@@ -999,14 +999,14 @@ impl<K: Ord, V> Memo<K, V> {
 /// symmetric, so the Python shell can carry the key as text without owning the
 /// format — the shape of the key is decided here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum MemoIdentity {
+pub enum PreBuildIdentity {
     /// A contract-address family (V2, V3, Aerodrome, Curve, Balancer).
     Address(alloy::primitives::Address),
     /// A V4 pool, by its on-chain id.
     V4(degenbot_decoders::v4_swap_decoder::V4PoolId),
 }
 
-impl MemoIdentity {
+impl PreBuildIdentity {
     fn hex(bytes: &[u8]) -> String {
         use std::fmt::Write as _;
         let mut out = String::with_capacity(bytes.len() * 2);
@@ -1025,7 +1025,7 @@ impl MemoIdentity {
     }
 }
 
-impl std::fmt::Display for MemoIdentity {
+impl std::fmt::Display for PreBuildIdentity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Address(address) => write!(f, "p:0x{}", Self::hex(address.as_slice())),
@@ -1034,7 +1034,7 @@ impl std::fmt::Display for MemoIdentity {
     }
 }
 
-impl MemoIdentity {
+impl PreBuildIdentity {
     /// The wire form as a memo key, or `None` when `text` is not one.
     ///
     /// The claim-window and Python doors carry keys as text; this is where that
@@ -1045,7 +1045,7 @@ impl MemoIdentity {
     }
 }
 
-impl std::str::FromStr for MemoIdentity {
+impl std::str::FromStr for PreBuildIdentity {
     type Err = String;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
@@ -1070,8 +1070,8 @@ impl std::str::FromStr for MemoIdentity {
 #[derive(Debug, Default)]
 pub struct RegistrationLedger {
     registered_paths: Memo<HopSignature>,
-    verified_pools: Memo<MemoIdentity>,
-    unregistrable_pools: Memo<MemoIdentity, UnregistrableRecord>,
+    verified_pools: Memo<PreBuildIdentity>,
+    unregistrable_pools: Memo<PreBuildIdentity, UnregistrableRecord>,
     rejected_paths: Memo<HopSignature>,
 }
 
@@ -1093,17 +1093,17 @@ impl RegistrationLedger {
         kind: PoolKind,
         address: Option<&str>,
         pool_hash: Option<&str>,
-    ) -> Option<MemoIdentity> {
+    ) -> Option<PreBuildIdentity> {
         match kind {
             PoolKind::V4 => pool_hash.and_then(|hash| {
-                let bytes = MemoIdentity::parse_hex(hash, 32)?;
-                Some(MemoIdentity::V4(
+                let bytes = PreBuildIdentity::parse_hex(hash, 32)?;
+                Some(PreBuildIdentity::V4(
                     <[u8; 32]>::try_from(bytes.as_slice()).ok()?,
                 ))
             }),
             _ => address.and_then(|address| {
-                let bytes = MemoIdentity::parse_hex(address, 20)?;
-                Some(MemoIdentity::Address(alloy::primitives::Address::from(
+                let bytes = PreBuildIdentity::parse_hex(address, 20)?;
+                Some(PreBuildIdentity::Address(alloy::primitives::Address::from(
                     <[u8; 20]>::try_from(bytes.as_slice()).ok()?,
                 )))
             }),
@@ -1164,12 +1164,12 @@ impl RegistrationLedger {
 
     /// Whether this pool's verify lifecycle already completed.
     #[must_use]
-    pub fn pool_verified(&self, key: &MemoIdentity) -> bool {
+    pub fn pool_verified(&self, key: &PreBuildIdentity) -> bool {
         self.verified_pools.contains(key)
     }
 
     /// Record a COMPLETED verify lifecycle (a pool fact).
-    pub fn memoize_verified_pool(&mut self, key: MemoIdentity) {
+    pub fn memoize_verified_pool(&mut self, key: PreBuildIdentity) {
         self.verified_pools.insert(key, ());
     }
 
@@ -1182,7 +1182,10 @@ impl RegistrationLedger {
 
     /// The memoized stable refusal for a pool key, or `None`.
     #[must_use]
-    pub fn unregistrable_record(&self, key: Option<&MemoIdentity>) -> Option<&UnregistrableRecord> {
+    pub fn unregistrable_record(
+        &self,
+        key: Option<&PreBuildIdentity>,
+    ) -> Option<&UnregistrableRecord> {
         key.and_then(|key| self.unregistrable_pools.get(key))
     }
 
@@ -1190,7 +1193,7 @@ impl RegistrationLedger {
     /// later transient answer cannot overwrite the pool fact).
     pub fn memoize_unregistrable(
         &mut self,
-        key: Option<MemoIdentity>,
+        key: Option<PreBuildIdentity>,
         outcome: RegistrationOutcome,
         counts_as_skip: bool,
     ) {
@@ -1577,12 +1580,15 @@ mod tests {
             "p:0xabcdef0000000000000000000000000000000001"
         );
         assert_eq!(
-            MemoIdentity::parse(&from_address.to_string()),
+            PreBuildIdentity::parse(&from_address.to_string()),
             Some(from_address)
         );
         let from_hash = RegistrationLedger::pool_memo_key(PoolKind::V4, None, Some(&hash)).unwrap();
         assert_eq!(from_hash.to_string(), format!("v4id:0x{}", "ab".repeat(32)));
-        assert_eq!(MemoIdentity::parse(&from_hash.to_string()), Some(from_hash));
+        assert_eq!(
+            PreBuildIdentity::parse(&from_hash.to_string()),
+            Some(from_hash)
+        );
         assert_eq!(
             RegistrationLedger::pool_memo_key(PoolKind::V4, None, None),
             None
@@ -1597,7 +1603,7 @@ mod tests {
             RegistrationLedger::pool_memo_key(PoolKind::V3, Some("0xabc"), None),
             None
         );
-        assert_eq!(MemoIdentity::parse("v3:0x1"), None);
+        assert_eq!(PreBuildIdentity::parse("v3:0x1"), None);
     }
 
     #[test]
@@ -1680,7 +1686,7 @@ mod tests {
             "orientation is part of the signature"
         );
 
-        let key = MemoIdentity::Address(alloy::primitives::Address::from([0x01u8; 20]));
+        let key = PreBuildIdentity::Address(alloy::primitives::Address::from([0x01u8; 20]));
         assert!(!ledger.pool_verified(&key));
         ledger.memoize_verified_pool(key);
         assert!(ledger.pool_verified(&key));

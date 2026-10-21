@@ -138,7 +138,7 @@ pub use degenbot_bot::bot_core::pool_builder::route::{
     construct_pool, BuiltIdentity, ConstructedPool, ConstructionRefusal, ConstructionRoute,
     RequestedPool, V3RouteInputs,
 };
-pub use degenbot_bot::bot_core::registration_ledger::{MemoIdentity, RefusalKind};
+pub use degenbot_bot::bot_core::registration_ledger::{PreBuildIdentity, RefusalKind};
 pub use degenbot_bot::bot_core::registration_lifecycle::{
     run_v3_registration_lifecycle, run_v4_registration_lifecycle, run_verify_lifecycle,
 };

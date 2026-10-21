@@ -378,12 +378,19 @@ key shape. Lives in `degenbot-substrate` beside the state owner; resolves the sh
 the seam and delegates to a single interior (ADR-081).
 _Avoid_: pool key, registration key (the retired prototype), pool ref.
 
-**Pool memo identity** (a `MemoIdentity`):
-The pre-build identity a registration memo keys on — a contract address for the address
-families, the on-chain pool id for a V4 pool — known before any RPC or build, so a refused
-pool is recognizable without one. One identity per pool, whatever its family; the text form
-(`p:0x…` / `v4id:0x…`) is only the wire form (ADR-081).
+**Pre-build identity** (a `PreBuildIdentity`):
+The identity a registration memo keys on before a build has resolved anything — a contract
+address for the address families, the on-chain pool id for a V4 pool — so a refused pool is
+recognizable without an RPC. One identity per pool, whatever its family; the text form
+(`p:0x…` / `v4id:0x…`) is only the wire form. Distinct from a **pool lookup**, which names a
+registered pool and addresses V4 by `(pool_manager, pool_id)` (ADR-081, ADR-082).
 _Avoid_: pool key string, `v3:`/`v4:` prefix, memo key format.
+
+**Effect vs view** (naming rule):
+An *effect* acts on a pool and is named family-free over a `PoolLookup`; a *view* that can
+only exist for one family may keep the family word; a verb whose payload narrows per family
+keeps its suffix rather than hiding the narrowing (ADR-082).
+_Avoid_: `_by_key` on a new effect, a family word in an effect name.
 
 **Known bitmap word**:
 A tick-bitmap word whose whole tick set has been established by a checked source (sparse

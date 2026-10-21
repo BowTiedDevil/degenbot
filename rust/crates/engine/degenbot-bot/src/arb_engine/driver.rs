@@ -66,7 +66,7 @@ use crate::arb_engine::{
 };
 use crate::bot_core::block_pump::{BlockPump, SubscribeState};
 use crate::bot_core::registration_ledger::{
-    MemoIdentity, RefusalKind, RegistrationPhase, VerifyOrigin,
+    PreBuildIdentity, RefusalKind, RegistrationPhase, VerifyOrigin,
 };
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
 use crate::bot_core::verification_retry::{retry_verification_call, RetryPolicy};
@@ -927,7 +927,7 @@ impl EngineDriver {
     /// do not consult it directly — they enter the lifecycle, which applies
     /// the fact itself.
     #[must_use]
-    pub fn is_pool_verified(&self, key: &MemoIdentity) -> bool {
+    pub fn is_pool_verified(&self, key: &PreBuildIdentity) -> bool {
         self.verifications.is_verified(key)
     }
 
@@ -960,8 +960,8 @@ impl EngineDriver {
         // memos on, so the driver's claim path and the pipeline's ledger share
         // one fact instead of three private string formats.
         let claim_key = match key {
-            PoolLookup::Address(address) => MemoIdentity::Address(address),
-            PoolLookup::V4 { pool_id, .. } => MemoIdentity::V4(pool_id),
+            PoolLookup::Address(address) => PreBuildIdentity::Address(address),
+            PoolLookup::V4 { pool_id, .. } => PreBuildIdentity::V4(pool_id),
         };
         if self.verifications.is_verified(&claim_key) {
             return Ok(());
@@ -1891,7 +1891,7 @@ mod tests {
         let driver = driver_for_test();
         let address = Address::from([0x11u8; 20]);
         register_sparse_v3(&driver, address);
-        let key = MemoIdentity::Address(address);
+        let key = PreBuildIdentity::Address(address);
 
         driver
             .run_registration_lifecycle(PoolLookup::from_address(address), None)
@@ -1960,7 +1960,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("test setup: tracked V3 registration");
-        let key = MemoIdentity::Address(address);
+        let key = PreBuildIdentity::Address(address);
 
         for _ in 0..2 {
             assert!(
@@ -1991,8 +1991,8 @@ mod tests {
         register_sparse_v3(&driver, shared_address);
         register_sparse_v4(&driver, shared_address, sibling_id);
 
-        let v3_key = MemoIdentity::Address(shared_address);
-        let v4_key = MemoIdentity::V4(sibling_id);
+        let v3_key = PreBuildIdentity::Address(shared_address);
+        let v4_key = PreBuildIdentity::V4(sibling_id);
 
         driver
             .run_registration_lifecycle(PoolLookup::from_address(shared_address), None)

@@ -174,7 +174,7 @@ async fn build_and_register(
                     pipeline.ledger.memoize_unregistrable(
                         node.memo_key
                             .as_deref()
-                            .and_then(degenbot::MemoIdentity::parse),
+                            .and_then(degenbot::PreBuildIdentity::parse),
                         refusal.outcome.clone(),
                         refusal.counts_as_skip,
                     );
@@ -457,7 +457,7 @@ async fn verify_one(
 ) -> Result<(), Box<RegistrationUnitOutcome>> {
     match row {
         DiscoveryPoolRow::V3(r) => {
-            let key = degenbot::MemoIdentity::Address(r.pool.address);
+            let key = degenbot::PreBuildIdentity::Address(r.pool.address);
             if pipeline.ledger.pool_verified(&key) {
                 return Ok(());
             }
@@ -486,7 +486,7 @@ async fn verify_one(
             }
         }
         DiscoveryPoolRow::V4(r) => {
-            let key = degenbot::MemoIdentity::V4(r.pool_hash.0);
+            let key = degenbot::PreBuildIdentity::V4(r.pool_hash.0);
             if pipeline.ledger.pool_verified(&key) {
                 return Ok(());
             }

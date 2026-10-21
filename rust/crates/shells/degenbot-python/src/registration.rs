@@ -13,8 +13,8 @@
 use crate::prelude::*;
 
 use degenbot_bot::bot_core::registration_ledger::{
-    BuildFailure, BuildRefusal, HopSignature, MemoIdentity, OutcomeLabel, PathAdmission,
-    PipelineReport, PolicyVerdict, RegistrationLedger, RegistrationOutcome,
+    BuildFailure, BuildRefusal, HopSignature, OutcomeLabel, PathAdmission, PipelineReport,
+    PolicyVerdict, PreBuildIdentity, RegistrationLedger, RegistrationOutcome,
     RegistrationUnitOutcome,
 };
 use degenbot_pathfinding::PoolKind;
@@ -28,11 +28,11 @@ pub struct PyUnregistrablePoolRecord {
 
 /// The typed memo key behind a Python-visible key string.
 ///
-/// The core keys its memos on `MemoIdentity`; Python carries the `Display`
+/// The core keys its memos on `PreBuildIdentity`; Python carries the `Display`
 /// form (`p:0x…` / `v4id:0x…`). Anything else is a caller bug, so it fails
 /// loudly instead of silently missing the memo.
-fn memo_identity(key: &str) -> PyResult<MemoIdentity> {
-    MemoIdentity::parse(key).ok_or_else(|| {
+fn memo_identity(key: &str) -> PyResult<PreBuildIdentity> {
+    PreBuildIdentity::parse(key).ok_or_else(|| {
         pyo3::exceptions::PyValueError::new_err(format!(
             "not a pool memo key: {key:?} (use the value from registration_pool_memo_key)"
         ))
