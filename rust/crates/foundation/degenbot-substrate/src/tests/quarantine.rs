@@ -481,7 +481,11 @@ fn quarantined_pool_update_block_cannot_outrun_last_complete_block() {
     // retained by the gate).
     core.apply_pump_buffer_by_key(pool_manager, pool_id_bytes);
     // Pin the post-drain pair.
-    core.pin_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .pin_post_drain(&mut core);
     let (tick_data, pinned_block) = core
         .take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes)
         .expect("a Tracked pool pins a post-drain pair");
@@ -687,7 +691,11 @@ fn quarantined_pool_dual_buffer_drain_correctness() {
     core.apply_backfill_buffer_by_key(pool_manager, pool_id_bytes);
     core.apply_pump_buffer_by_key(pool_manager, pool_id_bytes);
     // Pin the post-drain pair.
-    core.pin_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .pin_post_drain(&mut core);
     let (tick_data, pinned_block) = core
         .take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes)
         .expect("Tracked pool pins");
@@ -752,7 +760,11 @@ fn quarantined_pool_backfill_always_fully_drained() {
     // nothing, but the backfill drain is UNGATED and must still apply.
     core.apply_backfill_buffer_by_key(pool_manager, pool_id_bytes);
     core.apply_pump_buffer_by_key(pool_manager, pool_id_bytes);
-    core.pin_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .pin_post_drain(&mut core);
     let (tick_data, pinned_block) = core
         .take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes)
         .expect("Tracked pool pins");
@@ -833,7 +845,11 @@ fn concurrent_registration_lifecycle_invariant() {
     // events were retained by the gate, NOT applied.
     for (pid_bytes, _) in &pool_ids {
         core.apply_pump_buffer_by_key(pool_manager, *pid_bytes);
-        core.pin_post_drain_snapshot_by_key(pool_manager, pid_bytes);
+        PoolLookup::V4 {
+            pool_manager,
+            pool_id: *pid_bytes,
+        }
+        .pin_post_drain(&mut core);
         let (_, pinned_block) = core
             .take_post_drain_snapshot_by_key(pool_manager, pid_bytes)
             .expect("each Tracked pool pins");
@@ -903,7 +919,11 @@ fn lifecycle_invariant_swap_before_mint_same_inprogress_block() {
         11,
     );
     core.apply_pump_buffer_by_key(pool_manager, pool_id_bytes);
-    core.pin_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .pin_post_drain(&mut core);
     let (tick_data, pinned_block) = core
         .take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes)
         .expect("Tracked pool pins");
@@ -947,7 +967,11 @@ fn reorg_during_quarantine_pin_is_independent_of_live_rollback() {
         10,
     );
     core.apply_pump_buffer_by_key(pool_manager, pool_id_bytes);
-    core.pin_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .pin_post_drain(&mut core);
     let (tick_data, pinned_block) = core
         .take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes)
         .expect("Tracked pool pins");

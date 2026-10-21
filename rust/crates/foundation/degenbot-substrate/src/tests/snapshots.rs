@@ -665,7 +665,11 @@ fn v4_post_drain_snapshot_survives_pump_modify_liquidity() {
 
     // Pin post-drain state atomically with the drain (what apply_buffer_v4
     // does inside its single core.write() hold).
-    core.pin_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .pin_post_drain(&mut core);
 
     // Pump ModifyLiquidity lands AFTER the drain.
     core.apply_liquidity_update_by_key(
@@ -741,7 +745,11 @@ fn v4_post_drain_snapshot_is_none_for_sparse_pools() {
         fetcher: None,
     })
     .expect("V4 sparse pool registers");
-    core.pin_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .pin_post_drain(&mut core);
     assert_eq!(
         core.take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes),
         None,

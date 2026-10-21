@@ -144,7 +144,11 @@ impl PyArbEngine {
             let mut core = core.write_at(degenbot_substrate::state_lock::LockSite::Python);
             core.apply_backfill_buffer_by_key(pm, pool_id);
             core.apply_pump_buffer_by_key(pm, pool_id);
-            core.pin_post_drain_snapshot_by_key(pm, &pool_id);
+            PoolLookup::V4 {
+                pool_manager: pm,
+                pool_id,
+            }
+            .pin_post_drain(&mut core);
         });
         Ok(())
     }
