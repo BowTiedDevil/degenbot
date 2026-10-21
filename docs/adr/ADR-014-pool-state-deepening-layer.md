@@ -101,16 +101,16 @@ would re-express, at the state-struct level, a dedup the journal can do
 more directly at the delta level — and after the journal-layer dedup the
 residual per-family apply bodies are too short to justify a trait + `dyn`.
 
-### D4 — V4 buffer narrowing at the drain→apply seam.
+### D4 — V4 buffer narrowing at the decode seam.
 
-`BufferedV4LiquidityUpdate.liquidity_delta` stays `I256` (matches the
-on-chain `ModifyLiquidity` event's `int256` envelope); the CL apply method
-takes `i128` (matches `Tick.Info.liquidityNet: int128`, the tick-layer
-type V4 itself narrows to at `PoolManager.sol:666`
-`params.liquidityDelta.toInt128()`). The one narrowing lives at the
-drain→apply call site in `BotState`, mirroring the contract's own
-boundary narrowing. An `int256` that doesn't fit `int128` is dropped at
-the registry seam, not buried in the apply body.
+The `int128` bound is ADR-082 D3's argument, and it owns the field width:
+`BufferedV4LiquidityUpdate.liquidity_delta` carries `i128` — the width
+both contracts narrow to internally (`params.liquidityDelta.toInt128()`
+in v4-core's `Pool.sol`, `ModifyPositionParams.liquidityDelta` in
+v3-core) — so the buffer round-trips nothing. The one fallible narrowing
+sits at the log decoder, where the `int256` wire value arrives: a delta
+outside the bound is not a canonical event and is refused there, not
+carried through the buffer and re-checked at the drain→apply seam.
 
 ### D5 — `PoolEntry` projections replace variant-exhaustion arms.
 

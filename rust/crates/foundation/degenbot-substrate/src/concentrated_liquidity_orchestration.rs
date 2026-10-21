@@ -1717,19 +1717,12 @@ impl ConcentratedLiquidityOrchestration {
                         liquidity_delta,
                         block_number,
                     }) => {
-                        if let Ok(delta_i128) = i128::try_from(liquidity_delta) {
-                            if let Some(PoolEntry::V4(p)) = reg.pools.get_mut(&id) {
-                                p.1.apply_liquidity_update(
-                                    tick_lower,
-                                    tick_upper,
-                                    delta_i128,
-                                    block_number,
-                                );
-                            }
-                        } else {
-                            debug_assert!(
-                                false,
-                                "V4 liquidity_delta exceeds i128 — unreachable for real events"
+                        if let Some(PoolEntry::V4(p)) = reg.pools.get_mut(&id) {
+                            p.1.apply_liquidity_update(
+                                tick_lower,
+                                tick_upper,
+                                liquidity_delta,
+                                block_number,
                             );
                         }
                     }
@@ -1785,7 +1778,7 @@ impl ConcentratedLiquidityOrchestration {
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
         tick_lower: i32,
         tick_upper: i32,
-        liquidity_delta: alloy::primitives::I256,
+        liquidity_delta: i128,
         block_number: u64,
     ) {
         let key = (pool_manager, pool_id);
@@ -1809,15 +1802,13 @@ impl ConcentratedLiquidityOrchestration {
                     // `liquidity()` scalar for a post-seed event (and carries the
                     // historical-replay guard + two-stamp clocks + journal), where
                     // the prior inline `apply_liquidity_to_tick_range` did not.
-                    if let Ok(delta_i128) = i128::try_from(liquidity_delta) {
-                        state.apply_liquidity_update(
-                            tick_lower,
-                            tick_upper,
-                            delta_i128,
-                            block_number,
-                        );
-                        return;
-                    }
+                    state.apply_liquidity_update(
+                        tick_lower,
+                        tick_upper,
+                        liquidity_delta,
+                        block_number,
+                    );
+                    return;
                 }
             }
         }
@@ -1845,9 +1836,9 @@ impl ConcentratedLiquidityOrchestration {
     /// registered pool's state. The V4 drain loops
     /// ([`apply_backfill_buffer_v4`] / [`apply_pump_buffer_v4`]) dispatch
     /// through here so cross-type arrival order within a block is preserved.
-    /// V4 twin of [`apply_buffered_v3_event`] — the `Liquidity` variant narrows
-    /// the int256 delta to i128 at the drain→apply seam (ADR-014 D4, matching
-    /// the live keyed liquidity-update path).
+    /// V4 twin of [`apply_buffered_v3_event`] — the `Liquidity` payload already
+    /// carries the contracts' `int128` bound, so the drain narrows nothing
+    /// (ADR-082 D3).
     fn apply_buffered_v4_event(state: &mut V4PoolState, event: BufferedV4PoolEvent) {
         state.apply_event(event);
     }
@@ -2223,9 +2214,7 @@ impl BotState {
                 BufferedPoolEvent::V4(BufferedV4PoolEvent::Liquidity(BufferedV4LiquidityUpdate {
                     tick_lower: update.tick_lower,
                     tick_upper: update.tick_upper,
-                    liquidity_delta: alloy::primitives::I256::unchecked_from(
-                        update.liquidity_delta,
-                    ),
+                    liquidity_delta: update.liquidity_delta,
                     block_number: update.block_number,
                 }))
             }
@@ -2266,7 +2255,7 @@ impl BotState {
                         pool_id,
                         update.tick_lower,
                         update.tick_upper,
-                        alloy::primitives::I256::unchecked_from(update.liquidity_delta),
+                        update.liquidity_delta,
                         update.block_number,
                     );
             }

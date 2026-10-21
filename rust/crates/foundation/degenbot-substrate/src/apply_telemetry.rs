@@ -188,7 +188,7 @@ pub(crate) fn trace_apply_route_v4(
     pool_id_hex: &str,
     tick_lower: i32,
     tick_upper: i32,
-    liquidity_delta: alloy::primitives::I256,
+    liquidity_delta: i128,
     block_number: u64,
     lifecycle: &str,
     routed_to: &str,

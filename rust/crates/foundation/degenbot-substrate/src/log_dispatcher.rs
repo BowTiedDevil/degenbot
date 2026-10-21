@@ -76,12 +76,16 @@ pub enum DecodedPoolEvent {
         block_number: u64,
     },
     /// V4 `ModifyLiquidity` — `(pool_manager, pool_id, tick_lower, tick_upper, delta)`.
+    ///
+    /// The delta arrives already narrowed to the `int128` bound both contracts
+    /// enforce (`toInt128()` reverts outside it), so a log outside the bound
+    /// never becomes an event (ADR-082 D3).
     V4Liquidity {
         pool_manager: alloy::primitives::Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
         tick_lower: i32,
         tick_upper: i32,
-        liquidity_delta: alloy::primitives::I256,
+        liquidity_delta: i128,
         block_number: u64,
     },
 }
@@ -422,7 +426,11 @@ impl LogDecoder for V4ModifyLiquidityDecoder {
             pool_id: ev.pool_id,
             tick_lower: ev.tick_lower,
             tick_upper: ev.tick_upper,
-            liquidity_delta: ev.liquidity_delta,
+            // The V4 twin of the V3 mint/burn decoder's `i128::try_from(..).ok()?`:
+            // `toInt128()` reverts outside this bound on-chain, so an out-of-bound
+            // delta is a forged log or a patched emitter — refused, never clamped.
+            // This is the ONE place the V4 wire bound is enforced.
+            liquidity_delta: i128::try_from(ev.liquidity_delta).ok()?,
             block_number: log.block_number.unwrap_or(default_block),
         })
     }

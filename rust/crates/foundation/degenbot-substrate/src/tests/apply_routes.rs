@@ -1217,3 +1217,103 @@ fn v3_restore_before_block_after_same_block_multi_swap_lands_on_pre_block() {
     assert_eq!(s.liquidity, 1_000_000);
     assert_eq!(s.tick, 0);
 }
+
+/// ADR-082 D3 / ADR-014 D4: the buffered V4 liquidity payload carries the
+/// bound both contracts impose (`toInt128()`), so both extremes of that bound
+/// must ride the unified door — and the buffer must hold a delta at the same
+/// width the door takes.
+#[test]
+fn v4_liquidity_delta_applies_at_the_int128_boundaries() {
+    use crate::PoolTickCoverage;
+    use crate::{RegisterV4PoolParams, V4PoolKey};
+
+    let pool_manager = Address::from([0x5au8; 20]);
+    let pool_id_bytes: degenbot_decoders::v4_swap_decoder::V4PoolId = [0x7au8; 32];
+    let key = PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    };
+
+    for delta in [i128::MAX, i128::MIN] {
+        let mut core = BotState::new();
+        let pool_id = core
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager,
+                pool_id: pool_id_bytes,
+                pool_key: V4PoolKey {
+                    currency0: Address::ZERO,
+                    currency1: Address::from([1u8; 20]),
+                    fee: 10_000,
+                    tick_spacing: 60,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                protocol_fee: 0,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                tick_data_block: None,
+                coverage: PoolTickCoverage::Sparse,
+                fetcher: None,
+            })
+            .expect("V4 pool registers");
+
+        // The buffered payload holds the delta at the door's own width.
+        let buffered = BufferedV4LiquidityUpdate {
+            tick_lower: 60,
+            tick_upper: 120,
+            liquidity_delta: delta,
+            block_number: 5,
+        };
+        assert_eq!(buffered.liquidity_delta, delta);
+
+        assert_eq!(
+            core.apply_liquidity_update(key, PoolLiquidityUpdate::new(60, 120, delta, 5)),
+            Some(pool_id),
+            "a delta at the contracts' bound must apply, never be dropped"
+        );
+
+        let state = core
+            .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+            .expect("registered");
+        assert_eq!(
+            state.journal.len(),
+            1,
+            "the boundary delta is journaled like any other"
+        );
+    }
+}
+
+/// The one place the wire bound is enforced: a delta outside `int128` cannot
+/// have come from a canonical `PoolManager` (`toInt128()` reverts), so the wire
+/// constructor refuses it instead of rounding it into the buffer.
+#[test]
+fn pool_liquidity_update_rejects_a_v4_wire_delta_outside_int128() {
+    use alloy::primitives::I256;
+
+    let at_max = I256::try_from(i128::MAX).expect("i128::MAX fits int256");
+    let at_min = I256::try_from(i128::MIN).expect("i128::MIN fits int256");
+
+    assert!(
+        PoolLiquidityUpdate::from_v4_wire(60, 120, at_max + I256::ONE, 5).is_none(),
+        "i128::MAX + 1 is outside the bound both contracts narrow to"
+    );
+    assert!(
+        PoolLiquidityUpdate::from_v4_wire(60, 120, at_min - I256::ONE, 5).is_none(),
+        "i128::MIN - 1 is outside the bound both contracts narrow to"
+    );
+    assert_eq!(
+        PoolLiquidityUpdate::from_v4_wire(60, 120, at_max, 5)
+            .expect("the bound itself is accepted")
+            .liquidity_delta,
+        i128::MAX
+    );
+    assert_eq!(
+        PoolLiquidityUpdate::from_v4_wire(60, 120, at_min, 5)
+            .expect("the bound itself is accepted")
+            .liquidity_delta,
+        i128::MIN
+    );
+}

@@ -114,22 +114,20 @@ pub(super) fn compute(
 
 /// The V4 apply arm of the [`FamilyApply`] contract — one buffered pool
 /// event (`Liquidity` or `Swap`) onto one V4 slice. V4 twin of the V3 apply
-/// arm — the `Liquidity` variant narrows the int256 delta to i128 at the
-/// drain→apply seam (ADR-014 D4, matching the live apply path).
+/// arm — the payload already carries the `int128` bound both contracts narrow
+/// to, so this arm narrows nothing (ADR-082 D3).
 impl FamilyApply for V4PoolState {
     type Event = BufferedV4PoolEvent;
 
     fn apply_event(&mut self, event: Self::Event) {
         match event {
             BufferedV4PoolEvent::Liquidity(u) => {
-                if let Ok(delta_i128) = i128::try_from(u.liquidity_delta) {
-                    self.apply_liquidity_update(
-                        u.tick_lower,
-                        u.tick_upper,
-                        delta_i128,
-                        u.block_number,
-                    );
-                }
+                self.apply_liquidity_update(
+                    u.tick_lower,
+                    u.tick_upper,
+                    u.liquidity_delta,
+                    u.block_number,
+                );
             }
             BufferedV4PoolEvent::Swap(s) => {
                 self.apply_swap(s.sqrt_price_x96, s.liquidity, s.tick, s.block_number, &[]);

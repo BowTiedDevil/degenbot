@@ -92,9 +92,12 @@ pub struct V4PoolKey {
 pub struct BufferedV4LiquidityUpdate {
     pub tick_lower: i32,
     pub tick_upper: i32,
-    /// Signed liquidity delta (V4 emits `int256`; stored as `I256` then
-    /// narrowed to `i128` at apply time — valid on-chain data always fits).
-    pub liquidity_delta: I256,
+    /// Signed liquidity delta, already narrowed to the `int128` bound v4-core
+    /// enforces (`params.liquidityDelta.toInt128()`, which reverts outside it).
+    /// The `int256` wire value narrows ONCE at the log decoder — the only
+    /// fallible site — so nothing here round-trips through a wider type
+    /// (ADR-082 D3).
+    pub liquidity_delta: i128,
     pub block_number: u64,
 }
 

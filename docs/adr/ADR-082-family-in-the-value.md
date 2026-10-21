@@ -51,8 +51,10 @@ Concretely:
    The family-typed payloads (`BufferedV3PoolEvent::Liquidity` /
    `BufferedV4PoolEvent::Liquidity`) are built inside the door from the
    family-free value: one narrowing site, and family knowledge stays where the
-   signatures genuinely differ. `BufferedV4LiquidityUpdate` keeps its `I256`
-   field (ADR-014 D4); the door widens losslessly into it.
+   signatures genuinely differ. `BufferedV4LiquidityUpdate` carries that same
+   `i128` bound (ADR-014 D4), so the door widens nothing and the buffer holds
+   the contract's own width; the only fallible narrowing is the decoder's,
+   where the `int256` wire value arrives.
 4. **Refusals are typed, not dropped.** Where a payload carries a family
    (`BufferedPoolEvent`, `PoolStateUpdate`) and the key names another, the door
    returns `PoolRefusal::FamilyMismatch`. It must not borrow `NoOpReason`,

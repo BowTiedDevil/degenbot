@@ -89,10 +89,11 @@ fn the_census_goes_red_on_the_old_shape() {
     // the census must name the doorway the retired twin left behind, and a
     // source that holds only the door must clear that entry.
     let door_gap = census("", "");
-    let expected_gap =
-        format!("apply_liquidity_update_by_key has no PoolLookup::apply_liquidity_update door");
     assert!(
-        door_gap.contains(&expected_gap),
+        door_gap
+            .iter()
+            .any(|v| v
+                == "apply_liquidity_update_by_key has no PoolLookup::apply_liquidity_update door"),
         "the census must report the missing door for the new entry: {door_gap:?}"
     );
     let door_only = "    pub fn apply_liquidity_update(&mut self) {}\n";
