@@ -2300,14 +2300,14 @@ impl BotState {
             .apply_pump_buffer_v4(&mut self.registry, pool_manager, pool_id);
     }
 
-    /// Coverage flag for the address-registered (V3) pool behind `address`
+    /// Coverage flag for the address-registered (V3) pool behind `pool_id`
     /// (`Tracked` = complete tick data, `Sparse` = none), read through the
-    /// family read module's observe door. `None` for unregistered / non-V3
-    /// addresses. The registration-lifecycle module reads this up-front to
-    /// branch the verify-lifecycle (Sparse stays `Live`, no RPC).
+    /// family read module's observe door. `None` for an unregistered / non-V3
+    /// id. The registration-lifecycle reads this up-front to branch the
+    /// verify-lifecycle (Sparse stays `Live`, no RPC); the address and V4 key
+    /// shapes resolve into this one interior.
     #[must_use]
-    pub fn pool_coverage(&self, address: Address) -> Option<PoolTickCoverage> {
-        let &pool_id = self.registry.pool_addresses.get(&address)?;
+    pub(crate) fn coverage_by_pool_id(&self, pool_id: u64) -> Option<PoolTickCoverage> {
         match self.registry.pools.get(&pool_id) {
             Some(PoolEntry::V3(p)) => {
                 let design = concentrated_liquidity::ConcentratedLiquidityState::V3 {
@@ -2326,7 +2326,7 @@ impl BotState {
     /// Coverage flag for the key-registered (V4) pool behind
     /// `(pool_manager, pool_id)` (`Tracked` / `Sparse`), read through the
     /// family read module's observe door. `None` for unregistered keys. V4
-    /// twin of [`Self::pool_coverage`] — read up-front by the
+    /// twin of [`Self::coverage_by_pool_id`] — read up-front by the
     /// registration-lifecycle to keep Sparse pools out of the verify deferral.
     #[must_use]
     pub fn pool_coverage_by_key(

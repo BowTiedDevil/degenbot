@@ -50,7 +50,9 @@ impl PoolLookup {
     /// under this key (the machine's no-op arm).
     pub fn coverage(&self, state: &BotState) -> Option<PoolTickCoverage> {
         match self {
-            Self::Address(address) => state.pool_coverage(*address),
+            Self::Address(address) => state
+                .pool_id_by_address(address)
+                .and_then(|pool_id| state.coverage_by_pool_id(pool_id)),
             Self::V4 {
                 pool_manager,
                 pool_id,
