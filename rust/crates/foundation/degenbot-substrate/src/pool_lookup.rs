@@ -130,10 +130,10 @@ impl PoolLookup {
             Self::Address(address) => {
                 state
                     .concentrated_liquidity
-                    .apply_backfill_buffer_v3(&mut state.registry, address);
+                    .apply_backfill_buffer::<V3Family>(&mut state.registry, address);
                 state
                     .concentrated_liquidity
-                    .apply_pump_buffer_v3(&mut state.registry, address);
+                    .apply_pump_buffer::<V3Family>(&mut state.registry, address);
             }
             Self::V4 {
                 pool_manager,
@@ -151,7 +151,7 @@ impl PoolLookup {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity
-                .apply_backfill_buffer_v3(&mut state.registry, address),
+                .apply_backfill_buffer::<V3Family>(&mut state.registry, address),
             Self::V4 {
                 pool_manager,
                 pool_id,
@@ -164,7 +164,7 @@ impl PoolLookup {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity
-                .apply_pump_buffer_v3(&mut state.registry, address),
+                .apply_pump_buffer::<V3Family>(&mut state.registry, address),
             Self::V4 {
                 pool_manager,
                 pool_id,

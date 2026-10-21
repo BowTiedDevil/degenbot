@@ -123,6 +123,19 @@ pub struct ConcentratedLiquidityOrchestration {
 ///
 /// This is the capability-level twin of `PoolLookup`: the seam decides *which*
 /// family, the body stays single.
+/// Why a drain stopped, for the drain-boundary diagnostic.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum DrainPhase {
+    /// The pool is not registered (the buffered events have no home yet).
+    NotRegistered,
+    /// The family buffer had nothing for this key or phase.
+    Empty,
+    /// The pump has no tombstone cutoff yet, so no block is complete.
+    NoCompleted,
+    /// A drain happened; `drained` is how many events it yielded.
+    Count,
+}
+
 pub(crate) trait LiquidityFamily {
     /// The pool's pre-registration key: its address, or its V4 `(manager, id)`.
     type Key: Copy + Eq + std::hash::Hash;
@@ -144,6 +157,28 @@ pub(crate) trait LiquidityFamily {
         key: &Self::Key,
     ) -> Option<Vec<Self::Event>>;
 
+    /// Drain this family's backfill buffer for `key`.
+    fn drain_backfill(
+        orch: &mut ConcentratedLiquidityOrchestration,
+        key: &Self::Key,
+    ) -> Option<Vec<Self::Event>>;
+
+    /// Drain the pump events whose block is complete (`<= cutoff`).
+    fn drain_pump_completed(
+        orch: &mut ConcentratedLiquidityOrchestration,
+        key: &Self::Key,
+        cutoff: u64,
+    ) -> Option<Vec<Self::Event>>;
+
+    /// The drain-boundary diagnostic (a lean family emits none).
+    fn diag_drain(key: &Self::Key, verb: &'static str, phase: DrainPhase, drained: usize);
+
+    /// The per-event drain diagnostic (a lean family emits none).
+    fn diag_event(key: &Self::Key, verb: &'static str, event: &Self::Event);
+
+    /// An `update_block` rewind after an apply (an apply must never move it back).
+    fn diag_rewind(key: &Self::Key, before: u64, after: u64);
+
     /// This family's registered state for `pool_id`.
     fn state_mut(reg: &mut RegistryCore, pool_id: u64) -> Option<&mut Self::State>;
 
@@ -162,6 +197,8 @@ pub(crate) trait RegistrationState {
     fn lifecycle_mut(&mut self) -> &mut RegistrationLifecycle;
     /// The pool's tick coverage (a `Sparse` pool is never quarantined).
     fn coverage(&self) -> PoolTickCoverage;
+    /// The block the pool's tick data reflects.
+    fn update_block(&self) -> u64;
 }
 
 impl RegistrationState for V3PoolState {
@@ -172,6 +209,10 @@ impl RegistrationState for V3PoolState {
     fn coverage(&self) -> PoolTickCoverage {
         self.coverage
     }
+
+    fn update_block(&self) -> u64 {
+        self.update_block
+    }
 }
 
 impl RegistrationState for V4PoolState {
@@ -181,6 +222,10 @@ impl RegistrationState for V4PoolState {
 
     fn coverage(&self) -> PoolTickCoverage {
         self.coverage
+    }
+
+    fn update_block(&self) -> u64 {
+        self.update_block
     }
 }
 
@@ -216,6 +261,76 @@ impl LiquidityFamily for V3Family {
 
     fn apply(state: &mut Self::State, event: Self::Event) {
         ConcentratedLiquidityOrchestration::apply_buffered_v3_event(state, event);
+    }
+
+    fn drain_backfill(
+        orch: &mut ConcentratedLiquidityOrchestration,
+        key: &Self::Key,
+    ) -> Option<Vec<Self::Event>> {
+        orch.v3_buffer.drain_backfill(key)
+    }
+
+    fn drain_pump_completed(
+        orch: &mut ConcentratedLiquidityOrchestration,
+        key: &Self::Key,
+        cutoff: u64,
+    ) -> Option<Vec<Self::Event>> {
+        orch.v3_buffer.drain_pump_completed(key, cutoff)
+    }
+
+    fn diag_drain(key: &Self::Key, verb: &'static str, phase: DrainPhase, drained: usize) {
+        match phase {
+            DrainPhase::NotRegistered => {
+                diag!(domain = pump, pool_addr = %format!("{key:x}"), "NOT REGISTERED");
+            }
+            DrainPhase::Empty => {
+                diag!(domain = pump, pool_addr = %format!("{key:x}"), verb = %verb, "EMPTY");
+            }
+            DrainPhase::NoCompleted => {
+                diag!(domain = pump, pool_addr = %format!("{key:x}"),
+                    verb = %verb,
+                    "NO-COMPLETE (no tombstone yet)"
+                );
+            }
+            DrainPhase::Count => {
+                diag!(domain = pump, pool_addr = %format!("{key:x}"), count = drained, verb = %verb);
+            }
+        }
+    }
+
+    fn diag_event(key: &Self::Key, verb: &'static str, event: &Self::Event) {
+        let label = if verb == "backfill" {
+            "backfill apply"
+        } else {
+            "pump apply"
+        };
+        match event {
+            BufferedV3PoolEvent::Liquidity(u) => {
+                diag!(domain = pump, pool_addr = %format!("{key:x}"),
+                    kind = %format!("{label} liq"),
+                    tick_lower = u.tick_lower,
+                    tick_upper = u.tick_upper,
+                    delta = u.liquidity_delta,
+                    block = u.block_number
+                );
+            }
+            BufferedV3PoolEvent::Swap(s) => {
+                diag!(domain = pump, pool_addr = %format!("{key:x}"),
+                    kind = %format!("{label} swap"),
+                    liquidity = s.liquidity,
+                    tick = s.tick,
+                    block = s.block_number
+                );
+            }
+        }
+    }
+
+    fn diag_rewind(key: &Self::Key, before: u64, after: u64) {
+        op_warn!(domain = state, pool_addr = %format!("{key:x}"),
+            ub_before = before,
+            ub_after = after,
+            "update_block REWIND"
+        );
     }
 
     fn diag(key: &Self::Key, verb: &str, blocks: &[u64], distinct_blocks: &[u64]) {
@@ -261,6 +376,27 @@ impl LiquidityFamily for V4Family {
     fn apply(state: &mut Self::State, event: Self::Event) {
         ConcentratedLiquidityOrchestration::apply_buffered_v4_event(state, event);
     }
+
+    fn drain_backfill(
+        orch: &mut ConcentratedLiquidityOrchestration,
+        key: &Self::Key,
+    ) -> Option<Vec<Self::Event>> {
+        orch.v4_buffer.drain_backfill(key)
+    }
+
+    fn drain_pump_completed(
+        orch: &mut ConcentratedLiquidityOrchestration,
+        key: &Self::Key,
+        cutoff: u64,
+    ) -> Option<Vec<Self::Event>> {
+        orch.v4_buffer.drain_pump_completed(key, cutoff)
+    }
+
+    fn diag_drain(_key: &Self::Key, _verb: &'static str, _phase: DrainPhase, _drained: usize) {}
+
+    fn diag_event(_key: &Self::Key, _verb: &'static str, _event: &Self::Event) {}
+
+    fn diag_rewind(_key: &Self::Key, _before: u64, _after: u64) {}
 
     fn diag(key: &Self::Key, verb: &str, blocks: &[u64], distinct_blocks: &[u64]) {
         diag!(domain = verify, pool_manager = %format!("{:x}", key.0),
@@ -775,135 +911,80 @@ impl ConcentratedLiquidityOrchestration {
             }),
         );
     }
-    /// Apply all buffered **backfill** V3 events for a pool address.
-    /// Call this during registration, after `register_v3_pool` and before
-    /// [`apply_pump_buffer_v3`](Self::apply_pump_buffer_v3). No-op if there are
-    /// none. The post-call state is at the backfill boundary (a deterministic
-    /// point suitable for verification cloning).
+    /// Drain and apply a pool's buffered backfill events, for either key shape.
     ///
-    /// Each buffered Mint/Burn pushes a tick-only `V3BlockDelta` (carrying the
-    /// boundary-tick priors) and advances `state.update_block` — mirroring the
-    /// live-path keyed liquidity-update apply. Pre-fix these
-    /// appliers mutated `tick_data` only, so the buffered events were invisible
-    /// to `restore_before_block` and `update_block` stayed frozen at the
-    /// registration block.
-    pub(crate) fn apply_backfill_buffer_v3(&mut self, reg: &mut RegistryCore, address: &Address) {
-        // Drain diagnostics: per-event apply at DEBUG on `pump` (the
-        // drain-dbg gate is retired). Diagnoses same-block Mint+Burn
-        // net-zero races where one half is lost between fetch and drain.
-        let Some(&key) = reg.pool_addresses.get(address) else {
-            diag!(domain = pump, pool_addr = %format!("{address:x}"), "backfill NOT REGISTERED");
+    /// The drain order is arrival order, so a same-block Mint+Burn pair
+    /// netting to zero lands both halves.
+    pub(crate) fn apply_backfill_buffer<F: LiquidityFamily>(
+        &mut self,
+        reg: &mut RegistryCore,
+        key: &F::Key,
+    ) {
+        let Some(pool_id) = F::pool_id(self, reg, key) else {
+            F::diag_drain(key, "backfill", DrainPhase::NotRegistered, 0);
             return;
         };
-        let Some(buffered) = self.v3_buffer.drain_backfill(address) else {
-            diag!(domain = pump, pool_addr = %format!("{address:x}"), "backfill EMPTY");
+        let Some(buffered) = F::drain_backfill(self, key) else {
+            F::diag_drain(key, "backfill", DrainPhase::Empty, 0);
             return;
         };
-        diag!(domain = pump, pool_addr = %format!("{address:x}"),
-            count = buffered.len(),
-            "backfill"
-        );
-        for update in buffered {
-            match &update {
-                BufferedV3PoolEvent::Liquidity(u) => {
-                    diag!(domain = pump, pool_addr = %format!("{address:x}"),
-                        tick_lower = u.tick_lower,
-                        tick_upper = u.tick_upper,
-                        delta = u.liquidity_delta,
-                        block = u.block_number,
-                        "backfill apply liq"
-                    );
-                }
-                BufferedV3PoolEvent::Swap(s) => {
-                    diag!(domain = pump, pool_addr = %format!("{address:x}"),
-                        liquidity = s.liquidity,
-                        tick = s.tick,
-                        block = s.block_number,
-                        "backfill apply swap"
-                    );
-                }
-            }
-            if let Some(state) = reg
-                .pools
-                .get_mut(&key)
-                .and_then(PoolEntry::v3_mut)
-                .map(|(_, s)| s)
-            {
-                let ub_before = state.update_block;
-                Self::apply_buffered_v3_event(state, update);
-                if state.update_block < ub_before {
-                    op_warn!(domain = state, pool_addr = %format!("{address:x}"),
-                        ub_before,
-                        ub_after = state.update_block,
-                        "update_block REWIND (backfill)"
-                    );
-                }
-            }
-        }
+        F::diag_drain(key, "backfill", DrainPhase::Count, buffered.len());
+        self.apply_buffered_events::<F>(reg, pool_id, key, "backfill", buffered);
     }
-    /// Apply all buffered **pump** V3 events for a pool address.
-    /// Call this during registration, after [`apply_backfill_buffer_v3`].
+
+    /// Drain and apply the pump events of every COMPLETED block, for either key
+    /// shape.
     ///
-    /// Same journal + `update_block` contract as
-    /// [`apply_backfill_buffer_v3`] — see its docs.
-    pub(crate) fn apply_pump_buffer_v3(&mut self, reg: &mut RegistryCore, address: &Address) {
-        let Some(&key) = reg.pool_addresses.get(address) else {
-            diag!(domain = pump, pool_addr = %format!("{address:x}"), "pump NOT REGISTERED");
+    /// The cutoff is the pump `StageMachine` tombstone cutoff: a block is
+    /// complete when the first log of N+1 closes N, and draining mid-block
+    /// would pin `update_block = N` while missing a later same-block log — so
+    /// the in-progress block's events stay buffered.
+    pub(crate) fn apply_pump_buffer<F: LiquidityFamily>(
+        &mut self,
+        reg: &mut RegistryCore,
+        key: &F::Key,
+    ) {
+        let Some(pool_id) = F::pool_id(self, reg, key) else {
+            F::diag_drain(key, "pump", DrainPhase::NotRegistered, 0);
             return;
         };
-        // drain ONLY fully-completed blocks. The cutoff is the pump's
-        // `StageMachine` tombstone cutoff — a block is complete when
-        // the first log of N+1 closes N; a drain mid-block would pin
-        // `update_block=N` missing a later same-block log. Events for the
-        // in-progress block stay buffered.
         let cutoff = self.pump_complete_cutoff;
         if cutoff == 0 {
-            diag!(domain = pump, pool_addr = %format!("{address:x}"), "pump NO-COMPLETE (no tombstone yet)");
+            F::diag_drain(key, "pump", DrainPhase::NoCompleted, 0);
             return;
         }
-        let Some(buffered) = self.v3_buffer.drain_pump_completed(address, cutoff) else {
-            diag!(domain = pump, pool_addr = %format!("{address:x}"), "pump EMPTY (no completed blocks)");
+        let Some(buffered) = F::drain_pump_completed(self, key, cutoff) else {
+            F::diag_drain(key, "pump", DrainPhase::Empty, 0);
             return;
         };
-        diag!(domain = pump, pool_addr = %format!("{address:x}"), count = buffered.len(), "pump");
-        for update in buffered {
-            match &update {
-                BufferedV3PoolEvent::Liquidity(u) => {
-                    diag!(domain = pump, pool_addr = %format!("{address:x}"),
-                        tick_lower = u.tick_lower,
-                        tick_upper = u.tick_upper,
-                        delta = u.liquidity_delta,
-                        block = u.block_number,
-                        "pump apply liq"
-                    );
-                }
-                BufferedV3PoolEvent::Swap(s) => {
-                    diag!(domain = pump, pool_addr = %format!("{address:x}"),
-                        liquidity = s.liquidity,
-                        tick = s.tick,
-                        block = s.block_number,
-                        "pump apply swap"
-                    );
-                }
-            }
-            if let Some(state) = reg
-                .pools
-                .get_mut(&key)
-                .and_then(PoolEntry::v3_mut)
-                .map(|(_, s)| s)
-            {
-                let ub_before = state.update_block;
-                Self::apply_buffered_v3_event(state, update);
-                if state.update_block < ub_before {
-                    op_warn!(domain = state, pool_addr = %format!("{address:x}"),
-                        ub_before,
-                        ub_after = state.update_block,
-                        "update_block REWIND (pump)"
-                    );
-                }
+        F::diag_drain(key, "pump", DrainPhase::Count, buffered.len());
+        self.apply_buffered_events::<F>(reg, pool_id, key, "pump", buffered);
+    }
+
+    /// Apply drained events in arrival order, warning if `update_block` moves
+    /// backwards (an apply must never rewind the pool's freshness).
+    fn apply_buffered_events<F: LiquidityFamily>(
+        &mut self,
+        reg: &mut RegistryCore,
+        pool_id: u64,
+        key: &F::Key,
+        verb: &'static str,
+        buffered: Vec<F::Event>,
+    ) {
+        for event in buffered {
+            F::diag_event(key, verb, &event);
+            let Some(state) = F::state_mut(reg, pool_id) else {
+                continue;
+            };
+            let before = state.update_block();
+            F::apply(state, event);
+            let after = state.update_block();
+            if after < before {
+                F::diag_rewind(key, before, after);
             }
         }
     }
+
     /// Number of buffered V3 liquidity events for a pool address (backfill + pump).
     #[must_use]
     pub fn buffered_v3_event_count(&self, address: &Address) -> usize {
@@ -1617,74 +1698,6 @@ impl ConcentratedLiquidityOrchestration {
             }),
         );
     }
-    /// Apply all buffered **backfill** V4 `ModifyLiquidity` events for a pool.
-    ///
-    /// Same journal + `update_block` contract as the V3 buffer appliers
-    /// ([`apply_backfill_buffer_v3`]) — each event pushes a tick-only
-    /// `V3BlockDelta` (V4 shares the V3 journal shape) and advances
-    /// `state.update_block`. Pre-fix these mutated `tick_data` only.
-    pub(crate) fn apply_backfill_buffer_v4(
-        &mut self,
-        reg: &mut RegistryCore,
-        pool_manager: Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
-    ) {
-        let key = (pool_manager, pool_id);
-        let Some(&id) = self.v4_pool_ids.get(&key) else {
-            return;
-        };
-        let Some(buffered) = self.v4_buffer.drain_backfill(&key) else {
-            return;
-        };
-        for update in buffered {
-            let Some(state) = reg
-                .pools
-                .get_mut(&id)
-                .and_then(PoolEntry::v4_mut)
-                .map(|(_, s)| s)
-            else {
-                continue;
-            };
-            Self::apply_buffered_v4_event(state, update);
-        }
-    }
-    /// Apply all buffered **pump** V4 `ModifyLiquidity` events for a pool.
-    ///
-    /// Same journal + `update_block` contract as
-    /// [`apply_backfill_buffer_v4`] — see its docs.
-    pub(crate) fn apply_pump_buffer_v4(
-        &mut self,
-        reg: &mut RegistryCore,
-        pool_manager: Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
-    ) {
-        let key = (pool_manager, pool_id);
-        let Some(&id) = self.v4_pool_ids.get(&key) else {
-            return;
-        };
-        // drain ONLY fully-completed blocks. The cutoff is the pump's
-        // `StageMachine` tombstone cutoff — a block is complete when
-        // the first log of N+1 closes N; a drain mid-block would pin
-        // `update_block=N` missing a later same-block log.
-        let cutoff = self.pump_complete_cutoff;
-        if cutoff == 0 {
-            return;
-        }
-        let Some(buffered) = self.v4_buffer.drain_pump_completed(&key, cutoff) else {
-            return;
-        };
-        for update in buffered {
-            let Some(state) = reg
-                .pools
-                .get_mut(&id)
-                .and_then(PoolEntry::v4_mut)
-                .map(|(_, s)| s)
-            else {
-                continue;
-            };
-            Self::apply_buffered_v4_event(state, update);
-        }
-    }
     /// Set the maximum age for buffered V4 pump events. `None` = unbounded.
     pub fn set_v4_buffer_max_age(&mut self, max_age: Option<u64>) {
         self.v4_buffer.set_max_age(max_age);
@@ -2344,27 +2357,24 @@ impl BotState {
             );
     }
 
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_backfill_buffer_v4`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_backfill_buffer`].
     pub fn apply_backfill_buffer_by_key(
         &mut self,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
-        self.concentrated_liquidity.apply_backfill_buffer_v4(
-            &mut self.registry,
-            pool_manager,
-            pool_id,
-        );
+        self.concentrated_liquidity
+            .apply_backfill_buffer::<V4Family>(&mut self.registry, &(pool_manager, pool_id));
     }
 
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_pump_buffer_v4`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_pump_buffer`].
     pub fn apply_pump_buffer_by_key(
         &mut self,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
         self.concentrated_liquidity
-            .apply_pump_buffer_v4(&mut self.registry, pool_manager, pool_id);
+            .apply_pump_buffer::<V4Family>(&mut self.registry, &(pool_manager, pool_id));
     }
 
     /// Coverage flag for the address-registered (V3) pool behind `pool_id`
