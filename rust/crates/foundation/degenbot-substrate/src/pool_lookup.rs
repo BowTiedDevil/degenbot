@@ -27,7 +27,7 @@ use degenbot_decoders::v4_swap_decoder::V4PoolId;
 /// value and the eight state verbs the machine needs hang off it. Both arms
 /// delegate to the state owner's own accessors: this is a join, not a second
 /// reading of pool state.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PoolLookup {
     /// A V3 concentrated-liquidity pool, addressed by contract address.
     Address(Address),
@@ -46,13 +46,30 @@ impl PoolLookup {
         Self::Address(address.into())
     }
 
+    /// The pool id this lookup names, or `None` when the pool is not
+    /// registered.
+    ///
+    /// The one resolution: a caller running several verbs resolves once and
+    /// passes the id along, instead of each verb re-resolving through the
+    /// registry. The ordering/`Eq` derives exist so a lookup can key a memo.
+    #[must_use]
+    pub fn resolve(&self, state: &BotState) -> Option<u64> {
+        match self {
+            Self::Address(address) => state.pool_id_by_address(address),
+            Self::V4 {
+                pool_manager,
+                pool_id,
+            } => state.pool_id_by_key(*pool_manager, pool_id),
+        }
+    }
+
     /// The pool's tick coverage, or `None` when the pool is not registered
     /// under this key (the machine's no-op arm).
     #[must_use]
     pub fn coverage(&self, state: &BotState) -> Option<PoolTickCoverage> {
         match self {
-            Self::Address(address) => state
-                .pool_id_by_address(address)
+            Self::Address(_) => self
+                .resolve(state)
                 .and_then(|pool_id| state.coverage_by_pool_id(pool_id)),
             Self::V4 {
                 pool_manager,
