@@ -108,7 +108,6 @@ pub use registration_ledger::{
     REGISTRATION_OUTCOMES,
 };
 pub use registration_lifecycle::{
-    run_concentrated_liquidity_v3_lifecycle, run_concentrated_liquidity_v4_lifecycle,
     run_v3_registration_lifecycle, run_v4_registration_lifecycle, run_verify_lifecycle,
 };
 

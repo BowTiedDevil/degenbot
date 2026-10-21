@@ -194,70 +194,8 @@ where
     Ok(())
 }
 
-/// Drive a V3 concentrated-liquidity pool's verify lifecycle — the
-/// address-keyed adapter over [`run_verify_lifecycle`].
-///
-/// # Errors
-///
-/// Returns the closure error type `E` (see [`run_verify_lifecycle`]).
-pub async fn run_concentrated_liquidity_v3_lifecycle<F1, Fut1, F2, Fut2, E>(
-    core: &StateLock<BotState>,
-    address: Address,
-    snapshot_block: Option<u64>,
-    verify_seed: F1,
-    verify_post_drain: F2,
-) -> Result<(), E>
-where
-    F1: FnOnce(HashMap<i32, TickInfo>, u64) -> Fut1 + Send,
-    Fut1: Future<Output = Result<(), E>> + Send,
-    F2: FnOnce(HashMap<i32, TickInfo>, u64) -> Fut2 + Send,
-    Fut2: Future<Output = Result<(), E>> + Send,
-{
-    run_verify_lifecycle(
-        core,
-        PoolLookup::from_address(address),
-        snapshot_block,
-        verify_seed,
-        verify_post_drain,
-    )
-    .await
-}
-
-/// Drive a V4 concentrated-liquidity pool's verify lifecycle — the
-/// `(pool_manager, pool_id)`-keyed adapter over [`run_verify_lifecycle`].
-///
-/// # Errors
-///
-/// Returns the closure error type `E` (see [`run_verify_lifecycle`]).
-pub async fn run_concentrated_liquidity_v4_lifecycle<F1, Fut1, F2, Fut2, E>(
-    core: &StateLock<BotState>,
-    pool_manager: Address,
-    pool_id: V4PoolId,
-    snapshot_block: Option<u64>,
-    verify_seed: F1,
-    verify_post_drain: F2,
-) -> Result<(), E>
-where
-    F1: FnOnce(HashMap<i32, TickInfo>, u64) -> Fut1 + Send,
-    Fut1: Future<Output = Result<(), E>> + Send,
-    F2: FnOnce(HashMap<i32, TickInfo>, u64) -> Fut2 + Send,
-    Fut2: Future<Output = Result<(), E>> + Send,
-{
-    run_verify_lifecycle(
-        core,
-        PoolLookup::V4 {
-            pool_manager,
-            pool_id,
-        },
-        snapshot_block,
-        verify_seed,
-        verify_post_drain,
-    )
-    .await
-}
-
 /// Concrete V3 registration-lifecycle: same choreography as
-/// [`run_concentrated_liquidity_v3_lifecycle`], but the two verify steps run through
+/// [`run_verify_lifecycle`] with an address key, but the two verify steps run through
 /// `liquidity_verifier::verify_v3_liquidity_map` against the bot's **single**
 /// `AlloyProvider` (ADR-022 D3 — one provider per bot/chain, passed-in). V3
 /// needs no `state_view` (the per-pool verify reads `pool.ticks()` directly).
@@ -279,9 +217,9 @@ pub async fn run_v3_registration_lifecycle(
     snapshot_block: Option<u64>,
 ) -> Result<(), RefusalKind> {
     let provider = provider.cloned();
-    run_concentrated_liquidity_v3_lifecycle(
+    run_verify_lifecycle(
         core,
-        address,
+        PoolLookup::from_address(address),
         snapshot_block,
         |seed, block| {
             let provider = provider.clone();
@@ -330,10 +268,12 @@ pub async fn run_v4_registration_lifecycle(
     snapshot_block: Option<u64>,
 ) -> Result<(), RefusalKind> {
     let provider = provider.cloned();
-    run_concentrated_liquidity_v4_lifecycle(
+    run_verify_lifecycle(
         core,
-        pool_manager,
-        pool_id,
+        PoolLookup::V4 {
+            pool_manager,
+            pool_id,
+        },
         snapshot_block,
         |seed, block| {
             let provider = provider.clone();
@@ -391,12 +331,30 @@ mod tests {
     use degenbot_decoders::v4_swap_decoder::V4PoolId;
     use degenbot_pools::v4_state::V4PoolKey;
 
-    use super::{run_concentrated_liquidity_v3_lifecycle, run_concentrated_liquidity_v4_lifecycle};
     use crate::bot_core::{
         LifecyclePrecondition, PoolTickCoverage, RefusalKind, RegisterV3PoolParams,
         RegisterV4PoolParams, RegistrationLifecycle, TickInfo,
     };
-    use degenbot_substrate::BotState;
+    use degenbot_substrate::{BotState, PoolLookup};
+
+    use super::run_verify_lifecycle;
+
+    /// The seam has ONE entry. A per-family adapter (`run_concentrated_liquidity_v3_lifecycle`
+    /// / `_v4_`) is the twin shape the pool-key census bans one level down: same body,
+    /// different argument unpacking. `PoolLookup` is how a caller names its family.
+    #[test]
+    fn the_lifecycle_seam_has_no_per_family_adapter() {
+        const SOURCE: &str = include_str!("registration_lifecycle.rs");
+        for retired in [
+            "run_concentrated_liquidity_v3_lifecycle",
+            "run_concentrated_liquidity_v4_lifecycle",
+        ] {
+            assert!(
+                !SOURCE.contains(&["pub async fn ", retired].concat()),
+                "{retired} is back: run_verify_lifecycle takes the PoolLookup"
+            );
+        }
+    }
 
     fn new_core() -> Arc<StateLock<BotState>> {
         Arc::new(StateLock::new(BotState::new()))
@@ -494,9 +452,9 @@ mod tests {
         };
         // Both closures `unreachable!` — the invariant is that Sparse never
         // invokes the verify RPC path.
-        let result = run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, ()>(
+        let result = run_verify_lifecycle::<_, _, _, _, ()>(
             &core,
-            addr,
+            PoolLookup::from_address(addr),
             Some(123),
             |_, _| async move { unreachable!("no seed verify for Sparse") },
             |_, _| async move { unreachable!("no post-drain verify for Sparse") },
@@ -517,10 +475,12 @@ mod tests {
             let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v4(&mut c, pm, pid, PoolTickCoverage::Sparse);
         }
-        let result = run_concentrated_liquidity_v4_lifecycle::<_, _, _, _, ()>(
+        let result = run_verify_lifecycle::<_, _, _, _, ()>(
             &core,
-            pm,
-            pid,
+            PoolLookup::V4 {
+                pool_manager: pm,
+                pool_id: pid,
+            },
             Some(123),
             |_, _| async move { unreachable!("no seed verify for Sparse") },
             |_, _| async move { unreachable!("no post-drain verify for Sparse") },
@@ -543,9 +503,9 @@ mod tests {
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
         let calls_seed = Arc::clone(&calls);
         let calls_post = Arc::clone(&calls);
-        let result = run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, ()>(
+        let result = run_verify_lifecycle::<_, _, _, _, ()>(
             &core,
-            addr,
+            PoolLookup::from_address(addr),
             Some(42),
             move |seed, block| {
                 let calls = calls_seed;
@@ -620,9 +580,9 @@ mod tests {
         };
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
         let seed_calls = Arc::clone(&calls);
-        let result = run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, ()>(
+        let result = run_verify_lifecycle::<_, _, _, _, ()>(
             &core,
-            addr,
+            PoolLookup::from_address(addr),
             Some(200), // global snapshot-seed block S
             move |seed, block| {
                 let calls = seed_calls;
@@ -654,9 +614,9 @@ mod tests {
             let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v3(&mut c, addr, PoolTickCoverage::Tracked)
         };
-        let result = run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, String>(
+        let result = run_verify_lifecycle::<_, _, _, _, String>(
             &core,
-            addr,
+            PoolLookup::from_address(addr),
             Some(42),
             move |_, _| async move { Err("seed mismatch".to_string()) },
             move |_, _| async move { unreachable!("post-drain must not run after seed fail") },
@@ -681,9 +641,9 @@ mod tests {
             let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v3(&mut c, addr, PoolTickCoverage::Tracked)
         };
-        let result = run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, String>(
+        let result = run_verify_lifecycle::<_, _, _, _, String>(
             &core,
-            addr,
+            PoolLookup::from_address(addr),
             Some(42),
             move |_, _| async move { Ok(()) },
             move |_, _| async move { Err("post-drain mismatch".to_string()) },
@@ -728,9 +688,9 @@ mod tests {
                 "must be buffered"
             );
         }
-        let result = run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, ()>(
+        let result = run_verify_lifecycle::<_, _, _, _, ()>(
             &core,
-            addr,
+            PoolLookup::from_address(addr),
             None, // no snapshot block → step-1 skipped; step-2 (post-drain) still runs
             |_, _| async move { Ok(()) },
             |_, _| async move { Ok(()) },
@@ -808,9 +768,9 @@ mod tests {
         }
 
         // Run the per-path lifecycle on the tracked V3 -> Live.
-        run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, ()>(
+        run_verify_lifecycle::<_, _, _, _, ()>(
             &core,
-            tracked_addr,
+            PoolLookup::from_address(tracked_addr),
             Some(42),
             |_, _| async move { Ok(()) },
             |_, _| async move { Ok(()) },
@@ -862,9 +822,9 @@ mod tests {
         let (release_tx, release_rx) = tokio::sync::oneshot::channel();
         let core_task = Arc::clone(&core);
         let task = tokio::spawn(async move {
-            run_concentrated_liquidity_v3_lifecycle::<_, _, _, _, ()>(
+            run_verify_lifecycle::<_, _, _, _, ()>(
                 &core_task,
-                addr,
+                PoolLookup::from_address(addr),
                 Some(42),
                 move |_, _| async move { Ok(()) },
                 move |_, _| {

@@ -140,9 +140,9 @@ pub use degenbot_bot::bot_core::pool_builder::route::{
 };
 pub use degenbot_bot::bot_core::registration_ledger::RefusalKind;
 pub use degenbot_bot::bot_core::registration_lifecycle::{
-    run_concentrated_liquidity_v3_lifecycle, run_concentrated_liquidity_v4_lifecycle,
-    run_v3_registration_lifecycle, run_v4_registration_lifecycle,
+    run_v3_registration_lifecycle, run_v4_registration_lifecycle, run_verify_lifecycle,
 };
+
 pub use degenbot_bot::bot_core::{
     PoolEntry, RegisterAerodromeV2PoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
     RegisterV3PoolParams, RegisterV4PoolParams, V2PoolState, V4PoolKey,
@@ -156,6 +156,7 @@ pub use degenbot_substrate::session_registry::{
     TokenObject,
 };
 pub use degenbot_substrate::BotState;
+pub use degenbot_substrate::PoolLookup;
 pub use degenbot_uniswap::dex_identity::{
     preset_for_variant, DexIdentity, DexVariant, ReservesAbi, UNISWAP_V2,
 };
