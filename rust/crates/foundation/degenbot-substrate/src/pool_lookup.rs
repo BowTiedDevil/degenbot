@@ -15,6 +15,7 @@
 use alloy::primitives::Address;
 use hashbrown::HashMap;
 
+use crate::concentrated_liquidity_orchestration::V3Family;
 use crate::state_lock::StateLock;
 use crate::{BotState, PoolTickCoverage, TickInfo};
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
@@ -83,7 +84,7 @@ impl PoolLookup {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity
-                .set_v3_pool_quarantined(&mut state.registry, *address),
+                .set_pool_quarantined::<V3Family>(&mut state.registry, *address),
             Self::V4 {
                 pool_manager,
                 pool_id,
@@ -203,7 +204,7 @@ impl PoolLookup {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity
-                .set_v3_pool_live(&mut state.registry, *address),
+                .set_pool_live::<V3Family>(&mut state.registry, *address),
             Self::V4 {
                 pool_manager,
                 pool_id,

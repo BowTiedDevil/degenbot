@@ -114,6 +114,165 @@ pub struct ConcentratedLiquidityOrchestration {
         HashMap<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId), u64>,
 }
 
+/// The family-specific half of an orchestration verb.
+///
+/// A concentrated-liquidity pool is addressed two ways and stores two different
+/// state types, so a verb's *skeleton* (resolve the id, drain the retained
+/// tail, apply each event, set the lifecycle) is shared while four steps are
+/// not. Those four live here; the skeleton above them is written once.
+///
+/// This is the capability-level twin of `PoolLookup`: the seam decides *which*
+/// family, the body stays single.
+pub(crate) trait LiquidityFamily {
+    /// The pool's pre-registration key: its address, or its V4 `(manager, id)`.
+    type Key: Copy + Eq + std::hash::Hash;
+    /// The event this family's buffer holds.
+    type Event: ::degenbot_pools::liquidity_event::LiquidityEvent;
+    /// This family's registered pool state.
+    type State: RegistrationState;
+
+    /// The registered `pool_id` behind `key`, when the pool is registered.
+    fn pool_id(
+        orch: &ConcentratedLiquidityOrchestration,
+        reg: &RegistryCore,
+        key: &Self::Key,
+    ) -> Option<u64>;
+
+    /// Drain this family's retained pump tail for `key`.
+    fn drain_pump(
+        orch: &mut ConcentratedLiquidityOrchestration,
+        key: &Self::Key,
+    ) -> Option<Vec<Self::Event>>;
+
+    /// This family's registered state for `pool_id`.
+    fn state_mut(reg: &mut RegistryCore, pool_id: u64) -> Option<&mut Self::State>;
+
+    /// Apply one buffered event to a registered pool.
+    fn apply(state: &mut Self::State, event: Self::Event);
+
+    /// Emit the drain diagnostic (the field names are family-specific).
+    fn diag(key: &Self::Key, verb: &str, blocks: &[u64], distinct_blocks: &[u64]);
+}
+
+/// The registration lifecycle both concentrated-liquidity state types carry.
+///
+/// Lets a shared verb body set the transition without knowing the family.
+pub(crate) trait RegistrationState {
+    /// The pool's registration lifecycle.
+    fn lifecycle_mut(&mut self) -> &mut RegistrationLifecycle;
+    /// The pool's tick coverage (a `Sparse` pool is never quarantined).
+    fn coverage(&self) -> PoolTickCoverage;
+}
+
+impl RegistrationState for V3PoolState {
+    fn lifecycle_mut(&mut self) -> &mut RegistrationLifecycle {
+        &mut self.registration_lifecycle
+    }
+
+    fn coverage(&self) -> PoolTickCoverage {
+        self.coverage
+    }
+}
+
+impl RegistrationState for V4PoolState {
+    fn lifecycle_mut(&mut self) -> &mut RegistrationLifecycle {
+        &mut self.registration_lifecycle
+    }
+
+    fn coverage(&self) -> PoolTickCoverage {
+        self.coverage
+    }
+}
+
+/// The address-keyed (V3) family.
+pub(crate) struct V3Family;
+
+impl LiquidityFamily for V3Family {
+    type Key = Address;
+    type Event = BufferedV3PoolEvent;
+    type State = V3PoolState;
+
+    fn pool_id(
+        _orch: &ConcentratedLiquidityOrchestration,
+        reg: &RegistryCore,
+        key: &Self::Key,
+    ) -> Option<u64> {
+        reg.pool_addresses.get(key).copied()
+    }
+
+    fn drain_pump(
+        orch: &mut ConcentratedLiquidityOrchestration,
+        key: &Self::Key,
+    ) -> Option<Vec<Self::Event>> {
+        orch.v3_buffer.drain_pump(key)
+    }
+
+    fn state_mut(reg: &mut RegistryCore, pool_id: u64) -> Option<&mut Self::State> {
+        reg.pools
+            .get_mut(&pool_id)
+            .and_then(PoolEntry::v3_mut)
+            .map(|(_, state)| state)
+    }
+
+    fn apply(state: &mut Self::State, event: Self::Event) {
+        ConcentratedLiquidityOrchestration::apply_buffered_v3_event(state, event);
+    }
+
+    fn diag(key: &Self::Key, verb: &str, blocks: &[u64], distinct_blocks: &[u64]) {
+        diag!(domain = verify, pool_addr = %format!("{key:x}"),
+            verb = %verb,
+            blocks = ?blocks,
+            distinct_blocks = ?distinct_blocks,
+            "V3 buffered drain"
+        );
+    }
+}
+
+/// The V4 `(pool_manager, pool_id)`-keyed family.
+pub(crate) struct V4Family;
+
+impl LiquidityFamily for V4Family {
+    type Key = (Address, degenbot_decoders::v4_swap_decoder::V4PoolId);
+    type Event = BufferedV4PoolEvent;
+    type State = V4PoolState;
+
+    fn pool_id(
+        orch: &ConcentratedLiquidityOrchestration,
+        _reg: &RegistryCore,
+        key: &Self::Key,
+    ) -> Option<u64> {
+        orch.v4_pool_ids.get(key).copied()
+    }
+
+    fn drain_pump(
+        orch: &mut ConcentratedLiquidityOrchestration,
+        key: &Self::Key,
+    ) -> Option<Vec<Self::Event>> {
+        orch.v4_buffer.drain_pump(key)
+    }
+
+    fn state_mut(reg: &mut RegistryCore, pool_id: u64) -> Option<&mut Self::State> {
+        reg.pools
+            .get_mut(&pool_id)
+            .and_then(PoolEntry::v4_mut)
+            .map(|(_, state)| state)
+    }
+
+    fn apply(state: &mut Self::State, event: Self::Event) {
+        ConcentratedLiquidityOrchestration::apply_buffered_v4_event(state, event);
+    }
+
+    fn diag(key: &Self::Key, verb: &str, blocks: &[u64], distinct_blocks: &[u64]) {
+        diag!(domain = verify, pool_manager = %format!("{:x}", key.0),
+            pool_id = %alloy::hex::encode_prefixed(key.1),
+            verb = %verb,
+            blocks = ?blocks,
+            distinct_blocks = ?distinct_blocks,
+            "V4 buffered drain"
+        );
+    }
+}
+
 impl ConcentratedLiquidityOrchestration {
     /// An empty capability - every buffer, registry, and horizon starts
     /// unseeded; `BotState::with_journal_depth` composes it with a
@@ -1546,159 +1705,67 @@ impl ConcentratedLiquidityOrchestration {
     fn apply_buffered_v4_event(state: &mut V4PoolState, event: BufferedV4PoolEvent) {
         state.apply_event(event);
     }
-    /// Set a V3 pool's registration lifecycle to `Quarantined`. The
-    /// live pump then defers the pool's `Swap`/`Mint`/`Burn` events to the
-    /// pump buffer until [`set_pool_live`] transitions it back. Call at the
-    /// start of `register_v3_pool` (before the first RPC await). No-op for
-    /// unregistered / non-V3 pools AND for non-`Tracked` pools (a `Sparse`
-    /// pool has no pin / step-2 verify to protect, so quarantining it would
-    /// only defer events with nothing to gain — it stays `Live`/direct-apply;
-    /// coverage-aware carve-out).
-    pub(crate) fn set_v3_pool_quarantined(&mut self, reg: &mut RegistryCore, address: Address) {
-        if let Some(&id) = reg.pool_addresses.get(&address) {
-            if let Some(state) = reg
-                .pools
-                .get_mut(&id)
-                .and_then(PoolEntry::v3_mut)
-                .map(|(_, s)| s)
-            {
-                if state.coverage == PoolTickCoverage::Tracked {
-                    state.registration_lifecycle = RegistrationLifecycle::Quarantined;
-                }
-            }
-        }
-    }
-    /// Set a V4 pool's registration lifecycle to `Quarantined`. V4
-    /// twin of [`set_v3_pool_quarantined`]. Call at the start of
-    /// `register_v4_pool` (before the first RPC await). No-op for unregistered
-    /// V4 pools and for non-`Tracked` pools (Sparse stays `Live`).
-    pub(crate) fn set_v4_pool_quarantined(
+    /// Set a `Tracked` pool's registration lifecycle to `Quarantined`, for
+    /// either key shape.
+    ///
+    /// The live pump then defers the pool's `Swap`/`Mint`/`Burn` events to the
+    /// pump buffer until [`Self::set_pool_live`] transitions it back. Call at the
+    /// start of registration, before the first RPC await. No-op for an
+    /// unregistered pool and for a `Sparse` pool (it has no pin / step-2 verify
+    /// to protect, so deferring its events buys nothing — coverage-aware
+    /// carve-out).
+    pub(crate) fn set_pool_quarantined<F: LiquidityFamily>(
         &mut self,
         reg: &mut RegistryCore,
-        pool_manager: Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
+        key: F::Key,
     ) {
-        let key = (pool_manager, pool_id);
-        if let Some(&id) = self.v4_pool_ids.get(&key) {
-            if let Some(state) = reg
-                .pools
-                .get_mut(&id)
-                .and_then(PoolEntry::v4_mut)
-                .map(|(_, s)| s)
-            {
-                if state.coverage == PoolTickCoverage::Tracked {
-                    state.registration_lifecycle = RegistrationLifecycle::Quarantined;
-                }
-            }
-        }
-    }
-    /// Transition a V3 pool from `Quarantined` to `Live`: flush any
-    /// remaining buffered pump events for the pool (the in-progress-block tail
-    /// retained by `drain_pump_completed`) via the UNGUARDED `drain_pump` in
-    /// insertion order, then mark `Live`. Applies under one `core.write()`
-    /// hold so no live event interleaves between the flush and the mark. The
-    /// flush uses `drain_pump` (not `drain_pump_completed`) because the
-    /// retained tail must not be orphaned (no second registration drain
-    /// exists) — matches the Live steady-state contract (Live pools receive
-    /// direct apply with no per-block gate; ordering preserved). No-op for
-    /// unregistered / non-V3 pools or an already-`Live` pool.
-    pub(crate) fn set_v3_pool_live(&mut self, reg: &mut RegistryCore, address: Address) {
-        let Some(&id) = reg.pool_addresses.get(&address) else {
+        let Some(pool_id) = F::pool_id(self, reg, &key) else {
             return;
         };
-        // Flush the retained pump tail first (backfill already fully drained
-        // during `apply_backfill_buffer_v3`).
-        if let Some(buffered) = self.v3_buffer.drain_pump(&address) {
-            {
-                use ::degenbot_pools::liquidity_event::LiquidityEvent;
-                let blocks: Vec<u64> = buffered.iter().map(LiquidityEvent::block_number).collect();
-                let mut sorted = blocks.clone();
-                sorted.sort_unstable();
-                let distinct: Vec<u64> = sorted
-                    .into_iter()
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .into_iter()
-                    .collect();
-                diag!(domain = verify, pool_addr = %format!("{address:x}"),
-                    drained_tail = buffered.len(),
-                    blocks = ?blocks,
-                    distinct_blocks = ?distinct,
-                    "V3 set_live"
-                );
-            }
-            for event in buffered {
-                if let Some(state) = reg
-                    .pools
-                    .get_mut(&id)
-                    .and_then(PoolEntry::v3_mut)
-                    .map(|(_, s)| s)
-                {
-                    Self::apply_buffered_v3_event(state, event);
-                }
-            }
-        }
-        if let Some(state) = reg
-            .pools
-            .get_mut(&id)
-            .and_then(PoolEntry::v3_mut)
-            .map(|(_, s)| s)
-        {
-            state.registration_lifecycle = RegistrationLifecycle::Live;
+        let Some(state) = F::state_mut(reg, pool_id) else {
+            return;
+        };
+        if state.coverage() == PoolTickCoverage::Tracked {
+            *state.lifecycle_mut() = RegistrationLifecycle::Quarantined;
         }
     }
-    /// Transition a V4 pool from `Quarantined` to `Live`. V4 twin of
-    /// [`set_v3_pool_live`] — flushes the retained pump tail via the
-    /// unguarded `drain_pump`, then marks `Live`. No-op for unregistered V4
-    /// pools or an already-`Live` pool.
-    pub(crate) fn set_v4_pool_live(
+
+    /// Transition a pool from `Quarantined` to `Live`, flushing the retained
+    /// pump tail first, for either key shape.
+    ///
+    /// The flush uses `drain_pump` (not `drain_pump_completed`) because the
+    /// retained tail must not be orphaned — there is no second registration
+    /// drain — matching the Live steady-state contract (Live pools receive
+    /// direct apply with no per-block gate; ordering preserved). No-op for an
+    /// unregistered pool.
+    pub(crate) fn set_pool_live<F: LiquidityFamily>(
         &mut self,
         reg: &mut RegistryCore,
-        pool_manager: Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
+        key: F::Key,
     ) {
-        let key = (pool_manager, pool_id);
-        let Some(&id) = self.v4_pool_ids.get(&key) else {
+        let Some(pool_id) = F::pool_id(self, reg, &key) else {
             return;
         };
-        if let Some(buffered) = self.v4_buffer.drain_pump(&key) {
-            {
-                use ::degenbot_pools::liquidity_event::LiquidityEvent;
-                let blocks: Vec<u64> = buffered.iter().map(LiquidityEvent::block_number).collect();
-                let mut sorted = blocks.clone();
-                sorted.sort_unstable();
-                let distinct: Vec<u64> = sorted
-                    .into_iter()
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .into_iter()
-                    .collect();
-                diag!(domain = verify, pool_manager = %format!("{pool_manager:x}"),
-                    pool_id = %alloy::hex::encode_prefixed(pool_id),
-                    drained_tail = buffered.len(),
-                    blocks = ?blocks,
-                    distinct_blocks = ?distinct,
-                    "V4 set_live"
-                );
-            }
+        if let Some(buffered) = F::drain_pump(self, &key) {
+            let blocks: Vec<u64> = buffered
+                .iter()
+                .map(::degenbot_pools::liquidity_event::LiquidityEvent::block_number)
+                .collect();
+            let mut distinct_blocks = blocks.clone();
+            distinct_blocks.sort_unstable();
+            distinct_blocks.dedup();
+            F::diag(&key, "set_live", &blocks, &distinct_blocks);
             for event in buffered {
-                if let Some(state) = reg
-                    .pools
-                    .get_mut(&id)
-                    .and_then(PoolEntry::v4_mut)
-                    .map(|(_, s)| s)
-                {
-                    Self::apply_buffered_v4_event(state, event);
+                if let Some(state) = F::state_mut(reg, pool_id) {
+                    F::apply(state, event);
                 }
             }
         }
-        if let Some(state) = reg
-            .pools
-            .get_mut(&id)
-            .and_then(PoolEntry::v4_mut)
-            .map(|(_, s)| s)
-        {
-            state.registration_lifecycle = RegistrationLifecycle::Live;
+        if let Some(state) = F::state_mut(reg, pool_id) {
+            *state.lifecycle_mut() = RegistrationLifecycle::Live;
         }
     }
+
     /// Batch-release every pool still `Quarantined` (orphan sweep).
     ///
     /// With Tracked pools now registering `Quarantined` by default, a Tracked
@@ -1707,7 +1774,7 @@ impl ConcentratedLiquidityOrchestration {
     /// registration) would otherwise defer events to its buffer indefinitely.
     /// Call once after `build_paths` finishes: flush each still-`Quarantined`
     /// pool's retained pump tail (same unguarded `drain_pump` as
-    /// [`set_v3_pool_live`]/[`set_v4_pool_live`]) and mark it `Live`, so no
+    /// [`Self::set_pool_live`]) and mark it `Live`, so no
     /// registered pool is left buffering forever. No-op when nothing is
     /// quarantined.
     pub(crate) fn release_all_v3_v4_quarantined(&mut self, reg: &mut RegistryCore) {
@@ -1758,10 +1825,10 @@ impl ConcentratedLiquidityOrchestration {
             "release-all quarantined"
         );
         for addr in v3_addrs {
-            self.set_v3_pool_live(reg, addr);
+            self.set_pool_live::<V3Family>(reg, addr);
         }
         for (pm, pid) in v4_keys {
-            self.set_v4_pool_live(reg, pm, pid);
+            self.set_pool_live::<V4Family>(reg, (pm, pid));
         }
     }
     /// Look up the pool ID for a registered `(pool_manager, pool_id)` pair.
@@ -2356,27 +2423,24 @@ impl BotState {
         }
     }
 
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v4_pool_quarantined`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_pool_quarantined`].
     pub fn set_pool_quarantined_by_key(
         &mut self,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
-        self.concentrated_liquidity.set_v4_pool_quarantined(
-            &mut self.registry,
-            pool_manager,
-            pool_id,
-        );
+        self.concentrated_liquidity
+            .set_pool_quarantined::<V4Family>(&mut self.registry, (pool_manager, pool_id));
     }
 
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v4_pool_live`].
+    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_pool_live`].
     pub fn set_pool_live_by_key(
         &mut self,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) {
         self.concentrated_liquidity
-            .set_v4_pool_live(&mut self.registry, pool_manager, pool_id);
+            .set_pool_live::<V4Family>(&mut self.registry, (pool_manager, pool_id));
     }
 
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::release_all_v3_v4_quarantined`].
