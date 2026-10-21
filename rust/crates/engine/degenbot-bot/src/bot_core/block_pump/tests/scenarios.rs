@@ -245,7 +245,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
             })
             .expect("fuzz registration");
             if roles[i] == 2 {
-                core.set_pool_quarantined(*addr);
+                PoolLookup::Address(*addr).quarantine(&mut core);
             }
         }
 
@@ -366,14 +366,14 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
                 ..Default::default()
             })
             .expect("late fuzz registration");
-            core.set_pool_quarantined(*addr);
+            PoolLookup::Address(*addr).quarantine(&mut core);
         }
         for addr in &addrs {
             let state = bot.state_arc();
             let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
             core.apply_backfill_buffer(addr);
             core.apply_pump_buffer(addr);
-            core.set_pool_live(*addr);
+            PoolLookup::Address(*addr).set_live(&mut core);
         }
 
         // ORACLE COMPARISON.
@@ -470,7 +470,7 @@ async fn fuwyur_live_mint_for_unregistered_pool_survives_late_registration() {
             ..Default::default()
         })
         .expect("late V3 registration");
-        core.set_pool_quarantined(pool_addr);
+        PoolLookup::Address(pool_addr).quarantine(&mut core);
     }
 
     // Registration drain+pin seam, then set_live flush of the retained
@@ -480,7 +480,7 @@ async fn fuwyur_live_mint_for_unregistered_pool_survives_late_registration() {
         let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.apply_backfill_buffer(&pool_addr);
         core.apply_pump_buffer(&pool_addr);
-        core.set_pool_live(pool_addr);
+        PoolLookup::Address(pool_addr).set_live(&mut core);
         let pool_id = core.pool_id_by_address(&pool_addr).unwrap();
         core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
             .expect("registered")

@@ -1,4 +1,5 @@
 use super::*;
+use crate::bot_core::PoolLookup;
 
 #[test]
 fn inspect_path_returns_hop_details() {
@@ -553,10 +554,11 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
     // Tracked pools register `Quarantined`; the driver's post-verify
     // `set_live` is what makes it apply directly. Transition to `Live` so
     // this test's swap/Mint direct-apply (its model).
-    engine
-        .core
-        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .set_pool_live(pool_addr);
+    PoolLookup::Address(pool_addr).set_live(
+        &mut engine
+            .core
+            .write_at(degenbot_substrate::state_lock::LockSite::Solver),
+    );
     // Capture the registration scalar state.
     let reg_sp = U256::from(79_228_162_514_264_337_593_543_950_336_u128);
     let reg_liq = 1_000_000u128;
@@ -815,10 +817,11 @@ fn process_backfill_logs_stamps_per_log_block_number() {
     });
     // Tracked pools register `Quarantined`; this test drives
     // backfill swaps that must direct-apply + journal, so release to Live.
-    engine
-        .core
-        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .set_pool_live(pool_addr);
+    PoolLookup::Address(pool_addr).set_live(
+        &mut engine
+            .core
+            .write_at(degenbot_substrate::state_lock::LockSite::Solver),
+    );
     // Two swaps at distinct blocks inside one backfill chunk.
     let b1 = 10u64;
     let b2 = 20u64;

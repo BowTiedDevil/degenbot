@@ -16,6 +16,7 @@ use std::sync::Arc;
 use alloy::rpc::types::Log;
 
 use crate::concentrated_liquidity_route::ApplyOutcome;
+use crate::pool_lookup::PoolLookup;
 use crate::state_lock::StateLock;
 use crate::BotState;
 use degenbot_decoders::v2_sync_decoder::decode_sync_log;
@@ -1130,9 +1131,8 @@ mod tests {
         // Tracked pools register `Quarantined`; transition to `Live`
         // (the driver's post-verify `set_live`) so the dispatched Mint
         // direct-applies as this test models.
-        state
-            .write_at(crate::state_lock::LockSite::Core)
-            .set_pool_live(pool_addr);
+        PoolLookup::Address(pool_addr)
+            .set_live(&mut state.write_at(crate::state_lock::LockSite::Core));
 
         // The exact Mint log emitted at block 25390812 (decoded from cast).
         // topics[1]=owner, topics[2]=tickLower=0x03113c=201020,

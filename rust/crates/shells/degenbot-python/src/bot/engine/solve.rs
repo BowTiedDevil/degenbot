@@ -163,7 +163,7 @@ impl PyArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_core_mut(py, |s| s.set_pool_quarantined(addr));
+        self.with_core_mut(py, |s| PoolLookup::Address(addr).quarantine(&mut *s));
         Ok(())
     }
 
@@ -196,7 +196,7 @@ impl PyArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_core_mut(py, |s| s.set_pool_live(addr));
+        self.with_core_mut(py, |s| PoolLookup::Address(addr).set_live(&mut *s));
         Ok(())
     }
 

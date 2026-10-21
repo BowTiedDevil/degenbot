@@ -1,5 +1,6 @@
 use super::*;
 use crate::bot_core::stage_machine::QuiesceParams;
+use crate::bot_core::PoolLookup;
 use degenbot_config::QuiesceMode;
 use degenbot_decoders::v2_sync_decoder::V2_SYNC_TOPIC;
 use degenbot_decoders::v3_mint_burn_decoder::{V3_BURN_TOPIC, V3_MINT_TOPIC};
@@ -898,7 +899,7 @@ fn bot_with_quarantined_v3_tracked(seed_gross: u128, update_block: u64) -> (Arc<
             ..Default::default()
         })
         .expect("test setup: V3 registration");
-        core.set_pool_quarantined(pool_addr);
+        PoolLookup::Address(pool_addr).quarantine(&mut core);
     }
     (bot, pool_addr)
 }

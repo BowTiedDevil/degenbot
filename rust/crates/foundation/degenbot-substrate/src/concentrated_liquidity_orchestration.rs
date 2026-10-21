@@ -2368,12 +2368,6 @@ impl BotState {
         }
     }
 
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v3_pool_quarantined`].
-    pub fn set_pool_quarantined(&mut self, address: Address) {
-        self.concentrated_liquidity
-            .set_v3_pool_quarantined(&mut self.registry, address);
-    }
-
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v4_pool_quarantined`].
     pub fn set_pool_quarantined_by_key(
         &mut self,
@@ -2385,12 +2379,6 @@ impl BotState {
             pool_manager,
             pool_id,
         );
-    }
-
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v3_pool_live`].
-    pub fn set_pool_live(&mut self, address: Address) {
-        self.concentrated_liquidity
-            .set_v3_pool_live(&mut self.registry, address);
     }
 
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_v4_pool_live`].

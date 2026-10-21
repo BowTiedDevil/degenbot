@@ -231,7 +231,7 @@ fn v3_snapshot_seed_survives_pump_liquidity_update() {
     // Tracked pools register `Quarantined`; transition to `Live`
     // (the driver's post-verify `set_live`) so the pump update below
     // direct-applies as this test models.
-    core.set_pool_live(v3_addr);
+    PoolLookup::Address(v3_addr).set_live(&mut core);
 
     // The seed is pinned at registration for Tracked (snapshot) pools.
     assert_eq!(
@@ -322,7 +322,7 @@ fn v3_post_drain_snapshot_survives_pump_liquidity_update() {
     .expect("test setup: V3 registration");
     // Tracked pools register `Quarantined`; transition to `Live` so
     // the pump Mint below direct-applies (this test's model).
-    core.set_pool_live(v3_addr);
+    PoolLookup::Address(v3_addr).set_live(&mut core);
 
     // Pin the post-drain state atomically with the drain (no buffer here →
     // pin == current tick_data == the seed at registration). This is what
@@ -786,7 +786,7 @@ fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
         .expect("test setup: V3 registration");
     // Quarantine so live Mint/Burn route to the pump buffer (the
     // registration-seam posture during drain+pin+verify).
-    core.set_pool_quarantined(pool_addr);
+    PoolLookup::Address(pool_addr).quarantine(&mut core);
     // Pump-buffer a Mint + a same-block Burn for block 100.
     core.apply_liquidity_update(pool_addr, -10, 10, 500_i128, 100);
     core.apply_liquidity_update(pool_addr, -10, 10, -500_i128, 100);
@@ -824,7 +824,7 @@ fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
     assert_eq!(pinned_ticks.len(), 0, "net-zero Mint+Burn yields no tick");
     // set_live under an empty retained tail is a no-op flush (the probe
     // would log drained_retained_tail=0).
-    core.set_pool_live(pool_addr);
+    PoolLookup::Address(pool_addr).set_live(&mut core);
 }
 
 // ── pin clamp regression (fabricated-mismatch fix) ──────────────
@@ -864,7 +864,7 @@ fn pin_clamps_verify_block_to_complete_cutoff_when_pump_undrained() {
     })
     .expect("test setup: V3 registration");
     // Quarantine so live Mint/Burn route to the pump buffer.
-    core.set_pool_quarantined(pool_addr);
+    PoolLookup::Address(pool_addr).quarantine(&mut core);
     // Pump-buffer an UNDRAINED Mint at block 100, but only tombstone the
     // pump through block 99 → the drain (apply_pump_buffer_v3) holds the
     // block-100 event back, so the map is NOT complete at its 100 clock.
@@ -915,7 +915,7 @@ fn pin_preserves_clock_block_when_no_undrained_events() {
         ..Default::default()
     })
     .expect("test setup: V3 registration");
-    core.set_pool_quarantined(pool_addr);
+    PoolLookup::Address(pool_addr).quarantine(&mut core);
     // Cutoff is BEHIND the seed clock (99 < 100) and the pump has NO event
     // for this pool at/below the clock → pump_count == 0. This is the
     // mod.rs:580 BENIGN seed case: the DB seed carries the live WS head

@@ -56,7 +56,9 @@ impl PoolLookup {
     /// Defer the pool's live events to the pump buffer until verification ends.
     pub fn quarantine(&self, state: &mut BotState) {
         match self {
-            Self::Address(address) => state.set_pool_quarantined(*address),
+            Self::Address(address) => state
+                .concentrated_liquidity
+                .set_v3_pool_quarantined(&mut state.registry, *address),
             Self::V4 {
                 pool_manager,
                 pool_id,
@@ -143,7 +145,9 @@ impl PoolLookup {
     /// The terminal transition: only reachable after a verified success.
     pub fn set_live(&self, state: &mut BotState) {
         match self {
-            Self::Address(address) => state.set_pool_live(*address),
+            Self::Address(address) => state
+                .concentrated_liquidity
+                .set_v3_pool_live(&mut state.registry, *address),
             Self::V4 {
                 pool_manager,
                 pool_id,
