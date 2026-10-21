@@ -29,7 +29,10 @@
 //! dynamic fee) carry their own counters and do not add to the generic skip
 //! counter, which is what `counts_as_skip` records.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::borrow::Borrow;
+use std::collections::BTreeMap;
+#[cfg(test)]
+use std::collections::BTreeSet;
 
 use alloy::primitives::Address;
 use degenbot_pathfinding::PoolKind;
@@ -935,13 +938,62 @@ impl PathAdmission {
     }
 }
 
+/// One negative-memo container.
+///
+/// The four registration memos differ only in their key and payload, so the
+/// lookup/insert/count rule lives here once instead of four times, and
+/// [`Memo::insert_once`] is the one place the *first answer wins* discipline
+/// (a stable refusal outranks a later transient one) is expressed.
+///
+/// Ordered (not hashed) storage is deliberate: the pipeline report folds these
+/// in iteration order, and a hash order would make it nondeterministic.
+#[derive(Debug)]
+struct Memo<K, V = ()>(BTreeMap<K, V>);
+
+impl<K: Ord, V> Default for Memo<K, V> {
+    fn default() -> Self {
+        Self(BTreeMap::new())
+    }
+}
+
+impl<K: Ord, V> Memo<K, V> {
+    fn contains<Q>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.0.contains_key(key)
+    }
+
+    fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.0.get(key)
+    }
+
+    fn insert(&mut self, key: K, value: V) {
+        self.0.insert(key, value);
+    }
+
+    /// Record only when absent — the first answer wins.
+    fn insert_once(&mut self, key: K, value: V) {
+        self.0.entry(key).or_insert(value);
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
 /// The four registration memos plus the typed build-refusal classification.
 #[derive(Debug, Default)]
 pub struct RegistrationLedger {
-    registered_paths: BTreeSet<HopSignature>,
-    verified_pools: BTreeSet<String>,
-    unregistrable_pools: HashMap<String, UnregistrableRecord>,
-    rejected_paths: BTreeSet<HopSignature>,
+    registered_paths: Memo<HopSignature>,
+    verified_pools: Memo<String>,
+    unregistrable_pools: Memo<String, UnregistrableRecord>,
+    rejected_paths: Memo<HopSignature>,
 }
 
 impl RegistrationLedger {
@@ -1018,7 +1070,7 @@ impl RegistrationLedger {
 
     /// Record a completed registration (engine-created or engine-dedup'd).
     pub fn memoize_registered_path(&mut self, hop_sig: HopSignature) {
-        self.registered_paths.insert(hop_sig);
+        self.registered_paths.insert(hop_sig, ());
     }
 
     /// Whether this pool's verify lifecycle already completed.
@@ -1029,7 +1081,7 @@ impl RegistrationLedger {
 
     /// Record a COMPLETED verify lifecycle (a pool fact).
     pub fn memoize_verified_pool(&mut self, key: String) {
-        self.verified_pools.insert(key);
+        self.verified_pools.insert(key, ());
     }
 
     /// How many pools have a completed verify-lifecycle fact (test/diagnostic
@@ -1054,12 +1106,13 @@ impl RegistrationLedger {
         counts_as_skip: bool,
     ) {
         if let Some(key) = key {
-            self.unregistrable_pools
-                .entry(key.to_string())
-                .or_insert(UnregistrableRecord {
+            self.unregistrable_pools.insert_once(
+                key.to_string(),
+                UnregistrableRecord {
                     outcome,
                     counts_as_skip,
-                });
+                },
+            );
         }
     }
 
@@ -1071,7 +1124,7 @@ impl RegistrationLedger {
 
     /// Record a deterministic policy/predicate deny for a hop signature.
     pub fn memoize_rejected_path(&mut self, hop_sig: HopSignature) {
-        self.rejected_paths.insert(hop_sig);
+        self.rejected_paths.insert(hop_sig, ());
     }
 
     // ── the eligibility gate ──
