@@ -41,3 +41,28 @@ fixture with the old shape fails the gate.
   caller holding a raw `pool_id` may collapse them into the same interior.
 - Public core surface shrank; the `check-rust-consumer` and
   `check-rust-binding-default` lanes gate the change on both consumers.
+
+## The memo identity is typed too
+
+The same split lived one level down: a pool's *pre-build* identity — what the
+negative memos and the verify-once fact key on — was text. The ledger formatted
+`p:0x…` / `v4id:0x…`, the pipeline formatted `v3:…` / `v4:…`, the example
+formatted a third variant, and the driver a fourth, so a verify fact written by
+one path was invisible to the others and every insert allocated a
+twice-lowercased string.
+
+`MemoIdentity` (`Address(Address) | V4(V4PoolId)`) is the key type now:
+`Display`/`FromStr` are the wire form (Python carries text without owning the
+format), the ledger's doors take the typed key, and the driver builds it from
+the `PoolLookup` it already holds. Three consequences are deliberate:
+
+- **Family is not part of the identity.** One contract address holds one pool,
+  so `Address` is the whole identity; the old `v3:`/`v4:` prefixes split facts
+  that should have been shared.
+- **A malformed identity is not memoizable.** `pool_memo_key` returns `None`
+  rather than keying by whatever text arrived — an identity that is not 20 or 32
+  bytes is a caller bug, and the Python doors raise `ValueError` naming it.
+- **Text stays at the boundary.** `RegistrationLedger.address_memo_key` /
+  `pool_id_memo_key` are the Python-side constructors; a source gate
+  (`tests/test_pool_memo_key_seam.py`) fails on a hand-formatted key anywhere
+  else in `src/`.

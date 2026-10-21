@@ -378,6 +378,13 @@ key shape. Lives in `degenbot-substrate` beside the state owner; resolves the sh
 the seam and delegates to a single interior (ADR-081).
 _Avoid_: pool key, registration key (the retired prototype), pool ref.
 
+**Pool memo identity** (a `MemoIdentity`):
+The pre-build identity a registration memo keys on — a contract address for the address
+families, the on-chain pool id for a V4 pool — known before any RPC or build, so a refused
+pool is recognizable without one. One identity per pool, whatever its family; the text form
+(`p:0x…` / `v4id:0x…`) is only the wire form (ADR-081).
+_Avoid_: pool key string, `v3:`/`v4:` prefix, memo key format.
+
 **Known bitmap word**:
 A tick-bitmap word whose whole tick set has been established by a checked source (sparse
 fetch, full-sync replace, snapshot tick keys, or explicit update input). Exists only on
