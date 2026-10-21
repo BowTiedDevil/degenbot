@@ -87,6 +87,33 @@ pytest_collect_file = Sybil(
 
 _EXPECTED_LINE_PARTS = 2
 
+_LIVE_RPC_START = "<!-- live-rpc: start"
+_LIVE_RPC_END = "<!-- live-rpc: end"
+
+
+def _live_rpc_line_spans(readme_text: str) -> list[tuple[int, int]]:
+    """The line spans (inclusive) of the README's ``live-rpc`` blocks.
+
+    Every leg inside such a block talks to a live archive node, so it belongs to
+    the on-demand tier, not the offline gate (ADR-074: `test` / pre-push / CI run
+    `-m 'not online_rpc'`, and `just test-fork` runs `-m online_rpc`).
+
+    Returns:
+
+        One ``(first_line, last_line)`` pair per block, 1-indexed.
+
+    """
+    spans: list[tuple[int, int]] = []
+    first: int | None = None
+    for number, line in enumerate(readme_text.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith(_LIVE_RPC_START):
+            first = number
+        elif stripped.startswith(_LIVE_RPC_END) and first is not None:
+            spans.append((first, number))
+            first = None
+    return spans
+
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -126,8 +153,22 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
     readme_items.sort(key=readme_sort_key)
 
+    # A README block inside a `live-rpc` span talks to a live archive node, so it
+    # joins the on-demand tier instead of the offline gate. The span map comes
+    # from the document itself, so a new live-RPC example is covered by the
+    # directive, not by remembering to add a marker.
+    live_rpc_spans = _live_rpc_line_spans(
+        (pathlib.Path(__file__).resolve().parent / "README.md").read_text(encoding="utf-8")
+    )
+
+    def in_live_rpc_block(item: pytest.Item) -> bool:
+        line = readme_sort_key(item)
+        return any(first <= line <= last for first, last in live_rpc_spans)
+
     for index, item in enumerate(readme_items):
         item.add_marker(pytest.mark.order(index))
+        if in_live_rpc_block(item):
+            item.add_marker(pytest.mark.online_rpc)
 
     items[:] = readme_items + other_items
 
