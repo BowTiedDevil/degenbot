@@ -648,6 +648,7 @@ mod tests {
             _block_number: u64,
         ) {
         }
+        fn seed_genesis(&mut self, _block: u64) {}
     }
 
     /// A scripted fetcher: ok/err per flag, counting every call.

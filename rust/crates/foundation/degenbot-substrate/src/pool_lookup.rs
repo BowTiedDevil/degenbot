@@ -17,7 +17,7 @@ use hashbrown::HashMap;
 
 use crate::concentrated_liquidity_orchestration::{V3Family, V4Family};
 use crate::state_lock::StateLock;
-use crate::{BotState, PoolTickCoverage, TickInfo};
+use crate::{BotState, ConcentratedLiquidityPoolMut, PoolEntry, PoolTickCoverage, TickInfo};
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 
 /// The pool key the verify lifecycle runs over.
@@ -47,6 +47,29 @@ impl PoolLookup {
         Self::Address(address.into())
     }
 
+    /// Resolve a `pool_id` to the key its family addresses the pool by.
+    ///
+    /// The ONE family match behind the `*_by_pool_id` apply doors: a V3 pool is
+    /// keyed by its contract address, a V4 pool by `(pool_manager, pool_id)`,
+    /// and a family with no concentrated-liquidity state — or an unregistered
+    /// id — has no such key at all, so the doors that need one can refuse it.
+    /// Round-trips with [`Self::resolve`], which maps the key back to `pool_id`.
+    #[must_use]
+    pub fn from_pool_id(state: &BotState, pool_id: u64) -> Option<Self> {
+        match state.registry.pools.get(&pool_id)? {
+            PoolEntry::V3(p) => Some(Self::Address(p.0.address)),
+            PoolEntry::V4(p) => Some(Self::V4 {
+                pool_manager: p.0.pool_manager,
+                pool_id: p.0.pool_id,
+            }),
+            PoolEntry::V2(..)
+            | PoolEntry::Curve(..)
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
+        }
+    }
+
     /// The structural family this lookup names.
     ///
     /// The canonical tag is `RegisteredPoolFamily`; a lookup narrows it to the
@@ -74,6 +97,27 @@ impl PoolLookup {
                 pool_id,
             } => state.pool_id_by_key(*pool_manager, pool_id),
         }
+    }
+
+    /// The pool's mutable concentrated-liquidity state — the write twin of
+    /// [`Self::coverage`], for the verbs that mutate the scalars and the tick
+    /// map directly (`apply_swap`, `apply_liquidity_update`, `seed_genesis`)
+    /// instead of routing an event through the buffer.
+    ///
+    /// The registry's own concentrated projection is the family-neutral handle,
+    /// so a caller holding a resolved key never names `V3PoolState` or
+    /// `V4PoolState`. `None` when the key names no registered
+    /// concentrated-liquidity pool.
+    pub fn state_mut<'a>(
+        &self,
+        state: &'a mut BotState,
+    ) -> Option<&'a mut dyn ConcentratedLiquidityPoolMut> {
+        let pool_id = self.resolve(state)?;
+        state
+            .registry
+            .pools
+            .get_mut(&pool_id)
+            .and_then(PoolEntry::as_concentrated_liquidity_mut)
     }
 
     /// The pool's tick coverage, or `None` when the pool is not registered

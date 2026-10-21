@@ -225,15 +225,6 @@ const fn entry_family(entry: &PoolEntry) -> &'static str {
     entry.registered_family().tag()
 }
 
-/// Concentrated-liquidity dispatch bucket for a registered pool, computed as
-/// a value so the caller's lookup borrow ends before it mutates state.
-enum ConcentratedLiquidityKind {
-    V3,
-    V4,
-    NonConcentratedLiquidity(&'static str),
-    Missing,
-}
-
 /// Diagnostic: log every V3 pump-buffer INSERTION. Companion to the
 /// drain-side `[dbg-drain]` logs in `apply_backfill_buffer_v3`/
 /// `apply_pump_buffer_v3` — diffing insertion vs drain logs reveals whether a
@@ -958,17 +949,9 @@ impl BotState {
         block_number: u64,
         tick_priors: &[(i32, TickInfo)],
     ) -> Option<u64> {
-        match self.registry.pools.get_mut(&pool_id) {
-            Some(PoolEntry::V3(p)) => {
-                p.1.apply_swap(sqrt_price_x96, liquidity, tick, block_number, tick_priors);
-                Some(pool_id)
-            }
-            Some(PoolEntry::V4(p)) => {
-                p.1.apply_swap(sqrt_price_x96, liquidity, tick, block_number, tick_priors);
-                Some(pool_id)
-            }
-            _ => None,
-        }
+        let state = self.concentrated_state_mut(pool_id, "swap").ok()?;
+        state.apply_swap(sqrt_price_x96, liquidity, tick, block_number, tick_priors);
+        Some(pool_id)
     }
 
     /// Registration/seed genesis anchor for a registered V3/V4 pool
@@ -989,42 +972,38 @@ impl BotState {
         pool_id: u64,
         block: u64,
     ) -> Result<u64, ConcentratedLiquidityApplyError> {
-        match self.concentrated_liquidity_kind(pool_id) {
-            ConcentratedLiquidityKind::V3 => {
-                let Some(PoolEntry::V3(p)) = self.registry.pools.get_mut(&pool_id) else {
-                    return Err(ConcentratedLiquidityApplyError::NotRegistered { pool_id });
-                };
-                p.1.seed_genesis(block);
-                Ok(pool_id)
-            }
-            ConcentratedLiquidityKind::V4 => {
-                let Some(PoolEntry::V4(p)) = self.registry.pools.get_mut(&pool_id) else {
-                    return Err(ConcentratedLiquidityApplyError::NotRegistered { pool_id });
-                };
-                p.1.seed_genesis(block);
-                Ok(pool_id)
-            }
-            ConcentratedLiquidityKind::Missing => {
-                Err(ConcentratedLiquidityApplyError::NotRegistered { pool_id })
-            }
-            ConcentratedLiquidityKind::NonConcentratedLiquidity(family) => {
-                Err(ConcentratedLiquidityApplyError::UnsupportedFamily {
-                    pool_id,
-                    family,
-                    op: "genesis seed",
-                })
-            }
-        }
+        self.concentrated_state_mut(pool_id, "genesis seed")?
+            .seed_genesis(block);
+        Ok(pool_id)
     }
 
-    /// The concentrated liquidity dispatch bucket for `pool_id` — see [`ConcentratedLiquidityKind`].
-    fn concentrated_liquidity_kind(&self, pool_id: u64) -> ConcentratedLiquidityKind {
-        match self.registry.pools.get(&pool_id) {
-            Some(PoolEntry::V3(..)) => ConcentratedLiquidityKind::V3,
-            Some(PoolEntry::V4(..)) => ConcentratedLiquidityKind::V4,
-            Some(entry) => ConcentratedLiquidityKind::NonConcentratedLiquidity(entry_family(entry)),
-            None => ConcentratedLiquidityKind::Missing,
-        }
+    /// The ONE family dispatch behind the three `*_by_pool_id` apply doors:
+    /// resolve the id to the [`PoolLookup`] key its family addresses the pool
+    /// by, then hand back the family-neutral state that key names.
+    ///
+    /// [`PoolLookup::from_pool_id`] answers `Some` only for the two
+    /// concentrated-liquidity families, so a miss is the refusal itself: an
+    /// unregistered id is [`ConcentratedLiquidityApplyError::NotRegistered`] and
+    /// a registered family without concentrated-liquidity state is
+    /// [`ConcentratedLiquidityApplyError::UnsupportedFamily`], with `op` naming
+    /// the refused operation for the operator.
+    fn concentrated_state_mut(
+        &mut self,
+        pool_id: u64,
+        op: &'static str,
+    ) -> Result<&mut dyn ConcentratedLiquidityPoolMut, ConcentratedLiquidityApplyError> {
+        let Some(key) = PoolLookup::from_pool_id(self, pool_id) else {
+            return Err(match self.registry.pools.get(&pool_id) {
+                Some(entry) => ConcentratedLiquidityApplyError::UnsupportedFamily {
+                    pool_id,
+                    family: entry_family(entry),
+                    op,
+                },
+                None => ConcentratedLiquidityApplyError::NotRegistered { pool_id },
+            });
+        };
+        key.state_mut(self)
+            .ok_or(ConcentratedLiquidityApplyError::NotRegistered { pool_id })
     }
 
     /// Family-dispatching liquidity update. The single entry point
@@ -1055,32 +1034,9 @@ impl BotState {
         liquidity_delta: i128,
         block_number: u64,
     ) -> Result<u64, ConcentratedLiquidityApplyError> {
-        match self.concentrated_liquidity_kind(pool_id) {
-            ConcentratedLiquidityKind::V3 => {
-                let Some(PoolEntry::V3(p)) = self.registry.pools.get_mut(&pool_id) else {
-                    return Err(ConcentratedLiquidityApplyError::NotRegistered { pool_id });
-                };
-                p.1.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
-                Ok(pool_id)
-            }
-            ConcentratedLiquidityKind::V4 => {
-                let Some(PoolEntry::V4(p)) = self.registry.pools.get_mut(&pool_id) else {
-                    return Err(ConcentratedLiquidityApplyError::NotRegistered { pool_id });
-                };
-                p.1.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
-                Ok(pool_id)
-            }
-            ConcentratedLiquidityKind::Missing => {
-                Err(ConcentratedLiquidityApplyError::NotRegistered { pool_id })
-            }
-            ConcentratedLiquidityKind::NonConcentratedLiquidity(family) => {
-                Err(ConcentratedLiquidityApplyError::UnsupportedFamily {
-                    pool_id,
-                    family,
-                    op: "liquidity update",
-                })
-            }
-        }
+        self.concentrated_state_mut(pool_id, "liquidity update")?
+            .apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
+        Ok(pool_id)
     }
 
     /// solving. Applies each decoded event via the same

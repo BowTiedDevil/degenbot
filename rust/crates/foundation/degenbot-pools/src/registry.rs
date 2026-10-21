@@ -6,6 +6,7 @@ use crate::aerodrome_v2_state::{AerodromeV2PoolIdentity, AerodromeV2PoolState};
 use crate::balancer_stable_state::{BalancerStablePoolIdentity, BalancerStablePoolState};
 use crate::balancer_weighted_state::{BalancerWeightedPoolIdentity, BalancerWeightedPoolState};
 use crate::curve_state::{CurvePoolIdentity, CurvePoolState};
+use crate::families::concentrated_liquidity::state_seeding;
 use crate::state_history::{
     BalanceVectorPoolState, ReservePairPoolState, ScalarPriors, TickBefore, V3BlockDelta,
 };
@@ -791,6 +792,22 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
         liquidity_delta: i128,
         block_number: u64,
     );
+
+    /// Push the registration/seed genesis anchor: a `before == after` journal
+    /// delta at `block`, advancing NO clock.
+    ///
+    /// The delta records the CURRENT scalars + both clocks as its “before”
+    /// priors, so a restore pops to the exact seeded state, and the non-empty
+    /// journal keeps `has_state_prior_to` true from registration — a
+    /// mid-window reorg restores to the seeded state instead of the graceful
+    /// `NoStatePriorToBlock` pump shutdown an empty journal triggers.
+    ///
+    /// Advancing no clock is the point, not an omission: registration can seed
+    /// price at HEAD past the DB map block, so an `apply_swap`-shaped genesis
+    /// would backward-panic the price clock and falsely claim the tick map
+    /// reaches head. Because `before == after` it is safe; call once at
+    /// registration, mirroring the V2/Curve genesis-anchor pattern.
+    fn seed_genesis(&mut self, block: u64);
 }
 
 /// Compute the new active (in-range) `liquidity` scalar when a Mint/Burn/
@@ -1048,6 +1065,10 @@ impl ConcentratedLiquidityPoolMut for V3PoolState {
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
     }
+
+    fn seed_genesis(&mut self, block: u64) {
+        state_seeding::seed_genesis(self, block);
+    }
 }
 
 impl ConcentratedLiquidityPoolMut for V4PoolState {
@@ -1241,6 +1262,10 @@ impl ConcentratedLiquidityPoolMut for V4PoolState {
         }
         self.state_nonce = self.state_nonce.wrapping_add(1);
         self.invalidate_tick_range_cache();
+    }
+
+    fn seed_genesis(&mut self, block: u64) {
+        state_seeding::seed_genesis(self, block);
     }
 }
 

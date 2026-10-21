@@ -75,7 +75,7 @@ pub(crate) fn seed_known_bitmap_words<H: SeedingHost>(host: &mut H, tick_spacing
     *host.known_bitmap_words_mut() = seeded;
 }
 
-/// `V3PoolState::seed_genesis` / `V4PoolState::seed_genesis` — the
+/// `ConcentratedLiquidityPoolMut::seed_genesis` (one impl per family) — the
 /// registration/seed genesis anchor (two-stamp rule fresh-read builder).
 ///
 /// Pushes a `before == after` journal delta at `block` so the reorg journal is

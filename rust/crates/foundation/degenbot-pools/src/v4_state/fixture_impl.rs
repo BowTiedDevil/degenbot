@@ -8,6 +8,7 @@
 use super::V4PoolState;
 use crate::families::concentrated_liquidity::state_fixture::{ClStateFixture, LIQ};
 use crate::int_v3_hop::IntV3TickRangeSequence;
+use crate::registry::ConcentratedLiquidityPoolMut;
 use crate::state_history::{ReorgJournal, V3BlockDelta};
 use crate::v3_state::{PoolTickCoverage, RegistrationLifecycle};
 use crate::TickInfo;
@@ -65,7 +66,7 @@ impl ClStateFixture for V4PoolState {
     }
 
     fn seed_genesis(&mut self, block: u64) {
-        V4PoolState::seed_genesis(self, block);
+        ConcentratedLiquidityPoolMut::seed_genesis(self, block);
     }
 
     fn apply_swap(

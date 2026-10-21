@@ -453,19 +453,6 @@ impl V4PoolState {
     // `V3PoolState::merge_tick_word`; the trait dedups the two. See
     // `impl ConcentratedLiquidityPoolMut for V4PoolState` in `registry.rs`.
 
-    /// Registration/seed genesis anchor — the V4 twin of
-    /// [`V3PoolState::seed_genesis`] (shares the same `V3BlockDelta` journal
-    /// type). Pushes a `before == after` delta at `block` advancing NO clock,
-    /// so the reorg journal is non-empty from registration (mid-window reorg
-    /// restores to the seeded state instead of a graceful `NoStatePriorToBlock`
-    /// shutdown). Split-seed replacement for the builder's old `apply_swap`
-    /// genesis, which would backward-panic `update_block` and falsely advance
-    /// `tick_data_block` when registration seeds price at HEAD past the DB map
-    /// block.
-    pub fn seed_genesis(&mut self, block: u64) {
-        state_seeding::seed_genesis(self, block);
-    }
-
     /// Construct from registration params with a journal of the given depth.
     #[must_use]
     pub fn from_params(
