@@ -1,4 +1,5 @@
 use super::*;
+use crate::concentrated_liquidity_route::{ApplyOutcome, BufferKind};
 use degenbot_pools::buffered_event::PoolLiquidityUpdate;
 
 /// ADR-040: the quarantine seam is idempotent, counts depth,
@@ -353,16 +354,20 @@ fn quarantined_v4_pool_defers_live_swap_to_pump_buffer() {
         .v4_buffer
         .event_count(&(pool_manager, pool_id_bytes));
     // Deliver a live Swap at block 11.
-    core.apply_swap_update(
-        &V4SwapUpdate {
-            pool_manager,
-            pool_id: pool_id_bytes,
-            sqrt_price_x96: U256::from(2u128) << 96,
-            liquidity: 2_000_000,
-            tick: 1,
-            tick_priors: Box::default(),
-        },
-        11,
+    assert_eq!(
+        core.apply_swap_update(
+            &V4SwapUpdate {
+                pool_manager,
+                pool_id: pool_id_bytes,
+                sqrt_price_x96: U256::from(2u128) << 96,
+                liquidity: 2_000_000,
+                tick: 1,
+                tick_priors: Box::default(),
+            },
+            11,
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "a quarantined pool's live Swap is staged, not dropped"
     );
     // The swap was deferred: scalars + update_block unchanged.
     let s = core
@@ -422,12 +427,17 @@ fn quarantined_v4_pool_defers_live_modify_liquidity_to_pump_buffer() {
         .v4_buffer
         .event_count(&(pool_manager, pool_id_bytes));
     // Deliver a live Burn (negative ModifyLiquidity) at block 11.
-    core.apply_liquidity_update(
-        PoolLookup::V4 {
-            pool_manager,
-            pool_id: pool_id_bytes,
-        },
-        PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-500i128).unwrap(), 11).unwrap(),
+    assert_eq!(
+        core.apply_liquidity_update(
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id: pool_id_bytes,
+            },
+            PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-500i128).unwrap(), 11)
+                .unwrap(),
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "a quarantined pool's live Burn is staged, not dropped"
     );
     let s = core
         .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
@@ -478,16 +488,20 @@ fn quarantined_pool_update_block_cannot_outrun_last_complete_block() {
         .advance_pump_complete_cutoff(10);
     // A live Swap lands at block 11 (in-progress; `last_complete_block` is
     // still 10 — no tombstone for 11 yet).
-    core.apply_swap_update(
-        &V4SwapUpdate {
-            pool_manager,
-            pool_id: pool_id_bytes,
-            sqrt_price_x96: U256::from(2u128) << 96,
-            liquidity: 2_000_000,
-            tick: 1,
-            tick_priors: Box::default(),
-        },
-        11,
+    assert_eq!(
+        core.apply_swap_update(
+            &V4SwapUpdate {
+                pool_manager,
+                pool_id: pool_id_bytes,
+                sqrt_price_x96: U256::from(2u128) << 96,
+                liquidity: 2_000_000,
+                tick: 1,
+                tick_priors: Box::default(),
+            },
+            11,
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "the door reports the quarantined pool's Swap as staged"
     );
     // Drain the complete-block tail (block 10 has no events; block 11 is
     // retained by the gate).
@@ -544,23 +558,32 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
         .advance_pump_complete_cutoff(10);
     // Buffer a Burn (block 11, in-progress) + a Swap (block 11) — both
     // retained by the gate during quarantine.
-    core.apply_liquidity_update(
-        PoolLookup::V4 {
-            pool_manager,
-            pool_id: pool_id_bytes,
-        },
-        PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-50i128).unwrap(), 11).unwrap(),
+    assert_eq!(
+        core.apply_liquidity_update(
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id: pool_id_bytes,
+            },
+            PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-50i128).unwrap(), 11)
+                .unwrap(),
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "the door reports the quarantined pool's Burn as staged"
     );
-    core.apply_swap_update(
-        &V4SwapUpdate {
-            pool_manager,
-            pool_id: pool_id_bytes,
-            sqrt_price_x96: U256::from(2u128) << 96,
-            liquidity: 2_000_000,
-            tick: 1,
-            tick_priors: Box::default(),
-        },
-        11,
+    assert_eq!(
+        core.apply_swap_update(
+            &V4SwapUpdate {
+                pool_manager,
+                pool_id: pool_id_bytes,
+                sqrt_price_x96: U256::from(2u128) << 96,
+                liquidity: 2_000_000,
+                tick: 1,
+                tick_priors: Box::default(),
+            },
+            11,
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "the door reports the quarantined pool's Swap as staged"
     );
     assert_eq!(
         core.concentrated_liquidity
@@ -595,12 +618,17 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
         0
     );
     // A subsequent live event applies directly (no buffering).
-    core.apply_liquidity_update(
-        PoolLookup::V4 {
-            pool_manager,
-            pool_id: pool_id_bytes,
-        },
-        PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(10i128).unwrap(), 12).unwrap(),
+    assert_eq!(
+        core.apply_liquidity_update(
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id: pool_id_bytes,
+            },
+            PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(10i128).unwrap(), 12)
+                .unwrap(),
+        ),
+        Ok(ApplyOutcome::Applied(pool_id)),
+        "a Live pool's update applies directly and names the pool"
     );
     assert_eq!(
         core.concentrated_liquidity
@@ -636,12 +664,17 @@ fn live_pool_applies_modify_liquidity_directly() {
     }
     .mark_registration_live(&mut core);
     // Now Live — applies directly, never buffers.
-    core.apply_liquidity_update(
-        PoolLookup::V4 {
-            pool_manager,
-            pool_id: pool_id_bytes,
-        },
-        PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-50i128).unwrap(), 11).unwrap(),
+    assert_eq!(
+        core.apply_liquidity_update(
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id: pool_id_bytes,
+            },
+            PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-50i128).unwrap(), 11)
+                .unwrap(),
+        ),
+        Ok(ApplyOutcome::Applied(pool_id)),
+        "a Live pool's update applies directly and names the pool"
     );
     assert_eq!(
         core.concentrated_liquidity
@@ -702,19 +735,29 @@ fn quarantined_pool_dual_buffer_drain_correctness() {
         .advance_pump_complete_cutoff(10);
     // A complete-block pump event (block 10) + an in-progress-block pump
     // event (block 11) — both deferred to the pump buffer.
-    core.apply_liquidity_update(
-        PoolLookup::V4 {
-            pool_manager,
-            pool_id: pool_id_bytes,
-        },
-        PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(20i128).unwrap(), 10).unwrap(),
+    assert_eq!(
+        core.apply_liquidity_update(
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id: pool_id_bytes,
+            },
+            PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(20i128).unwrap(), 10)
+                .unwrap(),
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "the complete-block Mint is staged for the drain"
     );
-    core.apply_liquidity_update(
-        PoolLookup::V4 {
-            pool_manager,
-            pool_id: pool_id_bytes,
-        },
-        PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-15i128).unwrap(), 11).unwrap(),
+    assert_eq!(
+        core.apply_liquidity_update(
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id: pool_id_bytes,
+            },
+            PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-15i128).unwrap(), 11)
+                .unwrap(),
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "the in-progress Burn is staged for the retained tail"
     );
     // Drain both buffers (the registration `apply_buffer_v4` sequence).
     PoolLookup::V4 {
@@ -875,30 +918,43 @@ fn concurrent_registration_lifecycle_invariant() {
     // Interleaved live events: a ModifyLiquidity on pool 0, a Swap on
     // pool 1, a ModifyLiquidity on pool 2 — all at the in-progress block
     // 11. All deferred to their respective pump buffers.
-    core.apply_liquidity_update(
-        PoolLookup::V4 {
-            pool_manager,
-            pool_id: pool_ids[0].0,
-        },
-        PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-10i128).unwrap(), 11).unwrap(),
+    assert_eq!(
+        core.apply_liquidity_update(
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id: pool_ids[0].0,
+            },
+            PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-10i128).unwrap(), 11)
+                .unwrap(),
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "pool 0's Burn is staged, not dropped"
     );
-    core.apply_swap_update(
-        &V4SwapUpdate {
-            pool_manager,
-            pool_id: pool_ids[1].0,
-            sqrt_price_x96: U256::from(2u128) << 96,
-            liquidity: 2_000_000,
-            tick: 1,
-            tick_priors: Box::default(),
-        },
-        11,
+    assert_eq!(
+        core.apply_swap_update(
+            &V4SwapUpdate {
+                pool_manager,
+                pool_id: pool_ids[1].0,
+                sqrt_price_x96: U256::from(2u128) << 96,
+                liquidity: 2_000_000,
+                tick: 1,
+                tick_priors: Box::default(),
+            },
+            11,
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "pool 1's Swap is staged, not dropped"
     );
-    core.apply_liquidity_update(
-        PoolLookup::V4 {
-            pool_manager,
-            pool_id: pool_ids[2].0,
-        },
-        PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(5i128).unwrap(), 11).unwrap(),
+    assert_eq!(
+        core.apply_liquidity_update(
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id: pool_ids[2].0,
+            },
+            PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(5i128).unwrap(), 11).unwrap(),
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "pool 2's Mint is staged, not dropped"
     );
     // Drain + pin each pool. For every pool, the pin's `update_block`
     // MUST be ≤ `last_complete_block` (10) — the in-progress block 11
@@ -970,23 +1026,32 @@ fn lifecycle_invariant_swap_before_mint_same_inprogress_block() {
     // Swap arrives FIRST (logIdx 120), then Mint (logIdx 1433) — both at
     // the in-progress block 11. Cross-type arrival order is preserved in
     // the buffer (Swap before Mint in the Vec).
-    core.apply_swap_update(
-        &V4SwapUpdate {
-            pool_manager,
-            pool_id: pool_id_bytes,
-            sqrt_price_x96: U256::from(3u128) << 96,
-            liquidity: 3_000_000,
-            tick: 2,
-            tick_priors: Box::default(),
-        },
-        11,
+    assert_eq!(
+        core.apply_swap_update(
+            &V4SwapUpdate {
+                pool_manager,
+                pool_id: pool_id_bytes,
+                sqrt_price_x96: U256::from(3u128) << 96,
+                liquidity: 3_000_000,
+                tick: 2,
+                tick_priors: Box::default(),
+            },
+            11,
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "the in-progress Swap is staged in arrival order"
     );
-    core.apply_liquidity_update(
-        PoolLookup::V4 {
-            pool_manager,
-            pool_id: pool_id_bytes,
-        },
-        PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(25i128).unwrap(), 11).unwrap(),
+    assert_eq!(
+        core.apply_liquidity_update(
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id: pool_id_bytes,
+            },
+            PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(25i128).unwrap(), 11)
+                .unwrap(),
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "the in-progress Mint is staged behind the Swap"
     );
     PoolLookup::V4 {
         pool_manager,
@@ -1043,12 +1108,17 @@ fn reorg_during_quarantine_pin_is_independent_of_live_rollback() {
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(10);
     // A complete-block Mint at 10 (applied at drain), then pin.
-    core.apply_liquidity_update(
-        PoolLookup::V4 {
-            pool_manager,
-            pool_id: pool_id_bytes,
-        },
-        PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(50i128).unwrap(), 10).unwrap(),
+    assert_eq!(
+        core.apply_liquidity_update(
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id: pool_id_bytes,
+            },
+            PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(50i128).unwrap(), 10)
+                .unwrap(),
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "the complete-block Mint is staged for the drain"
     );
     PoolLookup::V4 {
         pool_manager,
@@ -1084,4 +1154,203 @@ fn reorg_during_quarantine_pin_is_independent_of_live_rollback() {
     // The pin (consumed above) is independent — it still holds (150, 10),
     // a frozen snapshot the verify compares against post-reorg on-chain.
     // (No re-assertion of the pin value: it was moved out by take_*.)
+}
+
+// ── the apply doors report the routing verdict, unflattened ──────────
+//
+// `apply_liquidity_update` / `apply_swap` / `apply_swap_update` used to
+// flatten the router's `ApplyOutcome` to `Option<pool_id>`, which made the
+// staging that keeps a not-yet-live pool's tick mutation alive
+// (`Buffered(Pump)`) indistinguishable from a sanctioned `NoOp` drop. These
+// tests pin the verdict AT THE DOOR, per family, so a re-flattening
+// regresses here first.
+
+#[test]
+fn v3_liquidity_update_door_reports_the_pump_buffer_for_a_quarantined_pool() {
+    use crate::concentrated_liquidity_route::{ApplyOutcome, BufferKind};
+    use crate::PoolTickCoverage;
+    use crate::{RegisterV3PoolParams, TickInfo};
+    use alloy::primitives::U128;
+
+    let mut core = BotState::new();
+    let pool_addr = Address::from([0x91u8; 20]);
+    let mut tick_data = HashMap::new();
+    tick_data.insert(
+        60,
+        TickInfo {
+            liquidity_gross: U128::from(100),
+            liquidity_net: 100i128,
+            block: 0,
+        },
+    );
+    let pool_id = core
+        .register_v3_pool(&RegisterV3PoolParams {
+            address: pool_addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3_000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+            update_block: 10,
+            tick_data_block: None,
+            coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
+            ..Default::default()
+        })
+        .expect("test setup: tracked V3 registration");
+    // A Tracked pool registers `Quarantined`; re-assert the seam so the door
+    // is exercised against the not-yet-live pool explicitly.
+    PoolLookup::from_address(pool_addr).begin_registration_quarantine(&mut core);
+    assert_eq!(
+        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .unwrap()
+            .registration_lifecycle,
+        RegistrationLifecycle::Quarantined,
+        "precondition: the pool is registered but not live"
+    );
+
+    let outcome = core.apply_liquidity_update(
+        PoolLookup::from_address(pool_addr),
+        PoolLiquidityUpdate::new(60, 120, 500_i128, 11),
+    );
+    assert_eq!(
+        outcome,
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "a quarantined pool's tick mutation is STAGED — the door must not \
+         report it as a drop"
+    );
+    assert_eq!(core.buffered_event_count(&pool_addr), 1);
+}
+
+#[test]
+fn v4_liquidity_update_door_reports_the_pump_buffer_for_a_quarantined_pool() {
+    use crate::concentrated_liquidity_route::{ApplyOutcome, BufferKind};
+
+    let pool_manager = Address::from([0x44u8; 20]);
+    let pool_id_bytes: [u8; 32] = [0xeeu8; 32];
+    let mut core = BotState::new();
+    let pool_id = register_v4_on_core(&mut core, 10);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .begin_registration_quarantine(&mut core);
+    assert_eq!(
+        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+            .unwrap()
+            .registration_lifecycle,
+        RegistrationLifecycle::Quarantined,
+        "precondition: the pool is registered but not live"
+    );
+
+    let outcome = core.apply_liquidity_update(
+        PoolLookup::V4 {
+            pool_manager,
+            pool_id: pool_id_bytes,
+        },
+        PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-500i128).unwrap(), 11).unwrap(),
+    );
+    assert_eq!(
+        outcome,
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "a quarantined pool's tick mutation is STAGED — the door must not \
+         report it as a drop"
+    );
+    assert_eq!(
+        core.concentrated_liquidity
+            .v4_buffer
+            .event_count(&(pool_manager, pool_id_bytes)),
+        1
+    );
+}
+
+#[test]
+fn v3_liquidity_update_door_reports_the_pump_buffer_for_an_unregistered_pool() {
+    use crate::concentrated_liquidity_route::{ApplyOutcome, BufferKind};
+
+    let mut core = BotState::new();
+    let pool_addr = Address::from([0x93u8; 20]);
+    // Live × Unregistered × TickMutation is the staged-mutation row: tick
+    // data cannot be retro-supplied, so the door stages instead of dropping.
+    let outcome = core.apply_liquidity_update(
+        PoolLookup::from_address(pool_addr),
+        PoolLiquidityUpdate::new(60, 120, 500_i128, 11),
+    );
+    assert_eq!(
+        outcome,
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "an unregistered pool's tick mutation is STAGED, not dropped"
+    );
+    assert_eq!(core.buffered_event_count(&pool_addr), 1);
+}
+
+#[test]
+fn v4_liquidity_update_door_reports_the_pump_buffer_for_an_unregistered_pool() {
+    use crate::concentrated_liquidity_route::{ApplyOutcome, BufferKind};
+
+    let pool_manager = Address::from([0x44u8; 20]);
+    let pool_id_bytes: [u8; 32] = [0xeeu8; 32];
+    let mut core = BotState::new();
+    let outcome = core.apply_liquidity_update(
+        PoolLookup::V4 {
+            pool_manager,
+            pool_id: pool_id_bytes,
+        },
+        PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(500i128).unwrap(), 11).unwrap(),
+    );
+    assert_eq!(
+        outcome,
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "an unregistered pool's tick mutation is STAGED, not dropped"
+    );
+    assert_eq!(
+        core.concentrated_liquidity
+            .v4_buffer
+            .event_count(&(pool_manager, pool_id_bytes)),
+        1
+    );
+}
+
+#[test]
+fn live_pool_swap_doors_report_applied() {
+    use crate::concentrated_liquidity_route::ApplyOutcome;
+
+    let mut core = BotState::new();
+    // V3: a Sparse registration lands `Live` (direct-apply).
+    let pool_addr = Address::from([0x94u8; 20]);
+    let v3_id = register_v3_on_core(&mut core, pool_addr, 0);
+    assert_eq!(
+        core.apply_swap(pool_addr, U256::from(2u128) << 96, 2_000_000, 1, 5, &[],),
+        Ok(ApplyOutcome::Applied(v3_id)),
+        "a swap on a live pool applies directly and names the pool"
+    );
+
+    // V4: a Tracked registration is `Quarantined`; release it to `Live`.
+    let pool_manager = Address::from([0x44u8; 20]);
+    let pool_id_bytes: [u8; 32] = [0xeeu8; 32];
+    let v4_id = register_v4_on_core(&mut core, 10);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .mark_registration_live(&mut core);
+    assert_eq!(
+        core.apply_swap_update(
+            &V4SwapUpdate {
+                pool_manager,
+                pool_id: pool_id_bytes,
+                sqrt_price_x96: U256::from(2u128) << 96,
+                liquidity: 2_000_000,
+                tick: 1,
+                tick_priors: Box::default(),
+            },
+            11,
+        ),
+        Ok(ApplyOutcome::Applied(v4_id)),
+        "a swap on a live pool applies directly and names the pool"
+    );
 }

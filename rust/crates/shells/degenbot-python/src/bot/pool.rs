@@ -1706,6 +1706,12 @@ impl PyLiquidityPool {
                 block_number,
             )
         });
+        // The companion's contract is "state moved", and a registered pool's
+        // state always moves on this direct path: the `_by_pool_id` door
+        // bypasses the phase table (ADR-082), so its `Ok(pool_id)` is an apply
+        // by construction — there is no `Buffered`/`NoOp` verdict here to
+        // flatten. `Err` is the unregistered / non-concentrated-liquidity
+        // refusal.
         match applied {
             Ok(_) => Ok(true),
             Err(e) => Err(pyo3::exceptions::PyValueError::new_err(format!(

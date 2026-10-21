@@ -2193,14 +2193,24 @@ impl BotState {
     ///
     /// Routes through [`Self::route_event`], so the phase gate, the
     /// family-mismatch refusal and the not-yet-live buffer all apply to both
-    /// families; the family-typed payload is built here, once. Returns the
-    /// affected `pool_id` on direct application, and `None` when the change was
-    /// staged into the pool's buffer or sanctioned as a no-op.
+    /// families; the family-typed payload is built here, once.
+    ///
+    /// The router's verdict comes back whole: `Applied(pool_id)` on direct
+    /// application, `Buffered(kind)` when the delta was staged (`Pump` for a
+    /// quarantined or unregistered pool at the live phase — the staging that
+    /// keeps a tick mutation alive across registration), `NoOp(reason)` for a
+    /// sanctioned drop. Flattening here would make staging
+    /// indistinguishable from a drop.
+    ///
+    /// # Errors
+    ///
+    /// [`PoolRefusal::FamilyMismatch`] when the payload's family differs from
+    /// the key's.
     pub fn apply_liquidity_update(
         &mut self,
         key: PoolLookup,
         update: PoolLiquidityUpdate,
-    ) -> Option<u64> {
+    ) -> Result<ApplyOutcome, PoolRefusal> {
         let event = match key {
             PoolLookup::Address(_) => {
                 BufferedPoolEvent::V3(BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
@@ -2219,10 +2229,7 @@ impl BotState {
                 }))
             }
         };
-        match self.route_event(Phase::Live, key, event, &[]).ok()? {
-            ApplyOutcome::Applied(pool_id) => Some(pool_id),
-            ApplyOutcome::Buffered(_) | ApplyOutcome::NoOp(_) => None,
-        }
+        self.route_event(Phase::Live, key, event, &[])
     }
 
     /// Stage a backfill liquidity-position change into the pool's backfill
@@ -2493,9 +2500,15 @@ impl BotState {
     /// The address-keyed swap apply (the payload shape is the V3 scalar form —
     /// V4 swaps carry [`V4SwapUpdate`] through [`Self::apply_swap_update`]).
     /// Routes through the capability's live-event router at `Phase::Live`: the
-    /// routing table decides apply-vs-buffer-vs-drop and this row flattens the
-    /// outcome to the historical `Option<pool_id>` shape (`None` = buffered or
-    /// dropped). `tick_priors` overlay only on direct application.
+    /// routing table decides apply-vs-buffer-vs-drop, and its verdict is
+    /// returned unflattened (`Applied` / `Buffered` / `NoOp`). `tick_priors`
+    /// overlay only on direct application.
+    ///
+    /// # Errors
+    ///
+    /// Never: an address key with a V3 payload cannot disagree on family, so
+    /// the row is infallible by construction — the `Result` shape matches the
+    /// key-shaped doors it sits beside.
     pub fn apply_swap(
         &mut self,
         pool_address: Address,
@@ -2504,9 +2517,9 @@ impl BotState {
         tick: i32,
         block_number: u64,
         tick_priors: &[(i32, TickInfo)],
-    ) -> Option<u64> {
+    ) -> Result<ApplyOutcome, PoolRefusal> {
         trace_apply_swap_v3(pool_address, sqrt_price_x96, liquidity, tick, block_number);
-        match self.concentrated_liquidity.route_event(
+        Ok(self.concentrated_liquidity.route_event(
             &mut self.registry,
             Phase::Live,
             pool_address,
@@ -2517,18 +2530,25 @@ impl BotState {
                 block_number,
             }),
             tick_priors,
-        ) {
-            ApplyOutcome::Applied(pool_id) => Some(pool_id),
-            ApplyOutcome::Buffered(_) | ApplyOutcome::NoOp(_) => None,
-        }
+        ))
     }
 
     /// The update-payload swap apply (the update type carries the design).
     /// Routes through the capability's key-registered live-event router at
-    /// `Phase::Live`; outcome flattened to the historical `Option<pool_id>`
-    /// shape. `update.tick_priors` overlay only on direct application
-    /// (pump/backfill pass an empty slice).
-    pub fn apply_swap_update(&mut self, update: &V4SwapUpdate, block_number: u64) -> Option<u64> {
+    /// `Phase::Live`; the verdict is returned unflattened (`Applied` /
+    /// `Buffered` / `NoOp`). `update.tick_priors` overlay only on direct
+    /// application (pump/backfill pass an empty slice).
+    ///
+    /// # Errors
+    ///
+    /// Never: a `(pool_manager, pool_id)` key with a V4 payload cannot
+    /// disagree on family, so the row is infallible by construction — the
+    /// `Result` shape matches the key-shaped doors it sits beside.
+    pub fn apply_swap_update(
+        &mut self,
+        update: &V4SwapUpdate,
+        block_number: u64,
+    ) -> Result<ApplyOutcome, PoolRefusal> {
         let pool_id_hex = alloy::hex::encode_prefixed(update.pool_id);
         trace_apply_swap_v4(
             update.pool_manager,
@@ -2538,7 +2558,7 @@ impl BotState {
             update.tick,
             block_number,
         );
-        match self.concentrated_liquidity.route_event_by_key(
+        Ok(self.concentrated_liquidity.route_event_by_key(
             &mut self.registry,
             Phase::Live,
             update.pool_manager,
@@ -2550,10 +2570,7 @@ impl BotState {
                 block_number,
             }),
             &update.tick_priors,
-        ) {
-            ApplyOutcome::Applied(pool_id) => Some(pool_id),
-            ApplyOutcome::Buffered(_) | ApplyOutcome::NoOp(_) => None,
-        }
+        ))
     }
     /// Route one decoded concentrated-liquidity event through the apply path,
     /// for either key shape.

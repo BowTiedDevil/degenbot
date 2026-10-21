@@ -1,6 +1,7 @@
 use super::*;
 use crate::bot_core::PoolLookup;
 use degenbot_pools::buffered_event::PoolLiquidityUpdate;
+use degenbot_substrate::concentrated_liquidity_route::ApplyOutcome;
 
 #[test]
 fn inspect_path_returns_hop_details() {
@@ -508,6 +509,7 @@ fn handle_reorg_rolls_back_v2_sync_and_expires_delivered_result() {
     );
 }
 #[test]
+#[expect(clippy::too_many_lines)] // one coherent scenario: apply, then roll back
 fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
     // What: a V3 pool gets a Swap (scalar state change at block 5) and an
     // in-range Mint (tick_data mutation + active-liquidity scalar bump at
@@ -570,20 +572,28 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
     let swapped_sp = (reg_sp + U256::from(1u128)) << 90;
     let swapped_liq = 2_000_000u128;
     let swapped_tick = 60i32;
-    engine
-        .core
-        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .apply_swap(pool_addr, swapped_sp, swapped_liq, swapped_tick, 5, &[]);
+    assert_eq!(
+        engine
+            .core
+            .write_at(degenbot_substrate::state_lock::LockSite::Solver)
+            .apply_swap(pool_addr, swapped_sp, swapped_liq, swapped_tick, 5, &[]),
+        Ok(ApplyOutcome::Applied(pool_id)),
+        "the live pool's swap applies directly"
+    );
     // Mint at block 6: adds liquidity at [+60, +120] — in-range because the
     // swap moved the tick to 60, so the active `liquidity` scalar also gets
     // +500 (parity with on-chain + the concentrated-liquidity-math pure reference).
-    engine
-        .core
-        .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .apply_liquidity_update(
-            PoolLookup::from_address(pool_addr),
-            PoolLiquidityUpdate::new(60, 120, 500_i128, 6),
-        );
+    assert_eq!(
+        engine
+            .core
+            .write_at(degenbot_substrate::state_lock::LockSite::Solver)
+            .apply_liquidity_update(
+                PoolLookup::from_address(pool_addr),
+                PoolLiquidityUpdate::new(60, 120, 500_i128, 6),
+            ),
+        Ok(ApplyOutcome::Applied(pool_id)),
+        "the live pool's in-range Mint applies directly"
+    );
     {
         let core = engine
             .core

@@ -1,4 +1,5 @@
 use super::*;
+use crate::concentrated_liquidity_route::{ApplyOutcome, BufferKind};
 use degenbot_pools::buffered_event::{BufferedPoolEvent, PoolLiquidityUpdate};
 
 /// Staged-router contract (`concentrated_liquidity_route)`: `route_event` is THE decision
@@ -7,7 +8,6 @@ use degenbot_pools::buffered_event::{BufferedPoolEvent, PoolLiquidityUpdate};
 /// in `v3_buffer` keyed by address for the registration drain+pin seam.
 #[test]
 fn fuwyur_router_stages_unregistered_live_liquidity_into_pump_buffer() {
-    use crate::concentrated_liquidity_route::{ApplyOutcome, BufferKind};
     let mut core = BotState::new();
     let addr = Address::from([0x66; 20]);
     let outcome = core.route_event(
@@ -590,9 +590,13 @@ fn apply_pump_buffer_v3_journals_and_advances_update_block() {
 
     // 1. Pre-registration: pump the Mint (unregistered → pump buffer).
     let mut core = BotState::new();
-    core.apply_liquidity_update(
-        PoolLookup::from_address(pool_addr),
-        PoolLiquidityUpdate::new(60, 120, 500_i128, block_b),
+    assert_eq!(
+        core.apply_liquidity_update(
+            PoolLookup::from_address(pool_addr),
+            PoolLiquidityUpdate::new(60, 120, 500_i128, block_b),
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "the door stages an unregistered pool's Mint into the pump buffer"
     );
 
     // 2. Register on the SAME core + 3. apply pump buffer.
@@ -825,16 +829,20 @@ fn apply_swap_by_pool_id_routes_to_v4_and_matches_apply_v4_swap() {
     // AC parity: same scalar inputs via `apply_swap_update` produce identical
     // post-state. The dispatcher's V4 branch mirrors `apply_swap_update`'s
     // body (same tick_priors=[], same journal shape).
-    let _ = core_b.apply_swap_update(
-        &V4SwapUpdate {
-            pool_manager,
-            pool_id: pool_id_bytes,
-            sqrt_price_x96: U256::from(2u128) << 96,
-            liquidity: 2_000_000,
-            tick: -100,
-            tick_priors: Box::default(),
-        },
-        block_b,
+    assert_eq!(
+        core_b.apply_swap_update(
+            &V4SwapUpdate {
+                pool_manager,
+                pool_id: pool_id_bytes,
+                sqrt_price_x96: U256::from(2u128) << 96,
+                liquidity: 2_000_000,
+                tick: -100,
+                tick_priors: Box::default(),
+            },
+            block_b,
+        ),
+        Ok(ApplyOutcome::Applied(id_b)),
+        "the update-payload door applies a live V4 swap directly"
     );
     let s_b = core_b
         .pool_slice::<degenbot_pools::v4_state::V4PoolState>(id_b)
@@ -932,7 +940,8 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
             PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(500i128).unwrap(), block_b)
                 .unwrap()
         ),
-        Some(id_b)
+        Ok(ApplyOutcome::Applied(id_b)),
+        "the key-shaped door reports the direct apply, not a flattening"
     );
     let s_b = core_b
         .pool_slice::<degenbot_pools::v4_state::V4PoolState>(id_b)
@@ -1020,16 +1029,20 @@ fn get_v3_or_v4_pool_reads_v4_scalars_matching_apply_v4_swap() {
 
     // AC parity: identical scalar inputs via `apply_swap_update` produce the
     // same values read through the accessor.
-    let _ = core_b.apply_swap_update(
-        &V4SwapUpdate {
-            pool_manager,
-            pool_id: pool_id_bytes,
-            sqrt_price_x96: U256::from(3u128) << 96,
-            liquidity: 9_000_000,
-            tick: -240,
-            tick_priors: Box::default(),
-        },
-        block_b,
+    assert_eq!(
+        core_b.apply_swap_update(
+            &V4SwapUpdate {
+                pool_manager,
+                pool_id: pool_id_bytes,
+                sqrt_price_x96: U256::from(3u128) << 96,
+                liquidity: 9_000_000,
+                tick: -240,
+                tick_priors: Box::default(),
+            },
+            block_b,
+        ),
+        Ok(ApplyOutcome::Applied(id_b)),
+        "the update-payload door applies a live V4 swap directly"
     );
     let view_b = core_b
         .pool_slice::<dyn degenbot_pools::registry::ConcentratedLiquidityPool>(id_b)
@@ -1094,13 +1107,17 @@ fn get_v3_or_v4_pool_reads_v4_tick_data_matching_apply_v4_liquidity_update() {
     let id_b = core_b.register_v4_pool(&params).expect("V4 B registers");
 
     let _ = core_a.apply_liquidity_update_by_pool_id(id_a, 60, 120, 700, block_b);
-    let _ = core_b.apply_liquidity_update(
-        PoolLookup::V4 {
-            pool_manager,
-            pool_id: pool_id_bytes,
-        },
-        PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(700i128).unwrap(), block_b)
-            .unwrap(),
+    assert_eq!(
+        core_b.apply_liquidity_update(
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id: pool_id_bytes,
+            },
+            PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(700i128).unwrap(), block_b)
+                .unwrap(),
+        ),
+        Ok(ApplyOutcome::Applied(id_b)),
+        "the key-shaped door reports the direct apply, not a flattening"
     );
 
     // Before the fix, the V4 view came back None → empty dict. Assert the
@@ -1271,7 +1288,7 @@ fn v4_liquidity_delta_applies_at_the_int128_boundaries() {
 
         assert_eq!(
             core.apply_liquidity_update(key, PoolLiquidityUpdate::new(60, 120, delta, 5)),
-            Some(pool_id),
+            Ok(ApplyOutcome::Applied(pool_id)),
             "a delta at the contracts' bound must apply, never be dropped"
         );
 

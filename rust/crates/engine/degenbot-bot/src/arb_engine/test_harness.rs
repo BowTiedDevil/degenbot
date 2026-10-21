@@ -16,6 +16,7 @@ use super::BlockMetadata;
 use crate::bot_core::V3SwapUpdate;
 use alloy::primitives::aliases::U112;
 use alloy::primitives::Address;
+use degenbot_substrate::concentrated_liquidity_route::ApplyOutcome;
 use hashbrown::HashSet;
 
 /// Test-only F-suite probe: the engine's construction-stamped boot —
@@ -94,7 +95,9 @@ pub(crate) fn process_updates(
             }
         }
         for update in v3_updates {
-            if let Some(pool_id) = core.apply_swap(
+            // The door returns the router's verdict unflattened: only a direct
+            // apply moved state (a staged event belongs to a later pump drain).
+            if let Ok(ApplyOutcome::Applied(pool_id)) = core.apply_swap(
                 update.pool_address,
                 update.sqrt_price_x96,
                 update.liquidity,

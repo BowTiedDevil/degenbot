@@ -1,4 +1,5 @@
 use super::*;
+use crate::concentrated_liquidity_route::ApplyOutcome;
 use crate::swap_simulation::{Caveats, SwapOutcome, SwapRead, SwapRequest};
 use alloy::primitives::aliases::U112;
 use alloy::primitives::uint;
@@ -31,6 +32,20 @@ fn tokens_out(core: &mut BotState, pool_id: u64, zero_for_one: bool, amount_in: 
     ) {
         SwapRead::Computed(outcome) => outcome.delivered_unsigned(),
         f => panic!("small non-overflowing V2 amount; calc must not miss or overflow: {f:?}"),
+    }
+}
+
+/// Assert that an apply door applied its event DIRECTLY to a registered pool,
+/// returning the affected `pool_id`.
+///
+/// The doors hand back the router's [`ApplyOutcome`] whole. A test whose
+/// subject is the resulting pool state still pins the verdict: a staged
+/// (`Buffered`) or sanctioned (`NoOp`) outcome panics here instead of passing
+/// silently, which is what the old `Option<pool_id>` flattening allowed.
+fn applied_directly(outcome: Result<ApplyOutcome, crate::PoolRefusal>) -> u64 {
+    match outcome {
+        Ok(ApplyOutcome::Applied(pool_id)) => pool_id,
+        other => panic!("expected a direct apply, got {other:?}"),
     }
 }
 

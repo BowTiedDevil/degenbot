@@ -1,4 +1,5 @@
 use super::*;
+use crate::concentrated_liquidity_route::{ApplyOutcome, BufferKind};
 use degenbot_pools::buffered_event::PoolLiquidityUpdate;
 
 #[test]
@@ -243,10 +244,10 @@ fn v3_snapshot_seed_survives_pump_liquidity_update() {
     );
 
     // Pump applies a Mint at block 1, mutating tick -60's gross.
-    core.apply_liquidity_update(
+    applied_directly(core.apply_liquidity_update(
         PoolLookup::from_address(v3_addr),
         PoolLiquidityUpdate::new(-60, 60, 500_i128, 1),
-    );
+    ));
 
     // Live tick_data CHANGED (journal applied) ...
     let live_gross = core
@@ -336,10 +337,10 @@ fn v3_post_drain_snapshot_survives_pump_liquidity_update() {
     PoolLookup::from_address(v3_addr).pin_post_drain(&mut core);
 
     // A pump Mint lands AFTER the drain — mutating the live tick_data.
-    core.apply_liquidity_update(
+    applied_directly(core.apply_liquidity_update(
         PoolLookup::from_address(v3_addr),
         PoolLiquidityUpdate::new(-60, 60, 500_i128, 1),
-    );
+    ));
 
     // Live tick_data CHANGED (journal applied) ...
     let live_gross = core
@@ -457,9 +458,13 @@ fn v3_post_drain_snapshot_carries_drained_block_not_backfill_block() {
         PoolLookup::from_address(v3_addr),
         PoolLiquidityUpdate::new(-60, 60, 500_i128, snapshot_block + 1),
     );
-    core.apply_liquidity_update(
-        PoolLookup::from_address(v3_addr),
-        PoolLiquidityUpdate::new(-60, 60, 750_i128, pump_block),
+    assert_eq!(
+        core.apply_liquidity_update(
+            PoolLookup::from_address(v3_addr),
+            PoolLiquidityUpdate::new(-60, 60, 750_i128, pump_block),
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "the door stages the pre-registration Mint into the pump buffer"
     );
 
     core.register_v3_pool(&RegisterV3PoolParams {
@@ -589,13 +594,13 @@ fn v4_snapshot_seed_survives_pump_modify_liquidity() {
     );
 
     // Pump applies a ModifyLiquidity at block 1, mutating tick -60's gross.
-    core.apply_liquidity_update(
+    applied_directly(core.apply_liquidity_update(
         PoolLookup::V4 {
             pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(-60, 60, I256::try_from(500_i128).unwrap(), 1).unwrap(),
-    );
+    ));
 
     // Live tick_data CHANGED (journal applied) ...
     let live_gross = {
@@ -707,13 +712,13 @@ fn v4_post_drain_snapshot_survives_pump_modify_liquidity() {
     .pin_post_drain(&mut core);
 
     // Pump ModifyLiquidity lands AFTER the drain.
-    core.apply_liquidity_update(
+    applied_directly(core.apply_liquidity_update(
         PoolLookup::V4 {
             pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(-60, 60, I256::try_from(500_i128).unwrap(), 1).unwrap(),
-    );
+    ));
 
     // Live tick_data CHANGED ...
     let live_gross = {
@@ -842,13 +847,21 @@ fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
     // registration-seam posture during drain+pin+verify).
     PoolLookup::from_address(pool_addr).begin_registration_quarantine(&mut core);
     // Pump-buffer a Mint + a same-block Burn for block 100.
-    core.apply_liquidity_update(
-        PoolLookup::from_address(pool_addr),
-        PoolLiquidityUpdate::new(-10, 10, 500_i128, 100),
+    assert_eq!(
+        core.apply_liquidity_update(
+            PoolLookup::from_address(pool_addr),
+            PoolLiquidityUpdate::new(-10, 10, 500_i128, 100),
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "a quarantined pool's Mint is staged, not dropped"
     );
-    core.apply_liquidity_update(
-        PoolLookup::from_address(pool_addr),
-        PoolLiquidityUpdate::new(-10, 10, -500_i128, 100),
+    assert_eq!(
+        core.apply_liquidity_update(
+            PoolLookup::from_address(pool_addr),
+            PoolLiquidityUpdate::new(-10, 10, -500_i128, 100),
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "a quarantined pool's Burn is staged, not dropped"
     );
     // Pre-mark: two pump events, no complete block yet.
     assert_eq!(
@@ -928,9 +941,13 @@ fn pin_clamps_verify_block_to_complete_cutoff_when_pump_undrained() {
     // Pump-buffer an UNDRAINED Mint at block 100, but only tombstone the
     // pump through block 99 → the drain (apply_pump_buffer_v3) holds the
     // block-100 event back, so the map is NOT complete at its 100 clock.
-    core.apply_liquidity_update(
-        PoolLookup::from_address(pool_addr),
-        PoolLiquidityUpdate::new(-10, 10, 500_i128, 100),
+    assert_eq!(
+        core.apply_liquidity_update(
+            PoolLookup::from_address(pool_addr),
+            PoolLiquidityUpdate::new(-10, 10, 500_i128, 100),
+        ),
+        Ok(ApplyOutcome::Buffered(BufferKind::Pump)),
+        "a quarantined pool's Mint is staged, not dropped"
     );
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(99);
