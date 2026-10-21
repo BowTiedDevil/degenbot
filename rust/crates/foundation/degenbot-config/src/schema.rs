@@ -74,6 +74,11 @@ pub enum KeyOwner {
     /// Only the Python driver shell reads the key; the core declares the key so
     /// the operator surface stays one schema.
     Shell,
+    /// Only test infrastructure reads the key (fixtures, capture probes, and
+    /// process-diagnostic hooks). Declared here so a fixture is documented like
+    /// any other key, and classified so it is never mistaken for operator
+    /// surface with a core consumer.
+    TestOnly,
 }
 
 /// The declared keys whose only implementation is the Python driver shell.
@@ -95,11 +100,35 @@ pub const SHELL_OWNED_KEYS: &[&str] = &[
     "simulation.sim_exit_on_fail",
 ];
 
+/// The declared keys whose only reader is test infrastructure.
+///
+/// A fixture knob is still operator-visible configuration (it is set from the
+/// environment like any other key), so it stays declared; classifying it keeps
+/// "declared but honoured by nobody" from hiding behind a fixture name.
+pub const TEST_ONLY_KEYS: &[&str] = &[
+    "capture.swap_capture_probe",
+    "offline.clcap_block",
+    "offline.clcap_max_fetches",
+    "offline.clcap_path_cap",
+    "offline.clcap_rpc",
+    "offline.scan_block",
+    "offline.v3_fixture_block",
+    "offline.v3_fixture_rpc",
+    "simulation.probe_fixture",
+    "simulation.probe_passes",
+    "telemetry.jaeger_e2e",
+    "test_hooks.alloc_track",
+    "test_hooks.self_abort_test",
+    "test_hooks.unused_test_flag",
+];
+
 /// The owner of one declared key, addressed by its dotted TOML path.
 #[must_use]
 pub fn owner_of(toml_path: &str) -> KeyOwner {
     if SHELL_OWNED_KEYS.contains(&toml_path) {
         KeyOwner::Shell
+    } else if TEST_ONLY_KEYS.contains(&toml_path) {
+        KeyOwner::TestOnly
     } else {
         KeyOwner::Core
     }
@@ -1376,20 +1405,49 @@ mod tests {
         );
     }
 
-    /// Ownership is total: a key outside the shell census is core-owned.
+    /// The test-only census is declared, listed once, and pinned.
+    #[test]
+    fn the_test_only_census_is_declared_and_pinned() {
+        let mut seen = std::collections::BTreeSet::new();
+        for path in TEST_ONLY_KEYS {
+            assert!(
+                SCHEMA.iter().any(|key| key.toml_path == *path),
+                "{path} is not a declared key"
+            );
+            assert!(seen.insert(*path), "{path} is listed twice");
+            assert!(
+                !SHELL_OWNED_KEYS.contains(path),
+                "{path} is both shell- and test-owned"
+            );
+        }
+        assert_eq!(
+            TEST_ONLY_KEYS.len(),
+            14,
+            "the test-only census changed: give the fixture a review, or move the key"
+        );
+    }
+
+    /// Ownership is total: a key outside both censuses is core-owned.
     #[test]
     fn owner_of_is_total_over_the_schema() {
         for key in SCHEMA {
-            let owner = owner_of(key.toml_path);
+            let expected = if SHELL_OWNED_KEYS.contains(&key.toml_path) {
+                KeyOwner::Shell
+            } else if TEST_ONLY_KEYS.contains(&key.toml_path) {
+                KeyOwner::TestOnly
+            } else {
+                KeyOwner::Core
+            };
             assert_eq!(
-                owner == KeyOwner::Shell,
-                SHELL_OWNED_KEYS.contains(&key.toml_path),
-                "{} disagrees with the census",
+                owner_of(key.toml_path),
+                expected,
+                "{} disagrees",
                 key.toml_path
             );
         }
         assert_eq!(owner_of("pathfinding.max_registered_paths"), KeyOwner::Core);
         assert_eq!(owner_of("diagnostics.tracemalloc_secs"), KeyOwner::Shell);
+        assert_eq!(owner_of("offline.clcap_rpc"), KeyOwner::TestOnly);
     }
 
     #[test]

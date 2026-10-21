@@ -50,7 +50,7 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 | `DEGENBOT_OTEL` | `telemetry.otel` | `bool` | `true` | `core` | Enable the OTel OTLP span layer and the Prometheus metrics endpoint; `0`/empty opts out. |
 | `DEGENBOT_METRICS_ADDR` | `telemetry.metrics_addr` | `string` | `127.0.0.1:9464` | `core` | Prometheus scrape endpoint bind address (only active when otel is on). |
 | `DEGENBOT_JAEGER_ENDPOINT` | `telemetry.jaeger_endpoint` | `string` | `http://127.0.0.1:4318` | `core` | OTLP endpoint used by the opt-in Jaeger E2E test. |
-| `DEGENBOT_JAEGER_E2E` | `telemetry.jaeger_e2e` | `bool` | `false` | `core` | Gate for the network-accessible Jaeger E2E test (Jaeger must be reachable at jaeger_endpoint). |
+| `DEGENBOT_JAEGER_E2E` | `telemetry.jaeger_e2e` | `bool` | `false` | `test-only` | Gate for the network-accessible Jaeger E2E test (Jaeger must be reachable at jaeger_endpoint). |
 ## `diagnostics`
 
 | Env var | TOML key | Type | Default | Owner | Description |
@@ -163,7 +163,7 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 | `DEGENBOT_SOLVER_CAPTURE_MIN_SIMS` | `capture.solver_capture_min_sims` | `u64` | `2000` | `core` | Capture only paths with at least this many walk sims. |
 | `DEGENBOT_SOLVER_CAPTURE_MIN_US` | `capture.solver_capture_min_us` | `u64` | `50000` | `core` | Capture only paths whose solve time is at least this many microseconds. |
 | `DEGENBOT_SOLVER_CAPTURE_OUT` | `capture.solver_capture_out` | `Option<path>` | `(unset; site picks a working-file default)` | `core` | Solver-capture output JSONL path (site-specific fallback). |
-| `DEGENBOT_SWAP_CAPTURE_PROBE` | `capture.swap_capture_probe` | `bool` | `false` | `core` | Swap-capture correctness example gate (`1` enables). |
+| `DEGENBOT_SWAP_CAPTURE_PROBE` | `capture.swap_capture_probe` | `bool` | `false` | `test-only` | Swap-capture correctness example gate (`1` enables). |
 ## `verify`
 
 | Env var | TOML key | Type | Default | Owner | Description |
@@ -180,9 +180,9 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 | `DEGENBOT_SIM_EXECUTE_GAS` | `simulation.sim_execute_gas` | `Option<u64>` | `(unset; EIP-7825 TX_GAS_LIMIT_CAP)` | `core` | Override the execute() gas limit (decimal u64; garbage/0 falls back at the site while migrating). |
 | `DEGENBOT_INJECT_EXECUTOR_CODE` | `simulation.inject_executor_code` | `bool` | `false` | `core` | Simulate against executor bytecode injected into the evm overlay instead of a deployed contract. Injection mode also gates live submission off for safety; `1` opts in (dry-run/dev posture). |
 | `DEGENBOT_SIM_EXIT_ON_FAIL` | `simulation.sim_exit_on_fail` | `bool` | `false` | `shell` | Owner: the Python driver shell's sim-failure trap (the live capture posture, not core policy). Abort the process when a sim fails (used to capture V3-hop fixtures). |
-| `DEGENBOT_PROBE_FIXTURE` | `simulation.probe_fixture` | `Option<path>` | `(unset)` | `core` | Corpus fixture for the offline executor A/B probe (ignore-listed test). |
+| `DEGENBOT_PROBE_FIXTURE` | `simulation.probe_fixture` | `Option<path>` | `(unset)` | `test-only` | Corpus fixture for the offline executor A/B probe (ignore-listed test). |
 | `DEGENBOT_PROBE_NS` | `simulation.probe_ns` | `string` | `1,2,4,8,16` | `core` | Comma-separated thread-count arms for the offline executor A/B probe. |
-| `DEGENBOT_PROBE_PASSES` | `simulation.probe_passes` | `usize` | `3` | `core` | Passes per arm for the offline executor A/B probe. |
+| `DEGENBOT_PROBE_PASSES` | `simulation.probe_passes` | `usize` | `3` | `test-only` | Passes per arm for the offline executor A/B probe. |
 | `DEGENBOT_SIM_PIPELINE_CONCURRENCY` | `simulation.pipeline_concurrency` | `usize` | `8` | `core` | Sims in flight per block before the pipeline's submitter is held back; 1 reproduces the serial reference (one sim, FIFO submit) for an offline soak. Clamped to >= 1 at the use site. |
 | `DEGENBOT_SIM_EXIT_IGNORE_BUCKETS` | `simulation.exit_ignore_buckets` | `string` | `(empty)` | `shell` | Owner: the Python driver shell's sim-failure trap. Comma-separated failure buckets the sim-failure tripwire does not count (e.g. `empty,short`). The trap itself is simulation.sim_exit_on_fail; this only narrows an ARMED trap, and there is no default ignore set -- an unlisted bucket stops the bot. |
 ## `pathfinding`
@@ -263,18 +263,18 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 
 | Env var | TOML key | Type | Default | Owner | Description |
 | --- | --- | --- | --- | --- | --- |
-| `DEGENBOT_CLCAP_RPC` | `offline.clcap_rpc` | `Option<string>` | `(unset; required by the capture examples)` | `core` | RPC URL for the offline concentrated liquidity capture/boundary-scan examples (network-gated). |
-| `DEGENBOT_CLCAP_BLOCK` | `offline.clcap_block` | `Option<u64>` | `(unset)` | `core` | Pinned block for the concentrated liquidity capture generator. |
-| `DEGENBOT_CLCAP_MAX_FETCHES` | `offline.clcap_max_fetches` | `usize` | `320` | `core` | Max active-set fetches backfilled by the concentrated liquidity capture generator. |
-| `DEGENBOT_CLCAP_PATH_CAP` | `offline.clcap_path_cap` | `usize` | `12` | `core` | Per-block path cap for the concentrated liquidity capture generator. |
-| `DEGENBOT_SCAN_BLOCK` | `offline.scan_block` | `Option<u64>` | `(unset)` | `core` | Block for the concentrated liquidity boundary-scan examples. |
+| `DEGENBOT_CLCAP_RPC` | `offline.clcap_rpc` | `Option<string>` | `(unset; required by the capture examples)` | `test-only` | RPC URL for the offline concentrated liquidity capture/boundary-scan examples (network-gated). |
+| `DEGENBOT_CLCAP_BLOCK` | `offline.clcap_block` | `Option<u64>` | `(unset)` | `test-only` | Pinned block for the concentrated liquidity capture generator. |
+| `DEGENBOT_CLCAP_MAX_FETCHES` | `offline.clcap_max_fetches` | `usize` | `320` | `test-only` | Max active-set fetches backfilled by the concentrated liquidity capture generator. |
+| `DEGENBOT_CLCAP_PATH_CAP` | `offline.clcap_path_cap` | `usize` | `12` | `test-only` | Per-block path cap for the concentrated liquidity capture generator. |
+| `DEGENBOT_SCAN_BLOCK` | `offline.scan_block` | `Option<u64>` | `(unset)` | `test-only` | Block for the concentrated liquidity boundary-scan examples. |
 | `DEGENBOT_FIXTURE_DB` | `offline.fixture_db` | `Option<path>` | `(unset)` | `core` | Database path for the standalone-consumer fixture example. |
-| `DEGENBOT_V3_FIXTURE_RPC` | `offline.v3_fixture_rpc` | `Option<string>` | `(unset)` | `core` | Network-gated V3 IIA fixture reproduction RPC endpoint (test-only). |
-| `DEGENBOT_V3_FIXTURE_BLOCK` | `offline.v3_fixture_block` | `Option<u64>` | `(unset)` | `core` | Network-gated V3 IIA fixture reproduction block (test-only). |
+| `DEGENBOT_V3_FIXTURE_RPC` | `offline.v3_fixture_rpc` | `Option<string>` | `(unset)` | `test-only` | Network-gated V3 IIA fixture reproduction RPC endpoint (test-only). |
+| `DEGENBOT_V3_FIXTURE_BLOCK` | `offline.v3_fixture_block` | `Option<u64>` | `(unset)` | `test-only` | Network-gated V3 IIA fixture reproduction block (test-only). |
 ## `test_hooks`
 
 | Env var | TOML key | Type | Default | Owner | Description |
 | --- | --- | --- | --- | --- | --- |
-| `DEGENBOT_ALLOC_TRACK` | `test_hooks.alloc_track` | `bool` | `false` | `core` | Allocation-tracking gate for the math/pools bench suites (`1` enables). |
-| `DEGENBOT_SELF_ABORT_TEST` | `test_hooks.self_abort_test` | `bool` | `false` | `core` | Block-pump self-abort hatch (presence gates in tests). |
-| `DEGENBOT_UNUSED_TEST_FLAG` | `test_hooks.unused_test_flag` | `bool` | `true` | `core` | Default-ON flag-parse probe (asserted by the bot-core unit tests). |
+| `DEGENBOT_ALLOC_TRACK` | `test_hooks.alloc_track` | `bool` | `false` | `test-only` | Allocation-tracking gate for the math/pools bench suites (`1` enables). |
+| `DEGENBOT_SELF_ABORT_TEST` | `test_hooks.self_abort_test` | `bool` | `false` | `test-only` | Block-pump self-abort hatch (presence gates in tests). |
+| `DEGENBOT_UNUSED_TEST_FLAG` | `test_hooks.unused_test_flag` | `bool` | `true` | `test-only` | Default-ON flag-parse probe (asserted by the bot-core unit tests). |

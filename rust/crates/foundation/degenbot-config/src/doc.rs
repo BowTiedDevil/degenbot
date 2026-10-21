@@ -78,6 +78,7 @@ pub fn render_key_reference() -> String {
         let owner = match crate::schema::owner_of(&format!("{}.{}", key.section, key.field)) {
             crate::schema::KeyOwner::Core => "core",
             crate::schema::KeyOwner::Shell => "shell",
+            crate::schema::KeyOwner::TestOnly => "test-only",
         };
         let _ = writeln!(
             out,
