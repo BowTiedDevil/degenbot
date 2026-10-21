@@ -2432,7 +2432,7 @@ impl BotState {
 
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::try_registered_v4`].
     #[must_use]
-    pub fn try_registered_by_key(
+    pub fn try_registered(
         &self,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -2736,7 +2736,7 @@ mod registered_v4_fast_path_tests {
         let registered = register_v4(&mut core, pid, PoolTickCoverage::Tracked, 0x0102);
 
         let existing = core
-            .try_registered_by_key(pm, &pid)
+            .try_registered(pm, &pid)
             .expect("registered pool must resolve by (pool_manager, pool_id)");
         assert_eq!(existing.pool_id, registered, "must be the same numeric id");
         let key = &existing.pool_key;
@@ -2758,7 +2758,7 @@ mod registered_v4_fast_path_tests {
         let _ = register_v4(&mut core, pid, PoolTickCoverage::Sparse, 0);
 
         let existing = core
-            .try_registered_by_key(pm, &pid)
+            .try_registered(pm, &pid)
             .expect("registered pool must resolve");
         assert_eq!(existing.coverage, PoolTickCoverage::Sparse);
     }
@@ -2770,12 +2770,12 @@ mod registered_v4_fast_path_tests {
         let _ = register_v4(&mut core, [0xeeu8; 32], PoolTickCoverage::Sparse, 0);
 
         assert_eq!(
-            core.try_registered_by_key(pm, &[0xffu8; 32]),
+            core.try_registered(pm, &[0xffu8; 32]),
             None,
             "an unregistered pool_id under the same manager must miss"
         );
         assert_eq!(
-            core.try_registered_by_key(Address::from([0x45u8; 20]), &[0xeeu8; 32]),
+            core.try_registered(Address::from([0x45u8; 20]), &[0xeeu8; 32]),
             None,
             "an unknown pool_manager must miss"
         );

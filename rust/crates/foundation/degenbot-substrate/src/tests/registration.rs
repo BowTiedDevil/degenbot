@@ -876,7 +876,7 @@ fn admission_refusal_records_a_consultable_gate_verdict() {
             .is_none(),
         "admitted pools gate-record nothing"
     );
-    assert!(core.try_registered_by_key(pm, &pid3).is_some());
+    assert!(core.try_registered(pm, &pid3).is_some());
     let _: u64 = admitted;
 }
 

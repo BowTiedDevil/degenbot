@@ -207,7 +207,7 @@ fn registered_address_pool(
 fn registered_v4_pool(bot: &Bot, pool_manager: Address, pool_id: &[u8; 32]) -> Option<u64> {
     bot.state_arc()
         .read_at(LockSite::Core)
-        .try_registered_by_key(pool_manager, pool_id)
+        .try_registered(pool_manager, pool_id)
         .map(|registered| registered.pool_id)
 }
 

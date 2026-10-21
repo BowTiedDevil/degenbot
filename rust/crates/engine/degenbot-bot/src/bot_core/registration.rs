@@ -338,9 +338,7 @@ impl Bot {
         {
             let core = self.state_arc();
             let registry = core.read_at(LockSite::Orchestrator);
-            if let Some(existing) =
-                registry.try_registered_by_key(params.pool_manager, &params.pool_id)
-            {
+            if let Some(existing) = registry.try_registered(params.pool_manager, &params.pool_id) {
                 let hit = existing.pool_key.currency0 == params.pool_key.currency0
                     && existing.pool_key.currency1 == params.pool_key.currency1;
                 if hit {
@@ -658,7 +656,7 @@ impl Bot {
         let Some(existing) = self
             .state_arc()
             .read_at(LockSite::Orchestrator)
-            .try_registered_by_key(pm, pid)
+            .try_registered(pm, pid)
         else {
             return Ok(None);
         };

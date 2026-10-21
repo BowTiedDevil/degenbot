@@ -2430,7 +2430,7 @@ async fn construction_door_v4_matches_the_route_interior() {
         door_bot
             .state_arc()
             .read_at(LockSite::Core)
-            .try_registered_by_key(pm, &pid)
+            .try_registered(pm, &pid)
             .map(|registered| registered.pool_id),
         Some(direct.pool_id),
     );
