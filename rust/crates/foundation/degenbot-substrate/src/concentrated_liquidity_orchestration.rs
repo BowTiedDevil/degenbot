@@ -29,8 +29,10 @@ use crate::concentrated_liquidity_route::{
     pin_provenance_verdict, route_action, ApplyOutcome, BufferKind, EventKind, Phase,
     PinProvenance, PoolPresence, RouteAction,
 };
+use crate::pool_lookup::PoolLookup;
 use degenbot_pools::state_history::{ScalarPriors, TickBefore, V3BlockDelta};
-use degenbot_pools::v3_state::{BufferedV3LiquidityUpdate, BufferedV3SwapEvent};
+use degenbot_pools::state_update::{PoolStateUpdate, PoolSyncRefusal};
+use degenbot_pools::v3_state::{BufferedV3LiquidityUpdate, BufferedV3SwapEvent, V3StateSync};
 use degenbot_pools::v4_state::{
     BufferedV4LiquidityUpdate, BufferedV4SwapEvent, V4PoolKey, V4StateSync, V4_DYNAMIC_FEE_FLAG,
 };
@@ -184,6 +186,11 @@ pub(crate) trait LiquidityFamily {
 
     /// Apply one buffered event to a registered pool.
     fn apply(state: &mut Self::State, event: Self::Event);
+    /// The wholesale state-sync payload this family accepts.
+    type Sync;
+
+    /// Overwrite the registered state from one source snapshot.
+    fn apply_sync(state: &mut Self::State, update: Self::Sync);
 
     /// The engine-witnessed event horizon for `key` (0 when nothing witnessed).
     fn event_horizon(orch: &ConcentratedLiquidityOrchestration, key: &Self::Key) -> u64;
@@ -323,6 +330,20 @@ impl LiquidityFamily for V3Family {
 
     fn apply(state: &mut Self::State, event: Self::Event) {
         ConcentratedLiquidityOrchestration::apply_buffered_v3_event(state, event);
+    }
+
+    type Sync = V3StateSync;
+
+    fn apply_sync(state: &mut Self::State, update: Self::Sync) {
+        state.sqrt_price_x96 = update.sqrt_price_x96;
+        state.liquidity = update.liquidity;
+        state.tick = update.tick;
+        state.tick_data = update.tick_data;
+        // A wholesale sync is a sanctioned reset: both clocks move to the
+        // snapshot's block together.
+        state.update_block = update.update_block;
+        state.tick_data_block = update.update_block;
+        state.invalidate_tick_range_cache();
     }
 
     fn drain_backfill(
@@ -486,6 +507,20 @@ impl LiquidityFamily for V4Family {
 
     fn apply(state: &mut Self::State, event: Self::Event) {
         ConcentratedLiquidityOrchestration::apply_buffered_v4_event(state, event);
+    }
+
+    type Sync = V4StateSync;
+
+    fn apply_sync(state: &mut Self::State, update: Self::Sync) {
+        state.sqrt_price_x96 = update.sqrt_price_x96;
+        state.liquidity = update.liquidity;
+        state.tick = update.tick;
+        state.tick_data = update.tick_data;
+        // A wholesale sync is a sanctioned reset: both clocks move to the
+        // snapshot's block together.
+        state.update_block = update.update_block;
+        state.tick_data_block = update.update_block;
+        state.invalidate_tick_range_cache();
     }
 
     fn drain_backfill(
@@ -1257,45 +1292,29 @@ impl ConcentratedLiquidityOrchestration {
         let verdict = pin_provenance_verdict(clock, cutoff, witnessed);
         F::diag_pin(key, clock, ticks, undrained, cutoff, verdict);
     }
-
-    /// Full-sync a V3 pool's `tick_data` from an external source (e.g. Python
-    /// backfill). Replaces the entire `tick_data` map (so ticks Burn-removed
-    /// on-chain are also removed here) and updates scalar state. No-op if the
-    /// pool address is not registered.
-    pub(crate) fn sync_v3_pool_state(
+    /// Overwrite a registered pool's state from one source snapshot, for either
+    /// key shape.
+    ///
+    /// Returns whether the pool was registered; a wholesale sync replaces the
+    /// scalars AND the tick map from one snapshot, so both clocks move to the
+    /// snapshot's block together — a sanctioned reset, not the incremental
+    /// backward stamp the two-stamp rule forbids.
+    pub(crate) fn sync_pool_state<F: LiquidityFamily>(
         &mut self,
         reg: &mut RegistryCore,
-        pool_address: Address,
-        sqrt_price_x96: U256,
-        liquidity: u128,
-        tick: i32,
-        tick_data: HashMap<i32, TickInfo>,
-        update_block: u64,
-    ) {
-        let Some(&key) = reg.pool_addresses.get(&pool_address) else {
-            return;
+        key: &F::Key,
+        update: F::Sync,
+    ) -> bool {
+        let Some(pool_id) = F::pool_id(self, reg, key) else {
+            return false;
         };
-        let Some(state) = reg
-            .pools
-            .get_mut(&key)
-            .and_then(PoolEntry::v3_mut)
-            .map(|(_, s)| s)
-        else {
-            return;
+        let Some(state) = F::state_mut(reg, pool_id) else {
+            return false;
         };
-        state.sqrt_price_x96 = sqrt_price_x96;
-        state.liquidity = liquidity;
-        state.tick = tick;
-        state.tick_data = tick_data;
-        // Two-stamp rule: a wholesale full-state sync replaces BOTH clocks
-        // with the same source block (the sync provides scalars AND tick_data
-        // from one snapshot). A full replacement is a sanctioned reset (not an
-        // incremental backward stamp), so it sets both directly — reorg is not
-        // the only permitted rewind here.
-        state.update_block = update_block;
-        state.tick_data_block = update_block;
-        state.invalidate_tick_range_cache();
+        F::apply_sync(state, update);
+        true
     }
+
     /// per-pool tick-mutation fingerprint for the staged word-fetch
     /// install check. Any `tick_data` mutation moves `update_block` and/or
     /// the tick population; the stamp-sum term kills same-block net-zero
@@ -1969,35 +1988,6 @@ impl ConcentratedLiquidityOrchestration {
     pub fn registered_pool_count(&self) -> usize {
         self.v4_pool_ids.len()
     }
-    /// Full-sync a V4 pool's `tick_data` from an external source.
-    pub(crate) fn sync_v4_pool_state(
-        &mut self,
-        reg: &mut RegistryCore,
-        pool_manager: Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
-        update: V4StateSync,
-    ) {
-        let Some(&id) = self.v4_pool_ids.get(&(pool_manager, pool_id)) else {
-            return;
-        };
-        let Some(state) = reg
-            .pools
-            .get_mut(&id)
-            .and_then(PoolEntry::v4_mut)
-            .map(|(_, s)| s)
-        else {
-            return;
-        };
-        state.sqrt_price_x96 = update.sqrt_price_x96;
-        state.liquidity = update.liquidity;
-        state.tick = update.tick;
-        state.tick_data = update.tick_data;
-        // Two-stamp rule (V4 twin of `sync_v3_pool_state`): wholesale sync
-        // replaces both clocks with the same source block (sanctioned reset).
-        state.update_block = update.update_block;
-        state.tick_data_block = update.update_block;
-        state.invalidate_tick_range_cache();
-    }
     // ------------------------------------------------------------------
     // Capability interface for registry-side consumers
     // ------------------------------------------------------------------
@@ -2179,26 +2169,48 @@ impl BotState {
     pub fn set_snapshot_seed_block(&mut self, s: Option<u64>) {
         self.concentrated_liquidity.set_snapshot_seed_block(s);
     }
-
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::sync_v3_pool_state`].
+    /// Overwrite a registered pool's state from one source snapshot, for either
+    /// key shape.
+    ///
+    /// The payload names the family and the key names the pool; a disagreement
+    /// is a caller bug, reported rather than silently ignored (an unregistered
+    /// pool is the one expected refusal). A wholesale sync replaces the scalars
+    /// AND the tick map from one snapshot, so both clocks move to the snapshot's
+    /// block together — a sanctioned reset, not the incremental backward stamp
+    /// the two-stamp rule forbids.
+    ///
+    /// # Errors
+    ///
+    /// [`PoolSyncRefusal::FamilyMismatch`] when the payload's family differs
+    /// from the key's, [`PoolSyncRefusal::Unregistered`] when the key names no
+    /// registered pool.
     pub fn sync_pool_state(
         &mut self,
-        pool_address: Address,
-        sqrt_price_x96: U256,
-        liquidity: u128,
-        tick: i32,
-        tick_data: HashMap<i32, TickInfo>,
-        update_block: u64,
-    ) {
-        self.concentrated_liquidity.sync_v3_pool_state(
-            &mut self.registry,
-            pool_address,
-            sqrt_price_x96,
-            liquidity,
-            tick,
-            tick_data,
-            update_block,
-        );
+        key: PoolLookup,
+        update: PoolStateUpdate,
+    ) -> Result<(), PoolSyncRefusal> {
+        match (key, update) {
+            (PoolLookup::Address(address), PoolStateUpdate::V3(update)) => self
+                .concentrated_liquidity
+                .sync_pool_state::<V3Family>(&mut self.registry, &address, update)
+                .then_some(())
+                .ok_or(PoolSyncRefusal::Unregistered),
+            (
+                PoolLookup::V4 {
+                    pool_manager,
+                    pool_id,
+                },
+                PoolStateUpdate::V4(update),
+            ) => self
+                .concentrated_liquidity
+                .sync_pool_state::<V4Family>(&mut self.registry, &(pool_manager, pool_id), update)
+                .then_some(())
+                .ok_or(PoolSyncRefusal::Unregistered),
+            (key, update) => Err(PoolSyncRefusal::FamilyMismatch {
+                key: key.family(),
+                update: update.family(),
+            }),
+        }
     }
 
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::tick_fingerprint`].
@@ -2675,21 +2687,6 @@ impl BotState {
                 | PoolEntry::AerodromeV2(..) => None,
             })
             .collect()
-    }
-
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::sync_v4_pool_state`].
-    pub fn sync_pool_state_by_key(
-        &mut self,
-        pool_manager: Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
-        update: V4StateSync,
-    ) {
-        self.concentrated_liquidity.sync_v4_pool_state(
-            &mut self.registry,
-            pool_manager,
-            pool_id,
-            update,
-        );
     }
 
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::snapshot_seed_block`].

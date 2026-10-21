@@ -8,6 +8,8 @@
 use super::{hex_string_to_pool_id, Address, PyArbEngine, PyList, V4StateSync};
 use crate::bot::pool::TickData;
 use crate::prelude::*;
+use degenbot_pools::state_update::PoolStateUpdate;
+use degenbot_pools::v3_state::V3StateSync;
 use degenbot_substrate::PoolLookup;
 use std::sync::Arc;
 
@@ -411,12 +413,29 @@ impl PyArbEngine {
             updates.push((addr, sqrt_price, liquidity, tick, rust_tick_data));
         }
 
-        self.with_core_mut(py, |s| {
-            for (addr, sqrt_price, liquidity, tick, tick_data) in updates {
-                s.sync_pool_state(addr, sqrt_price, liquidity, tick, tick_data, block_number);
-            }
+        let refusal = self.with_core_mut(py, |s| {
+            updates
+                .into_iter()
+                .find_map(|(addr, sqrt_price, liquidity, tick, tick_data)| {
+                    s.sync_pool_state(
+                        PoolLookup::from_address(addr),
+                        PoolStateUpdate::V3(V3StateSync {
+                            sqrt_price_x96: sqrt_price,
+                            liquidity,
+                            tick,
+                            tick_data,
+                            update_block: block_number,
+                        }),
+                    )
+                    .err()
+                })
         });
-        Ok(())
+        match refusal {
+            None => Ok(()),
+            Some(refusal) => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "sync_v3_pool_states refused: {refusal}"
+            ))),
+        }
     }
 
     /// Full-sync V4 pool `tick_data` from Python backfill.
@@ -473,11 +492,25 @@ impl PyArbEngine {
             ));
         }
 
-        self.with_core_mut(py, |s| {
-            for (pool_manager, pool_id, sync) in updates {
-                s.sync_pool_state_by_key(pool_manager, pool_id, sync);
-            }
+        let refusal = self.with_core_mut(py, |s| {
+            updates
+                .into_iter()
+                .find_map(|(pool_manager, pool_id, sync)| {
+                    s.sync_pool_state(
+                        PoolLookup::V4 {
+                            pool_manager,
+                            pool_id,
+                        },
+                        PoolStateUpdate::V4(sync),
+                    )
+                    .err()
+                })
         });
-        Ok(())
+        match refusal {
+            None => Ok(()),
+            Some(refusal) => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "sync_v4_pool_states refused: {refusal}"
+            ))),
+        }
     }
 }

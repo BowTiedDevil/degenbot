@@ -2052,3 +2052,24 @@ mod tests {
 /// (ADR-080 D4).
 #[cfg(test)]
 mod fixture_impl;
+
+/// A wholesale V3 pool-state overwrite from one source snapshot.
+///
+/// The V3 mirror of [`V4StateSync`](crate::v4_state::V4StateSync): a full-sync
+/// replaces the scalars AND the tick map from one snapshot, so both clocks
+/// (`update_block` and `tick_data_block`) move to the snapshot's block together
+/// — a sanctioned reset, not the incremental backward stamp the two-stamp rule
+/// forbids.
+#[derive(Clone, Debug)]
+pub struct V3StateSync {
+    /// New sqrt price (Q64.96).
+    pub sqrt_price_x96: U256,
+    /// New active in-range liquidity.
+    pub liquidity: u128,
+    /// Current tick.
+    pub tick: i32,
+    /// Full tick-data overwrite (`liquidity_gross`/`liquidity_net`).
+    pub tick_data: HashMap<i32, TickInfo>,
+    /// Block number of this state update.
+    pub update_block: u64,
+}

@@ -91,6 +91,9 @@ pub mod registration_refusal;
 pub mod registry;
 pub mod simulate_swap;
 pub mod slot_layout;
+pub mod state_update;
+
+pub use state_update::{PoolStateUpdate, PoolSyncRefusal};
 /// The solver-kernel tree (ADR-073 endgame re-home): the family-blind kernels
 /// (the golden-section template, the integer-verification Möbius order, the
 /// envelope composition and its caches) live here beside the family read

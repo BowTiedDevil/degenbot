@@ -47,6 +47,18 @@ impl PoolLookup {
         Self::Address(address.into())
     }
 
+    /// The structural family this lookup names.
+    ///
+    /// The canonical tag is `RegisteredPoolFamily`; a lookup narrows it to the
+    /// two concentrated-liquidity families it can express.
+    #[must_use]
+    pub const fn family(&self) -> degenbot_pools::registry::RegisteredPoolFamily {
+        match self {
+            Self::Address(_) => degenbot_pools::registry::RegisteredPoolFamily::V3,
+            Self::V4 { .. } => degenbot_pools::registry::RegisteredPoolFamily::V4,
+        }
+    }
+
     /// The pool id this lookup names, or `None` when the pool is not
     /// registered.
     ///

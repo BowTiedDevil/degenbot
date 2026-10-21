@@ -77,9 +77,11 @@ pub use ::degenbot_pools::v2_state::{
 pub use ::degenbot_pools::v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, BufferedV3PoolEvent, BufferedV3SwapEvent,
     ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams,
-    RegistrationLifecycle, SimulateSwapError, V3PoolIdentity, V3PoolState, V3SwapOutcome,
-    V3SwapUpdate,
+    RegistrationLifecycle, SimulateSwapError, V3PoolIdentity, V3PoolState, V3StateSync,
+    V3SwapOutcome, V3SwapUpdate,
 };
+
+pub use ::degenbot_pools::state_update::{PoolStateUpdate, PoolSyncRefusal};
 pub use ::degenbot_pools::v4_state::{
     v4_simulate_swap, BufferedV4LiquidityUpdate, BufferedV4PoolEvent, BufferedV4SwapEvent,
     RegisterV4PoolError, RegisterV4PoolParams, V4PoolIdentity, V4PoolKey, V4PoolState, V4StateSync,
