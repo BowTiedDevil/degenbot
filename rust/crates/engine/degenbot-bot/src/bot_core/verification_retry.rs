@@ -39,6 +39,26 @@ pub fn is_retryable(err: &RefusalKind) -> bool {
         )
 }
 
+/// The verification-retry policy the resolved verdict declares.
+///
+/// The four `verify.verify_retry_*` keys are declared once in the config
+/// schema; this projection is where that declaration becomes a policy value.
+/// Every consumer comes through here — the driver shell's injected policy and
+/// a standalone Rust bot alike — so a declared default cannot mean one thing
+/// in the cockpit and nothing at all in a `cargo add degenbot` bot.
+#[must_use]
+pub fn retry_policy_from_config(cfg: &degenbot_config::schema::VerifyConfig) -> RetryPolicy {
+    RetryPolicy {
+        // The schema declares a `usize` count and the policy carries `u32`.
+        // Saturation is the honest fold: any count above `u32::MAX` is already
+        // "retry for the rest of the session" in a real budget.
+        max_attempts: u32::try_from(cfg.verify_retry_max_attempts).unwrap_or(u32::MAX),
+        base_delay: cfg.verify_retry_base_delay,
+        max_delay: cfg.verify_retry_max_delay,
+        jitter: cfg.verify_retry_jitter,
+    }
+}
+
 /// A pseudo-random fraction in `[0, 1)` derived from the clock and the attempt
 /// number. No RNG dependency is warranted: the jitter only de-correlates
 /// retries.
@@ -98,6 +118,17 @@ where
 mod tests {
     use super::*;
     use crate::bot_core::registration_ledger::{RegistrationPhase, VerifyOrigin};
+
+    /// The schema's declared defaults ARE the policy defaults: one home for
+    /// the numbers, so the cockpit and a standalone Rust consumer cannot
+    /// retry differently out of the same configuration.
+    #[test]
+    fn the_schema_defaults_are_the_policy_defaults() {
+        assert_eq!(
+            retry_policy_from_config(&degenbot_config::schema::VerifyConfig::default()),
+            RetryPolicy::verification_default(),
+        );
+    }
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 

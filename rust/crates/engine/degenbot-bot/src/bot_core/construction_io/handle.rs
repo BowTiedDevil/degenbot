@@ -12,6 +12,7 @@ use degenbot_db::rows::{
 use degenbot_rpc::provider::EthBlock;
 
 use super::block_selector::BlockSelector;
+use super::tick_pace::TickFetchPace;
 use super::{DbConstruction, RpcConstruction};
 
 /// The composite construction-I/O handle, held by `Bot` (ADR-003).
@@ -27,15 +28,43 @@ use super::{DbConstruction, RpcConstruction};
 pub struct ConstructionIo {
     pub db: Arc<dyn DbConstruction + Send + Sync>,
     pub rpc: Arc<dyn RpcConstruction + Send + Sync>,
+    /// The tick-RPC pace gate: `builders.tick_fetch_min_interval_ms`, honoured
+    /// here so every construction path paces the same way (see
+    /// [`TickFetchPace`]).
+    tick_fetch_pace: TickFetchPace,
 }
 
 impl ConstructionIo {
+    /// The handle the process's resolved verdict paces.
+    ///
+    /// The pace comes from the installed config (the schema's declared default
+    /// when nothing is installed), so an operator's `builders.` key reaches a
+    /// construction path without the caller forwarding it.
     #[must_use]
     pub fn new(
         db: Arc<dyn DbConstruction + Send + Sync>,
         rpc: Arc<dyn RpcConstruction + Send + Sync>,
     ) -> Self {
-        Self { db, rpc }
+        Self {
+            db,
+            rpc,
+            tick_fetch_pace: TickFetchPace::from_config(
+                &degenbot_config::holder::config().builders,
+            ),
+        }
+    }
+
+    /// Override the pace — the construction-time test knob.
+    #[must_use]
+    pub fn with_tick_fetch_pace(mut self, pace: TickFetchPace) -> Self {
+        self.tick_fetch_pace = pace;
+        self
+    }
+
+    /// The tick-RPC pace gate every tick fetch crosses.
+    #[must_use]
+    pub fn tick_fetch_pace(&self) -> &TickFetchPace {
+        &self.tick_fetch_pace
     }
 }
 

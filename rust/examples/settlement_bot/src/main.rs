@@ -339,16 +339,10 @@ impl SettlementBotConfig {
             .ok()
             .filter(|v| !v.is_empty());
 
-        // The retry policy is declared in the core schema; the loaded verdict
-        // carries it, so the operator file and the environment reach it through
-        // the one cascade.
-        let verification_retry_policy = RetryPolicy {
-            max_attempts: u32::try_from(loaded.config.verify.verify_retry_max_attempts)
-                .unwrap_or(u32::MAX),
-            base_delay: loaded.config.verify.verify_retry_base_delay,
-            max_delay: loaded.config.verify.verify_retry_max_delay,
-            jitter: loaded.config.verify.verify_retry_jitter,
-        };
+        // The retry policy is declared in the core schema, and the projection
+        // from that declaration lives beside the retry dance.
+        let verification_retry_policy =
+            degenbot::bot_core::verification_retry::retry_policy_from_config(&loaded.config.verify);
 
         Ok(Self {
             operator_address,

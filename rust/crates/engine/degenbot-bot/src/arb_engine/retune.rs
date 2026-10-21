@@ -57,9 +57,9 @@ impl EngineRetune {
     ///
     /// Only construction/config-derived writes are folded here: the admission
     /// trio (packed like every other construction-stance value),
-    /// `min_profit_wei`, and the schema defaults for the operator-only knobs
-    /// ([`Self::path_cap`] and [`Self::event_buffer_max_age`] have no Rust
-    /// config key — the `PyO3` driver sets them, T5's scope).
+    /// `min_profit_wei`, the declared registered-path cap, and the schema
+    /// defaults for the operator-only knobs ([`Self::event_buffer_max_age`]
+    /// has no Rust config key — the `PyO3` driver sets it, T5's scope).
     ///
     /// [`BotConfig`]: ::degenbot_config::BotConfig
     #[must_use]
@@ -77,8 +77,11 @@ impl EngineRetune {
                 .unwrap_or(DETACHED_INFLIGHT_CAP)
                 .clamp(1, DETACHED_INFLIGHT_CAP),
             admission_retention_blocks: cfg.solve.admission_retention_blocks,
-            // No Rust config key: the driver installs the path cap.
-            path_cap: None,
+            // The declared `pathfinding.max_registered_paths` budget: the
+            // engine enforces it by default, for a standalone Rust bot and the
+            // cockpit alike. `set_path_cap` stays the runtime override
+            // (`None` = unlimited).
+            path_cap: Some(cfg.pathfinding.max_registered_paths),
             min_profit: U256::from(cfg.solve.min_profit_wei),
             max_profit: U256::MAX,
             clamp_margin: U256::from(cfg.solve.clamp_margin_wei),
@@ -144,8 +147,13 @@ mod tests {
         let e = engine.lock();
         assert_eq!(e.cycle.admission_target_depth, 3);
         assert_eq!(e.cycle.admission_retention_blocks, 7);
-        // Defaults: no config key for the cap / max age, min_profit_wei = 0.
-        assert_eq!(e.registry.cap(), None);
+        // Defaults: the declared path cap, no config key for the max age,
+        // min_profit_wei = 0.
+        assert_eq!(
+            e.registry.cap(),
+            Some(degenbot_config::schema::PathfindingConfig::default().max_registered_paths),
+            "the engine enforces the declared `pathfinding.max_registered_paths` budget"
+        );
         assert!(!e.event_buffer_expiry_enabled);
         assert_eq!(e.delivery.min_profit, U256::ZERO);
         assert_eq!(e.delivery.max_profit, U256::MAX);

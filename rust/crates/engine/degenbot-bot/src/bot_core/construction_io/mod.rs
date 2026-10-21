@@ -63,9 +63,11 @@ use degenbot_rpc::provider::EthBlock;
 // `adapters.rs`.
 pub mod adapters;
 pub mod block_selector;
+pub mod tick_pace;
 pub use self::adapters::{AlloyRpcConstruction, DegenbotDbConstruction, NoDb};
 pub use self::block_selector::{BlockSelector, BlockSelectorError};
 pub use self::handle::ConstructionIo;
+pub use self::tick_pace::TickFetchPace;
 
 /// The 12 construction-time DB reads/writes — one trait per concern.
 ///

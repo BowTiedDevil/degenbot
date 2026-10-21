@@ -321,13 +321,13 @@ crate::config_schema! {
     // copy of "off".
     diagnostics DiagnosticsConfig {
         tracemalloc_secs [f64] = 0.0, env = "DEGENBOT_TRACEMALLOC_SECS", def = "0.0",
-            doc = "Interval in seconds between tracemalloc snapshot-diff dumps to stderr; 0 (or unset) arms nothing. A flat traced-current under a climbing RSS pins the growth outside the Python object graph, so the probe splits a memory diagnosis in half.";
+            doc = "Owner: the Python driver shell (a CPython-runtime diagnostic with no core implementation). Interval in seconds between tracemalloc snapshot-diff dumps to stderr; 0 (or unset) arms nothing. A flat traced-current under a climbing RSS pins the growth outside the Python object graph, so the probe splits a memory diagnosis in half.";
         procmem_secs [f64] = 0.0, env = "DEGENBOT_PROCMEM_SECS", def = "0.0",
-            doc = "Interval in seconds between /proc/self RSS/VmHWM CSV sampler rows; 0 (or unset) arms nothing. The sampler is read-only -- no snapshots, no allocator calls -- so it never perturbs the behavior being measured.";
+            doc = "Owner: the Python driver shell (a process-diagnostic probe with no core implementation). Interval in seconds between /proc/self RSS/VmHWM CSV sampler rows; 0 (or unset) arms nothing. The sampler is read-only -- no snapshots, no allocator calls -- so it never perturbs the behavior being measured.";
         procmem_csv [path] = std::path::PathBuf::from("logs/procmem.csv"), env = "DEGENBOT_PROCMEM_CSV", def = "logs/procmem.csv",
-            doc = "CSV output file for the procmem sampler, one row per procmem_secs interval. The parent directory is created when the probe arms.";
+            doc = "Owner: the Python driver shell. CSV output file for the procmem sampler, one row per procmem_secs interval. The parent directory is created when the probe arms.";
         faulthandler_timeout_secs [f64] = 0.0, env = "DEGENBOT_FAULTHANDLER_TIMEOUT_SECS", def = "0.0",
-            doc = "Seconds after which faulthandler dumps every thread's stack; 0 (or unset) arms no watchdog. A dump is the only record of where a wedged process was when it stopped answering.";
+            doc = "Owner: the Python driver shell (faulthandler is a CPython facility). Seconds after which faulthandler dumps every thread's stack; 0 (or unset) arms no watchdog. A dump is the only record of where a wedged process was when it stopped answering.";
     }
 
     // Per-session run artifacts: one directory per process lifetime holding
@@ -418,7 +418,7 @@ crate::config_schema! {
     // core one; 0 is the declared off posture.
     builders BuildersConfig {
         tick_fetch_min_interval_ms [ms] = 0, env = "DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS", def = "0",
-            doc = "Minimum interval (ms) between the on-chain tick RPCs the Python companion's tick fetcher issues, pacing a constrained fork/archive source below its advertised rate (dRPC's free plan advertises 100 req/s, so 20 => 50 req/s, leaving headroom for the anvil fork's own background fetching). 0 (or unset) disables the clamp entirely.";
+            doc = "Minimum interval (ms) between the on-chain tick RPCs a construction tick fetch issues, pacing a constrained fork/archive source below its advertised rate (dRPC's free plan advertises 100 req/s, so 20 => 50 req/s, leaving headroom for the anvil fork's own background fetching). Honoured by the core construction gate (degenbot_bot::bot_core::construction_io::TickFetchPace) and by the Python tick loop, which reads the same key. 0 (or unset) disables the clamp entirely.";
     }
 
     solve SolveConfig {
@@ -529,7 +529,7 @@ crate::config_schema! {
         inject_executor_code [bool] = false, env = "DEGENBOT_INJECT_EXECUTOR_CODE", def = "false",
             doc = "Simulate against executor bytecode injected into the evm overlay instead of a deployed contract. Injection mode also gates live submission off for safety; `1` opts in (dry-run/dev posture).";
         sim_exit_on_fail [bool] = false, env = "DEGENBOT_SIM_EXIT_ON_FAIL", def = "false",
-            doc = "Abort the process when a sim fails (the live trap used to capture V3-hop fixtures).";
+            doc = "Owner: the Python driver shell's sim-failure trap (the live capture posture, not core policy). Abort the process when a sim fails (used to capture V3-hop fixtures).";
         probe_fixture [opt path] = None, env = "DEGENBOT_PROBE_FIXTURE", def = "(unset)",
             doc = "Corpus fixture for the offline executor A/B probe (ignore-listed test).";
         probe_ns [string] = String::from("1,2,4,8,16"), env = "DEGENBOT_PROBE_NS", def = "1,2,4,8,16",
@@ -539,7 +539,7 @@ crate::config_schema! {
         pipeline_concurrency [usize] = 8, env = "DEGENBOT_SIM_PIPELINE_CONCURRENCY", def = "8",
             doc = "Sims in flight per block before the pipeline's submitter is held back; 1 reproduces the serial reference (one sim, FIFO submit) for an offline soak. Clamped to >= 1 at the use site.";
         exit_ignore_buckets [string] = String::new(), env = "DEGENBOT_SIM_EXIT_IGNORE_BUCKETS", def = "(empty)",
-            doc = "Comma-separated failure buckets the sim-failure tripwire does not count (e.g. `empty,short`). The trap itself is simulation.sim_exit_on_fail; this only narrows an ARMED trap, and there is no default ignore set -- an unlisted bucket stops the bot.";
+            doc = "Owner: the Python driver shell's sim-failure trap. Comma-separated failure buckets the sim-failure tripwire does not count (e.g. `empty,short`). The trap itself is simulation.sim_exit_on_fail; this only narrows an ARMED trap, and there is no default ignore set -- an unlisted bucket stops the bot.";
     }
 
     // Discovery delivery batching. The startup discovery sweep's
@@ -548,11 +548,11 @@ crate::config_schema! {
     // operator-settable without a code change.
     pathfinding PathfindingConfig {
         discovery_batch_size [usize] = 1000, env = "DEGENBOT_DISCOVERY_BATCH_SIZE", def = "1000",
-            doc = "Discovery-sweep delivery batch size (paths per async batch): the worker thread collects this many paths before the async consumer yields them and gives the event loop one turn. A value <= 1 falls back to the legacy per-path delivery.";
+            doc = "Owner: the driver loop (asyncio batching; the native console registers differently). Discovery-sweep delivery batch size (paths per async batch): the worker thread collects this many paths before the async consumer yields them and gives the event loop one turn. A value <= 1 falls back to the legacy per-path delivery.";
         max_registered_paths [usize] = 100_000, env = "DEGENBOT_MAX_PATHS", def = "100000",
             doc = "Ceiling on total registered arbitrage paths, applied before discovery runs so a discovery-heavy skip-fest stops instead of registering millions. 0 means uncapped.";
         reg_progress_secs [f64] = 30.0, env = "DEGENBOT_REG_PROGRESS_SECS", def = "30.0",
-            doc = "Seconds between registration-progress summaries, which fire on the interval even when the path count never crosses a discovery_batch_size boundary. 0 emits on every update.";
+            doc = "Owner: the driver loop's renderer. Seconds between registration-progress summaries, which fire on the interval even when the path count never crosses a discovery_batch_size boundary. 0 emits on every update.";
     }
 
     // The driver's dispatch policy: how a decided arm becomes a transaction.
@@ -565,7 +565,7 @@ crate::config_schema! {
         min_profit_margin_bps [u64] = 0, env = "DEGENBOT_MIN_PROFIT_MARGIN_BPS", def = "0",
             doc = "Driver-side profit floor in basis points (1/100 of a percent) applied at the simulation seam before a candidate is dispatched. A floor is a magnitude, so the key is unsigned end to end: a negative value is refused by the layer that supplied it, not clamped into a silent second default. This is NOT solve.min_profit_wei, which is the core's own floor: the two arms of the simulation seam are measured against their own floors, so naming one does not size the other.";
         contracts_dir [opt path] = None, env = "DEGENBOT_CONTRACTS_DIR", def = "(unset)",
-            doc = "Directory holding the executor runtime bytecode file the sim injects; unset falls through to the source-layout candidate the driver computes, and a wheel install must set it (or pass the file path explicitly).";
+            doc = "Owner: the driver shell's deployment policy. Directory holding the executor runtime bytecode file the sim injects; unset falls through to the source-layout candidate the driver computes, and a wheel install must set it (or pass the file path explicitly).";
     }
 
     // The per-arm facet namespaces: the typed config home each strategy's own

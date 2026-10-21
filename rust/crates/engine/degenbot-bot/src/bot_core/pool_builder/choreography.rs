@@ -366,6 +366,7 @@ pub async fn fetch_tick_bitmap(
     word_position: i16,
     block: Option<u64>,
 ) -> Result<U256, ProviderError> {
+    io.tick_fetch_pace().wait().await;
     let bytes = eth_call(io, address, abi::encode_tick_bitmap(word_position), block).await?;
     abi::decode_tick_bitmap(&bytes)
 }
@@ -381,6 +382,7 @@ pub async fn fetch_tick_data(
     tick: i32,
     block: Option<u64>,
 ) -> Result<(U128, i128), ProviderError> {
+    io.tick_fetch_pace().wait().await;
     let bytes = eth_call(io, address, abi::encode_tick_data(tick), block).await?;
     abi::decode_tick_data(&bytes)
 }
@@ -397,6 +399,7 @@ pub async fn fetch_v4_tick_bitmap(
     word_position: i16,
     block: Option<u64>,
 ) -> Result<U256, ProviderError> {
+    io.tick_fetch_pace().wait().await;
     let bytes = eth_call(
         io,
         state_view,
@@ -420,6 +423,7 @@ pub async fn fetch_v4_tick_data(
     tick: i32,
     block: Option<u64>,
 ) -> Result<(U128, i128), ProviderError> {
+    io.tick_fetch_pace().wait().await;
     let bytes = eth_call(
         io,
         state_view,

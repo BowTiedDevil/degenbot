@@ -55,10 +55,10 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `DEGENBOT_TRACEMALLOC_SECS` | `diagnostics.tracemalloc_secs` | `f64` | `0.0` | Interval in seconds between tracemalloc snapshot-diff dumps to stderr; 0 (or unset) arms nothing. A flat traced-current under a climbing RSS pins the growth outside the Python object graph, so the probe splits a memory diagnosis in half. |
-| `DEGENBOT_PROCMEM_SECS` | `diagnostics.procmem_secs` | `f64` | `0.0` | Interval in seconds between /proc/self RSS/VmHWM CSV sampler rows; 0 (or unset) arms nothing. The sampler is read-only -- no snapshots, no allocator calls -- so it never perturbs the behavior being measured. |
-| `DEGENBOT_PROCMEM_CSV` | `diagnostics.procmem_csv` | `path` | `logs/procmem.csv` | CSV output file for the procmem sampler, one row per procmem_secs interval. The parent directory is created when the probe arms. |
-| `DEGENBOT_FAULTHANDLER_TIMEOUT_SECS` | `diagnostics.faulthandler_timeout_secs` | `f64` | `0.0` | Seconds after which faulthandler dumps every thread's stack; 0 (or unset) arms no watchdog. A dump is the only record of where a wedged process was when it stopped answering. |
+| `DEGENBOT_TRACEMALLOC_SECS` | `diagnostics.tracemalloc_secs` | `f64` | `0.0` | Owner: the Python driver shell (a CPython-runtime diagnostic with no core implementation). Interval in seconds between tracemalloc snapshot-diff dumps to stderr; 0 (or unset) arms nothing. A flat traced-current under a climbing RSS pins the growth outside the Python object graph, so the probe splits a memory diagnosis in half. |
+| `DEGENBOT_PROCMEM_SECS` | `diagnostics.procmem_secs` | `f64` | `0.0` | Owner: the Python driver shell (a process-diagnostic probe with no core implementation). Interval in seconds between /proc/self RSS/VmHWM CSV sampler rows; 0 (or unset) arms nothing. The sampler is read-only -- no snapshots, no allocator calls -- so it never perturbs the behavior being measured. |
+| `DEGENBOT_PROCMEM_CSV` | `diagnostics.procmem_csv` | `path` | `logs/procmem.csv` | Owner: the Python driver shell. CSV output file for the procmem sampler, one row per procmem_secs interval. The parent directory is created when the probe arms. |
+| `DEGENBOT_FAULTHANDLER_TIMEOUT_SECS` | `diagnostics.faulthandler_timeout_secs` | `f64` | `0.0` | Owner: the Python driver shell (faulthandler is a CPython facility). Seconds after which faulthandler dumps every thread's stack; 0 (or unset) arms no watchdog. A dump is the only record of where a wedged process was when it stopped answering. |
 ## `logging`
 
 | Env var | TOML key | Type | Default | Description |
@@ -111,7 +111,7 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS` | `builders.tick_fetch_min_interval_ms` | `duration-ms (u64)` | `0` | Minimum interval (ms) between the on-chain tick RPCs the Python companion's tick fetcher issues, pacing a constrained fork/archive source below its advertised rate (dRPC's free plan advertises 100 req/s, so 20 => 50 req/s, leaving headroom for the anvil fork's own background fetching). 0 (or unset) disables the clamp entirely. |
+| `DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS` | `builders.tick_fetch_min_interval_ms` | `duration-ms (u64)` | `0` | Minimum interval (ms) between the on-chain tick RPCs a construction tick fetch issues, pacing a constrained fork/archive source below its advertised rate (dRPC's free plan advertises 100 req/s, so 20 => 50 req/s, leaving headroom for the anvil fork's own background fetching). Honoured by the core construction gate (degenbot_bot::bot_core::construction_io::TickFetchPace) and by the Python tick loop, which reads the same key. 0 (or unset) disables the clamp entirely. |
 ## `solve`
 
 | Env var | TOML key | Type | Default | Description |
@@ -179,26 +179,26 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 | --- | --- | --- | --- | --- |
 | `DEGENBOT_SIM_EXECUTE_GAS` | `simulation.sim_execute_gas` | `Option<u64>` | `(unset; EIP-7825 TX_GAS_LIMIT_CAP)` | Override the execute() gas limit (decimal u64; garbage/0 falls back at the site while migrating). |
 | `DEGENBOT_INJECT_EXECUTOR_CODE` | `simulation.inject_executor_code` | `bool` | `false` | Simulate against executor bytecode injected into the evm overlay instead of a deployed contract. Injection mode also gates live submission off for safety; `1` opts in (dry-run/dev posture). |
-| `DEGENBOT_SIM_EXIT_ON_FAIL` | `simulation.sim_exit_on_fail` | `bool` | `false` | Abort the process when a sim fails (the live trap used to capture V3-hop fixtures). |
+| `DEGENBOT_SIM_EXIT_ON_FAIL` | `simulation.sim_exit_on_fail` | `bool` | `false` | Owner: the Python driver shell's sim-failure trap (the live capture posture, not core policy). Abort the process when a sim fails (used to capture V3-hop fixtures). |
 | `DEGENBOT_PROBE_FIXTURE` | `simulation.probe_fixture` | `Option<path>` | `(unset)` | Corpus fixture for the offline executor A/B probe (ignore-listed test). |
 | `DEGENBOT_PROBE_NS` | `simulation.probe_ns` | `string` | `1,2,4,8,16` | Comma-separated thread-count arms for the offline executor A/B probe. |
 | `DEGENBOT_PROBE_PASSES` | `simulation.probe_passes` | `usize` | `3` | Passes per arm for the offline executor A/B probe. |
 | `DEGENBOT_SIM_PIPELINE_CONCURRENCY` | `simulation.pipeline_concurrency` | `usize` | `8` | Sims in flight per block before the pipeline's submitter is held back; 1 reproduces the serial reference (one sim, FIFO submit) for an offline soak. Clamped to >= 1 at the use site. |
-| `DEGENBOT_SIM_EXIT_IGNORE_BUCKETS` | `simulation.exit_ignore_buckets` | `string` | `(empty)` | Comma-separated failure buckets the sim-failure tripwire does not count (e.g. `empty,short`). The trap itself is simulation.sim_exit_on_fail; this only narrows an ARMED trap, and there is no default ignore set -- an unlisted bucket stops the bot. |
+| `DEGENBOT_SIM_EXIT_IGNORE_BUCKETS` | `simulation.exit_ignore_buckets` | `string` | `(empty)` | Owner: the Python driver shell's sim-failure trap. Comma-separated failure buckets the sim-failure tripwire does not count (e.g. `empty,short`). The trap itself is simulation.sim_exit_on_fail; this only narrows an ARMED trap, and there is no default ignore set -- an unlisted bucket stops the bot. |
 ## `pathfinding`
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `DEGENBOT_DISCOVERY_BATCH_SIZE` | `pathfinding.discovery_batch_size` | `usize` | `1000` | Discovery-sweep delivery batch size (paths per async batch): the worker thread collects this many paths before the async consumer yields them and gives the event loop one turn. A value <= 1 falls back to the legacy per-path delivery. |
+| `DEGENBOT_DISCOVERY_BATCH_SIZE` | `pathfinding.discovery_batch_size` | `usize` | `1000` | Owner: the driver loop (asyncio batching; the native console registers differently). Discovery-sweep delivery batch size (paths per async batch): the worker thread collects this many paths before the async consumer yields them and gives the event loop one turn. A value <= 1 falls back to the legacy per-path delivery. |
 | `DEGENBOT_MAX_PATHS` | `pathfinding.max_registered_paths` | `usize` | `100000` | Ceiling on total registered arbitrage paths, applied before discovery runs so a discovery-heavy skip-fest stops instead of registering millions. 0 means uncapped. |
-| `DEGENBOT_REG_PROGRESS_SECS` | `pathfinding.reg_progress_secs` | `f64` | `30.0` | Seconds between registration-progress summaries, which fire on the interval even when the path count never crosses a discovery_batch_size boundary. 0 emits on every update. |
+| `DEGENBOT_REG_PROGRESS_SECS` | `pathfinding.reg_progress_secs` | `f64` | `30.0` | Owner: the driver loop's renderer. Seconds between registration-progress summaries, which fire on the interval even when the path count never crosses a discovery_batch_size boundary. 0 emits on every update. |
 ## `dispatch`
 
 | Env var | TOML key | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | `DEGENBOT_ERC6909_PROFIT` | `dispatch.erc6909_profit` | `bool` | `false` | Capture profit through an ERC-6909 vault claim instead of a plain transfer; `1` opts in. The two capture paths need different executor bytecode, so this selects the whole post-profit seam. |
 | `DEGENBOT_MIN_PROFIT_MARGIN_BPS` | `dispatch.min_profit_margin_bps` | `u64` | `0` | Driver-side profit floor in basis points (1/100 of a percent) applied at the simulation seam before a candidate is dispatched. A floor is a magnitude, so the key is unsigned end to end: a negative value is refused by the layer that supplied it, not clamped into a silent second default. This is NOT solve.min_profit_wei, which is the core's own floor: the two arms of the simulation seam are measured against their own floors, so naming one does not size the other. |
-| `DEGENBOT_CONTRACTS_DIR` | `dispatch.contracts_dir` | `Option<path>` | `(unset)` | Directory holding the executor runtime bytecode file the sim injects; unset falls through to the source-layout candidate the driver computes, and a wheel install must set it (or pass the file path explicitly). |
+| `DEGENBOT_CONTRACTS_DIR` | `dispatch.contracts_dir` | `Option<path>` | `(unset)` | Owner: the driver shell's deployment policy. Directory holding the executor runtime bytecode file the sim injects; unset falls through to the source-layout candidate the driver computes, and a wheel install must set it (or pass the file path explicitly). |
 ## `strategy.settlement`
 
 | Env var | TOML key | Type | Default | Description |
