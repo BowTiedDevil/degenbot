@@ -97,7 +97,7 @@ impl PoolLookup {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity
-                .take_v3_snapshot_seed(&mut state.registry, *address),
+                .take_snapshot_seed::<V3Family>(&mut state.registry, address),
             Self::V4 {
                 pool_manager,
                 pool_id,
@@ -191,7 +191,7 @@ impl PoolLookup {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity
-                .take_v3_post_drain_snapshot(&mut state.registry, *address),
+                .take_post_drain_snapshot::<V3Family>(&mut state.registry, address),
             Self::V4 {
                 pool_manager,
                 pool_id,

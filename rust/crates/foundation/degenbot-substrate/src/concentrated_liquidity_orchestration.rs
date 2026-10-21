@@ -199,6 +199,10 @@ pub(crate) trait RegistrationState {
     fn coverage(&self) -> PoolTickCoverage;
     /// The block the pool's tick data reflects.
     fn update_block(&self) -> u64;
+    /// The pinned snapshot seed (consumed once by step-1 verify).
+    fn snapshot_seed_mut(&mut self) -> &mut Option<HashMap<i32, TickInfo>>;
+    /// The pinned post-drain `(tick_data, block)` pair (consumed once by step-2 verify).
+    fn post_drain_snapshot_mut(&mut self) -> &mut Option<(HashMap<i32, TickInfo>, u64)>;
 }
 
 impl RegistrationState for V3PoolState {
@@ -213,6 +217,14 @@ impl RegistrationState for V3PoolState {
     fn update_block(&self) -> u64 {
         self.update_block
     }
+
+    fn snapshot_seed_mut(&mut self) -> &mut Option<HashMap<i32, TickInfo>> {
+        &mut self.snapshot_seed
+    }
+
+    fn post_drain_snapshot_mut(&mut self) -> &mut Option<(HashMap<i32, TickInfo>, u64)> {
+        &mut self.post_drain_snapshot
+    }
 }
 
 impl RegistrationState for V4PoolState {
@@ -226,6 +238,14 @@ impl RegistrationState for V4PoolState {
 
     fn update_block(&self) -> u64 {
         self.update_block
+    }
+
+    fn snapshot_seed_mut(&mut self) -> &mut Option<HashMap<i32, TickInfo>> {
+        &mut self.snapshot_seed
+    }
+
+    fn post_drain_snapshot_mut(&mut self) -> &mut Option<(HashMap<i32, TickInfo>, u64)> {
+        &mut self.post_drain_snapshot
     }
 }
 
@@ -1035,20 +1055,29 @@ impl ConcentratedLiquidityOrchestration {
     pub fn set_snapshot_seed_block(&mut self, s: Option<u64>) {
         self.snapshot_seed_block = s;
     }
-    /// Take (move out + clear) the pinned snapshot seed for a V3 pool.
-    /// Step-1 verify calls this to read+free the seed in one pass — the seed is
-    /// verified exactly once (at the snapshot block during `build_paths`), then
-    /// released to bound memory across 18k pools. Returns `None` for sparse
-    /// pools or if already taken.
-    pub(crate) fn take_v3_snapshot_seed(
+    /// Consume the pinned snapshot seed for either key shape (exactly once, so
+    /// the memory is bounded). `None` when the pool is unregistered or the seed
+    /// was already taken.
+    pub(crate) fn take_snapshot_seed<F: LiquidityFamily>(
         &mut self,
         reg: &mut RegistryCore,
-        address: Address,
+        key: &F::Key,
     ) -> Option<HashMap<i32, TickInfo>> {
-        let &pool_id = reg.pool_addresses.get(&address)?;
-        let (_identity, state) = reg.pools.get_mut(&pool_id).and_then(PoolEntry::v3_mut)?;
-        state.snapshot_seed.take()
+        let pool_id = F::pool_id(self, reg, key)?;
+        F::state_mut(reg, pool_id)?.snapshot_seed_mut().take()
     }
+
+    /// Consume the pinned post-drain `(tick_data, block)` pair for either key
+    /// shape (exactly once).
+    pub(crate) fn take_post_drain_snapshot<F: LiquidityFamily>(
+        &mut self,
+        reg: &mut RegistryCore,
+        key: &F::Key,
+    ) -> Option<(HashMap<i32, TickInfo>, u64)> {
+        let pool_id = F::pool_id(self, reg, key)?;
+        F::state_mut(reg, pool_id)?.post_drain_snapshot_mut().take()
+    }
+
     /// Pin the **post-drain** `(tick_data, block)` pair for a V3 pool (the step-2
     /// rolling-start race fix). Captures a frozen copy of the current
     /// `tick_data` alongside the `update_block` it was computed at — called
@@ -1160,24 +1189,6 @@ impl ConcentratedLiquidityOrchestration {
                 }
             }
         }
-    }
-    /// Take (move out + clear) the pinned post-drain `(tick_data, block)` pair
-    /// for a V3 pool. Step-2 verify calls this to read+free the pin in one
-    /// pass — the pin is verified exactly once (at the pinned block during
-    /// `build_paths`), then released to bound memory. The returned block is the
-    /// `tick_data_block` (liquidity clock, two-stamp rule) captured
-    /// atomically with the drain; the verify compares
-    /// `tick_data` against on-chain@THIS block, NOT a caller-supplied
-    /// `verify_backfill_block` constant. Returns `None` for sparse pools, pools
-    /// with no drain-yet pin, or if already taken (no-op Ok at the seam).
-    pub(crate) fn take_v3_post_drain_snapshot(
-        &mut self,
-        reg: &mut RegistryCore,
-        address: Address,
-    ) -> Option<(HashMap<i32, TickInfo>, u64)> {
-        let &pool_id = reg.pool_addresses.get(&address)?;
-        let (_identity, state) = reg.pools.get_mut(&pool_id).and_then(PoolEntry::v3_mut)?;
-        state.post_drain_snapshot.take()
     }
     /// Full-sync a V3 pool's `tick_data` from an external source (e.g. Python
     /// backfill). Replaces the entire `tick_data` map (so ticks Burn-removed
@@ -1885,18 +1896,6 @@ impl ConcentratedLiquidityOrchestration {
             coverage: state.coverage,
         })
     }
-    /// Take (move out + clear) the pinned snapshot seed for a V4 pool.
-    /// V4 twin of `take_v3_snapshot_seed` — step-1 verify consumes the seed once.
-    pub(crate) fn take_v4_snapshot_seed(
-        &mut self,
-        reg: &mut RegistryCore,
-        pool_manager: Address,
-        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
-    ) -> Option<HashMap<i32, TickInfo>> {
-        let pid = self.pool_id_by_key(pool_manager, pool_id)?;
-        let (_identity, state) = reg.pools.get_mut(&pid).and_then(PoolEntry::v4_mut)?;
-        state.snapshot_seed.take()
-    }
     /// Pin the post-drain `(tick_data, block)` pair for a V4 pool (step-2 race
     /// fix, V4 twin of `pin_v3_post_drain_snapshot`). Captures a frozen copy
     /// of the current `tick_data` alongside the `update_block` it was computed
@@ -1989,23 +1988,6 @@ impl ConcentratedLiquidityOrchestration {
                 }
             }
         }
-    }
-    /// Take (move out + clear) the V4 post-drain `(tick_data, block)` pair.
-    /// Step-2 verify consumes it once (at the pinned block). The returned
-    /// block is the `tick_data_block` (liquidity clock, two-stamp rule)
-    /// captured atomically with the drain; the verify compares `tick_data`
-    /// against on-chain@THIS block, NOT a caller-supplied
-    /// `verify_backfill_block` constant. `None` for sparse / un-drained /
-    /// already-taken pools (no-op Ok at the seam).
-    pub(crate) fn take_v4_post_drain_snapshot(
-        &mut self,
-        reg: &mut RegistryCore,
-        pool_manager: Address,
-        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
-    ) -> Option<(HashMap<i32, TickInfo>, u64)> {
-        let pid = self.pool_id_by_key(pool_manager, pool_id)?;
-        let (_identity, state) = reg.pools.get_mut(&pid).and_then(PoolEntry::v4_mut)?;
-        state.post_drain_snapshot.take()
     }
     /// Number of pools registered under a `(pool_manager, pool_id)` key.
     #[must_use]
@@ -2689,7 +2671,7 @@ impl BotState {
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<HashMap<i32, TickInfo>> {
         self.concentrated_liquidity
-            .take_v4_snapshot_seed(&mut self.registry, pool_manager, pool_id)
+            .take_snapshot_seed::<V4Family>(&mut self.registry, &(pool_manager, *pool_id))
     }
 
     /// The registration-key-keyed post-drain pin (the capability's
@@ -2712,11 +2694,8 @@ impl BotState {
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<(HashMap<i32, TickInfo>, u64)> {
-        self.concentrated_liquidity.take_v4_post_drain_snapshot(
-            &mut self.registry,
-            pool_manager,
-            pool_id,
-        )
+        self.concentrated_liquidity
+            .take_post_drain_snapshot::<V4Family>(&mut self.registry, &(pool_manager, *pool_id))
     }
 
     /// Snapshot all key-registered (V4) pool state for verification.
