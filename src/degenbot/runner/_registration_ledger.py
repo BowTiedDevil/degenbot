@@ -244,8 +244,9 @@ class RegistrationLedger:
             return None
         return registration_pool_memo_key(label, str(step.address).lower(), None)
 
-    def address_memo_key(self, address: str) -> str | None:
-        """The canonical memo key for a contract-address pool.
+    @staticmethod
+    def address_memo_key(address: str) -> str | None:
+        """Build the canonical memo key for a contract-address pool.
 
         The verify-once fact and the negative memos must key a pool the same
         way, so both go through this constructor rather than formatting a
@@ -253,14 +254,17 @@ class RegistrationLedger:
 
         Returns:
             The memo key, or ``None`` when the address is not a pool identity.
+
         """
         return registration_pool_memo_key("V3", str(address).lower(), None)
 
-    def pool_id_memo_key(self, pool_id: str) -> str | None:
-        """The canonical memo key for a V4 pool, by its on-chain id.
+    @staticmethod
+    def pool_id_memo_key(pool_id: str) -> str | None:
+        """Build the canonical memo key for a V4 pool, by its on-chain id.
 
         Returns:
             The memo key, or ``None`` when the id is not a pool identity.
+
         """
         return registration_pool_memo_key("V4", None, str(pool_id))
 
