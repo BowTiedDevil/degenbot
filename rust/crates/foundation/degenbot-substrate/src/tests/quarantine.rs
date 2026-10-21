@@ -424,7 +424,7 @@ fn quarantined_v4_pool_defers_live_modify_liquidity_to_pump_buffer() {
     // Deliver a live Burn (negative ModifyLiquidity) at block 11.
     core.apply_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-500i128).unwrap(), 11).unwrap(),
@@ -546,7 +546,7 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
     // retained by the gate during quarantine.
     core.apply_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-50i128).unwrap(), 11).unwrap(),
@@ -597,7 +597,7 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
     // A subsequent live event applies directly (no buffering).
     core.apply_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(10i128).unwrap(), 12).unwrap(),
@@ -638,7 +638,7 @@ fn live_pool_applies_modify_liquidity_directly() {
     // Now Live — applies directly, never buffers.
     core.apply_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-50i128).unwrap(), 11).unwrap(),
@@ -685,7 +685,7 @@ fn quarantined_pool_dual_buffer_drain_correctness() {
     // an UNregistered pool → backfill buffer.
     core.buffer_backfill_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(30i128).unwrap(), 8).unwrap(),
@@ -704,14 +704,14 @@ fn quarantined_pool_dual_buffer_drain_correctness() {
     // event (block 11) — both deferred to the pump buffer.
     core.apply_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(20i128).unwrap(), 10).unwrap(),
     );
     core.apply_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-15i128).unwrap(), 11).unwrap(),
@@ -792,7 +792,7 @@ fn quarantined_pool_backfill_always_fully_drained() {
     // A backfill event at block 9 (gap S+1..W-1). No pump buffer events.
     core.buffer_backfill_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(40i128).unwrap(), 9).unwrap(),
@@ -877,7 +877,7 @@ fn concurrent_registration_lifecycle_invariant() {
     // 11. All deferred to their respective pump buffers.
     core.apply_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_ids[0].0,
         },
         PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(-10i128).unwrap(), 11).unwrap(),
@@ -895,7 +895,7 @@ fn concurrent_registration_lifecycle_invariant() {
     );
     core.apply_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_ids[2].0,
         },
         PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(5i128).unwrap(), 11).unwrap(),
@@ -983,7 +983,7 @@ fn lifecycle_invariant_swap_before_mint_same_inprogress_block() {
     );
     core.apply_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(25i128).unwrap(), 11).unwrap(),
@@ -1045,7 +1045,7 @@ fn reorg_during_quarantine_pin_is_independent_of_live_rollback() {
     // A complete-block Mint at 10 (applied at drain), then pin.
     core.apply_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(50i128).unwrap(), 10).unwrap(),

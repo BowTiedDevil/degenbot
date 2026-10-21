@@ -664,7 +664,7 @@ fn apply_backfill_buffer_v4_journals_and_advances_update_block() {
     let mut core = BotState::new();
     core.buffer_backfill_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(500i128).unwrap(), block_b)
@@ -926,7 +926,7 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
     assert_eq!(
         core_b.apply_liquidity_update(
             PoolLookup::V4 {
-                pool_manager: pool_manager,
+                pool_manager,
                 pool_id: pool_id_bytes
             },
             PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(500i128).unwrap(), block_b)
@@ -1096,7 +1096,7 @@ fn get_v3_or_v4_pool_reads_v4_tick_data_matching_apply_v4_liquidity_update() {
     let _ = core_a.apply_liquidity_update_by_pool_id(id_a, 60, 120, 700, block_b);
     let _ = core_b.apply_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(700i128).unwrap(), block_b)

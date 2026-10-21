@@ -591,7 +591,7 @@ fn v4_snapshot_seed_survives_pump_modify_liquidity() {
     // Pump applies a ModifyLiquidity at block 1, mutating tick -60's gross.
     core.apply_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(-60, 60, I256::try_from(500_i128).unwrap(), 1).unwrap(),
@@ -709,7 +709,7 @@ fn v4_post_drain_snapshot_survives_pump_modify_liquidity() {
     // Pump ModifyLiquidity lands AFTER the drain.
     core.apply_liquidity_update(
         PoolLookup::V4 {
-            pool_manager: pool_manager,
+            pool_manager,
             pool_id: pool_id_bytes,
         },
         PoolLiquidityUpdate::from_v4_wire(-60, 60, I256::try_from(500_i128).unwrap(), 1).unwrap(),
