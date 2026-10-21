@@ -1131,7 +1131,7 @@ mod tests {
         // Tracked pools register `Quarantined`; transition to `Live`
         // (the driver's post-verify `set_live`) so the dispatched Mint
         // direct-applies as this test models.
-        PoolLookup::Address(pool_addr)
+        PoolLookup::from_address(pool_addr)
             .set_live(&mut state.write_at(crate::state_lock::LockSite::Core));
 
         // The exact Mint log emitted at block 25390812 (decoded from cast).

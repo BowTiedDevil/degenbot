@@ -471,7 +471,7 @@ async fn verify_one(
             // lifecycle.
             let result = driver
                 .run_registration_lifecycle_with_retry(
-                    degenbot::bot_core::PoolLookup::Address(address),
+                    degenbot::bot_core::PoolLookup::from_address(address),
                     block,
                     &policy,
                 )

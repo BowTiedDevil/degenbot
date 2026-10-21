@@ -511,7 +511,7 @@ fn apply_backfill_buffer_v3_journals_and_advances_update_block() {
     let pool_id = register_v3_on_core(&mut core, pool_addr, 0);
 
     // 3. Apply the backfill buffer (the registration-staged application).
-    core.apply_backfill_buffer(&pool_addr);
+    PoolLookup::from_address(*pool_addr).backfill(&mut core);
 
     {
         let s = core
@@ -584,7 +584,7 @@ fn apply_pump_buffer_v3_journals_and_advances_update_block() {
     // buffered Mint instead of leaving it pinned behind the gate.
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(block_b);
-    core.apply_pump_buffer(&pool_addr);
+    PoolLookup::from_address(*pool_addr).pump(&mut core);
 
     {
         let s = core

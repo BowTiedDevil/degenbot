@@ -1905,7 +1905,7 @@ mod tests {
         let key = verify_claim_key("v3", &alloy::hex::encode_prefixed(address));
 
         driver
-            .run_registration_lifecycle(PoolLookup::Address(address), None)
+            .run_registration_lifecycle(PoolLookup::from_address(address), None)
             .await
             .expect("first lifecycle");
         assert!(driver.is_pool_verified(&key), "success records the fact");
@@ -1924,7 +1924,7 @@ mod tests {
         register_v3(&driver, address, PoolTickCoverage::Tracked);
 
         driver
-            .run_registration_lifecycle(PoolLookup::Address(address), None)
+            .run_registration_lifecycle(PoolLookup::from_address(address), None)
             .await
             .expect("a verified pool is not re-verified");
         assert_eq!(driver.verified_pool_count(), 1);
@@ -1976,7 +1976,7 @@ mod tests {
         for _ in 0..2 {
             assert!(
                 driver
-                    .run_registration_lifecycle(PoolLookup::Address(address), None)
+                    .run_registration_lifecycle(PoolLookup::from_address(address), None)
                     .await
                     .is_err(),
                 "a tracked pool with no provider fails"
@@ -2013,7 +2013,7 @@ mod tests {
         );
 
         driver
-            .run_registration_lifecycle(PoolLookup::Address(shared_address), None)
+            .run_registration_lifecycle(PoolLookup::from_address(shared_address), None)
             .await
             .expect("V3 lifecycle");
         assert!(driver.is_pool_verified(&v3_key));

@@ -228,7 +228,7 @@ fn sparse_pool_ignores_set_quarantined() {
     let pool_addr = Address::from([0x77u8; 20]);
     // register_v3_on_core uses Sparse coverage.
     register_v3_on_core(&mut core, pool_addr, 0);
-    PoolLookup::Address(pool_addr).quarantine(&mut core);
+    PoolLookup::from_address(pool_addr).quarantine(&mut core);
     assert_eq!(
         core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(
             core.pool_id_by_address(&pool_addr).unwrap()

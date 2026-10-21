@@ -28,10 +28,10 @@ async fn scenario_a_buffered_mint_is_drained_into_pin() {
     let (tick_data, pinned_block) = {
         let state = bot.state_arc();
         let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
-        core.apply_backfill_buffer(&pool_addr);
-        core.apply_pump_buffer(&pool_addr);
-        PoolLookup::Address(pool_addr).pin_post_drain(&mut core);
-        PoolLookup::Address(pool_addr)
+        PoolLookup::from_address(*pool_addr).backfill(&mut core);
+        PoolLookup::from_address(*pool_addr).pump(&mut core);
+        PoolLookup::from_address(pool_addr).pin_post_drain(&mut core);
+        PoolLookup::from_address(pool_addr)
             .take_post_drain(&mut core)
             .expect("Tracked pool pins after drain")
     };
@@ -104,10 +104,10 @@ async fn scenario_c_two_adjacent_same_block_mints_both_applied_to_pin() {
     let (tick_data, pinned_block) = {
         let state = bot.state_arc();
         let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
-        core.apply_backfill_buffer(&pool_addr);
-        core.apply_pump_buffer(&pool_addr);
-        PoolLookup::Address(pool_addr).pin_post_drain(&mut core);
-        PoolLookup::Address(pool_addr)
+        PoolLookup::from_address(*pool_addr).backfill(&mut core);
+        PoolLookup::from_address(*pool_addr).pump(&mut core);
+        PoolLookup::from_address(pool_addr).pin_post_drain(&mut core);
+        PoolLookup::from_address(pool_addr)
             .take_post_drain(&mut core)
             .expect("Tracked pool pins after drain")
     };
@@ -161,10 +161,10 @@ async fn scenario_b_dropped_mint_reproduces_verify_mismatch_symptom() {
     let (tick_data, pinned_block) = {
         let state = bot.state_arc();
         let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
-        core.apply_backfill_buffer(&pool_addr);
-        core.apply_pump_buffer(&pool_addr);
-        PoolLookup::Address(pool_addr).pin_post_drain(&mut core);
-        PoolLookup::Address(pool_addr)
+        PoolLookup::from_address(*pool_addr).backfill(&mut core);
+        PoolLookup::from_address(*pool_addr).pump(&mut core);
+        PoolLookup::from_address(pool_addr).pin_post_drain(&mut core);
+        PoolLookup::from_address(pool_addr)
             .take_post_drain(&mut core)
             .expect("Tracked pool pins after drain")
     };
@@ -245,7 +245,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
             })
             .expect("fuzz registration");
             if roles[i] == 2 {
-                PoolLookup::Address(*addr).quarantine(&mut core);
+                PoolLookup::from_address(*addr).quarantine(&mut core);
             }
         }
 
@@ -366,14 +366,14 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
                 ..Default::default()
             })
             .expect("late fuzz registration");
-            PoolLookup::Address(*addr).quarantine(&mut core);
+            PoolLookup::from_address(*addr).quarantine(&mut core);
         }
         for addr in &addrs {
             let state = bot.state_arc();
             let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
-            core.apply_backfill_buffer(addr);
-            core.apply_pump_buffer(addr);
-            PoolLookup::Address(*addr).set_live(&mut core);
+            PoolLookup::from_address(*addr).backfill(&mut core);
+            PoolLookup::from_address(*addr).pump(&mut core);
+            PoolLookup::from_address(*addr).set_live(&mut core);
         }
 
         // ORACLE COMPARISON.
@@ -470,7 +470,7 @@ async fn fuwyur_live_mint_for_unregistered_pool_survives_late_registration() {
             ..Default::default()
         })
         .expect("late V3 registration");
-        PoolLookup::Address(pool_addr).quarantine(&mut core);
+        PoolLookup::from_address(pool_addr).quarantine(&mut core);
     }
 
     // Registration drain+pin seam, then set_live flush of the retained
@@ -478,9 +478,9 @@ async fn fuwyur_live_mint_for_unregistered_pool_survives_late_registration() {
     let tick_data = {
         let state = bot.state_arc();
         let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
-        core.apply_backfill_buffer(&pool_addr);
-        core.apply_pump_buffer(&pool_addr);
-        PoolLookup::Address(pool_addr).set_live(&mut core);
+        PoolLookup::from_address(*pool_addr).backfill(&mut core);
+        PoolLookup::from_address(*pool_addr).pump(&mut core);
+        PoolLookup::from_address(pool_addr).set_live(&mut core);
         let pool_id = core.pool_id_by_address(&pool_addr).unwrap();
         core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
             .expect("registered")
@@ -562,10 +562,10 @@ async fn scenario_a_race_concurrent_drain_cannot_produce_symptom() {
     let pin_after_mint1 = {
         let state = bot.state_arc();
         let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
-        core.apply_backfill_buffer(&pool_addr);
-        core.apply_pump_buffer(&pool_addr);
-        PoolLookup::Address(pool_addr).pin_post_drain(&mut core);
-        PoolLookup::Address(pool_addr).take_post_drain(&mut core)
+        PoolLookup::from_address(*pool_addr).backfill(&mut core);
+        PoolLookup::from_address(*pool_addr).pump(&mut core);
+        PoolLookup::from_address(pool_addr).pin_post_drain(&mut core);
+        PoolLookup::from_address(pool_addr).take_post_drain(&mut core)
     };
     // Release the pump to feed Mint2 + Swap (tombstone N, cutoff = N).
     let _ = drain_done_tx.send(());
@@ -592,7 +592,7 @@ async fn scenario_a_race_concurrent_drain_cannot_produce_symptom() {
     let live_gross = {
         let state = bot.state_arc();
         let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
-        core.apply_pump_buffer(&pool_addr);
+        PoolLookup::from_address(*pool_addr).pump(&mut core);
         let pool_id = core.pool_id_by_address(&pool_addr).unwrap();
         core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
             .unwrap()

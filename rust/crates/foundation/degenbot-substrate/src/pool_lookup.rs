@@ -41,6 +41,11 @@ pub enum PoolLookup {
 }
 
 impl PoolLookup {
+    /// The address-keyed lookup, for any key that converts to an `Address`.
+    pub fn from_address(address: impl Into<Address>) -> Self {
+        Self::Address(address.into())
+    }
+
     /// The pool's tick coverage, or `None` when the pool is not registered
     /// under this key (the machine's no-op arm).
     pub fn coverage(&self, state: &BotState) -> Option<PoolTickCoverage> {
@@ -102,8 +107,12 @@ impl PoolLookup {
     pub fn drain(&self, state: &mut BotState) {
         match self {
             Self::Address(address) => {
-                state.apply_backfill_buffer(address);
-                state.apply_pump_buffer(address);
+                state
+                    .concentrated_liquidity
+                    .apply_backfill_buffer_v3(&mut state.registry, address);
+                state
+                    .concentrated_liquidity
+                    .apply_pump_buffer_v3(&mut state.registry, address);
             }
             Self::V4 {
                 pool_manager,
@@ -112,6 +121,33 @@ impl PoolLookup {
                 state.apply_backfill_buffer_by_key(*pool_manager, *pool_id);
                 state.apply_pump_buffer_by_key(*pool_manager, *pool_id);
             }
+        }
+    }
+
+    /// Apply only the buffered backfill onto the pool (the granular half of
+    /// [`Self::drain`], for a caller that has already pumped or must not).
+    pub fn backfill(&self, state: &mut BotState) {
+        match self {
+            Self::Address(address) => state
+                .concentrated_liquidity
+                .apply_backfill_buffer_v3(&mut state.registry, address),
+            Self::V4 {
+                pool_manager,
+                pool_id,
+            } => state.apply_backfill_buffer_by_key(*pool_manager, *pool_id),
+        }
+    }
+
+    /// Apply only the buffered pump events onto the pool.
+    pub fn pump(&self, state: &mut BotState) {
+        match self {
+            Self::Address(address) => state
+                .concentrated_liquidity
+                .apply_pump_buffer_v3(&mut state.registry, address),
+            Self::V4 {
+                pool_manager,
+                pool_id,
+            } => state.apply_pump_buffer_by_key(*pool_manager, *pool_id),
         }
     }
 

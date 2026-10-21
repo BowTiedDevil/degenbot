@@ -215,7 +215,7 @@ where
 {
     run_verify_lifecycle(
         core,
-        PoolLookup::Address(address),
+        PoolLookup::from_address(address),
         snapshot_block,
         verify_seed,
         verify_post_drain,

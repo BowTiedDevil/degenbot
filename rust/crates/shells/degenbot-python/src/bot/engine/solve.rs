@@ -114,9 +114,9 @@ impl PyArbEngine {
         py.detach(move || {
             let core = stages.core();
             let mut core = core.write_at(degenbot_substrate::state_lock::LockSite::Python);
-            core.apply_backfill_buffer(&addr);
-            core.apply_pump_buffer(&addr);
-            PoolLookup::Address(addr).pin_post_drain(&mut core);
+            PoolLookup::from_address(*addr).backfill(&mut core);
+            PoolLookup::from_address(*addr).pump(&mut core);
+            PoolLookup::from_address(addr).pin_post_drain(&mut core);
         });
         Ok(())
     }
@@ -163,7 +163,7 @@ impl PyArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_core_mut(py, |s| PoolLookup::Address(addr).quarantine(&mut *s));
+        self.with_core_mut(py, |s| PoolLookup::from_address(addr).quarantine(&mut *s));
         Ok(())
     }
 
@@ -196,7 +196,7 @@ impl PyArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_core_mut(py, |s| PoolLookup::Address(addr).set_live(&mut *s));
+        self.with_core_mut(py, |s| PoolLookup::from_address(addr).set_live(&mut *s));
         Ok(())
     }
 

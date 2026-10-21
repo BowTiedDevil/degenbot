@@ -2138,18 +2138,6 @@ impl BotState {
             );
     }
 
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_backfill_buffer_v3`].
-    pub fn apply_backfill_buffer(&mut self, address: &Address) {
-        self.concentrated_liquidity
-            .apply_backfill_buffer_v3(&mut self.registry, address);
-    }
-
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_pump_buffer_v3`].
-    pub fn apply_pump_buffer(&mut self, address: &Address) {
-        self.concentrated_liquidity
-            .apply_pump_buffer_v3(&mut self.registry, address);
-    }
-
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_snapshot_seed_block`].
     pub fn set_snapshot_seed_block(&mut self, s: Option<u64>) {
         self.concentrated_liquidity.set_snapshot_seed_block(s);

@@ -231,7 +231,7 @@ fn v3_snapshot_seed_survives_pump_liquidity_update() {
     // Tracked pools register `Quarantined`; transition to `Live`
     // (the driver's post-verify `set_live`) so the pump update below
     // direct-applies as this test models.
-    PoolLookup::Address(v3_addr).set_live(&mut core);
+    PoolLookup::from_address(v3_addr).set_live(&mut core);
 
     // The seed is pinned at registration for Tracked (snapshot) pools.
     assert_eq!(
@@ -266,7 +266,7 @@ fn v3_snapshot_seed_survives_pump_liquidity_update() {
 
     // `take_v3_snapshot_seed` returns the seed once and clears the slot
     // (memory is freed after step-1 verify; the seed is never needed again).
-    let taken = PoolLookup::Address(v3_addr).take_seed(&mut core);
+    let taken = PoolLookup::from_address(v3_addr).take_seed(&mut core);
     assert_eq!(taken, Some(seed_clone), "take returns the pinned seed");
     assert_eq!(
         core.snapshot_seed(v3_addr),
@@ -322,12 +322,12 @@ fn v3_post_drain_snapshot_survives_pump_liquidity_update() {
     .expect("test setup: V3 registration");
     // Tracked pools register `Quarantined`; transition to `Live` so
     // the pump Mint below direct-applies (this test's model).
-    PoolLookup::Address(v3_addr).set_live(&mut core);
+    PoolLookup::from_address(v3_addr).set_live(&mut core);
 
     // Pin the post-drain state atomically with the drain (no buffer here →
     // pin == current tick_data == the seed at registration). This is what
     // `apply_buffer_v3` does inside its single core.write() hold.
-    PoolLookup::Address(v3_addr).pin_post_drain(&mut core);
+    PoolLookup::from_address(v3_addr).pin_post_drain(&mut core);
 
     // A pump Mint lands AFTER the drain — mutating the live tick_data.
     core.apply_liquidity_update(v3_addr, -60, 60, 500_i128, 1);
@@ -347,7 +347,7 @@ fn v3_post_drain_snapshot_survives_pump_liquidity_update() {
 
     // ... but the pinned post-drain snapshot is UNCHANGED — step-2 verifies
     // the drain-time state, not the pump-corrupted current.
-    let taken = PoolLookup::Address(v3_addr).take_post_drain(&mut core);
+    let taken = PoolLookup::from_address(v3_addr).take_post_drain(&mut core);
     let (tick_data, pinned_block) = taken.expect("Tracked pool pins post-drain");
     assert_eq!(
         tick_data, drain_clone,
@@ -358,7 +358,7 @@ fn v3_post_drain_snapshot_survives_pump_liquidity_update() {
         "no buffer events drained → pin's block is the registration update_block (0)"
     );
     assert_eq!(
-        PoolLookup::Address(v3_addr).take_post_drain(&mut core),
+        PoolLookup::from_address(v3_addr).take_post_drain(&mut core),
         None,
         "take clears the post-drain slot (verified exactly once)"
     );
@@ -388,9 +388,9 @@ fn v3_post_drain_snapshot_is_none_for_sparse_pools() {
         ..Default::default()
     })
     .expect("test setup: V3 registration");
-    PoolLookup::Address(v3_addr).pin_post_drain(&mut core);
+    PoolLookup::from_address(v3_addr).pin_post_drain(&mut core);
     assert_eq!(
-        PoolLookup::Address(v3_addr).take_post_drain(&mut core),
+        PoolLookup::from_address(v3_addr).take_post_drain(&mut core),
         None,
         "sparse pools must not pin post-drain (no complete tick_data)"
     );
@@ -468,20 +468,20 @@ fn v3_post_drain_snapshot_carries_drained_block_not_backfill_block() {
 
     // Drain both buffers + pin — exactly what `apply_buffer_v3` does
     // inside its single `core.write()` hold.
-    core.apply_backfill_buffer(&v3_addr);
+    PoolLookup::from_address(*v3_addr).backfill(&mut core);
     // the gated pump drain only yields fully-completed blocks.
     // Mirror the live pump's ADR-008 D1 tombstone (first log of
     // `pump_block`+1 closes `pump_block`) so the drain takes the pump
     // Mint at `pump_block` rather than leaving it behind the gate.
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(pump_block);
-    core.apply_pump_buffer(&v3_addr);
-    PoolLookup::Address(v3_addr).pin_post_drain(&mut core);
+    PoolLookup::from_address(*v3_addr).pump(&mut core);
+    PoolLookup::from_address(v3_addr).pin_post_drain(&mut core);
 
     // The pin must carry the pump event's block — the block the drained
     // `tick_data` actually matches on-chain at. Pre-fix the pin carried no
     // block at all and the verify used `backfill_block` → false mismatch.
-    let taken = PoolLookup::Address(v3_addr).take_post_drain(&mut core);
+    let taken = PoolLookup::from_address(v3_addr).take_post_drain(&mut core);
     let (tick_data, pinned_block) = taken.expect("Tracked pool pins post-drain");
     assert_eq!(
         pinned_block, pump_block,
@@ -500,7 +500,7 @@ fn v3_post_drain_snapshot_carries_drained_block_not_backfill_block() {
 
     // Idempotent take: second call returns None (verified exactly once).
     assert_eq!(
-        PoolLookup::Address(v3_addr).take_post_drain(&mut core),
+        PoolLookup::from_address(v3_addr).take_post_drain(&mut core),
         None,
         "take clears the pin slot (verified exactly once)"
     );
@@ -786,7 +786,7 @@ fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
         .expect("test setup: V3 registration");
     // Quarantine so live Mint/Burn route to the pump buffer (the
     // registration-seam posture during drain+pin+verify).
-    PoolLookup::Address(pool_addr).quarantine(&mut core);
+    PoolLookup::from_address(pool_addr).quarantine(&mut core);
     // Pump-buffer a Mint + a same-block Burn for block 100.
     core.apply_liquidity_update(pool_addr, -10, 10, 500_i128, 100);
     core.apply_liquidity_update(pool_addr, -10, 10, -500_i128, 100);
@@ -811,9 +811,9 @@ fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
     // Drain + pin: the gated drain yields both events, then the pin
     // captures the post-drain pair. (apply_pump_buffer_v3 + pin are the
     // exact sequence the registration seam runs.)
-    core.apply_pump_buffer(&pool_addr);
-    PoolLookup::Address(pool_addr).pin_post_drain(&mut core);
-    let (pinned_ticks, pinned_block) = PoolLookup::Address(pool_addr)
+    PoolLookup::from_address(*pool_addr).pump(&mut core);
+    PoolLookup::from_address(pool_addr).pin_post_drain(&mut core);
+    let (pinned_ticks, pinned_block) = PoolLookup::from_address(pool_addr)
         .take_post_drain(&mut core)
         .expect("pin was captured for a Tracked pool");
     assert_eq!(pinned_block, 100, "pin captured the drained update_block");
@@ -824,7 +824,7 @@ fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
     assert_eq!(pinned_ticks.len(), 0, "net-zero Mint+Burn yields no tick");
     // set_live under an empty retained tail is a no-op flush (the probe
     // would log drained_retained_tail=0).
-    PoolLookup::Address(pool_addr).set_live(&mut core);
+    PoolLookup::from_address(pool_addr).set_live(&mut core);
 }
 
 // ── pin clamp regression (fabricated-mismatch fix) ──────────────
@@ -864,7 +864,7 @@ fn pin_clamps_verify_block_to_complete_cutoff_when_pump_undrained() {
     })
     .expect("test setup: V3 registration");
     // Quarantine so live Mint/Burn route to the pump buffer.
-    PoolLookup::Address(pool_addr).quarantine(&mut core);
+    PoolLookup::from_address(pool_addr).quarantine(&mut core);
     // Pump-buffer an UNDRAINED Mint at block 100, but only tombstone the
     // pump through block 99 → the drain (apply_pump_buffer_v3) holds the
     // block-100 event back, so the map is NOT complete at its 100 clock.
@@ -878,9 +878,9 @@ fn pin_clamps_verify_block_to_complete_cutoff_when_pump_undrained() {
             .pump_count_at_or_below(&pool_addr, 100),
         1
     );
-    core.apply_pump_buffer(&pool_addr);
-    PoolLookup::Address(pool_addr).pin_post_drain(&mut core);
-    let (_ticks, pinned_block) = PoolLookup::Address(pool_addr)
+    PoolLookup::from_address(*pool_addr).pump(&mut core);
+    PoolLookup::from_address(pool_addr).pin_post_drain(&mut core);
+    let (_ticks, pinned_block) = PoolLookup::from_address(pool_addr)
         .take_post_drain(&mut core)
         .expect("pin captured for a Tracked pool");
     assert_eq!(
@@ -915,7 +915,7 @@ fn pin_preserves_clock_block_when_no_undrained_events() {
         ..Default::default()
     })
     .expect("test setup: V3 registration");
-    PoolLookup::Address(pool_addr).quarantine(&mut core);
+    PoolLookup::from_address(pool_addr).quarantine(&mut core);
     // Cutoff is BEHIND the seed clock (99 < 100) and the pump has NO event
     // for this pool at/below the clock → pump_count == 0. This is the
     // mod.rs:580 BENIGN seed case: the DB seed carries the live WS head
@@ -929,9 +929,9 @@ fn pin_preserves_clock_block_when_no_undrained_events() {
             .pump_count_at_or_below(&pool_addr, 100),
         0
     );
-    core.apply_pump_buffer(&pool_addr);
-    PoolLookup::Address(pool_addr).pin_post_drain(&mut core);
-    let (_ticks, pinned_block) = PoolLookup::Address(pool_addr)
+    PoolLookup::from_address(*pool_addr).pump(&mut core);
+    PoolLookup::from_address(pool_addr).pin_post_drain(&mut core);
+    let (_ticks, pinned_block) = PoolLookup::from_address(pool_addr)
         .take_post_drain(&mut core)
         .expect("pin captured for a Tracked pool");
     assert_eq!(
