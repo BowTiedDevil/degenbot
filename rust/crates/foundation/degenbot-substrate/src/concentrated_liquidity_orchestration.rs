@@ -2155,27 +2155,6 @@ impl BotState {
         self.concentrated_liquidity.set_snapshot_seed_block(s);
     }
 
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::take_v3_snapshot_seed`].
-    pub fn take_snapshot_seed(&mut self, address: Address) -> Option<HashMap<i32, TickInfo>> {
-        self.concentrated_liquidity
-            .take_v3_snapshot_seed(&mut self.registry, address)
-    }
-
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::pin_v3_post_drain_snapshot`].
-    pub fn pin_post_drain_snapshot(&mut self, address: Address) {
-        self.concentrated_liquidity
-            .pin_v3_post_drain_snapshot(&mut self.registry, address);
-    }
-
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::take_v3_post_drain_snapshot`].
-    pub fn take_post_drain_snapshot(
-        &mut self,
-        address: Address,
-    ) -> Option<(HashMap<i32, TickInfo>, u64)> {
-        self.concentrated_liquidity
-            .take_v3_post_drain_snapshot(&mut self.registry, address)
-    }
-
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::sync_v3_pool_state`].
     pub fn sync_pool_state(
         &mut self,

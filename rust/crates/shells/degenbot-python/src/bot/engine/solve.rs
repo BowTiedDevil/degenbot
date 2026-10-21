@@ -8,6 +8,7 @@
 use super::{hex_string_to_pool_id, Address, PyArbEngine, PyList, V4StateSync};
 use crate::bot::pool::TickData;
 use crate::prelude::*;
+use degenbot_substrate::PoolLookup;
 use std::sync::Arc;
 
 #[pymethods]
@@ -115,7 +116,7 @@ impl PyArbEngine {
             let mut core = core.write_at(degenbot_substrate::state_lock::LockSite::Python);
             core.apply_backfill_buffer(&addr);
             core.apply_pump_buffer(&addr);
-            core.pin_post_drain_snapshot(addr);
+            PoolLookup::Address(addr).pin_post_drain(&mut core);
         });
         Ok(())
     }

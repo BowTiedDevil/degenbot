@@ -1,4 +1,5 @@
 use super::*;
+use crate::bot_core::PoolLookup;
 
 /// Scenario A — the normal path: a Mint@N in the WS feed IS buffered by
 /// the pump, the tombstone@N+1 sets `last_complete_block = N`, and the
@@ -29,8 +30,9 @@ async fn scenario_a_buffered_mint_is_drained_into_pin() {
         let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.apply_backfill_buffer(&pool_addr);
         core.apply_pump_buffer(&pool_addr);
-        core.pin_post_drain_snapshot(pool_addr);
-        core.take_post_drain_snapshot(pool_addr)
+        PoolLookup::Address(pool_addr).pin_post_drain(&mut core);
+        PoolLookup::Address(pool_addr)
+            .take_post_drain(&mut core)
             .expect("Tracked pool pins after drain")
     };
     assert_eq!(pinned_block, block_n, "pin's update_block advanced to N");
@@ -104,8 +106,9 @@ async fn scenario_c_two_adjacent_same_block_mints_both_applied_to_pin() {
         let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.apply_backfill_buffer(&pool_addr);
         core.apply_pump_buffer(&pool_addr);
-        core.pin_post_drain_snapshot(pool_addr);
-        core.take_post_drain_snapshot(pool_addr)
+        PoolLookup::Address(pool_addr).pin_post_drain(&mut core);
+        PoolLookup::Address(pool_addr)
+            .take_post_drain(&mut core)
             .expect("Tracked pool pins after drain")
     };
     assert_eq!(pinned_block, block_n, "pin's update_block advanced to N");
@@ -160,8 +163,9 @@ async fn scenario_b_dropped_mint_reproduces_verify_mismatch_symptom() {
         let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.apply_backfill_buffer(&pool_addr);
         core.apply_pump_buffer(&pool_addr);
-        core.pin_post_drain_snapshot(pool_addr);
-        core.take_post_drain_snapshot(pool_addr)
+        PoolLookup::Address(pool_addr).pin_post_drain(&mut core);
+        PoolLookup::Address(pool_addr)
+            .take_post_drain(&mut core)
             .expect("Tracked pool pins after drain")
     };
     // The pin advanced to N (from Mint1) but is missing Mint2.
@@ -560,8 +564,8 @@ async fn scenario_a_race_concurrent_drain_cannot_produce_symptom() {
         let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         core.apply_backfill_buffer(&pool_addr);
         core.apply_pump_buffer(&pool_addr);
-        core.pin_post_drain_snapshot(pool_addr);
-        core.take_post_drain_snapshot(pool_addr)
+        PoolLookup::Address(pool_addr).pin_post_drain(&mut core);
+        PoolLookup::Address(pool_addr).take_post_drain(&mut core)
     };
     // Release the pump to feed Mint2 + Swap (tombstone N, cutoff = N).
     let _ = drain_done_tx.send(());

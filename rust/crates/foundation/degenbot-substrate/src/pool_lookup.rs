@@ -67,7 +67,9 @@ impl PoolLookup {
     /// Consume the pinned snapshot seed (exactly once, so memory is bounded).
     pub fn take_seed(&self, state: &mut BotState) -> Option<HashMap<i32, TickInfo>> {
         match self {
-            Self::Address(address) => state.take_snapshot_seed(*address),
+            Self::Address(address) => state
+                .concentrated_liquidity
+                .take_v3_snapshot_seed(&mut state.registry, *address),
             Self::V4 {
                 pool_manager,
                 pool_id,
@@ -115,7 +117,9 @@ impl PoolLookup {
     /// drain.
     pub fn pin_post_drain(&self, state: &mut BotState) {
         match self {
-            Self::Address(address) => state.pin_post_drain_snapshot(*address),
+            Self::Address(address) => state
+                .concentrated_liquidity
+                .pin_v3_post_drain_snapshot(&mut state.registry, *address),
             Self::V4 {
                 pool_manager,
                 pool_id,
@@ -126,7 +130,9 @@ impl PoolLookup {
     /// Consume the pinned post-drain pair (exactly once).
     pub fn take_post_drain(&self, state: &mut BotState) -> Option<(HashMap<i32, TickInfo>, u64)> {
         match self {
-            Self::Address(address) => state.take_post_drain_snapshot(*address),
+            Self::Address(address) => state
+                .concentrated_liquidity
+                .take_v3_post_drain_snapshot(&mut state.registry, *address),
             Self::V4 {
                 pool_manager,
                 pool_id,
