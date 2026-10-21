@@ -335,6 +335,14 @@ publish-dry-run *args:
     cd rust
     cargo publish --locked --workspace --dry-run --allow-dirty {{ args }}
 
+# Which publishable members are live on crates.io at the workspace version, and
+# which are not — the audit the release workflow's crates.io leg runs before every
+# upload round. The oracle is the crates.io sparse index (what `cargo publish`
+# gates on), not `cargo search`, whose backend lags publication. Prints pending
+# members; pass `--live` or `--classify` for the other views.
+crates-io-pending *args:
+    scripts/crates_io_pending.sh "$@"
+
 # Authoritative CI/pre-push Clippy gate. It deliberately checks default
 # features without `--all-features`, so test-only and mutually exclusive build
 # variants cannot hide a default regression; it runs the architecture subset

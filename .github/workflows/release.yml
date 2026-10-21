@@ -6,6 +6,12 @@
 #     -> PyPI publish (needs crates leg succeeded)
 #     -> GitHub Release (needs both pushes; the clean-completion signal)
 # test-* tags publish only to Test PyPI (crates.io release is policy-forbidden there).
+#
+# Every leg is re-runnable on the same tag, because publishing is a sequence of
+# one-way registry writes that can die partway: the crates.io leg resumes from the
+# sparse index (see its publish step), and the PyPI and GitHub Release legs skip
+# what an earlier attempt already accepted. A failed run is therefore continued by
+# re-running the workflow, never by re-tagging.
 name: Release
 
 on:
@@ -15,6 +21,27 @@ on:
       - 'v*'
       - 'test-*'
 
+  # Resume path. A tag whose run died — rate limit, partial publish, runner
+  # failure — is completed by dispatching this workflow at that tag instead of
+  # moving the tag or hand-publishing with a local token. A dispatch runs the
+  # workflow file from the DISPATCHED ref against the TAGGED TREE, so a fix to
+  # this file can complete an older tag whose own commit carries the broken one.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)release, e.g. v0.6.0a15'
+        required: true
+        type: string
+
+# One release run per tag at a time. Publishing is a sequence of one-way registry
+# writes, so two runs on the same tag (a push plus a manual re-run, or a re-run
+# started while the first is still sleeping out a rate limit) would each audit the
+# same pre-state and race on the same uploads. cancel-in-progress stays false: a
+# newer run must queue behind an in-flight publish, never kill it mid-upload.
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   validate-branch:
     # Shared by both former workflows (identical bodies).
@@ -23,15 +50,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # A dispatch on main must still build the TAGGED tree, so the tag is
+          # always resolved explicitly rather than inherited from the trigger.
+          ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
 
       - name: Check tag is on main
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        # HEAD, not github.sha: on a dispatch run github.sha is the dispatched
+        # branch's tip, which says nothing about where the tag points.
         run: |
-          if ! git merge-base --is-ancestor ${{ github.sha }} origin/main; then
-            echo "Tag ${{ github.ref_name }} is not on main branch"
+          if ! git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/main; then
+            echo "Tag $RELEASE_TAG is not on main branch"
             exit 1
           fi
-          echo "Tag ${{ github.ref_name }} is on main branch"
+          echo "Tag $RELEASE_TAG is on main branch"
 
   build-wheels:
     name: Build wheels on ${{ matrix.os }} (${{ matrix.target }})
@@ -61,6 +95,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Set up QEMU
         if: runner.os == 'Linux' && matrix.target != 'x86_64-unknown-linux-gnu'
@@ -97,6 +133,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Build sdist with maturin
         uses: PyO3/maturin-action@v1
@@ -113,7 +151,7 @@ jobs:
 
   publish-to-test-pypi:
     name: Publish to Test PyPI
-    if: startsWith(github.ref, 'refs/tags/test-')
+    if: startsWith(inputs.tag || github.ref_name, 'test-')
     needs: [validate-branch, build-wheels, build-sdist]
     runs-on: ubuntu-latest
     environment:
@@ -137,12 +175,17 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          # A re-run of the same tag must converge, not collide: PyPI answers an
+          # upload of a filename it already holds with HTTP 400, so an interrupted
+          # first attempt would otherwise make every retry fail on the artifacts it
+          # had already accepted.
+          skip-existing: true
 
   publish-to-pypi:
     name: Publish to PyPI
     # Ordering: needs the crates.io leg, so a crates.io failure skips the PyPI
     # push entirely — the upstream registries can no longer split on a tag.
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(inputs.tag || github.ref_name, 'v')
     needs: [validate-branch, build-wheels, build-sdist, publish-crates-io]
     runs-on: ubuntu-latest
     environment:
@@ -164,15 +207,20 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Same convergence rule as Test PyPI: an interrupted attempt leaves some
+          # files accepted, and PyPI rejects the rest of the set with HTTP 400
+          # unless the already-present files are skipped.
+          skip-existing: true
 
   publish-crates-io:
-    # Former standalone publish-to-crates-io.yml `publish` job (body verbatim).
-    # Ordering: the crates.io leg runs FIRST because it is the failure-prone
-    # one (new-crate rate limits, lockstep checks) — a failure here publishes
-    # nothing anywhere, and a re-tag after a fix is cheap. PyPI holds the
-    # wheel artifacts and is the recoverable leg (a tag-driven retry republishes).
-    name: Publish (cargo-native order + new-crate rate-limit retries)
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Ordering: the crates.io leg runs FIRST because it is the failure-prone one
+    # (new-crate rate limits, lockstep checks). It is also the only leg whose
+    # failures are not cheap: a mid-run rate limit leaves a prefix of the
+    # workspace published, so this job reads the live set from the registry before
+    # touching it and resumes at whatever is missing, rather than starting over.
+    name: Publish (index-audited, resumable; new-crate rate-limit rounds)
+    if: startsWith(inputs.tag || github.ref_name, 'v')
     needs: [validate-branch, build-wheels, build-sdist]
     runs-on: ubuntu-latest
     env:
@@ -180,7 +228,30 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
+
+      - name: Provide the release audit tooling
+        # The audit script ships WITH this workflow rather than with the code, so it
+        # is resolved here instead of assumed present: a tag cut after this change
+        # carries its own copy (current by construction), while a tag that predates
+        # the tooling — the case a resume exists for — takes main's. The tagged tree
+        # supplies the code being published; this step supplies the machinery doing
+        # the publishing.
+        run: |
+          tooling=scripts/crates_io_pending.sh
+          if git cat-file -e "HEAD:$tooling" 2>/dev/null; then
+            echo "audit tooling: the tagged tree's copy"
+          elif git cat-file -e "origin/main:$tooling" 2>/dev/null; then
+            git show "origin/main:$tooling" > "$tooling"
+            chmod +x "$tooling"
+            echo "audit tooling: main's copy (the tag predates it)"
+          else
+            echo "::error::neither the tagged tree nor main carries $tooling — merge the release-tooling change before resuming a tag" >&2
+            exit 1
+          fi
+          bash -n "$tooling"
+          echo "audit tooling: $(wc -l < "$tooling") lines, syntax ok"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.98.1
@@ -199,8 +270,10 @@ jobs:
         # must equal the single [workspace.package] version literal (ADR-009).
         # e.g. tag v0.6.0-alpha.5 requires version = "0.6.0-alpha.5"; a
         # v0.6.0 tag against an alpha workspace fails fast, before upload.
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          tag="${GITHUB_REF_NAME#v}"
+          tag="${RELEASE_TAG#v}"
           # Release tags use PEP440 (v0.6.0a5); crates.io uses SemVer
           # (0.6.0-alpha.5), which is what the workspace literal holds. Normalize
           # the PEP440 pre-release suffixes before comparing, so v0.6.0a5 and
@@ -225,7 +298,7 @@ jobs:
             exit 1
           fi
           if [ "$cargo_ver" != "$ws_ver" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match [workspace.package] version '$ws_ver'" >&2
+            echo "Tag $RELEASE_TAG does not match [workspace.package] version '$ws_ver'" >&2
             exit 1
           fi
           echo "Tag/version match: $ws_ver"
@@ -241,82 +314,177 @@ jobs:
           fi
           echo "crates.io token present"
 
-      - name: Pre-publish verification (full verify, all members)
-        # Release policy: never publish without verify. `cargo publish
-        # --workspace --dry-run` packages every publishable member and
-        # verifies each tarball's build (the two non-publishable members,
-        # degenbot_rs + degenbot-execution-sample, are skipped by cargo).
-        # A fresh CI runner has no stale local-registry state, so this is a
-        # clean verification of the tag's exact tree.
-        run: cargo publish --locked --workspace --dry-run --allow-dirty --manifest-path rust/Cargo.toml
+      - name: Audit the live set (crates.io sparse index)
+        # Which members are already live at this version decides everything the
+        # next two steps may do, so it is read from the source `cargo publish`
+        # itself gates on: the crates.io sparse index. `cargo search` is not that
+        # source — it answers from a separate search backend that lags publication
+        # and is rate-limited per IP, so a member published minutes earlier reads
+        # as absent there, and a job that trusts it re-uploads a version the
+        # registry already holds (a hard error, never a no-op). The script exits
+        # non-zero when the index cannot be read, so this step fails closed
+        # instead of guessing.
+        run: |
+          set -o pipefail
+          audit="$(scripts/crates_io_pending.sh --classify)"
+          printf '%s\n' "$audit" | sed 's/^/  crates.io: /'
+          live=$(printf '%s\n' "$audit" | grep -c '^live ' || true)
+          pending=$(printf '%s\n' "$audit" | grep -c '^pending ' || true)
+          echo "live=$live pending=$pending"
+          {
+            echo '### crates.io live-set audit'
+            echo
+            echo '```'
+            printf '%s\n' "$audit"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
 
-      - name: Publish (cargo-native order + waits; new-crate rate-limit retry rounds)
-        # First-release mechanics: docs/releases/2026-08-19-first-crates-io-release.md.
-        # `cargo publish --locked --workspace` orders the publishable members itself (dependency
-        # order) and polls the registry until each crate AND its local deps are
-        # index-visible before proceeding — no hand-rolled topo list, no curl index
-        # polling. crates.io's PublishNew bucket (1 NEW NAME per 10 min, burst 5)
-        # rate-limits brand-new crate names, so each round publishes the
-        # not-yet-live members and, on 429, sleeps until the server-stated
-        # retry-after. Version-bump releases (PublishUpdate: 1/min, burst 30)
-        # complete in round 1.
+      - name: Pre-publish verification (verify exactly what will be uploaded)
+        # Release policy: never publish without verify (ADR-020). The verify is
+        # scoped to the members that are not live yet: an already-published member
+        # cannot be uploaded again, and verifying all of them is precisely what
+        # makes a resuming re-run expensive. A fresh runner has no stale
+        # local-registry state, so the remaining tarballs are verified clean; the
+        # two non-publishable members (degenbot_rs and the execution sample) are
+        # skipped by cargo itself.
+        run: |
+          set -o pipefail
+          audit="$(scripts/crates_io_pending.sh --classify)"
+          excludes=()
+          pending=0
+          while read -r state member; do
+            [ -n "$member" ] || continue
+            if [ "$state" = "live" ]; then
+              excludes+=("--exclude" "$member")
+            else
+              pending=$((pending + 1))
+            fi
+          done <<< "$audit"
+          if [ "$pending" -eq 0 ]; then
+            echo "nothing to verify: every publishable member is already live at this version"
+            exit 0
+          fi
+          echo "verifying $pending pending member(s); ${#excludes[@]} already-live member(s) excluded"
+          cargo publish --locked --workspace --dry-run --allow-dirty \
+            --manifest-path rust/Cargo.toml "${excludes[@]}"
+
+      - name: Publish (resumable across partial publishes; rate-limit rounds)
+        # Publishing is a sequence of one-way registry writes: an attempt that dies
+        # partway leaves a prefix of the workspace permanently live at this
+        # version, and the registry rejects every second upload of it. Three
+        # properties make this step resume instead of collide:
+        #
+        #   1. The live set is re-read from the sparse index at the top of every
+        #      round (scripts/crates_io_pending.sh), never from `cargo search`,
+        #      whose backend lags publication and reports a freshly published
+        #      member as absent — the reading that turns a resume into a duplicate
+        #      upload.
+        #   2. `cargo publish --workspace --exclude <live...>` therefore never
+        #      attempts an upload the registry would reject. If a concurrent
+        #      publisher still trips "already exists", the round counts as progress
+        #      rather than failure: the next audit drops that member.
+        #   3. A 429 sleeps toward the server-stated retry-after, and the loop ends
+        #      on a wall-clock budget with a diagnostic naming what is left, so a
+        #      long rate limit surfaces as "re-run to resume" instead of a job
+        #      timeout that reports nothing.
+        #
+        # `cargo publish --workspace` orders the publishable members itself
+        # (dependency order) and polls the registry until each crate and its local
+        # deps are index-visible, so no hand-rolled topo list or index polling is
+        # needed here. Its verify pass covers only the still-pending members, so
+        # the cost of a round shrinks as the release progresses.
+        timeout-minutes: 210
+        env:
+          # Rate-limit wait budget. The job's own timeout is longer on purpose, so
+          # this loop's diagnostic always wins the race against a cancelled job.
+          CRATES_PUBLISH_BUDGET_SECONDS: 10800
         run: |
           set -uo pipefail
-          cd rust
-          # The live-set audit below greps the crates.io index, which stores the
-          # SEMVER literal (0.6.0-alpha.6), not the PEP440 tag (0.6.0a6). Read the
-          # workspace version instead of deriving it from the tag so the grep
-          # always matches what crates.io reports.
-          ver=$(sed -n 's/^version = //p' Cargo.toml | head -n 1 | tr -d '"' | tr -d ' ')
-          # Publishable members from cargo metadata itself (publish:null), so a
-          # new non-publishable crate (publish=false -> []) is auto-skipped — no
-          # hardcoded name list to drift. Today that's degenbot_rs + degenbot-execution-sample.
-          read -r -a members <<< "$(cargo metadata --format-version 1 --no-deps | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);console.log(m.packages.filter(p=>p.publish==null).map(p=>p.name).join(" "))})')"
-          log=/tmp/crates-publish.log
-          : > "$log"
-          for round in $(seq 1 30); do
+          # The index stores the SEMVER literal (0.6.0-alpha.15), not the PEP440
+          # tag (0.6.0a15), so the workspace literal — not the tag — is what every
+          # audit below looks for.
+          ver=$(sed -n 's/^version = //p' rust/Cargo.toml | head -n 1 | tr -d '"' | tr -d ' ')
+          budget="${CRATES_PUBLISH_BUDGET_SECONDS:-10800}"
+          deadline=$(( $(date +%s) + budget ))
+          log="$RUNNER_TEMP/crates-publish.log"
+          round=0
+          stall=0
+          last_pending=""
+          while :; do
+            round=$((round + 1))
+            : > "$log"
+            if ! audit=$(scripts/crates_io_pending.sh --classify); then
+              echo "::error::the crates.io index could not be read — refusing to guess which members are live"
+              exit 1
+            fi
             excludes=()
-            live=0
-            for m in "${members[@]}"; do
-              # cargo search prints `name = "version"  # description` when live; grep
-              # only the anchored exact-name line so fuzzy search hits never false-match.
-              if cargo search "$m" --limit 3 2>/dev/null | grep -q "^$m = \"$ver\""; then
-                excludes+=(--exclude "$m")
-                live=$((live + 1))
+            pending=()
+            while read -r state member; do
+              [ -n "$member" ] || continue
+              if [ "$state" = "live" ]; then
+                excludes+=(--exclude "$member")
+              else
+                pending+=("$member")
               fi
-            done
-            if [ "$live" -eq "${#members[@]}" ]; then
-              echo "all ${#members[@]} members already live at $ver"
+            done <<< "$audit"
+            if [ "${#pending[@]}" -eq 0 ]; then
+              echo "all publishable members are live at $ver — nothing to publish"
               exit 0
             fi
-            echo "=== round $round: $live/${#members[@]} members already live at $ver — publishing the rest ==="
-            if cargo publish --locked --workspace --allow-dirty "${excludes[@]}" >>"$log" 2>&1; then
-              echo "=== publish complete at $ver ==="; exit 0
+            echo "=== round $round: ${#pending[@]} pending at $ver — ${pending[*]} ==="
+            if cargo publish --locked --workspace --allow-dirty "${excludes[@]}" \
+                --manifest-path rust/Cargo.toml >>"$log" 2>&1; then
+              echo "=== publish complete at $ver ==="
+              exit 0
             fi
-            # `|| true` matters: the loop runs under `bash -e`, and a missing 429
-            # in the log makes this assignment exit 1 — silently skipping the
-            # diagnostic + log tail below. Keep the no-match case non-fatal.
-            ra=$(grep -o 'try again after [A-Za-z]*, [0-9]* [A-Za-z]* [0-9]* [0-9:]* GMT' "$log" | tail -n 1 | sed 's/try again after //' || true)
-            if [ -n "$ra" ]; then
-              ra_epoch=$(date -d "$ra" +%s) || { echo "::error::unparseable retry-after: $ra"; exit 1; }
-              sleep_s=$(( ra_epoch - $(date +%s) + 120 ))
-              echo "429 new-crate rate limit — retry-after $ra (sleeping ${sleep_s}s)"
-              if [ "$sleep_s" -gt 0 ]; then sleep "$sleep_s"; fi
+            tail -n 20 "$log"
+            if grep -q 'already exists on crates.io index' "$log"; then
+              echo "round $round: crates.io already holds part of this version — resuming at the remaining members"
+              # Index propagation can make a just-published member read as pending
+              # once; three identical audits in a row mean the audit — not the
+              # index — is what is wrong, and spinning would hide it.
+              if [ "${pending[*]}" = "$last_pending" ]; then stall=$((stall + 1)); else stall=0; fi
+              last_pending="${pending[*]}"
+              if [ "$stall" -ge 3 ]; then
+                echo "::error::the index never reflected the last uploads (pending set unchanged across 3 audits)"
+                exit 1
+              fi
               continue
             fi
-            echo "::error::cargo publish failed without a 429 retry-after — last 50 log lines:"
-            tail -n 50 "$log"
-            exit 1
+            ra=$(grep -o 'try again after [A-Za-z]*, [0-9]* [A-Za-z]* [0-9]* [0-9:]* GMT' "$log" | tail -n 1 | sed 's/try again after //' || true)
+            if [ -n "$ra" ]; then
+              ra_epoch=$(date -d "$ra" +%s 2>/dev/null || true)
+              if [ -n "$ra_epoch" ]; then
+                wait_s=$(( ra_epoch - $(date +%s) + ${CRATES_PUBLISH_RETRY_BUFFER_SECONDS:-120} ))
+              else
+                echo "::warning::unparseable retry-after '$ra' — using the fallback wait"
+                wait_s=600
+              fi
+            elif grep -q '429' "$log"; then
+              # A 429 whose retry-after cargo did not render still means "wait",
+              # never "fail".
+              ra="(not rendered)"
+              wait_s=600
+            else
+              echo "::error::cargo publish failed without a rate-limit signal — see the log tail above"
+              exit 1
+            fi
+            floor="${CRATES_PUBLISH_RETRY_FLOOR_SECONDS:-60}"
+            if [ "$wait_s" -lt "$floor" ]; then wait_s="$floor"; fi
+            if [ $(( $(date +%s) + wait_s )) -ge "$deadline" ]; then
+              echo "::error::crates.io asks for a ${wait_s}s wait, past the ${budget}s publish budget — re-run this workflow to resume at: ${pending[*]}"
+              exit 1
+            fi
+            echo "rate limited (retry-after $ra) — sleeping ${wait_s}s, then resuming ${#pending[@]} member(s)"
+            sleep "$wait_s"
           done
-          echo "::error::30 rounds exhausted (new-crate rate limit longer than expected) — re-tag to continue; partial releases are recoverable at the same version"
-          exit 1
 
 
   github-release:
     name: Create GitHub Release
     # Final "release completed cleanly" signal: only created when BOTH upstream
     # pushes succeeded.
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(inputs.tag || github.ref_name, 'v')
     needs: [publish-to-pypi, publish-crates-io]
     runs-on: ubuntu-latest
     permissions:
@@ -341,16 +509,25 @@ jobs:
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create
-          '${{ github.ref_name }}'
-          --repo '${{ github.repository }}'
-          --notes ""
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        # Idempotent: `gh release create` fails when the Release for this tag
+        # already exists, which is exactly the state an earlier attempt of this
+        # workflow leaves behind when it dies after the publishes.
+        run: |
+          if gh release view "$RELEASE_TAG" --repo '${{ github.repository }}' >/dev/null 2>&1; then
+            echo "release $RELEASE_TAG already exists — reusing it"
+          else
+            gh release create "$RELEASE_TAG" --repo '${{ github.repository }}' --notes ""
+          fi
 
       - name: Upload artifacts to GitHub Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        # --clobber completes a partially uploaded asset set instead of refusing
+        # to re-upload an asset an earlier attempt already attached.
         run: >-
           gh release upload
-          '${{ github.ref_name }}' dist/**
+          "$RELEASE_TAG" dist/**
           --repo '${{ github.repository }}'
+          --clobber
