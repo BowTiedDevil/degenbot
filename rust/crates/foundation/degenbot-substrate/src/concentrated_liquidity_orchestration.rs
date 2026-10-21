@@ -2352,26 +2352,6 @@ impl BotState {
             );
     }
 
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_backfill_buffer`].
-    pub fn apply_backfill_buffer_by_key(
-        &mut self,
-        pool_manager: Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
-    ) {
-        self.concentrated_liquidity
-            .apply_backfill_buffer::<V4Family>(&mut self.registry, &(pool_manager, pool_id));
-    }
-
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::apply_pump_buffer`].
-    pub fn apply_pump_buffer_by_key(
-        &mut self,
-        pool_manager: Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
-    ) {
-        self.concentrated_liquidity
-            .apply_pump_buffer::<V4Family>(&mut self.registry, &(pool_manager, pool_id));
-    }
-
     /// Coverage flag for the address-registered (V3) pool behind `pool_id`
     /// (`Tracked` = complete tick data, `Sparse` = none), read through the
     /// family read module's observe door. `None` for an unregistered / non-V3
@@ -2394,37 +2374,42 @@ impl BotState {
             _ => None,
         }
     }
-
-    /// Coverage flag for the key-registered (V4) pool behind
-    /// `(pool_manager, pool_id)` (`Tracked` / `Sparse`), read through the
-    /// family read module's observe door. `None` for unregistered keys. V4
-    /// twin of [`Self::coverage_by_pool_id`] — read up-front by the
-    /// registration-lifecycle to keep Sparse pools out of the verify deferral.
+    /// The pool's tick coverage (`Tracked` = complete tick data, `Sparse` = none),
+    /// or `None` when the key names no registered concentrated-liquidity pool.
+    ///
+    /// The registration lifecycle reads this up-front to branch the verify
+    /// path: a Sparse pool stays `Live` and never needs an RPC.
     #[must_use]
-    pub fn pool_coverage_by_key(
-        &self,
-        pool_manager: Address,
-        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
-    ) -> Option<PoolTickCoverage> {
-        let pid = self
-            .concentrated_liquidity
-            .pool_id_by_key(pool_manager, pool_id)?;
-        match self.registry.pools.get(&pid) {
-            Some(PoolEntry::V4(p)) => {
-                let design = concentrated_liquidity::ConcentratedLiquidityState::V4 {
-                    state: &p.1,
-                    scalars: concentrated_liquidity::DesignScalars::new(
-                        p.0.pool_key.fee,
-                        p.0.pool_key.tick_spacing,
-                    ),
-                    hooks: p.0.pool_key.hooks,
-                };
-                match concentrated_liquidity::observe(design, Observe::Coverage) {
-                    Observed::Coverage(coverage) => Some(coverage),
-                    _ => unreachable!("the coverage probe answers"),
+    pub fn pool_coverage(&self, key: PoolLookup) -> Option<PoolTickCoverage> {
+        match key {
+            PoolLookup::Address(address) => self
+                .pool_id_by_address(&address)
+                .and_then(|pool_id| self.coverage_by_pool_id(pool_id)),
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id,
+            } => {
+                let pid = self
+                    .concentrated_liquidity
+                    .pool_id_by_key(pool_manager, &pool_id)?;
+                match self.registry.pools.get(&pid) {
+                    Some(PoolEntry::V4(p)) => {
+                        let design = concentrated_liquidity::ConcentratedLiquidityState::V4 {
+                            state: &p.1,
+                            scalars: concentrated_liquidity::DesignScalars::new(
+                                p.0.pool_key.fee,
+                                p.0.pool_key.tick_spacing,
+                            ),
+                            hooks: p.0.pool_key.hooks,
+                        };
+                        match concentrated_liquidity::observe(design, Observe::Coverage) {
+                            Observed::Coverage(coverage) => Some(coverage),
+                            _ => unreachable!("the coverage probe answers"),
+                        }
+                    }
+                    _ => None,
                 }
             }
-            _ => None,
         }
     }
 
@@ -2655,26 +2640,6 @@ impl BotState {
             .pool_id_by_key(pool_manager, pool_id)?;
         let (_identity, state) = self.registry.pools.get(&pid).and_then(PoolEntry::v4)?;
         state.snapshot_seed.as_ref()
-    }
-
-    /// The registration-key-keyed snapshot seed take (move out + clear).
-    pub fn take_snapshot_seed_by_key(
-        &mut self,
-        pool_manager: Address,
-        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
-    ) -> Option<HashMap<i32, TickInfo>> {
-        self.concentrated_liquidity
-            .take_snapshot_seed::<V4Family>(&mut self.registry, &(pool_manager, *pool_id))
-    }
-
-    /// The registration-key-keyed post-drain take (move out + clear).
-    pub fn take_post_drain_snapshot_by_key(
-        &mut self,
-        pool_manager: Address,
-        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
-    ) -> Option<(HashMap<i32, TickInfo>, u64)> {
-        self.concentrated_liquidity
-            .take_post_drain_snapshot::<V4Family>(&mut self.registry, &(pool_manager, *pool_id))
     }
 
     /// Snapshot all key-registered (V4) pool state for verification.

@@ -13,16 +13,22 @@
 const ORCHESTRATION: &str = include_str!("../concentrated_liquidity_orchestration.rs");
 const POOL_LOOKUP: &str = include_str!("../pool_lookup.rs");
 
-/// The retired address-keyed verb and the `PoolLookup` verb that replaced it.
+/// Each retired `_by_key` twin and the `PoolLookup` doorway that replaced it.
+///
+/// The table encodes the target: no effect may exist twice on the state owner,
+/// and every retired twin must leave a single door behind.
 const DOORS: &[(&str, &str)] = &[
-    ("pool_coverage", "coverage"),
-    ("set_pool_live", "mark_registration_live"),
-    ("set_pool_quarantined", "begin_registration_quarantine"),
-    ("apply_backfill_buffer", "backfill"),
-    ("apply_pump_buffer", "pump"),
-    ("take_snapshot_seed", "take_seed"),
-    ("pin_post_drain_snapshot", "pin_post_drain"),
-    ("take_post_drain_snapshot", "take_post_drain"),
+    ("pool_coverage_by_key", "coverage"),
+    ("set_pool_live_by_key", "mark_registration_live"),
+    (
+        "set_pool_quarantined_by_key",
+        "begin_registration_quarantine",
+    ),
+    ("apply_backfill_buffer_by_key", "backfill"),
+    ("apply_pump_buffer_by_key", "pump"),
+    ("take_snapshot_seed_by_key", "take_seed"),
+    ("pin_post_drain_snapshot_by_key", "pin_post_drain"),
+    ("take_post_drain_snapshot_by_key", "take_post_drain"),
 ];
 
 fn signature(verb: &str) -> String {

@@ -604,7 +604,11 @@ fn v4_snapshot_seed_survives_pump_modify_liquidity() {
     );
 
     // take: returns the seed exactly once then clears.
-    let taken = core.take_snapshot_seed_by_key(pool_manager, &pool_id_bytes);
+    let taken = PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .take_seed(&mut core);
     assert_eq!(taken, Some(seed_clone), "take returns the pinned seed");
     assert_eq!(
         core.snapshot_seed_by_key(pool_manager, &pool_id_bytes),
@@ -706,7 +710,11 @@ fn v4_post_drain_snapshot_survives_pump_modify_liquidity() {
 
     // ... but the pinned post-drain snapshot is UNCHANGED — step-2 verifies
     // drain-time state, not pump-corrupted current.
-    let taken = core.take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes);
+    let taken = PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .take_post_drain(&mut core);
     let (tick_data, pinned_block) = taken.expect("Tracked V4 pool pins post-drain");
     assert_eq!(
         tick_data, drain_clone,
@@ -717,7 +725,11 @@ fn v4_post_drain_snapshot_survives_pump_modify_liquidity() {
         "no buffer events drained → pin's block is the registration update_block (0)"
     );
     assert_eq!(
-        core.take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes),
+        PoolLookup::V4 {
+            pool_manager,
+            pool_id: pool_id_bytes
+        }
+        .take_post_drain(&mut core),
         None,
         "take clears the V4 post-drain slot (verified exactly once)"
     );
@@ -759,7 +771,11 @@ fn v4_post_drain_snapshot_is_none_for_sparse_pools() {
     }
     .pin_post_drain(&mut core);
     assert_eq!(
-        core.take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes),
+        PoolLookup::V4 {
+            pool_manager,
+            pool_id: pool_id_bytes
+        }
+        .take_post_drain(&mut core),
         None,
         "sparse V4 pools must not pin post-drain"
     );

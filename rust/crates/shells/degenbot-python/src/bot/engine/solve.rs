@@ -144,8 +144,16 @@ impl PyArbEngine {
         py.detach(move || {
             let core = stages.core();
             let mut core = core.write_at(degenbot_substrate::state_lock::LockSite::Python);
-            core.apply_backfill_buffer_by_key(pm, pool_id);
-            core.apply_pump_buffer_by_key(pm, pool_id);
+            PoolLookup::V4 {
+                pool_manager: pm,
+                pool_id,
+            }
+            .backfill(&mut core);
+            PoolLookup::V4 {
+                pool_manager: pm,
+                pool_id,
+            }
+            .pump(&mut core);
             PoolLookup::V4 {
                 pool_manager: pm,
                 pool_id,

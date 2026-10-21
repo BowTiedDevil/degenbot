@@ -491,16 +491,23 @@ fn quarantined_pool_update_block_cannot_outrun_last_complete_block() {
     );
     // Drain the complete-block tail (block 10 has no events; block 11 is
     // retained by the gate).
-    core.apply_pump_buffer_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .pump(&mut core);
     // Pin the post-drain pair.
     PoolLookup::V4 {
         pool_manager,
         pool_id: pool_id_bytes,
     }
     .pin_post_drain(&mut core);
-    let (tick_data, pinned_block) = core
-        .take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes)
-        .expect("a Tracked pool pins a post-drain pair");
+    let (tick_data, pinned_block) = PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .take_post_drain(&mut core)
+    .expect("a Tracked pool pins a post-drain pair");
     // The pin's `update_block` is 10 (the registration block) — the live
     // Swap at 11 was deferred and the gate retained it. `update_block` did
     // NOT advance to 11 (the in-progress block). This is the invariant
@@ -716,17 +723,28 @@ fn quarantined_pool_dual_buffer_drain_correctness() {
         11,
     );
     // Drain both buffers (the registration `apply_buffer_v4` sequence).
-    core.apply_backfill_buffer_by_key(pool_manager, pool_id_bytes);
-    core.apply_pump_buffer_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .backfill(&mut core);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .pump(&mut core);
     // Pin the post-drain pair.
     PoolLookup::V4 {
         pool_manager,
         pool_id: pool_id_bytes,
     }
     .pin_post_drain(&mut core);
-    let (tick_data, pinned_block) = core
-        .take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes)
-        .expect("Tracked pool pins");
+    let (tick_data, pinned_block) = PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .take_post_drain(&mut core)
+    .expect("Tracked pool pins");
     // The pin reflects backfill (8) + complete-block pump (10): tick 60
     // gross = 100 (seed) + 30 (backfill) + 20 (pump@10) = 150. The pin's
     // `update_block` is 10 (the highest complete-block event). The
@@ -794,16 +812,27 @@ fn quarantined_pool_backfill_always_fully_drained() {
     .begin_registration_quarantine(&mut core);
     // NO cutoff set (no tombstone yet) — the gated pump drain would yield
     // nothing, but the backfill drain is UNGATED and must still apply.
-    core.apply_backfill_buffer_by_key(pool_manager, pool_id_bytes);
-    core.apply_pump_buffer_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .backfill(&mut core);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .pump(&mut core);
     PoolLookup::V4 {
         pool_manager,
         pool_id: pool_id_bytes,
     }
     .pin_post_drain(&mut core);
-    let (tick_data, pinned_block) = core
-        .take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes)
-        .expect("Tracked pool pins");
+    let (tick_data, pinned_block) = PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .take_post_drain(&mut core)
+    .expect("Tracked pool pins");
     // The backfill event applied (ungated) → the tick (seed 100 + 40) is
     // present. `update_block` is MONOTONIC (no rewind): the pool registered
     // at block 10 and the backfill event is at the older block 9, so the
@@ -884,15 +913,22 @@ fn concurrent_registration_lifecycle_invariant() {
     // MUST be ≤ `last_complete_block` (10) — the in-progress block 11
     // events were retained by the gate, NOT applied.
     for (pid_bytes, _) in &pool_ids {
-        core.apply_pump_buffer_by_key(pool_manager, *pid_bytes);
+        PoolLookup::V4 {
+            pool_manager,
+            pool_id: *pid_bytes,
+        }
+        .pump(&mut core);
         PoolLookup::V4 {
             pool_manager,
             pool_id: *pid_bytes,
         }
         .pin_post_drain(&mut core);
-        let (_, pinned_block) = core
-            .take_post_drain_snapshot_by_key(pool_manager, pid_bytes)
-            .expect("each Tracked pool pins");
+        let (_, pinned_block) = PoolLookup::V4 {
+            pool_manager,
+            pool_id: *pid_bytes,
+        }
+        .take_post_drain(&mut core)
+        .expect("each Tracked pool pins");
         assert!(
             pinned_block <= 10,
             "pool {pid_bytes:?}: pin update_block {pinned_block} must be ≤ last_complete_block 10"
@@ -962,15 +998,22 @@ fn lifecycle_invariant_swap_before_mint_same_inprogress_block() {
         I256::try_from(25i128).unwrap(),
         11,
     );
-    core.apply_pump_buffer_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .pump(&mut core);
     PoolLookup::V4 {
         pool_manager,
         pool_id: pool_id_bytes,
     }
     .pin_post_drain(&mut core);
-    let (tick_data, pinned_block) = core
-        .take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes)
-        .expect("Tracked pool pins");
+    let (tick_data, pinned_block) = PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .take_post_drain(&mut core)
+    .expect("Tracked pool pins");
     assert_eq!(pinned_block, 10, "in-progress block 11 events retained");
     assert_eq!(
         tick_data.get(&60).unwrap().liquidity_gross,
@@ -1018,15 +1061,22 @@ fn reorg_during_quarantine_pin_is_independent_of_live_rollback() {
         I256::try_from(50i128).unwrap(),
         10,
     );
-    core.apply_pump_buffer_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .pump(&mut core);
     PoolLookup::V4 {
         pool_manager,
         pool_id: pool_id_bytes,
     }
     .pin_post_drain(&mut core);
-    let (tick_data, pinned_block) = core
-        .take_post_drain_snapshot_by_key(pool_manager, &pool_id_bytes)
-        .expect("Tracked pool pins");
+    let (tick_data, pinned_block) = PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .take_post_drain(&mut core)
+    .expect("Tracked pool pins");
     assert_eq!(pinned_block, 10);
     assert_eq!(tick_data.get(&60).unwrap().liquidity_gross, U128::from(150));
     // Now a reorg rolls back block 10 on the LIVE pool state. The

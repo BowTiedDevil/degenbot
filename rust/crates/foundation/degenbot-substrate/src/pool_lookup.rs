@@ -80,15 +80,7 @@ impl PoolLookup {
     /// under this key (the machine's no-op arm).
     #[must_use]
     pub fn coverage(&self, state: &BotState) -> Option<PoolTickCoverage> {
-        match self {
-            Self::Address(_) => self
-                .resolve(state)
-                .and_then(|pool_id| state.coverage_by_pool_id(pool_id)),
-            Self::V4 {
-                pool_manager,
-                pool_id,
-            } => state.pool_coverage_by_key(*pool_manager, pool_id),
-        }
+        state.pool_coverage(*self)
     }
 
     /// Defer the pool's live events to the pump buffer until verification ends.
@@ -118,7 +110,9 @@ impl PoolLookup {
             Self::V4 {
                 pool_manager,
                 pool_id,
-            } => state.take_snapshot_seed_by_key(*pool_manager, pool_id),
+            } => state
+                .concentrated_liquidity
+                .take_snapshot_seed::<V4Family>(&mut state.registry, &(*pool_manager, *pool_id)),
         }
     }
 
@@ -156,8 +150,15 @@ impl PoolLookup {
                 pool_manager,
                 pool_id,
             } => {
-                state.apply_backfill_buffer_by_key(*pool_manager, *pool_id);
-                state.apply_pump_buffer_by_key(*pool_manager, *pool_id);
+                state
+                    .concentrated_liquidity
+                    .apply_backfill_buffer::<V4Family>(
+                        &mut state.registry,
+                        &(*pool_manager, *pool_id),
+                    );
+                state
+                    .concentrated_liquidity
+                    .apply_pump_buffer::<V4Family>(&mut state.registry, &(*pool_manager, *pool_id));
             }
         }
     }
@@ -172,7 +173,9 @@ impl PoolLookup {
             Self::V4 {
                 pool_manager,
                 pool_id,
-            } => state.apply_backfill_buffer_by_key(*pool_manager, *pool_id),
+            } => state
+                .concentrated_liquidity
+                .apply_backfill_buffer::<V4Family>(&mut state.registry, &(*pool_manager, *pool_id)),
         }
     }
 
@@ -185,7 +188,9 @@ impl PoolLookup {
             Self::V4 {
                 pool_manager,
                 pool_id,
-            } => state.apply_pump_buffer_by_key(*pool_manager, *pool_id),
+            } => state
+                .concentrated_liquidity
+                .apply_pump_buffer::<V4Family>(&mut state.registry, &(*pool_manager, *pool_id)),
         }
     }
 
@@ -217,7 +222,12 @@ impl PoolLookup {
             Self::V4 {
                 pool_manager,
                 pool_id,
-            } => state.take_post_drain_snapshot_by_key(*pool_manager, pool_id),
+            } => state
+                .concentrated_liquidity
+                .take_post_drain_snapshot::<V4Family>(
+                    &mut state.registry,
+                    &(*pool_manager, *pool_id),
+                ),
         }
     }
 

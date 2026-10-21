@@ -687,7 +687,11 @@ fn apply_backfill_buffer_v4_journals_and_advances_update_block() {
         .expect("V4 pool registers");
 
     // 3. Apply the backfill buffer.
-    core.apply_backfill_buffer_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .backfill(&mut core);
 
     {
         let s = core
