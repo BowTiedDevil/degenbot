@@ -7,6 +7,9 @@
 #     -> GitHub Release (needs both pushes; the clean-completion signal)
 # test-* tags publish only to Test PyPI (crates.io release is policy-forbidden there).
 #
+# Procedure — cutting, resuming after a failure, verifying the result:
+# docs/releases/runbook.md.
+#
 # Every leg is re-runnable on the same tag, because publishing is a sequence of
 # one-way registry writes that can die partway: the crates.io leg resumes from the
 # sparse index (see its publish step), and the PyPI and GitHub Release legs skip
