@@ -26,6 +26,9 @@ pub mod nonce;
 pub mod path_info;
 pub mod planning;
 pub mod pool_ingress;
+pub mod pool_lookup;
+
+pub use pool_lookup::PoolLookup;
 pub mod registration_anchor;
 pub mod registration_door;
 pub mod registration_gate;

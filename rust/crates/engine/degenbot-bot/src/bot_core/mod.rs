@@ -110,8 +110,9 @@ pub use registration_ledger::{
 pub use registration_lifecycle::{
     run_concentrated_liquidity_v3_lifecycle, run_concentrated_liquidity_v4_lifecycle,
     run_v3_registration_lifecycle, run_v4_registration_lifecycle, run_verify_lifecycle,
-    RegistrationKey,
 };
+
+pub use ::degenbot_substrate::PoolLookup;
 pub use stage_handlers::{
     AffectedPaths, CandidateId, Finalize, FinalizeOutcome, Gate, GateOutcome, Publish,
     PublishOutcome, QuiesceOutcome, QuiesceVerdict, Resolve, Rewind, RewindOutcome, Simulate,

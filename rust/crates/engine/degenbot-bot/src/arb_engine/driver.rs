@@ -66,7 +66,6 @@ use crate::arb_engine::{
 };
 use crate::bot_core::block_pump::{BlockPump, SubscribeState};
 use crate::bot_core::registration_ledger::{RefusalKind, RegistrationPhase, VerifyOrigin};
-use crate::bot_core::registration_lifecycle::RegistrationKey;
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
 use crate::bot_core::verification_retry::{retry_verification_call, RetryPolicy};
 use crate::bot_core::verify_claims::PoolVerifications;
@@ -83,6 +82,7 @@ use degenbot_substrate::path_info::PathInfoBuildError;
 use degenbot_substrate::session_registry::PoolIdentity;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::BotState;
+use degenbot_substrate::PoolLookup;
 use hashbrown::HashMap;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -932,7 +932,7 @@ impl EngineDriver {
     /// Run a pool's core-owned registration verify lifecycle, AT MOST ONCE per
     /// live claim window — and never again once it has COMPLETED.
     ///
-    /// The key is a value ([`crate::bot_core::RegistrationKey`]): a V3 pool by
+    /// The key is a value ([`crate::bot_core::PoolLookup`]): a V3 pool by
     /// contract address, a V4 pool by `(PoolManager, pool_id)`. One body serves
     /// both designs, so the claim key, the unregistered no-op guard, the span
     /// fields and the diagnostic wording cannot drift apart per family.
@@ -950,15 +950,15 @@ impl EngineDriver {
     /// (`Mismatch` = fatal; `Rpc` = retryable; missing provider = fail-fast).
     pub async fn run_registration_lifecycle(
         &self,
-        key: RegistrationKey,
+        key: PoolLookup,
         snapshot_block: Option<u64>,
     ) -> Result<(), DriverError> {
         let core = self.stages.core();
         let claim_key = match key {
-            RegistrationKey::Address(address) => {
+            PoolLookup::Address(address) => {
                 verify_claim_key("v3", &alloy::hex::encode_prefixed(address))
             }
-            RegistrationKey::V4 {
+            PoolLookup::V4 {
                 pool_manager,
                 pool_id,
             } => verify_claim_key(
@@ -988,7 +988,7 @@ impl EngineDriver {
             .run_exclusive(&claim_key, || async move {
                 let result = async move {
                     match key {
-                        RegistrationKey::Address(address) => {
+                        PoolLookup::Address(address) => {
                             let span = tracing::info_span!(
                                 "degenbot.pool.verify_lifecycle",
                                 pool.version = "v3",
@@ -1003,7 +1003,7 @@ impl EngineDriver {
                             .instrument(span)
                             .await
                         }
-                        RegistrationKey::V4 {
+                        PoolLookup::V4 {
                             pool_manager,
                             pool_id,
                         } => {
@@ -1028,16 +1028,16 @@ impl EngineDriver {
                 .await;
 
                 match (key, result.is_ok()) {
-                    (RegistrationKey::Address(address), true) => {
+                    (PoolLookup::Address(address), true) => {
                         diag!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle complete");
                     }
-                    (RegistrationKey::Address(address), false) => {
+                    (PoolLookup::Address(address), false) => {
                         op_warn!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle FAILED");
                     }
-                    (RegistrationKey::V4 { pool_id, .. }, true) => {
+                    (PoolLookup::V4 { pool_id, .. }, true) => {
                         diag!(domain = pump, version = "v4", pool_id = %alloy::hex::encode_prefixed(pool_id), "registration verify-lifecycle complete");
                     }
-                    (RegistrationKey::V4 { pool_id, .. }, false) => {
+                    (PoolLookup::V4 { pool_id, .. }, false) => {
                         op_warn!(domain = pump, version = "v4", pool_id = %alloy::hex::encode_prefixed(pool_id), "registration verify-lifecycle FAILED");
                     }
                 }
@@ -1058,7 +1058,7 @@ impl EngineDriver {
     /// Panics if called from within a Tokio runtime.
     pub fn run_registration_lifecycle_sync(
         &self,
-        key: crate::bot_core::RegistrationKey,
+        key: crate::bot_core::PoolLookup,
         snapshot_block: Option<u64>,
     ) -> Result<(), DriverError> {
         degenbot_core::runtime::get_runtime()
@@ -1079,7 +1079,7 @@ impl EngineDriver {
     /// or the first fatal one.
     pub async fn run_registration_lifecycle_with_retry(
         &self,
-        key: crate::bot_core::RegistrationKey,
+        key: crate::bot_core::PoolLookup,
         snapshot_block: Option<u64>,
         policy: &RetryPolicy,
     ) -> Result<(), RefusalKind> {
@@ -1102,7 +1102,7 @@ impl EngineDriver {
     /// Panics if called from within a Tokio runtime.
     pub fn run_registration_lifecycle_with_retry_sync(
         &self,
-        key: crate::bot_core::RegistrationKey,
+        key: crate::bot_core::PoolLookup,
         snapshot_block: Option<u64>,
         policy: &RetryPolicy,
     ) -> Result<(), RefusalKind> {
@@ -1905,7 +1905,7 @@ mod tests {
         let key = verify_claim_key("v3", &alloy::hex::encode_prefixed(address));
 
         driver
-            .run_registration_lifecycle(RegistrationKey::Address(address), None)
+            .run_registration_lifecycle(PoolLookup::Address(address), None)
             .await
             .expect("first lifecycle");
         assert!(driver.is_pool_verified(&key), "success records the fact");
@@ -1924,7 +1924,7 @@ mod tests {
         register_v3(&driver, address, PoolTickCoverage::Tracked);
 
         driver
-            .run_registration_lifecycle(RegistrationKey::Address(address), None)
+            .run_registration_lifecycle(PoolLookup::Address(address), None)
             .await
             .expect("a verified pool is not re-verified");
         assert_eq!(driver.verified_pool_count(), 1);
@@ -1976,7 +1976,7 @@ mod tests {
         for _ in 0..2 {
             assert!(
                 driver
-                    .run_registration_lifecycle(RegistrationKey::Address(address), None)
+                    .run_registration_lifecycle(PoolLookup::Address(address), None)
                     .await
                     .is_err(),
                 "a tracked pool with no provider fails"
@@ -2013,7 +2013,7 @@ mod tests {
         );
 
         driver
-            .run_registration_lifecycle(RegistrationKey::Address(shared_address), None)
+            .run_registration_lifecycle(PoolLookup::Address(shared_address), None)
             .await
             .expect("V3 lifecycle");
         assert!(driver.is_pool_verified(&v3_key));
@@ -2024,7 +2024,7 @@ mod tests {
 
         driver
             .run_registration_lifecycle(
-                RegistrationKey::V4 {
+                PoolLookup::V4 {
                     pool_manager: shared_address,
                     pool_id: sibling_id,
                 },

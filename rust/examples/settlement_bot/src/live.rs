@@ -471,7 +471,7 @@ async fn verify_one(
             // lifecycle.
             let result = driver
                 .run_registration_lifecycle_with_retry(
-                    degenbot::bot_core::RegistrationKey::Address(address),
+                    degenbot::bot_core::PoolLookup::Address(address),
                     block,
                     &policy,
                 )
@@ -500,7 +500,7 @@ async fn verify_one(
             // by the `(PoolManager, pool_id)` pair.
             let result = driver
                 .run_registration_lifecycle_with_retry(
-                    degenbot::bot_core::RegistrationKey::V4 {
+                    degenbot::bot_core::PoolLookup::V4 {
                         pool_manager: manager,
                         pool_id,
                     },
