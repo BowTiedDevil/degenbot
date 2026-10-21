@@ -66,6 +66,7 @@ use crate::arb_engine::{
 };
 use crate::bot_core::block_pump::{BlockPump, SubscribeState};
 use crate::bot_core::registration_ledger::{RefusalKind, RegistrationPhase, VerifyOrigin};
+use crate::bot_core::registration_lifecycle::RegistrationKey;
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
 use crate::bot_core::verification_retry::{retry_verification_call, RetryPolicy};
 use crate::bot_core::verify_claims::PoolVerifications;
@@ -73,7 +74,6 @@ use crate::bot_core::{Bot, PumpControl, StageHandlers};
 use crate::strategy_host::HostHub;
 use alloy::primitives::Address;
 use degenbot_core::{diag, op_error, op_info, op_warn};
-use degenbot_decoders::v4_swap_decoder::V4PoolId;
 use degenbot_eventhub::Hub;
 use degenbot_executor::composers::PathInfo;
 use degenbot_ingestion::IngestEvent as WsEvent;
@@ -929,14 +929,17 @@ impl EngineDriver {
         self.verifications.is_verified(key)
     }
 
-    /// Run a V3 pool's core-owned registration verify lifecycle, AT MOST ONCE
-    /// per live claim window — and never again once it has COMPLETED.
+    /// Run a pool's core-owned registration verify lifecycle, AT MOST ONCE per
+    /// live claim window — and never again once it has COMPLETED.
     ///
-    /// The choreography is entered through the session's per-pool
-    /// [`PoolVerifications`] owner, keyed by the pool identity. Concurrent
-    /// callers — the async driver, a blocking seat-thread twin, or any `PyO3`
-    /// caller of this same driver — share one run and each receive its
-    /// outcome; a failed window is released so a later caller retries. A
+    /// The key is a value ([`crate::bot_core::RegistrationKey`]): a V3 pool by
+    /// contract address, a V4 pool by `(PoolManager, pool_id)`. One body serves
+    /// both designs, so the claim key, the unregistered no-op guard, the span
+    /// fields and the diagnostic wording cannot drift apart per family.
+    ///
+    /// Concurrent callers — the async driver, a blocking seat-thread twin, or
+    /// any `PyO3` caller of this same driver — share one run and each receive
+    /// its outcome; a failed window is released so a later caller retries. A
     /// completed lifecycle records a durable verified-pool fact, so a
     /// subsequent registration of the same identity is a no-op rather than a
     /// re-run (the behavior the retired Python key cache provided).
@@ -945,112 +948,98 @@ impl EngineDriver {
     ///
     /// Propagates [`DriverError::Verify`] from the core lifecycle
     /// (`Mismatch` = fatal; `Rpc` = retryable; missing provider = fail-fast).
-    pub async fn run_v3_registration_lifecycle(
+    pub async fn run_registration_lifecycle(
         &self,
-        address: Address,
+        key: RegistrationKey,
         snapshot_block: Option<u64>,
     ) -> Result<(), DriverError> {
         let core = self.stages.core();
-        let key = verify_claim_key("v3", &alloy::hex::encode_prefixed(address));
-        if self.verifications.is_verified(&key) {
-            return Ok(());
-        }
-        // An unregistered pool is a no-op `Ok` in the lifecycle; that must not
-        // become a durable fact, or a later registration of this address would
-        // skip the verify it still needs.
-        if core
-            .read_at(LockSite::Registration)
-            .pool_coverage(address)
-            .is_none()
-        {
-            return Ok(());
-        }
-        let provider = self.verify_provider.lock().clone();
-        self.verifications
-            .run_exclusive(&key, || async move {
-                let lifecycle_span = tracing::info_span!(
-            "degenbot.pool.verify_lifecycle",
-            pool.version = "v3",
-            pool.address = %address,
-        );
-                let result = crate::bot_core::run_v3_registration_lifecycle(
-                    &core,
-                    provider.as_ref(),
-                    address,
-                    snapshot_block,
-                )
-                .instrument(lifecycle_span)
-                .await;
-                if result.is_ok() {
-                    diag!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle complete");
-                } else {
-                    op_warn!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle FAILED");
-                }
-                result
-            })
-            .await
-            .map_err(DriverError::Verify)
-    }
-
-    /// Run a V4 pool's core-owned registration verify lifecycle, at most once
-    /// per live claim window — and never again once it has COMPLETED — the V4
-    /// twin of [`Self::run_v3_registration_lifecycle`], keyed by the
-    /// `(PoolManager, pool_id)` pair rather than an address, because one
-    /// manager hosts many pools.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`DriverError::Verify`].
-    pub async fn run_v4_registration_lifecycle(
-        &self,
-        pool_manager: Address,
-        pool_id: V4PoolId,
-        snapshot_block: Option<u64>,
-    ) -> Result<(), DriverError> {
-        let core = self.stages.core();
-        let key = verify_claim_key(
-            "v4",
-            &format!(
-                "{}:{}",
-                alloy::hex::encode_prefixed(pool_manager),
-                alloy::hex::encode_prefixed(pool_id)
+        let claim_key = match key {
+            RegistrationKey::Address(address) => {
+                verify_claim_key("v3", &alloy::hex::encode_prefixed(address))
+            }
+            RegistrationKey::V4 {
+                pool_manager,
+                pool_id,
+            } => verify_claim_key(
+                "v4",
+                &format!(
+                    "{}:{}",
+                    alloy::hex::encode_prefixed(pool_manager),
+                    alloy::hex::encode_prefixed(pool_id)
+                ),
             ),
-        );
-        if self.verifications.is_verified(&key) {
+        };
+        if self.verifications.is_verified(&claim_key) {
             return Ok(());
         }
         // An unregistered pool is a no-op `Ok` in the lifecycle; that must not
-        // become a durable fact, or a later registration of this pair would
+        // become a durable fact, or a later registration of this pool would
         // skip the verify it still needs.
-        if core
-            .read_at(LockSite::Registration)
-            .pool_coverage_by_key(pool_manager, &pool_id)
-            .is_none()
-        {
+        let registered = {
+            let state = core.read_at(LockSite::Registration);
+            key.coverage(&state).is_some()
+        };
+        if !registered {
             return Ok(());
         }
         let provider = self.verify_provider.lock().clone();
         self.verifications
-            .run_exclusive(&key, || async move {
-                let lifecycle_span = tracing::info_span!(
-                    "degenbot.pool.verify_lifecycle",
-                    pool.version = "v4",
-                    pool.manager = %pool_manager,
-                    pool.id = %alloy::hex::encode_prefixed(pool_id),
-                );
-                let result = crate::bot_core::run_v4_registration_lifecycle(
-                    &core,
-                    provider.as_ref(),
-                    pool_manager,
-                    pool_id,
-                    snapshot_block,
-                )
-                .instrument(lifecycle_span)
+            .run_exclusive(&claim_key, || async move {
+                let result = async move {
+                    match key {
+                        RegistrationKey::Address(address) => {
+                            let span = tracing::info_span!(
+                                "degenbot.pool.verify_lifecycle",
+                                pool.version = "v3",
+                                pool.address = %address,
+                            );
+                            crate::bot_core::run_v3_registration_lifecycle(
+                                &core,
+                                provider.as_ref(),
+                                address,
+                                snapshot_block,
+                            )
+                            .instrument(span)
+                            .await
+                        }
+                        RegistrationKey::V4 {
+                            pool_manager,
+                            pool_id,
+                        } => {
+                            let span = tracing::info_span!(
+                                "degenbot.pool.verify_lifecycle",
+                                pool.version = "v4",
+                                pool.manager = %pool_manager,
+                                pool.id = %alloy::hex::encode_prefixed(pool_id),
+                            );
+                            crate::bot_core::run_v4_registration_lifecycle(
+                                &core,
+                                provider.as_ref(),
+                                pool_manager,
+                                pool_id,
+                                snapshot_block,
+                            )
+                            .instrument(span)
+                            .await
+                        }
+                    }
+                }
                 .await;
-                if result.is_ok() {
-                    diag!(domain = pump, version = "v4", pool_id = %alloy::hex::encode_prefixed(pool_id), "registration verify-lifecycle complete");
-                } else {
-                    op_warn!(domain = pump, version = "v4", pool_id = %alloy::hex::encode_prefixed(pool_id), "registration verify-lifecycle FAILED");
+
+                match (key, result.is_ok()) {
+                    (RegistrationKey::Address(address), true) => {
+                        diag!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle complete");
+                    }
+                    (RegistrationKey::Address(address), false) => {
+                        op_warn!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle FAILED");
+                    }
+                    (RegistrationKey::V4 { pool_id, .. }, true) => {
+                        diag!(domain = pump, version = "v4", pool_id = %alloy::hex::encode_prefixed(pool_id), "registration verify-lifecycle complete");
+                    }
+                    (RegistrationKey::V4 { pool_id, .. }, false) => {
+                        op_warn!(domain = pump, version = "v4", pool_id = %alloy::hex::encode_prefixed(pool_id), "registration verify-lifecycle FAILED");
+                    }
                 }
                 result
             })
@@ -1058,7 +1047,7 @@ impl EngineDriver {
             .map_err(DriverError::Verify)
     }
 
-    /// Blocking V3 registration lifecycle (the seat-thread twin).
+    /// Blocking registration lifecycle (the seat-thread twin).
     ///
     /// # Errors
     ///
@@ -1067,38 +1056,16 @@ impl EngineDriver {
     /// # Panics
     ///
     /// Panics if called from within a Tokio runtime.
-    pub fn run_v3_registration_lifecycle_sync(
+    pub fn run_registration_lifecycle_sync(
         &self,
-        address: Address,
+        key: crate::bot_core::RegistrationKey,
         snapshot_block: Option<u64>,
     ) -> Result<(), DriverError> {
         degenbot_core::runtime::get_runtime()
-            .block_on(self.run_v3_registration_lifecycle(address, snapshot_block))
+            .block_on(self.run_registration_lifecycle(key, snapshot_block))
     }
 
-    /// Blocking V4 registration lifecycle (the seat-thread twin).
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`DriverError::Verify`].
-    ///
-    /// # Panics
-    ///
-    /// Panics if called from within a Tokio runtime.
-    pub fn run_v4_registration_lifecycle_sync(
-        &self,
-        pool_manager: Address,
-        pool_id: V4PoolId,
-        snapshot_block: Option<u64>,
-    ) -> Result<(), DriverError> {
-        degenbot_core::runtime::get_runtime().block_on(self.run_v4_registration_lifecycle(
-            pool_manager,
-            pool_id,
-            snapshot_block,
-        ))
-    }
-
-    /// Run a V3 pool's registration verify lifecycle under the bounded retry
+    /// Run a pool's registration verify lifecycle under the bounded retry
     /// dance.
     ///
     /// A transient verify failure (`fatal == false`) releases the claim (the
@@ -1110,41 +1077,21 @@ impl EngineDriver {
     ///
     /// Returns the last transient [`RefusalKind`] after exhausting `policy`,
     /// or the first fatal one.
-    pub async fn run_v3_registration_lifecycle_with_retry(
+    pub async fn run_registration_lifecycle_with_retry(
         &self,
-        address: Address,
+        key: crate::bot_core::RegistrationKey,
         snapshot_block: Option<u64>,
         policy: &RetryPolicy,
     ) -> Result<(), RefusalKind> {
         retry_verification_call(policy, |_attempt| async move {
-            self.run_v3_registration_lifecycle(address, snapshot_block)
+            self.run_registration_lifecycle(key, snapshot_block)
                 .await
                 .map_err(verify_refusal_from_driver)
         })
         .await
     }
 
-    /// V4 twin of [`Self::run_v3_registration_lifecycle_with_retry`].
-    ///
-    /// # Errors
-    ///
-    /// As the V3 twin.
-    pub async fn run_v4_registration_lifecycle_with_retry(
-        &self,
-        pool_manager: Address,
-        pool_id: V4PoolId,
-        snapshot_block: Option<u64>,
-        policy: &RetryPolicy,
-    ) -> Result<(), RefusalKind> {
-        retry_verification_call(policy, |_attempt| async move {
-            self.run_v4_registration_lifecycle(pool_manager, pool_id, snapshot_block)
-                .await
-                .map_err(verify_refusal_from_driver)
-        })
-        .await
-    }
-
-    /// Blocking V3 with-retry twin (the seat-thread shape).
+    /// Blocking with-retry twin (the seat-thread shape).
     ///
     /// # Errors
     ///
@@ -1153,41 +1100,17 @@ impl EngineDriver {
     /// # Panics
     ///
     /// Panics if called from within a Tokio runtime.
-    pub fn run_v3_registration_lifecycle_with_retry_sync(
+    pub fn run_registration_lifecycle_with_retry_sync(
         &self,
-        address: Address,
+        key: crate::bot_core::RegistrationKey,
         snapshot_block: Option<u64>,
         policy: &RetryPolicy,
     ) -> Result<(), RefusalKind> {
-        degenbot_core::runtime::get_runtime().block_on(
-            self.run_v3_registration_lifecycle_with_retry(address, snapshot_block, policy),
-        )
-    }
-
-    /// Blocking V4 with-retry twin (the seat-thread shape).
-    ///
-    /// # Errors
-    ///
-    /// As the async twin.
-    ///
-    /// # Panics
-    ///
-    /// Panics if called from within a Tokio runtime.
-    pub fn run_v4_registration_lifecycle_with_retry_sync(
-        &self,
-        pool_manager: Address,
-        pool_id: V4PoolId,
-        snapshot_block: Option<u64>,
-        policy: &RetryPolicy,
-    ) -> Result<(), RefusalKind> {
-        degenbot_core::runtime::get_runtime().block_on(
-            self.run_v4_registration_lifecycle_with_retry(
-                pool_manager,
-                pool_id,
-                snapshot_block,
-                policy,
-            ),
-        )
+        degenbot_core::runtime::get_runtime().block_on(self.run_registration_lifecycle_with_retry(
+            key,
+            snapshot_block,
+            policy,
+        ))
     }
 
     /// Register a mixed path (DELEGATION, ADR-050 D4).
@@ -1301,6 +1224,7 @@ fn verify_claim_key(family: &str, identity: &str) -> String {
 mod tests {
     use super::*;
     use crate::bot_core::PoolTickCoverage;
+    use degenbot_decoders::v4_swap_decoder::V4PoolId;
     use degenbot_eventhub::OverflowPolicy;
     use futures_util::StreamExt;
 
@@ -1981,7 +1905,7 @@ mod tests {
         let key = verify_claim_key("v3", &alloy::hex::encode_prefixed(address));
 
         driver
-            .run_v3_registration_lifecycle(address, None)
+            .run_registration_lifecycle(RegistrationKey::Address(address), None)
             .await
             .expect("first lifecycle");
         assert!(driver.is_pool_verified(&key), "success records the fact");
@@ -2000,7 +1924,7 @@ mod tests {
         register_v3(&driver, address, PoolTickCoverage::Tracked);
 
         driver
-            .run_v3_registration_lifecycle(address, None)
+            .run_registration_lifecycle(RegistrationKey::Address(address), None)
             .await
             .expect("a verified pool is not re-verified");
         assert_eq!(driver.verified_pool_count(), 1);
@@ -2052,7 +1976,7 @@ mod tests {
         for _ in 0..2 {
             assert!(
                 driver
-                    .run_v3_registration_lifecycle(address, None)
+                    .run_registration_lifecycle(RegistrationKey::Address(address), None)
                     .await
                     .is_err(),
                 "a tracked pool with no provider fails"
@@ -2089,7 +2013,7 @@ mod tests {
         );
 
         driver
-            .run_v3_registration_lifecycle(shared_address, None)
+            .run_registration_lifecycle(RegistrationKey::Address(shared_address), None)
             .await
             .expect("V3 lifecycle");
         assert!(driver.is_pool_verified(&v3_key));
@@ -2099,7 +2023,13 @@ mod tests {
         );
 
         driver
-            .run_v4_registration_lifecycle(shared_address, sibling_id, None)
+            .run_registration_lifecycle(
+                RegistrationKey::V4 {
+                    pool_manager: shared_address,
+                    pool_id: sibling_id,
+                },
+                None,
+            )
             .await
             .expect("V4 lifecycle");
         assert!(driver.is_pool_verified(&v4_key));

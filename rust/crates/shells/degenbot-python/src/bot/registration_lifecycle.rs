@@ -297,87 +297,43 @@ pub(crate) fn run_registration_lifecycle(
     driver: &Arc<EngineDriver>,
     lifecycle: &PyRegistrationLifecycle,
 ) -> PyResult<Py<PyAny>> {
-    match lifecycle.target()? {
-        Target::V3(address) => {
-            let snapshot_block = lifecycle.snapshot_block;
-            match lifecycle.mode {
-                Mode::Async => {
-                    let driver = Arc::clone(driver);
-                    let future = crate::ambient_runtime::future_into_py(py, async move {
-                        driver
-                            .run_v3_registration_lifecycle(address, snapshot_block)
-                            .await
-                            .map_err(map_driver_lifecycle_err)
-                    })?;
-                    Ok(future.into())
-                }
-                Mode::Blocking => {
-                    let driver = Arc::clone(driver);
-                    py.detach(move || {
-                        driver
-                            .run_v3_registration_lifecycle_sync(address, snapshot_block)
-                            .map_err(map_driver_lifecycle_err)
-                    })?;
-                    Ok(py.None())
-                }
-                Mode::BlockingWithRetry => {
-                    let policy = lifecycle.core_policy(py)?;
-                    let driver = Arc::clone(driver);
-                    py.detach(move || {
-                        driver
-                            .run_v3_registration_lifecycle_with_retry_sync(
-                                address,
-                                snapshot_block,
-                                &policy,
-                            )
-                            .map_err(map_refusal)
-                    })?;
-                    Ok(py.None())
-                }
-            }
+    let key = match lifecycle.target()? {
+        Target::V3(address) => degenbot_bot::bot_core::RegistrationKey::Address(address),
+        Target::V4(pool_manager, pool_id) => degenbot_bot::bot_core::RegistrationKey::V4 {
+            pool_manager,
+            pool_id,
+        },
+    };
+    let snapshot_block = lifecycle.snapshot_block;
+    match lifecycle.mode {
+        Mode::Async => {
+            let driver = Arc::clone(driver);
+            let future = crate::ambient_runtime::future_into_py(py, async move {
+                driver
+                    .run_registration_lifecycle(key, snapshot_block)
+                    .await
+                    .map_err(map_driver_lifecycle_err)
+            })?;
+            Ok(future.into())
         }
-        Target::V4(pool_manager, pool_id) => {
-            let snapshot_block = lifecycle.snapshot_block;
-            match lifecycle.mode {
-                Mode::Async => {
-                    let driver = Arc::clone(driver);
-                    let future = crate::ambient_runtime::future_into_py(py, async move {
-                        driver
-                            .run_v4_registration_lifecycle(pool_manager, pool_id, snapshot_block)
-                            .await
-                            .map_err(map_driver_lifecycle_err)
-                    })?;
-                    Ok(future.into())
-                }
-                Mode::Blocking => {
-                    let driver = Arc::clone(driver);
-                    py.detach(move || {
-                        driver
-                            .run_v4_registration_lifecycle_sync(
-                                pool_manager,
-                                pool_id,
-                                snapshot_block,
-                            )
-                            .map_err(map_driver_lifecycle_err)
-                    })?;
-                    Ok(py.None())
-                }
-                Mode::BlockingWithRetry => {
-                    let policy = lifecycle.core_policy(py)?;
-                    let driver = Arc::clone(driver);
-                    py.detach(move || {
-                        driver
-                            .run_v4_registration_lifecycle_with_retry_sync(
-                                pool_manager,
-                                pool_id,
-                                snapshot_block,
-                                &policy,
-                            )
-                            .map_err(map_refusal)
-                    })?;
-                    Ok(py.None())
-                }
-            }
+        Mode::Blocking => {
+            let driver = Arc::clone(driver);
+            py.detach(move || {
+                driver
+                    .run_registration_lifecycle_sync(key, snapshot_block)
+                    .map_err(map_driver_lifecycle_err)
+            })?;
+            Ok(py.None())
+        }
+        Mode::BlockingWithRetry => {
+            let policy = lifecycle.core_policy(py)?;
+            let driver = Arc::clone(driver);
+            py.detach(move || {
+                driver
+                    .run_registration_lifecycle_with_retry_sync(key, snapshot_block, &policy)
+                    .map_err(map_refusal)
+            })?;
+            Ok(py.None())
         }
     }
 }

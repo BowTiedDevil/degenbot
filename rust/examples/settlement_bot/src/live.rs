@@ -466,11 +466,15 @@ async fn verify_one(
             let block = ctx.block;
             let policy = pipeline.retry_policy;
             // The at-most-once claim and the retry classification are the
-            // DRIVER's (`EngineDriver::run_v3_registration_lifecycle_with_retry`):
+            // DRIVER's (`EngineDriver::run_registration_lifecycle_with_retry`):
             // a transient failure releases the claim and the dance re-enters the
             // lifecycle.
             let result = driver
-                .run_v3_registration_lifecycle_with_retry(address, block, &policy)
+                .run_registration_lifecycle_with_retry(
+                    degenbot::bot_core::RegistrationKey::Address(address),
+                    block,
+                    &policy,
+                )
                 .await;
             match result {
                 Ok(()) => {
@@ -492,10 +496,17 @@ async fn verify_one(
             pool_id.copy_from_slice(r.pool_hash.as_slice());
             let block = ctx.block;
             let policy = pipeline.retry_policy;
-            // The V4 twin: the claim and the retry classification are the
-            // driver's, keyed by the `(PoolManager, pool_id)` pair.
+            // The claim and the retry classification are the driver's, keyed
+            // by the `(PoolManager, pool_id)` pair.
             let result = driver
-                .run_v4_registration_lifecycle_with_retry(manager, pool_id, block, &policy)
+                .run_registration_lifecycle_with_retry(
+                    degenbot::bot_core::RegistrationKey::V4 {
+                        pool_manager: manager,
+                        pool_id,
+                    },
+                    block,
+                    &policy,
+                )
                 .await;
             match result {
                 Ok(()) => {

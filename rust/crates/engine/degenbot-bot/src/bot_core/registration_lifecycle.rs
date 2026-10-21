@@ -86,7 +86,7 @@ pub enum RegistrationKey {
 impl RegistrationKey {
     /// The pool's tick coverage, or `None` when the pool is not registered
     /// under this key (the machine's no-op arm).
-    fn coverage(&self, state: &BotState) -> Option<PoolTickCoverage> {
+    pub fn coverage(&self, state: &BotState) -> Option<PoolTickCoverage> {
         match self {
             Self::Address(address) => state.pool_coverage(*address),
             Self::V4 {
@@ -97,7 +97,7 @@ impl RegistrationKey {
     }
 
     /// Defer the pool's live events to the pump buffer until verification ends.
-    fn quarantine(&self, state: &mut BotState) {
+    pub fn quarantine(&self, state: &mut BotState) {
         match self {
             Self::Address(address) => state.set_pool_quarantined(*address),
             Self::V4 {
@@ -108,7 +108,7 @@ impl RegistrationKey {
     }
 
     /// Consume the pinned snapshot seed (exactly once, so memory is bounded).
-    fn take_seed(&self, state: &mut BotState) -> Option<HashMap<i32, TickInfo>> {
+    pub fn take_seed(&self, state: &mut BotState) -> Option<HashMap<i32, TickInfo>> {
         match self {
             Self::Address(address) => state.take_snapshot_seed(*address),
             Self::V4 {
@@ -125,7 +125,7 @@ impl RegistrationKey {
     /// chains key → clock under ONE `read_at(Registration)`, so this must not
     /// be recomposed from two single-step reads (nested reads are a
     /// self-deadlock when a writer queues between them — soak-2026-08-22).
-    fn own_liquidity_clock(&self, core: &StateLock<BotState>) -> u64 {
+    pub fn own_liquidity_clock(&self, core: &StateLock<BotState>) -> u64 {
         match self {
             Self::Address(address) => core.pool_tick_data_block_by_address(address),
             Self::V4 {
@@ -138,7 +138,7 @@ impl RegistrationKey {
     /// Drain the buffered backfill and pump events onto the pool. Draining is
     /// not verification: it preserves the permanent V2-V2-V3 apply-buffer
     /// behaviour and runs for a Sparse pool too.
-    fn drain(&self, state: &mut BotState) {
+    pub fn drain(&self, state: &mut BotState) {
         match self {
             Self::Address(address) => {
                 state.apply_backfill_buffer(address);
@@ -156,7 +156,7 @@ impl RegistrationKey {
 
     /// Freeze the post-drain `(tick_data, block)` pair atomically with the
     /// drain.
-    fn pin_post_drain(&self, state: &mut BotState) {
+    pub fn pin_post_drain(&self, state: &mut BotState) {
         match self {
             Self::Address(address) => state.pin_post_drain_snapshot(*address),
             Self::V4 {
@@ -167,7 +167,7 @@ impl RegistrationKey {
     }
 
     /// Consume the pinned post-drain pair (exactly once).
-    fn take_post_drain(&self, state: &mut BotState) -> Option<(HashMap<i32, TickInfo>, u64)> {
+    pub fn take_post_drain(&self, state: &mut BotState) -> Option<(HashMap<i32, TickInfo>, u64)> {
         match self {
             Self::Address(address) => state.take_post_drain_snapshot(*address),
             Self::V4 {
@@ -178,7 +178,7 @@ impl RegistrationKey {
     }
 
     /// The terminal transition: only reachable after a verified success.
-    fn set_live(&self, state: &mut BotState) {
+    pub fn set_live(&self, state: &mut BotState) {
         match self {
             Self::Address(address) => state.set_pool_live(*address),
             Self::V4 {
