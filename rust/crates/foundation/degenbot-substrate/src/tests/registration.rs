@@ -778,7 +778,7 @@ fn unregister_v2_pool_returns_true_then_re_register_allocates_fresh_id() {
     assert_eq!(core.pool_count(), 1);
 
     // Unregister the V2 pool.
-    let removed = core.unregister_pool(make_pool_addr(), None);
+    let removed = core.unregister_pool(PoolLookup::from_address(make_pool_addr()));
     assert!(removed, "unregister of a registered V2 pool returns true");
     assert_eq!(core.pool_count(), 0, "unregister must drop the PoolEntry");
     assert_eq!(
@@ -1125,7 +1125,7 @@ fn unregister_pool_on_unknown_address_returns_false_silently() {
         .expect("test setup: V2 registration");
     let unknown = Address::from([0x99u8; 20]);
 
-    let removed = core.unregister_pool(unknown, None);
+    let removed = core.unregister_pool(PoolLookup::from_address(unknown));
     assert!(!removed, "unregister on an unknown address returns false");
     // No mutation occurred.
     assert_eq!(core.pool_count(), 1);
@@ -1382,7 +1382,7 @@ fn unregister_v3_pool_discards_buffered_liquidity_events() {
 
     // Unregister the V3 pool. ADR-007 U3: drain the V3 buffer for the
     // removed address so a re-register does not replay stale Mint/Burn.
-    let removed = core.unregister_pool(v3_addr, None);
+    let removed = core.unregister_pool(PoolLookup::from_address(v3_addr));
     assert!(removed);
     assert_eq!(
         core.buffered_event_count(&v3_addr),
@@ -1426,7 +1426,10 @@ fn unregister_v4_pool_by_tuple_key_discards_buffered_modify_liquidity() {
     assert_eq!(core.pool_count(), 1);
 
     // Unregister by the V4 tuple key (address = pool_manager).
-    let removed = core.unregister_pool(pool_manager, Some(pool_id_bytes));
+    let removed = core.unregister_pool(PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    });
     assert!(removed, "unregister of a registered V4 pool returns true");
     assert_eq!(core.pool_count(), 0);
 

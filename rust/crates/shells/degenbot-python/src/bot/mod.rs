@@ -58,7 +58,7 @@ use degenbot_bot::bot_core::{
     RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
     RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey,
 };
-use degenbot_substrate::PoolRegistration;
+use degenbot_substrate::{PoolLookup, PoolRegistration};
 use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
 use pyo3::Bound;
@@ -1722,7 +1722,7 @@ impl PyBot {
         // The write guard is acquired inside the core method under this
         // py.detach — the GIL is released while parked on the BotState
         // write.
-        Ok(py.detach(|| self.bot.unregister_pool(addr)))
+        Ok(py.detach(|| self.bot.unregister_pool(PoolLookup::from_address(addr))))
     }
 
     /// Assemble a V3 pool's tick map from the stored DB snapshot (`Store → Db`

@@ -1908,7 +1908,7 @@ mod tests {
             let shared = driver.stages().core();
             shared
                 .write_at(LockSite::Registration)
-                .unregister_pool(address, None);
+                .unregister_pool(PoolLookup::from_address(address));
         }
         register_v3(&driver, address, PoolTickCoverage::Tracked);
 

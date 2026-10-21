@@ -186,6 +186,16 @@ pub(crate) trait LiquidityFamily {
 
     /// Apply one buffered event to a registered pool.
     fn apply(state: &mut Self::State, event: Self::Event);
+    /// Forget this family's registration index for `key`, returning the pool id.
+    fn forget_registration(
+        orch: &mut ConcentratedLiquidityOrchestration,
+        reg: &mut RegistryCore,
+        key: &Self::Key,
+    ) -> Option<u64>;
+
+    /// Discard any buffered events for a pool that is leaving the registry.
+    fn discard_buffered(orch: &mut ConcentratedLiquidityOrchestration, key: &Self::Key);
+
     /// The wholesale state-sync payload this family accepts.
     type Sync;
 
@@ -330,6 +340,18 @@ impl LiquidityFamily for V3Family {
 
     fn apply(state: &mut Self::State, event: Self::Event) {
         ConcentratedLiquidityOrchestration::apply_buffered_v3_event(state, event);
+    }
+
+    fn forget_registration(
+        _orch: &mut ConcentratedLiquidityOrchestration,
+        reg: &mut RegistryCore,
+        key: &Self::Key,
+    ) -> Option<u64> {
+        reg.pool_addresses.remove(key)
+    }
+
+    fn discard_buffered(orch: &mut ConcentratedLiquidityOrchestration, key: &Self::Key) {
+        orch.v3_buffer.discard_for(key);
     }
 
     type Sync = V3StateSync;
@@ -507,6 +529,18 @@ impl LiquidityFamily for V4Family {
 
     fn apply(state: &mut Self::State, event: Self::Event) {
         ConcentratedLiquidityOrchestration::apply_buffered_v4_event(state, event);
+    }
+
+    fn forget_registration(
+        orch: &mut ConcentratedLiquidityOrchestration,
+        _reg: &mut RegistryCore,
+        key: &Self::Key,
+    ) -> Option<u64> {
+        orch.v4_pool_ids.remove(key)
+    }
+
+    fn discard_buffered(orch: &mut ConcentratedLiquidityOrchestration, key: &Self::Key) {
+        orch.v4_buffer.discard_for(key);
     }
 
     type Sync = V4StateSync;
@@ -2006,29 +2040,21 @@ impl ConcentratedLiquidityOrchestration {
     > {
         self.v4_pool_ids.iter()
     }
-
-    /// Unregistration seam (ADR-007 U3): drop every buffered V3 event for
-    /// `address` so a re-register never replays stale Mint/Burn events.
-    pub(crate) fn discard_v3_buffered(&mut self, address: &Address) {
-        self.v3_buffer.discard_for(address);
-    }
-
-    /// Unregistration seam (ADR-007 U3): remove the `(pool_manager, pool_id)`
-    /// V4 registration, returning its internal pool id (`None` = never
-    /// registered).
-    pub(crate) fn remove_v4_registration(
+    /// Remove a pool's registration and everything buffered for it, for either
+    /// key shape. Returns the pool id that left the registry.
+    ///
+    /// The address arm covers every address-keyed family (V2/V3/Aerodrome/
+    /// Curve/Balancer as well as concentrated liquidity); discarding the
+    /// concentrated-liquidity buffers for a non-CL address is a no-op.
+    pub(crate) fn unregister_pool<F: LiquidityFamily>(
         &mut self,
-        key: &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
+        reg: &mut RegistryCore,
+        key: &F::Key,
     ) -> Option<u64> {
-        self.v4_pool_ids.remove(key)
-    }
-
-    /// Unregistration seam (ADR-007 U3): drop every buffered V4 event for `key`.
-    pub(crate) fn discard_v4_buffered(
-        &mut self,
-        key: &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
-    ) {
-        self.v4_buffer.discard_for(key);
+        let pool_id = F::forget_registration(self, reg, key)?;
+        F::discard_buffered(self, key);
+        reg.pools.remove(&pool_id);
+        Some(pool_id)
     }
 
     // ------------------------------------------------------------------

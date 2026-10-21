@@ -138,7 +138,7 @@ fn unregistration_withdraws_the_derived_identity() {
         .pool_id_for_identity(&PoolIdentity::v2(make_pool_addr()))
         .is_some());
 
-    state.unregister_pool(make_pool_addr(), None);
+    state.unregister_pool(PoolLookup::from_address(make_pool_addr()));
 
     assert_eq!(
         state.pool_id_for_identity(&PoolIdentity::v2(make_pool_addr())),

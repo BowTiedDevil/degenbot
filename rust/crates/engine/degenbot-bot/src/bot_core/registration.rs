@@ -24,7 +24,7 @@ use degenbot_pools::tick_fetch::TickBootstrapRpc;
 use degenbot_substrate::registration_gate::AdmissionVerdict;
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::tick_assembly::TickMapAssemblyError;
-use degenbot_substrate::PoolRegistration;
+use degenbot_substrate::{PoolLookup, PoolRegistration};
 
 use super::bot::Bot;
 use super::registration_ledger::{
@@ -544,10 +544,10 @@ impl Bot {
     /// the address was never registered (silent no-op). V4 tuple-key
     /// unregister is engine-side and never routed here.
     #[must_use]
-    pub fn unregister_pool(&self, address: Address) -> bool {
+    pub fn unregister_pool(&self, key: PoolLookup) -> bool {
         self.state_arc()
             .write_at(LockSite::Orchestrator)
-            .unregister_pool(address, None)
+            .unregister_pool(key)
     }
 
     /// The address-keyed registry-of-record payload for a V2 build: identity
@@ -1225,12 +1225,12 @@ mod tests {
         let pool_id =
             register_v2(&bot, v2_addr, adhoc_factory()).expect("test setup: V2 registration");
         assert!(
-            bot.unregister_pool(v2_addr),
+            bot.unregister_pool(PoolLookup::from_address(v2_addr)),
             "a registered pool unregisters"
         );
         assert!(!bot.has_pool(pool_id));
         assert!(
-            !bot.unregister_pool(v2_addr),
+            !bot.unregister_pool(PoolLookup::from_address(v2_addr)),
             "an unregistered address is a silent no-op"
         );
     }

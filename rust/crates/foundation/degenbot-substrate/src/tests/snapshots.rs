@@ -66,7 +66,7 @@ fn pool_state_head_is_max_update_block_across_all_pools() {
 
     // De-registering the leading pool (B, at 12) drops the head back to A's 5.
     let _ = a;
-    core.unregister_pool(b_addr, None);
+    core.unregister_pool(PoolLookup::from_address(b_addr));
     assert_eq!(
         core.pool_state_head(),
         5,

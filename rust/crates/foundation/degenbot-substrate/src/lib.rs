@@ -110,6 +110,8 @@ pub use crate::session_registry::PoolIdentity;
 use alloy::primitives::{Address, U256};
 use hashbrown::HashMap;
 
+use crate::concentrated_liquidity_orchestration::{V3Family, V4Family};
+
 #[expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[cfg(test)]
 mod tests;
@@ -638,56 +640,24 @@ impl BotState {
         (self.pool_family(pool_id) == Some(identity.family_tag())).then_some(pool_id)
     }
 
-    /// Unregister a pool. ADR-007 U3.
+    /// Remove a pool from the registry, discarding anything buffered for it.
     ///
-    /// Drops the `PoolEntry` (and its reorg journal with it — restore for a
-    /// removed pool is a no-op target) plus its index entries, and discards
-    /// any buffered liquidity events for the pool so a re-register does not
-    /// replay stale Mint/Burn/ModifyLiquidity onto the fresh pool.
-    ///
-    /// # Keying
-    ///
-    /// - **V2/V3 path** (`pool_id` = `None`): keyed by contract `address`
-    ///   (`pool_addresses`).
-    /// - **V4 path** (`pool_id` = `Some`): keyed by `(address, pool_id)` where
-    ///   `address` is the **`PoolManager`** contract address (one `PoolManager`
-    ///   hosts many pool ids — address alone is ambiguous, hence the tuple).
-    ///
-    /// `next_pool_id` is **not** reused — removed ids are retired so a stale
-    /// `PyLiquidityPool` handle retained by a Python caller cannot alias onto
-    /// a different pool that happens to receive the recycled id.
-    ///
-    /// # Returns
-    ///
-    /// `true` if an entry was found and removed; `false` if the address/tuple
-    /// was never registered (silent no-op, mirroring Python `PoolRegistry.remove`
-    /// silent-on-miss). Register stays refusal-on-`panic!`/`Err` (ADR-007 U2);
-    /// the asymmetry reflects the asymmetry in the operations' invariants.
-    pub fn unregister_pool(
-        &mut self,
-        address: Address,
-        pool_id: Option<degenbot_decoders::v4_swap_decoder::V4PoolId>,
-    ) -> bool {
-        match pool_id {
-            None => {
-                // V2/V3 path: address-keyed.
-                let Some(id) = self.registry.pool_addresses.remove(&address) else {
-                    return false;
-                };
-                self.registry.pools.remove(&id);
-                self.concentrated_liquidity.discard_v3_buffered(&address);
-                true
-            }
-            Some(pid) => {
-                // V4 path: (pool_manager, pool_id)-keyed.
-                let key = (address, pid);
-                let Some(id) = self.concentrated_liquidity.remove_v4_registration(&key) else {
-                    return false;
-                };
-                self.registry.pools.remove(&id);
-                self.concentrated_liquidity.discard_v4_buffered(&key);
-                true
-            }
+    /// One effect, either key shape: the address names any address-keyed family,
+    /// the `(pool_manager, pool_id)` pair names a V4 pool. Returns whether a
+    /// registration was removed.
+    pub fn unregister_pool(&mut self, key: PoolLookup) -> bool {
+        match key {
+            PoolLookup::Address(address) => self
+                .concentrated_liquidity
+                .unregister_pool::<V3Family>(&mut self.registry, &address)
+                .is_some(),
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id,
+            } => self
+                .concentrated_liquidity
+                .unregister_pool::<V4Family>(&mut self.registry, &(pool_manager, pool_id))
+                .is_some(),
         }
     }
 
