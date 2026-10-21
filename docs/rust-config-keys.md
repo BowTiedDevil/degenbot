@@ -20,261 +20,261 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 
 ## `nodes`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_RPC_HTTP_CHAINID_` | `nodes.http` | `Option<map<string, string>>` | `(unset)` | Per-chain JSON-RPC HTTP endpoint per chain id: [nodes] http = { 1 = "https://eth.example/rpc", 8453 = "https://base.example/rpc" } (or [nodes.http] with one `1 = "..."` line per chain). The env layer is the name family DEGENBOT_RPC_HTTP_CHAINID_<chain_id>, whose entry overrides the file entry for that chain alone. Every value must be an http:// or https:// URL. |
-| `DEGENBOT_RPC_WS_CHAINID_` | `nodes.ws` | `Option<map<string, string>>` | `(unset)` | Per-chain subscription (WebSocket) endpoint per chain id, same table and family shape as nodes.http. The env layer is the name family DEGENBOT_RPC_WS_CHAINID_<chain_id>. Every value must be a ws:// or wss:// URL; a subscription consumer takes this transport or nodes.ipc, never nodes.http. |
-| `DEGENBOT_RPC_IPC_CHAINID_` | `nodes.ipc` | `Option<map<string, string>>` | `(unset)` | Per-chain local IPC endpoint per chain id (a node running beside the bot, reachable over a Unix socket or a Windows named pipe), same table and family shape as nodes.http. The env layer is the name family DEGENBOT_RPC_IPC_CHAINID_<chain_id>. Every value must be an `ipc://` URL or an absolute socket path (a leading `/` on Unix, or a Windows named pipe under the `\\.\pipe\` namespace, e.g. `ipc://\\.\pipe\node.ipc`). A relative or `~/` path is refused: it resolves against the process working directory, not the config file's directory, and `~` is never expanded here. An IPC entry can serve requests and subscriptions alike. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_RPC_HTTP_CHAINID_` | `nodes.http` | `Option<map<string, string>>` | `(unset)` | `core` | Per-chain JSON-RPC HTTP endpoint per chain id: [nodes] http = { 1 = "https://eth.example/rpc", 8453 = "https://base.example/rpc" } (or [nodes.http] with one `1 = "..."` line per chain). The env layer is the name family DEGENBOT_RPC_HTTP_CHAINID_<chain_id>, whose entry overrides the file entry for that chain alone. Every value must be an http:// or https:// URL. |
+| `DEGENBOT_RPC_WS_CHAINID_` | `nodes.ws` | `Option<map<string, string>>` | `(unset)` | `core` | Per-chain subscription (WebSocket) endpoint per chain id, same table and family shape as nodes.http. The env layer is the name family DEGENBOT_RPC_WS_CHAINID_<chain_id>. Every value must be a ws:// or wss:// URL; a subscription consumer takes this transport or nodes.ipc, never nodes.http. |
+| `DEGENBOT_RPC_IPC_CHAINID_` | `nodes.ipc` | `Option<map<string, string>>` | `(unset)` | `core` | Per-chain local IPC endpoint per chain id (a node running beside the bot, reachable over a Unix socket or a Windows named pipe), same table and family shape as nodes.http. The env layer is the name family DEGENBOT_RPC_IPC_CHAINID_<chain_id>. Every value must be an `ipc://` URL or an absolute socket path (a leading `/` on Unix, or a Windows named pipe under the `\\.\pipe\` namespace, e.g. `ipc://\\.\pipe\node.ipc`). A relative or `~/` path is refused: it resolves against the process working directory, not the config file's directory, and `~` is never expanded here. An IPC entry can serve requests and subscriptions alike. |
 ## `session`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_DEFAULT_CHAIN_ID` | `session.chain_id` | `Option<u64>` | `(unset)` | Chain id the session runs against (a positive integer; the pre-0.6 top-level default_chain_id key is retired and refused with a pointer here). The endpoint tables are keyed by chain id, so this is the chain whose entry the node resolvers read; unset means no chain was named and a node endpoint cannot be selected. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_DEFAULT_CHAIN_ID` | `session.chain_id` | `Option<u64>` | `(unset)` | `core` | Chain id the session runs against (a positive integer; the pre-0.6 top-level default_chain_id key is retired and refused with a pointer here). The endpoint tables are keyed by chain id, so this is the chain whose entry the node resolvers read; unset means no chain was named and a node endpoint cannot be selected. |
 ## `database`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_DB_PATH` | `database.path` | `path` | `~/.local/state/degenbot/db/degenbot.db` | SQLite database file this process owns. A leading ~ expands against HOME, and the declared default rebases onto an absolute $XDG_STATE_HOME; an explicit file or environment path expands as written. The pre-0.6 [database] `filepath` key is retired and refused as an unknown key. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_DB_PATH` | `database.path` | `path` | `~/.local/state/degenbot/db/degenbot.db` | `core` | SQLite database file this process owns. A leading ~ expands against HOME, and the declared default rebases onto an absolute $XDG_STATE_HOME; an explicit file or environment path expands as written. The pre-0.6 [database] `filepath` key is retired and refused as an unknown key. |
 ## `runtime`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_IO_WORKERS` | `runtime.io_workers` | `Option<usize>` | `(unset; derived from the cgroup CPU budget)` | Ambient I/O runtime worker count; when unset it is derived from the cgroup CPU budget after the solve bins take theirs (see solve.solve_cpus / solve.solve_headroom). |
-| `DEGENBOT_FLEET_PROFILE` | `runtime.fleet_profile` | `FleetProfile(Auto|Pinned|Serial)` | `auto` | Fleet host-binding profile (FLEETFLOOR FF-T2): auto resolves the host tier from the CPU budget (pinned at/above the pinned-role floor, serial on 2-5 cores, refused below 2); pinned/serial force a binding — a forced pinned binding below the floor runs marked oversubscribed, and forced bindings still need 2 or more cores. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_IO_WORKERS` | `runtime.io_workers` | `Option<usize>` | `(unset; derived from the cgroup CPU budget)` | `core` | Ambient I/O runtime worker count; when unset it is derived from the cgroup CPU budget after the solve bins take theirs (see solve.solve_cpus / solve.solve_headroom). |
+| `DEGENBOT_FLEET_PROFILE` | `runtime.fleet_profile` | `FleetProfile(Auto|Pinned|Serial)` | `auto` | `core` | Fleet host-binding profile (FLEETFLOOR FF-T2): auto resolves the host tier from the CPU budget (pinned at/above the pinned-role floor, serial on 2-5 cores, refused below 2); pinned/serial force a binding — a forced pinned binding below the floor runs marked oversubscribed, and forced bindings still need 2 or more cores. |
 ## `telemetry`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_LOG_LEVEL` | `telemetry.log_level` | `Option<LogLevel(Off|Error|Warn|Info|Debug|Trace)>` | `(unset: wiring default)` | Console wiring default level, used only when RUST_LOG is absent (off\|error\|warn\|info\|debug\|trace). The standalone Rust bot wiring defaults to warn; the Python driver to info. |
-| `DEGENBOT_TELEMETRY_DIAG` | `telemetry.diag` | `map<string, LogLevel>` | `(empty)` | Per-domain console escalation from a validated map: [telemetry.diag] with sim = "debug", or the env form sim=debug,solver=trace. A typo'd domain is a boot error. Ignored with one WARN when RUST_LOG is set. |
-| `DEGENBOT_OTEL` | `telemetry.otel` | `bool` | `true` | Enable the OTel OTLP span layer and the Prometheus metrics endpoint; `0`/empty opts out. |
-| `DEGENBOT_METRICS_ADDR` | `telemetry.metrics_addr` | `string` | `127.0.0.1:9464` | Prometheus scrape endpoint bind address (only active when otel is on). |
-| `DEGENBOT_JAEGER_ENDPOINT` | `telemetry.jaeger_endpoint` | `string` | `http://127.0.0.1:4318` | OTLP endpoint used by the opt-in Jaeger E2E test. |
-| `DEGENBOT_JAEGER_E2E` | `telemetry.jaeger_e2e` | `bool` | `false` | Gate for the network-accessible Jaeger E2E test (Jaeger must be reachable at jaeger_endpoint). |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_LOG_LEVEL` | `telemetry.log_level` | `Option<LogLevel(Off|Error|Warn|Info|Debug|Trace)>` | `(unset: wiring default)` | `core` | Console wiring default level, used only when RUST_LOG is absent (off\|error\|warn\|info\|debug\|trace). The standalone Rust bot wiring defaults to warn; the Python driver to info. |
+| `DEGENBOT_TELEMETRY_DIAG` | `telemetry.diag` | `map<string, LogLevel>` | `(empty)` | `core` | Per-domain console escalation from a validated map: [telemetry.diag] with sim = "debug", or the env form sim=debug,solver=trace. A typo'd domain is a boot error. Ignored with one WARN when RUST_LOG is set. |
+| `DEGENBOT_OTEL` | `telemetry.otel` | `bool` | `true` | `core` | Enable the OTel OTLP span layer and the Prometheus metrics endpoint; `0`/empty opts out. |
+| `DEGENBOT_METRICS_ADDR` | `telemetry.metrics_addr` | `string` | `127.0.0.1:9464` | `core` | Prometheus scrape endpoint bind address (only active when otel is on). |
+| `DEGENBOT_JAEGER_ENDPOINT` | `telemetry.jaeger_endpoint` | `string` | `http://127.0.0.1:4318` | `core` | OTLP endpoint used by the opt-in Jaeger E2E test. |
+| `DEGENBOT_JAEGER_E2E` | `telemetry.jaeger_e2e` | `bool` | `false` | `core` | Gate for the network-accessible Jaeger E2E test (Jaeger must be reachable at jaeger_endpoint). |
 ## `diagnostics`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_TRACEMALLOC_SECS` | `diagnostics.tracemalloc_secs` | `f64` | `0.0` | Owner: the Python driver shell (a CPython-runtime diagnostic with no core implementation). Interval in seconds between tracemalloc snapshot-diff dumps to stderr; 0 (or unset) arms nothing. A flat traced-current under a climbing RSS pins the growth outside the Python object graph, so the probe splits a memory diagnosis in half. |
-| `DEGENBOT_PROCMEM_SECS` | `diagnostics.procmem_secs` | `f64` | `0.0` | Owner: the Python driver shell (a process-diagnostic probe with no core implementation). Interval in seconds between /proc/self RSS/VmHWM CSV sampler rows; 0 (or unset) arms nothing. The sampler is read-only -- no snapshots, no allocator calls -- so it never perturbs the behavior being measured. |
-| `DEGENBOT_PROCMEM_CSV` | `diagnostics.procmem_csv` | `path` | `logs/procmem.csv` | Owner: the Python driver shell. CSV output file for the procmem sampler, one row per procmem_secs interval. The parent directory is created when the probe arms. |
-| `DEGENBOT_FAULTHANDLER_TIMEOUT_SECS` | `diagnostics.faulthandler_timeout_secs` | `f64` | `0.0` | Owner: the Python driver shell (faulthandler is a CPython facility). Seconds after which faulthandler dumps every thread's stack; 0 (or unset) arms no watchdog. A dump is the only record of where a wedged process was when it stopped answering. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_TRACEMALLOC_SECS` | `diagnostics.tracemalloc_secs` | `f64` | `0.0` | `shell` | Owner: the Python driver shell (a CPython-runtime diagnostic with no core implementation). Interval in seconds between tracemalloc snapshot-diff dumps to stderr; 0 (or unset) arms nothing. A flat traced-current under a climbing RSS pins the growth outside the Python object graph, so the probe splits a memory diagnosis in half. |
+| `DEGENBOT_PROCMEM_SECS` | `diagnostics.procmem_secs` | `f64` | `0.0` | `shell` | Owner: the Python driver shell (a process-diagnostic probe with no core implementation). Interval in seconds between /proc/self RSS/VmHWM CSV sampler rows; 0 (or unset) arms nothing. The sampler is read-only -- no snapshots, no allocator calls -- so it never perturbs the behavior being measured. |
+| `DEGENBOT_PROCMEM_CSV` | `diagnostics.procmem_csv` | `path` | `logs/procmem.csv` | `shell` | Owner: the Python driver shell. CSV output file for the procmem sampler, one row per procmem_secs interval. The parent directory is created when the probe arms. |
+| `DEGENBOT_FAULTHANDLER_TIMEOUT_SECS` | `diagnostics.faulthandler_timeout_secs` | `f64` | `0.0` | `shell` | Owner: the Python driver shell (faulthandler is a CPython facility). Seconds after which faulthandler dumps every thread's stack; 0 (or unset) arms no watchdog. A dump is the only record of where a wedged process was when it stopped answering. |
 ## `logging`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_RUNS_DIR` | `logging.runs_dir` | `path` | `~/.local/state/degenbot/logs` | Root directory for per-session run artifacts: each session lands in `<runs_dir>/<engine>/<UTC-stamp>-<pid>/` holding stdout.log and trace.jsonl, with a best-effort `latest` symlink beside it. The default is the XDG state home (`$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`); a leading `~` expands against HOME. There is deliberately no rotation, compression, or size cap. |
-| `DEGENBOT_LOG_STDERR` | `logging.log_stderr` | `bool` | `false` | Also mirror the session stdout log to stderr (interactive runs); the file-only posture is the default. A bad value fails the load rather than silently picking a sink. |
-| `DEGENBOT_TRACE_JSONL` | `logging.trace_jsonl` | `Option<path>` | `(unset; the session trace.jsonl under logging.runs_dir)` | Explicit offline-review JSONL capture path. When unset, the trace helpers append to the session's `trace.jsonl` under logging.runs_dir. |
-| `DEGENBOT_DRY_RUN_JSONL` | `logging.dry_run_jsonl` | `Option<path>` | `(unset; live feed)` | Dry-run fixture frames path: a captured frame JSONL replaces the live feed and is processed once, in order. Unset keeps the live feed. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_RUNS_DIR` | `logging.runs_dir` | `path` | `~/.local/state/degenbot/logs` | `core` | Root directory for per-session run artifacts: each session lands in `<runs_dir>/<engine>/<UTC-stamp>-<pid>/` holding stdout.log and trace.jsonl, with a best-effort `latest` symlink beside it. The default is the XDG state home (`$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`); a leading `~` expands against HOME. There is deliberately no rotation, compression, or size cap. |
+| `DEGENBOT_LOG_STDERR` | `logging.log_stderr` | `bool` | `false` | `core` | Also mirror the session stdout log to stderr (interactive runs); the file-only posture is the default. A bad value fails the load rather than silently picking a sink. |
+| `DEGENBOT_TRACE_JSONL` | `logging.trace_jsonl` | `Option<path>` | `(unset; the session trace.jsonl under logging.runs_dir)` | `core` | Explicit offline-review JSONL capture path. When unset, the trace helpers append to the session's `trace.jsonl` under logging.runs_dir. |
+| `DEGENBOT_DRY_RUN_JSONL` | `logging.dry_run_jsonl` | `Option<path>` | `(unset; live feed)` | `core` | Dry-run fixture frames path: a captured frame JSONL replaces the live feed and is processed once, in order. Unset keeps the live feed. |
 ## `persistence`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_STATE_DIR` | `persistence.state_dir` | `path` | `~/.local/state/degenbot/state` | Root directory for durable, process-lifetime-independent bot state (e.g. the backrun arm's gap-quarantine journal). State here OUTLIVES sessions and is deliberately NOT nested under a per-session run directory. The default is the XDG state home (`$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`); a leading `~` expands against HOME. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_STATE_DIR` | `persistence.state_dir` | `path` | `~/.local/state/degenbot/state` | `core` | Root directory for durable, process-lifetime-independent bot state (e.g. the backrun arm's gap-quarantine journal). State here OUTLIVES sessions and is deliberately NOT nested under a per-session run directory. The default is the XDG state home (`$XDG_STATE_HOME` when absolute, else `$HOME/.local/state`); a leading `~` expands against HOME. |
 ## `allocator`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_MIMALLOC_PURGE_DELAY_MS` | `allocator.mimalloc_purge_delay_ms` | `Option<i64>` | `(unset)` | Fixed mimalloc purge delay in ms overriding cadence discovery entirely (clamped 1_000..=600_000). |
-| `DEGENBOT_MIMALLOC_AUTO_PURGE` | `allocator.mimalloc_auto_purge` | `bool` | `true` | Whether mimalloc cadence discovery may re-apply the purge option; `0` disables. |
-| `DEGENBOT_MIMALLOC_PURGE_DELAY_MULT` | `allocator.mimalloc_purge_delay_mult` | `f64` | `2.0` | Purge-delay multiplier over the mean block interval (clamped 1.0..=20.0). |
-| `DEGENBOT_MIMALLOC_PURGE_DECOMMITS` | `allocator.mimalloc_purge_decommits` | `bool` | `false` | Purge with MADV_DONTNEED instead of MADV_FREE (`1`/`true` enables aggressive decommit). |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_MIMALLOC_PURGE_DELAY_MS` | `allocator.mimalloc_purge_delay_ms` | `Option<i64>` | `(unset)` | `core` | Fixed mimalloc purge delay in ms overriding cadence discovery entirely (clamped 1_000..=600_000). |
+| `DEGENBOT_MIMALLOC_AUTO_PURGE` | `allocator.mimalloc_auto_purge` | `bool` | `true` | `core` | Whether mimalloc cadence discovery may re-apply the purge option; `0` disables. |
+| `DEGENBOT_MIMALLOC_PURGE_DELAY_MULT` | `allocator.mimalloc_purge_delay_mult` | `f64` | `2.0` | `core` | Purge-delay multiplier over the mean block interval (clamped 1.0..=20.0). |
+| `DEGENBOT_MIMALLOC_PURGE_DECOMMITS` | `allocator.mimalloc_purge_decommits` | `bool` | `false` | `core` | Purge with MADV_DONTNEED instead of MADV_FREE (`1`/`true` enables aggressive decommit). |
 ## `state_lock`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_LOCK_TRACE` | `state_lock.trace` | `bool` | `false` | Capture full backtraces at lock acquire (diagnostics). |
-| `DEGENBOT_LOCK_WARN_MS` | `state_lock.warn_ms` | `duration-ms (u64)` | `500` | Warn threshold (ms) for read-hold age and write-acquire block (clamped >= 1). |
-| `DEGENBOT_STATE_LOCK_DIAG` | `state_lock.diag` | `bool` | `false` | Enable hold-tracking diagnostics for soak/incident forensics. |
-| `DEGENBOT_THREAD_REGISTRY_PATH` | `state_lock.thread_registry_path` | `path` | `/tmp/degenbot-thread-registry-{pid}.json` | Watchdog thread-registry dump path; `{pid}` is substituted with the process id at use. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_LOCK_TRACE` | `state_lock.trace` | `bool` | `false` | `core` | Capture full backtraces at lock acquire (diagnostics). |
+| `DEGENBOT_LOCK_WARN_MS` | `state_lock.warn_ms` | `duration-ms (u64)` | `500` | `core` | Warn threshold (ms) for read-hold age and write-acquire block (clamped >= 1). |
+| `DEGENBOT_STATE_LOCK_DIAG` | `state_lock.diag` | `bool` | `false` | `core` | Enable hold-tracking diagnostics for soak/incident forensics. |
+| `DEGENBOT_THREAD_REGISTRY_PATH` | `state_lock.thread_registry_path` | `path` | `/tmp/degenbot-thread-registry-{pid}.json` | `core` | Watchdog thread-registry dump path; `{pid}` is substituted with the process id at use. |
 ## `pump`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_PUMP_DEBOUNCE_MS` | `pump.pump_debounce_ms` | `duration-ms (u64)` | `50` | Publish-debounce settle window in ms (`> 0`; bad values historically fall back to 50 at the site). |
-| `DEGENBOT_EARLY_SLICE_MS` | `pump.early_slice_ms` | `duration-ms (u64)` | `25` | Early-slice window in ms; `0` valid and disables the slice (settle-only parity). |
-| `DEGENBOT_STREAMING_DELIVERY` | `pump.streaming_delivery` | `bool` | `true` | Stream solved arms immediately (T3 default); `0` opts out to the debounce sweep. |
-| `DEGENBOT_WS_COMPLETENESS` | `pump.ws_completeness` | `bool` | `true` | WS completeness gating (newHeads + logs double-delivery check); `0` disables. |
-| `DEGENBOT_PUMP_QUIESCE_MODE` | `pump.quiesce_mode` | `QuiesceMode(Fixed|Adaptive)` | `adaptive` | Settle-window mode: `fixed` = constant pump.pump_debounce_ms debounce; `adaptive` = EWMA trailing-quiesce estimator (never below quiesce_floor_ms, never above quiesce_ceil_ms; late-admit budget overruns hold at the ceiling). |
-| `DEGENBOT_PUMP_QUIESCE_FLOOR_MS` | `pump.quiesce_floor_ms` | `duration-ms (u64)` | `2` | Adaptive mode: lower bound (ms) of the trailing settle window (clamped >= 1; a 0/garbage value never collapses the window to zero). |
-| `DEGENBOT_PUMP_QUIESCE_CEIL_MS` | `pump.quiesce_ceil_ms` | `duration-ms (u64)` | `20` | Adaptive mode: upper bound (ms) of the trailing settle window; the estimator never grows beyond it (inherits the debounce parse contract: unset/zero/invalid falls back, never 0). |
-| `DEGENBOT_PUMP_QUIESCE_MARGIN_MS` | `pump.quiesce_margin_ms` | `f64` | `3.0` | Adaptive mode: safety multiplier over the silence-gap EWMA (W = EWMA × margin, then floor/ceiling clamp). |
-| `DEGENBOT_PUMP_QUIESCE_EWMA_ALPHA` | `pump.quiesce_ewma_alpha` | `f64` | `0.1` | Adaptive mode: EWMA smoothing constant over per-block max silence gaps (≈10-block memory); clamped to (0, 1]. |
-| `DEGENBOT_PUMP_QUIESCE_LATE_BUDGET` | `pump.quiesce_late_budget` | `u64` | `120` | Adaptive-mode runtime backstop: more than this many benign late-admit events in a sliding hour holds the window at quiesce_ceil_ms until the ledger drains. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_PUMP_DEBOUNCE_MS` | `pump.pump_debounce_ms` | `duration-ms (u64)` | `50` | `core` | Publish-debounce settle window in ms (`> 0`; bad values historically fall back to 50 at the site). |
+| `DEGENBOT_EARLY_SLICE_MS` | `pump.early_slice_ms` | `duration-ms (u64)` | `25` | `core` | Early-slice window in ms; `0` valid and disables the slice (settle-only parity). |
+| `DEGENBOT_STREAMING_DELIVERY` | `pump.streaming_delivery` | `bool` | `true` | `core` | Stream solved arms immediately (T3 default); `0` opts out to the debounce sweep. |
+| `DEGENBOT_WS_COMPLETENESS` | `pump.ws_completeness` | `bool` | `true` | `core` | WS completeness gating (newHeads + logs double-delivery check); `0` disables. |
+| `DEGENBOT_PUMP_QUIESCE_MODE` | `pump.quiesce_mode` | `QuiesceMode(Fixed|Adaptive)` | `adaptive` | `core` | Settle-window mode: `fixed` = constant pump.pump_debounce_ms debounce; `adaptive` = EWMA trailing-quiesce estimator (never below quiesce_floor_ms, never above quiesce_ceil_ms; late-admit budget overruns hold at the ceiling). |
+| `DEGENBOT_PUMP_QUIESCE_FLOOR_MS` | `pump.quiesce_floor_ms` | `duration-ms (u64)` | `2` | `core` | Adaptive mode: lower bound (ms) of the trailing settle window (clamped >= 1; a 0/garbage value never collapses the window to zero). |
+| `DEGENBOT_PUMP_QUIESCE_CEIL_MS` | `pump.quiesce_ceil_ms` | `duration-ms (u64)` | `20` | `core` | Adaptive mode: upper bound (ms) of the trailing settle window; the estimator never grows beyond it (inherits the debounce parse contract: unset/zero/invalid falls back, never 0). |
+| `DEGENBOT_PUMP_QUIESCE_MARGIN_MS` | `pump.quiesce_margin_ms` | `f64` | `3.0` | `core` | Adaptive mode: safety multiplier over the silence-gap EWMA (W = EWMA × margin, then floor/ceiling clamp). |
+| `DEGENBOT_PUMP_QUIESCE_EWMA_ALPHA` | `pump.quiesce_ewma_alpha` | `f64` | `0.1` | `core` | Adaptive mode: EWMA smoothing constant over per-block max silence gaps (≈10-block memory); clamped to (0, 1]. |
+| `DEGENBOT_PUMP_QUIESCE_LATE_BUDGET` | `pump.quiesce_late_budget` | `u64` | `120` | `core` | Adaptive-mode runtime backstop: more than this many benign late-admit events in a sliding hour holds the window at quiesce_ceil_ms until the ledger drains. |
 ## `trace`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_HOTPATH` | `trace.hotpath` | `bool` | `false` | Construct the hotpath profiling guard (default OFF; build must enable the profiling feature too). |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_HOTPATH` | `trace.hotpath` | `bool` | `false` | `core` | Construct the hotpath profiling guard (default OFF; build must enable the profiling feature too). |
 ## `builders`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS` | `builders.tick_fetch_min_interval_ms` | `duration-ms (u64)` | `0` | Minimum interval (ms) between the on-chain tick RPCs a construction tick fetch issues, pacing a constrained fork/archive source below its advertised rate (dRPC's free plan advertises 100 req/s, so 20 => 50 req/s, leaving headroom for the anvil fork's own background fetching). Honoured by the core construction gate (degenbot_bot::bot_core::construction_io::TickFetchPace) and by the Python tick loop, which reads the same key. 0 (or unset) disables the clamp entirely. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS` | `builders.tick_fetch_min_interval_ms` | `duration-ms (u64)` | `0` | `core` | Minimum interval (ms) between the on-chain tick RPCs a construction tick fetch issues, pacing a constrained fork/archive source below its advertised rate (dRPC's free plan advertises 100 req/s, so 20 => 50 req/s, leaving headroom for the anvil fork's own background fetching). Honoured by the core construction gate (degenbot_bot::bot_core::construction_io::TickFetchPace) and by the Python tick loop, which reads the same key. 0 (or unset) disables the clamp entirely. |
 ## `solve`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_SOLVE_CPUS` | `solve.solve_cpus` | `Option<usize>` | `(unset)` | Override the detected solve CPU budget (worker bin count). |
-| `DEGENBOT_SOLVE_HEADROOM` | `solve.solve_headroom` | `Option<usize>` | `(unset)` | Override the I/O headroom carved out of the CPU budget before solve bins. |
-| `DEGENBOT_SOLVE_INLINE_SIM` | `solve.solve_inline_sim` | `bool` | `true` | Inline-sim stance (T2 worker-side clamp path); `0`/`false` disables. |
-| `DEGENBOT_SOLVE_RESOLVE_PAR` | `solve.solve_resolve_par` | `bool` | `true` | Chunked parallel resolve stance; `0`/`off`/`false`/`disabled` disables. |
-| `DEGENBOT_INLINE_SIM_WORKERS` | `solve.inline_sim_workers` | `Option<usize>` | `(unset; derived from CPU budget)` | Inline-sim worker count (clamped 1..=32; unparsable falls back to derived default at the site). |
-| `DEGENBOT_SOLVE_ADMISSION` | `solve.admission_shed` | `bool` | `true` | QTZGFL capacity-modulated admission stance: unset/`1`/`true`/`on` (default) replaces the retired in-flight cap degrade with budget = max(0, admission_target_depth - in-flight) and SHEDS zero-budget cycles; `0`/`false`/`off` is the intentional take-all no-shed operator stance (A/B). |
-| `DEGENBOT_SOLVE_ADMISSION_TARGET_DEPTH` | `solve.admission_target_depth` | `usize` | `8` | QTZGFL: un-merged-result pipe depth target in KEYS (pools) — the draw budget headroom. Clamped at engine construction to 1..=DETACHED_INFLIGHT_CAP (DETACHED_INFLIGHT_CAP is only the default/clamp for this key now, no longer a runtime cap verdict); default 8 = DETACHED_INFLIGHT_CAP. |
-| `DEGENBOT_SOLVE_ADMISSION_RETENTION` | `solve.admission_retention_blocks` | `u64` | `50` | QTZGFL: retained (carried) key retention window W in blocks — on each block advance the ledger prunes buckets older than head - W and counts degenbot.detached.leads_expired. Default 50. |
-| `DEGENBOT_MIN_PROFIT_WEI` | `solve.min_profit_wei` | `u128 (decimal text)` | `0` | Minimum path profit floor in wei (decimal text; TOML: quoted string). |
-| `DEGENBOT_CLAMP_MARGIN_WEI` | `solve.clamp_margin_wei` | `u128 (decimal text)` | `1` | concentrated-liquidity-hop clamp margin in wei: the amount subtracted from a hop's committed input before the exact-in loop runs. Default 1 wei commits input - 1, so the loop converts nearly everything and stops at the last funded tick (maximum extraction). The margin must stay strictly greater than the worst solver-vs-engine over-prediction, which a parity sweep pins; raise it only when investigating a runaway swap. |
-| `DEGENBOT_WALK_EVENT_SOLVER` | `solve.walk_event_solver_legacy` | `bool (inverted: `0` enables)` | `false` | Legacy event-solver path is enabled by `DEGENBOT_WALK_EVENT_SOLVER=0` (inverted flag). |
-| `DEGENBOT_WALK_EVENT_CENSUS` | `solve.walk_event_census` | `bool` | `false` | Loop-15 nested event census counters in the concentrated liquidity walker (`1` enables). |
-| `DEGENBOT_WALK_ANCHOR_SWEEP` | `solve.walk_anchor_sweep` | `AnchorSweep(Off|CenterOnly|Full)` | `full` | Walk anchor-sweep posture: `off` (0), `center-only` (2), or `full` (default/anything else). |
-| `DEGENBOT_ENVELOPE_MAX_TANGENT_LINES` | `solve.envelope_max_tangent_lines` | `usize` | `32` | Profit-envelope max tangent lines cap. |
-| `DEGENBOT_ENVELOPE_SAMPLED_COMPOSE_LINES` | `solve.envelope_sampled_compose_lines` | `usize` | `48` | Profit-envelope sampled-compose lines cap. |
-| `DEGENBOT_SOLVER_WALK_MEMO` | `solve.solver_walk_memo` | `bool` | `false` | concentrated-liquidity-solver walk memo (result caching) (`1` enables). |
-| `DEGENBOT_SOLVER_WALK_MEMO_STATS` | `solve.solver_walk_memo_stats` | `bool` | `false` | Walk-memo recomposition census (`1` enables). |
-| `DEGENBOT_CONCENTRATED_LIQUIDITY_PROJECTION_CACHE` | `solve.concentrated_liquidity_projection_cache` | `bool` | `true` | Concentrated-liquidity projection memo cache; `0`/`off`/`false`/`disabled` disables. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_SOLVE_CPUS` | `solve.solve_cpus` | `Option<usize>` | `(unset)` | `core` | Override the detected solve CPU budget (worker bin count). |
+| `DEGENBOT_SOLVE_HEADROOM` | `solve.solve_headroom` | `Option<usize>` | `(unset)` | `core` | Override the I/O headroom carved out of the CPU budget before solve bins. |
+| `DEGENBOT_SOLVE_INLINE_SIM` | `solve.solve_inline_sim` | `bool` | `true` | `core` | Inline-sim stance (T2 worker-side clamp path); `0`/`false` disables. |
+| `DEGENBOT_SOLVE_RESOLVE_PAR` | `solve.solve_resolve_par` | `bool` | `true` | `core` | Chunked parallel resolve stance; `0`/`off`/`false`/`disabled` disables. |
+| `DEGENBOT_INLINE_SIM_WORKERS` | `solve.inline_sim_workers` | `Option<usize>` | `(unset; derived from CPU budget)` | `core` | Inline-sim worker count (clamped 1..=32; unparsable falls back to derived default at the site). |
+| `DEGENBOT_SOLVE_ADMISSION` | `solve.admission_shed` | `bool` | `true` | `core` | QTZGFL capacity-modulated admission stance: unset/`1`/`true`/`on` (default) replaces the retired in-flight cap degrade with budget = max(0, admission_target_depth - in-flight) and SHEDS zero-budget cycles; `0`/`false`/`off` is the intentional take-all no-shed operator stance (A/B). |
+| `DEGENBOT_SOLVE_ADMISSION_TARGET_DEPTH` | `solve.admission_target_depth` | `usize` | `8` | `core` | QTZGFL: un-merged-result pipe depth target in KEYS (pools) — the draw budget headroom. Clamped at engine construction to 1..=DETACHED_INFLIGHT_CAP (DETACHED_INFLIGHT_CAP is only the default/clamp for this key now, no longer a runtime cap verdict); default 8 = DETACHED_INFLIGHT_CAP. |
+| `DEGENBOT_SOLVE_ADMISSION_RETENTION` | `solve.admission_retention_blocks` | `u64` | `50` | `core` | QTZGFL: retained (carried) key retention window W in blocks — on each block advance the ledger prunes buckets older than head - W and counts degenbot.detached.leads_expired. Default 50. |
+| `DEGENBOT_MIN_PROFIT_WEI` | `solve.min_profit_wei` | `u128 (decimal text)` | `0` | `core` | Minimum path profit floor in wei (decimal text; TOML: quoted string). |
+| `DEGENBOT_CLAMP_MARGIN_WEI` | `solve.clamp_margin_wei` | `u128 (decimal text)` | `1` | `core` | concentrated-liquidity-hop clamp margin in wei: the amount subtracted from a hop's committed input before the exact-in loop runs. Default 1 wei commits input - 1, so the loop converts nearly everything and stops at the last funded tick (maximum extraction). The margin must stay strictly greater than the worst solver-vs-engine over-prediction, which a parity sweep pins; raise it only when investigating a runaway swap. |
+| `DEGENBOT_WALK_EVENT_SOLVER` | `solve.walk_event_solver_legacy` | `bool (inverted: `0` enables)` | `false` | `core` | Legacy event-solver path is enabled by `DEGENBOT_WALK_EVENT_SOLVER=0` (inverted flag). |
+| `DEGENBOT_WALK_EVENT_CENSUS` | `solve.walk_event_census` | `bool` | `false` | `core` | Loop-15 nested event census counters in the concentrated liquidity walker (`1` enables). |
+| `DEGENBOT_WALK_ANCHOR_SWEEP` | `solve.walk_anchor_sweep` | `AnchorSweep(Off|CenterOnly|Full)` | `full` | `core` | Walk anchor-sweep posture: `off` (0), `center-only` (2), or `full` (default/anything else). |
+| `DEGENBOT_ENVELOPE_MAX_TANGENT_LINES` | `solve.envelope_max_tangent_lines` | `usize` | `32` | `core` | Profit-envelope max tangent lines cap. |
+| `DEGENBOT_ENVELOPE_SAMPLED_COMPOSE_LINES` | `solve.envelope_sampled_compose_lines` | `usize` | `48` | `core` | Profit-envelope sampled-compose lines cap. |
+| `DEGENBOT_SOLVER_WALK_MEMO` | `solve.solver_walk_memo` | `bool` | `false` | `core` | concentrated-liquidity-solver walk memo (result caching) (`1` enables). |
+| `DEGENBOT_SOLVER_WALK_MEMO_STATS` | `solve.solver_walk_memo_stats` | `bool` | `false` | `core` | Walk-memo recomposition census (`1` enables). |
+| `DEGENBOT_CONCENTRATED_LIQUIDITY_PROJECTION_CACHE` | `solve.concentrated_liquidity_projection_cache` | `bool` | `true` | `core` | Concentrated-liquidity projection memo cache; `0`/`off`/`false`/`disabled` disables. |
 ## `fleet`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_FLEET_QUOTA_CPUS` | `fleet.quota_cpus` | `Option<f64>` | `(unset; detected from the cgroup)` | Terminal override of the fractional cgroup CPU quota (cores) feeding the fleet budget sum check; unset detects from the cgroup (ADR-042 §5). |
-| `DEGENBOT_FLEET_RESERVE_CPUS` | `fleet.reserve_cpus` | `Option<usize>` | `(unset; default 1)` | Fleet-budget reserve share H (Python bridge, pump, OTel, async GC) in cores; overrides the fixed default 1 (design doc §5). |
-| `DEGENBOT_FLEET_SOLVER_CPUS` | `fleet.solver_cpus` | `Option<usize>` | `(unset; derived floor(Q)-H-A-R-M)` | Fleet Solver CPU share S in cores; terminal when set and it participates in the same startup sum check (default: floor(quota) − H − A − R − M; S < 2 fails the boot). |
-| `DEGENBOT_FLEET_SIM_SLOT_CAP` | `fleet.sim_slot_cap` | `Option<usize>` | `(unset; default 4)` | SimDriver slot cap (duty-counted; spendable from the fractional-quota remainder); default 4, today's SimSlots cap. |
-| `DEGENBOT_FLEET_POOL_STATE_UPDATER_SLOTS` | `fleet.pool_state_updater_slots` | `Option<usize>` | `(unset; default 4)` | PoolStateUpdater slot cap (the registration intake station: duty-counted, spendable from the fractional-quota remainder, Deferrable cordon class); default 4. |
-| `DEGENBOT_FLEET_CORDON_ENTER_EVENTS` | `fleet.cordon_enter_events` | `usize` | `2` | Throttle events within the enter window that cordon the fleet (design doc §6 enter trigger; Q5 amendment delivered: runtime-tunable via the operator channel — `degenbot fleet posture set --cordon-enter-events N` on a live process). |
-| `DEGENBOT_FLEET_CORDON_ENTER_WINDOW_MS` | `fleet.cordon_enter_window_ms` | `duration-ms (u64)` | `1000` | Rolling window (ms) for the throttle-event burst enter trigger. |
-| `DEGENBOT_FLEET_CORDON_DUTY_PERCENT` | `fleet.cordon_duty_percent` | `f64` | `2.0` | Throttled-time duty percent over the duty window that cordons the fleet (enter trigger; 2.0 = >2%). |
-| `DEGENBOT_FLEET_CORDON_DUTY_WINDOW_MS` | `fleet.cordon_duty_window_ms` | `duration-ms (u64)` | `5000` | Trailing window (ms) over which throttled-time duty is evaluated. |
-| `DEGENBOT_FLEET_CORDON_EXIT_CLEAN_MS` | `fleet.cordon_exit_clean_ms` | `duration-ms (u64)` | `10000` | Clean-window hysteresis (ms) required before cordon exits (design doc §6: 10 s of clean windows). |
-| `DEGENBOT_FLEET_CORDON_SIM_INTAKE_FLOOR` | `fleet.cordon_sim_intake_floor` | `Option<usize>` | `(unset; half the slot cap)` | SimDriver new-lease cap while cordoned; in-flight sims are never cancelled (default: half the slot cap). |
-| `DEGENBOT_FLEET_INTAKE_BACKSTOP_MS` | `fleet.intake_backstop_ms` | `duration-ms (u64)` | `250` | Backstop recv-timeout (ms) armed iff a host intake backlog is non-empty; on timeout the host re-runs the grant pump, so a posture lift with no further message still drains held units (TB4QGX T2). Clamped to >= 1 ms at the site so a garbage value cannot collapse into a busy-spin. |
-| `DEGENBOT_FLEET_INTAKE_NO_PROGRESS_TICKS` | `fleet.intake_no_progress_ticks` | `usize` | `8` | Consecutive admitted-but-no-progress host intake passes (backlog non-empty, admission admits, yet no dequeue and no grant) before the host fails LOUDLY (TB4QGX T4). Legitimate WaitCap/WaitPosture holds never count, and only real progress resets the counter. Clamped to >= 1 at the site so a garbage value cannot trip on the first pass. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_FLEET_QUOTA_CPUS` | `fleet.quota_cpus` | `Option<f64>` | `(unset; detected from the cgroup)` | `core` | Terminal override of the fractional cgroup CPU quota (cores) feeding the fleet budget sum check; unset detects from the cgroup (ADR-042 §5). |
+| `DEGENBOT_FLEET_RESERVE_CPUS` | `fleet.reserve_cpus` | `Option<usize>` | `(unset; default 1)` | `core` | Fleet-budget reserve share H (Python bridge, pump, OTel, async GC) in cores; overrides the fixed default 1 (design doc §5). |
+| `DEGENBOT_FLEET_SOLVER_CPUS` | `fleet.solver_cpus` | `Option<usize>` | `(unset; derived floor(Q)-H-A-R-M)` | `core` | Fleet Solver CPU share S in cores; terminal when set and it participates in the same startup sum check (default: floor(quota) − H − A − R − M; S < 2 fails the boot). |
+| `DEGENBOT_FLEET_SIM_SLOT_CAP` | `fleet.sim_slot_cap` | `Option<usize>` | `(unset; default 4)` | `core` | SimDriver slot cap (duty-counted; spendable from the fractional-quota remainder); default 4, today's SimSlots cap. |
+| `DEGENBOT_FLEET_POOL_STATE_UPDATER_SLOTS` | `fleet.pool_state_updater_slots` | `Option<usize>` | `(unset; default 4)` | `core` | PoolStateUpdater slot cap (the registration intake station: duty-counted, spendable from the fractional-quota remainder, Deferrable cordon class); default 4. |
+| `DEGENBOT_FLEET_CORDON_ENTER_EVENTS` | `fleet.cordon_enter_events` | `usize` | `2` | `core` | Throttle events within the enter window that cordon the fleet (design doc §6 enter trigger; Q5 amendment delivered: runtime-tunable via the operator channel — `degenbot fleet posture set --cordon-enter-events N` on a live process). |
+| `DEGENBOT_FLEET_CORDON_ENTER_WINDOW_MS` | `fleet.cordon_enter_window_ms` | `duration-ms (u64)` | `1000` | `core` | Rolling window (ms) for the throttle-event burst enter trigger. |
+| `DEGENBOT_FLEET_CORDON_DUTY_PERCENT` | `fleet.cordon_duty_percent` | `f64` | `2.0` | `core` | Throttled-time duty percent over the duty window that cordons the fleet (enter trigger; 2.0 = >2%). |
+| `DEGENBOT_FLEET_CORDON_DUTY_WINDOW_MS` | `fleet.cordon_duty_window_ms` | `duration-ms (u64)` | `5000` | `core` | Trailing window (ms) over which throttled-time duty is evaluated. |
+| `DEGENBOT_FLEET_CORDON_EXIT_CLEAN_MS` | `fleet.cordon_exit_clean_ms` | `duration-ms (u64)` | `10000` | `core` | Clean-window hysteresis (ms) required before cordon exits (design doc §6: 10 s of clean windows). |
+| `DEGENBOT_FLEET_CORDON_SIM_INTAKE_FLOOR` | `fleet.cordon_sim_intake_floor` | `Option<usize>` | `(unset; half the slot cap)` | `core` | SimDriver new-lease cap while cordoned; in-flight sims are never cancelled (default: half the slot cap). |
+| `DEGENBOT_FLEET_INTAKE_BACKSTOP_MS` | `fleet.intake_backstop_ms` | `duration-ms (u64)` | `250` | `core` | Backstop recv-timeout (ms) armed iff a host intake backlog is non-empty; on timeout the host re-runs the grant pump, so a posture lift with no further message still drains held units (TB4QGX T2). Clamped to >= 1 ms at the site so a garbage value cannot collapse into a busy-spin. |
+| `DEGENBOT_FLEET_INTAKE_NO_PROGRESS_TICKS` | `fleet.intake_no_progress_ticks` | `usize` | `8` | `core` | Consecutive admitted-but-no-progress host intake passes (backlog non-empty, admission admits, yet no dequeue and no grant) before the host fails LOUDLY (TB4QGX T4). Legitimate WaitCap/WaitPosture holds never count, and only real progress resets the counter. Clamped to >= 1 at the site so a garbage value cannot trip on the first pass. |
 ## `capture`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_GATE_CAPTURE` | `capture.gate_capture` | `bool` | `false` | Gate degenerate-path capture (presence gates; loader parses a bool). |
-| `DEGENBOT_GATE_CAPTURE_OUT` | `capture.gate_capture_out` | `path` | `/tmp/gate_degenerate.jsonl` | Gate-capture output JSONL path. |
-| `DEGENBOT_GATE_CAPTURE_CAP` | `capture.gate_capture_cap` | `usize` | `50` | Max paths captured per gate-capture run. |
-| `DEGENBOT_SOLVER_CAPTURE` | `capture.solver_capture` | `bool` | `false` | Heavy concentrated-liquidity-path solve capture (presence gates; loader parses a bool). |
-| `DEGENBOT_SOLVER_CAPTURE_CAP` | `capture.solver_capture_cap` | `usize` | `16` | Max captures per run (deduped by path id). |
-| `DEGENBOT_SOLVER_CAPTURE_MIN_SIMS` | `capture.solver_capture_min_sims` | `u64` | `2000` | Capture only paths with at least this many walk sims. |
-| `DEGENBOT_SOLVER_CAPTURE_MIN_US` | `capture.solver_capture_min_us` | `u64` | `50000` | Capture only paths whose solve time is at least this many microseconds. |
-| `DEGENBOT_SOLVER_CAPTURE_OUT` | `capture.solver_capture_out` | `Option<path>` | `(unset; site picks a working-file default)` | Solver-capture output JSONL path (site-specific fallback). |
-| `DEGENBOT_SWAP_CAPTURE_PROBE` | `capture.swap_capture_probe` | `bool` | `false` | Swap-capture correctness example gate (`1` enables). |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_GATE_CAPTURE` | `capture.gate_capture` | `bool` | `false` | `core` | Gate degenerate-path capture (presence gates; loader parses a bool). |
+| `DEGENBOT_GATE_CAPTURE_OUT` | `capture.gate_capture_out` | `path` | `/tmp/gate_degenerate.jsonl` | `core` | Gate-capture output JSONL path. |
+| `DEGENBOT_GATE_CAPTURE_CAP` | `capture.gate_capture_cap` | `usize` | `50` | `core` | Max paths captured per gate-capture run. |
+| `DEGENBOT_SOLVER_CAPTURE` | `capture.solver_capture` | `bool` | `false` | `core` | Heavy concentrated-liquidity-path solve capture (presence gates; loader parses a bool). |
+| `DEGENBOT_SOLVER_CAPTURE_CAP` | `capture.solver_capture_cap` | `usize` | `16` | `core` | Max captures per run (deduped by path id). |
+| `DEGENBOT_SOLVER_CAPTURE_MIN_SIMS` | `capture.solver_capture_min_sims` | `u64` | `2000` | `core` | Capture only paths with at least this many walk sims. |
+| `DEGENBOT_SOLVER_CAPTURE_MIN_US` | `capture.solver_capture_min_us` | `u64` | `50000` | `core` | Capture only paths whose solve time is at least this many microseconds. |
+| `DEGENBOT_SOLVER_CAPTURE_OUT` | `capture.solver_capture_out` | `Option<path>` | `(unset; site picks a working-file default)` | `core` | Solver-capture output JSONL path (site-specific fallback). |
+| `DEGENBOT_SWAP_CAPTURE_PROBE` | `capture.swap_capture_probe` | `bool` | `false` | `core` | Swap-capture correctness example gate (`1` enables). |
 ## `verify`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_VERIFY_SPOTCHECK_PERMYRIAD` | `verify.verify_spotcheck_permyriad` | `u64` | `0` | Per-myriad (1/10_000) sampling rate for verify spot-checks (0 = off). |
-| `VERIFICATION_RETRY_MAX_ATTEMPTS` | `verify.verify_retry_max_attempts` | `usize` | `4` | Attempts for a transient verification RPC failure (per-call transport / provider-init) before it propagates. A genuine on-chain mismatch is never retried. Below 1 the policy is not a policy, so building one refuses rather than retrying nothing. |
-| `VERIFICATION_RETRY_BASE_DELAY` | `verify.verify_retry_base_delay` | `f64` | `0.5` | First backoff wait in seconds for a retried verification call; grows exponentially from here. A negative or non-finite value is refused when the policy is built. |
-| `VERIFICATION_RETRY_MAX_DELAY` | `verify.verify_retry_max_delay` | `f64` | `4.0` | Ceiling in seconds on one verification backoff wait. A value below verify_retry_base_delay is refused when the policy is built, because the cap would sit under the first wait it is meant to bound. |
-| `VERIFICATION_RETRY_JITTER` | `verify.verify_retry_jitter` | `f64` | `0.5` | Upper bound in seconds of the uniform jitter added to one backoff wait, so a recovering node is not hit by a synchronized retry herd. A value outside 0..=1 is refused when the policy is built. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_VERIFY_SPOTCHECK_PERMYRIAD` | `verify.verify_spotcheck_permyriad` | `u64` | `0` | `core` | Per-myriad (1/10_000) sampling rate for verify spot-checks (0 = off). |
+| `VERIFICATION_RETRY_MAX_ATTEMPTS` | `verify.verify_retry_max_attempts` | `usize` | `4` | `core` | Attempts for a transient verification RPC failure (per-call transport / provider-init) before it propagates. A genuine on-chain mismatch is never retried. Below 1 the policy is not a policy, so building one refuses rather than retrying nothing. |
+| `VERIFICATION_RETRY_BASE_DELAY` | `verify.verify_retry_base_delay` | `f64` | `0.5` | `core` | First backoff wait in seconds for a retried verification call; grows exponentially from here. A negative or non-finite value is refused when the policy is built. |
+| `VERIFICATION_RETRY_MAX_DELAY` | `verify.verify_retry_max_delay` | `f64` | `4.0` | `core` | Ceiling in seconds on one verification backoff wait. A value below verify_retry_base_delay is refused when the policy is built, because the cap would sit under the first wait it is meant to bound. |
+| `VERIFICATION_RETRY_JITTER` | `verify.verify_retry_jitter` | `f64` | `0.5` | `core` | Upper bound in seconds of the uniform jitter added to one backoff wait, so a recovering node is not hit by a synchronized retry herd. A value outside 0..=1 is refused when the policy is built. |
 ## `simulation`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_SIM_EXECUTE_GAS` | `simulation.sim_execute_gas` | `Option<u64>` | `(unset; EIP-7825 TX_GAS_LIMIT_CAP)` | Override the execute() gas limit (decimal u64; garbage/0 falls back at the site while migrating). |
-| `DEGENBOT_INJECT_EXECUTOR_CODE` | `simulation.inject_executor_code` | `bool` | `false` | Simulate against executor bytecode injected into the evm overlay instead of a deployed contract. Injection mode also gates live submission off for safety; `1` opts in (dry-run/dev posture). |
-| `DEGENBOT_SIM_EXIT_ON_FAIL` | `simulation.sim_exit_on_fail` | `bool` | `false` | Owner: the Python driver shell's sim-failure trap (the live capture posture, not core policy). Abort the process when a sim fails (used to capture V3-hop fixtures). |
-| `DEGENBOT_PROBE_FIXTURE` | `simulation.probe_fixture` | `Option<path>` | `(unset)` | Corpus fixture for the offline executor A/B probe (ignore-listed test). |
-| `DEGENBOT_PROBE_NS` | `simulation.probe_ns` | `string` | `1,2,4,8,16` | Comma-separated thread-count arms for the offline executor A/B probe. |
-| `DEGENBOT_PROBE_PASSES` | `simulation.probe_passes` | `usize` | `3` | Passes per arm for the offline executor A/B probe. |
-| `DEGENBOT_SIM_PIPELINE_CONCURRENCY` | `simulation.pipeline_concurrency` | `usize` | `8` | Sims in flight per block before the pipeline's submitter is held back; 1 reproduces the serial reference (one sim, FIFO submit) for an offline soak. Clamped to >= 1 at the use site. |
-| `DEGENBOT_SIM_EXIT_IGNORE_BUCKETS` | `simulation.exit_ignore_buckets` | `string` | `(empty)` | Owner: the Python driver shell's sim-failure trap. Comma-separated failure buckets the sim-failure tripwire does not count (e.g. `empty,short`). The trap itself is simulation.sim_exit_on_fail; this only narrows an ARMED trap, and there is no default ignore set -- an unlisted bucket stops the bot. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_SIM_EXECUTE_GAS` | `simulation.sim_execute_gas` | `Option<u64>` | `(unset; EIP-7825 TX_GAS_LIMIT_CAP)` | `core` | Override the execute() gas limit (decimal u64; garbage/0 falls back at the site while migrating). |
+| `DEGENBOT_INJECT_EXECUTOR_CODE` | `simulation.inject_executor_code` | `bool` | `false` | `core` | Simulate against executor bytecode injected into the evm overlay instead of a deployed contract. Injection mode also gates live submission off for safety; `1` opts in (dry-run/dev posture). |
+| `DEGENBOT_SIM_EXIT_ON_FAIL` | `simulation.sim_exit_on_fail` | `bool` | `false` | `shell` | Owner: the Python driver shell's sim-failure trap (the live capture posture, not core policy). Abort the process when a sim fails (used to capture V3-hop fixtures). |
+| `DEGENBOT_PROBE_FIXTURE` | `simulation.probe_fixture` | `Option<path>` | `(unset)` | `core` | Corpus fixture for the offline executor A/B probe (ignore-listed test). |
+| `DEGENBOT_PROBE_NS` | `simulation.probe_ns` | `string` | `1,2,4,8,16` | `core` | Comma-separated thread-count arms for the offline executor A/B probe. |
+| `DEGENBOT_PROBE_PASSES` | `simulation.probe_passes` | `usize` | `3` | `core` | Passes per arm for the offline executor A/B probe. |
+| `DEGENBOT_SIM_PIPELINE_CONCURRENCY` | `simulation.pipeline_concurrency` | `usize` | `8` | `core` | Sims in flight per block before the pipeline's submitter is held back; 1 reproduces the serial reference (one sim, FIFO submit) for an offline soak. Clamped to >= 1 at the use site. |
+| `DEGENBOT_SIM_EXIT_IGNORE_BUCKETS` | `simulation.exit_ignore_buckets` | `string` | `(empty)` | `shell` | Owner: the Python driver shell's sim-failure trap. Comma-separated failure buckets the sim-failure tripwire does not count (e.g. `empty,short`). The trap itself is simulation.sim_exit_on_fail; this only narrows an ARMED trap, and there is no default ignore set -- an unlisted bucket stops the bot. |
 ## `pathfinding`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_DISCOVERY_BATCH_SIZE` | `pathfinding.discovery_batch_size` | `usize` | `1000` | Owner: the driver loop (asyncio batching; the native console registers differently). Discovery-sweep delivery batch size (paths per async batch): the worker thread collects this many paths before the async consumer yields them and gives the event loop one turn. A value <= 1 falls back to the legacy per-path delivery. |
-| `DEGENBOT_MAX_PATHS` | `pathfinding.max_registered_paths` | `usize` | `100000` | Ceiling on total registered arbitrage paths, applied before discovery runs so a discovery-heavy skip-fest stops instead of registering millions. 0 means uncapped. |
-| `DEGENBOT_REG_PROGRESS_SECS` | `pathfinding.reg_progress_secs` | `f64` | `30.0` | Owner: the driver loop's renderer. Seconds between registration-progress summaries, which fire on the interval even when the path count never crosses a discovery_batch_size boundary. 0 emits on every update. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_DISCOVERY_BATCH_SIZE` | `pathfinding.discovery_batch_size` | `usize` | `1000` | `shell` | Owner: the driver loop (asyncio batching; the native console registers differently). Discovery-sweep delivery batch size (paths per async batch): the worker thread collects this many paths before the async consumer yields them and gives the event loop one turn. A value <= 1 falls back to the legacy per-path delivery. |
+| `DEGENBOT_MAX_PATHS` | `pathfinding.max_registered_paths` | `usize` | `100000` | `core` | Ceiling on total registered arbitrage paths, applied before discovery runs so a discovery-heavy skip-fest stops instead of registering millions. 0 means uncapped. |
+| `DEGENBOT_REG_PROGRESS_SECS` | `pathfinding.reg_progress_secs` | `f64` | `30.0` | `shell` | Owner: the driver loop's renderer. Seconds between registration-progress summaries, which fire on the interval even when the path count never crosses a discovery_batch_size boundary. 0 emits on every update. |
 ## `dispatch`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_ERC6909_PROFIT` | `dispatch.erc6909_profit` | `bool` | `false` | Capture profit through an ERC-6909 vault claim instead of a plain transfer; `1` opts in. The two capture paths need different executor bytecode, so this selects the whole post-profit seam. |
-| `DEGENBOT_MIN_PROFIT_MARGIN_BPS` | `dispatch.min_profit_margin_bps` | `u64` | `0` | Driver-side profit floor in basis points (1/100 of a percent) applied at the simulation seam before a candidate is dispatched. A floor is a magnitude, so the key is unsigned end to end: a negative value is refused by the layer that supplied it, not clamped into a silent second default. This is NOT solve.min_profit_wei, which is the core's own floor: the two arms of the simulation seam are measured against their own floors, so naming one does not size the other. |
-| `DEGENBOT_CONTRACTS_DIR` | `dispatch.contracts_dir` | `Option<path>` | `(unset)` | Owner: the driver shell's deployment policy. Directory holding the executor runtime bytecode file the sim injects; unset falls through to the source-layout candidate the driver computes, and a wheel install must set it (or pass the file path explicitly). |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_ERC6909_PROFIT` | `dispatch.erc6909_profit` | `bool` | `false` | `core` | Capture profit through an ERC-6909 vault claim instead of a plain transfer; `1` opts in. The two capture paths need different executor bytecode, so this selects the whole post-profit seam. |
+| `DEGENBOT_MIN_PROFIT_MARGIN_BPS` | `dispatch.min_profit_margin_bps` | `u64` | `0` | `core` | Driver-side profit floor in basis points (1/100 of a percent) applied at the simulation seam before a candidate is dispatched. A floor is a magnitude, so the key is unsigned end to end: a negative value is refused by the layer that supplied it, not clamped into a silent second default. This is NOT solve.min_profit_wei, which is the core's own floor: the two arms of the simulation seam are measured against their own floors, so naming one does not size the other. |
+| `DEGENBOT_CONTRACTS_DIR` | `dispatch.contracts_dir` | `Option<path>` | `(unset)` | `shell` | Owner: the driver shell's deployment policy. Directory holding the executor runtime bytecode file the sim injects; unset falls through to the source-layout candidate the driver computes, and a wheel install must set it (or pass the file path explicitly). |
 ## `strategy.settlement`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_STRATEGY_SETTLEMENT_ACTIVE` | `strategy.settlement.active` | `bool` | `false` | Activate the settled-block settlement arm in this process; inactive leaves the facet dormant. |
-| `DEGENBOT_STRATEGY_SETTLEMENT_ENDPOINTS` | `strategy.settlement.endpoints` | `Option<string>` | `(unset; required when settlement is active)` | Comma-separated broadcast endpoints for settlement submissions. Restricted to the pinned revert-protecting relay allowlist (docs/autonomous-user-journey/RELAYS_AND_GUARDRAILS.md). |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_STRATEGY_SETTLEMENT_ACTIVE` | `strategy.settlement.active` | `bool` | `false` | `core` | Activate the settled-block settlement arm in this process; inactive leaves the facet dormant. |
+| `DEGENBOT_STRATEGY_SETTLEMENT_ENDPOINTS` | `strategy.settlement.endpoints` | `Option<string>` | `(unset; required when settlement is active)` | `core` | Comma-separated broadcast endpoints for settlement submissions. Restricted to the pinned revert-protecting relay allowlist (docs/autonomous-user-journey/RELAYS_AND_GUARDRAILS.md). |
 ## `strategy.mevblocker_backrun`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_ACTIVE` | `strategy.mevblocker_backrun.active` | `bool` | `false` | Activate this per-ecosystem backrun arm in this process; inactive leaves the facet dormant. |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BID_MODE` | `strategy.mevblocker_backrun.bid_mode` | `bool` | `false` | Explicit bid-mode flag; off is observe-only. Bid mode also requires a non-zero budget_wei (the legality gate reads both). |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BUDGET_WEI` | `strategy.mevblocker_backrun.budget_wei` | `u128 (decimal text)` | `0` | Cumulative bid budget cap in wei (decimal text; TOML: quoted string). Zero makes bid mode illegal; the spent accumulator tracks the wallet's gas burn. |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_MAX_BUNDLE_WEI` | `strategy.mevblocker_backrun.max_bundle_wei` | `u128 (decimal text)` | `1000000000000000` | Hard per-submission cap in wei (decimal text; TOML: quoted string); a decided bid is clamped to it. |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BRIBE_BIPS` | `strategy.mevblocker_backrun.bribe_bips` | `u64` | `9800` | The builder's bribe share of true profit in bips of 10_000 — the competitiveness ceiling (clamped at the site to <= 10_000). |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_PRIORITY_FEE_GWEI` | `strategy.mevblocker_backrun.priority_fee_gwei` | `u64` | `2` | The operator's priority fee in gwei, converted to wei when pricing the wallet's gas burn. |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BUNDLE_GAS_EST` | `strategy.mevblocker_backrun.bundle_gas_est` | `u64` | `300000` | Composed-bundle gas estimate priced into the net-of-gas bid gate until an exact in-scratch measurement replaces it. |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_GAS_FLOOR_WEI` | `strategy.mevblocker_backrun.gas_floor_wei` | `u64` | `1` | The envelope gate's profit floor in wei: a declared chain whose solver bound tops out below this is skipped without a simulation. Default 1 wei = solve everything and let the net-of-gas bid gate decide; raise to pre-filter thin cycles. |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_VERIFY_TICKS` | `strategy.mevblocker_backrun.verify_ticks` | `VerifyTicks(Strict|Bootstrap|Off)` | `bootstrap` | Chain-sample verification policy for ingress V3 tick-map admission: strict verifies every admission, bootstrap verifies the first admission per pool per process then memoizes, off declares operator confidence and emits a loud boot entry. Integrity checks are unconditional under off. |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_DRY_RUN` | `strategy.mevblocker_backrun.dry_run` | `bool` | `false` | Sign-nothing dispatch: every candidate skips as DryRun. Plain bool words are accepted. |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_KEY_FILE` | `strategy.mevblocker_backrun.key_file` | `Option<path>` | `(unset)` | Hex secp256k1 operator key file. Unset means no signing material is loaded (observe-only); the key never leaves TxSigner. |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_EXECUTOR` | `strategy.mevblocker_backrun.executor` | `string` | `0x30b28ed8aa581fbc0191c3b532b0697773070e97` | Executor contract address the composed backrun calls; parsed and validated at the driver boot. |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_OPERATOR` | `strategy.mevblocker_backrun.operator` | `Option<string>` | `(unset; falls back to EXECUTOR_OWNER_ADDRESS)` | Executor owner / sim caller address. Unset falls back to the legacy EXECUTOR_OWNER_ADDRESS env name, then the built-in default; parsed at the driver boot. |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_SIM_URL` | `strategy.mevblocker_backrun.sim_url` | `Option<string>` | `(unset; the chain node)` | Bundle-sim endpoint serving eth_callMany. Unset reuses the chain node; MEVBlocker's /fast tier answers method-missing, so the node is the fallback. |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_RANK_EVIDENCE` | `strategy.mevblocker_backrun.rank_evidence` | `bool` | `false` | Run the live deep-pair ranking sanity probe before any frame trusts the connector-depth truncation (diagnostic). |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_CONNECTORS` | `strategy.mevblocker_backrun.connectors` | `usize` | `8` | Discovery fan-out cap: the maximum number of WETH-entry cycles admitted per frame (strongest by touched-pool count). |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_CYCLE_MAX_HOPS` | `strategy.mevblocker_backrun.cycle_max_hops` | `usize` | `4` | Hop-depth cap per admitted cycle: the WETH stake pin plus up to cycle_max_hops - 1 connectors (cycle length in pools). Minimum 2 (one pin + one connector); a lower value fails the load. Distinct from `connectors`, which caps the cycles admitted per frame. |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_FIXTURE_HEAD` | `strategy.mevblocker_backrun.fixture_head` | `Option<u64>` | `(unset)` | Offline dry-run's pinned head block: replays captured frames against the chain view they were pending in instead of the live tip. Unset falls back to the fetched head. |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_STOP_FILE` | `strategy.mevblocker_backrun.stop_file` | `path` | `/tmp/degenbot-sidecar-STOP` | Kill-switch path: while the file exists the decision layer drops every candidate and the loop halts. |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_ENDPOINTS` | `strategy.mevblocker_backrun.endpoints` | `Option<string>` | `(unset; required when mevblocker_backrun is active)` | MEVBlocker searcher WebSocket for the private bundle broadcast (single URL). |
-| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_MEVBLOCKER_URL` | `strategy.mevblocker_backrun.mevblocker_url` | `Option<string>` | `(unset: bundle-only bid)` | Private-broadcast RPC for the raw relay fan-out. Set arms the private-broadcast arm: the signed backrun goes raw to this endpoint first, then to the chain node as the public fallback relay. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_ACTIVE` | `strategy.mevblocker_backrun.active` | `bool` | `false` | `core` | Activate this per-ecosystem backrun arm in this process; inactive leaves the facet dormant. |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BID_MODE` | `strategy.mevblocker_backrun.bid_mode` | `bool` | `false` | `core` | Explicit bid-mode flag; off is observe-only. Bid mode also requires a non-zero budget_wei (the legality gate reads both). |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BUDGET_WEI` | `strategy.mevblocker_backrun.budget_wei` | `u128 (decimal text)` | `0` | `core` | Cumulative bid budget cap in wei (decimal text; TOML: quoted string). Zero makes bid mode illegal; the spent accumulator tracks the wallet's gas burn. |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_MAX_BUNDLE_WEI` | `strategy.mevblocker_backrun.max_bundle_wei` | `u128 (decimal text)` | `1000000000000000` | `core` | Hard per-submission cap in wei (decimal text; TOML: quoted string); a decided bid is clamped to it. |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BRIBE_BIPS` | `strategy.mevblocker_backrun.bribe_bips` | `u64` | `9800` | `core` | The builder's bribe share of true profit in bips of 10_000 — the competitiveness ceiling (clamped at the site to <= 10_000). |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_PRIORITY_FEE_GWEI` | `strategy.mevblocker_backrun.priority_fee_gwei` | `u64` | `2` | `core` | The operator's priority fee in gwei, converted to wei when pricing the wallet's gas burn. |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_BUNDLE_GAS_EST` | `strategy.mevblocker_backrun.bundle_gas_est` | `u64` | `300000` | `core` | Composed-bundle gas estimate priced into the net-of-gas bid gate until an exact in-scratch measurement replaces it. |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_GAS_FLOOR_WEI` | `strategy.mevblocker_backrun.gas_floor_wei` | `u64` | `1` | `core` | The envelope gate's profit floor in wei: a declared chain whose solver bound tops out below this is skipped without a simulation. Default 1 wei = solve everything and let the net-of-gas bid gate decide; raise to pre-filter thin cycles. |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_VERIFY_TICKS` | `strategy.mevblocker_backrun.verify_ticks` | `VerifyTicks(Strict|Bootstrap|Off)` | `bootstrap` | `core` | Chain-sample verification policy for ingress V3 tick-map admission: strict verifies every admission, bootstrap verifies the first admission per pool per process then memoizes, off declares operator confidence and emits a loud boot entry. Integrity checks are unconditional under off. |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_DRY_RUN` | `strategy.mevblocker_backrun.dry_run` | `bool` | `false` | `core` | Sign-nothing dispatch: every candidate skips as DryRun. Plain bool words are accepted. |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_KEY_FILE` | `strategy.mevblocker_backrun.key_file` | `Option<path>` | `(unset)` | `core` | Hex secp256k1 operator key file. Unset means no signing material is loaded (observe-only); the key never leaves TxSigner. |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_EXECUTOR` | `strategy.mevblocker_backrun.executor` | `string` | `0x30b28ed8aa581fbc0191c3b532b0697773070e97` | `core` | Executor contract address the composed backrun calls; parsed and validated at the driver boot. |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_OPERATOR` | `strategy.mevblocker_backrun.operator` | `Option<string>` | `(unset; falls back to EXECUTOR_OWNER_ADDRESS)` | `core` | Executor owner / sim caller address. Unset falls back to the legacy EXECUTOR_OWNER_ADDRESS env name, then the built-in default; parsed at the driver boot. |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_SIM_URL` | `strategy.mevblocker_backrun.sim_url` | `Option<string>` | `(unset; the chain node)` | `core` | Bundle-sim endpoint serving eth_callMany. Unset reuses the chain node; MEVBlocker's /fast tier answers method-missing, so the node is the fallback. |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_RANK_EVIDENCE` | `strategy.mevblocker_backrun.rank_evidence` | `bool` | `false` | `core` | Run the live deep-pair ranking sanity probe before any frame trusts the connector-depth truncation (diagnostic). |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_CONNECTORS` | `strategy.mevblocker_backrun.connectors` | `usize` | `8` | `core` | Discovery fan-out cap: the maximum number of WETH-entry cycles admitted per frame (strongest by touched-pool count). |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_CYCLE_MAX_HOPS` | `strategy.mevblocker_backrun.cycle_max_hops` | `usize` | `4` | `core` | Hop-depth cap per admitted cycle: the WETH stake pin plus up to cycle_max_hops - 1 connectors (cycle length in pools). Minimum 2 (one pin + one connector); a lower value fails the load. Distinct from `connectors`, which caps the cycles admitted per frame. |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_FIXTURE_HEAD` | `strategy.mevblocker_backrun.fixture_head` | `Option<u64>` | `(unset)` | `core` | Offline dry-run's pinned head block: replays captured frames against the chain view they were pending in instead of the live tip. Unset falls back to the fetched head. |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_STOP_FILE` | `strategy.mevblocker_backrun.stop_file` | `path` | `/tmp/degenbot-sidecar-STOP` | `core` | Kill-switch path: while the file exists the decision layer drops every candidate and the loop halts. |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_ENDPOINTS` | `strategy.mevblocker_backrun.endpoints` | `Option<string>` | `(unset; required when mevblocker_backrun is active)` | `core` | MEVBlocker searcher WebSocket for the private bundle broadcast (single URL). |
+| `DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_MEVBLOCKER_URL` | `strategy.mevblocker_backrun.mevblocker_url` | `Option<string>` | `(unset: bundle-only bid)` | `core` | Private-broadcast RPC for the raw relay fan-out. Set arms the private-broadcast arm: the signed backrun goes raw to this endpoint first, then to the chain node as the public fallback relay. |
 ## `strategy.txpool_backrun`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_ACTIVE` | `strategy.txpool_backrun.active` | `bool` | `false` | Activate this per-ecosystem backrun arm in this process; inactive leaves the facet dormant. |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_BID_MODE` | `strategy.txpool_backrun.bid_mode` | `bool` | `false` | Explicit bid-mode flag; off is observe-only. Bid mode also requires a non-zero budget_wei (the legality gate reads both). |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_BUDGET_WEI` | `strategy.txpool_backrun.budget_wei` | `u128 (decimal text)` | `0` | Cumulative bid budget cap in wei (decimal text; TOML: quoted string). Zero makes bid mode illegal; the spent accumulator tracks the wallet's gas burn. |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_MAX_BUNDLE_WEI` | `strategy.txpool_backrun.max_bundle_wei` | `u128 (decimal text)` | `1000000000000000` | Hard per-submission cap in wei (decimal text; TOML: quoted string); a decided bid is clamped to it. |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_BRIBE_BIPS` | `strategy.txpool_backrun.bribe_bips` | `u64` | `9800` | The builder's bribe share of true profit in bips of 10_000 — the competitiveness ceiling (clamped at the site to <= 10_000). |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_PRIORITY_FEE_GWEI` | `strategy.txpool_backrun.priority_fee_gwei` | `u64` | `2` | The operator's priority fee in gwei, converted to wei when pricing the wallet's gas burn. |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_BUNDLE_GAS_EST` | `strategy.txpool_backrun.bundle_gas_est` | `u64` | `300000` | Composed-bundle gas estimate priced into the net-of-gas bid gate until an exact in-scratch measurement replaces it. |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_GAS_FLOOR_WEI` | `strategy.txpool_backrun.gas_floor_wei` | `u64` | `1` | The envelope gate's profit floor in wei: a declared chain whose solver bound tops out below this is skipped without a simulation. Default 1 wei = solve everything and let the net-of-gas bid gate decide; raise to pre-filter thin cycles. |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_VERIFY_TICKS` | `strategy.txpool_backrun.verify_ticks` | `VerifyTicks(Strict|Bootstrap|Off)` | `bootstrap` | Chain-sample verification policy for ingress V3 tick-map admission: strict verifies every admission, bootstrap verifies the first admission per pool per process then memoizes, off declares operator confidence and emits a loud boot entry. Integrity checks are unconditional under off. |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_DRY_RUN` | `strategy.txpool_backrun.dry_run` | `bool` | `false` | Sign-nothing dispatch: every candidate skips as DryRun. Plain bool words are accepted. |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_KEY_FILE` | `strategy.txpool_backrun.key_file` | `Option<path>` | `(unset)` | Hex secp256k1 operator key file. Unset means no signing material is loaded (observe-only); the key never leaves TxSigner. |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_EXECUTOR` | `strategy.txpool_backrun.executor` | `string` | `0x30b28ed8aa581fbc0191c3b532b0697773070e97` | Executor contract address the composed backrun calls; parsed and validated at the driver boot. |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_OPERATOR` | `strategy.txpool_backrun.operator` | `Option<string>` | `(unset; falls back to EXECUTOR_OWNER_ADDRESS)` | Executor owner / sim caller address. Unset falls back to the legacy EXECUTOR_OWNER_ADDRESS env name, then the built-in default; parsed at the driver boot. |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_SIM_URL` | `strategy.txpool_backrun.sim_url` | `Option<string>` | `(unset; the chain node)` | Bundle-sim endpoint serving eth_callMany. Unset reuses the chain node; MEVBlocker's /fast tier answers method-missing, so the node is the fallback. |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_RANK_EVIDENCE` | `strategy.txpool_backrun.rank_evidence` | `bool` | `false` | Run the live deep-pair ranking sanity probe before any frame trusts the connector-depth truncation (diagnostic). |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_CONNECTORS` | `strategy.txpool_backrun.connectors` | `usize` | `8` | Discovery fan-out cap: the maximum number of WETH-entry cycles admitted per frame (strongest by touched-pool count). |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_CYCLE_MAX_HOPS` | `strategy.txpool_backrun.cycle_max_hops` | `usize` | `4` | Hop-depth cap per admitted cycle: the WETH stake pin plus up to cycle_max_hops - 1 connectors (cycle length in pools). Minimum 2 (one pin + one connector); a lower value fails the load. Distinct from `connectors`, which caps the cycles admitted per frame. |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_FIXTURE_HEAD` | `strategy.txpool_backrun.fixture_head` | `Option<u64>` | `(unset)` | Offline dry-run's pinned head block: replays captured frames against the chain view they were pending in instead of the live tip. Unset falls back to the fetched head. |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_STOP_FILE` | `strategy.txpool_backrun.stop_file` | `path` | `/tmp/degenbot-sidecar-STOP` | Kill-switch path: while the file exists the decision layer drops every candidate and the loop halts. |
-| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_ENDPOINTS` | `strategy.txpool_backrun.endpoints` | `Option<string>` | `(unset; required when txpool_backrun is active)` | Comma-separated public relay fan-out endpoints for raw backrun broadcast, with the read provider as fallback. |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_ACTIVE` | `strategy.txpool_backrun.active` | `bool` | `false` | `core` | Activate this per-ecosystem backrun arm in this process; inactive leaves the facet dormant. |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_BID_MODE` | `strategy.txpool_backrun.bid_mode` | `bool` | `false` | `core` | Explicit bid-mode flag; off is observe-only. Bid mode also requires a non-zero budget_wei (the legality gate reads both). |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_BUDGET_WEI` | `strategy.txpool_backrun.budget_wei` | `u128 (decimal text)` | `0` | `core` | Cumulative bid budget cap in wei (decimal text; TOML: quoted string). Zero makes bid mode illegal; the spent accumulator tracks the wallet's gas burn. |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_MAX_BUNDLE_WEI` | `strategy.txpool_backrun.max_bundle_wei` | `u128 (decimal text)` | `1000000000000000` | `core` | Hard per-submission cap in wei (decimal text; TOML: quoted string); a decided bid is clamped to it. |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_BRIBE_BIPS` | `strategy.txpool_backrun.bribe_bips` | `u64` | `9800` | `core` | The builder's bribe share of true profit in bips of 10_000 — the competitiveness ceiling (clamped at the site to <= 10_000). |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_PRIORITY_FEE_GWEI` | `strategy.txpool_backrun.priority_fee_gwei` | `u64` | `2` | `core` | The operator's priority fee in gwei, converted to wei when pricing the wallet's gas burn. |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_BUNDLE_GAS_EST` | `strategy.txpool_backrun.bundle_gas_est` | `u64` | `300000` | `core` | Composed-bundle gas estimate priced into the net-of-gas bid gate until an exact in-scratch measurement replaces it. |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_GAS_FLOOR_WEI` | `strategy.txpool_backrun.gas_floor_wei` | `u64` | `1` | `core` | The envelope gate's profit floor in wei: a declared chain whose solver bound tops out below this is skipped without a simulation. Default 1 wei = solve everything and let the net-of-gas bid gate decide; raise to pre-filter thin cycles. |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_VERIFY_TICKS` | `strategy.txpool_backrun.verify_ticks` | `VerifyTicks(Strict|Bootstrap|Off)` | `bootstrap` | `core` | Chain-sample verification policy for ingress V3 tick-map admission: strict verifies every admission, bootstrap verifies the first admission per pool per process then memoizes, off declares operator confidence and emits a loud boot entry. Integrity checks are unconditional under off. |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_DRY_RUN` | `strategy.txpool_backrun.dry_run` | `bool` | `false` | `core` | Sign-nothing dispatch: every candidate skips as DryRun. Plain bool words are accepted. |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_KEY_FILE` | `strategy.txpool_backrun.key_file` | `Option<path>` | `(unset)` | `core` | Hex secp256k1 operator key file. Unset means no signing material is loaded (observe-only); the key never leaves TxSigner. |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_EXECUTOR` | `strategy.txpool_backrun.executor` | `string` | `0x30b28ed8aa581fbc0191c3b532b0697773070e97` | `core` | Executor contract address the composed backrun calls; parsed and validated at the driver boot. |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_OPERATOR` | `strategy.txpool_backrun.operator` | `Option<string>` | `(unset; falls back to EXECUTOR_OWNER_ADDRESS)` | `core` | Executor owner / sim caller address. Unset falls back to the legacy EXECUTOR_OWNER_ADDRESS env name, then the built-in default; parsed at the driver boot. |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_SIM_URL` | `strategy.txpool_backrun.sim_url` | `Option<string>` | `(unset; the chain node)` | `core` | Bundle-sim endpoint serving eth_callMany. Unset reuses the chain node; MEVBlocker's /fast tier answers method-missing, so the node is the fallback. |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_RANK_EVIDENCE` | `strategy.txpool_backrun.rank_evidence` | `bool` | `false` | `core` | Run the live deep-pair ranking sanity probe before any frame trusts the connector-depth truncation (diagnostic). |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_CONNECTORS` | `strategy.txpool_backrun.connectors` | `usize` | `8` | `core` | Discovery fan-out cap: the maximum number of WETH-entry cycles admitted per frame (strongest by touched-pool count). |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_CYCLE_MAX_HOPS` | `strategy.txpool_backrun.cycle_max_hops` | `usize` | `4` | `core` | Hop-depth cap per admitted cycle: the WETH stake pin plus up to cycle_max_hops - 1 connectors (cycle length in pools). Minimum 2 (one pin + one connector); a lower value fails the load. Distinct from `connectors`, which caps the cycles admitted per frame. |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_FIXTURE_HEAD` | `strategy.txpool_backrun.fixture_head` | `Option<u64>` | `(unset)` | `core` | Offline dry-run's pinned head block: replays captured frames against the chain view they were pending in instead of the live tip. Unset falls back to the fetched head. |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_STOP_FILE` | `strategy.txpool_backrun.stop_file` | `path` | `/tmp/degenbot-sidecar-STOP` | `core` | Kill-switch path: while the file exists the decision layer drops every candidate and the loop halts. |
+| `DEGENBOT_STRATEGY_TXPOOL_BACKRUN_ENDPOINTS` | `strategy.txpool_backrun.endpoints` | `Option<string>` | `(unset; required when txpool_backrun is active)` | `core` | Comma-separated public relay fan-out endpoints for raw backrun broadcast, with the read provider as fallback. |
 ## `aave`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_BRIDGE_PROBE` | `aave.bridge_probe` | `bool` | `false` | In-tree bridge-probe observation surface in the arbitrage simulator (presence gates). |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_BRIDGE_PROBE` | `aave.bridge_probe` | `bool` | `false` | `core` | In-tree bridge-probe observation surface in the arbitrage simulator (presence gates). |
 ## `offline`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_CLCAP_RPC` | `offline.clcap_rpc` | `Option<string>` | `(unset; required by the capture examples)` | RPC URL for the offline concentrated liquidity capture/boundary-scan examples (network-gated). |
-| `DEGENBOT_CLCAP_BLOCK` | `offline.clcap_block` | `Option<u64>` | `(unset)` | Pinned block for the concentrated liquidity capture generator. |
-| `DEGENBOT_CLCAP_MAX_FETCHES` | `offline.clcap_max_fetches` | `usize` | `320` | Max active-set fetches backfilled by the concentrated liquidity capture generator. |
-| `DEGENBOT_CLCAP_PATH_CAP` | `offline.clcap_path_cap` | `usize` | `12` | Per-block path cap for the concentrated liquidity capture generator. |
-| `DEGENBOT_SCAN_BLOCK` | `offline.scan_block` | `Option<u64>` | `(unset)` | Block for the concentrated liquidity boundary-scan examples. |
-| `DEGENBOT_FIXTURE_DB` | `offline.fixture_db` | `Option<path>` | `(unset)` | Database path for the standalone-consumer fixture example. |
-| `DEGENBOT_V3_FIXTURE_RPC` | `offline.v3_fixture_rpc` | `Option<string>` | `(unset)` | Network-gated V3 IIA fixture reproduction RPC endpoint (test-only). |
-| `DEGENBOT_V3_FIXTURE_BLOCK` | `offline.v3_fixture_block` | `Option<u64>` | `(unset)` | Network-gated V3 IIA fixture reproduction block (test-only). |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_CLCAP_RPC` | `offline.clcap_rpc` | `Option<string>` | `(unset; required by the capture examples)` | `core` | RPC URL for the offline concentrated liquidity capture/boundary-scan examples (network-gated). |
+| `DEGENBOT_CLCAP_BLOCK` | `offline.clcap_block` | `Option<u64>` | `(unset)` | `core` | Pinned block for the concentrated liquidity capture generator. |
+| `DEGENBOT_CLCAP_MAX_FETCHES` | `offline.clcap_max_fetches` | `usize` | `320` | `core` | Max active-set fetches backfilled by the concentrated liquidity capture generator. |
+| `DEGENBOT_CLCAP_PATH_CAP` | `offline.clcap_path_cap` | `usize` | `12` | `core` | Per-block path cap for the concentrated liquidity capture generator. |
+| `DEGENBOT_SCAN_BLOCK` | `offline.scan_block` | `Option<u64>` | `(unset)` | `core` | Block for the concentrated liquidity boundary-scan examples. |
+| `DEGENBOT_FIXTURE_DB` | `offline.fixture_db` | `Option<path>` | `(unset)` | `core` | Database path for the standalone-consumer fixture example. |
+| `DEGENBOT_V3_FIXTURE_RPC` | `offline.v3_fixture_rpc` | `Option<string>` | `(unset)` | `core` | Network-gated V3 IIA fixture reproduction RPC endpoint (test-only). |
+| `DEGENBOT_V3_FIXTURE_BLOCK` | `offline.v3_fixture_block` | `Option<u64>` | `(unset)` | `core` | Network-gated V3 IIA fixture reproduction block (test-only). |
 ## `test_hooks`
 
-| Env var | TOML key | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| `DEGENBOT_ALLOC_TRACK` | `test_hooks.alloc_track` | `bool` | `false` | Allocation-tracking gate for the math/pools bench suites (`1` enables). |
-| `DEGENBOT_SELF_ABORT_TEST` | `test_hooks.self_abort_test` | `bool` | `false` | Block-pump self-abort hatch (presence gates in tests). |
-| `DEGENBOT_UNUSED_TEST_FLAG` | `test_hooks.unused_test_flag` | `bool` | `true` | Default-ON flag-parse probe (asserted by the bot-core unit tests). |
+| Env var | TOML key | Type | Default | Owner | Description |
+| --- | --- | --- | --- | --- | --- |
+| `DEGENBOT_ALLOC_TRACK` | `test_hooks.alloc_track` | `bool` | `false` | `core` | Allocation-tracking gate for the math/pools bench suites (`1` enables). |
+| `DEGENBOT_SELF_ABORT_TEST` | `test_hooks.self_abort_test` | `bool` | `false` | `core` | Block-pump self-abort hatch (presence gates in tests). |
+| `DEGENBOT_UNUSED_TEST_FLAG` | `test_hooks.unused_test_flag` | `bool` | `true` | `core` | Default-ON flag-parse probe (asserted by the bot-core unit tests). |

@@ -63,8 +63,8 @@ pub fn render_key_reference() -> String {
         if Some(key.section) != current_section {
             current_section = Some(key.section);
             let _ = writeln!(out, "## `{}`", key.section);
-            out.push_str("\n| Env var | TOML key | Type | Default | Description |\n");
-            out.push_str("| --- | --- | --- | --- | --- |\n");
+            out.push_str("\n| Env var | TOML key | Type | Default | Owner | Description |\n");
+            out.push_str("| --- | --- | --- | --- | --- | --- |\n");
         }
         let default_display = if key.default_repr.is_empty() {
             "(empty)"
@@ -72,9 +72,16 @@ pub fn render_key_reference() -> String {
             key.default_repr
         };
         let description = key.description.replace('|', "\\|");
+        // The owner is derived from the census, not restated in prose: a key
+        // that gains a core implementation leaves `SHELL_OWNED_KEYS`, and the
+        // next regeneration says so.
+        let owner = match crate::schema::owner_of(&format!("{}.{}", key.section, key.field)) {
+            crate::schema::KeyOwner::Core => "core",
+            crate::schema::KeyOwner::Shell => "shell",
+        };
         let _ = writeln!(
             out,
-            "| `{}` | `{}.{}` | `{}` | `{}` | {} |",
+            "| `{}` | `{}.{}` | `{}` | `{}` | `{owner}` | {} |",
             key.env, key.section, key.field, key.kind, default_display, description
         );
     }
