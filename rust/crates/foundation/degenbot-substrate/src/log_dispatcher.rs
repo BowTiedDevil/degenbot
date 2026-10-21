@@ -16,7 +16,6 @@ use std::sync::Arc;
 use alloy::rpc::types::Log;
 
 use crate::concentrated_liquidity_route::ApplyOutcome;
-#[cfg(test)]
 use crate::pool_lookup::PoolLookup;
 use crate::state_lock::StateLock;
 use crate::BotState;
@@ -26,6 +25,7 @@ use degenbot_decoders::v3_pancakeswap_swap_decoder::decode_v3_pancakeswap_swap_l
 use degenbot_decoders::v3_swap_decoder::decode_v3_swap_log;
 use degenbot_decoders::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
 use degenbot_decoders::v4_swap_decoder::decode_v4_swap_log;
+use degenbot_pools::buffered_event::BufferedPoolEvent;
 
 /// Whether `topic0` is one of the six degenbot pool-event signatures we
 /// dispatch on (`crate::RELEVANT_TOPICS`). A log carrying
@@ -193,45 +193,65 @@ impl DecodedPoolEvent {
     /// Route one decoded event to `bot_state` at the given pipeline `phase`.
     /// The phase is part of the routing-table question (Live vs Backfill), so
     /// the forward path and the backfill chunk loop share these arms.
+    ///
+    /// The four concentrated-liquidity arms go through [`BotState::route_event`]
+    /// — the one door that owns the key-vs-family agreement check — exactly as
+    /// every other caller does. Each arm builds the payload variant its own key
+    /// shape names (an address key with a `V3` event, a `V4` key with a `V4`
+    /// event), so the door's `PoolRefusal::FamilyMismatch` arm is unrepresentable
+    /// here rather than merely unexpected; the `expect` after the match marks
+    /// that, it does not widen the contract.
+    #[expect(
+        clippy::expect_used,
+        reason = "each arm builds the payload variant its own key shape names, so the door cannot refuse it"
+    )]
     fn apply_at(
         self,
         bot_state: &mut BotState,
         phase: crate::concentrated_liquidity_route::Phase,
     ) -> ApplyOutcome {
-        match self {
+        // The key shape and the payload variant both come from the decoder's
+        // own family choice - a V3 event is addressed by its pool address, a V4
+        // event by `(pool_manager, pool_id)` - so the pair handed to the door
+        // cannot disagree with itself.
+        let (key, event) = match self {
+            // V2 has no `PoolLookup` and no routing-table verdict (scalar state
+            // arrives by table read, not by buffered event), so the sync keeps
+            // its own scalar door.
             Self::V2Sync {
                 pool_address,
                 reserve0,
                 reserve1,
                 block_number,
-            } => match bot_state.apply_sync_by_address(
-                pool_address,
-                reserve0,
-                reserve1,
-                block_number,
-            ) {
-                Some(pool_id) => ApplyOutcome::Applied(pool_id),
-                None => ApplyOutcome::NoOp(
-                    crate::concentrated_liquidity_route::NoOpReason::ScalarReseedAtRegistration,
-                ),
-            },
+            } => {
+                return match bot_state.apply_sync_by_address(
+                    pool_address,
+                    reserve0,
+                    reserve1,
+                    block_number,
+                ) {
+                    Some(pool_id) => ApplyOutcome::Applied(pool_id),
+                    None => ApplyOutcome::NoOp(
+                        crate::concentrated_liquidity_route::NoOpReason::ScalarReseedAtRegistration,
+                    ),
+                };
+            }
             Self::V3Swap {
                 pool_address,
                 sqrt_price_x96,
                 liquidity,
                 tick,
                 block_number,
-            } => bot_state.concentrated_liquidity.route_event(
-                &mut bot_state.registry,
-                phase,
-                pool_address,
-                crate::BufferedV3PoolEvent::Swap(degenbot_pools::v3_state::BufferedV3SwapEvent {
-                    sqrt_price_x96,
-                    liquidity: liquidity.to::<u128>(),
-                    tick,
-                    block_number,
-                }),
-                &[],
+            } => (
+                PoolLookup::from_address(pool_address),
+                BufferedPoolEvent::V3(crate::BufferedV3PoolEvent::Swap(
+                    degenbot_pools::v3_state::BufferedV3SwapEvent {
+                        sqrt_price_x96,
+                        liquidity: liquidity.to::<u128>(),
+                        tick,
+                        block_number,
+                    },
+                )),
             ),
             Self::V3Liquidity {
                 pool_address,
@@ -239,19 +259,16 @@ impl DecodedPoolEvent {
                 tick_upper,
                 liquidity_delta,
                 block_number,
-            } => bot_state.concentrated_liquidity.route_event(
-                &mut bot_state.registry,
-                phase,
-                pool_address,
-                crate::BufferedV3PoolEvent::Liquidity(
+            } => (
+                PoolLookup::from_address(pool_address),
+                BufferedPoolEvent::V3(crate::BufferedV3PoolEvent::Liquidity(
                     degenbot_pools::v3_state::BufferedV3LiquidityUpdate {
                         tick_lower,
                         tick_upper,
                         liquidity_delta,
                         block_number,
                     },
-                ),
-                &[],
+                )),
             ),
             Self::V4Swap {
                 pool_manager,
@@ -260,18 +277,19 @@ impl DecodedPoolEvent {
                 liquidity,
                 tick,
                 block_number,
-            } => bot_state.concentrated_liquidity.route_event_by_key(
-                &mut bot_state.registry,
-                phase,
-                pool_manager,
-                pool_id,
-                crate::BufferedV4PoolEvent::Swap(degenbot_pools::v4_state::BufferedV4SwapEvent {
-                    sqrt_price_x96,
-                    liquidity: liquidity.to::<u128>(),
-                    tick,
-                    block_number,
-                }),
-                &[],
+            } => (
+                PoolLookup::V4 {
+                    pool_manager,
+                    pool_id,
+                },
+                BufferedPoolEvent::V4(crate::BufferedV4PoolEvent::Swap(
+                    degenbot_pools::v4_state::BufferedV4SwapEvent {
+                        sqrt_price_x96,
+                        liquidity: liquidity.to::<u128>(),
+                        tick,
+                        block_number,
+                    },
+                )),
             ),
             Self::V4Liquidity {
                 pool_manager,
@@ -280,22 +298,24 @@ impl DecodedPoolEvent {
                 tick_upper,
                 liquidity_delta,
                 block_number,
-            } => bot_state.concentrated_liquidity.route_event_by_key(
-                &mut bot_state.registry,
-                phase,
-                pool_manager,
-                pool_id,
-                crate::BufferedV4PoolEvent::Liquidity(
+            } => (
+                PoolLookup::V4 {
+                    pool_manager,
+                    pool_id,
+                },
+                BufferedPoolEvent::V4(crate::BufferedV4PoolEvent::Liquidity(
                     degenbot_pools::v4_state::BufferedV4LiquidityUpdate {
                         tick_lower,
                         tick_upper,
                         liquidity_delta,
                         block_number,
                     },
-                ),
-                &[],
+                )),
             ),
-        }
+        };
+        bot_state
+            .route_event(phase, key, event, &[])
+            .expect("apply_at builds a matching-family event for its key")
     }
 
     /// Backfill-phase apply: the backfill chunk loop's ONE apply entry —
