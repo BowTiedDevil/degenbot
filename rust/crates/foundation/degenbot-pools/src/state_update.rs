@@ -32,32 +32,36 @@ impl PoolStateUpdate {
     }
 }
 
-/// Why a state sync was refused.
+/// Why a family-tagged payload was refused.
+///
+/// One type serves every door that takes a payload beside a pool key: a
+/// mismatch is a caller bug either way, and a second refusal type would be a
+/// mirror.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PoolSyncRefusal {
-    /// The update names a different family than the pool key does.
+pub enum PoolRefusal {
+    /// The payload names a different family than the pool key does.
     FamilyMismatch {
         /// The family the key names.
         key: RegisteredPoolFamily,
-        /// The family the payload replaces.
-        update: RegisteredPoolFamily,
+        /// The family the payload names.
+        value: RegisteredPoolFamily,
     },
     /// The key names no registered pool.
     Unregistered,
 }
 
-impl core::fmt::Display for PoolSyncRefusal {
+impl core::fmt::Display for PoolRefusal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::FamilyMismatch { key, update } => write!(
+            Self::FamilyMismatch { key, value } => write!(
                 f,
-                "state update for {} applied to a {} pool key",
-                update.tag(),
+                "payload for a {} pool applied to a {} pool key",
+                value.tag(),
                 key.tag()
             ),
-            Self::Unregistered => f.write_str("state update for an unregistered pool"),
+            Self::Unregistered => f.write_str("payload for an unregistered pool"),
         }
     }
 }
 
-impl std::error::Error for PoolSyncRefusal {}
+impl std::error::Error for PoolRefusal {}

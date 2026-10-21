@@ -81,7 +81,7 @@ pub use ::degenbot_pools::v3_state::{
     V3SwapOutcome, V3SwapUpdate,
 };
 
-pub use ::degenbot_pools::state_update::{PoolStateUpdate, PoolSyncRefusal};
+pub use ::degenbot_pools::state_update::{PoolRefusal, PoolStateUpdate};
 pub use ::degenbot_pools::v4_state::{
     v4_simulate_swap, BufferedV4LiquidityUpdate, BufferedV4PoolEvent, BufferedV4SwapEvent,
     RegisterV4PoolError, RegisterV4PoolParams, V4PoolIdentity, V4PoolKey, V4PoolState, V4StateSync,

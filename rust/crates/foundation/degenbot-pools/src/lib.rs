@@ -78,6 +78,7 @@ pub mod curve_dy_io;
 pub use curve_dy_io::{
     check_metapool_liquidity, check_pool_liquidity, resolve_dy_inputs, CurveInputsError,
 };
+pub mod buffered_event;
 pub mod curve_state;
 pub mod curve_strategies;
 pub mod families;
@@ -93,7 +94,8 @@ pub mod simulate_swap;
 pub mod slot_layout;
 pub mod state_update;
 
-pub use state_update::{PoolStateUpdate, PoolSyncRefusal};
+pub use buffered_event::BufferedPoolEvent;
+pub use state_update::{PoolRefusal, PoolStateUpdate};
 /// The solver-kernel tree (ADR-073 endgame re-home): the family-blind kernels
 /// (the golden-section template, the integer-verification Möbius order, the
 /// envelope composition and its caches) live here beside the family read

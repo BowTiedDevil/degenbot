@@ -125,7 +125,7 @@ pub use ::degenbot_pools::v4_state::{
     V4SwapUpdate, AMOUNT_MODIFYING_HOOK_MASK, V4_DYNAMIC_FEE_FLAG,
 };
 
-pub use degenbot_pools::state_update::{PoolStateUpdate, PoolSyncRefusal};
+pub use degenbot_pools::state_update::{PoolRefusal, PoolStateUpdate};
 pub use degenbot_pools::v3_state::V3StateSync;
 
 // Re-export the ADR-004 typed TickMap boundary trait (V3 + V4 impls both live

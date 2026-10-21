@@ -1,4 +1,5 @@
 use super::*;
+use degenbot_pools::buffered_event::BufferedPoolEvent;
 
 /// Staged-router contract (`concentrated_liquidity_route)`: `route_event` is THE decision
 /// point — a live-phase tick mutation for an unregistered pool must
@@ -11,16 +12,19 @@ fn fuwyur_router_stages_unregistered_live_liquidity_into_pump_buffer() {
     let addr = Address::from([0x66; 20]);
     let outcome = core.route_event(
         crate::concentrated_liquidity_route::Phase::Live,
-        addr,
-        BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
+        PoolLookup::from_address(addr),
+        BufferedPoolEvent::V3(BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
             tick_lower: -100,
             tick_upper: 7,
             liquidity_delta: 118_748_558_607_688,
             block_number: 10,
-        }),
+        })),
         &[],
     );
-    assert_eq!(outcome, ApplyOutcome::Buffered(BufferKind::Pump));
+    assert_eq!(
+        outcome.expect("routed"),
+        ApplyOutcome::Buffered(BufferKind::Pump)
+    );
     assert_eq!(core.buffered_event_count(&addr), 1);
     // a buffered event is engine-witnessed activity — the
     // event horizon advances at ARRIVAL time (parity with V4) so the
@@ -38,31 +42,34 @@ fn v3_event_horizon_tracks_max_block_across_buffered_events() {
     let mut core = BotState::new();
     let addr = Address::from([0x67; 20]);
     let mk = |block, delta| {
-        BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
+        BufferedPoolEvent::V3(BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
             tick_lower: -100,
             tick_upper: 7,
             liquidity_delta: delta,
             block_number: block,
-        })
+        }))
     };
     core.route_event(
         crate::concentrated_liquidity_route::Phase::Live,
-        addr,
+        PoolLookup::from_address(addr),
         mk(10, 1),
         &[],
-    );
+    )
+    .expect("routed");
     core.route_event(
         crate::concentrated_liquidity_route::Phase::Live,
-        addr,
+        PoolLookup::from_address(addr),
         mk(50, 2),
         &[],
-    );
+    )
+    .expect("routed");
     core.route_event(
         crate::concentrated_liquidity_route::Phase::Live,
-        addr,
+        PoolLookup::from_address(addr),
         mk(30, 3),
         &[],
-    );
+    )
+    .expect("routed");
     assert_eq!(core.buffered_event_count(&addr), 3);
     assert_eq!(core.concentrated_liquidity().event_horizon(&addr), 50);
 }
@@ -1154,22 +1161,26 @@ fn v3_restore_before_block_after_same_block_multi_swap_lands_on_pre_block() {
 
     let block_b = 9u64;
     // Two same-block Swaps with distinct scalars.
-    let _ = core.apply_swap_by_pool_id(
-        pool_id,
-        U256::from(2u128) << 96,
-        2_000_000,
-        -10,
-        block_b,
-        &[],
-    );
-    let _ = core.apply_swap_by_pool_id(
-        pool_id,
-        U256::from(3u128) << 96,
-        3_000_000,
-        -20,
-        block_b,
-        &[],
-    );
+    let _ = core
+        .apply_swap_by_pool_id(
+            pool_id,
+            U256::from(2u128) << 96,
+            2_000_000,
+            -10,
+            block_b,
+            &[],
+        )
+        .expect("routed");
+    let _ = core
+        .apply_swap_by_pool_id(
+            pool_id,
+            U256::from(3u128) << 96,
+            3_000_000,
+            -20,
+            block_b,
+            &[],
+        )
+        .expect("routed");
 
     // Sanity: current state reflects the second swap.
     {

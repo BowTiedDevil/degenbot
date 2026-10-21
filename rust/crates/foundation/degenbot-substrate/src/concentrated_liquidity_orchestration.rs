@@ -30,8 +30,9 @@ use crate::concentrated_liquidity_route::{
     PinProvenance, PoolPresence, RouteAction,
 };
 use crate::pool_lookup::PoolLookup;
+use degenbot_pools::buffered_event::BufferedPoolEvent;
 use degenbot_pools::state_history::{ScalarPriors, TickBefore, V3BlockDelta};
-use degenbot_pools::state_update::{PoolStateUpdate, PoolSyncRefusal};
+use degenbot_pools::state_update::{PoolRefusal, PoolStateUpdate};
 use degenbot_pools::v3_state::{BufferedV3LiquidityUpdate, BufferedV3SwapEvent, V3StateSync};
 use degenbot_pools::v4_state::{
     BufferedV4LiquidityUpdate, BufferedV4SwapEvent, V4PoolKey, V4StateSync, V4_DYNAMIC_FEE_FLAG,
@@ -2207,20 +2208,20 @@ impl BotState {
     ///
     /// # Errors
     ///
-    /// [`PoolSyncRefusal::FamilyMismatch`] when the payload's family differs
-    /// from the key's, [`PoolSyncRefusal::Unregistered`] when the key names no
+    /// [`PoolRefusal::FamilyMismatch`] when the payload's family differs
+    /// from the key's, [`PoolRefusal::Unregistered`] when the key names no
     /// registered pool.
     pub fn sync_pool_state(
         &mut self,
         key: PoolLookup,
         update: PoolStateUpdate,
-    ) -> Result<(), PoolSyncRefusal> {
+    ) -> Result<(), PoolRefusal> {
         match (key, update) {
             (PoolLookup::Address(address), PoolStateUpdate::V3(update)) => self
                 .concentrated_liquidity
                 .sync_pool_state::<V3Family>(&mut self.registry, &address, update)
                 .then_some(())
-                .ok_or(PoolSyncRefusal::Unregistered),
+                .ok_or(PoolRefusal::Unregistered),
             (
                 PoolLookup::V4 {
                     pool_manager,
@@ -2231,10 +2232,10 @@ impl BotState {
                 .concentrated_liquidity
                 .sync_pool_state::<V4Family>(&mut self.registry, &(pool_manager, pool_id), update)
                 .then_some(())
-                .ok_or(PoolSyncRefusal::Unregistered),
-            (key, update) => Err(PoolSyncRefusal::FamilyMismatch {
+                .ok_or(PoolRefusal::Unregistered),
+            (key, update) => Err(PoolRefusal::FamilyMismatch {
                 key: key.family(),
-                update: update.family(),
+                value: update.family(),
             }),
         }
     }
@@ -2568,43 +2569,47 @@ impl BotState {
             ApplyOutcome::Buffered(_) | ApplyOutcome::NoOp(_) => None,
         }
     }
-
-    /// The phase-routed live-event apply, address-keyed (the buffered event
-    /// type carries the design).
+    /// Route one decoded concentrated-liquidity event through the apply path,
+    /// for either key shape.
+    ///
+    /// The event carries its family and the key names the pool; a disagreement
+    /// is a caller bug, refused rather than dropped (a drop would look like one
+    /// of the sanctioned `NoOp` trust decisions).
+    ///
+    /// # Errors
+    ///
+    /// [`PoolRefusal::FamilyMismatch`] when the event's family differs from the
+    /// key's.
     pub fn route_event(
         &mut self,
         phase: Phase,
-        pool_address: Address,
-        event: BufferedV3PoolEvent,
+        key: PoolLookup,
+        event: BufferedPoolEvent,
         swap_priors: &[(i32, TickInfo)],
-    ) -> ApplyOutcome {
-        self.concentrated_liquidity.route_event(
-            &mut self.registry,
-            phase,
-            pool_address,
-            event,
-            swap_priors,
-        )
-    }
-
-    /// The phase-routed live-event apply, registration-key-keyed (the
-    /// capability's design-keyed route behind a family-neutral name).
-    pub fn route_event_by_key(
-        &mut self,
-        phase: Phase,
-        pool_manager: Address,
-        v4_pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
-        event: BufferedV4PoolEvent,
-        swap_priors: &[(i32, TickInfo)],
-    ) -> ApplyOutcome {
-        self.concentrated_liquidity.route_event_by_key(
-            &mut self.registry,
-            phase,
-            pool_manager,
-            v4_pool_id,
-            event,
-            swap_priors,
-        )
+    ) -> Result<ApplyOutcome, PoolRefusal> {
+        match (key, event) {
+            (PoolLookup::Address(pool_address), BufferedPoolEvent::V3(event)) => Ok(self
+                .concentrated_liquidity
+                .route_event(&mut self.registry, phase, pool_address, event, swap_priors)),
+            (
+                PoolLookup::V4 {
+                    pool_manager,
+                    pool_id,
+                },
+                BufferedPoolEvent::V4(event),
+            ) => Ok(self.concentrated_liquidity.route_event_by_key(
+                &mut self.registry,
+                phase,
+                pool_manager,
+                pool_id,
+                event,
+                swap_priors,
+            )),
+            (key, event) => Err(PoolRefusal::FamilyMismatch {
+                key: key.family(),
+                value: event.family(),
+            }),
+        }
     }
 
     /// The buffered-event depth probe for the address-keyed buffer.

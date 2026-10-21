@@ -61,9 +61,9 @@ fn a_family_mismatch_is_refused() {
         .expect_err("a V4 payload on a V3 key must be refused");
     assert_eq!(
         refusal,
-        degenbot_pools::state_update::PoolSyncRefusal::FamilyMismatch {
+        degenbot_pools::state_update::PoolRefusal::FamilyMismatch {
             key: degenbot_pools::registry::RegisteredPoolFamily::V3,
-            update: degenbot_pools::registry::RegisteredPoolFamily::V4,
+            value: degenbot_pools::registry::RegisteredPoolFamily::V4,
         }
     );
 }
@@ -88,6 +88,6 @@ fn an_unregistered_pool_is_refused() {
         .expect_err("an unregistered pool must be refused");
     assert_eq!(
         refusal,
-        degenbot_pools::state_update::PoolSyncRefusal::Unregistered
+        degenbot_pools::state_update::PoolRefusal::Unregistered
     );
 }
