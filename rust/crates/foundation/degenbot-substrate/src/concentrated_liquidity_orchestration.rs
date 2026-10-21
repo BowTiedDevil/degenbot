@@ -2110,6 +2110,33 @@ impl BotState {
     pub fn concentrated_liquidity_mut(&mut self) -> &mut ConcentratedLiquidityOrchestration {
         &mut self.concentrated_liquidity
     }
+
+    /// The pinned snapshot seed a pool is registered with, if it has one.
+    ///
+    /// Read before the seed is consumed by step-1 verify; one door for either
+    /// key shape (the seed itself is the same tick-row map in both families).
+    #[must_use]
+    pub fn snapshot_seed(&self, key: PoolLookup) -> Option<&HashMap<i32, TickInfo>> {
+        match key {
+            PoolLookup::Address(address) => {
+                let pool_id = self.pool_id_by_address(&address)?;
+                let (_identity, state) =
+                    self.registry.pools.get(&pool_id).and_then(PoolEntry::v3)?;
+                state.snapshot_seed.as_ref()
+            }
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id,
+            } => {
+                let pool_id = self
+                    .concentrated_liquidity
+                    .pool_id_by_key(pool_manager, &pool_id)?;
+                let (_identity, state) =
+                    self.registry.pools.get(&pool_id).and_then(PoolEntry::v4)?;
+                state.snapshot_seed.as_ref()
+            }
+        }
+    }
 }
 
 /// Delegating composition-root surface: every concentrated liquidity capability method stays
@@ -2616,35 +2643,6 @@ impl BotState {
     #[must_use]
     pub fn buffered_event_count(&self, address: &Address) -> usize {
         self.concentrated_liquidity.buffered_v3_event_count(address)
-    }
-
-    /// The address-keyed snapshot seed read (the V4 twin is
-    /// [`Self::snapshot_seed_by_key`]). Returns the seed if the pool is
-    /// `Tracked` and the seed has not yet been taken; `None` for sparse pools
-    /// or after [`Self::take_snapshot_seed`]. The seed is the
-    /// registration-time `tick_data`, immutable across pump Mint/Burn — step-1
-    /// verify compares this against on-chain@snapshot_block (not the
-    /// pump-mutated `tick_data` current).
-    #[must_use]
-    pub fn snapshot_seed(&self, address: Address) -> Option<&HashMap<i32, TickInfo>> {
-        let &pool_id = self.registry.pool_addresses.get(&address)?;
-        let (_identity, state) = self.registry.pools.get(&pool_id).and_then(PoolEntry::v3)?;
-        state.snapshot_seed.as_ref()
-    }
-
-    /// The registration-key-keyed snapshot seed read (the address-keyed twin
-    /// is [`Self::snapshot_seed`]).
-    #[must_use]
-    pub fn snapshot_seed_by_key(
-        &self,
-        pool_manager: Address,
-        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
-    ) -> Option<&HashMap<i32, TickInfo>> {
-        let pid = self
-            .concentrated_liquidity
-            .pool_id_by_key(pool_manager, pool_id)?;
-        let (_identity, state) = self.registry.pools.get(&pid).and_then(PoolEntry::v4)?;
-        state.snapshot_seed.as_ref()
     }
 
     /// Snapshot all key-registered (V4) pool state for verification.

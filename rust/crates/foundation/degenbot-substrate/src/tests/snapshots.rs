@@ -235,7 +235,8 @@ fn v3_snapshot_seed_survives_pump_liquidity_update() {
 
     // The seed is pinned at registration for Tracked (snapshot) pools.
     assert_eq!(
-        core.snapshot_seed(v3_addr).cloned(),
+        core.snapshot_seed(PoolLookup::from_address(v3_addr))
+            .cloned(),
         Some(seed_clone.clone()),
         "Tracked pool must pin its snapshot seed at registration"
     );
@@ -259,7 +260,8 @@ fn v3_snapshot_seed_survives_pump_liquidity_update() {
     // ... but the pinned seed is UNCHANGED — step-1 can still verify the
     // snapshot block against the seed, not the pump-corrupted current.
     assert_eq!(
-        core.snapshot_seed(v3_addr).cloned(),
+        core.snapshot_seed(PoolLookup::from_address(v3_addr))
+            .cloned(),
         Some(seed_clone.clone()),
         "snapshot seed must be immutable across pump Mint/Burn (the rolling-start race fix)"
     );
@@ -269,7 +271,7 @@ fn v3_snapshot_seed_survives_pump_liquidity_update() {
     let taken = PoolLookup::from_address(v3_addr).take_seed(&mut core);
     assert_eq!(taken, Some(seed_clone), "take returns the pinned seed");
     assert_eq!(
-        core.snapshot_seed(v3_addr),
+        core.snapshot_seed(PoolLookup::from_address(v3_addr)),
         None,
         "take clears the slot so the seed is verified exactly once"
     );
@@ -564,8 +566,11 @@ fn v4_snapshot_seed_survives_pump_modify_liquidity() {
     .mark_registration_live(&mut core);
 
     assert_eq!(
-        core.snapshot_seed_by_key(pool_manager, &pool_id_bytes)
-            .cloned(),
+        core.snapshot_seed(PoolLookup::V4 {
+            pool_manager,
+            pool_id: pool_id_bytes
+        })
+        .cloned(),
         Some(seed_clone.clone()),
         "Tracked V4 pool must pin its snapshot seed at registration"
     );
@@ -597,8 +602,11 @@ fn v4_snapshot_seed_survives_pump_modify_liquidity() {
 
     // ... but the pinned seed is UNCHANGED — step-1 verifies seed, not current.
     assert_eq!(
-        core.snapshot_seed_by_key(pool_manager, &pool_id_bytes)
-            .cloned(),
+        core.snapshot_seed(PoolLookup::V4 {
+            pool_manager,
+            pool_id: pool_id_bytes
+        })
+        .cloned(),
         Some(seed_clone.clone()),
         "V4 snapshot seed must be immutable across pump ModifyLiquidity (rolling-start race fix)"
     );
@@ -611,7 +619,10 @@ fn v4_snapshot_seed_survives_pump_modify_liquidity() {
     .take_seed(&mut core);
     assert_eq!(taken, Some(seed_clone), "take returns the pinned seed");
     assert_eq!(
-        core.snapshot_seed_by_key(pool_manager, &pool_id_bytes),
+        core.snapshot_seed(PoolLookup::V4 {
+            pool_manager,
+            pool_id: pool_id_bytes
+        }),
         None,
         "take clears the V4 seed slot (verified exactly once)"
     );

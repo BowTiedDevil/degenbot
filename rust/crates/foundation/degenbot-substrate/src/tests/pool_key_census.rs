@@ -19,6 +19,7 @@ const POOL_LOOKUP: &str = include_str!("../pool_lookup.rs");
 /// and every retired twin must leave a single door behind.
 const DOORS: &[(&str, &str)] = &[
     ("pool_coverage_by_key", "coverage"),
+    ("snapshot_seed_by_key", "snapshot_seed"),
     ("set_pool_live_by_key", "mark_registration_live"),
     (
         "set_pool_quarantined_by_key",
@@ -45,7 +46,7 @@ fn census(state_owner: &str, lookup: &str) -> Vec<String> {
                 "{retired}(address) is back: the PoolLookup door owns this verb"
             ));
         }
-        if !lookup.contains(&signature(door)) {
+        if !lookup.contains(&signature(door)) && !state_owner.contains(&signature(door)) {
             violations.push(format!("{retired} has no PoolLookup::{door} door"));
         }
     }
@@ -59,17 +60,19 @@ fn the_pool_key_census_is_clean() {
 
 #[test]
 fn the_census_goes_red_on_the_old_shape() {
-    let fixture = "    pub fn mark_registration_live(&mut self, address: Address) {}\n";
+    let fixture = "    pub fn set_pool_live_by_key(&mut self, address: Address) {}\n";
     let red = census(fixture, "");
     assert!(
-        red.iter().any(|v| v.contains("mark_registration_live")),
+        red.iter().any(|v| v.contains("set_pool_live_by_key")),
         "the census must catch a restored address-keyed twin: {red:?}"
     );
+    let empty = census("", "");
     assert_eq!(
-        red.iter()
+        empty
+            .iter()
             .filter(|v| v.contains("has no PoolLookup"))
             .count(),
         DOORS.len(),
-        "an empty lookup source must report every door missing"
+        "empty sources must report every door missing"
     );
 }
