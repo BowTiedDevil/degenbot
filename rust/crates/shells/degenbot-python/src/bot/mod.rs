@@ -56,7 +56,7 @@ use degenbot_bot::bot_core::RegisteredPoolFamily;
 use degenbot_bot::bot_core::{
     Bot, RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
     RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
-    RegisterV4PoolParams, V4PoolKey,
+    RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey,
 };
 use degenbot_substrate::PoolRegistration;
 use degenbot_uniswap::dex_identity::DexVariant;
@@ -1965,35 +1965,36 @@ impl PyBot {
             }
         };
 
-        // The CREATE2 verify (Fork A), deployer/init-hash resolution, params
-        // assembly, and the write-lock acquisition live inside the core
-        // method ([`Bot::register_v3_pool`]). The seed fetcher is wrapped
-        // here (GIL held) — a Python callback cannot cross into the core
-        // closure — and the remaining params are all `Send`; the error is
-        // mapped to a `PyErr` OUTSIDE the detach (GIL-held) since `PyErr`
-        // construction needs the interpreter.
+        // The CREATE2 verify (Fork A), deployer/init-hash resolution, and the
+        // write-lock acquisition live inside the door's V3 request interior.
+        // The seed fetcher is wrapped here (GIL held) — a Python callback
+        // cannot cross into the core closure — and the remaining params are
+        // all `Send`; the error is mapped to a `PyErr` OUTSIDE the detach
+        // (GIL-held) since `PyErr` construction needs the interpreter.
         let fetcher = tick_data_fetcher
             .filter(|f| !f.is_none())
             .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind()));
         py.detach(|| {
+            let slot_layout = self.bot.v3_slot_layout_for(fac, slot_override);
             self.bot
-                .register_v3_pool(
-                    addr,
-                    t0,
-                    t1,
+                .register(PoolRegistration::V3(Box::new(RegisterV3PoolParams {
+                    address: addr,
+                    token0: t0,
+                    token1: t1,
                     fee,
                     tick_spacing,
-                    fac,
-                    spx,
-                    liq,
+                    factory: fac,
+                    sqrt_price_x96: spx,
+                    liquidity: liq,
                     tick,
-                    rust_tick_data,
+                    tick_data: rust_tick_data,
                     update_block,
-                    cov,
-                    fetcher,
                     tick_data_block,
-                    slot_override,
-                )
+                    coverage: cov,
+                    fetcher,
+                    slot_layout,
+                    ..Default::default()
+                })))
                 .map_err(map_refusal)
         })
     }

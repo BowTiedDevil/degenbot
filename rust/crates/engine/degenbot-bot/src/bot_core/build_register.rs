@@ -666,7 +666,7 @@ impl Bot {
 #[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use super::super::RegisterCurvePoolParams;
+    use super::super::{RegisterCurvePoolParams, RegisterV2PoolParams, RegisterV3PoolParams};
     use super::*;
 
     /// A non-JSON factory (CREATE2 verify skipped).
@@ -674,23 +674,40 @@ mod tests {
         Address::from([0x33u8; 20])
     }
 
+    /// The V3 fixture geometry the registration fixtures share.
+    fn v3_fixture_params() -> RegisterV3PoolParams {
+        RegisterV3PoolParams {
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            fee: 3_000,
+            tick_spacing: 60,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: hashbrown::HashMap::new(),
+            update_block: 100,
+            coverage: PoolTickCoverage::Sparse,
+            slot_layout: degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
+            ..Default::default()
+        }
+    }
+
     /// Register a fixture V2 pool (the facade registration; the CREATE2
     /// verify is skipped for the non-JSON factory).
     fn register_v2_fixture(bot: &Bot, address: Address) -> u64 {
-        bot.register_v2_pool(
+        bot.register(PoolRegistration::V2(Box::new(RegisterV2PoolParams {
             address,
-            Address::from([0x01u8; 20]),
-            Address::from([0x02u8; 20]),
-            U256::from(1000).to::<alloy::primitives::aliases::U112>(),
-            U256::from(2000).to::<alloy::primitives::aliases::U112>(),
-            (997, 1000),
-            (997, 1000),
-            adhoc_factory(),
-            10,
-            degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
-            false,
-            None,
-        )
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            reserve0: U256::from(1000).to::<alloy::primitives::aliases::U112>(),
+            reserve1: U256::from(2000).to::<alloy::primitives::aliases::U112>(),
+            fee_token0: (997, 1000),
+            fee_token1: (997, 1000),
+            factory: adhoc_factory(),
+            update_block: 10,
+            variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+            ..Default::default()
+        })))
         .expect("test setup: V2 registration")
     }
 
@@ -850,7 +867,9 @@ mod tests {
             metapool_underlying_style: 1,
             data_provider: None,
         };
-        let pool_id = bot.register_curve_pool(&params).expect("curve registers");
+        let pool_id = bot
+            .register(PoolRegistration::Curve(Box::new(params)))
+            .expect("curve registers");
 
         let dy = bot
             .curve_get_dy(
@@ -917,23 +936,11 @@ mod tests {
 
         // Race-answer arm: `built == None` echoes the registered payload.
         let registered = bot
-            .register_v3_pool(
-                addr,
-                Address::from([0x01u8; 20]),
-                Address::from([0x02u8; 20]),
-                3_000,
-                60,
-                adhoc_factory(),
-                U256::from(1u128) << 96,
-                1_000_000,
-                0,
-                hashbrown::HashMap::new(),
-                100,
-                PoolTickCoverage::Sparse,
-                None,
-                None,
-                None,
-            )
+            .register(PoolRegistration::V3(Box::new(RegisterV3PoolParams {
+                address: addr,
+                factory: adhoc_factory(),
+                ..v3_fixture_params()
+            })))
             .expect("test setup: V3 registration");
         let (pool_id, identity) = bot
             .finalize_v3_construct(
@@ -996,23 +1003,11 @@ mod tests {
         let bot = Bot::new(1);
         let addr = Address::from([0x22u8; 20]);
         let pool_id = bot
-            .register_v3_pool(
-                addr,
-                Address::from([0x01u8; 20]),
-                Address::from([0x02u8; 20]),
-                3_000,
-                60,
-                adhoc_factory(),
-                U256::from(1u128) << 96,
-                1_000_000,
-                0,
-                hashbrown::HashMap::new(),
-                100,
-                PoolTickCoverage::Sparse,
-                None,
-                None,
-                None,
-            )
+            .register(PoolRegistration::V3(Box::new(RegisterV3PoolParams {
+                address: addr,
+                factory: adhoc_factory(),
+                ..v3_fixture_params()
+            })))
             .expect("test setup: V3 registration");
         assert_eq!(bot.v3_journal_len(pool_id), 0);
         bot.update_pool(addr, U256::from(2u128) << 96, 2_000_000, -1, 101);

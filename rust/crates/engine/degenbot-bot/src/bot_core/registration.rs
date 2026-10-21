@@ -18,16 +18,13 @@
 //!   passes the borrow, so the shared frozen-WAL-snapshot read is unchanged.
 
 use std::fmt;
-use std::sync::Arc;
 
-use alloy::primitives::aliases::U112;
-use alloy::primitives::{Address, U256};
-use degenbot_pools::tick_fetch::{TickBootstrapRpc, TickWordFetcher};
+use alloy::primitives::Address;
+use degenbot_pools::tick_fetch::TickBootstrapRpc;
 use degenbot_substrate::registration_gate::AdmissionVerdict;
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::tick_assembly::TickMapAssemblyError;
 use degenbot_substrate::PoolRegistration;
-use degenbot_uniswap::dex_identity::DexVariant;
 
 use super::bot::Bot;
 use super::registration_ledger::{
@@ -194,52 +191,6 @@ impl Bot {
         }
     }
 
-    /// Register a V2 pool by contract address — the flat-argument twin of the
-    /// door request ([`Self::register`] with [`PoolRegistration::V2`]). The
-    /// get-or-register guard, the JSON-sourced CREATE2 verification (Fork A),
-    /// the derived deployer + init-hash completion, and the door insert live
-    /// in the request interior ([`Self::register_v2_request`]).
-    ///
-    /// # Errors
-    /// [`RefusalKind::IdentityMismatch`] on a verified CREATE2 mismatch,
-    /// [`RefusalKind::RegisterRefused`] when the registry refuses (already
-    /// registered / spec violation).
-    #[expect(clippy::too_many_arguments)]
-    pub fn register_v2_pool(
-        &self,
-        address: Address,
-        token0: Address,
-        token1: Address,
-        reserve0: U112,
-        reserve1: U112,
-        fee_token0: (u64, u64),
-        fee_token1: (u64, u64),
-        factory: Address,
-        update_block: u64,
-        variant: DexVariant,
-        stable_swap: bool,
-        fee_denominator: Option<u64>,
-    ) -> Result<u64, RefusalKind> {
-        // The derived deployer/init-hash identity is completed inside the
-        // request interior; the flat entry carries only caller-known fields.
-        self.register_v2_request(RegisterV2PoolParams {
-            address,
-            token0,
-            token1,
-            reserve0,
-            reserve1,
-            fee_token0,
-            fee_token1,
-            factory,
-            deployer: Address::default(),
-            init_hash: alloy::primitives::B256::default(),
-            update_block,
-            variant,
-            stable_swap,
-            fee_denominator,
-        })
-    }
-
     /// The V2 request interior (see [`Self::register`]): the get-or-register
     /// family guard, the JSON-sourced CREATE2 verification (Fork A) — skipped
     /// when `(chain, factory)` is not in the shipped deployments JSON,
@@ -298,65 +249,24 @@ impl Bot {
         )
     }
 
-    /// Register a V3 pool by contract address — the flat-argument twin of the
-    /// door request ([`Self::register`] with [`PoolRegistration::V3`]), with
-    /// the seeded tick data riding the request (ADR-006 rolling-start race
-    /// closure: the pool is never visible to the pump in an unseeded state).
-    /// The get-or-register guard, the slot-layout defaulting, the CREATE2
-    /// verify, and the derived deployer + init-hash completion live in
-    /// [`Self::register_v3_request`].
+    /// Resolve a V3 pool's concrete storage-slot layout for `factory`.
     ///
-    /// # Errors
-    /// [`RefusalKind::IdentityMismatch`] on a verified CREATE2 mismatch,
-    /// [`RefusalKind::RegisterRefused`] when the registry refuses.
-    #[expect(clippy::too_many_arguments)]
-    pub fn register_v3_pool(
+    /// [`RegisterV3PoolParams::slot_layout`] is deliberately concrete, so the
+    /// deployment-table deferral resolves HERE, once, for every consumer: a
+    /// caller passes `None` to defer to the shipped JSON (a PancakeSwap
+    /// factory), or an explicit layout to force it.
+    #[must_use]
+    pub fn v3_slot_layout_for(
         &self,
-        address: Address,
-        token0: Address,
-        token1: Address,
-        fee: u32,
-        tick_spacing: i32,
         factory: Address,
-        sqrt_price_x96: U256,
-        liquidity: u128,
-        tick: i32,
-        tick_data: hashbrown::HashMap<i32, TickInfo>,
-        update_block: u64,
-        coverage: PoolTickCoverage,
-        fetcher: Option<Arc<dyn TickWordFetcher>>,
-        tick_data_block: Option<u64>,
-        slot_layout: Option<ConcentratedLiquiditySlotLayout>,
-    ) -> Result<u64, RefusalKind> {
-        // The deployment-table slot-layout deferral stays at the flat entry:
-        // `RegisterV3PoolParams.slot_layout` is deliberately concrete (the
-        // params type's contract), so the `None` deferral resolves before the
-        // request is built.
-        let slot_layout = slot_layout.unwrap_or_else(|| {
+        explicit: Option<ConcentratedLiquiditySlotLayout>,
+    ) -> ConcentratedLiquiditySlotLayout {
+        explicit.unwrap_or_else(|| {
             if degenbot_uniswap::deployments::is_pancakeswap_v3_factory(self.chain_id(), factory) {
                 ConcentratedLiquiditySlotLayout::PancakeV3
             } else {
                 ConcentratedLiquiditySlotLayout::UniswapV3
             }
-        });
-        self.register_v3_request(RegisterV3PoolParams {
-            address,
-            token0,
-            token1,
-            fee,
-            tick_spacing,
-            factory,
-            deployer: Address::default(),
-            init_hash: alloy::primitives::B256::default(),
-            sqrt_price_x96,
-            liquidity,
-            tick,
-            tick_data,
-            update_block,
-            tick_data_block,
-            coverage,
-            fetcher,
-            slot_layout,
         })
     }
 
@@ -364,7 +274,8 @@ impl Bot {
     /// family guard, the CREATE2 verify, the derived deployer + init-hash
     /// completion, and the door insert under ONE core write guard. The
     /// request's `slot_layout` is the caller-resolved concrete layout (the
-    /// params type carries it as mandatory).
+    /// params type carries it as mandatory; [`Self::v3_slot_layout_for`] owns
+    /// the deployment-table deferral).
     fn register_v3_request(&self, mut params: RegisterV3PoolParams) -> Result<u64, RefusalKind> {
         // get-or-register, family-guarded (see `register_v2_request`).
         {
@@ -415,19 +326,6 @@ impl Bot {
         )
     }
 
-    /// Register a V4 pool by `(pool_manager, pool_id)` — the params-typed
-    /// twin of the door request ([`Self::register`] with
-    /// [`PoolRegistration::V4`]); the get-or-register guard and the door
-    /// insert live in [`Self::register_v4_request`].
-    ///
-    /// # Errors
-    /// [`RefusalKind::RegisterRefused`] on an admission-floor refusal
-    /// (dynamic fee / fee-exceeds-encoder-limit), an already-registered
-    /// disagreement, or a spec violation.
-    pub fn register_v4_pool(&self, params: &RegisterV4PoolParams) -> Result<u64, RefusalKind> {
-        self.register_v4_request(params.clone())
-    }
-
     /// The V4 request interior (see [`Self::register`]): the get-or-register
     /// guard and the door insert under ONE core write guard. The guard stays
     /// core-side: the substrate door's V4 arm refuses every duplicate
@@ -468,48 +366,6 @@ impl Bot {
                 .write_at(LockSite::Orchestrator)
                 .register_pool(PoolRegistration::V4(Box::new(params))),
         )
-    }
-
-    /// Register a Curve `StableSwap` pool — the params-typed twin of the door
-    /// request ([`Self::register`] with [`PoolRegistration::Curve`]); the
-    /// get-or-register guard and the door insert live in
-    /// [`Self::register_curve_request`].
-    ///
-    /// # Errors
-    /// [`RefusalKind::RegisterRefused`] when the registry refuses a
-    /// disagreeing same-address entry (the door's typed duplicate-address
-    /// arm — previously the state insert's loud panic).
-    pub fn register_curve_pool(
-        &self,
-        params: &RegisterCurvePoolParams,
-    ) -> Result<u64, RefusalKind> {
-        self.register_curve_request(params.clone())
-    }
-
-    /// Register a Balancer V2 weighted pool — the params-typed twin of the
-    /// door request (see [`Self::register_curve_pool`]).
-    ///
-    /// # Errors
-    /// [`RefusalKind::RegisterRefused`] when the registry refuses a
-    /// disagreeing same-address entry.
-    pub fn register_balancer_weighted_pool(
-        &self,
-        params: &RegisterBalancerWeightedPoolParams,
-    ) -> Result<u64, RefusalKind> {
-        self.register_balancer_weighted_request(params.clone())
-    }
-
-    /// Register a Balancer V2 stable pool — the params-typed twin of the
-    /// door request (see [`Self::register_curve_pool`]).
-    ///
-    /// # Errors
-    /// [`RefusalKind::RegisterRefused`] when the registry refuses a
-    /// disagreeing same-address entry.
-    pub fn register_balancer_stable_pool(
-        &self,
-        params: &RegisterBalancerStablePoolParams,
-    ) -> Result<u64, RefusalKind> {
-        self.register_balancer_stable_request(params.clone())
     }
 
     /// The Curve request interior (see [`Self::register`]): the
@@ -604,46 +460,6 @@ impl Bot {
                 .write_at(LockSite::Orchestrator)
                 .register_pool(PoolRegistration::BalancerStable(Box::new(params))),
         )
-    }
-
-    /// Register an Aerodrome V2 pool — the flat-argument twin of the door
-    /// request ([`Self::register`] with [`PoolRegistration::AerodromeV2`]);
-    /// the get-or-register guard, the EIP-1167 verify, and the door insert
-    /// live in [`Self::register_aerodrome_request`].
-    ///
-    /// # Errors
-    /// [`RefusalKind::IdentityMismatch`] on a verified mismatch.
-    #[expect(clippy::too_many_arguments)]
-    pub fn register_aerodrome_pool(
-        &self,
-        address: Address,
-        token0: Address,
-        token1: Address,
-        factory: Address,
-        variant: DexVariant,
-        stable: bool,
-        fee_numer: u64,
-        fee_denom: u64,
-        token0_decimals: u8,
-        token1_decimals: u8,
-        reserve0: U112,
-        reserve1: U112,
-        update_block: u64,
-    ) -> Result<u64, RefusalKind> {
-        self.register_aerodrome_request(RegisterAerodromeV2PoolParams {
-            address,
-            token0,
-            token1,
-            factory,
-            variant,
-            stable,
-            fee: (fee_numer, fee_denom),
-            token0_decimals,
-            token1_decimals,
-            reserve0,
-            reserve1,
-            update_block,
-        })
     }
 
     /// The Aerodrome request interior (see [`Self::register`]): the
@@ -987,24 +803,52 @@ mod tests {
     use crate::bot_core::{V4PoolKey, V4_DYNAMIC_FEE_FLAG};
     use alloy::primitives::aliases::U112;
 
+    /// The V2 door request the fixtures register through.
+    fn v2_request(address: Address, token0: Address, factory: Address) -> PoolRegistration {
+        PoolRegistration::V2(Box::new(RegisterV2PoolParams {
+            address,
+            token0,
+            token1: Address::from([0x02u8; 20]),
+            reserve0: U112::from(1000),
+            reserve1: U112::from(2000),
+            fee_token0: (997, 1000),
+            fee_token1: (997, 1000),
+            factory,
+            update_block: 10,
+            variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+            ..Default::default()
+        }))
+    }
+
+    /// The V3 door request the fixtures register through (the seeded variant
+    /// carries `tick_data`; the empty map is the unseeded shape).
+    fn v3_request(
+        address: Address,
+        tick_data: hashbrown::HashMap<i32, TickInfo>,
+    ) -> PoolRegistration {
+        PoolRegistration::V3(Box::new(RegisterV3PoolParams {
+            address,
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            fee: 3_000,
+            tick_spacing: 60,
+            factory: Address::from([0x33u8; 20]),
+            sqrt_price_x96: alloy::primitives::U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+            update_block: 100,
+            coverage: PoolTickCoverage::Sparse,
+            slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
+            ..Default::default()
+        }))
+    }
+
     /// Register a fixture V2 pool over `address` with `factory` (defaulting
     /// to a factory that is NOT in the shipped deployments JSON — the CREATE2
     /// verify is skipped, the manual/ad-hoc path).
     fn register_v2(bot: &Bot, address: Address, factory: Address) -> Result<u64, RefusalKind> {
-        bot.register_v2_pool(
-            address,
-            Address::from([0x01u8; 20]),
-            Address::from([0x02u8; 20]),
-            U112::from(1000),
-            U112::from(2000),
-            (997, 1000),
-            (997, 1000),
-            factory,
-            10,
-            degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
-            false,
-            None,
-        )
+        bot.register(v2_request(address, Address::from([0x01u8; 20]), factory))
     }
 
     /// A non-JSON factory (CREATE2 verify skipped).
@@ -1068,20 +912,11 @@ mod tests {
         register_v2(&bot, addr, adhoc_factory()).expect("first registration");
         // Same address, DIFFERENT token0 — the wire-drift class.
         let err = bot
-            .register_v2_pool(
+            .register(v2_request(
                 addr,
                 Address::from([0x09u8; 20]),
-                Address::from([0x02u8; 20]),
-                U112::from(1000),
-                U112::from(2000),
-                (997, 1000),
-                (997, 1000),
                 adhoc_factory(),
-                10,
-                degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
-                false,
-                None,
-            )
+            ))
             .expect_err("a same-family identity mismatch is a loud refusal");
         assert!(
             matches!(
@@ -1105,23 +940,7 @@ mod tests {
         let addr = Address::from([0x11u8; 20]);
         register_v2(&bot, addr, adhoc_factory()).expect("first registration");
         let err = bot
-            .register_v3_pool(
-                addr,
-                Address::from([0x01u8; 20]),
-                Address::from([0x02u8; 20]),
-                3_000,
-                60,
-                Address::from([0x33u8; 20]),
-                alloy::primitives::U256::from(1u128) << 96,
-                1_000_000,
-                0,
-                hashbrown::HashMap::new(),
-                100,
-                PoolTickCoverage::Sparse,
-                None,
-                None,
-                None,
-            )
+            .register(v3_request(addr, hashbrown::HashMap::new()))
             .expect_err("a different-family address is not an answer");
         assert!(
             matches!(
@@ -1142,8 +961,12 @@ mod tests {
     fn register_curve_pool_get_or_register_reuses_the_existing_id() {
         let bot = Bot::new(1);
         let params = curve_params(Address::from([0x71u8; 20]));
-        let first = bot.register_curve_pool(&params).expect("curve registers");
-        let second = bot.register_curve_pool(&params).expect("curve reuses");
+        let first = bot
+            .register(PoolRegistration::Curve(Box::new(params.clone())))
+            .expect("curve registers");
+        let second = bot
+            .register(PoolRegistration::Curve(Box::new(params)))
+            .expect("curve reuses");
         assert_eq!(first, second, "the existing Curve handle answers");
         assert_eq!(bot.pool_count(), 1, "no second Curve pool was created");
     }
@@ -1208,23 +1031,7 @@ mod tests {
             },
         );
         let pool_id = bot
-            .register_v3_pool(
-                Address::from([0x22u8; 20]),
-                Address::from([0x01u8; 20]),
-                Address::from([0x02u8; 20]),
-                3_000,
-                60,
-                Address::from([0x33u8; 20]),
-                alloy::primitives::U256::from(1u128) << 96,
-                1_000_000,
-                0,
-                tick_data,
-                100,
-                PoolTickCoverage::Sparse,
-                None,
-                None,
-                None,
-            )
+            .register(v3_request(Address::from([0x22u8; 20]), tick_data))
             .expect("non-JSON factory registers");
         assert!(bot.has_pool(pool_id));
     }
@@ -1240,23 +1047,7 @@ mod tests {
             register_v2(&bot, v2_addr, adhoc_factory()).expect("test setup: V2 registration");
         let v3_addr = Address::from([0x22u8; 20]);
         let v3_id = bot
-            .register_v3_pool(
-                v3_addr,
-                Address::from([0x01u8; 20]),
-                Address::from([0x02u8; 20]),
-                3_000,
-                60,
-                Address::from([0x33u8; 20]),
-                alloy::primitives::U256::from(1u128) << 96,
-                1_000_000,
-                0,
-                hashbrown::HashMap::new(),
-                100,
-                PoolTickCoverage::Sparse,
-                None,
-                None,
-                None,
-            )
+            .register(v3_request(v3_addr, hashbrown::HashMap::new()))
             .expect("test setup: V3 registration");
 
         let (pid, t0, t1, addr, variant) = bot
@@ -1297,21 +1088,22 @@ mod tests {
         let bot = Bot::new(8453);
         let addr = Address::from([0x44u8; 20]);
         let pool_id = bot
-            .register_aerodrome_pool(
-                addr,
-                Address::from([0x01u8; 20]),
-                Address::from([0x02u8; 20]),
-                Address::from([0x33u8; 20]),
-                degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
-                false,
-                30,
-                10_000,
-                18,
-                18,
-                U112::from(1000),
-                U112::from(2000),
-                10,
-            )
+            .register(PoolRegistration::AerodromeV2(Box::new(
+                RegisterAerodromeV2PoolParams {
+                    address: addr,
+                    token0: Address::from([0x01u8; 20]),
+                    token1: Address::from([0x02u8; 20]),
+                    factory: Address::from([0x33u8; 20]),
+                    variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
+                    stable: false,
+                    fee: (30, 10_000),
+                    token0_decimals: 18,
+                    token1_decimals: 18,
+                    reserve0: U112::from(1000),
+                    reserve1: U112::from(2000),
+                    update_block: 10,
+                },
+            )))
             .expect("non-JSON factory registers (CREATE2 verify skipped)");
         assert_eq!(
             bot.registered_family_pool_id(&addr, RegisteredPoolFamily::AerodromeV2),
@@ -1335,7 +1127,7 @@ mod tests {
         let pid = [0xABu8; 32];
         let dynamic_fee_params = v4_params(pm, pid, V4_DYNAMIC_FEE_FLAG, Address::ZERO);
         let err = bot
-            .register_v4_pool(&dynamic_fee_params)
+            .register(PoolRegistration::V4(Box::new(dynamic_fee_params)))
             .expect_err("dynamic fee is admission-refused");
         assert!(
             matches!(
@@ -1378,7 +1170,12 @@ mod tests {
         let pm = Address::from([0x51u8; 20]);
         let pid = [0xCDu8; 32];
         let pool_id = bot
-            .register_v4_pool(&v4_params(pm, pid, 3_000, Address::ZERO))
+            .register(PoolRegistration::V4(Box::new(v4_params(
+                pm,
+                pid,
+                3_000,
+                Address::ZERO,
+            ))))
             .expect("a static-fee V4 pool registers");
         let payload = bot
             .registered_v4_payload(pm, &pid)
@@ -1444,7 +1241,7 @@ mod tests {
     fn curve_and_balancer_facades_register_under_one_core_write() {
         let bot = Bot::new(1);
         let curve_id = bot
-            .register_curve_pool(&RegisterCurvePoolParams {
+            .register(PoolRegistration::Curve(Box::new(RegisterCurvePoolParams {
                 address: Address::from([0x71u8; 20]),
                 tokens: vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])],
                 a_coefficient: 200,
@@ -1483,56 +1280,60 @@ mod tests {
                 metapool_rate_style: 1,
                 metapool_underlying_style: 1,
                 data_provider: None,
-            })
+            })))
             .expect("curve registers");
         assert!(bot.has_pool(curve_id));
 
         let weighted_id = bot
-            .register_balancer_weighted_pool(&RegisterBalancerWeightedPoolParams {
-                address: Address::from([0x72u8; 20]),
-                vault: Address::from([0xBAu8; 20]),
-                pool_id: [0x07u8; 32],
-                tokens: vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])],
-                weights: vec![
-                    alloy::primitives::U256::from(1u8),
-                    alloy::primitives::U256::from(1u8),
-                ],
-                scaling_factors: vec![
-                    alloy::primitives::U256::from(1u8),
-                    alloy::primitives::U256::from(1u8),
-                ],
-                swap_fee: 0,
-                pow_version: 1,
-                balances: vec![
-                    alloy::primitives::U256::from(1_000u64),
-                    alloy::primitives::U256::from(1_000u64),
-                ],
-                update_block: 5,
-            })
+            .register(PoolRegistration::BalancerWeighted(Box::new(
+                RegisterBalancerWeightedPoolParams {
+                    address: Address::from([0x72u8; 20]),
+                    vault: Address::from([0xBAu8; 20]),
+                    pool_id: [0x07u8; 32],
+                    tokens: vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])],
+                    weights: vec![
+                        alloy::primitives::U256::from(1u8),
+                        alloy::primitives::U256::from(1u8),
+                    ],
+                    scaling_factors: vec![
+                        alloy::primitives::U256::from(1u8),
+                        alloy::primitives::U256::from(1u8),
+                    ],
+                    swap_fee: 0,
+                    pow_version: 1,
+                    balances: vec![
+                        alloy::primitives::U256::from(1_000u64),
+                        alloy::primitives::U256::from(1_000u64),
+                    ],
+                    update_block: 5,
+                },
+            )))
             .expect("weighted registers");
         assert!(bot.has_pool(weighted_id));
 
         let stable_id = bot
-            .register_balancer_stable_pool(&RegisterBalancerStablePoolParams {
-                address: Address::from([0x73u8; 20]),
-                vault: Address::from([0xBAu8; 20]),
-                pool_id: [0x08u8; 32],
-                tokens: vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])],
-                amp: 100,
-                scaling_factors: vec![
-                    alloy::primitives::U256::from(1u8),
-                    alloy::primitives::U256::from(1u8),
-                ],
-                swap_fee: 0,
-                bpt_idx: None,
-                invariant_version: 1,
-                balances: vec![
-                    alloy::primitives::U256::from(1_000u64),
-                    alloy::primitives::U256::from(1_000u64),
-                ],
-                update_block: 5,
-                rate_provider: None,
-            })
+            .register(PoolRegistration::BalancerStable(Box::new(
+                RegisterBalancerStablePoolParams {
+                    address: Address::from([0x73u8; 20]),
+                    vault: Address::from([0xBAu8; 20]),
+                    pool_id: [0x08u8; 32],
+                    tokens: vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])],
+                    amp: 100,
+                    scaling_factors: vec![
+                        alloy::primitives::U256::from(1u8),
+                        alloy::primitives::U256::from(1u8),
+                    ],
+                    swap_fee: 0,
+                    bpt_idx: None,
+                    invariant_version: 1,
+                    balances: vec![
+                        alloy::primitives::U256::from(1_000u64),
+                        alloy::primitives::U256::from(1_000u64),
+                    ],
+                    update_block: 5,
+                    rate_provider: None,
+                },
+            )))
             .expect("stable registers");
         assert!(bot.has_pool(stable_id));
     }
@@ -1703,185 +1504,5 @@ mod tests {
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
         }
-    }
-
-    use degenbot_substrate::RegistrationVerdict;
-
-    // ── ADR-078 D3 step 2: the facade register entries ride the write door ──
-    //
-    // Per-family parity: the SAME params through the converged
-    // `Bot::register_*` entry and through the substrate write door
-    // (`BotState::register_pool`) answer the same pool id, family tag,
-    // census, and genesis journal — the facade's registration IS the door's
-    // insert, so the converged entry stays observationally identical.
-
-    /// V2 door parity at the facade.
-    #[test]
-    fn register_v2_facade_parity_with_the_write_door() {
-        let factory = adhoc_factory();
-        let params = RegisterV2PoolParams {
-            address: Address::from([0x11u8; 20]),
-            token0: Address::from([0x01u8; 20]),
-            token1: Address::from([0x02u8; 20]),
-            reserve0: U112::from(1000),
-            reserve1: U112::from(2000),
-            fee_token0: (997, 1000),
-            fee_token1: (997, 1000),
-            factory,
-            deployer: degenbot_uniswap::deployments::resolve_deployer(1, factory),
-            init_hash: degenbot_uniswap::deployments::resolve_v2_init_hash(1, factory),
-            update_block: 10,
-            variant: DexVariant::UniswapV2,
-            stable_swap: false,
-            fee_denominator: None,
-        };
-        let facade = Bot::new(1);
-        let facade_id = facade
-            .register_v2_pool(
-                params.address,
-                params.token0,
-                params.token1,
-                params.reserve0,
-                params.reserve1,
-                params.fee_token0,
-                params.fee_token1,
-                params.factory,
-                params.update_block,
-                params.variant,
-                params.stable_swap,
-                params.fee_denominator,
-            )
-            .expect("the facade registers");
-        let door = Bot::new(1);
-        let verdict = door
-            .state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_pool(PoolRegistration::V2(Box::new(params)));
-        assert_eq!(
-            verdict,
-            RegistrationVerdict::Registered {
-                pool_id: facade_id,
-                family: RegisteredPoolFamily::V2,
-            },
-        );
-        assert_eq!(facade.pool_count(), door.pool_count());
-        assert_eq!(
-            facade.v2_journal_len(facade_id),
-            door.v2_journal_len(facade_id),
-            "the same genesis journal delta"
-        );
-    }
-
-    /// V3 door parity at the facade.
-    #[test]
-    fn register_v3_facade_parity_with_the_write_door() {
-        let factory = adhoc_factory();
-        let params = RegisterV3PoolParams {
-            address: Address::from([0x22u8; 20]),
-            token0: Address::from([0x01u8; 20]),
-            token1: Address::from([0x02u8; 20]),
-            fee: 3_000,
-            tick_spacing: 60,
-            factory,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 1_000_000,
-            tick: 0,
-            tick_data: hashbrown::HashMap::new(),
-            update_block: 100,
-            tick_data_block: None,
-            coverage: PoolTickCoverage::Sparse,
-            fetcher: None,
-            deployer: degenbot_uniswap::deployments::resolve_deployer(1, factory),
-            init_hash: degenbot_uniswap::deployments::resolve_v3_init_hash(1, factory),
-            slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
-        };
-        let facade = Bot::new(1);
-        let facade_id = facade
-            .register_v3_pool(
-                params.address,
-                params.token0,
-                params.token1,
-                params.fee,
-                params.tick_spacing,
-                params.factory,
-                params.sqrt_price_x96,
-                params.liquidity,
-                params.tick,
-                params.tick_data.clone(),
-                params.update_block,
-                params.coverage,
-                params.fetcher.clone(),
-                params.tick_data_block,
-                Some(params.slot_layout),
-            )
-            .expect("the facade registers");
-        let door = Bot::new(1);
-        let verdict = door
-            .state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_pool(PoolRegistration::V3(Box::new(params)));
-        assert_eq!(
-            verdict,
-            RegistrationVerdict::Registered {
-                pool_id: facade_id,
-                family: RegisteredPoolFamily::V3,
-            },
-        );
-        assert_eq!(facade.pool_count(), door.pool_count());
-        assert_eq!(
-            facade.v3_journal_len(facade_id),
-            door.v3_journal_len(facade_id),
-            "the same genesis journal delta"
-        );
-    }
-
-    /// Aerodrome V2 door parity at the facade.
-    #[test]
-    fn register_aerodrome_facade_parity_with_the_write_door() {
-        let params = RegisterAerodromeV2PoolParams {
-            address: Address::from([0x44u8; 20]),
-            token0: Address::from([0x01u8; 20]),
-            token1: Address::from([0x02u8; 20]),
-            factory: adhoc_factory(),
-            variant: DexVariant::AerodromeV2Volatile,
-            stable: false,
-            fee: (30, 10_000),
-            token0_decimals: 18,
-            token1_decimals: 18,
-            reserve0: U112::from(1000),
-            reserve1: U112::from(2000),
-            update_block: 10,
-        };
-        let facade = Bot::new(8453);
-        let facade_id = facade
-            .register_aerodrome_pool(
-                params.address,
-                params.token0,
-                params.token1,
-                params.factory,
-                params.variant,
-                params.stable,
-                params.fee.0,
-                params.fee.1,
-                params.token0_decimals,
-                params.token1_decimals,
-                params.reserve0,
-                params.reserve1,
-                params.update_block,
-            )
-            .expect("the facade registers");
-        let door = Bot::new(8453);
-        let verdict = door
-            .state_arc()
-            .write_at(LockSite::Orchestrator)
-            .register_pool(PoolRegistration::AerodromeV2(Box::new(params)));
-        assert_eq!(
-            verdict,
-            RegistrationVerdict::Registered {
-                pool_id: facade_id,
-                family: RegisteredPoolFamily::AerodromeV2,
-            },
-        );
-        assert_eq!(facade.pool_count(), door.pool_count());
     }
 }

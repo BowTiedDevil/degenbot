@@ -84,11 +84,13 @@ pub struct ArbitrageEngine {
 
 Pools are registered individually by type, then paths combine them:
 
-| Method | Sub-engine | Key | Dual orientation? |
-|--------|-----------|-----|--------------------|
-| `register_v2_pool` | V2 | contract address → forward pool_id; reverse = forward + 1 | Yes |
-| `register_v3_pool` | V3 | contract address → pool_key | No (zfo in path ref) |
-| `register_v4_pool` | V4 | (pool_manager, pool_id) → forward pool_key; reverse = forward + 1 | Yes |
+One door verb takes the per-family request; family identity rides as data (ADR-078):
+
+| Request | Key | Dual orientation? |
+|--------|-----|--------------------|
+| `PoolRegistration::V2(params)` | contract address → forward pool_id; reverse = forward + 1 | Yes |
+| `PoolRegistration::V3(params)` | contract address → pool_key | No (zfo in path ref) |
+| `PoolRegistration::V4(params)` | (pool_manager, pool_id) → forward pool_key; reverse = forward + 1 | Yes |
 
 `register_path` takes a `Vec<MixedPoolRef>` (hop_type, pool_key, zero_for_one) and returns a path_id. After `freeze()`, no more registration is allowed.
 
