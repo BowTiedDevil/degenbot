@@ -1,5 +1,6 @@
 use super::*;
 use crate::RegisterAerodromePoolError;
+use degenbot_pools::buffered_event::PoolLiquidityUpdate;
 
 #[test]
 fn conservative_bot_flag_default_on() {
@@ -1344,7 +1345,10 @@ fn unregister_v3_pool_discards_buffered_liquidity_events() {
     // Pre-registration: buffer a backfill ModifyLiquidity for `v3_addr`.
     // `buffer_backfill_v3_liquidity_update` on an UNregistered address
     // buffers (the registered-address early-return path doesn't fire).
-    core.buffer_backfill_liquidity_update(v3_addr, -100, 100, 500_i128, 42_u64);
+    core.buffer_backfill_liquidity_update(
+        PoolLookup::from_address(v3_addr),
+        PoolLiquidityUpdate::new(-100, 100, 500_i128, 42_u64),
+    );
     assert_eq!(
         core.buffered_event_count(&v3_addr),
         1,

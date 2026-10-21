@@ -1,5 +1,5 @@
 use super::*;
-use degenbot_pools::buffered_event::BufferedPoolEvent;
+use degenbot_pools::buffered_event::{BufferedPoolEvent, PoolLiquidityUpdate};
 
 /// Staged-router contract (`concentrated_liquidity_route)`: `route_event` is THE decision
 /// point — a live-phase tick mutation for an unregistered pool must
@@ -333,7 +333,10 @@ fn backfill_live_in_range_post_seed_adjusts_in_range_liquidity() {
     let mut core = BotState::new();
     let pool_id = register_v3(&mut core, 5); // seed block 5, liq 0, tick 0 (Sparse -> Live)
                                              // Post-seed in-range Mint (tick 0 in [-60,60), block 6 > seed 5):
-    core.buffer_backfill_liquidity_update(make_pool_addr(), -60, 60, 123_456_i128, 6);
+    core.buffer_backfill_liquidity_update(
+        PoolLookup::from_address(make_pool_addr()),
+        PoolLiquidityUpdate::new(-60, 60, 123_456_i128, 6),
+    );
     let Some(state) = core
         .registry
         .pools
@@ -368,7 +371,10 @@ fn backfill_live_in_range_pre_seed_does_not_adjust_scalar() {
     let mut core = BotState::new();
     let pool_id = register_v3(&mut core, 5); // seed block 5
                                              // Pre-seed in-range Mint (block 4 <= seed 5):
-    core.buffer_backfill_liquidity_update(make_pool_addr(), -60, 60, 250_000_i128, 4);
+    core.buffer_backfill_liquidity_update(
+        PoolLookup::from_address(make_pool_addr()),
+        PoolLiquidityUpdate::new(-60, 60, 250_000_i128, 4),
+    );
     let Some(state) = core
         .registry
         .pools
@@ -512,7 +518,10 @@ fn apply_backfill_buffer_v3_journals_and_advances_update_block() {
 
     // 1. Pre-registration: buffer a backfill Mint at [60, 120], block B=5.
     let mut core = BotState::new();
-    core.buffer_backfill_liquidity_update(pool_addr, 60, 120, 500_i128, block_b);
+    core.buffer_backfill_liquidity_update(
+        PoolLookup::from_address(pool_addr),
+        PoolLiquidityUpdate::new(60, 120, 500_i128, block_b),
+    );
 
     // 2. Register on the SAME core (tick 60 gross=100, tick 120 absent).
     let pool_id = register_v3_on_core(&mut core, pool_addr, 0);
@@ -581,7 +590,10 @@ fn apply_pump_buffer_v3_journals_and_advances_update_block() {
 
     // 1. Pre-registration: pump the Mint (unregistered → pump buffer).
     let mut core = BotState::new();
-    core.apply_liquidity_update(pool_addr, 60, 120, 500_i128, block_b);
+    core.apply_liquidity_update(
+        PoolLookup::from_address(pool_addr),
+        PoolLiquidityUpdate::new(60, 120, 500_i128, block_b),
+    );
 
     // 2. Register on the SAME core + 3. apply pump buffer.
     let pool_id = register_v3_on_core(&mut core, pool_addr, 0);
@@ -650,13 +662,13 @@ fn apply_backfill_buffer_v4_journals_and_advances_update_block() {
 
     // 1. Pre-registration: buffer a backfill ModifyLiquidity at [60,120].
     let mut core = BotState::new();
-    core.buffer_backfill_liquidity_update_by_key(
-        pool_manager,
-        pool_id_bytes,
-        60,
-        120,
-        I256::try_from(500i128).unwrap(),
-        block_b,
+    core.buffer_backfill_liquidity_update(
+        PoolLookup::V4 {
+            pool_manager: pool_manager,
+            pool_id: pool_id_bytes,
+        },
+        PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(500i128).unwrap(), block_b)
+            .unwrap(),
     );
 
     // 2. Register (tick 60 gross=100, tick 120 absent, update_block=0).
@@ -838,7 +850,7 @@ fn apply_swap_by_pool_id_routes_to_v4_and_matches_apply_v4_swap() {
 /// update previously routed V4 pools into `apply_v3_liquidity_update_by_pool
 /// _id` (V3-only, no-op on V4). The family dispatcher must apply a V4
 /// `ModifyLiquidity` to the tick range and journal it, matching
-/// `apply_liquidity_update_by_key` on the same inputs.
+/// `apply_liquidity_update` on the same inputs.
 #[test]
 fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
     use crate::PoolTickCoverage;
@@ -881,7 +893,7 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
         fetcher: None,
     };
 
-    // Twin pools: A via the dispatcher, B via apply_liquidity_update_by_key.
+    // Twin pools: A via the dispatcher, B via the id-keyed door.
     let mut core_a = BotState::new();
     let id_a = core_a.register_v4_pool(&params).expect("V4 A registers");
     let mut core_b = BotState::new();
@@ -910,15 +922,15 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
     // slot0 scalars unchanged (tick-only event per ADR-004).
     assert_eq!(s_a.sqrt_price_x96, U256::from(1u128) << 96);
 
-    // Parity: direct apply_liquidity_update_by_key on B produces the same state.
+    // Parity: the direct door on B produces the same state.
     assert_eq!(
-        core_b.apply_liquidity_update_by_key(
-            pool_manager,
-            pool_id_bytes,
-            60,
-            120,
-            I256::try_from(500i128).unwrap(),
-            block_b
+        core_b.apply_liquidity_update(
+            PoolLookup::V4 {
+                pool_manager: pool_manager,
+                pool_id: pool_id_bytes
+            },
+            PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(500i128).unwrap(), block_b)
+                .unwrap()
         ),
         Some(id_b)
     );
@@ -1032,7 +1044,7 @@ fn get_v3_or_v4_pool_reads_v4_scalars_matching_apply_v4_swap() {
 /// `tick_bitmap_snapshot` routed through `get_v3_pool`, returning an
 /// empty dict for V4 pools. The family `get_v3_or_v4_pool` accessor's
 /// `tick_data()` must surface a V4 pool's tick map (post-Mint/Burn) — and
-/// it must match `apply_liquidity_update_by_key` on the same inputs.
+/// it must match `apply_liquidity_update` on the same inputs.
 #[test]
 fn get_v3_or_v4_pool_reads_v4_tick_data_matching_apply_v4_liquidity_update() {
     use crate::PoolTickCoverage;
@@ -1075,20 +1087,20 @@ fn get_v3_or_v4_pool_reads_v4_tick_data_matching_apply_v4_liquidity_update() {
         fetcher: None,
     };
 
-    // Twin pools: A via the dispatcher, B via apply_liquidity_update_by_key.
+    // Twin pools: A via the dispatcher, B via the id-keyed door.
     let mut core_a = BotState::new();
     let id_a = core_a.register_v4_pool(&params).expect("V4 A registers");
     let mut core_b = BotState::new();
     let id_b = core_b.register_v4_pool(&params).expect("V4 B registers");
 
     let _ = core_a.apply_liquidity_update_by_pool_id(id_a, 60, 120, 700, block_b);
-    let _ = core_b.apply_liquidity_update_by_key(
-        pool_manager,
-        pool_id_bytes,
-        60,
-        120,
-        I256::try_from(700i128).unwrap(),
-        block_b,
+    let _ = core_b.apply_liquidity_update(
+        PoolLookup::V4 {
+            pool_manager: pool_manager,
+            pool_id: pool_id_bytes,
+        },
+        PoolLiquidityUpdate::from_v4_wire(60, 120, I256::try_from(700i128).unwrap(), block_b)
+            .unwrap(),
     );
 
     // Before the fix, the V4 view came back None → empty dict. Assert the

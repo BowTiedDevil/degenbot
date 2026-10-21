@@ -25,12 +25,11 @@ Concretely:
 2. **Views may keep a family word.** A read that cannot exist for the other
    family — a V4 registry iterator, a V4-only door — may say so in its name,
    because there is no counterpart to be confused with.
-3. **Family-typed payloads keep their suffix.** A verb whose *payload* narrows
-   per family stays suffixed and stays paired, so
-   `apply_liquidity_update(_by_key)` is honest about which conversion it applies.
-   Faking a family-neutral payload there would hide a narrowing.
-
-   The contract types are not the same, which is the reason:
+3. **A payload unifies where the wire bounds coincide, and the narrowing happens
+   once.** `apply_liquidity_update` and `buffer_backfill_liquidity_update` take a
+   family-neutral `PoolLiquidityUpdate` (`i128`) for both key shapes. The
+   licence is a *behavioural* bound that both contracts impose, not a shared ABI
+   type:
 
    - **v3-core** (`contracts/UniswapV3Pool.sol`) takes liquidity as an
      **unsigned** `uint128 amount` on `mint` and `burn` — direction is which
@@ -42,10 +41,18 @@ Concretely:
      only inside `src/libraries/Pool.sol`.
 
    So the wire types differ (`uint128` vs `int256`) and converge on `int128`
-   internally. Our representation follows each wire type: the V3 decoder keeps
-   `u128` and the dispatcher converts with `i128::try_from(..).ok()?` (checked —
-   a value above `i128::MAX` drops the event rather than truncating), while the
-   V4 path keeps `I256` until the drain→apply seam (ADR-014 D4).
+   internally. Both call `toInt128()` before acting and **revert** outside that
+   range, so no event from a canonical pool or manager can carry a larger delta —
+   which is what makes `int128` the honest shared payload. A forged log, or a
+   patched emitter, still can: the V3 decoder keeps its checked
+   `i128::try_from(..).ok()?` and the V4 wire constructor
+   (`PoolLiquidityUpdate::from_v4_wire`) is fallible for the same reason.
+
+   The family-typed payloads (`BufferedV3PoolEvent::Liquidity` /
+   `BufferedV4PoolEvent::Liquidity`) are built inside the door from the
+   family-free value: one narrowing site, and family knowledge stays where the
+   signatures genuinely differ. `BufferedV4LiquidityUpdate` keeps its `I256`
+   field (ADR-014 D4); the door widens losslessly into it.
 4. **Refusals are typed, not dropped.** Where a payload carries a family
    (`BufferedPoolEvent`, `PoolStateUpdate`) and the key names another, the door
    returns `PoolRefusal::FamilyMismatch`. It must not borrow `NoOpReason`,
@@ -70,6 +77,14 @@ Concretely:
 - `log_dispatcher` keeps its own event enum and resolves through the capability
   directly. Unifying it is a hot-path change that deserves its own commit and a
   bench comparison, not a rider on a rename.
-- Three doors that looked like twins were left suffixed *on purpose*
-  (`apply_liquidity_update_by_key`, `buffer_backfill_liquidity_update_by_key`),
-  and this ADR is the record of why.
+- The two liquidity doors that were left suffixed here were unified once the
+  contract bound was verified: `apply_liquidity_update(PoolLookup, PoolLiquidityUpdate)`
+  and `buffer_backfill_liquidity_update(PoolLookup, PoolLiquidityUpdate)`, both
+  routing through `route_event` so the phase gate is not optional for them.
+- `apply_liquidity_update_by_pool_id` stays a **direct-state** door and does not
+  delegate to that one. Its callers (the Python companion applying an event it
+  already gated, and the projection-memoization seam) assert that a registered
+  pool's state moves immediately; the routing table has no "apply now while
+  quarantined" cell, so delegating would stage the delta into a buffer those
+  callers never drain. Two contracts, two doors — the divergence is documented
+  at the door rather than implied by which one a caller happened to find.

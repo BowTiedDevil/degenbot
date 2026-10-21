@@ -326,6 +326,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy::primitives::{Address, U128, U256};
+    use degenbot_pools::buffered_event::PoolLiquidityUpdate;
     use degenbot_substrate::state_lock::{LockSite, StateLock};
 
     use degenbot_decoders::v4_swap_decoder::V4PoolId;
@@ -677,7 +678,10 @@ mod tests {
         // is Quarantined (Tracked) so this BUFFERS rather than applies.
         {
             let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-            c.buffer_backfill_liquidity_update(addr, -201_000, -200_990, -100, 5);
+            c.buffer_backfill_liquidity_update(
+                PoolLookup::from_address(addr),
+                PoolLiquidityUpdate::new(-201_000, -200_990, -100, 5),
+            );
             // Verify it buffered (Quarantined → not applied yet).
             assert_eq!(
                 c.pool_slice::<degenbot_pools::v3_state::V3PoolState>(pid)

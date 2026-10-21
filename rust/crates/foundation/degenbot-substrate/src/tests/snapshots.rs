@@ -1,4 +1,5 @@
 use super::*;
+use degenbot_pools::buffered_event::PoolLiquidityUpdate;
 
 #[test]
 fn pool_update_block_tracks_forward_sync_and_returns_zero_for_unknown() {
@@ -242,7 +243,10 @@ fn v3_snapshot_seed_survives_pump_liquidity_update() {
     );
 
     // Pump applies a Mint at block 1, mutating tick -60's gross.
-    core.apply_liquidity_update(v3_addr, -60, 60, 500_i128, 1);
+    core.apply_liquidity_update(
+        PoolLookup::from_address(v3_addr),
+        PoolLiquidityUpdate::new(-60, 60, 500_i128, 1),
+    );
 
     // Live tick_data CHANGED (journal applied) ...
     let live_gross = core
@@ -332,7 +336,10 @@ fn v3_post_drain_snapshot_survives_pump_liquidity_update() {
     PoolLookup::from_address(v3_addr).pin_post_drain(&mut core);
 
     // A pump Mint lands AFTER the drain — mutating the live tick_data.
-    core.apply_liquidity_update(v3_addr, -60, 60, 500_i128, 1);
+    core.apply_liquidity_update(
+        PoolLookup::from_address(v3_addr),
+        PoolLiquidityUpdate::new(-60, 60, 500_i128, 1),
+    );
 
     // Live tick_data CHANGED (journal applied) ...
     let live_gross = core
@@ -446,8 +453,14 @@ fn v3_post_drain_snapshot_carries_drained_block_not_backfill_block() {
     // backfill boundary — the pump was already running during `build_paths`,
     // so the pool's Mint at `pump_block` landed in the unregistered-pool
     // pump buffer via `apply_liquidity_update`).
-    core.buffer_backfill_liquidity_update(v3_addr, -60, 60, 500_i128, snapshot_block + 1);
-    core.apply_liquidity_update(v3_addr, -60, 60, 750_i128, pump_block);
+    core.buffer_backfill_liquidity_update(
+        PoolLookup::from_address(v3_addr),
+        PoolLiquidityUpdate::new(-60, 60, 500_i128, snapshot_block + 1),
+    );
+    core.apply_liquidity_update(
+        PoolLookup::from_address(v3_addr),
+        PoolLiquidityUpdate::new(-60, 60, 750_i128, pump_block),
+    );
 
     core.register_v3_pool(&RegisterV3PoolParams {
         address: v3_addr,
@@ -576,13 +589,12 @@ fn v4_snapshot_seed_survives_pump_modify_liquidity() {
     );
 
     // Pump applies a ModifyLiquidity at block 1, mutating tick -60's gross.
-    core.apply_liquidity_update_by_key(
-        pool_manager,
-        pool_id_bytes,
-        -60,
-        60,
-        I256::try_from(500_i128).unwrap(),
-        1,
+    core.apply_liquidity_update(
+        PoolLookup::V4 {
+            pool_manager: pool_manager,
+            pool_id: pool_id_bytes,
+        },
+        PoolLiquidityUpdate::from_v4_wire(-60, 60, I256::try_from(500_i128).unwrap(), 1).unwrap(),
     );
 
     // Live tick_data CHANGED (journal applied) ...
@@ -695,13 +707,12 @@ fn v4_post_drain_snapshot_survives_pump_modify_liquidity() {
     .pin_post_drain(&mut core);
 
     // Pump ModifyLiquidity lands AFTER the drain.
-    core.apply_liquidity_update_by_key(
-        pool_manager,
-        pool_id_bytes,
-        -60,
-        60,
-        I256::try_from(500_i128).unwrap(),
-        1,
+    core.apply_liquidity_update(
+        PoolLookup::V4 {
+            pool_manager: pool_manager,
+            pool_id: pool_id_bytes,
+        },
+        PoolLiquidityUpdate::from_v4_wire(-60, 60, I256::try_from(500_i128).unwrap(), 1).unwrap(),
     );
 
     // Live tick_data CHANGED ...
@@ -831,8 +842,14 @@ fn verify_dbg_mark_complete_and_pin_are_behavior_preserving() {
     // registration-seam posture during drain+pin+verify).
     PoolLookup::from_address(pool_addr).begin_registration_quarantine(&mut core);
     // Pump-buffer a Mint + a same-block Burn for block 100.
-    core.apply_liquidity_update(pool_addr, -10, 10, 500_i128, 100);
-    core.apply_liquidity_update(pool_addr, -10, 10, -500_i128, 100);
+    core.apply_liquidity_update(
+        PoolLookup::from_address(pool_addr),
+        PoolLiquidityUpdate::new(-10, 10, 500_i128, 100),
+    );
+    core.apply_liquidity_update(
+        PoolLookup::from_address(pool_addr),
+        PoolLiquidityUpdate::new(-10, 10, -500_i128, 100),
+    );
     // Pre-mark: two pump events, no complete block yet.
     assert_eq!(
         core.concentrated_liquidity
@@ -911,7 +928,10 @@ fn pin_clamps_verify_block_to_complete_cutoff_when_pump_undrained() {
     // Pump-buffer an UNDRAINED Mint at block 100, but only tombstone the
     // pump through block 99 → the drain (apply_pump_buffer_v3) holds the
     // block-100 event back, so the map is NOT complete at its 100 clock.
-    core.apply_liquidity_update(pool_addr, -10, 10, 500_i128, 100);
+    core.apply_liquidity_update(
+        PoolLookup::from_address(pool_addr),
+        PoolLiquidityUpdate::new(-10, 10, 500_i128, 100),
+    );
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(99);
     assert_eq!(core.concentrated_liquidity().pump_complete_cutoff(), 99);

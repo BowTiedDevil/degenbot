@@ -94,7 +94,7 @@ pub mod simulate_swap;
 pub mod slot_layout;
 pub mod state_update;
 
-pub use buffered_event::BufferedPoolEvent;
+pub use buffered_event::{BufferedPoolEvent, PoolLiquidityUpdate};
 pub use state_update::{PoolRefusal, PoolStateUpdate};
 /// The solver-kernel tree (ADR-073 endgame re-home): the family-blind kernels
 /// (the golden-section template, the integer-verification Möbius order, the

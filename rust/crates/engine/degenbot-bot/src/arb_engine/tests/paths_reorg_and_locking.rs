@@ -1,5 +1,6 @@
 use super::*;
 use crate::bot_core::PoolLookup;
+use degenbot_pools::buffered_event::PoolLiquidityUpdate;
 
 #[test]
 fn inspect_path_returns_hop_details() {
@@ -579,7 +580,10 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
     engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .apply_liquidity_update(pool_addr, 60, 120, 500_i128, 6);
+        .apply_liquidity_update(
+            PoolLookup::from_address(pool_addr),
+            PoolLiquidityUpdate::new(60, 120, 500_i128, 6),
+        );
     {
         let core = engine
             .core

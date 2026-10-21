@@ -1032,7 +1032,16 @@ impl BotState {
     /// bucket selects the design by the entry (ADR-073 D3: the surface name
     /// is family-neutral). A non-concentrated-liquidity family is refused
     /// with [`ConcentratedLiquidityApplyError::UnsupportedFamily`] instead of falling into the
-    /// V3 path.
+    /// Apply a liquidity-position change to a registered pool **now**.
+    ///
+    /// This is the caller-owns-the-event entry, not the driver's: the companion
+    /// (a Python tracker applying a decoded Mint/Burn it already gated) and the
+    /// memoization seam assert that a registered pool's state moves immediately,
+    /// so this door skips the phase gate that [`Self::apply_liquidity_update`]
+    /// applies. Routing it through the phase table would stage the delta into
+    /// the pump buffer for a pool that is registered but not yet live, which
+    /// those callers do not drain — `pool_id` names a pool this caller already
+    /// holds, and the driver keeps its own buffered path for the same event.
     ///
     /// # Errors
     ///

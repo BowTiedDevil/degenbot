@@ -8,6 +8,7 @@
 use super::{hex_string_to_pool_id, Address, PyArbEngine, PyList, V4StateSync};
 use crate::bot::pool::TickData;
 use crate::prelude::*;
+use degenbot_pools::buffered_event::PoolLiquidityUpdate;
 use degenbot_pools::state_update::PoolStateUpdate;
 use degenbot_pools::v3_state::V3StateSync;
 use degenbot_substrate::PoolLookup;
@@ -281,11 +282,8 @@ impl PyArbEngine {
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
         self.with_core_mut(py, |s| {
             s.buffer_backfill_liquidity_update(
-                addr,
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-                block_number,
+                degenbot_substrate::PoolLookup::from_address(addr),
+                PoolLiquidityUpdate::new(tick_lower, tick_upper, liquidity_delta, block_number),
             );
         });
         Ok(())

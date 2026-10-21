@@ -30,7 +30,7 @@ use crate::concentrated_liquidity_route::{
     PinProvenance, PoolPresence, RouteAction,
 };
 use crate::pool_lookup::PoolLookup;
-use degenbot_pools::buffered_event::BufferedPoolEvent;
+use degenbot_pools::buffered_event::{BufferedPoolEvent, PoolLiquidityUpdate};
 use degenbot_pools::state_history::{ScalarPriors, TickBefore, V3BlockDelta};
 use degenbot_pools::state_update::{PoolRefusal, PoolStateUpdate};
 use degenbot_pools::v3_state::{BufferedV3LiquidityUpdate, BufferedV3SwapEvent, V3StateSync};
@@ -2198,25 +2198,79 @@ impl BotState {
         self.concentrated_liquidity
             .mark_bitmap_words_known_by_pool_id(&mut self.registry, pool_id, words)
     }
+    /// Apply a liquidity-position change to a pool, for either key shape.
+    ///
+    /// Routes through [`Self::route_event`], so the phase gate, the
+    /// family-mismatch refusal and the not-yet-live buffer all apply to both
+    /// families; the family-typed payload is built here, once. Returns the
+    /// affected `pool_id` on direct application, and `None` when the change was
+    /// staged into the pool's buffer or sanctioned as a no-op.
+    pub fn apply_liquidity_update(
+        &mut self,
+        key: PoolLookup,
+        update: PoolLiquidityUpdate,
+    ) -> Option<u64> {
+        let event = match key {
+            PoolLookup::Address(_) => {
+                BufferedPoolEvent::V3(BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
+                    tick_lower: update.tick_lower,
+                    tick_upper: update.tick_upper,
+                    liquidity_delta: update.liquidity_delta,
+                    block_number: update.block_number,
+                }))
+            }
+            PoolLookup::V4 { .. } => {
+                BufferedPoolEvent::V4(BufferedV4PoolEvent::Liquidity(BufferedV4LiquidityUpdate {
+                    tick_lower: update.tick_lower,
+                    tick_upper: update.tick_upper,
+                    liquidity_delta: alloy::primitives::I256::unchecked_from(
+                        update.liquidity_delta,
+                    ),
+                    block_number: update.block_number,
+                }))
+            }
+        };
+        match self.route_event(Phase::Live, key, event, &[]).ok()? {
+            ApplyOutcome::Applied(pool_id) => Some(pool_id),
+            ApplyOutcome::Buffered(_) | ApplyOutcome::NoOp(_) => None,
+        }
+    }
 
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::buffer_backfill_v3_liquidity_update`].
+    /// Stage a backfill liquidity-position change into the pool's backfill
+    /// buffer, for either key shape.
     pub fn buffer_backfill_liquidity_update(
         &mut self,
-        pool_address: Address,
-        tick_lower: i32,
-        tick_upper: i32,
-        liquidity_delta: i128,
-        block_number: u64,
+        key: PoolLookup,
+        update: PoolLiquidityUpdate,
     ) {
-        self.concentrated_liquidity
-            .buffer_backfill_v3_liquidity_update(
-                &mut self.registry,
-                pool_address,
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-                block_number,
-            );
+        match key {
+            PoolLookup::Address(pool_address) => {
+                self.concentrated_liquidity
+                    .buffer_backfill_v3_liquidity_update(
+                        &mut self.registry,
+                        pool_address,
+                        update.tick_lower,
+                        update.tick_upper,
+                        update.liquidity_delta,
+                        update.block_number,
+                    );
+            }
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id,
+            } => {
+                self.concentrated_liquidity
+                    .buffer_backfill_v4_liquidity_update(
+                        &mut self.registry,
+                        pool_manager,
+                        pool_id,
+                        update.tick_lower,
+                        update.tick_upper,
+                        alloy::primitives::I256::unchecked_from(update.liquidity_delta),
+                        update.block_number,
+                    );
+            }
+        }
     }
 
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_snapshot_seed_block`].
@@ -2356,28 +2410,6 @@ impl BotState {
     ) -> Result<u64, RegisterV4PoolError> {
         self.concentrated_liquidity
             .register_v4_pool(&mut self.registry, params)
-    }
-
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::buffer_backfill_v4_liquidity_update`].
-    pub fn buffer_backfill_liquidity_update_by_key(
-        &mut self,
-        pool_manager: Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
-        tick_lower: i32,
-        tick_upper: i32,
-        liquidity_delta: alloy::primitives::I256,
-        block_number: u64,
-    ) {
-        self.concentrated_liquidity
-            .buffer_backfill_v4_liquidity_update(
-                &mut self.registry,
-                pool_manager,
-                pool_id,
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-                block_number,
-            );
     }
 
     /// Coverage flag for the address-registered (V3) pool behind `pool_id`
@@ -2531,68 +2563,6 @@ impl BotState {
             &update.tick_priors,
         ) {
             ApplyOutcome::Applied(pool_id) => Some(pool_id),
-            ApplyOutcome::Buffered(_) | ApplyOutcome::NoOp(_) => None,
-        }
-    }
-
-    /// The address-keyed liquidity update (the V4 twin is
-    /// [`Self::apply_liquidity_update_by_key`]). Routes through the
-    /// capability's live-event router at `Phase::Live` — unregistered pools
-    /// stage into the PUMP buffer here so late registration captures them;
-    /// outcome flattened to the historical `Option<pool_id>` shape.
-    pub fn apply_liquidity_update(
-        &mut self,
-        pool_address: Address,
-        tick_lower: i32,
-        tick_upper: i32,
-        liquidity_delta: i128,
-        block_number: u64,
-    ) -> Option<u64> {
-        match self.concentrated_liquidity.route_event(
-            &mut self.registry,
-            Phase::Live,
-            pool_address,
-            BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-                block_number,
-            }),
-            &[],
-        ) {
-            ApplyOutcome::Applied(pool_id) => Some(pool_id),
-            ApplyOutcome::Buffered(_) | ApplyOutcome::NoOp(_) => None,
-        }
-    }
-
-    /// The registration-key-keyed liquidity update (the key is the
-    /// `(PoolManager, pool_id)` pair ADR-003 registers V4 under). Routes
-    /// through the capability's key-registered live-event router at
-    /// `Phase::Live`; outcome flattened to the historical `Option<pool_id>`
-    /// shape.
-    pub fn apply_liquidity_update_by_key(
-        &mut self,
-        pool_manager: Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
-        tick_lower: i32,
-        tick_upper: i32,
-        liquidity_delta: alloy::primitives::I256,
-        block_number: u64,
-    ) -> Option<u64> {
-        match self.concentrated_liquidity.route_event_by_key(
-            &mut self.registry,
-            Phase::Live,
-            pool_manager,
-            pool_id,
-            BufferedV4PoolEvent::Liquidity(BufferedV4LiquidityUpdate {
-                tick_lower,
-                tick_upper,
-                liquidity_delta,
-                block_number,
-            }),
-            &[],
-        ) {
-            ApplyOutcome::Applied(pid) => Some(pid),
             ApplyOutcome::Buffered(_) | ApplyOutcome::NoOp(_) => None,
         }
     }
