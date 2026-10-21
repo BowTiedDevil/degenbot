@@ -26,10 +26,26 @@ Concretely:
    family — a V4 registry iterator, a V4-only door — may say so in its name,
    because there is no counterpart to be confused with.
 3. **Family-typed payloads keep their suffix.** A verb whose *payload* narrows
-   per family stays suffixed and stays paired: a V3 liquidity delta is `i128`
-   while a V4 delta is `int256` (ADR-014 D4), so
-   `apply_liquidity_update(_by_key)` is honest about which narrowing it applies.
-   Faking a family-neutral payload there would hide a truncation.
+   per family stays suffixed and stays paired, so
+   `apply_liquidity_update(_by_key)` is honest about which conversion it applies.
+   Faking a family-neutral payload there would hide a narrowing.
+
+   The contract types are not the same, which is the reason:
+
+   - **v3-core** (`contracts/UniswapV3Pool.sol`) takes liquidity as an
+     **unsigned** `uint128 amount` on `mint` and `burn` — direction is which
+     event fired, not the sign — and its internal
+     `ModifyPositionParams.liquidityDelta` is `int128`.
+   - **v4-core** (`src/types/PoolOperation.sol`, `src/interfaces/IPoolManager.sol`)
+     carries a **signed** `int256 liquidityDelta` through both
+     `modifyLiquidity` and the `ModifyLiquidity` event, and narrows to `int128`
+     only inside `src/libraries/Pool.sol`.
+
+   So the wire types differ (`uint128` vs `int256`) and converge on `int128`
+   internally. Our representation follows each wire type: the V3 decoder keeps
+   `u128` and the dispatcher converts with `i128::try_from(..).ok()?` (checked —
+   a value above `i128::MAX` drops the event rather than truncating), while the
+   V4 path keeps `I256` until the drain→apply seam (ADR-014 D4).
 4. **Refusals are typed, not dropped.** Where a payload carries a family
    (`BufferedPoolEvent`, `PoolStateUpdate`) and the key names another, the door
    returns `PoolRefusal::FamilyMismatch`. It must not borrow `NoOpReason`,
