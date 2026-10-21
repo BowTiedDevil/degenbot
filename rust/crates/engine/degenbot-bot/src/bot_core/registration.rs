@@ -253,7 +253,7 @@ impl Bot {
     ///
     /// [`RegisterV3PoolParams::slot_layout`] is deliberately concrete, so the
     /// deployment-table deferral resolves HERE, once, for every consumer: a
-    /// caller passes `None` to defer to the shipped JSON (a PancakeSwap
+    /// caller passes `None` to defer to the shipped JSON (a `PancakeSwap`
     /// factory), or an explicit layout to force it.
     #[must_use]
     pub fn v3_slot_layout_for(

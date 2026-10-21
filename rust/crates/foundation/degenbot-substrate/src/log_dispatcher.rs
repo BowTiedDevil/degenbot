@@ -16,6 +16,7 @@ use std::sync::Arc;
 use alloy::rpc::types::Log;
 
 use crate::concentrated_liquidity_route::ApplyOutcome;
+#[cfg(test)]
 use crate::pool_lookup::PoolLookup;
 use crate::state_lock::StateLock;
 use crate::BotState;

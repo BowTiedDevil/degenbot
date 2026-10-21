@@ -48,6 +48,7 @@ impl PoolLookup {
 
     /// The pool's tick coverage, or `None` when the pool is not registered
     /// under this key (the machine's no-op arm).
+    #[must_use]
     pub fn coverage(&self, state: &BotState) -> Option<PoolTickCoverage> {
         match self {
             Self::Address(address) => state

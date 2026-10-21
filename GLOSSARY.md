@@ -371,6 +371,13 @@ Registers `Quarantined`; must pass verification before `Live`.
 A pool for which no complete tick data exists, so solver results may be inaccurate.
 Registers `Live` immediately and is never verified.
 
+**Pool lookup** (a `PoolLookup`):
+The one value an orchestration verb takes to name its pool — `Address` for a V3 pool,
+`V4 { pool_manager, pool_id }` for a V4 pool — so a verb exists once instead of once per
+key shape. Lives in `degenbot-substrate` beside the state owner; resolves the shape at
+the seam and delegates to a single interior (ADR-081).
+_Avoid_: pool key, registration key (the retired prototype), pool ref.
+
 **Known bitmap word**:
 A tick-bitmap word whose whole tick set has been established by a checked source (sparse
 fetch, full-sync replace, snapshot tick keys, or explicit update input). Exists only on

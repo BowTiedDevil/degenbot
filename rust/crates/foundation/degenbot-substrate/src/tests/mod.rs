@@ -6,6 +6,7 @@ use alloy::primitives::I256;
 
 mod apply_routes;
 mod pool_identity;
+mod pool_key_census;
 mod quarantine;
 mod registration;
 mod registration_door;

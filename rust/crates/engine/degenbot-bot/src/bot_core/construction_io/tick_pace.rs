@@ -133,7 +133,7 @@ mod tests {
             handles.push(tokio::spawn(async move { pace.wait().await }));
         }
         for handle in handles {
-            handle.await.expect("no panic");
+            assert!(handle.await.is_ok(), "the fetch task panicked");
         }
         assert!(
             started.elapsed() >= Duration::from_millis(55),

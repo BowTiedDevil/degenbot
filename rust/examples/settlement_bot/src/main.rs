@@ -250,10 +250,6 @@ impl SettlementBotConfig {
     /// defaults, same fail-fast error strings, same cascade order. Identity is
     /// read from the process environment, which the launch shell exports from
     /// `bot.env`.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "linear env-parse mirror of ArbitrageConfig.build; splitting obscures the field-by-field cascade"
-    )]
     fn build(cli: &Cli, loaded: &degenbot::config::LoadedConfig) -> Result<Self, String> {
         // ── Operator ──
         let operator_raw = env_value("OPERATOR_ADDRESS");
