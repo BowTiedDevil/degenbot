@@ -30,6 +30,11 @@ const DOORS: &[(&str, &str)] = &[
     ("take_snapshot_seed_by_key", "take_seed"),
     ("pin_post_drain_snapshot_by_key", "pin_post_drain"),
     ("take_post_drain_snapshot_by_key", "take_post_drain"),
+    ("apply_liquidity_update_by_key", "apply_liquidity_update"),
+    (
+        "buffer_backfill_liquidity_update_by_key",
+        "buffer_backfill_liquidity_update",
+    ),
 ];
 
 fn signature(verb: &str) -> String {
@@ -60,11 +65,43 @@ fn the_pool_key_census_is_clean() {
 
 #[test]
 fn the_census_goes_red_on_the_old_shape() {
-    let fixture = "    pub fn set_pool_live_by_key(&mut self, address: Address) {}\n";
-    let red = census(fixture, "");
+    let fixture = [
+        "    pub fn set_pool_live_by_key(&mut self, address: Address) {}\n",
+        "    pub fn apply_liquidity_update_by_key(&mut self, pool_manager: Address) {}\n",
+        "    pub fn buffer_backfill_liquidity_update_by_key(&mut self, pool_manager: Address) {}\n",
+    ]
+    .concat();
+    let red = census(&fixture, "");
     assert!(
         red.iter().any(|v| v.contains("set_pool_live_by_key")),
         "the census must catch a restored address-keyed twin: {red:?}"
+    );
+    for twin in [
+        "apply_liquidity_update_by_key",
+        "buffer_backfill_liquidity_update_by_key",
+    ] {
+        assert!(
+            red.iter().any(|v| v.contains(twin)),
+            "the census must catch a restored {twin} twin: {red:?}"
+        );
+    }
+    // The door-exists half, on one of the new entries: with no door anywhere
+    // the census must name the doorway the retired twin left behind, and a
+    // source that holds only the door must clear that entry.
+    let door_gap = census("", "");
+    let expected_gap =
+        format!("apply_liquidity_update_by_key has no PoolLookup::apply_liquidity_update door");
+    assert!(
+        door_gap.contains(&expected_gap),
+        "the census must report the missing door for the new entry: {door_gap:?}"
+    );
+    let door_only = "    pub fn apply_liquidity_update(&mut self) {}\n";
+    let door_met = census(door_only, "");
+    assert!(
+        !door_met
+            .iter()
+            .any(|v| v.contains("apply_liquidity_update_by_key")),
+        "a present door satisfies the new entry: {door_met:?}"
     );
     let empty = census("", "");
     assert_eq!(
