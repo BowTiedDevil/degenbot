@@ -58,6 +58,53 @@ pub enum BaseKind {
     StrMap,
 }
 
+/// Who honours a declared key.
+///
+/// Every key in `SCHEMA` is declared once for the operator surface, but not
+/// every key has a core implementation: a handful are consumed only by the
+/// Python driver shell (CPython-runtime diagnostics, asyncio-loop batching,
+/// deployment policy). Naming that owner is what stops a *core* key from
+/// silently regressing into a shell-only one — the
+/// `builders.tick_fetch_min_interval_ms` and `pathfinding.max_registered_paths`
+/// shapes, where the core declared a key and honoured nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyOwner {
+    /// A core crate reads the key and implements the behaviour it names.
+    Core,
+    /// Only the Python driver shell reads the key; the core declares the key so
+    /// the operator surface stays one schema.
+    Shell,
+}
+
+/// The declared keys whose only implementation is the Python driver shell.
+///
+/// A census rather than a per-declaration attribute, deliberately: the
+/// `config_schema` tt-muncher would need an `owner` arm in every pass and every
+/// declaration-shape variant, which buys nothing this pinned list does not — a
+/// new shell-owned key still has to be added here, and a key that gains a core
+/// implementation still has to be removed.
+pub const SHELL_OWNED_KEYS: &[&str] = &[
+    "diagnostics.faulthandler_timeout_secs",
+    "diagnostics.procmem_csv",
+    "diagnostics.procmem_secs",
+    "diagnostics.tracemalloc_secs",
+    "dispatch.contracts_dir",
+    "pathfinding.discovery_batch_size",
+    "pathfinding.reg_progress_secs",
+    "simulation.exit_ignore_buckets",
+    "simulation.sim_exit_on_fail",
+];
+
+/// The owner of one declared key, addressed by its dotted TOML path.
+#[must_use]
+pub fn owner_of(toml_path: &str) -> KeyOwner {
+    if SHELL_OWNED_KEYS.contains(&toml_path) {
+        KeyOwner::Shell
+    } else {
+        KeyOwner::Core
+    }
+}
+
 impl fmt::Display for BaseKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1307,6 +1354,42 @@ mod tests {
             !BotConfig::default().simulation.inject_executor_code,
             "production default is the deployed executor: injection is opt-in"
         );
+    }
+
+    /// Every shell-owned key is a declared key, listed once — and the census is
+    /// pinned, so gaining or losing one is a reviewed edit rather than a silent
+    /// drift.
+    #[test]
+    fn the_shell_owned_census_is_declared_and_pinned() {
+        let mut seen = std::collections::BTreeSet::new();
+        for path in SHELL_OWNED_KEYS {
+            assert!(
+                SCHEMA.iter().any(|key| key.toml_path == *path),
+                "{path} is not a declared key"
+            );
+            assert!(seen.insert(*path), "{path} is listed twice");
+        }
+        assert_eq!(
+            SHELL_OWNED_KEYS.len(),
+            9,
+            "the shell-owned census changed: give the new key a core implementation, or add it here on review"
+        );
+    }
+
+    /// Ownership is total: a key outside the shell census is core-owned.
+    #[test]
+    fn owner_of_is_total_over_the_schema() {
+        for key in SCHEMA {
+            let owner = owner_of(key.toml_path);
+            assert_eq!(
+                owner == KeyOwner::Shell,
+                SHELL_OWNED_KEYS.contains(&key.toml_path),
+                "{} disagrees with the census",
+                key.toml_path
+            );
+        }
+        assert_eq!(owner_of("pathfinding.max_registered_paths"), KeyOwner::Core);
+        assert_eq!(owner_of("diagnostics.tracemalloc_secs"), KeyOwner::Shell);
     }
 
     #[test]
