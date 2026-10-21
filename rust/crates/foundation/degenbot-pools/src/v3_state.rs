@@ -73,7 +73,7 @@ pub enum RegistrationLifecycle {
     /// Live events apply directly to pool state (the steady-state contract).
     #[default]
     Live,
-    /// Live events are deferred to the pump buffer until `set_pool_live`
+    /// Live events are deferred to the pump buffer until `mark_registration_live`
     /// flushes them. Used during `register_v3/v4_pool`'s drain+pin+verify.
     Quarantined,
 }
@@ -644,7 +644,7 @@ impl V3PoolState {
             state_nonce: 0,
             // ADR-close of the rolling-start direct-apply gap: a
             // freshly-registered `Tracked` pool starts `Quarantined` so no live
-            // event can direct-apply before the two-step verify; `set_pool_live`
+            // event can direct-apply before the two-step verify; `mark_registration_live`
             // (post-verify) is the sole transition to `Live`. `Sparse` pools
             // (no complete liquidity map → no pin, no step-2 verify) stay
             // `Live`/direct-apply — quarantining them would defer events with

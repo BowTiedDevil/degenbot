@@ -1854,12 +1854,12 @@ impl ConcentratedLiquidityOrchestration {
     /// either key shape.
     ///
     /// The live pump then defers the pool's `Swap`/`Mint`/`Burn` events to the
-    /// pump buffer until [`Self::set_pool_live`] transitions it back. Call at the
+    /// pump buffer until [`Self::mark_registration_live`] transitions it back. Call at the
     /// start of registration, before the first RPC await. No-op for an
     /// unregistered pool and for a `Sparse` pool (it has no pin / step-2 verify
     /// to protect, so deferring its events buys nothing — coverage-aware
     /// carve-out).
-    pub(crate) fn set_pool_quarantined<F: LiquidityFamily>(
+    pub(crate) fn begin_registration_quarantine<F: LiquidityFamily>(
         &mut self,
         reg: &mut RegistryCore,
         key: F::Key,
@@ -1883,7 +1883,7 @@ impl ConcentratedLiquidityOrchestration {
     /// drain — matching the Live steady-state contract (Live pools receive
     /// direct apply with no per-block gate; ordering preserved). No-op for an
     /// unregistered pool.
-    pub(crate) fn set_pool_live<F: LiquidityFamily>(
+    pub(crate) fn mark_registration_live<F: LiquidityFamily>(
         &mut self,
         reg: &mut RegistryCore,
         key: F::Key,
@@ -1919,7 +1919,7 @@ impl ConcentratedLiquidityOrchestration {
     /// registration) would otherwise defer events to its buffer indefinitely.
     /// Call once after `build_paths` finishes: flush each still-`Quarantined`
     /// pool's retained pump tail (same unguarded `drain_pump` as
-    /// [`Self::set_pool_live`]) and mark it `Live`, so no
+    /// [`Self::mark_registration_live`]) and mark it `Live`, so no
     /// registered pool is left buffering forever. No-op when nothing is
     /// quarantined.
     pub(crate) fn release_all_v3_v4_quarantined(&mut self, reg: &mut RegistryCore) {
@@ -1970,10 +1970,10 @@ impl ConcentratedLiquidityOrchestration {
             "release-all quarantined"
         );
         for addr in v3_addrs {
-            self.set_pool_live::<V3Family>(reg, addr);
+            self.mark_registration_live::<V3Family>(reg, addr);
         }
         for (pm, pid) in v4_keys {
-            self.set_pool_live::<V4Family>(reg, (pm, pid));
+            self.mark_registration_live::<V4Family>(reg, (pm, pid));
         }
     }
     /// Look up the pool ID for a registered `(pool_manager, pool_id)` pair.
@@ -2426,26 +2426,6 @@ impl BotState {
             }
             _ => None,
         }
-    }
-
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_pool_quarantined`].
-    pub fn set_pool_quarantined_by_key(
-        &mut self,
-        pool_manager: Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
-    ) {
-        self.concentrated_liquidity
-            .set_pool_quarantined::<V4Family>(&mut self.registry, (pool_manager, pool_id));
-    }
-
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::set_pool_live`].
-    pub fn set_pool_live_by_key(
-        &mut self,
-        pool_manager: Address,
-        pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
-    ) {
-        self.concentrated_liquidity
-            .set_pool_live::<V4Family>(&mut self.registry, (pool_manager, pool_id));
     }
 
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::release_all_v3_v4_quarantined`].

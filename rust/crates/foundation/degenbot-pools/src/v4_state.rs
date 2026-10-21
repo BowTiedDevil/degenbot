@@ -484,7 +484,7 @@ impl V4PoolState {
             // ADR-close of the rolling-start direct-apply gap (V4 twin
             // of the V3 `from_params` change): `Tracked` pools start
             // `Quarantined` (no live event direct-applies before the two-step
-            // verify; `set_pool_live` is the sole transition to `Live`);
+            // verify; `mark_registration_live` is the sole transition to `Live`);
             // `Sparse` pools stay `Live`/direct-apply (no pin, no step-2
             // verify to protect — quarantining would re-raise the retained-tail
             // flush hazard at `set_live`).

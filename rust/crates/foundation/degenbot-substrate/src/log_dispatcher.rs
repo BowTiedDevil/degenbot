@@ -1133,7 +1133,7 @@ mod tests {
         // (the driver's post-verify `set_live`) so the dispatched Mint
         // direct-applies as this test models.
         PoolLookup::from_address(pool_addr)
-            .set_live(&mut state.write_at(crate::state_lock::LockSite::Core));
+            .mark_registration_live(&mut state.write_at(crate::state_lock::LockSite::Core));
 
         // The exact Mint log emitted at block 25390812 (decoded from cast).
         // topics[1]=owner, topics[2]=tickLower=0x03113c=201020,

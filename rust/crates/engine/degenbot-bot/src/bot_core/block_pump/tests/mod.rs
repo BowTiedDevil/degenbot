@@ -899,7 +899,7 @@ fn bot_with_quarantined_v3_tracked(seed_gross: u128, update_block: u64) -> (Arc<
             ..Default::default()
         })
         .expect("test setup: V3 registration");
-        PoolLookup::from_address(pool_addr).quarantine(&mut core);
+        PoolLookup::from_address(pool_addr).begin_registration_quarantine(&mut core);
     }
     (bot, pool_addr)
 }

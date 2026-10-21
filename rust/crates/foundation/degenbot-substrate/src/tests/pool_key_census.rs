@@ -16,8 +16,8 @@ const POOL_LOOKUP: &str = include_str!("../pool_lookup.rs");
 /// The retired address-keyed verb and the `PoolLookup` verb that replaced it.
 const DOORS: &[(&str, &str)] = &[
     ("pool_coverage", "coverage"),
-    ("set_pool_live", "set_live"),
-    ("set_pool_quarantined", "quarantine"),
+    ("set_pool_live", "mark_registration_live"),
+    ("set_pool_quarantined", "begin_registration_quarantine"),
     ("apply_backfill_buffer", "backfill"),
     ("apply_pump_buffer", "pump"),
     ("take_snapshot_seed", "take_seed"),
@@ -53,10 +53,10 @@ fn the_pool_key_census_is_clean() {
 
 #[test]
 fn the_census_goes_red_on_the_old_shape() {
-    let fixture = "    pub fn set_pool_live(&mut self, address: Address) {}\n";
+    let fixture = "    pub fn mark_registration_live(&mut self, address: Address) {}\n";
     let red = census(fixture, "");
     assert!(
-        red.iter().any(|v| v.contains("set_pool_live")),
+        red.iter().any(|v| v.contains("mark_registration_live")),
         "the census must catch a restored address-keyed twin: {red:?}"
     );
     assert_eq!(

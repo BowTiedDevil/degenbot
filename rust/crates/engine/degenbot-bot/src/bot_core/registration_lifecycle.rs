@@ -131,7 +131,7 @@ where
     // outrun `last_complete_block` during the drain+pin+verify window.
     {
         let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-        key.quarantine(&mut state);
+        key.begin_registration_quarantine(&mut state);
     }
 
     // Step-1: verify the pinned snapshot SEED @ snapshot block. Only when a
@@ -189,7 +189,7 @@ where
     // transition.
     {
         let mut state = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-        key.set_live(&mut state);
+        key.mark_registration_live(&mut state);
     }
     Ok(())
 }

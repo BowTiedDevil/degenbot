@@ -169,7 +169,9 @@ impl PyArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_core_mut(py, |s| PoolLookup::from_address(addr).quarantine(&mut *s));
+        self.with_core_mut(py, |s| {
+            PoolLookup::from_address(addr).begin_registration_quarantine(&mut *s);
+        });
         Ok(())
     }
 
@@ -188,7 +190,13 @@ impl PyArbEngine {
         })?;
         let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_core_mut(py, |s| s.set_pool_quarantined_by_key(pm, pool_id));
+        self.with_core_mut(py, |s| {
+            PoolLookup::V4 {
+                pool_manager: pm,
+                pool_id,
+            }
+            .begin_registration_quarantine(s);
+        });
         Ok(())
     }
 
@@ -202,7 +210,9 @@ impl PyArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_core_mut(py, |s| PoolLookup::from_address(addr).set_live(&mut *s));
+        self.with_core_mut(py, |s| {
+            PoolLookup::from_address(addr).mark_registration_live(&mut *s);
+        });
         Ok(())
     }
 
@@ -220,7 +230,13 @@ impl PyArbEngine {
         })?;
         let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)?;
         // GIL hygiene: write guard acquired inside the accessor's py.detach.
-        self.with_core_mut(py, |s| s.set_pool_live_by_key(pm, pool_id));
+        self.with_core_mut(py, |s| {
+            PoolLookup::V4 {
+                pool_manager: pm,
+                pool_id,
+            }
+            .mark_registration_live(s);
+        });
         Ok(())
     }
 

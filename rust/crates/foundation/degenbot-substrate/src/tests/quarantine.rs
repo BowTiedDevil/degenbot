@@ -49,7 +49,7 @@ fn quarantine_pool_seam_is_idempotent_and_dirties_nonce() {
 // same-block Burn stays retained in the pump buffer → mismatch by exactly
 // the Burn's delta (block 25647112 reproduction). The Quarantined lifecycle
 // defers ALL live events (swap + liquidity) to the buffer until
-// drain+pin+verify completes; `set_pool_live` flushes the retained tail.
+// drain+pin+verify completes; `mark_registration_live` flushes the retained tail.
 //
 // These tests cover the CORE lifecycle + deferral invariants; the
 // positional 25647112 reproduction + concurrent-registration stress live
@@ -228,7 +228,7 @@ fn sparse_pool_ignores_set_quarantined() {
     let pool_addr = Address::from([0x77u8; 20]);
     // register_v3_on_core uses Sparse coverage.
     register_v3_on_core(&mut core, pool_addr, 0);
-    PoolLookup::from_address(pool_addr).quarantine(&mut core);
+    PoolLookup::from_address(pool_addr).begin_registration_quarantine(&mut core);
     assert_eq!(
         core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(
             core.pool_id_by_address(&pool_addr).unwrap()
@@ -331,7 +331,11 @@ fn quarantined_v4_pool_defers_live_swap_to_pump_buffer() {
     let mut core = BotState::new();
     let pool_id = register_v4_on_core(&mut core, 10);
     // Quarantine the pool.
-    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .begin_registration_quarantine(&mut core);
     assert_eq!(
         core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
             .unwrap()
@@ -396,7 +400,11 @@ fn quarantined_v4_pool_defers_live_modify_liquidity_to_pump_buffer() {
     let pool_id_bytes: [u8; 32] = [0xeeu8; 32];
     let mut core = BotState::new();
     let pool_id = register_v4_on_core(&mut core, 10);
-    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .begin_registration_quarantine(&mut core);
     let pre_t60 = core
         .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
         .unwrap()
@@ -460,7 +468,11 @@ fn quarantined_pool_update_block_cannot_outrun_last_complete_block() {
     // Snapshot seed at S=10; register the pool.
     let _pool_id = register_v4_on_core(&mut core, 10);
     // Quarantine BEFORE any live event lands (the registration seam's job).
-    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .begin_registration_quarantine(&mut core);
     // The pump has fully delivered block 10 (tombstone at 11).
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(10);
@@ -516,7 +528,11 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
     let pool_id_bytes: [u8; 32] = [0xeeu8; 32];
     let mut core = BotState::new();
     let pool_id = register_v4_on_core(&mut core, 10);
-    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .begin_registration_quarantine(&mut core);
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(10);
     // Buffer a Burn (block 11, in-progress) + a Swap (block 11) — both
@@ -548,7 +564,11 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
         "both events retained"
     );
     // Transition to Live: flush the retained tail.
-    core.set_pool_live_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .mark_registration_live(&mut core);
     let s = core
         .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
         .unwrap();
@@ -605,7 +625,11 @@ fn live_pool_applies_modify_liquidity_directly() {
     // A Tracked pool registers `Quarantined` — transition it
     // to `Live` (the driver's `set_v4_pool_live` is the sole path to the
     // steady-state direct-apply contract).
-    core.set_pool_live_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .mark_registration_live(&mut core);
     // Now Live — applies directly, never buffers.
     core.apply_liquidity_update_by_key(
         pool_manager,
@@ -645,7 +669,7 @@ fn live_pool_applies_modify_liquidity_directly() {
 /// Dual-buffer drain correctness: a quarantined pool with events in BOTH
 /// the backfill buffer (snapshot gap) and the pump buffer (live) drains
 /// both in order during `apply_buffer_*`; the pin reflects backfill +
-/// complete-block pump events; `set_pool_live` flushes only the retained
+/// complete-block pump events; `mark_registration_live` flushes only the retained
 /// in-progress pump tail (backfill is always fully drained).
 #[test]
 fn quarantined_pool_dual_buffer_drain_correctness() {
@@ -665,7 +689,11 @@ fn quarantined_pool_dual_buffer_drain_correctness() {
     );
     // Register the pool (snapshot seed at block 10, tick 60 gross 100).
     let pool_id = register_v4_on_core(&mut core, 10);
-    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .begin_registration_quarantine(&mut core);
     // The pump has tombstoned block 10 (live events at 10 are complete).
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(10);
@@ -713,7 +741,11 @@ fn quarantined_pool_dual_buffer_drain_correctness() {
         "pin = seed + backfill + complete-pump (block-11 Burn retained)"
     );
     // set_live flushes the retained tail (block-11 Burn).
-    core.set_pool_live_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .mark_registration_live(&mut core);
     let s = core
         .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
         .unwrap();
@@ -755,7 +787,11 @@ fn quarantined_pool_backfill_always_fully_drained() {
         9,
     );
     let pool_id = register_v4_on_core(&mut core, 10);
-    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .begin_registration_quarantine(&mut core);
     // NO cutoff set (no tombstone yet) — the gated pump drain would yield
     // nothing, but the backfill drain is UNGATED and must still apply.
     core.apply_backfill_buffer_by_key(pool_manager, pool_id_bytes);
@@ -803,7 +839,11 @@ fn concurrent_registration_lifecycle_invariant() {
             let pid_byte = 0xeeu8 + i as u8;
             let pid_bytes = [pid_byte; 32];
             let pool_id = register_v4_on_core_with_pid(&mut core, pid_bytes, 10);
-            core.set_pool_quarantined_by_key(pool_manager, pid_bytes);
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id: pid_bytes,
+            }
+            .begin_registration_quarantine(&mut core);
             (pid_bytes, pool_id)
         })
         .collect();
@@ -893,7 +933,11 @@ fn lifecycle_invariant_swap_before_mint_same_inprogress_block() {
     let pool_id_bytes: [u8; 32] = [0xeeu8; 32];
     let mut core = BotState::new();
     let _pool_id = register_v4_on_core(&mut core, 10);
-    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .begin_registration_quarantine(&mut core);
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(10);
     // Swap arrives FIRST (logIdx 120), then Mint (logIdx 1433) — both at
@@ -934,7 +978,11 @@ fn lifecycle_invariant_swap_before_mint_same_inprogress_block() {
         "Mint at 11 NOT applied — retained"
     );
     // Flush at Live applies BOTH in arrival order (Swap, then Mint).
-    core.set_pool_live_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .mark_registration_live(&mut core);
 }
 
 /// Reorg-during-quarantine edge (documented): a reorg that changes
@@ -954,7 +1002,11 @@ fn reorg_during_quarantine_pin_is_independent_of_live_rollback() {
     let pool_id_bytes: [u8; 32] = [0xeeu8; 32];
     let mut core = BotState::new();
     let pool_id = register_v4_on_core(&mut core, 10);
-    core.set_pool_quarantined_by_key(pool_manager, pool_id_bytes);
+    PoolLookup::V4 {
+        pool_manager,
+        pool_id: pool_id_bytes,
+    }
+    .begin_registration_quarantine(&mut core);
     core.concentrated_liquidity_mut()
         .advance_pump_complete_cutoff(10);
     // A complete-block Mint at 10 (applied at drain), then pin.

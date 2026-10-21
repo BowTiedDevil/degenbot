@@ -554,7 +554,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
     // Tracked pools register `Quarantined`; the driver's post-verify
     // `set_live` is what makes it apply directly. Transition to `Live` so
     // this test's swap/Mint direct-apply (its model).
-    PoolLookup::from_address(pool_addr).set_live(
+    PoolLookup::from_address(pool_addr).mark_registration_live(
         &mut engine
             .core
             .write_at(degenbot_substrate::state_lock::LockSite::Solver),
@@ -817,7 +817,7 @@ fn process_backfill_logs_stamps_per_log_block_number() {
     });
     // Tracked pools register `Quarantined`; this test drives
     // backfill swaps that must direct-apply + journal, so release to Live.
-    PoolLookup::from_address(pool_addr).set_live(
+    PoolLookup::from_address(pool_addr).mark_registration_live(
         &mut engine
             .core
             .write_at(degenbot_substrate::state_lock::LockSite::Solver),

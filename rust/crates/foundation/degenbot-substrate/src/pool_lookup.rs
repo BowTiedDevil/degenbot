@@ -2,8 +2,8 @@
 //!
 //! A pool is addressed two ways in this codebase — a V3 pool by contract
 //! address, a V4 pool by `(pool_manager, pool_id)` — and the state owner used
-//! to publish each orchestration verb once per shape (`set_pool_live` /
-//! `set_pool_live_by_key`, and so on). [`PoolLookup`] is the value that ends
+//! to publish each orchestration verb once per shape (`mark_registration_live` /
+//! `set_pool_live`, and so on). [`PoolLookup`] is the value that ends
 //! that: a caller resolves its key once, and a verb reads the shape off the
 //! lookup.
 //!
@@ -92,15 +92,20 @@ impl PoolLookup {
     }
 
     /// Defer the pool's live events to the pump buffer until verification ends.
-    pub fn quarantine(&self, state: &mut BotState) {
+    pub fn begin_registration_quarantine(&self, state: &mut BotState) {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity
-                .set_pool_quarantined::<V3Family>(&mut state.registry, *address),
+                .begin_registration_quarantine::<V3Family>(&mut state.registry, *address),
             Self::V4 {
                 pool_manager,
                 pool_id,
-            } => state.set_pool_quarantined_by_key(*pool_manager, *pool_id),
+            } => state
+                .concentrated_liquidity
+                .begin_registration_quarantine::<V4Family>(
+                    &mut state.registry,
+                    (*pool_manager, *pool_id),
+                ),
         }
     }
 
@@ -217,15 +222,17 @@ impl PoolLookup {
     }
 
     /// The terminal transition: only reachable after a verified success.
-    pub fn set_live(&self, state: &mut BotState) {
+    pub fn mark_registration_live(&self, state: &mut BotState) {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity
-                .set_pool_live::<V3Family>(&mut state.registry, *address),
+                .mark_registration_live::<V3Family>(&mut state.registry, *address),
             Self::V4 {
                 pool_manager,
                 pool_id,
-            } => state.set_pool_live_by_key(*pool_manager, *pool_id),
+            } => state
+                .concentrated_liquidity
+                .mark_registration_live::<V4Family>(&mut state.registry, (*pool_manager, *pool_id)),
         }
     }
 }
