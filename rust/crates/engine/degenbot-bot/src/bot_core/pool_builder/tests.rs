@@ -1755,6 +1755,46 @@ async fn build_curve_pool_rejects_fewer_than_two_coins() {
     ));
 }
 
+/// A pool that answers `coins(1)` but reverts on `balances(1)` is
+/// non-standard: discovery stops with more coins than balances, and the
+/// registration layer asserts N-consistency. The build must refuse with the
+/// same `Spec` taxonomy as the BrokenPool guard rather than assembling
+/// params that panic downstream.
+#[tokio::test]
+async fn build_curve_pool_rejects_a_coin_whose_balance_read_fails() {
+    let mut f = FakeRpc::new();
+    let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000004");
+    let coin1: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000005");
+
+    // Two coins, but only coin 0's balance answers; coin 1's balance read
+    // reverts (no FakeRpc response).
+    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
+    f.set_full(abi::encode_curve_coins_uint(1), addr_word(coin1));
+    f.set_full(
+        abi::encode_curve_balances_uint(0),
+        enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
+    );
+
+    // Params must succeed (they're fetched before the guards).
+    f.set(
+        choreography::selector(b"A()"),
+        enc(DynSolValue::Uint(U256::from(100u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(100u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"admin_fee()"),
+        enc(DynSolValue::Uint(U256::from(0u64), 256)),
+    );
+    let io = io_with(f);
+    assert!(matches!(
+        builder::build_curve_pool(TO, &[REGISTRY], &io, Some(1)).await,
+        Err(builder::PoolBuilderError::Spec)
+    ));
+}
+
 /// The three ERC-20 token reads (`balanceOf`/`allowance`/`totalSupply`) decode
 /// a `uint256` return losslessly through the core choreography (SUB-TASK: ERC-20
 /// token-balance family). Selector-keyed [`FakeRpc`] responses.

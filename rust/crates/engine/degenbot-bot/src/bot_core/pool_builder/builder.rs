@@ -1091,6 +1091,14 @@ pub async fn build_curve_pool(
         return Err(PoolBuilderError::Spec);
     }
 
+    // A pool that answers `coins(i)` but reverts on `balances(i)` leaves the
+    // vectors mismatched, and `register_curve_pool` asserts N-consistency —
+    // refuse with the same taxonomy rather than assembling params that panic
+    // downstream.
+    if coins.balances.len() != coins.token_addresses.len() {
+        return Err(PoolBuilderError::Spec);
+    }
+
     // Per-coin ERC20 decimals — needed for the rate/precision multipliers and
     // the lending detection (the driver owns the companions, so we fetch here).
     let mut token_decimals = Vec::with_capacity(coins.token_addresses.len());
