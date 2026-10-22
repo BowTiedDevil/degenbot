@@ -1497,6 +1497,8 @@ assert values == ["0x0000000000000000000000000000000000000001", "100"]
 
 `bot.provider` is the normal way to reach chain data. The extension also exposes the raw synchronous/async RPC provider classes directly for the cases where the `Bot` conveniences don't fit:
 
+<!-- live-rpc: start "requires live RPC" -->
+
 <!-- invisible-code-block: python
 from degenbot._ffi.contract import Contract
 from degenbot._ffi.provider import AlloyProvider
@@ -1504,8 +1506,6 @@ from degenbot._ffi.provider import AlloyProvider
 # they need an archive-capable node, which is what the harness name resolves.
 from tests.conftest import TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 -->
-
-<!-- live-rpc: start "requires live RPC" -->
 
 ```python
 # RPC_URL is any HTTP RPC endpoint for chain 1, for example
