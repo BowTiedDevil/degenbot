@@ -1065,14 +1065,49 @@ async fn bootstrap_v3_tick_map(
 /// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure or
 /// [`PoolBuilderError::Spec`] when the pool exposes fewer than 2 coins
 /// (mirrors the `BrokenPool` minimum-tokens guard).
+/// The Curve V1 pools known to be broken beyond repair: stale or disabled
+/// deployments whose getters will not return (a `coins(i)`/`balances(i)`
+/// that reverts, an empty `A()`, or a permanently wedged rate path). The
+/// build refuses them up front with the `Spec` taxonomy rather than dying
+/// mid-discovery on whichever read breaks first.
+pub const BROKEN_CURVE_V1_POOLS: &[Address] = &[
+    alloy::primitives::address!("110cc323ca53d622469EdD217387E2E6B33F1dF5"),
+    alloy::primitives::address!("1F71f05CF491595652378Fe94B7820344A551B8E"),
+    alloy::primitives::address!("28B0Cf1baFB707F2c6826d10caf6DD901a6540C5"),
+    alloy::primitives::address!("3685646651FCcC80e7CCE7Ee24c5f47Ed9b434ac"),
+    alloy::primitives::address!("4029f7DcBdF6059ed80DA6856526E7510D64fA21"),
+    alloy::primitives::address!("69ACcb968B19a53790f43e57558F5E443A91aF22"),
+    alloy::primitives::address!("84997FAFC913f1613F51Bb0E2b5854222900514B"),
+    alloy::primitives::address!("9CA41a2DaB3CEE15308998868ca644e2e3be5C59"),
+    alloy::primitives::address!("A77d09743F77052950C4eb4e6547E9665299BecD"),
+    alloy::primitives::address!("D652c40fBb3f06d6B58Cb9aa9CFF063eE63d465D"),
+];
+
+/// A revert on a REQUIRED read is the contract's own verdict that it does
+/// not implement the call (a decommissioned V1 pool whose `A()`/`fee()`
+/// reverts, a coin whose `decimals()` reverts) — a broken pool, refused with
+/// the `Spec` taxonomy rather than masked as a transport `Rpc`.
+fn required_read(err: ProviderError) -> PoolBuilderError {
+    match err {
+        ProviderError::ExecutionReverted { .. } => PoolBuilderError::Spec,
+        other => PoolBuilderError::Rpc(other),
+    }
+}
+
 pub async fn build_curve_pool(
     address: Address,
     registry_addresses: &[Address],
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<RegisterCurvePoolParams, PoolBuilderError> {
+    if BROKEN_CURVE_V1_POOLS.contains(&address) {
+        return Err(PoolBuilderError::Spec);
+    }
+
     let coins = curve_choreography::discover_curve_coins(io, address, block).await;
-    let params = curve_choreography::fetch_curve_pool_params(io, address, block).await?;
+    let params = curve_choreography::fetch_curve_pool_params(io, address, block)
+        .await
+        .map_err(required_read)?;
     let ramping = curve_choreography::detect_curve_a_ramping(io, address, block).await;
     let crypto = curve_choreography::detect_curve_crypto_params(io, address, block).await;
     let lp_token =
@@ -1101,9 +1136,18 @@ pub async fn build_curve_pool(
 
     // Per-coin ERC20 decimals — needed for the rate/precision multipliers and
     // the lending detection (the driver owns the companions, so we fetch here).
+    // A discovered coin with no runtime code (an old vyper pool's ETH
+    // sentinel, or a junk `coins()` return) will never answer an ERC20 read —
+    // refuse with the same `Spec` taxonomy instead of dying on the decode.
     let mut token_decimals = Vec::with_capacity(coins.token_addresses.len());
     for token in &coins.token_addresses {
-        token_decimals.push(fetch_erc20_decimals(io, *token, block).await?);
+        match fetch_erc20_decimals(io, *token, block).await {
+            Ok(decimals) => token_decimals.push(decimals),
+            Err(PoolBuilderError::Rpc(ProviderError::ExecutionReverted { .. })) => {
+                return Err(PoolBuilderError::Spec);
+            }
+            Err(err) => return Err(err),
+        }
     }
     let lending = curve_choreography::detect_curve_lending_tokens(
         io,
@@ -1203,6 +1247,12 @@ async fn fetch_erc20_decimals(
 ) -> Result<u8, PoolBuilderError> {
     let calldata = choreography::selector(b"decimals()");
     let bytes = io.call(token, calldata.into(), block).await?;
+    // An empty return is a coin that cannot serve an ERC20 read at all (an
+    // old vyper pool's ETH sentinel has no code; a junk `coins()` return is
+    // the same shape): the pool is refused, not decoded.
+    if bytes.is_empty() {
+        return Err(PoolBuilderError::Spec);
+    }
     let dec = abi::decode_uint256(&bytes)?;
     Ok(dec.to::<u8>())
 }

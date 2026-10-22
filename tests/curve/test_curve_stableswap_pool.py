@@ -34,6 +34,7 @@ from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.arbitrage import NoLiquidity
+from degenbot.exceptions import SpecViolationError
 from degenbot.exceptions.pool import (
     BrokenPool,
     EVMRevertError,
@@ -314,11 +315,18 @@ def test_metapool_with_valid_base_cache():
     assert lp._get_cached_virtual_price(block) == lp._data_provider.base_virtual_price(block)
 
 
+# Pinned sweep head: the registry/factory contents at a fixed block never
+# change, so the compliance sweep replays deterministically on any archive
+# node. Pin to a stage-complete local-node block (advance deliberately).
+_SWEEP_FORK_BLOCK = 26204126
+
+
 @pytest.mark.online_rpc
-def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
+@pytest.mark.parametrize("fork_mainnet_archive", [_SWEEP_FORK_BLOCK], indirect=True)
+def test_factory_stableswap_pools(fork_mainnet_archive: AnvilFork):
     """Test the user-deployed pools deployed by the factory"""
     stableswap_factory = ContractCompat(
-        CURVE_V1_FACTORY_ADDRESS, CURVE_V1_FACTORY_ABI, fork_mainnet_full.provider
+        CURVE_V1_FACTORY_ADDRESS, CURVE_V1_FACTORY_ABI, fork_mainnet_archive.provider
     )
     pool_count = stableswap_factory.functions.pool_count().call()
 
@@ -328,12 +336,12 @@ def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
         print(f"Testing factory pool {i}/{pool_count} @ {pool_address}")
 
         try:
-            lp = _build_pool(fork_mainnet_full, pool_address)
-            _test_calculations(lp=lp, provider=fork_mainnet_full.provider)
-        except (BrokenPool, NoLiquidity):
+            lp = _build_pool(fork_mainnet_archive, pool_address)
+            _test_calculations(lp=lp, provider=fork_mainnet_archive.provider)
+        except (BrokenPool, NoLiquidity, SpecViolationError):
             continue
         except Exception as e:
-            block_number = fork_mainnet_full.provider.get_block_number()
+            block_number = fork_mainnet_archive.provider.get_block_number()
             msg = (
                 f"{type(e).__name__}: {e} — "
                 f"pool {i}/{pool_count} @ {pool_address}, block {block_number}. "
@@ -346,10 +354,11 @@ def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
 
 
 @pytest.mark.online_rpc
-def test_base_registry_pools(fork_mainnet_full: AnvilFork):
+@pytest.mark.parametrize("fork_mainnet_archive", [_SWEEP_FORK_BLOCK], indirect=True)
+def test_base_registry_pools(fork_mainnet_archive: AnvilFork):
     """Test the custom pools deployed by Curve"""
     registry = make_contract(
-        fork_mainnet_full.http_url, CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_REGISTRY_ABI
+        fork_mainnet_archive.http_url, CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_REGISTRY_ABI
     )
     pool_count = registry.functions.pool_count().call()
 
@@ -358,12 +367,15 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
     for i, pool_address in enumerate(pool_addresses, start=1):
         print(f"Testing registry pool {i}/{pool_count} @ {pool_address}")
         try:
-            lp = _build_pool(fork_mainnet_full, pool_address)
+            lp = _build_pool(fork_mainnet_archive, pool_address)
         except MissingCurveData:
             print("  Skipping pool with missing data")
             continue
+        except SpecViolationError:
+            print("  Skipping pool refused out of spec")
+            continue
         except Exception as e:
-            block_number = fork_mainnet_full.provider.get_block_number()
+            block_number = fork_mainnet_archive.provider.get_block_number()
             msg = (
                 f"{type(e).__name__}: {e} — "
                 f"registry pool {i}/{pool_count} @ {pool_address}, block {block_number}. "
@@ -374,9 +386,9 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
             print(msg)
             raise AssertionError(msg) from e
         try:
-            _test_calculations(lp=lp, provider=fork_mainnet_full.provider)
+            _test_calculations(lp=lp, provider=fork_mainnet_archive.provider)
         except Exception as e:
-            block_number = fork_mainnet_full.provider.get_block_number()
+            block_number = fork_mainnet_archive.provider.get_block_number()
             msg = (
                 f"{type(e).__name__}: {e} — "
                 f"registry pool {i}/{pool_count} @ {pool_address}, block {block_number}. "

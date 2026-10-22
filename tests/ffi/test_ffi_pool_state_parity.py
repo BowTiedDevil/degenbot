@@ -33,7 +33,7 @@ reads do not depend on the lifecycle.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -651,6 +651,21 @@ def test_dispatched_events_land_the_recomputed_bookkeeping(ops: list[_Op]) -> No
     block_number = _EVENT_SEED_BLOCK
     for op in ops:
         block_number += 1
+        if isinstance(op, _LiquidityOp) and not op.mint:
+            # A Burn can only retire liquidity the book actually holds: the
+            # boundary ticks' gross, plus the active in-range liquidity when
+            # the range covers the current tick. The core refuses (panics)
+            # beyond that, so the draw is clamped to the valid envelope
+            # rather than discarded.
+            gross_lower = expected.tick_data.get(op.tick_lower, (0, 0, 0))[0]
+            gross_upper = expected.tick_data.get(op.tick_upper, (0, 0, 0))[0]
+            cap = min(gross_lower, gross_upper)
+            if op.tick_lower <= expected.tick < op.tick_upper:
+                cap = min(cap, expected.liquidity)
+            amount = min(op.amount, cap)
+            if amount == 0:
+                continue
+            op = replace(op, amount=amount)
         _dispatch(bot, op, block_number)
         _apply_to_oracle(expected, op, block_number)
         _assert_handle_views(handle, expected, coverage=PoolTickCoverage.Sparse)

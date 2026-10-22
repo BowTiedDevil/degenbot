@@ -1729,6 +1729,22 @@ async fn build_curve_pool_assembles_plain_pool_params() {
 }
 
 #[tokio::test]
+async fn build_curve_pool_rejects_a_known_broken_v1_pool() {
+    // A known-broken V1 pool is refused before any RPC: the FakeRpc needs no
+    // responses because discovery never runs.
+    let io = io_with(FakeRpc::new());
+    for broken in builder::BROKEN_CURVE_V1_POOLS {
+        assert!(
+            matches!(
+                builder::build_curve_pool(*broken, &[REGISTRY], &io, Some(1)).await,
+                Err(builder::PoolBuilderError::Spec)
+            ),
+            "known-broken pool built: {broken}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn build_curve_pool_rejects_fewer_than_two_coins() {
     // Only one coin discovered → Spec error (BrokenPool guard).
     let mut f = FakeRpc::new();
@@ -1748,6 +1764,86 @@ async fn build_curve_pool_rejects_fewer_than_two_coins() {
         choreography::selector(b"admin_fee()"),
         enc(DynSolValue::Uint(U256::from(0u64), 256)),
     );
+    let io = io_with(f);
+    assert!(matches!(
+        builder::build_curve_pool(TO, &[REGISTRY], &io, Some(1)).await,
+        Err(builder::PoolBuilderError::Spec)
+    ));
+}
+
+/// A required read that reverts (`A()`/`fee()`/`admin_fee()`/a coin's
+/// `decimals()`) is the contract's own verdict that it does not implement
+/// the interface — a broken pool, refused with `Spec`, not a transport `Rpc`.
+#[tokio::test]
+async fn build_curve_pool_rejects_a_pool_whose_required_getter_reverts() {
+    let mut f = FakeRpc::new();
+    let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000007");
+    let coin1: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000008");
+    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
+    f.set_full(abi::encode_curve_coins_uint(1), addr_word(coin1));
+    f.set_full(
+        abi::encode_curve_balances_uint(0),
+        enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
+    );
+    f.set_full(
+        abi::encode_curve_balances_uint(1),
+        enc(DynSolValue::Uint(U256::from(2_000_000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"A()"),
+        enc(DynSolValue::Uint(U256::from(100u64), 256)),
+    );
+    // `fee()` reverts — a decommissioned pool.
+    f.set_error(
+        choreography::selector(b"fee()"),
+        ProviderError::ExecutionReverted {
+            code: 3,
+            message: "execution reverted".to_string(),
+        },
+    );
+
+    let io = io_with(f);
+    assert!(matches!(
+        builder::build_curve_pool(TO, &[REGISTRY], &io, Some(1)).await,
+        Err(builder::PoolBuilderError::Spec)
+    ));
+}
+
+/// A pool whose discovered coin has no runtime code (an ETH-sentinel coin
+/// from an old vyper pool, or a junk `coins()` return) cannot be built:
+/// its ERC20 reads will never succeed, so the build refuses with `Spec`
+/// rather than dying on the decimals fetch.
+#[tokio::test]
+async fn build_curve_pool_rejects_a_coin_with_no_code() {
+    let mut f = FakeRpc::new();
+    let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000006");
+    let sentinel: Address = alloy::primitives::address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+
+    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
+    f.set_full(abi::encode_curve_coins_uint(1), addr_word(sentinel));
+    f.set_full(
+        abi::encode_curve_balances_uint(0),
+        enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
+    );
+    f.set_full(
+        abi::encode_curve_balances_uint(1),
+        enc(DynSolValue::Uint(U256::from(2_000_000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"A()"),
+        enc(DynSolValue::Uint(U256::from(100u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(100u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"admin_fee()"),
+        enc(DynSolValue::Uint(U256::from(0u64), 256)),
+    );
+    // The sentinel's `decimals()` returns nothing (a no-code address).
+    f.set(choreography::selector(b"decimals()"), Vec::new());
+
     let io = io_with(f);
     assert!(matches!(
         builder::build_curve_pool(TO, &[REGISTRY], &io, Some(1)).await,

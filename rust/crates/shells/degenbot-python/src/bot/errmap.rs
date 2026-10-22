@@ -147,7 +147,7 @@ fn map_build_failure(failure: BuildFailure) -> PyErr {
         BuildFailure::Rpc(detail) => {
             PyRuntimeError::new_err(format!("pool build RPC error: {detail}"))
         }
-        BuildFailure::Spec => PyRuntimeError::new_err("pool build out-of-spec V2 reserve"),
+        BuildFailure::Spec => SpecViolationError::new_err("pool build refused: out of spec"),
         BuildFailure::Decoding(message) => {
             PyRuntimeError::new_err(format!("pool build decode failure: {message}"))
         }
@@ -770,10 +770,12 @@ mod tests {
             ))
         };
 
-        assert_eq!(
-            message(&mapped(&PoolBuilderError::Spec)),
-            "pool build out-of-spec V2 reserve"
-        );
+        Python::attach(|py| {
+            assert!(
+                mapped(&PoolBuilderError::Spec).is_instance_of::<SpecViolationError>(py),
+                "expected a SpecViolationError"
+            );
+        });
         // The identity verdict is the ONE exception the register path and the
         // build path both raise: the deployment table's own mismatch text.
         let mismatch = address_mismatch(1);
@@ -830,17 +832,20 @@ mod tests {
             )),
             "build_curve_pool: no ConstructionIo attached (requires an alloy provider)"
         );
-        assert_eq!(
-            message(&map_build_refusal(
-                "build_curve_pool",
-                RefusalKind::from_builder_error(
-                    &PoolBuilderError::Spec,
-                    None,
-                    RegistrationPhase::Build,
-                ),
-            )),
-            "pool build out-of-spec V2 reserve"
-        );
+        Python::attach(|py| {
+            assert!(
+                map_build_refusal(
+                    "build_curve_pool",
+                    RefusalKind::from_builder_error(
+                        &PoolBuilderError::Spec,
+                        None,
+                        RegistrationPhase::Build,
+                    ),
+                )
+                .is_instance_of::<SpecViolationError>(py),
+                "expected a SpecViolationError"
+            );
+        });
     }
 
     #[test]
