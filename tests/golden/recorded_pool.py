@@ -190,7 +190,7 @@ def reconstruct_pool(state: dict[str, Any]) -> Any:
         )
 
     if family == "v3":
-        pool = make_v3_pool(
+        return make_v3_pool(
             state["address"],
             token0=token0,
             token1=token1,
@@ -202,22 +202,11 @@ def reconstruct_pool(state: dict[str, Any]) -> Any:
             liquidity=state["liquidity"],
             state_block=block,
             tick_data=state.get("tick_data"),
+            # The recorded WORD positions ride in as registration-seeded
+            # checked words, so swap simulation can tell where liquidity ends
+            # (swap-for-all / IncompleteSwap) — fork parity (T1).
+            known_bitmap_words=[int(word) for word in state.get("tick_bitmap") or []],
         )
-        # ``make_v3_pool`` seeds tick_data but not the checked words, so
-        # swap simulation can't tell where liquidity ends (swap-for-all /
-        # IncompleteSwap). ``update_tick_data`` replays the recorded words
-        # (Sparse pools record them as checked words in Rust — the bitmap
-        # itself derives from the tick rows), restoring fork parity (T1
-        # The companion override is retired).
-        tick_data = state.get("tick_data")
-        tick_bitmap = state.get("tick_bitmap")
-        if tick_bitmap or tick_data:
-            pool.update_tick_data(
-                tick_bitmap={int(word) for word in (tick_bitmap or [])},
-                tick_data=({int(t): v for t, v in tick_data.items()} if tick_data else {}),
-                block=block,
-            )
-        return pool
 
     if family == "v4":
         # make_v4_pool expects ``{tick: (gross, net, block)}`` tuples, not the
@@ -248,6 +237,7 @@ def reconstruct_pool(state: dict[str, Any]) -> Any:
             protocol_fee_one_for_zero=state.get("protocol_fee_one_for_zero", 0),
             lp_fee=state.get("lp_fee", 0),
             tick_data=v4_tick_data,
+            known_bitmap_words=[int(word) for word in state.get("tick_bitmap") or []],
             state_block=block,
         )
 

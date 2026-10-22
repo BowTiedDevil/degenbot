@@ -19,6 +19,8 @@ from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
 from tests.helpers.pool_bot import new_pool_bot
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from degenbot._ffi import Bot
     from degenbot.erc20 import Erc20Token
 
@@ -46,6 +48,7 @@ def make_v4_pool(
     protocol_fee_one_for_zero: int,
     lp_fee: int,
     tick_data: dict[int, Any] | None = None,
+    known_bitmap_words: Iterable[int] | None = None,
     state_block: int | None = None,
     py_bot: Bot | None = None,
     coverage: str | None = None,
@@ -62,6 +65,11 @@ def make_v4_pool(
     data; clearing tick_data via ``update_tick_data({})`` does NOT flip the
     Rust coverage flag (it is set at registration), so the sparse contract
     must be established at construction.
+
+    ``known_bitmap_words`` forwards to ``register_v4_pool`` (the V4 twin of the
+    V3 argument): the tick-bitmap WORD positions a caller already checked
+    on-chain, recorded as checked for a Sparse pool and ignored for a Tracked
+    one.
 
     Mints a fresh ``Bot`` unless ``py_bot`` is injected, so each pool is
     isolated; registration is get-or-register (a same-key + same-currency
@@ -113,6 +121,7 @@ def make_v4_pool(
         tick_data=register_rows,
         coverage=coverage,
         tick_data_fetcher=tick_data_fetcher,
+        known_bitmap_words=(list(known_bitmap_words) if known_bitmap_words is not None else None),
     )
     handle = bot.get_pool(pool_id_int)
 

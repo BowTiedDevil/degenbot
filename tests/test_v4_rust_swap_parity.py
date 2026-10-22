@@ -503,7 +503,8 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words_v4():
         py_bot=py_bot,
         tick_data_fetcher=fetcher,
     )
-    sparse._py_pool.update_tick_data({}, {}, 0)
+    # No tick_data at registration → Rust coverage is Sparse (the regime under
+    # test); the registered state needs no further write.
     assert sparse.sparse_liquidity_map, "sparse-registered companion is sparse (Rust coverage)"
 
     rust_outcome = _unsigned_swap(

@@ -36,16 +36,16 @@ from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import OfflineProvider
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_types import UniswapV3PoolExternalUpdate
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-from degenbot.uniswap.v4_types import UniswapV4PoolExternalUpdate, UniswapV4PoolKey
+from degenbot.uniswap.v4_types import UniswapV4PoolKey
 from degenbot.utils.bytes import to_bytes
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20, make_ether_placeholder
+from tests.helpers.pool_bot import new_pool_bot
+from tests.helpers.synthetic_logs import v2_sync, v3_swap, v4_swap
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
 from tests.helpers.v4_pool_factory import make_v4_pool
@@ -335,14 +335,15 @@ class TestV2PoolIOFreeConstructor:
         assert pool.update_block == 18_000_000
 
     def test_io_free_pool_computation_works(self) -> None:
-        pool = _v2_injected()
+        bot = new_pool_bot()
+        pool = _v2_injected(py_bot=bot)
 
-        pool.external_update(
-            UniswapV2PoolExternalUpdate(
-                block_number=18_000_001,
-                reserves_token0=1100 * 10**18,
-                reserves_token1=1_800_000 * 10**6,
-            )
+        # New reserves arrive through the pump's own door: a synthetic
+        # `Sync(uint112,uint112)` log decoded + applied by the bot.
+        bot.dispatch_log(
+            address=pool.address,
+            block_number=18_000_001,
+            **v2_sync(reserve0=1100 * 10**18, reserve1=1_800_000 * 10**6),
         )
         assert pool.reserves_token0 == 1100 * 10**18
 
@@ -422,18 +423,21 @@ class TestV3PoolIOFreeConstructor:
         assert -76080 in pool.tick_data
         assert -75960 in pool.tick_data
 
-    def test_io_free_pool_external_update(self) -> None:
-        pool = _v3_injected()
+    def test_io_free_pool_swap_event_update(self) -> None:
+        bot = new_pool_bot()
+        pool = _v3_injected(py_bot=bot)
 
-        updated = pool.external_update(
-            UniswapV3PoolExternalUpdate(
-                block_number=18_000_001,
+        # A V3 Swap log carries the post-swap scalars; the pumped event moves
+        # the pool's sqrt_price/tick/liquidity.
+        bot.dispatch_log(
+            address=pool.address,
+            block_number=18_000_001,
+            **v3_swap(
                 sqrt_price_x96=2200000000000000000000,
                 tick=-75900,
                 liquidity=9999999999,
-            )
+            ),
         )
-        assert updated is True
         assert pool.tick == -75900
         assert pool.liquidity == 9999999999
 
@@ -529,16 +533,22 @@ class TestV4PoolIOFreeConstructor:
         assert pool.tick_data[120].liquidity_net == 100
         assert pool.tick_data[-10].liquidity_net == 100
 
-    def test_io_free_external_update(self) -> None:
-        pool = _v4_injected()
+    def test_io_free_swap_event_update(self) -> None:
+        bot = new_pool_bot()
+        pool = _v4_injected(py_bot=bot)
 
-        update = UniswapV4PoolExternalUpdate(
+        # The V4 twin: a `PoolManager` Swap log keyed by pool_id, dispatched
+        # at the manager address the pool lives under.
+        bot.dispatch_log(
+            address=pool.address,
             block_number=18_000_001,
-            sqrt_price_x96=2198666895605150000000,
-            tick=-76010,
-            liquidity=1234567999,
+            **v4_swap(
+                pool_id=V4_POOL_ID,
+                sqrt_price_x96=2198666895605150000000,
+                tick=-76010,
+                liquidity=1234567999,
+            ),
         )
-        assert pool.external_update(update) is True
         assert pool.tick == -76010
         assert pool.liquidity == 1234567999
 

@@ -25,6 +25,8 @@ from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
 from tests.helpers.pool_bot import new_pool_bot
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from degenbot._ffi import Bot
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types import Pool
@@ -85,6 +87,7 @@ def make_v3_pool(
     init_hash: str | None = None,
     state_block: BlockNumber | None = None,
     tick_data: dict[int, Any] | None = None,
+    known_bitmap_words: Iterable[int] | None = None,
     tick_data_fetcher: Any = None,
     py_bot: Bot | None = None,
     pool_class: type[UniswapV3Pool] = UniswapV3Pool,
@@ -106,9 +109,14 @@ def make_v3_pool(
     I/O-free scalar-only construction), the companion is built sparse (the
     fetcher backfills on demand, mirroring the engine's authority over tick
     data per plan-101). When ``tick_data`` is provided it is seeded into Rust
-    via ``Pool.update_tick_data`` and the companion is built non-sparse. The
-    retired ``tick_bitmap`` value arg is gone (Rust derives the words from the
-    seeded tick rows).
+    inline at registration and the companion is built non-sparse. The retired
+    ``tick_bitmap`` value arg is gone (Rust derives the words from the seeded
+    tick rows).
+
+    ``known_bitmap_words`` forwards to ``register_v3_pool``: the tick-bitmap
+    WORD positions a caller already checked on-chain. A Sparse pool records
+    them as checked (a checked word is never re-fetched); a Tracked pool
+    ignores them (its bitmap is complete).
     """
     address_checksum = get_checksum_address(address)
 
@@ -134,6 +142,7 @@ def make_v3_pool(
         update_block=state_block_int,
         coverage=coverage,
         tick_data_fetcher=tick_data_fetcher,
+        known_bitmap_words=(list(known_bitmap_words) if known_bitmap_words is not None else None),
     )
     handle: Pool | None = bot.get_pool(pool_id)
     assert handle is not None, "register_v3_pool returned a pool_id with no handle"

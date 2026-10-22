@@ -22,6 +22,7 @@ import pytest
 
 from degenbot._ffi import Bot
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
+from tests.helpers.synthetic_logs import v3_mint, v4_modify_liquidity
 
 USDC = 10**6
 WETH = 10**18
@@ -386,13 +387,13 @@ class TestSharedStateTopologyV3:
         assert handle.concentrated_liquidity().liquidity == V3_LIQUIDITY
         assert handle.concentrated_liquidity().tick == V3_TICK
 
-    def test_v3_handle_apply_liquidity_update_inits_ticks(self) -> None:
-        """A V3 Mint via ``apply_liquidity_update`` initializes tick entries.
+    def test_v3_pumped_mint_inits_ticks(self) -> None:
+        """A dispatched V3 Mint initializes the pool's tick entries.
 
-        The handle mutates ``BotState.tick_data`` (pool_id-keyed) — the same
-        state the engine solver's ``compute_tick_ranges`` reads. Brackets the
-        current tick with a lower/upper tick pair to set up a bounded liquidity
-        range.
+        The pump's decode/apply path mutates ``BotState.tick_data``
+        (pool_id-keyed) — the same state the engine solver's
+        ``compute_tick_ranges`` reads. Brackets the current tick with a
+        lower/upper tick pair to set up a bounded liquidity range.
         """
         core = Bot()
         pool_id = core.register_v3_pool(
@@ -412,135 +413,20 @@ class TestSharedStateTopologyV3:
         tick_lower = V3_TICK - V3_TICK_SPACING
         tick_upper = V3_TICK + V3_TICK_SPACING
         delta = 10_000
-        applied = handle.apply_liquidity_update(
-            tick_lower=tick_lower,
-            tick_upper=tick_upper,
-            liquidity_delta=delta,
-            block_number=3,
-        )
-        assert applied, "apply_liquidity_update should succeed on a registered V3 pool"
-
-        # Applies to a non-V3 pool (V2) silently return False — don't corrupt.
-        v2_pool_id = core.register_v2_pool(
-            address=V2_POOL_B,
-            token0=TOKEN0,
-            token1=TOKEN1,
-            reserve0=1_500_000 * USDC,
-            reserve1=800 * WETH,
-            gamma_numer0=997,
-            fee_denom0=1000,
-            gamma_numer1=997,
-            fee_denom1=1000,
-            factory=FACTORY,
-        )
-        v2_handle = core.get_pool(v2_pool_id)
-        assert v2_handle is not None
-        # A non-concentrated-liquidity family has no tick state: the
-        # concentrated-liquidity-only write is refused loudly (a V2 pool
-        # receiving a concentrated-liquidity update is a misuse).
-        with pytest.raises(ValueError, match="has no concentrated-liquidity"):
-            v2_handle.apply_liquidity_update(
-                tick_lower=tick_lower,
-                tick_upper=tick_upper,
-                liquidity_delta=delta,
-                block_number=4,
-            )
-
-    def test_v3_handle_update_tick_data_replaces_tick_map(self) -> None:
-        """A V3 ``update_tick_data`` full-sync replaces the pool's tick_data map.
-
-        The Python sparse-map fetcher (``make_tick_data_fetcher``) writes
-        fetched ticks back through ``pool.update_tick_data(tick_bitmap,
-        tick_data, block)``. In the post-8b topology the companion delegates
-        here; this pins the Rust write path the delegation targets. Symmetric
-        with ``tick_data_snapshot``: the dict shape written in is the shape read
-        back out. The ``tick_bitmap`` arg carries the checked WORD set only
-        (the bitmap itself — and its VALUE — is derived from ``tick_data``
-        keys); here it is empty, accepted for API parity with the Python caller
-        signature.
-        Scalars (sqrt_price/liquidity/tick) are UNCHANGED — ``update_tick_data``
-        is tick-only (a wholesale replace from a fetched snapshot, not a
-        journalled event delta).
-        """
-        core = Bot()
-        pool_id = core.register_v3_pool(
+        core.dispatch_log(
             address=V3_POOL_A,
-            token0=TOKEN0,
-            token1=TOKEN1,
-            fee=V3_FEE,
-            tick_spacing=V3_TICK_SPACING,
-            factory=FACTORY,
-            sqrt_price_x96=V3_SQRT_PRICE,
-            liquidity=V3_LIQUIDITY,
-            tick=V3_TICK,
-        )
-        handle = core.get_pool(pool_id)
-        assert handle is not None
-        assert handle.concentrated_liquidity().tick_data == {}
-
-        # Seed two ticks via apply_liquidity_update (the Mint/Burn event path).
-        seeded_lower = V3_TICK - V3_TICK_SPACING
-        seeded_upper = V3_TICK + V3_TICK_SPACING
-        handle.apply_liquidity_update(
-            tick_lower=seeded_lower,
-            tick_upper=seeded_upper,
-            liquidity_delta=7_500,
             block_number=3,
+            **v3_mint(tick_lower=tick_lower, tick_upper=tick_upper, amount=delta),
         )
-        assert set(handle.concentrated_liquidity().tick_data.keys()) == {seeded_lower, seeded_upper}
 
-        # Full-sync a DIFFERENT tick set via update_tick_data — REPLACES the map.
-        new_tick_a = V3_TICK - 2 * V3_TICK_SPACING
-        new_tick_b = V3_TICK + 2 * V3_TICK_SPACING
-        new_tick_data: dict[int, tuple[int, int, int]] = {
-            new_tick_a: (12_000, 12_000, 9),
-            new_tick_b: (12_000, -12_000, 9),
-        }
-        applied = handle.update_tick_data(
-            tick_bitmap=set(),  # no checked words (words derive from tick_data keys)
-            tick_data=new_tick_data,
-            block=9,
-        )
-        assert applied, "update_tick_data should succeed on a registered V3 pool"
-
-        # The tick map is REPLACED (the two apply_liquidity_update ticks gone).
         snap = handle.concentrated_liquidity().tick_data
-        assert set(snap.keys()) == {new_tick_a, new_tick_b}
-        gross_a, net_a, block_a = snap[new_tick_a]
-        gross_b, net_b, _block_b = snap[new_tick_b]
-        assert gross_a == 12_000
-        assert net_a == 12_000
-        assert gross_b == 12_000
-        assert net_b == -12_000
-        assert block_a == 9
+        assert set(snap.keys()) == {tick_lower, tick_upper}
+        assert snap[tick_lower] == (delta, delta, 3)
+        assert snap[tick_upper] == (delta, -delta, 3)
 
-        # Scalars UNCHANGED (update_tick_data is tick-only, not a scalar event) —
-        # but the earlier apply_liquidity_update(+7500) position spans the current
-        # tick, so the current-liquidity baseline is V3_LIQUIDITY + 7500.
-        assert handle.concentrated_liquidity().sqrt_price_x96 == V3_SQRT_PRICE
-        assert handle.concentrated_liquidity().liquidity == V3_LIQUIDITY + 7_500
-        assert handle.concentrated_liquidity().tick == V3_TICK
-        # Two clocks: the tick-map full-sync advances only the LIQUIDITY
-        # clock (tick_data_block); the PRICE clock (update_block) moves only on
-        # scalar/liquidity events, so it stays at 3 (the apply_liquidity_update).
-        assert handle.concentrated_liquidity().tick_data_block == 9
-        assert _update_block(handle) == 3
-
-        # `tick_bitmap` reflects the new tick keys (the word positions only).
-        def word_of(tick: int) -> int:
-            return (tick // V3_TICK_SPACING) >> 8
-
-        bitmap = handle.concentrated_liquidity().tick_bitmap
-        assert bitmap == {word_of(new_tick_a), word_of(new_tick_b)}
-
-        # NOTE: a backward-block full-sync (sync block < current tick_data_block)
-        # is deliberately NOT exercised here — it is a hard panic on the
-        # liquidity clock (see `V3PoolState::replace_tick_data_backward_block_panics`
-        # + `_does_not_rewind_block` Rust unit tests), and a background-thread Rust
-        # panic is not a catchable Python exception.
-
-        # A V2 apply returns False silently (don't corrupt) — mirrors the
-        # apply_liquidity_update V2-rejection contract (a V2 pool has no ticks).
+        # A non-concentrated-liquidity family has no tick state: a Mint log
+        # dispatched at a V2 pool is not a concentrated-liquidity event, so the
+        # V2 reserves stay untouched.
         v2_pool_id = core.register_v2_pool(
             address=V2_POOL_B,
             token0=TOKEN0,
@@ -555,12 +441,12 @@ class TestSharedStateTopologyV3:
         )
         v2_handle = core.get_pool(v2_pool_id)
         assert v2_handle is not None
-        bad = v2_handle.update_tick_data(
-            tick_bitmap={},
-            tick_data={new_tick_a: (1, 1, 1)},
-            block=1,
+        core.dispatch_log(
+            address=V2_POOL_B,
+            block_number=4,
+            **v3_mint(tick_lower=tick_lower, tick_upper=tick_upper, amount=delta),
         )
-        assert bad is False
+        assert v2_handle.reserve_pair().reserve0 == 1_500_000 * USDC
 
     def test_v3_handle_tick_data_snapshot_returns_dict(self) -> None:
         """tick_data_snapshot() returns {tick: (gross, net, block)} dict.
@@ -588,15 +474,14 @@ class TestSharedStateTopologyV3:
         # Empty at registration.
         assert handle.concentrated_liquidity().tick_data == {}
 
-        # Apply a liquidity update — two ticks gain gross/net entries.
+        # A dispatched Mint — two ticks gain gross/net entries.
         tick_lower = V3_TICK - V3_TICK_SPACING
         tick_upper = V3_TICK + V3_TICK_SPACING
         delta = 7_500
-        handle.apply_liquidity_update(
-            tick_lower=tick_lower,
-            tick_upper=tick_upper,
-            liquidity_delta=delta,
+        core.dispatch_log(
+            address=V3_POOL_A,
             block_number=7,
+            **v3_mint(tick_lower=tick_lower, tick_upper=tick_upper, amount=delta),
         )
 
         snap = handle.concentrated_liquidity().tick_data
@@ -637,11 +522,10 @@ class TestSharedStateTopologyV3:
 
         tick_lower = V3_TICK - V3_TICK_SPACING
         tick_upper = V3_TICK + V3_TICK_SPACING
-        handle.apply_liquidity_update(
-            tick_lower=tick_lower,
-            tick_upper=tick_upper,
-            liquidity_delta=10_000,
+        core.dispatch_log(
+            address=V3_POOL_A,
             block_number=7,
+            **v3_mint(tick_lower=tick_lower, tick_upper=tick_upper, amount=10_000),
         )
 
         bitmap = handle.concentrated_liquidity().tick_bitmap
@@ -659,12 +543,11 @@ class TestSharedStateTopologyV4:
     """Uniswap V4 over Pool — V4-specific closure.
 
     Mirrors ``TestSharedStateTopologyV3`` for the V4 family. The headline
-    regression: previously, ``Pool.apply_swap``/
-    ``apply_liquidity_update`` routed unconditionally into V3-only
-    ``apply_v3_*_by_pool_id`` methods that match ``PoolEntry::V3`` only and
-    return ``None`` for ``PoolEntry::V4`` — so every Python-side V4 update
-    (snapshots, manual ``external_update`` flows driven through the handle)
-    was **silently dropped**. The fix is a family-dispatching
+    regression: the handle's family dispatch used to route every write into
+    V3-only ``apply_v3_*_by_pool_id`` methods that match ``PoolEntry::V3`` and
+    return ``None`` for ``PoolEntry::V4`` — so every Python-side V4 write
+    (a snapshot seed, a handle-driven event) was **silently dropped**. The fix
+    is a family-dispatching
     ``apply_swap_by_pool_id``/``apply_liquidity_update_by_pool_id`` on
     ``BotState``; these tests pin that dispatch through the *public* Python
     handle surface (the exact layer that was broken).
@@ -693,7 +576,11 @@ class TestSharedStateTopologyV4:
             liquidity=V4_LIQUIDITY,
             tick=V4_TICK,
             block=0,
-            coverage="tracked",
+            # No tick_data seeded → the pool is honestly Sparse, and a Sparse
+            # pool registers Live (a Tracked one registers Quarantined, which
+            # defers every dispatched event until set_live). These tests drive
+            # state through the pump's door, so they need the live lifecycle.
+            coverage="sparse",
         )
 
     def test_v4_handle_apply_swap_is_visible_to_handle_reads(self) -> None:
@@ -730,16 +617,15 @@ class TestSharedStateTopologyV4:
         assert handle.concentrated_liquidity().tick == new_tick
         assert _update_block(handle) == 5
 
-    def test_v4_handle_apply_liquidity_update_inits_ticks(self) -> None:
-        """A V4 ``apply_liquidity_update`` through the handle inits tick entries.
+    def test_v4_pumped_modify_liquidity_inits_ticks(self) -> None:
+        """A dispatched V4 ModifyLiquidity inits the pool's tick entries.
 
-        The other half: pre-fix ``Pool.apply_liquidity_update``
-        routed to ``apply_v3_liquidity_update_by_pool_id`` unconditionally, which
-        no-op'd on ``PoolEntry::V4`` and silently dropped the ModifyLiquidity
-        tick mutation. After the fix the dispatch reaches the V4 path and the
+        The other half: the handle's liquidity write used to route to
+        ``apply_v3_liquidity_update_by_pool_id`` unconditionally, which no-op'd
+        on ``PoolEntry::V4`` and silently dropped the ModifyLiquidity tick
+        mutation. The family-dispatching route reaches the V4 arm and the
         tick_data map gains entries — the V4 family of the V3
-        ``apply_liquidity_update`` contract
-        (``test_v3_handle_apply_liquidity_update_inits_ticks``).
+        pumped-Mint contract (``test_v3_pumped_mint_inits_ticks``).
         """
         core = Bot()
         engine = ArbitrageEngine(py_bot=core)
@@ -752,13 +638,16 @@ class TestSharedStateTopologyV4:
         tick_lower = V4_TICK - V4_TICK_SPACING
         tick_upper = V4_TICK + V4_TICK_SPACING
         delta = 10_000
-        applied = handle.apply_liquidity_update(
-            tick_lower=tick_lower,
-            tick_upper=tick_upper,
-            liquidity_delta=delta,
+        core.dispatch_log(
+            address=V4_POOL_MANAGER,
             block_number=3,
+            **v4_modify_liquidity(
+                pool_id=V4_POOL_ID_HEX,
+                tick_lower=tick_lower,
+                tick_upper=tick_upper,
+                liquidity_delta=delta,
+            ),
         )
-        assert applied, "apply_liquidity_update should succeed on a registered V4 pool"
 
         snap = handle.concentrated_liquidity().tick_data
         assert set(snap.keys()) == {tick_lower, tick_upper}
@@ -769,67 +658,6 @@ class TestSharedStateTopologyV4:
         assert net_lower == delta
         assert net_upper == -delta
         assert block_lower == 3
-
-    def test_v4_handle_update_tick_data_replaces_tick_map(self) -> None:
-        """A V4 ``update_tick_data`` full-sync replaces the pool's tick_data map.
-
-        The family-agnostic twin of
-        ``test_v3_handle_update_tick_data_replaces_tick_map``: the V4 arm of
-        ``BotState::sync_tick_data_by_pool_id`` mirrors the V3 path (both
-        store an identical ``tick_data: HashMap<i32, TickInfo>``).
-        Pins that the V3-paid-for family-agnostic write path actually reaches
-        a V4 pool (a future maintainer narrowing it to V3-only would re-open
-        the silent-drop footgun shape).
-        """
-        core = Bot()
-        engine = ArbitrageEngine(py_bot=core)
-        pool_id = self._register_v4(core, engine)
-        handle = core.get_pool(pool_id)
-        assert handle is not None
-        assert handle.concentrated_liquidity().tick_data == {}
-
-        # Seed two ticks via the V4 Mint/Burn event path.
-        seeded_lower = V4_TICK - V4_TICK_SPACING
-        seeded_upper = V4_TICK + V4_TICK_SPACING
-        handle.apply_liquidity_update(
-            tick_lower=seeded_lower,
-            tick_upper=seeded_upper,
-            liquidity_delta=7_500,
-            block_number=3,
-        )
-        assert set(handle.concentrated_liquidity().tick_data.keys()) == {seeded_lower, seeded_upper}
-
-        # Full-sync a DIFFERENT tick set — REPLACES the map (V4 family).
-        new_tick_a = V4_TICK - 2 * V4_TICK_SPACING
-        new_tick_b = V4_TICK + 2 * V4_TICK_SPACING
-        new_tick_data: dict[int, tuple[int, int, int]] = {
-            new_tick_a: (12_000, 12_000, 9),
-            new_tick_b: (12_000, -12_000, 9),
-        }
-        applied = handle.update_tick_data(
-            tick_bitmap=set(),
-            tick_data=new_tick_data,
-            block=9,
-        )
-        assert applied, "update_tick_data should succeed on a registered V4 pool"
-
-        snap = handle.concentrated_liquidity().tick_data
-        assert set(snap.keys()) == {new_tick_a, new_tick_b}
-        gross_a, net_a, block_a = snap[new_tick_a]
-        assert gross_a == 12_000
-        assert net_a == 12_000
-        assert block_a == 9
-
-        # V4 scalars UNCHANGED. The earlier apply_liquidity_update(+7500)
-        # position spans the current tick, so the current-liquidity baseline is
-        # V4_LIQUIDITY + 7500. Two clocks: the full-sync advances the
-        # LIQUIDITY clock (tick_data_block); the PRICE clock (update_block)
-        # stays at 3 (the apply_liquidity_update).
-        assert handle.concentrated_liquidity().sqrt_price_x96 == V4_SQRT_PRICE
-        assert handle.concentrated_liquidity().liquidity == V4_LIQUIDITY + 7_500
-        assert handle.concentrated_liquidity().tick == V4_TICK
-        assert handle.concentrated_liquidity().tick_data_block == 9
-        assert _update_block(handle) == 3
 
 
 class TestSharedStateTopologyConcurrency:

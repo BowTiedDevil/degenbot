@@ -8,8 +8,8 @@ behavior died with the Python V3 builder (the tick maps passed to
 `build_pool` were silently discarded); the snapshot-apply contract that
 survived is the one this test pins:
 
-    A snapshot's pending Mint/Burn events are applied to a freshly-built pool
-    via `snapshot.pending_updates(...)` → `pool.update_liquidity_map`.
+    The recorded Mint/Burn events are applied to a freshly-built pool through
+    the pump's own door: `Bot.dispatch_log` → `LogDispatcher` decode → apply.
 
 Scope note: building the pool through `Bot.build_pool` is RPC-shaped end to
 end — that path is covered by the parity suites' build contracts and is out of
@@ -20,8 +20,8 @@ state out.
 What is golden: the pool's on-chain tick state at two consecutive pinned
 blocks plus the real Mint/Burn events between them. Record mode captures both
 against a live archive fork; replay mode rebuilds the pool I/O-free from the
-recorded cassette, feeds the recorded events through the snapshot-apply
-step, and asserts the application lands the exact recorded state — with a
+recorded cassette, dispatches the recorded events as the logs the chain
+emitted, and asserts the application lands the exact recorded state — with a
 hard dial-block so the replay is offline by contract (the same convention as
 the onchain-parity suites).
 
@@ -51,11 +51,10 @@ import pytest
 
 from degenbot import abi_decode
 from degenbot._ffi import Bot as _Engine
+from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
-from degenbot.uniswap.v3_types import UniswapV3LiquidityEvent
 from degenbot.updater.pool_updater_configs import (
     UNISWAP_V3_BURN_EVENT_HASH,
     UNISWAP_V3_MINT_EVENT_HASH,
@@ -69,6 +68,7 @@ from tests.golden.oracle import (
     replay_makes_no_network_calls,  # ruff: ignore[unused-import]
 )
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.synthetic_logs import v3_burn, v3_mint
 from tests.helpers.v3_pool_factory import make_v3_pool
 
 TRACKER_SNAPSHOT_BLOCK = 24_407_814  # pool state: the block before the events
@@ -129,8 +129,12 @@ class _RecordFork(AbstractContextManager):
             self.fork.close()
 
 
-def _build_wbtc_weth_v3_io_free(cassette: dict[str, Any]) -> UniswapV3Pool:
-    """Build the WBTC/WETH V3 pool I/O-free from a full tick-state cassette."""
+def _build_wbtc_weth_v3_io_free(cassette: dict[str, Any]) -> tuple[UniswapV3Pool, _Engine]:
+    """Build the WBTC/WETH V3 pool I/O-free from a full tick-state cassette.
+
+    Returns the pool plus the ``Bot`` that owns it — the handle a test needs to
+    push events through the pump's own door.
+    """
     scalars = cassette["scalars"]
     # ``make_v3_pool`` normalizes dict-shaped tick entries itself.
     tick_data = cassette["tick_data"]
@@ -154,7 +158,7 @@ def _build_wbtc_weth_v3_io_free(cassette: dict[str, Any]) -> UniswapV3Pool:
         decimals=18,
         chain_id=1,
     )
-    return make_v3_pool(
+    pool = make_v3_pool(
         WBTC_WETH_V3_POOL_ADDRESS,
         token0=wbtc,
         token1=weth,
@@ -166,8 +170,14 @@ def _build_wbtc_weth_v3_io_free(cassette: dict[str, Any]) -> UniswapV3Pool:
         liquidity=scalars["liquidity"],
         state_block=cassette["block"],
         tick_data=tick_data,
+        py_bot=py_bot,
         pool_class=UniswapV3Pool,
     )
+    # A full tick map registers the pool Tracked, and a Tracked pool registers
+    # Quarantined — every dispatched event would defer to its buffer. The
+    # runner's post-build sweep is the production door that releases it.
+    ArbitrageEngine(py_bot=py_bot).release_all_v3_v4_quarantined()
+    return pool, py_bot
 
 
 def _assert_tick_state(pool: UniswapV3Pool, expected: dict[str, Any], *, label: str) -> None:
@@ -228,57 +238,33 @@ def test_tracker_applies_pending_snapshot_events(golden_factory) -> None:
         assert oracle.ok
         assert expected_state == oracle.value
 
-        pool = _build_wbtc_weth_v3_io_free(snapshot_cassette)
+        pool, py_bot = _build_wbtc_weth_v3_io_free(snapshot_cassette)
 
-        # The events are queued into the snapshot exactly as the facade's
-        # event queue holds them (raw Mint/Burn records, as the runner streams
-        # them), then applied to the freshly-built pool through
-        # `update_liquidity_map` — the surviving snapshot-apply contract.
-        snapshot = _snapshot_with_events(events)
-        for liquidity_update in snapshot.pending_updates(pool.address):
-            pool.update_liquidity_map(liquidity_update)
+        # The recorded Mint/Burn events go back through the pump's own door:
+        # each is rebuilt as the log the chain emitted and dispatched for
+        # decode + apply, so the assertion rides the production path.
+        for event in events:
+            liquidity = int(event["liquidity"])
+            log = (
+                v3_mint(
+                    tick_lower=event["tick_lower"],
+                    tick_upper=event["tick_upper"],
+                    amount=liquidity,
+                )
+                if liquidity > 0
+                else v3_burn(
+                    tick_lower=event["tick_lower"],
+                    tick_upper=event["tick_upper"],
+                    amount=-liquidity,
+                )
+            )
+            py_bot.dispatch_log(
+                address=pool.address,
+                block_number=event["block_number"],
+                **log,
+            )
 
-        _assert_tick_state(pool, expected_state, label="snapshot-applied")
-
-
-def _snapshot_with_events(events: list[dict[str, Any]]) -> UniswapV3LiquiditySnapshot:
-    """Build a snapshot whose pending-event queue holds the recorded events."""
-    snapshot = UniswapV3LiquiditySnapshot(
-        source=_MinimalSnapshotSource(chain_id=1, pools={WBTC_WETH_V3_POOL_ADDRESS}),
-    )
-    queue = snapshot._liquidity_events[WBTC_WETH_V3_POOL_ADDRESS]
-    queue.extend(
-        UniswapV3LiquidityEvent(
-            block_number=ev["block_number"],
-            liquidity=ev["liquidity"],
-            tick_lower=ev["tick_lower"],
-            tick_upper=ev["tick_upper"],
-            tx_index=ev["tx_index"],
-            log_index=ev["log_index"],
-        )
-        for ev in events
-    )
-    return snapshot
-
-
-class _MinimalSnapshotSource:
-    """The smallest source the snapshot facade accepts (hermetic)."""
-
-    storage_kind = "memory"
-
-    def __init__(self, *, chain_id: int, pools: set[str]) -> None:
-        self.chain_id = chain_id
-        self._pools = pools
-        self._newest_block = TRACKER_EVENT_BLOCK
-
-    def get_newest_block(self) -> int:
-        return self._newest_block
-
-    def get_pools(self) -> set[str]:
-        return set(self._pools)
-
-    def get_liquidity_map(self, pool_address: str):
-        return None
+        _assert_tick_state(pool, expected_state, label="event-applied")
 
 
 def _load_snapshot_cassette() -> dict[str, Any]:
