@@ -227,14 +227,13 @@ When `build_pool` is called, the pool type is auto-resolved — in order, from t
 
 ### External Updates
 
-Pools receive state updates via `external_update()` — a pure-logic method that validates the update and transitions pool state. I/O never touches the pool itself: for the V2/V3/V4 families `bot.update(pool)` fetches current reserves/slot0/liquidity from the Rust core (Curve/Balancer refresh runs through the remaining Python builders), constructs the family's `ExternalUpdate` message, and pushes it to the pool:
+State reaches a pool through the pump's own door, never through a Python-side write method: `bot.dispatch_log(...)` decodes a WS log and applies it to the shared Rust state, and `bot.dispatch_reorg_log(...)` drives the same log flagged `removed: true` through the reorg restore. I/O never touches the pool itself: for the V2/V3/V4 families `bot.update(pool)` fetches current reserves/slot0/liquidity from the Rust core (Curve/Balancer refresh runs through the remaining Python builders) and applies it through the core's refresh entry:
 
 <!-- invisible-code-block: python
 from degenbot._ffi import Bot
 _BOT = Bot()
 from tests.helpers.erc20_factory import make_erc20
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from degenbot.erc20.erc20 import Erc20Token
 from tests.helpers.v2_pool_factory import make_v2_pool
 from fractions import Fraction
@@ -263,6 +262,7 @@ pool = make_v2_pool(
     reserves_token0=10732489743,
     reserves_token1=2056834999904002274711,
     chain_id=1,
+    py_bot=_BOT,
 )
 block_number = 100
 reserves0 = 10732455184
@@ -270,13 +270,15 @@ reserves1 = 2056841643098872755548
 -->
 
 ```python
-# Builder fetches state from chain (I/O), constructs update, pushes to pool
-update = UniswapV2PoolExternalUpdate(
+# The pump's door: a WS Sync log is decoded and applied to the shared Rust
+# state — the pool class carries no write method of its own.
+_BOT.dispatch_log(
+    address=pool.address,
     block_number=block_number,
-    reserves_token0=reserves0,
-    reserves_token1=reserves1,
+    topics=["0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"],
+    data="0x" + (reserves0.to_bytes(32, "big") + reserves1.to_bytes(32, "big")).hex(),
 )
-pool.external_update(update)  # Pure logic — no I/O
+assert pool.state.reserves_token0 == reserves0
 
 # Pool.simulate_swap() previews swaps without state change
 # Pool.calculate_tokens_out_from_tokens_in() is pure math after construction
@@ -369,7 +371,6 @@ from degenbot._ffi import Bot
 _BOT = Bot()
 from tests.helpers.erc20_factory import make_erc20
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from degenbot.erc20.erc20 import Erc20Token
 from tests.helpers.v2_pool_factory import make_v2_pool
 from fractions import Fraction
@@ -398,6 +399,7 @@ lp = make_v2_pool(
     reserves_token0=10732489743,
     reserves_token1=2056834999904002274711,
     chain_id=1,
+    py_bot=_BOT,
 )
 -->
 
@@ -426,14 +428,15 @@ assert lp.calculate_tokens_in_from_tokens_out(
     token_out_quantity=5199789
 ) == 999999992817074189
 
-# Pools are I/O-free: updates flow through external_update()
-# The builder (internal to Bot) fetches state and pushes updates
-update = UniswapV2PoolExternalUpdate(
+# Pools are I/O-free: state arrives through the pump's door. The log below is
+# the WBTC/WETH pair's `Sync` event at block 100.
+_BOT.dispatch_log(
+    address=lp.address,
     block_number=100,
-    reserves_token0=10732455184,
-    reserves_token1=2056841643098872755548,
+    topics=["0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"],
+    data="0x" + (10732455184).to_bytes(32, "big").hex()
+    + (2056841643098872755548).to_bytes(32, "big").hex(),
 )
-lp.external_update(update)
 
 # Reserves are updated in-place
 assert lp.reserves_token0 == 10732455184

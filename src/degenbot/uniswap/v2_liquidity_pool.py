@@ -12,12 +12,10 @@ from degenbot.aerodrome.math import (
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import ExternalUpdateError, NoPoolStateAvailable
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
 from degenbot.uniswap.v2_pool_state import V2PoolState
 from degenbot.uniswap.v2_types import (
-    UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
@@ -272,64 +270,6 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
                 block=view.update_block,
             ),
         )
-
-    def external_update(
-        self,
-        update: UniswapV2PoolExternalUpdate,
-    ) -> None:
-        """External update.
-
-        Raises:
-            ExternalUpdateError: If the update is for a past block.
-
-        """
-        if update.block_number < self.update_block:
-            raise ExternalUpdateError(
-                message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}",  # ruff:ignore[line-too-long]
-            )
-
-        self._py_pool.apply_sync(
-            reserve0=update.reserves_token0,
-            reserve1=update.reserves_token1,
-            block_number=update.block_number,
-        )
-
-    def discard_states_before_block(self, block: BlockNumber) -> None:
-        """Discard cached V2 reorg journal deltas earlier than the given block.
-
-        Delegates to ``Pool.discard_before_block`` (Rust pops
-        journal deltas strictly earlier than the target, keeping the genesis
-        delta + everything at/after the target). The current state is
-        unchanged when the target is at/after the newest delta.
-
-        Raises:
-            NoPoolStateAvailable: If the target is past the newest delta
-                (would remove every known state).
-
-        """
-        try:
-            self._py_pool.discard_before_block(block)
-        except ValueError as e:
-            raise NoPoolStateAvailable(block=block) from e
-
-    def restore_state_before_block(self, block: BlockNumber) -> None:
-        """Restore the V2 pool to the landed-at state just before the target block.
-
-        Delegates to ``Pool.restore_before_block`` (Rust pops
-        journal deltas at/after the target + reverse-applies them, writing
-        back the pre-target reserves in one write guard). The journal's
-        ``update_block`` lands at the oldest popped delta's block (the target
-        convention); the restored reserves are the pre-target state.
-
-        Raises:
-            NoPoolStateAvailable: If no state exists prior to the target
-                block (the target is at or before the registration block).
-
-        """
-        try:
-            self._py_pool.restore_before_block(block)
-        except ValueError as e:
-            raise NoPoolStateAvailable(block=block) from e
 
     def simulate_exact_input_swap(
         self,

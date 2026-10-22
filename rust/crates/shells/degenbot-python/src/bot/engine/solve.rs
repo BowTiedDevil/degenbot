@@ -89,7 +89,7 @@ impl PyArbEngine {
     /// on top of the snapshot-seeded tick data.
     ///
     /// Under the shared-BotState design (ADR-006) V3 pools enter `BotState` via
-    /// the bot builders (`py_bot.register_v3_pool` + `update_tick_data`),
+    /// the bot builders (`py_bot.register_v3_pool`, tick data seeded inline),
     /// NOT via the engine's verify-gated `register_v3_pool`. That builder path
     /// seeds the snapshot tick map but never drains the backfill/pump buffer —
     /// so Mint/Burn events that fired during `backfill_from_snapshot` (before

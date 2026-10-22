@@ -10,15 +10,15 @@ from __future__ import annotations
 
 from fractions import Fraction
 
-import pytest
-
 import degenbot._ffi as ffi
 from degenbot._ffi import Bot, Pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.synthetic_logs import v2_sync
 from tests.helpers.v2_pool_factory import make_v2_pool
 
 
-def _reserve_pair() -> Pool:
+def _reserve_pair_bot() -> tuple[Bot, Pool]:
+    """A registered V2 pool plus the Bot that owns it (the dispatch door)."""
     bot = Bot(1)
     pool_id = bot.register_v2_pool_test_only(
         address="0x1111111111111111111111111111111111111111",
@@ -38,7 +38,11 @@ def _reserve_pair() -> Pool:
     )
     handle = bot.get_pool(pool_id)
     assert handle is not None
-    return handle
+    return bot, handle
+
+
+def _reserve_pair() -> Pool:
+    return _reserve_pair_bot()[1]
 
 
 def _balance_vector() -> Pool:
@@ -93,13 +97,18 @@ def make_erc20_for_pool(address: str, symbol: str, decimals: int):
     return make_erc20(Bot(1), address, name=symbol, symbol=symbol, decimals=decimals)
 
 
-def test_reserve_pair_view_is_the_atomic_read_and_apply_sync_is_the_command() -> None:
-    handle = _reserve_pair()
+def test_reserve_pair_view_is_the_atomic_read_and_a_dispatched_sync_is_the_command() -> None:
+    bot, handle = _reserve_pair_bot()
 
     before = handle.reserve_pair()
     assert (before.reserve0, before.reserve1, before.update_block) == (1_000, 2_000, 100)
 
-    handle.apply_sync(3_000, 4_000, 101)
+    # The ONLY write path: a WS Sync through the pump's own door.
+    bot.dispatch_log(
+        address="0x1111111111111111111111111111111111111111",
+        block_number=101,
+        **v2_sync(reserve0=3_000, reserve1=4_000),
+    )
 
     after = handle.reserve_pair()
     assert (after.reserve0, after.reserve1, after.update_block) == (3_000, 4_000, 101)
@@ -117,11 +126,27 @@ def test_balance_vector_view_is_the_atomic_read_and_apply_balances_is_the_comman
     assert (list(after.balances), after.update_block) == ([3_000, 4_000], 101)
 
 
-def test_structural_command_refuses_the_wrong_family_loudly() -> None:
-    handle = _balance_vector()
+def test_pool_class_write_doors_are_gone() -> None:
+    """State moves through the pump only — no pool-class write door survives.
 
-    with pytest.raises(ValueError, match="reserve-pair"):
-        handle.apply_sync(3_000, 4_000, 101)
+    The handle is a read surface: events land via ``Bot.dispatch_log`` (and
+    reorgs via ``Bot.dispatch_reorg_log``), so a companion-shaped set of write
+    methods on the handle would be a second, diverging write path.
+    """
+    retired = (
+        "apply_swap",
+        "apply_sync",
+        "apply_liquidity_update",
+        "update_tick_data",
+        "ensure_word_known",
+        "discard_before_block",
+        "restore_before_block",
+    )
+    for handle in (_reserve_pair(), _balance_vector()):
+        for door in retired:
+            assert not hasattr(handle, door), door
+    # The one write left is the registration anchor production still calls.
+    assert hasattr(_reserve_pair(), "seed_genesis")
 
 
 def test_legacy_liquidity_pool_handle_is_not_registered() -> None:

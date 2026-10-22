@@ -1,11 +1,11 @@
 """Shared concentrated-liquidity companion surface.
 
 ``UniswapV3Pool`` and ``UniswapV4Pool`` carried duplicated copies of the
-same concentrated liquidity write-back surface — the tick-map reads, the 3-format
-``update_tick_data`` normalisation, ``external_update``,
-``update_liquidity_map`` and the discard/restore delegation. This module
-collapses that surface into one base so the concentrated liquidity state
-write-back is written once.
+same concentrated liquidity surface — the scalar/tick-map reads and the
+``swap_is_viable`` predicate. This module collapses that surface into one base
+so the read path is written once. Writes are not on this surface: state moves
+only through the pump's own door (``Bot.dispatch_log`` →
+``LogDispatcher`` decode → apply), never through a companion method.
 
 What stays on the subclasses: identity (address/factory/tokens/fee/
 pool_key/hook/protocol-fees), the family calc mixins, and ``__eq__``/
@@ -18,8 +18,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from degenbot.exceptions import ExternalUpdateError
-from degenbot.exceptions.pool import NoPoolStateAvailable
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 
@@ -28,14 +26,6 @@ if TYPE_CHECKING:
     from degenbot.types.aliases import BlockNumber
     from degenbot.types.chain import ChecksummedAddress
     from degenbot.uniswap.types import UniswapPoolSwapVector
-    from degenbot.uniswap.v3_types import (
-        UniswapV3PoolExternalUpdate,
-        UniswapV3PoolLiquidityMappingUpdate,
-    )
-    from degenbot.uniswap.v4_types import (
-        UniswapV4PoolExternalUpdate,
-        UniswapV4PoolLiquidityMappingUpdate,
-    )
 
 
 # A concentrated liquidity state (the family NamedTuple the ``state`` property builds).
@@ -90,10 +80,10 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
         The load-bearing key set only — the per-word bitmap VALUE is retired
         (it derives from the ``tick_data`` rows). Rust surfaces the words the
         pool knows: every word its ``tick_data`` keys land in, plus (Sparse
-        only) the Rust ``known_bitmap_words`` recorded by
-        ``update_tick_data``/fetch-merge, so a checked-but-empty word survives
-        as a known word (the fetch loop breaks). Tracked pools know exactly
-        their tick rows' words.
+        only) the Rust ``known_bitmap_words`` recorded by the registration
+        seed / fetch-merge, so a checked-but-empty word survives as a known
+        word (the fetch loop breaks). Tracked pools know exactly their tick
+        rows' words.
         """
         return {int(word) for word in self._py_pool.concentrated_liquidity().tick_bitmap}
 
@@ -134,7 +124,7 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
         """
         return self._initial_state_block
 
-    # --- shared concentrated liquidity write-back --------------------------
+    # --- shared concentrated liquidity state predicate ---------------------
 
     def swap_is_viable(  # ruff:ignore[no-self-use]
         self,
@@ -150,146 +140,6 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
         if state.liquidity == 0:
             return False
         return cast("bool", state.sqrt_price_x96 > 1)
-
-    def update_tick_data(
-        self,
-        tick_bitmap: set[int] | dict[int, Any],
-        tick_data: dict[int, Any],
-        block: int,
-    ) -> None:
-        """Apply updated tick bitmap and data from the tick data fetcher.
-
-        Delegates to ``Pool.update_tick_data`` (replaces the
-        Rust-side ``tick_data`` HashMap; scalars unchanged). The
-        ``tick_bitmap`` is the set of checked words (any iterable of word
-        ints — a ``dict`` iterates its keys): for Sparse pools the FFI records
-        them in Rust ``known_bitmap_words`` (a checked word is never
-        re-fetched); no bitmap VALUE crosses the boundary (the bitmap derives
-        from the tick rows). Tracked pools record nothing (their bitmap is
-        complete).
-        """
-        # Normalize LiquidityAtTick inputs into the tuple shape the Rust write
-        # path expects: {tick: (gross, net, block)}.
-        normalized: dict[int, tuple[int, int, int]] = {}
-        for tick, info in tick_data.items():
-            if isinstance(info, LiquidityAtTick):
-                normalized[int(tick)] = (
-                    int(info.liquidity_gross),
-                    int(info.liquidity_net),
-                    int(info.block),
-                )
-            elif isinstance(info, dict):
-                normalized[int(tick)] = (
-                    int(info["liquidity_gross"]),
-                    int(info["liquidity_net"]),
-                    int(info.get("block", 0)),
-                )
-            else:
-                normalized[int(tick)] = (
-                    int(info[0]),
-                    int(info[1]),
-                    int(info[2]) if len(info) > 2 else block,  # ruff:ignore[magic-value-comparison]
-                )
-        self._py_pool.update_tick_data(tick_bitmap, normalized, block)
-
-    def external_update(
-        self,
-        update: UniswapV3PoolExternalUpdate | UniswapV4PoolExternalUpdate,
-    ) -> bool:
-        """Process a family-external update (Swap event).
-
-        Delegates the scalar write to ``Pool.apply_swap`` (journals
-        the priors then lands the new ``sqrt_price_x96``/``liquidity``/
-        ``tick`` at ``block_number`` in one write guard).
-
-        Returns:
-            True if any updated state value was recorded, False otherwise.
-
-        Raises:
-            ExternalUpdateError: If the update is for an invalid block.
-
-        """
-        if (
-            update.block_number <= self._initial_state_block
-            or update.block_number < self.update_block
-        ):
-            raise ExternalUpdateError(message=f"Rejected update for block {update.block_number}")
-
-        if (
-            update.liquidity == self.liquidity
-            and update.sqrt_price_x96 == self.sqrt_price_x96
-            and update.tick == self.tick
-        ):
-            return False
-
-        self._py_pool.apply_swap(
-            sqrt_price_x96=update.sqrt_price_x96,
-            liquidity=update.liquidity,
-            tick=update.tick,
-            block_number=update.block_number,
-        )
-        return True
-
-    def update_liquidity_map(
-        self,
-        update: UniswapV3PoolLiquidityMappingUpdate | UniswapV4PoolLiquidityMappingUpdate,
-    ) -> None:
-        """Apply an update to the liquidity map (Mint/Burn/ModifyLiquidity).
-
-        Delegates the whole Mint/Burn application to
-        ``Pool.apply_liquidity_update`` (Rust does the tick bitmap +
-        tick_data mutation AND — for in-range events, since the 2026-08-02
-        core fix (7347dcdc3) — the active ``liquidity`` scalar adjustment
-        under one write guard). The companion performs no scalar write of
-        its own: a separate ``apply_swap`` here would double-apply the
-        in-range delta (the golden tracker test caught exactly that).
-
-        """
-        state_block = update.block_number
-
-        # The active-liquidity scalar adjust for IN-RANGE events lives in the
-        # Rust core now (7347dcdc3: "adjust in-range active liquidity on
-        # liquidity events") — it is applied inside
-        # ``apply_liquidity_update`` under the same write guard, journaled as
-        # a scalar event for reorg rollback. The companion must NOT re-apply
-        # it: the retired scalar block here double-counted every in-range
-        # Mint/Burn since the companion collapse (caught by the golden
-        # tracker test against chain truth).
-        self._py_pool.apply_liquidity_update(
-            tick_lower=update.tick_lower,
-            tick_upper=update.tick_upper,
-            liquidity_delta=update.liquidity,
-            block_number=state_block,
-        )
-
-    # --- reorg journal delegation ------------------------------------------
-
-    def discard_states_before_block(self, block: BlockNumber) -> None:
-        """Discard cached states earlier than the given block.
-
-        Raises:
-            NoPoolStateAvailable: If the target is past the newest delta.
-
-        """
-        try:
-            self._py_pool.discard_before_block(block)
-        except ValueError as e:
-            raise NoPoolStateAvailable(block=block) from e
-
-    def restore_state_before_block(self, block: BlockNumber) -> None:
-        """Restore the last pool state recorded prior to a target block.
-
-        Delegates to ``Pool.restore_v3_before_block``
-        (V3/V4-generic).
-
-        Raises:
-            NoPoolStateAvailable: If no state exists prior to the target block.
-
-        """
-        try:
-            self._py_pool.restore_before_block(block)
-        except ValueError as e:
-            raise NoPoolStateAvailable(block=block) from e
 
 
 __all__ = ["ConcentratedLiquidityCompanion"]

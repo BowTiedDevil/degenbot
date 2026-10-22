@@ -6,7 +6,6 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 from degenbot.aerodrome.types import (
-    AerodromeV2PoolExternalUpdate,
     AerodromeV2PoolState,
     AerodromeV3PoolState,
 )
@@ -15,10 +14,6 @@ from degenbot.aerodrome.v2_pool_state import AerodromeV2PoolState as AerodromeV2
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import (
-    ExternalUpdateError,
-    NoPoolStateAvailable,
-)
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
@@ -194,59 +189,6 @@ class AerodromeV2Pool(
         if state.reserves_token0 == 0 or state.reserves_token1 == 0:
             return False
         return state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
-
-    def external_update(
-        self,
-        update: AerodromeV2PoolExternalUpdate,
-    ) -> None:
-        """External update.
-
-        Raises:
-            ExternalUpdateError: See function documentation.
-
-        """
-        if update.block_number < self.update_block:
-            raise ExternalUpdateError(
-                message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}",  # ruff:ignore[line-too-long]
-            )
-
-        self._py_pool.apply_sync(
-            update.reserves_token0,
-            update.reserves_token1,
-            update.block_number,
-        )
-
-    def discard_states_before_block(
-        self,
-        block: BlockNumber,
-    ) -> None:
-        """Discard cached states earlier than the given block.
-
-        Raises:
-            NoPoolStateAvailable: See function documentation.
-
-        """
-        try:
-            self._py_pool.discard_before_block(block)
-        except ValueError as e:
-            raise NoPoolStateAvailable(block=block) from e
-
-    def restore_state_before_block(
-        self,
-        block: BlockNumber,
-    ) -> None:
-        """Restore the last pool state recorded prior to a target block.
-
-        Use this method to maintain consistent state data following a chain re-organization.
-
-        Raises:
-            NoPoolStateAvailable: See function documentation.
-
-        """
-        try:
-            self._py_pool.restore_before_block(block)
-        except ValueError as e:
-            raise NoPoolStateAvailable(block=block) from e
 
 
 class AerodromeV3Pool(UniswapV3Pool):

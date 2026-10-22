@@ -662,8 +662,8 @@ class Bot(AccountQueryMixin):
             )
 
         # V3: split-seed the reorg genesis anchor. Without it the Sparse pool
-        # journals nothing, so `discard_states_before_block(update_block + 1)`
-        # would not raise — a behavior regression for every consumer that
+        # journals nothing, so a reorg restore targeting the registration seed
+        # finds no prior state — a behavior regression for every consumer that
         # expects the registration seed to be a known state boundary.
         if is_concentrated_liquidity and block is not None and block > 0:
             py_pool.seed_genesis(block_number=block)

@@ -11,16 +11,15 @@ use crate::bot::token::PyErc20Token;
 use crate::prelude::*;
 use alloy::primitives::{I256, U256};
 use degenbot_pools::registry::PoolEntry;
-use degenbot_substrate::InstallWordOutcome;
 use hashbrown::HashMap;
 use std::sync::Arc;
 
 use pyo3::types::{PyDict, PyList, PySet, PyTuple};
 
 use crate::bot::errmap::{
-    encode_swap_failed, exact_output_family_gap, hooked_pool_approximation, journal_err_to_py,
-    override_family_gap, pool_unregistered, swap_family_gap, swap_math_in_overflow,
-    swap_math_overflow, swap_unknown_pool,
+    encode_swap_failed, exact_output_family_gap, hooked_pool_approximation, override_family_gap,
+    pool_unregistered, swap_family_gap, swap_math_in_overflow, swap_math_overflow,
+    swap_unknown_pool,
 };
 use degenbot_bot::bot_core::pool_ops::{self, SwapOpError};
 use degenbot_bot::bot_core::refresh::{RefreshError, RefreshOutcome};
@@ -33,8 +32,8 @@ use degenbot_substrate::{BotState, CurveInputsError};
 /// [`TickWordFetcher`] (ADR-005 sparse-map parity, slice 3).
 /// The callable is `fetcher(word: int, block: int) ->
 /// dict[int, tuple[int, int, int]] | None`. It must RETURN the fetched tick data
-/// (not write it back via `update_tick_data`) — the Rust loop merges the
-/// returned [`FetchedTickWord`] itself. See [`PyLiquidityPool::calculate_tokens_out_with_fetch`].
+/// (writing it back would re-enter the state lock the caller holds) — the Rust
+/// loop merges the returned [`FetchedTickWord`] itself. See [`PyLiquidityPool::calculate_tokens_out_with_fetch`].
 #[derive(Debug)]
 struct PyTickWordFetcher {
     callback: pyo3::Py<pyo3::PyAny>,
@@ -902,9 +901,9 @@ impl PyLiquidityPool {
     /// It MUST return the fetched tick data mapping tick →
     /// `(liquidity_gross, liquidity_net, block)`; returning `None` or `{}` marks
     /// the word known with no initialized ticks (an all-zero bitmap word).
-    /// The fetcher MUST NOT write back into the pool via `update_tick_data`
-    /// (the Rust loop merges the returned data itself) — doing so would re-enter
-    /// the `BotState` write lock this call holds and deadlock.
+    /// The fetcher MUST NOT write back into the pool (the Rust loop merges the
+    /// returned data itself) — doing so would re-enter the `BotState` write
+    /// lock this call holds and deadlock.
     #[pyo3(signature = (zero_for_one, amount_in, block))]
     fn calculate_tokens_out_with_fetch(
         &self,
@@ -1613,43 +1612,6 @@ impl PyLiquidityPool {
 
     // --- Mutations (per-handle, pool_id-keyed) ---
 
-    // --- Aerodrome V2 reorg journal ---
-
-    // --- V3 mutations (plan-101 slice 8a) ---
-    // Pool-id-keyed — the handle already holds the canonical pool_id, so no
-    // address resolution is needed (single lock, single lookup).
-
-    /// Apply a V3/V4 `Swap` event: journals the scalar priors then lands the
-    /// new `sqrt_price_x96`/`liquidity`/`tick` at `block_number`.
-    /// Swap events change the V3 scalars but NOT the tick data — the
-    /// `tick_priors` Vec is empty here (unlike `PyBot.update_v3_pool`, which
-    /// accepts tick updates from decoded Swap logs when they carry tick
-    /// mutations).
-    /// Raises:
-    ///     `ValueError`: If `pool_id` is not registered as a V3/V4 pool.
-    #[pyo3(signature = (sqrt_price_x96, liquidity, tick, block_number))]
-    fn apply_swap(
-        &self,
-        py: Python<'_>,
-        sqrt_price_x96: &Bound<'_, PyAny>,
-        liquidity: &Bound<'_, PyAny>,
-        tick: i32,
-        block_number: u64,
-    ) -> PyResult<()> {
-        let spx = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
-        let liq = crate::conversion::alloy::extract_python_u256(liquidity)?.to::<u128>();
-        // family-dispatching apply. The registered entry selects the
-        // design; a V4 pool routes to the V4 apply path (an unconditional
-        // V3-routed apply would no-op on `PoolEntry::V4` and silently
-        // drop every Python-side V4 update). The dispatcher is one write
-        // guard + one O(1) lookup; the single Python `apply_swap` API is
-        // preserved.
-        let _ = self.with_state_mut(py, |s| {
-            s.apply_swap_by_pool_id(self.pool_id, spx, liq, tick, block_number, &[])
-        });
-        Ok(())
-    }
-
     /// Registration/seed genesis anchor (two-stamp rule): push a
     /// `before == after` reorg-journal delta at `block_number` WITHOUT
     /// advancing either clock, so a split-seed (price at HEAD, tick map at the
@@ -1666,169 +1628,6 @@ impl PyLiquidityPool {
                 "seed_genesis: {e}"
             ))),
         }
-    }
-
-    /// Apply a V3 Mint/Burn event (liquidity update) via the handle.
-    /// Initializes (or removes) tick entries at `tick_lower`/`tick_upper`,
-    /// journals the priors for reorg rollback, invalidates the tick-range
-    /// cache. Mutates `tick_data` only for OUT-OF-RANGE events (per ADR-004);
-    /// for IN-RANGE events (the range straddles the current tick) the core
-    /// also adjusts the active `liquidity` scalar under the same write guard
-    /// (7347dcdc3), journaled as a scalar event for reorg rollback.
-    /// `sqrt_price_x96`/`tick` are never changed — no scalar write back out.
-    /// Returns `True` when the update applied to a registered V3/V4 pool;
-    /// raises `ValueError` for a registered non-concentrated-liquidity family (no concentrated liquidity tick state to
-    /// mutate) or an unregistered id.
-    #[pyo3(signature = (tick_lower, tick_upper, liquidity_delta, block_number))]
-    fn apply_liquidity_update(
-        &self,
-        py: Python<'_>,
-        tick_lower: i32,
-        tick_upper: i32,
-        liquidity_delta: &Bound<'_, PyAny>,
-        block_number: u64,
-    ) -> PyResult<bool> {
-        // liquidity_delta is a signed V3 Mint/Burn delta (Burn events are
-        // negative). Extract as i128 directly — V3 deltas fit in i128 (the
-        // contract's int128 type). For unusual callers passing values outside
-        // i128 range, surface OverflowError rather than silently muffling.
-        let delta: i128 = liquidity_delta.extract().map_err(|_| {
-            pyo3::exceptions::PyOverflowError::new_err(
-                "liquidity_delta must fit in i128 (V3 contract int128 range)",
-            )
-        })?;
-        let applied = self.with_state_mut(py, |s| {
-            s.apply_liquidity_update_by_pool_id(
-                self.pool_id,
-                tick_lower,
-                tick_upper,
-                delta,
-                block_number,
-            )
-        });
-        // The companion's contract is "state moved", and a registered pool's
-        // state always moves on this direct path: the `_by_pool_id` door
-        // bypasses the phase table (ADR-082), so its `Ok(pool_id)` is an apply
-        // by construction — there is no `Buffered`/`NoOp` verdict here to
-        // flatten. `Err` is the unregistered / non-concentrated-liquidity
-        // refusal.
-        match applied {
-            Ok(_) => Ok(true),
-            Err(e) => Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "apply_liquidity_update: {e}"
-            ))),
-        }
-    }
-
-    /// Backfill an unknown tick-bitmap word for this pool (the
-    /// write-path gate's fetch seam).
-    /// STAGED fetch — the multi-second fetch (`Python::attach` + the
-    /// companion's serial web3 RPC) runs with the `BotState` write guard
-    /// RELEASED; the fetcher re-acquires the GIL via `Python::attach` and
-    /// the pump applies events to other pools through the whole window.
-    /// Choreography per attempt: (1) short write — stage (fetcher + tick
-    /// fingerprint), (2) fetch — no lock held, (3) short write — install,
-    /// merging only if the pool was not mutated during the fetch. A race
-    /// (the pump applied an event for THIS pool mid-fetch) retries the
-    /// stage+fetch bounded times rather than applying the overlay clobber.
-    /// Returns `False` when no fetcher is stored OR the fetch failed/exhausted
-    /// its retries — the caller RAISES rather than applying the event over
-    /// an unknown word.
-    #[pyo3(signature = (word, block))]
-    fn ensure_word_known(&self, py: Python<'_>, word: i64, block: u64) -> PyResult<bool> {
-        let word_i32 = i32::try_from(word)
-            .map_err(|_| pyo3::exceptions::PyOverflowError::new_err("word must fit in i32"))?;
-        // Bounded retries: each retry refetches (the RPC is the slow part);
-        // a race requires a same-pool event to land inside the multi-second
-        // fetch window, so three attempts exhaust only pathological bursts.
-        // The retry attempt re-derives the fetch context from the pool clock
-        // (finding 1(b)), not from the caller's stale block.
-        for attempt in 0..3u8 {
-            let Some(staged) = self.with_state_mut(py, |s| {
-                s.stage_word_fetch_by_pool_id(self.pool_id, word_i32, block, attempt > 0)
-            }) else {
-                return Ok(false);
-            };
-            // NO state lock held across this fetch.
-            let Ok(fetched) = staged.fetch() else {
-                return Ok(false);
-            };
-            let outcome = self.with_state_mut(py, |s| s.install_word_fetch(&staged, &fetched));
-            match outcome {
-                InstallWordOutcome::Merged => return Ok(true),
-                InstallWordOutcome::Failed => return Ok(false),
-                InstallWordOutcome::Raced => {}
-            }
-        }
-        Ok(false)
-    }
-
-    /// The pool's tick-map coverage: `"sparse"` or `"tracked"`
-    /// for a registered V3/V4 pool, `None` for any other pool family. The
-    /// Python companion's sparse-word gate reads this — Rust's coverage is
-    /// sparse-map backfill). Mirrors the Python `UniswapV3Pool.update_tick_data`
-    /// the companion delegates here once it's rewritten over the handle
-    /// (plan-101 slice 8b). No journal delta (full-sync; the pump is the
-    /// authority for event-derived ticks — mirrors `sync_v3_pool_state`).
-    /// `tick_data` is the SAME shape `tick_data_snapshot` returns:
-    /// `{tick: (liquidity_gross, liquidity_net, block)}` — the write path is
-    /// symmetric with the read path, + the companion converts its
-    /// `LiquidityAtTick` objects to this tuple shape at the boundary (matching
-    /// how V2 converts its Python `Fraction` fees to the Rust `gamma_numer` at
-    /// the boundary).
-    /// `tick_bitmap`: the checked bitmap WORD positions — any iterable of word
-    /// ints (a `set`/`list`/`tuple`, or a `dict` whose keys are the words). For
-    /// Sparse pools the FFI records them in the Rust `known_bitmap_words` (a
-    /// checked word is never re-fetched — the contract that retires the
-    /// companion's `_bitmap_override` shadow); no bitmap VALUE crosses the
-    /// boundary (the bitmap derives from the `tick_data` rows — see the
-    /// `tick_bitmap` getter). Tracked pools never record (their bitmap is
-    /// complete).
-    /// Scalars (`sqrt_price_x96`/`liquidity`/`tick`) are UNCHANGED — this is
-    /// tick-only. `update_block` advances to `block` if newer (monotonic).
-    /// Returns `True` if the replace applied to a registered V3/V4 pool,
-    /// `False` if this `pool_id` is a V2 pool or unregistered (silent no-op —
-    /// mirrors the `apply_liquidity_update` family contract).
-    #[pyo3(signature = (tick_bitmap, tick_data, block))]
-    fn update_tick_data(
-        &self,
-        py: Python<'_>,
-        tick_bitmap: &Bound<'_, PyAny>,
-        tick_data: &Bound<'_, PyDict>,
-        block: u64,
-    ) -> PyResult<bool> {
-        // Checked-word extraction (arch-review cand 4, T1): the entries are the
-        // words the caller has checked on-chain; Sparse pools record them in
-        // `known_bitmap_words`, Tracked never do (the gate is in core —
-        // `mark_bitmap_words_known` no-ops there). No bitmap value crosses the
-        // boundary — derivation from the `tick_data` rows is the bit source.
-        let mut words: Vec<i32> = Vec::new();
-        for item in tick_bitmap.try_iter().map_err(|_| {
-            pyo3::exceptions::PyTypeError::new_err(
-                "update_tick_data: tick_bitmap must be an iterable of word ints",
-            )
-        })? {
-            words.push(item?.extract::<i32>().map_err(|_| {
-                pyo3::exceptions::PyTypeError::new_err(
-                    "update_tick_data: tick_bitmap entries must be ints",
-                )
-            })?);
-        }
-        // The seed boundary owns the wire shape (arity, gross narrowing,
-        // per-tick block) and the one malformed-container error; the per-tick
-        // block it carries is preserved on the Rust ``TickInfo.block`` field
-        // (mirrors the Python ``LiquidityAtTick.block``).
-        let map = TickData::from_py(tick_data.as_any())?;
-        // The write guard lives inside py.detach (GIL/BotState inversion fix,
-        // 2026-08-21 run-9): GIL released while parked on the BotState lock.
-        let applied = self.with_state_mut(py, |core| {
-            let applied = core.sync_tick_data_by_pool_id(self.pool_id, map, block);
-            if applied {
-                let _ = core.mark_bitmap_words_known_by_pool_id(self.pool_id, &words);
-            }
-            applied
-        });
-        Ok(applied)
     }
 
     // --- Curve state read getters + mutations (ADR-005 slice 11a state port) ---
@@ -2826,69 +2625,6 @@ impl PyLiquidityPool {
             tokens,
             balances,
             update_block,
-        })
-    }
-
-    /// Apply a reserve-pair sync command for V2 or Aerodrome V2.
-    #[pyo3(signature = (reserve0, reserve1, block_number))]
-    fn apply_sync(
-        &self,
-        py: Python<'_>,
-        reserve0: &Bound<'_, PyAny>,
-        reserve1: &Bound<'_, PyAny>,
-        block_number: u64,
-    ) -> PyResult<()> {
-        let family = self.family_of(py)?;
-        if !matches!(family, "v2" | "aerodrome-v2") {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "apply_sync requires a reserve-pair pool, got {family}"
-            )));
-        }
-        let r0 = degenbot_pools::spec_bounds::narrow_v2_reserve(
-            crate::conversion::alloy::extract_python_u256(reserve0)?,
-            "reserve0",
-        )
-        .map_err(|sv| crate::bot::engine::SpecViolationError::new_err(format!("{sv}")))?;
-        let r1 = degenbot_pools::spec_bounds::narrow_v2_reserve(
-            crate::conversion::alloy::extract_python_u256(reserve1)?,
-            "reserve1",
-        )
-        .map_err(|sv| crate::bot::engine::SpecViolationError::new_err(format!("{sv}")))?;
-        let _ = self.with_state_mut(py, |core| {
-            core.apply_sync_by_pool_id(self.pool_id, r0, r1, block_number)
-        });
-        Ok(())
-    }
-
-    #[pyo3(signature = (block))]
-    fn discard_before_block(&self, py: Python<'_>, block: u64) -> PyResult<()> {
-        if self.family_of(py).is_err() {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "pool {} is not registered",
-                self.pool_id
-            )));
-        }
-        self.with_state_mut(py, |core| {
-            core.discard_pool_before_block(self.pool_id, block)
-                .unwrap_or(Ok(()))
-                .map_err(journal_err_to_py)
-        })
-    }
-
-    /// Restore the registered pool to its landed-at state before `block`.
-    #[pyo3(signature = (block))]
-    fn restore_before_block(&self, py: Python<'_>, block: u64) -> PyResult<()> {
-        if self.family_of(py).is_err() {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "pool {} is not registered",
-                self.pool_id
-            )));
-        }
-        self.with_state_mut(py, |core| {
-            match core.restore_pool_before_block(self.pool_id, block) {
-                None | Some(Ok(())) => Ok(()),
-                Some(Err(e)) => Err(journal_err_to_py(e)),
-            }
         })
     }
 

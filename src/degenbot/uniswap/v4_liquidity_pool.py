@@ -5,9 +5,9 @@ handle topology as the V3 companion. Rust `BotState` is the single source of
 truth for V4 mutable state (scalars, tick data, reorg journal); this companion
 reads it through `self._py_pool` (atomic `snapshot_v3()` for scalars — already
 V3/V4-generic via `get_v3_or_v4_pool` — + `tick_data()`/`tick_bitmap` for the
- tick maps) and delegates
-`external_update` (Swap) / `update_liquidity_map` (ModifyLiquidity) /
-`update_tick_data` (sparse-map backfill) / discard / restore to the handle.
+ tick maps). The companion is a READ surface: state moves on the pump's own
+door (`Bot.dispatch_log` → `LogDispatcher` decode → apply), never through a
+companion write method.
 
 `_state_mgr` / `_state_cache` / `state_cache_depth` are dropped — the
 `StateCache` temporal-navigation layer lives in Rust now (journal +
@@ -154,10 +154,8 @@ class UniswapV4Pool(
     ``V4PoolState``; this companion reads it through ``self._py_pool`` (one
     atomic ``snapshot_v3()`` for scalars — already V3/V4-generic via
     ``get_v3_or_v4_pool`` — + ``tick_data_snapshot()`` /
-    ``tick_data()``/``tick_bitmap`` for the tick maps) and delegates
-    ``external_update`` (Swap) / ``update_liquidity_map`` (ModifyLiquidity) /
-    ``update_tick_data`` (sparse-map backfill) / discard / restore to the
-    handle. V4-specific identity (pool_id, pool_manager, pool_key, hooks,
+    ``tick_data()``/``tick_bitmap`` for the tick maps). V4-specific identity
+    (pool_id, pool_manager, pool_key, hooks,
     protocol_fee, lp_fee, state_view_address) stays Python-side — matches V3.
 
     Construct via the V4 builder (which registers in Rust and hands the handle

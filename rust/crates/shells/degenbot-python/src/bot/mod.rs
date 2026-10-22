@@ -35,8 +35,8 @@ use alloy::primitives::Address;
 
 use crate::bot::engine::{hex_string_to_pool_id, SpecViolationError};
 use crate::bot::errmap::{
-    journal_err_to_py, map_build_refusal, map_calc_tokens_in_err, map_calc_tokens_out_err,
-    map_driver_err, map_no_construction_io, map_refusal, map_register_v2_err,
+    map_build_refusal, map_calc_tokens_in_err, map_calc_tokens_out_err, map_driver_err,
+    map_no_construction_io, map_refusal, map_register_v2_err,
 };
 
 /// Narrow a Python-supplied `U256` reserve to `U112` (the on-chain `uint112`
@@ -1622,6 +1622,66 @@ impl PyBot {
         self.bot.chain_id()
     }
 
+    /// Drive a raw REORGED (`removed: true`) WS log through the reorg path.
+    ///
+    /// The WS twin of [`PyBot::dispatch_log`] and the Python-facing mirror of
+    /// the `BlockPump`'s removed-log branch: the log is decoded (the same
+    /// `LogDispatcher` decode half, `Bot::try_decode_log`) to resolve its
+    /// `pool_id` WITHOUT applying it forward, then the production
+    /// `ReorgCoordinator` restores that pool's state to just before the log's
+    /// block from its reorg journal and records the pool into the epoch
+    /// `EpochDelta` ledger.
+    ///
+    /// A separate door rather than a `removed=` flag on `dispatch_log` because
+    /// the two production call sites differ in more than the flag: forward
+    /// dispatch has no verdict, while a reorg restore returns an action AND
+    /// can fail hard (a too-deep reorg). The shell keeps that split.
+    ///
+    /// Args:
+    ///     `address`: Emitter contract address (hex string, `0x` optional).
+    ///     `topics`: Log topics (hex strings, `0x` optional).
+    ///     `data`: ABI-encoded log data (hex string, `0x` optional).
+    ///     `block_number`: Block number the reorged log belonged to; the
+    ///         journal restores to its pre-block state.
+    ///
+    /// Returns:
+    ///     `"restored"` when journal deltas were popped and the live state
+    ///     changed, `"noop"` otherwise (an idempotent replay whose newest
+    ///     delta is already before the target, or a log the registry does not
+    ///     decode / a pool it does not know — the forward-dispatch no-op).
+    ///
+    /// Raises:
+    ///     `ValueError`: If the log fields do not parse, or the target is at
+    ///         or below the journal's earliest delta (a too-deep reorg —
+    ///         production shuts the pump down on it; a driver gets the raise).
+    #[pyo3(signature = (address, topics, data, block_number=0))]
+    fn dispatch_reorg_log(
+        &self,
+        address: &str,
+        topics: Vec<String>,
+        data: &str,
+        block_number: u64,
+    ) -> PyResult<&'static str> {
+        let mut log = degenbot_bot::bot_core::build_rpc_log(address, topics, data, block_number)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        // `removed` is the ONE field a reorg log differs by: the decoders read
+        // topics/data/block, and the coordinator consumes only the block +
+        // pool identity.
+        log.removed = true;
+        let coordinator = degenbot_bot::bot_core::reorg_coordinator::ReorgCoordinator::new(
+            std::sync::Arc::clone(&self.bot),
+        );
+        match coordinator.dispatch_reorg_log(&log, None) {
+            Ok(degenbot_bot::bot_core::reorg_coordinator::ReorgOutcome::Restored) => Ok("restored"),
+            Ok(degenbot_bot::bot_core::reorg_coordinator::ReorgOutcome::IdempotentNoop) => {
+                Ok("noop")
+            }
+            Err(e) => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "dispatch_reorg_log: {e:?}"
+            ))),
+        }
+    }
+
     /// Drive a raw WS log through the event bus (ADR-006 D4).
     ///
     /// This is the Python-facing mirror of the `BlockPump`'s per-log call to
@@ -1893,9 +1953,9 @@ impl PyBot {
     #[expect(clippy::too_many_arguments)]
     /// Register a V3 pool, optionally seeding `tick_data` inline.
     ///
-    /// ADR-006 rolling-start race closure: the builder previously called
-    /// ``register_v3_pool`` (empty `tick_data`) THEN ``update_tick_data`` to seed
-    /// the snapshot. Because ``resume()`` runs before ``build_paths``, a pump
+    /// ADR-006 rolling-start race closure: the builder previously registered
+    /// with an empty `tick_data` THEN seeded the snapshot through a separate
+    /// pool write. Because ``resume()`` runs before ``build_paths``, a pump
     /// Mint/Burn landing between register and seed was applied to the empty
     /// `tick_data` then CLOBBERED by the seed overwrite — a lost update the
     /// on-chain ``verify_liquidity_maps`` reproduces. Folding the seed into
@@ -1911,10 +1971,10 @@ impl PyBot {
     /// `known_bitmap_words` are the tick-bitmap WORD positions the caller
     /// looked up on-chain and found EMPTY. They are seeded INLINE (same write
     /// lock as the `tick_data` seed), so a checked word is never re-fetched —
-    /// no post-register `update_tick_data` call needed. Any iterable of word
-    /// ints (a `list`/`set`/`tuple`, or a `dict` whose keys are the words)
-    /// works. Sparse pools record them; Tracked pools ignore them (a complete
-    /// bitmap has no miss to prevent — mirrors `update_tick_data`'s no-op).
+    /// no post-register seed call is needed. Any iterable of word ints (a
+    /// `list`/`set`/`tuple`, or a `dict` whose keys are the words) works.
+    /// Sparse pools record them; Tracked pools ignore them (a complete bitmap
+    /// has no miss to prevent).
     #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data=None, update_block=0, coverage="sparse", tick_data_fetcher=None, tick_data_block=None, slot_layout=None, known_bitmap_words=None))]
     fn register_v3_pool(
         &self,
@@ -2029,8 +2089,8 @@ impl PyBot {
     /// INLINE in `register_v4_pool` (one `BotState` write lock) so the pool is
     /// never visible to the live pump (resumed before `build_paths`) in an
     /// unseeded state. Previously the builder registered with empty `tick_data`
-    /// then called `update_tick_data` to seed — a pump `ModifyLiquidity` landing
-    /// between register and seed was applied then CLOBBERED by the seed
+    /// then seeded through a separate pool write — a pump `ModifyLiquidity`
+    /// landing between register and seed was applied then CLOBBERED by the seed
     /// overwrite (lost update → V4 tick-map desync → `verify_liquidity_maps`
     /// mismatch). Mirrors the V3 closure.
     ///
@@ -2620,56 +2680,6 @@ impl PyBot {
         py.detach(|| self.bot.v3_journal_len(pool_id))
     }
 
-    /// Discard V3 reorg journal deltas earlier than the given block.
-    /// Discard V3 reorg journal deltas earlier than the given block.
-    ///
-    /// No-op if the earliest delta is at/after the target; errors if the target
-    /// is past the newest delta. Raises `ValueError` on error (ADR-005 slice 4).
-    #[pyo3(signature = (pool_id, block))]
-    fn v3_discard_before_block(&self, py: Python<'_>, pool_id: u64, block: u64) -> PyResult<()> {
-        // The write guard is acquired inside the core method under this
-        // py.detach — the GIL is released while parked behind a live reader.
-        py.detach(|| self.bot.v3_discard_before_block(pool_id, block))
-            .map_err(journal_err_to_py)
-    }
-
-    /// Restore V3 pool state prior to a target block.
-    ///
-    /// Returns `(sqrt_price_x96, liquidity, tick, block)` as Python ints,
-    /// or `None` if the pool ID is not registered or not a V3 pool.
-    #[pyo3(signature = (pool_id, block))]
-    fn v3_restore_before_block(
-        &self,
-        py: Python<'_>,
-        pool_id: u64,
-        block: u64,
-    ) -> PyResult<Option<Py<PyAny>>> {
-        // Read-after-restore (ADR-016 D4): the trait `restore_pool_before_block`
-        // returns `()`; the post-restore scalar fields ARE the before-values
-        // the `V3RestoreResult.scalar_priors` previously carried. The core
-        // copies the owned scalars out under its write guard; this shell
-        // marshals them after release.
-        // The write scope runs under the core method's py.detach — the GIL
-        // is released while parked behind a live reader, and the !Send guard
-        // never leaves the core.
-        let restored = py
-            .detach(|| self.bot.v3_restore_before_block(pool_id, block))
-            .map_err(journal_err_to_py)?;
-        let Some((sqrt_p, liq, tick, blk)) = restored else {
-            return Ok(None);
-        };
-        let tuple = pyo3::types::PyTuple::new(
-            py,
-            [
-                crate::conversion::alloy::u256_to_py(py, &sqrt_p)?.unbind(),
-                liq.into_pyobject(py)?.into_any().unbind(),
-                tick.into_pyobject(py)?.into_any().unbind(),
-                blk.into_pyobject(py)?.into_any().unbind(),
-            ],
-        )?;
-        Ok(Some(tuple.into_any().unbind()))
-    }
-
     /// Register a token.
     ///
     /// Args:
@@ -2795,64 +2805,6 @@ impl PyBot {
         // which runs under this py.detach (inversion class).
         py.detach(|| self.bot.v2_journal_len(pool_id))
     }
-
-    /// Discard V2 reorg journal deltas earlier than the given block.
-    ///
-    /// No-op if the earliest delta is at/after the target; errors if the
-    /// target is past the newest delta (would remove every known state).
-    ///
-    /// Raises:
-    ///     `ValueError`: If the target is past the newest delta.
-    #[pyo3(signature = (pool_id, block))]
-    fn v2_discard_before_block(&self, py: Python<'_>, pool_id: u64, block: u64) -> PyResult<()> {
-        // The write guard is acquired inside the core method under this
-        // py.detach — the GIL is released while parked behind a live reader.
-        py.detach(|| self.bot.v2_discard_before_block(pool_id, block))
-            .map_err(journal_err_to_py)
-    }
-
-    /// Restore V2 pool state prior to a target block.
-    ///
-    /// Pops reorg journal deltas at/after the target block and restores the
-    /// landed-at state into the current fluid fields.
-    ///
-    /// Returns `(reserve0, reserve1, block)` as Python ints, or `None`
-    /// if the pool ID is not registered.
-    ///
-    /// Raises:
-    ///     `ValueError`: If the target is at or before the registration block
-    ///         (no state exists before it) — rolling back past registration is
-    ///         a hard error, not a silent no-op (ADR-005 slice 4 decision 3).
-    #[pyo3(signature = (pool_id, block))]
-    fn v2_restore_before_block(
-        &self,
-        py: Python<'_>,
-        pool_id: u64,
-        block: u64,
-    ) -> PyResult<Option<Py<PyAny>>> {
-        // Read-after-restore (ADR-016): the trait returns `()`; the
-        // post-restore reserves ARE the before-values the per-family tuple
-        // previously carried. The core copies the owned scalars out under its
-        // write guard; this shell marshals them after release.
-        // The write scope runs under the core method's py.detach — the GIL
-        // is released while parked behind a live reader, and the !Send guard
-        // never leaves the core.
-        let restored = py
-            .detach(|| self.bot.v2_restore_before_block(pool_id, block))
-            .map_err(journal_err_to_py)?;
-        let Some((r0, r1, blk)) = restored else {
-            return Ok(None);
-        };
-        let tuple = pyo3::types::PyTuple::new(
-            py,
-            [
-                crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
-                crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
-                blk.into_pyobject(py)?.into_any().unbind(),
-            ],
-        )?;
-        Ok(Some(tuple.into_any().unbind()))
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2865,8 +2817,8 @@ impl PyBot {
 /// adapter only crosses the error into Python.
 /// Extract checked tick-bitmap WORD positions from a Python iterable (a
 /// `list`/`set`/`tuple` of word ints, or a `dict` whose keys are the words) —
-/// the same shape `Pool.update_tick_data`'s `tick_bitmap` argument accepts. `None` (or `None` passed as the value) means "no words
-/// checked at registration".
+/// the shape `register_v3_pool`'s `known_bitmap_words` argument accepts. `None`
+/// (or `None` passed as the value) means "no words checked at registration".
 fn extract_checked_bitmap_words(
     words: Option<&Bound<'_, PyAny>>,
     door: &str,

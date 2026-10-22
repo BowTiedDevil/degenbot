@@ -123,12 +123,11 @@ def make_tick_data_fetcher(
 
     ADR-005 sparse-map parity (slice 3b): the returned fetcher RETURNS the
     fetched word's tick data (``{tick: (liquidity_gross, liquidity_net,
-    block)}``) rather than writing it back via ``update_tick_data``. This is
-    the contract both the Rust ``TickWordFetcher`` seam AND the Python
-    companion's sparse-write-back sites expect — the former holds the write
+    block)}``) rather than writing it back into the pool. This is the contract
+    the Rust ``TickWordFetcher`` seam expects — the write path holds the state
     lock across the fetch call (a write-back fetcher would re-enter it and
-    deadlock), the latter now merges the returned data explicitly so the
-    on-chain baseline is preserved when an update is later applied on top.
+    deadlock), and the Rust loop merges the returned data itself so the
+    on-chain baseline is preserved when an event is later applied on top.
 
     Returns ``None`` if the pool is not found or the bitmap RPC fails (the
     Rust loop treats this as a fetch failure → gives up; a Python sparse loop

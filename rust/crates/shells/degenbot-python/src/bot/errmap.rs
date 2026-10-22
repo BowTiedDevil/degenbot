@@ -31,7 +31,6 @@ use degenbot_bot::bot_core::registration_ledger::{
     RegisteredPoolFamily, SnapshotLoadReason, UnsupportedSubject, VerifyOrigin,
 };
 use degenbot_bot::bot_core::RegisterV2PoolError;
-use degenbot_pools::state_history::JournalError;
 
 use crate::bot::engine::{
     DynamicFeePoolRejectedError, HighFeePoolRejectedError, HookedPoolRejectedError,
@@ -336,23 +335,6 @@ pub(crate) fn map_calc_tokens_in_err(
 }
 
 // --- Registration wrappers (CREATE2 verify → admission) ---
-
-// --- Journal ---
-
-/// Map a [`JournalError`] to a Python `ValueError` with the `NoPoolStateAvailable`
-///-shaped message the Python pool companion expects (and re-raises as
-/// `NoPoolStateAvailable`). ADR-005 slice 4 decision 2: reorg errors that used
-/// to panic must surface as `ValueError`. Shared by `PyBot` and `PyLiquidityPool`.
-pub(crate) fn journal_err_to_py(e: JournalError) -> PyErr {
-    match e {
-        JournalError::NoStatePriorToBlock { block } => {
-            PyValueError::new_err(format!("No pool state known prior to block {block}"))
-        }
-        JournalError::NoStateAtOrAfterBlock { block } => {
-            PyValueError::new_err(format!("No pool state known at or after block {block}"))
-        }
-    }
-}
 
 // --- Pool swap-sim surfaces (`bot_core::pool_ops`) ---
 
@@ -1110,22 +1092,6 @@ mod tests {
                 "pool has an amount-modifying V4 hook; approximation consumed=102 delivered=100"
             ),
             "rendered: {rendered}"
-        );
-    }
-
-    #[test]
-    fn journal_err_pins_the_no_state_vocabulary() {
-        assert_eq!(
-            value_error(&journal_err_to_py(JournalError::NoStatePriorToBlock {
-                block: 9
-            })),
-            "No pool state known prior to block 9"
-        );
-        assert_eq!(
-            value_error(&journal_err_to_py(JournalError::NoStateAtOrAfterBlock {
-                block: 11
-            })),
-            "No pool state known at or after block 11"
         );
     }
 }

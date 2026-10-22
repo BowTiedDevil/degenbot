@@ -36,9 +36,9 @@ if TYPE_CHECKING:
 def _tick_data_to_rust_rows(
     tick_data: dict[int, Any] | None,
 ) -> dict[int, tuple[int, int, int]]:
-    """Convert ``{tick: LiquidityAtTick | tuple}`` to the Rust write shape.
+    """Convert ``{tick: LiquidityAtTick | tuple}`` to the Rust seed shape.
 
-    Rust's ``Pool.update_tick_data`` expects
+    Rust's ``register_v3_pool`` tick-data wire shape is
     ``{tick: (liquidity_gross, liquidity_net, block)}`` (symmetric with
     ``tick_data_snapshot``'s read shape). The Python companion carries
     ``LiquidityAtTick(liquidity_net, liquidity_gross, block)`` — net before
@@ -147,17 +147,12 @@ def make_v3_pool(
     handle: Pool | None = bot.get_pool(pool_id)
     assert handle is not None, "register_v3_pool returned a pool_id with no handle"
 
-    # ``apply_swap`` anchors the reorg genesis delta at state_block (mirrors
-    # the V2 builder writing reserves with update_block=state_block). The
-    # tick_data seed landed inline in ``register_v3_pool`` — no separate
-    # ``update_tick_data`` call (that would clobber pump-applied events).
+    # ``seed_genesis`` anchors the reorg journal at state_block — the same
+    # production anchor ``Bot.build_pool`` uses (a ``before == after`` delta
+    # that advances neither clock), so a mid-window reorg restore has a known
+    # state boundary. The tick_data seed landed inline in ``register_v3_pool``.
     if state_block is not None and state_block_int > 0:
-        handle.apply_swap(
-            sqrt_price_x96=sqrt_price_x96,
-            liquidity=liquidity,
-            tick=tick,
-            block_number=state_block_int,
-        )
+        handle.seed_genesis(block_number=state_block_int)
 
     # ADR-006: the pool's tokens must live in the SAME Bot as
     # the pool — ``from_handle`` recovers them via ``py_pool.get_token0``/

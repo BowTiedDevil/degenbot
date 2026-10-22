@@ -4,9 +4,9 @@ ADR-005 slice 8b — the V3 companion rewritten over the same `Pool`
 handle topology as the V2 `UniswapV2Pool`. Rust `BotState` is the single
 source of truth for V3 mutable state (scalars, tick data, reorg journal);
 this companion reads it through `self._py_pool` (the atomic `snapshot_v3()`
-for scalars + `tick_data()`/`tick_bitmap` for the tick maps)
-and delegates `external_update` (Swap) / `update_liquidity_map` (Mint/Burn) /
-`update_tick_data` (sparse-map backfill) / discard / restore to the handle.
+for scalars + `tick_data()`/`tick_bitmap` for the tick maps). The companion is
+a READ surface: state moves on the pump's own door (`Bot.dispatch_log` →
+`LogDispatcher` decode → apply), never through a companion write method.
 Immutable identity (tokens, factory, fee, tick_spacing) stays Python-side —
 matches V2 (calc lives in the `UniswapV3PoolCalc` mixin).
 
@@ -17,9 +17,9 @@ discard/restore). V2 already has none; V3 follows.
 Sparse-map bitmap note: Rust's tick bitmap is DERIVED from `tick_data` keys
 (no separate bitmap store, and no stored bitmap VALUE — the word-value
 machinery is retired), and the CHECKED words are tracked in Rust
-(`known_bitmap_words` — seeded at Sparse registration, grown by fetch-merge /
-full-sync, and grown by the `update_tick_data` FFI seam from the caller's
-checked-word set — Sparse only, never Tracked). `tick_bitmap` surfaces the
+(`known_bitmap_words` — seeded at Sparse registration from the caller's
+checked-word set, grown by fetch-merge / full-sync — Sparse only, never
+Tracked). `tick_bitmap` surfaces the
 known WORD positions as a `set[int]`, so a checked-but-empty word reads as
 present (not missing) and the fetch loop breaks with no client-side shadow. A
 word ABSENT from the set is indeterminate on a Sparse pool (fetch it) and
@@ -72,11 +72,8 @@ class UniswapV3Pool(
     Rust owns the mutable state (scalars + tick data + reorg journal) as
     ``V3PoolState``; this companion reads it through ``self._py_pool`` (one
     atomic ``snapshot_v3()`` for scalars + ``tick_data_snapshot()`` /
-    ``tick_data()``/``tick_bitmap`` for the tick maps) and delegates
-    ``external_update`` (Swap) / ``update_liquidity_map`` (Mint/Burn) /
-    ``update_tick_data`` (sparse-map backfill) / discard / restore to the
-    handle. Immutable identity (tokens, factory, fee, tick_spacing) stays
-    Python-side — matches V2.
+    ``tick_data()``/``tick_bitmap`` for the tick maps). Immutable identity
+    (tokens, factory, fee, tick_spacing) stays Python-side — matches V2.
 
     Construct via ``Bot.build_pool()`` (which registers in Rust and hands the
     handle here); tests use ``make_v3_pool``.

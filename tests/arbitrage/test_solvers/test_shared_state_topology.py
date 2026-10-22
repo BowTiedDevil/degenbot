@@ -8,8 +8,8 @@ closure of the ``rust-owned-bot.md`` §17 stale-state caveat:
 - Pools register ONCE — via ``Bot.register_v2_pool`` (the same path
   ``Bot.build_pool`` takes). The engine does NOT re-register them; it reads
   them through the shared state via ``register_and_solve_path``.
-- A live-state write through the ``Pool`` handle
-  (``sync_reserves``) is immediately visible to a subsequent engine re-solve
+- A live state change driven through the pump's own door
+  (``Bot.dispatch_log``) is immediately visible to a subsequent engine re-solve
   (``solve_all_paths``) — the engine reads the *current* shared state, not a
   stale copy. The dual-``BotState`` split (the §17 root cause) is gone.
 """
@@ -22,7 +22,13 @@ import pytest
 
 from degenbot._ffi import Bot
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
-from tests.helpers.synthetic_logs import v3_mint, v4_modify_liquidity
+from tests.helpers.synthetic_logs import (
+    v2_sync,
+    v3_mint,
+    v3_swap,
+    v4_modify_liquidity,
+    v4_swap,
+)
 
 USDC = 10**6
 WETH = 10**18
@@ -32,9 +38,6 @@ V2_POOL_B = "0x" + "22" * 20
 TOKEN0 = "0x" + "aa" * 20
 TOKEN1 = "0x" + "bb" * 20
 FACTORY = "0x" + "ff" * 20
-
-# Keccak256 of `Sync(uint112,uint112)` — the V2 Sync event signature.
-V2_SYNC_TOPIC = "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"
 
 # ─── V3 topology round-trip fixtures (plan-101 slice 8a) ────────────────
 # A V3 pool whose sqrt_price ~ 1 USDC per WETH-wei-fractal priced at ~2000.
@@ -48,9 +51,9 @@ V3_TICK = -76020
 V3_LIQUIDITY = 1_234_567_890
 
 # ─── V4 topology round-trip fixtures(public-interface regression) ─
-# A V4 pool registered via ArbitrageEngine.register_v4_pool (with its core
-# shared from a Bot) and read back through a Pool handle. The
-# handle is family-agnostic — the same getters/apply methods used for V3.
+# A V4 pool registered via Bot.register_v4_pool (with its core shared with an
+# ArbitrageEngine) and read back through a Pool handle. The handle is
+# family-agnostic — the same getters serve V3 and V4.
 V4_POOL_MANAGER = "0x" + "ee" * 20
 V4_POOL_ID_HEX = "0x" + "01" * 32
 V4_FEE = 3000
@@ -77,11 +80,6 @@ def _update_block(handle: object) -> int:
     if structure == "concentrated_liquidity":
         return handle.concentrated_liquidity().update_block  # type: ignore[attr-defined]
     return handle.balance_vector().update_block  # type: ignore[attr-defined]
-
-
-def _v2_sync_log_data(reserve0: int, reserve1: int) -> str:
-    """ABI-encode `Sync(uint112, uint112)` data: two 32-byte left-padded slots."""
-    return "0x" + (reserve0.to_bytes(32, "big") + reserve1.to_bytes(32, "big")).hex()
 
 
 def _register_balanced_v2_pair(core: Bot) -> tuple[int, int]:
@@ -133,11 +131,11 @@ class TestSharedStateTopology:
         assert engine.path_count() == 1
 
     def test_live_state_write_is_visible_to_engine_re_solve(self) -> None:
-        """A ``Pool`` write is immediately read by the next engine solve.
+        """A pump-dispatched state change is read by the next engine solve.
 
         This is the §17 stale-state root cause's structural closure: with one
         shared ``BotState``, the engine re-solve reads the *current* state the
-        handle just wrote — not a stale copy.
+        dispatched log just landed — not a stale copy.
         """
         core = Bot()
         pool_id_a, pool_id_b = _register_balanced_v2_pair(core)
@@ -149,11 +147,15 @@ class TestSharedStateTopology:
         profit_before = results_1[0][2]
         assert profit_before > 0, "the initial mispricing should be profitable"
 
-        # Live write through the pool handle — updates the shared BotState.
+        # A live Sync through the pump's door — updates the shared BotState.
         pool_handle = core.get_pool(pool_id_a)
         assert pool_handle is not None
         assert pool_handle.reserve_pair().reserve0 == 1_500_000 * USDC
-        pool_handle.apply_sync(1_000_000 * USDC, 800 * WETH, block_number=2)
+        core.dispatch_log(
+            address=V2_POOL_A,
+            block_number=2,
+            **v2_sync(reserve0=1_000_000 * USDC, reserve1=800 * WETH),
+        )
         # The handle reads the live shared state immediately.
         assert pool_handle.reserve_pair().reserve0 == 1_000_000 * USDC
 
@@ -168,14 +170,13 @@ class TestSharedStateTopology:
     def test_dispatch_log_drives_full_pump_to_solve_loop(self) -> None:
         """A synthetic WS Sync log via `Bot.dispatch_log` reaches the engine.
 
-        This is the *full* §17 closure: not just that a `Pool` write
+        This is the *full* §17 closure: not just that a state change
         is visible to the engine (the prior test), but that the WS pump's own
         path — `dispatch_log` → `LogDispatcher` decode/apply → notify
         `EngineSubscriber` → engine dirties the pool → `solve_all_paths`
-        re-solves — reads the post-Sync shared state. `sync_reserves` short-
-        circuits straight to the core; `dispatch_log` exercises the pump's
-        decoder/notify wiring, proving the hot loop (not just the eager entry)
-        reads live state.
+        re-solves — reads the post-Sync shared state. `dispatch_log` exercises
+        the pump's decoder/notify wiring, proving the hot loop (not just an
+        eager entry) reads live state.
         """
         core = Bot()
         pool_id_a, pool_id_b = _register_balanced_v2_pair(core)
@@ -192,9 +193,8 @@ class TestSharedStateTopology:
         # exactly what BlockPump calls per WS log (ADR-006 D4, slice 5).
         core.dispatch_log(
             address=V2_POOL_A,
-            topics=[V2_SYNC_TOPIC],
-            data=_v2_sync_log_data(1_000_000 * USDC, 800 * WETH),
             block_number=2,
+            **v2_sync(reserve0=1_000_000 * USDC, reserve1=800 * WETH),
         )
 
         # Confirm the synthetic log mutated the shared state via the decoder —
@@ -259,13 +259,13 @@ class TestSharedStateTopologyV3:
         assert handle.concentrated_liquidity().fee == V3_FEE
         assert handle.concentrated_liquidity().tick_spacing == V3_TICK_SPACING
 
-    def test_v3_handle_apply_swap_is_visible_to_handle_reads(self) -> None:
-        """A V3 ``apply_swap`` write through the handle is immediately readable.
+    def test_v3_dispatched_swap_is_visible_to_handle_reads(self) -> None:
+        """A dispatched V3 Swap is immediately readable through the handle.
 
-        This is the deepest assertion of slice 8a: a write through
-        ``Pool.apply_swap`` lands on the shared ``BotState`` and the
-        next getter read sees the new scalars — the V3 family of the V2
-        ``sync_reserves → reserve0`` visibility contract.
+        This is the deepest assertion of slice 8a: a swap driven through the
+        pump's own door (``Bot.dispatch_log`` → decode → apply) lands on the
+        shared ``BotState`` and the next getter read sees the new scalars —
+        the V3 family of the V2 ``dispatch_log → reserve0`` contract.
         """
         core = Bot()
         pool_id = core.register_v3_pool(
@@ -286,15 +286,14 @@ class TestSharedStateTopologyV3:
         new_liq = V3_LIQUIDITY + 100
         new_tick = V3_TICK + 1
 
-        handle.apply_swap(
-            sqrt_price_x96=new_spx,
-            liquidity=new_liq,
-            tick=new_tick,
+        core.dispatch_log(
+            address=V3_POOL_A,
             block_number=5,
+            **v3_swap(sqrt_price_x96=new_spx, liquidity=new_liq, tick=new_tick),
         )
 
         # All four written fields are immediately visible — proving the handle
-        # reads the same shared BotState the mutation wrote to.
+        # reads the same shared BotState the dispatched event landed on.
         assert handle.concentrated_liquidity().sqrt_price_x96 == new_spx
         assert handle.concentrated_liquidity().liquidity == new_liq
         assert handle.concentrated_liquidity().tick == new_tick
@@ -350,13 +349,13 @@ class TestSharedStateTopologyV3:
         with pytest.raises(ValueError, match="concentrated-liquidity"):
             v2_handle.concentrated_liquidity()
 
-    def test_v3_handle_restore_before_block_round_trips_journal(self) -> None:
-        """apply_swap journals priors; restore_before_block rolls back.
+    def test_v3_reorg_log_restores_the_pool_to_its_pre_block_state(self) -> None:
+        """A forward swap journals priors; a removed log rolls them back.
 
-        Mirrors the V2 ``restore_before_block`` contract — the journal lands
-        one delta per V3 swap (scalar priors), and restoring to a block before
-        the swap reverts the scalars in-place. The reader immediately sees the
-        rolled-back values.
+        The production reorg path: the forward Swap's journal delta carries the
+        scalar priors, and the SAME log reflagged `removed: true` at the same
+        block restores the pool in place through `ReorgCoordinator`. The reader
+        immediately sees the rolled-back values.
         """
         core = Bot()
         pool_id = core.register_v3_pool(
@@ -373,15 +372,16 @@ class TestSharedStateTopologyV3:
         handle = core.get_pool(pool_id)
         assert handle is not None
 
-        handle.apply_swap(
+        swap = v3_swap(
             sqrt_price_x96=V3_SQRT_PRICE + 1,
             liquidity=V3_LIQUIDITY + 100,
             tick=V3_TICK + 1,
-            block_number=10,
         )
+        core.dispatch_log(address=V3_POOL_A, block_number=10, **swap)
+        assert handle.concentrated_liquidity().sqrt_price_x96 == V3_SQRT_PRICE + 1
 
-        # Restore to block 5 → in-place revert of the swap scalars.
-        handle.restore_before_block(5)
+        # The reorg: the same log, reflagged removed at the same block.
+        assert core.dispatch_reorg_log(address=V3_POOL_A, block_number=10, **swap) == "restored"
 
         assert handle.concentrated_liquidity().sqrt_price_x96 == V3_SQRT_PRICE
         assert handle.concentrated_liquidity().liquidity == V3_LIQUIDITY
@@ -542,15 +542,11 @@ class TestSharedStateTopologyV3:
 class TestSharedStateTopologyV4:
     """Uniswap V4 over Pool — V4-specific closure.
 
-    Mirrors ``TestSharedStateTopologyV3`` for the V4 family. The headline
-    regression: the handle's family dispatch used to route every write into
-    V3-only ``apply_v3_*_by_pool_id`` methods that match ``PoolEntry::V3`` and
-    return ``None`` for ``PoolEntry::V4`` — so every Python-side V4 write
-    (a snapshot seed, a handle-driven event) was **silently dropped**. The fix
-    is a family-dispatching
-    ``apply_swap_by_pool_id``/``apply_liquidity_update_by_pool_id`` on
-    ``BotState``; these tests pin that dispatch through the *public* Python
-    handle surface (the exact layer that was broken).
+    Mirrors ``TestSharedStateTopologyV3`` for the V4 family. The family
+    dispatch regression these tests pin: a V4 event routed through a V3-only
+    apply path matches ``PoolEntry::V3`` and returns ``None`` for
+    ``PoolEntry::V4``, silently dropping every V4 update. Both the pump's
+    dispatched events and the handle reads must reach the V4 arm.
     """
 
     @staticmethod
@@ -583,16 +579,15 @@ class TestSharedStateTopologyV4:
             coverage="sparse",
         )
 
-    def test_v4_handle_apply_swap_is_visible_to_handle_reads(self) -> None:
-        """A V4 ``apply_swap`` through the handle lands on the shared BotState.
+    def test_v4_dispatched_swap_is_visible_to_handle_reads(self) -> None:
+        """A dispatched V4 Swap lands on the shared BotState.
 
-        Headline regression via the public interface: pre-fix,
-        ``Pool.apply_swap`` called ``apply_v3_swap_by_pool_id``
-        unconditionally, which no-op'd on a ``PoolEntry::V4`` and silently left
-        the V4 scalars at their registration values. After the family-dispatch
-        fix, the write is visible to the next handle read — the V4 family of
-        the V3 ``apply_swap → sqrt_price_x96`` visibility contract
-        (``test_v3_handle_apply_swap_is_visible_to_handle_reads``).
+        Headline regression via the public interface: a V4 event routed into a
+        V3-only ``apply_v3_swap_by_pool_id`` no-ops on a ``PoolEntry::V4`` and
+        silently leaves the V4 scalars at their registration values. Through
+        the family-dispatching path the write is visible to the next handle
+        read — the V4 family of the V3 dispatched-swap visibility contract
+        (``test_v3_dispatched_swap_is_visible_to_handle_reads``).
         """
         core = Bot()
         engine = ArbitrageEngine(py_bot=core)
@@ -603,15 +598,19 @@ class TestSharedStateTopologyV4:
         new_spx = V4_SQRT_PRICE + 1
         new_liq = V4_LIQUIDITY + 100
         new_tick = V4_TICK + 1
-        handle.apply_swap(
-            sqrt_price_x96=new_spx,
-            liquidity=new_liq,
-            tick=new_tick,
+        core.dispatch_log(
+            address=V4_POOL_MANAGER,
             block_number=5,
+            **v4_swap(
+                pool_id=V4_POOL_ID_HEX,
+                sqrt_price_x96=new_spx,
+                liquidity=new_liq,
+                tick=new_tick,
+            ),
         )
 
-        # All four written fields are immediately visible — proving the handle
-        # dispatched to the V4 apply path (not the V3-only no-op).
+        # All four written fields are immediately visible — proving the event
+        # reached the V4 apply arm (not the V3-only no-op).
         assert handle.concentrated_liquidity().sqrt_price_x96 == new_spx
         assert handle.concentrated_liquidity().liquidity == new_liq
         assert handle.concentrated_liquidity().tick == new_tick
@@ -620,9 +619,9 @@ class TestSharedStateTopologyV4:
     def test_v4_pumped_modify_liquidity_inits_ticks(self) -> None:
         """A dispatched V4 ModifyLiquidity inits the pool's tick entries.
 
-        The other half: the handle's liquidity write used to route to
-        ``apply_v3_liquidity_update_by_pool_id`` unconditionally, which no-op'd
-        on ``PoolEntry::V4`` and silently dropped the ModifyLiquidity tick
+        The other half: a liquidity event routed to
+        ``apply_v3_liquidity_update_by_pool_id`` unconditionally no-ops on
+        ``PoolEntry::V4`` and silently drops the ModifyLiquidity tick
         mutation. The family-dispatching route reaches the V4 arm and the
         tick_data map gains entries — the V4 family of the V3
         pumped-Mint contract (``test_v3_pumped_mint_inits_ticks``).
@@ -668,8 +667,8 @@ class TestSharedStateTopologyConcurrency:
     inside; ``Bot``/``Pool`` methods take ``core`` alone and never
     call into the engine (ADR-003's rule keeping the deadlock surface empty).
     These tests characterize that invariant under concurrent writer/reader
-    threads — the pump-side write (``apply_swap``) interleaved with companion
-    reads (``snapshot_v3``).
+    threads — the pump-side write (a dispatched V3 Swap) interleaved with
+    companion reads (``snapshot_v3``).
 
     Note on the GIL: under CPython's GIL these threads don't create true
     parallel lock contention, but they DO exercise the lock-acquire/release
@@ -681,12 +680,12 @@ class TestSharedStateTopologyConcurrency:
     _ITERATIONS = 2_000
     _READERS = 4
 
-    def test_concurrent_apply_swap_writes_complete_without_deadlock(self) -> None:
-        """A writer thread looping ``apply_swap`` joins within a sane timeout.
+    def test_concurrent_dispatched_writes_complete_without_deadlock(self) -> None:
+        """A writer thread looping dispatched Swaps joins within a sane timeout.
 
         Regression guard for the engine-then-core lock ordering: if a path
         ever nested core-then-engine, the writer (which takes ``core.write()``
-        via the handle) would block the pump and the join would time out.
+        via the apply path) would block the pump and the join would time out.
         """
         core = Bot()
         core.register_v3_pool(
@@ -708,11 +707,14 @@ class TestSharedStateTopologyConcurrency:
         def writer() -> None:
             try:
                 for i in range(self._ITERATIONS):
-                    handle.apply_swap(
-                        sqrt_price_x96=V3_SQRT_PRICE + i,
-                        liquidity=V3_LIQUIDITY + i,
-                        tick=V3_TICK + (i % 7),
+                    core.dispatch_log(
+                        address=V3_POOL_A,
                         block_number=i + 1,
+                        **v3_swap(
+                            sqrt_price_x96=V3_SQRT_PRICE + i,
+                            liquidity=V3_LIQUIDITY + i,
+                            tick=V3_TICK + (i % 7),
+                        ),
                     )
             except BaseException as exc:  # ruff: ignore[blind-except]
                 errors.append(exc)
@@ -763,11 +765,14 @@ class TestSharedStateTopologyConcurrency:
             i = 0
             while not stop.is_set() and i < self._ITERATIONS:
                 i += 1
-                handle.apply_swap(
-                    sqrt_price_x96=V3_SQRT_PRICE + i,
-                    liquidity=V3_LIQUIDITY + i,
-                    tick=V3_TICK + i,
+                core.dispatch_log(
+                    address=V3_POOL_A,
                     block_number=i,
+                    **v3_swap(
+                        sqrt_price_x96=V3_SQRT_PRICE + i,
+                        liquidity=V3_LIQUIDITY + i,
+                        tick=V3_TICK + i,
+                    ),
                 )
 
         def reader() -> None:
@@ -910,8 +915,8 @@ class TestSharedStateTopologyCurve:
 
         The deepest assertion of the state-port sub-slice: a write through the
         handle lands on the shared ``BotState`` and the next getter read sees
-        the new balances — the Curve family of the V3
-        ``apply_swap → sqrt_price_x96`` visibility contract.
+        the new balances — the Curve family of the V3 dispatched-swap →
+        ``sqrt_price_x96`` visibility contract.
         """
         core = Bot()
         pool_id = core.register_curve_pool(
@@ -1094,7 +1099,7 @@ class TestSharedStateTopologyBalancerWeighted:
         The deepest assertion of the state-port sub-slice: a write through the
         handle lands on the shared ``BotState`` and the next getter read sees
         the new balances — the Balancer weighted family of the V3
-        ``apply_swap → sqrt_price_x96`` visibility contract.
+        dispatched-swap → ``sqrt_price_x96`` visibility contract.
         """
         core = Bot()
         pool_id = core.register_balancer_weighted_pool(
@@ -1306,7 +1311,7 @@ class TestSharedStateTopologyBalancerStable:
         The deepest assertion of the state-port sub-slice: a write through
         the handle lands on the shared ``BotState`` and the next getter read
         sees the new balances — the Balancer stable family of the V3
-        ``apply_swap → sqrt_price_x96`` visibility contract.
+        dispatched-swap → ``sqrt_price_x96`` visibility contract.
         """
         core = Bot()
         pool_id = core.register_balancer_stable_pool(

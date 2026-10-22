@@ -129,7 +129,7 @@ class ArbitrageEngine:
         on top of the snapshot-seeded tick data.
 
         Under the shared-BotState design (ADR-006) V3 pools enter `BotState` via
-        the bot builders (`py_bot.register_v3_pool` + `update_tick_data`),
+        the bot builders (`py_bot.register_v3_pool`, tick data seeded inline),
         NOT via the engine's verify-gated `register_v3_pool`. That builder path
         seeds the snapshot tick map but never drains the backfill/pump buffer —
         so Mint/Burn events that fired during `backfill_from_snapshot` (before
@@ -1006,6 +1006,43 @@ class Bot:
             `data`: ABI-encoded log data (hex string, `0x` optional).
             `block_number`: Block number the synthetic log belongs to.
         """
+    def dispatch_reorg_log(
+        self, /, address: str, topics: Sequence[str], data: str, block_number: int = 0
+    ) -> str:
+        """
+        Drive a raw REORGED (`removed: true`) WS log through the reorg path.
+
+        The WS twin of [`PyBot::dispatch_log`] and the Python-facing mirror of
+        the `BlockPump`'s removed-log branch: the log is decoded (the same
+        `LogDispatcher` decode half, `Bot::try_decode_log`) to resolve its
+        `pool_id` WITHOUT applying it forward, then the production
+        `ReorgCoordinator` restores that pool's state to just before the log's
+        block from its reorg journal and records the pool into the epoch
+        `EpochDelta` ledger.
+
+        A separate door rather than a `removed=` flag on `dispatch_log` because
+        the two production call sites differ in more than the flag: forward
+        dispatch has no verdict, while a reorg restore returns an action AND
+        can fail hard (a too-deep reorg). The shell keeps that split.
+
+        Args:
+            `address`: Emitter contract address (hex string, `0x` optional).
+            `topics`: Log topics (hex strings, `0x` optional).
+            `data`: ABI-encoded log data (hex string, `0x` optional).
+            `block_number`: Block number the reorged log belonged to; the
+                journal restores to its pre-block state.
+
+        Returns:
+            `"restored"` when journal deltas were popped and the live state
+            changed, `"noop"` otherwise (an idempotent replay whose newest
+            delta is already before the target, or a log the registry does not
+            decode / a pool it does not know — the forward-dispatch no-op).
+
+        Raises:
+            `ValueError`: If the log fields do not parse, or the target is at
+                or below the journal's earliest delta (a too-deep reorg —
+                production shuts the pump down on it; a driver gets the raise).
+        """
     def encode_swap(
         self, /, pool_id: int, zero_for_one: bool, amount_out: Any, recipient: str
     ) -> tuple[str, str, int] | None:
@@ -1318,9 +1355,9 @@ class Bot:
         Returns the auto-assigned pool ID.
         Register a V3 pool, optionally seeding `tick_data` inline.
 
-        ADR-006 rolling-start race closure: the builder previously called
-        ``register_v3_pool`` (empty `tick_data`) THEN ``update_tick_data`` to seed
-        the snapshot. Because ``resume()`` runs before ``build_paths``, a pump
+        ADR-006 rolling-start race closure: the builder previously registered
+        with an empty `tick_data` THEN seeded the snapshot through a separate
+        pool write. Because ``resume()`` runs before ``build_paths``, a pump
         Mint/Burn landing between register and seed was applied to the empty
         `tick_data` then CLOBBERED by the seed overwrite — a lost update the
         on-chain ``verify_liquidity_maps`` reproduces. Folding the seed into
@@ -1336,10 +1373,10 @@ class Bot:
         `known_bitmap_words` are the tick-bitmap WORD positions the caller
         looked up on-chain and found EMPTY. They are seeded INLINE (same write
         lock as the `tick_data` seed), so a checked word is never re-fetched —
-        no post-register `update_tick_data` call needed. Any iterable of word
-        ints (a `list`/`set`/`tuple`, or a `dict` whose keys are the words)
-        works. Sparse pools record them; Tracked pools ignore them (a complete
-        bitmap has no miss to prevent — mirrors `update_tick_data`'s no-op).
+        no post-register seed call is needed. Any iterable of word ints (a
+        `list`/`set`/`tuple`, or a `dict` whose keys are the words) works.
+        Sparse pools record them; Tracked pools ignore them (a complete bitmap
+        has no miss to prevent).
         """
     def register_v4_pool(
         self,
@@ -1382,8 +1419,8 @@ class Bot:
         INLINE in `register_v4_pool` (one `BotState` write lock) so the pool is
         never visible to the live pump (resumed before `build_paths`) in an
         unseeded state. Previously the builder registered with empty `tick_data`
-        then called `update_tick_data` to seed — a pump `ModifyLiquidity` landing
-        between register and seed was applied then CLOBBERED by the seed
+        then seeded through a separate pool write — a pump `ModifyLiquidity`
+        landing between register and seed was applied then CLOBBERED by the seed
         overwrite (lost update → V4 tick-map desync → `verify_liquidity_maps`
         mismatch). Mirrors the V3 closure.
 
@@ -1591,57 +1628,17 @@ class Bot:
 
         No-op if the pool is not registered.
         """
-    def v2_discard_before_block(self, /, pool_id: int, block: int) -> None:
-        """
-        Discard V2 reorg journal deltas earlier than the given block.
-
-        No-op if the earliest delta is at/after the target; errors if the
-        target is past the newest delta (would remove every known state).
-
-        Raises:
-            `ValueError`: If the target is past the newest delta.
-        """
     def v2_journal_len(self, /, pool_id: int) -> int:
         """
         Get the number of deltas in the reorg journal for a V2 pool.
 
         Returns 0 if the pool ID is not registered.
         """
-    def v2_restore_before_block(self, /, pool_id: int, block: int) -> Any | None:
-        """
-        Restore V2 pool state prior to a target block.
-
-        Pops reorg journal deltas at/after the target block and restores the
-        landed-at state into the current fluid fields.
-
-        Returns `(reserve0, reserve1, block)` as Python ints, or `None`
-        if the pool ID is not registered.
-
-        Raises:
-            `ValueError`: If the target is at or before the registration block
-                (no state exists before it) — rolling back past registration is
-                a hard error, not a silent no-op (ADR-005 slice 4 decision 3).
-        """
-    def v3_discard_before_block(self, /, pool_id: int, block: int) -> None:
-        """
-        Discard V3 reorg journal deltas earlier than the given block.
-        Discard V3 reorg journal deltas earlier than the given block.
-
-        No-op if the earliest delta is at/after the target; errors if the target
-        is past the newest delta. Raises `ValueError` on error (ADR-005 slice 4).
-        """
     def v3_journal_len(self, /, pool_id: int) -> int:
         """
         Get the number of deltas in the reorg journal for a V3 pool.
 
         Returns 0 if the pool ID is not registered or is not a V3 pool.
-        """
-    def v3_restore_before_block(self, /, pool_id: int, block: int) -> Any | None:
-        """
-        Restore V3 pool state prior to a target block.
-
-        Returns `(sqrt_price_x96, liquidity, tick, block)` as Python ints,
-        or `None` if the pool ID is not registered or not a V3 pool.
         """
 
 @final
@@ -2324,6 +2321,8 @@ class _ConfigPumpFace:
     @property
     def streaming_delivery(self) -> bool: ...
     @property
+    def strict_sparse_apply(self) -> bool: ...
+    @property
     def ws_completeness(self) -> bool: ...
 
 @type_check_only
@@ -2956,39 +2955,6 @@ class Pool:
         Aerodrome V2 token1 ERC-20 decimal count. `0` for non-Aerodrome pools.
         """
     def apply_balances(self, /, balances: list, block_number: int) -> bool: ...
-    def apply_liquidity_update(
-        self, /, tick_lower: int, tick_upper: int, liquidity_delta: Any, block_number: int
-    ) -> bool:
-        """
-        Apply a V3 Mint/Burn event (liquidity update) via the handle.
-        Initializes (or removes) tick entries at `tick_lower`/`tick_upper`,
-        journals the priors for reorg rollback, invalidates the tick-range
-        cache. Mutates `tick_data` only for OUT-OF-RANGE events (per ADR-004);
-        for IN-RANGE events (the range straddles the current tick) the core
-        also adjusts the active `liquidity` scalar under the same write guard
-        (7347dcdc3), journaled as a scalar event for reorg rollback.
-        `sqrt_price_x96`/`tick` are never changed — no scalar write back out.
-        Returns `True` when the update applied to a registered V3/V4 pool;
-        raises `ValueError` for a registered non-concentrated-liquidity family (no concentrated liquidity tick state to
-        mutate) or an unregistered id.
-        """
-    def apply_swap(
-        self, /, sqrt_price_x96: Any, liquidity: Any, tick: int, block_number: int
-    ) -> None:
-        """
-        Apply a V3/V4 `Swap` event: journals the scalar priors then lands the
-        new `sqrt_price_x96`/`liquidity`/`tick` at `block_number`.
-        Swap events change the V3 scalars but NOT the tick data — the
-        `tick_priors` Vec is empty here (unlike `PyBot.update_v3_pool`, which
-        accepts tick updates from decoded Swap logs when they carry tick
-        mutations).
-        Raises:
-            `ValueError`: If `pool_id` is not registered as a V3/V4 pool.
-        """
-    def apply_sync(self, /, reserve0: Any, reserve1: Any, block_number: int) -> None:
-        """
-        Apply a reserve-pair sync command for V2 or Aerodrome V2.
-        """
     def balance_vector(self, /) -> BalanceVectorView:
         """
         Structural balance-vector snapshot. Family mismatch is a loud refusal.
@@ -3180,9 +3146,9 @@ class Pool:
         It MUST return the fetched tick data mapping tick →
         `(liquidity_gross, liquidity_net, block)`; returning `None` or `{}` marks
         the word known with no initialized ticks (an all-zero bitmap word).
-        The fetcher MUST NOT write back into the pool via `update_tick_data`
-        (the Rust loop merges the returned data itself) — doing so would re-enter
-        the `BotState` write lock this call holds and deadlock.
+        The fetcher MUST NOT write back into the pool (the Rust loop merges the
+        returned data itself) — doing so would re-enter the `BotState` write
+        lock this call holds and deadlock.
         """
     def concentrated_liquidity(self, /) -> ConcentratedLiquidityView:
         """
@@ -3379,27 +3345,9 @@ class Pool:
         """
         Resolved DEX deployment name, or ``None`` for an unknown deployment.
         """
-    def discard_before_block(self, /, block: int) -> None: ...
     def encode_swap(
         self, /, zero_for_one: bool, amount_out: Any, recipient: str
     ) -> tuple[str, str, int] | None: ...
-    def ensure_word_known(self, /, word: int, block: int) -> bool:
-        """
-        Backfill an unknown tick-bitmap word for this pool (the
-        write-path gate's fetch seam).
-        STAGED fetch — the multi-second fetch (`Python::attach` + the
-        companion's serial web3 RPC) runs with the `BotState` write guard
-        RELEASED; the fetcher re-acquires the GIL via `Python::attach` and
-        the pump applies events to other pools through the whole window.
-        Choreography per attempt: (1) short write — stage (fetcher + tick
-        fingerprint), (2) fetch — no lock held, (3) short write — install,
-        merging only if the pool was not mutated during the fetch. A race
-        (the pump applied an event for THIS pool mid-fetch) retries the
-        stage+fetch bounded times rather than applying the overlay clobber.
-        Returns `False` when no fetcher is stored OR the fetch failed/exhausted
-        its retries — the caller RAISES rather than applying the event over
-        an unknown word.
-        """
     @property
     def factory(self, /) -> str:
         """
@@ -3567,10 +3515,6 @@ class Pool:
         `update_block`. Silent no-op (`False`) if this `pool_id` is not
         registered as a Balancer stable pool (so a companion built for a
         """
-    def restore_before_block(self, /, block: int) -> None:
-        """
-        Restore the registered pool to its landed-at state before `block`.
-        """
     def seed_genesis(self, /, block_number: int) -> bool:
         """
         Registration/seed genesis anchor (two-stamp rule): push a
@@ -3622,35 +3566,6 @@ class Pool:
         Token1 contract address (EIP-55 checksummed hex). Empty string when the
         registered family has no token1 field; raises if the id is not
         registered.
-        """
-    def update_tick_data(self, /, tick_bitmap: Any, tick_data: dict, block: int) -> bool:
-        """
-        The pool's tick-map coverage: `"sparse"` or `"tracked"`
-        for a registered V3/V4 pool, `None` for any other pool family. The
-        Python companion's sparse-word gate reads this — Rust's coverage is
-        sparse-map backfill). Mirrors the Python `UniswapV3Pool.update_tick_data`
-        the companion delegates here once it's rewritten over the handle
-        (plan-101 slice 8b). No journal delta (full-sync; the pump is the
-        authority for event-derived ticks — mirrors `sync_v3_pool_state`).
-        `tick_data` is the SAME shape `tick_data_snapshot` returns:
-        `{tick: (liquidity_gross, liquidity_net, block)}` — the write path is
-        symmetric with the read path, + the companion converts its
-        `LiquidityAtTick` objects to this tuple shape at the boundary (matching
-        how V2 converts its Python `Fraction` fees to the Rust `gamma_numer` at
-        the boundary).
-        `tick_bitmap`: the checked bitmap WORD positions — any iterable of word
-        ints (a `set`/`list`/`tuple`, or a `dict` whose keys are the words). For
-        Sparse pools the FFI records them in the Rust `known_bitmap_words` (a
-        checked word is never re-fetched — the contract that retires the
-        companion's `_bitmap_override` shadow); no bitmap VALUE crosses the
-        boundary (the bitmap derives from the `tick_data` rows — see the
-        `tick_bitmap` getter). Tracked pools never record (their bitmap is
-        complete).
-        Scalars (`sqrt_price_x96`/`liquidity`/`tick`) are UNCHANGED — this is
-        tick-only. `update_block` advances to `block` if newer (monotonic).
-        Returns `True` if the replace applied to a registered V3/V4 pool,
-        `False` if this `pool_id` is a V2 pool or unregistered (silent no-op —
-        mirrors the `apply_liquidity_update` family contract).
         """
     @property
     def variant(self, /) -> str:
