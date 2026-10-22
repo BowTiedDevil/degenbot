@@ -241,6 +241,7 @@ fn make_hop(
         deployer: Address::ZERO,
         init_hash: alloy::primitives::B256::ZERO,
         slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
+        known_bitmap_words: Vec::new(),
     };
     let (_identity, state) = V3PoolState::from_params(params, 8);
     let seq = state

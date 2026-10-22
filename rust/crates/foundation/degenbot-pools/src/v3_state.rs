@@ -240,6 +240,16 @@ pub struct RegisterV3PoolParams {
     /// snapshot coverage (`Sparse`). The buffer is always applied — the
     /// snapshot is always stale data from the DB.
     pub coverage: PoolTickCoverage,
+
+    /// Checked tick-bitmap WORD positions the caller looked up on-chain at
+    /// registration and found EMPTY (Sparse pools only). Seeded inline with
+    /// the registration — one write lock, mirroring the `tick_data` inline
+    /// seed — so a known word is never re-fetched, without a post-register
+    /// `update_tick_data` door. Combined with the words derived from the
+    /// `tick_data` keys. Ignored for `Tracked` pools: their bitmap is
+    /// complete, so the known set would be dead state (mirrors
+    /// `mark_bitmap_words_known`'s no-op).
+    pub known_bitmap_words: Vec<i32>,
     /// Sparse-tick backfill fetcher (stored on `V3PoolState` at
     /// registration; `None` for `Tracked` pools or when no Python fetcher
     /// was supplied). ADR-006 I/O trait object — pyo3-free trait, the
@@ -286,6 +296,7 @@ impl Default for RegisterV3PoolParams {
             update_block: 0,
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
+            known_bitmap_words: Vec::new(),
             fetcher: None,
             deployer: Address::ZERO,
             init_hash: B256::ZERO,
@@ -660,6 +671,13 @@ impl V3PoolState {
         if params.coverage == PoolTickCoverage::Sparse {
             state.seed_known_bitmap_words(params.tick_spacing);
         }
+        // Registration-supplied checked words (a caller's on-chain
+        // checked-empty words) land in the same construction as the seed.
+        state_seeding::seed_checked_bitmap_words(
+            &mut state,
+            &params.known_bitmap_words,
+            params.coverage,
+        );
         (identity, state)
     }
 

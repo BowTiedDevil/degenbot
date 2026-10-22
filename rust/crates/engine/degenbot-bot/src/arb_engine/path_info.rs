@@ -329,6 +329,7 @@ mod tests {
                 tick_data_block: None,
                 coverage: PoolTickCoverage::Tracked,
                 fetcher: None,
+                known_bitmap_words: Vec::new(),
             })
             .expect("register_v4_pool");
         let pool2_id = engine.register_v2_pool(

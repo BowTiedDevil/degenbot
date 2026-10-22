@@ -69,6 +69,10 @@ impl ClStateFixture for V4PoolState {
         ConcentratedLiquidityPoolMut::seed_genesis(self, block);
     }
 
+    fn set_coverage(&mut self, coverage: PoolTickCoverage) {
+        self.coverage = coverage;
+    }
+
     fn apply_swap(
         &mut self,
         sqrt_price_x96: U256,

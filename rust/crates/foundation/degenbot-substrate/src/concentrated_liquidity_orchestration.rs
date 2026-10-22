@@ -2700,6 +2700,7 @@ mod registered_v4_fast_path_tests {
             tick_data_block: None,
             coverage,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("test setup: V4 registration")
     }

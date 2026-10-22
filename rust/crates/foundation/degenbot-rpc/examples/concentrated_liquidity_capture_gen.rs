@@ -259,6 +259,7 @@ fn main() -> ExitCode {
             deployer: Address::ZERO,
             init_hash: B256::ZERO,
             slot_layout: degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
+            known_bitmap_words: Vec::new(),
         };
         let (_identity, mut state) = V3PoolState::from_params(params, 8);
 

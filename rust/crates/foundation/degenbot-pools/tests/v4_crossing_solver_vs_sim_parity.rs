@@ -125,6 +125,7 @@ fn build_multi_tick_v4_state(
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
     // `from_params` is the production registration constructor (seeds
     // `known_bitmap_words` from tick_data keys, pins the snapshot seed).
@@ -372,6 +373,7 @@ fn build_fee1_tiny_state(
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
     let (_identity, state) = V4PoolState::from_params(params, 8);
     state
@@ -1553,6 +1555,7 @@ fn build_uni_9a5c1d2f_v4_state() -> V4PoolState {
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
     let (_identity, state) = V4PoolState::from_params(params, 8);
     state
@@ -1644,6 +1647,7 @@ fn build_fee1_76f75965_v4_state() -> V4PoolState {
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
     let (_identity, state) = V4PoolState::from_params(params, 8);
     state

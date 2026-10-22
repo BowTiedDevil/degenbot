@@ -47,6 +47,7 @@ fn make_v3_pool(factory: Address, liquidity: u128) -> PoolEntry {
         deployer: factory,
         init_hash: B256::default(),
         slot_layout: degenbot_pools::ConcentratedLiquiditySlotLayout::UniswapV3,
+        known_bitmap_words: Vec::new(),
     };
     let (identity, state) = V3PoolState::from_params(params, 8);
     PoolEntry::V3(Box::new((identity, state)))

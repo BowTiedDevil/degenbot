@@ -61,6 +61,7 @@ fn v4_params() -> RegisterV4PoolParams {
         tick_data_block: None,
         coverage: PoolTickCoverage::Sparse,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     }
 }
 

@@ -572,6 +572,7 @@ fn v4_snapshot_seed_survives_pump_modify_liquidity() {
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     })
     .expect("V4 pool registers");
     // Tracked pools register `Quarantined`; transition to `Live`
@@ -693,6 +694,7 @@ fn v4_post_drain_snapshot_survives_pump_modify_liquidity() {
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     })
     .expect("V4 pool registers");
     // Tracked pools register `Quarantined`; transition to `Live` so
@@ -790,6 +792,7 @@ fn v4_post_drain_snapshot_is_none_for_sparse_pools() {
         tick_data_block: None,
         coverage: PoolTickCoverage::Sparse,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     })
     .expect("V4 sparse pool registers");
     PoolLookup::V4 {

@@ -1285,6 +1285,7 @@ pub async fn build_v3(
         deployer,
         init_hash,
         slot_layout,
+        known_bitmap_words: Vec::new(),
     })
 }
 
@@ -1475,6 +1476,7 @@ pub async fn build_v4(
             tick_data_block: Some(tick_data_block),
             coverage,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         },
         lp_fee,
     })

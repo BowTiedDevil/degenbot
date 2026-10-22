@@ -4,10 +4,10 @@
 //! method is per-adapter surface); what lives here is the shared verb
 //! contract itself.
 
-use super::{seed_known_bitmap_words, word_of, SeedingHost};
+use super::{seed_checked_bitmap_words, seed_known_bitmap_words, word_of, SeedingHost};
 use crate::families::concentrated_liquidity::state_fixture::ClStateFixture;
 use crate::families::concentrated_liquidity::state_journal::JournalHost;
-use crate::v3_state::V3PoolState;
+use crate::v3_state::{PoolTickCoverage, V3PoolState};
 use crate::v4_state::V4PoolState;
 use crate::TickInfo;
 use alloy::primitives::U128;
@@ -97,4 +97,51 @@ fn seed_known_bitmap_words_seeds_the_word_positions_of_the_tick_keys_on_both_ada
     }
     seed_known_bitmap_words_seeds_the_word_positions_of_the_tick_keys::<V3PoolState>("V3");
     seed_known_bitmap_words_seeds_the_word_positions_of_the_tick_keys::<V4PoolState>("V4");
+}
+
+#[test]
+fn seed_checked_bitmap_words_extends_the_sparse_set_and_ignores_tracked() {
+    fn case<F: ClStateFixture>(tag: &str) {
+        // Sparse: a checked-empty word (absent from the tick map, so absent
+        // from the derived set) joins the known set — the registration-time
+        // on-chain check is never repeated as a fetch.
+        let mut state = F::with_position(1_000_000u128);
+        F::set_coverage(&mut state, PoolTickCoverage::Sparse);
+        seed_known_bitmap_words(&mut state, 60);
+        let derived = SeedingHost::known_bitmap_words_mut(&mut state).clone();
+        assert!(
+            !derived.contains(&9),
+            "{tag}: fixture precondition: word 9 has no tick"
+        );
+
+        seed_checked_bitmap_words(&mut state, &[9], PoolTickCoverage::Sparse);
+
+        let known = SeedingHost::known_bitmap_words_mut(&mut state).clone();
+        assert!(
+            known.contains(&9),
+            "{tag}: the registration-checked word joins the sparse set: {known:?}"
+        );
+        assert!(
+            derived.is_subset(&known),
+            "{tag}: the tick-derived words survive the checked-word seed"
+        );
+
+        // Tracked: the bitmap is complete, so the known set is never written
+        // (the same coverage gate as `mark_bitmap_words_known`).
+        let mut state = F::with_position(1_000_000u128);
+        F::set_coverage(&mut state, PoolTickCoverage::Tracked);
+        seed_known_bitmap_words(&mut state, 60);
+        let before = SeedingHost::known_bitmap_words_mut(&mut state).clone();
+
+        seed_checked_bitmap_words(&mut state, &[9], PoolTickCoverage::Tracked);
+
+        assert_eq!(
+            SeedingHost::known_bitmap_words_mut(&mut state),
+            &before,
+            "{tag}: a Tracked pool ignores registration-checked words"
+        );
+    }
+
+    case::<V3PoolState>("V3");
+    case::<V4PoolState>("V4");
 }

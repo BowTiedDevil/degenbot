@@ -75,6 +75,22 @@ pub(crate) fn seed_known_bitmap_words<H: SeedingHost>(host: &mut H, tick_spacing
     *host.known_bitmap_words_mut() = seeded;
 }
 
+/// `V3PoolState::from_params` / `V4PoolState::from_params` — record the
+/// checked bitmap words a registration caller supplied (each word was looked
+/// up on-chain and came back EMPTY). Extends the set seeded from the
+/// `tick_data` keys, so a registration-time check is never repeated as a
+/// fetch. A no-op for `Tracked` pools, whose bitmap is complete — the same
+/// coverage gate as `ConcentratedLiquidityPoolMut::mark_bitmap_words_known`.
+pub(crate) fn seed_checked_bitmap_words<H: SeedingHost>(
+    host: &mut H,
+    words: &[i32],
+    coverage: PoolTickCoverage,
+) {
+    if coverage == PoolTickCoverage::Sparse && !words.is_empty() {
+        host.known_bitmap_words_mut().extend(words.iter().copied());
+    }
+}
+
 /// `ConcentratedLiquidityPoolMut::seed_genesis` (one impl per family) — the
 /// registration/seed genesis anchor (two-stamp rule fresh-read builder).
 ///

@@ -1907,7 +1907,15 @@ impl PyBot {
     /// (symmetric with ``PyLiquidityPool.tick_data_snapshot``).
     /// `coverage` is ``"tracked"`` (complete DB snapshot) or ``"sparse"``
     /// (RPC-fetched active word only / no snapshot).
-    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data=None, update_block=0, coverage="sparse", tick_data_fetcher=None, tick_data_block=None, slot_layout=None))]
+    ///
+    /// `known_bitmap_words` are the tick-bitmap WORD positions the caller
+    /// looked up on-chain and found EMPTY. They are seeded INLINE (same write
+    /// lock as the `tick_data` seed), so a checked word is never re-fetched —
+    /// no post-register `update_tick_data` call needed. Any iterable of word
+    /// ints (a `list`/`set`/`tuple`, or a `dict` whose keys are the words)
+    /// works. Sparse pools record them; Tracked pools ignore them (a complete
+    /// bitmap has no miss to prevent — mirrors `update_tick_data`'s no-op).
+    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data=None, update_block=0, coverage="sparse", tick_data_fetcher=None, tick_data_block=None, slot_layout=None, known_bitmap_words=None))]
     fn register_v3_pool(
         &self,
         py: Python<'_>,
@@ -1926,6 +1934,7 @@ impl PyBot {
         tick_data_fetcher: Option<Bound<'_, PyAny>>,
         tick_data_block: Option<u64>,
         slot_layout: Option<&str>,
+        known_bitmap_words: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<u64> {
         let addr = parse_address(address)?;
         let t0 = parse_address(token0)?;
@@ -1974,6 +1983,7 @@ impl PyBot {
         let fetcher = tick_data_fetcher
             .filter(|f| !f.is_none())
             .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind()));
+        let checked_words = extract_checked_bitmap_words(known_bitmap_words, "register_v3_pool")?;
         py.detach(|| {
             let slot_layout = self.bot.v3_slot_layout_for(fac, slot_override);
             self.bot
@@ -1993,6 +2003,7 @@ impl PyBot {
                     coverage: cov,
                     fetcher,
                     slot_layout,
+                    known_bitmap_words: checked_words,
                     ..Default::default()
                 })))
                 .map_err(map_refusal)
@@ -2029,7 +2040,10 @@ impl PyBot {
     ///     `ValueError`: If `addresses/pool_id` are malformed or already
     ///         registered.
     #[expect(clippy::too_many_arguments)]
-    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_address, sqrt_price_x96, liquidity, tick, block, tick_data=None, coverage="sparse", tick_data_fetcher=None, protocol_fee=0, tick_data_block=None))]
+    /// `known_bitmap_words`: V4 twin of the V3 argument — the checked
+    /// (on-chain-empty) tick-bitmap WORD positions, seeded INLINE in the
+    /// registration (Sparse pools only; Tracked pools ignore them).
+    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_address, sqrt_price_x96, liquidity, tick, block, tick_data=None, coverage="sparse", tick_data_fetcher=None, protocol_fee=0, tick_data_block=None, known_bitmap_words=None))]
     fn register_v4_pool(
         &self,
         py: Python<'_>,
@@ -2053,6 +2067,7 @@ impl PyBot {
         tick_data_fetcher: Option<Bound<'_, PyAny>>,
         protocol_fee: u32,
         tick_data_block: Option<u64>,
+        known_bitmap_words: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<u64> {
         let pm = pool_manager.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
@@ -2086,6 +2101,7 @@ impl PyBot {
             })
             .transpose()?
             .unwrap_or_default();
+        let checked_words = extract_checked_bitmap_words(known_bitmap_words, "register_v4_pool")?;
         let params = RegisterV4PoolParams {
             pool_manager: pm,
             pool_id,
@@ -2110,6 +2126,7 @@ impl PyBot {
             fetcher: tick_data_fetcher
                 .filter(|f| !f.is_none())
                 .map(|f| crate::bot::pool::make_tick_fetcher(f.clone().unbind())),
+            known_bitmap_words: checked_words,
         };
         // ADR-078 D3 step 3: the params ride the ONE door request and
         // dispatch through the engine verb ([`Bot::register`]); the
@@ -2846,6 +2863,32 @@ impl PyBot {
 /// `Invalid address '<input>': <source>` vocabulary is core-owned
 /// ([`degenbot_bot::bot_core::registration::parse_address_str`]); this
 /// adapter only crosses the error into Python.
+/// Extract checked tick-bitmap WORD positions from a Python iterable (a
+/// `list`/`set`/`tuple` of word ints, or a `dict` whose keys are the words) —
+/// the same shape `Pool.update_tick_data`'s `tick_bitmap` argument accepts. `None` (or `None` passed as the value) means "no words
+/// checked at registration".
+fn extract_checked_bitmap_words(
+    words: Option<&Bound<'_, PyAny>>,
+    door: &str,
+) -> PyResult<Vec<i32>> {
+    let Some(words) = words.filter(|w| !w.is_none()) else {
+        return Ok(Vec::new());
+    };
+    let mut out: Vec<i32> = Vec::new();
+    for item in words.try_iter().map_err(|_| {
+        pyo3::exceptions::PyTypeError::new_err(format!(
+            "{door}: known_bitmap_words must be an iterable of word ints"
+        ))
+    })? {
+        out.push(item?.extract::<i32>().map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err(format!(
+                "{door}: known_bitmap_words entries must be ints"
+            ))
+        })?);
+    }
+    Ok(out)
+}
+
 fn parse_address(s: &str) -> PyResult<Address> {
     degenbot_bot::bot_core::registration::parse_address_str(s).map_err(|kind| {
         pyo3::exceptions::PyValueError::new_err(kind.detail().unwrap_or_default().to_string())

@@ -167,6 +167,7 @@ fn standalone_rust_consumer_v4_swap_matches_recorded_constant() {
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
     /// Exact-input read through the swap-simulation gate (ADR-037).
     fn tokens_out(bot: &mut BotState, pool_id: u64, zero_for_one: bool, amount_in: U256) -> U256 {

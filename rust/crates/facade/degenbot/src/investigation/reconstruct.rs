@@ -164,6 +164,7 @@ pub fn register_v4_with(
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     })
     .map_err(|e| format!("register_v4: {e:?}"))
 }
@@ -227,6 +228,7 @@ pub fn build_v4_state(p: &PoolData) -> V4PoolState {
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
     let (_identity, state) = V4PoolState::from_params(params, 8);
     state

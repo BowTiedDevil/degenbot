@@ -101,6 +101,7 @@ fn overfed_v4_engine() -> (ArbitrageEngine, u64, Vec<std::sync::Arc<MixedPath>>)
             tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("V4 registration failed");
     let path_id = register_path(

@@ -104,6 +104,7 @@ fn onchain_v4_state_at_block_25635461(protocol_fee: u32) -> V4PoolState {
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
     let (_identity, state) = V4PoolState::from_params(params, 8);
     state

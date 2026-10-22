@@ -103,6 +103,7 @@ fn register_v4_on_core_with_pid(
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     })
     .expect("test setup: V4 registration")
 }
@@ -172,6 +173,7 @@ fn fresh_pool_lifecycle_is_coverage_aware() {
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("sparse V4 registration");
     assert_eq!(

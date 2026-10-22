@@ -180,6 +180,7 @@ pub(super) fn discovery_state(
             tick_data_block: None,
             coverage: state.coverage,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         },
         journal_depth,
     )
@@ -217,6 +218,7 @@ pub(super) fn override_state(
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         },
         journal_depth,
     )

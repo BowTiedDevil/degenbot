@@ -1305,6 +1305,7 @@ mod projection_tests {
                 deployer: Address::ZERO,
                 init_hash: alloy::primitives::B256::ZERO,
                 slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
+                known_bitmap_words: Vec::new(),
             },
             8,
         );
@@ -1370,6 +1371,7 @@ mod known_word_tests {
                 deployer: Address::ZERO,
                 init_hash: alloy::primitives::B256::ZERO,
                 slot_layout: crate::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
+                known_bitmap_words: Vec::new(),
             },
             8,
         );
@@ -1399,6 +1401,7 @@ mod known_word_tests {
                 tick_data_block: None,
                 coverage,
                 fetcher: None,
+                known_bitmap_words: Vec::new(),
             },
             8,
         );

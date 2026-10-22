@@ -28,6 +28,7 @@ fn register_v4(core: &mut BotState) -> u64 {
         tick_data_block: None,
         coverage: PoolTickCoverage::Sparse,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     })
     .expect("test setup: V4 registration")
 }

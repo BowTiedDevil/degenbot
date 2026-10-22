@@ -51,6 +51,7 @@ fn make_v4_pool(liquidity: u128) -> PoolEntry {
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
     let (identity, state) = V4PoolState::from_params(params, 8);
     PoolEntry::V4(Box::new((identity, state)))

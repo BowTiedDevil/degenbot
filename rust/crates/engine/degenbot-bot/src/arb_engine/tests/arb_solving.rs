@@ -717,6 +717,7 @@ fn v4_int128_overflow_path_rejected() {
             tick_data_block: None,
             coverage: crate::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("V4 registration failed");
     // Register path: V3 (zfo) → V4 (ofz, which will produce huge token0 output)
@@ -852,6 +853,7 @@ fn clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_
             tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("V4 registration failed");
     let path_id = register_path(
@@ -989,6 +991,7 @@ fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
             tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("V4 registration failed");
     // Register a V2→V4 path (V4 is hop 1, over-fed).
@@ -1148,6 +1151,7 @@ fn clamp_concentrated_liquidity_hop_capacity_aligns_v4_first_hop0_outputs() {
             tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("V4 registration failed");
     let v2 = engine.register_v2_pool(
@@ -1265,6 +1269,7 @@ fn clamp_concentrated_liquidity_hop_capacity_noop_within_capacity() {
             tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("V4 registration failed");
     let v2_id = engine.register_v2_pool(

@@ -55,6 +55,7 @@ fn inspect_path_returns_hop_details() {
             tick_data_block: None,
             coverage: crate::arb_engine::PoolTickCoverage::Tracked,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("V4 registration should succeed");
     // Register a 3-hop path: V2 → V3 → V4

@@ -109,6 +109,7 @@ fn v3_params_with(tick_data: HB<i32, TickInfo>) -> RegisterV3PoolParams {
         deployer: Address::ZERO,
         init_hash: alloy::primitives::B256::ZERO,
         slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
+        known_bitmap_words: Vec::new(),
     }
 }
 

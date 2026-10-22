@@ -267,6 +267,7 @@ fn build_sequence(
         deployer: Address::ZERO,
         init_hash: alloy::primitives::B256::ZERO,
         slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
+        known_bitmap_words: Vec::new(),
     };
     let (_identity, state) = degenbot_pools::v3_state::V3PoolState::from_params(params, 8);
     (

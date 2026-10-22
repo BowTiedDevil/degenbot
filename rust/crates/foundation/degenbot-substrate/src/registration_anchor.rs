@@ -142,6 +142,7 @@ mod tests {
             tick_data_block: Some(clock),
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("test setup: V4 registration with a liquidity clock")
     }

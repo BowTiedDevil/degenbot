@@ -414,6 +414,7 @@ impl Workspace {
                     deployer: Address::ZERO,
                     init_hash: alloy::primitives::B256::ZERO,
                     slot_layout,
+                    known_bitmap_words: Vec::new(),
                 })
                 .map_err(PlanningAdmissionError::V3),
             ExplicitPoolState::V4 {
@@ -449,6 +450,7 @@ impl Workspace {
                     tick_data_block: Some(seed.seed_block),
                     coverage: seed.coverage,
                     fetcher: None,
+                    known_bitmap_words: Vec::new(),
                 })
                 .map_err(PlanningAdmissionError::V4),
         }

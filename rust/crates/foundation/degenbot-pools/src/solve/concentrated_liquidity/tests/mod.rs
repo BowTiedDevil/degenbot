@@ -3364,6 +3364,7 @@ fn block_25641093_pool_feed_hop2_predicts_revm_output() {
         deployer: Address::ZERO,
         init_hash: B256::ZERO,
         slot_layout: crate::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
+        known_bitmap_words: Vec::new(),
     };
     let (_, state) = V3PoolState::from_params(params, 4);
 

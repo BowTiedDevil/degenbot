@@ -65,6 +65,7 @@ pub(super) fn v4_params(pool_manager: Address, pool_id: V4PoolId) -> RegisterV4P
         tick_data_block: None,
         coverage: PoolTickCoverage::Sparse,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     }
 }
 

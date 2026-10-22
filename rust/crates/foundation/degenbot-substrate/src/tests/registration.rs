@@ -306,6 +306,7 @@ fn pool_family_dispatches_every_registered_family() {
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("V4 registration");
     assert_eq!(core.pool_family(v4_id), Some("v4"));
@@ -463,6 +464,7 @@ fn register_v4_pool_admits_amount_modifying_hook_with_caveat() {
             tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("hooked pool must now be admitted");
 
@@ -515,6 +517,7 @@ fn register_v4_pool_rejects_dynamic_fee_with_typed_error() {
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect_err("dynamic-fee pool must be rejected");
     assert_eq!(
@@ -555,6 +558,7 @@ fn register_v4_pool_rejects_duplicate_with_already_registered_variant() {
         tick_data_block: None,
         coverage: PoolTickCoverage::Sparse,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
     core.register_v4_pool(&params)
         .expect("first registration ok");
@@ -611,6 +615,7 @@ fn make_v4_params_in_spec() -> crate::RegisterV4PoolParams {
         tick_data_block: None,
         coverage: PoolTickCoverage::Sparse,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     }
 }
 
@@ -838,6 +843,7 @@ fn admission_refusal_records_a_consultable_gate_verdict() {
         tick_data_block: None,
         coverage: PoolTickCoverage::Sparse,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
 
     // Dynamic-fee refusal records a consultable verdict.
@@ -1425,6 +1431,7 @@ fn unregister_v4_pool_by_tuple_key_discards_buffered_modify_liquidity() {
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("V4 pool registers");
     assert_eq!(core.pool_count(), 1);
@@ -1459,6 +1466,7 @@ fn unregister_v4_pool_by_tuple_key_discards_buffered_modify_liquidity() {
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("V4 re-register after unregister must succeed");
     assert_ne!(

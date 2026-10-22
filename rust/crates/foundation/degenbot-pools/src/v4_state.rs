@@ -196,6 +196,12 @@ pub struct RegisterV4PoolParams {
     /// `None` for `Tracked` pools or when no Python fetcher was supplied).
     /// ADR-006 I/O trait object — same shape as V3.
     pub fetcher: Option<Arc<dyn TickWordFetcher>>,
+    /// Checked tick-bitmap WORD positions the caller looked up on-chain at
+    /// registration and found EMPTY — the V4 twin of
+    /// `RegisterV3PoolParams::known_bitmap_words`. Seeded inline with the
+    /// registration (Sparse pools only; `Tracked` pools ignore it, mirroring
+    /// `mark_bitmap_words_known`'s no-op).
+    pub known_bitmap_words: Vec<i32>,
 }
 
 /// Typed rejection from [`crate::BotState::register_v4_pool`].
@@ -500,6 +506,13 @@ impl V4PoolState {
         // relied on a later separate `update_tick_data` — the clobber the
         // closure removes. Seeding here makes the inline seed complete.
         state.seed_known_bitmap_words(tick_spacing);
+        // Registration-supplied checked words (a caller's on-chain
+        // checked-empty words) land in the same construction as the seed.
+        state_seeding::seed_checked_bitmap_words(
+            &mut state,
+            &params.known_bitmap_words,
+            params.coverage,
+        );
         // pin the snapshot seed for Tracked pools so step-1 verify
         // compares the seed (not pump-mutated `tick_data`) against
         // on-chain@snapshot_block. Sparse pools have no complete seed.

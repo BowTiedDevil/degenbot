@@ -88,6 +88,7 @@ fn build_v4(liquidity: u128, tick_data: HashMap<i32, TickInfo>) -> V4PoolState {
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
     let (_id, state) = V4PoolState::from_params(params, 8);
     state
@@ -112,6 +113,7 @@ fn build_v3(liquidity: u128, tick_data: HashMap<i32, TickInfo>) -> V3PoolState {
         deployer: Address::ZERO,
         init_hash: B256::ZERO,
         slot_layout: degenbot_pools::ConcentratedLiquiditySlotLayout::UniswapV3,
+        known_bitmap_words: Vec::new(),
     };
     let (_id, state) = V3PoolState::from_params(params, 8);
     state

@@ -275,6 +275,7 @@ fn dense_v4_state(
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
     let (_identity, state) = V4PoolState::from_params(params, 8);
     state
@@ -348,6 +349,7 @@ fn build_arbitrary_v4_state(
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
     let (_identity, state) = V4PoolState::from_params(params, 8);
     state
@@ -1288,6 +1290,7 @@ fn v4_pool_fee1_valid_single_position_matches_sim() {
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
     let (_identity, state) = V4PoolState::from_params(params, 8);
 
@@ -1381,6 +1384,7 @@ fn fee1_protocol_fee_state(protocol_fee: u32, lp_fee: u32) -> V4PoolState {
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
     let (_identity, state) = V4PoolState::from_params(params, 8);
     state

@@ -521,6 +521,7 @@ mod inline_sim_tests {
                 tick_data_block: None,
                 coverage: PoolTickCoverage::Tracked,
                 fetcher: None,
+                known_bitmap_words: Vec::new(),
             })
             .expect("V4 registration failed");
         let path_id = register_path(

@@ -108,6 +108,7 @@ fn build_sparse_v4_state(base_liquidity: u128, ticks: &[(i32, i128)]) -> V4PoolS
         tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
     let (_identity, state) = V4PoolState::from_params(params, 8);
     state

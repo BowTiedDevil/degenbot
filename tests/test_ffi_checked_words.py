@@ -19,7 +19,7 @@ _ZERO_ADDRESS = "0x" + "00" * 20
 _TOKEN1_ADDRESS = "0x" + "11" * 20
 
 
-def _register_sparse_v3(bot: Bot, *, tick_data_fetcher=None) -> int:
+def _register_sparse_v3(bot: Bot, *, tick_data_fetcher=None, known_bitmap_words=None) -> int:
     """Sparse V3 pool at tick 0, ratio 1:1, 0.3% fee, empty `tick_data`."""
     return bot.register_v3_pool(
         _ZERO_ADDRESS,
@@ -32,6 +32,7 @@ def _register_sparse_v3(bot: Bot, *, tick_data_fetcher=None) -> int:
         1_000_010_000_000,
         0,
         tick_data_fetcher=tick_data_fetcher,
+        known_bitmap_words=known_bitmap_words,
     )
 
 
@@ -78,6 +79,107 @@ def test_sparse_checked_zero_word_prevents_refetch() -> None:
     assert all(w != 0 for (w, _b) in calls), (
         f"the caller-checked word 0 must not be fetched: {calls}",
     )
+
+
+def test_sparse_registration_known_bitmap_words_survive_in_snapshot() -> None:
+    bot = Bot(chain_id=1)
+    # Word 0 was checked on-chain at construction and came back empty.
+    pool = bot.get_pool(_register_sparse_v3(bot, known_bitmap_words=[0]))
+    snap = _snapshot(pool)
+    assert 0 in snap, f"registration-seeded checked word 0 must survive: {snap}"
+
+
+def test_sparse_registration_known_bitmap_words_prevent_refetch() -> None:
+    bot = Bot(chain_id=1)
+    calls: list[tuple[int, int]] = []
+
+    def fake_fetcher(word: int, block: int) -> dict[int, tuple[int, int, int]]:
+        calls.append((word, block))
+        return {}
+
+    pool = bot.get_pool(
+        _register_sparse_v3(
+            bot,
+            tick_data_fetcher=fake_fetcher,
+            known_bitmap_words=[0],
+        ),
+    )
+    snap = _snapshot(pool)
+    assert 0 in snap, f"registration-seeded word must appear present: {snap}"
+    amount = int(
+        pool.calculate_tokens_out_with_fetch(
+            zero_for_one=True,
+            amount_in=1000,
+            block=100,
+        ),
+    )
+    assert amount > 0, "a registration-checked (empty) word must compute, not miss"
+    # The swap also crosses the adjacent (genuinely unknown) word -1 — that
+    # fetch is correct. The contract under test: the word checked at
+    # registration must never be a fetch target.
+    assert all(w != 0 for (w, _b) in calls), (
+        f"the registration-checked word 0 must not be fetched: {calls}",
+    )
+
+
+def test_tracked_registration_known_bitmap_words_ignored() -> None:
+    bot = Bot(chain_id=1)
+    rows = {0: (10_000_000_000_000, 5_000_000_000_000, 0)}
+    pool_id = bot.register_v3_pool(
+        _ZERO_ADDRESS,
+        _ZERO_ADDRESS,
+        _TOKEN1_ADDRESS,
+        3000,
+        60,
+        _ZERO_ADDRESS,
+        1 << 96,
+        1_000_010_000_000,
+        0,
+        tick_data=rows,
+        update_block=0,
+        coverage="tracked",
+        known_bitmap_words=[3],
+    )
+    words = _snapshot(bot.get_pool(pool_id))
+    assert words == {0}, f"Tracked pools ignore checked words: {words}"
+
+
+def _v4_pool_id_hex(currency0: str, currency1: str, fee: int, tick_spacing: int) -> str:
+    from degenbot.abi import encode
+    from degenbot.crypto import keccak256
+
+    return (
+        "0x"
+        + keccak256(
+            encode(
+                types=["address", "address", "uint24", "int24", "address"],
+                args=[currency0, currency1, fee, tick_spacing, _ZERO_ADDRESS],
+            )
+        ).hex()
+    )
+
+
+def test_v4_sparse_registration_known_bitmap_words_survive_in_snapshot() -> None:
+    bot = Bot(chain_id=1)
+    currency0, currency1 = _TOKEN1_ADDRESS, "0x" + "22" * 20
+    pool = bot.get_pool(
+        bot.register_v4_pool(
+            "0x" + "33" * 20,
+            _v4_pool_id_hex(currency0, currency1, 3000, 60),
+            currency0,
+            currency1,
+            3000,
+            60,
+            None,
+            1 << 96,
+            1_000_010_000_000,
+            0,
+            0,
+            known_bitmap_words=[1],
+        ),
+    )
+    snap = _snapshot(pool)
+    assert 1 in snap, f"V4 registration-seeded checked word must survive: {snap}"
 
 
 def test_tracked_update_tick_data_adds_no_bitmap_entries() -> None:

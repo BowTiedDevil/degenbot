@@ -173,6 +173,7 @@ pub(super) fn discovery_state(
             coverage: state.coverage,
             fetcher: None,
             slot_layout: identity.slot_layout,
+            known_bitmap_words: Vec::new(),
         },
         journal_depth,
     )
@@ -214,6 +215,7 @@ pub(super) fn override_state(
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
             slot_layout: identity.slot_layout,
+            known_bitmap_words: Vec::new(),
         },
         journal_depth,
     )

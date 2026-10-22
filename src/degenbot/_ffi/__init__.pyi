@@ -1310,6 +1310,7 @@ class Bot:
         tick_data_fetcher: Any | None = None,
         tick_data_block: int | None = None,
         slot_layout: str | None = None,
+        known_bitmap_words: Any | None = None,
     ) -> int:
         """
         Register a V3 pool by contract address.
@@ -1331,6 +1332,14 @@ class Bot:
         (symmetric with ``PyLiquidityPool.tick_data_snapshot``).
         `coverage` is ``"tracked"`` (complete DB snapshot) or ``"sparse"``
         (RPC-fetched active word only / no snapshot).
+
+        `known_bitmap_words` are the tick-bitmap WORD positions the caller
+        looked up on-chain and found EMPTY. They are seeded INLINE (same write
+        lock as the `tick_data` seed), so a checked word is never re-fetched —
+        no post-register `update_tick_data` call needed. Any iterable of word
+        ints (a `list`/`set`/`tuple`, or a `dict` whose keys are the words)
+        works. Sparse pools record them; Tracked pools ignore them (a complete
+        bitmap has no miss to prevent — mirrors `update_tick_data`'s no-op).
         """
     def register_v4_pool(
         self,
@@ -1351,6 +1360,7 @@ class Bot:
         tick_data_fetcher: Any | None = None,
         protocol_fee: int = 0,
         tick_data_block: int | None = None,
+        known_bitmap_words: Any | None = None,
     ) -> int:
         """
         Register a V4 pool by `(pool_manager, pool_id)`.
@@ -1382,6 +1392,9 @@ class Bot:
             `HighFeePoolRejectedError`: If `fee > 65535` (executor can't encode).
             `ValueError`: If `addresses/pool_id` are malformed or already
                 registered.
+        `known_bitmap_words`: V4 twin of the V3 argument — the checked
+        (on-chain-empty) tick-bitmap WORD positions, seeded INLINE in the
+        registration (Sparse pools only; Tracked pools ignore them).
         """
     def register_v4_state_view(self, /, pool_manager: str, state_view: str) -> None:
         """

@@ -18,6 +18,7 @@ use crate::families::concentrated_liquidity::state_seeding::SeedingHost;
 use crate::families::concentrated_liquidity::state_walk::{CachedTickRanges, WalkHost};
 use crate::int_v3_hop::IntV3TickRangeSequence;
 use crate::state_history::ReorgPoolState;
+use crate::v3_state::PoolTickCoverage;
 use crate::TickInfo;
 
 /// Registration block of the seeded pool: the genesis anchor lands here and
@@ -94,6 +95,10 @@ pub(crate) trait ClStateFixture:
     /// Overwrite the seed block (fixture setup for the historical-replay
     /// guard tests).
     fn set_initial_state_block(&mut self, block: u64);
+
+    /// Overwrite the tick-map coverage (fixture setup for the
+    /// coverage-gated registration-seeding tests).
+    fn set_coverage(&mut self, coverage: PoolTickCoverage);
 }
 
 /// One event of a scripted sequence.

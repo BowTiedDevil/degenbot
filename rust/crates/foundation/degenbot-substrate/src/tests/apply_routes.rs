@@ -706,6 +706,7 @@ fn apply_backfill_buffer_v4_journals_and_advances_update_block() {
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("V4 pool registers");
 
@@ -796,6 +797,7 @@ fn apply_swap_by_pool_id_routes_to_v4_and_matches_apply_v4_swap() {
         tick_data_block: None,
         coverage: PoolTickCoverage::Sparse,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
 
     // Twin pools: A updated via the family dispatcher, B via the
@@ -899,6 +901,7 @@ fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
         tick_data_block: None,
         coverage: PoolTickCoverage::Sparse,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
 
     // Twin pools: A via the dispatcher, B via the id-keyed door.
@@ -991,6 +994,7 @@ fn get_v3_or_v4_pool_reads_v4_scalars_matching_apply_v4_swap() {
         tick_data_block: None,
         coverage: PoolTickCoverage::Sparse,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
 
     // Twin V4 pools: A read via the family accessor after a dispatcher
@@ -1098,6 +1102,7 @@ fn get_v3_or_v4_pool_reads_v4_tick_data_matching_apply_v4_liquidity_update() {
         tick_data_block: None,
         coverage: PoolTickCoverage::Sparse,
         fetcher: None,
+        known_bitmap_words: Vec::new(),
     };
 
     // Twin pools: A via the dispatcher, B via the id-keyed door.
@@ -1274,6 +1279,7 @@ fn v4_liquidity_delta_applies_at_the_int128_boundaries() {
                 tick_data_block: None,
                 coverage: PoolTickCoverage::Sparse,
                 fetcher: None,
+                known_bitmap_words: Vec::new(),
             })
             .expect("V4 pool registers");
 

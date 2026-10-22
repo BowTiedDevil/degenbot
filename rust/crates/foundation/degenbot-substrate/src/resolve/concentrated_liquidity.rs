@@ -348,6 +348,7 @@ mod tests {
             tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
+            known_bitmap_words: Vec::new(),
         })
         .expect("v4 registration")
     }

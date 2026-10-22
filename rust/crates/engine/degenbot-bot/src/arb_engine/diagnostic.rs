@@ -611,6 +611,7 @@ mod tests {
                 tick_data_block: None,
                 coverage: PoolTickCoverage::Tracked,
                 fetcher: None,
+                known_bitmap_words: Vec::new(),
             })
             .expect("V4 registration failed");
         // Mixed V2 -> V3 -> V4 path
