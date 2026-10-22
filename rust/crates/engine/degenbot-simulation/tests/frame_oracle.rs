@@ -609,8 +609,9 @@ fn oracle_masks_untracked_bits_and_flags_tracked_divergence() {
 }
 
 /// The archived capture classifies to router archetypes and dedupes: the
-/// committed fixture carries TWO distinct frames (a CoW batch settle + a
-/// 1inch aggregation swap), each captured twice.
+/// committed fixture carries a CoW batch settle, a 1inch aggregation swap, and
+/// a SwapRouter02 frame, and a frame captured more than once contributes one
+/// entry.
 #[test]
 fn capture_frames_classify_to_archetypes_and_dedupe() {
     let frames = load_capture_frames(&capture_path());
