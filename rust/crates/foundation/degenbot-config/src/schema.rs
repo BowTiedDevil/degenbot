@@ -107,6 +107,7 @@ pub const SHELL_OWNED_KEYS: &[&str] = &[
 /// "declared but honoured by nobody" from hiding behind a fixture name.
 pub const TEST_ONLY_KEYS: &[&str] = &[
     "capture.swap_capture_probe",
+    "nodes.anvil_fork_compute_units_per_second",
     "offline.clcap_block",
     "offline.clcap_max_fetches",
     "offline.clcap_path_cap",
@@ -344,7 +345,20 @@ crate::config_schema! {
         ws [opt strmap] = None, env_prefix = "DEGENBOT_RPC_WS_CHAINID_", def = "(unset)",
             doc = "Per-chain subscription (WebSocket) endpoint per chain id, same table and family shape as nodes.http. The env layer is the name family DEGENBOT_RPC_WS_CHAINID_<chain_id>. Every value must be a ws:// or wss:// URL; a subscription consumer takes this transport or nodes.ipc, never nodes.http.";
         ipc [opt strmap] = None, env_prefix = "DEGENBOT_RPC_IPC_CHAINID_", def = "(unset)",
+
             doc = "Per-chain local IPC endpoint per chain id (a node running beside the bot, reachable over a Unix socket or a Windows named pipe), same table and family shape as nodes.http. The env layer is the name family DEGENBOT_RPC_IPC_CHAINID_<chain_id>. Every value must be an `ipc://` URL or an absolute socket path (a leading `/` on Unix, or a Windows named pipe under the `\\\\.\\pipe\\` namespace, e.g. `ipc://\\\\.\\pipe\\node.ipc`). A relative or `~/` path is refused: it resolves against the process working directory, not the config file's directory, and `~` is never expanded here. An IPC entry can serve requests and subscriptions alike.";
+        rate_limit_rps [opt usize] = None, env = "DEGENBOT_RPC_RATE_LIMIT_RPS", def = "(unset)",
+
+            doc = "Sustained requests/second cap applied to AlloyProvider HTTP transports built without an explicit caller limit, for REMOTE endpoints only (localhost/127.0.0.1/[::1]/host.containers.internal/host.docker.internal are exempt: a local node has no per-IP budget to protect). Unset means no throttle; hosted free tiers enforce a per-IP CU budget (dRPC: 120k CU/min nominal, 50.4k CU/min floor) and this keeps the live lanes under it.";
+
+        rate_limit_burst [opt usize] = None, env = "DEGENBOT_RPC_RATE_LIMIT_BURST", def = "(unset)",
+
+            doc = "Burst allowance paired with nodes.rate_limit_rps (the token bucket's capacity); unset defaults to the rps value. Ignored when rate_limit_rps is unset.";
+
+        anvil_fork_compute_units_per_second [opt usize] = None, env = "DEGENBOT_ANVIL_FORK_COMPUTE_UNITS_PER_SECOND", def = "(unset)",
+
+            doc = "Cap on a forked anvil's upstream fetch rate (anvil's --fork-compute-units-per-second) for REMOTE fork URLs, in anvil compute units/second (350 matches anvil's own default and sits well under dRPC's free-tier floor of 50,400 CU/min). Unset spawns forked anvils --no-rate-limit: uncapped suits a local node.";
+
     }
 
     // The session's chain identity: the chain the bot runs against unless an
@@ -1424,7 +1438,7 @@ mod tests {
         }
         assert_eq!(
             TEST_ONLY_KEYS.len(),
-            14,
+            15,
             "the test-only census changed: give the fixture a review, or move the key"
         );
     }

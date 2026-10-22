@@ -81,6 +81,7 @@ pub struct AnvilForkBuilder {
     fork_url: Option<String>,
     fork_block: Option<u64>,
     fork_transaction_hash: Option<String>,
+    fork_compute_units_per_second: Option<u64>,
     mining_mode: MiningMode,
     storage_caching: bool,
     base_fee: Option<u128>,
@@ -102,6 +103,7 @@ impl Default for AnvilForkBuilder {
             fork_url: None,
             fork_block: None,
             fork_transaction_hash: None,
+            fork_compute_units_per_second: None,
             mining_mode: MiningMode::Auto,
             storage_caching: true,
             base_fee: None,
@@ -127,6 +129,16 @@ impl AnvilForkBuilder {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Cap the fork upstream's request rate in compute units per second
+    /// (`--fork-compute-units-per-second`). `None` (default) spawns with
+    /// `--no-rate-limit`: uncapped suits a local node, while a configured
+    /// cap keeps a hosted free-tier endpoint under its per-IP CU budget.
+    #[must_use]
+    pub fn fork_compute_units_per_second(mut self, cups: u64) -> Self {
+        self.fork_compute_units_per_second = Some(cups);
+        self
     }
 
     /// Set the fork URL (`fork_url`). `None` (default) = in-memory, no fork.
@@ -353,6 +365,19 @@ impl AnvilForkBuilder {
         Ok(fork)
     }
 
+    /// The anvil CLI flags governing the fork upstream's request rate.
+    ///
+    /// Uncapped (`--no-rate-limit`) suits a local node, which has no per-IP
+    /// budget to protect; a configured cap
+    /// (`--fork-compute-units-per-second`) keeps a hosted free-tier endpoint
+    /// under its budget (dRPC's free floor is 50,400 CU/min).
+    fn fork_rate_args(&self) -> Vec<String> {
+        match self.fork_compute_units_per_second {
+            Some(cups) => vec![format!("--fork-compute-units-per-second={cups}")],
+            None => vec!["--no-rate-limit".to_string()],
+        }
+    }
+
     /// Build the `alloy::node_bindings::Anvil` builder from the configured
     /// params (mirrors the Python command construction).
     fn build_anvil(&self, ipc_path: &str) -> Anvil {
@@ -370,7 +395,10 @@ impl AnvilForkBuilder {
             anvil = anvil.arg(format!("--chain-id={chain_id}"));
         }
         if let Some(ref url) = self.fork_url {
-            anvil = anvil.fork(url.clone()).arg("--no-rate-limit");
+            anvil = anvil.fork(url.clone());
+            for arg in self.fork_rate_args() {
+                anvil = anvil.arg(arg);
+            }
         }
         if let Some(block) = self.fork_block {
             anvil = anvil.arg(format!("--fork-block-number={block}"));
@@ -720,6 +748,26 @@ mod tests {
             .join(format!("degenbot-fork-test-{}-{n}.ipc", std::process::id()))
             .to_string_lossy()
             .into_owned()
+    }
+
+    #[test]
+    fn fork_rate_args_default_uncapped() {
+        let builder = AnvilForkBuilder::new().fork_url("http://localhost:8545");
+        assert_eq!(
+            builder.fork_rate_args(),
+            vec!["--no-rate-limit".to_string()]
+        );
+    }
+
+    #[test]
+    fn fork_rate_args_configured_cap_replaces_no_rate_limit() {
+        let builder = AnvilForkBuilder::new()
+            .fork_url("http://localhost:8545")
+            .fork_compute_units_per_second(350);
+        assert_eq!(
+            builder.fork_rate_args(),
+            vec!["--fork-compute-units-per-second=350".to_string()]
+        );
     }
 
     #[tokio::test]

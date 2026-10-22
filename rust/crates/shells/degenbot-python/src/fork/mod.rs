@@ -127,6 +127,7 @@ impl PyAnvilFork {
         mnemonic=DEFAULT_MNEMONIC,
         chain_id=None,
         anvil_opts=None,
+        fork_compute_units_per_second=None,
     ))]
     #[expect(clippy::too_many_arguments)]
     fn new(
@@ -144,6 +145,7 @@ impl PyAnvilFork {
         mnemonic: &str,
         chain_id: Option<u64>,
         anvil_opts: Option<Vec<String>>,
+        fork_compute_units_per_second: Option<u64>,
     ) -> PyResult<Self> {
         // Arg extraction (no business logic; the closure below is `Send`,
         // so all borrows must be drained to owned values BEFORE the
@@ -189,6 +191,9 @@ impl PyAnvilFork {
         }
         if let Some(args) = anvil_opts {
             builder = builder.extra_args(args);
+        }
+        if let Some(cups) = fork_compute_units_per_second {
+            builder = builder.fork_compute_units_per_second(cups);
         }
 
         let fork = py

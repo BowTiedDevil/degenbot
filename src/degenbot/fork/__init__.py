@@ -106,6 +106,11 @@ class ForkLaunchConfig:
     storage_overrides: Iterable[tuple[HexAddress | bytes, int, HexStr | bytes | int]] | None = None
     coinbase: HexAddress | None = None
     anvil_opts: list[str] | None = None
+    # Cap on the fork upstream's request rate (anvil's
+    # ``--fork-compute-units-per-second``). ``None`` spawns with
+    # ``--no-rate-limit``: uncapped suits a local node, while a configured
+    # cap keeps a hosted free-tier endpoint under its per-IP CU budget.
+    fork_compute_units_per_second: int | None = None
 
 
 class AnvilFork:
@@ -205,6 +210,7 @@ class AnvilFork:
             "mnemonic": launch.mnemonic,
             "chain_id": launch.chain_id,
             "anvil_opts": tuple(launch.anvil_opts) if launch.anvil_opts else None,
+            "fork_compute_units_per_second": launch.fork_compute_units_per_second,
         }
 
         self._fork_url = fork_url

@@ -35,6 +35,36 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+/// A local endpoint has no per-IP budget to protect, and throttling it
+/// would only slow the local lanes — the configured throttle skips it.
+fn is_local_rpc_url(rpc_url: &str) -> bool {
+    [
+        "://localhost",
+        "://127.0.0.1",
+        "://[::1]",
+        "://host.containers.internal",
+        "://host.docker.internal",
+    ]
+    .iter()
+    .any(|marker| rpc_url.contains(marker))
+}
+
+/// Resolve the config-declared throttle (`nodes.rate_limit_rps` /
+/// `nodes.rate_limit_burst`) for `rpc_url`, if any.
+fn configured_rate_limit(rpc_url: &str) -> Option<(u32, NonZeroU32)> {
+    if is_local_rpc_url(rpc_url) {
+        return None;
+    }
+    let nodes = &::degenbot_config::holder::config().nodes;
+    let rps = NonZeroU32::new(u32::try_from(nodes.rate_limit_rps?).ok()?)?;
+    let burst = nodes
+        .rate_limit_burst
+        .and_then(|v| u32::try_from(v).ok())
+        .and_then(NonZeroU32::new)
+        .unwrap_or(rps);
+    Some((rps.get(), burst))
+}
+
 /// Constants for retry logic. `pub(crate)` so the subscription watchdog
 /// ([`crate::subscription::pump_blocks`]) reuses the same backoff curve for
 /// its reconnect retries — one retry vocabulary across the crate, not a
@@ -1146,6 +1176,9 @@ impl AlloyProvider {
         max_retries: u32,
         rate_limit: Option<(u32, NonZeroU32)>,
     ) -> ProviderResult<Self> {
+        // A caller-declared limit wins; otherwise the typed config's
+        // `nodes.rate_limit_*` applies.
+        let rate_limit = rate_limit.or_else(|| configured_rate_limit(rpc_url));
         let provider: Arc<dyn Provider<Ethereum>> =
             if rpc_url.starts_with("http://") || rpc_url.starts_with("https://") {
                 let url = rpc_url
@@ -1935,6 +1968,57 @@ impl LogFetcher {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    // Holder-reinstalling tests serialize on one lock: the holder is
+    // process-global, and cargo runs this binary's tests on shared threads.
+    static CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn govern_nodes(rate_limit_rps: Option<usize>, rate_limit_burst: Option<usize>) {
+        let mut cfg = ::degenbot_config::BotConfig::default();
+        cfg.nodes.rate_limit_rps = rate_limit_rps;
+        cfg.nodes.rate_limit_burst = rate_limit_burst;
+        ::degenbot_config::holder::reinstall_for_tests(std::sync::Arc::new(cfg));
+    }
+
+    #[test]
+    fn configured_rate_limit_off_when_unset() {
+        let _guard = CONFIG_LOCK.lock().unwrap();
+        govern_nodes(None, None);
+        assert_eq!(configured_rate_limit("https://rpc.example.com"), None);
+    }
+
+    #[test]
+    fn configured_rate_limit_applies_with_burst_defaulting_to_rps() {
+        let _guard = CONFIG_LOCK.lock().unwrap();
+        govern_nodes(Some(25), None);
+        let (rps, burst) = configured_rate_limit("https://rpc.example.com").unwrap();
+        assert_eq!(rps, 25);
+        assert_eq!(burst.get(), 25);
+        govern_nodes(Some(25), Some(5));
+        let (_, burst) = configured_rate_limit("https://rpc.example.com").unwrap();
+        assert_eq!(burst.get(), 5);
+        govern_nodes(None, None);
+    }
+
+    #[test]
+    fn configured_rate_limit_skips_local_endpoints() {
+        let _guard = CONFIG_LOCK.lock().unwrap();
+        govern_nodes(Some(25), None);
+        for url in [
+            "http://localhost:8545/",
+            "http://127.0.0.1:8545/",
+            "http://[::1]:8545/",
+            "http://host.containers.internal:8545/",
+            "http://host.docker.internal:8545/",
+        ] {
+            assert_eq!(
+                configured_rate_limit(url),
+                None,
+                "local url throttled: {url}"
+            );
+        }
+        govern_nodes(None, None);
+    }
 
     // ── Unresolvable-host classification (WS connect fail-fast) ────────
 

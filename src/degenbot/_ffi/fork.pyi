@@ -38,6 +38,7 @@ class AnvilFork:
         mnemonic: str = ...,
         chain_id: int | None = None,
         anvil_opts: Sequence[str] | None = None,
+        fork_compute_units_per_second: int | None = None,
     ) -> AnvilFork:
         """
         Spawn the `anvil` subprocess + connect the IPC `DynProvider`.
