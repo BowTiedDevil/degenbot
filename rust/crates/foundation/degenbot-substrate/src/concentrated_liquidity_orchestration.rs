@@ -950,10 +950,10 @@ impl ConcentratedLiquidityOrchestration {
         }
         match reg.pools.get_mut(&pool_id) {
             Some(PoolEntry::V3(p)) => {
-                p.1.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number)
+                p.1.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
             }
             Some(PoolEntry::V4(p)) => {
-                p.1.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number)
+                p.1.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
             }
             _ => {}
         }
