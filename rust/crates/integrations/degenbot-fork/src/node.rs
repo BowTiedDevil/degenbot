@@ -365,6 +365,10 @@ impl AnvilForkBuilder {
         Ok(fork)
     }
 
+    /// Spawn deadline for a forked anvil (alloy's default is 10s, tuned
+    /// for in-memory spawns).
+    const FORK_SPAWN_TIMEOUT_MS: u64 = 60_000;
+
     /// The anvil CLI flags governing the fork upstream's request rate.
     ///
     /// Uncapped (`--no-rate-limit`) suits a local node, which has no per-IP
@@ -399,6 +403,11 @@ impl AnvilForkBuilder {
             for arg in self.fork_rate_args() {
                 anvil = anvil.arg(arg);
             }
+            // Alloy's 10s startup deadline covers local process spawn; a
+            // fork's startup also fetches fork metadata from the upstream,
+            // which under a hosted endpoint's latency (and a configured CUPS
+            // cap) needs a wider margin.
+            anvil = anvil.timeout(Self::FORK_SPAWN_TIMEOUT_MS);
         }
         if let Some(block) = self.fork_block {
             anvil = anvil.arg(format!("--fork-block-number={block}"));
