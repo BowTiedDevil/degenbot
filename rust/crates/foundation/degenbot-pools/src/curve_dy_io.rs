@@ -31,6 +31,11 @@ const FEE_DENOMINATOR: U256 = U256::from_limbs([10_000_000_000, 0, 0, 0]);
 /// `LendingRateStyle` `NONE` discriminant (1-based `auto()`, matches Python).
 const LENDING_NONE: u8 = 1;
 
+/// The metapool base-virtual-price cache lifetime (600 s), mirroring the
+/// contract's `base_cache_updated + BASE_CACHE_EXPIRES` freshness test and the
+/// Python companion's `BASE_CACHE_EXPIRES`.
+const BASE_CACHE_EXPIRES: u64 = 10 * 60;
+
 /// Errors from resolving the dy-calculation inputs.
 #[derive(Debug)]
 pub enum CurveInputsError {
@@ -122,6 +127,46 @@ fn resolve_rates(
         let p = provider.ok_or(CurveInputsError::NoProvider("lending_rate"))?;
         p.lending_rates(block_number)
             .map_err(CurveInputsError::Provider)
+    }
+}
+
+/// Resolve the metapool's base rate — the virtual price the metapool prices a
+/// base-pool coin with.
+///
+/// The contract's `_vp_rate_ro()` returns the metapool's **cached**
+/// `base_virtual_price()` while the base cache is fresh
+/// (`block.timestamp <= base_cache_updated + 600`) and the base pool's **live**
+/// `get_virtual_price()` once it has expired. Always reading the live value
+/// therefore disagrees with the contract on any fresh cache whose cached vp
+/// lags the live one (observed on GUSD/3Crv at block 26_204_126: 21_035 wei of
+/// rate, 50_528_091 wei of dy on a 260_189 GUSD swap). Mirrors the Python
+/// `CurveStableswapPool._get_cached_virtual_price`.
+///
+/// A provider that cannot serve the cache metadata (`base_cache_updated` or
+/// `block_timestamp` unavailable) has no freshness signal to apply, so it
+/// degrades to the live read rather than refusing the swap.
+///
+/// # Errors
+///
+/// Returns [`CurveInputsError::Provider`] when the selected virtual-price read
+/// fails.
+fn resolve_metapool_base_rate(
+    p: &dyn CurveDataProvider,
+    block_number: u64,
+) -> Result<U256, CurveInputsError> {
+    let cache_metadata = p
+        .base_cache_updated(block_number)
+        .ok()
+        .zip(p.block_timestamp(block_number).ok());
+    match cache_metadata {
+        // `saturating_add`: an observed state carries `base_cache_updated`
+        // ahead of `block_timestamp`, which must stay fresh, not wrap.
+        Some((updated, timestamp)) if timestamp <= updated.saturating_add(BASE_CACHE_EXPIRES) => p
+            .base_virtual_price(block_number)
+            .map_err(CurveInputsError::Provider),
+        _ => p
+            .virtual_price(block_number)
+            .map_err(CurveInputsError::Provider),
     }
 }
 
@@ -218,10 +263,7 @@ pub fn resolve_dy_inputs(
     // Metapool virtual/redemption prices.
     if metapool {
         let p = provider.ok_or(CurveInputsError::NoProvider("metapool virtual_price"))?;
-        inputs.virtual_price = Some(
-            p.virtual_price(block_number)
-                .map_err(CurveInputsError::Provider)?,
-        );
+        inputs.virtual_price = Some(resolve_metapool_base_rate(p, block_number)?);
         inputs.scaled_redemption_price = p.redemption_price(block_number).ok();
     }
 

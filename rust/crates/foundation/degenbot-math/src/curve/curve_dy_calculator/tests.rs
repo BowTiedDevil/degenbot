@@ -424,3 +424,63 @@ fn i_equals_j_rejected() {
         CurveSwapError::IndexOutOfBounds
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// GUSD/3Crv metapool rate-source pin (block 26_204_126)
+//
+// The contract's `_vp_rate()` prices off the metapool's cached
+// `base_virtual_price()` while the base cache is fresh (600 s) and off the
+// base pool's live `get_virtual_price()` after expiry — a 21_035 wei rate
+// difference that moves a 260_189 GUSD swap by 50_528_091 wei of dy. Both
+// expected values below are recorded contract/Rust outputs for the same
+// otherwise-identical state, pinning the metapool math to the input it must
+// receive; which value the I/O layer resolves is
+// `curve_dy_io::resolve_metapool_base_rate`'s rule.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// The observed GUSD/3Crv metapool state at block 26_204_126, with `vp` as the
+/// only substitution point (the cached vs live base virtual price).
+fn gusd_3crv_inputs(vp: U256) -> DyCalculationInputs {
+    let mut i = inputs();
+    i.balances = vec![
+        U256::from(26_018_948_u64),
+        U256::from(777_378_229_033_900_005_289_262_u128),
+    ];
+    i.rate_multipliers = vec![U256::from(10u64).pow(U256::from(34u64)), ONE];
+    i.precision_multipliers = vec![U256::from(10u64).pow(U256::from(16u64)), U256::from(1u8)];
+    i.fee = U256::from(4_000_000_u64);
+    i.amp = U256::from(100_000_u64); // a_coefficient 1000 x a_precision 100
+    i.a_precision = A_PREC;
+    i.metapool = true;
+    i.metapool_rate_style = 1; // STANDARD: rates = [rate_multipliers[0], vp]
+    i.virtual_price = Some(vp);
+    i.scaled_redemption_price = None;
+    i
+}
+
+#[test]
+fn gusd_3crv_swap_pins_the_cached_base_virtual_price_result() {
+    // The metapool's cached base vp — the value the contract prices with.
+    let dy = calculate_dy(
+        0,
+        1,
+        U256::from(260_189_u64),
+        &gusd_3crv_inputs(U256::from(1_039_823_717_425_653_995_u128)),
+    )
+    .unwrap();
+    assert_eq!(dy, U256::from(2_505_906_561_443_977_164_727_u128));
+}
+
+#[test]
+fn gusd_3crv_swap_pins_the_live_base_virtual_price_result() {
+    // The base pool's live vp — the value a live read produces, 21_035 wei
+    // higher and 50_528_091 wei lower in dy.
+    let dy = calculate_dy(
+        0,
+        1,
+        U256::from(260_189_u64),
+        &gusd_3crv_inputs(U256::from(1_039_823_717_425_675_030_u128)),
+    )
+    .unwrap();
+    assert_eq!(dy, U256::from(2_505_906_561_443_926_636_636_u128));
+}
