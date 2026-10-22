@@ -336,7 +336,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::expect_used)]
+    #![expect(clippy::expect_used, clippy::unwrap_used)]
 
     use alloy::primitives::aliases::U112;
     use alloy::primitives::{Address, Bytes};
