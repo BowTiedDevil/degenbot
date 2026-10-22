@@ -4,8 +4,8 @@
 same concentrated liquidity write-back surface — the tick-map reads, the 3-format
 ``update_tick_data`` normalisation, ``external_update``,
 ``update_liquidity_map`` and the discard/restore delegation. This module
-collapses that surface into one base so "concentrated liquidity state
-write-back + the sparse backfill gate" is written once.
+collapses that surface into one base so the concentrated liquidity state
+write-back is written once.
 
 What stays on the subclasses: identity (address/factory/tokens/fee/
 pool_key/hook/protocol-fees), the family calc mixins, and ``__eq__``/
@@ -19,13 +19,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from degenbot.exceptions import ExternalUpdateError
-from degenbot.exceptions.pool import LiquidityMapWordMissing, NoPoolStateAvailable
+from degenbot.exceptions.pool import NoPoolStateAvailable
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.uniswap import PoolTickCoverage
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
-from degenbot.uniswap.math import (
-    get_tick_word_and_bit_position as concentrated_liquidity_get_tick_word_and_bit_position,
-)
 
 if TYPE_CHECKING:
     from degenbot._ffi import Pool
@@ -248,34 +244,8 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
         its own: a separate ``apply_swap`` here would double-apply the
         in-range delta (the golden tracker test caught exactly that).
 
-        Raises:
-            LiquidityMapWordMissing: A Sparse boundary word could not be
-                backfilled (no stored fetcher or the fetch failed) — the
-                event is NOT applied (a silent apply over an unknown word
-                would corrupt the reorg journal's tick priors).
-
         """
         state_block = update.block_number
-
-        # Unified sparse-word backfill gate: Rust `coverage` is
-        # the fact (the twin's double-tracked sparseness flags are retired).
-        # For each boundary tick, a word ABSENT from the derived bitmap is
-        # non-deterministic (Sparse semantics) → backfill it via the
-        # RUST-stored fetcher at state_block - 1; a failed fetch RAISES
-        # rather than applying over an unknown word (the reorg journal's
-        # priors for those ticks would be wrong). Tracked pools: inert (the
-        # bitmap is complete; absent word = known-empty).
-        if self._py_pool.concentrated_liquidity().coverage == PoolTickCoverage.Sparse:
-            for tick in (update.tick_lower, update.tick_upper):
-                word, _ = concentrated_liquidity_get_tick_word_and_bit_position(
-                    tick, self.tick_spacing
-                )
-                # Short-circuit: ensure_word_known is only called for a word
-                # the derived bitmap says is unknown.
-                if word not in self.tick_bitmap and not self._py_pool.ensure_word_known(
-                    word, state_block - 1
-                ):
-                    raise LiquidityMapWordMissing(word)
 
         # The active-liquidity scalar adjust for IN-RANGE events lives in the
         # Rust core now (7347dcdc3: "adjust in-range active liquidity on

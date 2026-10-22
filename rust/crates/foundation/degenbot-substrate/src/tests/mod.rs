@@ -17,6 +17,7 @@ mod session_path;
 mod session_position;
 mod session_registry;
 mod snapshots;
+mod sparse_apply_gate;
 mod word_fetch;
 
 /// Exact-input read through the swap-simulation gate (ADR-037) — the

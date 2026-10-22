@@ -432,6 +432,20 @@ impl V4PoolState {
         state_seeding::word_of(tick, tick_spacing)
     }
 
+    /// The first boundary bitmap word of a liquidity event whose sparse region
+    /// this pool has not checked yet; `None` when every boundary word is known
+    /// or the pool is `Tracked` (V4 twin of
+    /// [`V3PoolState::unknown_boundary_word`]).
+    #[must_use]
+    pub fn unknown_boundary_word(
+        &self,
+        tick_lower: i32,
+        tick_upper: i32,
+        tick_spacing: i32,
+    ) -> Option<i32> {
+        state_seeding::unknown_boundary_word(self, tick_lower, tick_upper, tick_spacing)
+    }
+
     /// Seed `known_bitmap_words` from the current `tick_data` keys' word
     /// positions. Unlike V3, registration seeds for every coverage; the
     /// shared verb (`families/concentrated_liquidity/state_seeding.rs`)
@@ -619,6 +633,14 @@ impl state_seeding::SeedingHost for V4PoolState {
 
     fn known_bitmap_words_mut(&mut self) -> &mut HashSet<i32> {
         &mut self.known_bitmap_words
+    }
+
+    fn known_bitmap_words(&self) -> &HashSet<i32> {
+        &self.known_bitmap_words
+    }
+
+    fn coverage(&self) -> PoolTickCoverage {
+        self.coverage
     }
 
     fn sqrt_price_x96(&self) -> U256 {

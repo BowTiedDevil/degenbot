@@ -461,6 +461,8 @@ crate::config_schema! {
             doc = "Stream solved arms immediately (T3 default); `0` opts out to the debounce sweep.";
         ws_completeness [bool] = true, env = "DEGENBOT_WS_COMPLETENESS", def = "true",
             doc = "WS completeness gating (newHeads + logs double-delivery check); `0` disables.";
+        strict_sparse_apply [bool] = false, env = "DEGENBOT_STRICT_SPARSE_APPLY", def = "false",
+            doc = "Strict sparse-word apply gate for V3 Mint/Burn and V4 ModifyLiquidity events. ON refuses a tick mutation whose boundary tick-bitmap word is not in the pool's checked set (`known_bitmap_words` on a Sparse pool), backfills the word through the stored tick-data fetcher with no state lock held, and re-routes the event; a word that cannot be backfilled leaves the event unapplied as the typed `MissingTickWord` routing outcome. OFF (the default) is the lazy production posture: the event applies immediately and the word is fetched at solve time. ON protects the reorg journal's per-tick priors, which applying over an unchecked word would record for a region whose other initialized ticks are absent.";
         // the
         // adaptive trailing-quiesce estimator. Default flipped to `adaptive`
         // after the 2026-09-09 live A/B (the untracked `logs/` run artifact

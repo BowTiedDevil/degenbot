@@ -115,6 +115,18 @@ pub struct ConcentratedLiquidityOrchestration {
     /// V4 twin of `v3_event_horizons`, keyed `(pool_manager, pool_id)`.
     pub(crate) v4_event_horizons:
         HashMap<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId), u64>,
+    /// The strict sparse-word apply gate stance (`pump.strict_sparse_apply`),
+    /// minted from the installed config at construction. ON makes the routing
+    /// table's direct-apply arm REFUSE a tick mutation whose boundary word the
+    /// pool has not checked ([`ApplyOutcome::MissingTickWord`]) instead of
+    /// applying over an unknown region; OFF keeps the lazy production posture
+    /// (apply now, backfill the word at solve time).
+    ///
+    /// A per-instance field rather than a live config read: the config snapshot
+    /// is process-wide while a state owner is not, and the stance must be
+    /// pinned for the owner's lifetime (the same shape as
+    /// `LogDispatcher::strict_decode_fault`).
+    pub(crate) strict_sparse_apply: bool,
 }
 
 /// The family-specific half of an orchestration verb.
@@ -658,7 +670,15 @@ impl ConcentratedLiquidityOrchestration {
             pump_complete_cutoff: 0,
             v3_event_horizons: HashMap::new(),
             v4_event_horizons: HashMap::new(),
+            strict_sparse_apply: crate::stance::config().pump.strict_sparse_apply,
         }
+    }
+
+    /// Arm or disarm the strict sparse-word apply gate for this capability
+    /// (`pump.strict_sparse_apply`; the construction default comes from the
+    /// installed config).
+    pub(crate) fn set_strict_sparse_apply(&mut self, on: bool) {
+        self.strict_sparse_apply = on;
     }
 }
 
@@ -879,6 +899,67 @@ impl ConcentratedLiquidityOrchestration {
                 });
         PoolPresence::from_lifecycle(lifecycle)
     }
+    /// The strict sparse-word gate's predicate for one tick mutation: the first
+    /// boundary word this pool has not checked, or `None` when the gate is
+    /// disarmed (`pump.strict_sparse_apply` off), every boundary word is known,
+    /// or the pool is `Tracked`/not concentrated liquidity.
+    ///
+    /// Refusing beats applying: the event's boundary ticks would journal priors
+    /// for a region whose other initialized ticks are absent, so a reorg
+    /// rollback would restore a state the chain never had.
+    fn sparse_gate_word(
+        &self,
+        reg: &RegistryCore,
+        pool_id: u64,
+        tick_lower: i32,
+        tick_upper: i32,
+    ) -> Option<i32> {
+        if !self.strict_sparse_apply {
+            return None;
+        }
+        match reg.pools.get(&pool_id)? {
+            PoolEntry::V3(p) => {
+                p.1.unknown_boundary_word(tick_lower, tick_upper, p.0.tick_spacing)
+            }
+            PoolEntry::V4(p) => {
+                p.1.unknown_boundary_word(tick_lower, tick_upper, p.0.pool_key.tick_spacing)
+            }
+            PoolEntry::AerodromeV2(..)
+            | PoolEntry::Curve(..)
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::V2(..) => None,
+        }
+    }
+
+    /// One direct-apply tick mutation onto a registered pool: the strict
+    /// sparse-word gate first (see [`Self::sparse_gate_word`]), then the
+    /// family's `apply_liquidity_update`. `Some(refusal)` when the gate holds —
+    /// the caller backfills the word and re-routes; `None` when it applied.
+    fn apply_tick_mutation(
+        &mut self,
+        reg: &mut RegistryCore,
+        pool_id: u64,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) -> Option<ApplyOutcome> {
+        if let Some(word) = self.sparse_gate_word(reg, pool_id, tick_lower, tick_upper) {
+            return Some(ApplyOutcome::MissingTickWord { pool_id, word });
+        }
+        match reg.pools.get_mut(&pool_id) {
+            Some(PoolEntry::V3(p)) => {
+                p.1.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number)
+            }
+            Some(PoolEntry::V4(p)) => {
+                p.1.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number)
+            }
+            _ => {}
+        }
+        None
+    }
+
     /// THE single decision point for a decoded V3 event (`concentrated_liquidity_route` table).
     ///
     /// Every production entry point — live dispatch, snapshot-gap backfill,
@@ -943,13 +1024,15 @@ impl ConcentratedLiquidityOrchestration {
                         liquidity_delta,
                         block_number,
                     }) => {
-                        if let Some(PoolEntry::V3(p)) = reg.pools.get_mut(&pool_id) {
-                            p.1.apply_liquidity_update(
-                                tick_lower,
-                                tick_upper,
-                                liquidity_delta,
-                                block_number,
-                            );
+                        if let Some(refusal) = self.apply_tick_mutation(
+                            reg,
+                            pool_id,
+                            tick_lower,
+                            tick_upper,
+                            liquidity_delta,
+                            block_number,
+                        ) {
+                            return refusal;
                         }
                     }
                 }
@@ -1717,13 +1800,15 @@ impl ConcentratedLiquidityOrchestration {
                         liquidity_delta,
                         block_number,
                     }) => {
-                        if let Some(PoolEntry::V4(p)) = reg.pools.get_mut(&id) {
-                            p.1.apply_liquidity_update(
-                                tick_lower,
-                                tick_upper,
-                                liquidity_delta,
-                                block_number,
-                            );
+                        if let Some(refusal) = self.apply_tick_mutation(
+                            reg,
+                            id,
+                            tick_lower,
+                            tick_upper,
+                            liquidity_delta,
+                            block_number,
+                        ) {
+                            return refusal;
                         }
                     }
                 }
@@ -2349,6 +2434,21 @@ impl BotState {
     ) -> InstallWordOutcome {
         self.concentrated_liquidity
             .install_word_fetch(&mut self.registry, staged, fetched)
+    }
+
+    /// Arm or disarm the strict sparse-word apply gate for this state owner
+    /// (`pump.strict_sparse_apply`). The construction default comes from the
+    /// installed config; this is the per-instance override for a consumer that
+    /// fronts one process config with several state owners (and for tests,
+    /// which must not re-govern the process-wide snapshot).
+    pub fn set_strict_sparse_apply(&mut self, on: bool) {
+        self.concentrated_liquidity.set_strict_sparse_apply(on);
+    }
+
+    /// Whether the strict sparse-word apply gate is armed for this state owner.
+    #[must_use]
+    pub fn strict_sparse_apply(&self) -> bool {
+        self.concentrated_liquidity.strict_sparse_apply
     }
 
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::ensure_word_known_by_pool_id`].

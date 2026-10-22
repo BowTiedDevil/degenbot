@@ -726,9 +726,17 @@ impl LogDispatcher {
         // decoded event's block into the record (read before `apply` consumes it).
         let event_block = decoded.block_number();
         let apply_start = std::time::Instant::now();
+        // The routing table's direct-apply arm may REFUSE a tick mutation over
+        // an unchecked sparse bitmap word (`pump.strict_sparse_apply`); the
+        // word is fetched with NO state lock held and the event re-routed, so
+        // the guard is taken per attempt instead of once around the apply.
         let outcome = hotpath::measure_block!(
             "dispatch.apply",
-            decoded.apply(&mut state.write_at(crate::state_lock::LockSite::Core))
+            crate::sparse_apply_gate::route_with_word_fetch(
+                state,
+                event_block.saturating_sub(1),
+                |core| decoded.clone().apply(core),
+            )
         );
         if let Some(p) = crate::telemetry_port::pipeline() {
             p.observe_state_apply(apply_start.elapsed().as_secs_f64());
@@ -774,6 +782,31 @@ impl LogDispatcher {
                 diag!(domain = ingest, block = log.block_number,
                     pool = %identity,
                     "APPLY MISS - no-op"
+                );
+                if let Some(p) = crate::telemetry_port::pipeline() {
+                    p.count_log_apply_missed();
+                }
+            }
+            ApplyOutcome::MissingTickWord { pool_id, word } => {
+                EpochLogTally::inc(&self.tally.apply_missed);
+                // The strict sparse-word gate refused the event and the word
+                // could not be backfilled (no stored fetcher, or the fetch
+                // failed): the event is NOT applied — applying it over the
+                // unknown region would journal per-tick priors for ticks the
+                // pool does not hold. Loud, counted as an apply miss, and the
+                // refusal is a named outcome, never a silent drop.
+                diag!(domain = ingest, block = log.block_number,
+                    pool = %identity,
+                    pool.id = pool_id,
+                    word,
+                    "APPLY REFUSED - sparse boundary word could not be backfilled"
+                );
+                tracing::warn!(
+                    block = log.block_number,
+                    pool = %identity,
+                    pool_id,
+                    word,
+                    "strict sparse apply gate: boundary word backfill failed; event NOT applied"
                 );
                 if let Some(p) = crate::telemetry_port::pipeline() {
                     p.count_log_apply_missed();

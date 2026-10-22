@@ -108,6 +108,23 @@ pub enum ApplyOutcome {
     Buffered(BufferKind),
     /// Deliberately dropped (reason names the trust assumption).
     NoOp(NoOpReason),
+    /// Refused, not dropped: the strict sparse-word gate
+    /// (`pump.strict_sparse_apply`) will not apply a tick mutation over a
+    /// bitmap word this pool has not checked — the event's boundary tick would
+    /// journal priors for a region whose other initialized ticks are absent.
+    ///
+    /// The caller backfills `word` through the pool's stored tick-data fetcher
+    /// (staged fetch, no state lock held) and re-routes the SAME event, which
+    /// is what [`crate::sparse_apply_gate`] does for the live dispatch path. A
+    /// word that cannot be backfilled (no stored fetcher, or a failed fetch)
+    /// leaves this refusal standing: the event is never applied over the
+    /// unknown region, and the refusal is a named outcome rather than a drop.
+    MissingTickWord {
+        /// The pool whose tick map was not mutated.
+        pool_id: u64,
+        /// The first boundary word the pool has not checked.
+        word: i32,
+    },
 }
 
 /// The verdict for one decoded event. Total: no implicit drop path exists.

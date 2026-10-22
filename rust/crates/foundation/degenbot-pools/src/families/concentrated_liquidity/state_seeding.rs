@@ -33,6 +33,12 @@ pub(crate) trait SeedingHost {
     /// The checked tick-bitmap words (the sparse miss-detection set), mutable.
     fn known_bitmap_words_mut(&mut self) -> &mut HashSet<i32>;
 
+    /// The checked tick-bitmap words (the sparse miss-detection set).
+    fn known_bitmap_words(&self) -> &HashSet<i32>;
+
+    /// The pool's registration coverage (`Tracked` / `Sparse`).
+    fn coverage(&self) -> PoolTickCoverage;
+
     /// The pool's current `sqrt_price_x96` slot0 scalar.
     fn sqrt_price_x96(&self) -> U256;
 
@@ -58,6 +64,35 @@ pub(crate) trait SeedingHost {
 #[must_use]
 pub(crate) fn word_of(tick: i32, tick_spacing: i32) -> i32 {
     i32::from(tick_position(tick.div_euclid(tick_spacing)).0)
+}
+
+/// `V3PoolState::unknown_boundary_word` / `V4PoolState::unknown_boundary_word`
+/// — the first boundary bitmap word of a liquidity event whose region this
+/// pool has not checked yet, or `None` when every boundary word is known or
+/// the pool is `Tracked` (in a complete bitmap an absent word is known-empty).
+///
+/// A `Sparse` tick map is a partial view: a word outside
+/// `known_bitmap_words` is a region whose initialized ticks have not been
+/// fetched. Applying a Mint/Burn over such a word writes the event's boundary
+/// ticks into it and leaves the region's other initialized ticks absent, so
+/// the reorg journal's per-tick priors for that region would be wrong — a
+/// rollback would restore a state the chain never had. The strict apply gate
+/// in the event path (`degenbot-substrate`, `pump.strict_sparse_apply`) is
+/// the caller.
+#[must_use]
+pub(crate) fn unknown_boundary_word<H: SeedingHost>(
+    host: &H,
+    tick_lower: i32,
+    tick_upper: i32,
+    tick_spacing: i32,
+) -> Option<i32> {
+    if host.coverage() != PoolTickCoverage::Sparse {
+        return None;
+    }
+    [tick_lower, tick_upper]
+        .into_iter()
+        .map(|tick| word_of(tick, tick_spacing))
+        .find(|word| !host.known_bitmap_words().contains(word))
 }
 
 /// `V3PoolState::seed_known_bitmap_words` / `V4PoolState::seed_known_bitmap_words`

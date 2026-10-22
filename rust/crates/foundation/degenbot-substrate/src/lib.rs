@@ -37,6 +37,7 @@ pub mod resolve;
 pub mod route_registry;
 pub mod session_registry;
 pub mod sim_anchor;
+pub mod sparse_apply_gate;
 pub mod stance;
 pub mod state_lock;
 pub mod swap_simulation;
@@ -1080,7 +1081,23 @@ impl BotState {
                 log_dispatcher::DecodedPoolEvent::V4Swap { .. }
                     | log_dispatcher::DecodedPoolEvent::V4Liquidity { .. }
             );
-            let _ = event.apply_backfill(self);
+            // The strict sparse-word gate can refuse a tick mutation here too
+            // (`pump.strict_sparse_apply`), but this loop holds the chunk's
+            // write guard, so no word fetch is reachable: surface the refusal
+            // loudly rather than letting it pass as an unapplied event.
+            if let Some(crate::concentrated_liquidity_route::ApplyOutcome::MissingTickWord {
+                pool_id,
+                word,
+            }) = event.apply_backfill(self)
+            {
+                tracing::warn!(
+                    pool_id,
+                    word,
+                    chunk_end,
+                    "strict sparse apply gate: backfill-phase boundary word \
+                     unknown and unfetchable under the chunk guard; event NOT applied"
+                );
+            }
         }
         if v3_touched {
             self.concentrated_liquidity.expire_v3_buffered(chunk_end);
