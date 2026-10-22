@@ -86,6 +86,7 @@ aave/transformations/*
 
 cache-lab-report
 hotpath-crossing-cache-verification
+testing/parity-suite-retirement-census
 cow-protocol-survey
 updater-rpc-sql-survey
 rayon-parallelism-lab

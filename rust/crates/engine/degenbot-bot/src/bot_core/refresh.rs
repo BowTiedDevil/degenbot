@@ -456,4 +456,123 @@ mod tests {
             "expected the V2 fetch to run, got {error:?}"
         );
     }
+
+    /// An RPC serving one canned `getReserves()` return for every call — the
+    /// compare half needs only the fetched pair to be scripted per case.
+    struct ReservesRpc {
+        reserve0: u64,
+        reserve1: u64,
+    }
+
+    #[async_trait]
+    impl RpcConstruction for ReservesRpc {
+        async fn get_block_number(&self) -> Result<u64, ProviderError> {
+            Ok(100)
+        }
+
+        async fn get_block(
+            &self,
+            _block_number: u64,
+        ) -> Result<Option<degenbot_rpc::provider::EthBlock>, ProviderError> {
+            Ok(None)
+        }
+
+        async fn get_block_timestamp(
+            &self,
+            _block_number: u64,
+        ) -> Result<Option<u64>, ProviderError> {
+            Ok(None)
+        }
+
+        async fn get_code(
+            &self,
+            _address: Address,
+            _block_number: Option<u64>,
+        ) -> Result<Bytes, ProviderError> {
+            Ok(Bytes::new())
+        }
+
+        async fn get_balance(
+            &self,
+            _address: Address,
+            _block_number: Option<u64>,
+        ) -> Result<U256, ProviderError> {
+            Ok(U256::ZERO)
+        }
+
+        async fn call(
+            &self,
+            _to: Address,
+            _data: Bytes,
+            _block_number: Option<u64>,
+        ) -> Result<Bytes, ProviderError> {
+            // getReserves() head: reserve0, reserve1, blockTimestampLast.
+            let mut bytes = Vec::with_capacity(96);
+            bytes.extend_from_slice(&U256::from(self.reserve0).to_be_bytes::<32>());
+            bytes.extend_from_slice(&U256::from(self.reserve1).to_be_bytes::<32>());
+            bytes.extend_from_slice(&[0u8; 32]);
+            Ok(Bytes::from(bytes))
+        }
+    }
+
+    fn reserves_io(reserve0: u64, reserve1: u64) -> ConstructionIo {
+        ConstructionIo::new(
+            std::sync::Arc::new(NoDb),
+            std::sync::Arc::new(ReservesRpc { reserve0, reserve1 }),
+        )
+    }
+
+    /// The reserve-pair half of the choreography: a fetched pair that differs
+    /// from the registered one is applied and reports `Changed`; a pair that
+    /// matches (or an observation older than the pool's own clock) applies
+    /// nothing and reports `Unchanged`.
+    #[tokio::test]
+    async fn a_differing_reserve_pair_is_applied_and_a_matching_one_is_unchanged() {
+        let (state, pool_id) = v2_state(); // 1000 / 2000, clock at block 100
+
+        assert_eq!(
+            refresh_pool(&state, pool_id, &reserves_io(5_000, 6_000), Some(101))
+                .await
+                .unwrap(),
+            RefreshOutcome::Changed,
+            "a differing pair is applied"
+        );
+        let (reserve0, reserve1, update_block) = {
+            let guard = state.read_at(LockSite::Orchestrator);
+            let pool = guard
+                .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
+                .expect("registered");
+            (pool.reserve0, pool.reserve1, pool.update_block)
+        };
+        assert_eq!((reserve0, reserve1), (U112::from(5_000), U112::from(6_000)));
+        assert_eq!(update_block, 101, "the observation block is stamped");
+
+        assert_eq!(
+            refresh_pool(&state, pool_id, &reserves_io(5_000, 6_000), Some(102))
+                .await
+                .unwrap(),
+            RefreshOutcome::Unchanged,
+            "a matching pair applies nothing"
+        );
+
+        assert_eq!(
+            refresh_pool(&state, pool_id, &reserves_io(1, 2), Some(100))
+                .await
+                .unwrap(),
+            RefreshOutcome::Unchanged,
+            "an observation at/below the pool clock is refused, never replayed"
+        );
+        let guard = state.read_at(LockSite::Orchestrator);
+        let pool = guard
+            .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
+            .expect("registered");
+        assert_eq!(
+            (pool.reserve0, pool.reserve1),
+            (U112::from(5_000), U112::from(6_000))
+        );
+        assert_eq!(
+            pool.update_block, 101,
+            "the refused observation moved nothing"
+        );
+    }
 }

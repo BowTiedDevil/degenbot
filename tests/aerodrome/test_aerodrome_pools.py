@@ -4,12 +4,8 @@ import pydantic_core
 import pytest
 
 from degenbot.aerodrome.functions import generate_aerodrome_v2_pool_address
-from degenbot.aerodrome.types import (
-    AerodromeV2PoolExternalUpdate,
-    AerodromeV3PoolState,
-)
+from degenbot.aerodrome.types import AerodromeV3PoolState
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.exceptions.pool import ExternalUpdateError
 from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.uniswap.math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from tests.conftest import TEST_BASE_FULL_NODE_HTTP_URI, _require_live_node
@@ -91,67 +87,6 @@ def test_aerodrome_v2_address_generator():
         )
         == AERODROME_V3_TBTC_USDBC_POOL_ADDRESS
     )
-
-
-def test_bot_update_state(fork_base_full: AnvilFork):
-
-    bot = make_bot_with_provider(fork_base_full.provider)
-    lp = bot.build_pool(AERODROME_V3_TBTC_USDBC_POOL_ADDRESS)
-
-    # Force the pool's state to disagree with the on-chain reserves so
-    # ``bot.update`` detects a positive change: push wrong reserves through
-    # the external-update seam at the current block (the supported state
-    # write since the state-cache collapse). The update then reconciles the
-    # cached state back to the on-chain values.
-    lp.external_update(
-        update=AerodromeV2PoolExternalUpdate(
-            block_number=lp.update_block,
-            reserves_token0=lp.reserves_token0 - 1,
-            reserves_token1=lp.reserves_token1 + 1,
-        ),
-    )
-    changed = bot.update(lp)
-    assert changed is True
-
-    # Updating again at the same block should indicate no change
-    changed = bot.update(lp)
-    assert changed is False
-
-
-def test_external_update(fork_base_full: AnvilFork):
-
-    bot = make_bot_with_provider(fork_base_full.provider)
-    lp = bot.build_pool(AERODROME_V3_TBTC_USDBC_POOL_ADDRESS)
-
-    current_state = lp.state
-
-    lp.external_update(
-        update=AerodromeV2PoolExternalUpdate(
-            block_number=lp.update_block + 1,
-            reserves_token0=int(1.1 * lp.reserves_token0),
-            reserves_token1=int(0.9 * lp.reserves_token1),
-        ),
-    )
-
-    assert lp.state.reserves_token0 == int(current_state.reserves_token0 * 1.1)
-    assert lp.state.reserves_token1 == int(current_state.reserves_token1 * 0.9)
-
-    lp.external_update(
-        update=AerodromeV2PoolExternalUpdate(
-            block_number=lp.update_block + 1,
-            reserves_token0=lp.reserves_token0,
-            reserves_token1=lp.reserves_token1,
-        ),
-    )
-
-    with pytest.raises(ExternalUpdateError):
-        lp.external_update(
-            update=AerodromeV2PoolExternalUpdate(
-                block_number=lp.update_block - 10,
-                reserves_token0=lp.reserves_token0,
-                reserves_token1=lp.reserves_token1,
-            ),
-        )
 
 
 def test_create_pool(fork_base_full: AnvilFork):
