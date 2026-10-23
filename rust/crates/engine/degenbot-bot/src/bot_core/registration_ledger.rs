@@ -563,10 +563,10 @@ impl RefusalKind {
                 phase,
                 failure: BuildFailure::Rpc(inner.to_string()),
             },
-            PoolBuilderError::Spec => Self::BuildRefused {
+            PoolBuilderError::Spec(reason) => Self::BuildRefused {
                 family,
                 phase,
-                failure: BuildFailure::Spec,
+                failure: BuildFailure::Spec(*reason),
             },
             PoolBuilderError::Decoding { message } => Self::BuildRefused {
                 family,
@@ -742,10 +742,10 @@ impl RefusalKind {
                 | BuildFailure::MissingIdentity(detail)
                 | BuildFailure::TickAssembly(detail)
                 | BuildFailure::Transient(detail) => Some(detail),
-                BuildFailure::HookedPool
-                | BuildFailure::DynamicFee
-                | BuildFailure::HighFee
-                | BuildFailure::Spec => None,
+                BuildFailure::HookedPool | BuildFailure::DynamicFee | BuildFailure::HighFee => None,
+                // A spec refusal is the one build arm whose facts are not text:
+                // its rendering is the reason label it carries.
+                BuildFailure::Spec(reason) => Some(reason.as_str()),
             },
             Self::SnapshotLoadFailed { reason, .. } => Some(match reason {
                 SnapshotLoadReason::Db { detail }
@@ -1137,7 +1137,7 @@ impl RegistrationLedger {
                 detail,
             },
             BuildFailure::Rpc(_)
-            | BuildFailure::Spec
+            | BuildFailure::Spec(_)
             | BuildFailure::Decoding(_)
             | BuildFailure::Db(_)
             | BuildFailure::MissingIdentity(_)
@@ -1967,6 +1967,7 @@ mod tests {
     use degenbot_core::errors::ProviderError;
     use degenbot_core::hex_utils::HexError;
     use degenbot_db::error::DbError;
+    use degenbot_pools::registration_refusal::SpecRefusal;
     use degenbot_pools::spec_bounds::{SpecValue, SpecViolation};
     use degenbot_pools::tick_fetch::BootstrapTickError;
     use degenbot_substrate::tick_assembly::TickMapAssemblyError;
@@ -2362,16 +2363,30 @@ mod tests {
             build,
         );
         assert_tags(
-            &RefusalKind::from_builder_error(&PoolBuilderError::Spec, None, build),
+            &RefusalKind::from_builder_error(
+                &PoolBuilderError::Spec(SpecRefusal::V2Reserve),
+                None,
+                build,
+            ),
             None,
             build,
         );
+
+        // The spec refusal's reason is its log-only detail, so a refused build
+        // never renders as a bare tag.
+        let spec = RefusalKind::from_builder_error(
+            &PoolBuilderError::Spec(SpecRefusal::CurveTooFewCoins),
+            None,
+            build,
+        );
+        assert_eq!(spec.detail(), Some("curve too few coins"));
+        assert_eq!(spec.to_string(), "build-refused: curve too few coins");
 
         // Each family's build door names its own family tag.
         for (kind, family) in [
             (
                 RefusalKind::from_builder_error(
-                    &PoolBuilderError::Spec,
+                    &PoolBuilderError::Spec(SpecRefusal::V2Reserve),
                     Some(RegisteredPoolFamily::V2),
                     build,
                 ),
@@ -2379,7 +2394,7 @@ mod tests {
             ),
             (
                 RefusalKind::from_builder_error(
-                    &PoolBuilderError::Spec,
+                    &PoolBuilderError::Spec(SpecRefusal::CurveTooFewCoins),
                     Some(RegisteredPoolFamily::AerodromeV2),
                     build,
                 ),
@@ -2387,7 +2402,7 @@ mod tests {
             ),
             (
                 RefusalKind::from_builder_error(
-                    &PoolBuilderError::Spec,
+                    &PoolBuilderError::Spec(SpecRefusal::NoCodeCoin),
                     Some(RegisteredPoolFamily::V4),
                     build,
                 ),
@@ -2535,9 +2550,10 @@ mod tests {
                 }),
                 |failure| matches!(failure, BuildFailure::Rpc(_)),
             ),
-            (PoolBuilderError::Spec, |failure| {
-                matches!(failure, BuildFailure::Spec)
-            }),
+            (
+                PoolBuilderError::Spec(SpecRefusal::CurveBrokenPool),
+                |failure| matches!(failure, BuildFailure::Spec(SpecRefusal::CurveBrokenPool)),
+            ),
             (
                 PoolBuilderError::Decoding {
                     message: "bad bytes".to_owned(),
@@ -2745,7 +2761,7 @@ mod tests {
             (BuildFailure::DynamicFee, true),
             (BuildFailure::HighFee, true),
             (BuildFailure::Rpc("blip".to_owned()), false),
-            (BuildFailure::Spec, false),
+            (BuildFailure::Spec(SpecRefusal::V2Reserve), false),
             (BuildFailure::Decoding("bad bytes".to_owned()), false),
             (BuildFailure::Db("bad row".to_owned()), false),
             (

@@ -27,6 +27,7 @@ use degenbot_pools::balancer_weighted_state::RegisterBalancerWeightedPoolParams;
 use degenbot_pools::curve_data_provider::CurveDataProvider;
 use degenbot_pools::curve_state::RegisterCurvePoolParams;
 use degenbot_pools::curve_strategies::resolve_curve_strategy_discriminants;
+use degenbot_pools::registration_refusal::SpecRefusal;
 use degenbot_pools::spec_bounds;
 use degenbot_pools::v2_state::RegisterV2PoolParams;
 use degenbot_pools::v3_state::{ConcentratedLiquiditySlotLayout, RegisterV3PoolParams};
@@ -103,8 +104,8 @@ pub enum PoolBuilderError {
     UnknownVariant { factory: Address },
     #[error("unknown pool identity at {address}: no identity selector answered")]
     UnknownPoolIdentity { address: Address },
-    #[error("out-of-spec V2 reserve")]
-    Spec,
+    #[error("out of spec ({0})")]
+    Spec(SpecRefusal),
     #[error("decode failure: {message}")]
     Decoding { message: String },
     #[error("{0}")]
@@ -466,10 +467,10 @@ pub async fn build_v2(
             factory: imm.factory,
         })?;
 
-    let reserve0 =
-        spec_bounds::narrow_v2_reserve(r0, "reserve0").map_err(|_| PoolBuilderError::Spec)?;
-    let reserve1 =
-        spec_bounds::narrow_v2_reserve(r1, "reserve1").map_err(|_| PoolBuilderError::Spec)?;
+    let reserve0 = spec_bounds::narrow_v2_reserve(r0, "reserve0")
+        .map_err(|_| PoolBuilderError::Spec(SpecRefusal::V2Reserve))?;
+    let reserve1 = spec_bounds::narrow_v2_reserve(r1, "reserve1")
+        .map_err(|_| PoolBuilderError::Spec(SpecRefusal::V2Reserve))?;
 
     parity::verify_v2_create2(chain_id, imm.factory, address, imm.token0, imm.token1)
         .map_err(|divergence| PoolBuilderError::Identity(Box::new(divergence)))?;
@@ -515,8 +516,9 @@ pub async fn build_v2(
 /// # Errors
 ///
 /// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure,
-/// [`PoolBuilderError::Spec`] on an out-of-u112 bounds reserve, or
-/// [`PoolBuilderError::Identity`] on an EIP-1167 address mismatch.
+/// [`PoolBuilderError::Spec`] with [`SpecRefusal::V2Reserve`] on an out-of-u112
+/// bounds reserve, or [`PoolBuilderError::Identity`] on an EIP-1167 address
+/// mismatch.
 pub async fn build_aerodrome_v2(
     chain_id: u64,
     address: Address,
@@ -544,10 +546,10 @@ pub async fn build_aerodrome_v2(
     )
     .map_err(|divergence| PoolBuilderError::Identity(Box::new(divergence)))?;
 
-    let reserve0 =
-        spec_bounds::narrow_v2_reserve(r0, "reserve0").map_err(|_| PoolBuilderError::Spec)?;
-    let reserve1 =
-        spec_bounds::narrow_v2_reserve(r1, "reserve1").map_err(|_| PoolBuilderError::Spec)?;
+    let reserve0 = spec_bounds::narrow_v2_reserve(r0, "reserve0")
+        .map_err(|_| PoolBuilderError::Spec(SpecRefusal::V2Reserve))?;
+    let reserve1 = spec_bounds::narrow_v2_reserve(r1, "reserve1")
+        .map_err(|_| PoolBuilderError::Spec(SpecRefusal::V2Reserve))?;
 
     // The Solidly stable invariant needs the `10**decimals` scale factors;
     // fetch the ERC-20 decimal counts for both tokens (unused by volatile
@@ -658,7 +660,9 @@ pub fn detect_pow_version(bytecode: &[u8]) -> u8 {
 ///
 /// # Errors
 ///
-/// Returns [`PoolBuilderError::Spec`] if the token's decimals cannot be read.
+/// Returns [`PoolBuilderError::Decoding`] when the token reports more than 18
+/// decimals (the `10^(18 - decimals)` scale cannot be represented), or
+/// [`PoolBuilderError::Rpc`] on an RPC/decode failure.
 #[expect(clippy::cast_possible_truncation)]
 async fn compute_scaling_factor(
     io: &ConstructionIo,
@@ -714,9 +718,10 @@ async fn decimals_of(
 ///
 /// # Errors
 ///
-/// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure or
-/// [`PoolBuilderError::Spec`] on an out-of-range scaling factor or for a pool
-/// in [`BROKEN_BALANCER_V2_POOLS`].
+/// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure,
+/// [`PoolBuilderError::Spec`] with [`SpecRefusal::BalancerBrokenPool`] for a
+/// pool in [`BROKEN_BALANCER_V2_POOLS`], or [`PoolBuilderError::Decoding`] for
+/// a token reporting more than 18 decimals.
 pub async fn build_balancer_weighted(
     vault: Address,
     address: Address,
@@ -724,7 +729,7 @@ pub async fn build_balancer_weighted(
     block: Option<u64>,
 ) -> Result<RegisterBalancerWeightedPoolParams, PoolBuilderError> {
     if BROKEN_BALANCER_V2_POOLS.contains(&address) {
-        return Err(PoolBuilderError::Spec);
+        return Err(PoolBuilderError::Spec(SpecRefusal::BalancerBrokenPool));
     }
 
     let pool_id = choreography::fetch_balancer_pool_id(io, address, block).await?;
@@ -771,9 +776,10 @@ pub async fn build_balancer_weighted(
 ///
 /// # Errors
 ///
-/// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure or
-/// [`PoolBuilderError::Spec`] on an out-of-range scaling factor or for a pool
-/// in [`BROKEN_BALANCER_V2_POOLS`].
+/// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure,
+/// [`PoolBuilderError::Spec`] with [`SpecRefusal::BalancerBrokenPool`] for a
+/// pool in [`BROKEN_BALANCER_V2_POOLS`], or [`PoolBuilderError::Decoding`] for
+/// a token reporting more than 18 decimals.
 pub async fn build_balancer_stable(
     vault: Address,
     address: Address,
@@ -782,7 +788,7 @@ pub async fn build_balancer_stable(
     invariant_version_override: Option<u8>,
 ) -> Result<RegisterBalancerStablePoolParams, PoolBuilderError> {
     if BROKEN_BALANCER_V2_POOLS.contains(&address) {
-        return Err(PoolBuilderError::Spec);
+        return Err(PoolBuilderError::Spec(SpecRefusal::BalancerBrokenPool));
     }
 
     let pool_id = choreography::fetch_balancer_pool_id(io, address, block).await?;
@@ -1088,14 +1094,19 @@ async fn bootstrap_v3_tick_map(
 ///
 /// # Errors
 ///
-/// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure or
-/// [`PoolBuilderError::Spec`] when the pool exposes fewer than 2 coins
-/// (mirrors the `BrokenPool` minimum-tokens guard).
+/// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure, or
+/// [`PoolBuilderError::Spec`] naming why the pool is unbuildable: a pool in
+/// [`BROKEN_CURVE_V1_POOLS`] ([`SpecRefusal::CurveBrokenPool`]), fewer than 2
+/// coins ([`SpecRefusal::CurveTooFewCoins`]), a `coins()`/`balances()` length
+/// disagreement ([`SpecRefusal::CurveCoinsBalancesMismatch`]), a required getter
+/// revert ([`SpecRefusal::CurveRequiredReadReverted`]), or a coin that cannot
+/// serve an ERC-20 read ([`SpecRefusal::NoCodeCoin`] /
+/// [`SpecRefusal::CurveCoinDecimalsReverted`]).
 /// The Curve V1 pools known to be broken beyond repair: stale or disabled
 /// deployments whose getters will not return (a `coins(i)`/`balances(i)`
 /// that reverts, an empty `A()`, or a permanently wedged rate path). The
-/// build refuses them up front with the `Spec` taxonomy rather than dying
-/// mid-discovery on whichever read breaks first.
+/// build refuses them up front with [`SpecRefusal::CurveBrokenPool`] rather
+/// than dying mid-discovery on whichever read breaks first.
 pub const BROKEN_CURVE_V1_POOLS: &[Address] = &[
     alloy::primitives::address!("110cc323ca53d622469EdD217387E2E6B33F1dF5"),
     alloy::primitives::address!("1F71f05CF491595652378Fe94B7820344A551B8E"),
@@ -1112,8 +1123,9 @@ pub const BROKEN_CURVE_V1_POOLS: &[Address] = &[
 /// The Balancer V2 pools known to be broken beyond repair: deployments whose
 /// swaps are disabled at the contract level (BAL#327 `SWAPS_DISABLED`), so the
 /// pool would register and then revert on every swap simulation. The build
-/// refuses them up front with the `Spec` taxonomy, on both Balancer arms, so a
-/// caller's family guess can never route around the verdict.
+/// refuses them up front with [`SpecRefusal::BalancerBrokenPool`], on both
+/// Balancer arms, so a caller's family guess can never route around the
+/// verdict.
 pub const BROKEN_BALANCER_V2_POOLS: &[Address] = &[alloy::primitives::address!(
     "753BD6a5bF0b14ae7e5d2877e5cD6a3398aA2AAB"
 )];
@@ -1124,7 +1136,9 @@ pub const BROKEN_BALANCER_V2_POOLS: &[Address] = &[alloy::primitives::address!(
 /// the `Spec` taxonomy rather than masked as a transport `Rpc`.
 fn required_read(err: ProviderError) -> PoolBuilderError {
     match err {
-        ProviderError::ExecutionReverted { .. } => PoolBuilderError::Spec,
+        ProviderError::ExecutionReverted { .. } => {
+            PoolBuilderError::Spec(SpecRefusal::CurveRequiredReadReverted)
+        }
         other => PoolBuilderError::Rpc(other),
     }
 }
@@ -1136,7 +1150,7 @@ pub async fn build_curve_pool(
     block: Option<u64>,
 ) -> Result<RegisterCurvePoolParams, PoolBuilderError> {
     if BROKEN_CURVE_V1_POOLS.contains(&address) {
-        return Err(PoolBuilderError::Spec);
+        return Err(PoolBuilderError::Spec(SpecRefusal::CurveBrokenPool));
     }
 
     let coins = curve_choreography::discover_curve_coins(io, address, block).await;
@@ -1158,7 +1172,7 @@ pub async fn build_curve_pool(
 
     // Minimum-tokens guard (mirrors `BrokenPool`).
     if coins.token_addresses.len() < 2 {
-        return Err(PoolBuilderError::Spec);
+        return Err(PoolBuilderError::Spec(SpecRefusal::CurveTooFewCoins));
     }
 
     // A pool that answers `coins(i)` but reverts on `balances(i)` leaves the
@@ -1166,7 +1180,9 @@ pub async fn build_curve_pool(
     // refuse with the same taxonomy rather than assembling params that panic
     // downstream.
     if coins.balances.len() != coins.token_addresses.len() {
-        return Err(PoolBuilderError::Spec);
+        return Err(PoolBuilderError::Spec(
+            SpecRefusal::CurveCoinsBalancesMismatch,
+        ));
     }
 
     // Per-coin ERC20 decimals — needed for the rate/precision multipliers and
@@ -1179,7 +1195,9 @@ pub async fn build_curve_pool(
         match fetch_erc20_decimals(io, *token, block).await {
             Ok(decimals) => token_decimals.push(decimals),
             Err(PoolBuilderError::Rpc(ProviderError::ExecutionReverted { .. })) => {
-                return Err(PoolBuilderError::Spec);
+                return Err(PoolBuilderError::Spec(
+                    SpecRefusal::CurveCoinDecimalsReverted,
+                ));
             }
             Err(err) => return Err(err),
         }
@@ -1286,7 +1304,7 @@ async fn fetch_erc20_decimals(
     // old vyper pool's ETH sentinel has no code; a junk `coins()` return is
     // the same shape): the pool is refused, not decoded.
     if bytes.is_empty() {
-        return Err(PoolBuilderError::Spec);
+        return Err(PoolBuilderError::Spec(SpecRefusal::NoCodeCoin));
     }
     let dec = abi::decode_uint256(&bytes)?;
     Ok(dec.to::<u8>())

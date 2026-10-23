@@ -153,7 +153,7 @@ pub use tick_fetch::{
     TickWordFetcher,
 };
 
-pub use registration_refusal::{BuildFailure, RegisterRefusal};
+pub use registration_refusal::{BuildFailure, RegisterRefusal, SpecRefusal};
 
 pub use pool::{
     BalanceVectorVariant, BalanceVectorView, BinnedLiquidityVariant, ConcentratedLiquidityVariant,

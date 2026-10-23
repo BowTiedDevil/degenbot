@@ -530,7 +530,7 @@ fn build_failure_detail(failure: &BuildFailure) -> String {
         | BuildFailure::Db(message)
         | BuildFailure::MissingIdentity(message)
         | BuildFailure::TickAssembly(message) => message.clone(),
-        BuildFailure::Spec => "out-of-spec V2 reserve".to_string(),
+        BuildFailure::Spec(reason) => format!("pool build refused: out of spec ({reason})"),
         BuildFailure::HookedPool => "hook admission refusal".to_string(),
         BuildFailure::DynamicFee => "dynamic-fee admission refusal".to_string(),
         BuildFailure::HighFee => "fee exceeds the encoder limit".to_string(),

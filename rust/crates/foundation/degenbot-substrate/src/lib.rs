@@ -63,7 +63,7 @@ pub use ::degenbot_pools::curve_state::{
 pub use ::degenbot_pools::rate_provider::{
     BalancerRateProvider, RateProviderError, StaticRateProvider,
 };
-pub use ::degenbot_pools::registration_refusal::{BuildFailure, RegisterRefusal};
+pub use ::degenbot_pools::registration_refusal::{BuildFailure, RegisterRefusal, SpecRefusal};
 pub use ::degenbot_pools::registry::{
     ConcentratedLiquidityPool, ConcentratedLiquidityPoolMut, PoolEntry, PoolEntrySlice,
     RegisteredPoolFamily, TokenEntry,

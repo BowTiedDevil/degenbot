@@ -139,9 +139,14 @@ pub use degenbot_bot::bot_core::pool_builder::route::{
     RequestedPool, V3RouteInputs,
 };
 pub use degenbot_bot::bot_core::registration_ledger::{PreBuildIdentity, RefusalKind};
+
 pub use degenbot_bot::bot_core::registration_lifecycle::{
     run_v3_registration_lifecycle, run_v4_registration_lifecycle, run_verify_lifecycle,
 };
+/// The reason a build refused a pool as out of spec — [`PoolBuilderError::Spec`]'s
+/// payload, so a consumer can name the refusal without reaching into the pools
+/// crate.
+pub use degenbot_pools::registration_refusal::SpecRefusal;
 
 pub use degenbot_bot::bot_core::{
     PoolEntry, RegisterAerodromeV2PoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,

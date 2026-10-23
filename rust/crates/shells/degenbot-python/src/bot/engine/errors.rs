@@ -120,7 +120,7 @@ create_exception!(
     degenbot._ffi,
     SpecViolationError,
     crate::bot::engine::PoolRegistrationError,
-    "A field on the pool registration params violates its on-chain Solidity bound (e.g. V2 reserve > uint112, V3/V4 sqrtPriceX96 / tick / fee / tickSpacing out of range). The message identifies the offending field, its value, and the bound it violates."
+    "A pool was refused as out of spec, either at registration (a field violates its on-chain Solidity bound: e.g. V2 reserve > uint112, V3/V4 sqrtPriceX96 / tick / fee / tickSpacing out of range) or at build (the pool is unbuildable, e.g. a known-broken pool, too few coins, an unreadable coin). The message identifies the offending field, its value, and the bound it violates; a build refusal names its reason in parentheses, e.g. `pool build refused: out of spec (curve broken pool)`."
 );
 
 // ADR-037: hooked V4 pools are admitted but their simulations use

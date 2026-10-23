@@ -442,6 +442,7 @@ mod route_tests {
     #![expect(clippy::expect_used)] // test assertions read the refusal arms directly
     use super::*;
     use alloy::primitives::B256;
+    use degenbot_pools::registration_refusal::SpecRefusal;
     use degenbot_uniswap::deployments::AddressMismatch;
 
     use crate::bot_core::pool_builder::parity;
@@ -486,7 +487,7 @@ mod route_tests {
             ));
         }
         for err in [
-            PoolBuilderError::Spec,
+            PoolBuilderError::Spec(SpecRefusal::CurveTooFewCoins),
             PoolBuilderError::Decoding {
                 message: "x".to_owned(),
             },

@@ -157,6 +157,66 @@ impl From<&RegisterAerodromePoolError> for RegisterRefusal {
     }
 }
 
+/// Why a build refused a pool as out of spec.
+///
+/// One variant per refusal mechanism the builders raise, so a refused build
+/// names its reason ("out of spec (curve broken pool)") instead of reporting
+/// one undifferentiated "out of spec": a Curve pool broken beyond repair, a
+/// Balancer pool whose swaps are disabled at the contract, a pool exposing
+/// fewer than two coins, and a reserve beyond `uint112` are four different
+/// facts about four different pools.
+///
+/// The type lives at this layer because [`BuildFailure`] carries it — the
+/// builders that raise it, the ledger that memoizes the refusal, and the FFI
+/// that renders the exception all speak this one taxonomy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SpecRefusal {
+    /// A reserve above the on-chain `uint112` bound (V2 / Aerodrome V2).
+    V2Reserve,
+    /// A pool in the known-broken Balancer V2 set — swaps disabled at the
+    /// contract, so the pool could never simulate.
+    BalancerBrokenPool,
+    /// A pool in the known-broken Curve V1 set.
+    CurveBrokenPool,
+    /// A Curve pool whose required getter (`A()` / `fee()` / `admin_fee()`)
+    /// reverted: the contract does not implement the interface it claims.
+    CurveRequiredReadReverted,
+    /// A Curve pool exposing fewer than two coins.
+    CurveTooFewCoins,
+    /// A Curve pool whose `coins()` and `balances()` lengths disagree, so the
+    /// N-consistent register params cannot be assembled.
+    CurveCoinsBalancesMismatch,
+    /// A Curve pool coin whose `decimals()` reverted.
+    CurveCoinDecimalsReverted,
+    /// A coin that cannot serve an ERC-20 read at all (no runtime code — an
+    /// old vyper pool's ETH sentinel, or a junk `coins()` return).
+    NoCodeCoin,
+}
+
+impl SpecRefusal {
+    /// The bounded reason label: the message suffix a refusal renders and the
+    /// tag a metric or log line carries.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::V2Reserve => "v2 reserve out of bounds",
+            Self::BalancerBrokenPool => "balancer broken pool",
+            Self::CurveBrokenPool => "curve broken pool",
+            Self::CurveRequiredReadReverted => "curve required read reverted",
+            Self::CurveTooFewCoins => "curve too few coins",
+            Self::CurveCoinsBalancesMismatch => "curve coins/balances mismatch",
+            Self::CurveCoinDecimalsReverted => "curve coin decimals reverted",
+            Self::NoCodeCoin => "no-code coin",
+        }
+    }
+}
+
+impl std::fmt::Display for SpecRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// The build failure a caller observed, before classification.
 ///
 /// The variants are the *typed* refusals a registration can hit; anything
@@ -174,8 +234,8 @@ pub enum BuildFailure {
     HighFee,
     /// A builder RPC / transport failure, with the provider error's rendering.
     Rpc(String),
-    /// The builder refused an out-of-spec V2 reserve.
-    Spec,
+    /// The builder refused the pool as out of spec, with the reason.
+    Spec(SpecRefusal),
     /// A builder decode failure.
     Decoding(String),
     /// A builder DB read failure, with the DB error's rendering.

@@ -15,6 +15,7 @@ use alloy::dyn_abi::DynSolValue;
 use alloy::primitives::{aliases::U112, aliases::U128, Address, Bytes, FixedBytes, I256, U256};
 use async_trait::async_trait;
 use degenbot_core::errors::ProviderError;
+use degenbot_pools::registration_refusal::SpecRefusal;
 use degenbot_rpc::abi;
 
 use super::{builder, choreography, curve_choreography};
@@ -750,6 +751,30 @@ async fn build_v2_assembles_register_params_from_onchain() {
     assert_eq!(state.reserve0, U112::from(123_456_789u64));
 }
 
+/// The V2-reserve refusal names its reason, and it enforces the on-chain
+/// `uint112` bound.
+///
+/// The arm is a DEFENSIVE guard, not a reachable refusal: the `getReserves()`
+/// decode narrows to `uint112` (an over-bound word comes back masked — `2^112`
+/// decodes as `0`), so no RPC hands the builder an out-of-bound reserve. The
+/// name still has to be right: it is what a caller renders when the guard
+/// fires.
+#[test]
+fn v2_reserve_refusal_names_its_reason() {
+    assert!(
+        degenbot_pools::spec_bounds::narrow_v2_reserve(
+            degenbot_pools::spec_bounds::UINT112_MAX + U256::from(1u64),
+            "reserve0",
+        )
+        .is_err(),
+        "one past uint112(-1) is out of bounds"
+    );
+    assert_eq!(
+        builder::PoolBuilderError::Spec(SpecRefusal::V2Reserve).to_string(),
+        "out of spec (v2 reserve out of bounds)"
+    );
+}
+
 #[tokio::test]
 async fn build_v3_assembles_sparse_register_params_from_onchain() {
     use crate::bot_core::PoolTickCoverage;
@@ -1394,7 +1419,9 @@ async fn build_balancer_weighted_rejects_a_known_broken_pool() {
         assert!(
             matches!(
                 builder::build_balancer_weighted(VAULT, *broken, &io, Some(1)).await,
-                Err(builder::PoolBuilderError::Spec)
+                Err(builder::PoolBuilderError::Spec(
+                    SpecRefusal::BalancerBrokenPool
+                ))
             ),
             "known-broken pool built: {broken}"
         );
@@ -1410,7 +1437,9 @@ async fn build_balancer_stable_rejects_a_known_broken_pool() {
         assert!(
             matches!(
                 builder::build_balancer_stable(VAULT, *broken, &io, Some(1), None).await,
-                Err(builder::PoolBuilderError::Spec)
+                Err(builder::PoolBuilderError::Spec(
+                    SpecRefusal::BalancerBrokenPool
+                ))
             ),
             "known-broken pool built: {broken}"
         );
@@ -1895,7 +1924,9 @@ async fn build_curve_pool_rejects_a_known_broken_v1_pool() {
         assert!(
             matches!(
                 builder::build_curve_pool(*broken, &[REGISTRY], &io, Some(1)).await,
-                Err(builder::PoolBuilderError::Spec)
+                Err(builder::PoolBuilderError::Spec(
+                    SpecRefusal::CurveBrokenPool
+                ))
             ),
             "known-broken pool built: {broken}"
         );
@@ -1925,7 +1956,9 @@ async fn build_curve_pool_rejects_fewer_than_two_coins() {
     let io = io_with(f);
     assert!(matches!(
         builder::build_curve_pool(TO, &[REGISTRY], &io, Some(1)).await,
-        Err(builder::PoolBuilderError::Spec)
+        Err(builder::PoolBuilderError::Spec(
+            SpecRefusal::CurveTooFewCoins
+        ))
     ));
 }
 
@@ -1963,7 +1996,9 @@ async fn build_curve_pool_rejects_a_pool_whose_required_getter_reverts() {
     let io = io_with(f);
     assert!(matches!(
         builder::build_curve_pool(TO, &[REGISTRY], &io, Some(1)).await,
-        Err(builder::PoolBuilderError::Spec)
+        Err(builder::PoolBuilderError::Spec(
+            SpecRefusal::CurveRequiredReadReverted
+        ))
     ));
 }
 
@@ -2005,7 +2040,55 @@ async fn build_curve_pool_rejects_a_coin_with_no_code() {
     let io = io_with(f);
     assert!(matches!(
         builder::build_curve_pool(TO, &[REGISTRY], &io, Some(1)).await,
-        Err(builder::PoolBuilderError::Spec)
+        Err(builder::PoolBuilderError::Spec(SpecRefusal::NoCodeCoin))
+    ));
+}
+
+/// A discovered coin whose `decimals()` reverts is the same class of refusal
+/// as the no-code sentinel (a coin that cannot serve an ERC-20 read), but a
+/// distinct reason: the contract answered, and refused.
+#[tokio::test]
+async fn build_curve_pool_rejects_a_coin_whose_decimals_read_reverts() {
+    let mut f = FakeRpc::new();
+    let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000011");
+    let coin1: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000012");
+
+    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
+    f.set_full(abi::encode_curve_coins_uint(1), addr_word(coin1));
+    f.set_full(
+        abi::encode_curve_balances_uint(0),
+        enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
+    );
+    f.set_full(
+        abi::encode_curve_balances_uint(1),
+        enc(DynSolValue::Uint(U256::from(2_000_000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"A()"),
+        enc(DynSolValue::Uint(U256::from(100u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(100u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"admin_fee()"),
+        enc(DynSolValue::Uint(U256::from(0u64), 256)),
+    );
+    f.set_error(
+        choreography::selector(b"decimals()"),
+        ProviderError::ExecutionReverted {
+            code: 3,
+            message: "execution reverted".to_string(),
+        },
+    );
+
+    let io = io_with(f);
+    assert!(matches!(
+        builder::build_curve_pool(TO, &[REGISTRY], &io, Some(1)).await,
+        Err(builder::PoolBuilderError::Spec(
+            SpecRefusal::CurveCoinDecimalsReverted
+        ))
     ));
 }
 
@@ -2045,7 +2128,9 @@ async fn build_curve_pool_rejects_a_coin_whose_balance_read_fails() {
     let io = io_with(f);
     assert!(matches!(
         builder::build_curve_pool(TO, &[REGISTRY], &io, Some(1)).await,
-        Err(builder::PoolBuilderError::Spec)
+        Err(builder::PoolBuilderError::Spec(
+            SpecRefusal::CurveCoinsBalancesMismatch
+        ))
     ));
 }
 
