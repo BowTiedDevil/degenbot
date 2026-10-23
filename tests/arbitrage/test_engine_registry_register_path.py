@@ -13,15 +13,21 @@ Rust engine / BotState is needed.
 
 from __future__ import annotations
 
+from fractions import Fraction
+
 import pytest
 
 from degenbot._ffi import Bot
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot.utils.bytes import to_0x_hex
+from tests.fakes.bot import FakeBot as _FakeBot
+from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.types.test_concrete_pool_construction import (
     _make_uniswap_v2_pool,
     _make_uniswap_v3_pool,
     _make_uniswap_v4_pool,
+    _make_usdc,
+    _make_weth,
 )
 
 
@@ -117,7 +123,7 @@ def test_pool_identity_is_derived_from_the_real_shared_bot_state() -> None:
     ``py_bot.register_v2_pool`` and every identity read resolves it from there —
     the core is the only identity owner left.
     """
-    bot = _FakeBot()
+    bot = _FakeBot(py_bot=Bot())
     registry = EngineRegistry(bot=bot)
     address = "0x00000000000000000000000000000000000000aa"
     key = bot._py_bot.register_v2_pool(
@@ -141,19 +147,6 @@ def test_pool_identity_is_derived_from_the_real_shared_bot_state() -> None:
     assert not any(name.endswith(("_keys", "_inflight", "_claims")) for name in vars(registry))
 
 
-class _FakeBot:
-    """Minimal Bot double exposing ``_py_bot`` for the production construction path.
-
-    ``EngineRegistry(bot=...)`` dereferences ``bot._py_bot`` to build the real
-    engine against the bot's shared BotState (ADR-006 D1). A bare ``Bot()`` is
-    the offline stand-in — ``test_shared_state_topology`` proves the shared-core
-    topology with this exact pair, no RPC/anvil needed.
-    """
-
-    def __init__(self) -> None:
-        self._py_bot = Bot()
-
-
 def test_bot_none_without_engine_raises() -> None:
     """Production path requires a bot when no engine is supplied."""
     with pytest.raises(ValueError, match=r"engine.*bot|bot.*engine"):
@@ -168,7 +161,7 @@ def test_bot_supplies_py_bot_to_real_engine() -> None:
     ``register_*`` surface); registering a V2 pool against the bot's py_bot must
     be visible to the engine's ``reserve_pair_pool_count``.
     """
-    bot = _FakeBot()
+    bot = _FakeBot(py_bot=Bot())
     registry = EngineRegistry(bot=bot)
 
     assert isinstance(registry.engine, ArbitrageEngine)
@@ -197,11 +190,6 @@ def test_register_path_dispatches_aerodrome_key() -> None:
     UnsupportedHopType for Solidly — matching the pre-flatten encode gap), so
     the Python relay no longer classifies the hop family. Key-dispatch only.
     """
-    from fractions import Fraction
-
-    from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
-    from tests.types.test_concrete_pool_construction import _make_usdc, _make_weth
-
     fake = FakeArbitrageEngine()
     registry = EngineRegistry(bot=None, engine=fake)
 

@@ -21,7 +21,7 @@ from degenbot.runner import BotRunner
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import InjectedActors, PhaseError
 from degenbot.runner.config import ArbitrageConfig
-from tests.fakes.engine import FakeEngine as _FakeEngine
+from tests.fakes.bot import FakeBot as _FakeBot
 from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 from tests.helpers.identity_env import identity_env
 from tests.helpers.rpc_env import rpc_env
@@ -46,22 +46,6 @@ def _cfg() -> ArbitrageConfig:
         "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
     }):
         return ArbitrageConfig.build(live=True, permutation=None)
-
-
-class _FakeBot:
-    chain_id = 1
-
-    def release_python_state(self) -> None:
-        pass
-
-    def block_stream(self):  # pragma: no cover - consumer is a no-op here
-        # The injected consumer never iterates it; an immediately-empty
-        # stream is enough for run() to acquire + pass through.
-        async def _empty():
-            return
-            yield {}  # pragma: no cover
-
-        return _empty()
 
 
 class _FakeAsyncW3:

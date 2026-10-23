@@ -14,22 +14,15 @@ instead of calling ``engine.register_v2_pool``).
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 
 import pytest
 
 from degenbot._ffi import Bot
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot.exceptions import VerificationRpcError
+from tests.fakes.bot import FakeBot as _FakeBot
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool
-
-
-@dataclasses.dataclass
-class _FakeBot:
-    """Minimal Bot double exposing ``_py_bot`` for the production path."""
-
-    _py_bot: Bot
 
 
 def _build_shared_v3_pool(py_bot: Bot) -> object:
@@ -73,7 +66,7 @@ def test_register_v3_pool_resolves_shared_state_key_without_re_registering() -> 
     """
     py_bot = Bot()
     pool = _build_shared_v3_pool(py_bot)
-    bot = _FakeBot(py_bot)
+    bot = _FakeBot(py_bot=py_bot)
     registry = EngineRegistry(bot=bot)
 
     key = asyncio.run(registry.register_v3_pool(pool))
@@ -100,7 +93,7 @@ def test_register_tracked_v3_pool_without_provider_fails_fast() -> None:
     """
     py_bot = Bot()
     engine = ArbitrageEngine(py_bot=py_bot)
-    bot = _FakeBot(py_bot)
+    bot = _FakeBot(py_bot=py_bot)
     registry = EngineRegistry(bot=bot, engine=engine)
 
     address = "0x11b815efB8f58119D17b5fc9880b1e1a29B7dC33"

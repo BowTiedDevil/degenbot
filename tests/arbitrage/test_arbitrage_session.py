@@ -37,6 +37,7 @@ from degenbot.runner.build_paths import (
     PathRegistrationPipeline,
 )
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
+from tests.fakes.bot import FakeBot as _FakeBot
 from tests.fakes.engine import FakeEngine as _FakeEngine
 from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 from tests.helpers.boot_actors import inline_registration_scheduler
@@ -81,34 +82,6 @@ def _cfg(**overrides) -> ArbitrageConfig:
             permutation=None,
             rpc=RpcCascadeOverrides(chain_id=1, node=_NODE),
         )
-
-
-class _FakeBot:
-    def __init__(
-        self,
-        events: list[str] | None = None,
-        blocks: list[dict[str, int]] | None = None,
-    ) -> None:
-        self.chain_id = 1
-        self.released = False
-        self._events = events
-        self._blocks = blocks or []
-        # Mimics the real Bot.block_stream() once-only receiver semantics
-        # (the block-clock pipe is coordinator-owned; the receiver is handed
-        # out exactly once).
-        self.block_stream_calls = 0
-
-    def release_python_state(self) -> None:
-        self.released = True
-        if self._events is not None:
-            self._events.append("release")
-
-    def block_stream(self):
-        self.block_stream_calls += 1
-        if self.block_stream_calls > 1:
-            msg = "block_stream() can only be called once"
-            raise RuntimeError(msg)
-        return _BlocksStream(list(self._blocks))
 
 
 class _RecordingPyBot:
@@ -193,28 +166,6 @@ def _noop_coro():
         pass
 
     return _n()
-
-
-class _BlocksStream:
-    """Async iterator over a fixed list of block dicts, then StopAsyncIteration.
-
-    Stand-in for the once-only `engine.block_stream()` receiver (mimics
-    `BlockStream.__anext__`).
-    """
-
-    def __init__(self, blocks: list[dict[str, int]]) -> None:
-        self._blocks = list(blocks)
-        self._i = 0
-
-    def __aiter__(self) -> _BlocksStream:
-        return self
-
-    async def __anext__(self) -> dict[str, int]:
-        if self._i >= len(self._blocks):
-            raise StopAsyncIteration
-        b = self._blocks[self._i]
-        self._i += 1
-        return b
 
 
 def _block_dict(number: int) -> dict[str, int]:
@@ -1054,8 +1005,8 @@ class TestSubBBackgroundRegistration:
         snapshot read-tx after `build_paths` completes — the canary stays
         active in the normal path (WAL reclamation preserved)."""
         calls: list[str] = []
-        bot = _FakeBot(events=calls)
-        bot._py_bot = _RecordingPyBot(calls)  # records `close_snapshot_tx`
+        # `_RecordingPyBot` records `close_snapshot_tx` on the shared event list.
+        bot = _FakeBot(events=calls, py_bot=_RecordingPyBot(calls))
         session = BotRunner(
             _cfg(),
             actors=InjectedActors(
@@ -1096,10 +1047,9 @@ class TestSubBBackgroundRegistration:
         the teardown stays clean and CancelledError propagates unadorned.
         """
         calls: list[str] = []
-        bot = _FakeBot(events=calls)
         # Simulate the in-flight-worker-clone scenario: the held `_py_bot`
         # would trip the canary if `close_snapshot_tx` were invoked mid-cancel.
-        bot._py_bot = _RecordingPyBot(calls, raise_on_close=True)
+        bot = _FakeBot(events=calls, py_bot=_RecordingPyBot(calls, raise_on_close=True))
         session = BotRunner(
             _cfg(),
             actors=InjectedActors(
@@ -1346,7 +1296,7 @@ class TestSubCBgRegistrationConcurrency:
         assert session._session.registration_task.cancelled()
 
 
-@pytest.fixture()
+@pytest.fixture
 def started_session():
     """A started :class:`BotRunner` over the suite's offline injected-actor posture.
 

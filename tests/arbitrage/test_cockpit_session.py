@@ -22,6 +22,7 @@ from degenbot.runner._consume import consume_result_batches
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import InjectedActors, _SessionState
 from degenbot.runner.config import ArbitrageConfig
+from tests.fakes.bot import FakeBot as _FakeBot
 from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 from tests.fakes.runner_pipelines import StubPipeline
 from tests.helpers.boot_actors import inline_registration_scheduler
@@ -48,22 +49,6 @@ def _cfg() -> ArbitrageConfig:
         "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
     }):
         return ArbitrageConfig.build(live=True, permutation=None)
-
-
-class _FakeBot:
-    chain_id = 1
-
-    def release_python_state(self) -> None:
-        pass
-
-    def block_stream(self):  # pragma: no cover - the capturing consumer never iterates it
-        # The async feature here is generator-hood (the consumer awaits
-        # ``__anext__`` on the returned stream), which RUF029 does not count.
-        async def _empty():  # ruff: ignore[unused-async] -- async generator, not an await-less coroutine
-            return
-            yield {}  # pragma: no cover
-
-        return _empty()
 
 
 class _FakeAsyncW3:

@@ -8,8 +8,8 @@ home for those doubles and for the wiring that renders them to a runner.
 
 Each caller keeps ownership of its own ``ArbitrageConfig`` construction: the two
 boots build their config differently, so that logic does not belong here.
-``FakeEngineRegistry`` stays in ``tests/fakes/engine.py`` — it is the
-engine-registry contract double, not a boot-path actor.
+``FakeBot`` and ``FakeEngineRegistry`` stay in ``tests/fakes/`` — they are the
+shared bot / engine-registry doubles, not boot-path actors.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from degenbot.runner import BotRunner
 from degenbot.runner.bot_runner import InjectedActors
+from tests.fakes.bot import FakeBot
 from tests.fakes.engine import FakeEngineRegistry
 
 if TYPE_CHECKING:
@@ -110,22 +111,6 @@ class FakeAsyncW3:
 
     def as_async_alloy(self) -> None:
         return None
-
-
-class FakeBot:
-    """The boot-path bot double: records the snapshot-trim surface."""
-
-    def __init__(self) -> None:
-        self.chain_id = 1
-        self.released = False
-        self.block_stream_calls = 0
-
-    def release_python_state(self) -> None:
-        self.released = True
-
-    def block_stream(self):
-        self.block_stream_calls += 1
-        return iter(())  # immediately exhausted
 
 
 def boot_runner(

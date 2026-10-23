@@ -9,7 +9,8 @@ NOT re-register the pool with the engine — it must resolve the existing
 shared-core key, mirroring the V2 path (``register_v2_pool`` reads
 ``pool._py_pool.pool_id``).
 
-Regression (the production settlement-arbitrage bot, ``examples/eth_settlement_arbitrage_v2_v3_v4_rust.py``):
+Regression (the production settlement-arbitrage bot,
+``examples/eth_settlement_arbitrage_v2_v3_v4_rust.py``):
 ``register_v4_pool`` called ``self.engine.register_v4_pool`` on the pre-
 registered pool, raising ``ValueError("V4 pool already registered: …")`` for
 every V4 hop in every discovered path. Because the Python ``_v4_keys`` cache
@@ -23,13 +24,13 @@ These tests pin the shared-state contract against a real ``Bot`` + real
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 from typing import TYPE_CHECKING
 
 from degenbot._ffi import Bot
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.utils.bytes import to_0x_hex
+from tests.fakes.bot import FakeBot as _FakeBot
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v4_pool_factory import make_v4_pool
 
@@ -37,13 +38,6 @@ if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
 
 V4_POOL_MANAGER = "0x000000000004444c5dc75cB358380D2e3dE08A90"
-
-
-@dataclasses.dataclass
-class _FakeBot:
-    """Minimal Bot double exposing ``_py_bot`` for the production path."""
-
-    _py_bot: Bot
 
 
 def _build_shared_v4_pool(py_bot: Bot) -> tuple[Erc20Token, Erc20Token, object]:
@@ -92,7 +86,7 @@ def test_register_v4_pool_resolves_shared_state_key_without_re_registering() -> 
     """
     py_bot = Bot()
     _weth, _usdc, pool = _build_shared_v4_pool(py_bot)
-    bot = _FakeBot(py_bot)
+    bot = _FakeBot(py_bot=py_bot)
     registry = EngineRegistry(bot=bot)
 
     # The pool is already in the shared BotState (built by make_v4_pool).
@@ -103,9 +97,7 @@ def test_register_v4_pool_resolves_shared_state_key_without_re_registering() -> 
     assert key == pool._py_pool.pool_id
     # The identity is answered by the shared core on demand — the registry
     # keeps no pool_id → key map of its own.
-    assert (
-        registry.engine.pool_id_for_v4_pool(pool.address, to_0x_hex(pool.pool_id)) == key
-    )
+    assert registry.engine.pool_id_for_v4_pool(pool.address, to_0x_hex(pool.pool_id)) == key
 
 
 def test_register_v4_pool_idempotent_across_paths() -> None:
@@ -113,7 +105,7 @@ def test_register_v4_pool_idempotent_across_paths() -> None:
     returns the same key both times and never re-enters the engine."""
     py_bot = Bot()
     _weth, _usdc, pool = _build_shared_v4_pool(py_bot)
-    bot = _FakeBot(py_bot)
+    bot = _FakeBot(py_bot=py_bot)
     registry = EngineRegistry(bot=bot)
 
     first = asyncio.run(registry.register_v4_pool(pool))

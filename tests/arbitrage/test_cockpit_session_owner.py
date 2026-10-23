@@ -27,6 +27,7 @@ from degenbot.runner._consume import consume_result_batches
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.bot_runner import InjectedActors, PhaseError, _Phase, _SessionState
 from degenbot.runner.config import ArbitrageConfig
+from tests.fakes.bot import FakeBot as _FakeBot
 from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 from tests.fakes.runner_pipelines import StubPipeline
 from tests.helpers.boot_actors import inline_registration_scheduler
@@ -53,18 +54,6 @@ def _cfg() -> ArbitrageConfig:
         "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
     }):
         return ArbitrageConfig.build(live=True, permutation=None)
-
-
-class _FakeBot:
-    chain_id = 1
-
-    def release_python_state(self) -> None:
-        pass
-
-    def block_stream(self):  # pragma: no cover - the noop consumer never iterates it
-        # The injected consumer is the noop ``_noop()`` in every test here, so
-        # run() never iterates this stream; ``None`` is the honest empty value.
-        return None
 
 
 class _FakeAsyncW3:
