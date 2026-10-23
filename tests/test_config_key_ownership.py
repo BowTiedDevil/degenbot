@@ -20,8 +20,9 @@ declared it and nobody honours it.
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
+
+from tests.source_scan import identifiers
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_RS = ROOT / "rust" / "crates" / "foundation" / "degenbot-config" / "src" / "schema.rs"
@@ -54,31 +55,11 @@ def _census(name: str) -> set[str]:
     return set(re.findall(r'"([a-z0-9_.]+)"', body))
 
 
-def _files_mentioning(fields: list[str], roots: list[str]) -> dict[str, set[str]]:
-    """Map each field to the files under `roots` that mention it as a word."""
-    patterns = "\n".join(r"\b" + field + r"\b" for field in fields)
-    completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
-        ["rg", "-o", "--no-heading", "-n", "-f", "-", *roots, "--glob", "*.{rs,py}"],
-        cwd=ROOT,
-        input=patterns,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert completed.returncode in (0, 1), completed.stderr
-    hits: dict[str, set[str]] = {field: set() for field in fields}
-    for line in completed.stdout.splitlines():
-        path, rest = line.split(":", 1)
-        _line_no, word = rest.split(":", 1)
-        hits.setdefault(word, set()).add(path)
-    return hits
-
-
 def _owners() -> dict[str, str]:
     """The owner each declared key's read sites prove."""
     keys = _declared_keys()
     fields = sorted({field for _, field in keys})
-    hits = _files_mentioning(fields, ["rust/crates", "src", "tests"])
+    hits = identifiers(fields, ["rust/crates", "src", "tests"])
 
     def classify(path: str, field: str) -> str:
         files = hits[field]
@@ -123,5 +104,15 @@ def test_every_declared_key_has_a_provable_owner() -> None:
 
 def test_a_key_read_nowhere_is_reported() -> None:
     """The negative probe: an unread key must not classify as core."""
-    unread = _files_mentioning(["definitely_unread_fixture_key"], ["rust/crates", "src"])
+    unread = identifiers(["definitely_unread_fixture_key"], ["rust/crates", "src"])
     assert unread["definitely_unread_fixture_key"] == set()
+
+
+def test_the_scan_reads_a_word_the_sources_certainly_hold() -> None:
+    """The positive control: the probe above only means something if the scan sees.
+
+    An `identifiers` scan that read no file would report every declared key as
+    unread, blaming the sources for a broken scan.
+    """
+    found = identifiers(["SHELL_OWNED_KEYS"], ["rust/crates"])
+    assert found["SHELL_OWNED_KEYS"], "the source scan found nothing at all"
