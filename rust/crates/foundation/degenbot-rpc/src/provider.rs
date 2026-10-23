@@ -2715,7 +2715,7 @@ mod tests {
             let message = collector.into_unquoted().unwrap_or_default();
             RETRY_CAPTURE.with(|c| {
                 if let Some(tx) = &*c.borrow() {
-                    let _ = tx.send(format!("{}|{}|{}", meta.level(), meta.target(), message,));
+                    let _ = tx.send(format!("{}|{}|{}", meta.level(), meta.target(), message));
                 }
             });
         }
