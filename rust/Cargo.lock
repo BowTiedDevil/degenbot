@@ -464,7 +464,7 @@ dependencies = [
  "futures",
  "futures-utils-wasm",
  "http",
- "lru",
+ "lru 0.18.5",
  "parking_lot",
  "pin-project",
  "reqwest",
@@ -2276,7 +2276,7 @@ version = "0.6.0-alpha.16"
 dependencies = [
  "alloy",
  "degenbot-core",
- "lru",
+ "lru 0.19.0",
  "parking_lot",
  "proptest",
  "thiserror",
@@ -2880,7 +2880,7 @@ dependencies = [
  "futures-util",
  "hashbrown 0.17.1",
  "log",
- "lru",
+ "lru 0.19.0",
  "mimalloc",
  "opentelemetry_sdk",
  "parking_lot",
@@ -4157,9 +4157,9 @@ checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 
 [[package]]
 name = "libc"
-version = "0.2.190"
+version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
+checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libm"
@@ -4232,6 +4232,15 @@ name = "lru"
 version = "0.18.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef9ac18847474e638e3702b76c65d4eb93428471a74778ef0f1be711717f89b5"
+dependencies = [
+ "hashbrown 0.17.1",
+]
+
+[[package]]
+name = "lru"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a9f71e3591c7ec44d3e563e87bf14ddc2bada8519dca046e5b0e560cd004e2d"
 dependencies = [
  "hashbrown 0.17.1",
 ]
@@ -4996,9 +5005,9 @@ dependencies = [
 
 [[package]]
 name = "pyo3-introspection"
-version = "0.29.3"
+version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7db9bbcb6d6679df2655f3b3dcd84f74a5c5fc4903eb3f89a6888b5c1a90793"
+checksum = "3b2ac30f128e6ab4ca1c464d6eabd30c84c7adc5955c3bb2eb7d203ea24ebd18"
 dependencies = [
  "anyhow",
  "goblin",
@@ -6535,9 +6544,9 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tokio"
-version = "1.53.2"
+version = "1.53.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044"
+checksum = "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e"
 dependencies = [
  "bytes",
  "libc",
@@ -7487,27 +7496,27 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zstd"
-version = "0.14.2"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "057cfd910cfac363a0ada849592624b4c9ff2e10bef504c3433810d78ed96f93"
+checksum = "db3ae9bf90af6e40197bef767eeefc46ad6397420fe873830bd85e5fbbfb3c70"
 dependencies = [
  "zstd-safe",
 ]
 
 [[package]]
 name = "zstd-safe"
-version = "8.1.0"
+version = "8.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdd44c6a7284e91f3717755b24315a302edd9153a01f753c3cba3d765e8eafac"
+checksum = "ded520f16b29e1a9b771c722221b2b0a0398c2316d9bb3c42b458a5414d7434b"
 dependencies = [
  "zstd-sys",
 ]
 
 [[package]]
 name = "zstd-sys"
-version = "2.1.1+zstd.1.5.7"
+version = "2.1.2+zstd.1.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aeec9eaf2dffbbd09201e23bd0ffcbaa33bb8e9266a10734fd7ed90a85eca078"
+checksum = "481ada9c543b2323cbb7bbdbb5249177fbf0188ed959ed2c15e4b22421c84ed3"
 dependencies = [
  "cc",
  "pkg-config",
