@@ -43,6 +43,7 @@ nested pool killed or in recovery mode), and a pool whose token answers
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -50,6 +51,7 @@ import pytest
 
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import SpecViolationError
 from degenbot.fork import AnvilFork
 from tests.sweep_pin import SWEEP_FORK_BLOCK, assert_fork_at_sweep_pin
@@ -83,10 +85,70 @@ _FAMILY_CLASS = {
     "weighted": BalancerV2Pool,
 }
 
+# The corpus's closed family vocabulary: the two families a construction arm
+# models, plus the generator's "no arm can build this address" bucket.
+_CORPUS_FAMILIES = frozenset({*_FAMILY_CLASS, "unknown"})
+
+_POOL_ID_RE = re.compile(r"0x[0-9a-fA-F]{64}")
+_ROW_FIELDS = ("address", "pool_id", "specialization", "registered_block", "family")
+
 
 def _load_corpus() -> dict:
     with _CORPUS_PATH.open() as f:
         return json.load(f)
+
+
+def _is_checksummed(address: object) -> bool:
+    if not isinstance(address, str):
+        return False
+    try:
+        return get_checksum_address(address) == address
+    except ValueError:
+        return False
+
+
+def _corpus_shape_violations(corpus: dict) -> list[str]:
+    """Every at-rest shape violation in a registration corpus (empty when clean).
+
+    The sweep replays these rows as pinned chain state, so a row the header's
+    scan could not have produced — a non-checksummed address, a pool id that is
+    not a 32-byte hex word, a family outside the probe's vocabulary, a
+    registration after the pin — must fail offline instead of surfacing as a
+    live-leg miss on a row the corpus should never have carried.
+    """
+    violations: list[str] = []
+    if corpus.get("pin_block") != SWEEP_FORK_BLOCK:
+        violations.append(
+            f"header pin_block {corpus.get('pin_block')!r} is not the sweep pin {SWEEP_FORK_BLOCK}"
+        )
+    pools = corpus.get("pools") or []
+    census = corpus.get("census")
+    if isinstance(census, dict) and sum(census.values()) != len(pools):
+        violations.append(
+            f"header census counts {sum(census.values())} rows, the corpus carries {len(pools)}"
+        )
+    for index, row in enumerate(pools):
+        where = f"row {index} ({row.get('address')!r})"
+        missing = [field for field in _ROW_FIELDS if field not in row]
+        if missing:
+            violations.append(f"{where}: missing fields {missing}")
+        if not _is_checksummed(row.get("address")):
+            violations.append(f"{where}: address is not an EIP-55 checksummed 20-byte address")
+        pool_id = row.get("pool_id")
+        if not (isinstance(pool_id, str) and _POOL_ID_RE.fullmatch(pool_id)):
+            violations.append(f"{where}: pool_id {pool_id!r} is not 0x + 64 hex")
+        family = row.get("family")
+        if family not in _CORPUS_FAMILIES:
+            violations.append(
+                f"{where}: family {family!r} is outside the closed vocabulary "
+                f"{sorted(_CORPUS_FAMILIES)}"
+            )
+        block = row.get("registered_block")
+        if not (isinstance(block, int) and 0 < block <= SWEEP_FORK_BLOCK):
+            violations.append(
+                f"{where}: registered_block {block!r} is not an int in (0, {SWEEP_FORK_BLOCK}]"
+            )
+    return violations
 
 
 def _named_refusal_reason(exc: SpecViolationError) -> str:
@@ -209,8 +271,25 @@ def test_corpus_is_the_pinned_vault_registration_scan() -> None:
     # One registration per pool address, and every row classified.
     addresses = [row["address"] for row in pools]
     assert len(addresses) == len(set(addresses))
-    assert all(row["family"] in {*_FAMILY_CLASS, "unknown"} for row in pools)
+    assert all(row["family"] in _CORPUS_FAMILIES for row in pools)
     census = Counter(row["family"] for row in pools)
     assert dict(census) == corpus["census"], (dict(census), corpus["census"])
     # Every pool row's id embeds its address (the Vault's pool-id layout).
     assert all(row["pool_id"][2:42].lower() == row["address"][2:].lower() for row in pools)
+
+    # At rest: every committed row satisfies the strict shape gate. The sweep
+    # treats these rows as pinned chain state, so a row the header's scan could
+    # not have produced fails offline, not as a live-leg miss.
+    violations = _corpus_shape_violations(corpus)
+    assert not violations, f"corpus is not strict-clean: {violations[:5]}"
+
+    # Red path: the gate discriminates, demonstrated on a constructed corpus
+    # (the committed corpus is never weakened to show red).
+    injected = json.loads(json.dumps(corpus))
+    injected["pools"][0]["address"] = injected["pools"][0]["address"].lower()
+    injected["pools"][1]["pool_id"] = injected["pools"][1]["pool_id"][:-2]
+    injected["pools"][2]["family"] = "gyro"
+    injected["pools"][3]["registered_block"] = SWEEP_FORK_BLOCK + 1
+    red = _corpus_shape_violations(injected)
+    for field in ("address", "pool_id", "family", "registered_block"):
+        assert any(field in violation for violation in red), (field, red)

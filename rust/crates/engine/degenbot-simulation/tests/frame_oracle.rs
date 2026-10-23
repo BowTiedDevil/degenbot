@@ -8,8 +8,11 @@
 //!   bits (`blockTimestampLast`, `feeProtocol`/`observationIndex`/`unlocked`)
 //!   can never flag while any tracked-field disagreement always does.
 //! - The archived capture loader classifies frames to router archetypes and
-//!   dedupes (the capture is best-effort by contract; a `0x0x`-prefixed hex
-//!   hash parses).
+//!   dedupes (the capture loader is best-effort by contract, so replay skips a
+//!   line it cannot parse). The corpus itself is validated strict-clean AT
+//!   REST: a `0x0x`-prefixed hash — which the loader's tolerance would resolve
+//!   to the right value — is a shape violation, because tolerance is right at
+//!   replay time and wrong as the corpus's only check.
 //!
 //! Live claims (ignored by default, network-gated, the same tier as the
 //! sibling suites): for one frame per live router archetype — a captured
@@ -245,9 +248,11 @@ fn load_capture_frames(path: &PathBuf) -> Vec<ClassifiedFrame> {
     out
 }
 
-/// A capture line → frame. The capture writes `hash` as `0x0x…` (a double
-/// prefix) — stripping every leading `0x` then re-parsing is the exact
-/// tolerance the frame pipeline's fixture loader applies.
+/// A capture line → frame. The loader is the tolerant side of the contract
+/// (replay skips what it cannot parse), so it strips every leading `0x` before
+/// re-parsing — the same tolerance the frame pipeline's fixture loader applies.
+/// The committed corpus never needs that tolerance: [`capture_shape_violations`]
+/// is the at-rest gate that rejects the doubled-prefix class outright.
 fn parse_captured_frame(line: &str) -> Option<CapturedFrame> {
     let obj = serde_json::from_str::<Value>(line)
         .ok()?
@@ -264,6 +269,125 @@ fn parse_captured_frame(line: &str) -> Option<CapturedFrame> {
         nonce: uget("nonce")?,
         gas: uget("gas")?,
     })
+}
+
+/// `0x` + exactly `width` hex digits. `lowercase_only` rejects uppercase: the
+/// committed capture is lowercase, and a hash is compared byte-wise, so case
+/// drift is a corruption signal rather than a style nit.
+fn prefixed_hex_ok(value: &str, width: usize, lowercase_only: bool) -> bool {
+    let Some(body) = value.strip_prefix("0x") else {
+        return false;
+    };
+    body.len() == width
+        && body.chars().all(|c| {
+            if lowercase_only {
+                matches!(c, '0'..='9' | 'a'..='f')
+            } else {
+                c.is_ascii_hexdigit()
+            }
+        })
+}
+
+/// A JSON quantity as `U256`: an unsigned JSON integer, or a string in decimal
+/// or `0x` hex form (the capture mixes both encodings across capture eras).
+fn json_quantity(value: &Value) -> Option<U256> {
+    match value {
+        Value::Number(n) => n.as_u64().map(U256::from),
+        Value::String(s) => {
+            let (body, radix) = match s.strip_prefix("0x") {
+                Some(hex) => (hex, 16),
+                None => (s.as_str(), 10),
+            };
+            if body.is_empty() {
+                None
+            } else {
+                U256::from_str_radix(body, radix).ok()
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The strict at-rest shape gate for one capture line: an empty result is a
+/// clean frame, and every message names what a mangled entry broke.
+///
+/// The replay loader is deliberately tolerant (a line it cannot parse is
+/// skipped), which is right at replay time and wrong as the corpus's only
+/// check: a `0x0x`-prefixed hash parses back to the right value by tolerance, so
+/// nothing catches a hash that no longer resolves on-chain until a live leg
+/// tries to fetch it weeks later. This gate is the corpus's other half.
+fn capture_line_violations(line: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<Value>(line) else {
+        return vec!["line is not JSON".to_owned()];
+    };
+    let Some(obj) = value.as_object() else {
+        return vec!["line is not a JSON object".to_owned()];
+    };
+    let mut out = Vec::new();
+    let str_field = |key: &str| obj.get(key).and_then(Value::as_str);
+
+    if str_field("kind") != Some("frame") {
+        out.push(format!("kind {:?} is not \"frame\"", obj.get("kind")));
+    }
+    match str_field("hash") {
+        Some(hash) if prefixed_hex_ok(hash, 64, true) => {}
+        Some(hash) => out.push(format!("hash {hash:?} is not 0x + 64 lowercase hex")),
+        None => out.push("hash missing or not a string".to_owned()),
+    }
+    for key in ["to", "from"] {
+        match str_field(key) {
+            Some(addr) if prefixed_hex_ok(addr, 40, false) => {}
+            _ => out.push(format!("{key} {:?} is not 0x + 40 hex", obj.get(key))),
+        }
+    }
+    if obj.get("chain_id").and_then(json_quantity) != Some(U256::ONE) {
+        out.push(format!("chain_id {:?} is not 1", obj.get("chain_id")));
+    }
+    match str_field("data") {
+        Some(data) => {
+            let even_hex = data.strip_prefix("0x").is_some_and(|body| {
+                body.len() % 2 == 0 && body.chars().all(|c| c.is_ascii_hexdigit())
+            });
+            if !even_hex {
+                out.push(format!(
+                    "data ({} chars) is not 0x-prefixed even-length hex",
+                    data.len()
+                ));
+            }
+        }
+        None => out.push("data missing or not a string".to_owned()),
+    }
+    for key in ["gas", "nonce"] {
+        let parsed = obj
+            .get(key)
+            .and_then(json_quantity)
+            .and_then(|n| u64::try_from(n).ok());
+        if parsed.is_none() {
+            out.push(format!("{key} {:?} does not parse as u64", obj.get(key)));
+        }
+    }
+    if obj.get("value").and_then(json_quantity).is_none() {
+        out.push(format!(
+            "value {:?} does not parse as a quantity",
+            obj.get("value")
+        ));
+    }
+    out
+}
+
+/// Every non-empty corpus line with its at-rest shape violations, prefixed by
+/// its 1-based line number so a mangled entry names itself.
+fn capture_shape_violations(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        for violation in capture_line_violations(line) {
+            out.push(format!("line {}: {violation}", index + 1));
+        }
+    }
+    out
 }
 
 /// One tracked-slot disagreement with fork truth — the oracle's flag unit,
@@ -608,10 +732,26 @@ fn oracle_masks_untracked_bits_and_flags_tracked_divergence() {
     assert!(line.contains("truth=0x"), "{line}");
 }
 
+/// The control hash for the at-rest gate's injected red path: a well-formed
+/// lowercase 32-byte hash with letters in it, so an uppercase injection is
+/// observable, and independent of the corpus so the control cannot drift with
+/// a re-capture.
+const CONTROL_CAPTURE_HASH: &str =
+    "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+/// A known-good capture line with `hash` substituted: the at-rest gate's
+/// positive control, and the base the injected-red variants mangle.
+fn injected_capture_line(hash: &str) -> String {
+    let line = r#"{"chain_id":1,"data":"0x13d79a0b","from":"0x5ed864e8f37dcb4f79c5172a815d1b3a9147eaab","gas":1465989,"hash":"<hash>","kind":"frame","nonce":35332,"to":"0x9008d19f58aabd9ed0d60971565aa8510560ab41","value":"0x0"}"#;
+    line.replace("<hash>", hash)
+}
+
 /// The archived capture classifies to router archetypes and dedupes: the
 /// committed fixture carries a CoW batch settle, a 1inch aggregation swap, and
 /// a SwapRouter02 frame, and a frame captured more than once contributes one
-/// entry.
+/// entry. The corpus is also validated strict-clean at rest: the replay loader
+/// skips a malformed line by contract, so without this gate a mangled entry
+/// would only surface as a live leg that cannot resolve its frame.
 #[test]
 fn capture_frames_classify_to_archetypes_and_dedupe() {
     let frames = load_capture_frames(&capture_path());
@@ -644,6 +784,62 @@ fn capture_frames_classify_to_archetypes_and_dedupe() {
         assert_ne!(f.frame.hash, B256::ZERO);
         assert_ne!(f.frame.to, Address::ZERO);
         assert_ne!(f.frame.from, Address::ZERO);
+    }
+
+    // At rest: every committed line satisfies the strict shape gate, not just
+    // the loader's tolerance. A doubled `0x0x` hash parses to the right value
+    // here, which is exactly why the corpus needs a check that is not the
+    // loader — tolerance at replay is correct, tolerance as the only check
+    // hides a hash that no longer resolves on-chain.
+    let text = std::fs::read_to_string(capture_path()).expect("the capture is readable");
+    let violations = capture_shape_violations(&text);
+    assert!(
+        violations.is_empty(),
+        "the capture corpus is not strict-clean: {violations:#?}"
+    );
+
+    // Red path: the gate discriminates, demonstrated on constructed lines (the
+    // committed corpus is never weakened to show red). The doubled prefix is
+    // the corruption this corpus actually carried; uppercase and truncation
+    // cover the rest of the hash shape rule.
+    let control = injected_capture_line(CONTROL_CAPTURE_HASH);
+    assert!(
+        capture_line_violations(&control).is_empty(),
+        "the injected clean line is the positive control: {:?}",
+        capture_line_violations(&control)
+    );
+    let doubled_prefix = format!("0x{CONTROL_CAPTURE_HASH}");
+    let uppercase = format!("0x{}", CONTROL_CAPTURE_HASH[2..].to_uppercase());
+    let truncated = CONTROL_CAPTURE_HASH[..CONTROL_CAPTURE_HASH.len() - 2].to_owned();
+    for (label, hash) in [
+        ("doubled 0x prefix", doubled_prefix),
+        ("uppercase hex", uppercase),
+        ("truncated", truncated),
+    ] {
+        let violations = capture_line_violations(&injected_capture_line(&hash));
+        assert_eq!(
+            violations.len(),
+            1,
+            "{label} must fail exactly its hash check: {violations:?}"
+        );
+        assert!(
+            violations[0].contains("hash"),
+            "{label} must be named by the hash rule: {violations:?}"
+        );
+    }
+    // The gate covers the whole shape list, not only the hash class.
+    let wrong_chain = control.replace("\"chain_id\":1", "\"chain_id\":5");
+    let odd_data = control.replace("\"0x13d79a0b\"", "\"0x13d79a0\"");
+    for (label, line) in [
+        ("wrong chain_id", wrong_chain),
+        ("odd-length data", odd_data),
+    ] {
+        let violations = capture_line_violations(&line);
+        assert_eq!(
+            violations.len(),
+            1,
+            "{label} must fail exactly its own check: {violations:?}"
+        );
     }
 }
 
