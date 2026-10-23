@@ -44,6 +44,7 @@ use crate::provider::AlloyProvider;
 use crate::rpc::provider::PyAlloyProvider;
 use crate::rpc::revert_to_pyerr;
 use degenbot_bot::bot_core::construction_io::BlockSelector;
+use degenbot_bot::bot_core::pool_builder::choreography::BalancerFamily;
 use degenbot_core::errors::ProviderError;
 use degenbot_core::runtime::get_runtime;
 
@@ -59,6 +60,40 @@ fn address_lower_hex(a: alloy::primitives::Address) -> String {
     hex.push_str("0x");
     let _ = write!(hex, "{a:x}");
     hex
+}
+
+/// A Balancer V2 pool's sub-family — the FFI projection of the core
+/// [`BalancerFamily`] that the `getNormalizedWeights()` /
+/// `getAmplificationParameter()` probe resolves.
+///
+/// [`BalancerFamily`] (`degenbot_bot::bot_core::pool_builder::choreography`)
+/// stays the semantic owner; this mirrors exactly its two discriminants, so a
+/// builder call site compares an enum member instead of string-matching the
+/// wire. [`balancer_family_to_py`]`s `match` is exhaustive over the core enum,
+/// so a new core discriminant is a compile error here rather than a silently
+/// wrong family.
+#[pyclass(
+    name = "BalancerFamily",
+    eq,
+    hash,
+    frozen,
+    from_py_object,
+    module = "degenbot._ffi"
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PyBalancerFamily {
+    /// Has `getNormalizedWeights()` — a weighted pool.
+    Weighted,
+    /// Has `getAmplificationParameter()` (no weights) — a stable pool.
+    Stable,
+}
+
+/// Project a core [`BalancerFamily`] onto its Python member.
+fn balancer_family_to_py(family: BalancerFamily) -> PyBalancerFamily {
+    match family {
+        BalancerFamily::Weighted => PyBalancerFamily::Weighted,
+        BalancerFamily::Stable => PyBalancerFamily::Stable,
+    }
 }
 
 /// The Rust I/O façade for pool builders (ADR-005 slice 14a).
@@ -1431,8 +1466,8 @@ impl PyBotIo {
     /// 14i). This sub-probe distinguishes weighted vs stable.
     ///
     /// Returns:
-    /// - `"weighted"` — `getNormalizedWeights()` succeeded.
-    /// - `"stable"` — `getAmplificationParameter()` succeeded (and
+    /// - `BalancerFamily.Weighted` — `getNormalizedWeights()` succeeded.
+    /// - `BalancerFamily.Stable` — `getAmplificationParameter()` succeeded (and
     ///   getNormalizedWeights reverted).
     ///
     /// Errors:
@@ -1444,9 +1479,7 @@ impl PyBotIo {
         py: Python<'_>,
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<String> {
-        use degenbot_bot::bot_core::pool_builder::choreography::BalancerFamily;
-
+    ) -> PyResult<PyBalancerFamily> {
         let io = self.required_construction_io()?;
         let addr = alloy::primitives::Address::from(parse_address_for_call(address)?);
         let block_num = self.resolve_block(py, block)?;
@@ -1474,10 +1507,7 @@ impl PyBotIo {
             }
             Err(e) => Err(e.into()),
         }?;
-        Ok(match family {
-            BalancerFamily::Weighted => "weighted".to_string(),
-            BalancerFamily::Stable => "stable".to_string(),
-        })
+        Ok(balancer_family_to_py(family))
     }
 
     fn __repr__(&self) -> String {
@@ -1638,4 +1668,25 @@ pub(crate) fn parse_address_for_call(address: &str) -> PyResult<[u8; 20]> {
     parse_address(address)
         .map(alloy::primitives::Address::into_array)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{balancer_family_to_py, BalancerFamily, PyBalancerFamily};
+
+    /// The sub-family probe answers the typed pyclass member, one per core
+    /// discriminant — the projection is exhaustive, so a weighted and a stable
+    /// pool can never collapse onto one member.
+    #[test]
+    fn the_balancer_family_projection_mirrors_the_core_discriminants() {
+        assert_eq!(
+            balancer_family_to_py(BalancerFamily::Weighted),
+            PyBalancerFamily::Weighted
+        );
+        assert_eq!(
+            balancer_family_to_py(BalancerFamily::Stable),
+            PyBalancerFamily::Stable
+        );
+        assert_ne!(PyBalancerFamily::Weighted, PyBalancerFamily::Stable);
+    }
 }

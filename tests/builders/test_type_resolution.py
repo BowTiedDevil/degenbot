@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from degenbot.balancer import BalancerFamily
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.builders.type_resolution import (
@@ -161,7 +162,7 @@ class FakePyBotIo:
         exchange_row: object | None = None,
         probe_exception: Exception | None = None,
         balancer_pool_id: bytes | None = None,
-        balancer_family: str | None = None,
+        balancer_family: BalancerFamily | None = None,
         balancer_factory: str | None = None,
     ) -> None:
         self._factory_address = factory_address
@@ -198,7 +199,9 @@ class FakePyBotIo:
             raise ValueError(msg)
         return self._balancer_pool_id
 
-    def probe_balancer_pool_type(self, _address: str, block: object | None = None) -> str:
+    def probe_balancer_pool_type(
+        self, _address: str, block: object | None = None
+    ) -> BalancerFamily:
         if self._balancer_family is None:
             msg = "neither getNormalizedWeights nor getAmplificationParameter answered"
             raise ValueError(msg)
@@ -379,7 +382,7 @@ class TestResolvePoolType:
             factory_address=None,
             pool_row=None,
             balancer_pool_id=bytes(32),
-            balancer_family="stable",
+            balancer_family=BalancerFamily.Stable,
             balancer_factory=composable_factory,
         )
         result = resolve_pool_type(
@@ -408,7 +411,7 @@ class TestResolvePoolType:
             factory_address=None,
             pool_row=None,
             balancer_pool_id=bytes(32),
-            balancer_family="stable",
+            balancer_family=BalancerFamily.Stable,
             balancer_factory=None,
         )
         result = resolve_pool_type(
@@ -427,7 +430,7 @@ class TestResolvePoolType:
             factory_address=None,
             pool_row=None,
             balancer_pool_id=bytes(32),
-            balancer_family="weighted",
+            balancer_family=BalancerFamily.Weighted,
             balancer_factory=weighted_factory,
         )
         result = resolve_pool_type(

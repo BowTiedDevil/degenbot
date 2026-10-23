@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import BotIo
+from degenbot._ffi import BalancerFamily, BotIo
 from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.abi import encode as abi_encode
 from degenbot.checksum_cache import get_checksum_address
@@ -388,25 +388,30 @@ class _BalancerOfflineProbeProvider:
 
 
 def test_pybot_io_probe_balancer_pool_type_returns_weighted():
-    """When getNormalizedWeights() succeeds, probe returns 'weighted'."""
+    """When getNormalizedWeights() succeeds, probe answers Weighted."""
     pool_addr = "aa" * 20
     weights = [5 * 10**17, 5 * 10**17]
     encoded = abi_encode(types=["uint256[]"], args=[weights]).hex()
     provider = _BalancerOfflineProbeProvider.build(
         pool_addr, weights_success=encoded, amp_success=None
     )
-    assert BotIo(provider=provider).probe_balancer_pool_type("0x" + pool_addr) == "weighted"
+    assert (
+        BotIo(provider=provider).probe_balancer_pool_type("0x" + pool_addr)
+        is BalancerFamily.Weighted
+    )
 
 
 def test_pybot_io_probe_balancer_pool_type_returns_stable():
     """When getNormalizedWeights() reverts but getAmplificationParameter()
-    succeeds, probe returns 'stable'."""
+    succeeds, probe answers Stable."""
     pool_addr = "aa" * 20
     amp_payload = abi_encode(types=["uint256", "bool", "uint256"], args=[2_000, False, 1000]).hex()
     provider = _BalancerOfflineProbeProvider.build(
         pool_addr, weights_success=None, amp_success=amp_payload
     )
-    assert BotIo(provider=provider).probe_balancer_pool_type("0x" + pool_addr) == "stable"
+    assert (
+        BotIo(provider=provider).probe_balancer_pool_type("0x" + pool_addr) is BalancerFamily.Stable
+    )
 
 
 def test_pybot_io_probe_balancer_pool_type_raises_when_neither_works():

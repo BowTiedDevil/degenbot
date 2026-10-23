@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-from enum import IntEnum
 from fractions import Fraction
 from typing import TYPE_CHECKING, cast
 
@@ -15,17 +14,7 @@ from degenbot.exceptions import DegenbotValueError, RpcError
 
 if TYPE_CHECKING:
     from degenbot._ffi import BotIo
-
-
-class _BalancerPoolType(IntEnum):
-    """Internal enum for _detect_pool_type return values.
-
-    Used instead of string literals to enable type-checker
-    exhaustiveness checking and prevent typos.
-    """
-
-    WEIGHTED = 1
-    STABLE = 2
+    from degenbot.balancer import BalancerFamily
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -221,12 +210,12 @@ class BalancerBuilderBase:
         io: BotIo,
         address: str,
         block: int,
-    ) -> _BalancerPoolType:
+    ) -> BalancerFamily:
         """Determine weighted vs stable by probing contract methods.
 
         Probes in order:
-        1. getNormalizedWeights() → WEIGHTED
-        2. getAmplificationParameter() → STABLE
+        1. getNormalizedWeights() → BalancerFamily.Weighted
+        2. getAmplificationParameter() → BalancerFamily.Stable
         3. Neither → raise (don't default to stable)
 
         Returns:
@@ -241,7 +230,7 @@ class BalancerBuilderBase:
         # the Python getNormalizedWeights/getAmplificationParameter probing
         # fallback is retired.
         try:
-            result = io.probe_balancer_pool_type(address, block=block)
+            return io.probe_balancer_pool_type(address, block=block)
         except ValueError:
             msg = (
                 f"Cannot determine Balancer pool type for {address}. "
@@ -250,6 +239,3 @@ class BalancerBuilderBase:
                 "Linear pools are not yet supported."
             )
             raise DegenbotValueError(message=msg) from None
-        if result == "weighted":
-            return _BalancerPoolType.WEIGHTED
-        return _BalancerPoolType.STABLE

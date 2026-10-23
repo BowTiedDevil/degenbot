@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, cast
 
+from degenbot.balancer import BalancerFamily
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.checksum_cache import get_checksum_address
@@ -261,7 +262,7 @@ def resolve_balancer_descriptor(
 
     variant = (
         PoolVariant.BALANCER_WEIGHTED
-        if balancer_family == "weighted"
+        if balancer_family is BalancerFamily.Weighted
         else PoolVariant.BALANCER_STABLE
     )
     family = (

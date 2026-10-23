@@ -716,6 +716,34 @@ class BalanceVectorView:
     def update_block(self, /) -> int: ...
 
 @final
+class BalancerFamily:
+    """
+    A Balancer V2 pool's sub-family — the FFI projection of the core
+    [`BalancerFamily`] that the `getNormalizedWeights()` /
+    `getAmplificationParameter()` probe resolves.
+
+    [`BalancerFamily`] (`degenbot_bot::bot_core::pool_builder::choreography`)
+    stays the semantic owner; this mirrors exactly its two discriminants, so a
+    builder call site compares an enum member instead of string-matching the
+    wire. [`balancer_family_to_py`]`s `match` is exhaustive over the core enum,
+    so a new core discriminant is a compile error here rather than a silently
+    wrong family.
+    """
+
+    Stable: Final[BalancerFamily]
+    """
+    Has `getAmplificationParameter()` (no weights) — a stable pool.
+    """
+    Weighted: Final[BalancerFamily]
+    """
+    Has `getNormalizedWeights()` — a weighted pool.
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __hash__(self, /) -> int: ...
+    def __int__(self, /) -> int: ...
+    def __ne__(self, value: object, /) -> bool: ...
+
+@final
 class BlockStream:
     """
     pyo3 async iterator over `newHeads` block notifications.
@@ -2173,7 +2201,7 @@ class BotIo:
         `AlloyProvider.get_code(addr, block)`. Fallback: delegates to
         `provider.get_code(address, block=block)` (mirrors `SyncPoolIO`).
         """
-    def probe_balancer_pool_type(self, /, address: str, block: Any | None = None) -> str:
+    def probe_balancer_pool_type(self, /, address: str, block: Any | None = None) -> BalancerFamily:
         """
         Probe a Balancer pool's sub-type by trying `getNormalizedWeights()` and
         `getAmplificationParameter()` in order (ADR-005 slice 14n).
@@ -2183,8 +2211,8 @@ class BotIo:
         14i). This sub-probe distinguishes weighted vs stable.
 
         Returns:
-        - `"weighted"` — `getNormalizedWeights()` succeeded.
-        - `"stable"` — `getAmplificationParameter()` succeeded (and
+        - `BalancerFamily.Weighted` — `getNormalizedWeights()` succeeded.
+        - `BalancerFamily.Stable` — `getAmplificationParameter()` succeeded (and
           getNormalizedWeights reverted).
 
         Errors:
@@ -5099,6 +5127,7 @@ def __getattr__(name: str) -> Incomplete: ...
 __all__ = [
     "ArbitrageEngine",
     "BalanceVectorView",
+    "BalancerFamily",
     "BlockStream",
     "BootRefused",
     "Bot",

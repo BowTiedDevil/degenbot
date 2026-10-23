@@ -676,8 +676,9 @@ pub async fn fetch_erc20_string_field(
 // Balancer V2 reads (the buyer primitive layer)
 // ---------------------------------------------------------------------------
 
-/// The Balancer pool sub-type resolved by [`probe_balancer_type`] — mirrored
-/// from `balancer_builder_base.py::_BalancerPoolType`.
+/// The Balancer pool sub-type resolved by [`probe_balancer_type`] — the
+/// semantic owner of the family vocabulary; the binding mirrors its two
+/// discriminants as the Python `BalancerFamily` enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BalancerFamily {
     /// Has `getNormalizedWeights()` — a weighted pool.
