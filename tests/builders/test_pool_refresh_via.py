@@ -19,7 +19,6 @@ from fractions import Fraction
 import pytest
 
 from degenbot._ffi import Bot, BotIo
-from degenbot.builders.balancer_builder import BalancerBuilder
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.provider import OfflineProvider
 from tests.helpers.erc20_factory import make_erc20
@@ -77,9 +76,6 @@ class TestBuilderUpdateRetired:
 
     def test_curve_builder_has_no_update(self) -> None:
         assert not hasattr(CurvePoolBuilder, "update")
-
-    def test_balancer_builder_has_no_update(self) -> None:
-        assert not hasattr(BalancerBuilder, "update")
 
 
 class TestPoolRefreshV2:

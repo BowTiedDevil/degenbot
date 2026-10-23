@@ -13,14 +13,11 @@ from degenbot._ffi import BotIo
 # class directly.
 from degenbot.aerodrome.pools import AerodromeV2Pool  # ruff:ignore[unused-import]
 from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS
-from degenbot.balancer.pools import BalancerV2Pool
-from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.bot import driver_boot as _driver_boot
 from degenbot.bot_lifecycle import close as _close_handles
 from degenbot.bot_lifecycle import (
     release_python_state as _release_python_state,
 )
-from degenbot.builders.balancer_builder import BalancerBuilder
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
@@ -293,20 +290,9 @@ class Bot(AccountQueryMixin):
             default_chain_id=self._chain_id,
         )
         self._curve_builder = CurvePoolBuilder(ctx)
-        self._balancer_builder = BalancerBuilder(ctx)
-
-        # Builder registry: concrete pool type → builder
-        # Used by update() for O(1) dict lookup instead of isinstance chain
-        self._builders: dict[type, PoolBuilder] = {}
 
         # Async adapter for subscriptions (single chain; created on demand)
         self._async_adapter: AsyncAlloyProvider | None = None
-        self.register_builder(CurveStableswapPool, self._curve_builder)
-        self.register_builder(BalancerV2Pool, self._balancer_builder)
-        self.register_builder(BalancerV2StablePool, self._balancer_builder)
-        # All V2-family DEXes (Uniswap/Sushi/Pancake/Swapbased/Camelot) now
-        # register the canonical ``UniswapV2Pool`` for their factories
-        # (ADR-005 slice 7 step 4b) — the single V2 builder handles them.
 
     def registration_fleet_hosted(self) -> bool:
         """Return the construction-time registration-intake stance (PRG-3/5).
@@ -441,24 +427,6 @@ class Bot(AccountQueryMixin):
     def __exit__(self, *exc: object) -> None:
         """Exit the context manager; release all Python handles. Never suppresses."""
         self.close()
-
-    def register_builder(
-        self,
-        pool_class: type[AbstractLiquidityPool],
-        builder: PoolBuilder,
-    ) -> None:
-        """Register a builder for a concrete pool type.
-
-        After registration, ``update()`` will use ``type(pool)`` dict lookup
-        instead of isinstance chains to find the right builder.
-
-        Args:
-            pool_class: The concrete pool class (e.g. UniswapV2Pool, AerodromeV2Pool).
-            builder: The builder instance that handles construction and updates
-                for this pool type.
-
-        """
-        self._builders[pool_class] = builder
 
     def build_erc20token(
         self,
