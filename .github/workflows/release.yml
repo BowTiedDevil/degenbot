@@ -207,7 +207,7 @@ jobs:
           path: dist
 
       - name: Install Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
 
@@ -343,7 +343,7 @@ jobs:
           echo "audit tooling: $(wc -l < "$tooling") lines, syntax ok"
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1
+        uses: dtolnay/rust-toolchain@f08ac54821369508305fcb9e0121ec6e30ae9ada # 1.98.1
 
       - name: Cache Cargo
         # Same source-aware cache the CI jobs use: a Cargo.lock-only key
