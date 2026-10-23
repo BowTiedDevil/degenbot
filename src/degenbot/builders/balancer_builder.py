@@ -12,7 +12,7 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING
 
-from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS, BROKEN_BALANCER_V2_POOLS
+from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS
 from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
 from degenbot.balancer.pools import BalancerV2Pool, detect_pow_version
@@ -21,7 +21,6 @@ from degenbot.builders.balancer_builder_base import BalancerBuilderBase, _Balanc
 from degenbot.builders.request import BuildPoolRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import BrokenPool
 
 if TYPE_CHECKING:
     from fractions import Fraction
@@ -76,7 +75,6 @@ class BalancerBuilder(BalancerBuilderBase):
 
         Raises:
             DegenbotValueError: If the operation fails.
-            BrokenPool: If the operation fails.
 
         """
         pool_address = get_checksum_address(address)
@@ -86,35 +84,31 @@ class BalancerBuilder(BalancerBuilderBase):
             request.state_block if request.state_block is not None else io.get_block_number()
         )
 
-        # 1. Check broken pools
-        if pool_address in BROKEN_BALANCER_V2_POOLS:
-            raise BrokenPool
-
-        # 2. Fetch pool ID from chain
+        # 1. Fetch pool ID from chain
         pool_id = BalancerBuilderBase._fetch_pool_id(  # ruff:ignore[private-member-access]
             io,
             pool_address,
             state_block,
         )
 
-        # 3. Decode specialization from pool_id
+        # 2. Decode specialization from pool_id
         pool_id_decoded = self.decode_pool_id(pool_id)
 
-        # 4. Fetch tokens and balances from Vault
+        # 3. Fetch tokens and balances from Vault
         token_addresses, balances = BalancerBuilderBase._fetch_vault_tokens(  # ruff:ignore[private-member-access]
             io,
             pool_id,
             state_block,
         )
 
-        # 5. Fetch fee
+        # 4. Fetch fee
         fee = BalancerBuilderBase._fetch_swap_fee(  # ruff:ignore[private-member-access]
             io,
             pool_address,
             state_block,
         )
 
-        # 6. Build shared context
+        # 5. Build shared context
         build_ctx = _BuildContext(
             address=pool_address,
             pool_id=pool_id,
@@ -125,7 +119,7 @@ class BalancerBuilder(BalancerBuilderBase):
             state_block=state_block,
         )
 
-        # 7. Detect pool type and build
+        # 6. Detect pool type and build
         pool_type = BalancerBuilderBase._detect_pool_type(  # ruff:ignore[private-member-access]
             io,
             pool_address,

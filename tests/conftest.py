@@ -433,13 +433,22 @@ def _fork(
     at head, like every full-tier fixture -- ``AnvilFork``'s default);
     ``extra_opts`` carries the chain's anvil flags after the universal
     ``--accounts=0``.
+
+    A pinned ``fork_block`` always forces ``storage_caching=False``. The anvil
+    fork storage cache is one on-disk file per block
+    (``~/.foundry/cache/rpc/<chain>/<block>/storage.json``) shared by every
+    anvil instance, so an entry written while the archive node could not answer
+    consistently for that block persists and makes every later fork at that
+    block serve state the block's header never had. A pinned block's state is
+    immutable, so the cache buys only repeat-spawn latency and costs
+    correctness; head forks keep it.
     """
     _require_live_node()
     fork = AnvilFork(
         fork_url=fork_url,
         fork_block=fork_block,
         launch=ForkLaunchConfig(
-            storage_caching=storage_caching,
+            storage_caching=storage_caching and fork_block is None,
             anvil_opts=["--accounts=0", *extra_opts],
         ),
     )

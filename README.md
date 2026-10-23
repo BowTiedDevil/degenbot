@@ -773,24 +773,30 @@ amount_in = weighted_pool.calculate_tokens_in_from_tokens_out(
 assert amount_in == 1616565737428323232324
 ```
 
-Contract addresses and broken pool filters are centralized in `degenbot.balancer.deployments`:
+Contract addresses are centralized in `degenbot.balancer.deployments`; the set of
+deployments with broken swaps is not, because it is Rust-core state rather than a
+caller-side filter:
 
 ```python
 from degenbot.balancer.deployments import (
     BALANCER_V2_VAULT_ADDRESS,
     BALANCERQUERIES_CONTRACT_ADDRESS,
-    BROKEN_BALANCER_V2_POOLS,
 )
+from degenbot.exceptions import PoolRegistrationError, SpecViolationError
 
 # Canonical Vault + BalancerQueries addresses
 assert BALANCER_V2_VAULT_ADDRESS == '0xBA12222222228d8Ba445958a75a0704d566BF2C8'
 assert BALANCERQUERIES_CONTRACT_ADDRESS == '0xE39B5e3B6D74016b2F6A9673D7d7493B6DF549d5'
 
-# BROKEN_BALANCER_V2_POOLS is a frozenset of pools with swaps disabled on-chain.
-# Filter before constructing:
-broken = '0x753BD6a5bF0b14ae7e5d2877e5cD6a3398aA2AAB'  # YUME/WETH 1/99
-assert broken in BROKEN_BALANCER_V2_POOLS
-assert weighted_pool.address not in BROKEN_BALANCER_V2_POOLS  # 80 BAL 20 WETH is healthy
+# Deployments whose swaps are disabled at the contract level (BAL#327
+# SWAPS_DISABLED) need no caller-side filter list: the Rust core owns that set
+# and refuses the build on both Balancer arms, before the arm's first state
+# read, so a broken deployment can never register as a pool that reverts on
+# every swap simulation. The refusal is the typed admission error below — a
+# `PoolRegistrationError`, so one `except` covers the whole admission taxonomy:
+broken = '0x753BD6a5bF0b14ae7e5d2877e5cD6a3398aA2AAB'  # YUME/WETH 1/99, swaps disabled
+# bot.build_pool(broken)  →  SpecViolationError: pool build refused: out of spec
+assert issubclass(SpecViolationError, PoolRegistrationError)
 ```
 
 ### Balancer V2 Stable Pools

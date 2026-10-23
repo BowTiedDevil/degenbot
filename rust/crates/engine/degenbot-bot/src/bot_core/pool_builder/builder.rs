@@ -691,13 +691,18 @@ async fn decimals_of(
 /// # Errors
 ///
 /// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure or
-/// [`PoolBuilderError::Spec`] on an out-of-range scaling factor.
+/// [`PoolBuilderError::Spec`] on an out-of-range scaling factor or for a pool
+/// in [`BROKEN_BALANCER_V2_POOLS`].
 pub async fn build_balancer_weighted(
     vault: Address,
     address: Address,
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<RegisterBalancerWeightedPoolParams, PoolBuilderError> {
+    if BROKEN_BALANCER_V2_POOLS.contains(&address) {
+        return Err(PoolBuilderError::Spec);
+    }
+
     let pool_id = choreography::fetch_balancer_pool_id(io, address, block).await?;
     let (tokens, balances) =
         choreography::fetch_balancer_vault_tokens(io, vault, &pool_id, block).await?;
@@ -742,7 +747,8 @@ pub async fn build_balancer_weighted(
 /// # Errors
 ///
 /// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure or
-/// [`PoolBuilderError::Spec`] on an out-of-range scaling factor.
+/// [`PoolBuilderError::Spec`] on an out-of-range scaling factor or for a pool
+/// in [`BROKEN_BALANCER_V2_POOLS`].
 pub async fn build_balancer_stable(
     vault: Address,
     address: Address,
@@ -750,6 +756,10 @@ pub async fn build_balancer_stable(
     block: Option<u64>,
     invariant_version_override: Option<u8>,
 ) -> Result<RegisterBalancerStablePoolParams, PoolBuilderError> {
+    if BROKEN_BALANCER_V2_POOLS.contains(&address) {
+        return Err(PoolBuilderError::Spec);
+    }
+
     let pool_id = choreography::fetch_balancer_pool_id(io, address, block).await?;
     let (tokens, balances) =
         choreography::fetch_balancer_vault_tokens(io, vault, &pool_id, block).await?;
@@ -1082,6 +1092,15 @@ pub const BROKEN_CURVE_V1_POOLS: &[Address] = &[
     alloy::primitives::address!("A77d09743F77052950C4eb4e6547E9665299BecD"),
     alloy::primitives::address!("D652c40fBb3f06d6B58Cb9aa9CFF063eE63d465D"),
 ];
+
+/// The Balancer V2 pools known to be broken beyond repair: deployments whose
+/// swaps are disabled at the contract level (BAL#327 `SWAPS_DISABLED`), so the
+/// pool would register and then revert on every swap simulation. The build
+/// refuses them up front with the `Spec` taxonomy, on both Balancer arms, so a
+/// caller's family guess can never route around the verdict.
+pub const BROKEN_BALANCER_V2_POOLS: &[Address] = &[alloy::primitives::address!(
+    "753BD6a5bF0b14ae7e5d2877e5cD6a3398aA2AAB"
+)];
 
 /// A revert on a REQUIRED read is the contract's own verdict that it does
 /// not implement the call (a decommissioned V1 pool whose `A()`/`fee()`

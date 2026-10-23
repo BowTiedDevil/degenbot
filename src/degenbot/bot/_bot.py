@@ -12,7 +12,7 @@ from degenbot._ffi import BotIo
 # builders below pull in `degenbot.uniswap`; the facade does not name the
 # class directly.
 from degenbot.aerodrome.pools import AerodromeV2Pool  # ruff:ignore[unused-import]
-from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS, BROKEN_BALANCER_V2_POOLS
+from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.bot import driver_boot as _driver_boot
@@ -48,7 +48,6 @@ from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGIST
 from degenbot.discovery import PoolRef
 from degenbot.discovery import pools_for_tokens as _pools_for_tokens
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.exceptions.pool import BrokenPool
 from degenbot.logging import logger
 from degenbot.provider import (
     AlloyProvider,  # ruff:ignore[typing-only-first-party-import]
@@ -684,7 +683,6 @@ class Bot(AccountQueryMixin):
             self._register_delegated_tokens(
                 py_pool,
                 variant=variant,
-                address=address,
                 chain_id=chain_id,
                 request=request,
             )
@@ -875,7 +873,6 @@ class Bot(AccountQueryMixin):
         py_pool: Pool,
         *,
         variant: str | None,
-        address: str,
         chain_id: ChainId,
         request: BuildPoolRequest,
     ) -> None:
@@ -885,15 +882,8 @@ class Bot(AccountQueryMixin):
         Balancer exposes N via the family-specific token-address getter, keyed
         by the descriptor `variant` (data), never a subclass test.
 
-        Raises:
-            BrokenPool: If `address` is a known-broken Balancer pool.
-
         """
         if variant in {"balancer_weighted", "balancer_stable"}:
-            # Preserve the broken-pool guard from the retired
-            # `BalancerBuilder.build` (BrokenPool) so known-bad pools fail fast.
-            if address in BROKEN_BALANCER_V2_POOLS:
-                raise BrokenPool
             token_addresses = (
                 py_pool.balancer_token_addresses
                 if variant == "balancer_weighted"

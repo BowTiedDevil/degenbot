@@ -1259,6 +1259,38 @@ async fn build_balancer_stable_assembles_params_with_rate_providers() {
     assert_eq!(p.scaling_factors[1], one);
 }
 
+/// A known-broken Balancer V2 pool is refused before any RPC: the FakeRpc
+/// carries no responses because the gate fires before the first read.
+#[tokio::test]
+async fn build_balancer_weighted_rejects_a_known_broken_pool() {
+    let io = io_with(FakeRpc::new());
+    for broken in builder::BROKEN_BALANCER_V2_POOLS {
+        assert!(
+            matches!(
+                builder::build_balancer_weighted(VAULT, *broken, &io, Some(1)).await,
+                Err(builder::PoolBuilderError::Spec)
+            ),
+            "known-broken pool built: {broken}"
+        );
+    }
+}
+
+/// The same known-broken pool is refused on the stable arm too — the gate is a
+/// property of the pool, not of the family the caller guessed.
+#[tokio::test]
+async fn build_balancer_stable_rejects_a_known_broken_pool() {
+    let io = io_with(FakeRpc::new());
+    for broken in builder::BROKEN_BALANCER_V2_POOLS {
+        assert!(
+            matches!(
+                builder::build_balancer_stable(VAULT, *broken, &io, Some(1), None).await,
+                Err(builder::PoolBuilderError::Spec)
+            ),
+            "known-broken pool built: {broken}"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Curve detection choreography
 // ---------------------------------------------------------------------------
