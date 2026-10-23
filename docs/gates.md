@@ -31,12 +31,26 @@ found 237 in-code tracker citations, zero resolvable. The rules live in
 
 - Detector 1 (anchored) — `ergo <ID>` / `epic|task|slice <ID>` citations and
   RED/GREEN gate narration co-occurring with a six-char ID token, scanned over
-  the *working tree* (`rg`, not `git grep`) for `*.py` and `*.rs` (minus
-  `executor/**`). It scans the working tree on purpose: an index-bound
-  enumeration once went green on a commit containing exactly the citations this
-  gate exists to catch, so a brand-new untracked source file must be examined.
+  the *working tree* (`rg`, not `git grep`) for the code-ish file classes
+  (`*.py`, `*.rs`, `*.pyi`, `*.toml`, `*.yml`, `*.yaml`, `*.sh`, `*.sol`, and
+  the extensionless `justfile`; minus `executor/**` and the
+  `tier3-oracle/src*` harness sources, whose bytes are sha256-pinned in
+  `tier3-oracle/artifacts/manifest.json` — a comment edit there fails the
+  committed-artifact match tests until a solc/vyper rebuild). Build recipes
+  carry the same prose a code comment does — the 2026-09-15 survey's
+  follow-up sweep found tracker citations in `justfile`, CI workflows,
+  `prek.toml`, the root `Cargo.toml`, crate manifests, Grafana rule
+  comments, and the tier3-oracle build scripts once those classes were
+  scanned, so they stay in scope. It scans
+  the working tree on purpose: an index-bound enumeration once went green on a
+  commit containing exactly the citations this gate exists to catch, so a
+  brand-new untracked source file must be examined.
 - Detector 2 (the bare-ID census ratchet) — any bare six-char `[A-Z0-9]{6}`
-  token with no anchor word that is not accounted for in the census.
+  token with no anchor word that is not accounted for in the census. Scan
+  paths mirror Detector 1's file classes (`src tests examples` plus the build
+  surface: `justfile`, `*.toml`, `*.yml`/`*.yaml`, `*.pyi`, `*.sol`,
+  `.github/**`, `tier3-oracle/**`, `scripts/`, `run_bot.sh`); `*.rs` files are
+  scanned on comment lines only, every other file class on all lines.
 
 **Census / waivers.**
 

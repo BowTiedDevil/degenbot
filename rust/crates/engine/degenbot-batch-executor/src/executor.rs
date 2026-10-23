@@ -1138,16 +1138,6 @@ mod tests {
         lines: Arc<Mutex<Vec<(String, String)>>>,
     }
 
-    struct MessageVisitor(String);
-
-    impl tracing::field::Visit for MessageVisitor {
-        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-            if field.name() == "message" {
-                self.0 = format!("{value:?}");
-            }
-        }
-    }
-
     impl<S> tracing_subscriber::Layer<S> for EventCapture
     where
         S: tracing::Subscriber,
@@ -1157,14 +1147,8 @@ mod tests {
             event: &tracing::Event<'_>,
             _ctx: tracing_subscriber::layer::Context<'_, S>,
         ) {
-            let mut visitor = MessageVisitor(String::new());
-            event.record(&mut visitor);
-            let message = visitor.0;
-            let message = message
-                .strip_prefix('"')
-                .and_then(|s| s.strip_suffix('"'))
-                .unwrap_or(&message)
-                .to_string();
+            let message =
+                degenbot_core::log_capture::MessageVisitor::capture(event).unwrap_or_default();
             self.lines
                 .lock()
                 .unwrap()

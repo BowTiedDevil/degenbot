@@ -5,8 +5,9 @@
 # bare six-char tracker tokens with no anchor word. Detector 2 of the hook
 # closes that blind spot ratchet-style: it fails on any bare [A-Z0-9]{6} token
 # in the scanned tree that is NOT accounted for here, so a new citation cannot
-# land unnoticed. The whole tree is currently swept — this file is therefore
-# lexicon-only, and it must stay that way.
+# land unnoticed. The whole tree is currently swept (including the build
+# surface: justfile, manifests, workflows, tier3-oracle) — this file is
+# therefore lexicon-only, and it must stay that way.
 #
 # Lexicon: one bare token per line, sorted. Legit identifiers, English words,
 # acronyms, EVM opcodes, and linter codes the bare-ID matcher would otherwise
@@ -76,6 +77,7 @@ CONFIG
 CORDON
 COUNTS
 CREATE
+CREDIT
 CRYPTO
 CTOKEN
 DECAYS
@@ -89,10 +91,14 @@ DESIGN
 DETACH
 DIFFER
 DIRECT
+DISPATCHED
+TAGGED
+V3JSON
 DOMAIN
 DOUBLE
 DRIVEN
 DRIVER
+EFFORT
 EITHER
 ENGINE
 ENTERS
@@ -111,6 +117,7 @@ FLIGHT
 FLOORS
 FORCED
 FROZEN
+FUTURE
 GAINED
 GLOBAL
 HALFUP
@@ -135,6 +142,7 @@ LACKED
 LANDED
 LATEST
 LAYERS
+LAYOUT
 LAZILY
 LEDGER
 LEGACY
@@ -169,6 +177,8 @@ PANICS
 PARAMS
 PARENT
 PARITY
+PASSES
+PEP440
 PINNED
 POLICY
 POOLED
@@ -217,6 +227,7 @@ SEALED
 SEATED
 SECOND
 SELECT
+SEMVER
 SENDER
 SERIAL
 SERIES

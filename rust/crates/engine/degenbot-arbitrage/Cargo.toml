@@ -35,7 +35,7 @@ degenbot-submission.workspace = true
 # `AlloyProvider` — the typed RPC provider `SimulateContext` borrows (the
 # cold-miss fallback underneath the engine's CacheDB).
 degenbot-rpc.workspace = true
-# `tick_map_verify::Slot0HeadScalars` (ADR-021 D3 slice 2, X6I3LN) — the
+# `tick_map_verify::Slot0HeadScalars` (ADR-021 D3) — the
 # shared slot0 head-scalar fact type the [sim-revert-swap] fix-enabler
 # scalars ride, so this log and the solve-time tripwire speak one type
 # language (pyo3-free core crate).

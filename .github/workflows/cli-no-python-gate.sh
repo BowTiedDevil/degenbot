@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # cli-no-python-gate.sh — the console has no Python in its build or run path
-# (ADR-051 D10, ergo EA6DY7).
+# (ADR-051 D10).
 #
 # The gate runs a fixed argv set against the built \`degenbot\` binary and diffs
 # the machine-checkable stdout against the checked-in oracle

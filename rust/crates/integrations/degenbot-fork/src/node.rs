@@ -954,27 +954,6 @@ mod tests {
     /// Tracing stores the format TEMPLATE plus separate field values, so the
     /// message field is e.g. `Reconnection attempt {retry_count}...` — the
     /// literal prefix is what the assertions key on.
-    #[derive(Default)]
-    struct MsgVisitor(Option<String>);
-
-    impl tracing::field::Visit for MsgVisitor {
-        fn record_str(&mut self, field: &tracing_core::field::Field, value: &str) {
-            if field.name() == "message" {
-                self.0 = Some(value.to_string());
-            }
-        }
-
-        fn record_debug(
-            &mut self,
-            field: &tracing_core::field::Field,
-            value: &dyn std::fmt::Debug,
-        ) {
-            if field.name() == "message" {
-                self.0 = Some(format!("{value:?}"));
-            }
-        }
-    }
-
     impl<S> tracing_subscriber::Layer<S> for CaptureLayer
     where
         S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
@@ -988,12 +967,14 @@ mod tests {
             if meta.target() != "alloy_pubsub::service" {
                 return;
             }
-            let mut visitor = MsgVisitor::default();
+            let mut visitor = degenbot_core::log_capture::MessageVisitor::default();
             event.record(&mut visitor);
             let msg = format!(
                 "[{}] {}",
                 meta.level(),
-                visitor.0.unwrap_or_else(|| "<no message>".into())
+                visitor
+                    .into_message()
+                    .unwrap_or_else(|| "<no message>".into())
             );
             self.events
                 .lock()

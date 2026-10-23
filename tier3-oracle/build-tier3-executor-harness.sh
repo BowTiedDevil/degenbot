@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Build the committed Vyper executor artifact for the BHL2R2 tier-3b oracle
+# Build the committed Vyper executor artifact for the tier-3b oracle
 # (deterministic revm replay of the V3->V4->V3 sim-Halt against real bytecode).
 #
 # Compiles the vendored `executor/contracts/cmd_executor.vy` with the PINNED
-# vyper 0.5.0a3 (the only version proven to compile it — ./AGENTS.md + task
-# 2ISTMX), emits creation + runtime bytecode + ABI + method identifiers +
+# vyper 0.5.0a3 (the only version proven to compile it — ./AGENTS.md), emits creation + runtime bytecode + ABI + method identifiers +
 # error map + immutable-deploy layout, and writes the artifact + manifest under
 # `artifacts/executor/`. The compiled output is byte-for-byte deterministic
 # (verified: a fresh build of the committed source equals the committed
@@ -14,7 +13,7 @@
 # Toolchain: the in-repo `executor/` uv project (`uv run vyper` executes
 # inside it; vyper pinned ==0.5.0a3, requires-python >=3.14). The executor
 # contracts were pulled in from the sibling /workspaces/executor repo
-# (epic SRMMM7) — degenbot is now self-contained.
+# (now in-repo) — degenbot is self-contained.
 #
 # EXECUTOR_DIR / VYPROOT env vars override the in-repo defaults for one-off
 # builds. This mirrors `build-tier3-*-swap-harness.sh` and is wired into the

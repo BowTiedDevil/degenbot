@@ -77,7 +77,7 @@ jobs:
             # scripts, and this workflow file itself, so an edit to any of
             # them must re-run the gates - a machinery-only change must not
             # merge green with zero jobs run. This includes the no-Python
-            # console gate and its oracle (ADR-051 D10 / ergo EA6DY7).
+            # console gate and its oracle (ADR-051 D10).
             machinery:
               - 'justfile'
               - 'scripts/**'
@@ -258,7 +258,7 @@ jobs:
       - name: Run Tests
         run: just test-rust
 
-      # FF-T5 (NT7HJC): the fleet budget-algebra (the pure plan/budget
+      # The fleet budget-algebra (the pure plan/budget
       # tiering tests) and the binding-parity gates (the pinned-vs-serial
       # outcome-corpus identity) run as a NAMED step so a fleet-tier
       # regression is readable in the check log, not buried in the suite.
@@ -281,7 +281,7 @@ jobs:
         run: just publish-dry-run --no-verify
 
   cli-no-python:
-    # ADR-051 D10 / ergo EA6DY7: the console must build and run with NO Python
+    # ADR-051 D10: the console must build and run with NO Python
     # anywhere. This job deliberately does NOT provision Python (no
     # actions/setup-python) and never invokes uv; it builds the `degenbot`
     # binary from the Rust workspace alone, runs the argv smoke set
@@ -387,10 +387,10 @@ jobs:
       - name: Verify committed harness bytecode matches a fresh compile
         run: just verify-tier3-artifacts
 
-      # The same, for the Vyper executor (BHL2R2 / tier-3b): recompile the
+      # The same, for the Vyper executor (tier-3b): recompile the
       # vendored executor/contracts source with the pinned vyper 0.5.0a3 and
-      # byte-compare the committed artifacts. Since SRMMM7 the toolchain is
-      # self-contained in-repo (executor/ uv project, interpreter pinned via
+      # byte-compare the committed artifacts. The toolchain is self-contained
+      # in-repo (executor/ uv project, interpreter pinned via
       # executor/.python-version — `uv run` fetches it on a fresh runner).
       - name: Install uv (executor vyper toolchain)
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
@@ -423,7 +423,7 @@ jobs:
       # forced-pinned fleet leg and the version legs carry separate signal.
       fail-fast: false
       matrix:
-        # FF-T5 (NT7HJC) - the fleet profile matrix: job A is `auto` on the
+        # The fleet profile matrix: job A is `auto` on the
         # standard 4-vCPU runner (the REAL small-host path: the 2-5-core
         # tier boots the serial binding); job B is forced `pinned` (the
         # operator override: seats and fan-out, marked oversubscribed on
@@ -493,7 +493,7 @@ jobs:
         # while the exit code stayed 0.
         run: just test-python-noise-gate
         env:
-          # FF-T5: the profile leg force (auto is the enum default - same
+          # The profile leg force (auto is the enum default - same
           # behavior as unset; pinned is the forced-override leg).
           DEGENBOT_FLEET_PROFILE: ${{ matrix.fleet-profile }}
 

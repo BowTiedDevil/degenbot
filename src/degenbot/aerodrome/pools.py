@@ -119,7 +119,7 @@ class AerodromeV2Pool(
         self._fee = Fraction(fee_numer, fee_denom)
 
         # Wire calculation strategy at construction.
-        self._wire_stable_calculations(stable=self._stable)
+        self._wire_calculations(stable=self._stable)
 
         self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee.numerator / self._fee.denominator:.2f}%)"  # ruff:ignore[line-too-long]
 

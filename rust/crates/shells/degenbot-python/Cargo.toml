@@ -33,7 +33,7 @@ degenbot-bot = { workspace = true, optional = true }
 # ADR-067: the state owner + seam types moved to the substrate crate; the
 # bot-driven shell resolves them directly.
 degenbot-substrate = { workspace = true, optional = true }
-# (5WTYYQ) The WS-ingestion event surface the bot-driven pump consumes.
+# The WS-ingestion event surface the bot-driven pump consumes.
 degenbot-ingestion = { workspace = true, optional = true }
 degenbot-pools.workspace = true
 degenbot-decoders = { workspace = true, optional = true }

@@ -35,18 +35,6 @@ from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.erc20_factory import make_erc20
 
 
-class _Spy:
-    """Record calls to a Rust seam function, then delegate to the real impl."""
-
-    def __init__(self, real) -> None:
-        self.real = real
-        self.calls: list[tuple] = []
-
-    def __call__(self, *args, **kwargs):
-        self.calls.append((args, kwargs))
-        return self.real(*args, **kwargs)
-
-
 @pytest.fixture
 def stable_pool():
     bot = Bot()
@@ -107,66 +95,40 @@ def volatile_pool():
     )
 
 
-@pytest.fixture
-def calc_strategy_spies(monkeypatch) -> dict[str, _Spy]:
-    spies = {
-        "stable": _Spy(calc_mod._rs_calc_exact_in_stable_solidly),
-        "volatile": _Spy(calc_mod._rs_calc_exact_in_volatile),
-        "stable_out": _Spy(calc_mod._rs_calc_exact_out_stable_solidly),
-    }
-    monkeypatch.setattr(calc_mod, "_rs_calc_exact_in_stable_solidly", spies["stable"])
-    monkeypatch.setattr(calc_mod, "_rs_calc_exact_in_volatile", spies["volatile"])
-    monkeypatch.setattr(calc_mod, "_rs_calc_exact_out_stable_solidly", spies["stable_out"])
-    return spies
-
-
 class TestPoolCalcRouting:
-    def test_stable_swap_routes_through_rust(self, stable_pool, calc_strategy_spies) -> None:
-        t0 = stable_pool._token0
-        amount_in = 100_000_000  # 100 USDC
-        stable_pool.calculate_tokens_out_from_tokens_in(t0, amount_in)
-
-        # Delegation-detection: the strategy's stable swap method routed
-        # through the Rust seam (not the Python oracle's
-        # `calc_exact_in_stable`); the volatile seam was NOT touched.
-        assert len(calc_strategy_spies["stable"].calls) == 1
-        assert len(calc_strategy_spies["volatile"].calls) == 0
-
-    def test_volatile_swap_routes_through_rust(self, volatile_pool, calc_strategy_spies) -> None:
-        t0 = volatile_pool._token0
-        amount_in = 100_000_000_000_000_000  # 0.1 WETH
-        volatile_pool.calculate_tokens_out_from_tokens_in(t0, amount_in)
-
-        # Delegation-detection: the strategy's volatile swap method routed
-        # through the Rust seam (not the Python oracle's
-        # `calc_exact_in_volatile`); the stable seam was NOT touched.
-        assert len(calc_strategy_spies["volatile"].calls) == 1
-        assert len(calc_strategy_spies["stable"].calls) == 0
-
-
-class TestStableExactOut:
-    """Aerodrome stable exact-out roundtrip — the inverse of the stable exact-in.
-
-    The stable exact-out (`calc_exact_out_stable_solidly`) exists only on
-    the Rust leaf (the Python side never had one); the parity oracle is the
-    property-based
-    roundtrip over the Solidly/Aerodrome stable invariant: `exact_out` is the
-    MINIMUM input producing at least the requested output, so
-
-        exact_out(exact_in(amount_in) ) ≤ amount_in
-        exact_in(exact_out(out)        ) ≥ out
-        exact_in(exact_out(out) - 1     ) < out   (the minimum is tight)
+    """Routing is construction-time WIRING, not a runtime branch: the pool's
+    `_wire_calculations` binds exactly one exact-in calc per stable flag, and
+    `calculate_tokens_out_from_tokens_in` dispatches only through the bound
+    seam. Asserted on the wiring itself plus an instance-level fake — no
+    module-global patching.
     """
 
-    def test_routes_through_rust(self, stable_pool, calc_strategy_spies) -> None:
-        t1 = stable_pool._token1  # the OUT token (exact-out direction)
-        stable_pool.calculate_tokens_in_from_tokens_out(1_000_000, t1)
+    def test_stable_pool_wires_the_stable_calc(self, stable_pool) -> None:
+        assert (
+            stable_pool._calc_tokens_out_from_tokens_in
+            == calc_mod.AerodromeV2PoolCalc._calc_tokens_out_stable
+        )
 
-        # Delegation-detection: the stable exact-out strategy routed
-        # through the Rust `calc_exact_out_stable_solidly` seam.
-        assert len(calc_strategy_spies["stable_out"].calls) == 1
-        assert len(calc_strategy_spies["stable"].calls) == 0
-        assert len(calc_strategy_spies["volatile"].calls) == 0
+    def test_volatile_pool_wires_the_volatile_calc(self, volatile_pool) -> None:
+        assert (
+            volatile_pool._calc_tokens_out_from_tokens_in
+            == calc_mod.AerodromeV2PoolCalc._calc_tokens_out_volatile
+        )
+
+    def test_calculate_out_dispatches_only_through_the_wired_calc(self, stable_pool) -> None:
+        calls: list[object] = []
+
+        def recording_calc(*, ctx: object) -> int:
+            calls.append(ctx)
+            return 123
+
+        stable_pool._calc_tokens_out_from_tokens_in = recording_calc
+        out = stable_pool.calculate_tokens_out_from_tokens_in(stable_pool._token0, 100_000_000)
+
+        # The public entry point consults ONLY the bound seam: the fake's
+        # return value comes out, and exactly one request arrived.
+        assert out == 123
+        assert len(calls) == 1
 
     def test_roundtrip_is_the_minimum_input(self, stable_pool) -> None:
         t0 = stable_pool._token0

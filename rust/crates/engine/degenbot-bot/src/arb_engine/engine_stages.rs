@@ -1049,27 +1049,16 @@ mod candidate2_seam_pins {
             event: &tracing::Event<'_>,
             _ctx: tracing_subscriber::layer::Context<'_, S>,
         ) {
-            struct Message(String);
-            impl tracing::field::Visit for Message {
-                fn record_debug(
-                    &mut self,
-                    field: &tracing::field::Field,
-                    value: &dyn std::fmt::Debug,
-                ) {
-                    if field.name() == "message" {
-                        self.0 = format!("{value:?}");
-                    }
-                }
-            }
             if *event.metadata().level() != tracing::Level::ERROR {
                 return;
             }
-            let mut message = Message(String::new());
-            event.record(&mut message);
+            let mut visitor = degenbot_core::log_capture::MessageVisitor::default();
+            event.record(&mut visitor);
+            let message = visitor.into_message().unwrap_or_default();
             self.events
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push((event.metadata().target().to_string(), message.0));
+                .push((event.metadata().target().to_string(), message));
         }
     }
     /// Pin 3 loudness half (GREEN at HEAD). The `EngineStages` pump-ended

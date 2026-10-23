@@ -1514,24 +1514,13 @@ mod tests {
             event: &tracing::Event<'_>,
             _ctx: tracing_subscriber::layer::Context<'_, S>,
         ) {
-            struct Message(String);
-            impl tracing::field::Visit for Message {
-                fn record_debug(
-                    &mut self,
-                    field: &tracing::field::Field,
-                    value: &dyn std::fmt::Debug,
-                ) {
-                    if field.name() == "message" {
-                        self.0 = format!("{value:?}");
-                    }
-                }
-            }
-            let mut message = Message(String::new());
-            event.record(&mut message);
+            let mut visitor = degenbot_core::log_capture::MessageVisitor::default();
+            event.record(&mut visitor);
+            let message = visitor.into_message().unwrap_or_default();
             self.events
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push((*event.metadata().level(), message.0));
+                .push((*event.metadata().level(), message));
         }
     }
 

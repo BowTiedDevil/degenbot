@@ -1000,7 +1000,7 @@ impl PipelineInstruments {
             1.0,
             &[
                 KeyValue::new("profile", summary.profile),
-                KeyValue::new("binding", summary.binding),
+                KeyValue::new("binding", summary.binding.label()),
                 KeyValue::new(
                     "oversubscribed",
                     if summary.oversubscribed {

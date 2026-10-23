@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build the Tier-3 Balancer weighted/stable swap oracle harness (ergo task
-# EZLECC, epic UP5NH6 — family 3/3 of SH6HAK's Tier-3 cutover). Compiles
+# Build the Tier-3 Balancer weighted/stable swap oracle harness (family 3/3
+# of the Tier-3 cutover). Compiles
 # `src-balancer/BalancerSwapOracleHarness.sol` directly with solc 0.7.6
 # (all canonical Balancer libs are `pragma ^0.7.0`). The harness imports the
 # canonical balancer-v2-monorepo math cores (FixedPoint/LogExpMath/

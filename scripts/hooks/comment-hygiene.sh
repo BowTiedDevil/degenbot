@@ -7,16 +7,23 @@
 #   - "epic|task|slice <ID>" citations
 #   - RED/GREEN gate narration co-occurring with a 6-char ID token
 #   Scope: the working tree, not the index. The search runs rg (same tool
-#   and ignore rules as Detector 2) over the whole repo for *.py and *.rs,
-#   excluding executor/** (a self-contained sub-workspace with its own
-#   conventions), so a brand-new untracked source file is examined. An
-#   index-bound search can certify a tree it never looked at — a green
-#   that examined nothing — which is the failure this gate exists to
-#   prevent. One rg pass; no per-token subprocesses.
-#   Deliberately out of scope here: shell and markdown. *.sh is covered
-#   by Detector 2's bare-token ratchet below, and markdown is where
-#   tracker discussion legitimately lives (docs/, this gate's own
-#   census/waiver files).
+#   and ignore rules as Detector 2) over the whole repo for the code-ish
+#   file classes (*.py, *.rs, *.pyi, *.toml, *.yml, *.yaml, *.sh, *.sol,
+#   and the extensionless `justfile`), excluding executor/** (a
+#   self-contained sub-workspace with its own conventions), the
+#   tier3-oracle/src* harness sources (their bytes are sha256-pinned in
+#   artifacts/manifest.json — a comment edit there fails the
+#   committed-artifact match tests until a solc/vyper rebuild, so they stay
+#   out of scope), and generated lockfiles, so a brand-new untracked source
+#   file is examined. Build recipes (justfile, CI workflows, prek.toml, the
+#   root Cargo.toml) and the tier3-oracle build scripts carry the same
+#   prose a code comment does, so they are in scope. An index-bound search can certify a tree
+#   it never looked at — a green that examined nothing — which is the
+#   failure this gate exists to prevent. One rg pass; no per-token
+#   subprocesses.
+#   Deliberately out of scope here: markdown. It is where tracker
+#   discussion legitimately lives (docs/, this gate's own census/waiver
+#   files).
 #   Waivers: one repo-relative path per line in
 #   scripts/hooks/comment-hygiene-waivers.txt. A waiver means "this file
 #   still carries pre-rule citations" — it NEVER licenses new ones; remove
@@ -39,8 +46,11 @@
 #   - anything inside a longer word or identifier: the word-boundary rule
 #     excludes SCREAMING_SNAKE members and 0x-prefixed hex fragments
 #   Scope: src/ tests/ examples/ (all lines), scripts/ and run_bot.sh
-#   (all lines), and rust/crates/*.rs comment lines only, excluding rust
-#   tests/benches/examples and the gate's own census/hook/waiver files.
+#   (all lines), rust/crates/*.rs comment lines only, plus the build
+#   surface — justfile, *.toml, *.yml/*.yaml, *.pyi, *.sol, .github/**,
+#   tier3-oracle/** — as all-lines files (their comments are '#' or '///',
+#   not Rust comments). Excluding rust tests/benches/examples, generated
+#   artifacts, and the gate's own census/hook/waiver files.
 #   Keep it fast (it runs in pre-commit): one rg pass + one awk pass, no
 #   per-token subprocesses.
 #   Override the census for testing: CHF=/dev/null <this script> (fails on
@@ -62,8 +72,11 @@ command -v rg >/dev/null 2>&1 || {
   exit 1
 }
 hits="$(rg -n --no-heading -e "$pat" \
-  -g '*.py' -g '*.rs' \
+  -g '*.py' -g '*.rs' -g '*.pyi' -g '*.toml' \
+  -g '*.yml' -g '*.yaml' -g '*.sh' -g '*.sol' \
+  -g 'justfile' \
   -g '!executor/**' \
+  -g '!tier3-oracle/src*/**' \
   2>/dev/null || true)"
 if [ -n "$hits" ]; then
   while IFS= read -r line; do
@@ -92,12 +105,17 @@ tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 rg -n --no-heading -P \
   -g '*.py' -g '*.rs' -g '*.sh' \
+  -g '*.pyi' -g '*.toml' -g '*.yml' -g '*.yaml' -g '*.sol' \
+  -g 'justfile' \
   -g '!rust/crates/**/tests/**' \
   -g '!rust/crates/**/benches/**' \
   -g '!rust/crates/**/examples/**' \
+  -g '!tier3-oracle/artifacts/**' \
+  -g '!tier3-oracle/src*/**' \
   -g '!scripts/hooks/comment-hygiene*' \
   '(?<![A-Za-z0-9_])[A-Z0-9]{6}(?![A-Za-z0-9_])' \
-  src tests rust/crates run_bot.sh scripts examples >"$tmp" 2>/dev/null || true
+  src tests rust/crates run_bot.sh scripts examples \
+  justfile prek.toml rust/Cargo.toml .github tier3-oracle >"$tmp" 2>/dev/null || true
 
 bare_fail="$(awk -v CENSUS="$census" '
   BEGIN {
@@ -117,8 +135,10 @@ bare_fail="$(awk -v CENSUS="$census" '
     c2 = index(rest, ":")
     lineno = substr(rest, 1, c2 - 1)
     content = substr(rest, c2 + 1)
-    # rust/crates slice: comment lines only (//, /*, block-comment continuation)
-    if (path ~ /^rust\// && content !~ /^[ \t]*(\/\/|\/\*|\*)/) next
+    # Rust source: comment lines only (//, /*, block-comment continuation);
+    # non-.rs files under rust/ (e.g. rust/Cargo.toml) are '#'-commented and
+    # are scanned on all lines like every other build file.
+    if (path ~ /\.rs$/ && content !~ /^[ \t]*(\/\/|\/\*|\*)/) next
     s = content
     prev_alnum = 0  # was the char just before s[1] a letter/digit/underscore?
     while (match(s, /[A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9]/)) {

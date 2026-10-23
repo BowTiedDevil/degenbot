@@ -18,7 +18,6 @@ return values — no ABI encoding needed.
 """
 
 from collections.abc import Callable
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -205,10 +204,8 @@ class TestRateClampReadsTheTypedConfig:
     def test_pace_spaces_calls_by_the_configured_interval(
         self,
         governed_holder: Callable[[dict[str, str]], None],
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         governed_holder({"DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS": "20"})
-        monkeypatch.setattr(tick_data_fetcher._governor, "_next_free", 0.0)
 
         clock = [1000.0]
         sleeps: list[float] = []
@@ -220,13 +217,9 @@ class TestRateClampReadsTheTypedConfig:
             sleeps.append(seconds)
             clock[0] += seconds
 
-        monkeypatch.setattr(
-            tick_data_fetcher,
-            "time",
-            SimpleNamespace(monotonic=_monotonic, sleep=_sleep),
-        )
+        governor = tick_data_fetcher._TickFetchGovernor(clock=_monotonic, sleep=_sleep)
 
-        tick_data_fetcher._pace()  # first call only schedules the next free slot
+        governor.pace()  # first call only schedules the next free slot
         assert sleeps == []
-        tick_data_fetcher._pace()  # second call waits out the interval
+        governor.pace()  # second call waits out the interval
         assert sleeps == pytest.approx([0.02])

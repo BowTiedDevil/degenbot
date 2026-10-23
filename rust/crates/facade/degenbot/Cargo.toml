@@ -41,7 +41,7 @@ degenbot-fork.workspace = true
 # The net-profit order index — re-exported for standalone consumers; the
 # `degenbot-arbitrage` edge below enables its `order-index` feature so
 # `dispatch_profitable` gets the deterministic pre-sim selection in every
-# umbrella build (B5L2XA; ADR-024).
+# umbrella build (ADR-024).
 degenbot-order-index.workspace = true
 degenbot-pathfinding.workspace = true
 degenbot-pool-updater.workspace = true
@@ -109,7 +109,7 @@ required-features = ["sql-ledger"]
 name = "generate_evm_oracle_captures"
 required-features = ["sql-ledger"]
 
-# The wave-3 aave-side adversarial capture generator (ergo HGOV5W) replays its
+# The wave-3 aave-side adversarial capture generator replays its
 # SQL goldens through the statement-ledger wrapper the same way — the same
 # `sql-ledger` passthrough applies.
 # `just check-aave-captures` is the one command that carries the feature.
@@ -124,7 +124,7 @@ required-features = ["sql-ledger"]
 name = "generate_aave_upgrade_windows"
 required-features = ["sql-ledger"]
 
-# The wave-5 config-dispatch span recorder (ergo 3R6LEY) drives the live chunk
+# The wave-5 config-dispatch span recorder drives the live chunk
 # loop and replays its SQL goldens through the statement-ledger wrapper, so the
 # same `sql-ledger` passthrough applies — a default-features target sweep (the
 # workspace clippy gate / `just check-rust-consumer`) must skip it instead of

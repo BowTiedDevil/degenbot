@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Build the Tier-3 V2 pair swap oracle harness (ergo task TLBUNW, epic
-# UP5NH6). Compiles `src-v2/V2SwapOracleHarness.sol` (which imports the real
+# Build the Tier-3 V2 pair swap oracle harness. Compiles `src-v2/V2SwapOracleHarness.sol` (which imports the real
 # v2-core `UniswapV2Pair`) directly with solc 0.5.16 — v2-core pragmas
 # `=0.5.16` and the mock tokens must compile under the same 0.5.x (no
 # `>=0.8` available). Foundry's solc manager cannot resolve solc <0.8 in

@@ -37,8 +37,13 @@ if TYPE_CHECKING:
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
-class _StableExactIn:
-    """Resolved inputs for a Solidly-stable exact-in calculation."""
+class _ExactInRequest:
+    """Resolved context shared by the volatile and stable exact-in leaves.
+
+    The volatile leaf reads only the constant-product fields; the stable-only
+    context travels with the request so the bound
+    ``_calc_tokens_out_from_tokens_in`` seam has one uniform shape.
+    """
 
     amount_in: int
     token_in: Literal[0, 1]
@@ -91,7 +96,7 @@ class AerodromeV2PoolCalc:
     state: AerodromeV2PoolState
     tokens: tuple[Erc20Token, Erc20Token]
 
-    def _wire_stable_calculations(self, *, stable: bool) -> None:
+    def _wire_calculations(self, *, stable: bool) -> None:
         """Wire calculation functions based on the stable flag.
 
         Called by the pool's __init__ after setting self._stable.
@@ -99,8 +104,10 @@ class AerodromeV2PoolCalc:
         self._stable_calc_mode = stable
         if stable:
             self._calc_tokens_in_from_tokens_out = self._calc_tokens_in_stable
+            self._calc_tokens_out_from_tokens_in = self._calc_tokens_out_stable
         else:
             self._calc_tokens_in_from_tokens_out = self._calc_tokens_in_volatile
+            self._calc_tokens_out_from_tokens_in = self._calc_tokens_out_volatile
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -210,24 +217,16 @@ class AerodromeV2PoolCalc:
 
         token_in_dir: Literal[0, 1] = 0 if token_in == self._token0 else 1
 
-        if self._stable_calc_mode:
-            return self._calc_tokens_out_stable(
-                ctx=_StableExactIn(
-                    amount_in=token_in_quantity,
-                    token_in=token_in_dir,
-                    reserves0=reserves_0,
-                    reserves1=reserves_1,
-                    decimals0=10**self._token0.decimals,
-                    decimals1=10**self._token1.decimals,
-                    fee=self._fee,
-                ),
-            )
-        return self._calc_tokens_out_volatile(
-            amount_in=token_in_quantity,
-            token_in=token_in_dir,
-            reserves0=reserves_0,
-            reserves1=reserves_1,
-            fee=self._fee,
+        return self._calc_tokens_out_from_tokens_in(
+            ctx=_ExactInRequest(
+                amount_in=token_in_quantity,
+                token_in=token_in_dir,
+                reserves0=reserves_0,
+                reserves1=reserves_1,
+                decimals0=10**self._token0.decimals,
+                decimals1=10**self._token1.decimals,
+                fee=self._fee,
+            ),
         )
 
     def get_absolute_price(
@@ -301,14 +300,7 @@ class AerodromeV2PoolCalc:
     # ── Private: calculation strategy methods ──
 
     @staticmethod
-    def _calc_tokens_out_volatile(
-        *,
-        amount_in: int,
-        token_in: Literal[0, 1],
-        reserves0: int,
-        reserves1: int,
-        fee: Fraction,
-    ) -> int:
+    def _calc_tokens_out_volatile(*, ctx: _ExactInRequest) -> int:
         """Volatile (constant-product) exact-in calculation.
 
         Returns:
@@ -318,17 +310,17 @@ class AerodromeV2PoolCalc:
         return cast(
             "int",
             _rs_calc_exact_in_volatile(
-                amount_in,
-                token_in,
-                reserves0,
-                reserves1,
-                fee.numerator,
-                fee.denominator,
+                ctx.amount_in,
+                ctx.token_in,
+                ctx.reserves0,
+                ctx.reserves1,
+                ctx.fee.numerator,
+                ctx.fee.denominator,
             ),
         )
 
     @staticmethod
-    def _calc_tokens_out_stable(*, ctx: _StableExactIn) -> int:
+    def _calc_tokens_out_stable(*, ctx: _ExactInRequest) -> int:
         """Stable (Solidly invariant) exact-in calculation.
 
         Returns:

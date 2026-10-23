@@ -949,9 +949,28 @@ where
 /// override before returning. `span.record` ignores undeclared field names
 /// (as_field), so the fields are declared as `tracing::field::Empty`
 /// placeholders at span creation.
+/// The closed verdict vocabulary stamped on the per-candidate sim span
+/// and exported as the `simulate.verdict` metric label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SimVerdict {
+    Profitable,
+    NotProfitable,
+    Error,
+}
+
+impl SimVerdict {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Profitable => "profitable",
+            Self::NotProfitable => "not_profitable",
+            Self::Error => "error",
+        }
+    }
+}
+
 struct SimSpanVerdict {
     span: tracing::Span,
-    verdict: &'static str,
+    verdict: SimVerdict,
     /// ADR-040: the closed `telemetry::error_reason` classification for an
     /// error-verdict sim (`None` until an error seam stamps it). Recorded on
     /// the span and tallied via `degenbot.sim.error_reason{reason}`.
@@ -963,23 +982,23 @@ struct SimSpanVerdict {
 
 impl Drop for SimSpanVerdict {
     fn drop(&mut self) {
-        self.span.record("simulate.verdict", self.verdict);
+        self.span.record("simulate.verdict", self.verdict.as_str());
         if let Some(profit) = self.profit {
             self.span.record("simulate.expected_profit", profit);
         }
         // T3: verdict counter (labeled, small closed set) + duration histogram.
         if let Some(p) = degenbot_bot::instruments::pipeline() {
-            p.count_simulate_verdict(self.verdict);
+            p.count_simulate_verdict(self.verdict.as_str());
             p.observe_simulate_duration(self.started.elapsed().as_secs_f64());
             // ADR-040: error-outcome sims tally by closed reason (the bucket
             // table keys the reaction; the label set stays closed).
-            if self.verdict == "error" {
+            if self.verdict == SimVerdict::Error {
                 if let Some(reason) = self.error_reason {
                     p.count_sim_error_reason(reason);
                 }
             }
         }
-        if self.verdict == "error" {
+        if self.verdict == SimVerdict::Error {
             if let Some(reason) = self.error_reason {
                 self.span.record("simulate.error_reason", reason);
             }
@@ -1096,7 +1115,7 @@ where
     let mut guard = SimSpanVerdict {
         span: span.clone(),
         error_reason: None,
-        verdict: "not_profitable",
+        verdict: SimVerdict::NotProfitable,
         started: std::time::Instant::now(),
         profit: None,
     };
@@ -1168,7 +1187,7 @@ where
     // the hardcoded `EXECUTE_CONFIG = ZERO` (check_mode=0 fast path, no
     // assert) — a money-losing production path now reverts on-chain.
     let execute_config = config_for_options(path.opts, U256::ZERO).map_err(|e| {
-        guard.verdict = "error";
+        guard.verdict = SimVerdict::Error;
         guard.error_reason = Some(degenbot_bot::telemetry::error_reason::SIM_PRE_ENCODE);
         ProviderError::RpcError {
             code: -32603,
@@ -1177,7 +1196,7 @@ where
     })?;
     let execute_calldata = wrap_execute_calldata(ctx.executor_address, &cmd_bytes, execute_config)
         .map_err(|e| {
-            guard.verdict = "error";
+            guard.verdict = SimVerdict::Error;
             guard.error_reason = Some(degenbot_bot::telemetry::error_reason::SIM_PRE_ENCODE);
             ProviderError::RpcError {
                 code: -32603,
@@ -1533,7 +1552,7 @@ where
     // The call trace + captured swaps were drained right after `finalize`
     // (before the revert branch) so both branches have them.
 
-    guard.verdict = "profitable";
+    guard.verdict = SimVerdict::Profitable;
     let profit_i128 = i128::try_from(net_profit).unwrap_or(i128::from(i64::MAX));
     guard.profit = Some(i64::try_from(profit_i128).unwrap_or(i64::MAX));
     Ok(Some(SimResult {

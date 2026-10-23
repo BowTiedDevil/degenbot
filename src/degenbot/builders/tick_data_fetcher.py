@@ -5,14 +5,13 @@ from __future__ import annotations
 import dataclasses
 import threading
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from degenbot.config import resolved_config
 from degenbot.logging import logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from degenbot._ffi import BotIo
     from degenbot.types.chain import ChecksummedAddress
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -44,7 +43,17 @@ class _TickFetchGovernor:
     per thread.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] | None = None,
+        sleep: Callable[[float], None] | None = None,
+    ) -> None:
+        # The monotonic clock and the blocking sleep are injectable so tests
+        # can drive the schedule deterministically without patching the
+        # module-global `time` or the process-wide singleton.
+        self._clock = clock if clock is not None else time.monotonic
+        self._sleep = sleep if sleep is not None else time.sleep
         self._lock = threading.Lock()
         self._next_free = 0.0
 
@@ -54,12 +63,12 @@ class _TickFetchGovernor:
         if min_interval_seconds <= 0:
             return
         with self._lock:
-            now = time.monotonic()
+            now = self._clock()
             scheduled = max(now, self._next_free)
             self._next_free = scheduled + min_interval_seconds
-        wait = scheduled - time.monotonic()
+        wait = scheduled - self._clock()
         if wait > 0:
-            time.sleep(wait)
+            self._sleep(wait)
 
 
 _governor = _TickFetchGovernor()

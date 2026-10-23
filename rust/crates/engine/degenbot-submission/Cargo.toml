@@ -35,12 +35,12 @@ degenbot-bot.workspace = true
 degenbot-substrate.workspace = true
 # `AlloyProvider` (the typed `eth_sendRawTransaction`/`eth_feeHistory`/
 # `eth_createAccessList` surfaces the N6 submit orchestration consumes —
-# ZUZANP typed, no `make_request` escape hatch).
+# typed, with no `make_request` escape hatch).
 degenbot-rpc.workspace = true
 # Per-session run artifacts: the driver's stdout fmt sink and the default
 # JSONL trace path. The `tracing` feature supplies the MakeWriter bridge.
 degenbot-runs = { workspace = true, features = ["tracing"] }
-# The frame pipeline (WKPZQK): frame-replay seam + journal-pool extraction
+# The frame pipeline: frame-replay seam + journal-pool extraction
 # (degenbot-simulation) over the bot crate's workspace/planning scope.
 degenbot-simulation.workspace = true
 # The zero-warmup `WarmupSlots` the frame-replay handle's override set rides.
@@ -52,14 +52,14 @@ degenbot-pools.workspace = true
 # `WarmCodeCacheInner::shared_default()` returns a parking_lot RwLock.
 parking_lot = "^0.12" 
 degenbot-decoders.workspace = true
-# The DB-backed connector index (DFYDYI B3) reads the
+# The DB-backed connector index reads the
 # workspace DB once at startup.
 degenbot-db.workspace = true
 
 # V3 pool CREATE2 resolution (the router wire never names the pool).
 degenbot-uniswap.workspace = true
 thiserror = { version = "^2.0" }
-# OTel tier-1 spans (RMHQAR, epic 2LXPPV): plain `tracing` spans - the
+# OTel tier-1 spans: plain `tracing` spans - the
 # process-wide subscriber (degenbot-bot/degenbot-python) exports them;
 # no OTel dependency here (core-crate rule).
 tracing = { version = "^0.1" }
@@ -83,7 +83,7 @@ degenbot-pathfinding.workspace = true
 # `PyErr` (mirrors `degenbot-core`/`degenbot-price`'s `pyo3` feature).
 pyo3 = { version = "^0.29", features = ["abi3-py312", "serde"], optional = true }
 
-# Backrun bundle submission (GSUF22): WS relay to searchers.mevblocker.io.
+# Backrun bundle submission: WS relay to searchers.mevblocker.io.
 serde_json = { version = "^1.0" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 tokio-tungstenite = { version = "^0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }

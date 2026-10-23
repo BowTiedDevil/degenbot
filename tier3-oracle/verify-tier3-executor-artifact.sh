@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Authoritative compile-vs-use check for the tier-3b executor oracle artifacts
-# (BHL2R2). Recompiles the committed sources with the real toolchain and
+# Recompiles the committed sources with the real toolchain and
 # byte-compares against the committed artifacts — so a source edit without a
 # rebuild+re-publish fails CI.
 #
@@ -9,7 +9,7 @@
 #   - src-executor/ExecutorV3Harness.sol      (solc 0.7.6)      -> artifacts/executor/ExecutorV3Harness.sol/ExecutorV3Harness.json
 #
 # REQUIRES the toolchain: the in-repo `executor/` uv project (vyper
-# ==0.5.0a3, SRMMM7) + solc 0.7.6 (svm cache). Runs in the CI `tier3-oracle`
+# ==0.5.0a3) + solc 0.7.6 (svm cache). Runs in the CI `tier3-oracle`
 # job, NOT the default cargo-test path. The default cargo-test path is guarded toolchain-free by
 # `rust/crates/engine/degenbot-simulation/tests/tier3_executor_artifacts.rs`.
 set -euo pipefail

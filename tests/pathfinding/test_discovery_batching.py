@@ -383,10 +383,18 @@ def _persistent_threads() -> dict[int, str]:
 
 async def test_aclose_leaves_no_worker_threads(db: pathlib.Path) -> None:
     """Repeated mid-sweep closes leave no stray discovery worker threads."""
-    # Warm any lazily-created runtime/executor threads first.
+    # Warm any lazily-created runtime/executor threads first: sweep until two
+    # consecutive persistent-thread snapshots agree, so the baseline contains
+    # every thread the machinery legitimately keeps alive. Convergence is
+    # structural (lazy factories fire on first use), never a wall-clock wait.
     await _partial_sweep(db, take=1)
-    await asyncio.sleep(0.2)
     baseline = _persistent_threads()
+    for _ in range(20):
+        await _partial_sweep(db, take=1)
+        settled = _persistent_threads()
+        if settled == baseline:
+            break
+        baseline = settled
 
     for _ in range(6):
         await _partial_sweep(db, take=1)
@@ -410,17 +418,31 @@ async def test_prep_never_blocks_the_event_loop(tmp_path: pathlib.Path) -> None:
     whole prep. It now runs on the Rust async seam's blocking pool, so the
     loop keeps turning while the prep is in flight.
     """
+    # Asserted deterministically: the prep records its thread identity (a
+    # blocking-pool thread, never the loop thread) and BLOCKS on a threading
+    # event until the loop-driven waiter observes it and releases it. An
+    # inline prep would stall the waiter into the failure timeout instead of
+    # passing; no wall-clock threshold arbitrates the sequencing.
+    loop_thread_ident = threading.get_ident()
+    prep_idents: list[int] = []
+    prep_started = threading.Event()
+    release_prep = threading.Event()
+
+    def slow_prep(**_: object) -> list[object]:
+        prep_idents.append(threading.get_ident())
+        prep_started.set()
+        # Simulate the slow (blocking) prep: hold a pool thread until the
+        # test proves the loop kept turning, then let the sweep finish.
+        release_prep.wait(timeout=30)
+        return [_fake_traversal()]
+
     ticks = 0
 
     async def canary() -> None:
         nonlocal ticks
         while True:
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0)
             ticks += 1
-
-    def slow_prep(**_: object) -> list[object]:
-        time.sleep(0.3)
-        return [_fake_traversal()]
 
     canary_task = asyncio.ensure_future(canary())
     agen = find_paths_async(
@@ -428,19 +450,31 @@ async def test_prep_never_blocks_the_event_loop(tmp_path: pathlib.Path) -> None:
         prepare_traversals=slow_prep,
         find_paths_async_rust=lambda *a, **k: _FakeBatchIterator([[]]),
     )
-    started = time.perf_counter()
-    with pytest.raises(StopAsyncIteration):
-        await anext(agen)
-    elapsed = time.perf_counter() - started
+    # The lazy generator runs its prep only at the first `__anext__`.
+    next_task = asyncio.ensure_future(anext(agen))
+
+    # Turn the loop until the prep thread has started and blocked. The
+    # event-loop turns here (and the canary ticks they interleave) ARE the
+    # invariant: an inline prep would stall this await into the failure
+    # timeout below instead of ever observing prep_started.
+    async def wait_for_prep_started() -> None:
+        while not prep_started.is_set():
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(wait_for_prep_started(), timeout=10)
+
+    assert prep_idents, "the prep never started"
+    assert all(ident != loop_thread_ident for ident in prep_idents), (
+        "the prep ran on the event-loop thread"
+    )
+    assert ticks >= 1, "event loop stalled while the prep blocked a pool thread"
+
+    release_prep.set()
+    with contextlib.suppress(StopAsyncIteration):
+        await next_task
     canary_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await canary_task
-
-    assert elapsed >= 0.3, "the slow prep did not actually run"
-    # One event-loop turn is the invariant: the offloaded prep lets the canary
-    # run at least once, while an inline blocking prep yields zero before the
-    # cancellation below. The exact count is scheduler-dependent under xdist.
-    assert ticks >= 1, f"event loop stalled during prep: {ticks} canary ticks in {elapsed:.2f}s"
 
 
 async def test_missing_start_token_raises_at_first_next(db: pathlib.Path) -> None:

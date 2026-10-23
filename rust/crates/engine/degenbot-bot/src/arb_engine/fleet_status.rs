@@ -125,6 +125,28 @@ fn live_default_boot() -> FleetBoot {
         owner: None,
     }
 }
+/// The resolved lane-to-thread binding of the process's fleet profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FleetBinding {
+    Pinned,
+    Serial,
+    /// The boot plan refused: the host is below the floor.
+    Refused,
+}
+
+impl FleetBinding {
+    /// The metric/`runtime_status` label (the field's closed vocabulary:
+    /// pinned / serial / refused).
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Pinned => "pinned",
+            Self::Serial => "serial",
+            Self::Refused => "refused",
+        }
+    }
+}
+
 /// The process's resolved fleet profile summary (FF-T5: the
 /// one-line answer to "what did the fleet boot as", recorded ONCE at the
 /// construction-stamp install (first engine wins, like every stance
@@ -133,8 +155,8 @@ fn live_default_boot() -> FleetBoot {
 pub struct FleetProfileSummary {
     /// The boot's profile (auto / pinned / serial).
     pub profile: &'static str,
-    /// The resolved lane-to-thread binding (pinned / serial / refused).
-    pub binding: &'static str,
+    /// The resolved lane-to-thread binding.
+    pub binding: FleetBinding,
     /// Whether the projection runs marked-oversubscribed.
     pub oversubscribed: bool,
 }
@@ -154,20 +176,20 @@ pub fn record_fleet_profile_at_install(boot: &FleetBoot) {
         Ok(plan) => FleetProfileSummary {
             profile: profile_label(boot.profile),
             binding: match plan.binding {
-                degenbot_workers::plan::Binding::Pinned => "pinned",
-                degenbot_workers::plan::Binding::Serial => "serial",
+                degenbot_workers::plan::Binding::Pinned => FleetBinding::Pinned,
+                degenbot_workers::plan::Binding::Serial => FleetBinding::Serial,
             },
             oversubscribed: plan.oversubscribed,
         },
         Err(_) => FleetProfileSummary {
             profile: profile_label(boot.profile),
-            binding: "refused",
+            binding: FleetBinding::Refused,
             oversubscribed: false,
         },
     };
     let summary = *FLEET_PROFILE_SUMMARY.get_or_init(|| summary);
     crate::instruments::note_fleet_profile(&summary);
-    if summary.binding == "serial" {
+    if summary.binding == FleetBinding::Serial {
         op_warn!(domain = solver, profile = summary.profile,
             quota_cpus = boot.quota_cpus,
             "PRODUCTION ALERT: this host resolved to the SERIAL tier              (2-5 cores: one cycle lane per host) - the small-host arm is a              degradation signal, never a silent narrow (FF-T5)"

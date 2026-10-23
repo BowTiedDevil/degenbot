@@ -126,7 +126,7 @@ degenbot-workers = { version = "0.6.0-alpha.16", path = "crates/engine/degenbot-
 # unifies the graph instead of growing it. default-hasher = foldhash.
 hashbrown = { version = "0.17", features = ["default-hasher"] }
 # indexmap: insertion-ordered set/map. `IndexSet` is the recency ledger's bucket
-# set (epic MROOY7 task 7S4QAG) — hashbrown offers no ordered variant, and the
+# set — hashbrown offers no ordered variant, and the
 # ledger needs order-preserving mutation: `shift_remove` on promotion, a
 # `split_off` head/tail split on a partial drain, and `mem::take` for a
 # whole-bucket drain. 2.14.2 already resolves transitively (alloy et al.), so

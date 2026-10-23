@@ -118,7 +118,7 @@ node-identity:
 # `cargo add degenbot` showcase binary AND a CI-runnable assertion.
 test-standalone:
     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot --example standalone_consumer
-    # MROOY7 5WTYYQ: the WS-ingestion crate's headless boot (no Python, no net).
+    # The WS-ingestion crate's headless boot (no Python, no net).
     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-ingestion --example headless_boot
 
 # ========== Tests ==========
@@ -182,7 +182,7 @@ test-rust-ci:
     CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 just test-rust
 
 
-# FF-T5 (NT7HJC): the fleet budget-algebra (pure plan/budget tiering) and the
+# The fleet budget-algebra (pure plan/budget tiering) and the
 # binding-parity gates (pinned-vs-serial outcome-corpus identity). NAMED so a
 # fleet-tier regression is readable in any check log, CI's or the hook's.
 test-fleet-parity:
@@ -302,7 +302,7 @@ test-timing top='30':
         print(f"  {d:8.3f}s  {name}")
     EOF
 
-# The replay bench (GLOSSARY “replay bench”, ADR-068 D6, ergo NNCPXA): the ONE
+# The replay bench (GLOSSARY “replay bench”, ADR-068 D6): the ONE
 # command reproducing the updater per-chunk baseline — the real chunk loops
 # over the committed seed cassettes through the replay transport (zero
 # network), reporting RPC round trips + response bytes, SQL statement count,
@@ -312,7 +312,7 @@ test-timing top='30':
 bench-updaters:
     cargo bench --locked --manifest-path rust/Cargo.toml -p degenbot --features degenbot/sql-ledger --bench updater_replay_bench
 
-# The wave-2 EVM-oracle capture generator's gate (LCRP37): regenerate the
+# The wave-2 EVM-oracle capture generator's gate: regenerate the
 # wave-2 cassettes + SQL goldens into a temp home and exit 1 on any byte
 # drift against the committed artifacts. The example only builds under the
 # `sql-ledger` passthrough (its [[example]] required-features, same shape as
@@ -321,7 +321,7 @@ bench-updaters:
 check-evm-captures:
     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot --features degenbot/sql-ledger --example generate_evm_oracle_captures -- --check tests/fixtures/cassettes/wave2 tests/fixtures/sql_goldens/wave2
 
-# The wave-3 aave-side adversarial capture generator's gate (HGOV5W): the
+# The wave-3 aave-side adversarial capture generator's gate: the
 # same drift gate as check-evm-captures over the wave-3 fixture homes.
 check-aave-captures:
     cargo run --locked --manifest-path rust/Cargo.toml -p degenbot --features degenbot/sql-ledger --example generate_aave_adversarial_captures -- --check tests/fixtures/cassettes/wave3 tests/fixtures/sql_goldens/wave3
@@ -476,10 +476,10 @@ check-cli-shell-purity:
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- cli_shell_names_only_allowlisted_externals --exact --nocapture
 
 
-# Structural gate for epic 5TBT7L (arch review #11, candidate 2): the engine
+# Structural gate: the engine
 # seam deepens until `EngineStages` is the ONE external driver surface and
 # every `impl ArbitrageEngine` block outside `arb_engine/mod.rs` is dissolved.
-# T6 flipped it GREEN and wired it into the Rust hygiene set
+# Wired into the Rust hygiene set
 # (`lint-rust-check` + the `rust-engine-impl-blocks` pre-commit hook + CI).
 # The `{` anchor keeps the prose mention of `impl ArbitrageEngine` in
 # mod.rs's module-tree comment from being counted as a block.
@@ -495,12 +495,12 @@ check-engine-impl-blocks:
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- one_engine_impl_block --exact --nocapture
 
 
-# Structural ratchet for the config-holder test seam (chunk SERRGX): every
+# Structural ratchet for the config-holder test seam: every
 # process-once static (`OnceLock`/`LazyLock`/`OnceCell`/`Once`) whose
 # initialization path reads `degenbot_config::holder::config()`/`config_arc()`
 # (or the substrate `stance::config()` delegate) must be classified in
 # rust/crates/facade/degenbot/tests/config_derived_statics_census.txt as
-# per-read | republishable | process-lifetime. The SERRGX call-site audit is a
+# per-read | republishable | process-lifetime. The call-site audit is a
 # snapshot in a result doc; this gate makes it durable, so the next
 # holder-derived once-static cannot land silently stale-able. Wired into
 # `lint-rust-check` (hence `just lint` / CI / the pre-push `rust-clippy` hook)
@@ -728,34 +728,33 @@ record-deployment-golden *args:
 # Rust-vs-real-EVM test. No family (default `all`) runs EVERY family, in the
 # order listed below.
 #
-# Family notes (harness sources under `tier3-oracle/src*/`, epic UP5NH6 task
-# IDs unless noted):
+# Family notes (harness sources under `tier3-oracle/src*/`):
 #   step      SwapMath.computeSwapStep (V3 + V4) vs the real canonical core
-#             libraries run as EVM bytecode in revm (OZRQS6). V3 via direct
+#             libraries run as EVM bytecode in revm. V3 via direct
 #             solc 0.7.6 (v3-core pragmas <0.8 + foundry can't resolve solc
 #             <0.8 in this env — documented toolchain deviation; the script
 #             caches solc 0.7.6 in the svm dir) + V4 via forge 0.8.26.
 #             Asserts each Rust output field === the on-chain output.
-#   swap      V3 `Pool.swap` end-to-end (2LTKVO). solc 0.7.6 harness, drives
+#   swap      V3 `Pool.swap` end-to-end. solc 0.7.6 harness, drives
 #             `v3_simulate_swap` against real UniswapV3Pool bytecode in revm.
-#   v2        V2 `Pair.swap` (TLBUNW — family 1/3 of SH6HAK). solc 0.5.16
+#   v2        V2 `Pair.swap` (family 1/3 of the Tier-3 cutover). solc 0.5.16
 #             harness; `IntHopState::swap` (V2 getAmountOut) byte-exact via the
 #             K-invariant boundary.
-#   v4        V4 `PoolManager.swap` end-to-end (2LTKVO). solc 0.8.26 harness
+#   v4        V4 `PoolManager.swap` end-to-end. solc 0.8.26 harness
 #             (PoolManager singleton + unlocker + mock tokens);
 #             `v4_simulate_swap` through the unlock/settle dance, with
 #             amount0/amount1 byte-exact to the on-chain BalanceDelta.
-#   path5000  path-5000 V4 CL-hop clamp regression (BHTWBZ): prove the CL-hop
+#   path5000  path-5000 V4 CL-hop clamp regression: prove the CL-hop
 #             input clamp turns the 20.7M-gas EMPTY-HALT into a clean
 #             byte-exact fill under the executor's 5M ceiling. Rebuilds the
 #             shared v4 harness and runs the pair from the umbrella `degenbot`
 #             crate.
-#   curve     Curve stableswap `get_dy` (YXMNWB — family 2/3 of SH6HAK). solc
+#   curve     Curve stableswap `get_dy` (family 2/3 of the Tier-3 cutover). solc
 #             0.8.26 harness — a faithful Solidity port of the STANDARD
 #             stableswap `get_dy` (Curve's canonical source is Vyper, absent
 #             here); the `simulate_swap` standard path is byte-exact to the
 #             on-chain `getDy`.
-#   balancer  Balancer weighted/stable (EZLECC — family 3/3 of SH6HAK). solc
+#   balancer  Balancer weighted/stable (family 3/3 of the Tier-3 cutover). solc
 #             0.7.6 harness over the CANONICAL balancer-v2-monorepo math cores
 #             (FixedPoint/LogExpMath/WeightedMath/StableMath, pinned commit
 #             f8b6f44); the `simulate_swap` weighted + stable
@@ -787,13 +786,13 @@ test-tier3 family='all':
         local harness pkg test
         case "$1" in
             step)     harness=build-tier3-harnesses.sh;           pkg=degenbot-math; test=tier3_compute_swap_step_vs_revm ;;
-            swap)     harness=build-tier3-v3-swap-harness.sh;     pkg=degenbot-simulation; test=tier3_v3_pool_swap_vs_revm ;;  # 5D3YVK: relocated from pools
+            swap)     harness=build-tier3-v3-swap-harness.sh;     pkg=degenbot-simulation; test=tier3_v3_pool_swap_vs_revm ;;
             v2)       harness=build-tier3-v2-swap-harness.sh;     pkg=degenbot-pools; test=tier3_v2_pair_swap_vs_revm ;;
-            v4)       harness=build-tier3-v4-swap-harness.sh;     pkg=degenbot-simulation; test=tier3_v4_pool_swap_vs_revm ;;  # 5D3YVK: relocated from pools
+            v4)       harness=build-tier3-v4-swap-harness.sh;     pkg=degenbot-simulation; test=tier3_v4_pool_swap_vs_revm ;;
             path5000) harness=build-tier3-v4-swap-harness.sh;     pkg=degenbot; test=tier3_path5000_v4_clamp ;;
             curve)    harness=build-tier3-curve-swap-harness.sh;  pkg=degenbot-pools; test=tier3_curve_swap_vs_revm ;;
             balancer) harness=build-tier3-balancer-swap-harness.sh; pkg=degenbot-pools; test=tier3_balancer_swap_vs_revm ;;
-            pancake)  harness=build-tier3-pancake-v3-swap-harness.sh; pkg=degenbot-simulation; test=tier3_pancake_v3_swap_vs_revm ;;  # 5D3YVK: relocated from pools
+            pancake)  harness=build-tier3-pancake-v3-swap-harness.sh; pkg=degenbot-simulation; test=tier3_pancake_v3_swap_vs_revm ;;
             pancake2) harness=build-tier3-pancake-v2-swap-harness.sh; pkg=degenbot-pools; test=tier3_pancake_v2_swap_vs_revm ;;
             *) echo "unknown tier-3 family '$1' (families: step swap v2 v4 path5000 curve balancer pancake pancake2 | all)" >&2; exit 2 ;;
         esac
@@ -822,7 +821,7 @@ test-tier3 family='all':
 verify-tier3-artifacts:
     tier3-oracle/verify-tier3-artifacts.sh
 
-# Validate the committed Vyper executor artifact (BHL2R2 / tier-3b): recompile
+# Validate the committed Vyper executor artifact (tier-3b): recompile
 # executor/contracts/cmd_executor.vy with the pinned vyper 0.5.0a3 (into a
 # throwaway dir, PUBLISH=0) and byte-compare against what the Rust tier-3b tests
 # load from `tier3-oracle/artifacts/executor/`. This is the authoritative
@@ -874,7 +873,7 @@ rebuild-tier3-artifacts:
 # fixes land, and `crap-baseline` / `crap-regression` to track the movement
 # while it happens. .cargo-crap.toml holds the threshold + exclusions.
 #
-# Read the output knowing three things (all measured, see ergo DRBR7Z):
+# Read the output knowing three things (all measured):
 #   1. It measures the RUST suite only. pytest drives the same core through the
 #      PyO3 seam and contributes no coverage here, so the binding layer
 #      (`degenbot_rs`, ~60% of the findings) and the Python-driven updaters
@@ -1167,8 +1166,7 @@ update-deps:
 # ========== Repository Setup ==========
 
 # Refresh the committed DEGENBOT_* key-inventory snapshot the
-# degenbot-config schema-completeness test compares against (reviewer note,
-# 7LKJFY sign-off). The exclusion glob keeps the snapshot self-contamination
+# degenbot-config schema-completeness test compares against. The exclusion glob keeps the snapshot self-contamination
 # (regeneration rewriting its own source) out of the sweep.
 env-inventory:
     #!/usr/bin/env bash
@@ -1211,7 +1209,7 @@ setup-git-hooks:
     echo "✓ commit template configured."
 
 
-# ========== Settlement-Bot Parity Gate (RSP-8 / ergo 23DLCY) ==========
+# ========== Settlement-Bot Parity Gate ==========
 #
 # The executable successor to the parity ledger
 # (docs/architecture/rust-settlement-bot-parity.md): the fixture boot gate
@@ -1225,7 +1223,7 @@ test-settlement-parity:
     {{ py_run }} pytest tests/standalone_parity/test_settlement_bot_boot_gate.py tests/standalone_parity/test_settlement_bot_dual_driver_gate.py -q
     {{ py_run }} python tests/standalone_parity/dual_driver_gate.py --recorded
 
-# ========== No-Python Console Gate (ADR-051 D10 / ergo EA6DY7) ==========
+# ========== No-Python Console Gate (ADR-051 D10) ==========
 #
 # The Rust-owned console (`degenbot`) must build and run with NO Python in the
 # path. This recipe builds the `degenbot-cli` binary, then runs the fixed argv

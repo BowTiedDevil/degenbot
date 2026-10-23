@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Tier-3a SwapMath oracle harnesses (ergo task OZRQS6, epic UP5NH6).
+# Build the Tier-3a SwapMath oracle harnesses.
 #
 # Three harnesses, two solc versions (v3-core pragmas `<0.8.0`, v4-core `^0.8.0`):
 # - V4 harness (`src-v4/SwapMathV4Harness.sol`) compiles under solc 0.8.26

@@ -54,7 +54,7 @@ degenbot-config.workspace = true
 # orchestration consumes — crossed from the executor leaf.
 degenbot-executor.workspace = true
 # `sqrt_price_math` — the engine's proven V3 amount math, so the harness
-# computes V3 hop outputs byte-consistent with the `PoolV3` stub (UQOAHA).
+# computes V3 hop outputs byte-consistent with the `PoolV3` stub.
 degenbot-math.workspace = true
 # `AlloyProvider` — the typed RPC provider the in-process sim's cold-miss
 # fallback (`WrapDatabaseAsync<AlloyDB>`) + the access-list / feeHistory paths
@@ -63,7 +63,7 @@ degenbot-rpc.workspace = true
 # `BotState` (ADR-003 state owner; ADR-005 standalone-core) — the snapshot
 # surface (`registered_pools_snapshot`) + the typed pool-state
 # structs BotStateDb reads. Depends on `degenbot-pools` (state structs) +
-# `degenbot-uniswap` (DexIdentity). Added in EGMSNS (option B).
+# `degenbot-uniswap` (DexIdentity).
 degenbot-bot.workspace = true
 # ADR-067: the state owner + seam types (BotState, executor_hop, sim_anchor,
 # divergence_probe, session registry) moved to the substrate crate.
@@ -117,14 +117,13 @@ degenbot-executor.workspace = true
 degenbot-uniswap.workspace = true
 # `IntHopState` — the executor grammar harness computes byte-consistent V2
 # hop outputs from the seeded reserves (mirroring the tier-3 V2 oracle) so the
-# encoded path round-trips cleanly (UQOAHA).
+# encoded path round-trips cleanly.
 # `proptest` — property-driven fixtures for the relocated Tier-3 CL parity
-# oracles (tier3_v3 / v4 / pancake_v3 swap-vs-revm, moved from degenbot-pools
-# in 5D3YVK). They live here because they drive `degenbot_simulation::oracle`;
+# oracles (tier3_v3 / v4 / pancake_v3 swap-vs-revm). They live here because they drive `degenbot_simulation::oracle`;
 # a dev-dep back from degenbot-pools would be a publish-blocking cycle
 # (pools -> simulation -> bot -> pools), and the release policy is to never
 # publish with --no-verify.
 proptest = "^1.12"
 # `hex` — revert-reason hex formatting in the relocated tier-3 CL parity oracles
-# (inline `hex::encode`, moved from degenbot-pools in 5D3YVK).
+# (inline `hex::encode`).
 hex = "^0.4"

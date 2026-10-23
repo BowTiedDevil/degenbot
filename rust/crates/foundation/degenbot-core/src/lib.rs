@@ -44,6 +44,7 @@ pub mod errors;
 pub mod fee_percentiles;
 pub mod hex_utils;
 pub mod libzip;
+pub mod log_capture;
 pub mod pubsub_runtime;
 pub mod retry;
 pub mod runtime;

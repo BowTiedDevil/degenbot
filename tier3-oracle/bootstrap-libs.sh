@@ -37,8 +37,7 @@ ensure_lib v2-core https://github.com/Uniswap/v2-core.git v1.0.0 contracts/Unisw
 ensure_lib v3-core https://github.com/Uniswap/v3-core.git v1.0.0 contracts/UniswapV3Pool.sol
 ensure_lib v4-core https://github.com/Uniswap/v4-core.git v4.0.0 src/PoolManager.sol
 
-# NOTE: the Curve stableswap oracle (`src-curve/CurveSwapOracleHarness.sol`, task
-# YXMNWB) has NO `ensure_lib` entry: Curve's canonical source is VYPER (not
+# NOTE: the Curve stableswap oracle (`src-curve/CurveSwapOracleHarness.sol`) has NO `ensure_lib` entry: Curve's canonical source is VYPER (not
 # compilable in this env — no vyper toolchain), so the harness is a faithful
 # Solidity 0.8.26 port of the STANDARD `get_dy` and is itself the on-chain
 # reference (a documented toolchain deviation). Its build is self-contained via
@@ -46,14 +45,14 @@ ensure_lib v4-core https://github.com/Uniswap/v4-core.git v4.0.0 src/PoolManager
 
 # v4-core's ProtocolFees imports solmate's `Owned.sol`; the depth-1 clone above
 # drops submodules, so vendor solmate separately (needed by the V4 swap oracle
-# harness, 2LTKVO). Pinned to the exact commit — main's head at the time the
+# harness). Pinned to the exact commit — main's head at the time the
 # vendored copy was created (tip as of 2026-08-17) — because `main` is a
 # moving ref and was a latent source of artifact drift on fresh checkouts.
 SOLMATE_PIN="89365b880c4f3c786bdd453d4b8e8fe410344a69"
 ensure_lib v4-core/lib/solmate https://github.com/transmissions11/solmate.git "${SOLMATE_PIN}" src/auth/Owned.sol
 
 # Balancer math cores (FixedPoint/LogExpMath/WeightedMath/StableMath + their
-# FixedPoint imports) for the Balancer tier-3 oracle (task EZLECC). The
+# FixedPoint imports) for the Balancer tier-3 oracle. The
 # canonical sources are Solidity (not Vyper), so we vendor the exact files at a
 # pinned balancer-v2-monorepo commit under `lib/balancer-src/` preserving their
 # `@balancer-labs/v2-solidity-utils` / `@balancer-labs/v2-interfaces` import

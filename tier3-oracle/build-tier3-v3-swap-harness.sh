@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Build the Tier-3b V3 Pool.swap end-to-end oracle harness (ergo task 2LTKVO,
-# epic UP5NH6). Compiles `src-v3/V3SwapOracleHarness.sol` (which imports the
+# Build the Tier-3b V3 Pool.swap end-to-end oracle harness. Compiles `src-v3/V3SwapOracleHarness.sol` (which imports the
 # real v3-core `UniswapV3Pool`) directly with solc 0.7.6 — foundry's solc
 # manager cannot resolve solc <0.8 in this environment (see the Tier-3a build
 # note in `build-tier3-harnesses.sh`). The standard-json output is reshaped

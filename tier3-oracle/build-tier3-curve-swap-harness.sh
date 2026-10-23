@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build the Tier-3 Curve stableswap `get_dy` oracle harness (ergo task
-# YXMNWB, epic UP5NH6 — family 2/3 of SH6HAK's Tier-3 cutover). Compiles
+# Build the Tier-3 Curve stableswap `get_dy` oracle harness (family 2/3 of
+# the Tier-3 cutover). Compiles
 # `src-curve/CurveSwapOracleHarness.sol` directly with solc 0.8.26 — the
 # harness is a standalone faithful Solidity port of the STANDARD stableswap
 # `get_dy` (Curve's canonical source is Vyper; no vyper toolchain here, so

@@ -1,11 +1,11 @@
-# Foundry project for Tier-3 on-chain accuracy oracles (ergo epic UP5NH6).
+# Foundry project for Tier-3 on-chain accuracy oracles.
 #
 # This project compiles *reference* Solidity (canonical deployed bytecode from
 # Uniswap V2/V3/V4, Curve, Balancer cores) into runtime bytecode that a Rust
 # `#[test]` deploys into an offline revm `CacheDB<EmptyDB>` and calls, so the
 # Rust swap-math / solver code is compared against the real on-chain contract
 # logic byte-for-byte — closing the "Rust == Rust" blind spot of Tier 2 (see
-# ADR-005 dual-path coverage in AGENTS.md, and the ADR filed as task 5WYE5Y).
+# ADR-005 dual-path coverage in AGENTS.md, and the ADR covering it).
 #
 # `forge build` compiles the V4 swap-math harness + the V4 PoolManager oracle
 # under `src-v4/` (the other families build via direct solc — see the

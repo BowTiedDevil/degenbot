@@ -1,4 +1,5 @@
 changes|ci-only||dorny/paths-filter decides which downstream jobs run; nothing to execute
+ci-green|ci-only||branch-protection aggregate: checks needs statuses only, nothing to execute
 commitlint|local|scripts/hooks/commitlint-push.sh|push range
 markdownlint|local||just lint-markdown
 msrv|local||just check-msrv

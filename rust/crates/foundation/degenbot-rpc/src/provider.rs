@@ -2710,40 +2710,17 @@ mod tests {
                 return;
             }
             // Format the event message by visiting fields.
-            let mut collector = MsgCollector(String::new());
+            let mut collector = degenbot_core::log_capture::MessageVisitor::default();
             event.record(&mut collector);
+            let message = collector.into_unquoted().unwrap_or_default();
             RETRY_CAPTURE.with(|c| {
                 if let Some(tx) = &*c.borrow() {
-                    let _ = tx.send(format!(
-                        "{}|{}|{}",
-                        meta.level(),
-                        meta.target(),
-                        collector.0,
-                    ));
+                    let _ = tx.send(format!("{}|{}|{}", meta.level(), meta.target(), message,));
                 }
             });
         }
     }
 
-    /// Collect a tracing event's `message` field into a string.
-    struct MsgCollector(String);
-    impl tracing::field::Visit for MsgCollector {
-        fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
-            if f.name() == "message" {
-                let s = format!("{v:?}");
-                self.0 = s
-                    .strip_prefix('"')
-                    .and_then(|s| s.strip_suffix('"'))
-                    .unwrap_or(&s)
-                    .to_owned();
-            }
-        }
-        fn record_str(&mut self, f: &tracing::field::Field, v: &str) {
-            if f.name() == "message" {
-                self.0 = v.to_owned();
-            }
-        }
-    }
     static INSTALL_CAPTURE_SUBSCRIBER: Once = Once::new();
     fn install_capturing_subscriber() {
         INSTALL_CAPTURE_SUBSCRIBER.call_once(|| {
