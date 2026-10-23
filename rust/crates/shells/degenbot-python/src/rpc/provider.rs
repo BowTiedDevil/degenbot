@@ -787,15 +787,31 @@ impl PyAlloyProvider {
     }
 }
 
+/// `is_local_rpc_url(rpc_url)` — the local-endpoint exemption predicate, over
+/// the core's ONE home ([`degenbot_rpc::provider::is_local_rpc_url`]).
+///
+/// The core asks it when it decides whether to attach the configured transport
+/// throttle; the Python driver shell asks it through this seam when
+/// `degenbot.fork._default_fork_compute_units_per_second` derives a fork
+/// target's upstream cap. Exposing the core function rather than restating the
+/// hostnames is what keeps the throttle lane and the fork lane from disagreeing
+/// about which endpoints a local node owns.
+#[pyfunction]
+#[must_use]
+pub fn is_local_rpc_url(rpc_url: &str) -> bool {
+    ::degenbot_rpc::provider::is_local_rpc_url(rpc_url)
+}
+
 /// The `degenbot._ffi.provider` Python submodule (declarative
 /// `#[pymodule]`), carrying the sync provider/filter/subscription pyclasses
-/// (plus the async provider under `feature = "async"`). The parent module
-/// registers the submodule itself and its `sys.modules` entry.
+/// (plus the async provider under `feature = "async"`), and the
+/// local-endpoint exemption predicate. The parent module registers the
+/// submodule itself and its `sys.modules` entry.
 #[pymodule(submodule)]
 #[pyo3(module = "degenbot._ffi")]
 pub mod provider {
     #[pymodule_export]
-    use super::{PyAlloyProvider, PyLogFilter};
+    use super::{is_local_rpc_url, PyAlloyProvider, PyLogFilter};
 
     #[pymodule_export]
     use crate::rpc::subscription::PyAlloySubscription;

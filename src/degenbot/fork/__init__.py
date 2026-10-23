@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Literal, Self, TypedDict
 from pydantic import validate_call
 
 from degenbot._ffi.fork import AnvilFork as _FFIAnvilFork
+from degenbot._ffi.provider import is_local_rpc_url
 from degenbot.config import resolved_config
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.infrastructure import AnvilError
@@ -79,19 +80,6 @@ def _coerce_storage_value_to_int(value: HexStr | bytes | int) -> int:
     return int(value, 16) if value.startswith("0x") else int(value)
 
 
-#: Hosts that make a fork target a LOCAL node — the exemption list
-#: ``nodes.rate_limit_rps`` documents, and the one the Rust provider's
-#: ``is_local_rpc_url`` applies: a local node has no per-IP upstream budget to
-#: protect.
-_LOCAL_FORK_HOSTS = (
-    "://localhost",
-    "://127.0.0.1",
-    "://[::1]",
-    "://host.containers.internal",
-    "://host.docker.internal",
-)
-
-
 def _default_fork_compute_units_per_second(fork_url: str | None) -> int | None:
     """Return the upstream fetch cap a fork target needs, absent an explicit one.
 
@@ -100,13 +88,18 @@ def _default_fork_compute_units_per_second(fork_url: str | None) -> int | None:
     anvil exits at once — a spawn failure, not a slow spawn. A local node has no
     per-IP budget, and uncapped fetches are what keep its lanes fast.
 
+    Which endpoints count as local is the Rust core's call
+    (:func:`degenbot._ffi.provider.is_local_rpc_url`): the same predicate the
+    provider throttles by, so the fork lane and the throttle lane cannot
+    disagree about it, and the hostname list has one home.
+
     Returns:
         The configured cap for a hosted endpoint (``None`` when
         ``nodes.anvil_fork_compute_units_per_second`` is unset), and ``None``
         for a local endpoint or an in-memory node.
 
     """
-    if fork_url is None or any(host in fork_url for host in _LOCAL_FORK_HOSTS):
+    if fork_url is None or is_local_rpc_url(fork_url):
         return None
     return resolved_config().values.nodes.anvil_fork_compute_units_per_second
 

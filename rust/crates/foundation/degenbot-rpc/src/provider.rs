@@ -20,6 +20,7 @@ use alloy::rpc::types::eth::{
 };
 use alloy::rpc::types::TransactionRequest;
 use alloy::rpc::types::{Filter, Log};
+use alloy::transports::http::reqwest::Url;
 use alloy::transports::ipc::IpcConnect;
 use alloy::transports::layers::ThrottleLayer;
 use alloy::transports::ws::{WebSocketConfig, WsConnect};
@@ -35,18 +36,48 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+/// The hostnames that make an endpoint LOCAL — the exemption list
+/// `nodes.rate_limit_rps` documents. A local node has no per-IP upstream
+/// budget to protect.
+const LOCAL_RPC_HOSTS: [&str; 5] = [
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "host.containers.internal",
+    "host.docker.internal",
+];
+
 /// A local endpoint has no per-IP budget to protect, and throttling it
 /// would only slow the local lanes — the configured throttle skips it.
-fn is_local_rpc_url(rpc_url: &str) -> bool {
-    [
-        "://localhost",
-        "://127.0.0.1",
-        "://[::1]",
-        "://host.containers.internal",
-        "://host.docker.internal",
-    ]
-    .iter()
-    .any(|marker| rpc_url.contains(marker))
+///
+/// The classification compares the URL's parsed host against
+/// [`LOCAL_RPC_HOSTS`], so a remote endpoint that merely *contains* a local
+/// marker (`http://localhost.example.com`, a `127.0.0.1` in the path or query)
+/// is throttled like the remote endpoint it is, while a local one is recognized
+/// whatever its userinfo or hostname case. A URL that does not parse is not
+/// local: no transport is ever built from one, so no throttle could apply to
+/// it.
+///
+/// This is the predicate's ONE home. The Python shell reaches the same function
+/// through `degenbot._ffi.provider.is_local_rpc_url` when it derives a fork
+/// target's default upstream cap, so the throttle lane and the fork lane cannot
+/// disagree about which hostnames a local node owns.
+#[must_use]
+pub fn is_local_rpc_url(rpc_url: &str) -> bool {
+    let Ok(url) = Url::parse(rpc_url) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    // `host_str` renders an IPv6 literal between brackets (`[::1]`).
+    let host = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
+    LOCAL_RPC_HOSTS
+        .iter()
+        .any(|local| host.eq_ignore_ascii_case(local))
 }
 
 /// Resolve the config-declared throttle (`nodes.rate_limit_rps` /
@@ -2018,6 +2049,50 @@ mod tests {
             );
         }
         govern_nodes(None, None);
+    }
+
+    /// The exemption compares the URL's parsed host, so every input a substring
+    /// scan (`"://localhost"` anywhere in the string) would classify differently
+    /// resolves on the host:
+    ///
+    /// - `http://localhost.example.com:8545` / `http://127.0.0.1.nip.io:8545` —
+    ///   a substring scan calls these local; here they are remote, because a
+    ///   remote name that merely starts with (or nests) a local one still has an
+    ///   upstream per-IP budget to protect.
+    /// - `https://user:pw@localhost:8545` / `http://LOCALHOST:8545` — a substring
+    ///   scan calls these remote (userinfo sits between the scheme and the host,
+    ///   and the scan was case-sensitive); here they are local, because the HOST
+    ///   is local whatever the userinfo or the hostname's case.
+    /// - `http://localhost:not-a-port` — a substring scan calls it local; here it
+    ///   is remote, since a URL the parser rejects never reaches a transport
+    ///   whose throttle could matter.
+    #[test]
+    fn local_endpoint_classification_is_by_parsed_host() {
+        for url in [
+            "http://localhost:8545",
+            "http://localhost:8545/",
+            "ws://localhost:8546",
+            "http://127.0.0.1:8545/eth-mainnet",
+            "http://[::1]:8545",
+            "http://host.containers.internal:8545/",
+            "http://host.docker.internal:8545/",
+            "https://user:pw@localhost:8545",
+            "http://LOCALHOST:8545",
+            "HTTP://LocalHost:8545/",
+        ] {
+            assert!(is_local_rpc_url(url), "expected local: {url}");
+        }
+        for url in [
+            "https://rpc.example.com",
+            "http://localhost.example.com:8545",
+            "http://127.0.0.1.nip.io:8545",
+            "http://host.containers.internal.example.com:8545",
+            "https://evil.example/?next=http://localhost:8545",
+            "http://localhost:not-a-port",
+            "",
+        ] {
+            assert!(!is_local_rpc_url(url), "expected remote: {url}");
+        }
     }
 
     // ── Unresolvable-host classification (WS connect fail-fast) ────────

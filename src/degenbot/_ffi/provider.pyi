@@ -4,8 +4,9 @@
 """
 The `degenbot._ffi.provider` Python submodule (declarative
 `#[pymodule]`), carrying the sync provider/filter/subscription pyclasses
-(plus the async provider under `feature = "async"`). The parent module
-registers the submodule itself and its `sys.modules` entry.
+(plus the async provider under `feature = "async"`), and the
+local-endpoint exemption predicate. The parent module registers the
+submodule itself and its `sys.modules` entry.
 """
 
 from collections.abc import Sequence
@@ -440,9 +441,23 @@ class LogFilter:
     @property
     def topics(self, /) -> list[list[str]]: ...
 
+def is_local_rpc_url(rpc_url: str) -> bool:
+    """
+    `is_local_rpc_url(rpc_url)` — the local-endpoint exemption predicate, over
+    the core's ONE home ([`degenbot_rpc::provider::is_local_rpc_url`]).
+
+    The core asks it when it decides whether to attach the configured transport
+    throttle; the Python driver shell asks it through this seam when
+    `degenbot.fork._default_fork_compute_units_per_second` derives a fork
+    target's upstream cap. Exposing the core function rather than restating the
+    hostnames is what keeps the throttle lane and the fork lane from disagreeing
+    about which endpoints a local node owns.
+    """
+
 __all__ = [
     "AlloyProvider",
     "AlloySubscription",
     "AsyncAlloyProvider",
     "LogFilter",
+    "is_local_rpc_url",
 ]
