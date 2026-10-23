@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Literal, Self
 from pydantic import validate_call
 
 from degenbot._ffi.fork import AnvilFork as _FFIAnvilFork
+from degenbot.config import resolved_config
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.infrastructure import AnvilError
 from degenbot.logging import logger
@@ -78,6 +79,38 @@ def _coerce_storage_value_to_int(value: HexStr | bytes | int) -> int:
     return int(value, 16) if value.startswith("0x") else int(value)
 
 
+#: Hosts that make a fork target a LOCAL node — the exemption list
+#: ``nodes.rate_limit_rps`` documents, and the one the Rust provider's
+#: ``is_local_rpc_url`` applies: a local node has no per-IP upstream budget to
+#: protect.
+_LOCAL_FORK_HOSTS = (
+    "://localhost",
+    "://127.0.0.1",
+    "://[::1]",
+    "://host.containers.internal",
+    "://host.docker.internal",
+)
+
+
+def _default_fork_compute_units_per_second(fork_url: str | None) -> int | None:
+    """The upstream fetch cap a fork target needs, absent an explicit one.
+
+    A fork child fetches its genesis state from the upstream before anvil
+    reports readiness, so an UNCAPPED hosted endpoint answers with HTTP 429 and
+    anvil exits at once — a spawn failure, not a slow spawn. A local node has no
+    per-IP budget, and uncapped fetches are what keep its lanes fast.
+
+    Returns:
+        The configured cap for a hosted endpoint (``None`` when
+        ``nodes.anvil_fork_compute_units_per_second`` is unset), and ``None``
+        for a local endpoint or an in-memory node.
+
+    """
+    if fork_url is None or any(host in fork_url for host in _LOCAL_FORK_HOSTS):
+        return None
+    return resolved_config().values.nodes.anvil_fork_compute_units_per_second
+
+
 @dataclass(frozen=True, slots=True)
 class ForkLaunchConfig:
     """Non-target launch knobs for the rust-owned anvil subprocess.
@@ -107,9 +140,10 @@ class ForkLaunchConfig:
     coinbase: HexAddress | None = None
     anvil_opts: list[str] | None = None
     # Cap on the fork upstream's request rate (anvil's
-    # ``--fork-compute-units-per-second``). ``None`` spawns with
-    # ``--no-rate-limit``: uncapped suits a local node, while a configured
-    # cap keeps a hosted free-tier endpoint under its per-IP CU budget.
+    # ``--compute-units-per-second``). ``None`` derives the cap from the fork
+    # target: ``nodes.anvil_fork_compute_units_per_second`` for a hosted
+    # endpoint, ``--no-rate-limit`` for a local one (see
+    # :func:`_default_fork_compute_units_per_second`).
     fork_compute_units_per_second: int | None = None
 
 
@@ -196,29 +230,19 @@ class AnvilFork:
         # `reset(transaction_hash=...)` can recreate the subprocess with
         # ALL the original params (the legacy Python `AnvilFork.reset`
         # supported re-spawning to a new fork URL + block + txn hash).
-        launch = launch or ForkLaunchConfig()
-        self._init_kwargs: dict[str, object] = {
-            "host": launch.localhost,
-            "fork_url": fork_url,
-            "fork_block": fork_block,
-            "fork_transaction_hash": launch.fork_transaction_hash,
-            "mining_mode": launch.mining_mode,
-            "mining_interval": launch.mining_interval,
-            "storage_caching": launch.storage_caching,
-            "base_fee": launch.base_fee,
-            "ipc_path": str(launch.ipc_path) if launch.ipc_path is not None else None,
-            "mnemonic": launch.mnemonic,
-            "chain_id": launch.chain_id,
-            "anvil_opts": tuple(launch.anvil_opts) if launch.anvil_opts else None,
-            "fork_compute_units_per_second": launch.fork_compute_units_per_second,
-        }
-
+        self._launch = launch or ForkLaunchConfig()
         self._fork_url = fork_url
         # Spawn the rust core. The rust core raises `RuntimeError` /
         # `ValueError` on failure — let those propagate unchanged
         # (`ValueError` for the `mining_mode` parse; `RuntimeError` for
         # the spawn / IPC connect).
-        self._fork: _FFIAnvilFork | None = _FFIAnvilFork(**self._init_kwargs)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        self._fork: _FFIAnvilFork | None = _FFIAnvilFork(
+            **self._spawn_kwargs(
+                fork_url=fork_url,
+                fork_block=fork_block,
+                fork_transaction_hash=self._launch.fork_transaction_hash,
+            )
+        )
 
         # General-RPC `AlloyProvider` over the fork's HTTP endpoint. The
         # rust core's dev-RPC (`mine`/`reset`/`anvil_*`) runs over its own
@@ -253,6 +277,46 @@ class AnvilFork:
             self.set_coinbase(launch.coinbase)
         if launch.mining_interval is not None and launch.mining_mode == "interval":
             self.set_block_timestamp_interval(launch.mining_interval)
+
+    def _spawn_kwargs(
+        self,
+        *,
+        fork_url: str | None,
+        fork_block: BlockNumber | None,
+        fork_transaction_hash: str | None,
+    ) -> dict[str, object]:
+        """The FFI constructor kwargs for one anvil subprocess.
+
+        The fork target is a parameter, not a captured field, because
+        ``reset(fork_url=...)`` respawns against a different upstream: the
+        upstream cap is derived from the target being spawned, so a reset from
+        a local node to a hosted endpoint gains the cap instead of inheriting
+        the local node's ``--no-rate-limit``.
+
+        Returns:
+            Keyword arguments for ``degenbot._ffi.AnvilFork``.
+
+        """
+        launch = self._launch
+        return {
+            "host": launch.localhost,
+            "fork_url": fork_url,
+            "fork_block": fork_block,
+            "fork_transaction_hash": fork_transaction_hash,
+            "mining_mode": launch.mining_mode,
+            "mining_interval": launch.mining_interval,
+            "storage_caching": launch.storage_caching,
+            "base_fee": launch.base_fee,
+            "ipc_path": str(launch.ipc_path) if launch.ipc_path is not None else None,
+            "mnemonic": launch.mnemonic,
+            "chain_id": launch.chain_id,
+            "anvil_opts": tuple(launch.anvil_opts) if launch.anvil_opts else None,
+            "fork_compute_units_per_second": (
+                launch.fork_compute_units_per_second
+                if launch.fork_compute_units_per_second is not None
+                else _default_fork_compute_units_per_second(fork_url)
+            ),
+        }
 
     # ------------------------------------------------------------------
     # Properties
@@ -442,8 +506,6 @@ class AnvilFork:
                 "the rust subprocess is being recreated (legacy Python"
                 " `reset()` semantics).",
             )
-            new_kwargs = dict(self._init_kwargs)
-            new_kwargs["fork_url"] = fork_url or self._fork_url
             if block_number is not None and transaction_hash is not None:
                 logger.warning(
                     f"Forking from transaction hash {transaction_hash},"
@@ -452,8 +514,12 @@ class AnvilFork:
             # When a transaction_hash is requested, the block_number
             # must not be passed (anvil's `--fork-transaction-hash`
             # conflicts with `--fork-block-number`).
-            new_kwargs["fork_block"] = block_number if transaction_hash is None else None
-            new_kwargs["fork_transaction_hash"] = transaction_hash
+            new_fork_url = fork_url or self._fork_url
+            spawn_kwargs = self._spawn_kwargs(
+                fork_url=new_fork_url,
+                fork_block=block_number if transaction_hash is None else None,
+                fork_transaction_hash=transaction_hash,
+            )
 
             # Drop the old `AlloyProvider` (HTTP — no pubsub to leak) then
             # the old handle (kills the old subprocess) BEFORE spawning the
@@ -461,8 +527,8 @@ class AnvilFork:
             # listening on.
             self._provider = None
             self._fork = None
-            self._fork = _FFIAnvilFork(**new_kwargs)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-            self._fork_url = new_kwargs["fork_url"]  # type: ignore[assignment]
+            self._fork = _FFIAnvilFork(**spawn_kwargs)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            self._fork_url = new_fork_url
             # Replace the general-RPC provider over the new fork's HTTP
             # endpoint (HTTP: no IPC/WS pubsub, so consumers that borrow it
             # cannot keep a reconnect loop alive across fork teardown).

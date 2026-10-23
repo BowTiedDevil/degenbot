@@ -132,9 +132,11 @@ impl AnvilForkBuilder {
     }
 
     /// Cap the fork upstream's request rate in compute units per second
-    /// (`--fork-compute-units-per-second`). `None` (default) spawns with
+    /// (`--compute-units-per-second`). `None` (default) spawns with
     /// `--no-rate-limit`: uncapped suits a local node, while a configured
-    /// cap keeps a hosted free-tier endpoint under its per-IP CU budget.
+    /// cap keeps a hosted free-tier endpoint under its per-IP CU budget —
+    /// an uncapped hosted endpoint answers the fork's genesis fetches with
+    /// HTTP 429, which kills anvil before it ever reports readiness.
     #[must_use]
     pub fn fork_compute_units_per_second(mut self, cups: u64) -> Self {
         self.fork_compute_units_per_second = Some(cups);
@@ -285,7 +287,7 @@ impl AnvilForkBuilder {
         let anvil = self.build_anvil(&ipc_path);
         let instance = anvil
             .try_spawn()
-            .map_err(|e| ForkError::Spawn(e.to_string()))?;
+            .map_err(|e| ForkError::Spawn(self.spawn_failure_context(&e)))?;
 
         // Use the instance's resolved ipc_path (may differ from the requested
         // default if anvil picked its own).
@@ -369,15 +371,40 @@ impl AnvilForkBuilder {
     /// for in-memory spawns).
     const FORK_SPAWN_TIMEOUT_MS: u64 = 60_000;
 
+    /// Render a spawn failure with the fork target and the cause alloy's
+    /// message hides.
+    ///
+    /// alloy's readiness wait reads stdout until it sees the `Listening on`
+    /// line and only checks its deadline between lines, so a child that dies
+    /// during startup reads as an endless stream of empty lines and is
+    /// reported as "timed out waiting for node to spawn; is the node binary
+    /// installed?". That is the right message for a missing binary and the
+    /// wrong one for a fork child anvil killed itself: a hosted endpoint
+    /// refusing the fork's genesis fetch (HTTP 429 rate limit) exits at once,
+    /// and the reason reaches the operator only on the child's inherited
+    /// stderr. Name the target so the operator can tell the two apart.
+    fn spawn_failure_context(&self, err: &alloy::node_bindings::NodeError) -> String {
+        self.fork_url.as_deref().map_or_else(
+            || format!("{err} (in-memory node)"),
+            |target| {
+                format!(
+                    "{err} (fork target {target}; a fork child that exits during startup is \
+                     reported as a spawn timeout — anvil's own reason is on the stderr above, \
+                     and a rate-limited upstream (HTTP 429) fails this way)"
+                )
+            },
+        )
+    }
+
     /// The anvil CLI flags governing the fork upstream's request rate.
     ///
     /// Uncapped (`--no-rate-limit`) suits a local node, which has no per-IP
     /// budget to protect; a configured cap
-    /// (`--fork-compute-units-per-second`) keeps a hosted free-tier endpoint
+    /// (`--compute-units-per-second`) keeps a hosted free-tier endpoint
     /// under its budget (dRPC's free floor is 50,400 CU/min).
     fn fork_rate_args(&self) -> Vec<String> {
         match self.fork_compute_units_per_second {
-            Some(cups) => vec![format!("--fork-compute-units-per-second={cups}")],
+            Some(cups) => vec![format!("--compute-units-per-second={cups}")],
             None => vec!["--no-rate-limit".to_string()],
         }
     }
@@ -775,7 +802,7 @@ mod tests {
             .fork_compute_units_per_second(350);
         assert_eq!(
             builder.fork_rate_args(),
-            vec!["--fork-compute-units-per-second=350".to_string()]
+            vec!["--compute-units-per-second=350".to_string()]
         );
     }
 

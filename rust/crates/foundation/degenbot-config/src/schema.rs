@@ -94,6 +94,7 @@ pub const SHELL_OWNED_KEYS: &[&str] = &[
     "diagnostics.procmem_secs",
     "diagnostics.tracemalloc_secs",
     "dispatch.contracts_dir",
+    "nodes.anvil_fork_compute_units_per_second",
     "pathfinding.discovery_batch_size",
     "pathfinding.reg_progress_secs",
     "simulation.exit_ignore_buckets",
@@ -107,7 +108,6 @@ pub const SHELL_OWNED_KEYS: &[&str] = &[
 /// "declared but honoured by nobody" from hiding behind a fixture name.
 pub const TEST_ONLY_KEYS: &[&str] = &[
     "capture.swap_capture_probe",
-    "nodes.anvil_fork_compute_units_per_second",
     "offline.clcap_block",
     "offline.clcap_max_fetches",
     "offline.clcap_path_cap",
@@ -357,7 +357,7 @@ crate::config_schema! {
 
         anvil_fork_compute_units_per_second [opt usize] = None, env = "DEGENBOT_ANVIL_FORK_COMPUTE_UNITS_PER_SECOND", def = "(unset)",
 
-            doc = "Cap on a forked anvil's upstream fetch rate (anvil's --fork-compute-units-per-second) for REMOTE fork URLs, in anvil compute units/second (350 matches anvil's own default and sits well under dRPC's free-tier floor of 50,400 CU/min). Unset spawns forked anvils --no-rate-limit: uncapped suits a local node.";
+            doc = "Cap on a forked anvil's upstream fetch rate (anvil's --compute-units-per-second) for REMOTE fork URLs, in anvil compute units/second (350 matches anvil's own default and sits well under dRPC's free-tier floor of 50,400 CU/min). Unset spawns forked anvils --no-rate-limit: uncapped suits a local node, while an uncapped hosted endpoint rejects the fork's genesis fetches with HTTP 429.";
 
     }
 
@@ -1416,7 +1416,7 @@ mod tests {
         }
         assert_eq!(
             SHELL_OWNED_KEYS.len(),
-            9,
+            10,
             "the shell-owned census changed: give the new key a core implementation, or add it here on review"
         );
     }
@@ -1438,7 +1438,7 @@ mod tests {
         }
         assert_eq!(
             TEST_ONLY_KEYS.len(),
-            15,
+            14,
             "the test-only census changed: give the fixture a review, or move the key"
         );
     }

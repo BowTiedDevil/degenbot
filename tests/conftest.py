@@ -32,7 +32,6 @@ from hypothesis import settings
 # absent per-session file.
 from degenbot._ffi import reinstall_config_holder_for_tests, shutdown_log_drainer
 from degenbot.bot import Bot
-from degenbot.config import resolved_config
 from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.logging import _LOG_LISTENER, _QUEUED_HANDLER, set_log_level
 from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
@@ -421,30 +420,6 @@ def _require_live_node() -> None:
         pytest.skip("requires live RPC/anvil (not available in offline CI)")
 
 
-_LOCAL_FORK_HOSTS = (
-    "localhost",
-    "127.0.0.1",
-    "[::1]",
-    "host.containers.internal",
-    "host.docker.internal",
-)
-
-
-def _fork_upstream_cups(fork_url: str) -> int | None:
-    """The fork upstream's request-rate cap (anvil compute units/second).
-
-    ``nodes.anvil_fork_compute_units_per_second`` (env
-    ``DEGENBOT_ANVIL_FORK_COMPUTE_UNITS_PER_SECOND``) caps anvil's upstream
-    fetching for REMOTE fork URLs (a hosted free-tier endpoint has a per-IP
-    CU budget — dRPC's free floor is 50,400 CU/min). Local endpoints return
-    ``None`` (anvil spawns ``--no-rate-limit``): a local node has no budget
-    to protect, and a cap would only slow the lanes.
-    """
-    if any(host in fork_url for host in _LOCAL_FORK_HOSTS):
-        return None
-    return resolved_config().values.nodes.anvil_fork_compute_units_per_second
-
-
 def _fork(
     *,
     fork_url: str,
@@ -466,7 +441,6 @@ def _fork(
         launch=ForkLaunchConfig(
             storage_caching=storage_caching,
             anvil_opts=["--accounts=0", *extra_opts],
-            fork_compute_units_per_second=_fork_upstream_cups(fork_url),
         ),
     )
     yield fork
