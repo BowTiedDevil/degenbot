@@ -17,6 +17,7 @@ import time
 import pytest
 
 from degenbot.runner.diag import DiagConfig, arm_diagnostics
+from tests.deadlock_guard import DEADLOCK_GUARD_S
 from tests.helpers import verdict_probe as probe
 from tests.helpers.rpc_env import rpc_env
 
@@ -157,7 +158,12 @@ class TestArmDiagnostics:
         armed = arm_diagnostics(cfg, proc_root=proc_root)
         assert armed == ["procmem"]
 
-        deadline = time.monotonic() + 5.0
+        # Guard only — not an ordering assertion: the row is written by the
+        # sampler's own background thread, which the test cannot step, so the
+        # presence of the write is proved by the assertion below, never by a
+        # duration. The budget sits ~3000x above the sampler's 0.01s interval,
+        # so a loaded runner's slow write can never read as a failure.
+        deadline = time.monotonic() + DEADLOCK_GUARD_S
         rows: list[str] = []
         while time.monotonic() < deadline:
             rows = csv_path.read_text(encoding="utf-8").splitlines() if csv_path.exists() else []

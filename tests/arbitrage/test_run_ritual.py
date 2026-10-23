@@ -25,6 +25,7 @@ import pytest
 from degenbot.runner._run_ritual import RunRitual, RunRitualError, _RitualState
 from degenbot.runner._session_watch import SessionEndVerdict, SessionWatch
 from degenbot.runner.bot_runner import InjectedActors
+from tests.deadlock_guard import DEADLOCK_GUARD_S
 from tests.helpers.boot_actors import inline_registration_scheduler
 
 
@@ -368,7 +369,10 @@ class TestRegistrationHandoff:
                 retry_policy=None,
             )
         )
-        await asyncio.wait_for(started.wait(), timeout=1)
+        # Deadlock guard only — not an ordering assertion: the hanging builder
+        # sets `started` before parking, so the edge is the gate. The budget
+        # only turns "registration never started" into a named failure.
+        await asyncio.wait_for(started.wait(), timeout=DEADLOCK_GUARD_S)
         task.cancel()
 
         with pytest.raises(asyncio.CancelledError):

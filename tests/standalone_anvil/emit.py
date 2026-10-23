@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from degenbot.utils.bytes import to_0x_hex
+from tests.deadlock_guard import EXTERNAL_PROCESS_GUARD_S
 
 if TYPE_CHECKING:
     from degenbot.provider import AlloyProvider
@@ -49,13 +50,18 @@ def emit_tx(
     data: bytes,
     chain_id: int,
     coinbase: str | None = None,
-    timeout: float = 10.0,
+    timeout: float = EXTERNAL_PROCESS_GUARD_S,
 ) -> EmittedTx:
     """Send one real, mined transaction (``data`` to ``to``) and wait.
 
     Sends from the first account in ``eth_accounts`` (unlocked server-side, so
     the node signs the transaction). ``coinbase``, when given, is set first
     via ``anvil_setCoinbase``.
+
+    The wait for the receipt is a guard on an external node's mining, never an
+    ordering assertion: the emitted block is read from the receipt itself, so
+    the budget only converts a node that never mines into a ``TimeoutError``
+    instead of a parked test (see :mod:`tests.deadlock_guard`).
     """
     if coinbase is not None:
         provider.make_request("anvil_setCoinbase", [coinbase])

@@ -40,6 +40,7 @@ from degenbot.pathfinding import (
 )
 from degenbot.runner.build_paths import PathRegistrationPipeline
 from degenbot.types.chain import ChainId
+from tests.deadlock_guard import DEADLOCK_GUARD_S
 from tests.fakes.runner_pipelines import FakeFleetHostedBot, FakePipelineContext
 from tests.helpers import verdict_probe as probe
 from tests.helpers.database import seed_v2_topology
@@ -461,7 +462,11 @@ async def test_prep_never_blocks_the_event_loop(tmp_path: pathlib.Path) -> None:
         while not prep_started.is_set():
             await asyncio.sleep(0)
 
-    await asyncio.wait_for(wait_for_prep_started(), timeout=10)
+    # Deadlock guard only — not an ordering assertion: `prep_started` is set
+    # by the blocking-pool thread itself and the loop turns the await above
+    # performs are the invariant. The budget only converts "the prep never
+    # started" into a named failure instead of a parked worker.
+    await asyncio.wait_for(wait_for_prep_started(), timeout=DEADLOCK_GUARD_S)
 
     assert prep_idents, "the prep never started"
     assert all(ident != loop_thread_ident for ident in prep_idents), (

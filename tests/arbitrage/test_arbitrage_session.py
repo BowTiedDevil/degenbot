@@ -37,6 +37,7 @@ from degenbot.runner.build_paths import (
     PathRegistrationPipeline,
 )
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
+from tests.deadlock_guard import DEADLOCK_GUARD_S
 from tests.fakes.bot import FakeBot as _FakeBot
 from tests.fakes.engine import FakeEngine as _FakeEngine
 from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
@@ -984,7 +985,10 @@ class TestSubBBackgroundRegistration:
         await session.start()
         run_task = asyncio.create_task(session.run())
         try:
-            await asyncio.wait_for(started.wait(), timeout=1)
+            # Deadlock guard only — not an ordering assertion: `started` is
+            # the fake builder's own edge. The budget only turns "the
+            # registration never climbed" into a named failure.
+            await asyncio.wait_for(started.wait(), timeout=DEADLOCK_GUARD_S)
             registration_task = session._session.registration_task
             assert registration_task is not None
             assert not registration_task.done()
@@ -1075,7 +1079,10 @@ class TestSubBBackgroundRegistration:
                 retry_policy=None,
             )
         )
-        await asyncio.wait_for(builder_started.wait(), timeout=1)
+        # Deadlock guard only — not an ordering assertion: the fake builder
+        # sets `builder_started` before parking, and the cancel below is what
+        # the test asserts on.
+        await asyncio.wait_for(builder_started.wait(), timeout=DEADLOCK_GUARD_S)
         task.cancel()
         # The cancelled task re-raises CancelledError cleanly — the secondary
         # `close_snapshot_tx` RuntimeError must NOT surface in its place.
@@ -1640,7 +1647,10 @@ class TestPathRegistrationPipeline:
 
         reg_task = asyncio.create_task(pipeline.run_registration(producer=forever_producer()))
         try:
-            await asyncio.wait_for(first_consume.wait(), timeout=1)
+            # Deadlock guard only — not an ordering assertion: `first_consume`
+            # is set by the pipeline's own first folded unit outcome. The budget
+            # only turns "the crawl never folded a unit" into a named failure.
+            await asyncio.wait_for(first_consume.wait(), timeout=DEADLOCK_GUARD_S)
 
             # MID-RUN add: a concrete 1-hop V2 path through the SAME `_consume`,
             # while forever discovery is still climbing in the background task.
@@ -1945,7 +1955,7 @@ class TestPumpFinishedWatchdog:
                 fake_engine.finish_pump()
 
                 # Deadlock guard only — not an ordering assertion.
-                done, _pending = await asyncio.wait({watchdog}, timeout=5.0)
+                done, _pending = await asyncio.wait({watchdog}, timeout=DEADLOCK_GUARD_S)
                 assert watchdog in done, "the watchdog must resolve when the pump-finish gate opens"
             finally:
                 watchdog.cancel()

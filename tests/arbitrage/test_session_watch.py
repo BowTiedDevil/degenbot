@@ -221,7 +221,10 @@ class TestWatchSetMatrix:
         registration = asyncio.create_task(climbing_registration())
         watch = _watch(consumer, lambda: _pump_end_watchdog(consumer), registration)
 
-        verdict = await asyncio.wait_for(watch.wait(), timeout=2.0)
+        # No guard timeout here: the verdict itself is the completion gate
+        # (`_pump_end_watchdog` cancels the consumer, which ends the watch-set),
+        # matching the bare awaits its sibling verdict tests use.
+        verdict = await watch.wait()
         assert verdict is SessionEndVerdict.WatchdogTripped
         assert consumer.cancelled()
         # The watch requested the registration cancel (the former twin's

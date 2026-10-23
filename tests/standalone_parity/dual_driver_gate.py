@@ -58,6 +58,11 @@ LIVE_TIMEOUT_ENV = "DEGENBOT_DUAL_DRIVER_TIMEOUT_SECS"
 DISCOVERY_CHAIN_ID = 8453
 _REPO = _HERE.parent.parent
 _ANVIL = Path("/home/dev/.foundry/bin/anvil")
+# Anvil boot + RPC round-trip guard for the --live mode. Wide on purpose (it is
+# a failure guard, not a budget a healthy boot must beat); mirrors
+# tests.deadlock_guard.EXTERNAL_PROCESS_GUARD_S, which this script cannot import
+# because it also runs as a plain file (`python tests/standalone_parity/...`).
+_ANVIL_BOOT_GUARD_SECS = 60.0
 
 
 def gate_enabled() -> bool:
@@ -172,8 +177,14 @@ def run_recorded() -> int:
     return 0
 
 
-def _wait_for_rpc(port: int, timeout: float = 30.0) -> None:
-    """Poll anvil's HTTP endpoint until it answers."""
+def _wait_for_rpc(port: int, timeout: float = _ANVIL_BOOT_GUARD_SECS) -> None:
+    """Poll anvil's HTTP endpoint until it answers.
+
+    Guard only — not an ordering assertion: anvil's boot is an external process
+    the gate does not step, and nothing downstream reads elapsed time. The
+    budget merely turns "anvil never answered" into a ``RuntimeError`` instead
+    of a gate that hangs on a loaded --live runner.
+    """
 
     payload = json.dumps({
         "jsonrpc": "2.0",
@@ -293,7 +304,10 @@ def run_live(fork_rpc: str, fork_block: int) -> int:
         rust_decisions = _read_decision_stream(rust_stream)
     finally:
         anvil.terminate()
-        anvil.wait(timeout=10)
+        # Teardown guard on the external anvil child, not an assertion: a slow
+        # exit on a loaded runner must not surface as TimeoutExpired out of the
+        # gate's finally block.
+        anvil.wait(timeout=_ANVIL_BOOT_GUARD_SECS)
 
     fixture = load_decisions_fixture()
     divergences = diff_decisions(python_decisions, rust_decisions, fixture["permitted_divergence"])

@@ -20,6 +20,7 @@ from degenbot.operator.operator_channel import (
     step_from_wire,
     wrap_handler,
 )
+from tests.deadlock_guard import DEADLOCK_GUARD_S
 
 
 def _stub_handler(*, fail_on=None):
@@ -127,11 +128,14 @@ async def test_serve_parks_until_closed(tmp_path) -> None:
         assert task.done() is False
     finally:
         # close() cancels serve_forever, so the parked serve() task unwinds
-        # (cancelled) — bounded so a regression to a non-parking serve()
-        # surfaces as a fast failure, not a hang.
+        # (cancelled). Deadlock guard only — not an ordering assertion: the
+        # assertion is the CancelledError below, and the budget only keeps a
+        # regression to a non-parking serve() a fast, named failure instead of
+        # a hang. The shield keeps the guard's own timeout from cancelling the
+        # task under inspection.
         await server.close()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(asyncio.shield(task), timeout=5)
+            await asyncio.wait_for(asyncio.shield(task), timeout=DEADLOCK_GUARD_S)
 
 
 async def test_handler_error_becomes_ok_false_and_host_survives(tmp_path) -> None:
