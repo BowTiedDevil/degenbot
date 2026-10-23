@@ -6,6 +6,16 @@ on:
   pull_request:
     branches: [main, dev]
   workflow_call:
+    inputs:
+      ref:
+        description: 'Ref to check out (tag or SHA); empty = the triggering commit.'
+        required: false
+        type: string
+        default: ''
+
+# Least privilege: every job in this workflow only reads the repository.
+permissions:
+  contents: read
 
 concurrency:
   # Superseded pushes to the same branch/PR replace the older run instead of
@@ -24,20 +34,23 @@ env:
 jobs:
   # Path gate: cheap first job that decides which tracks the event actually
   # touched. PRs diff against the merge-base, pushes against the previous
-  # commit (dorny/paths-filter handles both). The workflow_call trigger has no
-  # in-repo consumer; its event carries no diff, so every output defaults to
-  # true and the callee runs the full matrix.
+  # commit (dorny/paths-filter handles both). release.yml calls this
+  # workflow at a tag; that event carries no diff, so every output defaults to
+  # true and the release gate runs the full matrix.
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
-      rust: ${{ github.event_name == 'workflow_call' || steps.filter.outputs.rust }}
-      python: ${{ github.event_name == 'workflow_call' || steps.filter.outputs.python }}
-      tier3: ${{ github.event_name == 'workflow_call' || steps.filter.outputs.tier3 }}
+      rust: ${{ github.event_name == 'workflow_call' || steps.filter.outputs.rust == 'true' || steps.filter.outputs.machinery == 'true' }}
+      python: ${{ github.event_name == 'workflow_call' || steps.filter.outputs.python == 'true' || steps.filter.outputs.machinery == 'true' }}
+      tier3: ${{ github.event_name == 'workflow_call' || steps.filter.outputs.tier3 == 'true' || steps.filter.outputs.machinery == 'true' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         id: filter
         with:
           filters: |
@@ -45,10 +58,10 @@ jobs:
               - 'rust/**'
               - 'rust-toolchain.toml'
               - 'tier3-oracle/artifacts/**'
-              # The no-Python console gate + its oracle: a gate/oracle edit must
-              # re-run the `cli-no-python` job (ADR-051 D10 / ergo EA6DY7).
-              - '.github/workflows/cli-no-python-gate.sh'
-              - '.github/workflows/cli-no-python-expected.txt'
+              # maturin reads the build config from these; the rust job builds
+              # the extension.
+              - 'pyproject.toml'
+              - 'uv.lock'
             python:
               - 'rust/**'
               - 'src/**'
@@ -60,17 +73,30 @@ jobs:
             tier3:
               - 'tier3-oracle/**'
               - 'executor/**'
+            # CI machinery: the gated jobs execute justfile recipes, gate
+            # scripts, and this workflow file itself, so an edit to any of
+            # them must re-run the gates - a machinery-only change must not
+            # merge green with zero jobs run. This includes the no-Python
+            # console gate and its oracle (ADR-051 D10 / ergo EA6DY7).
+            machinery:
+              - 'justfile'
+              - 'scripts/**'
+              - '.github/workflows/**'
+              - '.cargo/config.toml'
+              - 'prek.toml'
 
   commitlint:
     name: Commit Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 0
 
       - name: Install Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
 
@@ -103,41 +129,52 @@ jobs:
             exit 0
           fi
           echo "Linting commits from $FROM to HEAD"
-          npx --yes @commitlint/cli --from="$FROM" --to=HEAD
+          # Pinned: a floating @commitlint/cli would make the lint rule set
+          # depend on when the job runs.
+          npx --yes @commitlint/cli@21.2.4 --from="$FROM" --to=HEAD
 
   markdownlint:
     name: Markdown Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Install Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
 
       - name: Lint Markdown
-        run: npx --yes markdownlint-cli2 --fix "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**"
+        # No --fix: an auto-fixable violation would be corrected on the runner
+        # and discarded, going green while the repository stays dirty. Fail on
+        # the violation instead. Pinned for the same reason as commitlint.
+        run: npx --yes markdownlint-cli2@0.24.0 "**/*.md" "!**/node_modules/**" "!**/.venv/**" "!tier3-oracle/lib/**" "!logs/**" "!.scratch/**"
 
   msrv:
     name: MSRV (Rust 1.97)
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Install Rust MSRV
-        uses: dtolnay/rust-toolchain@1.97.0
+        uses: dtolnay/rust-toolchain@f08ac54821369508305fcb9e0121ec6e30ae9ada # 1.97.0
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: ci-rust-msrv
 
       - name: Install just
-        uses: extractions/setup-just@v4
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - name: Compile workspace at MSRV
         run: just check-msrv
@@ -152,11 +189,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.98.1
+        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1
         with:
           components: clippy, rustfmt
 
@@ -164,13 +204,13 @@ jobs:
         # Shared prefix so the jobs that survive the path gate chain off each
         # other's saves. Unlike a Cargo.lock-only key, rust-cache accounts for
         # workspace source changes and prunes stale artifacts before saving.
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: ci-rust
 
       - name: Install just
-        uses: extractions/setup-just@v4
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       # The engine impl-block gate shells out to ripgrep. ubuntu-latest no
       # longer preinstalls it (a missing rg made the gate misreport a tool
@@ -180,7 +220,7 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y ripgrep
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1
 
       # Cheapest first: a fmt/clippy failure never pays for the test build.
       - name: Check formatting
@@ -253,14 +293,17 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.98.1
+        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: ci-rust
@@ -307,28 +350,30 @@ jobs:
     needs: changes
     if: needs.changes.outputs.tier3 == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ inputs.ref || github.sha }}
           submodules: recursive
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.98.1
+        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1
 
       - name: Cache Cargo
         # Shared prefix so the jobs that survive the path gate chain off each
         # other's saves. Unlike a Cargo.lock-only key, rust-cache accounts for
         # workspace source changes and prunes stale artifacts before saving.
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: ci-rust
 
       - name: Install just
-        uses: extractions/setup-just@v4
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - name: Install Foundry (forge + solc 0.7.6)
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1
 
       - name: Fetch canonical reference contracts (v2/v3/v4-core) + solc binaries
         run: tier3-oracle/bootstrap-libs.sh
@@ -348,13 +393,15 @@ jobs:
       # self-contained in-repo (executor/ uv project, interpreter pinned via
       # executor/.python-version — `uv run` fetches it on a fresh runner).
       - name: Install uv (executor vyper toolchain)
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
 
       - name: Cache uv wheel cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-executor-${{ hashFiles('executor/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-executor-
 
       - name: Verify committed executor artifact matches a fresh compile
         run: just verify-tier3-executor-artifact
@@ -363,13 +410,18 @@ jobs:
     # Consolidation of the former python-lint / python-test matrix /
     # python-test-anvil jobs, which were byte-identical environments (uv +
     # Rust toolchain + maturin develop) differing only in their final
-    # commands. The 3.12 floor leg absorbs the lint steps and the anvil tier; the other versions run a limited set of tests;
-    # 3.14 is the ceiling leg. 3.13 was dropped as a mid-endpoint.
+    # commands. The 3.12 floor leg absorbs the lint steps, the anvil tier,
+    # and both fleet profiles; the other legs run the test suite only. 3.15 is
+    # the ceiling leg.
     name: Python ${{ matrix.python-version }} (fleet ${{ matrix.fleet-profile }})
     needs: changes
     if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
+      # Independent legs: one failure must not cancel the others - the
+      # forced-pinned fleet leg and the version legs carry separate signal.
+      fail-fast: false
       matrix:
         # FF-T5 (NT7HJC) - the fleet profile matrix: job A is `auto` on the
         # standard 4-vCPU runner (the REAL small-host path: the 2-5-core
@@ -389,38 +441,41 @@ jobs:
             fleet-profile: pinned
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           python-version: ${{ matrix.python-version }}
+          enable-cache: true
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.98.1
+        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1
 
       - name: Cache Cargo
         # Shared prefix so the jobs that survive the path gate chain off each
         # other's saves. Unlike a Cargo.lock-only key, rust-cache accounts for
         # workspace source changes and prunes stale artifacts before saving.
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: ci-rust
 
       - name: Install just
-        uses: extractions/setup-just@v4
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - name: Bootstrap development environment
         run: just bootstrap
 
       # Foundry provides `anvil` so the standalone-anvil (T1) tier executes on
       # the floor leg (no RPC secret is ever plumbed: standalone-anvil tests
-      # run against a seeded local chain with no upstream). The 3.14 leg skips
-      # that tier, matching the historical matrix behavior.
+      # run against a seeded local chain with no upstream). The other legs
+      # skip that tier, matching the historical matrix behavior.
       - name: Install Foundry (anvil)
         if: matrix.python-version == '3.12'
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1
 
       # Former python-lint job (same pinned 3.12 uv environment as this leg).
       - name: Check Python formatting
@@ -456,30 +511,59 @@ jobs:
     needs: changes
     if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          enable-cache: true
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.98.1
+        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1
 
       - name: Cache Cargo
         # Shares the ci-rust prefix with the rust/python jobs so the common
         # workspace deps are reused; the `experimental-inspect` toggle only adds
         # feature-specific fingerprints, and `just dev` still selects the
         # canonical feature set from whatever the cache carries.
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: rust
           shared-key: ci-rust
 
       - name: Install just
-        uses: extractions/setup-just@v4
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - name: Sync the uv environment (no extension build)
         run: uv sync --locked --dev --no-install-project
 
       - name: Regenerate-and-diff stub gate
         run: just lint-stub-drift
+
+  ci-green:
+    # Single required-check target for branch protection: protection rules can
+    # reference this one check instead of the whole path-gated set. A job that
+    # was path-gated out (skipped) counts as pass; a failed or cancelled job
+    # fails the aggregate. `if: always()` so the aggregate still runs when a
+    # needed job failed - otherwise it would skip and report green.
+    name: CI (aggregate)
+    if: always()
+    needs: [changes, commitlint, markdownlint, msrv, rust, cli-no-python, tier3-oracle, python, stub-drift]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify every job passed or was path-gated out
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          failed="$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key): \(.value.result)"')"
+          if [ -n "$failed" ]; then
+            echo "::error::CI is not green:"
+            echo "$failed"
+            exit 1
+          fi
+          echo "all jobs green (skipped = path-gated out)" 

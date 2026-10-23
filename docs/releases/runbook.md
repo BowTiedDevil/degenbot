@@ -10,12 +10,14 @@ that died. The pipeline itself lives in `.github/workflows/release.yml`.
 | Order | Surface | Job | Owns |
 | --- | --- | --- | --- |
 | 1 | — | `validate-branch` | the tag is an ancestor of `main` |
-| 2 | built artifacts | `build-wheels`, `build-sdist` | 4 platform wheels + sdist, Rust pinned to `rust-toolchain.toml` |
-| 3 | crates.io | `publish-crates-io` | 31 publishable members, dependency order |
-| 4 | PyPI | `publish-to-pypi` | the artifacts from step 2 |
-| 5 | GitHub Releases | `github-release` | artifacts, Sigstore bundles, the "release completed" signal |
+| 2 | — | `ci` | the full CI suite (ci.yml) green on the tagged tree; a tag that never passed CI does not publish |
+| 3 | built artifacts | `build-wheels`, `build-sdist` | 4 platform wheels + sdist, Rust pinned to `rust-toolchain.toml` |
+| 4 | — | `test-wheels` | each wheel installed and smoke-tested on its native platform (import, console `--version`, tag == wheel metadata version) |
+| 5 | crates.io | `publish-crates-io` | 31 publishable members, dependency order |
+| 6 | PyPI | `publish-to-pypi` | the artifacts from step 3 |
+| 7 | GitHub Releases | `github-release` | artifacts, Sigstore bundles, the "release completed" signal |
 
-`test-*` tags stop after step 2 and publish only to Test PyPI.
+`test-*` tags stop after step 4 and publish only to Test PyPI.
 
 Two policies bind every release:
 

@@ -1,7 +1,9 @@
 # Single ordered release pipeline (merges the former publish-to-pypi.yaml +
 # publish-to-crates-io.yml, which raced each other on the same v* tag and
 # could split the version across registries). On a v* tag:
-#   validate-branch, build-wheels + build-sdist (parallel)
+#   validate-branch -> ci (the full CI suite on the tagged tree; a tag that
+#     never passed CI does not publish) -> build-wheels + build-sdist
+#     (parallel) -> test-wheels (each wheel installed + smoke-tested natively)
 #     -> crates.io publish (failure-prone leg runs first; failure = nothing published)
 #     -> PyPI publish (needs crates leg succeeded)
 #     -> GitHub Release (needs both pushes; the clean-completion signal)
@@ -36,6 +38,11 @@ on:
         required: true
         type: string
 
+# Least privilege: jobs that need more (trusted publishing, the GitHub
+# Release) declare it themselves.
+permissions:
+  contents: read
+
 # One release run per tag at a time. Publishing is a sequence of one-way registry
 # writes, so two runs on the same tag (a push plus a manual re-run, or a re-run
 # started while the first is still sleeping out a rate limit) would each audit the
@@ -50,8 +57,9 @@ jobs:
     # Shared by both former workflows (identical bodies).
     name: Verify tag is on main
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # A dispatch on main must still build the TAGGED tree, so the tag is
           # always resolved explicitly rather than inherited from the trigger.
@@ -70,9 +78,21 @@ jobs:
           fi
           echo "Tag $RELEASE_TAG is on main branch"
 
+  ci:
+    # Pre-publish gate: the full CI suite (ci.yml's workflow_call) against the
+    # TAGGED tree - a tag pushed without a green run does not publish. The ref
+    # input is threaded to every checkout in ci.yml, so the suite tests the
+    # tag's commit even on a dispatch resume from main.
+    name: CI gate (full suite on the tagged tree)
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ inputs.tag || github.ref_name }}
+
   build-wheels:
     name: Build wheels on ${{ matrix.os }} (${{ matrix.target }})
+    needs: [validate-branch, ci]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -97,18 +117,18 @@ jobs:
             args: ""
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Set up QEMU
         if: runner.os == 'Linux' && matrix.target != 'x86_64-unknown-linux-gnu'
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
         with:
           platforms: all
 
       - name: Build wheels with maturin
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
@@ -126,37 +146,101 @@ jobs:
           working-directory: .
 
       - name: Upload wheels
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: wheels-${{ matrix.target }}
           path: dist/*.whl
 
   build-sdist:
     name: Build source distribution
+    needs: [validate-branch, ci]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Build sdist with maturin
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: sdist
           args: --out dist
           working-directory: .
 
       - name: Upload sdist
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: sdist
           path: dist/*.tar.gz
 
+  test-wheels:
+    # The wheels are the release artifact, so prove each one installs and
+    # loads on its native platform BEFORE any registry publish: a wheel that
+    # builds but does not import (missing abi3 symbol, wrong universal2
+    # slice) would otherwise be discovered by users.
+    name: Smoke-test wheel (${{ matrix.target }})
+    needs: [build-wheels]
+    runs-on: ${{ matrix.os }}
+    permissions: {}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          # Native arm runner: the aarch64 wheel runs natively instead of
+          # under QEMU user-mode on the x86 build host.
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-14
+            target: universal2-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Download wheel
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: wheels-${{ matrix.target }}
+          path: dist
+
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Install the wheel and smoke-test it
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          ls -la dist/
+          python -m pip install dist/*.whl
+          case "$RELEASE_TAG" in
+            v*)
+              expected="${RELEASE_TAG#v}"
+              actual="$(python -c 'import importlib.metadata; print(importlib.metadata.version("degenbot"))')"
+              if [ "$actual" != "$expected" ]; then
+                echo "::error::wheel metadata version '$actual' does not match tag '$expected'"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "non-release tag $RELEASE_TAG - skipping the exact version assertion"
+              ;;
+          esac
+          python -c 'import degenbot'
+          degenbot --version
+
   publish-to-test-pypi:
     name: Publish to Test PyPI
     if: startsWith(inputs.tag || github.ref_name, 'test-')
-    needs: [validate-branch, build-wheels, build-sdist]
+    needs: [validate-branch, build-wheels, build-sdist, test-wheels]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment:
       name: testpypi
       url: https://test.pypi.org/p/degenbot
@@ -165,7 +249,7 @@ jobs:
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: dist
           pattern: '*'
@@ -175,7 +259,7 @@ jobs:
         run: ls -la dist/
 
       - name: Publish to Test PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
           # A re-run of the same tag must converge, not collide: PyPI answers an
@@ -189,8 +273,9 @@ jobs:
     # Ordering: needs the crates.io leg, so a crates.io failure skips the PyPI
     # push entirely — the upstream registries can no longer split on a tag.
     if: startsWith(inputs.tag || github.ref_name, 'v')
-    needs: [validate-branch, build-wheels, build-sdist, publish-crates-io]
+    needs: [validate-branch, build-wheels, build-sdist, test-wheels, publish-crates-io]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment:
       name: pypi
       url: https://pypi.org/p/degenbot
@@ -199,7 +284,7 @@ jobs:
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: dist
           pattern: '*'
@@ -209,7 +294,7 @@ jobs:
         run: ls -la dist/
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
         with:
           # Same convergence rule as Test PyPI: an interrupted attempt leaves some
           # files accepted, and PyPI rejects the rest of the set with HTTP 400
@@ -224,12 +309,13 @@ jobs:
     # touching it and resumes at whatever is missing, rather than starting over.
     name: Publish (index-audited, resumable; new-crate rate-limit rounds)
     if: startsWith(inputs.tag || github.ref_name, 'v')
-    needs: [validate-branch, build-wheels, build-sdist]
+    needs: [validate-branch, build-wheels, build-sdist, test-wheels]
     runs-on: ubuntu-latest
+    timeout-minutes: 300
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
@@ -257,16 +343,15 @@ jobs:
           echo "audit tooling: $(wc -l < "$tooling") lines, syntax ok"
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.98.1
+        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1
 
       - name: Cache Cargo
-        uses: actions/cache@v6
+        # Same source-aware cache the CI jobs use: a Cargo.lock-only key
+        # restores a target dir built from different sources.
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            rust/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          workspaces: rust
+          shared-key: release-crates
 
       - name: Check tag matches workspace version
         # Release-policy guard (pre-release safe): the tag (minus leading v)
@@ -490,20 +575,21 @@ jobs:
     if: startsWith(inputs.tag || github.ref_name, 'v')
     needs: [publish-to-pypi, publish-crates-io]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
       id-token: write
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: dist
           pattern: '*'
           merge-multiple: true
 
       - name: Sign with Sigstore
-        uses: sigstore/gh-action-sigstore-python@v3.5.0
+        uses: sigstore/gh-action-sigstore-python@790bc6befb9d733738f18d8f895854b453640ec9 # v3.5.0
         with:
           inputs: >-
             ./dist/*.tar.gz

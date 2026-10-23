@@ -9,3 +9,17 @@ updates:
       actions:
         patterns: ["*"]
 
+  - package-ecosystem: "cargo"
+
+    directory: "/rust"
+
+    schedule:
+
+      interval: "weekly"
+
+    groups:
+
+      cargo:
+
+        patterns: ["*"]
+
