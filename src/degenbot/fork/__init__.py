@@ -29,7 +29,7 @@ anvil process. Former callers using `fork.w3.eth.X` are migrated to
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Self
+from typing import TYPE_CHECKING, Literal, Self, TypedDict
 
 from pydantic import validate_call
 
@@ -46,7 +46,7 @@ from degenbot.validation.evm_values import (
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
     from degenbot.types.chain import HexAddress, HexStr
 
@@ -93,7 +93,7 @@ _LOCAL_FORK_HOSTS = (
 
 
 def _default_fork_compute_units_per_second(fork_url: str | None) -> int | None:
-    """The upstream fetch cap a fork target needs, absent an explicit one.
+    """Return the upstream fetch cap a fork target needs, absent an explicit one.
 
     A fork child fetches its genesis state from the upstream before anvil
     reports readiness, so an UNCAPPED hosted endpoint answers with HTTP 429 and
@@ -145,6 +145,30 @@ class ForkLaunchConfig:
     # endpoint, ``--no-rate-limit`` for a local one (see
     # :func:`_default_fork_compute_units_per_second`).
     fork_compute_units_per_second: int | None = None
+
+
+class _AnvilForkSpawnKwargs(TypedDict):
+    """Keyword surface of the `degenbot._ffi.AnvilFork` constructor.
+
+    Every key :meth:`AnvilFork._spawn_kwargs` produces, typed as the PyO3
+    signature types it, so the `**` spread at the constructor call is checked
+    against that signature. A plain ``dict[str, object]`` leaves the spread
+    untyped and every value an ``object``.
+    """
+
+    host: str
+    fork_url: str | None
+    fork_block: int | None
+    fork_transaction_hash: str | None
+    mining_mode: str
+    mining_interval: int | None
+    storage_caching: bool
+    base_fee: int | None
+    ipc_path: str | None
+    mnemonic: str
+    chain_id: int | None
+    anvil_opts: Sequence[str] | None
+    fork_compute_units_per_second: int | None
 
 
 class AnvilFork:
@@ -230,7 +254,8 @@ class AnvilFork:
         # `reset(transaction_hash=...)` can recreate the subprocess with
         # ALL the original params (the legacy Python `AnvilFork.reset`
         # supported re-spawning to a new fork URL + block + txn hash).
-        self._launch = launch or ForkLaunchConfig()
+        config = launch or ForkLaunchConfig()
+        self._launch = config
         self._fork_url = fork_url
         # Spawn the rust core. The rust core raises `RuntimeError` /
         # `ValueError` on failure — let those propagate unchanged
@@ -261,22 +286,22 @@ class AnvilFork:
         # Post-spawn state overrides — applied via the registered dev
         # methods so the rust `AnvilApi` calls go through the same
         # IPC-bound `DynProvider`. Matches the legacy Python semantics.
-        if launch.balance_overrides is not None:
-            for account, balance in launch.balance_overrides:
+        if config.balance_overrides is not None:
+            for account, balance in config.balance_overrides:
                 self.set_balance(account, balance)
-        if launch.bytecode_overrides is not None:
-            for account, bytecode in launch.bytecode_overrides:
+        if config.bytecode_overrides is not None:
+            for account, bytecode in config.bytecode_overrides:
                 self.set_code(account, bytecode)
-        if launch.nonce_overrides is not None:
-            for account, nonce in launch.nonce_overrides:
+        if config.nonce_overrides is not None:
+            for account, nonce in config.nonce_overrides:
                 self.set_nonce(account, nonce)
-        if launch.storage_overrides is not None:
-            for address, position, value in launch.storage_overrides:
+        if config.storage_overrides is not None:
+            for address, position, value in config.storage_overrides:
                 self.set_storage(address=address, position=position, value=value)
-        if launch.coinbase is not None:
-            self.set_coinbase(launch.coinbase)
-        if launch.mining_interval is not None and launch.mining_mode == "interval":
-            self.set_block_timestamp_interval(launch.mining_interval)
+        if config.coinbase is not None:
+            self.set_coinbase(config.coinbase)
+        if config.mining_interval is not None and config.mining_mode == "interval":
+            self.set_block_timestamp_interval(config.mining_interval)
 
     def _spawn_kwargs(
         self,
@@ -284,8 +309,8 @@ class AnvilFork:
         fork_url: str | None,
         fork_block: BlockNumber | None,
         fork_transaction_hash: str | None,
-    ) -> dict[str, object]:
-        """The FFI constructor kwargs for one anvil subprocess.
+    ) -> _AnvilForkSpawnKwargs:
+        """Build the FFI constructor kwargs for one anvil subprocess.
 
         The fork target is a parameter, not a captured field, because
         ``reset(fork_url=...)`` respawns against a different upstream: the
@@ -527,7 +552,7 @@ class AnvilFork:
             # listening on.
             self._provider = None
             self._fork = None
-            self._fork = _FFIAnvilFork(**spawn_kwargs)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            self._fork = _FFIAnvilFork(**spawn_kwargs)
             self._fork_url = new_fork_url
             # Replace the general-RPC provider over the new fork's HTTP
             # endpoint (HTTP: no IPC/WS pubsub, so consumers that borrow it
