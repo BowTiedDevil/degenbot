@@ -17,14 +17,18 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from degenbot.balancer.pools import BalancerV2Pool
+from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.builders.type_resolution import (
     fetch_factory_from_chain,
     pool_class_for_descriptor,
     resolve_pool_type,
     resolve_pool_type_by_probing,
 )
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions.base import DegenbotValueError
+from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.pool_type import PoolFamily, PoolProbe, PoolTypeDescriptor
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -77,18 +81,30 @@ class TestPoolClassForDescriptor:
         result = pool_class_for_descriptor(descriptor, chain_id=CHAIN_ID)
         assert result is CurveStableswapPool
 
-    def test_stableswap_balancer_variant_with_unregistered_factory_raises(self) -> None:
-        """The vault-dependent Balancer variants REQUIRE a factory registration."""
+    def test_stableswap_balancer_variant_without_registered_factory_is_balancer(self) -> None:
+        """A Balancer identity never falls back to CurveStableswapPool.
+
+        The variant is authoritative (probed on-chain or read from the DB kind);
+        the factory only refines it to one deployment, so an unregistered
+        revision (the MetaStablePool factory is not a registry row) still
+        resolves to the Balancer stable class.
+        """
         descriptor = PoolTypeDescriptor(
             family=PoolFamily.STABLESWAP,
             variant="balancer_stable",
             kind="balancer_stable",
             factory=None,
         )
-        with pytest.raises(
-            DegenbotValueError, match="Balancer stable pool with unregistered factory"
-        ):
-            pool_class_for_descriptor(descriptor, chain_id=CHAIN_ID)
+        assert pool_class_for_descriptor(descriptor, chain_id=CHAIN_ID) is BalancerV2StablePool
+
+    def test_weighted_balancer_variant_without_registered_factory_is_balancer(self) -> None:
+        descriptor = PoolTypeDescriptor(
+            family=PoolFamily.WEIGHTED,
+            variant="balancer_weighted",
+            kind="balancer_weighted",
+            factory=None,
+        )
+        assert pool_class_for_descriptor(descriptor, chain_id=CHAIN_ID) is BalancerV2Pool
 
     def test_stableswap_unrecognized_variant_with_unregistered_factory_raises(self) -> None:
         """An unrecognized stableswap variant raises instead of silently
@@ -131,12 +147,20 @@ class FakePyBotIo:
         pool_row: object | None = None,
         exchange_row: object | None = None,
         probe_exception: Exception | None = None,
+        balancer_pool_id: bytes | None = None,
+        balancer_family: str | None = None,
+        balancer_factory: str | None = None,
     ) -> None:
         self._factory_address = factory_address
         self._probe_result = probe_result
         self._pool_row = pool_row
         self._exchange_row = exchange_row
         self._probe_exception = probe_exception
+        self._balancer_pool_id = balancer_pool_id
+        self._balancer_family = balancer_family
+        self._balancer_factory = balancer_factory
+        #: The candidate factories each membership probe was asked about.
+        self.balancer_factory_candidates: list[str] = []
 
     def get_block_number(self) -> int:
         return 18_000_000
@@ -154,6 +178,27 @@ class FakePyBotIo:
 
     def fetch_exchange(self, exchange_id: int) -> object | None:
         return self._exchange_row
+
+    def fetch_balancer_pool_id(self, _address: str, block: object | None = None) -> bytes:
+        if self._balancer_pool_id is None:
+            msg = "getPoolId() reverted: not a Balancer pool"
+            raise ValueError(msg)
+        return self._balancer_pool_id
+
+    def probe_balancer_pool_type(self, _address: str, block: object | None = None) -> str:
+        if self._balancer_family is None:
+            msg = "neither getNormalizedWeights nor getAmplificationParameter answered"
+            raise ValueError(msg)
+        return self._balancer_family
+
+    def fetch_balancer_factory(
+        self,
+        _address: str,
+        factories: list[str],
+        block: object | None = None,
+    ) -> str | None:
+        self.balancer_factory_candidates = list(factories)
+        return self._balancer_factory
 
 
 class TestFetchFactoryFromChain:
@@ -308,6 +353,79 @@ class TestResolvePoolType:
         )
         assert result.family == PoolFamily.CONCENTRATED_LIQUIDITY
         assert result.factory == factory_address
+
+    def test_balancer_stable_identity_resolves_from_factory_membership(self) -> None:
+        """A Balancer pool (`factory()` reverts) resolves to the registry row of
+        the factory that owns it — the bug this path exists to fix: without it
+        the address fell through to the generic Curve arm and was refused as
+        out-of-spec."""
+        # Balancer V2 ComposableStable Pool Factory (rev3) — a shipped chain-1
+        # registry row; bb-s-USD reports it via `isPoolFromFactory`.
+        composable_factory = "0xdba127fBc23fb20F5929C546af220A991b5C6e01"
+        io = FakePyBotIo(
+            factory_address=None,
+            pool_row=None,
+            balancer_pool_id=bytes(32),
+            balancer_family="stable",
+            balancer_factory=composable_factory,
+        )
+        result = resolve_pool_type(
+            "0x779d01F939D78a918A3de18cC236ee89221dfd4E",  # type: ignore[arg-type]
+            chain_id=CHAIN_ID,
+            io=io,
+        )
+        assert result.family == PoolFamily.STABLESWAP
+        assert result.variant == "balancer_stable"
+        assert result.factory == get_checksum_address(composable_factory)
+        # Only the stable factory rows are asked about a stable pool.
+        assert io.balancer_factory_candidates
+        registered_stable_factories = {
+            descriptor.factory
+            for (row_chain, _factory), (_cls, descriptor, _dep) in (
+                pool_type_registry.registrations.items()
+            )
+            if row_chain == CHAIN_ID and descriptor.variant == "balancer_stable"
+        }
+        assert set(io.balancer_factory_candidates) == registered_stable_factories
+
+    def test_balancer_identity_without_a_registered_factory_keeps_the_variant(self) -> None:
+        """An unregistered factory revision (the MetaStablePool factory) still
+        resolves to a Balancer identity — the variant is probed, not guessed."""
+        io = FakePyBotIo(
+            factory_address=None,
+            pool_row=None,
+            balancer_pool_id=bytes(32),
+            balancer_family="stable",
+            balancer_factory=None,
+        )
+        result = resolve_pool_type(
+            "0x32296969Ef14EB0c6d29669C550D4a0449130230",  # type: ignore[arg-type]
+            chain_id=CHAIN_ID,
+            io=io,
+        )
+        assert result.family == PoolFamily.STABLESWAP
+        assert result.variant == "balancer_stable"
+        assert result.factory is None
+        assert pool_class_for_descriptor(result, chain_id=CHAIN_ID) is BalancerV2StablePool
+
+    def test_balancer_weighted_identity_resolves_to_the_weighted_family(self) -> None:
+        weighted_factory = "0x897888115Ada5773E02aA29F775430BFB5F34c51"
+        io = FakePyBotIo(
+            factory_address=None,
+            pool_row=None,
+            balancer_pool_id=bytes(32),
+            balancer_family="weighted",
+            balancer_factory=weighted_factory,
+        )
+        result = resolve_pool_type(
+            "0x5c6Ee304399DBdB9C8Ef030aB642B10820DB8F56",  # type: ignore[arg-type]
+            chain_id=CHAIN_ID,
+            io=io,
+        )
+        assert result.family == PoolFamily.WEIGHTED
+        assert result.variant == "balancer_weighted"
+        assert result.factory == get_checksum_address(weighted_factory)
+        assert pool_class_for_descriptor(result, chain_id=CHAIN_ID) is BalancerV2Pool
 
     def test_raises_on_unknown_db_kind_without_probing(self) -> None:
         """A present DB kind the registry doesn't know raises instead of

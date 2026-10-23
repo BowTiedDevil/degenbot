@@ -1382,6 +1382,46 @@ impl PyBotIo {
         crate::conversion::alloy::u256_to_py(py, &val).map(pyo3::Bound::unbind)
     }
 
+    /// Find the Balancer V2 factory that owns `address`, by asking each
+    /// candidate factory's `isPoolFromFactory(address)`.
+    ///
+    /// Balancer V2 has no enumerable pool registry and deployed pools carry no
+    /// `factory()` getter, so factory membership is the only on-chain ownership
+    /// answer — it is what `type_resolution.py` needs to resolve a Balancer
+    /// address to its registry row (family / variant / class).
+    ///
+    /// Returns the owning factory as a lowercase `0x` hex string, or `None` when
+    /// no candidate owns the pool (a factory revision the registry does not
+    /// carry).
+    #[pyo3(signature = (address, factories, block=None))]
+    fn fetch_balancer_factory(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        factories: Vec<String>,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Option<String>> {
+        let io = self.required_construction_io()?;
+        let pool = alloy::primitives::Address::from(parse_address_for_call(address)?);
+        let candidates = factories
+            .iter()
+            .map(|f| parse_address_for_call(f).map(alloy::primitives::Address::from))
+            .collect::<PyResult<Vec<_>>>()?;
+        let block_num = self.resolve_block(py, block)?;
+        let owning = py.detach(|| {
+            get_runtime().block_on(async move {
+                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_factory(
+                    &io,
+                    pool,
+                    &candidates,
+                    block_num,
+                )
+                .await
+            })
+        });
+        Ok(owning.map(address_lower_hex))
+    }
+
     /// Probe a Balancer pool's sub-type by trying `getNormalizedWeights()` and
     /// `getAmplificationParameter()` in order (ADR-005 slice 14n).
     ///

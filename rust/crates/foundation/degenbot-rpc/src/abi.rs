@@ -148,6 +148,12 @@ alloy::sol! {
         function get_base_pool(address pool) external view returns (address);
     }
 
+    /// Balancer V2 pool-factory membership read (every factory revision
+    /// answers it; `getPoolCount` / `getPools` / `getPoolAt` revert).
+    interface IBalancerPoolFactory {
+        function isPoolFromFactory(address pool) external view returns (bool);
+    }
+
     /// Lending-token detection reads (cToken / yToken probes).
     interface ILendingToken {
         function isCToken() external view returns (bool);
@@ -991,6 +997,28 @@ pub fn decode_curve_is_meta(bytes: &[u8]) -> ProviderResult<bool> {
             message: format!("is_meta decode: {e}"),
         }
     })?;
+    Ok(r)
+}
+
+/// Encode `isPoolFromFactory(address)` calldata for `pool` — the one Balancer
+/// V2 factory read that answers on every revision.
+#[must_use]
+pub fn encode_balancer_is_pool_from_factory(pool: &Address) -> Vec<u8> {
+    IBalancerPoolFactory::isPoolFromFactoryCall { pool: *pool }.abi_encode()
+}
+
+/// Decode `isPoolFromFactory(address)` return data (single `bool`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_balancer_is_pool_from_factory(bytes: &[u8]) -> ProviderResult<bool> {
+    let r =
+        IBalancerPoolFactory::isPoolFromFactoryCall::abi_decode_returns(bytes).map_err(|e| {
+            ProviderError::DecodingError {
+                message: format!("isPoolFromFactory decode: {e}"),
+            }
+        })?;
     Ok(r)
 }
 

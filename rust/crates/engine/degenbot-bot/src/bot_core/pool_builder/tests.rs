@@ -1150,6 +1150,42 @@ async fn probe_balancer_type_weights_first_then_stable() {
     );
 }
 
+/// Factory membership is the Balancer V2 ownership answer (no enumerable
+/// registry, no `factory()` getter on a deployed pool): the candidate that
+/// answers `true` owns the pool, an all-`false` / silent candidate set
+/// (unregistered factory revision) reports no owner.
+#[tokio::test]
+async fn fetch_balancer_factory_reports_the_owning_candidate() {
+    let sel: [u8; 4] = abi::encode_balancer_is_pool_from_factory(&TO)[..4]
+        .try_into()
+        .unwrap();
+
+    // Every candidate reverts (no response configured) → no owner.
+    let io = io_with(FakeRpc::new());
+    assert_eq!(
+        choreography::fetch_balancer_factory(&io, TO, &[VAULT], None).await,
+        None
+    );
+
+    // `true` → the candidate owns the pool.
+    let mut f = FakeRpc::new();
+    f.set(sel, enc(DynSolValue::Bool(true)));
+    let io = io_with(f);
+    assert_eq!(
+        choreography::fetch_balancer_factory(&io, TO, &[VAULT], None).await,
+        Some(VAULT)
+    );
+
+    // `false` → not the owner.
+    let mut f = FakeRpc::new();
+    f.set(sel, enc(DynSolValue::Bool(false)));
+    let io = io_with(f);
+    assert_eq!(
+        choreography::fetch_balancer_factory(&io, TO, &[VAULT], None).await,
+        None
+    );
+}
+
 #[tokio::test]
 async fn build_balancer_weighted_assembles_params() {
     let mut f = FakeRpc::new();
@@ -1243,11 +1279,11 @@ async fn build_balancer_stable_assembles_params_with_rate_providers() {
         )),
     );
     let io = io_with(f);
-    // specialization from pool_id[20..22] = 0xef,ef → not 1 → INVARIANT_V1 (1).
+    // No BPT among the Vault tokens → a non-composable stable pool → V2.
     let p = builder::build_balancer_stable(VAULT, TO, &io, None, None)
         .await
         .unwrap();
-    assert_eq!(p.invariant_version, 1);
+    assert_eq!(p.invariant_version, 2);
     assert_eq!(p.bpt_idx, None);
     let one = U256::from(1_000_000_000_000_000_000u128);
     // First token rate-multiplied: ONE*10^0 * 1.02e18 / 1e18 = 1.02e18.
@@ -1257,6 +1293,96 @@ async fn build_balancer_stable_assembles_params_with_rate_providers() {
     );
     // Second token zero-sentinel provider → unscaled ONE.
     assert_eq!(p.scaling_factors[1], one);
+}
+
+/// FakeRpc responses for one `build_balancer_stable` pass. `tokens` is the
+/// Vault token list; a ComposableStablePool lists *itself* in it.
+fn balancer_stable_fakes(tokens: &[Address]) -> FakeRpc {
+    let mut f = FakeRpc::new();
+    let pool_id = [0xef; 32];
+    f.set(
+        abi::encode_get_pool_id()[..4].try_into().unwrap(),
+        pool_id_ret(&pool_id),
+    );
+    let balances: Vec<U256> = (0..tokens.len()).map(|_| U256::from(100u64)).collect();
+    f.set(
+        abi::encode_get_pool_tokens(&pool_id)[..4]
+            .try_into()
+            .unwrap(),
+        pool_tokens_ret(tokens, &balances),
+    );
+    f.set(
+        abi::encode_get_swap_fee()[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::from(5_000_000_000_000_000u64), 256)),
+    );
+    f.set(
+        abi::encode_get_amp()[..4].try_into().unwrap(),
+        enc(DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(100u64), 256),
+            DynSolValue::Bool(false),
+            DynSolValue::Uint(U256::from(100u64), 256),
+        ])),
+    );
+    f.set(
+        choreography::selector(b"decimals()"),
+        enc(DynSolValue::Uint(U256::from(18), 256)),
+    );
+    // Every token carries the zero-address sentinel rate provider. Both stable
+    // families answer `getRateProviders()` (measured on the mainnet
+    // MetaStablePools), so its presence says nothing about the family.
+    f.set(
+        choreography::selector(b"getRateProviders()"),
+        enc(DynSolValue::Array(
+            tokens
+                .iter()
+                .map(|_| DynSolValue::Address(Address::ZERO))
+                .collect(),
+        )),
+    );
+    f
+}
+
+/// A ComposableStablePool lists its own BPT among the Vault tokens
+/// (`bpt_idx` = `Some`). Composable pools ship the monorepo `StableMath` —
+/// always-roundDown `D_P` — so the shape resolves to `INVARIANT_V1`.
+#[tokio::test]
+async fn build_balancer_stable_derives_v1_for_a_composable_pool() {
+    let io = io_with(balancer_stable_fakes(&[TO, T0, T1]));
+    let p = builder::build_balancer_stable(VAULT, TO, &io, None, None)
+        .await
+        .unwrap();
+    assert_eq!(p.bpt_idx, Some(0), "composable shape: the BPT is token 0");
+    assert_eq!(p.invariant_version, 1);
+}
+
+/// A non-composable stable pool (MetaStablePool / the 2021 StablePool) carries
+/// no BPT and ships the 2021 deployed `StableMath` — roundUp `P_D` — so the
+/// shape resolves to `INVARIANT_V2`.
+///
+/// The wstETH/WETH MetaStablePool's pool-id specialization is `0x0002`
+/// (TwoToken — a token-count artifact of the Vault's `_getSpecialization`,
+/// not a family signal), which is why the retired
+/// specialization-derived rule got every MetaStablePool wrong.
+#[tokio::test]
+async fn build_balancer_stable_derives_v2_for_a_non_composable_pool() {
+    let io = io_with(balancer_stable_fakes(&[T0, T1]));
+    let p = builder::build_balancer_stable(VAULT, TO, &io, None, None)
+        .await
+        .unwrap();
+    assert_eq!(p.bpt_idx, None);
+    assert_eq!(p.invariant_version, 2);
+}
+
+/// An explicit override outranks the shape derivation in both directions.
+#[tokio::test]
+async fn build_balancer_stable_override_outranks_the_shape() {
+    for (tokens, override_version) in [(&[TO, T0, T1][..], 2u8), (&[T0, T1][..], 1u8)] {
+        let io = io_with(balancer_stable_fakes(tokens));
+        let p = builder::build_balancer_stable(VAULT, TO, &io, None, Some(override_version))
+            .await
+            .unwrap();
+        assert_eq!(p.invariant_version, override_version);
+    }
 }
 
 /// A known-broken Balancer V2 pool is refused before any RPC: the FakeRpc

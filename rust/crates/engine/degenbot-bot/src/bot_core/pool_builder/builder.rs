@@ -611,6 +611,30 @@ pub fn decode_balancer_pool_id(raw: &[u8; 32]) -> DecodedBalancerPoolId {
     }
 }
 
+/// Resolve a Balancer V2 stable pool's `StableMath` invariant version from the
+/// pool's *shape*: a pool that lists its own address among the Vault tokens is a
+/// ComposableStablePool (`bpt` present) and ships the monorepo `StableMath`
+/// (always-roundDown `D_P`) — `1` (`INVARIANT_V1`); every non-composable stable
+/// pool (MetaStablePool, the 2021 StablePool) ships the 2021 deployed
+/// `StableMath` (roundUp `P_D`) — `2` (`INVARIANT_V2`).
+///
+/// The Vault specialization is NOT a family signal: it is derived from the
+/// token count (`TwoToken` for 2-token pools), so the wstETH/WETH MetaStablePool
+/// (`0x32296969…`, `specialization = 0x0002`) reads exactly like a 2-token
+/// composable. Rate providers do not discriminate either — both families answer
+/// `getRateProviders()` on mainnet. The BPT-in-tokens shape is the one signal
+/// that is both family-exact (composable pools are the only pools registering
+/// their own BPT as a Vault token) and already fetched by the builder, so it
+/// costs no extra RPC.
+#[must_use]
+pub const fn derive_invariant_version(bpt_present: bool) -> u8 {
+    if bpt_present {
+        1
+    } else {
+        2
+    }
+}
+
 /// The `2e18` constant (`0x1BC16D674EC80000`) that only appears in the
 /// deployed bytecode of **V2** `WeightedPool` contracts (the `y == TWO`
 /// fast-path in `powDown`/`powUp`). Absent from V1 `WeightedPool2Tokens` —
@@ -737,8 +761,9 @@ pub async fn build_balancer_weighted(
 /// the BPT index (token whose address matches the pool — `None` for
 /// `MetaStablePools`); reads `getRateProviders` + per-provider `getRate()`
 /// (empty when the pool doesn't expose them); computes rate-multiplied scaling
-/// factors; and resolves the `invariant_version` from the Vault specialization
-/// (`MetaStable` `specialization=1` → V2, else V1) with an optional override.
+/// factors; and resolves the `invariant_version` from the pool's shape (BPT
+/// among the Vault tokens → composable → V1, else V2; see
+/// [`derive_invariant_version`]) with an optional override that always wins.
 /// Returns a [`RegisterBalancerStablePoolParams`] for
 /// `BotState::register_balancer_stable_pool`.
 ///
@@ -766,18 +791,9 @@ pub async fn build_balancer_stable(
     let fee = choreography::fetch_balancer_swap_fee(io, address, block).await?;
     let amp = choreography::fetch_balancer_amp(io, address, block).await?;
 
-    let decoded = decode_balancer_pool_id(&pool_id);
     let bpt_idx = tokens.iter().position(|t| *t == address);
-    let invariant_version = invariant_version_override.unwrap_or({
-        // MetaStablePools use specialization=1 → INVARIANT_V2 (roundUp `P_D`);
-        // else INVARIANT_V1 (always-roundDown `D_P`). Mirrors
-        // `resolve_invariant_version`.
-        if decoded.specialization == 1 {
-            2
-        } else {
-            1
-        }
-    });
+    let invariant_version =
+        invariant_version_override.unwrap_or(derive_invariant_version(bpt_idx.is_some()));
     let mut base_sf = Vec::with_capacity(tokens.len());
     for token in &tokens {
         base_sf.push(compute_scaling_factor(io, *token, block).await?);

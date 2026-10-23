@@ -774,7 +774,8 @@ class Bot:
         + BPT-detect + rate-provider/rate + scaling-factor + `invariant_version`
         resolution choreography and returns a [`RegisterBalancerStablePoolParams`];
         this adapter registers it into [`PoolEntry::BalancerStable`].
-        `invariant_version` overrides the Vault-specialization heuristic.
+        `invariant_version` overrides the shape-derived invariant version (BPT
+        among the Vault tokens → V1, else V2).
         Returns the `pool_id`.
         """
     def build_balancer_weighted_pool(self, /, address: str, vault: str, block: int | None) -> int:
@@ -1691,6 +1692,22 @@ class BotIo:
         `(uint256, bool, uint256)`; we only need the first word (amp value).
 
         Errors propagate.
+        """
+    def fetch_balancer_factory(
+        self, /, address: str, factories: Sequence[str], block: Any | None = None
+    ) -> str | None:
+        """
+        Find the Balancer V2 factory that owns `address`, by asking each
+        candidate factory's `isPoolFromFactory(address)`.
+
+        Balancer V2 has no enumerable pool registry and deployed pools carry no
+        `factory()` getter, so factory membership is the only on-chain ownership
+        answer — it is what `type_resolution.py` needs to resolve a Balancer
+        address to its registry row (family / variant / class).
+
+        Returns the owning factory as a lowercase `0x` hex string, or `None` when
+        no candidate owns the pool (a factory revision the registry does not
+        carry).
         """
     def fetch_balancer_pool_id(self, /, address: str, block: Any | None = None) -> Any:
         """

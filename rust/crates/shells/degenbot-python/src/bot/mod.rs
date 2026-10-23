@@ -887,7 +887,8 @@ impl PyBot {
     /// + BPT-detect + rate-provider/rate + scaling-factor + `invariant_version`
     /// resolution choreography and returns a [`RegisterBalancerStablePoolParams`];
     /// this adapter registers it into [`PoolEntry::BalancerStable`].
-    /// `invariant_version` overrides the Vault-specialization heuristic.
+    /// `invariant_version` overrides the shape-derived invariant version (BPT
+    /// among the Vault tokens → V1, else V2).
     /// Returns the `pool_id`.
     #[pyo3(signature = (address, vault, block=None, invariant_version=None))]
     fn build_balancer_stable_pool(

@@ -19,6 +19,8 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, cast
 
+from degenbot.balancer.pools import BalancerV2Pool
+from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.exceptions.base import DegenbotValueError
@@ -78,14 +80,19 @@ def pool_class_for_descriptor(
                 pool_type_registry.get_v3_class(chain_id, pool_type.factory or "") or UniswapV3Pool,
             )
         case PoolFamily.STABLESWAP:
-            # Variant-aware: the vault-dependent Balancer variants REQUIRE a
-            # factory registration, and an unrecognized variant must not
-            # silently masquerade as generic Curve (ADR-021 — classify or raise).
+            # Variant-aware: a Balancer variant must resolve to the Balancer
+            # stable class (never to CurveStableswapPool), and an unrecognized
+            # variant must not masquerade as generic Curve (ADR-021 — classify
+            # or raise). The family's own class is the answer even when the
+            # factory is unregistered: a probed Balancer identity (or a DB kind)
+            # is authoritative, the factory only refines it to a deployment.
             variant = classify_pool_variant(pool_type.variant)
+            if variant is PoolVariant.BALANCER_STABLE:
+                return BalancerV2StablePool
             if variant in BALANCER_VARIANTS:
                 msg = (
-                    f"Balancer stable pool with unregistered factory {pool_type.factory}. "
-                    f"Register the factory address in pool_type_registry first."
+                    f"Balancer weighted variant {pool_type.variant!r} on a stableswap family "
+                    f"descriptor (factory {pool_type.factory})."
                 )
                 raise DegenbotValueError(message=msg)
             if variant is PoolVariant.UNRECOGNIZED:
@@ -96,13 +103,8 @@ def pool_class_for_descriptor(
                 raise DegenbotValueError(message=msg)
             return CurveStableswapPool
         case PoolFamily.WEIGHTED:
-            # No default Balancer weighted class — require factory registration
-            if classify_pool_variant(pool_type.variant) in BALANCER_VARIANTS:
-                msg = (
-                    f"Balancer weighted pool with unregistered factory {pool_type.factory}. "
-                    f"Register the factory address in pool_type_registry first."
-                )
-                raise DegenbotValueError(message=msg)
+            if classify_pool_variant(pool_type.variant) is PoolVariant.BALANCER_WEIGHTED:
+                return BalancerV2Pool
             msg = f"No pool class for WEIGHTED family with variant {pool_type.variant!r}"
             raise DegenbotValueError(message=msg)
         case _:
@@ -193,6 +195,84 @@ def _descriptor_from_probing_result(
         variant=None,
         kind=derive_kind(family, None),
         factory=factory,
+    )
+
+
+def resolve_balancer_descriptor(
+    address: ChecksummedAddress,
+    *,
+    chain_id: ChainId,
+    io: BotIo,
+) -> PoolTypeDescriptor | None:
+    """Resolve a Balancer V2 pool's identity from on-chain factory membership.
+
+    A deployed Balancer pool carries no ``factory()`` getter (the probe
+    :func:`resolve_pool_type` tries first), and Balancer V2 exposes no
+    enumerable pool registry (``getPoolCount`` / ``getPools`` / ``getPoolAt``
+    revert on every factory revision). Two reads do answer universally:
+
+    1. ``getPoolId()`` — every Balancer pool (and no other family we build)
+       defines it. A revert means "not a Balancer pool": return ``None`` so the
+       caller's non-Balancer path is untouched.
+    2. ``isPoolFromFactory(address)`` — every factory revision answers it, so
+       membership across the registry's rows for the probed family names the
+       owning factory, and that row carries the identity (family, variant,
+       kind) plus the class the registry registered for it.
+
+    A pool whose owning factory is not in the registry (the MetaStablePool
+    factory is one) still has a positively probed Balancer identity; its
+    descriptor keeps the variant with ``factory=None`` and
+    :func:`pool_class_for_descriptor` supplies the family's default class.
+
+    Identity is a deployment-time property, so the probes run at the head block
+    like :func:`fetch_factory_from_chain` — not at the construction block.
+
+    Returns:
+        The descriptor, or ``None`` when the contract is not a Balancer pool.
+
+    """
+    try:
+        io.fetch_balancer_pool_id(address)
+    except Exception:  # ruff: ignore[blind-except] — a revert is "not Balancer"
+        return None
+
+    try:
+        balancer_family = io.probe_balancer_pool_type(address)
+    except Exception:  # ruff: ignore[blind-except]
+        # `getPoolId()` answered but neither weights nor amplification did: a
+        # Balancer pool outside the weighted/stable families (linear pools),
+        # which no construction arm models. Refuse the identity, never guess.
+        return None
+
+    variant = (
+        PoolVariant.BALANCER_WEIGHTED
+        if balancer_family == "weighted"
+        else PoolVariant.BALANCER_STABLE
+    )
+    family = (
+        PoolFamily.WEIGHTED if variant is PoolVariant.BALANCER_WEIGHTED else PoolFamily.STABLESWAP
+    )
+
+    candidates = [
+        descriptor.factory
+        for (row_chain_id, _factory), (_cls, descriptor, _deployment) in (
+            pool_type_registry.registrations.items()
+        )
+        if row_chain_id == chain_id
+        and descriptor.variant == variant
+        and descriptor.factory is not None
+    ]
+    owning_factory = io.fetch_balancer_factory(address, candidates) if candidates else None
+    if owning_factory is not None:
+        registered = pool_type_registry.get_descriptor(chain_id, owning_factory)
+        if registered is not None:
+            return registered
+
+    return PoolTypeDescriptor(
+        family=family,
+        variant=variant,
+        kind=derive_kind(family, variant),
+        factory=None,
     )
 
 
@@ -307,7 +387,11 @@ def resolve_pool_type(
     Consults these sources in order:
     1. Database `kind` column (exact polymorphic type)
     2. PoolTypeRegistry registration (factory address → descriptor)
-    3. On-chain probing (slot0 vs getReserves) when factory is unknown
+    3. On-chain probing (slot0 vs getReserves) when the factory is unknown to
+       the registry
+    4. Balancer identity — `getPoolId()` plus `isPoolFromFactory()` membership
+       across the registry's Balancer factory rows — when `factory()` does not
+       answer at all (every deployed Balancer pool)
 
     Raises DegenbotValueError if the type cannot be determined.
 
@@ -348,9 +432,18 @@ def resolve_pool_type(
         # Step 3: No registry match — probe the contract to determine invariant
         return resolve_pool_type_by_probing(address, chain_id=chain_id, factory=factory, io=io)
 
+    # Step 4: Balancer identity. A Balancer pool has no `factory()` getter and
+    # its factory rows are the only place its identity lives, so the membership
+    # probe is what keeps the caller from falling through to the Curve arm (the
+    # wrong family's refusal).
+    balancer_descriptor = resolve_balancer_descriptor(address, chain_id=chain_id, io=io)
+    if balancer_descriptor is not None:
+        return balancer_descriptor
+
     raise DegenbotValueError(
         message=(
             f"Cannot resolve pool type for address {address} on chain {chain_id}. "
-            f"The factory() call failed and no database entry exists."
+            f"The factory() call failed, no database entry exists, and no Balancer "
+            f"factory claims the pool."
         ),
     )

@@ -218,7 +218,8 @@ impl Bot {
     /// `getAmplificationParameter` + BPT-detect + rate-provider/rate +
     /// scaling-factor + `invariant_version` resolution choreography,
     /// registered into `PoolEntry::BalancerStable`). `invariant_version`
-    /// overrides the Vault-specialization heuristic.
+    /// overrides the shape-derived invariant version (BPT among the Vault
+    /// tokens → V1, else V2).
     ///
     /// # Errors
     /// [`RefusalKind::MissingConstructionIo`] / [`RefusalKind::BuildRefused`].

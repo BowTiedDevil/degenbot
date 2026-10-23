@@ -793,6 +793,41 @@ pub async fn fetch_balancer_rate(
     abi::decode_get_rate(&bytes)
 }
 
+/// Find the Balancer V2 factory that owns `pool`, by asking each candidate
+/// factory's `isPoolFromFactory(pool)`.
+///
+/// Balancer V2 exposes no enumerable pool registry (`getPoolCount` / `getPools`
+/// / `getPoolAt` revert on every factory revision), and a deployed pool carries
+/// no `factory()` getter — so membership is the only on-chain ownership answer.
+/// A candidate that reverts or fails to decode is not the owner; a candidate
+/// that does not own the pool reports `false`.
+///
+/// Returns `None` when no candidate owns the pool (a factory revision the
+/// registry does not carry — e.g. the MetaStablePool factory).
+pub async fn fetch_balancer_factory(
+    io: &ConstructionIo,
+    pool: Address,
+    candidates: &[Address],
+    block: Option<u64>,
+) -> Option<Address> {
+    for &factory in candidates {
+        let Ok(bytes) = eth_call(
+            io,
+            factory,
+            abi::encode_balancer_is_pool_from_factory(&pool),
+            block,
+        )
+        .await
+        else {
+            continue;
+        };
+        if abi::decode_balancer_is_pool_from_factory(&bytes).unwrap_or(false) {
+            return Some(factory);
+        }
+    }
+    None
+}
+
 /// Probe a Balancer pool's sub-type: `getNormalizedWeights()` succeeds →
 /// [`BalancerFamily::Weighted`]; else `getAmplificationParameter()` succeeds →
 /// [`BalancerFamily::Stable`]; else an error (mirrors
