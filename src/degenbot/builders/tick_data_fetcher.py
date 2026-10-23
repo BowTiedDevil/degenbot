@@ -5,13 +5,14 @@ from __future__ import annotations
 import dataclasses
 import threading
 import time
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from degenbot.config import resolved_config
 from degenbot.logging import logger
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from degenbot._ffi import BotIo
     from degenbot.types.chain import ChecksummedAddress
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
