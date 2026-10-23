@@ -25,11 +25,9 @@ from degenbot.balancer.stable_pools import (
     BalancerV2StablePool,
 )
 from degenbot.fork import AnvilFork
+from tests.sweep_pin import SWEEP_FORK_BLOCK, assert_fork_at_sweep_pin
 
 pytestmark = pytest.mark.online_rpc
-
-# Pinned to the Curve sweep block: one replayable number for both families.
-_SWEEP_FORK_BLOCK = 26204126
 
 # ComposableStablePool (Factory rev3) — lists its own BPT as Vault token 0, so
 # the shape resolves to INVARIANT_V1.
@@ -39,7 +37,7 @@ _BB_S_USD = "0x779d01F939D78a918A3de18cC236ee89221dfd4E"
 _WSTETH_WETH = "0x32296969Ef14EB0c6d29669C550D4a0449130230"
 
 
-@pytest.mark.parametrize("fork_mainnet_archive", [_SWEEP_FORK_BLOCK], indirect=True)
+@pytest.mark.parametrize("fork_mainnet_archive", [SWEEP_FORK_BLOCK], indirect=True)
 class TestBuildPoolBalancerIdentity:
     """`Bot.build_pool` resolves a Balancer address to its own family."""
 
@@ -48,9 +46,9 @@ class TestBuildPoolBalancerIdentity:
         bot_mainnet_archive,
         fork_mainnet_archive: AnvilFork,
     ) -> None:
-        assert fork_mainnet_archive.provider.get_block_number() == _SWEEP_FORK_BLOCK
+        assert_fork_at_sweep_pin(fork_mainnet_archive)
 
-        pool = bot_mainnet_archive.build_pool(_BB_S_USD, state_block=_SWEEP_FORK_BLOCK)
+        pool = bot_mainnet_archive.build_pool(_BB_S_USD, state_block=SWEEP_FORK_BLOCK)
 
         assert isinstance(pool, BalancerV2StablePool)
         assert pool.bpt_idx == 0
@@ -65,7 +63,7 @@ class TestBuildPoolBalancerIdentity:
         This is the leg the pool-id specialization read backwards: `0x0002` is
         `TwoToken`, not a family marker.
         """
-        pool = bot_mainnet_archive.build_pool(_WSTETH_WETH, state_block=_SWEEP_FORK_BLOCK)
+        pool = bot_mainnet_archive.build_pool(_WSTETH_WETH, state_block=SWEEP_FORK_BLOCK)
 
         assert isinstance(pool, BalancerV2StablePool)
         assert pool.bpt_idx is None

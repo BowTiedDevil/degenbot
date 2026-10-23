@@ -54,6 +54,7 @@ from tests.curve.test_curve_onchain_parity import (
 )
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.contract_compat import ContractCompat, make_contract
+from tests.sweep_pin import SWEEP_FORK_BLOCK
 
 Timestamp = int
 
@@ -315,14 +316,12 @@ def test_metapool_with_valid_base_cache():
     assert lp._get_cached_virtual_price(block) == lp._data_provider.base_virtual_price(block)
 
 
-# Pinned sweep head: the registry/factory contents at a fixed block never
-# change, so the compliance sweep replays deterministically on any archive
-# node. Pin to a stage-complete local-node block (advance deliberately).
-_SWEEP_FORK_BLOCK = 26204126
+# Registry/factory sweep pin: its semantics and advance record are in
+# tests/sweep_pin.py.
 
 
 @pytest.mark.online_rpc
-@pytest.mark.parametrize("fork_mainnet_archive", [_SWEEP_FORK_BLOCK], indirect=True)
+@pytest.mark.parametrize("fork_mainnet_archive", [SWEEP_FORK_BLOCK], indirect=True)
 def test_factory_stableswap_pools(fork_mainnet_archive: AnvilFork):
     """Test the user-deployed pools deployed by the factory"""
     stableswap_factory = ContractCompat(
@@ -354,7 +353,7 @@ def test_factory_stableswap_pools(fork_mainnet_archive: AnvilFork):
 
 
 @pytest.mark.online_rpc
-@pytest.mark.parametrize("fork_mainnet_archive", [_SWEEP_FORK_BLOCK], indirect=True)
+@pytest.mark.parametrize("fork_mainnet_archive", [SWEEP_FORK_BLOCK], indirect=True)
 def test_base_registry_pools(fork_mainnet_archive: AnvilFork):
     """Test the custom pools deployed by Curve"""
     registry = make_contract(

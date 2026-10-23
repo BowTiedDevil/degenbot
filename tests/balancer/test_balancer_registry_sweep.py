@@ -23,10 +23,11 @@ size: linear pools, boosted pools' linear constituents, gyro/quant-amm shapes,
 and spam registrations whose address answers no pool getter at all (an EIP-7702
 delegation designator with no pool code).
 
-The pin is the Curve sweep block — one replayable number for both families, a
-stage-complete local-node block advanced deliberately (a head-forking sweep is
-not a gate; the historical Balancer fork failures were exactly head-dependent,
-see `.ergo-notes/balancer-builder-compliance-analysis.md`).
+The pin is `tests/sweep_pin.py`'s `SWEEP_FORK_BLOCK` — one replayable number
+for both families, and the one place that records the block's semantics and any
+advance. A head-forking sweep is not a gate: the historical Balancer fork
+failures were exactly head-dependent, see
+`.ergo-notes/balancer-builder-compliance-analysis.md`.
 
 The refusal check is BY TYPE, never by message: a `SpecViolationError` is the
 one legitimate refusal, and its reason must be one of the named
@@ -51,12 +52,10 @@ from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.exceptions import SpecViolationError
 from degenbot.fork import AnvilFork
-
-# Pinned to the Curve sweep block: one replayable number for both families.
-_SWEEP_FORK_BLOCK = 26204126
+from tests.sweep_pin import SWEEP_FORK_BLOCK, assert_fork_at_sweep_pin
 
 _CORPUS_PATH = (
-    Path(__file__).parent / "data" / f"balancer_v2_pool_registrations_{_SWEEP_FORK_BLOCK}.json"
+    Path(__file__).parent / "data" / f"balancer_v2_pool_registrations_{SWEEP_FORK_BLOCK}.json"
 )
 
 # `SpecRefusal::as_str` for every arm of the refusal taxonomy. A refusal the
@@ -109,7 +108,7 @@ def _named_refusal_reason(exc: SpecViolationError) -> str:
 
 
 @pytest.mark.online_rpc
-@pytest.mark.parametrize("fork_mainnet_archive", [_SWEEP_FORK_BLOCK], indirect=True)
+@pytest.mark.parametrize("fork_mainnet_archive", [SWEEP_FORK_BLOCK], indirect=True)
 def test_every_registered_pool_builds_or_is_refused_typed(
     bot_mainnet_archive,
     fork_mainnet_archive: AnvilFork,
@@ -121,10 +120,10 @@ def test_every_registered_pool_builds_or_is_refused_typed(
     raised at the end, so one bad pool names itself without hiding the rest of
     the census.
     """
-    assert fork_mainnet_archive.provider.get_block_number() == _SWEEP_FORK_BLOCK
+    assert_fork_at_sweep_pin(fork_mainnet_archive)
 
     corpus = _load_corpus()
-    assert corpus["pin_block"] == _SWEEP_FORK_BLOCK
+    assert corpus["pin_block"] == SWEEP_FORK_BLOCK
     pools = corpus["pools"]
     assert pools, "empty corpus"
 
@@ -152,15 +151,15 @@ def test_every_registered_pool_builds_or_is_refused_typed(
                 flush=True,
             )
         try:
-            pool = bot_mainnet_archive.build_pool(address, state_block=_SWEEP_FORK_BLOCK)
+            pool = bot_mainnet_archive.build_pool(address, state_block=SWEEP_FORK_BLOCK)
         except SpecViolationError as refusal:
             refused[_named_refusal_reason(refusal)] += 1
             continue
         except Exception as error:  # noqa: BLE001 — collected, reported as a census line
             failures.append(
                 f"{type(error).__name__}: {error} — pool {index}/{len(pools)} @ {address} "
-                f"(corpus family {family!r}), block {_SWEEP_FORK_BLOCK}. Reproduce: "
-                f'bot.build_pool("{address}", state_block={_SWEEP_FORK_BLOCK})'
+                f"(corpus family {family!r}), block {SWEEP_FORK_BLOCK}. Reproduce: "
+                f'bot.build_pool("{address}", state_block={SWEEP_FORK_BLOCK})'
             )
             continue
 
@@ -174,7 +173,7 @@ def test_every_registered_pool_builds_or_is_refused_typed(
         built[family] += 1
 
     print(
-        f"Balancer V2 registry sweep census @ block {_SWEEP_FORK_BLOCK}: "
+        f"Balancer V2 registry sweep census @ block {SWEEP_FORK_BLOCK}: "
         f"{len(pools)} registered pools — "
         f"built {sum(built.values())} {dict(sorted(built.items()))}, "
         f"refused {sum(refused.values())} {dict(sorted(refused.items()))}, "
@@ -205,7 +204,7 @@ def test_corpus_is_the_pinned_vault_registration_scan() -> None:
     assert corpus["topic0"] == (
         "0x3c13bc30b8e878c53fd2a36b679409c073afd75950be43d8858768e956fbc20e"
     )
-    assert corpus["pin_block"] == _SWEEP_FORK_BLOCK
+    assert corpus["pin_block"] == SWEEP_FORK_BLOCK
     pools = corpus["pools"]
     # One registration per pool address, and every row classified.
     addresses = [row["address"] for row in pools]

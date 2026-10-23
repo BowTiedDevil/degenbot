@@ -35,6 +35,7 @@ from degenbot.provider import AlloyProvider
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.contract_compat import ContractCompat
 from tests.helpers.erc20_factory import make_erc20
+from tests.sweep_pin import SWEEP_FORK_BLOCK, SweepPinHygiene
 
 pytestmark = pytest.mark.online_rpc
 
@@ -90,14 +91,6 @@ COMPOSABLE_STABLE_POOL_ADDRESSES = {
     "tusd_bsp": "0x53BC3cBa3832ebeCBFa002c12023F8ab1AA3a3a0",
     "bb_s_usd": "0x779d01F939D78a918A3de18cC236ee89221dfd4E",
 }
-
-
-# Pinned sweep head: a pool's on-chain state at a fixed block never changes, so
-# these composable-stable parity legs replay deterministically on any archive
-# node instead of drifting with the node's head. Pin to a stage-complete
-# local-node block (advance deliberately) — the same block the Curve compliance
-# sweeps use.
-_SWEEP_FORK_BLOCK = 26204126
 
 
 # ---------- Rate Provider ----------
@@ -299,30 +292,12 @@ def _query_swap(
         pytest.skip(f"On-chain query reverted: {e}")
 
 
-@pytest.mark.parametrize("fork_mainnet_archive", [_SWEEP_FORK_BLOCK], indirect=True)
-class TestPinnedForkHygiene:
+@pytest.mark.parametrize("fork_mainnet_archive", [SWEEP_FORK_BLOCK], indirect=True)
+class TestPinnedForkHygiene(SweepPinHygiene):
     """The pin is part of the expected value; assert it instead of assuming it."""
 
-    def test_fork_is_pinned_to_the_sweep_block(self, fork_mainnet_archive):
-        """The fork block is part of the expected value of every assertion here.
 
-        A fork that drifted to the node's head would replay these legs against
-        moving state, so the pin is asserted rather than assumed.
-        """
-        assert fork_mainnet_archive.provider.get_block_number() == _SWEEP_FORK_BLOCK
-
-    def test_pinned_fork_disables_the_storage_cache(self, fork_mainnet_archive):
-        """A pinned fork must not read anvil's on-disk per-block storage cache.
-
-        The cache entry is keyed by block and shared by every anvil instance, so
-        one written while the archive node could not answer consistently for
-        that block persists — and makes a pinned sweep read state the block's
-        header never had.
-        """
-        assert fork_mainnet_archive._launch.storage_caching is False
-
-
-@pytest.mark.parametrize("fork_mainnet_archive", [_SWEEP_FORK_BLOCK], indirect=True)
+@pytest.mark.parametrize("fork_mainnet_archive", [SWEEP_FORK_BLOCK], indirect=True)
 class TestBalancerV2StablePoolMetaStable:
     """Test BalancerV2StablePool against on-chain for MetaStablePools.
 
@@ -462,7 +437,7 @@ class TestBalancerV2StablePoolMetaStable:
             assert python_in == on_chain_in, f"pct=1/{pct}: diff={python_in - on_chain_in}"
 
 
-@pytest.mark.parametrize("fork_mainnet_archive", [_SWEEP_FORK_BLOCK], indirect=True)
+@pytest.mark.parametrize("fork_mainnet_archive", [SWEEP_FORK_BLOCK], indirect=True)
 class TestBalancerV2StablePoolComposableExact:
     """Test BalancerV2StablePool against on-chain for ComposableStablePools
     with a CacheAwareRateProvider injected.
@@ -608,7 +583,7 @@ class TestBalancerV2StablePoolComposableExact:
             assert python_in == on_chain_in, f"pct=1/{pct}: diff={python_in - on_chain_in}"
 
 
-@pytest.mark.parametrize("fork_mainnet_archive", [_SWEEP_FORK_BLOCK], indirect=True)
+@pytest.mark.parametrize("fork_mainnet_archive", [SWEEP_FORK_BLOCK], indirect=True)
 class TestBalancerV2StablePoolComposableStaleRates:
     """Test that ComposableStablePools without a live rate_provider raise
     StaleRateResult, and that the wrapped values are close

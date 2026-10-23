@@ -15,12 +15,10 @@ import pytest
 
 from degenbot.exceptions import SpecViolationError
 from degenbot.fork import AnvilFork
+from tests.sweep_pin import SWEEP_FORK_BLOCK, assert_fork_at_sweep_pin
 
 pytestmark = pytest.mark.online_rpc
 
-
-# Pinned to the Curve sweep block: one replayable number for both families.
-_SWEEP_FORK_BLOCK = 26204126
 
 # `BROKEN_CURVE_V1_POOLS[0]` — a decommissioned V1 pool whose getters no
 # longer answer.
@@ -30,17 +28,17 @@ _BROKEN_CURVE_POOL = "0x110cc323ca53d622469EdD217387E2E6B33F1dF5"
 _BROKEN_BALANCER_POOL = "0x753BD6a5bF0b14ae7e5d2877e5cD6a3398aA2AAB"
 
 
-@pytest.mark.parametrize("fork_mainnet_archive", [_SWEEP_FORK_BLOCK], indirect=True)
+@pytest.mark.parametrize("fork_mainnet_archive", [SWEEP_FORK_BLOCK], indirect=True)
 def test_broken_pools_are_refused_with_distinct_named_reasons(
     bot_mainnet_archive,
     fork_mainnet_archive: AnvilFork,
 ) -> None:
-    assert fork_mainnet_archive.provider.get_block_number() == _SWEEP_FORK_BLOCK
+    assert_fork_at_sweep_pin(fork_mainnet_archive)
 
     with pytest.raises(SpecViolationError) as curve_err:
-        bot_mainnet_archive.build_pool(_BROKEN_CURVE_POOL, state_block=_SWEEP_FORK_BLOCK)
+        bot_mainnet_archive.build_pool(_BROKEN_CURVE_POOL, state_block=SWEEP_FORK_BLOCK)
     with pytest.raises(SpecViolationError) as balancer_err:
-        bot_mainnet_archive.build_pool(_BROKEN_BALANCER_POOL, state_block=_SWEEP_FORK_BLOCK)
+        bot_mainnet_archive.build_pool(_BROKEN_BALANCER_POOL, state_block=SWEEP_FORK_BLOCK)
 
     curve_message = str(curve_err.value)
     balancer_message = str(balancer_err.value)

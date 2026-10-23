@@ -52,6 +52,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
 from degenbot.fork import AnvilFork
 from tests.helpers.contract_compat import ContractCompat
+from tests.sweep_pin import SWEEP_FORK_BLOCK, SweepPinHygiene
 
 pytestmark = pytest.mark.online_rpc
 
@@ -315,41 +316,15 @@ def _compute_given_out(
     return numerator // denominator + (1 if numerator % denominator > 0 else 0)
 
 
-# Pinned sweep head: a pool's on-chain state at a fixed block never changes, so
-# these composable-stable parity legs replay deterministically on any archive
-# node instead of drifting with the node's head. Pin to a stage-complete
-# local-node block (advance deliberately) — the same block the Curve compliance
-# sweeps use.
-_SWEEP_FORK_BLOCK = 26204126
-
-
 # ---------- Test classes ----------
 
 
-@pytest.mark.parametrize("fork_mainnet_archive", [_SWEEP_FORK_BLOCK], indirect=True)
-class TestPinnedForkHygiene:
+@pytest.mark.parametrize("fork_mainnet_archive", [SWEEP_FORK_BLOCK], indirect=True)
+class TestPinnedForkHygiene(SweepPinHygiene):
     """The pin is part of the expected value; assert it instead of assuming it."""
 
-    def test_fork_is_pinned_to_the_sweep_block(self, fork_mainnet_archive):
-        """The fork block is part of the expected value of every assertion here.
 
-        A fork that drifted to the node's head would replay these legs against
-        moving state, so the pin is asserted rather than assumed.
-        """
-        assert fork_mainnet_archive.provider.get_block_number() == _SWEEP_FORK_BLOCK
-
-    def test_pinned_fork_disables_the_storage_cache(self, fork_mainnet_archive):
-        """A pinned fork must not read anvil's on-disk per-block storage cache.
-
-        The cache entry is keyed by block and shared by every anvil instance, so
-        one written while the archive node could not answer consistently for
-        that block persists — and makes a pinned sweep read state the block's
-        header never had.
-        """
-        assert fork_mainnet_archive._launch.storage_caching is False
-
-
-@pytest.mark.parametrize("fork_mainnet_archive", [_SWEEP_FORK_BLOCK], indirect=True)
+@pytest.mark.parametrize("fork_mainnet_archive", [SWEEP_FORK_BLOCK], indirect=True)
 class TestMetaStablePoolSwaps:
     """Test swap calculations against BalancerQueries for MetaStablePools.
 
@@ -935,7 +910,7 @@ def _compute_composable_given_out(
     return numerator // denominator + (1 if numerator % denominator > 0 else 0)
 
 
-@pytest.mark.parametrize("fork_mainnet_archive", [_SWEEP_FORK_BLOCK], indirect=True)
+@pytest.mark.parametrize("fork_mainnet_archive", [SWEEP_FORK_BLOCK], indirect=True)
 class TestComposableStablePoolSwaps:
     """Test swap calculations against BalancerQueries for ComposableStablePools.
 
