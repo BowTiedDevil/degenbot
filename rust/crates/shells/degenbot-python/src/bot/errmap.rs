@@ -34,8 +34,9 @@ use degenbot_bot::bot_core::RegisterV2PoolError;
 
 use crate::bot::engine::{
     DynamicFeePoolRejectedError, HighFeePoolRejectedError, HookedPoolRejectedError,
-    PathRegistryFullError, PoolAlreadyRegisteredError, SpecViolationError,
-    UnsupportedPoolFamilyError, VerificationMismatchError, VerificationRpcError,
+    PathRegistryFullError, PoolAlreadyRegisteredError, PoolBuildDecodeError, PoolBuildRpcError,
+    SpecViolationError, UnsupportedPoolFamilyError, VerificationMismatchError,
+    VerificationRpcError,
 };
 
 // --- Driver lifecycle (`EngineDriver` seam) ---
@@ -132,7 +133,12 @@ pub(crate) fn map_build_refusal(method: &'static str, kind: RefusalKind) -> PyEr
 }
 
 /// The typed builder-failure vocabulary (the historical `map_builder_err`
-/// rendering, plus the construction route's taxonomy arms).
+/// rendering, plus the construction route's taxonomy arms). The two I/O arms
+/// are TYPED, not text: `Rpc` (the read failed — retry-worthy) and `Decoding`
+/// (the read succeeded with a value no pool can hold — permanent for that
+/// state) ride their own `PoolRegistrationError` subclasses, so a caller can
+/// skip-by-type without parsing the message. Their message text is the
+/// historical rendering, unchanged.
 fn map_build_failure(failure: BuildFailure) -> PyErr {
     match failure {
         BuildFailure::HookedPool => {
@@ -145,13 +151,13 @@ fn map_build_failure(failure: BuildFailure) -> PyErr {
             "pool refused: static fee exceeds the cmd_executor's 2-byte encoding limit",
         ),
         BuildFailure::Rpc(detail) => {
-            PyRuntimeError::new_err(format!("pool build RPC error: {detail}"))
+            PoolBuildRpcError::new_err(format!("pool build RPC error: {detail}"))
         }
         BuildFailure::Spec(reason) => {
             SpecViolationError::new_err(format!("pool build refused: out of spec ({reason})"))
         }
         BuildFailure::Decoding(message) => {
-            PyRuntimeError::new_err(format!("pool build decode failure: {message}"))
+            PoolBuildDecodeError::new_err(format!("pool build decode failure: {message}"))
         }
         BuildFailure::Db(detail) => {
             PyRuntimeError::new_err(format!("pool build DB read failed: {detail}"))
@@ -1115,6 +1121,72 @@ mod tests {
                 "pool has an amount-modifying V4 hook; approximation consumed=102 delivered=100"
             ),
             "rendered: {rendered}"
+        );
+    }
+
+    /// The build taxonomy's I/O arms are typed: a transport hiccup (retry-worthy)
+    /// and a permanent decode bug are distinguishable by exception type, and
+    /// both stay under `PoolRegistrationError` so ONE `except` still covers the
+    /// whole build/admission taxonomy. Messages are the historical text,
+    /// unchanged.
+    #[test]
+    fn build_io_failures_raise_their_typed_class() {
+        use crate::bot::engine::PoolRegistrationError;
+
+        let refused = |failure: BuildFailure| {
+            map_refusal(RefusalKind::BuildRefused {
+                family: None,
+                phase: RegistrationPhase::Build,
+                failure,
+            })
+        };
+
+        let rpc = refused(BuildFailure::Rpc("Request timeout: blip".to_string()));
+        Python::attach(|py| {
+            assert!(
+                rpc.is_instance_of::<PoolBuildRpcError>(py),
+                "a transport failure must surface as the retryable PoolBuildRpcError, got: {rpc}"
+            );
+            assert!(
+                rpc.is_instance_of::<PoolRegistrationError>(py),
+                "the typed build errors stay under the one admission parent"
+            );
+            assert!(
+                !rpc.is_instance_of::<PoolBuildDecodeError>(py),
+                "a transport failure is NOT a decode failure (distinct types)"
+            );
+        });
+        assert_eq!(message(&rpc), "pool build RPC error: Request timeout: blip");
+
+        let decode = refused(BuildFailure::Decoding("bad bytes".to_string()));
+        Python::attach(|py| {
+            assert!(
+                decode.is_instance_of::<PoolBuildDecodeError>(py),
+                "a decoded-value bug must surface as PoolBuildDecodeError, got: {decode}"
+            );
+            assert!(
+                decode.is_instance_of::<PoolRegistrationError>(py),
+                "the typed build errors stay under the one admission parent"
+            );
+            assert!(
+                !decode.is_instance_of::<PoolBuildRpcError>(py),
+                "a decode failure is NOT a transport failure (distinct types)"
+            );
+        });
+        assert_eq!(message(&decode), "pool build decode failure: bad bytes");
+
+        // The Spec arm is unchanged: a typed spec refusal keeps its own class.
+        let spec = refused(BuildFailure::Spec(SpecRefusal::CurveBrokenPool));
+        Python::attach(|py| {
+            assert!(
+                spec.is_instance_of::<SpecViolationError>(py),
+                "the spec arm keeps its class (no regression), got: {spec}"
+            );
+            assert!(spec.is_instance_of::<PoolRegistrationError>(py));
+        });
+        assert_eq!(
+            message(&spec),
+            "pool build refused: out of spec (curve broken pool)"
         );
     }
 }

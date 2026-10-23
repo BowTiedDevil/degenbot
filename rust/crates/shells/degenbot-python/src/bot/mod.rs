@@ -754,9 +754,13 @@ impl PyBot {
     ///
     /// # Errors
     ///
-    /// `RuntimeError` if no `ConstructionIo` is attached, on a builder RPC /
-    /// CREATE2 / spec / DB failure, or on a registration (already-registered /
-    /// spec) failure.
+    /// `RuntimeError` if no `ConstructionIo` is attached (and for a DB-read or
+    /// transient builder failure). A pool refusal is a `PoolRegistrationError`
+    /// subclass — `PoolBuildRpcError` (a read failed: retryable),
+    /// `PoolBuildDecodeError` (a read answered a value no pool can hold),
+    /// `SpecViolationError` (out of spec), or `PoolAlreadyRegisteredError`
+    /// (duplicate registration); a CREATE2 identity divergence stays a plain
+    /// `ValueError`.
     #[pyo3(signature = (address, block=None))]
     fn build_v2_pool(
         &self,
@@ -2401,7 +2405,11 @@ impl PyBot {
     ///
     /// Raises:
     ///     `RuntimeError`: No `ConstructionIo` attached (requires an alloy
-    ///         provider), or a builder RPC/decode failure.
+    ///         provider).
+    ///     `PoolBuildRpcError`: A builder read failed — the pool's state was
+    ///         never read, so the refusal is retryable.
+    ///     `PoolBuildDecodeError`: A builder read answered a value no pool can
+    ///         hold (permanent for the observed state).
     #[pyo3(signature = (address, registry_addresses, block=None))]
     fn build_curve_pool(
         &self,

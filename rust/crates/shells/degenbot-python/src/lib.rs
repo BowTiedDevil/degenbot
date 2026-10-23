@@ -762,6 +762,17 @@ mod _ffi {
                 "SpecViolationError",
                 py.get_type::<crate::bot::engine::SpecViolationError>(),
             )?;
+            // The build taxonomy's I/O arms: a transport failure (retryable)
+            // and a decode failure (permanent for the observed state) are
+            // classifiable by type under the same admission parent.
+            m.add(
+                "PoolBuildRpcError",
+                py.get_type::<crate::bot::engine::PoolBuildRpcError>(),
+            )?;
+            m.add(
+                "PoolBuildDecodeError",
+                py.get_type::<crate::bot::engine::PoolBuildDecodeError>(),
+            )?;
             // PRG-4: the registered-path cap refusal — a BENIGN stop signal
             // the crawl catches instead of a Python counter unwind.
             m.add(

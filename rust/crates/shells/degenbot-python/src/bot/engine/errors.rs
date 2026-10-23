@@ -83,9 +83,14 @@ create_exception!(
 //      │                                              fee > 65535)
 //      ├─ PoolAlreadyRegisteredError                (V2/V3/V4 — duplicate
 //      │                                              address at registration)
-//      └─ SpecViolationError                        (V2/V3/V4 — out-of-spec
-//                                                     field: sqrt/tick/fee/
-//                                                     tickSpacing/reserve)
+//      ├─ SpecViolationError                        (V2/V3/V4 — out-of-spec
+//      │                                              field: sqrt/tick/fee/
+//      │                                              tickSpacing/reserve)
+//      ├─ PoolBuildRpcError                         (build — the I/O read
+//      │                                              itself failed: retryable)
+//      └─ PoolBuildDecodeError                      (build — the read succeeded
+//                                                     but its value is invalid:
+//                                                     permanent for that state)
 create_exception!(
     degenbot._ffi,
     PoolRegistrationError,
@@ -121,6 +126,27 @@ create_exception!(
     SpecViolationError,
     crate::bot::engine::PoolRegistrationError,
     "A pool was refused as out of spec, either at registration (a field violates its on-chain Solidity bound: e.g. V2 reserve > uint112, V3/V4 sqrtPriceX96 / tick / fee / tickSpacing out of range) or at build (the pool is unbuildable, e.g. a known-broken pool, too few coins, an unreadable coin). The message identifies the offending field, its value, and the bound it violates; a build refusal names its reason in parentheses, e.g. `pool build refused: out of spec (curve broken pool)`."
+);
+
+// The build taxonomy's two I/O arms. A build can fail before admission is ever
+// decided, and the two ways it does need different caller behaviour: a
+// transport failure says only that the chain could not be reached (retry
+// later), while a decode failure says the chain answered with a value no pool
+// can hold (retrying re-reads the same answer). They ride the ONE admission
+// parent so a single `except PoolRegistrationError:` still covers the whole
+// build/admission taxonomy, and the distinction is carried by the TYPE instead
+// of the message text.
+create_exception!(
+    degenbot._ffi,
+    PoolBuildRpcError,
+    crate::bot::engine::PoolRegistrationError,
+    "A pool build could not complete because a provider call failed (transport error, failed eth_call, unreachable endpoint). Transient and retry-worthy: the refusal says nothing about the pool's admissibility because its state was never read."
+);
+create_exception!(
+    degenbot._ffi,
+    PoolBuildDecodeError,
+    crate::bot::engine::PoolRegistrationError,
+    "A pool build read chain data successfully but the returned values do not decode into a valid pool shape (e.g. a token reporting more than 18 decimals, a value that does not fit its field). Permanent for the observed state: re-reading the same data decodes the same way, so the pool is inadmissible rather than momentarily unreachable."
 );
 
 // ADR-037: hooked V4 pools are admitted but their simulations use

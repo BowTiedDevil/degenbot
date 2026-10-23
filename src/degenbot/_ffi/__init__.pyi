@@ -50,6 +50,16 @@ class PoolAlreadyRegisteredError(PoolRegistrationError):
     A pool at this address is already registered. Subclasses PoolRegistrationError (a wiring/programming error surfaced at admission time, distinct from per-field spec violations / V4 admission categories).
     """
 
+class PoolBuildDecodeError(PoolRegistrationError):
+    """
+    A pool build read chain data successfully but the returned values do not decode into a valid pool shape (e.g. a token reporting more than 18 decimals, a value that does not fit its field). Permanent for the observed state: re-reading the same data decodes the same way, so the pool is inadmissible rather than momentarily unreachable.
+    """
+
+class PoolBuildRpcError(PoolRegistrationError):
+    """
+    A pool build could not complete because a provider call failed (transport error, failed eth_call, unreachable endpoint). Transient and retry-worthy: the refusal says nothing about the pool's admissibility because its state was never read.
+    """
+
 class PoolRegistrationError(ValueError):
     """
     A pool was refused at registration (duplicate address, out-of-spec field, V4 amount-modifying hook, V4 dynamic fee, or V4 high static fee > 65535). Subclasses classify the specific admission reason so build_paths skips rejected pools by type, not string matching.
@@ -808,7 +818,11 @@ class Bot:
 
         Raises:
             `RuntimeError`: No `ConstructionIo` attached (requires an alloy
-                provider), or a builder RPC/decode failure.
+                provider).
+            `PoolBuildRpcError`: A builder read failed — the pool's state was
+                never read, so the refusal is retryable.
+            `PoolBuildDecodeError`: A builder read answered a value no pool can
+                hold (permanent for the observed state).
         """
     def build_erc20_token(
         self, /, address: str, chain_id: int, block: int | None = None
@@ -844,9 +858,13 @@ class Bot:
 
         # Errors
 
-        `RuntimeError` if no `ConstructionIo` is attached, on a builder RPC /
-        CREATE2 / spec / DB failure, or on a registration (already-registered /
-        spec) failure.
+        `RuntimeError` if no `ConstructionIo` is attached (and for a DB-read or
+        transient builder failure). A pool refusal is a `PoolRegistrationError`
+        subclass — `PoolBuildRpcError` (a read failed: retryable),
+        `PoolBuildDecodeError` (a read answered a value no pool can hold),
+        `SpecViolationError` (out of spec), or `PoolAlreadyRegisteredError`
+        (duplicate registration); a CREATE2 identity divergence stays a plain
+        `ValueError`.
         """
     def build_v3_pool(
         self,
@@ -4893,6 +4911,8 @@ __all__ = [
     "PathStepBuilder",
     "Pool",
     "PoolAlreadyRegisteredError",
+    "PoolBuildDecodeError",
+    "PoolBuildRpcError",
     "PoolKind",
     "PoolRegistrationError",
     "PoolTickCoverage",

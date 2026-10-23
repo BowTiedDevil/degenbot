@@ -121,6 +121,20 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
     ExceptionIsland {
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
+        name: "PoolBuildRpcError",
+        base: "PoolRegistrationError",
+        message: "A pool build could not complete because a provider call failed (transport error, failed eth_call, unreachable endpoint). Transient and retry-worthy: the refusal says nothing about the pool's admissibility because its state was never read.",
+    },
+    ExceptionIsland {
+        python_module: "degenbot._ffi",
+        rust_path: "bot::engine::errors",
+        name: "PoolBuildDecodeError",
+        base: "PoolRegistrationError",
+        message: "A pool build read chain data successfully but the returned values do not decode into a valid pool shape (e.g. a token reporting more than 18 decimals, a value that does not fit its field). Permanent for the observed state: re-reading the same data decodes the same way, so the pool is inadmissible rather than momentarily unreachable.",
+    },
+    ExceptionIsland {
+        python_module: "degenbot._ffi",
+        rust_path: "bot::engine::errors",
         name: "PossibleInaccurateResult",
         base: "ValueError",
         message: "The simulated swap crosses a pool whose amount-modifying hook may have invalidated the result; the attached amounts are the standard-math approximation.",
@@ -609,7 +623,7 @@ mod tests {
         }
         assert_eq!(
             EXCEPTION_ISLANDS.len(),
-            18,
+            20,
             "one entry per create_exception! island"
         );
     }
