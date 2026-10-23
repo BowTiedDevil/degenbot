@@ -14,7 +14,9 @@
 //!
 //! Live claims (ignored by default, network-gated), following
 //! `tests/frame_replay.rs`'s fixture discipline (Eip1559-only, no access
-//! list, first-sender-in-block, env-pinnable fixtures):
+//! list, first-sender-in-block). Each leg replays a committed, chain-verified
+//! frame — an archived pin block plus its swap tx — and only falls back to the
+//! env-pinnable scan window when the node cannot serve that frame:
 //! - a replayed V2 pair swap's extracted reserves equal the chain's post-tx
 //!   word, decoded through the same layout rows — 0-wei error;
 //! - a V3 in-range swap's slot0 (sqrtPriceX96 + tick) + liquidity equal the
@@ -25,7 +27,7 @@
 
 use std::sync::Arc;
 
-use alloy::primitives::{address, Address, Bytes, B256, U256};
+use alloy::primitives::{address, b256, Address, Bytes, B256, U256};
 use degenbot_pools::slot_layout::{
     concentrated_liquidity_liquidity_tracked_word, concentrated_liquidity_slot0_tracked_word,
     decode_tick_word, decode_v2_reserves_word, pack_v2_reserves_word, tick_mapping_slot_at_base,
@@ -751,6 +753,167 @@ const V2_PAIR_USDC_WETH: Address = address!("0xB4e16d0168e52d35CACD2c6185b44281E
 /// stay bounded when a window won't yield a clean frame).
 const MAX_TRIED_FRAMES: usize = 64;
 
+/// A committed, chain-verified frame a live leg replays before it scans: the
+/// block whose PARENT state the replay starts from, the swap tx landing in it,
+/// and the pool carrying the leg's predicate. Each fixture passed every gate
+/// the live scanner applies — replayable input domain, a settling replay, no
+/// earlier same-block touch of `pool`, typed post-state parity for `pool` — so
+/// a fork run replays one fixed frame instead of whatever the moving-head
+/// window happens to yield.
+#[derive(Clone, Copy, Debug)]
+struct PinnedFrame {
+    pin: u64,
+    tx: B256,
+    pool: Address,
+}
+
+/// A pair swap whose post-tx `reserves` word matches the replayed journal
+/// word to the wei.
+const V2_PAIR_FRAME: PinnedFrame = PinnedFrame {
+    pin: 26_253_267,
+    tx: b256!("0x32a0b68c7b721396fbceb0414f36983532d36a62ae442ccc8f6f8f4475d44ec8"),
+    pool: address!("0x29400Cbdb5E586bF274b2F052E4639A9f088B5bd"),
+};
+
+/// A swap that stays inside its current tick range: slot0 + liquidity parity,
+/// no tick word journalled.
+const V3_IN_RANGE_FRAME: PinnedFrame = PinnedFrame {
+    pin: 26_253_263,
+    tx: b256!("0x4a32ce0e488c2021937fc3fa462d8edc20713adf471756d8f29c8213664264b7"),
+    pool: address!("0x5aAc15117e733ba4c9A039525E24AC330c0B4D4F"),
+};
+
+/// A swap that crosses an initialized tick: every recovered tick word matches
+/// the node's post-tx `ticks(tick)` word, and at least one is recovered.
+const V3_TICK_CROSSING_FRAME: PinnedFrame = PinnedFrame {
+    pin: 26_253_091,
+    tx: b256!("0xf80357f25133ddc2c3f7771a15d05513824a52d2cb9b46930454d7886d4b9220"),
+    pool: address!("0x7F63306A62C345365881e0fFF85CB2c8BaaA13D5"),
+};
+
+/// The committed frame table: one fixture per live leg.
+const PINNED_FRAMES: [(&str, PinnedFrame); 3] = [
+    ("v2_pair", V2_PAIR_FRAME),
+    ("v3_in_range", V3_IN_RANGE_FRAME),
+    ("v3_tick_crossing", V3_TICK_CROSSING_FRAME),
+];
+
+/// A pool a leg's gates confirmed, with the predicate payload they asserted:
+/// the tick words the frame's journal recovered for it (pairs journal none).
+#[derive(Clone, Copy, Debug)]
+struct VerifiedPool {
+    pool: Address,
+    touched_tick_words: usize,
+}
+
+/// What one candidate frame yielded under a leg's gates.
+enum FrameVerdict {
+    /// Every gate held: the pools parity was confirmed for.
+    Verified(Vec<VerifiedPool>),
+    /// Not a candidate for this leg (domain, predicate, or dirty-pool miss).
+    NoCandidate,
+    /// The frame does not settle against parent state; later same-block txs
+    /// build on it, so the rest of its block is unusable too.
+    Unsettleable,
+}
+
+impl std::fmt::Display for FrameVerdict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Verified(pools) => {
+                write!(f, "verified")?;
+                for (i, verified) in pools.iter().enumerate() {
+                    write!(
+                        f,
+                        "{}{}={} tick words",
+                        if i == 0 { " " } else { ", " },
+                        verified.pool,
+                        verified.touched_tick_words
+                    )?;
+                }
+                Ok(())
+            }
+            Self::NoCandidate => write!(f, "no candidate"),
+            Self::Unsettleable => write!(f, "unsettleable against parent state"),
+        }
+    }
+}
+
+/// The live legs' acquisition readout: which frame a leg replayed and the
+/// predicate it carried. Assertions carry pass/fail; this carries the why.
+#[expect(
+    clippy::print_stdout,
+    reason = "the acquisition route is the live legs' operator readout; a \
+              --nocapture run is its consumer, not a debug leftover"
+)]
+fn journal_note(msg: &str) {
+    println!("{msg}");
+}
+
+/// The committed frame table is complete: a zeroed entry would silently fall
+/// back to the moving-head scan, which is the instability these fixtures
+/// exist to remove.
+#[test]
+fn pinned_frames_are_complete() {
+    for (leg, frame) in PINNED_FRAMES {
+        assert_ne!(frame.pin, 0, "{leg} fixture pins a block");
+        assert_ne!(frame.tx, B256::ZERO, "{leg} fixture names its swap tx");
+        assert_ne!(frame.pool, Address::ZERO, "{leg} fixture names its pool");
+    }
+}
+
+/// The live scan's window depth below the head, kept well below the sync
+/// frontier (a frame is only replayed against its parent block, so depth costs
+/// nothing but the search).
+const LIVE_SCAN_DEPTH: u64 = 300;
+
+/// The newest-first window a live leg scans when no block is pinned.
+async fn scan_window(provider: &alloy::providers::RootProvider, depth: u64) -> Vec<u64> {
+    use alloy::providers::Provider as _;
+    let head = provider.get_block_number().await.unwrap();
+    (1..=depth).rev().map(|i| head.saturating_sub(i)).collect()
+}
+
+/// The block an env pin names — an operator hunting a frame there.
+fn pinned_block(pin_env: &str) -> Option<u64> {
+    std::env::var(pin_env)
+        .ok()
+        .map(|b| b.parse::<u64>().unwrap())
+}
+
+/// The pinned frame's landing tx, or `None` when the node cannot serve it at
+/// the pinned block — an unavailable frame degrades to the live scan instead
+/// of failing the leg.
+async fn pinned_frame_tx(
+    provider: &alloy::providers::RootProvider,
+    frame: &PinnedFrame,
+) -> Option<alloy::rpc::types::Transaction> {
+    use alloy::providers::Provider as _;
+    let t = provider
+        .get_transaction_by_hash(frame.tx)
+        .await
+        .ok()
+        .flatten()?;
+    // A hash landing outside the pin is not this fixture's frame.
+    (t.block_number == Some(frame.pin)).then_some(t)
+}
+
+/// The committed fixture's pool is one a leg's gates confirmed: a fixture
+/// naming an untouched pool would document a predicate nothing asserted.
+fn assert_pinned_pool(verified: &[VerifiedPool], frame: &PinnedFrame) {
+    assert!(
+        verified.iter().any(|v| v.pool == frame.pool),
+        "the committed fixture names a pool the frame's gates confirmed: \
+         {} vs {}",
+        frame.pool,
+        verified
+            .iter()
+            .map(|v| v.pool.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+}
+
 /// The scratch stack never applies the strategy's state overrides, so the
 /// live tests only need a well-formed (all-zero) warmup set to pass through
 /// `BlockSimHandle::build`.
@@ -978,34 +1141,193 @@ async fn v2_pair_hits(
     hits
 }
 
-/// Live parity: a replayed V2 pair swap's extracted reserves equal the
-/// chain's post-tx `reserves` word decoded through the same layout rows —
-/// 0-wei error — for a clean-frame first-sender-in-block router swap.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "live network: needs a chain-1 RPC behind DEGENBOT_RPC_HTTP_CHAINID_1"]
-#[expect(clippy::too_many_lines)]
-async fn live_v2_pair_swap_post_state_matches_the_node() {
-    use alloy::consensus::Transaction as _;
-    use alloy::eips::{BlockId, BlockNumberOrTag};
-    use alloy::providers::Provider;
-
-    let provider = live_provider();
-    let head = provider.get_block_number().await.unwrap();
-    let scan = match std::env::var("DEGENBOT_V2_FIXTURE_BLOCK") {
-        Ok(b) => vec![b.parse::<u64>().unwrap()],
-        Err(_) => (1..=300u64).rev().map(|i| head.saturating_sub(i)).collect(),
-    };
+/// The V2 pair family identity: keccak256 of a deployed pair's runtime (one
+/// runtime = one layout) — the fixture discriminates touched pair accounts
+/// with it.
+async fn v2_pair_family(provider: &alloy::providers::RootProvider) -> B256 {
+    use alloy::providers::Provider as _;
     let pair_code: alloy::primitives::Bytes = provider
         .client()
         .request("eth_getCode", (V2_PAIR_USDC_WETH, "latest"))
         .await
         .unwrap();
-    let pair_family = code_id(&pair_code);
+    code_id(&pair_code)
+}
 
+/// Evaluate one candidate frame against the V2 leg's gates: a router target in
+/// the replayable input domain, a pair-family account whose `reserves` word
+/// the frame writes, no earlier same-block touch of that account, a settling
+/// replay, and 0-wei reserves parity against the node's post-tx word.
+async fn v2_frame_verdict(
+    provider: &alloy::providers::RootProvider,
+    pin: u64,
+    timestamp: u64,
+    t: &alloy::rpc::types::Transaction,
+    pair_family: B256,
+    code_cache: &mut hashbrown::HashMap<Address, Option<B256>>,
+    tried: &mut usize,
+) -> FrameVerdict {
+    use alloy::consensus::Transaction as _;
+    use alloy::eips::BlockId;
+    use alloy::providers::Provider;
+
+    // Cheap filters first: known router + replayable input domain.
+    if !ROUTER_TARGETS.contains(&t.to().unwrap_or_default()) {
+        return FrameVerdict::NoCandidate;
+    }
+    let parent_nonce = provider
+        .get_transaction_count(t.inner.signer())
+        .block_id(BlockId::number(pin.saturating_sub(1)))
+        .await
+        .unwrap();
+    if !is_replayable_domain(t, parent_nonce) {
+        return FrameVerdict::NoCandidate;
+    }
+    let (node_post, _) = node_post_diff(provider, *t.inner.hash()).await;
+    let pairs = v2_pair_hits(provider, &node_post, pair_family, code_cache).await;
+    if pairs.is_empty() {
+        return FrameVerdict::NoCandidate;
+    }
+    // Same-block interference would diverge a parent-state replay of any of
+    // the frame's pairs, so one dirty pair disqualifies the whole frame.
+    let tx_index = t
+        .transaction_index
+        .expect("rpc transaction carries its index");
+    for &pair in &pairs {
+        if pool_touched_earlier_in_block(provider, pair, pin, *t.inner.hash(), tx_index).await {
+            return FrameVerdict::NoCandidate;
+        }
+    }
+
+    *tried += 1;
+    let descriptors: hashbrown::HashMap<Address, PoolFamily> =
+        pairs.iter().map(|a| (*a, PoolFamily::V2Pair)).collect();
+    live_scratch!(
+        scratch,
+        handle,
+        provider,
+        pin,
+        timestamp,
+        parent_base_fee(provider, pin).await
+    );
+    let Ok(out) = scratch.replay(&replayable_of(t)) else {
+        return FrameVerdict::Unsettleable; // not a settleable frame
+    };
+    assert!(
+        matches!(out.status, ReplayStatus::Success),
+        "status {:?}",
+        out.status
+    );
+
+    let states = extract_pool_post_states(&out, &descriptors);
+    for pair in &pairs {
+        let state = post(&states, *pair);
+        assert_eq!(state.family, PoolFamily::V2Pair);
+        let expected = decode_v2_reserves_word(
+            *node_post
+                .get(pair)
+                .and_then(|s| s.get(&U256::from(8u64)))
+                .expect("the node diff reported slot 8 for the pair"),
+        );
+        match &state.kind {
+            PoolPostKind::Typed(TypedPoolPost::V2 { reserves }) => {
+                assert_eq!(reserves, &expected, "0-wei reserves parity vs the node");
+            }
+            other => panic!("expected V2 typed post-state for {pair}, got {other:?}"),
+        }
+    }
+    FrameVerdict::Verified(
+        pairs
+            .iter()
+            .map(|pool| VerifiedPool {
+                pool: *pool,
+                touched_tick_words: 0,
+            })
+            .collect(),
+    )
+}
+
+/// Replay [`V2_PAIR_FRAME`] — the V2 leg's default route — and report whether
+/// it carried the leg. A frame the node cannot serve, or one that fails a
+/// gate, is noted so the window scan that follows is attributable.
+async fn committed_v2_frame_carries_leg(
+    provider: &alloy::providers::RootProvider,
+    pair_family: B256,
+    code_cache: &mut hashbrown::HashMap<Address, Option<B256>>,
+    tried: &mut usize,
+) -> bool {
+    use alloy::eips::BlockNumberOrTag;
+    use alloy::providers::Provider;
+
+    let frame = &V2_PAIR_FRAME;
+    let Some(t) = pinned_frame_tx(provider, frame).await else {
+        journal_note(&format!(
+            "journal[v2_pair] committed fixture {} is not retrievable at block {}; \
+             falling back to the live scan",
+            frame.tx, frame.pin
+        ));
+        return false;
+    };
+    let block = provider
+        .get_block_by_number(BlockNumberOrTag::Number(frame.pin))
+        .await
+        .unwrap()
+        .expect("the fixture's pin block exists");
+    let verdict = v2_frame_verdict(
+        provider,
+        frame.pin,
+        block.header.timestamp,
+        &t,
+        pair_family,
+        code_cache,
+        tried,
+    )
+    .await;
+    if let FrameVerdict::Verified(verified) = &verdict {
+        assert_pinned_pool(verified, frame);
+        journal_note(&format!(
+            "journal[v2_pair] via committed fixture: {verdict} pin={} tx={}",
+            frame.pin, frame.tx
+        ));
+        return true;
+    }
+    journal_note(&format!(
+        "journal[v2_pair] committed fixture {} is not a clean frame ({verdict}); \
+         falling back to the live scan",
+        frame.tx
+    ));
+    false
+}
+
+/// Live parity: a replayed V2 pair swap's extracted reserves equal the
+/// chain's post-tx `reserves` word decoded through the same layout rows —
+/// 0-wei error — for a clean-frame first-sender-in-block router swap.
+///
+/// [`V2_PAIR_FRAME`] is the default route; an env pin hunts a frame at that
+/// block, and the newest-first window covers a node that cannot serve the
+/// committed frame.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live network: needs a chain-1 RPC behind DEGENBOT_RPC_HTTP_CHAINID_1"]
+async fn live_v2_pair_swap_post_state_matches_the_node() {
+    use alloy::eips::BlockNumberOrTag;
+    use alloy::providers::Provider;
+
+    let provider = live_provider();
+    let pair_family = v2_pair_family(&provider).await;
     let mut code_cache = hashbrown::HashMap::new();
     let mut tried = 0usize;
-    let mut verified = false;
-    'blocks: for pin in scan {
+
+    let scan = if let Some(pin) = pinned_block("DEGENBOT_V2_FIXTURE_BLOCK") {
+        vec![pin]
+    } else {
+        if committed_v2_frame_carries_leg(&provider, pair_family, &mut code_cache, &mut tried).await
+        {
+            return;
+        }
+        scan_window(&provider, LIVE_SCAN_DEPTH).await
+    };
+
+    for pin in scan {
         let Some(block) = provider
             .get_block_by_number(BlockNumberOrTag::Number(pin))
             .full()
@@ -1016,87 +1338,34 @@ async fn live_v2_pair_swap_post_state_matches_the_node() {
         };
         for t in block.transactions.txns() {
             if tried >= MAX_TRIED_FRAMES {
-                break 'blocks;
+                break;
             }
-            // Cheap filters first: known router + replayable input domain.
-            if !ROUTER_TARGETS.contains(&t.to().unwrap_or_default()) {
-                continue;
-            }
-            let parent_nonce = provider
-                .get_transaction_count(t.inner.signer())
-                .block_id(BlockId::number(pin.saturating_sub(1)))
-                .await
-                .unwrap();
-            if !is_replayable_domain(t, parent_nonce) {
-                continue;
-            }
-            let (node_post, _) = node_post_diff(&provider, *t.inner.hash()).await;
-            let pairs = v2_pair_hits(&provider, &node_post, pair_family, &mut code_cache).await;
-            if pairs.is_empty() {
-                continue;
-            }
-            // Same-block interference would diverge a parent-state replay.
-            let tx_index = t
-                .transaction_index
-                .expect("rpc transaction carries its index");
-            let mut clean = false;
-            for &pair in &pairs {
-                if pool_touched_earlier_in_block(&provider, pair, pin, *t.inner.hash(), tx_index)
-                    .await
-                {
-                    clean = true;
-                    break;
-                }
-            }
-            if clean {
-                continue;
-            }
-
-            tried += 1;
-            let descriptors: hashbrown::HashMap<Address, PoolFamily> =
-                pairs.iter().map(|a| (*a, PoolFamily::V2Pair)).collect();
-            live_scratch!(
-                scratch,
-                handle,
+            let verdict = v2_frame_verdict(
                 &provider,
                 pin,
                 block.header.timestamp,
-                parent_base_fee(&provider, pin).await
-            );
-            let Ok(out) = scratch.replay(&replayable_of(t)) else {
-                continue 'blocks; // not a settleable frame — skip the fixture
-            };
-            assert!(
-                matches!(out.status, ReplayStatus::Success),
-                "status {:?}",
-                out.status
-            );
-
-            let states = extract_pool_post_states(&out, &descriptors);
-            for pair in &pairs {
-                let state = post(&states, *pair);
-                assert_eq!(state.family, PoolFamily::V2Pair);
-                let expected = decode_v2_reserves_word(
-                    *node_post
-                        .get(pair)
-                        .and_then(|s| s.get(&U256::from(8u64)))
-                        .expect("the node diff reported slot 8 for the pair"),
-                );
-                match &state.kind {
-                    PoolPostKind::Typed(TypedPoolPost::V2 { reserves }) => {
-                        assert_eq!(reserves, &expected, "0-wei reserves parity vs the node");
-                    }
-                    other => panic!("expected V2 typed post-state for {pair}, got {other:?}"),
-                }
+                t,
+                pair_family,
+                &mut code_cache,
+                &mut tried,
+            )
+            .await;
+            if matches!(verdict, FrameVerdict::Unsettleable) {
+                break; // later same-block txs build on this frame
             }
-            verified = true;
-            break 'blocks;
+            if matches!(verdict, FrameVerdict::Verified(_)) {
+                journal_note(&format!(
+                    "journal[v2_pair] via live scan: {verdict} pin={pin} tx={}",
+                    t.inner.hash()
+                ));
+                return;
+            }
         }
     }
-    assert!(
-        verified,
-        "no clean V2 pair swap fixture found in the scanned blocks \
-         (pin one via DEGENBOT_V2_FIXTURE_BLOCK)"
+    panic!(
+        "no clean V2 pair swap frame replayed (committed fixture {} plus {tried} \
+         live-scan replays); pin a block via DEGENBOT_V2_FIXTURE_BLOCK",
+        V2_PAIR_FRAME.tx
     );
 }
 
@@ -1118,34 +1387,298 @@ async fn live_v3_tick_crossing_swap_touched_ticks_match_the_node() {
     v3_live_parity(true).await;
 }
 
-/// Shared V3 live parity. Fixture discovery follows the
-/// `swap_capture_correctness` probe's shape: scan logs for V3 `Swap`
-/// events, take the first replay-clean tx whose emitter pool of the
-/// requested crossing class was untouched earlier in its block, then replay
-/// through the scratch seam over the parent block and compare the extracted
-/// typed post against the node's post-tx words — both sides decode through
-/// the same layout rows.
-#[expect(clippy::too_many_lines)]
-async fn v3_live_parity(want_crossing: bool) {
-    use alloy::eips::{BlockId, BlockNumberOrTag};
+/// The V3 `Swap`-log emitter pools per tx hash in one block — the candidate
+/// pool set the in-range and crossing legs classify.
+async fn v3_swap_pools_by_tx(
+    provider: &alloy::providers::RootProvider,
+    pin: u64,
+) -> hashbrown::HashMap<alloy::primitives::TxHash, Vec<Address>> {
+    use alloy::eips::BlockNumberOrTag;
+    use alloy::providers::Provider as _;
+
+    let logs = provider
+        .get_logs(
+            &alloy::rpc::types::Filter::new()
+                .event_signature(degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC)
+                .from_block(BlockNumberOrTag::Number(pin))
+                .to_block(BlockNumberOrTag::Number(pin)),
+        )
+        .await
+        .unwrap();
+    let mut pools_by_tx: hashbrown::HashMap<alloy::primitives::TxHash, Vec<Address>> =
+        hashbrown::HashMap::new();
+    for log in &logs {
+        if log.block_number != Some(pin) {
+            continue;
+        }
+        pools_by_tx
+            .entry(log.transaction_hash.unwrap_or_default())
+            .or_default()
+            .push(log.address());
+    }
+    pools_by_tx
+}
+
+/// A crossed frame touches keccak-derived slots (tick word / bitmap /
+/// fee-growth-outside); an in-range frame only moves the scalar slots.
+fn journalled_keccak_slot(slot: &U256) -> bool {
+    *slot >> 128u32 != U256::ZERO
+}
+
+/// Evaluate one candidate frame against a V3 leg's gates: a replayable input
+/// domain, an emitter pool of the requested crossing class untouched earlier
+/// in its block, a settling replay, slot0 + liquidity parity, tick-word parity
+/// for every recovered tick, and — for a crossing — at least one recovered
+/// tick word.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the parity lanes read top-to-bottom per tracked slot kind, \
+              mirroring the layout table"
+)]
+async fn v3_frame_verdict(
+    provider: &alloy::providers::RootProvider,
+    pin: u64,
+    timestamp: u64,
+    t: &alloy::rpc::types::Transaction,
+    pools: &[Address],
+    want_crossing: bool,
+    tried: &mut usize,
+) -> FrameVerdict {
+    use alloy::eips::BlockId;
     use alloy::providers::Provider;
 
-    let v3_swap_topic = degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
-    let provider = live_provider();
-    let head = provider.get_block_number().await.unwrap();
-    let scan = match std::env::var("DEGENBOT_V3_FIXTURE_BLOCK") {
-        Ok(b) => vec![b.parse::<u64>().unwrap()],
-        Err(_) => (1..=300u64).rev().map(|i| head.saturating_sub(i)).collect(),
-    };
-    // A crossed frame touches keccak-derived slots (tick word / bitmap /
-    // fee-growth-outside); an in-range frame only moves the scalar slots.
-    let keccakish = |slot: &U256| *slot >> 128u32 != U256::ZERO;
+    let parent_nonce = provider
+        .get_transaction_count(t.inner.signer())
+        .block_id(BlockId::number(pin.saturating_sub(1)))
+        .await
+        .unwrap();
+    if !is_replayable_domain(t, parent_nonce) {
+        return FrameVerdict::NoCandidate;
+    }
+    let (node_post, node_pre) = node_post_diff(provider, *t.inner.hash()).await;
+    // Descriptor per emitter pool of the requested crossing class, excluding
+    // pools an earlier same-block tx already touched.
+    let tx_index = t
+        .transaction_index
+        .expect("rpc transaction carries its index");
+    let mut descriptors = hashbrown::HashMap::new();
+    for pool in pools {
+        let Some(pool_post) = node_post.get(pool) else {
+            continue;
+        };
+        if pool_post.keys().any(journalled_keccak_slot) != want_crossing {
+            continue;
+        }
+        if pool_touched_earlier_in_block(provider, *pool, pin, *t.inner.hash(), tx_index).await {
+            continue;
+        }
+        let spacing = tick_spacing_of(provider, *pool).await;
+        let hint = pool_pre_tx_tick(provider, &node_pre, &node_post, *pool, pin).await;
+        descriptors.insert(
+            *pool,
+            PoolFamily::V3 {
+                layout: ConcentratedLiquiditySlotLayout::UniswapV3,
+                tick_spacing: spacing,
+                current_tick_hint: Some(hint),
+            },
+        );
+    }
+    if descriptors.is_empty() {
+        return FrameVerdict::NoCandidate;
+    }
 
+    *tried += 1;
+    live_scratch!(
+        scratch,
+        handle,
+        provider,
+        pin,
+        timestamp,
+        parent_base_fee(provider, pin).await
+    );
+    let Ok(out) = scratch.replay(&replayable_of(t)) else {
+        return FrameVerdict::Unsettleable; // not a settleable frame
+    };
+    assert!(
+        matches!(out.status, ReplayStatus::Success),
+        "status {:?}",
+        out.status
+    );
+
+    let states = extract_pool_post_states(&out, &descriptors);
+    let mut verified = Vec::with_capacity(descriptors.len());
+    for (&pool, family) in &descriptors {
+        let PoolFamily::V3 {
+            layout,
+            tick_spacing: _,
+            current_tick_hint: _,
+        } = family
+        else {
+            panic!("v3 parity only handles V3 descriptors");
+        };
+        let state = post(&states, pool);
+        assert_eq!(&state.family, family);
+        let pool_post = node_post.get(&pool).expect("diff reported this pool");
+        let liquidity_slot = layout.liquidity_slot();
+        match &state.kind {
+            PoolPostKind::Typed(TypedPoolPost::V3 {
+                sqrt_price_x96,
+                tick,
+                liquidity,
+                touched_ticks,
+            }) => {
+                // slot0 parity: the node post word carries the full packed
+                // shape when the frame moved it; a frame-read unchanged slot0
+                // falls back to the parent-block word — both sides decode
+                // through the same rows.
+                if sqrt_price_x96.is_some() || tick.is_some() {
+                    let expected0 = match pool_post.get(&U256::ZERO) {
+                        Some(w) => *w,
+                        None => chain_word(provider, pool, U256::ZERO, pin).await,
+                    };
+                    let parts = decode_v3_slot0(expected0);
+                    assert_eq!(*sqrt_price_x96, Some(parts.sqrt_price_x96), "sqrtP parity");
+                    assert_eq!(*tick, Some(parts.tick), "tick parity");
+                }
+                // liquidity parity: the node diff reports the slot only when
+                // the frame changed it; an in-frame READ (journal-surfaced,
+                // unchanged value) falls back to the parent-block word — both
+                // are chain truth.
+                let expected_liq = match pool_post.get(&U256::from(liquidity_slot)) {
+                    Some(w) => *w,
+                    None => chain_word(provider, pool, U256::from(liquidity_slot), pin).await,
+                };
+                assert_eq!(
+                    *liquidity,
+                    Some((expected_liq & U256::from(u128::MAX)).to::<u128>()),
+                    "liquidity parity"
+                );
+                // tick words: every recovered tick word matches the node's
+                // post-tx `ticks(tick)` word exactly; a crossing must recover
+                // at least one.
+                if want_crossing {
+                    assert!(!touched_ticks.is_empty(), "a crossing touches tick words");
+                }
+                for tt in touched_ticks {
+                    let slot =
+                        tick_mapping_slot_at_base(tt.tick, U256::from(layout.ticks_mapping_slot()));
+                    // Crossed tick words land in the node's diff; in-word
+                    // unchanged reads fall back to the parent-block word —
+                    // both are chain truth.
+                    let word = match pool_post.get(&slot) {
+                        Some(w) => *w,
+                        None => chain_word(provider, pool, slot, pin).await,
+                    };
+                    let (gross, net) = decode_tick_word(word);
+                    assert_eq!(
+                        (tt.liquidity_gross, tt.liquidity_net),
+                        (gross, net),
+                        "tick word parity at tick {}",
+                        tt.tick
+                    );
+                }
+                verified.push(VerifiedPool {
+                    pool,
+                    touched_tick_words: touched_ticks.len(),
+                });
+            }
+            other => panic!("expected V3 typed post-state for {pool}, got {other:?}"),
+        }
+    }
+    FrameVerdict::Verified(verified)
+}
+
+/// Replay a leg's committed V3 frame — the crossing/in-range legs' default
+/// route — and report whether it carried the leg. A frame the node cannot
+/// serve, or one that fails a gate, is noted so the window scan that follows
+/// is attributable.
+async fn committed_v3_frame_carries_leg(
+    provider: &alloy::providers::RootProvider,
+    leg: &str,
+    frame: &PinnedFrame,
+    want_crossing: bool,
+    tried: &mut usize,
+) -> bool {
+    use alloy::eips::BlockNumberOrTag;
+    use alloy::providers::Provider;
+
+    let Some(t) = pinned_frame_tx(provider, frame).await else {
+        journal_note(&format!(
+            "journal[{leg}] committed fixture {} is not retrievable at block {}; \
+             falling back to the live scan",
+            frame.tx, frame.pin
+        ));
+        return false;
+    };
+    let block = provider
+        .get_block_by_number(BlockNumberOrTag::Number(frame.pin))
+        .full()
+        .await
+        .unwrap()
+        .expect("the fixture's pin block exists");
+    let pools = v3_swap_pools_by_tx(provider, frame.pin)
+        .await
+        .get(t.inner.hash())
+        .cloned()
+        .unwrap_or_default();
+    let verdict = v3_frame_verdict(
+        provider,
+        frame.pin,
+        block.header.timestamp,
+        &t,
+        &pools,
+        want_crossing,
+        tried,
+    )
+    .await;
+    if let FrameVerdict::Verified(verified) = &verdict {
+        assert_pinned_pool(verified, frame);
+        journal_note(&format!(
+            "journal[{leg}] via committed fixture: {verdict} pin={} tx={}",
+            frame.pin, frame.tx
+        ));
+        return true;
+    }
+    journal_note(&format!(
+        "journal[{leg}] committed fixture {} is not a clean frame ({verdict}); \
+         falling back to the live scan",
+        frame.tx
+    ));
+    false
+}
+
+/// Shared V3 live parity. A candidate is a tx whose V3 `Swap` event emitter
+/// pool, of the requested crossing class, was untouched earlier in its block
+/// and replays clean through the scratch seam; both sides of every comparison
+/// decode through the same layout rows.
+///
+/// The leg's committed fixture is the default route; an env pin hunts a frame
+/// at that block, and the newest-first window covers a node that cannot serve
+/// the committed frame.
+async fn v3_live_parity(want_crossing: bool) {
+    use alloy::eips::BlockNumberOrTag;
+    use alloy::providers::Provider;
+
+    let provider = live_provider();
+    let (leg, frame) = if want_crossing {
+        ("v3_tick_crossing", &V3_TICK_CROSSING_FRAME)
+    } else {
+        ("v3_in_range", &V3_IN_RANGE_FRAME)
+    };
     let mut tried = 0usize;
-    let mut verified = false;
-    'blocks: for pin in scan {
+
+    let scan = if let Some(pin) = pinned_block("DEGENBOT_V3_FIXTURE_BLOCK") {
+        vec![pin]
+    } else {
+        if committed_v3_frame_carries_leg(&provider, leg, frame, want_crossing, &mut tried).await {
+            return;
+        }
+        scan_window(&provider, LIVE_SCAN_DEPTH).await
+    };
+
+    for pin in scan {
         if tried >= MAX_TRIED_FRAMES {
-            break 'blocks;
+            break;
         }
         let Some(block) = provider
             .get_block_by_number(BlockNumberOrTag::Number(pin))
@@ -1156,181 +1689,43 @@ async fn v3_live_parity(want_crossing: bool) {
             continue;
         };
         // The V3 Swap events of this block: emitter pools per tx hash.
-        let logs = provider
-            .get_logs(
-                &alloy::rpc::types::Filter::new()
-                    .event_signature(v3_swap_topic)
-                    .from_block(BlockNumberOrTag::Number(pin))
-                    .to_block(BlockNumberOrTag::Number(pin)),
-            )
-            .await
-            .unwrap();
-        if logs.is_empty() {
+        let pools_by_tx = v3_swap_pools_by_tx(&provider, pin).await;
+        if pools_by_tx.is_empty() {
             continue;
         }
-        let mut pools_by_tx: hashbrown::HashMap<alloy::primitives::TxHash, Vec<Address>> =
-            hashbrown::HashMap::new();
-        for log in &logs {
-            if log.block_number != Some(pin) {
-                continue;
-            }
-            pools_by_tx
-                .entry(log.transaction_hash.unwrap_or_default())
-                .or_default()
-                .push(log.address());
-        }
-
         for t in block.transactions.txns() {
             let Some(pools) = pools_by_tx.get(t.inner.hash()) else {
                 continue;
             };
-            let parent_nonce = provider
-                .get_transaction_count(t.inner.signer())
-                .block_id(BlockId::number(pin.saturating_sub(1)))
-                .await
-                .unwrap();
-            if !is_replayable_domain(t, parent_nonce) {
-                continue;
+            if tried >= MAX_TRIED_FRAMES {
+                break;
             }
-            let (node_post, node_pre) = node_post_diff(&provider, *t.inner.hash()).await;
-            // Descriptor per emitter pool of the requested crossing class,
-            // excluding pools an earlier same-block tx already touched.
-            let tx_index = t
-                .transaction_index
-                .expect("rpc transaction carries its index");
-            let mut descriptors = hashbrown::HashMap::new();
-            for pool in pools {
-                let Some(pool_post) = node_post.get(pool) else {
-                    continue;
-                };
-                if pool_post.keys().any(keccakish) != want_crossing {
-                    continue;
-                }
-                if pool_touched_earlier_in_block(&provider, *pool, pin, *t.inner.hash(), tx_index)
-                    .await
-                {
-                    continue;
-                }
-                let spacing = tick_spacing_of(&provider, *pool).await;
-                let hint = pool_pre_tx_tick(&provider, &node_pre, &node_post, *pool, pin).await;
-                descriptors.insert(
-                    *pool,
-                    PoolFamily::V3 {
-                        layout: ConcentratedLiquiditySlotLayout::UniswapV3,
-                        tick_spacing: spacing,
-                        current_tick_hint: Some(hint),
-                    },
-                );
-            }
-            if descriptors.is_empty() {
-                continue;
-            }
-
-            tried += 1;
-            live_scratch!(
-                scratch,
-                handle,
+            let verdict = v3_frame_verdict(
                 &provider,
                 pin,
                 block.header.timestamp,
-                parent_base_fee(&provider, pin).await
-            );
-            let Ok(out) = scratch.replay(&replayable_of(t)) else {
-                continue 'blocks; // not a settleable frame — skip the fixture
-            };
-            assert!(
-                matches!(out.status, ReplayStatus::Success),
-                "status {:?}",
-                out.status
-            );
-
-            let states = extract_pool_post_states(&out, &descriptors);
-            for (&pool, family) in &descriptors {
-                let PoolFamily::V3 {
-                    layout,
-                    tick_spacing: _,
-                    current_tick_hint: _,
-                } = family
-                else {
-                    panic!("v3 parity only handles V3 descriptors");
-                };
-                let state = post(&states, pool);
-                assert_eq!(&state.family, family);
-                let pool_post = node_post.get(&pool).expect("diff reported this pool");
-                let liquidity_slot = layout.liquidity_slot();
-                match &state.kind {
-                    PoolPostKind::Typed(TypedPoolPost::V3 {
-                        sqrt_price_x96,
-                        tick,
-                        liquidity,
-                        touched_ticks,
-                    }) => {
-                        // slot0 parity: the node post word carries the full
-                        // packed shape when the frame moved it; a frame-read
-                        // unchanged slot0 falls back to the parent-block
-                        // word — both sides decode through the same rows.
-                        if sqrt_price_x96.is_some() || tick.is_some() {
-                            let expected0 = match pool_post.get(&U256::ZERO) {
-                                Some(w) => *w,
-                                None => chain_word(&provider, pool, U256::ZERO, pin).await,
-                            };
-                            let parts = decode_v3_slot0(expected0);
-                            assert_eq!(*sqrt_price_x96, Some(parts.sqrt_price_x96), "sqrtP parity");
-                            assert_eq!(*tick, Some(parts.tick), "tick parity");
-                        }
-                        // liquidity parity: the node diff reports the slot
-                        // only when the frame changed it; an in-frame READ
-                        // (journal-surfaced, unchanged value) falls back to
-                        // the parent-block word — both are chain truth.
-                        let expected_liq = match pool_post.get(&U256::from(liquidity_slot)) {
-                            Some(w) => *w,
-                            None => {
-                                chain_word(&provider, pool, U256::from(liquidity_slot), pin).await
-                            }
-                        };
-                        assert_eq!(
-                            *liquidity,
-                            Some((expected_liq & U256::from(u128::MAX)).to::<u128>()),
-                            "liquidity parity"
-                        );
-                        // tick words: every recovered tick word matches the
-                        // node's post-tx `ticks(tick)` word exactly; a
-                        // crossing must recover at least one.
-                        if want_crossing {
-                            assert!(!touched_ticks.is_empty(), "a crossing touches tick words");
-                        }
-                        for tt in touched_ticks {
-                            let slot = tick_mapping_slot_at_base(
-                                tt.tick,
-                                U256::from(layout.ticks_mapping_slot()),
-                            );
-                            // Crossed tick words land in the node's diff;
-                            // in-word unchanged reads fall back to the
-                            // parent-block word — both are chain truth.
-                            let word = match pool_post.get(&slot) {
-                                Some(w) => *w,
-                                None => chain_word(&provider, pool, slot, pin).await,
-                            };
-                            let (gross, net) = decode_tick_word(word);
-                            assert_eq!(
-                                (tt.liquidity_gross, tt.liquidity_net),
-                                (gross, net),
-                                "tick word parity at tick {}",
-                                tt.tick
-                            );
-                        }
-                    }
-                    other => panic!("expected V3 typed post-state for {pool}, got {other:?}"),
-                }
+                t,
+                pools,
+                want_crossing,
+                &mut tried,
+            )
+            .await;
+            if matches!(verdict, FrameVerdict::Unsettleable) {
+                break; // later same-block txs build on this frame
             }
-            verified = true;
-            break 'blocks;
+            if matches!(verdict, FrameVerdict::Verified(_)) {
+                journal_note(&format!(
+                    "journal[{leg}] via live scan: {verdict} pin={pin} tx={}",
+                    t.inner.hash()
+                ));
+                return;
+            }
         }
     }
-    assert!(
-        verified,
-        "no matching V3 swap fixture found in the scanned blocks \
-         (pin one via DEGENBOT_V3_FIXTURE_BLOCK)"
+    panic!(
+        "no matching V3 swap frame replayed (committed fixture {} plus {tried} \
+         live-scan replays); pin a block via DEGENBOT_V3_FIXTURE_BLOCK",
+        frame.tx
     );
 }
 
