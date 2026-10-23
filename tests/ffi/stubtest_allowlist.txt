@@ -30,11 +30,10 @@
 #     The generator emits __all__ from the stub's top-level declarations,
 #     while the runtime __all__ carries members outside that surface.
 #     ADR-066 gap list: "__all__ emission".
-#   parent-stub re-export emission
-#     The generator emits one stub file per submodule without a
-#     `from . import <name> as <name>` re-export in the parent stub, so
-#     stubtest reports each runtime submodule object as absent from the
-#     stub namespace. ADR-066 gap list: module-structure-level deltas.
+#   parent-stub re-export emission — CLOSED
+#     The generator now emits a `from . import <name> as <name>` re-export
+#     per submodule in the parent stub, so stubtest no longer reports the
+#     runtime submodule objects as absent; its 26 entries were dropped.
 #
 # The #2454 annotation frontier (PyO3 "a first step"; the rest of annotation
 # generation tracked upstream) is VISIBLE in the emitted stubs as `Any`
@@ -81,33 +80,3 @@ degenbot._ffi.concentrated_liquidity_math.MIN_SQRT_RATIO  # imperative attribute
 degenbot._ffi.__all__  # __all__ emission
 degenbot._ffi.concentrated_liquidity_math.__all__  # __all__ emission
 
-# ==== Submodule declaration emission (26) ====
-# The generator emits one stub file per submodule but no `from . import
-# <name> as <name>` re-export in the parent stub, so stubtest reports each
-# runtime submodule object as absent from the stub namespace.
-degenbot._ffi.aave  # parent-stub re-export emission
-degenbot._ffi.abi  # parent-stub re-export emission
-degenbot._ffi.backrun  # parent-stub re-export emission
-degenbot._ffi.balancer_math  # parent-stub re-export emission
-degenbot._ffi.cancel  # parent-stub re-export emission
-degenbot._ffi.concentrated_liquidity_math  # parent-stub re-export emission
-degenbot._ffi.contract  # parent-stub re-export emission
-degenbot._ffi.curve_dy  # parent-stub re-export emission
-degenbot._ffi.curve_math  # parent-stub re-export emission
-degenbot._ffi.db  # parent-stub re-export emission
-degenbot._ffi.deployments  # parent-stub re-export emission
-degenbot._ffi.dex_identity  # parent-stub re-export emission
-degenbot._ffi.diagnostics  # parent-stub re-export emission
-degenbot._ffi.eip_1559  # parent-stub re-export emission
-degenbot._ffi.execution  # parent-stub re-export emission
-degenbot._ffi.executor  # parent-stub re-export emission
-degenbot._ffi.fleet  # parent-stub re-export emission
-degenbot._ffi.fork  # parent-stub re-export emission
-degenbot._ffi.pool  # parent-stub re-export emission
-degenbot._ffi.price  # parent-stub re-export emission
-degenbot._ffi.provider  # parent-stub re-export emission
-degenbot._ffi.simulation  # parent-stub re-export emission
-degenbot._ffi.solady  # parent-stub re-export emission
-degenbot._ffi.solidly_math  # parent-stub re-export emission
-degenbot._ffi.submission  # parent-stub re-export emission
-degenbot._ffi.v2_math  # parent-stub re-export emission

@@ -95,7 +95,11 @@ def _prepare_graph(
         database_path=str(database_path),
         chain_id=chain_id,
         pool_kinds=classify_pool_kinds(pool_types),
-        allowed_intermediate_token_ids=allowed_intermediate_tokens,
+        # pyo3 maps every integer function input to typing.SupportsIndex, and
+        # the generated stub composes that inside the invariant set container,
+        # so the stub demands set[SupportsIndex] even though the Rust seam
+        # (HashSet<u64>) accepts the plain ints TokenId aliases.
+        allowed_intermediate_token_ids=allowed_intermediate_tokens,  # ty: ignore[invalid-argument-type]
         step_cls=PathStep,
     )
     candidate_tokens = graph.candidate_tokens
