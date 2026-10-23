@@ -96,6 +96,21 @@ fn configured_rate_limit(rpc_url: &str) -> Option<(u32, NonZeroU32)> {
     Some((rps.get(), burst))
 }
 
+/// Resolve the config-declared cumulative retry budget
+/// (`nodes.retry_budget_ms`): the wall-clock ONE call may spend retrying.
+///
+/// `None` (unset) is the production default and means no cumulative cap — the
+/// schedule's own arithmetic bounds the wait, which for the default ceiling is
+/// 81.1s of backoff per call. Constructors snapshot this value, so a provider
+/// keeps the posture it was built with rather than reading live config on the
+/// hot retry path.
+fn configured_retry_budget() -> Option<Duration> {
+    ::degenbot_config::holder::config()
+        .nodes
+        .retry_budget_ms
+        .map(Duration::from_millis)
+}
+
 /// Constants for retry logic. `pub(crate)` so the subscription watchdog
 /// ([`crate::subscription::pump_blocks`]) reuses the same backoff curve for
 /// its reconnect retries — one retry vocabulary across the crate, not a
@@ -108,6 +123,13 @@ const MAX_JITTER_MS: u64 = 100; // Add up to 100ms of jitter
 /// the workspace-canonical [`RetryPolicy`] . The exponential
 /// growth (x2, saturating at the cap) lives in the shared type — not a
 /// hand-rolled multiplier at each loop.
+///
+/// The curve's arithmetic is the reason callers get a budget knob rather than
+/// only an attempt count: from 100ms doubling to a 30s cap, the driver's
+/// 11-attempt ceiling sleeps 81.1s in backoff alone
+/// ([`RetryPolicy::cumulative_backoff`]) before a single call fails. An attempt
+/// count therefore does not bound wall clock, and
+/// [`configured_retry_budget`] is what a caller with its own deadline sets.
 #[must_use]
 pub(crate) fn rpc_retry_policy(max_attempts: u32) -> RetryPolicy {
     RetryPolicy::from_millis(
@@ -116,6 +138,85 @@ pub(crate) fn rpc_retry_policy(max_attempts: u32) -> RetryPolicy {
         MAX_RETRY_DELAY_MS,
         MAX_JITTER_MS,
     )
+}
+
+/// The backoff for one retry: the capped exponential curve owned by the shared
+/// policy plus this site's uniform jitter draw (uses `random_range`, avoiding
+/// modulo bias).
+fn jittered_backoff(policy: &RetryPolicy, retry: u32) -> Duration {
+    policy.capped_backoff(retry) + Duration::from_millis(rand::rng().random_range(0..MAX_JITTER_MS))
+}
+
+/// The distinguishable terminal error for a retry chain that ran out of
+/// budget rather than attempts.
+///
+/// `None` means the chain may keep retrying: no budget is configured (the
+/// default, where the schedule's own arithmetic is the only bound) or the next
+/// backoff still lands inside it. `Some` carries the error the caller
+/// surfaces — never the bare transport failure it replaces, so a budget
+/// refusal can never be read as "the endpoint returned 429 once".
+///
+/// The decision includes the backoff about to be slept, so the loop never
+/// schedules a sleep that would land past the budget: the wait is bounded by
+/// the budget itself, not by the budget plus one attempt's duration.
+fn retry_budget_exhausted(
+    retry_budget: Option<Duration>,
+    started: std::time::Instant,
+    attempt: u32,
+    next_backoff: Duration,
+    last_error: &ProviderError,
+) -> Option<ProviderError> {
+    let budget = retry_budget?;
+    let elapsed = started.elapsed();
+    if elapsed + next_backoff < budget {
+        return None;
+    }
+    Some(ProviderError::RetryBudgetExhausted {
+        attempt,
+        elapsed_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+        budget_ms: u64::try_from(budget.as_millis()).unwrap_or(u64::MAX),
+        last_error: last_error.to_string(),
+    })
+}
+
+/// Advance a broadcast retry chain by one retry: consume an attempt, then wait
+/// the jittered backoff that attempt earned — unless the chain is out of
+/// attempts or the backoff would land past the retry budget, in which case the
+/// terminal error comes back for the caller to surface.
+///
+/// One home for the broadcast loop's three backoff sites: the attempt ceiling
+/// and the budget are two different stops, and both must be logged and
+/// surfaced the same way wherever the chain reached them.
+async fn broadcast_retry_step(
+    policy: &RetryPolicy,
+    retry_budget: Option<Duration>,
+    started: std::time::Instant,
+    attempt: &mut u32,
+    max_attempts: u32,
+    last_error: &ProviderError,
+) -> Option<ProviderError> {
+    *attempt += 1;
+    if *attempt >= max_attempts {
+        op_error!(domain = rpc, attempt = *attempt,
+            max_attempts,
+            %last_error,
+            "eth_sendRawTransaction: retries exhausted"
+        );
+        return Some(last_error.clone());
+    }
+    let next_backoff = jittered_backoff(policy, *attempt);
+    if let Some(exhausted) =
+        retry_budget_exhausted(retry_budget, started, *attempt, next_backoff, last_error)
+    {
+        op_error!(domain = rpc, attempt = *attempt,
+            max_attempts,
+            %exhausted,
+            "eth_sendRawTransaction: retry budget exhausted"
+        );
+        return Some(exhausted);
+    }
+    tokio::time::sleep(next_backoff).await;
+    None
 }
 
 /// Retry an async operation with exponential backoff, emitting `log` records on
@@ -153,14 +254,19 @@ pub(crate) fn rpc_retry_policy(max_attempts: u32) -> RetryPolicy {
 /// - Subsequent retries (attempt >= 2): `log::warn!` — sustained backoff.
 /// - Exhausted all attempts: `log::error!` — terminal failure.
 ///
+/// `retry_budget` bounds the chain's wall clock (see
+/// [`retry_budget_exhausted`]); `None` keeps the attempt count as the only
+/// bound.
+///
 /// Extracted from `AlloyProvider::retry_with_backoff` (which delegates, passing
-/// `self.max_attempts` + `self.call_timeout`) so the loop is unit-testable
-/// without constructing a live provider, and so a test can drive
-/// `max_attempts = 2` for a fast, deterministic assertion that the expected
-/// structured fields are emitted.
+/// `self.max_attempts` + `self.call_timeout` + `self.retry_budget`) so the loop
+/// is unit-testable without constructing a live provider, and so a test can
+/// drive `max_attempts = 2` for a fast, deterministic assertion that the
+/// expected structured fields are emitted.
 pub(crate) async fn retry_with_backoff_loop<F, Fut, T>(
     max_attempts: u32,
     call_timeout: Duration,
+    retry_budget: Option<Duration>,
     operation: F,
 ) -> ProviderResult<T>
 where
@@ -169,6 +275,7 @@ where
     T: Send,
 {
     let policy = rpc_retry_policy(max_attempts);
+    let started = std::time::Instant::now();
     let mut attempt = 0;
 
     loop {
@@ -201,12 +308,22 @@ where
             return Err(outcome);
         }
 
-        // Capped exponential backoff + site-owned uniform jitter; the curve
-        // lives in the shared RetryPolicy (uses random_range for a uniform
-        // distribution, avoiding modulo bias).
-        let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
-        let sleep = policy.capped_backoff(attempt) + Duration::from_millis(jitter);
+        // Capped exponential backoff + site-owned uniform jitter.
+        let sleep = jittered_backoff(&policy, attempt);
         let sleep_ms = sleep.as_millis();
+
+        // Budget check BEFORE the retry log line: a refused sleep must not be
+        // announced as a retry that then never happens.
+        if let Some(exhausted) =
+            retry_budget_exhausted(retry_budget, started, attempt, sleep, &outcome)
+        {
+            op_error!(domain = rpc, attempt,
+                max_attempts,
+                %exhausted,
+                "RPC retry budget exhausted"
+            );
+            return Err(exhausted);
+        }
 
         if attempt <= 1 {
             diag!(domain = rpc, attempt,
@@ -281,6 +398,7 @@ pub(crate) async fn send_raw_transaction_with_reconciliation<F, Fut, G, FutR>(
     broadcast: F,
     reconcile_receipt: G,
     max_attempts: u32,
+    retry_budget: Option<Duration>,
 ) -> ProviderResult<B256>
 where
     F: Fn() -> Fut + Send + Sync,
@@ -289,6 +407,7 @@ where
     FutR: std::future::Future<Output = ProviderResult<bool>> + Send,
 {
     let policy = rpc_retry_policy(max_attempts);
+    let started = std::time::Instant::now();
     let mut attempt = 0;
 
     loop {
@@ -316,19 +435,18 @@ where
                                 "eth_sendRawTransaction: ambiguous outcome — receipt absent, rebroadcasting"
                             );
                             // fall through to the shared backoff/retry block below
-                            attempt += 1;
-                            if attempt >= max_attempts {
-                                op_error!(domain = rpc, attempt,
-                                    max_attempts,
-                                    %e,
-                                    "eth_sendRawTransaction: retries exhausted"
-                                );
-                                return Err(e);
+                            if let Some(terminal) = broadcast_retry_step(
+                                &policy,
+                                retry_budget,
+                                started,
+                                &mut attempt,
+                                max_attempts,
+                                &e,
+                            )
+                            .await
+                            {
+                                return Err(terminal);
                             }
-                            let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
-                            let sleep =
-                                policy.capped_backoff(attempt) + Duration::from_millis(jitter);
-                            tokio::time::sleep(sleep).await;
                         }
                         Err(reconcile_err) => {
                             // Reconciliation itself failed (e.g. a transient
@@ -339,43 +457,42 @@ where
                                 %reconcile_err,
                                 "eth_sendRawTransaction: ambiguous outcome; reconcile probe failed — rebroadcasting"
                             );
-                            attempt += 1;
-                            if attempt >= max_attempts {
-                                op_error!(domain = rpc, attempt,
-                                    max_attempts,
-                                    %e,
-                                    "eth_sendRawTransaction: retries exhausted"
-                                );
-                                return Err(e);
+                            if let Some(terminal) = broadcast_retry_step(
+                                &policy,
+                                retry_budget,
+                                started,
+                                &mut attempt,
+                                max_attempts,
+                                &e,
+                            )
+                            .await
+                            {
+                                return Err(terminal);
                             }
-                            let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
-                            let sleep =
-                                policy.capped_backoff(attempt) + Duration::from_millis(jitter);
-                            tokio::time::sleep(sleep).await;
                         }
                     }
                 }
                 // Rate-limited: the request never reached the node. The
                 // mempool never saw it, so rebroadcast is safe + necessary.
                 ProviderError::RateLimited { .. } => {
-                    attempt += 1;
-                    if attempt >= max_attempts {
-                        op_error!(domain = rpc, attempt,
-                            max_attempts,
-                            %e,
-                            "eth_sendRawTransaction: retries exhausted"
-                        );
-                        return Err(e);
-                    }
                     op_warn!(
                         domain = rpc,
                         attempt,
                         max_attempts,
                         "eth_sendRawTransaction: rate-limited — rebroadcasting"
                     );
-                    let jitter = rand::rng().random_range(0..MAX_JITTER_MS);
-                    let sleep = policy.capped_backoff(attempt) + Duration::from_millis(jitter);
-                    tokio::time::sleep(sleep).await;
+                    if let Some(terminal) = broadcast_retry_step(
+                        &policy,
+                        retry_budget,
+                        started,
+                        &mut attempt,
+                        max_attempts,
+                        &e,
+                    )
+                    .await
+                    {
+                        return Err(terminal);
+                    }
                 }
                 // RpcError / ExecutionReverted / InvalidParams / etc.: the tx
                 // was seen and rejected by the node's validation. Retrying the
@@ -1028,6 +1145,17 @@ pub struct AlloyProvider {
     /// Default `DEFAULT_CALL_TIMEOUT` (30s); raise via the constructor for
     /// `eth_simulate_v1` / large `eth_getLogs` ranges.
     call_timeout: Duration,
+    /// Cumulative wall-clock budget ONE call may spend retrying, snapshotted
+    /// from `nodes.retry_budget_ms` at construction
+    /// ([`configured_retry_budget`]).
+    ///
+    /// `None` — the declared default, and therefore production's posture — is
+    /// no cumulative cap: the backoff schedule alone bounds the wait, which for
+    /// an 11-attempt call is 81.1s. A caller with a shorter deadline (a test
+    /// lane whose budget is a pytest timeout) pins one here and the chain
+    /// stops at it with [`ProviderError::RetryBudgetExhausted`] instead of
+    /// running the schedule out.
+    retry_budget: Option<Duration>,
     /// The chain this endpoint was BOUND to, verified once at bind time.
     /// A `OnceLock` because the verification is a fact about the endpoint, not
     /// about the handle: every clone reads the one verified value, and no
@@ -1044,6 +1172,7 @@ impl Clone for AlloyProvider {
             rpc_url: self.rpc_url.clone(),
             max_attempts: self.max_attempts,
             call_timeout: self.call_timeout,
+            retry_budget: self.retry_budget,
             verified_chain_id: Arc::clone(&self.verified_chain_id),
         }
     }
@@ -1073,12 +1202,25 @@ impl AlloyProvider {
             rpc_url: self.rpc_url.clone(),
             max_attempts: SIM_MAX_ATTEMPTS,
             call_timeout: SIM_CALL_TIMEOUT,
+            retry_budget: self.retry_budget,
             verified_chain_id: Arc::clone(&self.verified_chain_id),
         }
     }
 }
 
 impl AlloyProvider {
+    /// Bound this provider's retry wall clock explicitly, overriding the
+    /// `nodes.retry_budget_ms` value its constructor snapshotted.
+    ///
+    /// The handle a caller with its OWN deadline uses — a test lane whose
+    /// budget is a pytest timeout, a one-shot script that would rather fail
+    /// fast than recover slowly — without touching process config.
+    #[must_use]
+    pub const fn with_retry_budget(mut self, retry_budget: Option<Duration>) -> Self {
+        self.retry_budget = retry_budget;
+        self
+    }
+
     /// Create a new provider with the given RPC URL.
     ///
     /// Automatically detects the connection type based on the URL:
@@ -1314,6 +1456,7 @@ impl AlloyProvider {
             rpc_url: rpc_url.to_string(),
             max_attempts: max_retries.saturating_add(1),
             call_timeout: DEFAULT_CALL_TIMEOUT,
+            retry_budget: configured_retry_budget(),
             verified_chain_id: Arc::new(OnceLock::new()),
         })
     }
@@ -1424,7 +1567,13 @@ impl AlloyProvider {
         Fut: std::future::Future<Output = ProviderResult<T>> + Send,
         T: Send,
     {
-        retry_with_backoff_loop(self.max_attempts, self.call_timeout, operation).await
+        retry_with_backoff_loop(
+            self.max_attempts,
+            self.call_timeout,
+            self.retry_budget,
+            operation,
+        )
+        .await
     }
 
     /// Get the RPC URL.
@@ -1799,6 +1948,7 @@ impl AlloyProvider {
                 }
             },
             max_attempts,
+            self.retry_budget,
         )
         .await
     }
@@ -1868,6 +2018,7 @@ impl AlloyProvider {
             rpc_url: String::from("test"),
             max_attempts: DEFAULT_MAX_RETRIES,
             call_timeout: DEFAULT_CALL_TIMEOUT,
+            retry_budget: configured_retry_budget(),
             verified_chain_id: Arc::new(OnceLock::new()),
         }
     }
@@ -2623,14 +2774,18 @@ mod tests {
         let max_attempts: u32 = 3;
         // Each invocation fails with a retryable rate-limit error; the context
         // label "eth_call failed" is baked into the message via Display.
-        let result: ProviderResult<u64> =
-            retry_with_backoff_loop(max_attempts, Duration::from_secs(30), move || async move {
+        let result: ProviderResult<u64> = retry_with_backoff_loop(
+            max_attempts,
+            Duration::from_secs(30),
+            None,
+            move || async move {
                 diag!(domain = rpc, attempt, "invocation attempt");
                 Err(ProviderError::RateLimited {
                     message: "eth_call failed: rate limited".to_string(),
                 })
-            })
-            .await;
+            },
+        )
+        .await;
 
         stop_capturing_retry_logs();
 
@@ -2696,7 +2851,7 @@ mod tests {
 
         let max_attempts: u32 = 5;
         let result: ProviderResult<u64> =
-            retry_with_backoff_loop(max_attempts, Duration::from_secs(30), || async {
+            retry_with_backoff_loop(max_attempts, Duration::from_secs(30), None, || async {
                 Err(ProviderError::InvalidBlockRange { from: 2, to: 1 })
             })
             .await;
@@ -2719,7 +2874,7 @@ mod tests {
 
         let max_attempts: u32 = 3;
         let result: ProviderResult<u64> =
-            retry_with_backoff_loop(max_attempts, Duration::from_secs(30), || async {
+            retry_with_backoff_loop(max_attempts, Duration::from_secs(30), None, || async {
                 Ok(7_u64)
             })
             .await;
@@ -2753,7 +2908,7 @@ mod tests {
 
         let started = std::time::Instant::now();
         let result: ProviderResult<u64> =
-            retry_with_backoff_loop(max_attempts, call_timeout, || async {
+            retry_with_backoff_loop(max_attempts, call_timeout, None, || async {
                 tokio::time::sleep(hung_sleep).await;
                 Ok(7_u64)
             })
@@ -2787,7 +2942,7 @@ mod tests {
         let counter = attempt_counter.clone();
 
         let result: ProviderResult<u64> =
-            retry_with_backoff_loop(max_attempts, call_timeout, move || {
+            retry_with_backoff_loop(max_attempts, call_timeout, None, move || {
                 let counter = counter.clone();
                 async move {
                     let n = counter.fetch_add(1, Ordering::SeqCst);
@@ -2810,6 +2965,218 @@ mod tests {
             2,
             "exactly two attempts: the first timed out, the second succeeded"
         );
+    }
+
+    /// The declared key is what a provider constructor snapshots.
+    #[test]
+    fn configured_retry_budget_reads_the_declared_key() {
+        let _guard = CONFIG_LOCK.lock().unwrap();
+        govern_nodes(None, None);
+        assert_eq!(
+            configured_retry_budget(),
+            None,
+            "unset is production's unbounded schedule"
+        );
+
+        let mut cfg = ::degenbot_config::BotConfig::default();
+        cfg.nodes.retry_budget_ms = Some(2_500);
+        let _ = ::degenbot_config::holder::reinstall_for_tests(std::sync::Arc::new(cfg));
+        assert_eq!(
+            configured_retry_budget(),
+            Some(Duration::from_millis(2_500))
+        );
+
+        govern_nodes(None, None);
+    }
+
+    /// A constructed provider carries the declared budget, so the key reaches
+    /// the retry loop through the provider rather than a live config read.
+    #[test]
+    fn a_constructed_provider_snapshots_the_declared_retry_budget() {
+        let _guard = CONFIG_LOCK.lock().unwrap();
+        let mut cfg = ::degenbot_config::BotConfig::default();
+        cfg.nodes.retry_budget_ms = Some(1_234);
+        let _ = ::degenbot_config::holder::reinstall_for_tests(std::sync::Arc::new(cfg));
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("a current-thread runtime for one construction");
+        // HTTP connects lazily, so an unused address still builds a provider.
+        let provider = runtime
+            .block_on(AlloyProvider::new("http://127.0.0.1:1", 1))
+            .expect("an HTTP endpoint builds without connecting");
+        assert_eq!(provider.retry_budget, Some(Duration::from_millis(1_234)));
+
+        govern_nodes(None, None);
+    }
+
+    /// A budget the next backoff would overrun stops the chain with the
+    /// distinguishable error, and the refused backoff is never slept.
+    #[tokio::test]
+    async fn retry_with_backoff_loop_stops_at_the_retry_budget_with_a_distinguishable_error() {
+        let max_attempts: u32 = 11;
+        let budget = Duration::from_millis(250);
+        let started = std::time::Instant::now();
+        let result: ProviderResult<u64> = retry_with_backoff_loop(
+            max_attempts,
+            Duration::from_secs(30),
+            Some(budget),
+            || async {
+                Err(ProviderError::RateLimited {
+                    message: "429 from the fake node".to_string(),
+                })
+            },
+        )
+        .await;
+        let elapsed = started.elapsed();
+
+        // The second backoff (200-300ms after jitter) cannot fit in what is
+        // left of 250ms, so it is refused rather than slept: the wall clock
+        // stays inside the budget plus scheduling slack.
+        assert!(
+            elapsed < budget + Duration::from_millis(100),
+            "the refused backoff was never slept, elapsed {elapsed:?} against budget {budget:?}"
+        );
+        match result {
+            Err(ProviderError::RetryBudgetExhausted {
+                attempt,
+                budget_ms,
+                last_error,
+                ..
+            }) => {
+                assert_eq!(
+                    attempt, 2,
+                    "the 100ms retry fits the budget, the following 200ms does not"
+                );
+                assert_eq!(budget_ms, 250);
+                assert!(
+                    last_error.contains("429 from the fake node"),
+                    "the last transport failure travels with the refusal: {last_error}"
+                );
+            }
+            other => panic!("expected a retry-budget exhaustion, got {other:?}"),
+        }
+    }
+
+    /// `None` is production's posture: the attempt count alone bounds the chain
+    /// and the underlying transport error surfaces verbatim. Pinned so a budget
+    /// can never quietly shorten the default schedule.
+    #[tokio::test]
+    async fn retry_with_backoff_loop_without_a_budget_keeps_the_full_attempt_chain() {
+        let max_attempts: u32 = 3;
+        let attempts = Arc::new(AtomicU32::new(0));
+        let counter = attempts.clone();
+        let result: ProviderResult<u64> =
+            retry_with_backoff_loop(max_attempts, Duration::from_secs(30), None, move || {
+                let counter = counter.clone();
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Err(ProviderError::RateLimited {
+                        message: "429 that never stops".to_string(),
+                    })
+                }
+            })
+            .await;
+
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            max_attempts,
+            "an unbudgeted chain spends every attempt it was given"
+        );
+        assert!(
+            matches!(result, Err(ProviderError::RateLimited { .. })),
+            "no budget means no substitution: the transport error surfaces as-is, got {result:?}"
+        );
+    }
+
+    /// A fault-injected node: every HTTP request answers `429 Too Many
+    /// Requests`.
+    ///
+    /// A std listener on a detached thread, so the probe needs neither tokio's
+    /// `net` feature nor a test-only transport fake: the real transport
+    /// classification, the real retry loop, and the real budget all run.
+    fn spawn_429_node() -> String {
+        use std::io::{Read as _, Write as _};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
+        let port = listener.local_addr().expect("listener address").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                // The request body is irrelevant; the status line IS the fault.
+                let mut buf = [0_u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+        format!("http://127.0.0.1:{port}")
+    }
+
+    /// The lane's failure shape, end to end: a node answering 429 to every
+    /// request drives a real provider through its retry chain, and the budget
+    /// ends that chain with a DISTINGUISHABLE error instead of letting it run
+    /// the schedule out (11 attempts, sleeps to 12.8s, 81.1s of backoff) into
+    /// whatever timeout the caller happens to have.
+    #[tokio::test]
+    async fn forced_429_node_fails_with_the_retry_budget_error() {
+        let url = spawn_429_node();
+        let budget = Duration::from_millis(300);
+        let provider = AlloyProvider::new(&url, 10)
+            .await
+            .expect("a provider builds against a listening endpoint")
+            .with_retry_budget(Some(budget));
+        let rx = capture_retry_logs();
+
+        let started = std::time::Instant::now();
+        let result = provider.get_block_number().await;
+        let elapsed = started.elapsed();
+
+        stop_capturing_retry_logs();
+        let logs: Vec<String> = rx.iter().collect();
+
+        // The retry lines fired before the terminal one: this is a chain that
+        // was stopped, not a first-attempt failure.
+        assert!(
+            logs.iter().any(|line| line.contains("RPC retry")),
+            "the stopped chain had already retried, logs: {logs:?}"
+        );
+        assert!(
+            logs.iter()
+                .any(|line| line.contains("RPC retry budget exhausted")),
+            "the terminal record names the budget as the cause, logs: {logs:?}"
+        );
+        assert!(
+            elapsed < budget + Duration::from_millis(500),
+            "the budget bounds the wait (the unbudgeted schedule would sleep 81.1s), \
+             elapsed {elapsed:?} against budget {budget:?}"
+        );
+        match result {
+            Err(ProviderError::RetryBudgetExhausted {
+                attempt,
+                elapsed_ms,
+                budget_ms,
+                last_error,
+            }) => {
+                assert!(attempt >= 2, "at least one retry happened, got {attempt}");
+                assert!(
+                    attempt < 11,
+                    "the budget, not the attempt count, ended the chain: {attempt}"
+                );
+                assert_eq!(budget_ms, 300);
+                assert!(
+                    elapsed_ms <= 400,
+                    "elapsed_ms tracks the measured wait, got {elapsed_ms}"
+                );
+                assert!(
+                    last_error.contains("Rate limited"),
+                    "the 429 classification travels with the refusal: {last_error}"
+                );
+            }
+            other => panic!("expected a retry-budget exhaustion, got {other:?}"),
+        }
     }
 
     // ── Chunk calculation ───────────────────────────────────────────────
@@ -3314,6 +3681,7 @@ mod tests {
                 }
             },
             5,
+            None,
         )
         .await;
 
@@ -3363,6 +3731,7 @@ mod tests {
                 }
             },
             5,
+            None,
         )
         .await;
 
@@ -3410,6 +3779,7 @@ mod tests {
                 }
             },
             5,
+            None,
         )
         .await;
 
@@ -3459,6 +3829,7 @@ mod tests {
                 }
             },
             5,
+            None,
         )
         .await;
 
@@ -3505,6 +3876,7 @@ mod tests {
                 }
             },
             5,
+            None,
         )
         .await;
 

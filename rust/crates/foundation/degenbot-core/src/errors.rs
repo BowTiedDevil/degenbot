@@ -169,6 +169,33 @@ pub enum ProviderError {
     #[error("Rate limited: {message}")]
     RateLimited { message: String },
 
+    /// The retry budget ran out before the call could succeed.
+    ///
+    /// Distinguishable from the transport failure it replaces: a `RateLimited`
+    /// says the ENDPOINT refused a request, this says the CALLER's budget (the
+    /// configured `nodes.retry_budget_ms`, or an explicit per-provider bound)
+    /// stopped the chain. A lane failure therefore reads as "the budget was the
+    /// binding constraint" rather than "the provider is broken", and the cause
+    /// travels in `last_error` so no information is lost by not surfacing the
+    /// bare transport error.
+    ///
+    /// Not retryable: the chain has already stopped, and an outer retry loop
+    /// re-entering it would spend the same budget again.
+    #[error(
+        "RPC retry budget exhausted after {attempt} attempt(s) in {elapsed_ms}ms (budget {budget_ms}ms); last error: {last_error}"
+    )]
+    RetryBudgetExhausted {
+        /// Attempts made before the budget ran out.
+        attempt: u32,
+        /// Wall clock spent, from the call's first attempt to the refusal.
+        elapsed_ms: u64,
+        /// The configured budget.
+        budget_ms: u64,
+        /// The last failure's `Display`, carried so the cause survives the
+        /// refusal.
+        last_error: String,
+    },
+
     /// Connection failed.
     #[error("Connection failed: {message}")]
     ConnectionFailed { message: String },
@@ -282,6 +309,7 @@ impl From<ProviderError> for PyErr {
             }
             ProviderError::SubscriptionNotSupported { .. }
             | ProviderError::RateLimited { .. }
+            | ProviderError::RetryBudgetExhausted { .. }
             | ProviderError::RpcError { .. }
             | ProviderError::ExecutionReverted { .. }
             | ProviderError::SerializationError { .. }

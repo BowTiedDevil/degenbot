@@ -121,6 +121,19 @@ impl RetryPolicy {
     pub fn capped_backoff(&self, attempt: u32) -> Duration {
         Duration::from_secs_f64(self.capped_backoff_secs(attempt).max(0.0))
     }
+
+    /// The total backoff this policy schedules across `retries` retries
+    /// (attempts `1..=retries`), before jitter.
+    ///
+    /// This is the number a caller compares against its own patience. The
+    /// `degenbot-rpc` curve — `max_attempts = 11` over a 100ms base doubling to
+    /// a 30s cap — totals 81.1s of backoff, so a single call can outlive a
+    /// caller whose deadline is shorter than that. That arithmetic is why the
+    /// rpc loop carries an explicit retry budget alongside the schedule.
+    #[must_use]
+    pub fn cumulative_backoff(&self, retries: u32) -> Duration {
+        (1..=retries).map(|retry| self.capped_backoff(retry)).sum()
+    }
 }
 
 #[cfg(test)]
@@ -174,6 +187,21 @@ mod tests {
         assert!((policy.capped_backoff_secs(3) - 2.0).abs() < f64::EPSILON);
         assert!((policy.capped_backoff_secs(4) - 4.0).abs() < f64::EPSILON);
         assert!((policy.capped_backoff_secs(9) - 4.0).abs() < f64::EPSILON);
+    }
+
+    /// The rpc loop's default ceiling: eleven attempts over the crate's
+    /// 100ms-base/30s-cap curve sleep 81.1s in backoff alone. Pinned as
+    /// arithmetic so a curve change that quietly lengthens the worst case has
+    /// to face this number.
+    #[test]
+    fn eleven_attempt_curve_costs_81_seconds_of_backoff() {
+        let policy = RetryPolicy::from_millis(11, 100, 30_000, 100);
+        assert_eq!(
+            policy.cumulative_backoff(10),
+            Duration::from_millis(81_100),
+            "10 retries: 0.1+0.2+0.4+0.8+1.6+3.2+6.4+12.8+25.6+30.0s"
+        );
+        assert_eq!(policy.cumulative_backoff(0), Duration::ZERO);
     }
 
     #[test]

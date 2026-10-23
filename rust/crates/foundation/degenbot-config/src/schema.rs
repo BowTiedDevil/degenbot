@@ -355,6 +355,10 @@ crate::config_schema! {
 
             doc = "Burst allowance paired with nodes.rate_limit_rps (the token bucket's capacity); unset defaults to the rps value. Ignored when rate_limit_rps is unset.";
 
+        retry_budget_ms [opt ms] = None, env = "DEGENBOT_RPC_RETRY_BUDGET_MS", def = "(unset)",
+
+            doc = "Cumulative wall-clock budget, in milliseconds, that ONE provider call may spend retrying: the retry loop refuses to schedule a backoff that would land past it and fails with the distinguishable RPC-retry-budget-exhausted error instead of continuing the chain. Unset (the default) leaves the schedule's own arithmetic as the only bound — an 11-attempt call sleeps 81.1s in backoff alone (0.1s doubling to the 30s cap) and can outlive a caller's own deadline, so a lane whose budget is a pytest timeout sets this to fail fast.";
+
         anvil_fork_compute_units_per_second [opt usize] = None, env = "DEGENBOT_ANVIL_FORK_COMPUTE_UNITS_PER_SECOND", def = "(unset)",
 
             doc = "Cap on a forked anvil's upstream fetch rate (anvil's --compute-units-per-second) for REMOTE fork URLs, in anvil compute units/second (350 matches anvil's own default and sits well under dRPC's free-tier floor of 50,400 CU/min). Unset spawns forked anvils --no-rate-limit: uncapped suits a local node, while an uncapped hosted endpoint rejects the fork's genesis fetches with HTTP 429.";

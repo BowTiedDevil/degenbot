@@ -762,6 +762,7 @@ macro_rules! cfg_ty {
     (bool) => { bool };
     (bool_not) => { bool };
     (ms) => { u64 };
+    (opt ms) => { Option<u64> };
     (string) => { String };
     (path) => { ::std::path::PathBuf };
     (usize) => { usize };
