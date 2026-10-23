@@ -227,12 +227,9 @@ class CurveStableswapPool(
     _create_timestamp: int | None
     _data_provider: CurveDataProvider | None
     _cache_block_timestamps: BoundedCache[BlockNumber, int]
-    _cache_virtual_price: BoundedCache[BlockNumber, int]
     _name: str
     FEE_DENOMINATOR: int = 10**10
     A_PRECISION: int = 100
-    # The contract's `_vp_rate_ro()` base-cache expiry window (10 minutes).
-    BASE_CACHE_EXPIRES: int = 10 * 60
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff:ignore[unused-method-argument]
         """Direct construction is forbidden.
@@ -373,28 +370,13 @@ class CurveStableswapPool(
         )
 
         # Per-block on-chain caches (companion-owned cache depth; the always-8
-        # default applies — no caller passes a non-default value).
+        # default applies — no caller passes a non-default value). Nothing is
+        # resolved at build time: the metapool base-cache freshness rule lives
+        # only in the Rust core
+        # (`degenbot_pools::curve_dy_io::resolve_metapool_base_rate`), which
+        # resolves the virtual price at calc time — so a provider-less pool is
+        # legal.
         self._cache_block_timestamps = BoundedCache(max_items=8)
-        self._cache_virtual_price = BoundedCache(max_items=8)
-
-        # The registration block (genesis journal delta). Metapools warm the
-        # base-cache virtual price here. A pool built without a stored data
-        # provider is legal — the Rust core resolves the virtual price at calc
-        # time — so the typed `MissingCurveData` is a deliberately-ignored fact;
-        # every other failure propagates loudly.
-        registration_block = py_pool.balance_vector().update_block
-        if self.base_pool is not None and registration_block != 0:
-            try:
-                self._get_cached_virtual_price(block_number=registration_block)
-            except MissingCurveData as exc:
-                # A provider-less pool is legal: the Rust core resolves the
-                # virtual price at calc time. Record the ignored typed fact;
-                # every other failure propagates loudly.
-                logger.debug(
-                    "Curve metapool %s: base-cache virtual price not prefetched: %s",
-                    self.address,
-                    exc,
-                )
 
         fee_string = f"{100 * self.fee / self.FEE_DENOMINATOR:.2f}"
         token_string = "-".join([token.symbol for token in self._tokens])
@@ -540,39 +522,6 @@ class CurveStableswapPool(
         result = self._data_provider.block_timestamp(block_number)
         self._cache_block_timestamps[block_number] = result
         return result
-
-    def _get_cached_virtual_price(self, block_number: BlockNumber) -> int:
-        """Resolve the virtual price, applying the metapool base-cache expiry.
-
-        For a metapool, the contract's `_vp_rate_ro()` uses the base pool's
-        cached virtual price while its cache is fresh, and fetches the live
-        virtual price once the base cache has expired; a plain pool fetches
-        directly. The resolved value is cached per block.
-
-        Returns:
-            The virtual price as an integer.
-
-        Raises:
-            MissingCurveData: If the value is not cached and no provider is available.
-
-        """
-        cached = self._cache_virtual_price.get(block_number)
-        if cached is not None:
-            return cached
-        if self._data_provider is None:
-            msg = "virtual_price requires a data_provider. Provide one via Bot.build_pool()."
-            raise MissingCurveData(self.address, "virtual_price", msg)
-        if self.base_pool is None:
-            value = self._data_provider.virtual_price(block_number)
-        else:
-            base_cache_updated = self._data_provider.base_cache_updated(block_number)
-            block_timestamp = self._get_cached_block_timestamp(block_number)
-            if block_timestamp > base_cache_updated + self.BASE_CACHE_EXPIRES:
-                value = self._data_provider.virtual_price(block_number)
-            else:
-                value = self._data_provider.base_virtual_price(block_number)
-        self._cache_virtual_price[block_number] = value
-        return value
 
     def _a(self, timestamp: int | None = None) -> int:
         """Handle ramping A up or down.

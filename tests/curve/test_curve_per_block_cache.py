@@ -1,8 +1,9 @@
 """Per-block cache behavior of ``CurveStableswapPool``.
 
-Exercises the pool's inlined per-block accessors — ``_get_cached_block_timestamp``
-and ``_get_cached_virtual_price`` — including the metapool base-cache expiry the
-contract's ``_vp_rate_ro()`` performs.
+Exercises the pool's inlined ``_get_cached_block_timestamp`` accessor (the
+try-cache→call-provider→store→return pattern). The metapool base-cache
+freshness rule is not a Python concern: the Rust core resolves the metapool
+virtual price at calc time.
 """
 
 from __future__ import annotations
@@ -107,63 +108,12 @@ class TestCacheMissingProviderRaises:
         with pytest.raises(MissingCurveData):
             lp._get_cached_block_timestamp(100)
 
-    def test_virtual_price(self) -> None:
-        """Missing provider raises MissingCurveData for virtual_price."""
-        lp = _plain_pool(data_provider=None)
-        with pytest.raises(MissingCurveData):
-            lp._get_cached_virtual_price(100)
 
+class TestProviderlessMetapoolConstruction:
+    """A metapool built with NO stored data provider is legal."""
 
-class TestVirtualPriceNonMetapool:
-    """A plain pool fetches virtual_price directly from the provider."""
-
-    def test_fetches_directly(self) -> None:
-        """Non-metapool gets virtual_price directly, then caches it."""
-        lp = _plain_pool(data_provider=FakeCurveDataProvider(virtual_price=_E18))
-        assert lp._get_cached_virtual_price(100) == _E18
-        assert lp._get_cached_virtual_price(100) == _E18
-
-
-class TestVirtualPriceExpiryLogic:
-    """Metapool virtual_price expiry and base-cache-validity logic."""
-
-    def test_base_cache_valid_uses_base_virtual_price(self) -> None:
-        """When the base cache has not expired, the base virtual price is used."""
-        lp = _metapool(
-            data_provider=FakeCurveDataProvider(
-                base_cache_updated=1_700_000_000,
-                base_virtual_price=_E18 + 42,
-                virtual_price=_E18 + 999,
-                block_timestamp=1_700_000_100,
-            ),
-        )
-        assert lp._get_cached_virtual_price(100) == _E18 + 42
-
-    def test_base_cache_expired_fetches_live_virtual_price(self) -> None:
-        """When the base cache has expired, the live virtual price is fetched."""
-        lp = _metapool(
-            data_provider=FakeCurveDataProvider(
-                base_cache_updated=1_700_000_000,
-                base_virtual_price=_E18 + 42,
-                virtual_price=_E18 + 999,
-                block_timestamp=1_700_000_700,
-            ),
-        )
-        assert lp._get_cached_virtual_price(100) == _E18 + 999
-
-
-class TestConstructionPrefetchOutcome:
-    """The construction-time prefetch is a typed, deliberately-ignored fact."""
-
-    def test_missing_provider_at_construction_is_typed_and_ignored(self) -> None:
-        """Fault-injected: a metapool built with NO stored data provider.
-
-        Construction succeeds — the prefetch's typed ``MissingCurveData`` is a
-        deliberately-ignored fact (a provider-less pool is legal; the Rust core
-        resolves the virtual price at calc time). Asking for the value directly
-        surfaces that typed fact.
-        """
+    def test_construction_succeeds(self) -> None:
+        """Construction reads no provider: the Rust core resolves state at calc time."""
         lp = _metapool(data_provider=None, state_block=12_345)
         assert isinstance(lp, CurveStableswapPool)
-        with pytest.raises(MissingCurveData):
-            lp._get_cached_virtual_price(12_345)
+        assert lp.update_block == 12_345

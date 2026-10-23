@@ -743,12 +743,11 @@ def _run_metapool_parity(
 def test_curve_metapool_get_dy(golden_factory) -> None:
     """Curve RAI/3Crv metapool: get_dy + get_dy_underlying == golden.
 
-    Covers ``test_metapool_with_valid_base_cache`` parity at the pinned block
-    (25,144,000) where the base cache has not expired — so virtual_price
-    resolution exercises the cached path. The cache-expiry regression
-    assertions live in the original live test; this golden test covers the
-    ``get_dy``/``get_dy_underlying`` parity across the full permutation x
-    multiplier loop (24 keys).
+    Pinned at block 25,144,000, where the metapool's base cache has not
+    expired, so the swap prices off the cached base virtual price. The 600 s
+    freshness rule lives only in the Rust core
+    (``curve_dy_io::resolve_metapool_base_rate``); exact parity across the full
+    permutation x multiplier loop (24 keys) pins it on real state.
     """
     _run_metapool_parity(
         golden_factory,

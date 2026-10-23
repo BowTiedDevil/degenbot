@@ -32,8 +32,8 @@ const FEE_DENOMINATOR: U256 = U256::from_limbs([10_000_000_000, 0, 0, 0]);
 const LENDING_NONE: u8 = 1;
 
 /// The metapool base-virtual-price cache lifetime (600 s), mirroring the
-/// contract's `base_cache_updated + BASE_CACHE_EXPIRES` freshness test and the
-/// Python companion's `BASE_CACHE_EXPIRES`.
+/// contract's `base_cache_updated + BASE_CACHE_EXPIRES` freshness test. This is
+/// the rule's single home — no consumer keeps its own copy of the window.
 const BASE_CACHE_EXPIRES: u64 = 10 * 60;
 
 /// Errors from resolving the dy-calculation inputs.
@@ -139,8 +139,7 @@ fn resolve_rates(
 /// `get_virtual_price()` once it has expired. Always reading the live value
 /// therefore disagrees with the contract on any fresh cache whose cached vp
 /// lags the live one (observed on GUSD/3Crv at block `26_204_126`: `21_035` wei
-/// of rate, `50_528_091` wei of dy on a `260_189` GUSD swap). Mirrors the Python
-/// `CurveStableswapPool._get_cached_virtual_price`.
+/// of rate, `50_528_091` wei of dy on a `260_189` GUSD swap).
 ///
 /// A provider that cannot serve the cache metadata (`base_cache_updated` or
 /// `block_timestamp` unavailable) has no freshness signal to apply, so it

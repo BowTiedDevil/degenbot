@@ -46,11 +46,8 @@ from degenbot.provider import AlloyProvider
 from degenbot.types.rpc_types import TxParams
 from tests.curve.test_curve_onchain_parity import (
     _METAPOOL_CASSETTE,
-    METAPOOL_PARITY_BLOCK,
     _build_curve_io_free,
-    _build_metapool_io_free,
     _load_cassette,
-    _metapool_immutable_and_state,
 )
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.contract_compat import ContractCompat, make_contract
@@ -288,32 +285,6 @@ def test_single_pool(
 
     lp = _build_pool(fork_mainnet_archive, pool_address)
     _test_calculations(lp=lp, provider=fork_mainnet_archive.provider)
-
-
-@pytest.mark.ethereum
-def test_metapool_with_valid_base_cache():
-    """Regression test: virtual_price must resolve correctly when the
-    base cache has not expired.
-
-    At block 25144000 the RAI/3Crv metapool's base_cache_updated is only ~180s old
-    (vs the 600s expiry), so the contract uses its cached virtual_price. Our pool
-    must do the same — `_get_cached_virtual_price()` resolves this internally.
-
-    Replayed from the recorded cassette at the pinned block (no fork); the
-    get_dy/get_dy_underlying parity at this same block is the golden test
-    ``test_curve_onchain_parity.py::test_curve_metapool_get_dy``.
-    """
-    block = METAPOOL_PARITY_BLOCK
-
-    immutable, state = _metapool_immutable_and_state(_load_cassette(_METAPOOL_CASSETTE), block)
-    lp = _build_metapool_io_free(immutable, state, block)
-    assert lp.update_block == block
-
-    # Verify the base cache has not expired at this block (recorded values)
-    block_timestamp = lp._data_provider.block_timestamp(block)
-    base_cache_updated = lp._data_provider.base_cache_updated(block)
-    assert block_timestamp <= base_cache_updated + lp.BASE_CACHE_EXPIRES
-    assert lp._get_cached_virtual_price(block) == lp._data_provider.base_virtual_price(block)
 
 
 # Registry/factory sweep pin: its semantics and advance record are in
