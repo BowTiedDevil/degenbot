@@ -43,8 +43,10 @@
     clippy::doc_markdown
 )]
 
+use std::cell::RefCell;
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use alloy::consensus::Transaction as ConsensusTx;
@@ -226,8 +228,18 @@ struct ClassifiedFrame {
 /// Load + classify the capture, deduping by hash. Malformed lines are
 /// skipped and unknown `to` targets contribute nothing.
 fn load_capture_frames(path: &PathBuf) -> Vec<ClassifiedFrame> {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Vec::new();
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) => {
+            // An unreadable capture silently empties the archived route, which
+            // for a committed corpus is a defect, not a tolerance: name it.
+            oracle_note(&format!(
+                "oracle: gate=archived-capture: the capture at {} is unreadable ({err}); the \
+                 archived route contributes no frame",
+                path.display()
+            ));
+            return Vec::new();
+        }
     };
     let mut out: Vec<ClassifiedFrame> = Vec::new();
     for line in text.lines() {
@@ -847,10 +859,11 @@ fn capture_frames_classify_to_archetypes_and_dedupe() {
 // Live tier: pin, replay, extract, compare (network-gated)
 // ─────────────────────────────────────────────────────────────────────────
 
-/// When set, every candidate's gate verdict prints (fixture-window
-/// diagnostics for an operator tuning the scan).
-fn scan_trace() -> bool {
-    std::env::var("DEGENBOT_ORACLE_TRACE").is_ok_and(|v| !v.is_empty() && v != "0")
+thread_local! {
+    /// Set while [`capture_notes`]'s future runs: a note records as well as
+    /// prints, so an offline test can assert on the exact line an operator
+    /// sees.
+    static NOTE_SINK: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
 }
 
 /// The oracle's diagnostic surface: which route resolved a fixture and why
@@ -863,7 +876,23 @@ fn scan_trace() -> bool {
               assertions carry the pass/fail, this carries the why"
 )]
 fn oracle_note(msg: &str) {
+    NOTE_SINK.with(|sink| {
+        if let Some(notes) = sink.borrow_mut().as_mut() {
+            notes.push(msg.to_owned());
+        }
+    });
     println!("{msg}");
+}
+
+/// Run `notes` with this thread's oracle notes captured alongside the print:
+/// the seam the fault-injection tests assert on (they quote the very line the
+/// operator would have seen). Drive it from a current-thread runtime — the
+/// sink is thread-local.
+async fn capture_notes<T>(notes: impl std::future::Future<Output = T>) -> (T, Vec<String>) {
+    NOTE_SINK.with(|sink| *sink.borrow_mut() = Some(Vec::new()));
+    let out = notes.await;
+    let captured = NOTE_SINK.with(|sink| sink.borrow_mut().take().unwrap_or_default());
+    (out, captured)
 }
 
 /// The reference V2 pair (USDC/WETH) whose runtime bytecode ids the V2 pair
@@ -1077,62 +1106,137 @@ async fn tick_spacing_of(provider: &RootProvider, pool: Address) -> i32 {
     }
 }
 
-/// Code id per account written in the node diff (memoized per test). A
-/// transient RPC failure is retried and never cached as "untracked" — a
-/// dropped lookup must not silently shrink the tracked set.
-async fn code_id_of(
-    provider: &RootProvider,
-    addr: Address,
-    cache: &mut HashMap<Address, Option<B256>>,
-) -> Option<B256> {
-    if let Some(cached) = cache.get(&addr) {
-        return *cached;
-    }
-    for _ in 0..3 {
-        match provider
-            .client()
+/// The raw node read the tracked-pool classifier makes, behind a seam: a
+/// fault-injected lookup drives the retry-exhaustion path with no node
+/// attached, which is the path whose silence once let a node transient read as
+/// a gate verdict.
+trait CodeLookup {
+    /// The account's runtime code, or the transport error that prevented it.
+    async fn runtime_code(&self, addr: Address) -> Result<Bytes, String>;
+}
+
+impl CodeLookup for RootProvider {
+    async fn runtime_code(&self, addr: Address) -> Result<Bytes, String> {
+        self.client()
             .request::<(Address, &str), Bytes>("eth_getCode", (addr, "latest"))
             .await
-        {
+            .map_err(|err| err.to_string())
+    }
+}
+
+/// `eth_getCode` attempts per probe before the account is declared
+/// unavailable.
+const CODE_FETCH_ATTEMPTS: usize = 3;
+
+/// Code id per account written in the node diff (memoized on success only: a
+/// transient RPC failure is retried on the next probe and never cached as
+/// "untracked", because a dropped lookup must not shrink the tracked set for
+/// the rest of the fixture search).
+///
+/// Exhaustion is ATTRIBUTED unconditionally — the note names the address, the
+/// tracked-pool-set gate the id feeds, and the last error — so a shrunken pool
+/// set can never read as a gate verdict.
+async fn code_id_of(
+    lookup: &impl CodeLookup,
+    addr: Address,
+    cache: &mut HashMap<Address, B256>,
+) -> Result<B256, String> {
+    if let Some(cached) = cache.get(&addr) {
+        return Ok(*cached);
+    }
+    let mut last_error = String::new();
+    for _ in 0..CODE_FETCH_ATTEMPTS {
+        match lookup.runtime_code(addr).await {
             Ok(code) => {
                 let id = code_id(&code);
-                cache.insert(addr, Some(id));
-                return Some(id);
+                cache.insert(addr, id);
+                return Ok(id);
             }
-            Err(err) => {
-                if scan_trace() {
-                    oracle_note(&format!(
-                        "oracle: eth_getCode transient failure for {addr:?}: {err}"
-                    ));
-                }
+            Err(err) => last_error = err,
+        }
+    }
+    let reason =
+        format!("eth_getCode exhausted {CODE_FETCH_ATTEMPTS} attempts (last error: {last_error})");
+    oracle_note(&format!(
+        "oracle: gate=tracked-pool-set cannot resolve {addr:?}: {reason}"
+    ));
+    Err(reason)
+}
+
+/// Why one write-touched account contributed no tracked pool descriptor — the
+/// distinction a short pool set has to preserve.
+#[derive(Debug)]
+enum DropReason {
+    /// `eth_getCode` never served the runtime: a NODE transient, not a gate
+    /// verdict.
+    CodeFetchFailed(String),
+    /// The runtime matches no tracked-pool family (a token, the router itself,
+    /// a relayer, the V4 PoolManager): correctly outside the tracked set.
+    UnknownFamily(B256),
+}
+
+impl fmt::Display for DropReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CodeFetchFailed(err) => write!(f, "runtime code unavailable: {err}"),
+            Self::UnknownFamily(id) => {
+                write!(f, "unknown family (code id 0x{})", alloy::hex::encode(id))
             }
         }
     }
-    None
 }
 
-/// The tracked-pool descriptor set a fixture frame recovers: every account
-/// the node diff reports as WRITTEN whose runtime bytecode matches a tracked
-/// pool family — V2 pair or V3 pool, keyed by the reference code ids. A
-/// family-unknown write account (tokens, relayers, the router itself, the V4
-/// PoolManager) contributes nothing.
+/// One write-touched account the tracked-pool classifier dropped, with the
+/// reason it dropped it.
+#[derive(Debug)]
+struct DroppedAccount {
+    addr: Address,
+    reason: DropReason,
+}
+
+impl fmt::Display for DroppedAccount {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?} ({})", self.addr, self.reason)
+    }
+}
+
+/// The tracked-pool descriptor set a fixture frame recovers — every account the
+/// node diff reports as WRITTEN whose runtime bytecode matches a tracked pool
+/// family (V2 pair or V3 pool, keyed by the reference code ids) — plus every
+/// write-touched account that contributed none and why, so a short set reads as
+/// a node failure or as honestly untracked code.
+struct TrackedPools {
+    descriptors: HashMap<Address, PoolFamily>,
+    dropped: Vec<DroppedAccount>,
+}
+
 async fn tracked_pool_descriptors(
     provider: &RootProvider,
     family_ids: &(B256, B256),
     post: &HashMap<Address, HashMap<U256, U256>>,
     pre: &HashMap<Address, HashMap<U256, U256>>,
     pin: u64,
-    code_cache: &mut HashMap<Address, Option<B256>>,
-) -> HashMap<Address, PoolFamily> {
-    let mut out = HashMap::new();
+    code_cache: &mut HashMap<Address, B256>,
+) -> TrackedPools {
+    let mut descriptors = HashMap::new();
+    let mut dropped: Vec<DroppedAccount> = Vec::new();
     for (addr, storage) in post {
         if storage.is_empty() {
             continue;
         }
-        let id = code_id_of(provider, *addr, code_cache).await;
-        let family = if id == Some(family_ids.0) {
+        let id = match code_id_of(provider, *addr, code_cache).await {
+            Ok(id) => id,
+            Err(err) => {
+                dropped.push(DroppedAccount {
+                    addr: *addr,
+                    reason: DropReason::CodeFetchFailed(err),
+                });
+                continue;
+            }
+        };
+        let family = if id == family_ids.0 {
             PoolFamily::V2Pair
-        } else if id == Some(family_ids.1) {
+        } else if id == family_ids.1 {
             let spacing = tick_spacing_of(provider, *addr).await;
             let hint = pool_pre_tx_tick(provider, pre, post, *addr, pin).await;
             PoolFamily::V3 {
@@ -1141,11 +1245,21 @@ async fn tracked_pool_descriptors(
                 current_tick_hint: Some(hint),
             }
         } else {
+            dropped.push(DroppedAccount {
+                addr: *addr,
+                reason: DropReason::UnknownFamily(id),
+            });
             continue;
         };
-        out.insert(*addr, family);
+        descriptors.insert(*addr, family);
     }
-    out
+    // The diff map's iteration order is not stable; the note lists accounts in
+    // address order so two runs over the same window read the same.
+    dropped.sort_by_key(|dropped| dropped.addr);
+    TrackedPools {
+        descriptors,
+        dropped,
+    }
 }
 
 /// A candidate transaction: first-sender-in-block, EIP-1559, no access
@@ -1220,67 +1334,143 @@ struct OracleFixture {
     via: &'static str,
 }
 
-/// True on dirty-pool interference: a descriptor pool touched by an earlier
-/// same-block tx (a parent-state replay would diverge mid-block).
-async fn clean_frame(provider: &RootProvider, fixture: &OracleFixture) -> bool {
-    for pool in fixture.descriptors.keys() {
+/// The clean-frame gate: `Err(pool)` names the first (address-ordered)
+/// descriptor pool an earlier same-block tx already touched — a parent-state
+/// replay of the frame would diverge mid-block.
+async fn clean_frame(provider: &RootProvider, fixture: &OracleFixture) -> Result<(), Address> {
+    let mut pools: Vec<Address> = fixture.descriptors.keys().copied().collect();
+    pools.sort_unstable();
+    for pool in pools {
         if pool_touched_earlier_in_block(
             provider,
-            *pool,
+            pool,
             fixture.pin,
             fixture.tx_hash,
             fixture.tx_index,
         )
         .await
         {
-            return false;
+            return Err(pool);
         }
     }
-    true
+    Ok(())
+}
+
+/// Why a classifier-passing candidate did NOT become a fixture. Every variant
+/// names the gate that rejected it, and carries the underlying error where one
+/// exists: a rejection reading "not a clean fixture" with no gate is how a node
+/// transient got chased as a gate verdict.
+#[derive(Debug)]
+enum FixtureRejection {
+    /// The replayable-input-domain gate: not a first-sender-in-block EIP-1559
+    /// transaction without an access list (a predicate verdict, no error).
+    DomainDirty { tx: B256 },
+    /// The tracked-pool-set gate: fewer descriptors than the archetype needs,
+    /// with every write-touched account it dropped and why.
+    PoolSetTooSmall {
+        tx: B256,
+        tracked: usize,
+        needed: usize,
+        dropped: Vec<DroppedAccount>,
+    },
+    /// The clean-frame gate: an earlier same-block transaction already wrote a
+    /// descriptor pool (a predicate verdict, no error).
+    PoolTouchedEarlierInBlock { tx: B256, pool: Address },
+}
+
+impl fmt::Display for FixtureRejection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DomainDirty { tx } => write!(
+                f,
+                "candidate {tx} rejected by gate=replayable-domain: not a first-sender-in-block \
+                 EIP-1559 tx without an access list"
+            ),
+            Self::PoolSetTooSmall {
+                tx,
+                tracked,
+                needed,
+                dropped,
+            } => {
+                write!(
+                    f,
+                    "candidate {tx} rejected by gate=tracked-pool-set: {tracked} tracked pool(s), \
+                     {needed} required"
+                )?;
+                if dropped.is_empty() {
+                    return write!(f, "; no write-touched account was dropped");
+                }
+                write!(
+                    f,
+                    "; dropped {} write-touched account(s): {}",
+                    dropped.len(),
+                    dropped
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+            Self::PoolTouchedEarlierInBlock { tx, pool } => write!(
+                f,
+                "candidate {tx} rejected by gate=clean-frame: pool {pool:?} was written by an \
+                 earlier same-block transaction"
+            ),
+        }
+    }
+}
+
+/// The one rejection-note shape the live-scan route emits.
+fn rejection_note(arch: Archetype, rejection: &FixtureRejection) -> String {
+    format!("oracle[{arch:?}] {rejection}")
+}
+
+/// The archived route's fallback note: which archived frame failed to carry the
+/// leg, and the gate (or retrieval failure) that explains it.
+fn archived_fallback_note(arch: Archetype, frame: B256, cause: &str) -> String {
+    format!(
+        "oracle[{arch:?}]: archived frame {frame} did not carry the leg ({cause}); falling back \
+         to the live-scan window"
+    )
 }
 
 /// Promote a classifier-passing candidate tx into a fixture when EVERY gate
 /// holds: replayable domain (EIP-1559, no access list, first-sender-in-block),
-/// enough tracked pools write-touched, and no earlier same-block touch.
+/// enough tracked pools write-touched, and no earlier same-block touch. `Err`
+/// names the gate that rejected it, with the error behind it where one exists.
 async fn finalize_candidate(
     provider: &RootProvider,
     arch: Archetype,
     t: &alloy::rpc::types::Transaction,
     family_ids: &(B256, B256),
-    code_cache: &mut HashMap<Address, Option<B256>>,
+    code_cache: &mut HashMap<Address, B256>,
     tried: &mut usize,
-) -> Option<OracleFixture> {
-    let pin = t.block_number?;
+) -> Result<OracleFixture, FixtureRejection> {
+    let pin = t
+        .block_number
+        .expect("a node-listed transaction carries its block number");
     let parent_nonce = provider
         .get_transaction_count(t.inner.signer())
         .block_id(BlockId::number(pin.saturating_sub(1)))
         .await
         .unwrap();
-    if !is_replayable_domain(t, parent_nonce) {
-        if scan_trace() {
-            oracle_note(&format!(
-                "oracle[{arch:?}] candidate {} domain-dirty",
-                t.inner.hash()
-            ));
-        }
-        return None;
-    }
     let tx_hash = *t.inner.hash();
+    if !is_replayable_domain(t, parent_nonce) {
+        return Err(FixtureRejection::DomainDirty { tx: tx_hash });
+    }
     let (post, pre) = node_post_diff(provider, tx_hash).await;
     *tried += 1;
     let tx_index = t
         .transaction_index
         .expect("rpc transaction carries its index");
-    let descriptors =
-        tracked_pool_descriptors(provider, family_ids, &post, &pre, pin, code_cache).await;
-    if descriptors.len() < arch.min_tracked_pools() {
-        if scan_trace() {
-            oracle_note(&format!(
-                "oracle[{arch:?}] candidate {tx_hash} pool set too small: {} tracked pools",
-                descriptors.len()
-            ));
-        }
-        return None;
+    let pools = tracked_pool_descriptors(provider, family_ids, &post, &pre, pin, code_cache).await;
+    if pools.descriptors.len() < arch.min_tracked_pools() {
+        return Err(FixtureRejection::PoolSetTooSmall {
+            tx: tx_hash,
+            tracked: pools.descriptors.len(),
+            needed: arch.min_tracked_pools(),
+            dropped: pools.dropped,
+        });
     }
     let block = provider
         .get_block_by_number(BlockNumberOrTag::Number(pin))
@@ -1295,18 +1485,13 @@ async fn finalize_candidate(
         pin,
         timestamp: block.header.timestamp,
         base_fee_next: parent_base_fee(provider, pin).await,
-        descriptors,
+        descriptors: pools.descriptors,
         via: "",
     };
-    if !clean_frame(provider, &fixture).await {
-        if scan_trace() {
-            oracle_note(&format!(
-                "oracle[{arch:?}] candidate {tx_hash} pool touched earlier in block"
-            ));
-        }
-        return None;
+    match clean_frame(provider, &fixture).await {
+        Ok(()) => Ok(fixture),
+        Err(pool) => Err(FixtureRejection::PoolTouchedEarlierInBlock { tx: tx_hash, pool }),
     }
-    Some(fixture)
 }
 
 /// A captured frame's on-chain identity matches its capture line (guarding
@@ -1318,6 +1503,65 @@ fn matches_capture(t: &alloy::rpc::types::Transaction, f: &CapturedFrame) -> boo
         && t.to() == Some(f.to)
 }
 
+/// The archived-capture route: the leg's committed frame when every gate holds.
+/// A frame the node cannot serve, one that fails the capture-identity check, and
+/// one a gate rejects all return attribution (`None`) — the fallback to the live
+/// scan is never a silence.
+async fn archived_capture_fixture(
+    provider: &RootProvider,
+    arch: Archetype,
+    family_ids: &(B256, B256),
+    code_cache: &mut HashMap<Address, B256>,
+) -> Option<OracleFixture> {
+    for classified in load_capture_frames(&capture_path())
+        .into_iter()
+        .filter(|c| c.archetype == arch)
+    {
+        let frame = classified.frame;
+        let t = match provider.get_transaction_by_hash(frame.hash).await {
+            Ok(Some(t)) => t,
+            Ok(None) => {
+                oracle_note(&archived_fallback_note(
+                    arch,
+                    frame.hash,
+                    "gate=archived-frame-retrievable: the node serves no such transaction",
+                ));
+                continue;
+            }
+            Err(err) => {
+                oracle_note(&archived_fallback_note(
+                    arch,
+                    frame.hash,
+                    &format!("gate=archived-frame-retrievable: the lookup failed: {err}"),
+                ));
+                continue;
+            }
+        };
+        if !matches_capture(&t, &frame) {
+            oracle_note(&archived_fallback_note(
+                arch,
+                frame.hash,
+                "gate=capture-identity: the on-chain transaction's from/nonce/gas/to differ from \
+                 the capture line",
+            ));
+            continue;
+        }
+        let mut tried = 0usize;
+        match finalize_candidate(provider, arch, &t, family_ids, code_cache, &mut tried).await {
+            Ok(mut fixture) => {
+                fixture.via = "archived capture";
+                return Some(fixture);
+            }
+            Err(rejection) => oracle_note(&archived_fallback_note(
+                arch,
+                frame.hash,
+                &rejection.to_string(),
+            )),
+        }
+    }
+    None
+}
+
 /// Resolve one fixture per archetype: the archived capture first (its
 /// landing tx looked up on-chain), then a clean frame from the live-scan
 /// window (env-pinnable per archetype).
@@ -1326,34 +1570,10 @@ async fn resolve_fixture(provider: &RootProvider, arch: Archetype) -> OracleFixt
     let mut code_cache = HashMap::new();
 
     // 1. The archived capture.
-    for classified in load_capture_frames(&capture_path())
-        .into_iter()
-        .filter(|c| c.archetype == arch)
+    if let Some(fixture) =
+        archived_capture_fixture(provider, arch, &family_ids, &mut code_cache).await
     {
-        let frame = classified.frame;
-        let Ok(Some(t)) = provider.get_transaction_by_hash(frame.hash).await else {
-            oracle_note(&format!(
-                "oracle[{arch:?}]: archived frame {} is not retrievable on-chain; falling \
-                 back to the live-scan window",
-                frame.hash
-            ));
-            continue;
-        };
-        if !matches_capture(&t, &frame) {
-            continue;
-        }
-        let mut tried = 0usize;
-        if let Some(mut fixture) =
-            finalize_candidate(provider, arch, &t, &family_ids, &mut code_cache, &mut tried).await
-        {
-            fixture.via = "archived capture";
-            return fixture;
-        }
-        oracle_note(&format!(
-            "oracle[{arch:?}]: archived frame {} is not a clean fixture; falling back to the \
-             live-scan window",
-            frame.hash
-        ));
+        return fixture;
     }
 
     // 2. The live-scan window, newest-first.
@@ -1376,12 +1596,26 @@ async fn resolve_fixture(provider: &RootProvider, arch: Archetype) -> OracleFixt
         if tried >= max_tried {
             break;
         }
-        let Ok(Some(block)) = provider
+        let block = match provider
             .get_block_by_number(BlockNumberOrTag::Number(pin))
             .full()
             .await
-        else {
-            continue;
+        {
+            Ok(Some(block)) => block,
+            Ok(None) => {
+                oracle_note(&format!(
+                    "oracle[{arch:?}]: gate=window-block-fetch: the node serves no block at pin \
+                     {pin}"
+                ));
+                continue;
+            }
+            Err(err) => {
+                oracle_note(&format!(
+                    "oracle[{arch:?}]: gate=window-block-fetch: the block fetch for pin {pin} \
+                     failed: {err}"
+                ));
+                continue;
+            }
         };
         for t in block.transactions.txns() {
             if tried >= max_tried {
@@ -1391,12 +1625,14 @@ async fn resolve_fixture(provider: &RootProvider, arch: Archetype) -> OracleFixt
             if !classifies_as(arch, to, t.input()) {
                 continue;
             }
-            if let Some(mut fixture) =
-                finalize_candidate(provider, arch, t, &family_ids, &mut code_cache, &mut tried)
-                    .await
+            match finalize_candidate(provider, arch, t, &family_ids, &mut code_cache, &mut tried)
+                .await
             {
-                fixture.via = "live scan";
-                return fixture;
+                Ok(mut fixture) => {
+                    fixture.via = "live scan";
+                    return fixture;
+                }
+                Err(rejection) => oracle_note(&rejection_note(arch, &rejection)),
             }
         }
     }
@@ -1586,4 +1822,189 @@ async fn live_1inch_v5_frame_matches_fork_truth() {
 #[ignore = "live network: needs a chain-1 RPC behind DEGENBOT_RPC_HTTP_CHAINID_1"]
 async fn live_cow_batch_settle_recovers_the_full_pool_set() {
     oracle_parity_for(Archetype::CoWBatchSettle).await;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Offline attribution tier: a fault-injected lookup names its gate
+// ─────────────────────────────────────────────────────────────────────────
+
+/// A node stand-in whose `eth_getCode` always fails — the transient-RPC class
+/// that used to vanish into a silently shrunken tracked set.
+struct CodeFetchFails {
+    attempts: AtomicUsize,
+}
+
+impl CodeFetchFails {
+    fn new() -> Self {
+        Self {
+            attempts: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl CodeLookup for CodeFetchFails {
+    fn runtime_code(
+        &self,
+        _addr: Address,
+    ) -> impl std::future::Future<Output = Result<Bytes, String>> {
+        self.attempts.fetch_add(1, Ordering::Relaxed);
+        std::future::ready(Err(
+            "transport error: eth_getCode responded 503 for block `latest`".to_owned(),
+        ))
+    }
+}
+
+/// The write-touched account the fault-injection fixtures probe.
+const FAULT_ACCOUNT: Address = address!("0x2222222222222222222222222222222222222222");
+/// A write-touched account whose runtime is real but outside both tracked
+/// families (a token, a relayer, the router itself).
+const FOREIGN_ACCOUNT: Address = address!("0x3333333333333333333333333333333333333333");
+
+/// Retry exhaustion is ATTRIBUTED: the note names the address, the
+/// tracked-pool-set gate the id feeds, and the last error — so a shrunken pool
+/// set can never be mistaken for a gate verdict — and the failure is never
+/// cached as "untracked".
+#[tokio::test]
+async fn code_fetch_exhaustion_names_the_gate_and_the_last_error() {
+    let lookup = CodeFetchFails::new();
+    let mut cache: HashMap<Address, B256> = HashMap::new();
+    let ((outcome, cached), notes) = capture_notes(async {
+        let outcome = code_id_of(&lookup, FAULT_ACCOUNT, &mut cache).await;
+        (outcome, cache.len())
+    })
+    .await;
+
+    let reason = outcome.expect_err("eth_getCode never answered: no code id is available");
+    assert_eq!(
+        lookup.attempts.load(Ordering::Relaxed),
+        CODE_FETCH_ATTEMPTS,
+        "the probe spends its whole retry budget"
+    );
+    assert_eq!(cached, 0, "a failed lookup is not cached as untracked");
+    assert_eq!(notes.len(), 1, "one note, not a silent drop: {notes:?}");
+    let note = &notes[0];
+    oracle_note(note);
+    assert!(note.contains("gate=tracked-pool-set"), "{note}");
+    assert!(
+        note.contains(&format!("{FAULT_ACCOUNT:?}")),
+        "the note names the dropped address: {note}"
+    );
+    assert!(
+        note.contains("eth_getCode responded 503"),
+        "the note quotes the last error: {note}"
+    );
+    assert!(
+        note.contains(&format!("exhausted {CODE_FETCH_ATTEMPTS} attempts")),
+        "{note}"
+    );
+    assert!(
+        reason.contains("503"),
+        "the error travels to the caller: {reason}"
+    );
+}
+
+/// A short pool set names WHICH write-touched accounts were dropped and WHY: a
+/// code-fetch failure (a node transient, error quoted) reads differently from an
+/// unknown family (honestly untracked code), and the note names the gate.
+#[tokio::test]
+async fn pool_set_too_small_names_each_dropped_account_and_reason() {
+    let lookup = CodeFetchFails::new();
+    let mut cache: HashMap<Address, B256> = HashMap::new();
+    let (fetch, notes) =
+        capture_notes(async { code_id_of(&lookup, FAULT_ACCOUNT, &mut cache).await }).await;
+    assert_eq!(notes.len(), 1, "the fetch failure is attributed: {notes:?}");
+    let fetch = fetch.expect_err("no code id is available for the failing account");
+
+    let rejection = FixtureRejection::PoolSetTooSmall {
+        tx: B256::repeat_byte(0xab),
+        tracked: 0,
+        needed: Archetype::CoWBatchSettle.min_tracked_pools(),
+        dropped: vec![
+            DroppedAccount {
+                addr: FAULT_ACCOUNT,
+                reason: DropReason::CodeFetchFailed(fetch),
+            },
+            DroppedAccount {
+                addr: FOREIGN_ACCOUNT,
+                reason: DropReason::UnknownFamily(B256::repeat_byte(0x11)),
+            },
+        ],
+    };
+    let note = rejection_note(Archetype::CoWBatchSettle, &rejection);
+    oracle_note(&note);
+    assert!(note.contains("gate=tracked-pool-set"), "{note}");
+    assert!(note.contains("0 tracked pool(s), 2 required"), "{note}");
+    assert!(
+        note.contains("dropped 2 write-touched account(s)"),
+        "{note}"
+    );
+    assert!(
+        note.contains(&format!("{FAULT_ACCOUNT:?} (runtime code unavailable")),
+        "a fetch failure reads as a node transient: {note}"
+    );
+    assert!(
+        note.contains("eth_getCode responded 503"),
+        "the fetch failure carries its error: {note}"
+    );
+    assert!(
+        note.contains(&format!("{FOREIGN_ACCOUNT:?} (unknown family")),
+        "an untracked runtime reads as a classification miss: {note}"
+    );
+}
+
+/// An unreadable committed capture is a defect, not loader tolerance: the
+/// archived route names the gate and the path instead of contributing nothing
+/// in silence.
+#[tokio::test]
+async fn unreadable_capture_names_the_archived_route() {
+    let missing = PathBuf::from("/nonexistent/frame_replay_capture.jsonl");
+    let (frames, notes) = capture_notes(async { load_capture_frames(&missing) }).await;
+    assert!(frames.is_empty(), "no frame: {frames:?}");
+    assert_eq!(
+        notes.len(),
+        1,
+        "one note, not a silent empty route: {notes:?}"
+    );
+    let note = &notes[0];
+    oracle_note(note);
+    assert!(note.contains("gate=archived-capture"), "{note}");
+    assert!(
+        note.contains("/nonexistent/frame_replay_capture.jsonl"),
+        "{note}"
+    );
+}
+
+/// Every rejection and fallback note names its gate, including the archived
+/// route's "did not carry the leg" line — the gate is never left anonymous.
+#[test]
+fn every_rejection_note_names_its_gate() {
+    let tx = B256::repeat_byte(0xcd);
+    let dirty = FixtureRejection::DomainDirty { tx };
+    let touched = FixtureRejection::PoolTouchedEarlierInBlock {
+        tx,
+        pool: FAULT_ACCOUNT,
+    };
+    for (rejection, gate) in [
+        (&dirty, "gate=replayable-domain"),
+        (&touched, "gate=clean-frame"),
+    ] {
+        let note = rejection_note(Archetype::CoWBatchSettle, rejection);
+        assert!(note.contains(gate), "{note}");
+    }
+
+    let note = archived_fallback_note(
+        Archetype::CoWBatchSettle,
+        B256::repeat_byte(0x01),
+        &touched.to_string(),
+    );
+    oracle_note(&note);
+    assert!(
+        note.contains("falling back to the live-scan window"),
+        "{note}"
+    );
+    assert!(note.contains("gate=clean-frame"), "{note}");
+    assert!(
+        note.contains(&format!("{FAULT_ACCOUNT:?}")),
+        "the note names the pool that dirtied the frame: {note}"
+    );
 }
