@@ -1977,7 +1977,7 @@ mod tests {
         let mut cfg = ::degenbot_config::BotConfig::default();
         cfg.nodes.rate_limit_rps = rate_limit_rps;
         cfg.nodes.rate_limit_burst = rate_limit_burst;
-        ::degenbot_config::holder::reinstall_for_tests(std::sync::Arc::new(cfg));
+        let _ = ::degenbot_config::holder::reinstall_for_tests(std::sync::Arc::new(cfg));
     }
 
     #[test]

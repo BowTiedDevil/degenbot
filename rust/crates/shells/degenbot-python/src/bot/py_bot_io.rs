@@ -1393,6 +1393,7 @@ impl PyBotIo {
     /// Returns the owning factory as a lowercase `0x` hex string, or `None` when
     /// no candidate owns the pool (a factory revision the registry does not
     /// carry).
+    #[expect(clippy::needless_pass_by_value)] // PyO3 extracts a `Vec<String>` argument by value
     #[pyo3(signature = (address, factories, block=None))]
     fn fetch_balancer_factory(
         &self,

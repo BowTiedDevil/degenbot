@@ -1320,8 +1320,8 @@ async fn build_balancer_stable_assembles_params_with_rate_providers() {
     assert_eq!(p.scaling_factors[1], one);
 }
 
-/// FakeRpc responses for one `build_balancer_stable` pass. `tokens` is the
-/// Vault token list; a ComposableStablePool lists *itself* in it.
+/// `FakeRpc` responses for one `build_balancer_stable` pass. `tokens` is the
+/// Vault token list; a `ComposableStablePool` lists *itself* in it.
 fn balancer_stable_fakes(tokens: &[Address]) -> FakeRpc {
     let mut f = FakeRpc::new();
     let pool_id = [0xef; 32];
@@ -1367,7 +1367,7 @@ fn balancer_stable_fakes(tokens: &[Address]) -> FakeRpc {
     f
 }
 
-/// A ComposableStablePool lists its own BPT among the Vault tokens
+/// A `ComposableStablePool` lists its own BPT among the Vault tokens
 /// (`bpt_idx` = `Some`). Composable pools ship the monorepo `StableMath` —
 /// always-roundDown `D_P` — so the shape resolves to `INVARIANT_V1`.
 #[tokio::test]
@@ -1380,14 +1380,14 @@ async fn build_balancer_stable_derives_v1_for_a_composable_pool() {
     assert_eq!(p.invariant_version, 1);
 }
 
-/// A non-composable stable pool (MetaStablePool / the 2021 StablePool) carries
+/// A non-composable stable pool (`MetaStablePool` / the 2021 `StablePool`) carries
 /// no BPT and ships the 2021 deployed `StableMath` — roundUp `P_D` — so the
 /// shape resolves to `INVARIANT_V2`.
 ///
-/// The wstETH/WETH MetaStablePool's pool-id specialization is `0x0002`
-/// (TwoToken — a token-count artifact of the Vault's `_getSpecialization`,
+/// The wstETH/WETH `MetaStablePool`'s pool-id specialization is `0x0002`
+/// (`TwoToken` — a token-count artifact of the Vault's `_getSpecialization`,
 /// not a family signal), which is why the retired
-/// specialization-derived rule got every MetaStablePool wrong.
+/// specialization-derived rule got every `MetaStablePool` wrong.
 #[tokio::test]
 async fn build_balancer_stable_derives_v2_for_a_non_composable_pool() {
     let io = io_with(balancer_stable_fakes(&[T0, T1]));
@@ -1410,7 +1410,7 @@ async fn build_balancer_stable_override_outranks_the_shape() {
     }
 }
 
-/// A known-broken Balancer V2 pool is refused before any RPC: the FakeRpc
+/// A known-broken Balancer V2 pool is refused before any RPC: the `FakeRpc`
 /// carries no responses because the gate fires before the first read.
 #[tokio::test]
 async fn build_balancer_weighted_rejects_a_known_broken_pool() {
@@ -1444,6 +1444,103 @@ async fn build_balancer_stable_rejects_a_known_broken_pool() {
             "known-broken pool built: {broken}"
         );
     }
+}
+
+/// A token whose `decimals()` answers nothing (no runtime code — self-destructed
+/// after its pool was registered — or an empty return) cannot be scaled, so the
+/// pool is refused by name instead of surfacing as an RPC decode failure.
+#[tokio::test]
+async fn build_balancer_weighted_refuses_a_pool_with_an_unreadable_coin() {
+    let mut f = FakeRpc::new();
+    let pool_id = [0xac; 32];
+    f.set(
+        abi::encode_get_pool_id()[..4].try_into().unwrap(),
+        pool_id_ret(&pool_id),
+    );
+    f.set(
+        abi::encode_get_pool_tokens(&pool_id)[..4]
+            .try_into()
+            .unwrap(),
+        pool_tokens_ret(&[T0, T1], &[U256::from(1_000u64), U256::from(2_000u64)]),
+    );
+    f.set(
+        abi::encode_get_swap_fee()[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::from(5_000_000_000_000_000u64), 256)),
+    );
+    f.set(
+        abi::encode_get_weights()[..4].try_into().unwrap(),
+        u256_array_ret(&[500_000_000_000_000_000u64, 500_000_000_000_000_000u64]),
+    );
+    // `decimals()` returns no data at all → the ABI word cannot decode.
+    f.set(choreography::selector(b"decimals()"), Vec::new());
+    let io = io_with(f);
+    assert!(matches!(
+        builder::build_balancer_weighted(VAULT, TO, &io, None).await,
+        Err(builder::PoolBuilderError::Spec(SpecRefusal::NoCodeCoin))
+    ));
+}
+
+/// A composable weighted pool (`ManagedPool`) lists its own BPT as a Vault
+/// token while `getNormalizedWeights()` covers only the underlying tokens, so
+/// the weight vector is one short of the token vector. The weighted state holds
+/// one weight per token; the shape refuses by name here instead of panicking in
+/// the registration arity check.
+#[tokio::test]
+async fn build_balancer_weighted_refuses_a_composable_weighted_pool() {
+    let mut f = FakeRpc::new();
+    let pool_id = [0xab; 32];
+    f.set(
+        abi::encode_get_pool_id()[..4].try_into().unwrap(),
+        pool_id_ret(&pool_id),
+    );
+    // `TO` is Vault token 0 — the pool's own BPT — and the weights cover the
+    // two underlying tokens only.
+    f.set(
+        abi::encode_get_pool_tokens(&pool_id)[..4]
+            .try_into()
+            .unwrap(),
+        pool_tokens_ret(
+            &[TO, T0, T1],
+            &[U256::ZERO, U256::from(1_000u64), U256::from(2_000u64)],
+        ),
+    );
+    f.set(
+        abi::encode_get_weights()[..4].try_into().unwrap(),
+        u256_array_ret(&[500_000_000_000_000_000u64, 500_000_000_000_000_000u64]),
+    );
+    let io = io_with(f);
+    assert!(matches!(
+        builder::build_balancer_weighted(VAULT, TO, &io, None).await,
+        Err(builder::PoolBuilderError::Spec(
+            SpecRefusal::BalancerComposableWeighted
+        ))
+    ));
+}
+
+/// A rate provider that reverts (a nested pool killed or in recovery mode)
+/// leaves the parent pool unable to price its own tokens: a pool fact, so the
+/// stable arm refuses it by name rather than surfacing an RPC error.
+#[tokio::test]
+async fn build_balancer_stable_refuses_a_pool_whose_rate_provider_reverts() {
+    let mut f = balancer_stable_fakes(&[T0, T1]);
+    // A live (non-sentinel) provider and no `getRate()` response → the read
+    // reverts.
+    f.set(
+        choreography::selector(b"getRateProviders()"),
+        enc(DynSolValue::Array(vec![
+            DynSolValue::Address(alloy::primitives::address!(
+                "0x2222222222222222222222222222222222222222"
+            )),
+            DynSolValue::Address(Address::ZERO),
+        ])),
+    );
+    let io = io_with(f);
+    assert!(matches!(
+        builder::build_balancer_stable(VAULT, TO, &io, None, None).await,
+        Err(builder::PoolBuilderError::Spec(
+            SpecRefusal::BalancerRateProviderUnreadable
+        ))
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -2095,7 +2192,7 @@ async fn build_curve_pool_rejects_a_coin_whose_decimals_read_reverts() {
 /// A pool that answers `coins(1)` but reverts on `balances(1)` is
 /// non-standard: discovery stops with more coins than balances, and the
 /// registration layer asserts N-consistency. The build must refuse with the
-/// same `Spec` taxonomy as the BrokenPool guard rather than assembling
+/// same `Spec` taxonomy as the `BrokenPool` guard rather than assembling
 /// params that panic downstream.
 #[tokio::test]
 async fn build_curve_pool_rejects_a_coin_whose_balance_read_fails() {

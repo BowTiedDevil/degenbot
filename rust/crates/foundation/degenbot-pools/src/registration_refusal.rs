@@ -176,6 +176,15 @@ pub enum SpecRefusal {
     /// A pool in the known-broken Balancer V2 set — swaps disabled at the
     /// contract, so the pool could never simulate.
     BalancerBrokenPool,
+    /// A composable weighted pool: the pool contract is its own BPT and a
+    /// Vault token, while `getNormalizedWeights()` covers only the underlying
+    /// tokens. The weighted arm holds one weight per Vault token, so a weight
+    /// vector shorter than the token vector is a shape it cannot represent.
+    BalancerComposableWeighted,
+    /// A Balancer pool whose rate provider cannot be read at the pinned block:
+    /// the nested pool it points at reverts, or answers unparseable data. A
+    /// pool that cannot price its own tokens cannot simulate.
+    BalancerRateProviderUnreadable,
     /// A pool in the known-broken Curve V1 set.
     CurveBrokenPool,
     /// A Curve pool whose required getter (`A()` / `fee()` / `admin_fee()`)
@@ -201,6 +210,8 @@ impl SpecRefusal {
         match self {
             Self::V2Reserve => "v2 reserve out of bounds",
             Self::BalancerBrokenPool => "balancer broken pool",
+            Self::BalancerComposableWeighted => "balancer composable weighted pool",
+            Self::BalancerRateProviderUnreadable => "balancer rate provider unreadable",
             Self::CurveBrokenPool => "curve broken pool",
             Self::CurveRequiredReadReverted => "curve required read reverted",
             Self::CurveTooFewCoins => "curve too few coins",

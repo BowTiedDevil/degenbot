@@ -803,7 +803,7 @@ pub async fn fetch_balancer_rate(
 /// that does not own the pool reports `false`.
 ///
 /// Returns `None` when no candidate owns the pool (a factory revision the
-/// registry does not carry — e.g. the MetaStablePool factory).
+/// registry does not carry — e.g. the `MetaStablePool` factory).
 pub async fn fetch_balancer_factory(
     io: &ConstructionIo,
     pool: Address,

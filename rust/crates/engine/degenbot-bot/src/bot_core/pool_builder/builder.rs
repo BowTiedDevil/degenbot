@@ -615,13 +615,13 @@ pub fn decode_balancer_pool_id(raw: &[u8; 32]) -> DecodedBalancerPoolId {
 
 /// Resolve a Balancer V2 stable pool's `StableMath` invariant version from the
 /// pool's *shape*: a pool that lists its own address among the Vault tokens is a
-/// ComposableStablePool (`bpt` present) and ships the monorepo `StableMath`
+/// `ComposableStablePool` (`bpt` present) and ships the monorepo `StableMath`
 /// (always-roundDown `D_P`) — `1` (`INVARIANT_V1`); every non-composable stable
-/// pool (MetaStablePool, the 2021 StablePool) ships the 2021 deployed
+/// pool (`MetaStablePool`, the 2021 `StablePool`) ships the 2021 deployed
 /// `StableMath` (roundUp `P_D`) — `2` (`INVARIANT_V2`).
 ///
 /// The Vault specialization is NOT a family signal: it is derived from the
-/// token count (`TwoToken` for 2-token pools), so the wstETH/WETH MetaStablePool
+/// token count (`TwoToken` for 2-token pools), so the wstETH/WETH `MetaStablePool`
 /// (`0x32296969…`, `specialization = 0x0002`) reads exactly like a 2-token
 /// composable. Rate providers do not discriminate either — both families answer
 /// `getRateProviders()` on mainnet. The BPT-in-tokens shape is the one signal
@@ -704,6 +704,34 @@ async fn decimals_of(
     Ok(dec.to::<u64>())
 }
 
+/// A Balancer token's scaling factor, with an unreadable `decimals()` classified
+/// as the pool fact it is.
+///
+/// A token that answers `decimals()` with nothing (no runtime code — a token
+/// self-destructed after its pool was registered — or an empty return) cannot be
+/// scaled, so the pool cannot be built. That is [`SpecRefusal::NoCodeCoin`], not
+/// an RPC fault, which keeps a broken pool out of the retry class.
+///
+/// # Errors
+///
+/// Returns [`PoolBuilderError::Spec`] with [`SpecRefusal::NoCodeCoin`] when the
+/// `decimals()` answer does not decode, or whatever
+/// [`compute_scaling_factor`] returns for a transport fault.
+async fn balancer_scaling_factor(
+    io: &ConstructionIo,
+    token: Address,
+    block: Option<u64>,
+) -> Result<U256, PoolBuilderError> {
+    compute_scaling_factor(io, token, block)
+        .await
+        .map_err(|error| match error {
+            PoolBuilderError::Rpc(degenbot_core::errors::ProviderError::DecodingError {
+                ..
+            }) => PoolBuilderError::Spec(SpecRefusal::NoCodeCoin),
+            other => other,
+        })
+}
+
 /// Assemble `build_balancer_weighted` params for a Balancer V2 weighted pool
 /// (the ADR-005 slice 12b builder twin): reads the 32-byte `poolId`,
 /// the Vault `getPoolTokens`, `getSwapFeePercentage`, `getNormalizedWeights`,
@@ -720,8 +748,10 @@ async fn decimals_of(
 ///
 /// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure,
 /// [`PoolBuilderError::Spec`] with [`SpecRefusal::BalancerBrokenPool`] for a
-/// pool in [`BROKEN_BALANCER_V2_POOLS`], or [`PoolBuilderError::Decoding`] for
-/// a token reporting more than 18 decimals.
+/// pool in [`BROKEN_BALANCER_V2_POOLS`] or
+/// [`SpecRefusal::BalancerComposableWeighted`] for a pool whose own BPT is
+/// among the Vault tokens, or [`PoolBuilderError::Decoding`] for a token
+/// reporting more than 18 decimals.
 pub async fn build_balancer_weighted(
     vault: Address,
     address: Address,
@@ -735,6 +765,18 @@ pub async fn build_balancer_weighted(
     let pool_id = choreography::fetch_balancer_pool_id(io, address, block).await?;
     let (tokens, balances) =
         choreography::fetch_balancer_vault_tokens(io, vault, &pool_id, block).await?;
+
+    // A composable weighted pool (`ManagedPool`) registers its own BPT as a
+    // Vault token and reports weights only for the underlying tokens, so the
+    // weight vector is one short of the Vault token vector — the arity the
+    // weighted state requires. Refuse the shape by name here, before the fee /
+    // weight / decimals reads and before the registration arity check.
+    if tokens.contains(&address) {
+        return Err(PoolBuilderError::Spec(
+            SpecRefusal::BalancerComposableWeighted,
+        ));
+    }
+
     let fee = choreography::fetch_balancer_swap_fee(io, address, block).await?;
     let weights = choreography::fetch_balancer_weights(io, address, block).await?;
 
@@ -743,7 +785,7 @@ pub async fn build_balancer_weighted(
 
     let mut scaling_factors = Vec::with_capacity(tokens.len());
     for token in &tokens {
-        scaling_factors.push(compute_scaling_factor(io, *token, block).await?);
+        scaling_factors.push(balancer_scaling_factor(io, *token, block).await?);
     }
 
     Ok(RegisterBalancerWeightedPoolParams {
@@ -778,8 +820,10 @@ pub async fn build_balancer_weighted(
 ///
 /// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure,
 /// [`PoolBuilderError::Spec`] with [`SpecRefusal::BalancerBrokenPool`] for a
-/// pool in [`BROKEN_BALANCER_V2_POOLS`], or [`PoolBuilderError::Decoding`] for
-/// a token reporting more than 18 decimals.
+/// pool in [`BROKEN_BALANCER_V2_POOLS`] or
+/// [`SpecRefusal::BalancerRateProviderUnreadable`] for a pool whose rate
+/// provider reverts, or [`PoolBuilderError::Decoding`] for a token reporting
+/// more than 18 decimals.
 pub async fn build_balancer_stable(
     vault: Address,
     address: Address,
@@ -802,7 +846,7 @@ pub async fn build_balancer_stable(
         invariant_version_override.unwrap_or(derive_invariant_version(bpt_idx.is_some()));
     let mut base_sf = Vec::with_capacity(tokens.len());
     for token in &tokens {
-        base_sf.push(compute_scaling_factor(io, *token, block).await?);
+        base_sf.push(balancer_scaling_factor(io, *token, block).await?);
     }
 
     // getRateProviders reverts for WeightedPool2Tokens / MetaStablePools —
@@ -826,7 +870,23 @@ pub async fn build_balancer_stable(
                 // Zero-address sentinel → rate of `ONE`.
                 one
             } else {
-                choreography::fetch_balancer_rate(io, *provider, block).await?
+                // A provider that reverts (a nested pool killed or in recovery
+                // mode) or answers data that does not decode leaves the pool
+                // unable to price its own tokens: a pool fact, not a transport
+                // fault, so it refuses by name instead of surfacing as an RPC
+                // error.
+                match choreography::fetch_balancer_rate(io, *provider, block).await {
+                    Ok(rate) => rate,
+                    Err(
+                        degenbot_core::errors::ProviderError::ExecutionReverted { .. }
+                        | degenbot_core::errors::ProviderError::DecodingError { .. },
+                    ) => {
+                        return Err(PoolBuilderError::Spec(
+                            SpecRefusal::BalancerRateProviderUnreadable,
+                        ));
+                    }
+                    Err(e) => return Err(PoolBuilderError::Rpc(e)),
+                }
             };
             scaled.push(bsf.saturating_mul(rate) / one);
         }
@@ -1080,28 +1140,6 @@ async fn bootstrap_v3_tick_map(
     Ok((ticks, bitmap))
 }
 
-/// Assemble `build_curve_pool` params for a Curve `StableSwap` pool (the task
-/// assembly twin of `CurvePoolBuilder.build`):
-/// discovers coins/balances, fetches `A`/`fee`/`admin_fee`, detects A-ramping,
-/// lending, crypto, `lp_token` + metapool (base pool + underlying coins),
-/// resolves the strategy discriminants (T3), computes rate/precision
-/// multipliers, and constructs the [`RpcCurveDataProvider`] (T4) — producing a
-/// [`RegisterCurvePoolParams`] ready for `BotState::register_curve_pool` with
-/// no Python round-trip.
-///
-/// ERC-20 / LP-token companion objects are built Python-side off the handle by
-/// the driver (as with `build_v2`/`build_balancer_*`).
-///
-/// # Errors
-///
-/// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure, or
-/// [`PoolBuilderError::Spec`] naming why the pool is unbuildable: a pool in
-/// [`BROKEN_CURVE_V1_POOLS`] ([`SpecRefusal::CurveBrokenPool`]), fewer than 2
-/// coins ([`SpecRefusal::CurveTooFewCoins`]), a `coins()`/`balances()` length
-/// disagreement ([`SpecRefusal::CurveCoinsBalancesMismatch`]), a required getter
-/// revert ([`SpecRefusal::CurveRequiredReadReverted`]), or a coin that cannot
-/// serve an ERC-20 read ([`SpecRefusal::NoCodeCoin`] /
-/// [`SpecRefusal::CurveCoinDecimalsReverted`]).
 /// The Curve V1 pools known to be broken beyond repair: stale or disabled
 /// deployments whose getters will not return (a `coins(i)`/`balances(i)`
 /// that reverts, an empty `A()`, or a permanently wedged rate path). The
@@ -1143,6 +1181,29 @@ fn required_read(err: ProviderError) -> PoolBuilderError {
     }
 }
 
+/// Assemble `build_curve_pool` params for a Curve `StableSwap` pool (the task
+/// assembly twin of `CurvePoolBuilder.build`):
+/// discovers coins/balances, fetches `A`/`fee`/`admin_fee`, detects A-ramping,
+/// lending, crypto, `lp_token` + metapool (base pool + underlying coins),
+/// resolves the strategy discriminants (T3), computes rate/precision
+/// multipliers, and constructs the [`RpcCurveDataProvider`] (T4) — producing a
+/// [`RegisterCurvePoolParams`] ready for `BotState::register_curve_pool` with
+/// no Python round-trip.
+///
+/// ERC-20 / LP-token companion objects are built Python-side off the handle by
+/// the driver (as with `build_v2`/`build_balancer_*`).
+///
+/// # Errors
+///
+/// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure, or
+/// [`PoolBuilderError::Spec`] naming why the pool is unbuildable: a pool in
+/// [`BROKEN_CURVE_V1_POOLS`] ([`SpecRefusal::CurveBrokenPool`]), fewer than 2
+/// coins ([`SpecRefusal::CurveTooFewCoins`]), a `coins()`/`balances()` length
+/// disagreement ([`SpecRefusal::CurveCoinsBalancesMismatch`]), a required getter
+/// revert ([`SpecRefusal::CurveRequiredReadReverted`]), or a coin that cannot
+/// serve an ERC-20 read ([`SpecRefusal::NoCodeCoin`] /
+/// [`SpecRefusal::CurveCoinDecimalsReverted`]).
+#[expect(clippy::too_many_lines)]
 pub async fn build_curve_pool(
     address: Address,
     registry_addresses: &[Address],

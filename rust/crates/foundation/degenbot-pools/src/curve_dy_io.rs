@@ -138,8 +138,8 @@ fn resolve_rates(
 /// (`block.timestamp <= base_cache_updated + 600`) and the base pool's **live**
 /// `get_virtual_price()` once it has expired. Always reading the live value
 /// therefore disagrees with the contract on any fresh cache whose cached vp
-/// lags the live one (observed on GUSD/3Crv at block 26_204_126: 21_035 wei of
-/// rate, 50_528_091 wei of dy on a 260_189 GUSD swap). Mirrors the Python
+/// lags the live one (observed on GUSD/3Crv at block `26_204_126`: `21_035` wei
+/// of rate, `50_528_091` wei of dy on a `260_189` GUSD swap). Mirrors the Python
 /// `CurveStableswapPool._get_cached_virtual_price`.
 ///
 /// A provider that cannot serve the cache metadata (`base_cache_updated` or
