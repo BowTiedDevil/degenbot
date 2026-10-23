@@ -9,10 +9,19 @@ call/decode/selector pyfunctions (plus the async contract under
 and its `sys.modules` entry.
 """
 
-from collections.abc import Sequence
-from typing import Any, final
+from typing import Any, SupportsIndex, final
+
+from _typeshed import SupportsGetItem
 
 from .provider import AlloyProvider
+
+__all__ = [
+    "AsyncContract",
+    "Contract",
+    "decode_return_data",
+    "encode_function_call",
+    "get_function_selector",
+]
 
 @final
 class AsyncContract:
@@ -25,7 +34,10 @@ class AsyncContract:
         Get the contract address.
         """
     def batch_call(
-        self, /, calls: Sequence[tuple[str, Sequence[str]]], block_number: int | None = None
+        self,
+        /,
+        calls: SupportsGetItem[int, tuple[str, SupportsGetItem[int, str]]],
+        block_number: SupportsIndex | None = None,
     ) -> Any:
         """
         Batch execute multiple contract calls in parallel.
@@ -38,7 +50,11 @@ class AsyncContract:
             List of results, where each result is a list of decoded return values
         """
     def call(
-        self, /, function_signature: str, args: Sequence[str], block_number: int | None = None
+        self,
+        /,
+        function_signature: str,
+        args: SupportsGetItem[int, str],
+        block_number: SupportsIndex | None = None,
     ) -> Any:
         """
         Execute a contract call asynchronously.
@@ -52,7 +68,7 @@ class AsyncContract:
             List of decoded return values as strings
         """
     @staticmethod
-    def create(address: str, provider_url: str, max_retries: int | None = None) -> Any:
+    def create(address: str, provider_url: str, max_retries: SupportsIndex | None = None) -> Any:
         """
         Create a new async contract instance.
 
@@ -89,7 +105,9 @@ class Contract:
         """
         Get the contract address.
         """
-    def call(self, /, function_signature: str, args: list, block_number: int | None = None) -> list:
+    def call(
+        self, /, function_signature: str, args: list, block_number: SupportsIndex | None = None
+    ) -> list:
         """
         Execute a contract call.
 
@@ -102,7 +120,7 @@ class Contract:
             List of decoded return values as strings
         """
     def call_typed(
-        self, /, function_signature: str, args: list, block_number: int | None = None
+        self, /, function_signature: str, args: list, block_number: SupportsIndex | None = None
     ) -> list:
         """
         Execute a contract call and return decoded values as Python types.

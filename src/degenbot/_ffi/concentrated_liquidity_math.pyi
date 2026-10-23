@@ -19,7 +19,7 @@ The companion `src/degenbot/uniswap/math.py` re-exports these as the
 stable import path, decoupling Python consumers from `degenbot._ffi`.
 """
 
-from typing import Any, Final
+from typing import Any, Final, SupportsIndex
 
 from _typeshed import Incomplete
 
@@ -56,7 +56,7 @@ def compute_swap_step_v4(
     Returns `PyValueError` on invalid input, overflow, or if liquidity exceeds int128.
     """
 
-def get_sqrt_ratio_at_tick(tick: int) -> Any:
+def get_sqrt_ratio_at_tick(tick: SupportsIndex) -> Any:
     """
     Converts a tick value to its corresponding sqrt price (X96 format).
 
@@ -119,7 +119,9 @@ def get_tick_at_sqrt_ratio(sqrt_price_x96: Any) -> int:
     ```
     """
 
-def get_tick_word_and_bit_position(tick: int, tick_spacing: int) -> tuple[int, int]:
+def get_tick_word_and_bit_position(
+    tick: SupportsIndex, tick_spacing: SupportsIndex
+) -> tuple[int, int]:
     """
     Compute the tick word and bit position for a compressed tick.
 

@@ -7,10 +7,13 @@ carrying the price-reader pyclasses. The parent module registers the
 submodule itself and its `sys.modules` entry.
 """
 
-from collections.abc import Sequence
-from typing import Any, final
+from typing import Any, SupportsIndex, final
+
+from _typeshed import SupportsGetItem
 
 from .provider import AlloyProvider
+
+__all__ = ["AavePriceOracle", "ChainlinkPriceFeed"]
 
 @final
 class AavePriceOracle:
@@ -34,7 +37,7 @@ class AavePriceOracle:
         """
         The oracle contract address (EIP-55 checksummed hex string).
         """
-    def fetch(self, /, asset_addresses: Sequence[str]) -> dict:
+    def fetch(self, /, asset_addresses: SupportsGetItem[int, str]) -> dict:
         """
         Fetch prices for a batch of assets, tolerantly.
 
@@ -70,7 +73,7 @@ class ChainlinkPriceFeed:
     path (no Python `abi_decode` / `provider.call_raw` round-trip).
     """
     def __new__(
-        cls, /, address: str, provider: AlloyProvider, chain_id: int | None = None
+        cls, /, address: str, provider: AlloyProvider, chain_id: SupportsIndex | None = None
     ) -> ChainlinkPriceFeed:
         """
         Create a new Chainlink price-feed reader.

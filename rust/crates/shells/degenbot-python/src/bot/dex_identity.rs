@@ -34,12 +34,7 @@ use degenbot_uniswap::dex_identity::{DexIdentity, DexVariant, ReservesAbi};
 /// core struct; only the representation differs (hex strings for addresses +
 /// init hash, since `pyo3` doesn't expose `alloy::Address`/`B256` directly
 /// without a converter).
-#[pyclass(
-    name = "DexIdentity",
-    frozen,
-    skip_from_py_object,
-    module = "degenbot._ffi.dex_identity"
-)]
+#[pyclass(name = "DexIdentity", frozen, module = "degenbot._ffi.dex_identity")]
 #[derive(Clone)]
 pub struct PyDexIdentity {
     factory: String,

@@ -9,8 +9,17 @@ local-endpoint exemption predicate. The parent module registers the
 submodule itself and its `sys.modules` entry.
 """
 
-from collections.abc import Sequence
-from typing import Any, final
+from typing import Any, SupportsIndex, final
+
+from _typeshed import SupportsGetItem
+
+__all__ = [
+    "AlloyProvider",
+    "AlloySubscription",
+    "AsyncAlloyProvider",
+    "LogFilter",
+    "is_local_rpc_url",
+]
 
 @final
 class AlloyProvider:
@@ -21,11 +30,11 @@ class AlloyProvider:
         cls,
         /,
         rpc_url: str,
-        max_retries: int = 10,
-        max_blocks_per_request: int = 5000,
-        requests_per_second: int | None = None,
-        burst: int | None = None,
-        chain_id: int | None = None,
+        max_retries: SupportsIndex = 10,
+        max_blocks_per_request: SupportsIndex = 5000,
+        requests_per_second: SupportsIndex | None = None,
+        burst: SupportsIndex | None = None,
+        chain_id: SupportsIndex | None = None,
     ) -> AlloyProvider:
         """
         Create a new provider.
@@ -58,7 +67,7 @@ class AlloyProvider:
         once at construction and raises `ValueError` when the endpoint serves
         another chain. `None` constructs the provider with no binding.
         """
-    def call(self, /, to: str, data: bytes, block_number: int | None = None) -> Any:
+    def call(self, /, to: str, data: bytes, block_number: SupportsIndex | None = None) -> Any:
         """
         Execute an `eth_call` to a contract.
         """
@@ -72,17 +81,17 @@ class AlloyProvider:
         to: str,
         data: bytes,
         from_: str | None = None,
-        value: int | None = None,
-        block_number: int | None = None,
+        value: SupportsIndex | None = None,
+        block_number: SupportsIndex | None = None,
     ) -> int:
         """
         Estimate gas for a transaction.
         """
-    def get_balance(self, /, address: str, block_number: int | None = None) -> Any:
+    def get_balance(self, /, address: str, block_number: SupportsIndex | None = None) -> Any:
         """
         Get the balance of an address in wei.
         """
-    def get_block(self, /, block_number: int) -> Any | None:
+    def get_block(self, /, block_number: SupportsIndex) -> Any | None:
         """
         Get a block by number.
 
@@ -97,7 +106,7 @@ class AlloyProvider:
         """
         Get chain ID.
         """
-    def get_code(self, /, address: str, block_number: int | None = None) -> Any:
+    def get_code(self, /, address: str, block_number: SupportsIndex | None = None) -> Any:
         """
         Get contract code at an address.
         """
@@ -109,16 +118,16 @@ class AlloyProvider:
         self,
         /,
         *,
-        from_block: int,
-        to_block: int,
-        addresses: Sequence[str] | None = None,
-        topics: Sequence[Sequence[str]] | None = None,
+        from_block: SupportsIndex,
+        to_block: SupportsIndex,
+        addresses: SupportsGetItem[int, str] | None = None,
+        topics: SupportsGetItem[int, SupportsGetItem[int, str]] | None = None,
     ) -> list:
         """
         Fetch logs synchronously (blocking).
         """
     def get_storage_at(
-        self, /, address: str, position: Any, block_number: int | None = None
+        self, /, address: str, position: Any, block_number: SupportsIndex | None = None
     ) -> Any:
         """
         Get storage at a given address and position.
@@ -127,7 +136,9 @@ class AlloyProvider:
         """
         Get a transaction by hash.
         """
-    def get_transaction_count(self, /, address: str, block_number: int | None = None) -> int:
+    def get_transaction_count(
+        self, /, address: str, block_number: SupportsIndex | None = None
+    ) -> int:
         """
         Get the transaction count (nonce) for an address.
         """
@@ -200,8 +211,8 @@ class AlloyProvider:
     def subscribe_logs(
         self,
         /,
-        addresses: Sequence[str] | None = None,
-        topics: Sequence[Sequence[str]] | None = None,
+        addresses: SupportsGetItem[int, str] | None = None,
+        topics: SupportsGetItem[int, SupportsGetItem[int, str]] | None = None,
     ) -> AlloySubscription:
         """
         Subscribe to logs matching the given filter.
@@ -308,7 +319,13 @@ class AsyncAlloyProvider:
         around it. The async provider uses Python's asyncio event loop instead
         of creating its own runtime.
         """
-    def call(self, /, to: str, data: Sequence[int], block_number: int | None = None) -> Any:
+    def call(
+        self,
+        /,
+        to: str,
+        data: SupportsGetItem[int, SupportsIndex],
+        block_number: SupportsIndex | None = None,
+    ) -> Any:
         """
         Execute an `eth_call` to a contract asynchronously.
         """
@@ -319,11 +336,11 @@ class AsyncAlloyProvider:
     @staticmethod
     def create(
         rpc_url: str,
-        max_retries: int = 10,
-        max_blocks_per_request: int = 5000,
-        requests_per_second: int | None = None,
-        burst: int | None = None,
-        chain_id: int | None = None,
+        max_retries: SupportsIndex = 10,
+        max_blocks_per_request: SupportsIndex = 5000,
+        requests_per_second: SupportsIndex | None = None,
+        burst: SupportsIndex | None = None,
+        chain_id: SupportsIndex | None = None,
     ) -> Any:
         """
         Create a new async provider from RPC URL.
@@ -343,19 +360,19 @@ class AsyncAlloyProvider:
         self,
         /,
         to: str,
-        data: Sequence[int],
+        data: SupportsGetItem[int, SupportsIndex],
         from_: str | None = None,
-        value: int | None = None,
-        block_number: int | None = None,
+        value: SupportsIndex | None = None,
+        block_number: SupportsIndex | None = None,
     ) -> Any:
         """
         Estimate gas for a transaction asynchronously.
         """
-    def get_balance(self, /, address: str, block_number: int | None = None) -> Any:
+    def get_balance(self, /, address: str, block_number: SupportsIndex | None = None) -> Any:
         """
         Get the balance of an address in wei asynchronously.
         """
-    def get_block(self, /, block_number: int) -> Any:
+    def get_block(self, /, block_number: SupportsIndex) -> Any:
         """
         Get a block by number asynchronously.
         """
@@ -367,7 +384,7 @@ class AsyncAlloyProvider:
         """
         Get chain ID asynchronously.
         """
-    def get_code(self, /, address: str, block_number: int | None = None) -> Any:
+    def get_code(self, /, address: str, block_number: SupportsIndex | None = None) -> Any:
         """
         Get contract code at an address asynchronously.
         """
@@ -378,16 +395,16 @@ class AsyncAlloyProvider:
     def get_logs(
         self,
         /,
-        from_block: int,
-        to_block: int,
-        addresses: Sequence[str] | None = None,
-        topics: Sequence[Sequence[str]] | None = None,
+        from_block: SupportsIndex,
+        to_block: SupportsIndex,
+        addresses: SupportsGetItem[int, str] | None = None,
+        topics: SupportsGetItem[int, SupportsGetItem[int, str]] | None = None,
     ) -> Any:
         """
         Get logs asynchronously with chunked fetching.
         """
     def get_storage_at(
-        self, /, address: str, position: Any, block_number: int | None = None
+        self, /, address: str, position: Any, block_number: SupportsIndex | None = None
     ) -> Any:
         """
         Get storage at a given address and position asynchronously.
@@ -396,7 +413,9 @@ class AsyncAlloyProvider:
         """
         Get a transaction by hash asynchronously.
         """
-    def get_transaction_count(self, /, address: str, block_number: int | None = None) -> Any:
+    def get_transaction_count(
+        self, /, address: str, block_number: SupportsIndex | None = None
+    ) -> Any:
         """
         Get the transaction count (nonce) for an address asynchronously.
         """
@@ -424,10 +443,10 @@ class LogFilter:
     def __new__(
         cls,
         /,
-        from_block: int,
-        to_block: int,
-        addresses: Sequence[str] | None = None,
-        topics: Sequence[Sequence[str]] | None = None,
+        from_block: SupportsIndex,
+        to_block: SupportsIndex,
+        addresses: SupportsGetItem[int, str] | None = None,
+        topics: SupportsGetItem[int, SupportsGetItem[int, str]] | None = None,
     ) -> LogFilter:
         """
         Create a new `LogFilter`.

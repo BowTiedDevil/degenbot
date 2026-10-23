@@ -25,7 +25,21 @@ pyfunctions. The parent module registers the submodule itself; the
 `sys.modules` entry lives in the parent's shared helper.
 """
 
-from typing import Any
+from typing import Any, SupportsIndex
+
+__all__ = [
+    "calc_d",
+    "calc_exact_in_stable_camelot",
+    "calc_exact_in_stable_solidly",
+    "calc_exact_in_volatile",
+    "calc_exact_out_stable_solidly",
+    "calc_f",
+    "calc_k",
+    "camelot_f",
+    "camelot_get_y_camelot",
+    "camelot_k",
+    "get_y_solidly",
+]
 
 def calc_d(x0: Any, y: Any) -> Any:
     """
@@ -39,7 +53,7 @@ def calc_d(x0: Any, y: Any) -> Any:
 
 def calc_exact_in_stable_camelot(
     amount_in: Any,
-    token_in: int,
+    token_in: SupportsIndex,
     reserves_0: Any,
     reserves_1: Any,
     decimals_0: Any,
@@ -58,7 +72,7 @@ def calc_exact_in_stable_camelot(
 
 def calc_exact_in_stable_solidly(
     amount_in: Any,
-    token_in: int,
+    token_in: SupportsIndex,
     reserves_0: Any,
     reserves_1: Any,
     decimals_0: Any,
@@ -76,7 +90,12 @@ def calc_exact_in_stable_solidly(
     """
 
 def calc_exact_in_volatile(
-    amount_in: Any, token_in: int, reserves_0: Any, reserves_1: Any, fee_numer: Any, fee_denom: Any
+    amount_in: Any,
+    token_in: SupportsIndex,
+    reserves_0: Any,
+    reserves_1: Any,
+    fee_numer: Any,
+    fee_denom: Any,
 ) -> Any:
     """
     `calc_exact_in_volatile` — Solidly volatile (`x*y >= k`) amount-out.
@@ -90,7 +109,7 @@ def calc_exact_in_volatile(
 
 def calc_exact_out_stable_solidly(
     amount_out: Any,
-    token_in: int,
+    token_in: SupportsIndex,
     reserves_0: Any,
     reserves_1: Any,
     decimals_0: Any,

@@ -15,20 +15,24 @@ entry. `CancelHandle` is registered by `crate::cancel::cancel` (shared
 with the Aave updater seam).
 """
 
+from typing import SupportsIndex
+
 from .cancel import CancelHandle
+
+__all__ = ["run_pool_update", "verify_v3_liquidity_map", "verify_v4_liquidity_map"]
 
 def run_pool_update(
     database_path: str,
-    chain_id: int,
-    to_block: int | None,
-    chunk_size: int,
+    chain_id: SupportsIndex,
+    to_block: SupportsIndex | None,
+    chunk_size: SupportsIndex,
     rpc_url: str,
     cancel_handle: CancelHandle,
     verify_chunk: bool = False,
     *,
-    verify_all_interval: int | None = None,
+    verify_all_interval: SupportsIndex | None = None,
     verify_all_at_completion: bool = False,
-    max_block_range: int = 10000,
+    max_block_range: SupportsIndex = 10000,
 ) -> dict:
     """
     `degenbot._ffi.pool.run_pool_update(database_path, chain_id, to_block,
@@ -89,7 +93,11 @@ def run_pool_update(
     """
 
 def verify_v3_liquidity_map(
-    database_path: str, rpc_url: str, chain_id: int, pool_address: str, block_number: int
+    database_path: str,
+    rpc_url: str,
+    chain_id: SupportsIndex,
+    pool_address: str,
+    block_number: SupportsIndex,
 ) -> list[dict]:
     """
     `degenbot._ffi.pool.verify_v3_liquidity_map(database_path, rpc_url, chain_id,
@@ -119,10 +127,10 @@ def verify_v3_liquidity_map(
 def verify_v4_liquidity_map(
     database_path: str,
     rpc_url: str,
-    chain_id: int,
+    chain_id: SupportsIndex,
     pool_hash: str,
     pool_manager_address: str,
-    block_number: int,
+    block_number: SupportsIndex,
 ) -> list[dict]:
     """
     `degenbot._ffi.pool.verify_v4_liquidity_map(database_path, rpc_url, chain_id,

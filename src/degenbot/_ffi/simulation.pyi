@@ -8,14 +8,40 @@ dispatch/assembly/probe pyfunctions. The parent module registers the
 submodule itself and its `sys.modules` entry.
 """
 
-from collections.abc import Sequence
-from typing import Any, Final, final
+from typing import Any, Final, SupportsIndex, final
 
-from _typeshed import Incomplete
+from _typeshed import Incomplete, SupportsGetItem
+from typing_extensions import disjoint_base
 
 from . import ArbitrageEngine, ConfigValues
 from .provider import AsyncAlloyProvider
 from .submission import Dispatcher, TxSigner
+
+__all__ = [
+    "AssemblyVerdict",
+    "BatchExecutor",
+    "BatchOutcome",
+    "BatchOutcomeSet",
+    "CandidateAssembly",
+    "DispatchCandidate",
+    "DispatchOutcome",
+    "ExecutorPolicyValues",
+    "FailureDetail",
+    "FailureKind",
+    "PayloadOutcome",
+    "PayloadVerdict",
+    "SimReceipt",
+    "SimulateContext",
+    "SimulateVerdict",
+    "SubmitVerdict",
+    "assemble_dispatch_candidates_py",
+    "build_batch_executor_py",
+    "dispatch_profitable_py",
+    "executor_policy_py",
+    "merge_payload_results_py",
+    "simulate_in_process_revert_probe",
+    "simulate_in_process_success_probe",
+]
 
 @final
 class AssemblyVerdict:
@@ -189,13 +215,13 @@ class DispatchCandidate:
         cls,
         /,
         engine: ArbitrageEngine,
-        path_id: int,
-        optimal_input: int,
-        engine_profit: int,
-        hop_outputs: Sequence[int],
-        consumed_inputs: Sequence[int],
-        solve_block: int,
-        state_nonces: Sequence[int],
+        path_id: SupportsIndex,
+        optimal_input: SupportsIndex,
+        engine_profit: SupportsIndex,
+        hop_outputs: SupportsGetItem[int, SupportsIndex],
+        consumed_inputs: SupportsGetItem[int, SupportsIndex],
+        solve_block: SupportsIndex,
+        state_nonces: SupportsGetItem[int, SupportsIndex],
         *,
         erc6909_profit: bool = False,
         use_v4_batch: bool = False,
@@ -568,6 +594,7 @@ class SimulateContext:
         The RPC URL the held provider points at (for the `[sim]` log line).
         """
 
+@disjoint_base
 class SimulateVerdict:
     """
     Stage 2 — the per-candidate simulation outcome (the core's typed enum).
@@ -583,7 +610,7 @@ class SimulateVerdict:
         """
 
         __match_args__: Final = ()
-        def __getitem__(self, key: int, /) -> Any: ...
+        def __getitem__(self, key: SupportsIndex, /) -> Any: ...
         def __len__(self, /) -> int: ...
         def __new__(cls, /) -> SimulateVerdict.Exception: ...
 
@@ -629,6 +656,7 @@ class SimulateVerdict:
             The renderer-read receipt.
             """
 
+@disjoint_base
 class SubmitVerdict:
     """
     Stage 3 — the submit receipt or typed failure (the core's typed enum; no
@@ -656,17 +684,17 @@ class SubmitVerdict:
         """
 
         __match_args__: Final = ()
-        def __getitem__(self, key: int, /) -> Any: ...
+        def __getitem__(self, key: SupportsIndex, /) -> Any: ...
         def __len__(self, /) -> int: ...
         def __new__(cls, /) -> SubmitVerdict.Submitted: ...
 
 def assemble_dispatch_candidates_py(
     engine: ArbitrageEngine,
-    results: Sequence[Incomplete],
+    results: SupportsGetItem[int, Incomplete],
     *,
     erc6909_profit: bool = False,
     use_v4_batch: bool = False,
-    skip_path_ids: Sequence[int] | None = None,
+    skip_path_ids: SupportsGetItem[int, SupportsIndex] | None = None,
 ) -> CandidateAssembly:
     """
     Assemble a batch of raw engine-result rows into `DispatchCandidate`s.
@@ -688,10 +716,10 @@ def build_batch_executor_py(
     engine: ArbitrageEngine,
     signer: TxSigner,
     submit_provider: AsyncAlloyProvider,
-    operator_nonce: int,
+    operator_nonce: SupportsIndex,
     *,
     dry_run: bool,
-    broadcast_providers: Sequence[AsyncAlloyProvider] | None = None,
+    broadcast_providers: SupportsGetItem[int, AsyncAlloyProvider] | None = None,
 ) -> BatchExecutor:
     """
     Construct the session executor: the core's value-configured module over
@@ -729,10 +757,10 @@ def dispatch_profitable_py(
     candidates: list,
     context: SimulateContext,
     dispatcher: Dispatcher,
-    base_fee_next: int,
-    current_block: int,
-    block_timestamp: int,
-    min_profit_margin_bps: int,
+    base_fee_next: SupportsIndex,
+    current_block: SupportsIndex,
+    block_timestamp: SupportsIndex,
+    min_profit_margin_bps: SupportsIndex,
     *,
     engine: ArbitrageEngine | None = None,
 ) -> Any:
@@ -819,7 +847,7 @@ def merge_payload_results_py(
     derivation needs the typed hops).
     """
 
-def simulate_in_process_revert_probe(path_id: int, runtime_bytecode: bytes) -> dict:
+def simulate_in_process_revert_probe(path_id: SupportsIndex, runtime_bytecode: bytes) -> dict:
     """
     Drive the `0xcafebabe`-style REVERT fixture (executor injected with
     caller-supplied runtime bytecode) through the in-process revm EVM —
@@ -849,7 +877,7 @@ def simulate_in_process_revert_probe(path_id: int, runtime_bytecode: bytes) -> d
     `ProviderResult` is honored for parity with the production signature).
     """
 
-def simulate_in_process_success_probe(path_id: int) -> dict:
+def simulate_in_process_success_probe(path_id: SupportsIndex) -> dict:
     """
     Drive the SELFDESTRUCT-gift success-path fixture through the in-process
     revm EVM — the ADR-005 Tier-2 dual-driver parity entrypoint for the

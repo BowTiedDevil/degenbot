@@ -27,11 +27,7 @@ use pyo3::types::PyList;
 use std::sync::Arc;
 
 /// Python wrapper for async provider operations.
-#[pyclass(
-    name = "AsyncAlloyProvider",
-    skip_from_py_object,
-    module = "degenbot._ffi.provider"
-)]
+#[pyclass(name = "AsyncAlloyProvider", module = "degenbot._ffi.provider")]
 pub struct PyAsyncAlloyProvider {
     provider: Arc<AlloyProvider>,
     max_blocks_per_request: u64,

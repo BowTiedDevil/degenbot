@@ -16,6 +16,11 @@ parent module registers the submodule itself and its `sys.modules` entry.
 
 from typing import Any, final
 
+from typing_extensions import disjoint_base
+
+__all__ = ["PayloadComposer", "SolveResult", "abi_encode_call"]
+
+@disjoint_base
 class PayloadComposer:
     """
     `PyPayloadComposer` — wrap an arbitrary Python callable

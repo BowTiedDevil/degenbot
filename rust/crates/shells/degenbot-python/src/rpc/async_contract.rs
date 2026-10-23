@@ -10,11 +10,7 @@ use crate::rpc::provider::PyAlloyProvider;
 use std::sync::Arc;
 
 /// Async contract wrapper for Python.
-#[pyclass(
-    name = "AsyncContract",
-    skip_from_py_object,
-    module = "degenbot._ffi.contract"
-)]
+#[pyclass(name = "AsyncContract", module = "degenbot._ffi.contract")]
 pub struct PyAsyncContract {
     contract: Arc<Contract>,
 }

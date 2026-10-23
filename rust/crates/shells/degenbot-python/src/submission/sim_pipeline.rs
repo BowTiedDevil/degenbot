@@ -96,11 +96,7 @@ fn leaf_failure_err(failure: PipelineFailure) -> PyErr {
 /// returns immediately while the core schedules the bounded sim and registers
 /// the batch in the FIFO submit queue. `raise_if_failed` re-raises the first
 /// leaf failure in the caller's frame; `shutdown` drains and joins.
-#[pyclass(
-    name = "SimSubmitPipeline",
-    module = "degenbot._ffi.submission",
-    skip_from_py_object
-)]
+#[pyclass(name = "SimSubmitPipeline", module = "degenbot._ffi.submission")]
 pub struct PySimSubmitPipeline {
     inner: Arc<SimSubmitPipeline<PyWork, PyOutcome>>,
 }

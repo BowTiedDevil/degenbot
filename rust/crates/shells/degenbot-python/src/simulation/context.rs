@@ -40,11 +40,7 @@ use std::sync::Arc;
 /// Construct once per session from a `&PyAsyncAlloyProvider` + the addresses +
 /// the inject flag + the executor runtime bytecode. Hands to
 /// `dispatch_profitable_py` (A4) each block alongside the per-block args.
-#[pyclass(
-    name = "SimulateContext",
-    skip_from_py_object,
-    module = "degenbot._ffi.simulation"
-)]
+#[pyclass(name = "SimulateContext", module = "degenbot._ffi.simulation")]
 // Every field is consumed by `dispatch_profitable_py` when it
 // stitches them into the borrowed `SimulateContext<'_>`; until A4 lands only
 // `provider` is read (by the `rpc_url` getter).

@@ -20,11 +20,7 @@ use std::collections::HashMap;
 /// Constructed with the oracle contract address + a shared `AlloyProvider`;
 /// `fetch` issues one `getAssetPrice(address)` `eth_call` per asset through
 /// the Rust path, tolerantly skipping assets that revert or fail to decode.
-#[pyclass(
-    name = "AavePriceOracle",
-    skip_from_py_object,
-    module = "degenbot._ffi.price"
-)]
+#[pyclass(name = "AavePriceOracle", module = "degenbot._ffi.price")]
 pub struct PyAavePriceOracle {
     oracle: AavePriceOracle,
 }

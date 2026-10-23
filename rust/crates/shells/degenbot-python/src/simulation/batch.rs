@@ -163,11 +163,7 @@ impl PyFailureDetail {
 }
 
 /// Stage 1 — the assembly verdict (the core's typed skip taxonomy).
-#[pyclass(
-    name = "AssemblyVerdict",
-    module = "degenbot._ffi.simulation",
-    skip_from_py_object
-)]
+#[pyclass(name = "AssemblyVerdict", module = "degenbot._ffi.simulation")]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PyAssemblyVerdict {
     Assembled,
@@ -211,11 +207,7 @@ impl PyAssemblyVerdict {
 // The `Failed` variant carries the far-larger `SimFailure` projection — the
 // boxed core shape unboxed into the Python view.
 #[expect(clippy::large_enum_variant)]
-#[pyclass(
-    name = "SimulateVerdict",
-    module = "degenbot._ffi.simulation",
-    skip_from_py_object
-)]
+#[pyclass(name = "SimulateVerdict", module = "degenbot._ffi.simulation")]
 #[derive(Clone)]
 pub enum PySimulateVerdict {
     /// The sim committed and net profit reached the floor.
@@ -284,11 +276,7 @@ impl PyFailureKind {
 /// Stage 3 — the submit receipt or typed failure (the core's typed enum; no
 /// drain reads inside this slot today — the raw submit-lane records the
 /// Python renderers consume ride `BatchOutcomeSet.submit_records`).
-#[pyclass(
-    name = "SubmitVerdict",
-    module = "degenbot._ffi.simulation",
-    skip_from_py_object
-)]
+#[pyclass(name = "SubmitVerdict", module = "degenbot._ffi.simulation")]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PySubmitVerdict {
     /// The tx was broadcast.
@@ -313,11 +301,7 @@ impl PySubmitVerdict {
 
 /// The typed result of one candidate's ordered pass through the pipeline
 /// (the core's `BatchOutcome`).
-#[pyclass(
-    name = "BatchOutcome",
-    module = "degenbot._ffi.simulation",
-    skip_from_py_object
-)]
+#[pyclass(name = "BatchOutcome", module = "degenbot._ffi.simulation")]
 #[derive(Clone)]
 pub struct PyBatchOutcome {
     inner: BatchOutcome,
@@ -388,11 +372,7 @@ impl PyBatchOutcome {
 /// One drained batch: the candidate outcome records + the RAW submit-lane
 /// records the Python drain renders (the `[dispatch]` per-record lines +
 /// the silent-veto smoke FSM).
-#[pyclass(
-    name = "BatchOutcomeSet",
-    module = "degenbot._ffi.simulation",
-    skip_from_py_object
-)]
+#[pyclass(name = "BatchOutcomeSet", module = "degenbot._ffi.simulation")]
 pub struct PyBatchOutcomeSet {
     inner: BatchOutcomeSet,
 }
@@ -456,11 +436,7 @@ struct BatchWorkRow {
 }
 
 /// The per-session executor over the core batch choreography.
-#[pyclass(
-    name = "BatchExecutor",
-    module = "degenbot._ffi.simulation",
-    skip_from_py_object
-)]
+#[pyclass(name = "BatchExecutor", module = "degenbot._ffi.simulation")]
 pub struct PyBatchExecutor {
     executor: Arc<BatchExecutor>,
     engine: Py<PyArbEngine>,

@@ -11,8 +11,11 @@ carrying the `PyAnvilFork` lifecycle + dev-RPC seam. The parent module
 registers the submodule itself and its `sys.modules` entry.
 """
 
-from collections.abc import Sequence
-from typing import Any, final
+from typing import Any, SupportsIndex, final
+
+from _typeshed import SupportsGetItem
+
+__all__ = ["AnvilFork"]
 
 @final
 class AnvilFork:
@@ -26,19 +29,19 @@ class AnvilFork:
         /,
         *,
         fork_url: str | None = None,
-        fork_block: int | None = None,
+        fork_block: SupportsIndex | None = None,
         fork_transaction_hash: str | None = None,
         mining_mode: str = "auto",
-        mining_interval: int | None = None,
+        mining_interval: SupportsIndex | None = None,
         storage_caching: bool = True,
-        base_fee: int | None = None,
+        base_fee: SupportsIndex | None = None,
         ipc_path: str | None = None,
-        port: int | None = None,
+        port: SupportsIndex | None = None,
         host: str = "127.0.0.1",
         mnemonic: str = ...,
-        chain_id: int | None = None,
-        anvil_opts: Sequence[str] | None = None,
-        fork_compute_units_per_second: int | None = None,
+        chain_id: SupportsIndex | None = None,
+        anvil_opts: SupportsGetItem[int, str] | None = None,
+        fork_compute_units_per_second: SupportsIndex | None = None,
     ) -> AnvilFork:
         """
         Spawn the `anvil` subprocess + connect the IPC `DynProvider`.
@@ -87,7 +90,7 @@ class AnvilFork:
         """
         TCP port the spawned anvil node listens on.
         """
-    def reset(self, /, block_number: int | None = None) -> None:
+    def reset(self, /, block_number: SupportsIndex | None = None) -> None:
         """
         `anvil_reset` — reset the fork, optionally re-fork to a new block
         number.
@@ -112,7 +115,7 @@ class AnvilFork:
         `ValueError` on invalid address; `RuntimeError` if the RPC call
         fails.
         """
-    def set_block_timestamp_interval(self, /, seconds: int) -> None:
+    def set_block_timestamp_interval(self, /, seconds: SupportsIndex) -> None:
         """
         `anvil_set_block_timestamp_interval`.
 
@@ -135,21 +138,21 @@ class AnvilFork:
         `ValueError` on invalid address; `RuntimeError` if the RPC call
         fails.
         """
-    def set_next_base_fee(self, /, basefee: int) -> None:
+    def set_next_base_fee(self, /, basefee: SupportsIndex) -> None:
         """
         `anvil_set_next_block_base_fee_per_gas`.
 
         # Errors
         `RuntimeError` if the RPC call fails.
         """
-    def set_next_block_timestamp(self, /, timestamp: int) -> None:
+    def set_next_block_timestamp(self, /, timestamp: SupportsIndex) -> None:
         """
         `anvil_set_next_block_timestamp`.
 
         # Errors
         `RuntimeError` if the RPC call fails.
         """
-    def set_nonce(self, /, address: str, nonce: int) -> None:
+    def set_nonce(self, /, address: str, nonce: SupportsIndex) -> None:
         """
         `anvil_set_nonce`.
 

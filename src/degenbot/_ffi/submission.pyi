@@ -9,10 +9,23 @@ pyfunctions. The parent module registers the submodule itself and its
 `sys.modules` entry.
 """
 
-from collections.abc import Sequence
-from typing import Any, final
+from typing import Any, SupportsFloat, SupportsIndex, final
+
+from _typeshed import SupportsGetItem
 
 from .provider import AsyncAlloyProvider
+
+__all__ = [
+    "Dispatcher",
+    "DivergentPool",
+    "SimSubmitPipeline",
+    "SubmitCandidate",
+    "TxParams",
+    "TxSigner",
+    "dispatch_and_submit_py",
+    "fetch_fee_history_py",
+    "finalize_fees",
+]
 
 @final
 class Dispatcher:
@@ -41,7 +54,7 @@ class Dispatcher:
         Count of in-flight spawned monitor/broadcast tasks (best-effort,
         reaped of finished entries).
         """
-    def advance_block(self, /, block: int) -> None:
+    def advance_block(self, /, block: SupportsIndex) -> None:
         """
         Update the current block (read by monitor tasks by reference).
         """
@@ -64,7 +77,7 @@ class Dispatcher:
         Raises:
             `IndexError`: If the ring is empty.
         """
-    def block_timestamp_for(self, /, block: int) -> int | None:
+    def block_timestamp_for(self, /, block: SupportsIndex) -> int | None:
         """
         Look up the recorded timestamp for `block` (the in-process `evm` sim
         uses it as the EVM `block.timestamp` ). Returns `None` if
@@ -75,11 +88,11 @@ class Dispatcher:
         """
         The current block (the by-reference block clock).
         """
-    def discard_path(self, /, path_id: int) -> None:
+    def discard_path(self, /, path_id: SupportsIndex) -> None:
         """
         Discard a path from suppression tracking (the result-batch `removed` set).
         """
-    def divergent_pools(self, /, current_block: int) -> list[DivergentPool]:
+    def divergent_pools(self, /, current_block: SupportsIndex) -> list[DivergentPool]:
         """
         The current divergent-pool set — `list[dict]`, one per pool flagged
         `SolverCalc` within the decay window. Each dict carries `family`
@@ -90,14 +103,14 @@ class Dispatcher:
         Python aggregator renders from `outcome.failures`).
         """
     @staticmethod
-    def for_block(current_block: int) -> Dispatcher:
+    def for_block(current_block: SupportsIndex) -> Dispatcher:
         """
         Construct a fresh dispatcher seeded at `current_block`.
 
         Args:
             `current_block`: The block to seed the by-reference block clock with.
         """
-    def fot_tokens(self, /, current_block: int) -> list[str]:
+    def fot_tokens(self, /, current_block: SupportsIndex) -> list[str]:
         """
         The current confirmed-FoT token set — `list[str]`, one per token
         confirmed `FoT` (>= K distinct failing pools, 0 successes, within the
@@ -112,7 +125,7 @@ class Dispatcher:
         """
         True iff any path pool is already locked (pending) or committed this batch.
         """
-    def is_suppressed(self, /, path_id: int, current_block: int) -> bool:
+    def is_suppressed(self, /, path_id: SupportsIndex, current_block: SupportsIndex) -> bool:
         """
         True iff `path_id` is currently suppressed (retried every
         `PATH_SUPPRESS_RETRY_INTERVAL` blocks).
@@ -132,16 +145,18 @@ class Dispatcher:
         """
         Reap finished tasks; return the count reaped.
         """
-    def record_block_time(self, /, block: int, timestamp: int) -> None:
+    def record_block_time(self, /, block: SupportsIndex, timestamp: SupportsIndex) -> None:
         """
         Record a `(block, timestamp)` pair into the block-time ring (maxlen 60).
         """
-    def record_failure(self, /, path_id: int) -> None:
+    def record_failure(self, /, path_id: SupportsIndex) -> None:
         """
         Record a failed simulation for `path_id` (bumps its fail streak;
         suppresses after `PATH_SUPPRESS_THRESHOLD` consecutive failures).
         """
-    def record_priority_fees(self, /, block: int, fees: dict[int, int]) -> None:
+    def record_priority_fees(
+        self, /, block: SupportsIndex, fees: dict[SupportsIndex, SupportsIndex]
+    ) -> None:
         """
         Record per-block percentile fees, pruning to the fee-history window.
 
@@ -149,7 +164,7 @@ class Dispatcher:
             `block`: The block the fees are for.
             `fees`: A `{percentile: wei}` dict (e.g. `{50: 1_000_000_000}`).
         """
-    def record_success(self, /, path_id: int) -> None:
+    def record_success(self, /, path_id: SupportsIndex) -> None:
         """
         Record a successful simulation for `path_id` (clears its fail streak).
         """
@@ -217,7 +232,7 @@ class SimSubmitPipeline:
     the batch in the FIFO submit queue. `raise_if_failed` re-raises the first
     leaf failure in the caller's frame; `shutdown` drains and joins.
     """
-    def __new__(cls, /, sim: Any, submit: Any, concurrency: int) -> SimSubmitPipeline:
+    def __new__(cls, /, sim: Any, submit: Any, concurrency: SupportsIndex) -> SimSubmitPipeline:
         """
         Build the pipeline over the two Python async leaves.
 
@@ -283,12 +298,12 @@ class SubmitCandidate:
     def __new__(
         cls,
         /,
-        path_id: int,
+        path_id: SupportsIndex,
         gross_profit: Any,
         net_profit: Any,
-        gas_used: int,
-        priority_fee: int,
-        base_fee_next: int,
+        gas_used: SupportsIndex,
+        priority_fee: SupportsIndex,
+        base_fee_next: SupportsIndex,
         execute_calldata: bytes,
         executor_address: str,
         access_list: list | None = None,
@@ -353,9 +368,9 @@ class TxParams:
         /,
         to: str,
         data: bytes,
-        gas_limit: int,
-        nonce: int,
-        value: int = 0,
+        gas_limit: SupportsIndex,
+        nonce: SupportsIndex,
+        value: SupportsIndex = 0,
         access_list: list | None = None,
     ) -> TxParams:
         """
@@ -391,7 +406,7 @@ class TxSigner:
     id. ``sign_eip1559`` builds + signs a type-2 ``TxEnvelope`` and returns the
     raw signed bytes ready for ``eth_sendRawTransaction``.
     """
-    def __new__(cls, /, key: Any, chain_id: int) -> TxSigner:
+    def __new__(cls, /, key: Any, chain_id: SupportsIndex) -> TxSigner:
         """
         Create a new signer holding the operator key.
 
@@ -464,11 +479,11 @@ def dispatch_and_submit_py(
     dispatcher: Dispatcher,
     provider: AsyncAlloyProvider,
     signer: TxSigner,
-    operator_nonce: int,
-    current_block: int,
+    operator_nonce: SupportsIndex,
+    current_block: SupportsIndex,
     dry_run: bool,
     inject_code: bool,
-    broadcast_providers: Sequence[AsyncAlloyProvider] | None = None,
+    broadcast_providers: SupportsGetItem[int, AsyncAlloyProvider] | None = None,
 ) -> Any:
     """
     Route a batch of profitable candidates through the Rust submit leaf.
@@ -506,9 +521,9 @@ def dispatch_and_submit_py(
 def fetch_fee_history_py(
     provider: AsyncAlloyProvider,
     dispatcher: Dispatcher,
-    block_count: int,
-    last_block: int,
-    reward_percentiles: Sequence[float],
+    block_count: SupportsIndex,
+    last_block: SupportsIndex,
+    reward_percentiles: SupportsGetItem[int, SupportsFloat | SupportsIndex],
 ) -> Any:
     """
     Route a single-block `eth_feeHistory` RPC + record into the dispatcher.
@@ -530,7 +545,9 @@ def fetch_fee_history_py(
             error (the leaf no-ops on `Web3Exception`, so this is rare).
     """
 
-def finalize_fees(params: TxParams, base_fee_next: int, priority_fee: int) -> None:
+def finalize_fees(
+    params: TxParams, base_fee_next: SupportsIndex, priority_fee: SupportsIndex
+) -> None:
     """
     `#[pyfunction]` wrapper over [`degenbot_submission::finalize_fees`].
 

@@ -10,6 +10,8 @@ entry.
 
 from typing import Any
 
+__all__ = ["flz_compress", "flz_decompress"]
+
 def flz_compress(data: Any) -> Any:
     """
     Compress data using Solady's `FastLZ` algorithm.

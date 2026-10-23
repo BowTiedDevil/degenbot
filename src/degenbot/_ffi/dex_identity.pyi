@@ -10,8 +10,11 @@ The `degenbot._ffi.dex_identity` Python submodule (declarative
 `sys.modules` entry.
 """
 
-from collections.abc import Sequence
-from typing import final
+from typing import SupportsIndex, final
+
+from _typeshed import SupportsGetItem
+
+__all__ = ["DexIdentity", "dex_identity"]
 
 @final
 class DexIdentity:
@@ -31,10 +34,10 @@ class DexIdentity:
         /,
         factory: str,
         init_hash: str,
-        fee_token0: tuple[int, int],
-        fee_token1: tuple[int, int],
+        fee_token0: tuple[SupportsIndex, SupportsIndex],
+        fee_token1: tuple[SupportsIndex, SupportsIndex],
         variant: str,
-        reserves_abi: Sequence[str] | None = None,
+        reserves_abi: SupportsGetItem[int, str] | None = None,
     ) -> DexIdentity:
         """
         Construct a custom `DexIdentity` view from explicit Python args.

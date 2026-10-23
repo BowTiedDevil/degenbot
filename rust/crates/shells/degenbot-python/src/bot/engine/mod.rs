@@ -56,7 +56,6 @@ pub(crate) use degenbot_pools::solve::mixed::{HopType, PoolHop, SolvePathResult}
     // The Python-visible class name is written as an escaped literal so the
     // core engine type name never appears in this crate (grep gate).
     name = "ArbitrageEngine",
-    skip_from_py_object,
     module = "degenbot._ffi"
 )]
 pub struct PyArbEngine {

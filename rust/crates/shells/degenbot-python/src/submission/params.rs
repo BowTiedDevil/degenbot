@@ -26,11 +26,7 @@ use pyo3::types::{PyBytes, PyList};
 /// finalize_fees(params, base_fee_next, priority_fee)
 /// raw = signer.sign_eip1559(params)
 /// ```
-#[pyclass(
-    name = "TxParams",
-    skip_from_py_object,
-    module = "degenbot._ffi.submission"
-)]
+#[pyclass(name = "TxParams", module = "degenbot._ffi.submission")]
 pub struct PyTxParams {
     pub(crate) inner: TxParams,
 }

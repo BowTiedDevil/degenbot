@@ -32,11 +32,7 @@ use pyo3::exceptions::PyValueError;
 /// Ports the Python `EngineResult` tuple `(path_id, opt_input, profit,
 /// hop_outputs, solve_block)` + the `engine_registry.paths.get(path_id)`
 /// `PathInfo` resolve. Construct one per solved path, per block.
-#[pyclass(
-    name = "DispatchCandidate",
-    skip_from_py_object,
-    module = "degenbot._ffi.simulation"
-)]
+#[pyclass(name = "DispatchCandidate", module = "degenbot._ffi.simulation")]
 // `inner` is read by `dispatch_profitable_py` (pending) — not yet landed;
 // the field is dead until then.
 pub struct PyDispatchCandidate {

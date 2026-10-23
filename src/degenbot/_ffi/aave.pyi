@@ -18,13 +18,24 @@ the submodule itself and its `sys.modules` entry. `CancelHandle` is
 registered separately by `crate::cancel::cancel` (shared).
 """
 
-from collections.abc import Sequence
+from typing import SupportsIndex
+
+from _typeshed import SupportsGetItem
 
 from .cancel import CancelHandle
 
+__all__ = [
+    "activate_aave_market",
+    "cleanup_zero_balance_positions",
+    "deactivate_aave_market",
+    "run_aave_update",
+    "verify_all_positions_on_chain",
+    "verify_touched_positions_on_chain",
+]
+
 def activate_aave_market(
     database_path: str,
-    chain_id: int,
+    chain_id: SupportsIndex,
     pool_address_provider: str,
     gho_token_address: str,
     rpc_url: str,
@@ -56,7 +67,7 @@ def activate_aave_market(
     `ValueError` on a DB / RPC / address-parse failure.
     """
 
-def cleanup_zero_balance_positions(database_path: str, market_id: int) -> None:
+def cleanup_zero_balance_positions(database_path: str, market_id: SupportsIndex) -> None:
     """
     `degenbot._ffi.aave.cleanup_zero_balance_positions(database_path, market_id)`
 
@@ -66,7 +77,7 @@ def cleanup_zero_balance_positions(database_path: str, market_id: int) -> None:
     the call.
     """
 
-def deactivate_aave_market(database_path: str, market_id: int) -> None:
+def deactivate_aave_market(database_path: str, market_id: SupportsIndex) -> None:
     """
     `degenbot._ffi.aave.deactivate_aave_market(database_path, market_id) -> None`
 
@@ -81,18 +92,18 @@ def deactivate_aave_market(database_path: str, market_id: int) -> None:
 
 def run_aave_update(
     database_path: str,
-    chain_id: int,
-    market_id: int,
-    to_block: int | None,
-    chunk_size: int,
+    chain_id: SupportsIndex,
+    market_id: SupportsIndex,
+    to_block: SupportsIndex | None,
+    chunk_size: SupportsIndex,
     rpc_url: str,
     cancel_handle: CancelHandle,
     verify_chunk: bool = False,
-    max_chunks: int | None = None,
+    max_chunks: SupportsIndex | None = None,
     *,
-    verify_all_interval: int | None = None,
+    verify_all_interval: SupportsIndex | None = None,
     verify_all_at_completion: bool = False,
-    max_block_range: int = 10000,
+    max_block_range: SupportsIndex = 10000,
 ) -> dict:
     """
     `degenbot._ffi.aave.run_aave_update(database_path, chain_id, market_id, to_block,
@@ -164,10 +175,10 @@ def run_aave_update(
 def verify_all_positions_on_chain(
     database_path: str,
     rpc_url: str,
-    market_id: int,
-    chain_id: int,
-    block_number: int,
-    touched_users: Sequence[str] | None = None,
+    market_id: SupportsIndex,
+    chain_id: SupportsIndex,
+    block_number: SupportsIndex,
+    touched_users: SupportsGetItem[int, str] | None = None,
 ) -> list[dict]:
     """
     `degenbot._ffi.aave.verify_all_positions_on_chain(database_path, rpc_url,
@@ -203,10 +214,10 @@ def verify_all_positions_on_chain(
 def verify_touched_positions_on_chain(
     database_path: str,
     rpc_url: str,
-    market_id: int,
-    chain_id: int,
-    block_number: int,
-    touched_users: Sequence[str] | None = None,
+    market_id: SupportsIndex,
+    chain_id: SupportsIndex,
+    block_number: SupportsIndex,
+    touched_users: SupportsGetItem[int, str] | None = None,
 ) -> list[dict]:
     """
     `degenbot._ffi.aave.verify_touched_positions_on_chain(database_path, rpc_url,

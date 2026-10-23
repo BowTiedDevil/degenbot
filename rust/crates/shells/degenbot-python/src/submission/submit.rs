@@ -63,11 +63,7 @@ use alloy::rpc::types::AccessList as AlloyAccessList;
 ///  * `executor_address`: hex string
 ///  * `access_list`: web3-shape list (optional; `None` to skip)
 ///  * `path_pools`: `set[str]` (V4 `pool_id_hex` / V2-V3 `pool_address`)
-#[pyclass(
-    name = "SubmitCandidate",
-    skip_from_py_object,
-    module = "degenbot._ffi.submission"
-)]
+#[pyclass(name = "SubmitCandidate", module = "degenbot._ffi.submission")]
 pub struct PySubmitCandidate {
     pub(crate) inner: SubmitCandidate,
 }

@@ -33,7 +33,7 @@ use super::{parse_address, PyBot};
 /// Not a pool and not a token — no state, no provider, no journal. It is the
 /// session's name for one object, and it holds no live data (that stays with
 /// `BotState`), so it is safe to hold for the session and cheap to compare.
-#[pyclass(name = "SessionObject", skip_from_py_object, module = "degenbot._ffi")]
+#[pyclass(name = "SessionObject", module = "degenbot._ffi")]
 pub struct PySessionObject {
     kind: &'static str,
     key: String,

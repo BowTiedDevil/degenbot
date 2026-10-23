@@ -24,10 +24,21 @@ for the dotted-path import — the extension module is a single file, not
 a package) lives in the parent's shared helper.
 """
 
-from typing import Any
+from typing import Any, SupportsIndex
+
+__all__ = [
+    "derive_rate_and_precision_multipliers",
+    "stableswap_get_d",
+    "stableswap_get_y",
+    "stableswap_get_y_d",
+    "stableswap_newton_y",
+    "stableswap_reduction_coefficient",
+]
 
 def derive_rate_and_precision_multipliers(
-    token_decimals: Any, precision_multipliers: Any | None = None, precision_decimals: int = 18
+    token_decimals: Any,
+    precision_multipliers: Any | None = None,
+    precision_decimals: SupportsIndex = 18,
 ) -> tuple[list, list]:
     """
     `derive_rate_and_precision_multipliers` — Rust-owned Curve
@@ -47,7 +58,9 @@ def derive_rate_and_precision_multipliers(
     Returns `ValueError` if `precision_multipliers` is not a `list[int]`.
     """
 
-def stableswap_get_d(xp: Any, amp: Any, n_coins: Any, a_precision: Any, d_variant: int) -> Any:
+def stableswap_get_d(
+    xp: Any, amp: Any, n_coins: Any, a_precision: Any, d_variant: SupportsIndex
+) -> Any:
     """
     `stableswap_get_d` — compute the `StableSwap` invariant D from XP + amp.
 
@@ -57,15 +70,15 @@ def stableswap_get_d(xp: Any, amp: Any, n_coins: Any, a_precision: Any, d_varian
     """
 
 def stableswap_get_y(
-    i: int,
-    j: int,
+    i: SupportsIndex,
+    j: SupportsIndex,
     x: Any,
     xp: Any,
     amp: Any,
     n_coins: Any,
     a_precision: Any,
-    y_variant: int,
-    d_variant: int,
+    y_variant: SupportsIndex,
+    d_variant: SupportsIndex,
 ) -> Any:
     """
     `stableswap_get_y` — compute x[j] given x[i] = x (the swap-solve entry).
@@ -76,7 +89,13 @@ def stableswap_get_y(
     """
 
 def stableswap_get_y_d(
-    amp: Any, i: int, xp: Any, d: Any, n_coins: Any, a_precision: Any, yd_variant: int
+    amp: Any,
+    i: SupportsIndex,
+    xp: Any,
+    d: Any,
+    n_coins: Any,
+    a_precision: Any,
+    yd_variant: SupportsIndex,
 ) -> Any:
     """
     `stableswap_get_y_d` — compute x[i] given the invariant D.
@@ -87,7 +106,13 @@ def stableswap_get_y_d(
     """
 
 def stableswap_newton_y(
-    ann: Any, gamma: Any, xp: Any, d: Any, token_index: int, n_coins: Any, a_multiplier: Any
+    ann: Any,
+    gamma: Any,
+    xp: Any,
+    d: Any,
+    token_index: SupportsIndex,
+    n_coins: Any,
+    a_multiplier: Any,
 ) -> Any:
     """
     `stableswap_newton_y` — the crypto-variant Newton solve (A/gamma/D/frac bounds).

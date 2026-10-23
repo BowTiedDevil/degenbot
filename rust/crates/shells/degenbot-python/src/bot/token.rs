@@ -15,7 +15,7 @@ use degenbot_substrate::BotState;
 /// A thin Python handle to a token registered in `BotState`.
 ///
 /// Does not own any state — all data lives in Rust inside `BotState`.
-#[pyclass(name = "Erc20Token", skip_from_py_object, module = "degenbot._ffi")]
+#[pyclass(name = "Erc20Token", module = "degenbot._ffi")]
 pub struct PyErc20Token {
     core: Arc<StateLock<BotState>>,
     address: Address,

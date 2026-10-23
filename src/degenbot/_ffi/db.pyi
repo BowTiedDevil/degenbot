@@ -15,8 +15,47 @@ The parent module registers the submodule itself and its `sys.modules`
 entry.
 """
 
-from collections.abc import Sequence
-from typing import Any, final
+from typing import Any, SupportsIndex, final
+
+from _typeshed import SupportsGetItem
+
+__all__ = [
+    "CollateralPositionData",
+    "DatabasePositionQuery",
+    "DatabaseSnapshot",
+    "DebtPositionData",
+    "DiscoveryPoolRow",
+    "ExchangeRow",
+    "LiquidityPoolRow",
+    "LiquidityUpdateEvent",
+    "PoolManagerRow",
+    "UserPositionSummary",
+    "V2PoolRowInput",
+    "V3PoolRowInput",
+    "V4PoolRowInput",
+    "analyze_aave_user_position",
+    "db_apply_v3_liquidity_updates",
+    "db_apply_v4_liquidity_updates",
+    "db_backup_database",
+    "db_compact_database",
+    "db_fetch_discovery_rows",
+    "db_fetch_exchange",
+    "db_fetch_exchange_by_name",
+    "db_fetch_graph_edition",
+    "db_fetch_pool_row",
+    "db_heal_database",
+    "db_inspect_schema_state",
+    "db_resolve_token_ids",
+    "db_schema_version",
+    "db_set_exchange_active",
+    "db_set_exchange_last_update_block",
+    "db_upgrade_database",
+    "db_upsert_exchange",
+    "db_upsert_pool_manager",
+    "db_upsert_v2_pools",
+    "db_upsert_v3_pools",
+    "db_upsert_v4_pools",
+]
 
 @final
 class CollateralPositionData:
@@ -64,35 +103,35 @@ class DatabasePositionQuery:
         Raises:
             `ValueError`: On a connection / PRAGMA / schema-gate failure.
         """
-    def get_asset_addresses(self, /, market_id: int) -> list[str]:
+    def get_asset_addresses(self, /, market_id: SupportsIndex) -> list[str]:
         """
         `get_asset_addresses(market_id: int) -> list[str]` — distinct
         underlying-token addresses (the Python shell wraps into a `set`).
         """
-    def get_collateral_config_map(self, /, user_id: int) -> dict:
+    def get_collateral_config_map(self, /, user_id: SupportsIndex) -> dict:
         """
         `get_collateral_config_map(user_id: int) -> dict[int, bool]` — the
         `asset_id` to `enabled` map.
         """
-    def get_collateral_positions(self, /, user_id: int) -> list:
+    def get_collateral_positions(self, /, user_id: SupportsIndex) -> list:
         """
         `get_collateral_positions(user_id: int) -> list[dict]` — keys:
         `asset_id`, `balance`, `underlying_address`, `underlying_symbol`,
         `liquidity_index`, `e_mode_category_id`, `asset_lt`, `asset_ltv`,
         `emode_lt`, `emode_ltv`.
         """
-    def get_debt_positions(self, /, user_id: int) -> list:
+    def get_debt_positions(self, /, user_id: SupportsIndex) -> list:
         """
         `get_debt_positions(user_id: int) -> list[dict]` — keys: `asset_id`,
         `balance`, `underlying_address`, `underlying_symbol`, `borrow_index`,
         `e_mode_category_id`.
         """
-    def get_oracle_address(self, /, market_id: int) -> str | None:
+    def get_oracle_address(self, /, market_id: SupportsIndex) -> str | None:
         """
         `get_oracle_address(market_id: int) -> str | None` — the
         `PRICE_ORACLE` contract address.
         """
-    def get_users_with_debt(self, /, market_id: int, limit: int | None) -> list:
+    def get_users_with_debt(self, /, market_id: SupportsIndex, limit: SupportsIndex | None) -> list:
         """
         `get_users_with_debt(market_id: int, limit: int | None = None) ->
         list[dict]` — one dict per user (keys: `id`, `address`, `market_id`,
@@ -108,7 +147,7 @@ class DatabaseSnapshot:
     from `database_path`; the Python `DatabaseSnapshot` shell constructs one
     per chain + delegates every read to it.
     """
-    def __new__(cls, /, chain_id: int, database_path: str) -> DatabaseSnapshot:
+    def __new__(cls, /, chain_id: SupportsIndex, database_path: str) -> DatabaseSnapshot:
         """
         `PyDatabaseSnapshot(chain_id, database_path)`.
 
@@ -331,11 +370,11 @@ class LiquidityUpdateEvent:
     def __new__(
         cls,
         /,
-        block_number: int,
-        log_index: int,
-        tick_lower: int,
-        tick_upper: int,
-        liquidity_delta: int,
+        block_number: SupportsIndex,
+        log_index: SupportsIndex,
+        tick_lower: SupportsIndex,
+        tick_upper: SupportsIndex,
+        liquidity_delta: SupportsIndex,
     ) -> LiquidityUpdateEvent:
         """
         Build a liquidity-update event record.
@@ -466,8 +505,8 @@ class V2PoolRowInput:
         address: str,
         token0_address: str,
         token1_address: str,
-        fee_token0: int,
-        fee_token1: int,
+        fee_token0: SupportsIndex,
+        fee_token1: SupportsIndex,
         stable: bool | None = None,
     ) -> V2PoolRowInput: ...
 
@@ -478,7 +517,13 @@ class V3PoolRowInput:
     address fields stored parsed, like [`PyV2PoolRowInput`]).
     """
     def __new__(
-        cls, /, address: str, token0_address: str, token1_address: str, fee: int, tick_spacing: int
+        cls,
+        /,
+        address: str,
+        token0_address: str,
+        token1_address: str,
+        fee: SupportsIndex,
+        tick_spacing: SupportsIndex,
     ) -> V3PoolRowInput: ...
 
 @final
@@ -498,8 +543,8 @@ class V4PoolRowInput:
         hooks: str,
         currency0_address: str,
         currency1_address: str,
-        fee: int,
-        tick_spacing: int,
+        fee: SupportsIndex,
+        tick_spacing: SupportsIndex,
     ) -> V4PoolRowInput: ...
 
 def analyze_aave_user_position(
@@ -540,7 +585,10 @@ def analyze_aave_user_position(
     """
 
 def db_apply_v3_liquidity_updates(
-    database_path: str, chain_id: int, pool_address: str, events: Sequence[LiquidityUpdateEvent]
+    database_path: str,
+    chain_id: SupportsIndex,
+    pool_address: str,
+    events: SupportsGetItem[int, LiquidityUpdateEvent],
 ) -> bool:
     """
     `degenbot._ffi.db.db_apply_v3_liquidity_updates(database_path, chain_id, pool_address, events) -> bool`
@@ -558,8 +606,8 @@ def db_apply_v3_liquidity_updates(
 def db_apply_v4_liquidity_updates(
     database_path: str,
     pool_hash_hex: str,
-    pool_manager_chain: int,
-    events: Sequence[LiquidityUpdateEvent],
+    pool_manager_chain: SupportsIndex,
+    events: SupportsGetItem[int, LiquidityUpdateEvent],
 ) -> bool:
     """
     `degenbot._ffi.db.db_apply_v4_liquidity_updates(database_path, pool_hash_hex, pool_manager_chain, events) -> bool`
@@ -586,7 +634,7 @@ def db_compact_database(path: str) -> None:
     `VACUUM`. A no-op for `:memory:`. Raises `ValueError` on failure.
     """
 
-def db_fetch_discovery_rows(database_path: str, chain_id: int) -> list[DiscoveryPoolRow]:
+def db_fetch_discovery_rows(database_path: str, chain_id: SupportsIndex) -> list[DiscoveryPoolRow]:
     """
     `degenbot._ffi.db.db_fetch_discovery_rows(database_path, chain_id) -> list[DiscoveryPoolRow]`
 
@@ -603,7 +651,7 @@ def db_fetch_discovery_rows(database_path: str, chain_id: int) -> list[Discovery
     fails to decode.
     """
 
-def db_fetch_exchange(database_path: str, exchange_id: int) -> ExchangeRow | None:
+def db_fetch_exchange(database_path: str, exchange_id: SupportsIndex) -> ExchangeRow | None:
     """
     `degenbot._ffi.db.db_fetch_exchange(database_path, exchange_id) -> ExchangeRow | None`
 
@@ -616,7 +664,9 @@ def db_fetch_exchange(database_path: str, exchange_id: int) -> ExchangeRow | Non
     [`db_fetch_pool_row`] (same `database_path` + fresh-open pattern).
     """
 
-def db_fetch_exchange_by_name(database_path: str, chain_id: int, name: str) -> ExchangeRow | None:
+def db_fetch_exchange_by_name(
+    database_path: str, chain_id: SupportsIndex, name: str
+) -> ExchangeRow | None:
     """
     `degenbot._ffi.db.db_fetch_exchange_by_name(database_path, chain_id, name)
     -> ExchangeRow | None`
@@ -627,7 +677,9 @@ def db_fetch_exchange_by_name(database_path: str, chain_id: int, name: str) -> E
     a fresh WAL snapshot). Raises ``ValueError`` on a DB failure.
     """
 
-def db_fetch_graph_edition(database_path: str, chain_id: int) -> tuple[int, int, int, int]:
+def db_fetch_graph_edition(
+    database_path: str, chain_id: SupportsIndex
+) -> tuple[int, int, int, int]:
     """
     Return `(v2v3_count, v2v3_max_id, v4_count, v4_max_id)` for a chain.
 
@@ -636,7 +688,9 @@ def db_fetch_graph_edition(database_path: str, chain_id: int) -> tuple[int, int,
     `ValueError` after releasing the GIL.
     """
 
-def db_fetch_pool_row(database_path: str, chain_id: int, address: str) -> LiquidityPoolRow | None:
+def db_fetch_pool_row(
+    database_path: str, chain_id: SupportsIndex, address: str
+) -> LiquidityPoolRow | None:
     """
 
     Module-level pool-row read by `(chain_id, address)` () — the V3
@@ -682,7 +736,9 @@ def db_inspect_schema_state(database_path: str) -> str:
     Raises `ValueError` only on a genuine `SQLite` open/query failure.
     """
 
-def db_resolve_token_ids(database_path: str, chain_id: int, addresses: Sequence[str]) -> dict:
+def db_resolve_token_ids(
+    database_path: str, chain_id: SupportsIndex, addresses: SupportsGetItem[int, str]
+) -> dict:
     """
     Resolve chain-scoped ERC-20 addresses to database row ids.
 
@@ -701,7 +757,7 @@ def db_schema_version() -> int:
     same constant the core writes instead of hardcoding it.
     """
 
-def db_set_exchange_active(database_path: str, exchange_id: int, active: bool) -> None:
+def db_set_exchange_active(database_path: str, exchange_id: SupportsIndex, active: bool) -> None:
     """
     `degenbot._ffi.db.db_set_exchange_active(database_path, exchange_id, active)
     -> None`
@@ -714,7 +770,7 @@ def db_set_exchange_active(database_path: str, exchange_id: int, active: bool) -
     """
 
 def db_set_exchange_last_update_block(
-    database_path: str, chain_id: int, exchange_id: int, block: int
+    database_path: str, chain_id: SupportsIndex, exchange_id: SupportsIndex, block: SupportsIndex
 ) -> None:
     """
     `degenbot._ffi.db.db_set_exchange_last_update_block(database_path, chain_id,
@@ -738,7 +794,7 @@ def db_upgrade_database(path: str) -> str:
     """
 
 def db_upsert_exchange(
-    database_path: str, chain_id: int, name: str, factory: str, deployer: str | None
+    database_path: str, chain_id: SupportsIndex, name: str, factory: str, deployer: str | None
 ) -> ExchangeRow:
     """
     `degenbot._ffi.db.db_upsert_exchange(database_path, chain_id, name, factory,
@@ -759,10 +815,10 @@ def db_upsert_exchange(
 def db_upsert_pool_manager(
     database_path: str,
     address: str,
-    chain: int,
+    chain: SupportsIndex,
     kind: str,
     state_view: str | None,
-    exchange_id: int,
+    exchange_id: SupportsIndex,
 ) -> PoolManagerRow:
     """
     `degenbot._ffi.db.db_upsert_pool_manager(database_path, address, chain, kind,
@@ -779,11 +835,11 @@ def db_upsert_pool_manager(
 
 def db_upsert_v2_pools(
     database_path: str,
-    chain_id: int,
+    chain_id: SupportsIndex,
     kind: str,
-    exchange_id: int,
-    fee_denominator: int,
-    rows: Sequence[V2PoolRowInput],
+    exchange_id: SupportsIndex,
+    fee_denominator: SupportsIndex,
+    rows: SupportsGetItem[int, V2PoolRowInput],
 ) -> None:
     """
     `degenbot._ffi.db.db_upsert_v2_pools(database_path, chain_id, kind, exchange_id,
@@ -801,11 +857,11 @@ def db_upsert_v2_pools(
 
 def db_upsert_v3_pools(
     database_path: str,
-    chain_id: int,
+    chain_id: SupportsIndex,
     kind: str,
-    exchange_id: int,
-    fee_denominator: int,
-    rows: Sequence[V3PoolRowInput],
+    exchange_id: SupportsIndex,
+    fee_denominator: SupportsIndex,
+    rows: SupportsGetItem[int, V3PoolRowInput],
 ) -> None:
     """
     `degenbot._ffi.db.db_upsert_v3_pools(database_path, chain_id, kind, exchange_id,
@@ -819,10 +875,10 @@ def db_upsert_v3_pools(
 
 def db_upsert_v4_pools(
     database_path: str,
-    chain_id: int,
+    chain_id: SupportsIndex,
     pool_manager_address: str,
-    fee_denominator: int,
-    rows: Sequence[V4PoolRowInput],
+    fee_denominator: SupportsIndex,
+    rows: SupportsGetItem[int, V4PoolRowInput],
 ) -> None:
     """
     `degenbot._ffi.db.db_upsert_v4_pools(database_path, chain_id, pool_manager_address,

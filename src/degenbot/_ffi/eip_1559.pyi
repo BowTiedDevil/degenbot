@@ -7,13 +7,17 @@ carrying the EIP-1559 `next_base_fee` seam. The parent module registers
 the submodule itself and its `sys.modules` entry.
 """
 
+from typing import SupportsIndex
+
+__all__ = ["next_base_fee"]
+
 def next_base_fee(
-    parent_base_fee: int,
-    parent_gas_used: int,
-    parent_gas_limit: int,
-    min_base_fee: int | None = None,
-    base_fee_max_change_denominator: int = 8,
-    elasticity_multiplier: int = 2,
+    parent_base_fee: SupportsIndex,
+    parent_gas_used: SupportsIndex,
+    parent_gas_limit: SupportsIndex,
+    min_base_fee: SupportsIndex | None = None,
+    base_fee_max_change_denominator: SupportsIndex = 8,
+    elasticity_multiplier: SupportsIndex = 2,
 ) -> int:
     """
     Compute the EIP-1559 next-block base fee, mirroring the pure-Rust

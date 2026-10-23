@@ -13,7 +13,9 @@ registers the submodule itself; the `sys.modules` entry lives in the
 parent's shared helper.
 """
 
-from typing import Any, final
+from typing import Any, SupportsIndex, final
+
+__all__ = ["DyCalculationInputs", "calculate_dy", "calculate_dy_underlying"]
 
 @final
 class DyCalculationInputs:
@@ -32,20 +34,20 @@ class DyCalculationInputs:
     address: str
     amp: Any
     balances: Any
-    block_number: int
-    block_timestamp: int
+    block_number: SupportsIndex
+    block_timestamp: SupportsIndex
     d: Any | None
-    d_variant: int
+    d_variant: SupportsIndex
     effective_balances: Any | None
     fee: Any
     fee_denominator: Any
     fee_gamma: Any
     gamma: Any | None
     metapool: bool
-    metapool_rate_style: int
-    metapool_underlying_style: int
+    metapool_rate_style: SupportsIndex
+    metapool_underlying_style: SupportsIndex
     mid_fee: Any
-    n_coins: int
+    n_coins: SupportsIndex
     offpeg_fee_multiplier: Any
     out_fee: Any
     precision: Any
@@ -54,12 +56,12 @@ class DyCalculationInputs:
     rate_multipliers: Any
     resolved_rates: Any
     scaled_redemption_price: Any | None
-    swap_style: int
+    swap_style: SupportsIndex
     virtual_price: Any | None
     xp: Any
-    y_variant: int
+    y_variant: SupportsIndex
 
-def calculate_dy(i: int, j: int, dx: Any, inputs: DyCalculationInputs) -> Any:
+def calculate_dy(i: SupportsIndex, j: SupportsIndex, dx: Any, inputs: DyCalculationInputs) -> Any:
     """
     `calculate_dy(i, j, dx, inputs)` — pure `get_dy` across all swap styles +
     metapool fast-path.
@@ -69,7 +71,9 @@ def calculate_dy(i: int, j: int, dx: Any, inputs: DyCalculationInputs) -> Any:
     Returns `ValueError` on an invariant failure / bad index / unknown style.
     """
 
-def calculate_dy_underlying(i: int, j: int, dx: Any, inputs: DyCalculationInputs, base: Any) -> Any:
+def calculate_dy_underlying(
+    i: SupportsIndex, j: SupportsIndex, dx: Any, inputs: DyCalculationInputs, base: Any
+) -> Any:
     """
     `calculate_dy_underlying(i, j, dx, inputs, base)` — metapool swap into/out
     of an underlying base-pool coin. `base` is a Python object exposing the

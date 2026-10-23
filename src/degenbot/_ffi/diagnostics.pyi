@@ -11,6 +11,10 @@ The `degenbot._ffi.diagnostics` Python submodule (declarative
 registers the submodule itself and its `sys.modules` entry.
 """
 
+from typing import SupportsIndex
+
+__all__ = ["failure_action", "mark_progress", "start_gil_probe"]
+
 def failure_action(kind: str, reason: str | None) -> str:
     """
     Python-callable: stamp "forward progress happened" (call after each
@@ -27,7 +31,11 @@ def failure_action(kind: str, reason: str | None) -> str:
     """
 
 def mark_progress() -> None: ...
-def start_gil_probe(interval_ms: int = 50, threshold_ms: int = 100, stuck_ms: int = 30000) -> None:
+def start_gil_probe(
+    interval_ms: SupportsIndex = 50,
+    threshold_ms: SupportsIndex = 100,
+    stuck_ms: SupportsIndex = 30000,
+) -> None:
     """
     Start the GIL-acquire-latency probe + main-loop stuck-watchdog.
 

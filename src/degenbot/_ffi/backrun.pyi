@@ -12,7 +12,9 @@ The `degenbot._ffi.backrun` Python submodule (declarative
 module registers the submodule itself and its `sys.modules` entry.
 """
 
-from typing import Any, final
+from typing import Any, SupportsIndex, final
+
+__all__ = ["BackrunFeed"]
 
 @final
 class BackrunFeed:
@@ -24,7 +26,11 @@ class BackrunFeed:
     grandfather list.
     """
     def __new__(
-        cls, /, url: str | None = None, watchdog_secs: int = 0, ring_capacity: int = 0
+        cls,
+        /,
+        url: str | None = None,
+        watchdog_secs: SupportsIndex = 0,
+        ring_capacity: SupportsIndex = 0,
     ) -> BackrunFeed:
         """
         Spawn the feed pump. Watchdog/ring/backoff are config-able; `0`

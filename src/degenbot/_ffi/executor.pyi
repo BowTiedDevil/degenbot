@@ -13,7 +13,9 @@ The `degenbot._ffi.executor` Python submodule (declarative
 parent module registers the submodule itself and its `sys.modules` entry.
 """
 
-from typing import Any
+from typing import Any, SupportsIndex
+
+__all__ = ["compute_simulation_warmup_slots", "mapping_slot", "nested_mapping_slot", "pack_config"]
 
 def compute_simulation_warmup_slots(
     executor_address: str, weth_address: str, pool_manager_address: str
@@ -47,7 +49,11 @@ def nested_mapping_slot(base_slot: Any, key1: Any, key2: Any) -> Any:
     """
 
 def pack_config(
-    check_mode: int, expected_value: Any, *, bribe_bips: int = 0, bribe_recipient_idx: int = 0
+    check_mode: SupportsIndex,
+    expected_value: Any,
+    *,
+    bribe_bips: SupportsIndex = 0,
+    bribe_recipient_idx: SupportsIndex = 0,
 ) -> Any:
     """
     `degenbot._ffi.executor.pack_config(check_mode=0, expected_value=0, bribe_bips=0,

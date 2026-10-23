@@ -11,6 +11,8 @@ are enabled (a single declarative export).
 
 from typing import final
 
+__all__ = ["CancelHandle"]
+
 @final
 class CancelHandle:
     """

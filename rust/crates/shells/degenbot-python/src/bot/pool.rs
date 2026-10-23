@@ -432,7 +432,7 @@ fn curve_no_liquidity_error(py: Python<'_>, message: &str) -> PyErr {
 
 /// A thin Python handle to a pool registered in `BotState`.
 /// Does not own any state — all data lives in Rust inside `BotState`.
-#[pyclass(name = "Pool", skip_from_py_object, module = "degenbot._ffi")]
+#[pyclass(name = "Pool", module = "degenbot._ffi")]
 pub struct PyLiquidityPool {
     core: Arc<StateLock<BotState>>,
     pool_id: u64,

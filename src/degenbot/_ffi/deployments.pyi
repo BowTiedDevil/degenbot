@@ -10,7 +10,17 @@ embedded deployments.json (Fork A). The parent module registers
 the submodule itself and its `sys.modules` entry.
 """
 
-def deployer_for(chain_id: int, factory: str) -> str | None:
+from typing import SupportsIndex
+
+__all__ = [
+    "deployer_for",
+    "init_hash_for",
+    "resolve_deployer",
+    "resolve_v2_init_hash",
+    "resolve_v3_init_hash",
+]
+
+def deployer_for(chain_id: SupportsIndex, factory: str) -> str | None:
     """
     Resolve the *effective* CREATE2 deployer for a ``(chain_id, factory)``
     pair from the embedded canonical `deployments.json`.
@@ -26,7 +36,7 @@ def deployer_for(chain_id: int, factory: str) -> str | None:
     Returns `ValueError` if `factory` is not a valid hex address.
     """
 
-def init_hash_for(chain_id: int, factory: str) -> str | None:
+def init_hash_for(chain_id: SupportsIndex, factory: str) -> str | None:
     """
     Resolve the CREATE2 init code hash for a ``(chain_id, factory)`` pair from
     the embedded canonical `deployments.json`.
@@ -40,14 +50,14 @@ def init_hash_for(chain_id: int, factory: str) -> str | None:
     Returns `ValueError` if `factory` is not a valid hex address.
     """
 
-def resolve_deployer(chain_id: int, factory: str) -> str:
+def resolve_deployer(chain_id: SupportsIndex, factory: str) -> str:
     """
     Resolve the effective CREATE2 deployer for a ``(chain_id, factory)`` pair,
     with the `None -> factory` convention applied. Returns the factory itself
     when the ``(chain, factory)`` is not in the shipped JSON (Fork A).
     """
 
-def resolve_v2_init_hash(chain_id: int, factory: str) -> str:
+def resolve_v2_init_hash(chain_id: SupportsIndex, factory: str) -> str:
     """
     Resolve the CREATE2 init code hash for a V2 ``(chain_id, factory)`` pair,
     with a documented fallback. Returns the JSON row's `init_hash` when shipped
@@ -55,7 +65,7 @@ def resolve_v2_init_hash(chain_id: int, factory: str) -> str:
     retired Python `ClassVar`'s default for non-JSON V2 pools) (Fork A).
     """
 
-def resolve_v3_init_hash(chain_id: int, factory: str) -> str:
+def resolve_v3_init_hash(chain_id: SupportsIndex, factory: str) -> str:
     """
     Resolve the CREATE2 init code hash for a V3 ``(chain_id, factory)`` pair,
     with a documented fallback. Returns the JSON row's `init_hash` when shipped

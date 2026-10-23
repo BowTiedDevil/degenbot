@@ -26,7 +26,22 @@ dotted-path import — the extension module is a single file, not a
 package) lives in the parent's shared helper.
 """
 
-from typing import Any
+from typing import Any, SupportsIndex
+
+__all__ = [
+    "fixed_point_div_down",
+    "fixed_point_div_up",
+    "fixed_point_mul_down",
+    "stable_calc_in_given_out",
+    "stable_calc_out_given_in",
+    "stable_calculate_invariant",
+    "stable_calculate_invariant_deployed",
+    "weighted_add_swap_fee_amount",
+    "weighted_calc_in_given_out",
+    "weighted_calc_out_given_in",
+    "weighted_calculate_invariant",
+    "weighted_subtract_swap_fee_amount",
+]
 
 def fixed_point_div_down(a: Any, b: Any) -> Any:
     """
@@ -67,8 +82,8 @@ def fixed_point_mul_down(a: Any, b: Any) -> Any:
 def stable_calc_in_given_out(
     amp: Any,
     balances: Any,
-    token_index_in: int,
-    token_index_out: int,
+    token_index_in: SupportsIndex,
+    token_index_out: SupportsIndex,
     token_amount_out: Any,
     invariant: Any,
 ) -> Any:
@@ -83,8 +98,8 @@ def stable_calc_in_given_out(
 def stable_calc_out_given_in(
     amp: Any,
     balances: Any,
-    token_index_in: int,
-    token_index_out: int,
+    token_index_in: SupportsIndex,
+    token_index_out: SupportsIndex,
     token_amount_in: Any,
     invariant: Any,
 ) -> Any:
@@ -129,7 +144,7 @@ def weighted_calc_in_given_out(
     balance_out: Any,
     weight_out: Any,
     amount_out: Any,
-    version: int,
+    version: SupportsIndex,
 ) -> Any:
     """
     Weighted `calc_in_given_out` (`WeightedMath._calc_in_given_out`).
@@ -140,7 +155,12 @@ def weighted_calc_in_given_out(
     """
 
 def weighted_calc_out_given_in(
-    balance_in: Any, weight_in: Any, balance_out: Any, weight_out: Any, amount_in: Any, version: int
+    balance_in: Any,
+    weight_in: Any,
+    balance_out: Any,
+    weight_out: Any,
+    amount_in: Any,
+    version: SupportsIndex,
 ) -> Any:
     """
     Weighted `calc_out_given_in` (`WeightedMath._calc_out_given_in`).
@@ -150,7 +170,9 @@ def weighted_calc_out_given_in(
     Returns `ValueError` (`MAX_IN_RATIO`) if `amount_in` exceeds 30% of `balance_in`, plus overflow reverts.
     """
 
-def weighted_calculate_invariant(normalized_weights: Any, balances: Any, version: int) -> Any:
+def weighted_calculate_invariant(
+    normalized_weights: Any, balances: Any, version: SupportsIndex
+) -> Any:
     """
     Weighted-product invariant (`WeightedMath._calculateInvariant`).
 
