@@ -40,6 +40,7 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
     MissingLiquidityData,
 )
+from degenbot.uniswap import SwapSimulationStatus
 from degenbot.uniswap.concentrated_liquidity_companion import ConcentratedLiquidityCompanion
 from degenbot.uniswap.v3_pool_calc import UniswapV3PoolCalc
 from degenbot.uniswap.v3_pool_state import V3PoolState
@@ -368,19 +369,19 @@ class UniswapV3Pool(
             override_state=override_state,
         )
         status = read.get("status")
-        if status == "not_computable":
+        if status is SwapSimulationStatus.NotComputable:
             # The rust engine's verdict for a swap the real pool would REVERT:
             # the walk exhausted the pool's tick range with input remaining
             # (the price would invert past the protocol bound). The offline
             # struct's revert-analog is the python-era IncompleteSwap.
             raise IncompleteSwap(amount_in=0, amount_out=0)
-        if status in {"fetch_failed", "fetch_exhausted"}:
+        if status in {SwapSimulationStatus.FetchFailed, SwapSimulationStatus.FetchExhausted}:
             # The walk entered a word the map lacks and the on-demand fetch
             # could not provide (e.g. rate-limited fork sources). Distinct
             # from the swap being impossible.
             word = read.get("word")
             raise MissingLiquidityData(word=int(word) if word is not None else -1)
-        if status != "computed":
+        if status is not SwapSimulationStatus.Computed:
             raise LiquidityPoolError(message=f"Unexpected simulation status {status!r}")
         return UniswapV3PoolSimulationResult(
             amount0_delta=int(read["amount0_delta"]),

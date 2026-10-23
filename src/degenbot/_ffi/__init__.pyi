@@ -3735,9 +3735,11 @@ class Pool:
         signed user-perspective (negative = exact input, positive = exact
         output). Returns a typed read dict — `status` is `computed` (with
         signed per-token deltas in the deposited-`+`/sent-`-` convention, the
-        end state, and `specified_met`), `not_computable`, `fetch_failed`, or
-        `fetch_exhausted`. Pass `override_state` (a concentrated liquidity pool-state object) to
-        simulate against a hypothetical.
+        end state, and `specified_met`); otherwise the typed
+        `SwapSimulationStatus` member for the refusal (`NotComputable`,
+        `FetchFailed`, or `FetchExhausted`). Pass `override_state` (a
+        concentrated liquidity pool-state object) to simulate against a
+        hypothetical.
         """
     @property
     def stable_swap(self, /) -> bool:
@@ -4338,6 +4340,44 @@ class StrategyReadinessView:
     def txpool_backrun_active(self, /) -> bool: ...
     @property
     def txpool_backrun_endpoints(self, /) -> list[str]: ...
+
+@final
+class SwapSimulationStatus:
+    """
+    The terminal verdict of one [`PyLiquidityPool::simulate`] read — the FFI
+    projection of the `SwapRead` discriminants that reach Python as a status.
+
+    `SwapRead` (in `degenbot_substrate::swap_simulation`) stays the semantic
+    owner; this mirrors exactly the verdicts the seam reports, so a call site
+    compares an enum member instead of string-matching the wire. Its
+    `UnknownPool` / `UnsupportedFamily` variants are raised as exceptions at the
+    seam (a registration refusal, not a swap verdict), so they carry no member
+    here — and `simulate`'s exhaustive `match` on `SwapRead` means a new core
+    variant cannot silently become a wrong status.
+    """
+
+    Computed: Final[SwapSimulationStatus]
+    """
+    The swap computed: the read carries the signed deltas, end state, and
+    `specified_met`.
+    """
+    FetchExhausted: Final[SwapSimulationStatus]
+    """
+    Miss recovery was impossible or exhausted for the read's `word`.
+    """
+    FetchFailed: Final[SwapSimulationStatus]
+    """
+    Miss recovery ran but the fetch itself failed for the read's `word`.
+    """
+    NotComputable: Final[SwapSimulationStatus]
+    """
+    Zero amount, a non-computable arithmetic/invariant outcome, or a
+    non-concentrated-liquidity payload the seam does not project.
+    """
+    def __eq__(self, value: object, /) -> bool: ...
+    def __hash__(self, /) -> int: ...
+    def __int__(self, /) -> int: ...
+    def __ne__(self, value: object, /) -> bool: ...
 
 @final
 class UnregistrablePoolRecord:
@@ -5103,6 +5143,7 @@ __all__ = [
     "SpecViolationError",
     "StrategyHostError",
     "StrategyReadinessView",
+    "SwapSimulationStatus",
     "UnconfiguredStrategyError",
     "UnknownStrategyError",
     "UnregistrablePoolRecord",

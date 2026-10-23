@@ -5,7 +5,7 @@
 # Pool-address derivation — the keccak/create2 math lives in the Rust core
 # (ADR-013: `_ffi` only in the `__init__.py` barrier; leaf modules import
 # from this stable home).
-from degenbot._ffi import PoolTickCoverage
+from degenbot._ffi import PoolTickCoverage, SwapSimulationStatus
 from degenbot._ffi import (
     generate_v2_pool_address as _rs_generate_v2_pool_address,
 )
@@ -48,6 +48,7 @@ pool_type_registry.set_default_v3_class(UniswapV3Pool)
 
 __all__ = (
     "PoolTickCoverage",
+    "SwapSimulationStatus",
     "UniswapV2Pool",
     "UniswapV2PoolExternalUpdate",
     "UniswapV2PoolSimulationResult",

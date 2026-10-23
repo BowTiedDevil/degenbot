@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import Bot
+from degenbot._ffi import Bot, SwapSimulationStatus
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.math import MIN_SQRT_RATIO
 from tests.helpers.erc20_factory import make_erc20
@@ -101,7 +101,7 @@ def _unsigned_swap(handle, *, zero_for_one: bool, amount_in: int, block: int = 0
         amount_specified=-amount_in,
         block=block,
     )
-    if read.get("status") != "computed":
+    if read.get("status") is not SwapSimulationStatus.Computed:
         return None
     amount0_delta = int(read["amount0_delta"])
     amount1_delta = int(read["amount1_delta"])

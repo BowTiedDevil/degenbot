@@ -44,6 +44,7 @@ from degenbot.exceptions.pool import (
     IncompleteSwap,
     LiquidityPoolError,
 )
+from degenbot.uniswap import SwapSimulationStatus
 from degenbot.uniswap.concentrated_liquidity_companion import ConcentratedLiquidityCompanion
 from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc
 from degenbot.uniswap.v4_pool_state import V4PoolState
@@ -370,7 +371,7 @@ class UniswapV4Pool(
             block=self.update_block,
             override_state=override_state,
         )
-        if read.get("status") != "computed":
+        if read.get("status") is not SwapSimulationStatus.Computed:
             raise LiquidityPoolError(
                 message=(
                     f"Simulated execution could not compute. "
@@ -426,7 +427,7 @@ class UniswapV4Pool(
             block=self.update_block,
             override_state=override_state,
         )
-        if read.get("status") != "computed":
+        if read.get("status") is not SwapSimulationStatus.Computed:
             raise LiquidityPoolError(
                 message=(
                     f"Simulated execution could not compute. "

@@ -942,9 +942,11 @@ impl PyLiquidityPool {
     /// signed user-perspective (negative = exact input, positive = exact
     /// output). Returns a typed read dict — `status` is `computed` (with
     /// signed per-token deltas in the deposited-`+`/sent-`-` convention, the
-    /// end state, and `specified_met`), `not_computable`, `fetch_failed`, or
-    /// `fetch_exhausted`. Pass `override_state` (a concentrated liquidity pool-state object) to
-    /// simulate against a hypothetical.
+    /// end state, and `specified_met`); otherwise the typed
+    /// `SwapSimulationStatus` member for the refusal (`NotComputable`,
+    /// `FetchFailed`, or `FetchExhausted`). Pass `override_state` (a
+    /// concentrated liquidity pool-state object) to simulate against a
+    /// hypothetical.
     #[pyo3(signature = (zero_for_one, amount_specified, block, sqrt_price_limit_x96=None, override_state=None))]
     fn simulate(
         &self,
@@ -1007,8 +1009,12 @@ impl PyLiquidityPool {
                 )
             }
             SwapRead::Computed(_) | SwapRead::NotComputable => not_computable_read(py),
-            SwapRead::FetchFailed { word } => status_word_read(py, "fetch_failed", word),
-            SwapRead::FetchExhausted { word } => status_word_read(py, "fetch_exhausted", word),
+            SwapRead::FetchFailed { word } => {
+                status_word_read(py, PySwapSimulationStatus::FetchFailed, word)
+            }
+            SwapRead::FetchExhausted { word } => {
+                status_word_read(py, PySwapSimulationStatus::FetchExhausted, word)
+            }
             SwapRead::UnsupportedFamily { pool_id, family } => {
                 Err(swap_family_gap(pool_id, family))
             }
@@ -2803,6 +2809,38 @@ fn i256_to_py(py: Python<'_>, value: I256) -> PyResult<Py<PyAny>> {
     Ok(signed.into_pyobject(py)?.into_any().unbind())
 }
 
+/// The terminal verdict of one [`PyLiquidityPool::simulate`] read — the FFI
+/// projection of the `SwapRead` discriminants that reach Python as a status.
+///
+/// `SwapRead` (in `degenbot_substrate::swap_simulation`) stays the semantic
+/// owner; this mirrors exactly the verdicts the seam reports, so a call site
+/// compares an enum member instead of string-matching the wire. Its
+/// `UnknownPool` / `UnsupportedFamily` variants are raised as exceptions at the
+/// seam (a registration refusal, not a swap verdict), so they carry no member
+/// here — and `simulate`'s exhaustive `match` on `SwapRead` means a new core
+/// variant cannot silently become a wrong status.
+#[pyclass(
+    name = "SwapSimulationStatus",
+    eq,
+    hash,
+    frozen,
+    from_py_object,
+    module = "degenbot._ffi"
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PySwapSimulationStatus {
+    /// The swap computed: the read carries the signed deltas, end state, and
+    /// `specified_met`.
+    Computed,
+    /// Zero amount, a non-computable arithmetic/invariant outcome, or a
+    /// non-concentrated-liquidity payload the seam does not project.
+    NotComputable,
+    /// Miss recovery ran but the fetch itself failed for the read's `word`.
+    FetchFailed,
+    /// Miss recovery was impossible or exhausted for the read's `word`.
+    FetchExhausted,
+}
+
 /// THE sign-mapping site (ADR-037): an unsigned per-token amount pair becomes
 /// signed deltas in the deposited-`+`/sent-`-` convention — the input side is
 /// positive, the output side negative — plus whether the requested side was
@@ -2834,7 +2872,7 @@ fn build_simulate_read(
         amount_specified.into_raw() <= output
     };
     let read = PyDict::new(py);
-    read.set_item("status", "computed")?;
+    read.set_item("status", PySwapSimulationStatus::Computed)?;
     read.set_item("amount0_delta", i256_to_py(py, amount0_delta)?)?;
     read.set_item("amount1_delta", i256_to_py(py, amount1_delta)?)?;
     read.set_item(
@@ -2847,15 +2885,19 @@ fn build_simulate_read(
     Ok(read.into_any().unbind())
 }
 
-/// The `not_computable` typed read (zero amount, miss, or non-concentrated-liquidity payload).
+/// The `NotComputable` typed read (zero amount, miss, or non-concentrated-liquidity payload).
 fn not_computable_read(py: Python<'_>) -> PyResult<Py<PyAny>> {
     let read = PyDict::new(py);
-    read.set_item("status", "not_computable")?;
+    read.set_item("status", PySwapSimulationStatus::NotComputable)?;
     Ok(read.into_any().unbind())
 }
 
 /// A typed miss read carrying the bitmap `word` the walk stalled on.
-fn status_word_read(py: Python<'_>, status: &str, word: i32) -> PyResult<Py<PyAny>> {
+fn status_word_read(
+    py: Python<'_>,
+    status: PySwapSimulationStatus,
+    word: i32,
+) -> PyResult<Py<PyAny>> {
     let read = PyDict::new(py);
     read.set_item("status", status)?;
     read.set_item("word", word)?;
@@ -3017,6 +3059,50 @@ mod tests {
             dict.set_item(42, (7u128, -3i128)).unwrap();
             let map = TickData::from_py_pairs(dict.as_any(), 21_000_000).unwrap();
             assert_eq!(map.get(&42).unwrap().block, 21_000_000);
+        });
+    }
+
+    /// The read dict's `status` is the typed pyclass enum member, never a wire
+    /// string: the Python call sites compare members with `is`.
+    #[test]
+    fn simulate_read_status_is_the_typed_enum_member() {
+        Python::attach(|py| {
+            let status_of = |read: Py<PyAny>| -> PySwapSimulationStatus {
+                read.into_bound(py)
+                    .cast_into::<PyDict>()
+                    .unwrap()
+                    .get_item("status")
+                    .unwrap()
+                    .unwrap()
+                    .extract()
+                    .unwrap()
+            };
+
+            let computed = build_simulate_read(
+                py,
+                true,
+                I256::try_from(-1_000_i64).unwrap(),
+                U256::from(1_000_u64),
+                U256::from(400_u64),
+                (U256::from(1_u64), 7, 3),
+            )
+            .unwrap();
+            assert_eq!(status_of(computed), PySwapSimulationStatus::Computed);
+
+            assert_eq!(
+                status_of(not_computable_read(py).unwrap()),
+                PySwapSimulationStatus::NotComputable
+            );
+            assert_eq!(
+                status_of(status_word_read(py, PySwapSimulationStatus::FetchFailed, -7).unwrap()),
+                PySwapSimulationStatus::FetchFailed
+            );
+            assert_eq!(
+                status_of(
+                    status_word_read(py, PySwapSimulationStatus::FetchExhausted, -8).unwrap()
+                ),
+                PySwapSimulationStatus::FetchExhausted
+            );
         });
     }
 

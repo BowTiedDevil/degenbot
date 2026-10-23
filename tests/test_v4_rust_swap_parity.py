@@ -17,7 +17,7 @@ import pathlib
 
 import pytest
 
-from degenbot._ffi import Bot
+from degenbot._ffi import Bot, SwapSimulationStatus
 from degenbot.abi import encode as abi_encode
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.crypto import keccak256
@@ -119,7 +119,7 @@ def _unsigned_swap(handle, *, zero_for_one: bool, amount_in: int, block: int = 0
         amount_specified=-amount_in,
         block=block,
     )
-    if read.get("status") != "computed":
+    if read.get("status") is not SwapSimulationStatus.Computed:
         return None
     amount0_delta = int(read["amount0_delta"])
     amount1_delta = int(read["amount1_delta"])

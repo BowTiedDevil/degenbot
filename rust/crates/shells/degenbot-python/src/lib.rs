@@ -402,7 +402,9 @@ mod _ffi {
     use crate::bot::pool::PyConcentratedLiquidityView;
     #[cfg(feature = "bot")]
     #[pymodule_export]
-    use crate::bot::pool::{PyBalanceVectorView, PyPoolTickCoverage, PyReservePairView};
+    use crate::bot::pool::{
+        PyBalanceVectorView, PyPoolTickCoverage, PyReservePairView, PySwapSimulationStatus,
+    };
     #[cfg(feature = "bot")]
     #[pymodule_export]
     use crate::bot::token::PyErc20Token;
