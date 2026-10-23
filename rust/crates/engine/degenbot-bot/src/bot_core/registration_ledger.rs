@@ -37,6 +37,7 @@ use std::collections::BTreeSet;
 use alloy::primitives::Address;
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::aerodrome_v2_state::RegisterAerodromePoolError;
+use degenbot_pools::registration_refusal::SpecRefusal;
 use degenbot_pools::v2_state::RegisterV2PoolError;
 use degenbot_pools::v3_state::RegisterV3PoolError;
 use degenbot_substrate::RegistrationVerdict;
@@ -652,6 +653,23 @@ impl RefusalKind {
         phase: RegistrationPhase,
     ) -> Self {
         Self::MissingConstructionIo { family, phase }
+    }
+
+    /// A build refusal the taxonomy names for a shape no builder ever saw.
+    ///
+    /// The driver positively resolved the identity — for the one live arm, a
+    /// Balancer Vault pool: `getPoolId()` answered while neither family probe
+    /// did — so there is no arm whose builder could refuse it, and no
+    /// transient read behind the verdict. The refusal is the taxonomy's own
+    /// [`SpecRefusal`], which keeps the stable-pool-fact classification a
+    /// builder's spec refusal carries.
+    #[must_use]
+    pub fn unbuilt_spec_refusal(reason: SpecRefusal) -> Self {
+        Self::BuildRefused {
+            family: None,
+            phase: RegistrationPhase::Build,
+            failure: BuildFailure::Spec(reason),
+        }
     }
 
     /// A registry GET that answered an address with no readable identity of

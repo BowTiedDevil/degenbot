@@ -118,6 +118,19 @@ class TestPoolClassForDescriptor:
         with pytest.raises(DegenbotValueError, match="Unrecognized stableswap variant"):
             pool_class_for_descriptor(descriptor, chain_id=CHAIN_ID)
 
+    def test_unmodeled_balancer_family_has_no_class(self) -> None:
+        """The unmodeled family exists to reach the construction switchboard,
+        which refuses it under its own name — no wrapper class can exist, so the
+        lookup refuses loudly instead of guessing a family's class."""
+        descriptor = PoolTypeDescriptor(
+            family=PoolFamily.UNMODELED,
+            variant="balancer_unmodeled",
+            kind="balancer_unmodeled",
+            factory=None,
+        )
+        with pytest.raises(DegenbotValueError, match="No pool class for family 'unmodeled'"):
+            pool_class_for_descriptor(descriptor, chain_id=CHAIN_ID)
+
     def test_registered_factory_returns_registered_class(self) -> None:
         """When the descriptor has a registered factory, returns the registered class."""
         factory = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
@@ -426,6 +439,33 @@ class TestResolvePoolType:
         assert result.variant == "balancer_weighted"
         assert result.factory == get_checksum_address(weighted_factory)
         assert pool_class_for_descriptor(result, chain_id=CHAIN_ID) is BalancerV2Pool
+
+    def test_balancer_identity_without_a_family_probe_is_unmodeled(self) -> None:
+        """`getPoolId()` answered, neither family probe did: the identity is a
+        Balancer pool of a shape no construction arm models (a linear pool, a
+        boosted pool's constituent, a gyro shape).
+
+        The identity must survive resolution under its own name — dropping it is
+        what routed these addresses into the generic Curve arm, which refused
+        them as a Curve pool.
+        """
+        io = FakePyBotIo(
+            factory_address=None,
+            pool_row=None,
+            balancer_pool_id=bytes(32),
+            balancer_family=None,
+        )
+        result = resolve_pool_type(
+            "0x2B218683178d029BAB6c9789b1073aA6c96E5176",  # type: ignore[arg-type]
+            chain_id=CHAIN_ID,
+            io=io,
+        )
+        assert result.family is PoolFamily.UNMODELED
+        assert result.variant == "balancer_unmodeled"
+        assert result.kind == "balancer_unmodeled"
+        assert result.factory is None
+        # No membership probe: the family never reached a factory claim.
+        assert io.balancer_factory_candidates == []
 
     def test_raises_on_unknown_db_kind_without_probing(self) -> None:
         """A present DB kind the registry doesn't know raises instead of

@@ -134,12 +134,13 @@ class _FamilyProbe:
     def __call__(self, address: str) -> str:
         """Classify a pool's family with the production probe, at the pin.
 
-        Returns ``"unknown"`` for a registered address no construction arm
-        models: a Balancer pool outside the weighted/stable families (linear
-        pools, boosted-pool linear constituents, gyro/quant-amm shapes), or a
-        spam registration whose address answers nothing at all.
+        Returns ``"weighted"``/``"stable"`` for the two families a construction
+        arm models, ``"unmodeled"`` for a positively identified Balancer pool
+        whose family probe answers nothing (a linear pool, a boosted-pool
+        constituent, a gyro/quant-amm shape), and ``"unknown"`` for a
+        registration whose address answers no pool identity at all.
 
-        `getPoolId()` gates the family claim. It decodes or the row is
+        `getPoolId()` gates the Balancer claim. It decodes or the row is
         `"unknown"`, because the family probe treats a *successful empty*
         `eth_call` as an answer: a registered address holding only an EIP-7702
         delegation designator (`0xef0100 || address`, no pool code) decodes its
@@ -147,7 +148,7 @@ class _FamilyProbe:
         would be labelled "weighted".
 
         Returns:
-            ``"weighted"``, ``"stable"``, or ``"unknown"``.
+            ``"weighted"``, ``"stable"``, ``"unmodeled"``, or ``"unknown"``.
         """
         try:
             self._io.fetch_balancer_pool_id(address)
@@ -155,8 +156,11 @@ class _FamilyProbe:
             return "unknown"
         try:
             return self._io.probe_balancer_pool_type(address, block=self._block)
-        except Exception:  # noqa: BLE001 — a revert is the family answer "unknown"
-            return "unknown"
+        except Exception:  # noqa: BLE001 — a revert is the family probe's negative
+            # A Balancer pool (the pool id decoded) whose family probe did not:
+            # the identity is positive, the shape is one no arm models. Kept
+            # apart from "unknown" so the sweep can assert the refusal names it.
+            return "unmodeled"
 
 
 def main() -> None:
@@ -214,10 +218,12 @@ def main() -> None:
             "collapsed to the earliest; duplicate_registrations counts them). family "
             "is the production identity probe's answer at the pin, gated on a "
             "decodable getPoolId: 'weighted'/'stable' are the families a construction "
-            "arm models, 'unknown' means no arm can build the address (a linear or "
-            "boosted-constituent pool, a gyro/quant-amm shape, or a spam registration "
-            "whose address answers no pool getter) and the sweep excludes it from the "
-            "build attempt."
+            "arm models; 'unmodeled' is a positively identified Balancer pool whose "
+            "family probe answers nothing (a linear pool, a boosted-pool constituent, "
+            "a gyro/quant-amm shape), which the sweep builds and expects to be refused "
+            "under its own name; 'unknown' means the address answers no pool identity "
+            "at all (an EIP-7702 delegation designator, a junk self-registration) and "
+            "the sweep excludes it from the build attempt."
         ),
         "vault": BALANCER_V2_VAULT_ADDRESS,
         "event": POOL_REGISTERED_SIGNATURE,

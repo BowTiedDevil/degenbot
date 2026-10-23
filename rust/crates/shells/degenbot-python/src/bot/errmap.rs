@@ -840,6 +840,30 @@ mod tests {
     }
 
     #[test]
+    fn unmodeled_balancer_refusal_pins_the_reason() {
+        // The unmodeled-family verdict never reaches a builder: the driver
+        // resolved the identity (a Balancer Vault pool — `getPoolId()`
+        // answered) and no family arm models its shape, so the construction
+        // switchboard answers the taxonomy's reason directly. It must name the
+        // Balancer family — the measured defect was this identity falling
+        // through to the Curve arm and refusing as "curve required read
+        // reverted".
+        let err = map_refusal(RefusalKind::unbuilt_spec_refusal(
+            SpecRefusal::BalancerUnmodeledFamily,
+        ));
+        Python::attach(|py| {
+            assert!(
+                err.is_instance_of::<SpecViolationError>(py),
+                "expected a SpecViolationError"
+            );
+        });
+        assert_eq!(
+            message(&err),
+            "pool build refused: out of spec (balancer unmodeled family)"
+        );
+    }
+
+    #[test]
     fn no_construction_io_pins_the_method_prefix() {
         assert_eq!(
             message(&map_no_construction_io("build_v2_pool")),

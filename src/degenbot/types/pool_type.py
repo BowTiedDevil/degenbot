@@ -40,7 +40,14 @@ class PoolFamily(Enum):
     CONSTANT_PRODUCT = "constant_product"  # V2-family
     CONCENTRATED_LIQUIDITY = "concentrated_liquidity"  # V3-family
     STABLESWAP = "stableswap"  # Curve V1-family
-    WEIGHTED = "weighted"  # Balancer (future)
+    WEIGHTED = "weighted"  # Balancer weighted
+    # A positively identified DEX identity whose pricing family the engine does
+    # not model: a Balancer Vault pool (`getPoolId()` answered) that is neither
+    # weighted nor stable — a linear pool, a boosted pool's linear constituent,
+    # a gyro/quant-amm shape. The family exists so the identity reaches the
+    # construction switchboard, which refuses it under its own name; no pool
+    # class and no registered pool ever belong to it.
+    UNMODELED = "unmodeled"
 
 
 class PoolVariant(StrEnum):
@@ -60,6 +67,7 @@ class PoolVariant(StrEnum):
 
     BALANCER_STABLE = "balancer_stable"
     BALANCER_WEIGHTED = "balancer_weighted"
+    BALANCER_UNMODELED = "balancer_unmodeled"
     AERODROME = "aerodrome"
     CAMELOT = "camelot"
     PANCAKESWAP = "pancakeswap"
@@ -127,6 +135,10 @@ def derive_kind(family: PoolFamily, variant: str | None) -> str:
         return variant if variant is not None else "stableswap"
     if family == PoolFamily.WEIGHTED:
         return variant if variant is not None else "weighted"
+    if family == PoolFamily.UNMODELED:
+        # The identity's own spelling is the only kind an unmodeled family can
+        # carry; nothing registers under it.
+        return variant if variant is not None else "unmodeled"
     suffix = "v2" if family == PoolFamily.CONSTANT_PRODUCT else "v3"
     if variant is None:
         return f"uniswap_{suffix}"

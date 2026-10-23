@@ -534,16 +534,14 @@ class Bot(AccountQueryMixin):
             # construction entry's generic Curve arm (never a second path).
             pool_type = None
 
-        # Resolve the concrete pool class + the `(family, variant)` identity.
-        # A discovery-only pool (the resolver raised — Curve exposes no
+        # The `(family, variant)` identity is what the core dispatches on. A
+        # discovery-only pool (the resolver raised — Curve exposes no
         # `factory()`) is the generic Curve descriptor, routed through the ONE
         # core construction entry below like every other family.
         if pool_type is not None:
-            pool_class = pool_class_for_descriptor(pool_type, chain_id=chain_id)
             family = pool_type.family
             variant = pool_type.variant
         else:
-            pool_class = CurveStableswapPool
             family = PoolFamily.STABLESWAP
             variant = None
 
@@ -678,6 +676,16 @@ class Bot(AccountQueryMixin):
                 )
             )
 
+        # The wrapper class is resolved AFTER the core answers: a family the
+        # engine does not model (PoolFamily.UNMODELED — a positively probed
+        # Balancer pool outside the weighted/stable families) has no class at
+        # all, and its refusal is the construction switchboard's, not a class
+        # lookup's.
+        pool_class = (
+            pool_class_for_descriptor(pool_type, chain_id=chain_id)
+            if pool_type is not None
+            else CurveStableswapPool
+        )
         pool = cast("type[Any]", pool_class).from_handle(py_pool)
 
         # Bind the resolved identity onto the companion (builder knowledge:

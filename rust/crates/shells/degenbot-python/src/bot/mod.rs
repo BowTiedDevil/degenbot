@@ -51,6 +51,7 @@ fn narrow_reserve(
 pub use crate::bot::pool::PyLiquidityPool;
 use crate::bot::pool::TickData;
 use crate::bot::token::PyErc20Token;
+use degenbot_bot::bot_core::registration_ledger::RefusalKind;
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::RegisteredPoolFamily;
 use degenbot_bot::bot_core::{
@@ -58,6 +59,7 @@ use degenbot_bot::bot_core::{
     RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
     RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey,
 };
+use degenbot_pools::registration_refusal::SpecRefusal;
 use degenbot_substrate::{PoolLookup, PoolRegistration};
 use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
@@ -1047,6 +1049,18 @@ impl PyBot {
                     Ok(echo(pool_id, "stableswap"))
                 }
             }
+            // An identity the engine does not model: a positively probed
+            // Balancer Vault pool (`getPoolId()` answered) whose family probe
+            // did not, so neither weighted nor stable — a linear pool, a
+            // boosted pool's linear constituent, a gyro/quant-amm shape. There
+            // is no shape to build, so the refusal rides the ledger's spec
+            // taxonomy under the identity's own name. Routing it through any
+            // other family's builder instead reports that builder's failure
+            // for a pool the family never owned (the measured mislabel was the
+            // Curve arm's "curve required read reverted").
+            "unmodeled" => Err(map_refusal(RefusalKind::unbuilt_spec_refusal(
+                SpecRefusal::BalancerUnmodeledFamily,
+            ))),
             other => Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "construct_pool: unsupported family {other:?}"
             ))),

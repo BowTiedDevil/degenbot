@@ -24,6 +24,7 @@ from degenbot.types.pool_type import (
         (None, None),
         ("balancer_stable", PoolVariant.BALANCER_STABLE),
         ("balancer_weighted", PoolVariant.BALANCER_WEIGHTED),
+        ("balancer_unmodeled", PoolVariant.BALANCER_UNMODELED),
         ("aerodrome", PoolVariant.AERODROME),
         ("camelot", PoolVariant.CAMELOT),
         ("pancakeswap", PoolVariant.PANCAKESWAP),
@@ -51,6 +52,14 @@ def test_balancer_variants_are_exactly_the_vault_dependent_pair() -> None:
         PoolVariant.BALANCER_STABLE,
         PoolVariant.BALANCER_WEIGHTED,
     })
+
+
+def test_the_unmodeled_variant_is_not_a_registerable_balancer_variant() -> None:
+    # No construction arm models an unmodeled Balancer pool, so it never
+    # reaches a factory registration: the construction switchboard refuses it
+    # under its own name. It must therefore stay outside the vault-dependent
+    # set, whose members require a factory row and have no default class.
+    assert PoolVariant.BALANCER_UNMODELED not in BALANCER_VARIANTS
 
 
 def test_unrecognized_is_not_vault_dependent() -> None:

@@ -16,12 +16,18 @@ first, then `probe_balancer_pool_type`). The corpus is data, not a curated
 allowlist: a pool's absence would hide a failure, so the generator keys one row
 per registered address and the test replays every row.
 
-A row whose family is not `weighted`/`stable` is EXCLUDED from the build attempt
-— no construction arm models it. That bucket is the generator's mechanical
-classification at the pin, not a hand-curated list, and the sweep prints its
-size: linear pools, boosted pools' linear constituents, gyro/quant-amm shapes,
-and spam registrations whose address answers no pool getter at all (an EIP-7702
-delegation designator with no pool code).
+The corpus distinguishes two "no arm builds this" buckets, both mechanical
+answers of the identity probe at the pin rather than hand-curated lists:
+
+- `unmodeled` — a positively identified Balancer pool whose family probe answers
+  nothing (linear pools, boosted pools' linear constituents, gyro/quant-amm
+  shapes). These rows ARE built, and the refusal must name them: the identity is
+  real, so an unmodeled pool that refuses as "curve required read reverted" is a
+  mislabel, not a skip.
+- `unknown` — a registration whose address answers no pool identity at all (a
+  spam registration, an EIP-7702 delegation designator with no pool code). There
+  is nothing to refuse, so these are EXCLUDED from the build attempt and the
+  sweep prints the bucket's size.
 
 The pin is `tests/sweep_pin.py`'s `SWEEP_FORK_BLOCK` — one replayable number
 for both families, and the one place that records the block's semantics and any
@@ -68,6 +74,7 @@ _NAMED_SPEC_REFUSALS = frozenset({
     "balancer broken pool",
     "balancer composable weighted pool",
     "balancer rate provider unreadable",
+    "balancer unmodeled family",
     "curve broken pool",
     "curve required read reverted",
     "curve too few coins",
@@ -86,8 +93,14 @@ _FAMILY_CLASS = {
 }
 
 # The corpus's closed family vocabulary: the two families a construction arm
-# models, plus the generator's "no arm can build this address" bucket.
-_CORPUS_FAMILIES = frozenset({*_FAMILY_CLASS, "unknown"})
+# models, plus the generator's two "no arm builds this address" buckets — a
+# positively identified Balancer pool of an unmodeled shape, and a registration
+# that answers no pool identity at all.
+_UNMODELED_FAMILY = "unmodeled"
+# `SpecRefusal::BalancerUnmodeledFamily`'s rendering — the one reason a row of
+# that family may be refused with.
+_UNMODELED_REFUSAL = "balancer unmodeled family"
+_CORPUS_FAMILIES = frozenset({*_FAMILY_CLASS, _UNMODELED_FAMILY, "unknown"})
 
 _POOL_ID_RE = re.compile(r"0x[0-9a-fA-F]{64}")
 _ROW_FIELDS = ("address", "pool_id", "specialization", "registered_block", "family")
@@ -197,12 +210,11 @@ def test_every_registered_pool_builds_or_is_refused_typed(
     for index, row in enumerate(pools, start=1):
         address = row["address"]
         family = row["family"]
-        if family not in _FAMILY_CLASS:
+        if family not in _FAMILY_CLASS and family != _UNMODELED_FAMILY:
             # The corpus family is the production identity probe's answer at the
-            # pin, so "not a modelled family" means no construction arm can
-            # build this address: a linear pool, a boosted pool's linear
-            # constituent, a gyro/quant-amm shape, or a spam registration that
-            # answers no pool getter at all. The set is the generator's
+            # pin, so a registration that answers no pool identity at all (a
+            # spam registration, an EIP-7702 delegation designator with no pool
+            # code) leaves nothing to refuse. The set is the generator's
             # mechanical classification, never a hand-curated list.
             excluded.append(address)
             continue
@@ -215,7 +227,19 @@ def test_every_registered_pool_builds_or_is_refused_typed(
         try:
             pool = bot_mainnet_archive.build_pool(address, state_block=SWEEP_FORK_BLOCK)
         except SpecViolationError as refusal:
-            refused[_named_refusal_reason(refusal)] += 1
+            reason = _named_refusal_reason(refusal)
+            # The corpus positively identified this row as a Balancer pool
+            # (getPoolId answered) of a shape no arm models, so the refusal must
+            # say exactly that. Any other reason — the Curve arm's, most of all —
+            # means the identity was dropped on the way to the builder and the
+            # pool was refused under a family it never belonged to.
+            if family == _UNMODELED_FAMILY and reason != _UNMODELED_REFUSAL:
+                failures.append(
+                    f"unmodeled-family pool refused as {reason!r}, not {_UNMODELED_REFUSAL!r} — "
+                    f"pool {index}/{len(pools)} @ {address}: {refusal}"
+                )
+                continue
+            refused[reason] += 1
             continue
         except Exception as error:  # noqa: BLE001 — collected, reported as a census line
             failures.append(
@@ -225,6 +249,14 @@ def test_every_registered_pool_builds_or_is_refused_typed(
             )
             continue
 
+        if family == _UNMODELED_FAMILY:
+            # A build succeeding on a positively identified unmodeled shape
+            # would mean an arm built a family the corpus says no arm serves.
+            failures.append(
+                f"unmodeled-family pool built as {type(pool).__name__} — "
+                f"pool {index}/{len(pools)} @ {address}"
+            )
+            continue
         expected_class = _FAMILY_CLASS[family]
         if not isinstance(pool, expected_class):
             failures.append(
@@ -239,7 +271,7 @@ def test_every_registered_pool_builds_or_is_refused_typed(
         f"{len(pools)} registered pools — "
         f"built {sum(built.values())} {dict(sorted(built.items()))}, "
         f"refused {sum(refused.values())} {dict(sorted(refused.items()))}, "
-        f"excluded {len(excluded)} (no weighted/stable identity at the pin), "
+        f"excluded {len(excluded)} (no pool identity at the pin), "
         f"failed {len(failures)}",
         flush=True,
     )

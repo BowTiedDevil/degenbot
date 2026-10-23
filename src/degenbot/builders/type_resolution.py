@@ -224,6 +224,14 @@ def resolve_balancer_descriptor(
     descriptor keeps the variant with ``factory=None`` and
     :func:`pool_class_for_descriptor` supplies the family's default class.
 
+    A pool whose family probe answers nothing (neither
+    ``getNormalizedWeights()`` nor ``getAmplificationParameter()``) is a
+    Balancer pool of a shape no construction arm models — a linear pool, a
+    boosted pool's linear constituent, a gyro/quant-amm shape. Its identity is
+    still positive, so it resolves to :attr:`PoolFamily.UNMODELED` and is
+    refused under that name; returning ``None`` here is what sent these
+    addresses to the Curve arm, whose builder refused them as a Curve pool.
+
     Identity is a deployment-time property, so the probes run at the head block
     like :func:`fetch_factory_from_chain` — not at the construction block.
 
@@ -240,9 +248,16 @@ def resolve_balancer_descriptor(
         balancer_family = io.probe_balancer_pool_type(address)
     except Exception:  # ruff: ignore[blind-except]
         # `getPoolId()` answered but neither weights nor amplification did: a
-        # Balancer pool outside the weighted/stable families (linear pools),
-        # which no construction arm models. Refuse the identity, never guess.
-        return None
+        # Balancer pool outside the weighted/stable families (linear pools,
+        # boosted-pool constituents, gyro shapes), which no construction arm
+        # models. The identity is positive and keeps its own name — the
+        # construction switchboard refuses it as an unmodeled Balancer family.
+        return PoolTypeDescriptor(
+            family=PoolFamily.UNMODELED,
+            variant="balancer_unmodeled",
+            kind=derive_kind(PoolFamily.UNMODELED, "balancer_unmodeled"),
+            factory=None,
+        )
 
     variant = (
         PoolVariant.BALANCER_WEIGHTED

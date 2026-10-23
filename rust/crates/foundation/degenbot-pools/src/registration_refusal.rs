@@ -185,6 +185,17 @@ pub enum SpecRefusal {
     /// the nested pool it points at reverts, or answers unparseable data. A
     /// pool that cannot price its own tokens cannot simulate.
     BalancerRateProviderUnreadable,
+    /// A positively identified Balancer V2 pool whose family no construction
+    /// arm models: `getPoolId()` answered (Balancer-exclusive, and no other
+    /// family the engine builds defines it) while neither the weighted arm's
+    /// `getNormalizedWeights()` nor the stable arm's
+    /// `getAmplificationParameter()` did. The identity is real — a linear
+    /// pool, a boosted pool's linear constituent, a gyro/quant-amm shape — and
+    /// the shape is not. It is refused under this name rather than handed to
+    /// another family's builder, whose failure would name a family that never
+    /// owned the pool (the Curve arm's "curve required read reverted" was the
+    /// measured mislabel for 188 corpus pools).
+    BalancerUnmodeledFamily,
     /// A pool in the known-broken Curve V1 set.
     CurveBrokenPool,
     /// A Curve pool whose required getter (`A()` / `fee()` / `admin_fee()`)
@@ -212,6 +223,7 @@ impl SpecRefusal {
             Self::BalancerBrokenPool => "balancer broken pool",
             Self::BalancerComposableWeighted => "balancer composable weighted pool",
             Self::BalancerRateProviderUnreadable => "balancer rate provider unreadable",
+            Self::BalancerUnmodeledFamily => "balancer unmodeled family",
             Self::CurveBrokenPool => "curve broken pool",
             Self::CurveRequiredReadReverted => "curve required read reverted",
             Self::CurveTooFewCoins => "curve too few coins",
@@ -274,5 +286,70 @@ impl From<RegisterV4PoolError> for BuildFailure {
                 Self::Transient(format!("{other:?}"))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SpecRefusal;
+
+    /// Every arm of the taxonomy with its bounded reason, in declaration
+    /// order. The FFI renders these strings into `SpecViolationError` and the
+    /// Balancer registry sweep mirrors the set, so a new arm must add its row
+    /// here — the drift gate for the reason vocabulary.
+    const VOCABULARY: &[(SpecRefusal, &str)] = &[
+        (SpecRefusal::V2Reserve, "v2 reserve out of bounds"),
+        (SpecRefusal::BalancerBrokenPool, "balancer broken pool"),
+        (
+            SpecRefusal::BalancerComposableWeighted,
+            "balancer composable weighted pool",
+        ),
+        (
+            SpecRefusal::BalancerRateProviderUnreadable,
+            "balancer rate provider unreadable",
+        ),
+        (
+            SpecRefusal::BalancerUnmodeledFamily,
+            "balancer unmodeled family",
+        ),
+        (SpecRefusal::CurveBrokenPool, "curve broken pool"),
+        (
+            SpecRefusal::CurveRequiredReadReverted,
+            "curve required read reverted",
+        ),
+        (SpecRefusal::CurveTooFewCoins, "curve too few coins"),
+        (
+            SpecRefusal::CurveCoinsBalancesMismatch,
+            "curve coins/balances mismatch",
+        ),
+        (
+            SpecRefusal::CurveCoinDecimalsReverted,
+            "curve coin decimals reverted",
+        ),
+        (SpecRefusal::NoCodeCoin, "no-code coin"),
+    ];
+
+    #[test]
+    fn every_spec_refusal_renders_its_own_name() {
+        for (refusal, reason) in VOCABULARY {
+            assert_eq!(refusal.as_str(), *reason);
+            assert_eq!(refusal.to_string(), *reason);
+        }
+        let names: std::collections::BTreeSet<&str> =
+            VOCABULARY.iter().map(|(_, reason)| *reason).collect();
+        assert_eq!(
+            names.len(),
+            VOCABULARY.len(),
+            "two arms render one reason — a refusal could not name its mechanism"
+        );
+    }
+
+    #[test]
+    fn the_unmodeled_balancer_arm_names_the_balancer_family() {
+        // The arm exists because the Curve arm's reason was a mislabel: a
+        // Balancer pool refused under another family's name is unactionable.
+        let reason = SpecRefusal::BalancerUnmodeledFamily.as_str();
+        assert_eq!(reason, "balancer unmodeled family");
+        assert!(!reason.contains("curve"), "{reason}");
     }
 }

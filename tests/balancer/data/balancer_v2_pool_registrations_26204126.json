@@ -1,13 +1,14 @@
 {
- "_comment": "Balancer V2 pool-registration corpus for the pinned registry sweep. Generated once by scripts/record_balancer_pool_registrations.py; do not hand-edit. One row per pool ADDRESS in the Vault's PoolRegistered log between the Vault's deployment and the pin (a repeat registration is collapsed to the earliest; duplicate_registrations counts them). family is the production identity probe's answer at the pin, gated on a decodable getPoolId: 'weighted'/'stable' are the families a construction arm models, 'unknown' means no arm can build the address (a linear or boosted-constituent pool, a gyro/quant-amm shape, or a spam registration whose address answers no pool getter) and the sweep excludes it from the build attempt.",
+ "_comment": "Balancer V2 pool-registration corpus for the pinned registry sweep. Generated once by scripts/record_balancer_pool_registrations.py; do not hand-edit. One row per pool ADDRESS in the Vault's PoolRegistered log between the Vault's deployment and the pin (a repeat registration is collapsed to the earliest; duplicate_registrations counts them). family is the production identity probe's answer at the pin, gated on a decodable getPoolId: 'weighted'/'stable' are the families a construction arm models; 'unmodeled' is a positively identified Balancer pool whose family probe answers nothing (a linear pool, a boosted-pool constituent, a gyro/quant-amm shape), which the sweep builds and expects to be refused under its own name; 'unknown' means the address answers no pool identity at all (an EIP-7702 delegation designator, a junk self-registration) and the sweep excludes it from the build attempt.",
  "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
  "event": "PoolRegistered(bytes32,address,uint8)",
  "topic0": "0x3c13bc30b8e878c53fd2a36b679409c073afd75950be43d8858768e956fbc20e",
  "scan_from_block": 12272146,
  "pin_block": 26204126,
  "census": {
-  "unknown": 192,
+  "unknown": 19,
   "weighted": 1569,
+  "unmodeled": 173,
   "stable": 193
  },
  "duplicate_registrations": 63,
@@ -24,7 +25,7 @@
    "pool_id": "0x000b87c8a4c6cbcef7a2577e8aa0dc134c67c3d8000200000000000000000178",
    "specialization": 2,
    "registered_block": 14427757,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x0017C363B29d8F86d82E9681552685F68F34b7e4",
@@ -262,7 +263,7 @@
    "pool_id": "0x03f84e2cd229ffcee732a3c98dc1acd8c8d5f5a20002000000000000000003fb",
    "specialization": 2,
    "registered_block": 16086148,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x040722Ae2f02F21D6EEDEC9254e817b6E4A639c9",
@@ -360,7 +361,7 @@
    "pool_id": "0x057d17716a79899f161e4b0cdc0f686f806a49810002000000000000000007de",
    "specialization": 2,
    "registered_block": 26203069,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x05Bb9b340D21Fc5A0D730EcD1CA79584Fe88E5b8",
@@ -472,7 +473,7 @@
    "pool_id": "0x06c55dad9a50adbc824ea50ef7acf54a290e549300020000000000000000016c",
    "specialization": 2,
    "registered_block": 14402580,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x06D72d1BcA801bC04E5ADe19e4a44068a2F72920",
@@ -535,7 +536,7 @@
    "pool_id": "0x07f589ea6b789249c83992dd1ed324c3b80fd06b00020000000000000000034e",
    "specialization": 2,
    "registered_block": 15435092,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x081650db8297690B60a0Fac6C32a304401653b7e",
@@ -661,7 +662,7 @@
    "pool_id": "0x09b1b33bad0e87454ff05696b1151bfbd208a43f0002000000000000000000a6",
    "specialization": 2,
    "registered_block": 13412956,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x0A0AeDdB7E906a897e07Ab35B468346A2cd81b4B",
@@ -682,7 +683,7 @@
    "pool_id": "0x0a0fb4ff697de5ac5b6770cd8ee1b72af80b57cf000000000000000000000496",
    "specialization": 0,
    "registered_block": 16641632,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x0A0aaca26aFE68a04745Be1052ef04B534cC77e2",
@@ -738,7 +739,7 @@
    "pool_id": "0x0afbd58beca09545e4fb67772faf3858e610bcd00000000000000000000004b9",
    "specialization": 0,
    "registered_block": 16741831,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x0B1dB456d0B4080A5E2634AF7aAE178c0757036E",
@@ -801,7 +802,7 @@
    "pool_id": "0x0da893e882277af482e442b2e73eb22e731f0ebc00020000000000000000032a",
    "specialization": 2,
    "registered_block": 15343479,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x0DE5a1184768473F5b24e5adA68C9c9420441cf8",
@@ -913,7 +914,7 @@
    "pool_id": "0x0d05aac44ac7dd3c7ba5d50be93eb884a057d23400000000000000000000051c",
    "specialization": 0,
    "registered_block": 17052587,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x0d70F2fC0096b9E3d39ad8A9c011126FbDb69779",
@@ -990,7 +991,7 @@
    "pool_id": "0x10a2f8bd81ee2898d7ed18fb8f114034a549fa59000200000000000000000090",
    "specialization": 2,
    "registered_block": 13224603,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x10bBFe344Ad647a3944e7a8Ff5dF335077dD9173",
@@ -1102,7 +1103,7 @@
    "pool_id": "0x126e7643235ec0ab9c103c507642dc3f4ca23c66000000000000000000000468",
    "specialization": 0,
    "registered_block": 16587836,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x12769c1020A3e68946a4F1F0D18A737258772e04",
@@ -1179,7 +1180,7 @@
    "pool_id": "0x13cf9e8115f35828a26062b6c05a56c72f54e0c60002000000000000000001d9",
    "specialization": 2,
    "registered_block": 14679474,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x14462305D211C12A736986F4E8216E28c5EA7Ab4",
@@ -1193,7 +1194,7 @@
    "pool_id": "0x14792d3f6fcf2661795d1e08ef818bf612708bbf0002000000000000000000be",
    "specialization": 2,
    "registered_block": 13595809,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x148CE9b50bE946a96e94A4f5479b771bAB9B1c59",
@@ -1256,7 +1257,7 @@
    "pool_id": "0x159cb00338fb63f263fd6f621df619cef71da9540000000000000000000004d5",
    "specialization": 0,
    "registered_block": 16842259,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x15C1cDAcd3dA1E1C1304200b1bEb080D50BbBc0F",
@@ -1452,7 +1453,7 @@
    "pool_id": "0x1afec1430d5615090067f5a3373f838aadde9904000200000000000000000155",
    "specialization": 2,
    "registered_block": 14336341,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x1B46e4B0791C9383B73b64AaBc371360a031a83F",
@@ -1466,7 +1467,7 @@
    "pool_id": "0x1b724e53d52a79763cf77dd86eb2a42f1e108e48000200000000000000000300",
    "specialization": 2,
    "registered_block": 15274956,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x1BdeE818c8FAF2265C2321E9bfee6BF84F8ebd48",
@@ -1578,7 +1579,7 @@
    "pool_id": "0x1ecbb397ac6ac884930c184c35037157df0fb5130002000000000000000007db",
    "specialization": 2,
    "registered_block": 26198677,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x1EcfAE11F6c502c4CdDf532e7cA3302c7dcCa197",
@@ -1606,7 +1607,7 @@
    "pool_id": "0x1f99e92f4b550e2a8c0cfea252552f35f90bb5df000200000000000000000500",
    "specialization": 2,
    "registered_block": 16981384,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x1aB5350bD6fe272Da4c0Ad4C60f9478b0bD5457A",
@@ -1837,7 +1838,7 @@
    "pool_id": "0x223029189aba95c191cae748b1c4c3e0cfbc25a50002000000000000000003eb",
    "specialization": 2,
    "registered_block": 16028728,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x2238aB6c8c58473a5e81b86ec352322fB3f5Edd8",
@@ -1872,7 +1873,7 @@
    "pool_id": "0x22939e40cf467de8f5db4f05a4027e5d4c1c658c000200000000000000000059",
    "specialization": 2,
    "registered_block": 12730149,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x23068d5E52dDCD7c27dADE7EAa8499B39C4797F6",
@@ -1949,7 +1950,7 @@
    "pool_id": "0x246ffb4d928e394a02e45761fecdba6c2e79b8eb000000000000000000000541",
    "specialization": 0,
    "registered_block": 17231795,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x24ECC6975aaE592C983CE58Ad4CBe1Ac1a1ee757",
@@ -1963,7 +1964,7 @@
    "pool_id": "0x24a82db9e1d0e96d9cafa84a58825fbe9701ced2000200000000000000000169",
    "specialization": 2,
    "registered_block": 14402428,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x24e1FAbA324f58b98AD2644EaBEA8CCec8B94811",
@@ -2166,7 +2167,7 @@
    "pool_id": "0x28b0379d98fb80da460c190c95f97c74302214b10002000000000000000003c0",
    "specialization": 2,
    "registered_block": 15918648,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x292bF1D4158E9125ceD4da2E92823abDD48B1D42",
@@ -2194,7 +2195,7 @@
    "pool_id": "0x2b218683178d029bab6c9789b1073aa6c96e517600000000000000000000058c",
    "specialization": 0,
    "registered_block": 17677562,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x2BAB1710709496afFA3c74e43FbCdAe52bA3dF0c",
@@ -2208,7 +2209,7 @@
    "pool_id": "0x2bbf681cc4eb09218bee85ea2a5d3d13fa40fc0c0000000000000000000000fd",
    "specialization": 0,
    "registered_block": 13799648,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x2BCe2b4275b0767c7B253a7FF984A41c2a2d24Ea",
@@ -2306,14 +2307,14 @@
    "pool_id": "0x2f4eb100552ef93840d5adc30560e5513dfffacb000000000000000000000334",
    "specialization": 0,
    "registered_block": 15366102,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x2FF1A9Dbdacd55297452cFD8a4d94724Bc22a5F7",
    "pool_id": "0x2ff1a9dbdacd55297452cfd8a4d94724bc22a5f7000000000000000000000484",
    "specialization": 0,
    "registered_block": 16620175,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x2Fb0A90c2fAb801AC6178D339F42A969cBCF47fc",
@@ -2446,7 +2447,7 @@
    "pool_id": "0x30004cdab9aab2060bc230455c874981064ccd1b0001000000000000000007bf",
    "specialization": 1,
    "registered_block": 25553518,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x3035917bE42aF437CBdD774Be26B9EC90a2BD677",
@@ -2579,7 +2580,7 @@
    "pool_id": "0x331d50e0b00fc1c32742f151e56b9b616227e23e00000000000000000000047c",
    "specialization": 0,
    "registered_block": 16600029,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x331dB1B2FfC8343A5a62Fdf407865b0bc6F810c1",
@@ -2600,7 +2601,7 @@
    "pool_id": "0x335d1709d4da9aca59d16328db5cd4ea66bfe06b0000000000000000000004d6",
    "specialization": 0,
    "registered_block": 16842262,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x33ee876F82903555c050a7163eCABBb35B02dA87",
@@ -2614,7 +2615,7 @@
    "pool_id": "0x3420231dc5ed1330a54bcb0bdc62c0cee0e7c51c000200000000000000000164",
    "specialization": 2,
    "registered_block": 14394408,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x344818B9b4cFec947FE8cCbEa65B3605585c2C71",
@@ -2663,14 +2664,14 @@
    "pool_id": "0x34c20b0b123a411e01b8958ad57984132ad03e63000200000000000000000165",
    "specialization": 2,
    "registered_block": 14394409,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x34d179259336812A1C7d320A0972e949dA5fa26d",
    "pool_id": "0x34d179259336812a1c7d320a0972e949da5fa26d00020000000000000000017f",
    "specialization": 2,
    "registered_block": 14452588,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x34d60Fa2FE1465f9c529ac7b440897E5Da8e7c18",
@@ -2761,7 +2762,7 @@
    "pool_id": "0x36288792a4a5adc7c19af25341e093197381bba6000200000000000000000501",
    "specialization": 2,
    "registered_block": 16981407,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x364A01a54F83f9C36923B584e6200b5b6aa9F68d",
@@ -2922,7 +2923,7 @@
    "pool_id": "0x395d8a1d9ad82b5abe558f8abbfe183b27138af40000000000000000000004e5",
    "specialization": 0,
    "registered_block": 16886361,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x3965eD15A0BbaB8C6292f4A3d9BF350406987749",
@@ -2978,7 +2979,7 @@
    "pool_id": "0x3a693eb97b500008d4bb6258906f7bbca1d09cc5000200000000000000000065",
    "specialization": 2,
    "registered_block": 12774166,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x3AC294fEb87d2f52237249Fa2e8B19Ee6Ed5D7e3",
@@ -3020,14 +3021,14 @@
    "pool_id": "0x3bb22fc9033b802f2ac47c18885f63476f158afc000000000000000000000483",
    "specialization": 0,
    "registered_block": 16613434,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x3C640f0d3036Ad85Afa2D5A9E32bE651657B874F",
    "pool_id": "0x3c640f0d3036ad85afa2d5a9e32be651657b874f00000000000000000000046b",
    "specialization": 0,
    "registered_block": 16588122,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x3C7228D4CC3dA130DbB6bdCa39F41063936A93a6",
@@ -3048,7 +3049,7 @@
    "pool_id": "0x3cdae4f12a67ba563499e102f309c73213cb241c000000000000000000000335",
    "specialization": 0,
    "registered_block": 15367135,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x3E09E828c716c5e2BC5034EeD7d5eC8677ffba18",
@@ -3062,7 +3063,7 @@
    "pool_id": "0x3e1f8fc2fbab8695b5749afb1f390d30bb33c8800002000000000000000001f8",
    "specialization": 2,
    "registered_block": 14805408,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x3E87048A3bd97C8Cd9ca84Ed2bF6Ba88495226e5",
@@ -3258,14 +3259,14 @@
    "pool_id": "0x3f9fee026fcebb40719a69416c72b714d89a17d900020000000000000000017c",
    "specialization": 2,
    "registered_block": 14452173,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x3fCb7085B8F2F473F80bF6D879cAe99eA4DE9344",
    "pool_id": "0x3fcb7085b8f2f473f80bf6d879cae99ea4de934400000000000000000000056d",
    "specialization": 0,
    "registered_block": 17480142,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x3fD11519f5906629986fEa4DA44ba4AA7Bb4998E",
@@ -3587,7 +3588,7 @@
    "pool_id": "0x454ed96955d04d2f5cdd05e0fd1c77975bfe5307000000000000000000000410",
    "specialization": 0,
    "registered_block": 16179228,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x45910fafF3cBf990FdB204682e93055506682d17",
@@ -3741,7 +3742,7 @@
    "pool_id": "0x489eedb33f82574afeabb3f4e156fbf662308ada0002000000000000000001a3",
    "specialization": 2,
    "registered_block": 14616976,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x48a5bFB5bd44345Db0B31FA4b5a204890695C9B4",
@@ -3755,7 +3756,7 @@
    "pool_id": "0x48ad3b70cb684df5151be44ee317dae5681cc944000200000000000000000510",
    "specialization": 2,
    "registered_block": 17025107,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x48d63961B25AF0A280B5Cf33bE8ce7d86C221Dbc",
@@ -3776,7 +3777,7 @@
    "pool_id": "0x48f9df5c181f6aaf40fef79c776fffbc3b5f31c80000000000000000000006e4",
    "specialization": 0,
    "registered_block": 21106133,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x494B26D4aEE801Cb1fabF498Ee24f0af20238743",
@@ -3832,7 +3833,7 @@
    "pool_id": "0x4a82b580365cff9b146281ab72500957a849abdc000000000000000000000494",
    "specialization": 0,
    "registered_block": 16641327,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x4B108592532F3A2826B9a902319E7a9199B2cfA5",
@@ -3874,7 +3875,7 @@
    "pool_id": "0x4db9024fc9f477134e00da0da3c77de98d9836ac000200000000000000000086",
    "specialization": 2,
    "registered_block": 13134876,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x4Dde571Dc66217a062e4B50f9b20c4D08b3245a0",
@@ -4021,7 +4022,7 @@
    "pool_id": "0x4bd6d86debdb9f5413e631ad386c4427dc9d01b20002000000000000000000ec",
    "specialization": 2,
    "registered_block": 13773265,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x4bddF01CbC15f3A2E78570c5bed14C67a16327f6",
@@ -4049,7 +4050,7 @@
    "pool_id": "0x4ce277df0feb5b4d07a0ca2adcf5326e4005239d000000000000000000000518",
    "specialization": 0,
    "registered_block": 17045360,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x4ce0BD7deBf13434d3ae127430e9BD4291bfB61f",
@@ -4105,7 +4106,7 @@
    "pool_id": "0x4ee4ddfb958416ca2afca3a894c3c3ed9a3cdda1000200000000000000000282",
    "specialization": 2,
    "registered_block": 15053278,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x4f2E0f963794a3876a54C503eC63dE95e9F24a75",
@@ -4315,7 +4316,7 @@
    "pool_id": "0x533a7d8d1d35dec92269220f927e9ad12f59d4cb000200000000000000000174",
    "specialization": 2,
    "registered_block": 14427281,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x533ca6E978446860621F4e42E3bf351229399BD4",
@@ -4364,7 +4365,7 @@
    "pool_id": "0x544c823194218f0640dae8291c1f59752d25fae3000200000000000000000093",
    "specialization": 2,
    "registered_block": 13237601,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x54CAa1859A519dc937462C7f5e0a4b8C836bdA05",
@@ -4441,7 +4442,7 @@
    "pool_id": "0x55bec22f8f6c69137ceaf284d9b441db1b9bfedc0002000000000000000003cd",
    "specialization": 2,
    "registered_block": 15981807,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x55eBdd8e500e7b122e01eBf0b516C536280B2a1B",
@@ -4469,7 +4470,7 @@
    "pool_id": "0x56f30398d13f111401d6e7ffe758254a0946687d000200000000000000000105",
    "specialization": 2,
    "registered_block": 13805752,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x56Ff560cDca4F90fe8935b9E169Cd95e0D08ee89",
@@ -4504,7 +4505,7 @@
    "pool_id": "0x56df5ef1a0a86c2a5dd9cc001aa8152545bdbdec000200000000000000000168",
    "specialization": 2,
    "registered_block": 14399488,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x571046EaE58C783f29f95ADBa17Dd561Af8a8712",
@@ -4518,7 +4519,7 @@
    "pool_id": "0x5746afd392b13946aacbda40317751db27d8b91800020000000000000000034c",
    "specialization": 2,
    "registered_block": 15413216,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x5757B37098d65b097cBcb78E22ae862817a82702",
@@ -4770,7 +4771,7 @@
    "pool_id": "0x5bfe65bca476bda0d0d393372394ae352ec0627b0002000000000000000001db",
    "specialization": 2,
    "registered_block": 14693824,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x5C406E75bAF8C66ea7b7C266ba2f4d474F33EC10",
@@ -4840,7 +4841,7 @@
    "pool_id": "0x5f8b11995d7f95faa59ca6fd5ffa1c0dbbe0ec7b000200000000000000000630",
    "specialization": 2,
    "registered_block": 18639768,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x5FAce3411e8dB2E35D2720633579C30915F0e998",
@@ -4889,7 +4890,7 @@
    "pool_id": "0x5ad5f864b346445a16fc95c59174269ed288e6400002000000000000000002fc",
    "specialization": 2,
    "registered_block": 15270516,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x5b19088e6110645545b8EBA36eC1eeC69bba42bb",
@@ -5127,14 +5128,14 @@
    "pool_id": "0x60ce0ac20a0cd8fcdc9720f62696e9136d03a1b3000200000000000000000301",
    "specialization": 2,
    "registered_block": 15275256,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x60D604890feaa0b5460B28A424407c24fe89374a",
    "pool_id": "0x60d604890feaa0b5460b28a424407c24fe89374a0000000000000000000004fc",
    "specialization": 0,
    "registered_block": 16977309,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x60F9966807473Cd78C9Aa59944dAF3A73F73da76",
@@ -5225,7 +5226,7 @@
    "pool_id": "0x62dcce87e77c67325fd984b8fe234f333bcc0d29000200000000000000000422",
    "specialization": 2,
    "registered_block": 16341675,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x62E57e37E3185871c13a422A363293780D17305B",
@@ -5295,7 +5296,7 @@
    "pool_id": "0x63e9b50dd3eb63bfbf93b26f57b9efb574e595760002000000000000000000cf",
    "specialization": 2,
    "registered_block": 13673202,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x63FC054159094583a27632361BD11C94c30e48C7",
@@ -5393,7 +5394,7 @@
    "pool_id": "0x64db005d040ee62e8fa202291c73e8a6151a0399000200000000000000000187",
    "specialization": 2,
    "registered_block": 14521021,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x64e2c43cA952BA01E32E8cFA05c1E009Bc92E06c",
@@ -5407,7 +5408,7 @@
    "pool_id": "0x652d486b80c461c397b0d95612a404da936f3db30000000000000000000000e7",
    "specialization": 0,
    "registered_block": 13767470,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x652e3cDc80f4697EEcD8046Be9D21DCA5B1c30DC",
@@ -5484,7 +5485,7 @@
    "pool_id": "0x6667c6fa9f2b3fc1cc8d85320b62703d938e43850000000000000000000004fb",
    "specialization": 0,
    "registered_block": 16977305,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x66958112c5da50Fa59d7E5BA4447609cDb09c1B1",
@@ -5505,7 +5506,7 @@
    "pool_id": "0x66bb9d104c55861feb3ec3559433f01f6373c9660002000000000000000003cf",
    "specialization": 2,
    "registered_block": 15987077,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x66d25e31CF63992Db9D7C690B61762096F119288",
@@ -5547,7 +5548,7 @@
    "pool_id": "0x67f8db40638d8e06ac78e1d04a805f59d11adf9b000200000000000000000391",
    "specialization": 2,
    "registered_block": 15719547,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x67b279E2a3C0Da05d12AF131616230AD13335e99",
@@ -5743,7 +5744,7 @@
    "pool_id": "0x6ac02ecd0c2a23b11f9afb3b3aaf237169475cac0002000000000000000000a8",
    "specialization": 2,
    "registered_block": 13418006,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x6AE82385f76e3742f89cB46343B169f6ee49dE1b",
@@ -5827,14 +5828,14 @@
    "pool_id": "0x6dd0f7c8f4793ed2531c0df4fea8633a21fdcff40002000000000000000000b7",
    "specialization": 2,
    "registered_block": 13550865,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x6De69beB66317557E65168BD7D3fff22a89dBb11",
    "pool_id": "0x6de69beb66317557e65168bd7d3fff22a89dbb11000200000000000000000056",
    "specialization": 2,
    "registered_block": 12705875,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x6Dec8d0496590521C8F4f1deE7Cfe9c7A6B7a480",
@@ -5967,7 +5968,7 @@
    "pool_id": "0x6a1eb2e9b45e772f55bd9a34659a04b6f75da68700000000000000000000040d",
    "specialization": 0,
    "registered_block": 16177902,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x6a2E09758cAc6C81ea64B5A600067A4f122823db",
@@ -5981,7 +5982,7 @@
    "pool_id": "0x6a556a2c2511e605a6c464ab5dccfdc0b19822e7000200000000000000000176",
    "specialization": 2,
    "registered_block": 14427611,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x6a5E8742d040b2c03751391b965118D4a7A7348C",
@@ -6198,7 +6199,7 @@
    "pool_id": "0x71628c66c502f988fbb9e17081f2bd14e361faf4000200000000000000000078",
    "specialization": 2,
    "registered_block": 12866768,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x7173b184525feAD2fFbde5FBe6FCB65Ea8246eE7",
@@ -6331,7 +6332,7 @@
    "pool_id": "0x7337224d59cb16c2dc6938cd45a7b2c60c865d6a0000000000000000000004d4",
    "specialization": 0,
    "registered_block": 16842255,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x733BD33Dd0604028f31AacA029C6cc14BdA8a367",
@@ -6366,7 +6367,7 @@
    "pool_id": "0x73f8e7a9a19e284a9ac85704af58454cfe75f059000200000000000000000631",
    "specialization": 2,
    "registered_block": 18639793,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x740A691bd31c4176BCb6B8A7a40f1A723537D99d",
@@ -6401,7 +6402,7 @@
    "pool_id": "0x74cbfaf94a3577c539a9dcee9870a6349a33b34f000000000000000000000534",
    "specialization": 0,
    "registered_block": 17173186,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x74E5E53056526b2609d82E85486005EF2A2Db001",
@@ -6492,7 +6493,7 @@
    "pool_id": "0x76e5f9860bd5b8666de322496f114b8a89183a2e000200000000000000000188",
    "specialization": 2,
    "registered_block": 14521065,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x76EE58AF556857605516AaFA10c3bbD31AbBB099",
@@ -6604,7 +6605,7 @@
    "pool_id": "0x787546bf2c05e3e19e2b6bde57a203da7f682eff00020000000000000000007c",
    "specialization": 2,
    "registered_block": 12948099,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x787F5Ee132BC2e016a167ddE5A14CFeF94E53535",
@@ -6688,7 +6689,7 @@
    "pool_id": "0x7968c9764f7e0da5642ec17b5446d7b6a5d9c2e9000200000000000000000157",
    "specialization": 2,
    "registered_block": 14336882,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x798b112420AD6391A4129Ac25eF59663a44C88bB",
@@ -6758,7 +6759,7 @@
    "pool_id": "0x7d3ff89007e7847128b4f5c1546549afe0ba67ed0002000000000000000001dd",
    "specialization": 2,
    "registered_block": 14695309,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x7D691c051FF138575de6c64C86C5aC44B1F67b75",
@@ -6814,7 +6815,7 @@
    "pool_id": "0x7edde0cb05ed19e03a9a47cd5e53fc57fde1c80c0002000000000000000000c8",
    "specialization": 2,
    "registered_block": 13627977,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x7F0c39e7728f65efe87752b26591006C49d1c200",
@@ -6842,7 +6843,7 @@
    "pool_id": "0x7f4a33dee068c4fa012d64677c61519a578dfa35000200000000000000000346",
    "specialization": 2,
    "registered_block": 15398483,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x7Fb3aD88deBbF2eb93f58782A5B8611099b4adE0",
@@ -6982,7 +6983,7 @@
    "pool_id": "0x804cdb9116a10bb78768d3252355a1b18067bf8f0000000000000000000000fb",
    "specialization": 0,
    "registered_block": 13799457,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x8055b8C947De30130BC1Ec750C8F345a50006B23",
@@ -7059,7 +7060,7 @@
    "pool_id": "0x813e3fe1761f714c502d1d2d3a7cceb33f37f59d00000000000000000000040c",
    "specialization": 0,
    "registered_block": 16169944,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x813E6A5f31C95F7c5f9982B1FDc6C69610bEab4A",
@@ -7136,7 +7137,7 @@
    "pool_id": "0x82698aecc9e28e9bb27608bd52cf57f704bd1b83000000000000000000000336",
    "specialization": 0,
    "registered_block": 15367159,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x827ad315960F5a0f5280D6936C8E52A5878bBa04",
@@ -7255,7 +7256,7 @@
    "pool_id": "0x84864e5af8ab5aac31b7a7af389183cbc4119f640002000000000000000002ff",
    "specialization": 2,
    "registered_block": 15274944,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x848a5564158d84b8A8fb68ab5D004Fae11619A54",
@@ -7325,7 +7326,7 @@
    "pool_id": "0x85dca8667d020e694fdff06e7ee85e0c5c7c61a4000200000000000000000076",
    "specialization": 2,
    "registered_block": 12866424,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x85Ff4879CFD6a3143233C2c83703912F84809858",
@@ -7458,7 +7459,7 @@
    "pool_id": "0x893b30574bf183d69413717f30b17062ec9dfd8b000200000000000000000061",
    "specialization": 2,
    "registered_block": 12736296,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x8950E720eB51AF9709A86941345844134517bcF4",
@@ -7549,7 +7550,7 @@
    "pool_id": "0x8b16914f0f9c5ba44377787cc120d3713b0959e10001000000000000000007bd",
    "specialization": 1,
    "registered_block": 25531667,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x8B568d9eE0f6BC4eB91ECe97dfdC8337728613E1",
@@ -7591,14 +7592,14 @@
    "pool_id": "0x8e59d8bb3d742ac2045f028bcfc39c7dc933b57d0002000000000000000007df",
    "specialization": 2,
    "registered_block": 26203132,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x8E6eC57A822c2F527F2Df7C7D7D361dF3E7530a1",
    "pool_id": "0x8e6ec57a822c2f527f2df7c7d7d361df3e7530a1000000000000000000000498",
    "specialization": 0,
    "registered_block": 16642017,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x8E9d636BbE6939BD0F52849afc02C0c66F6A3603",
@@ -7787,7 +7788,7 @@
    "pool_id": "0x8f4063446f5011bc1c9f79a819efe87776f23704000000000000000000000197",
    "specialization": 0,
    "registered_block": 14570791,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x8f4205e1604133d1875a3E771AE7e4F2b0865639",
@@ -7829,7 +7830,7 @@
    "pool_id": "0x8ffd1dc7c3ef65f833cf84dbcd15b6ad7f9c54ec000200000000000000000199",
    "specialization": 2,
    "registered_block": 14573033,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x8fcB5BB072c221793FE975d377AA3634d7A47921",
@@ -7878,7 +7879,7 @@
    "pool_id": "0x90ca5cef5b29342b229fb8ae2db5d8f4f894d6520002000000000000000000b5",
    "specialization": 2,
    "registered_block": 13538309,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x90a310C2F53B3Acc366100D0957f57a660A71a6B",
@@ -7920,7 +7921,7 @@
    "pool_id": "0x910fd04a174e705b30c98e04ba4689ab95dbb1fc0002000000000000000007d2",
    "specialization": 2,
    "registered_block": 26109834,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x911FC393355Fe415A667893d55FfF6703C57c72E",
@@ -7962,7 +7963,7 @@
    "pool_id": "0x9210f1204b5a24742eba12f710636d76240df3d00000000000000000000000fc",
    "specialization": 0,
    "registered_block": 13799621,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x9212b088D48Fc749c5adC573B445bc0D0A289a34",
@@ -7976,7 +7977,7 @@
    "pool_id": "0x9224ef7cfccfbd8ae1ee6111fc1246c68a32869d00020000000000000000032b",
    "specialization": 2,
    "registered_block": 15343489,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x92298020C8D8E6Fa5e4C42c5d2489530A2637379",
@@ -8123,7 +8124,7 @@
    "pool_id": "0x94c476e4675faac1bf60211c5e39486bcf720cbd0002000000000000000000a3",
    "specialization": 2,
    "registered_block": 13405392,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x94Ce642f78ef731a3748DD058C084458af1b5630",
@@ -8151,7 +8152,7 @@
    "pool_id": "0x9516a2d25958edb8da246a320f2c7d94a0dbe25d000000000000000000000519",
    "specialization": 0,
    "registered_block": 17045882,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x958084e3B84f8E6E4d6b26f04B1601936Aa8c9b5",
@@ -8284,7 +8285,7 @@
    "pool_id": "0x9796ea4490f99330150fc400cbc9ac1292dfbc790002000000000000000003f2",
    "specialization": 2,
    "registered_block": 16055272,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x97BE981946843F45a62Dfa5AB62181EAc29DAa79",
@@ -8438,7 +8439,7 @@
    "pool_id": "0x9a6dcc67fddaeede76cc978d4d23bb0a7f9b4282000200000000000000000156",
    "specialization": 2,
    "registered_block": 14336858,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x9B143788f52Daa8C91cf5162fb1b981663a8a1eF",
@@ -8452,7 +8453,7 @@
    "pool_id": "0x9b1c8407a360443a9e5eca004713e4088fab8ac0000000000000000000000497",
    "specialization": 0,
    "registered_block": 16641999,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x9B532AB955417AFD0D012Eb9F7389457cd0EA712",
@@ -8676,7 +8677,7 @@
    "pool_id": "0x9f41a3d1ec37090e52a9102b24bc6921a813925f0002000000000000000002fd",
    "specialization": 2,
    "registered_block": 15270575,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0x9fb771D530B0cEBA5160F7bFE2DD1E8B8aa13403",
@@ -8732,7 +8733,7 @@
    "pool_id": "0xa1697f9af0875b63ddc472d6eebada8c1fab85680000000000000000000004f9",
    "specialization": 0,
    "registered_block": 16977299,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xA17A3EC5926e606D9c215FcE80E43158c79d3A74",
@@ -8788,7 +8789,7 @@
    "pool_id": "0xa3823e50f20982656557a4a6a9c06ba5467ae9080000000000000000000000e6",
    "specialization": 0,
    "registered_block": 13767310,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xA4254e476a41790E019179A913AE0A16153d8C4d",
@@ -8809,7 +8810,7 @@
    "pool_id": "0xa47d1251cf21ad42685cc6b8b3a186a73dbd06cf000200000000000000000097",
    "specialization": 2,
    "registered_block": 13269660,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xA5aeb7B7a40aeC3fC6d30eb3Ee1431B1E01D2d43",
@@ -8823,7 +8824,7 @@
    "pool_id": "0xa68ccd2c3805c175c9f9caf30ae497e173dab30e000200000000000000000313",
    "specialization": 2,
    "registered_block": 15309486,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xA6F548DF93de924d73be7D25dC02554c6bD66dB5",
@@ -8886,7 +8887,7 @@
    "pool_id": "0xa8d4433badaa1a35506804b43657b0694dea928d00020000000000000000005e",
    "specialization": 2,
    "registered_block": 12735535,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xAAAc5297F76ED0158B2a39639D71647b7F2eB6Be",
@@ -8907,14 +8908,14 @@
    "pool_id": "0xabb93e3787b984cb62dcd962af8732f52ff57586000200000000000000000183",
    "specialization": 2,
    "registered_block": 14475529,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xABc0191377f1513B7785e08aF880d77eC5618B75",
    "pool_id": "0xabc0191377f1513b7785e08af880d77ec5618b750002000000000000000003fc",
    "specialization": 2,
    "registered_block": 16086536,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xAC0f0065e06cfDe8E8a64681cBA72719D8e2Aa7d",
@@ -8928,7 +8929,7 @@
    "pool_id": "0xac5b4ef7ede2f2843a704e96dcaa637f4ba3dc3f00000000000000000000051d",
    "specialization": 0,
    "registered_block": 17052604,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xACF687871E7d6A0b9393Bb5F7f4e2e5997050B4f",
@@ -9033,7 +9034,7 @@
    "pool_id": "0xad0e5e0778cac28f1ff459602b31351871b5754a0002000000000000000003ce",
    "specialization": 2,
    "registered_block": 15986823,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xAd762B20e671FaE84Fbe9a17eE3626343C0a5E2A",
@@ -9579,14 +9580,14 @@
    "pool_id": "0xc51d3287a8c20dc865df7b5da6f5b2d596ee694b00020000000000000000048f",
    "specialization": 2,
    "registered_block": 16640024,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xC58150838855a5605C9030398c6D22afd5Bb09EE",
    "pool_id": "0xc58150838855a5605c9030398c6d22afd5bb09ee00020000000000000000061b",
    "specialization": 2,
    "registered_block": 18509788,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xC5B3F108024da9776D024fD9CEFa4b48e021f1A2",
@@ -9691,7 +9692,7 @@
    "pool_id": "0xc80fef22fccc277ac0ffea84d111888a767f717e0002000000000000000001b1",
    "specialization": 2,
    "registered_block": 14623700,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xC89FdB059F40003F8675cCB6921CC3Bc2F3fA826",
@@ -9719,7 +9720,7 @@
    "pool_id": "0xc9ad279994980f8df348b526901006972509677f00020000000000000000009e",
    "specialization": 2,
    "registered_block": 13314587,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xC9C5Ff67bB2Fae526aE2467C359609D6BCb4c532",
@@ -9866,14 +9867,14 @@
    "pool_id": "0xcdbe59755723d6d34c3f7a071796aab362f0036200020000000000000000016b",
    "specialization": 2,
    "registered_block": 14402500,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xCe621Fc54D2547294A46b4D5c142bdEB2d0F0Aeb",
    "pool_id": "0xce621fc54d2547294a46b4d5c142bdeb2d0f0aeb00020000000000000000016a",
    "specialization": 2,
    "registered_block": 14402434,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xCe7B614d4898125a6B0D398AF3A8A7EB318416A0",
@@ -9908,7 +9909,7 @@
    "pool_id": "0xd098ba344ab1f1068360d07358a7921b591a46e70001000000000000000007be",
    "specialization": 1,
    "registered_block": 25531667,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xD0cbF6765997b7CA7Be6440F5E305B2ec7B96065",
@@ -10006,7 +10007,7 @@
    "pool_id": "0xd40954a9ff856f9a2c6efa88ad45623157a7dff0000200000000000000000177",
    "specialization": 2,
    "registered_block": 14427744,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xD43Eba5423F0d1B1Ed58C7A38370ab366a73B727",
@@ -10027,7 +10028,7 @@
    "pool_id": "0xd4e7c1f3da1144c9e2cfd1b015eda7652b4a439900000000000000000000046a",
    "specialization": 0,
    "registered_block": 16588117,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xD5324EA7569A67BbA46E5a243589955eF76B0626",
@@ -10076,7 +10077,7 @@
    "pool_id": "0xd6e355036f41dc261b3f1ed3bbc6003e87aadb4f000000000000000000000495",
    "specialization": 0,
    "registered_block": 16641340,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xD7d7E117D6EA91690A9BA96a49143948100E316C",
@@ -10167,7 +10168,7 @@
    "pool_id": "0xdec02e6642e2c999af429f5ce944653cad15e093000000000000000000000469",
    "specialization": 0,
    "registered_block": 16588079,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xDFd67F525D89060403b6982d7F1A24ee35AAe69F",
@@ -10202,7 +10203,7 @@
    "pool_id": "0xdba274b4d04097b90a72b62467d828cefd708037000000000000000000000486",
    "specialization": 0,
    "registered_block": 16620187,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xDbBbE36a625Fd6581af4C5A72cbF4867d7EbDEc5",
@@ -10223,7 +10224,7 @@
    "pool_id": "0xdc063deafce952160ec112fa382ac206305657e60000000000000000000004c4",
    "specialization": 0,
    "registered_block": 16778438,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xDd3b8a0A963F51869DF37D270339c33071f2D428",
@@ -10587,7 +10588,7 @@
    "pool_id": "0xef779137cf7d0f55e2c486ed680787d4d2d93625000200000000000000000420",
    "specialization": 2,
    "registered_block": 16341509,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xEFAa1604e82e1B3AF8430b90192c1B9e8197e377",
@@ -10636,7 +10637,7 @@
    "pool_id": "0xecf2c7a432e5f7d8ba0a85b12f2ae3e4874ec690000200000000000000000175",
    "specialization": 2,
    "registered_block": 14427600,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xEd0DF9Cd16D806E8A523805e53cf0c56E6dB4D1d",
@@ -10671,7 +10672,7 @@
    "pool_id": "0xedf085f65b4f6c155e13155502ef925c9a756003000200000000000000000123",
    "specialization": 2,
    "registered_block": 13942074,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xEe094FCc47A64c7C74c6324054F0f76c278D7086",
@@ -10783,7 +10784,7 @@
    "pool_id": "0xf201e99f5ea2d846bd7dc3229a2e602ab1d2e3080002000000000000000004b7",
    "specialization": 2,
    "registered_block": 16741202,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xF21BBa788E1a6fe94a7C2F3be3ce350Cd7843Da3",
@@ -10797,7 +10798,7 @@
    "pool_id": "0xf22ff21e17157340575158ad7394e068048dd98b0000000000000000000004b8",
    "specialization": 0,
    "registered_block": 16741493,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xF274e07e86d999E33066EA445cD3d076B1D6bD52",
@@ -10937,7 +10938,7 @@
    "pool_id": "0xf6dc4640d2783654bef88e0df3fb0f051f0dfc1a00020000000000000000007e",
    "specialization": 2,
    "registered_block": 13012356,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xF6eEec51Df83Ed7D6f3153622132EaD168C551BD",
@@ -10951,7 +10952,7 @@
    "pool_id": "0xf71d0774b214c4cf51e33eb3d30ef98132e4dbaa00000000000000000000046e",
    "specialization": 0,
    "registered_block": 16591348,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xF767F0a3FCf1EAfEc2180b7dE79D0c559D7E7e37",
@@ -11063,7 +11064,7 @@
    "pool_id": "0xfd11ccdbdb7ab91cb9427a6d6bf570c95876d1950000000000000000000004c2",
    "specialization": 0,
    "registered_block": 16778438,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xFD1Cf6FD41F229Ca86ada0584c63C49C3d66BbC9",
@@ -11168,7 +11169,7 @@
    "pool_id": "0xa00486f88c98e2131e043e6b28fa53d46db7e6c70002000000000000000001f6",
    "specialization": 2,
    "registered_block": 14805267,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xa02E4b3d18D4E6B8d18Ac421fBc3dfFF8933c40a",
@@ -11210,7 +11211,7 @@
    "pool_id": "0xa16109e6ad6f7a3c4e97fb104d2a0031b2d16640000200000000000000000302",
    "specialization": 2,
    "registered_block": 15275258,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xa1a6a7DC48919A182cF2541fcF7e2ecd952E9775",
@@ -11350,7 +11351,7 @@
    "pool_id": "0xa4fcd765171e50702093e020fa2ffe22432224aa000200000000000000000303",
    "specialization": 2,
    "registered_block": 15275273,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xa50530e8cf630393b76cf1dCf25D5C89654f35A9",
@@ -11455,7 +11456,7 @@
    "pool_id": "0xa8b103a10a94f4f2d7ed2fdcd5545e807557330700000000000000000000048e",
    "specialization": 0,
    "registered_block": 16637932,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xa96C13734ae2d57c30307027f17CCBCA67a3eaC3",
@@ -11476,7 +11477,7 @@
    "pool_id": "0xa9e5001f4af1983d5dc9986b1df7e5769f56f81f0002000000000000000007d1",
    "specialization": 2,
    "registered_block": 26109352,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xa9F3692ab025400dDcF212542302190CAd83B630",
@@ -11616,7 +11617,7 @@
    "pool_id": "0xae37d54ae477268b9997d4161b96b8200755935c000000000000000000000337",
    "specialization": 0,
    "registered_block": 15367176,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xae4d08895B1F0F14C7Ab5f5B2E9bf54e6e1e5C6F",
@@ -11658,7 +11659,7 @@
    "pool_id": "0xb03c6b351a283bc1cd26b9cf6d7b0c4556013bdb0002000000000000000000ab",
    "specialization": 2,
    "registered_block": 13448208,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xb0588899661A28356C56AE5E92d2420bdb6B8B58",
@@ -11686,7 +11687,7 @@
    "pool_id": "0xb0f75e97a114a4eb4a425edc48990e6760726709000000000000000000000198",
    "specialization": 0,
    "registered_block": 14570793,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xb1c5944170C96C2bd5F0f1855E4691C54601DCA6",
@@ -11819,7 +11820,7 @@
    "pool_id": "0xb6d249437270f710e0362d4566ce1a2f1ba56bc2000200000000000000000421",
    "specialization": 2,
    "registered_block": 16341612,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xb7262cABC0f14A67D9bF620Ce28927dA5f09DBea",
@@ -11833,7 +11834,7 @@
    "pool_id": "0xb7dff8b71e62bff9f850795bcea61ffbca7c87a30002000000000000000002fb",
    "specialization": 2,
    "registered_block": 15270485,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xb814Ca71D95d294826806f092eD87FDf5C076055",
@@ -11924,7 +11925,7 @@
    "pool_id": "0xba5f10b7fa4974e2909ec211eb95b9424e3c3ee20000000000000000000006ca",
    "specialization": 0,
    "registered_block": 20753210,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xbB41e62BA1A743376119Fa83EC6dd575EA796613",
@@ -11938,14 +11939,14 @@
    "pool_id": "0xbb6881874825e60e1160416d6c426eae65f2459e000000000000000000000592",
    "specialization": 0,
    "registered_block": 17677991,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xbB6C7b5E0804d07aE31A43E6E83Ea66fb128a3BB",
    "pool_id": "0xbb6c7b5e0804d07ae31a43e6e83ea66fb128a3bb00020000000000000000017e",
    "specialization": 2,
    "registered_block": 14452579,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xbD482fFb3E6E50dC1c437557C3Bea2B68f3683Ee",
@@ -11973,7 +11974,7 @@
    "pool_id": "0xbfa413a2ff0f20456d57b643746133f54bfe0cd20000000000000000000004c3",
    "specialization": 0,
    "registered_block": 16778438,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xbFCe47224B4A938865E3e2727DC34E0fAA5b1D82",
@@ -12022,7 +12023,7 @@
    "pool_id": "0xbc0f2372008005471874e426e86ccfae7b4de79d000000000000000000000485",
    "specialization": 0,
    "registered_block": 16620181,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xbc5F4f9332d8415AAf31180Ab4661c9141CC84E4",
@@ -12064,7 +12065,7 @@
    "pool_id": "0xc0b5fc5fc888c18356318cbbce6e6fe0bc9494020002000000000000000004fe",
    "specialization": 2,
    "registered_block": 16979215,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xc0E89F01aCdB6F5Ea5E883fc32003bC110e0e4A1",
@@ -12120,7 +12121,7 @@
    "pool_id": "0xc2cf7bf63f93daa12641840abb1e20adea99a3cd0002000000000000000007dc",
    "specialization": 2,
    "registered_block": 26201958,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xc3bd87c92493877d6a5639fB35D5dCf26093EF8D",
@@ -12169,7 +12170,7 @@
    "pool_id": "0xc50d4347209f285247bda8a09fc1c12ce42031c3000000000000000000000590",
    "specialization": 0,
    "registered_block": 17677936,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xc5E1C6923b94D64a240fC87c2216852CE1beA82b",
@@ -12232,7 +12233,7 @@
    "pool_id": "0xc8c79fcd0e859e7ec81118e91ce8e4379a481ee6000000000000000000000196",
    "specialization": 0,
    "registered_block": 14570763,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xc931b64E181a4a29416F55E67921BFe16e4Fe789",
@@ -12323,7 +12324,7 @@
    "pool_id": "0xcbfa4532d8b2ade2c261d3dd5ef2a2284f7926920000000000000000000004fa",
    "specialization": 0,
    "registered_block": 16977302,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xcc92Ed2D1De9268a7E2048b8A56Bd8433abE3AcF",
@@ -12351,7 +12352,7 @@
    "pool_id": "0xce16e7ed7654a3453e8faf748f2c82e57069278f00020000000000000000006d",
    "specialization": 2,
    "registered_block": 12814335,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xce6369C7a219846C4464A914A40da6a7CC639079",
@@ -12372,14 +12373,14 @@
    "pool_id": "0xcfae6e251369467f465f13836ac8135bd42f8a56000000000000000000000591",
    "specialization": 0,
    "registered_block": 17677939,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xcfD44644926D66247685a104515f5dc1C0d7dBe2",
    "pool_id": "0xcfd44644926d66247685a104515f5dc1c0d7dbe2000200000000000000000414",
    "specialization": 2,
    "registered_block": 16192466,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xd0515d7822aE8798116F275Ae6C9d4a4F732D691",
@@ -12400,7 +12401,7 @@
    "pool_id": "0xd0f001dbc3b5c3cfd5d2584f8c2cbd998c4d61e10002000000000000000005ae",
    "specialization": 2,
    "registered_block": 17790480,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xd10386804959A121A8a487e49F45aA9F5a2eb2a0",
@@ -12673,7 +12674,7 @@
    "pool_id": "0xd8dc4cc15945a16aa5201bcabfa1d32d2cb39fd60002000000000000000001f7",
    "specialization": 2,
    "registered_block": 14805358,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xd9C45F3224549ED7d22338D75688e32f0399D246",
@@ -12729,7 +12730,7 @@
    "pool_id": "0xdbbfb4ccd10a0828b95ce6fbe8a7502a9e6a76f5000200000000000000000314",
    "specialization": 2,
    "registered_block": 15309503,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xdBcF0F9fDC724E2855f8fb61C13962aF77b41B77",
@@ -12932,7 +12933,7 @@
    "pool_id": "0xe03af00fabe8401560c1ff7d242d622a5b601573000000000000000000000493",
    "specialization": 0,
    "registered_block": 16641324,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xe074fBcC87e18615D6b099Ee603BD37dE562416b",
@@ -12967,7 +12968,7 @@
    "pool_id": "0xe0c50a16d6fa0d85daa64c785f6fd47f13f82ca00000000000000000000006c8",
    "specialization": 0,
    "registered_block": 20701273,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xe172CFa66467c4b32ca9A97AC7EcEf48be8dF488",
@@ -12981,7 +12982,7 @@
    "pool_id": "0xe23d111cb71414830b93f078977b7f53a5e996ee0000000000000000000003ee",
    "specialization": 0,
    "registered_block": 16035544,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xe2469f47aB58cf9CF59F9822e3C5De4950a41C49",
@@ -13072,7 +13073,7 @@
    "pool_id": "0xe6bcc79f328eec93d4ec8f7ed35534d9ab549faa0000000000000000000000e8",
    "specialization": 0,
    "registered_block": 13767512,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xe77326d55a892DFA257F865daEBcA49ab73fb375",
@@ -13093,7 +13094,7 @@
    "pool_id": "0xe7d03b47fa2b3e8f7e6fa0dcf17ff0b54815c92b0002000000000000000003fa",
    "specialization": 2,
    "registered_block": 16086028,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xe805c864992e6a6cBf46E7E81C7154B78155D0ac",
@@ -13177,7 +13178,7 @@
    "pool_id": "0xeb486af868aeb3b6e53066abc9623b1041b42bc000000000000000000000046c",
    "specialization": 0,
    "registered_block": 16588127,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xeB58bE542E77195355d90100beb07105B9BD295E",
@@ -13254,7 +13255,7 @@
    "pool_id": "0xea34b59a4e7075203a93f97178b2581d5f3f99190002000000000000000001dc",
    "specialization": 2,
    "registered_block": 14693922,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xea6a85B417BD2F0A346DE73858829212E1d88425",
@@ -13317,7 +13318,7 @@
    "pool_id": "0xefeab9874f6c9cef9675ed46916f55464295ea1400020000000000000000017d",
    "specialization": 2,
    "registered_block": 14452182,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xefdEc913b82E55287Fb83DF3c058891B724dba28",
@@ -13345,7 +13346,7 @@
    "pool_id": "0xf06bbbdec03bf7a5222308de75f4e7cd7cff97590002000000000000000007dd",
    "specialization": 2,
    "registered_block": 26202526,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xf0B4C4d356D976179e26e46956188DAe8C817Ef7",
@@ -13632,7 +13633,7 @@
    "pool_id": "0xfa24a90a3f2bbe5feea92b95cd0d14ce709649f900000000000000000000058f",
    "specialization": 0,
    "registered_block": 17677916,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xfb052C73b7d5F82726c0D23fb990B2ef53827390",
@@ -13681,7 +13682,7 @@
    "pool_id": "0xfef969638c52899f91781f1be594af6f40b99bad00000000000000000000047b",
    "specialization": 0,
    "registered_block": 16599925,
-   "family": "unknown"
+   "family": "unmodeled"
   },
   {
    "address": "0xfee6Da6ce300197B7D613dE22Cb00e86a8537F06",
