@@ -34,7 +34,7 @@ serde_json = "^1"
 # Unix socket, "signal" the inert operator mode's Ctrl-C exit. The umbrella
 # already depends on tokio; this is the pure-Rust consumer owning its own
 # task/claim primitives — NOT a core capability lifted into the example.
-tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync", "net", "signal"] }
+tokio = { version = "^1.54", features = ["rt-multi-thread", "time", "macros", "sync", "net", "signal"] }
 # Telemetry boot wiring (Gap G6). The driver composes its
 # console subscriber + optional OTel layer from the core `degenbot::bot::otel`
 # / `degenbot::bot::metrics` surfaces, exactly as `degenbot-python` composes
@@ -64,4 +64,4 @@ hotpath = ["degenbot/hotpath"]
 [dev-dependencies]
 # start_paused + tokio::time::advance give the session-watch tests a
 # controlled clock instead of real sleeps ("test-util" enables paused time).
-tokio = { version = "^1.53", features = ["test-util"] }
+tokio = { version = "^1.54", features = ["test-util"] }

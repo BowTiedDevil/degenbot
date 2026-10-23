@@ -20,7 +20,7 @@ workspace = true
 alloy = { version = "^2.5", features = ["full", "node-bindings", "transport-throttle"] }
 degenbot-core.workspace = true
 thiserror = { version = "^2.0" }
-tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
+tokio = { version = "^1.54", features = ["rt-multi-thread", "time", "macros", "sync"] }
 
 [features]
 default = []

@@ -37,7 +37,7 @@ degenbot-core.workspace = true
 degenbot-math.workspace = true
 degenbot-pathfinding.workspace = true
 hashbrown.workspace = true
-parking_lot = { version = "^0.12" }
+parking_lot = { version = "^0.13" }
 # Float upward across rusqlite's 0.x point releases (each minor is semver-
 # breaking) but cap below a future 1.0 cutover. The `bundled` feature lives
 # only here so libsqlite3-sys is compiled once for the whole workspace.

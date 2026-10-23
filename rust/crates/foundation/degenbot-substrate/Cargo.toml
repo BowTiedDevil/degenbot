@@ -30,15 +30,15 @@ degenbot-pool-updater.workspace = true
 degenbot-pools.workspace = true
 degenbot-rpc.workspace = true
 degenbot-uniswap.workspace = true
-hotpath = { version = "^0.28.6", default-features = false }
-parking_lot = { version = "^0.12" }
+hotpath = { version = "^0.29.0", default-features = false }
+parking_lot = { version = "^0.13" }
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
-tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "macros", "sync"] }
+tokio = { version = "^1.54", features = ["rt-multi-thread", "time", "macros", "sync"] }
 
 [dev-dependencies]
 proptest = "^1.12"
 rusqlite = { version = "^0.40", features = ["bundled"] }
 tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "fmt", "env-filter", "registry"] }
-tokio = { version = "^1.53", features = ["test-util"] }
+tokio = { version = "^1.54", features = ["test-util"] }
 degenbot-rpc = { workspace = true, features = ["test-utils"] }

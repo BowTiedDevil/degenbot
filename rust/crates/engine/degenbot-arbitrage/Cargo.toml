@@ -55,7 +55,7 @@ degenbot-core.workspace = true
 # the engine exposes via `BlockSimHandle::evm_mut`).
 revm = { version = "^43.0", default-features = true, features = ["alloydb", "asyncdb"] }
 alloy = { version = "^2.5" }
-parking_lot = "^0.12"
+parking_lot = "^0.13"
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
 # The net-profit order index — used (feature `order-index`) to make the pre-sim
@@ -76,7 +76,7 @@ order-index = ["dep:degenbot-order-index"]
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.23", features = ["registry", "ansi"] }
 # multi-thread flavor for the WrapDatabaseAsync ambient-runtime requirement
-tokio = { version = "^1.53", features = ["macros", "rt", "rt-multi-thread", "time"] }
+tokio = { version = "^1.54", features = ["macros", "rt", "rt-multi-thread", "time"] }
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
 serde_json = { version = "^1.0" }
 # the delaying transport's Service impl

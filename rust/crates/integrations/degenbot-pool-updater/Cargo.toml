@@ -24,7 +24,7 @@ degenbot-decoders.workspace = true
 degenbot-pools.workspace = true
 degenbot-core.workspace = true
 degenbot-rpc.workspace = true
-tokio = { version = "^1.53", features = ["rt-multi-thread", "macros", "sync"] }
+tokio = { version = "^1.54", features = ["rt-multi-thread", "macros", "sync"] }
 thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
 # Plain rusqlite (no `bundled`) — the bundled libsqlite3-sys link is owned

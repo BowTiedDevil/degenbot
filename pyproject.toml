@@ -17,9 +17,9 @@ description = "Python + Rust building blocks for Uniswap (V2, V3, V4), Curve V1,
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "pydantic ~= 2.13",
+    "pydantic ~= 2.14",
     "pydantic-settings ~= 2.15",
-    "tenacity ~= 9.1",
+    "tenacity ~= 9.2",
     "tomlkit ~= 0.15",
 ]
 license = {text = "MIT"}

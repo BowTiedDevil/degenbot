@@ -20,11 +20,11 @@ degenbot-rpc.workspace = true
 degenbot-decoders.workspace = true
 degenbot-core.workspace = true
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
-tokio = { version = "^1.53", features = ["time", "sync"] }
+tokio = { version = "^1.54", features = ["time", "sync"] }
 tracing = { version = "^0.1" }
 
 [dev-dependencies]
 # Test-only constructors (`AlloyProvider::from_provider`) — mock transports.
 alloy = { version = "^2.5", features = ["full"] }
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
-tokio = { version = "^1.53", features = ["rt-multi-thread", "macros", "test-util"] }
+tokio = { version = "^1.54", features = ["rt-multi-thread", "macros", "test-util"] }

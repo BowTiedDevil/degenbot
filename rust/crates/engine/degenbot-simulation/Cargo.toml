@@ -83,7 +83,7 @@ serde_json = { version = "^1.0" }
 # (the bytecode + account-existence layer) AND the `BotState` lock type
 # (matches `degenbot-bot` so the `Option<Arc<RwLock<BotState>>>` fan-out param
 # is the same lock family).
-parking_lot = "^0.12"
+parking_lot = "^0.13"
 # `tower::Service` — the JSON-RPC transport seam the scratch chain serves (the
 # same shape the degenbot-rpc recording/replay transports implement).
 tower = { version = "^0.5", default-features = false }
@@ -92,7 +92,7 @@ tower = { version = "^0.5", default-features = false }
 # current-thread tokio handle). The fan-out/categorization policy + its
 # `buffer_unordered`/`Semaphore` concurrency retired with the strategy
 # relocation to `degenbot-arbitrage` (ADR-019 D4/D7).
-tokio = { version = "^1.53", features = ["rt"] }
+tokio = { version = "^1.54", features = ["rt"] }
 
 [dev-dependencies]
 # sha256 for the tier-3 harness bytecode drift guard (`tier3_harness_artifacts.rs`)
@@ -103,7 +103,7 @@ sha2 = "0.11"
 # `examples/rpc_cache_fanout.rs` uses `#[tokio::main(flavor = "multi_thread")]`
 # — `WrapDatabaseAsync<AlloyDB>` blocks on the ambient tokio runtime, which
 # requires a multi-thread runtime (`CurrentThread` returns `None`).
-tokio = { version = "^1.53", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "^1.54", features = ["macros", "rt-multi-thread"] }
 # `test-utils` gates `AlloyProvider::from_provider` (the mock-transport
 # constructor) so the §4.2 wire-shape tests + the parity fixture can drive the
 # typed dispatch without a live RPC. Production builds (the umbrella, the

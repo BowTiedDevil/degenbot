@@ -24,7 +24,7 @@ degenbot-decoders.workspace = true
 degenbot-rpc.workspace = true
 rusqlite = { version = "^0.40" }
 thiserror = { version = "^2.0" }
-tokio = { version = "^1.53", features = ["rt-multi-thread", "macros", "sync"] }
+tokio = { version = "^1.54", features = ["rt-multi-thread", "macros", "sync"] }
 tracing = { version = "^0.1" }
 
 [dev-dependencies]

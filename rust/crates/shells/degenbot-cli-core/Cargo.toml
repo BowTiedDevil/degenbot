@@ -39,7 +39,7 @@ alloy = { version = "^2.5", features = ["full"] }
 # The updater cores own their runtime; the arms build a short-lived one only to
 # resolve a tag+offset block identifier (or drive an on-chain verify) before the
 # core's own runtime is built.
-tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "net", "io-util"] }
+tokio = { version = "^1.54", features = ["rt-multi-thread", "time", "net", "io-util"] }
 # Plain rusqlite (no `bundled`) - the on-conn read/write seams take a
 # `&rusqlite::Connection` (the chunk's Transaction). The bundled libsqlite3-sys
 # link is owned solely by degenbot-db.

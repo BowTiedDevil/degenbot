@@ -17,14 +17,14 @@ alloy = { version = "^2.5" }
 degenbot-config.workspace = true
 tracing = { version = "^0.1" }
 thiserror = { version = "^2.0" }
-tokio = { version = "^1.53", features = ["rt-multi-thread", "time", "sync"] }
-parking_lot = { version = "^0.12" }
+tokio = { version = "^1.54", features = ["rt-multi-thread", "time", "sync"] }
+parking_lot = { version = "^0.13" }
 
 # Optional: enables `From<*> for PyErr` conversions in `errors`.
 # Gated (not default) so pure-Rust consumers build without pulling pyo3.
 # The orphan rule forbids placing these impls in a downstream crate where both
 # `PyErr` and the error types are foreign, so they live here with the types.
-pyo3 = { version = "^0.29", features = ["abi3-py312", "serde"], optional = true }
+pyo3 = { version = "^0.30", features = ["abi3-py312", "serde"], optional = true }
 
 [features]
 default = []
@@ -39,7 +39,7 @@ strict-engine-spans = []
 [dev-dependencies]
 proptest = "^1.12"
 # Test-only: the `#[tokio::test]` macro for the pubsub-runtime teardown pins.
-tokio = { version = "^1.53", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "^1.54", features = ["macros", "rt-multi-thread"] }
 tracing-subscriber = "^0.3"
 # Test-only: a minimal recording Subscriber for the [cpu-budget] boot-log
 # probe (tracing's trait methods take tracing-core types by name).
