@@ -133,8 +133,8 @@ test-standalone:
 # toolchain-gated Tier-3 harness rebuilds (`test-tier3` / `verify-tier3-*`) and
 # net-gated suites (`test-fork`, `record-golden`, `verify-deployments`).
 
-# Default gate: standalone smoke + cargo workspace + full pytest.
-test: test-rust-nextest test-python
+# Default gate: workspace lint (fails fast) + standalone smoke + cargo workspace + full pytest.
+test: lint-rust-check test-rust-nextest test-python
 
 # Run the pre-push gates before `git push`. prek.toml's
 # `stages = ["pre-push"]` entries are the single owner of the gate list (the

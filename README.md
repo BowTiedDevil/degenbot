@@ -1707,7 +1707,7 @@ git clone https://github.com/BowTiedDevil/degenbot.git
 cd degenbot
 just bootstrap
 
-# Run the full gate: standalone-Rust smoke + cargo workspace + full pytest
+# Run the full gate: Rust lint + standalone-Rust smoke + cargo workspace + full pytest
 just test
 
 # Individual tracks:
