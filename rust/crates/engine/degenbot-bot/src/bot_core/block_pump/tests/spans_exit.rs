@@ -188,8 +188,10 @@ async fn header_burst_closes_every_block_span() {
     // Force a park between headers: a ready stream never suspends, so the
     // task would stay on one worker and the pre-fix leaked-enter bug (which
     // only manifests when the task MIGRATES across an enter guard) would not
-    // be exercised. A 1ms sleep makes every inter-header await pend, giving
-    // the multi-threaded runtime a migration opportunity each iteration.
+    // be exercised. The 1ms is this scenario's SCHEDULING INPUT — a park long
+    // enough for an idle worker to take the task — not a wait for the pump to
+    // make progress: nothing below reads elapsed time, and every assertion
+    // runs over the spans the loop already produced.
     let combined = stream::iter(events)
         .then(|e| async move {
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
@@ -197,8 +199,9 @@ async fn header_burst_closes_every_block_span() {
         })
         .boxed();
     pump.run_test_loop(combined, BASE - 1).await;
-    // The channels may still be flushing; give the idle settle one beat.
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    // No settle wait: every epoch span is entered AND dropped on the pump task
+    // before the loop returns, so all of them are already queued in the batch
+    // processor — `force_flush` drains that queue synchronously.
     provider.force_flush().expect("flush");
     let spans = exporter.get_finished_spans().expect("spans");
 
@@ -233,9 +236,12 @@ async fn header_burst_closes_every_block_span() {
 #[tokio::test(flavor = "current_thread")]
 async fn timed_exit_flag_exits_parked_select_promptly() {
     let (mut pump, _sink) = pump_for_test(None);
-    // Raise the flag from outside after 100ms — mid-park on the select's
-    // settle window. The 500ms timed-exit tick polls it and breaks the
-    // loop; success is sub-second return (vs the 60s park regression).
+    // Raise the flag from OUTSIDE the runtime after 100ms — mid-park on the
+    // select's settle window. That delay is this scenario's INPUT (an external
+    // actor's timing, on another OS thread because the pump task owns the only
+    // runtime thread here), not a proxy for "the pump noticed": the assertion
+    // is the elapsed bound below, and the 500ms timed-exit tick is what turns
+    // the raised flag into the loop's return.
     let flag = Arc::clone(&pump.shutdown);
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(100));

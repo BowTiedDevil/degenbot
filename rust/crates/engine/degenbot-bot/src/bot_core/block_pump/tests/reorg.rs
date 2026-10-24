@@ -96,7 +96,6 @@ async fn late_forward_after_tombstone_is_benign_late_admit() {
         ))),
     ];
     pump.run_test_loop(stream::iter(events).boxed(), 5).await;
-    drainer_settle(|| sink.finalized.lock().unwrap().len() >= 2).await;
 
     // THE no-landmine assertion: lateness must never look structural.
     assert!(
@@ -239,8 +238,6 @@ proptest::proptest! {
             }
 
             pump.run_test_loop(stream::iter(events).boxed(), 5).await;
-            drainer_settle(|| sink.finalized.lock().unwrap().len() >= expected_finalized.len())
-                .await;
 
             // No-landmine: lateness never trips a fatal path.
             if shutdown.load(Ordering::Relaxed) {
@@ -472,7 +469,6 @@ async fn late_forward_log_on_tombstoned_block_is_benign_late_admit() {
     ])
     .boxed();
     pump.run_test_loop(combined, 5).await;
-    drainer_settle(|| sink.logs_recorded() >= 2).await;
 
     assert!(
         !shutdown.load(Ordering::Relaxed),

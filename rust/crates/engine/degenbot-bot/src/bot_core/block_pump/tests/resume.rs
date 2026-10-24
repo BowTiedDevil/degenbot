@@ -109,7 +109,6 @@ async fn cold_start_anchors_to_first_observed_block() {
     ];
     let combined = stream::iter(events).boxed();
     pump.run_test_loop(combined, w).await;
-    drainer_settle(|| !sink.finalized.lock().unwrap().is_empty()).await;
 
     let finalized = sink.finalized.lock().unwrap().clone();
     assert!(!finalized.is_empty(), "log w+1 should tombstone+finalize w");
@@ -532,7 +531,6 @@ async fn resume_anchors_to_subscribe_block() {
     ];
     let combined = stream::iter(events).boxed();
     pump.run_test_loop(combined, w).await;
-    drainer_settle(|| !sink.finalized.lock().unwrap().is_empty()).await;
 
     // log(W+2) tombstones W+1 — carrying meta_w1 (W+1's own metadata,
     // snapshotted when header W+1 arrived). Proves the anchor held: we

@@ -12,7 +12,6 @@ async fn early_slice_fires_mid_burst_then_settles() {
     let combined = gap_burst_stream(3, 40);
     let t0 = tokio::time::Instant::now();
     pump.run_test_loop(combined, 100).await;
-    drainer_settle(|| sink.drained_blocks().len() >= 2).await;
 
     assert_eq!(
         sink.drained_blocks(),
@@ -46,7 +45,6 @@ async fn early_slice_fires_at_most_once_per_window() {
 
     let combined = gap_burst_stream(5, 40);
     pump.run_test_loop(combined, 100).await;
-    drainer_settle(|| sink.drained_blocks().len() >= 2).await;
 
     assert_eq!(
         sink.drained_blocks(),
@@ -69,7 +67,6 @@ async fn early_slice_disabled_restores_gate_parity() {
     let combined = gap_burst_stream(3, 40);
     let t0 = tokio::time::Instant::now();
     pump.run_test_loop(combined, 100).await;
-    drainer_settle(|| !sink.drained_blocks().is_empty()).await;
 
     assert_eq!(
         sink.drained_blocks(),
@@ -112,7 +109,6 @@ async fn adaptive_quiesce_arms_the_estimator_window() {
     let combined = gap_burst_stream_with_dirty_edge(3, 40, Some(Arc::clone(&sink)));
     let t0 = tokio::time::Instant::now();
     pump.run_test_loop(combined, 100).await;
-    drainer_settle(|| !sink.drained_blocks().is_empty()).await;
 
     let stamps = sink.drained_at();
     assert!(
@@ -408,7 +404,6 @@ async fn solve_gate_waits_for_buffered_log_before_solving() {
     ];
     let combined = stream::iter(events).boxed();
     pump.run_test_loop(combined, 100).await;
-    drainer_settle(|| !sink.drained_blocks().is_empty()).await;
 
     assert_eq!(
         sink.drained_blocks(),

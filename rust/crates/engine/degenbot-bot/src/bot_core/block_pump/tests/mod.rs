@@ -1,3 +1,12 @@
+//! Test doubles and fixtures for the block-pump driver.
+//!
+//! `BlockPump::run_test_loop` drives the stage hooks INLINE on the calling
+//! task — there is no dispatch queue and no background drainer — so every
+//! `StageHandlers` / `PumpControl` poke the [`FakeStageEngine`] records has
+//! already happened by the time `run_test_loop` returns. Tests assert on the
+//! fake's records directly: there is no settle window to wait out, and a
+//! negative ("no publish") needs no grace period either.
+
 use super::*;
 use crate::bot_core::stage_machine::QuiesceParams;
 use crate::bot_core::PoolLookup;
@@ -927,22 +936,6 @@ async fn run_loop_guarded(
     .expect(
         "pump loop did not finish inside the deadlock-guard window — a latched signal never fired",
     );
-}
-
-/// Wait (with a deadline, in `rt` runtime ticks) until `cond` returns true.
-/// After `run_test_loop` returns, the background drainer task may still be
-/// processing the final queued work asynchronously (the sole mode since
-/// B4); tests that assert on the sink must settle the drainer first.
-async fn drainer_settle(cond: impl Fn() -> bool) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !cond() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "drainer did not settle within timeout"
-        );
-        tokio::task::yield_now().await;
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-    }
 }
 
 // -----------------------------------------------------------------

@@ -49,13 +49,10 @@ fn test_pump_disables_ws_completeness_by_default() {
     );
 }
 
-/// the GIL-bound `on_send` (Python dispatch) runs on the
-/// background drainer task so the WS poller is never parked behind
-/// `Python::attach`. This exercises the (now sole) mode end-to-end: a
-/// header opens block 101, a V2 Sync log for 101 opens + quiesces it, and
-/// the stream-exhaust settle point flushes the quiesce-gated publish —
-/// which MUST still fire `on_send` (with the block metadata) from the
-/// drainer.
+/// The quiesce-gated publish rides the INLINE stage hooks end-to-end: a header
+/// opens block 101, a V2 Sync log for 101 opens + quiesces it, and the
+/// stream-exhaust settle point flushes the publish — which MUST still fire
+/// `on_send` with the block metadata.
 #[tokio::test]
 async fn decoupled_drain_still_publishes_with_block_metadata() {
     use alloy::primitives::{aliases::U112, Address as A};
@@ -106,35 +103,25 @@ async fn decoupled_drain_still_publishes_with_block_metadata() {
     let combined = stream::iter(events).boxed();
     pump.run_test_loop(combined, 100).await;
 
-    // All sink ops were deferred to the drainer; wait until the drain,
-    // the header notify, and the publish have all landed.
-    let deadline = std::time::Instant::now() + Duration::from_secs(1);
-    loop {
-        let done = !sink.drained.lock().unwrap().is_empty()
-            && !sink.notified.lock().unwrap().is_empty()
-            && !sink.sent.lock().unwrap().is_empty();
-        if done || std::time::Instant::now() >= deadline {
-            break;
-        }
-        tokio::task::yield_now().await;
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    // No settle wait: the stage hooks run INLINE on the pump task, so the
+    // drain, the header notify, and the quiesce-gated publish were all
+    // recorded before `run_test_loop` returned.
 
-    // Notify(header 101) routed to the drainer.
+    // Notify(header 101).
     let notified = sink.notified.lock().unwrap().clone();
     assert!(
         notified.iter().any(|&(b, _)| b == 101),
         "decoupled header notify must fire (got {notified:?})"
     );
 
-    // Drain(eager solve of the dirty pool) routed to the drainer.
+    // Drain(eager solve of the dirty pool).
     let drained = sink.drained.lock().unwrap().clone();
     assert!(
         !drained.is_empty(),
         "decoupled eager drain must solve dirty paths (got {drained:?})"
     );
 
-    // Publish(on_send) routed to the drainer — with the block metadata.
+    // Publish(on_send) — with the block metadata.
     let sent = sink.sent.lock().unwrap().clone();
     assert!(
         !sent.is_empty(),

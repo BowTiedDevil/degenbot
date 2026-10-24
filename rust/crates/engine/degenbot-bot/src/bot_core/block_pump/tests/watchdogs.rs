@@ -418,7 +418,6 @@ async fn finalize_carries_just_finished_blocks_metadata() {
     ];
     let combined = stream::iter(events).boxed();
     pump.run_test_loop(combined, 100).await;
-    drainer_settle(|| !sink.finalized.lock().unwrap().is_empty()).await;
 
     let finalized = sink.finalized.lock().unwrap().clone();
     assert!(
@@ -491,7 +490,6 @@ async fn on_drain_receives_promoted_active_block_not_stalled_header() {
         .collect();
     let combined = stream::iter(events).boxed();
     pump.run_test_loop(combined, 100).await;
-    drainer_settle(|| !sink.drained_blocks().is_empty()).await;
 
     let drained = sink.drained_blocks();
     assert!(
@@ -531,7 +529,6 @@ async fn solve_gate_waits_for_drained_stream_headers() {
         .collect();
     let combined = stream::iter(events).boxed();
     pump.run_test_loop(combined, 100).await;
-    drainer_settle(|| !sink.drained_blocks().is_empty()).await;
 
     assert_eq!(
         sink.drained_blocks(),

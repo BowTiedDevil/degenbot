@@ -521,30 +521,39 @@ async fn scenario_a_race_concurrent_drain_cannot_produce_symptom() {
     let mint2 = make_v3_mint_log_with_block(pool_addr, -200, 7, delta2, block_n);
     let swap = make_v3_swap_log_with_block(pool_addr, block_n + 1);
 
-    // Stream: Mint1@N, then await the drain-done signal, then Mint2@N +
-    // Swap@N+1 (tombstone), then end. The pump dispatches Mint1 into the
-    // buffer (cutoff < N), parks on the oneshot receive; the test runs
-    // the drain+pin (cutoff < N → Mint1 retained); then signals.
+    // Stream: Mint1@N, then — once the pump comes back for more — signal that
+    // Mint1 was CONSUMED, park on the drain-done signal, then Mint2@N +
+    // Swap@N+1 (tombstone), then end. The pump only re-enters `next()` after
+    // the log it just took is fully dispatched, so that re-entry is the fact
+    // the test needs: Mint1 is in the pump buffer with cutoff still < N. No
+    // wall clock stands in for it.
+    let (mint1_consumed_tx, mint1_consumed_rx) = oneshot::channel::<()>();
     let (drain_done_tx, drain_done_rx) = oneshot::channel::<()>();
     let logs: Vec<Log> = vec![mint1, mint2, swap];
     let combined = stream::unfold(
-        (0u8, Some(drain_done_rx), logs.into_iter()),
-        |(phase, rx_opt, mut logs)| async move {
+        (
+            0u8,
+            Some(mint1_consumed_tx),
+            Some(drain_done_rx),
+            logs.into_iter(),
+        ),
+        |(phase, consumed_tx, rx_opt, mut logs)| async move {
             match phase {
                 0 => Some((
                     WsEvent::Pool(PoolEvent::from_log(logs.next().unwrap())),
-                    (1, rx_opt, logs),
+                    (1, consumed_tx, rx_opt, logs),
                 )),
                 1 => {
-                    let _ = rx_opt.unwrap().await; // park until drain completes
+                    let _ = consumed_tx.unwrap().send(());
+                    let _ = rx_opt.unwrap().await; // park until the drain completes
                     Some((
                         WsEvent::Pool(PoolEvent::from_log(logs.next().unwrap())),
-                        (2, None, logs),
+                        (2, None, None, logs),
                     ))
                 }
                 2 => Some((
                     WsEvent::Pool(PoolEvent::from_log(logs.next().unwrap())),
-                    (3, None, logs),
+                    (3, None, None, logs),
                 )),
                 _ => None,
             }
@@ -554,8 +563,14 @@ async fn scenario_a_race_concurrent_drain_cannot_produce_symptom() {
     let pump_handle = tokio::spawn(async move {
         pump.run_test_loop(combined, block_n - 1).await;
     });
-    // Let the pump process Mint1 (cutoff still < N — no tombstone yet).
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    // Gate on the pump's own re-entry into the stream instead of sleeping
+    // "long enough for Mint1 to be processed": the signal IS the fact the
+    // race window needs (Mint1 dispatched, cutoff still < N — no tombstone).
+    // The timeout is a DEADLOCK GUARD, not an ordering assertion.
+    tokio::time::timeout(DEADLOCK_GUARD, mint1_consumed_rx)
+        .await
+        .expect("pump never consumed Mint1 inside the deadlock-guard window")
+        .expect("synthetic stream dropped before Mint1's dispatch was signalled");
 
     // Run the registration drain+pin NOW (cutoff < N → Mint1 retained,
     // NOT drained). The pin captures the backfill seed state.
@@ -569,7 +584,10 @@ async fn scenario_a_race_concurrent_drain_cannot_produce_symptom() {
     };
     // Release the pump to feed Mint2 + Swap (tombstone N, cutoff = N).
     let _ = drain_done_tx.send(());
-    let _ = pump_handle.await;
+    tokio::time::timeout(DEADLOCK_GUARD, pump_handle)
+        .await
+        .expect("pump loop did not finish inside the deadlock-guard window")
+        .expect("pump task panicked");
 
     // The pin captured at the race window has update_block = backfill
     // block (< N), NOT N — because cutoff was < N at drain time, Mint1

@@ -34,7 +34,6 @@ async fn burst_of_logs_publishes_once_at_tail_via_quiesce_gate() {
     // probe (timeout(ZERO) on the exhausted stream) flushes on_send once.
     let combined = stream::iter(vec![mk(1_500, 2_500), mk(1_600, 2_600), mk(1_700, 2_700)]).boxed();
     pump.run_test_loop(combined, 100).await;
-    drainer_settle(|| !sink.sent.lock().unwrap().is_empty()).await;
 
     let sent = sink.sent.lock().unwrap().clone();
     assert_eq!(
@@ -91,7 +90,6 @@ async fn newhead_promoted_solve_does_not_publish_until_quiesced() {
     }];
     let combined = stream::iter(events).boxed();
     pump.run_test_loop(combined, 100).await;
-    drainer_settle(|| !sink.drained_blocks().is_empty()).await;
 
     let drained = sink.drained_blocks();
     assert!(
