@@ -2,11 +2,18 @@
 
 Snapshot sources route through the Rust ``degenbot-db`` core crate (ADR-005
 three-layer architecture); file-based snapshot sources are not supported.
+
+The two concentrated-liquidity families differ in exactly two things: how a
+pool identity is spelled (V3 keys a pool by one checksummed address, V4 by a
+``(pool manager, pool id)`` pair) and which Rust read seam that spelling calls.
+Both are declared once per family as a `DatabaseSnapshotSeams` set, so the
+source and facade implementations below are the only implementations.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, TypedDict, cast
 
 from degenbot.db import DatabaseSnapshot as _EngineSnapshot
@@ -79,15 +86,56 @@ def _liquidity_map_from_raw(raw: dict[str, Any]) -> LiquidityMap:
     )
 
 
+def _identity_pool_key(pool: str) -> str:
+    return pool
+
+
+@dataclass(frozen=True, slots=True)
+class DatabaseSnapshotSeams[K]:
+    """The per-family Rust read seams and key adapters of a database snapshot source.
+
+    ``degenbot-db`` exposes one reader per pool-identity spelling, so a family
+    substitutes its own seams rather than the source branching on the family.
+    Every read seam receives the lazily-opened Rust handle. ``all_maps_key``
+    converts one raw bulk-read key into the family's snapshot key, and
+    ``db_pool_key`` normalizes one stored pool key as ``get_pools`` reports it
+    (identity by default, since only V3 re-checksums stored keys).
+    """
+
+    liquidity_map: Callable[[_EngineSnapshot, K], dict[str, Any] | None]
+    all_liquidity_maps: Callable[[_EngineSnapshot], dict[Any, dict[int, tuple[int, int]]]]
+    newest_block: Callable[[_EngineSnapshot], BlockNumber | None]
+    pools: Callable[[_EngineSnapshot], set[str]]
+    all_maps_key: Callable[[Any], K]
+    db_pool_key: Callable[[str], str] = _identity_pool_key
+
+
+def _merge_tick_maps(
+    pool_snapshot: LiquidityMap,
+    *,
+    tick_data: dict[int, LiquidityAtTick],
+    tick_bitmap: set[int],
+) -> None:
+    # A liquidity update merges into the map the pool already has. What a pool
+    # with no snapshot means is the caller's call, because the exception type
+    # is family-specific (UnknownPool for V3, UnknownPoolId for V4).
+    pool_snapshot["tick_bitmap"].update(tick_bitmap)
+    pool_snapshot["tick_data"].update(tick_data)
+
+
 class DatabaseSnapshotBase[K]:
     """Snapshot source backed by built-in SQLite database.
 
     Routes every read through the Rust `degenbot-db` core crate via the
     `_EngineSnapshot` PyO3 seam (ADR-005 three-layer architecture). The
     explicit file path is retained as the authority for the lazy Rust handle.
+    A concrete source class supplies its family's `_seams`; everything else is
+    family-agnostic and implemented here.
     """
 
     storage_kind = "db"
+
+    _seams: ClassVar[DatabaseSnapshotSeams[Any]]
 
     def __init__(self, chain_id: ChainId, *, database_path: pathlib.Path) -> None:
         """Initialize the instance from an explicit file-backed database path."""
@@ -139,33 +187,15 @@ class DatabaseSnapshotBase[K]:
         """Release the Rust handle when leaving the context."""
         self.close()
 
-    def _seam_liquidity_map(self, pool_key: K) -> dict[str, Any] | None:
-        raise NotImplementedError(pool_key)
-
-    def _seam_all_liquidity_maps(self) -> dict[Any, dict[int, tuple[int, int]]]:
-        raise NotImplementedError
-
-    def _seam_newest_block(self) -> BlockNumber | None:
-        raise NotImplementedError
-
-    def _seam_pools(self) -> set[str]:
-        raise NotImplementedError
-
-    def _all_maps_key(self, raw_key: object) -> K:
-        raise NotImplementedError(raw_key)
-
-    def _db_pool_key(self, pool: str) -> str:
-        raise NotImplementedError(pool)
-
     def _liquidity_map_for_key(self, pool_key: K) -> LiquidityMap | None:
-        raw = self._seam_liquidity_map(pool_key)
+        raw = self._seams.liquidity_map(self._rust(), pool_key)
         if raw is None:
             return None
         # The Db stores no per-tick block, so stamp the snapshot's bulk-sync
         # block onto every row that does not carry one. ``0`` is a legal
         # stamp, never a sentinel. The Db carries no per-word bitmap value, so
         # there is nothing to stamp for ``tick_bitmap`` (keys only).
-        source_block = self._seam_newest_block()
+        source_block = self._seams.newest_block(self._rust())
         for entry in raw["tick_data"].values():
             entry.setdefault("block", source_block)
         return _liquidity_map_from_raw(raw)
@@ -182,8 +212,8 @@ class DatabaseSnapshotBase[K]:
 
         """
         return {
-            self._all_maps_key(raw_key): ticks
-            for raw_key, ticks in self._seam_all_liquidity_maps().items()
+            self._seams.all_maps_key(raw_key): ticks
+            for raw_key, ticks in self._seams.all_liquidity_maps(self._rust()).items()
         }
 
     def get_newest_block(self) -> BlockNumber | None:
@@ -193,7 +223,7 @@ class DatabaseSnapshotBase[K]:
             The newest block number across all exchanges, or None if unavailable.
 
         """
-        return self._seam_newest_block()
+        return self._seams.newest_block(self._rust())
 
     def get_pools(self) -> set[str]:
         """Return pools.
@@ -202,7 +232,7 @@ class DatabaseSnapshotBase[K]:
             The set of pool keys from the database.
 
         """
-        return {self._db_pool_key(pool) for pool in self._seam_pools()}
+        return {self._seams.db_pool_key(pool) for pool in self._seams.pools(self._rust())}
 
 
 class LiquiditySnapshotBase[K, U, E: LiquidityEvent, S: LiquiditySnapshotSource]:
