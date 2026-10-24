@@ -2198,11 +2198,9 @@ class BotIo:
     def probe_balancer_pool_type(self, /, address: str, block: Any | None = None) -> BalancerFamily:
         """
         Probe a Balancer pool's sub-type by trying `getNormalizedWeights()` and
-        `getAmplificationParameter()` in order.
-
-        Mirrors `balancer_builder_base.py::_detect_pool_type`. By the time this
-        runs, the pool is already known to be Balancer (via `probe_pool_type`,
-        14i). This sub-probe distinguishes weighted vs stable.
+        `getAmplificationParameter()` in order. By the time this runs, the pool
+        is already known to be Balancer (via `probe_pool_type`, 14i); this
+        sub-probe distinguishes weighted vs stable.
 
         Returns:
         - `BalancerFamily.Weighted` — `getNormalizedWeights()` succeeded.
@@ -2211,7 +2209,8 @@ class BotIo:
 
         Errors:
         - `PyValueError` — neither method responded (raises so the Python
-          caller can wrap as `DegenbotValueError`; linear pools unsupported).
+          identity probe can name the pool an unmodeled Balancer family; linear
+          pools unsupported).
         """
     def probe_pool_type(self, /, address: str, block: Any | None = None) -> int:
         """

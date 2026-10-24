@@ -1453,11 +1453,9 @@ impl PyBotIo {
     }
 
     /// Probe a Balancer pool's sub-type by trying `getNormalizedWeights()` and
-    /// `getAmplificationParameter()` in order.
-    ///
-    /// Mirrors `balancer_builder_base.py::_detect_pool_type`. By the time this
-    /// runs, the pool is already known to be Balancer (via `probe_pool_type`,
-    /// 14i). This sub-probe distinguishes weighted vs stable.
+    /// `getAmplificationParameter()` in order. By the time this runs, the pool
+    /// is already known to be Balancer (via `probe_pool_type`, 14i); this
+    /// sub-probe distinguishes weighted vs stable.
     ///
     /// Returns:
     /// - `BalancerFamily.Weighted` — `getNormalizedWeights()` succeeded.
@@ -1466,7 +1464,8 @@ impl PyBotIo {
     ///
     /// Errors:
     /// - `PyValueError` — neither method responded (raises so the Python
-    ///   caller can wrap as `DegenbotValueError`; linear pools unsupported).
+    ///   identity probe can name the pool an unmodeled Balancer family; linear
+    ///   pools unsupported).
     #[pyo3(signature = (address, block=None))]
     fn probe_balancer_pool_type(
         &self,
@@ -1488,9 +1487,10 @@ impl PyBotIo {
         let family = match r {
             Ok(v) => Ok(v),
             // Neither probe responded → surface as ValueError so the Python
-            // caller (`balancer_builder_base._detect_pool_type`) can re-wrap as
-            // DegenbotValueError (linear pools unsupported). The core returns
-            // DecodingError, whose default PyErr mapping is RuntimeError.
+            // identity probe (`type_resolution.py`) can record the pool as an
+            // unmodeled Balancer family (linear pools unsupported). The core
+            // returns DecodingError, whose default PyErr mapping is
+            // RuntimeError.
             Err(ProviderError::DecodingError { .. }) => {
                 Err(pyo3::exceptions::PyValueError::new_err(format!(
                     "Cannot determine Balancer pool type for {address}."

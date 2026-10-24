@@ -10,11 +10,10 @@ from degenbot.abi import AbiDecodeError, decode
 from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS
 from degenbot.balancer.libraries.constants import ONE, PowVersion
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.exceptions import DegenbotValueError, RpcError
+from degenbot.exceptions import RpcError
 
 if TYPE_CHECKING:
     from degenbot._ffi import BotIo
-    from degenbot.balancer import BalancerFamily
 
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
@@ -203,38 +202,3 @@ class BalancerBuilderBase:
                 continue
             rates.append(int(io.fetch_balancer_rate(provider, block=block)))
         return rates
-
-    @staticmethod
-    def _detect_pool_type(
-        io: BotIo,
-        address: str,
-        block: int,
-    ) -> BalancerFamily:
-        """Determine weighted vs stable by probing contract methods.
-
-        Probes in order:
-        1. getNormalizedWeights() → BalancerFamily.Weighted
-        2. getAmplificationParameter() → BalancerFamily.Stable
-        3. Neither → raise (don't default to stable)
-
-        Returns:
-            The computed value.
-
-        Raises:
-            DegenbotValueError: If the operation fails.
-
-        """
-        # Delegate both probes to Rust (``BotIo.probe_balancer_pool_type``).
-        # BotIo is the only executor; the Python
-        # getNormalizedWeights/getAmplificationParameter probing fallback is
-        # retired.
-        try:
-            return io.probe_balancer_pool_type(address, block=block)
-        except ValueError:
-            msg = (
-                f"Cannot determine Balancer pool type for {address}. "
-                "Neither getNormalizedWeights() nor "
-                "getAmplificationParameter() responded. "
-                "Linear pools are not yet supported."
-            )
-            raise DegenbotValueError(message=msg) from None

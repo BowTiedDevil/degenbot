@@ -827,8 +827,7 @@ pub async fn fetch_balancer_factory(
 
 /// Probe a Balancer pool's sub-type: `getNormalizedWeights()` succeeds →
 /// [`BalancerFamily::Weighted`]; else `getAmplificationParameter()` succeeds →
-/// [`BalancerFamily::Stable`]; else an error (mirrors
-/// `balancer_builder_base.py::_detect_pool_type` — Linear pools unsupported).
+/// [`BalancerFamily::Stable`]; else an error (linear pools unsupported).
 ///
 /// # Errors
 ///
