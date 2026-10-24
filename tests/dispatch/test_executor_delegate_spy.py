@@ -221,8 +221,9 @@ class TestExampleRoutesThroughRust:
         symbols — the driver does not import ``degenbot_rs`` directly).
         """
         sim_src = (REPO / "src" / "degenbot" / "runner" / "_sim_submit.py").read_text()
-        assert "build_batch_executor_py(" in sim_src, (
-            "driver must construct the core batch executor (build_batch_executor_py)"
+        assert "engine_builder or build_batch_executor_py" in sim_src, (
+            "driver must construct the core batch executor (build_batch_executor_py), "
+            "bound as the construction seam's production default"
         )
         assert "dispatch_profitable" not in sim_src and "dispatch_and_submit" not in sim_src, (
             "the cut-over driver authors no sim/submit choreography — the "

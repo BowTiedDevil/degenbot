@@ -4,8 +4,10 @@ Driven by the frozen `parity_expected.json` oracle (dumped from the
 prior legacy reader-backed `DatabaseSnapshot`) + a freshly-regenerated
 `parity.db` fixture: the Rust-backed `DatabaseSnapshot` (delegating through
 `DatabaseSnapshot`) produces identical results to the frozen legacy reader
-oracle. Plus a delegation spy proving the Python reader hits Rust with
-the right args.
+oracle. Plus round-trip tests pinning that each PUBLIC read returns exactly
+the family's own Rust engine read — the seam wiring, by value: a seam
+re-pointed at another family's reader (the pair-keyed V4 one) changes the
+value or the key shape, never just a call name.
 """
 
 import json
@@ -14,6 +16,8 @@ from collections.abc import Iterator
 
 import pytest
 
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.db import DatabaseSnapshot as EngineSnapshot
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
 from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
 
@@ -110,42 +114,31 @@ class TestV4SnapshotParity:
             assert {int(t): tuple(map(int, v)) for t, v in entry["ticks"].items()} == rust_ticks
 
 
-# ── delegation: Python reader hits the Rust seam with the right args ─
+# ── delegation: each public read round-trips the family's engine read ─────
 
 
 class TestSnapshotDelegation:
-    """The Python DatabaseSnapshot delegates to the Rust DatabaseSnapshot."""
+    """The Python DatabaseSnapshot returns exactly the V3 engine read.
 
-    def test_get_newest_block_delegates_to_rust(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """get_newest_block calls DatabaseSnapshot.get_newest_block_v3.
+    The family declares its Rust read seam once (``DatabaseSnapshotSeams``), so
+    the public read and the engine's own V3 read are the two sides of one
+    delegation: equality proves the declared seam is the V3 one AND pins what
+    the facade adds on top (V3's checksum normalization of stored pool keys).
+    """
 
-        Patches the lazily-cached `_rust` handle to a recording wrapper so the
-        pyclass (whose methods are read-only) need not be monkeypatched.
-        """
-        calls: list[str] = []
+    def test_get_newest_block_round_trips_the_engine_read(self) -> None:
+        """get_newest_block returns the engine's V3 newest-block read."""
+        engine = EngineSnapshot(chain_id=8453, database_path=str(DB_PATH))
+        engine_block = engine.get_newest_block_v3()
+        assert engine_block is not None, "the fixture holds a V3 update block"
         with V3DatabaseSnapshot(chain_id=8453, database_path=DB_PATH) as snap:
-            real_rust = snap._rust()
+            assert snap.get_newest_block() == engine_block
 
-            class _Spy:
-                def get_newest_block_v3(self) -> int | None:
-                    calls.append("get_newest_block_v3")
-                    return real_rust.get_newest_block_v3()
-
-            monkeypatch.setattr(snap, "_rust_snapshot", _Spy())
-            snap.get_newest_block()
-            assert calls == ["get_newest_block_v3"]
-
-    def test_get_pools_delegates_to_rust(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """get_pools calls DatabaseSnapshot.get_pools_v3."""
-        calls: list[str] = []
+    def test_get_pools_round_trips_the_engine_read(self) -> None:
+        """get_pools returns the engine's V3 pool set, checksum-normalized."""
+        engine = EngineSnapshot(chain_id=8453, database_path=str(DB_PATH))
+        engine_pools = engine.get_pools_v3()
+        assert engine_pools, "the fixture holds V3 pools; an empty read proves nothing"
+        expected = {get_checksum_address(pool) for pool in engine_pools}
         with V3DatabaseSnapshot(chain_id=8453, database_path=DB_PATH) as snap:
-            real_rust = snap._rust()
-
-            class _Spy:
-                def get_pools_v3(self) -> set[str]:
-                    calls.append("get_pools_v3")
-                    return real_rust.get_pools_v3()
-
-            monkeypatch.setattr(snap, "_rust_snapshot", _Spy())
-            snap.get_pools()
-            assert calls == ["get_pools_v3"]
+            assert snap.get_pools() == expected

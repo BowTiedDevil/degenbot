@@ -35,6 +35,7 @@ from tests.helpers.database import seed_v2_topology, seed_v3_topology, seed_v4_t
 
 if TYPE_CHECKING:
     import pathlib
+    from typing import Any
 
 
 CHAIN_ID = 1
@@ -110,6 +111,24 @@ def seeded_db(tmp_path: pathlib.Path) -> pathlib.Path:
 def bot(seeded_db: pathlib.Path) -> Bot:
     """An offline Bot bound to the seeded database (injected RPC boundary)."""
     return Bot(chain_id=CHAIN_ID, database=str(seeded_db), provider=_BoundaryProvider())
+
+
+class _NonConstructingBot(Bot):
+    """A Bot whose construction door is a failing fake.
+
+    Discovery is a database question, so it must never cross into
+    construction: the injected door makes any crossing a named failure rather
+    than an observable call.
+    """
+
+    def __init__(self, *, chain_id: int, database: str, provider: Any) -> None:
+        super().__init__(chain_id=chain_id, database=database, provider=provider)
+        self.build_calls: list[str] = []
+
+    def build_pool(self, address: str, **kwargs: Any) -> Any:
+        self.build_calls.append(address)
+        msg = "discovery crossed the construction door"
+        raise AssertionError(msg)
 
 
 def _by_kind(refs: list[PoolRef], kind: PoolKind) -> PoolRef:
@@ -261,21 +280,18 @@ def test_pools_for_tokens_reports_the_aerodrome_stable_flag(tmp_path: pathlib.Pa
     assert refs[0].stable is True
 
 
-def test_bot_pools_for_tokens_constructs_nothing(bot: Bot, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Discovery never crosses the construction door (spy on ``build_pool``)."""
-    build_calls: list[str] = []
-    original_build = bot.build_pool
-
-    def _recording_build(address: str, **kwargs: object) -> object:
-        build_calls.append(address)
-        return original_build(address, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(bot, "build_pool", _recording_build)
+def test_bot_pools_for_tokens_constructs_nothing(seeded_db: pathlib.Path) -> None:
+    """Discovery never crosses the construction door (a failing builder fake)."""
+    bot = _NonConstructingBot(
+        chain_id=CHAIN_ID,
+        database=str(seeded_db),
+        provider=_BoundaryProvider(),
+    )
 
     refs = bot.pools_for_tokens(TOKEN_A, TOKEN_B)
 
     assert len(refs) == 3
-    assert build_calls == []
+    assert bot.build_calls == []
     assert bot.pools.get(chain_id=CHAIN_ID, pool_address=POOL_V2) is None
 
 

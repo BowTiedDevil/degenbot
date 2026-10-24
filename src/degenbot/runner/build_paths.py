@@ -162,7 +162,7 @@ class RegistrationUnitOutcome:
     #: register-fail / registered).
     kind: RegistrationUnitKind
     #: The stable skip/reject tag (never an interpolated address) for
-    #: ``_record_skip`` and the engine-reject log line.
+    #: ``record_skip`` and the engine-reject log line.
     tag: str | None = None
     #: "registered": the engine path registry created a NEW path (False = the
     #: signature dedup answered an existing id, PRG-4).
@@ -463,7 +463,7 @@ class PathRegistrationPipeline:
         if memoized is not None:
             return memoized
 
-        built = self._build_hop_pools(steps, pool_kinds)
+        built = self.build_hop_pools(steps, pool_kinds)
         if isinstance(built, RegistrationUnitOutcome):
             return built
         pools = built
@@ -579,7 +579,7 @@ class PathRegistrationPipeline:
             detail=refusal.detail,
         )
 
-    def _build_hop_pools(
+    def build_hop_pools(
         self,
         steps: list[Any],
         pool_kinds: list[PoolKind],
@@ -947,7 +947,7 @@ class PathRegistrationPipeline:
         """
         return pool._py_pool.pool_id  # ruff:ignore[private-member-access]
 
-    def _record_skip(
+    def record_skip(
         self,
         reason: str,
         detail: BaseException | str | None = None,
@@ -1046,7 +1046,7 @@ class PathRegistrationPipeline:
         async def _resolve(receipt: Any) -> None:
             """Await one receipt and fold its outcome into the counters."""
             await receipt.wait_async()
-            self._absorb_outcome(receipt.result())
+            self.absorb_outcome(receipt.result())
 
         async for path in producer:
             if self.capped:
@@ -1229,9 +1229,9 @@ class PathRegistrationPipeline:
 
         receipt = self.constr_bot.submit_registration_unit(_unit)
         await receipt.wait_async()
-        self._absorb_outcome(cast("RegistrationUnitOutcome", receipt.result()))
+        self.absorb_outcome(cast("RegistrationUnitOutcome", receipt.result()))
 
-    def _absorb_outcome(self, outcome: RegistrationUnitOutcome) -> None:
+    def absorb_outcome(self, outcome: RegistrationUnitOutcome) -> None:
         """Fold one unit outcome into the summary counters (driver-side).
 
         The single-loop mutation point: units on fleet seats never touch the

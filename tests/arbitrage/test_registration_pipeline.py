@@ -12,7 +12,7 @@ doubles (the same scripted shape the intake-station tests use):
   drains the window (the engine is full — the drain is cheap),
 - the fatal contract: a unit's VerificationMismatchError propagates through
   the receipt and aborts the crawl loudly,
-- counter parity: `_absorb_outcome` folds the unit outcomes into the exact
+- counter parity: `absorb_outcome` folds the unit outcomes into the exact
   counter shapes the retired inline `_consume` produced.
 
 All work runs through the SAME `_consume` body the operator surfaces use,
@@ -313,43 +313,43 @@ def test_absorb_outcome_counter_parity(tmp_path: Path) -> None:
     pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", bot)
 
     # Benign skip: skip_count + skip-reason tag.
-    pipeline._absorb_outcome(RegistrationUnitOutcome(kind="skip", tag="build-v3:X"))
+    pipeline.absorb_outcome(RegistrationUnitOutcome(kind="skip", tag="build-v3:X"))
     assert pipeline.skip_count == 1
     assert pipeline._skip_reasons["build-v3:X"] == 1
 
     # V4 admission refusals are counted separately, NOT in skip_count.
-    pipeline._absorb_outcome(
+    pipeline.absorb_outcome(
         RegistrationUnitOutcome(kind="skip", tag="v4-hook-rejected", counts_as_skip=False)
     )
     assert pipeline.v4_hook_rejected == 1
     assert pipeline.skip_count == 1
-    pipeline._absorb_outcome(
+    pipeline.absorb_outcome(
         RegistrationUnitOutcome(kind="skip", tag="v4-dynamic-fee-rejected", counts_as_skip=False)
     )
     assert pipeline.v4_dynamic_fee_rejected == 1
 
     # Engine reject: engine_reject + other-Exception (parity with the two
     # retired except-branches that incremented both).
-    pipeline._absorb_outcome(RegistrationUnitOutcome(kind="reject"))
+    pipeline.absorb_outcome(RegistrationUnitOutcome(kind="reject"))
     assert pipeline.engine_reject_count == 1
     assert pipeline.other_exc_count == 1
 
     # register-fail: its own counter + the bounded warning source.
-    pipeline._absorb_outcome(RegistrationUnitOutcome(kind="register-fail", tag="ValueError: x"))
+    pipeline.absorb_outcome(RegistrationUnitOutcome(kind="register-fail", tag="ValueError: x"))
     assert pipeline.register_fail_count == 1
 
     # Registered: created and duplicate folds; v4 hops counted in BOTH
     # (the retired body incremented v4_pool_count pre-dedup).
-    pipeline._absorb_outcome(RegistrationUnitOutcome(kind="registered", created=True, v4_hops=1))
+    pipeline.absorb_outcome(RegistrationUnitOutcome(kind="registered", created=True, v4_hops=1))
     assert pipeline.path_count == 1
     assert pipeline.v4_pool_count == 1
-    pipeline._absorb_outcome(RegistrationUnitOutcome(kind="registered", created=False, v4_hops=2))
+    pipeline.absorb_outcome(RegistrationUnitOutcome(kind="registered", created=False, v4_hops=2))
     assert pipeline.path_count == 1
     assert pipeline.dup_count == 1
     assert pipeline.v4_pool_count == 3
     assert pipeline._skip_reasons["dup"] == 1
     # The cap fold stops the crawl.
-    pipeline._absorb_outcome(RegistrationUnitOutcome(kind="cap", tag="path-cap"))
+    pipeline.absorb_outcome(RegistrationUnitOutcome(kind="cap", tag="path-cap"))
     assert pipeline.capped
 
 
@@ -366,7 +366,7 @@ def test_retired_skip_gate_pipeline_tests_upgraded_shape(tmp_path: Path) -> None
     """The skip-gate pipeline shape still builds under the fleet intake."""
     bot = _FleetBot()
     pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", bot)
-    pipeline._record_skip("v4-no-hash")
+    pipeline.record_skip("v4-no-hash")
     assert pipeline._skip_reasons["v4-no-hash"] == 1
 
 
@@ -469,14 +469,14 @@ def test_duplicate_candidate_short_circuits_before_verify_and_engine(tmp_path: P
     first = pipeline._registration_unit(steps)
     assert first.kind == "registered"
     assert first.created is True
-    pipeline._absorb_outcome(first)
+    pipeline.absorb_outcome(first)
     assert pipeline.path_count == 1
     assert registry.registrations == [[(101, True), (202, True)]]
 
     second = pipeline._registration_unit(steps)
     assert second.kind == "registered"
     assert second.created is False
-    pipeline._absorb_outcome(second)
+    pipeline.absorb_outcome(second)
     # Counter parity: the dup fold matches the engine-dedup fold.
     assert pipeline.path_count == 1
     assert pipeline.dup_count == 1
@@ -591,10 +591,10 @@ def test_verify_lifecycle_runs_once_per_pool_across_sightings(tmp_path: Path) ->
     ]
     second = pipeline._registration_unit(shared_hop)
     assert second.kind == "register-fail"
-    pipeline._absorb_outcome(second)
+    pipeline.absorb_outcome(second)
     third = pipeline._registration_unit(shared_hop)
     assert third.kind == "register-fail"
-    pipeline._absorb_outcome(third)
+    pipeline.absorb_outcome(third)
 
     # Exactness preserved: register-fail is NOT negatively memoized, so the
     # candidate re-attempted registration on every sighting.
@@ -637,7 +637,7 @@ def test_stable_build_refusal_memoizes_the_pool(tmp_path: Path) -> None:
     assert first.kind == "skip"
     assert first.tag == "v4-hook-rejected"
     assert first.counts_as_skip is False
-    pipeline._absorb_outcome(first)
+    pipeline.absorb_outcome(first)
 
     second = pipeline._registration_unit(steps)
     assert second.kind == "skip"
@@ -679,7 +679,7 @@ def test_policy_gate_denial_memoizes_the_path(tmp_path: Path) -> None:
     assert first.tag == RegistrationOutcome.PATH_REJECTED_MEMO.value
     assert first.detail is not None and first.detail.startswith("PathRejectedError")
     assert registry.verifies == []  # the gate precedes verify
-    pipeline._absorb_outcome(first)
+    pipeline.absorb_outcome(first)
 
     second = pipeline._registration_unit(steps)
     assert second.kind == "reject"
@@ -1004,5 +1004,5 @@ def test_transient_build_skip_tag_uses_the_bounded_vocabulary(tmp_path: Path) ->
     assert outcome.tag in {member.value for member in RegistrationOutcome}
     assert outcome.detail is not None
     assert "ConnectionError" in outcome.detail
-    pipeline._absorb_outcome(outcome)
+    pipeline.absorb_outcome(outcome)
     assert pipeline._skip_reasons[outcome.tag] == 1

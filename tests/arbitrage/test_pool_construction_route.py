@@ -127,7 +127,7 @@ class TestRouteFailureClassification:
         )
         pipeline = _make_pipeline(bot)
         with pytest.raises(UnsupportedPoolFamilyError):
-            pipeline._build_hop_pools([_step()], [PoolKind.V3])
+            pipeline.build_hop_pools([_step()], [PoolKind.V3])
 
     def test_transient_rpc_failure_is_a_counted_skip(self, tmp_path: Path) -> None:
         """A transient failure keeps skip semantics: a counted skip outcome,
@@ -136,7 +136,7 @@ class TestRouteFailureClassification:
             database_path=tmp_path / "unused.db", exc=RuntimeError("connection blip")
         )
         pipeline = _make_pipeline(bot)
-        outcome = pipeline._build_hop_pools([_step()], [PoolKind.V3])
+        outcome = pipeline.build_hop_pools([_step()], [PoolKind.V3])
         assert outcome is not None
         assert outcome.kind == "skip"
         assert outcome.tag == "build-v3-refused"
@@ -156,7 +156,7 @@ class TestRouteFailureClassification:
         )
         pipeline = _make_pipeline(bot)
         step = _v4_step()
-        outcome = pipeline._build_hop_pools([step], [PoolKind.V4])
+        outcome = pipeline.build_hop_pools([step], [PoolKind.V4])
         assert outcome is not None
         assert outcome.kind == "skip"
         assert outcome.tag == "v4-hook-rejected"
@@ -171,7 +171,7 @@ class TestRouteFailureClassification:
             database_path=tmp_path / "unused.db", exc=DynamicFeePoolRejectedError("dynamic")
         )
         pipeline = _make_pipeline(bot)
-        outcome = pipeline._build_hop_pools([_v4_step()], [PoolKind.V4])
+        outcome = pipeline.build_hop_pools([_v4_step()], [PoolKind.V4])
         assert outcome is not None
         assert outcome.tag == "v4-dynamic-fee-rejected"
 
@@ -182,7 +182,7 @@ class TestRoutePolicyFlows:
         one core build entry — no tracker rungs, no driver-side chain."""
         bot = _RouteRecordingBot(database_path=tmp_path / "unused.db")
         pipeline = _make_pipeline(bot)
-        outcome = pipeline._build_hop_pools([_step()], [PoolKind.V3])
+        outcome = pipeline.build_hop_pools([_step()], [PoolKind.V3])
         assert isinstance(outcome, list), "a successful build returns the pools, not an outcome"
         assert len(bot.build_calls) == 1, "one core entry, not a rung chain"
         call = bot.build_calls[0]

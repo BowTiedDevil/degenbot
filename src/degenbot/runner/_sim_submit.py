@@ -32,6 +32,7 @@ from degenbot.dispatch import (
 from degenbot.runner._dispatch import _resolve_relay_providers
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from typing import Any
 
     from degenbot.runner._dispatch import RawEngineResult
@@ -55,7 +56,11 @@ class BatchWork:
     payloads: dict[int, dict[str, Any]] | None = None
 
 
-async def build_batch_executor(session: _SessionState) -> BatchExecutor:
+async def build_batch_executor(
+    session: _SessionState,
+    *,
+    engine_builder: Callable[..., BatchExecutor] | None = None,
+) -> BatchExecutor:
     """Build the core batch executor over this session's resolved policy.
 
     Every policy value (thin-margin floor, the ERC6909 encode axis, the
@@ -64,6 +69,16 @@ async def build_batch_executor(session: _SessionState) -> BatchExecutor:
     cannot name (the run-mode stance, the relay posture's broadcast fan-out,
     the nonce seed). The construction-time chain read seeds the Rust nonce
     authority's lane; the hosted per-head reconcile maintains it afterwards.
+
+    ``engine_builder`` is the construction seam: a caller injects its own
+    constructor to observe exactly which values cross this boundary. The
+    production default is the companion package's FFI
+    ``build_batch_executor``, so the uninjected path stays Rust-bound.
+
+    Args:
+        session: The session whose runtime handles the executor is built over.
+        engine_builder: The construction override; defaults to the FFI
+            ``build_batch_executor``.
 
     Returns:
         The constructed batch executor.
@@ -93,7 +108,8 @@ async def build_batch_executor(session: _SessionState) -> BatchExecutor:
 
     operator_nonce = int(await session.async_w3.get_transaction_count(session.cfg.operator_address))
     signer = TxSigner(key=session.cfg.operator_private_key, chain_id=session.cfg.chain_id)
-    return build_batch_executor_py(
+    construct = engine_builder or build_batch_executor_py
+    return construct(
         context=sim_ctx,
         dispatcher=session.dispatcher,
         engine=session.engine_registry.engine,

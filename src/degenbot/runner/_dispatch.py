@@ -376,7 +376,7 @@ async def _resolve_relay_providers(
     return broadcast_providers
 
 
-def _render_submit_records(
+def render_submit_records(
     records: list[Any],
     *,
     logger: Any = bot_logger,
@@ -409,7 +409,7 @@ def _render_submit_records(
     return skip_histogram
 
 
-def _track_submission_smoke(
+def track_submission_smoke(
     session: _SessionState,
     outcome: _SimOutcome,
     submitted_count: int,

@@ -20,7 +20,6 @@ import pytest
 from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider
 from degenbot._ffi.simulation import SimulateContext
 from degenbot.dispatch import Dispatcher, TxSigner
-from degenbot.runner import _sim_submit as sim_submit_module
 from degenbot.runner._sim_submit import build_batch_executor
 from degenbot.runner.bot_runner import _SessionState
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
@@ -85,7 +84,7 @@ def test_erc6909_default_is_off() -> None:
     assert _cfg().erc6909_profit is False
 
 
-async def test_construction_injects_only_runtime_values(monkeypatch) -> None:
+async def test_construction_injects_only_runtime_values() -> None:
     """The construction boundary carries NO driver-side policy copy.
 
     The verdict-named knobs (the ERC6909 axis, the thin-margin floor, the
@@ -99,11 +98,9 @@ async def test_construction_injects_only_runtime_values(monkeypatch) -> None:
         recorded.update(kwargs)
         return "executor"
 
-    monkeypatch.setattr(sim_submit_module, "build_batch_executor_py", recorder)
-
     engine_registry = type("R", (), {"engine": "engine"})()
     cfg = _cfg()
-    await build_batch_executor(_session(engine_registry, cfg))
+    await build_batch_executor(_session(engine_registry, cfg), engine_builder=recorder)
 
     assert recorded["dry_run"] is cfg.dry_run
     for verdict_named in (

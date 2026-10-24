@@ -1633,17 +1633,17 @@ class TestPathRegistrationPipeline:
         # fleet intake (the scripted receipts self-resolve inline).
         # Deterministic readiness: signal when the FIRST unit outcome is folded.
         # run_registration (PRG-5) submits discovery units directly through the
-        # fleet intake and folds outcomes via `_absorb_outcome` — it never
+        # fleet intake and folds outcomes via `absorb_outcome` — it never
         # dispatches through `_consume`, so a `_consume` wrapper would never
         # fire from the crawl.
         first_consume = asyncio.Event()
-        real_absorb = pipeline._absorb_outcome
+        real_absorb = pipeline.absorb_outcome
 
         def absorb_and_signal(outcome):
             real_absorb(outcome)
             first_consume.set()
 
-        pipeline._absorb_outcome = absorb_and_signal  # type: ignore[method-assign]
+        pipeline.absorb_outcome = absorb_and_signal  # type: ignore[method-assign]
 
         reg_task = asyncio.create_task(pipeline.run_registration(producer=forever_producer()))
         try:
@@ -1687,9 +1687,9 @@ class TestPathRegistrationPipeline:
         pipeline, _reg, _t_base = self._make_pipeline(tmp_path / "unused.db")
         # Simulate a crawl that is skipping almost everything well below the
         # 1000-registration print threshold.
-        pipeline._record_skip("build-v3:ConnectionError")
-        pipeline._record_skip("build-v3:ConnectionError")
-        pipeline._record_skip("direction-fail")
+        pipeline.record_skip("build-v3:ConnectionError")
+        pipeline.record_skip("build-v3:ConnectionError")
+        pipeline.record_skip("direction-fail")
         pipeline.path_count = 7
         pipeline.skip_count = 3
 

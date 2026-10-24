@@ -36,9 +36,9 @@ class _RecordingPyBot:
 
 def test_record_skip_counts_the_reason(tmp_path: Path) -> None:
     p = make_pipeline(tmp_path / "unused.db")
-    p._record_skip("build-v3:ConnectionError")
-    p._record_skip("build-v3:ConnectionError")
-    p._record_skip("dup")
+    p.record_skip("build-v3:ConnectionError")
+    p.record_skip("build-v3:ConnectionError")
+    p.record_skip("dup")
     assert p._skip_reasons["build-v3:ConnectionError"] == 2
     assert p._skip_reasons["dup"] == 1
 
@@ -46,8 +46,8 @@ def test_record_skip_counts_the_reason(tmp_path: Path) -> None:
 def test_record_skip_forwards_to_the_rust_meter(tmp_path: Path) -> None:
     meter = _RecordingPyBot()
     p = make_pipeline(tmp_path / "unused.db", py_bot=meter)
-    p._record_skip("v4-dynamic-fee-rejected")
-    p._record_skip("path-cap")
+    p.record_skip("v4-dynamic-fee-rejected")
+    p.record_skip("path-cap")
     assert meter.reasons == ["v4-dynamic-fee-rejected", "path-cap"]
 
 
@@ -58,5 +58,5 @@ def test_record_skip_without_a_bot_only_counts(tmp_path: Path) -> None:
     p = PathRegistrationPipeline(
         context=ctx, engine_registry=None, max_paths=0, discovery_batch_size=1000
     )
-    p._record_skip("v4-no-hash")
+    p.record_skip("v4-no-hash")
     assert p._skip_reasons["v4-no-hash"] == 1

@@ -28,8 +28,8 @@ from degenbot.runner._dispatch import (
     MergedOutcome,
     RawEngineResult,
     _render_outcome,
-    _render_submit_records,
-    _track_submission_smoke,
+    render_submit_records,
+    track_submission_smoke,
 )
 from degenbot.runner._sim_submit import BatchWork
 from degenbot.utils.tasks import cancel_and_reap
@@ -261,8 +261,8 @@ async def _drain_batch_outcomes(session: _SessionState, executor: Any) -> None:
             _render_outcome(session, outcome, block)
             records = [typed_submit_record(record) for record in batch.submit_records]
             submitted_count = sum(isinstance(record, SubmittedRecord) for record in records)
-            skip_histogram = _render_submit_records(records)
-            _track_submission_smoke(session, outcome, submitted_count, skip_histogram)
+            skip_histogram = render_submit_records(records)
+            track_submission_smoke(session, outcome, submitted_count, skip_histogram)
         # The drain frame re-raises the loud-abort failure (the consumer loop
         # polls the same surface between batches).
         executor.raise_if_failed()

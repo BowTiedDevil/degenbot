@@ -61,8 +61,8 @@ async def test_broadcast_failure_renders_at_warning() -> None:
     outcome = FakeSubmitOutcome(gas_profitable=[candidate])
 
     # The drain's submit-record render (the executor publishes the raw lane
-    # records; `_render_submit_records` is its display leaf).
-    dispatch_module._render_submit_records([rec], logger=captured)
+    # records; `render_submit_records` is its display leaf).
+    dispatch_module.render_submit_records([rec], logger=captured)
 
     assert any(
         level == "warning" and "relay unreachable" in msg for level, msg in captured.calls
@@ -97,7 +97,9 @@ async def test_silent_veto_streak_warns_once() -> None:
     outcome = FakeSubmitOutcome(gas_profitable=[_candidate()])
 
     for _ in range(4):
-        dispatch_module._track_submission_smoke(session, outcome, 0, {"POOLS_CLAIMED": 1}, logger=captured)
+        dispatch_module.track_submission_smoke(
+            session, outcome, 0, {"POOLS_CLAIMED": 1}, logger=captured
+        )
 
     stall_warnings = [m for lvl, m in captured.calls if lvl == "warning" and "no submissions" in m]
     assert len(stall_warnings) == 1, f"expected one throttled stall warn, got {captured.calls}"
@@ -107,7 +109,7 @@ async def test_silent_veto_streak_warns_once() -> None:
     async def one_submitted(**kwargs):  # noqa: ANN003, ANN202
         return [real_submitted]
 
-    dispatch_module._track_submission_smoke(session, outcome, 1, {}, logger=captured)
+    dispatch_module.track_submission_smoke(session, outcome, 1, {}, logger=captured)
     assert session.submission_smoke.streak == 0
 
 

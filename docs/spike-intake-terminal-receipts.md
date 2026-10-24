@@ -38,7 +38,7 @@ closure**, then for every outstanding unit:
 - `wait_async()` parks on the blocking `recv()` with **no timeout at all**.
 
 `run_registration`'s completion clause is `while inflight: await _resolve(...)`
-with `_resolve` = `await receipt.wait_async()` + `_absorb_outcome(result())`.
+with `_resolve` = `await receipt.wait_async()` + `absorb_outcome(result())`.
 So a Faulted host **hangs the crawl at the receipt join** — the same observed
 shape as the 9,955 freeze, just above the Rust layer. **Therefore the Faulted
 drain MUST resolve every outstanding receipt** (backlog + role queue +
@@ -88,7 +88,7 @@ already filled — it is never re-resolved. So at-most-once holds. "Never drop"
 (§10) is preserved by making the resolution **typed + counted + loud**, never a
 silent discard: a new counter `degenbot_fleet_intake_fault_resolved_total`
 (a `held` label), the sticky `LaneDeath` posture cause, and a completion-log
-clause. `_absorb_outcome` must **not** fold a fault into `register-fail`
+clause. `absorb_outcome` must **not** fold a fault into `register-fail`
 (that would masquerade as a real build failure) — use a dedicated counter and a
 distinct summary line.
 
@@ -100,7 +100,7 @@ distinct summary line.
   No degraded count; the Progress summary ends with the fault line. Mirrors
   solve-lane `LaneDeath` (sticky cordon, process lives, no stranded submitter).
 - **(B) Degraded completion.** Held receipts resolve to a typed *outcome* folded
-  by `_absorb_outcome` as a new `kind="fault"`; the crawl finishes with a lower
+  by `absorb_outcome` as a new `kind="fault"`; the crawl finishes with a lower
   `registered_paths` + a loud log. Non-fatal; risks a soft undercount unless
   the completion line states the faulted count explicitly.
 - **(C) Hybrid (recommended overall).** `run_registration` (the discovery

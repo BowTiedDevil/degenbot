@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from degenbot.exceptions import ContractLogicError
-from tests.golden import oracle as oracle_module
 from tests.golden.oracle import (
     GOLDEN_ROOT,
     REPLAY_DIAL_MSG,
@@ -270,29 +269,25 @@ def test_parity_golden_file_resolution(request: pytest.FixtureRequest) -> None:
 def test_assert_golden_keys_exact_set_equality(
     request: pytest.FixtureRequest,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The shared key-set assert passes on equality and reports the diff with
     the stale=/missing= shape."""
     golden = tmp_path / "g.json"
     golden.write_text(json.dumps({"entries": {"alpha": {"value": 1}, "zeta": {"value": 2}}}))
-    monkeypatch.setattr(oracle_module, "parity_golden_file", lambda req, name: golden)
 
-    assert_golden_keys_exact(request, "some_test", {"alpha", "zeta"})
+    assert_golden_keys_exact(request, "some_test", {"alpha", "zeta"}, path=golden)
 
     with pytest.raises(AssertionError, match=r"stale=\['zeta'\] missing=\[\]"):
-        assert_golden_keys_exact(request, "some_test", {"alpha"})
+        assert_golden_keys_exact(request, "some_test", {"alpha"}, path=golden)
 
     with pytest.raises(AssertionError, match=r"stale=\['zeta'\] missing=\['omega'\]"):
-        assert_golden_keys_exact(request, "some_test", {"alpha", "omega"})
+        assert_golden_keys_exact(request, "some_test", {"alpha", "omega"}, path=golden)
 
 
 def test_assert_golden_keys_exact_skips_in_record_mode(
     request: pytest.FixtureRequest,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """In record mode the shared assert skips: the run rewrites the very file
     being diffed."""
-    monkeypatch.setattr(request.config.option, "golden_mode", "record")
     with pytest.raises(pytest.skip.Exception, match="the record run rewrites"):
-        assert_golden_keys_exact(request, "whatever", set())
+        assert_golden_keys_exact(request, "whatever", set(), mode="record")

@@ -298,6 +298,11 @@ def parity_golden_file(request: pytest.FixtureRequest, test_name: str) -> Path:
     return Path(request.config.getoption("--golden-root")) / rel
 
 
+def golden_mode(request: pytest.FixtureRequest) -> str:
+    """The run's ``--golden-mode``: ``replay`` (the default) or ``record``."""
+    return str(request.config.getoption("--golden-mode"))
+
+
 @pytest.fixture(autouse=True)
 def replay_makes_no_network_calls(
     request: pytest.FixtureRequest,
@@ -310,7 +315,7 @@ def replay_makes_no_network_calls(
     on an unreachable endpoint. Record mode is the one sanctioned dialer (a fork
     pinned to the recorded block), so the block is armed only for replay.
     """
-    if request.config.getoption("--golden-mode") == "record":
+    if golden_mode(request) == "record":
         yield
         return
     monkeypatch.setattr(socket, "create_connection", refuse_connection)
@@ -324,6 +329,9 @@ def assert_golden_keys_exact(
     request: pytest.FixtureRequest,
     test_name: str,
     expected: set[str],
+    *,
+    path: Path | None = None,
+    mode: str | None = None,
 ) -> None:
     """The golden file holds exactly the keys the module's replay drives.
 
@@ -337,10 +345,15 @@ def assert_golden_keys_exact(
     Set-equality against the recorded file closes that drift: a shrunken case
     list cannot leave orphaned oracle entries behind. Skips in record mode,
     where the run rewrites the very file being diffed.
+
+    ``path`` and ``mode`` are the injection seam for testing THIS assert: they
+    default to the file ``test_name`` resolves to and the run's
+    ``--golden-mode``, so a parity module never passes either.
     """
-    if request.config.getoption("--golden-mode") == "record":
+    if (golden_mode(request) if mode is None else mode) == "record":
         pytest.skip(RECORD_MODE_KEY_SET_SKIP_REASON)
-    recorded = set(json.loads(parity_golden_file(request, test_name).read_text())["entries"])
+    golden = parity_golden_file(request, test_name) if path is None else path
+    recorded = set(json.loads(golden.read_text())["entries"])
     assert recorded == expected, (
         f"stale={sorted(recorded - expected)} missing={sorted(expected - recorded)}"
     )
