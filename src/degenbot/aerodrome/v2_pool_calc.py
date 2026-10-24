@@ -30,10 +30,12 @@ from degenbot.exceptions.pool import (
     InvalidSwapInputAmount,
     LiquidityPoolError,
 )
+from degenbot.uniswap import SwapSimulationStatus
 
 if TYPE_CHECKING:
     from degenbot.aerodrome.types import AerodromeV2PoolState
     from degenbot.erc20 import Erc20Token
+    from degenbot.types import Pool
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
@@ -95,6 +97,10 @@ class AerodromeV2PoolCalc:
     reserves_token1: int
     state: AerodromeV2PoolState
     tokens: tuple[Erc20Token, Erc20Token]
+    update_block: int
+    # Pool handle (set by the concrete AerodromeV2Pool companion in the MRO).
+    # The volatile override read routes through it.
+    _py_pool: Pool
 
     def _wire_calculations(self, *, stable: bool) -> None:
         """Wire calculation functions based on the stable flag.
@@ -129,6 +135,10 @@ class AerodromeV2PoolCalc:
         if token_out_quantity <= 0:  # pragma: no cover
             raise InvalidSwapInputAmount
 
+        # The exact-output read has no door arm for this family (the
+        # reserve-pair Aerodrome design answers exact-input only), so the
+        # registered and the override path both resolve the reserves here and
+        # call the wired Rust leaf.
         if token_out == self._token1:
             reserves_in = (
                 override_state.reserves_token0
@@ -200,6 +210,7 @@ class AerodromeV2PoolCalc:
         Raises:
             DegenbotValueError: See function documentation.
             InvalidSwapInputAmount: See function documentation.
+            LiquidityPoolError: See function documentation.
 
         """
         if token_in not in self.tokens:  # pragma: no cover
@@ -208,14 +219,35 @@ class AerodromeV2PoolCalc:
         if token_in_quantity <= 0:  # pragma: no cover
             raise InvalidSwapInputAmount
 
+        token_in_dir: Literal[0, 1] = 0 if token_in == self._token0 else 1
+
+        if override_state is not None and not self._stable_calc_mode:
+            # Volatile override read: the constant-product read runs core-side
+            # through the swap-simulation door over the override reserves (the
+            # fee is borrowed from the registration, never re-sent). The stable
+            # arm below keeps the Solidly leaf — the door refuses a `stable`
+            # identity, since the Solidly family's read arm owns that invariant.
+            read = self._py_pool.simulate(
+                zero_for_one=token_in_dir == 0,
+                amount_specified=-token_in_quantity,
+                block=self.update_block,
+                override_state=override_state,
+            )
+            if read.get("status") is not SwapSimulationStatus.Computed:
+                raise LiquidityPoolError(
+                    message=(
+                        f"Input amount ({token_in_quantity}) overflows "
+                        "uint256 swap math (on-chain revert)"
+                    ),
+                )
+            return -int(read["amount1_delta"] if token_in_dir == 0 else read["amount0_delta"])
+
         reserves_0 = (
             override_state.reserves_token0 if override_state is not None else self.reserves_token0
         )
         reserves_1 = (
             override_state.reserves_token1 if override_state is not None else self.reserves_token1
         )
-
-        token_in_dir: Literal[0, 1] = 0 if token_in == self._token0 else 1
 
         return self._calc_tokens_out_from_tokens_in(
             ctx=_ExactInRequest(

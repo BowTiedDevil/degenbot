@@ -953,6 +953,15 @@ _Avoid_: "quote", "oracle", "gate"; the retired miss-aware/with-fetch twins.
 The simulation request: direction, signed amount (positive = exact output, negative =
 exact input, from the user's perspective), and price limit.
 
+**Override state**:
+The hypothetical per-family state a swap read runs against — `ReservePair` reserves,
+`BalanceVector` balances, or `ConcentratedLiquidity` scalars plus tick rows — one
+`OverrideState` variant per family (a new family is a new variant, never a new method),
+with immutable params borrowed from the registration rather than re-sent. The outcome
+carries the end state (reserve-pair reads include their post-swap reserves), so no caller
+re-derives it from the deltas.
+_Avoid_: "hypothetical pool"; per-family override methods; an override flag beside the state.
+
 **SwapRead**:
 The typed outcome (`Computed` / `NotComputable` / `FetchFailed` / `FetchExhausted`).
 No silent zero — a former silent-failure mode is always an observable variant.

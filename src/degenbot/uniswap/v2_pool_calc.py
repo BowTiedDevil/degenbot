@@ -20,7 +20,7 @@ from degenbot.exceptions.pool import (
     InvalidSwapInputAmount,
     LiquidityPoolError,
 )
-from degenbot.uniswap.math import calc_exact_in_v2, calc_exact_out_v2
+from degenbot.uniswap import SwapSimulationStatus
 
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
@@ -49,9 +49,11 @@ class UniswapV2PoolCalc:
     reserves_token1: int
     state: UniswapV2PoolState
     tokens: tuple[Erc20Token, Erc20Token]
+    update_block: int
     # Pool handle (set by the concrete UniswapV2Pool companion in MRO).
-    # Calc delegation routes the constant-product math through it on the
-    # non-override path.
+    # Calc delegation routes the constant-product math through it — the
+    # registered reads by direct delegation, the override reads through the
+    # swap-simulation door.
     _py_pool: Pool
 
     # These can be overridden by subclasses (e.g., PancakeSwap uses different fee)
@@ -102,33 +104,25 @@ class UniswapV2PoolCalc:
                 )
             return result
 
-        # Override path: Python constant-product calc against the override
-        # reserves. simulate_* relies on this for delta + final_state
-        # consistency (one local snapshot both reads).
-        if zero_for_one:
-            reserves_in = override_state.reserves_token0
-            reserves_out = override_state.reserves_token1
-            fee = self._fee_token0
-        else:
-            reserves_in = override_state.reserves_token1
-            reserves_out = override_state.reserves_token0
-            fee = self._fee_token1
-
-        if token_out_quantity > reserves_out - 1:
+        # Override path: the exact-output read runs core-side through the
+        # swap-simulation door over the override reserves (the door borrows the
+        # fee fractions from the registration), so the companion holds no swap
+        # math. A refusal is the historical overdraw verdict — the requested
+        # output is not available against those reserves.
+        read = self._py_pool.simulate(
+            zero_for_one=zero_for_one,
+            amount_specified=token_out_quantity,
+            block=self.update_block,
+            override_state=override_state,
+        )
+        if read.get("status") is not SwapSimulationStatus.Computed:
+            reserves_out = (
+                override_state.reserves_token1 if zero_for_one else override_state.reserves_token0
+            )
             raise LiquidityPoolError(
                 message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})",  # ruff:ignore[line-too-long]
             )
-
-        return cast(
-            "int",
-            calc_exact_out_v2(
-                reserves_in,
-                reserves_out,
-                token_out_quantity,
-                fee.numerator,
-                fee.denominator,
-            ),
-        )
+        return int(read["amount0_delta"] if zero_for_one else read["amount1_delta"])
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -187,28 +181,25 @@ class UniswapV2PoolCalc:
                     ),
                 ) from e
 
-        # Override path: Python constant-product calc against the override
-        # reserves. simulate_* relies on this for delta + final_state
-        # consistency.
-        if zero_for_one:
-            reserves_in = override_state.reserves_token0
-            reserves_out = override_state.reserves_token1
-            fee = self._fee_token0
-        else:
-            reserves_in = override_state.reserves_token1
-            reserves_out = override_state.reserves_token0
-            fee = self._fee_token1
-
-        return cast(
-            "int",
-            calc_exact_in_v2(
-                reserves_in,
-                reserves_out,
-                token_in_quantity,
-                fee.numerator,
-                fee.denominator,
-            ),
+        # Override path: the exact-input read runs core-side through the
+        # swap-simulation door over the override reserves (the door borrows the
+        # fee fractions from the registration), so the companion holds no swap
+        # math. The read's signed deltas ARE the answer: the output side is the
+        # negative of the token that left the pool.
+        read = self._py_pool.simulate(
+            zero_for_one=zero_for_one,
+            amount_specified=-token_in_quantity,
+            block=self.update_block,
+            override_state=override_state,
         )
+        if read.get("status") is not SwapSimulationStatus.Computed:
+            raise LiquidityPoolError(
+                message=(
+                    f"Input amount ({token_in_quantity}) overflows "
+                    "uint256 swap math (on-chain revert)"
+                ),
+            )
+        return -int(read["amount1_delta"] if zero_for_one else read["amount0_delta"])
 
     def get_absolute_price(
         self,
