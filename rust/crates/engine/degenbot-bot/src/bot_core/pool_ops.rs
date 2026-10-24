@@ -19,13 +19,11 @@ use degenbot_pools::curve_data_provider::CurveDataProvider;
 use degenbot_pools::registry::RegisteredPoolFamily;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::swap_simulation::{
-    simulate_pair_in_given_out, simulate_pair_out, Caveats, OverrideSwap, SwapOutcome, SwapRead,
-    SwapRequest, UnsupportedOverrideFamily,
+    simulate_pair_in_given_out, simulate_pair_out, Caveats, OverrideOutcome, OverrideState,
+    OverrideSwap, SwapOutcome, SwapRead, SwapRequest,
 };
 use degenbot_substrate::{BotState, EncodeSwapError};
 use degenbot_uniswap::v2_encoding::EncodedCall;
-
-use crate::bot_core::V3SwapOutcome;
 
 /// Typed failure from the swap calc ops — the shell maps each variant to its
 /// byte-identical historical Python surface (`bot::errmap`).
@@ -426,19 +424,20 @@ pub fn simulate_mainline(
         .swap_simulation_disarmed(block, pool_id, request)
 }
 
-/// Staged fetch+retry override (hypothetical concentrated liquidity state) sim — the bounded
+/// Staged fetch+retry override (hypothetical state) sim — the bounded
 /// 3-pass loop over [`BotState::override_missing_words`] + the stored fetcher
 /// (fetched ticks merge into the caller-owned TRANSIENT map, never
 /// registered state), then the disarmed override sim.
 ///
-/// # Errors
-/// [`UnsupportedOverrideFamily`] when the target pool is registered under a
-/// non-concentrated-liquidity family (no transient concentrated liquidity state to build).
+/// Only the concentrated-liquidity family carries a sparse tick map, so only
+/// its override state lists words to stage; every other family's override read
+/// is a pure transient and enters the door directly.
+#[must_use]
 pub fn simulate_override_with_fetch(
     state: &StateLock<BotState>,
     over: &mut OverrideSwap,
     block: u64,
-) -> Result<Option<V3SwapOutcome>, UnsupportedOverrideFamily> {
+) -> Option<OverrideOutcome> {
     for _ in 0..3u8 {
         let staged = {
             let guard = state.read_at(LockSite::Orchestrator);
@@ -446,30 +445,29 @@ pub fn simulate_override_with_fetch(
             let missing = guard.override_missing_words(over);
             missing.map(|missing| (fetcher, missing))
         };
-        let Some((fetcher, missing)) = staged else {
-            return Ok(None);
-        };
+        let (fetcher, missing) = staged?;
         if missing.is_empty() {
             break;
         }
         // Misses exist but no fetcher is stored: the hypothetical cannot be
         // backfilled — fail as `None` exactly like the disarmed sim's
         // FetchExhausted arm.
-        let Some(fetcher) = fetcher else {
-            return Ok(None);
-        };
+        let fetcher = fetcher?;
         // Fetches: NO state lock held.
         let mut staged_words = Vec::new();
         for word in &missing {
             match fetcher.fetch_missing_tick_word(over.pool_id, *word, block) {
                 Ok(f) => staged_words.push(f),
-                Err(_) => return Ok(None),
+                Err(_) => return None,
             }
         }
-        // Merge fetched ticks into the caller-owned override map.
+        // Merge fetched ticks into the caller-owned transient map.
+        let OverrideState::ConcentratedLiquidity { tick_data, .. } = &mut over.state else {
+            return None;
+        };
         for f in &staged_words {
             for (tick, info) in &f.ticks {
-                over.tick_data.insert(*tick, info.clone());
+                tick_data.insert(*tick, info.clone());
             }
         }
     }
@@ -811,35 +809,71 @@ mod tests {
         let mut over = OverrideSwap {
             pool_id: V3_ID,
             request: exact_in_request(true),
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 1_000_000,
-            tick: 0,
-            tick_data: over_ticks,
+            state: OverrideState::ConcentratedLiquidity {
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data: over_ticks,
+            },
         };
         let outcome = simulate_override_with_fetch(&state, &mut over, 100)
-            .expect("override sim over a concentrated liquidity family");
-        let outcome = outcome.expect("complete hypothetical tick data computes");
-        assert_eq!(outcome.liquidity, 1_000_000);
+            .expect("complete hypothetical tick data computes");
+        let OverrideOutcome::ConcentratedLiquidity(walk) = outcome else {
+            panic!("the state variant selects the family: {outcome:?}")
+        };
+        assert_eq!(walk.liquidity, 1_000_000);
         assert!(
-            outcome.tick <= 0 && outcome.tick > -20,
+            walk.tick <= 0 && walk.tick > -20,
             "end tick {} in range",
-            outcome.tick
+            walk.tick
         );
-        assert!(outcome.amount1 > U256::ZERO);
+        assert!(walk.amount1 > U256::ZERO);
+        // The concentrated-liquidity family is the only one with words to
+        // stage; a complete hypothetical stages none.
+        assert_eq!(
+            state
+                .read_at(LockSite::Orchestrator)
+                .override_missing_words(&over),
+            Some(Vec::new())
+        );
 
-        // A non-concentrated-liquidity family has no transient concentrated liquidity state: the typed refusal.
+        // The reserve-pair family computes from the caller's TRANSIENT
+        // reserves: no fetch pass exists for it (nothing to stage, and no
+        // fetcher could be consulted).
         let mut over_v2 = OverrideSwap {
             pool_id: V2_ID,
             request: exact_in_request(true),
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 1_000_000,
-            tick: 0,
-            tick_data: HashMap::new(),
+            state: OverrideState::ReservePair {
+                reserves_token0: U112::from(1_000u64),
+                reserves_token1: U112::from(2_000u64),
+            },
         };
-        let err = simulate_override_with_fetch(&state, &mut over_v2, 100)
-            .expect_err("non-concentrated-liquidity family refuses the override seam");
-        assert_eq!(err.pool_id, V2_ID);
-        assert_eq!(err.family, "v2");
+        let outcome = simulate_override_with_fetch(&state, &mut over_v2, 100)
+            .expect("the reserve-pair override computes");
+        let OverrideOutcome::ReservePair(payload) = outcome else {
+            panic!("the state variant selects the family: {outcome:?}")
+        };
+        // (100 * 997 * 2000) / (1000 * 1000 + 100 * 997) = 181 (EVM floor div).
+        assert_eq!(payload.consumed, -i256(100));
+        assert_eq!(payload.delivered, i256(181));
+        assert_eq!(payload.end_reserves_token0, U112::from(1_100u64));
+        assert_eq!(payload.end_reserves_token1, U112::from(1_819u64));
+
+        // A state the registration cannot carry is the door's refusal — the
+        // shell marshalls the variant from the registered family, so this
+        // pairing is unreachable from Python.
+        let mut mismatch = OverrideSwap {
+            pool_id: V3_ID,
+            request: exact_in_request(true),
+            state: OverrideState::ReservePair {
+                reserves_token0: U112::from(1_000u64),
+                reserves_token1: U112::from(2_000u64),
+            },
+        };
+        assert_eq!(
+            simulate_override_with_fetch(&state, &mut mismatch, 100),
+            None
+        );
     }
 
     #[test]

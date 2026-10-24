@@ -24,11 +24,15 @@ use std::sync::OnceLock;
 /// `rg 'match entry' rust/crates -g '!*tests*'`; the one excluded hit is the
 /// cli-core exchange-arm test fixture, not a pool matcher).
 ///
-/// The count is 21 because the entry-side tag table is not a central matcher:
+/// The count is 22 because the entry-side tag table is not a central matcher:
 /// `BotState::pool_family` reads the typed family and renders
 /// `RegisteredPoolFamily::tag`, so the only family-name spelling lives on the
-/// enum.
-const PINNED_MATCH_ENTRY_CENSUS: usize = 21;
+/// enum. The 22nd row is the override door's SECOND dispatch row
+/// (`reserve_pair_override_read`, the peer of the concentrated-liquidity row):
+/// ADR-073 D2 permits exactly one dispatch row per family at each central
+/// site, and the override door now carries one per family with an override
+/// read.
+const PINNED_MATCH_ENTRY_CENSUS: usize = 22;
 
 /// The reintroduction marker the census counts (shared by the workspace scan
 /// and the synthetic-fixture negative probe, so the probe witnesses the same
@@ -44,6 +48,7 @@ const MATCH_ENTRY_TOKEN: &str = "match entry";
 /// `the_families_export_only_the_door_fns` meta-test.
 const DOOR_FNS: &[&str] = &[
     "read_swap",
+    "read_swap_override",
     "capture_hop",
     "capture_aerodrome_hop",
     "observe",

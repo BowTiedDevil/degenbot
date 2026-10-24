@@ -31,6 +31,9 @@
 //! - [`capture_hop`] — the resolve projection (the V2 design): one fresh
 //!   projection of one hop as the math leaf's hop payload;
 //! - [`read_swap`] — the swap-read arm, ALL variants behind one entry;
+//! - [`read_swap_override`] — the override (hypothetical) read arm: the same
+//!   read code over a transient carrying the caller's reserves, answering the
+//!   POST-swap reserves alongside the amounts;
 //! - [`apply_event`] — one buffered `Sync` event onto one slice;
 //! - [`observe`] — family-local GET behavior over one slice.
 //!
@@ -59,6 +62,7 @@
 //! collapse: both slices' `apply_sync` bodies are byte-identical full-state
 //! [`crate::state_history::V2BlockDelta`] pushes).
 
+use alloy::primitives::aliases::U112;
 use alloy::primitives::U256;
 
 use degenbot_math::solidly;
@@ -66,7 +70,7 @@ use degenbot_math::v2::IntHopState;
 
 use crate::families::solidly as solidly_read;
 
-use crate::state_history::ReservePairPoolState;
+use crate::state_history::{ReorgJournal, ReservePairPoolState, V2BlockDelta};
 use crate::v3_state::SimulateSwapError;
 
 use super::door::{FamilyApply, Observe, Observed, ReadOutcome, SwapReadRequest, SyncEvent};
@@ -233,6 +237,197 @@ pub fn read_swap(design: ReservePairState<'_>, request: SwapReadRequest) -> Read
             }
             ReadOutcome::simple(read_aerodrome_volatile_swap(state, identity, request))
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The override (hypothetical) read arm
+// ---------------------------------------------------------------------------
+
+/// The transient reserves a hypothetical (override) read runs against — the
+/// caller's view of the pair, narrowed to the on-chain `uint112` width at the
+/// FFI edge. The family's IMMUTABLE params (the per-direction fee fractions,
+/// the Camelot `10**decimals` scales) are not carried here: they are borrowed
+/// from the registered identity, exactly as the registered read borrows them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OverrideReserves {
+    /// Hypothetical token0 reserve.
+    pub reserve0: U112,
+    /// Hypothetical token1 reserve.
+    pub reserve1: U112,
+}
+
+/// The override read's computed payload: the swap's per-side magnitudes AND
+/// the POST-swap reserves the transient implies.
+///
+/// A hypothetical read leaves no registered state to re-read, so the end state
+/// is part of the read's own answer — the shell and the Python companion
+/// consume it as data and never re-derive it from the deltas.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OverrideAmounts {
+    /// Taken from the user (unsigned, input-token units).
+    pub amount_in: U256,
+    /// Given to the user (unsigned, output-token units).
+    pub amount_out: U256,
+    /// Post-swap reserves.
+    pub end_reserves: OverrideReserves,
+}
+
+/// The override read's verdict — the registered arm's refusal set, plus the
+/// end-state payload a transient read owes its caller.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OverrideReadOutcome {
+    /// The transient read computed.
+    Computed(OverrideAmounts),
+    /// The registered arm's typed refusal: a zero exact-output request,
+    /// overdraw against the transient reserves, a `stable` Aerodrome identity
+    /// at the volatile door, a scale-less Camelot identity, an
+    /// arithmetic/invariant overflow, an input past the `uint112` reserve
+    /// width, or a request variant this family does not answer.
+    NotComputable,
+}
+
+/// The override (hypothetical) read arm: the caller's reserves + the
+/// registered pool's immutable params through the SAME read code the
+/// registered slice takes ([`read_swap`] over a transient mirror — the
+/// concentrated-liquidity override precedent, `v3::override_state`).
+///
+/// I/O-free by construction: a reserve-pair slice has no tick words, no
+/// fetcher, and this arm reads no state owner — the transient is the whole
+/// input besides the identity.
+#[must_use]
+pub fn read_swap_override(
+    design: ReservePairState<'_>,
+    reserves: OverrideReserves,
+    journal_depth: usize,
+    request: SwapReadRequest,
+) -> OverrideReadOutcome {
+    // The specified side is the caller's, the computed side the math's; the
+    // direction selects the end-state orientation below.
+    let (zero_for_one, specified_is_output, specified_amount) = match request {
+        SwapReadRequest::ExactIn {
+            zero_for_one,
+            amount_in,
+        } => (zero_for_one, false, amount_in),
+        SwapReadRequest::ExactOut {
+            zero_for_one,
+            amount_out,
+        } => (zero_for_one, true, amount_out),
+        // A variant this family doesn't answer is the typed refusal (the
+        // registered arm's own rule).
+        _ => return OverrideReadOutcome::NotComputable,
+    };
+    let read = match design {
+        ReservePairState::V2 { identity, state } => {
+            let transient = transient_v2(state, reserves, journal_depth);
+            read_swap(
+                ReservePairState::V2 {
+                    identity,
+                    state: &transient,
+                },
+                request,
+            )
+        }
+        ReservePairState::Aerodrome { identity, state } => {
+            let transient = transient_aerodrome(state, reserves, journal_depth);
+            read_swap(
+                ReservePairState::Aerodrome {
+                    identity,
+                    state: &transient,
+                },
+                request,
+            )
+        }
+    };
+    let Ok(computed) = read.amount() else {
+        return OverrideReadOutcome::NotComputable;
+    };
+    let (amount_in, amount_out) = if specified_is_output {
+        (computed, specified_amount)
+    } else {
+        (specified_amount, computed)
+    };
+    let Some(end_reserves) = end_reserves(reserves, zero_for_one, amount_in, amount_out) else {
+        return OverrideReadOutcome::NotComputable;
+    };
+    OverrideReadOutcome::Computed(OverrideAmounts {
+        amount_in,
+        amount_out,
+        end_reserves,
+    })
+}
+
+/// The post-swap reserves a computed read implies: the input side grows by the
+/// amount that entered, the output side shrinks by the amount that left. Both
+/// ends are CHECKED against the on-chain `uint112` width — an input too large
+/// for a reserve refuses rather than wrapping.
+fn end_reserves(
+    reserves: OverrideReserves,
+    zero_for_one: bool,
+    amount_in: U256,
+    amount_out: U256,
+) -> Option<OverrideReserves> {
+    let (input_side, output_side) = if zero_for_one {
+        (reserves.reserve0, reserves.reserve1)
+    } else {
+        (reserves.reserve1, reserves.reserve0)
+    };
+    let grown = narrow_u112(amount_in).and_then(|delta| input_side.checked_add(delta))?;
+    let shrunk = narrow_u112(amount_out).and_then(|delta| output_side.checked_sub(delta))?;
+    Some(if zero_for_one {
+        OverrideReserves {
+            reserve0: grown,
+            reserve1: shrunk,
+        }
+    } else {
+        OverrideReserves {
+            reserve0: shrunk,
+            reserve1: grown,
+        }
+    })
+}
+
+/// Narrow an amount to the on-chain `uint112` reserve width (`None` = it does
+/// not fit, so no such end reserve exists).
+fn narrow_u112(amount: U256) -> Option<U112> {
+    if amount > U256::from(U112::MAX) {
+        None
+    } else {
+        Some(amount.to::<U112>())
+    }
+}
+
+/// A transient mirror of the V2 slice carrying the caller's reserves — the
+/// reserve-pair analogue of the concentrated-liquidity override transient: the
+/// same slice type the design arms read, the hypothetical reserves, the
+/// registered price clock and nonce, and a fresh journal (a read never pushes
+/// a delta, so the journal stays inert).
+fn transient_v2(
+    state: &V2PoolState,
+    reserves: OverrideReserves,
+    journal_depth: usize,
+) -> V2PoolState {
+    V2PoolState {
+        reserve0: reserves.reserve0,
+        reserve1: reserves.reserve1,
+        update_block: state.update_block,
+        state_nonce: state.state_nonce,
+        journal: ReorgJournal::<V2BlockDelta>::new(journal_depth),
+    }
+}
+
+/// The Aerodrome V2 design's transient mirror (see [`transient_v2`]).
+fn transient_aerodrome(
+    state: &AerodromeV2PoolState,
+    reserves: OverrideReserves,
+    journal_depth: usize,
+) -> AerodromeV2PoolState {
+    AerodromeV2PoolState {
+        reserve0: reserves.reserve0,
+        reserve1: reserves.reserve1,
+        update_block: state.update_block,
+        state_nonce: state.state_nonce,
+        journal: ReorgJournal::<V2BlockDelta>::new(journal_depth),
     }
 }
 
@@ -924,6 +1119,304 @@ mod tests {
         assert_eq!(hop.reserve_in, U256::from(2_000_000u64));
         assert_eq!(hop.reserve_out, U256::from(1_000_000u64));
         assert_eq!(hop.gamma_numer, U256::from(997u64));
+    }
+
+    // -------------------------------------------------------------------
+    // The override (hypothetical) read arm: caller-supplied reserves + the
+    // registered identity's immutable params, through the registered read
+    // code. I/O-free (a reserve-pair slice has no tick words and no fetcher).
+    // -------------------------------------------------------------------
+    const JOURNAL_DEPTH: usize = 8;
+
+    /// The independent closed-form oracle (on-chain `getAmountOut`), recomputed
+    /// from the transient reserves in `U256` — shares no production code path.
+    fn exact_in_oracle(reserve_in: u64, reserve_out: u64, amount_in: u64) -> U256 {
+        let amount_in_with_fee = U256::from(amount_in) * U256::from(997u64);
+        amount_in_with_fee * U256::from(reserve_out)
+            / (U256::from(reserve_in) * U256::from(1000u64) + amount_in_with_fee)
+    }
+
+    fn override_reserves(reserve0: u64, reserve1: u64) -> OverrideReserves {
+        OverrideReserves {
+            reserve0: U112::from(reserve0),
+            reserve1: U112::from(reserve1),
+        }
+    }
+
+    #[test]
+    fn reserve_pair_override_exact_in_reads_the_transient_reserves() {
+        // What: an override exact-in read follows the CALLER's reserves (not
+        // the registered slice), keeps the registered identity's fee, and
+        // reports the post-swap reserves the transient implies.
+        let (identity, state) = v2_fixture();
+        let reserves = override_reserves(2_000_000_000_000, 1_000_000_000_000_000_000);
+        let read = read_swap_override(
+            ReservePairState::V2 {
+                identity: &identity,
+                state: &state,
+            },
+            reserves,
+            JOURNAL_DEPTH,
+            SwapReadRequest::ExactIn {
+                zero_for_one: true,
+                amount_in: U256::from(AMOUNT_IN),
+            },
+        );
+        let OverrideReadOutcome::Computed(amounts) = read else {
+            panic!("the transient read computes, got {read:?}")
+        };
+        let expected_out = exact_in_oracle(2_000_000_000_000, 1_000_000_000_000_000_000, AMOUNT_IN);
+        assert_eq!(amounts.amount_in, U256::from(AMOUNT_IN));
+        assert_eq!(amounts.amount_out, expected_out);
+        assert_ne!(
+            expected_out,
+            U256::from(EXPECTED_AMOUNT_OUT),
+            "the transient reserves must answer a different number than the slice"
+        );
+        // Post-swap: the input side grew by the amount that entered, the
+        // output side shrank by the amount that left.
+        assert_eq!(
+            amounts.end_reserves.reserve0,
+            U112::from(2_000_000_000_000u64 + AMOUNT_IN)
+        );
+        assert_eq!(
+            amounts.end_reserves.reserve1,
+            U112::from(1_000_000_000_000_000_000u64 - expected_out.to::<u64>())
+        );
+        // The registered slice is untouched — the override is hypothetical.
+        assert_eq!(state.reserve0, U112::from(RESERVE0));
+        assert_eq!(state.reserve1, U112::from(RESERVE1));
+    }
+
+    #[test]
+    fn reserve_pair_override_exact_out_closes_the_form_and_carries_the_end_reserves() {
+        let (identity, state) = v2_fixture();
+        let reserves = override_reserves(1_000_000_000_000, 500_000_000_000_000_000);
+        let amount_out = U256::from(400_000_000_000_000_000u64);
+        let read = read_swap_override(
+            ReservePairState::V2 {
+                identity: &identity,
+                state: &state,
+            },
+            reserves,
+            JOURNAL_DEPTH,
+            SwapReadRequest::ExactOut {
+                zero_for_one: true,
+                amount_out,
+            },
+        );
+        let OverrideReadOutcome::Computed(amounts) = read else {
+            panic!("the exact-output transient read computes, got {read:?}")
+        };
+        // The closed form over the transient reserves:
+        // ceil(reserve_in * amount_out * fee_denom / ((reserve_out - amount_out) * gamma)) + 1.
+        let expected_in = U256::from(1_000_000_000_000u64) * amount_out * U256::from(1000u64)
+            / ((U256::from(500_000_000_000_000_000u64) - amount_out) * U256::from(997u64))
+            + U256::ONE;
+        assert_eq!(amounts.amount_in, expected_in);
+        assert_eq!(amounts.amount_out, amount_out);
+        assert_eq!(
+            amounts.end_reserves.reserve0,
+            U112::from(1_000_000_000_000u64 + expected_in.to::<u64>())
+        );
+        assert_eq!(
+            amounts.end_reserves.reserve1,
+            U112::from(100_000_000_000_000_000u64)
+        );
+    }
+
+    #[test]
+    fn reserve_pair_override_overdraw_is_the_registered_arms_typed_refusal() {
+        // What: an exact-output request that could not be paid out of the
+        // TRANSIENT reserves is the same typed refusal the registered arm
+        // answers — never a wrapped `uint112` end reserve.
+        let (identity, state) = v2_fixture();
+        let reserves = override_reserves(1_000_000_000_000, 500_000_000_000_000_000);
+        let design = ReservePairState::V2 {
+            identity: &identity,
+            state: &state,
+        };
+        // The registered slice holds enough; the transient does not — the
+        // refusal follows the override.
+        assert_eq!(
+            read_swap_override(
+                design,
+                override_reserves(1_000_000_000_000, 1_000u64),
+                JOURNAL_DEPTH,
+                SwapReadRequest::ExactOut {
+                    zero_for_one: true,
+                    amount_out: U256::from(1_001u64),
+                },
+            ),
+            OverrideReadOutcome::NotComputable
+        );
+        // The zero request refuses exactly as it does at the registered arm.
+        assert_eq!(
+            read_swap_override(
+                design,
+                reserves,
+                JOURNAL_DEPTH,
+                SwapReadRequest::ExactOut {
+                    zero_for_one: true,
+                    amount_out: U256::ZERO,
+                },
+            ),
+            OverrideReadOutcome::NotComputable
+        );
+    }
+
+    #[test]
+    fn reserve_pair_override_end_reserves_refuse_rather_than_wrap_uint112() {
+        // What: an input that would push the transient reserve past the
+        // on-chain `uint112` width refuses — the end state is never a wrapped
+        // reserve.
+        let (identity, state) = v2_fixture();
+        let read = read_swap_override(
+            ReservePairState::V2 {
+                identity: &identity,
+                state: &state,
+            },
+            override_reserves(RESERVE0, RESERVE1),
+            JOURNAL_DEPTH,
+            SwapReadRequest::ExactIn {
+                zero_for_one: true,
+                amount_in: U256::from(U112::MAX),
+            },
+        );
+        assert_eq!(read, OverrideReadOutcome::NotComputable);
+    }
+
+    #[test]
+    fn reserve_pair_override_fee_is_the_registered_identitys_retained_fraction() {
+        // What: the transient carries reserves ONLY — the directional fee
+        // fraction rides the registered identity, so a fee change with
+        // identical reserves changes the read.
+        let (mut identity, state) = v2_fixture();
+        let read = |identity: &V2PoolIdentity| match read_swap_override(
+            ReservePairState::V2 {
+                identity,
+                state: &state,
+            },
+            override_reserves(RESERVE0, RESERVE1),
+            JOURNAL_DEPTH,
+            SwapReadRequest::ExactIn {
+                zero_for_one: true,
+                amount_in: U256::from(AMOUNT_IN),
+            },
+        ) {
+            OverrideReadOutcome::Computed(amounts) => amounts.amount_out,
+            OverrideReadOutcome::NotComputable => panic!("the override read computes"),
+        };
+        // The transient reserves equal the registered ones, so the override
+        // read answers the registered constant exactly.
+        assert_eq!(read(&identity), U256::from(EXPECTED_AMOUNT_OUT));
+        identity.fee_token0 = (99, 100);
+        assert!(read(&identity) < U256::from(EXPECTED_AMOUNT_OUT));
+    }
+
+    #[test]
+    fn reserve_pair_override_aerodrome_volatile_reads_the_fee_fraction() {
+        let (identity, state) = aerodrome_fixture(false);
+        let read = read_swap_override(
+            ReservePairState::Aerodrome {
+                identity: &identity,
+                state: &state,
+            },
+            override_reserves(1_000_000, 2_000_000),
+            JOURNAL_DEPTH,
+            SwapReadRequest::ExactIn {
+                zero_for_one: true,
+                amount_in: U256::from(1000u64),
+            },
+        );
+        let OverrideReadOutcome::Computed(amounts) = read else {
+            panic!("the volatile override read computes, got {read:?}")
+        };
+        assert_eq!(amounts.amount_in, U256::from(1000u64));
+        assert_eq!(amounts.amount_out, U256::from(1992u64));
+        assert_eq!(
+            amounts.end_reserves,
+            override_reserves(1_001_000, 1_998_008)
+        );
+
+        // A stable identity stays the Solidly family's: the volatile door
+        // refuses it exactly as the registered arm does.
+        let (stable_identity, stable_state) = aerodrome_fixture(true);
+        assert_eq!(
+            read_swap_override(
+                ReservePairState::Aerodrome {
+                    identity: &stable_identity,
+                    state: &stable_state,
+                },
+                override_reserves(1_000_000, 2_000_000),
+                JOURNAL_DEPTH,
+                SwapReadRequest::ExactIn {
+                    zero_for_one: true,
+                    amount_in: U256::from(1000u64),
+                },
+            ),
+            OverrideReadOutcome::NotComputable
+        );
+    }
+
+    #[test]
+    fn reserve_pair_override_camelot_stable_routes_to_the_solidly_door() {
+        // What: a `stable_swap` identity read through the OVERRIDE arm keeps
+        // the behavioral routing (ADR-073) — the transient reserves go through
+        // the Solidly door's Camelot arm, not the constant product.
+        let (identity, state) = camelot_stable_fixture();
+        let reserves = override_reserves(CAM2[1], CAM2[2]);
+        let read = read_swap_override(
+            ReservePairState::V2 {
+                identity: &identity,
+                state: &state,
+            },
+            reserves,
+            JOURNAL_DEPTH,
+            SwapReadRequest::ExactIn {
+                zero_for_one: true,
+                amount_in: U256::from(CAM2[0]),
+            },
+        );
+        let OverrideReadOutcome::Computed(amounts) = read else {
+            panic!("the Camelot override read computes, got {read:?}")
+        };
+        assert_eq!(amounts.amount_out, U256::from(CAM2[7]));
+        assert_eq!(
+            amounts.end_reserves,
+            override_reserves(CAM2[1] + CAM2[0], CAM2[2] - CAM2[7])
+        );
+        // The constant product on the same reserves answers a different
+        // number — the routing is load-bearing on the override arm too.
+        assert_ne!(
+            exact_in_oracle(CAM2[1], CAM2[2], CAM2[0]),
+            U256::from(CAM2[7])
+        );
+    }
+
+    #[test]
+    fn reserve_pair_override_zero_input_keeps_the_sentinel_and_the_reserves() {
+        let (identity, state) = v2_fixture();
+        let reserves = override_reserves(RESERVE0, RESERVE1);
+        assert_eq!(
+            read_swap_override(
+                ReservePairState::V2 {
+                    identity: &identity,
+                    state: &state,
+                },
+                reserves,
+                JOURNAL_DEPTH,
+                SwapReadRequest::ExactIn {
+                    zero_for_one: true,
+                    amount_in: U256::ZERO,
+                },
+            ),
+            OverrideReadOutcome::Computed(OverrideAmounts {
+                amount_in: U256::ZERO,
+                amount_out: U256::ZERO,
+                end_reserves: reserves,
+            })
+        );
     }
 
     #[test]

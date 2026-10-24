@@ -31,6 +31,7 @@ use std::sync::Arc;
 
 use ::degenbot_pools::tick_fetch::TickWordFetcher;
 
+use alloy::primitives::aliases::U112;
 use alloy::primitives::{I256, U256};
 
 use ::degenbot_pools::families::concentrated_liquidity;
@@ -225,17 +226,35 @@ pub enum SwapRead {
     FetchExhausted { word: i32 },
 }
 
-/// A non-concentrated-liquidity pool was asked for an override (hypothetical concentrated liquidity) simulation.
+/// The payload of a reserve-pair (constant-product) override read: THE
+/// hypothetical read's answer, end state included.
 ///
-/// The override seam builds a transient V3/V4 state from override scalars; a
-/// registered non-concentrated-liquidity family has no such state, so the request is a typed
-/// refusal instead of a bare `None` indistinguishable from a compute miss.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UnsupportedOverrideFamily {
-    /// The requested pool id.
-    pub pool_id: u64,
-    /// The registered family tag.
-    pub family: &'static str,
+/// A transient read leaves no registered state to re-read, so the post-swap
+/// reserves ride the outcome — the shell and the Python companion consume them
+/// as data and never re-derive them from the deltas.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReservePairSwapOutcome {
+    /// Taken FROM the user (negative magnitude of the input sent).
+    pub consumed: I256,
+    /// Given TO the user (positive magnitude of the output delivered).
+    pub delivered: I256,
+    /// POST-swap token0 reserve.
+    pub end_reserves_token0: U112,
+    /// POST-swap token1 reserve.
+    pub end_reserves_token1: U112,
+    /// Constant-product families carry no sparse-tick risk today.
+    pub caveats: Caveats,
+}
+
+/// A computed override (hypothetical) read, per family — the outcome
+/// vocabulary beside [`OverrideState`]'s state vocabulary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OverrideOutcome {
+    /// Reserve-pair family result (the transient read's amounts + end reserves).
+    ReservePair(ReservePairSwapOutcome),
+    /// Concentrated-liquidity family result: the raw engine outcome, whose
+    /// end state (price / liquidity / tick) is already complete.
+    ConcentratedLiquidity(V3SwapOutcome),
 }
 
 /// Trust flags implied by a pool's registration-time tick coverage.
@@ -380,21 +399,53 @@ pub fn simulate_pair_out(
     }
 }
 
-/// Hypothetical (override) pool scalars: "what if the pool were at state X?"
-/// The transient copy borrows the registered pool's immutable params
-/// (`fee`, `tick_spacing`, `pool_key`) — only these four scalars differ.
-#[derive(Clone, Debug)]
+/// The per-family hypothetical pool state — "what if the pool were at state
+/// X?" The VARIANT names the family, so a wrong-family override is
+/// unrepresentable rather than a typed gap: the door dispatches on it, and the
+/// registered pool supplies the family's IMMUTABLE params (fees, tick
+/// spacing, pool key, Camelot decimal scales) — never re-sent by the caller.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OverrideState {
+    /// Reserve-pair (V2 / Aerodrome V2 volatile): the caller's view of the pair.
+    ReservePair {
+        /// Hypothetical token0 reserve (on-chain `uint112` width).
+        reserves_token0: U112,
+        /// Hypothetical token1 reserve (on-chain `uint112` width).
+        reserves_token1: U112,
+    },
+    /// Balance-vector (Curve / Balancer): the caller's view of the balances.
+    /// Those families answer override reads through their own pair door today
+    /// (the caller's balances ride `SwapReadRequest::PairExactIn` /
+    /// `curve_get_dy`); this variant is the door's shared shape, not yet a
+    /// compute row here.
+    BalanceVector {
+        /// Hypothetical balances, one per pool token.
+        balances: Vec<U256>,
+    },
+    /// Concentrated liquidity (V3 / V4): the hypothetical scalars + tick data.
+    ConcentratedLiquidity {
+        /// Override `sqrtPriceX96`.
+        sqrt_price_x96: U256,
+        /// Override active liquidity.
+        liquidity: u128,
+        /// Override current tick.
+        tick: i32,
+        /// Replacement tick data for the hypothetical walk.
+        tick_data: HashMap<i32, ::degenbot_pools::TickInfo>,
+    },
+}
+
+/// A hypothetical (override) swap read: the registered pool to borrow
+/// immutable params + fetcher from, the signed request (same user-perspective
+/// convention), and the family's override state.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OverrideSwap {
     /// Registered pool to derive identity/params/fetcher from.
     pub pool_id: u64,
     /// Directional swap request (same user-perspective sign convention).
     pub request: SwapRequest,
-    /// Override scalars.
-    pub sqrt_price_x96: U256,
-    pub liquidity: u128,
-    pub tick: i32,
-    /// Replacement tick data for the hypothetical walk.
-    pub tick_data: HashMap<i32, ::degenbot_pools::TickInfo>,
+    /// The hypothetical state the read runs against.
+    pub state: OverrideState,
 }
 
 // The transient (hypothetical) concentrated liquidity target machinery, the per-family compute
@@ -402,7 +453,10 @@ pub struct OverrideSwap {
 // the family read module (ADR-073 D1):
 // degenbot_pools::families::concentrated_liquidity — the swap-read door owns
 // ALL variants (registered stateless / armed / disarm-fetch / override /
-// discovery) behind `read_swap`.
+// discovery) behind `read_swap`. Each other family owns its own override arm
+// the same way (`reserve_pair::read_swap_override` over a transient built from
+// the caller's reserves), so this module only marshalls the state and adapts
+// the outcome — it owns no family math.
 impl BotState {
     /// the missing bitmap words a concentrated liquidity swap
     /// would need, WITHOUT fetching and WITHOUT mutating registered state
@@ -489,21 +543,21 @@ impl BotState {
         }
     }
 
-    /// # Errors
-    ///
-    /// [`UnsupportedOverrideFamily`] when the pool is registered under a
-    /// non-concentrated-liquidity family (no transient concentrated liquidity state to build).
+    /// The override read with miss recovery DISARMED (the staged-pre-pass
+    /// contract): a residual sparse miss surfaces as the door's not-computable
+    /// verdict instead of fetching under the caller's read guard.
+    #[must_use]
     pub fn simulate_override_disarmed(
         &self,
         over: &OverrideSwap,
         block: u64,
-    ) -> Result<Option<V3SwapOutcome>, UnsupportedOverrideFamily> {
+    ) -> Option<OverrideOutcome> {
         self.simulate_override_ext(over, block, true)
     }
 
     /// the missing bitmap words the OVERLAY sim would fetch,
     /// listed by a collect-only walk over a transient built from the
-    /// override scalars + the caller tick data (no fetch, no registered
+    /// override state + the caller tick data (no fetch, no registered
     /// mutation). Pair with the lock-free fetch choreography in pool.rs
     /// (`ensure_override_missing_staged`).
     #[must_use]
@@ -512,9 +566,21 @@ impl BotState {
             return Some(Vec::new());
         }
         let entry = self.registry.pools.get(&over.pool_id)?;
+        // Only the concentrated-liquidity family carries a sparse tick map, so
+        // only its override read has words to miss — every other family's
+        // override read is a pure transient (I/O-free).
+        let OverrideState::ConcentratedLiquidity {
+            sqrt_price_x96,
+            liquidity,
+            tick,
+            tick_data,
+        } = &over.state
+        else {
+            return Some(Vec::new());
+        };
         // One concentrated liquidity dispatch row (ADR-073 D2): the override discovery pass is
         // the family read module's read_swap door in Discovery mode over a
-        // Sparse transient the door builds from the override scalars. The
+        // Sparse transient the door builds from the override state. The
         // checked-word set is NOT mirrored (a hypothetical has no
         // established words) and registered state is never touched.
         let source = match entry {
@@ -524,10 +590,10 @@ impl BotState {
                     state: &p.1,
                 },
                 concentrated_liquidity::OverrideScalars {
-                    sqrt_price_x96: over.sqrt_price_x96,
-                    liquidity: over.liquidity,
-                    tick: over.tick,
-                    tick_data: &over.tick_data,
+                    sqrt_price_x96: *sqrt_price_x96,
+                    liquidity: *liquidity,
+                    tick: *tick,
+                    tick_data,
                 },
                 p.1.update_block,
                 self.registry.journal_depth,
@@ -538,10 +604,10 @@ impl BotState {
                     state: &p.1,
                 },
                 concentrated_liquidity::OverrideScalars {
-                    sqrt_price_x96: over.sqrt_price_x96,
-                    liquidity: over.liquidity,
-                    tick: over.tick,
-                    tick_data: &over.tick_data,
+                    sqrt_price_x96: *sqrt_price_x96,
+                    liquidity: *liquidity,
+                    tick: *tick,
+                    tick_data,
                 },
                 p.1.update_block,
                 self.registry.journal_depth,
@@ -562,37 +628,139 @@ impl BotState {
         )
     }
 
-    /// # Errors
-    ///
-    /// [`UnsupportedOverrideFamily`] when the pool is registered under a
-    /// non-concentrated-liquidity family (no transient concentrated liquidity state to build).
-    pub fn simulate_override(
-        &self,
-        over: &OverrideSwap,
-        block: u64,
-    ) -> Result<Option<V3SwapOutcome>, UnsupportedOverrideFamily> {
+    /// The override read with miss recovery ARMED (the stored fetcher merges
+    /// into the hypothetical only).
+    #[must_use]
+    pub fn simulate_override(&self, over: &OverrideSwap, block: u64) -> Option<OverrideOutcome> {
         self.simulate_override_ext(over, block, false)
     }
 
+    /// The override door: dispatch on the override STATE's variant (the state
+    /// names its family), borrow the registered pool's immutable params, and
+    /// run the family's override read. A `None` is the door's typed
+    /// not-computable verdict — a compute miss, an overdraw, or a state the
+    /// registration cannot carry (a pairing the shell's registered-family
+    /// dispatch cannot construct).
     fn simulate_override_ext(
         &self,
         over: &OverrideSwap,
         block: u64,
         disarm_fetch: bool,
-    ) -> Result<Option<V3SwapOutcome>, UnsupportedOverrideFamily> {
+    ) -> Option<OverrideOutcome> {
         if over.request.amount_specified.is_zero() {
-            return Ok(None);
+            return None;
         }
-        let Some(entry) = self.registry.pools.get(&over.pool_id) else {
-            return Ok(None);
+        let entry = self.registry.pools.get(&over.pool_id)?;
+        match &over.state {
+            OverrideState::ReservePair {
+                reserves_token0,
+                reserves_token1,
+            } => self.reserve_pair_override_read(
+                entry,
+                over,
+                reserve_pair::OverrideReserves {
+                    reserve0: *reserves_token0,
+                    reserve1: *reserves_token1,
+                },
+            ),
+            // The balance-vector families answer override reads through their
+            // own pair door (the caller's balances ride
+            // `SwapReadRequest::PairExactIn` / `curve_get_dy`); this door
+            // carries the shared shape, not a compute row.
+            OverrideState::BalanceVector { .. } => None,
+            OverrideState::ConcentratedLiquidity {
+                sqrt_price_x96,
+                liquidity,
+                tick,
+                tick_data,
+            } => self.concentrated_liquidity_override_read(
+                entry,
+                over,
+                block,
+                disarm_fetch,
+                concentrated_liquidity::OverrideScalars {
+                    sqrt_price_x96: *sqrt_price_x96,
+                    liquidity: *liquidity,
+                    tick: *tick,
+                    tick_data,
+                },
+            ),
+        }
+    }
+
+    /// The reserve-pair override read row: the family read module's override
+    /// arm over the caller's reserves, the registered identity's fee fractions
+    /// / Camelot scales, and the registered price clock. I/O-free — a
+    /// reserve-pair slice has no tick words and no fetcher.
+    fn reserve_pair_override_read(
+        &self,
+        entry: &PoolEntry,
+        over: &OverrideSwap,
+        reserves: reserve_pair::OverrideReserves,
+    ) -> Option<OverrideOutcome> {
+        let design = match entry {
+            PoolEntry::V2(p) => reserve_pair::ReservePairState::V2 {
+                identity: &p.0,
+                state: &p.1,
+            },
+            PoolEntry::AerodromeV2(p) => reserve_pair::ReservePairState::Aerodrome {
+                identity: &p.0,
+                state: &p.1,
+            },
+            // A reserve-pair state presented for a family whose registration
+            // carries no reserve-pair identity.
+            _ => return None,
         };
+        // The door's signed request → the family door's exact side.
+        let magnitude = over.request.amount_specified.into_sign_and_abs().1;
+        let request = if over.request.amount_specified.is_positive() {
+            SwapReadRequest::ExactOut {
+                zero_for_one: over.request.zero_for_one,
+                amount_out: magnitude,
+            }
+        } else {
+            SwapReadRequest::ExactIn {
+                zero_for_one: over.request.zero_for_one,
+                amount_in: magnitude,
+            }
+        };
+        match reserve_pair::read_swap_override(
+            design,
+            reserves,
+            self.registry.journal_depth,
+            request,
+        ) {
+            reserve_pair::OverrideReadOutcome::Computed(amounts) => {
+                Some(OverrideOutcome::ReservePair(ReservePairSwapOutcome {
+                    consumed: -unsigned_to_user_delta(amounts.amount_in),
+                    delivered: unsigned_to_user_delta(amounts.amount_out),
+                    end_reserves_token0: amounts.end_reserves.reserve0,
+                    end_reserves_token1: amounts.end_reserves.reserve1,
+                    caveats: Caveats::default(),
+                }))
+            }
+            reserve_pair::OverrideReadOutcome::NotComputable => None,
+        }
+    }
+
+    /// The concentrated-liquidity override read row: the family read module's
+    /// [`concentrated_liquidity::read_swap`] door over a Sparse transient the
+    /// door builds from the override scalars. Registered pools passed the
+    /// hook/dynamic-fee admission gate, so the transient's zeroed hook and
+    /// protocol-fee fields are safe by construction. Fetched words merge into
+    /// the TRANSIENT only — the override is a hypothetical that cannot pollute
+    /// registered `BotState`.
+    fn concentrated_liquidity_override_read(
+        &self,
+        entry: &PoolEntry,
+        over: &OverrideSwap,
+        block: u64,
+        disarm_fetch: bool,
+        over_scalars: concentrated_liquidity::OverrideScalars<'_>,
+    ) -> Option<OverrideOutcome> {
         // One concentrated liquidity dispatch row (ADR-073 D2): the override sim is the family
         // read module's read_swap door over a Sparse transient the door
-        // builds from the override scalars. Registered pools passed the
-        // hook/dynamic-fee admission gate, so the transient's zeroed
-        // hook_flags/protocol_fee are safe by construction. Fetched words
-        // merge into the TRANSIENT only — the override is a hypothetical
-        // that cannot pollute registered `BotState`.
+        // builds from the override state.
         let (fetcher, source) = match entry {
             PoolEntry::V3(p) => (
                 p.1.fetcher.clone(),
@@ -601,12 +769,7 @@ impl BotState {
                         identity: &p.0,
                         state: &p.1,
                     },
-                    concentrated_liquidity::OverrideScalars {
-                        sqrt_price_x96: over.sqrt_price_x96,
-                        liquidity: over.liquidity,
-                        tick: over.tick,
-                        tick_data: &over.tick_data,
-                    },
+                    over_scalars,
                     p.1.update_block,
                     self.registry.journal_depth,
                 ),
@@ -618,22 +781,13 @@ impl BotState {
                         identity: &p.0,
                         state: &p.1,
                     },
-                    concentrated_liquidity::OverrideScalars {
-                        sqrt_price_x96: over.sqrt_price_x96,
-                        liquidity: over.liquidity,
-                        tick: over.tick,
-                        tick_data: &over.tick_data,
-                    },
+                    over_scalars,
                     p.1.update_block,
                     self.registry.journal_depth,
                 ),
             ),
-            _ => {
-                return Err(UnsupportedOverrideFamily {
-                    pool_id: over.pool_id,
-                    family: super::entry_family(entry),
-                });
-            }
+            // Concentrated-liquidity scalars presented for another family.
+            _ => return None,
         };
         let mode = match &fetcher {
             Some(f) if !disarm_fetch => concentrated_liquidity::FetchMode::Armed {
@@ -643,27 +797,25 @@ impl BotState {
             },
             _ => concentrated_liquidity::FetchMode::Disarmed,
         };
-        Ok(
-            match concentrated_liquidity::read_swap(
-                source,
-                SwapReadRequest::ConcentratedLiquidity {
-                    zero_for_one: over.request.zero_for_one,
-                    amount_specified: over.request.amount_specified,
-                    sqrt_price_limit: over.request.sqrt_price_limit,
-                },
-                mode,
-            ) {
-                ReadOutcome::Computed { outcome, .. } => Some(outcome),
-                ReadOutcome::NotComputable
-                | ReadOutcome::FetchFailed { .. }
-                | ReadOutcome::FetchExhausted { .. } => None,
-                ReadOutcome::Amount(_)
-                | ReadOutcome::Stateless(_)
-                | ReadOutcome::MissingWords(_) => {
-                    unreachable!("override reads run armed or disarmed, never stateless/discovery")
-                }
+        match concentrated_liquidity::read_swap(
+            source,
+            SwapReadRequest::ConcentratedLiquidity {
+                zero_for_one: over.request.zero_for_one,
+                amount_specified: over.request.amount_specified,
+                sqrt_price_limit: over.request.sqrt_price_limit,
             },
-        )
+            mode,
+        ) {
+            ReadOutcome::Computed { outcome, .. } => {
+                Some(OverrideOutcome::ConcentratedLiquidity(outcome))
+            }
+            ReadOutcome::NotComputable
+            | ReadOutcome::FetchFailed { .. }
+            | ReadOutcome::FetchExhausted { .. } => None,
+            ReadOutcome::Amount(_) | ReadOutcome::Stateless(_) | ReadOutcome::MissingWords(_) => {
+                unreachable!("override reads run armed or disarmed, never stateless/discovery")
+            }
+        }
     }
 }
 
@@ -1243,31 +1395,210 @@ mod tests {
         );
     }
 
-    /// An override (hypothetical concentrated liquidity) request against a non-concentrated-liquidity family is a
-    /// typed refusal, not a bare `None` an override miss could produce.
+    // ---------------------------------------------------------------------
+    // The override (hypothetical) door: family-complete override state,
+    // dispatched by variant, carrying the post-swap reserves for the
+    // reserve-pair family.
+    // ---------------------------------------------------------------------
+
+    fn v2_swap_fixture(bot: &mut BotState) -> u64 {
+        use alloy::primitives::aliases::U112;
+        bot.register_v2_pool(&crate::RegisterV2PoolParams {
+            address: alloy::primitives::Address::from([0xbdu8; 20]),
+            token0: alloy::primitives::Address::ZERO,
+            token1: alloy::primitives::Address::from([1u8; 20]),
+            reserve0: U112::from(1_000u64),
+            reserve1: U112::from(2_000u64),
+            fee_token0: (997, 1000),
+            fee_token1: (997, 1000),
+            factory: alloy::primitives::Address::ZERO,
+            update_block: 0,
+            ..Default::default()
+        })
+        .expect("test setup: V2 registration")
+    }
+
+    fn exact_in_100() -> SwapRequest {
+        SwapRequest {
+            zero_for_one: true,
+            amount_specified: -I256::try_from(100u64).unwrap(),
+            sqrt_price_limit: None,
+        }
+    }
+
     #[test]
-    fn override_simulation_on_a_non_concentrated_liquidity_family_is_typed() {
+    fn reserve_pair_override_reads_the_hypothetical_reserves_and_carries_the_end_state() {
         let mut bot = BotState::new();
-        let pid = register_curve_for_swap(&mut bot);
+        let pid = v2_swap_fixture(&mut bot);
+        // Reserves doubled with respect to the registration: the read must
+        // follow the OVERRIDE, and answer a different number than the slice.
+        let over = OverrideSwap {
+            pool_id: pid,
+            request: exact_in_100(),
+            state: OverrideState::ReservePair {
+                reserves_token0: alloy::primitives::aliases::U112::from(2_000u64),
+                reserves_token1: alloy::primitives::aliases::U112::from(4_000u64),
+            },
+        };
+        // I/O-free: the staged fetch pre-pass lists no words for this family,
+        // so the fetch choreography never runs a fetcher.
+        assert_eq!(bot.override_missing_words(&over), Some(Vec::new()));
+        let outcome = bot
+            .simulate_override_disarmed(&over, 0)
+            .expect("the reserve-pair override computes");
+        let OverrideOutcome::ReservePair(payload) = outcome else {
+            panic!("the state variant selects the family: {outcome:?}")
+        };
+        // (100 * 997 * 4000) / (2000 * 1000 + 100 * 997) = 189 (EVM floor div).
+        assert_eq!(payload.consumed, -I256::try_from(100u64).unwrap());
+        assert_eq!(payload.delivered, I256::try_from(189u64).unwrap());
+        assert_eq!(
+            payload.end_reserves_token0,
+            alloy::primitives::aliases::U112::from(2_100u64)
+        );
+        assert_eq!(
+            payload.end_reserves_token1,
+            alloy::primitives::aliases::U112::from(3_811u64)
+        );
+        assert!(payload.caveats.is_empty());
+
+        // The hypothetical cannot pollute the registration: the registered
+        // read still answers 181 from the registered 1000/2000 reserves.
+        assert_eq!(
+            bot.swap_simulation(0, pid, exact_in_100()),
+            SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
+                consumed: -I256::try_from(100u64).unwrap(),
+                delivered: I256::try_from(181u64).unwrap(),
+                caveats: Caveats::default(),
+            }))
+        );
+    }
+
+    #[test]
+    fn reserve_pair_override_armed_and_disarmed_reads_agree() {
+        // The reserve-pair override read is a pure transient: arming the miss
+        // recovery cannot change the answer (no fetch to run).
+        let mut bot = BotState::new();
+        let pid = v2_swap_fixture(&mut bot);
+        let over = OverrideSwap {
+            pool_id: pid,
+            request: exact_in_100(),
+            state: OverrideState::ReservePair {
+                reserves_token0: alloy::primitives::aliases::U112::from(1_000u64),
+                reserves_token1: alloy::primitives::aliases::U112::from(2_000u64),
+            },
+        };
+        assert_eq!(
+            bot.simulate_override(&over, 0),
+            bot.simulate_override_disarmed(&over, 0)
+        );
+    }
+
+    #[test]
+    fn concentrated_liquidity_override_computes_through_the_door() {
+        let mut bot = BotState::new();
+        let pid = register_canonical_v3(&mut bot, PoolTickCoverage::Tracked, true);
+        // A complete hypothetical tick set around the current tick — the walk
+        // needs no fetch (the concentrated liquidity transient is Sparse).
+        let mut over_ticks = HashMap::new();
+        let liquidity_net = FIXTURE_LIQUIDITY.cast_signed();
+        for (tick, net) in [
+            (-20i32, liquidity_net),
+            (10, -liquidity_net),
+            (20, liquidity_net),
+        ] {
+            over_ticks.insert(
+                tick,
+                degenbot_pools::TickInfo {
+                    liquidity_gross: alloy::primitives::U128::from(FIXTURE_LIQUIDITY),
+                    liquidity_net: net,
+                    block: 0,
+                },
+            );
+        }
         let over = OverrideSwap {
             pool_id: pid,
             request: SwapRequest {
                 zero_for_one: true,
-                amount_specified: -I256::try_from(1u64).unwrap(),
+                amount_specified: -I256::try_from(FIXTURE_AMOUNT_IN).unwrap(),
                 sqrt_price_limit: None,
             },
+            state: OverrideState::ConcentratedLiquidity {
+                sqrt_price_x96: U256::from(2_u8).pow(U256::from(96_u8)),
+                liquidity: FIXTURE_LIQUIDITY,
+                tick: 0,
+                tick_data: over_ticks,
+            },
+        };
+        let outcome = bot
+            .simulate_override_disarmed(&over, 0)
+            .expect("the hypothetical walk computes");
+        let OverrideOutcome::ConcentratedLiquidity(walk) = outcome else {
+            panic!("the state variant selects the family: {outcome:?}")
+        };
+        assert!(walk.amount1 > U256::ZERO, "the hypothetical walk delivers");
+    }
+
+    /// The door dispatches by the state VARIANT against the registered
+    /// family (the shell marshalls the variant from the registration, so a
+    /// mismatch is unreachable from Python): a state whose family the
+    /// registration does not carry answers the door's refusal, never a panic
+    /// and never a mis-priced compute.
+    #[test]
+    fn an_override_state_the_registration_cannot_carry_is_the_doors_refusal() {
+        let mut bot = BotState::new();
+        let v2 = v2_swap_fixture(&mut bot);
+        let v3 = register_canonical_v3(&mut bot, PoolTickCoverage::Tracked, true);
+        let curve = register_curve_for_swap(&mut bot);
+        let concentrated_liquidity_state = OverrideState::ConcentratedLiquidity {
             sqrt_price_x96: U256::from(1u128) << 96,
             liquidity: 1_000,
             tick: 0,
             tick_data: HashMap::new(),
         };
-        let err = bot.simulate_override_disarmed(&over, 0).unwrap_err();
+        let reserve_pair_state = OverrideState::ReservePair {
+            reserves_token0: alloy::primitives::aliases::U112::from(1_000u64),
+            reserves_token1: alloy::primitives::aliases::U112::from(2_000u64),
+        };
+        // concentrated liquidity scalars for a reserve-pair registration
         assert_eq!(
-            err,
-            UnsupportedOverrideFamily {
-                pool_id: pid,
-                family: "curve"
-            }
+            bot.simulate_override_disarmed(
+                &OverrideSwap {
+                    pool_id: v2,
+                    request: exact_in_100(),
+                    state: concentrated_liquidity_state.clone(),
+                },
+                0
+            ),
+            None
+        );
+        // reserve-pair reserves for a concentrated liquidity registration
+        assert_eq!(
+            bot.simulate_override_disarmed(
+                &OverrideSwap {
+                    pool_id: v3,
+                    request: exact_in_100(),
+                    state: reserve_pair_state.clone(),
+                },
+                0
+            ),
+            None
+        );
+        // The balance-vector family takes its override reads through its own
+        // pair door (the caller's balances ride `simulate_pair_out` /
+        // `curve_get_dy`); this door answers the shape, not a compute row.
+        assert_eq!(
+            bot.simulate_override_disarmed(
+                &OverrideSwap {
+                    pool_id: curve,
+                    request: exact_in_100(),
+                    state: OverrideState::BalanceVector {
+                        balances: vec![U256::from(1_000u64), U256::from(2_000u64)],
+                    },
+                },
+                0
+            ),
+            None
         );
     }
 

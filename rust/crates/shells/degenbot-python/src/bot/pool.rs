@@ -17,15 +17,19 @@ use std::sync::Arc;
 use pyo3::types::{PyDict, PyList, PySet, PyTuple};
 
 use crate::bot::errmap::{
-    encode_swap_failed, exact_output_family_gap, hooked_pool_approximation, override_family_gap,
-    pool_unregistered, swap_family_gap, swap_math_in_overflow, swap_math_overflow,
-    swap_unknown_pool,
+    encode_swap_failed, exact_output_family_gap, hooked_pool_approximation, pool_unregistered,
+    swap_family_gap, swap_math_in_overflow, swap_math_overflow, swap_unknown_pool,
 };
 use degenbot_bot::bot_core::pool_ops::{self, SwapOpError};
 use degenbot_bot::bot_core::refresh::{RefreshError, RefreshOutcome};
 use degenbot_bot::bot_core::TickInfo;
 use degenbot_substrate::state_lock::StateLock;
-use degenbot_substrate::swap_simulation::{Caveats, SwapOutcome, SwapRead, SwapRequest};
+use degenbot_substrate::swap_simulation::{
+    Caveats, OverrideOutcome, OverrideState, ReservePairSwapOutcome, SwapOutcome, SwapRead,
+    SwapRequest,
+};
+
+use super::narrow_reserve;
 use degenbot_substrate::{BotState, CurveInputsError};
 
 /// `PyO3` adapter wrapping a Python fetch-word callable as a
@@ -558,8 +562,10 @@ impl PyLiquidityPool {
         }
     }
 
-    /// Shared override-sim inner: reads the hypothetical scalars off a concentrated liquidity
-    /// pool-state object and drives the gate's transient-state fetch+retry.
+    /// Shared override-sim inner: marshall the hypothetical state for the pool's
+    /// REGISTERED family, then drive the gate's override door. The dispatch IS
+    /// the registration's, so a wrong-family override cannot be constructed
+    /// here — the state variant names the family.
     fn sim_override_inner(
         &self,
         py: Python<'_>,
@@ -568,31 +574,12 @@ impl PyLiquidityPool {
         block: u64,
         override_state: &Bound<'_, PyAny>,
         sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Option<degenbot_bot::bot_core::V3SwapOutcome>> {
-        let override_sqrt = crate::conversion::alloy::extract_python_u256(
-            &override_state.getattr("sqrt_price_x96")?,
-        )?;
-        let override_liquidity = u128::try_from(crate::conversion::alloy::extract_python_u256(
-            &override_state.getattr("liquidity")?,
-        )?)
-        .map_err(|_| {
-            pyo3::exceptions::PyOverflowError::new_err("override_liquidity must fit in u128")
-        })?;
-        let override_tick = i32::try_from(
-            override_state
-                .getattr("tick")?
-                .extract::<i64>()
-                .map_err(|_| {
-                    pyo3::exceptions::PyTypeError::new_err("override_tick must be an int")
-                })?,
-        )
-        .map_err(|_| pyo3::exceptions::PyOverflowError::new_err("override_tick must fit in i32"))?;
-        let rust_tick_data =
-            TickData::from_py_liquidity_rows(&override_state.getattr("tick_data")?)?;
+    ) -> PyResult<Option<OverrideOutcome>> {
         let sqrt_price_limit = match sqrt_price_limit_x96 {
             Some(v) if !v.is_none() => Some(crate::conversion::alloy::extract_python_u256(v)?),
             _ => None,
         };
+        let state = self.override_state_of(py, override_state)?;
         let mut over = degenbot_substrate::swap_simulation::OverrideSwap {
             pool_id: self.pool_id,
             request: SwapRequest {
@@ -600,20 +587,80 @@ impl PyLiquidityPool {
                 amount_specified,
                 sqrt_price_limit,
             },
-            sqrt_price_x96: override_sqrt,
-            liquidity: override_liquidity,
-            tick: override_tick,
-            tick_data: rust_tick_data,
+            state,
         };
         let core = self.core.clone();
-        let outcome =
-            py.detach(move || pool_ops::simulate_override_with_fetch(&core, &mut over, block));
-        match outcome {
-            Ok(o) => Ok(o),
-            // A non-concentrated-liquidity family has no transient concentrated liquidity state to simulate — a typed
-            // refusal, never a bare `None` an override miss could produce.
-            Err(u) => Err(override_family_gap(u.pool_id, u.family)),
-        }
+        Ok(py.detach(move || pool_ops::simulate_override_with_fetch(&core, &mut over, block)))
+    }
+
+    /// Read the pool's hypothetical state off the Python per-family pool-state
+    /// object — dispatched by the pool's REGISTERED family. Immutable params
+    /// (fees, tick spacing, Camelot decimal scales) are NEVER sent: the core
+    /// borrows them from the registration.
+    fn override_state_of(
+        &self,
+        py: Python<'_>,
+        override_state: &Bound<'_, PyAny>,
+    ) -> PyResult<OverrideState> {
+        let to_u256 = crate::conversion::alloy::extract_python_u256;
+        Ok(match self.family_of(py)? {
+            // Reserve-pair: the caller's view of the pair, narrowed to the
+            // on-chain `uint112` width at this ingestion seam.
+            "v2" | "aerodrome-v2" => OverrideState::ReservePair {
+                reserves_token0: narrow_reserve(
+                    to_u256(&override_state.getattr("reserves_token0")?)?,
+                    "reserves_token0",
+                )?,
+                reserves_token1: narrow_reserve(
+                    to_u256(&override_state.getattr("reserves_token1")?)?,
+                    "reserves_token1",
+                )?,
+            },
+            // Concentrated liquidity: the hypothetical scalars + tick rows.
+            "v3" | "v4" => {
+                let liquidity = u128::try_from(to_u256(&override_state.getattr("liquidity")?)?)
+                    .map_err(|_| {
+                        pyo3::exceptions::PyOverflowError::new_err(
+                            "override_liquidity must fit in u128",
+                        )
+                    })?;
+                let tick =
+                    i32::try_from(override_state.getattr("tick")?.extract::<i64>().map_err(
+                        |_| pyo3::exceptions::PyTypeError::new_err("override_tick must be an int"),
+                    )?)
+                    .map_err(|_| {
+                        pyo3::exceptions::PyOverflowError::new_err("override_tick must fit in i32")
+                    })?;
+                OverrideState::ConcentratedLiquidity {
+                    sqrt_price_x96: to_u256(&override_state.getattr("sqrt_price_x96")?)?,
+                    liquidity,
+                    tick,
+                    tick_data: TickData::from_py_liquidity_rows(
+                        &override_state.getattr("tick_data")?,
+                    )?,
+                }
+            }
+            // Balance vector: the caller's view of the balances. Those
+            // families answer override reads through their own pair doors
+            // (`curve_get_dy` / `calculate_tokens_out_for_pair`), which carry
+            // the balances as data.
+            "curve" | "balancer-weighted" | "balancer-stable" => {
+                let balances = override_state.getattr("balances")?;
+                let balances = balances.cast::<pyo3::types::PyList>().map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err(
+                        "override_state.balances must be a list[int]",
+                    )
+                })?;
+                OverrideState::BalanceVector {
+                    balances: crate::bot::extract_u256_list(balances)?,
+                }
+            }
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unsupported pool family {other}"
+                )));
+            }
+        })
     }
 
     /// The pool ID this handle references.
@@ -946,9 +993,12 @@ impl PyLiquidityPool {
     /// signed per-token deltas in the deposited-`+`/sent-`-` convention, the
     /// end state, and `specified_met`); otherwise the typed
     /// `SwapSimulationStatus` member for the refusal (`NotComputable`,
-    /// `FetchFailed`, or `FetchExhausted`). Pass `override_state` (a
-    /// concentrated liquidity pool-state object) to simulate against a
-    /// hypothetical.
+    /// `FetchFailed`, or `FetchExhausted`). Pass `override_state` (this
+    /// pool's own pool-state object) to simulate against a hypothetical: the
+    /// shell marshalls the state for the pool's REGISTERED family, so a
+    /// reserve-pair read carries `reserves_token0` / `reserves_token1`
+    /// (POST-swap) where a concentrated-liquidity read carries the end
+    /// `sqrt_price_x96` / `liquidity` / `tick`.
     #[pyo3(signature = (zero_for_one, amount_specified, block, sqrt_price_limit_x96=None, override_state=None))]
     fn simulate(
         &self,
@@ -970,7 +1020,7 @@ impl PyLiquidityPool {
                 sqrt_price_limit_x96,
             )?;
             return match outcome {
-                Some(o) => build_simulate_read(
+                Some(OverrideOutcome::ConcentratedLiquidity(o)) => build_simulate_read(
                     py,
                     zero_for_one,
                     amount_specified,
@@ -978,6 +1028,9 @@ impl PyLiquidityPool {
                     o.amount1,
                     (o.sqrt_price_x96, o.liquidity, o.tick),
                 ),
+                Some(OverrideOutcome::ReservePair(o)) => {
+                    build_reserve_pair_simulate_read(py, zero_for_one, &o)
+                }
                 None => not_computable_read(py),
             };
         }
@@ -2842,9 +2895,20 @@ pub enum PySwapSimulationStatus {
 }
 
 /// THE sign-mapping site (ADR-037): an unsigned per-token amount pair becomes
-/// signed deltas in the deposited-`+`/sent-`-` convention — the input side is
-/// positive, the output side negative — plus whether the requested side was
-/// fully met.
+/// signed per-token deltas in the deposited-`+`/sent-`-` convention — the
+/// input side positive, the output side negative — keyed by the direction.
+fn token_deltas(zero_for_one: bool, input: U256, output: U256) -> (I256, I256) {
+    let input_delta = I256::try_from(input).unwrap_or(I256::MAX);
+    let output_delta = -I256::try_from(output).unwrap_or(I256::MAX);
+    if zero_for_one {
+        (input_delta, output_delta)
+    } else {
+        (output_delta, input_delta)
+    }
+}
+
+/// The concentrated-liquidity read dict: the deltas, the end scalars, and
+/// whether the requested side was fully met.
 fn build_simulate_read(
     py: Python<'_>,
     zero_for_one: bool,
@@ -2859,13 +2923,7 @@ fn build_simulate_read(
     } else {
         (amount1, amount0)
     };
-    let input_delta = I256::try_from(input).unwrap_or(I256::MAX);
-    let output_delta = -I256::try_from(output).unwrap_or(I256::MAX);
-    let (amount0_delta, amount1_delta) = if zero_for_one {
-        (input_delta, output_delta)
-    } else {
-        (output_delta, input_delta)
-    };
+    let (amount0_delta, amount1_delta) = token_deltas(zero_for_one, input, output);
     let specified_met = if amount_specified.is_negative() {
         (-amount_specified).into_raw() <= input
     } else {
@@ -2885,7 +2943,37 @@ fn build_simulate_read(
     Ok(read.into_any().unbind())
 }
 
-/// The `NotComputable` typed read (zero amount, miss, or non-concentrated-liquidity payload).
+/// The reserve-pair read dict — the frozen cross-chunk contract: the same
+/// `status` / `amount0_delta` / `amount1_delta` keys every computed read
+/// carries, PLUS the POST-swap `reserves_token0` / `reserves_token1` (the
+/// hypothetical read's own end state, which no caller may re-derive from the
+/// deltas). The concentrated-liquidity end scalars are absent by construction:
+/// a constant-product pool has no price or tick state.
+fn build_reserve_pair_simulate_read(
+    py: Python<'_>,
+    zero_for_one: bool,
+    outcome: &ReservePairSwapOutcome,
+) -> PyResult<Py<PyAny>> {
+    let input = (-outcome.consumed).into_raw();
+    let output = outcome.delivered.into_raw();
+    let (amount0_delta, amount1_delta) = token_deltas(zero_for_one, input, output);
+    let read = PyDict::new(py);
+    read.set_item("status", PySwapSimulationStatus::Computed)?;
+    read.set_item("amount0_delta", i256_to_py(py, amount0_delta)?)?;
+    read.set_item("amount1_delta", i256_to_py(py, amount1_delta)?)?;
+    read.set_item(
+        "reserves_token0",
+        crate::conversion::alloy::u256_to_py(py, &U256::from(outcome.end_reserves_token0))?,
+    )?;
+    read.set_item(
+        "reserves_token1",
+        crate::conversion::alloy::u256_to_py(py, &U256::from(outcome.end_reserves_token1))?,
+    )?;
+    Ok(read.into_any().unbind())
+}
+
+/// The `NotComputable` typed read (zero amount, a miss, or a family the seam
+/// does not project a computed read for).
 fn not_computable_read(py: Python<'_>) -> PyResult<Py<PyAny>> {
     let read = PyDict::new(py);
     read.set_item("status", PySwapSimulationStatus::NotComputable)?;

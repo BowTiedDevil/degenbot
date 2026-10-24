@@ -3758,9 +3758,12 @@ class Pool:
         signed per-token deltas in the deposited-`+`/sent-`-` convention, the
         end state, and `specified_met`); otherwise the typed
         `SwapSimulationStatus` member for the refusal (`NotComputable`,
-        `FetchFailed`, or `FetchExhausted`). Pass `override_state` (a
-        concentrated liquidity pool-state object) to simulate against a
-        hypothetical.
+        `FetchFailed`, or `FetchExhausted`). Pass `override_state` (this
+        pool's own pool-state object) to simulate against a hypothetical: the
+        shell marshalls the state for the pool's REGISTERED family, so a
+        reserve-pair read carries `reserves_token0` / `reserves_token1`
+        (POST-swap) where a concentrated-liquidity read carries the end
+        `sqrt_price_x96` / `liquidity` / `tick`.
         """
     @property
     def stable_swap(self, /) -> bool:

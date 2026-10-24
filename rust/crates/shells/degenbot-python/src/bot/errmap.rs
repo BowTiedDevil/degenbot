@@ -384,14 +384,6 @@ pub(crate) fn exact_output_family_gap(op: &str, pool_id: u64, family: &str) -> P
     ))
 }
 
-/// `ValueError` for an override sim against a non-concentrated-liquidity family (the family tag
-/// renders in its historical `Debug` form).
-pub(crate) fn override_family_gap(pool_id: u64, family: &str) -> PyErr {
-    PyValueError::new_err(format!(
-        "simulate_override: pool {pool_id} family {family:?} has no concentrated-liquidity override state"
-    ))
-}
-
 /// `ValueError` for a pool handle whose id is not registered.
 pub(crate) fn pool_unregistered(pool_id: u64) -> PyErr {
     PyValueError::new_err(format!("pool {pool_id} is not registered"))
@@ -1113,11 +1105,6 @@ mod tests {
 
     #[test]
     fn pool_override_and_handle_surfaces_pin_their_vocabulary() {
-        // The family tag renders in its historical Debug (quoted) form.
-        assert_eq!(
-            value_error(&override_family_gap(7, "v2")),
-            "simulate_override: pool 7 family \"v2\" has no concentrated-liquidity override state"
-        );
         assert_eq!(
             value_error(&pool_unregistered(12)),
             "pool 12 is not registered"
