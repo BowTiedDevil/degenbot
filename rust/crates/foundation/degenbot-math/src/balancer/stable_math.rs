@@ -4,9 +4,9 @@
 //! Plain integer math (NOT 18-decimal fixed point) — the Solidity
 //! `Math.mul`/`Math.divDown`/`Math.divUp` map to plain `*` / `/` here with
 //! zero-division checks. FixedPoint operations (`mul_down`/`mul_up` etc.) are
-//! used ONLY by the BPT/join/exit functions, which are out of scope for this
-//! slice (the swap math + the two `_calculate_invariant` variants cover the
-//! slice 12e plan + the oracle snapshot).
+//! used ONLY by the BPT/join/exit functions, which are out of scope here (the
+//! swap math + the two `_calculate_invariant` variants are what this crate
+//! ports, cross-checked by the oracle snapshot).
 //!
 //! Two `_calculate_invariant` implementations:
 //!

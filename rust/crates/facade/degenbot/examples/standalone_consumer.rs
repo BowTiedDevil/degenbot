@@ -218,8 +218,8 @@ fn main() {
     let mut bot = BotState::new();
 
     // 2. Derive the V2 pool's registration parameters from the `UNISWAP_V2`
-    //    `DexIdentity` preset (ADR-005 slice 6 — the standalone-constraint
-    //    data layer). Using the preset's factory + fee params means a
+    //    `DexIdentity` preset (the standalone-constraint data layer). Using the
+    //    preset's factory + fee params means a
     //    standalone Rust consumer reaches on-chain-correct swap math without
     //    any Python-side ClassVar lookup.
     let token0 = address!("000000000000000000000000000000000000000A");
@@ -312,8 +312,8 @@ fn main() {
     );
 
     // 4. Verify the preset's on-chain-correct fee convention is wired through
-    //    (the slice-5 bug was registering the FEE numerator, not the RETAINED
-    //    complement). The `UNISWAP_V2` preset's `fee_tokenN.0` is `997`
+    //    (registering the FEE numerator instead of the RETAINED complement is
+    //    the footgun this pins). The `UNISWAP_V2` preset's `fee_tokenN.0` is `997`
     //    (retained) over `1000` — a 0.3% fee. Cross-check against the
     //    closed-form Uniswap V2 `getAmountOut` for the configured reserves:
     //      amountInWithFee = amount_in * 997

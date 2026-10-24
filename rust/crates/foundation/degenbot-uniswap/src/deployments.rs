@@ -1,5 +1,5 @@
 //! `(chain_id, factory)`-keyed deployment-identity lookup — the compile-time
-//! single source (ADR-005 slice 6 follow-on, Fork A).
+//! single source (Fork A).
 //!
 //! The canonical `deployments.json` (the same file the Python loader reads) is
 //! embedded into the Rust binary via `include_str!` and parsed **once** into a

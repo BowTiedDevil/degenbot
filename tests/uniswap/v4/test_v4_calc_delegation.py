@@ -1,4 +1,4 @@
-"""ADR-005 slice 9 — V4 calc delegation to ``Pool``.
+"""V4 calc delegation to ``Pool``.
 
 The V4 swap-calc path (``UniswapV4PoolCalc`` mixin is pricing-only by design;
 swap math lives on ``UniswapV4Pool``) routes both

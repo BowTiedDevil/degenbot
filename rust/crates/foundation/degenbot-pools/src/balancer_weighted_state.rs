@@ -1,28 +1,17 @@
 //! Balancer V2 **weighted** pool state — the `BotState`-owned home for a
 //! Balancer V2 weighted pool (`BalancerV2Pool`, weighted product invariant).
 //!
-//! ADR-005 slice 12a — the **weighted-state-port** sub-slice of slice 12
-//! (the plan's "state port" sub-slice for the weighted variant, mirroring
-//! what slice 11a did for Curve before the Curve companion rewrite + the
-//! Curve pure-math port). Adds the Balancer weighted family as a fourth
-//! `PoolEntry` variant — alongside V2/V3/V4/Curve (ADR-003 "third family"
-//! was a Curve-only reservation; Balancer weighted + stable grow that set
-//! to a sixth variant in slice 12c).
-//!
-//! Scope of THIS sub-slice: the Rust state struct +
-//! `register_balancer_weighted_pool` +
-//! `apply_balance_update_by_pool_id` + journal
-//! restore/discard + `PyBot.register_balancer_weighted_pool` + Balancer
-//! weighted read getters on `PyLiquidityPool`
+//! The Balancer weighted family is a `PoolEntry` variant alongside V2/V3/V4
+//! and Curve. This module owns its authoritative state: the state struct,
+//! `register_balancer_weighted_pool`, `apply_balance_update_by_pool_id`, the
+//! journal restore/discard paths, `PyBot.register_balancer_weighted_pool`, and
+//! the Balancer weighted read getters on `PyLiquidityPool`
 //! (`balancer_balances`/`balancer_update_block`/`snapshot_balancer_weighted`/
 //! `n_balancer_tokens`/`balancer_vault_tokens`/`balancer_weights`/
 //! `balancer_scaling_factors`/`balancer_swap_fee`/`balancer_pow_version`).
-//! The Python `BalancerV2Pool` companion rewrite (delegating `self._state`
-//! to the handle) + `make_balancer_weighted_pool` factory + `BalancerBuilder`
-//! weighted-branch migration are deferred to follow-on sub-slice 12b. The
-//! pure-math Rust port (`WeightedMath`/`FixedPoint`/`LogExpMath`) + rate-cache-
-//! aware providers (`CacheAwareRateProvider`, stable-pool-only) are deferred
-//! to 12e and 12d respectively.
+//! The Python `BalancerV2Pool` companion reads state through those getters and
+//! delegates `external_update` to the state method; the swap math lives in
+//! `degenbot-balancer-math` (`WeightedMath`/`FixedPoint`/`LogExpMath`).
 //!
 //! ## State shape
 //!
@@ -39,13 +28,13 @@
 //! - A **swap fee** as a fraction of `FEE_DENOMINATOR = 1e18`. Stored as the
 //!   Python-computed `int(fee * FEE_DENOMINATOR)`.
 //! - **`PowVersion`** (V1/V2) — controls `FixedPoint.pow` fast paths; carried
-//!   as opaque `u8` for the (future, 12e) Rust `WeightedMath` port.
+//!   as opaque `u8` for the Rust `WeightedMath` port.
 //!
 //! The mutable slot is just `balances` + `update_block` — the only fields a
 //! Balancer `external_update` (new balances from a Vault `PoolBalanceChanged`
 //! event) mutates. Everything else is immutable config set at registration.
 //!
-//! Matches `CurvePoolState`'s discipline (ADR-005 slice 11a): a full-state
+//! Matches `CurvePoolState`'s discipline: a full-state
 //! `balances_before/after` delta + a V2-style genesis anchor at registration.
 
 use alloy::primitives::{Address, U256};
@@ -108,7 +97,7 @@ pub struct RegisterBalancerWeightedPoolParams {
     /// Initial balances (one per token), captured at `update_block`.
     pub balances: Vec<U256>,
     /// Block number of the registration state — seeds the genesis reorg
-    /// journal delta (ADR-005 slice 4).
+    /// journal delta.
     pub update_block: u64,
 }
 
@@ -145,10 +134,9 @@ pub struct BalancerWeightedPoolIdentity {
 /// Carries the mutable `balances`/`update_block` slot + a per-pool reorg
 /// journal. Immutable identity lives on [`BalancerWeightedPoolIdentity`]
 /// (look it up via
-/// [`crate::BotState::get_balancer_weighted_identity`]). The
-/// state-port sub-slice (ADR-005 slice 12a): the Python `BalancerV2Pool`
-/// companion (12b) reads `balances`/`update_block` from this struct via
-/// `PyLiquidityPool` getters and delegates `external_update` to
+/// [`crate::BotState::get_balancer_weighted_identity`]). The Python
+/// `BalancerV2Pool` companion reads `balances`/`update_block` from this struct
+/// via `PyLiquidityPool` getters and delegates `external_update` to
 /// `apply_balance_update_by_pool_id`.
 #[derive(Clone, Debug)]
 pub struct BalancerWeightedPoolState {

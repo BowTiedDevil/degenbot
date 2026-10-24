@@ -1,4 +1,4 @@
-"""Tests for Bot passing BotIo to builders (Plan 048, Slice 2)."""
+"""Tests for Bot passing BotIo to builders."""
 
 from __future__ import annotations
 

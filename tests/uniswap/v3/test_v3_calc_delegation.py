@@ -1,4 +1,4 @@
-"""ADR-005 slice 9 — V3 calc delegation to ``Pool``.
+"""V3 calc delegation to ``Pool``.
 
 The V3 swap-calc path (``UniswapV3PoolCalc`` mixin → ``UniswapV3Pool``) routes
 both ``calculate_tokens_out_from_tokens_in`` and

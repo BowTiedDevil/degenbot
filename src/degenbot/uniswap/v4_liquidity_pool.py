@@ -1,7 +1,7 @@
 """UniswapV4Pool: concentrated liquidity AMM companion over a Pool handle.
 
-ADR-005 slice 9b — the V4 companion rewritten over the same `Pool`
-handle topology as the V3 companion. Rust `BotState` is the single source of
+The V4 companion sits on the same `Pool` handle topology as the V3
+companion. Rust `BotState` is the single source of
 truth for V4 mutable state (scalars, tick data, reorg journal); this companion
 reads it through `self._py_pool` (atomic `snapshot_v3()` for scalars — already
 V3/V4-generic via `get_v3_or_v4_pool` — + `tick_data()`/`tick_bitmap` for the
@@ -9,16 +9,16 @@ V3/V4-generic via `get_v3_or_v4_pool` — + `tick_data()`/`tick_bitmap` for the
 door (`Bot.dispatch_log` → `LogDispatcher` decode → apply), never through a
 companion write method.
 
-`_state_mgr` / `_state_cache` / `state_cache_depth` are dropped — the
-`StateCache` temporal-navigation layer lives in Rust now (journal +
-discard/restore). V3 already has none; V4 follows.
+There is no `_state_mgr` / `_state_cache` / `state_cache_depth`: the
+`StateCache` temporal-navigation layer lives in Rust (journal +
+discard/restore).
 
 V4-specific identity (pool_id, pool_manager_address, pool_key, hook_address,
 protocol_fee, lp_fee, state_view_address) stays Python-side — matches V3
 keeping tokens/factory/fee Python-side. The hook admission floor (reject
 amount-modifying hooks + dynamic fees) lives in Rust
-(`BotState::register_v4_pool`), surfaced at `Bot.register_v4_pool` (ADR-005
-slice 9a) so the companion never holds a hooked pool.
+(`BotState::register_v4_pool`), surfaced at `Bot.register_v4_pool`, so the
+companion never holds a hooked pool.
 
 Checked words (a tick-data fetcher probed `tickBitmap(word)` and the on-chain
 bitmap was zero) are tracked in Rust `known_bitmap_words` (Sparse only — see

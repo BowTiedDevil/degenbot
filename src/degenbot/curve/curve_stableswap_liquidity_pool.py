@@ -397,8 +397,8 @@ class CurveStableswapPool(
     def balances(self) -> tuple[int, ...]:
         """Balances.
 
-        Read from the Rust core via the ``Pool`` handle
-        (ADR-005 slice 11b). Rust ``BotState`` is the single source of truth
+        Read from the Rust core via the ``Pool`` handle.
+        Rust ``BotState`` is the single source of truth
         for the mutable ``balances`` slot; this getter returns the live tuple.
         """
         return cast("tuple[int, ...]", tuple(self._py_pool.balance_vector().balances))
@@ -464,8 +464,8 @@ class CurveStableswapPool(
 
         Delegates to the Rust core (``Pool.apply_curve_balance_update``)
         which journals the prior balances (genesis-anchor V2-style discipline)
-        and lands the new balances + ``update_block`` atomically
-        (ADR-005 slice 11b). The ``StateCache`` temporal-navigation layer it
+        and lands the new balances + ``update_block`` atomically. The
+        ``StateCache`` temporal-navigation layer it
         used to write is gone — the Rust reorg journal handles rollback now.
 
         Raises:

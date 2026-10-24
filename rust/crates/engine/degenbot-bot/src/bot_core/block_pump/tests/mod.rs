@@ -622,7 +622,7 @@ fn run_reorg_stream(capture: ReorgSpanCapture, pump: &mut BlockPump, events: Vec
 }
 
 // -----------------------------------------------------------------
-// Pump-level reorg integration (ADR-006 slice 7).
+// Pump-level reorg integration (ADR-006 D4).
 //
 // `ReorgCoordinator` is covered directly in `reorg_coordinator.rs`
 // (dispatch → restore_before_block → notify). What is NOT covered

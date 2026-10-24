@@ -1331,13 +1331,13 @@ class Bot:
         rate_provider: Any | None = None,
     ) -> int:
         """
-        Register a Balancer V2 stable pool (ADR-005 slice 12c state port).
+        Register a Balancer V2 stable pool.
 
         Stores immutable pool config (`pool_id`, vault, tokens, amp,
         `scaling_factors`, `swap_fee`, `bpt_idx`, `invariant_version`) +
-        registration balances + a genesis reorg journal delta. The slice 12d
-        Python `BalancerV2StablePool` companion will be constructed over the
-        returned `PyLiquidityPool` handle (call `get_pool(id)` after this).
+        registration balances + a genesis reorg journal delta. The Python
+        `BalancerV2StablePool` companion is constructed over the returned
+        `PyLiquidityPool` handle (call `get_pool(id)` after this).
 
         Returns the auto-assigned numeric pool ID. `tokens` / `scaling_factors`
         / `balances` lists MUST all have length `N`. `bpt_idx` is `None` for
@@ -1363,13 +1363,13 @@ class Bot:
         update_block: SupportsIndex,
     ) -> int:
         """
-        Register a Balancer V2 weighted pool (ADR-005 slice 12a state port).
+        Register a Balancer V2 weighted pool.
 
         Stores immutable pool config (`pool_id`, vault, tokens, weights,
         `scaling_factors`, `swap_fee`, `pow_version`) + registration balances + a
-        genesis reorg journal delta. The slice 12b Python `BalancerV2Pool`
-        companion is constructed over the returned `PyLiquidityPool` handle
-        (call `get_pool(id)` after this).
+        genesis reorg journal delta. The Python `BalancerV2Pool` companion is
+        constructed over the returned `PyLiquidityPool` handle (call
+        `get_pool(id)` after this).
 
         Returns the auto-assigned numeric pool ID. `tokens` / `weights` /
         `scaling_factors` / `balances` lists MUST all have length `N`.
@@ -1563,7 +1563,7 @@ class Bot:
         Register a V4 pool by `(pool_manager, pool_id)`.
 
         Returns the auto-assigned pool ID. The dynamic-fee admission floor
-        lives in `BotState::register_v4_pool` (ADR-005 slice 9a): pools with
+        lives in `BotState::register_v4_pool`: pools with
         dynamic fees (`fee == 0x100000`) or static fees exceeding the
         executor's 2-byte encoding limit (`fee > 65535`) are rejected here,
         surfacing as typed Python exceptions
@@ -1860,7 +1860,7 @@ class BotIo:
     def fetch_balancer_amp(self, /, address: str, block: Any | None = None) -> Any:
         """
         Fetch a Balancer pool's amplification parameter via
-        `getAmplificationParameter()` (ADR-005 slice 14l).
+        `getAmplificationParameter()`.
 
         Mirrors `balancer_builder_base.py::_fetch_amp`. The full struct is
         `(uint256, bool, uint256)`; we only need the first word (amp value).
@@ -1885,7 +1885,7 @@ class BotIo:
         """
     def fetch_balancer_pool_id(self, /, address: str, block: Any | None = None) -> Any:
         """
-        Fetch a Balancer pool's `pool_id` via `getPoolId()` (ADR-005 slice 14l).
+        Fetch a Balancer pool's `pool_id` via `getPoolId()`.
 
         Mirrors `balancer_builder_base.py::_fetch_pool_id`. Returns the raw
         32-byte `bytes32` value (no decode — bytes32 is already 32 bytes).
@@ -1894,8 +1894,7 @@ class BotIo:
         """
     def fetch_balancer_rate(self, /, provider_address: str, block: Any | None = None) -> Any:
         """
-        Fetch a single Balancer rate provider's rate via `getRate()` (ADR-005
-        slice 14n).
+        Fetch a single Balancer rate provider's rate via `getRate()`.
 
         Mirrors the per-provider loop body of `balancer_builder_base.py::
         _fetch_rates`. Each rate provider exposes a `getRate()` no-arg call
@@ -1906,8 +1905,7 @@ class BotIo:
         """
     def fetch_balancer_rate_providers(self, /, address: str, block: Any | None = None) -> Any:
         """
-        Fetch a Balancer pool's rate providers via `getRateProviders()`
-        (ADR-005 slice 14l).
+        Fetch a Balancer pool's rate providers via `getRateProviders()`.
 
         Mirrors `balancer_builder_base.py::_fetch_rate_providers`. Returns
         `address[]` as a Python list of lowercase hex strings. Reverts propagate
@@ -1918,8 +1916,7 @@ class BotIo:
         """
     def fetch_balancer_swap_fee(self, /, address: str, block: Any | None = None) -> Any:
         """
-        Fetch a Balancer pool's swap fee via `getSwapFeePercentage()`
-        (ADR-005 slice 14l).
+        Fetch a Balancer pool's swap fee via `getSwapFeePercentage()`.
 
         Mirrors `balancer_builder_base.py::_fetch_swap_fee`. Returns `uint256`.
 
@@ -1930,7 +1927,7 @@ class BotIo:
     ) -> tuple[Any, Any]:
         """
         Fetch a Balancer vault's pool tokens + balances via `getPoolTokens(
-        bytes32)` on the vault contract (ADR-005 slice 14m).
+        bytes32)` on the vault contract.
 
         Mirrors `balancer_builder_base.py::_fetch_vault_tokens`. The hardest
         Balancer decode: an ABI-encoded tuple `(address[], uint256[], uint256)`
@@ -1946,7 +1943,7 @@ class BotIo:
     def fetch_balancer_weights(self, /, address: str, block: Any | None = None) -> Any:
         """
         Fetch a Balancer weighted pool's normalized weights via
-        `getNormalizedWeights()` (ADR-005 slice 14l).
+        `getNormalizedWeights()`.
 
         Mirrors `balancer_builder_base.py::_fetch_weights`. Returns `uint256[]`
         as a Python list of ints. New decode pattern: ABI-encoded dynamic array
@@ -1958,8 +1955,7 @@ class BotIo:
         self, /, pool_address: str, count: SupportsIndex, block: Any | None = None
     ) -> Any:
         """
-        Fetch all Curve pool balances via `balances(uint256)` in a loop
-        (ADR-005 slice 14s).
+        Fetch all Curve pool balances via `balances(uint256)` in a loop.
 
         Mirrors `curve_pool_builder.py::_fetch_balances`'s snapshot-update loop.
         Issues `count` RPCs, indexing 0..count, gathering `uint256` results into
@@ -2006,15 +2002,13 @@ class BotIo:
     def fetch_factory_address(self, /, address: str) -> str | None:
         """
         Fetch the factory address for a V2-style pool, performing the full
-        encode -> call -> decode -> checksum choreography in Rust (ADR-005 slice 14b).
+        encode -> call -> decode -> checksum choreography in Rust.
 
         Mirrors `degenbot/builders/type_resolution.py::fetch_factory_from_chain`:
         encode `factory()`, `eth_call` the pool, ABI-decode the right-aligned
         20-byte `address`, EIP-55 checksum it. The RPC primitive (`call`)
-        still delegates to the held provider (the native-alloy swap is a later
-        slice); the *choreography* now lives in Rust — slice 14's
-        "methods for the builder I/O choreography … moved here, called from
-        Python via `PyBotIo`".
+        still delegates to the held provider; the *choreography* lives in Rust,
+        called from Python via `PyBotIo`.
 
         Returns `None` on any provider error, decode failure, or short result —
         mirrors the Python impl's `except (Web3Exception, DecodingError): return None`
@@ -2038,7 +2032,7 @@ class BotIo:
     ) -> Any:
         """
         Fetch a V3 pool's tick bitmap word via `tickBitmap(int16)`, performing
-        the encode -> call -> decode choreography in Rust (ADR-005 slice 14j).
+        the encode -> call -> decode choreography in Rust.
 
         Calldata + return decode from `degenbot_rpc::abi` (B2) — no hand-rolled
         `selector` / `sign_extend_to_32_bytes` here. The encode/decode helpers
@@ -2054,7 +2048,7 @@ class BotIo:
     ) -> tuple[Any, Any]:
         """
         Fetch a V3 pool's tick liquidity data via `ticks(int24)`, performing
-        the encode -> call -> decode choreography in Rust (ADR-005 slice 14j).
+        the encode -> call -> decode choreography in Rust.
 
         Calldata + return decode from `degenbot_rpc::abi` (B2). The result's
         first two fields (`liquidity_gross: uint128`, `liquidity_net: int128`)
@@ -2068,7 +2062,7 @@ class BotIo:
     ) -> Any:
         """
         Fetch an ERC-20 token allowance via `allowance(address,address)`, the
-        two-address-arg parameterized-call pattern (ADR-005 slice 14d).
+        two-address-arg parameterized-call pattern.
 
         Mirrors `Erc20Builder.get_token_approval`'s I/O path. Selector
         `0xdd62ed3e`; two ABI-encoded `address` args; decoded `uint256` result.
@@ -2077,7 +2071,7 @@ class BotIo:
     def fetch_token_balance(self, /, token: str, owner: str, block: Any | None = None) -> Any:
         """
         Fetch an ERC-20 token balance via `balanceOf(address)`, performing the
-        full encode -> call -> decode choreography in Rust (ADR-005 slice 14d).
+        full encode -> call -> decode choreography in Rust.
 
         Mirrors `degenbot/builders/erc20_builder.py::Erc20Builder.get_token_balance`'s
         I/O call path (cache + checksum are out of scope; the caller still owns
@@ -2092,7 +2086,7 @@ class BotIo:
     def fetch_token_total_supply(self, /, token: str, block: Any | None = None) -> Any:
         """
         Fetch an ERC-20 token's total supply via `totalSupply()`, the no-arg
-        uint256-returning call pattern (ADR-005 slice 14d).
+        uint256-returning call pattern.
 
         Mirrors `Erc20Builder.get_token_total_supply`'s I/O path. Selector
         `0x18160ddd`; no args; decoded `uint256` result. Errors propagate.
@@ -2100,7 +2094,7 @@ class BotIo:
     def fetch_v2_reserves(self, /, pool_address: str, block: Any | None = None) -> tuple[Any, Any]:
         """
         Fetch a V2-style pool's reserves via `getReserves()`, performing the
-        encode -> call -> decode choreography in Rust (ADR-005 slice 14e).
+        encode -> call -> decode choreography in Rust.
 
         Mirrors the reserves-RPC block of `V2BuilderBase._fetch_v2_common_data`.
         Selector `0x0902f1ac`; no args; ABI-decodes a `(uint256, uint256)` tuple.
@@ -2114,7 +2108,7 @@ class BotIo:
     ) -> tuple[Any, Any, Any]:
         """
         Fetch a V3-style pool's `slot0()` + `liquidity()` state — the 2-call
-        encode -> call -> decode choreography in Rust (ADR-005 slice 14f).
+        encode -> call -> decode choreography in Rust.
 
         Mirrors `V3PoolBuilder.build`'s slot0+liquidity RPC block. `slot0()`
         returns `(uint160 sqrtPriceX96, int24 tick, uint16, uint16, uint16, uint8,
@@ -2133,12 +2127,12 @@ class BotIo:
     ) -> tuple[Any, Any, Any, Any, Any]:
         """
         Fetch a V4 pool's slot0 + liquidity via `getSlot0(bytes32)` +
-        `getLiquidity(bytes32)` on the state-view contract (ADR-005 slice 14o).
+        `getLiquidity(bytes32)` on the state-view contract.
 
         Mirrors `degenbot/builders/v4_pool_builder.py`'s slot0/liquidity RPC
         block in `_build_pool`. V4 differs from V3 in two ways:
         1. Methods take a `bytes32 pool_id` prefix argument (like the V4 tick
-           RPCs from slices 14j/14k).
+           RPCs).
         2. `getSlot0` returns `(uint160 sqrtPriceX96, int24 tick, uint24
            protocolFee, uint24 lpFee)` — 4 fields, not 6. The protocolFee word
            packs two uint12 fees; we return the raw `uint24` and leave that
@@ -2158,7 +2152,7 @@ class BotIo:
     ) -> Any:
         """
         Fetch a V4 pool's tick bitmap via `getTickBitmap(bytes32,int16)` on the
-        state-view contract (ADR-005 slice 14k).
+        state-view contract.
 
         Calldata + return decode from `degenbot_rpc::abi` (B2). V4 adds a
         `pool_id` (`bytes32`) prefix argument before the `int16` word position.
@@ -2175,7 +2169,7 @@ class BotIo:
     ) -> tuple[Any, Any]:
         """
         Fetch a V4 pool's tick liquidity via `getTickLiquidity(bytes32,int24)`
-        on the state-view contract (ADR-005 slice 14k).
+        on the state-view contract.
 
         Calldata + return decode from `degenbot_rpc::abi` (B2). V4 adds a
         `pool_id` (`bytes32`) prefix argument before the `int24` tick. The V4
@@ -2204,7 +2198,7 @@ class BotIo:
     def probe_balancer_pool_type(self, /, address: str, block: Any | None = None) -> BalancerFamily:
         """
         Probe a Balancer pool's sub-type by trying `getNormalizedWeights()` and
-        `getAmplificationParameter()` in order (ADR-005 slice 14n).
+        `getAmplificationParameter()` in order.
 
         Mirrors `balancer_builder_base.py::_detect_pool_type`. By the time this
         runs, the pool is already known to be Balancer (via `probe_pool_type`,
@@ -2221,7 +2215,7 @@ class BotIo:
         """
     def probe_pool_type(self, /, address: str, block: Any | None = None) -> int:
         """
-        Probe a pool's type by trying method calls in order (ADR-005 slice 14i).
+        Probe a pool's type by trying method calls in order.
 
         Mirrors `type_resolution.py::resolve_pool_type_by_probing`: tries V3
         (`slot0()`), then V2 (`getReserves()`), then Balancer (`getPoolId()` +
@@ -2863,7 +2857,7 @@ class Erc20Token:
 @final
 class Erc20TokenRow:
     """
-    The Rust I/O façade for pool builders (ADR-005 slice 14a).
+    The Rust I/O façade for pool builders.
 
     Construct with an existing `ProviderAdapter` (the `Bot.provider`):
     ```python
@@ -3340,7 +3334,7 @@ class Pool:
         self, /, zero_for_one: bool, amount_in: Any, block: SupportsIndex
     ) -> Any:
         """
-        Fetch+retry exact-input swap for sparse V3/V4 pools (ADR-005 slice 3).
+        Fetch+retry exact-input swap for sparse V3/V4 pools.
         Like [`calculate_tokens_out`][Self::calculate_tokens_out], but on a
         sparse tick-map miss it calls `fetcher(word, block)` to fetch the
         missing word's tick data, merges it, and retries (dedup-protected — a

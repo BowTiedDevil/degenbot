@@ -91,7 +91,7 @@ impl Bot {
     /// adopting an existing session's core uses [`Bot::with_core`] and hands
     /// that session's registry in, so it never starts a second one.
     ///
-    /// ADR-006 slice 8b: the Python `Bot` facade is single-chain and passes the
+    /// The Python `Bot` facade is single-chain and passes the
     /// real `chain_id` via `PyBot::new(chain_id)`; `0` is the default for the
     /// bare-fixture test path. The construction-I/O handle is `None` until
     /// [`Bot::set_construction_io`] attaches one (the Python path does this at
@@ -286,7 +286,7 @@ impl Bot {
             .dispatch(log, &self.state, Some(&self.delta));
     }
 
-    /// Decode `log` into a [`DecodedPoolEvent`] without applying (ADR-006 slice 7).
+    /// Decode `log` into a [`DecodedPoolEvent`] without applying.
     /// `ReorgCoordinator` uses this on `removed: true` logs to identify the
     /// target pool before restoring it from the journal.
     pub fn try_decode_log(
@@ -296,7 +296,7 @@ impl Bot {
         self.dispatcher.try_decode_log(log)
     }
 
-    /// Resolve a decoded event's `pool_id` against `BotState` (ADR-006 slice 7).
+    /// Resolve a decoded event's `pool_id` against `BotState`.
     /// V2/V3 by address, V4 by `(pool_manager, pool_id)` key.
     pub fn resolve_pool_id(&self, event: &log_dispatcher::DecodedPoolEvent) -> Option<u64> {
         event.resolve_pool_id(
@@ -306,7 +306,7 @@ impl Bot {
         )
     }
 
-    /// Restore `pool_id`'s state to just before `block` (ADR-006 slice 7).
+    /// Restore `pool_id`'s state to just before `block`.
     /// Writes the journal's landed-at state into the current mutable fields.
     /// Pre-check [`has_state_prior_to`](Self::has_state_prior_to) first — the
     /// V3/V4 journal `restore_before_block` panics on an empty journal.
@@ -329,8 +329,8 @@ impl Bot {
             .newest_journal_block(pool_id)
     }
 
-    /// Does `pool_id`'s journal have state at or before `block`? (ADR-006
-    /// slice 7.) `false` → a too-deep reorg; `ReorgCoordinator` returns
+    /// Does `pool_id`'s journal have state at or before `block`?
+    /// `false` → a too-deep reorg; `ReorgCoordinator` returns
     /// `Err(NoStatePriorToBlock)` and the pump shuts down gracefully.
     #[must_use]
     pub fn has_state_prior_to(&self, pool_id: u64, block: u64) -> bool {
@@ -499,7 +499,7 @@ impl Bot {
     }
 
     /// Restore a V2 pool's state to the landed-at state strictly before
-    /// `block` (ADR-005 slice 4). Returns the post-restore
+    /// `block`. Returns the post-restore
     /// `(reserve0, reserve1, update_block)` — the read-after-restore contract
     /// (ADR-016): the restore trait returns `()`, and the post-restore fields
     /// ARE the before-values. `Ok(None)` when the id is unregistered or not a
@@ -546,7 +546,7 @@ impl Bot {
     }
 
     /// Restore a V3/V4 pool's state to the landed-at state strictly before
-    /// `block` (ADR-005 slice 4). Returns the post-restore
+    /// `block`. Returns the post-restore
     /// `(sqrt_price_x96, liquidity, tick, update_block)` — the
     /// read-after-restore contract (ADR-016 D4). `Ok(None)` when the id is
     /// unregistered or not a concentrated liquidity pool.
@@ -627,11 +627,12 @@ impl Bot {
         )))
     }
 
-    /// Start the block pump. Placeholder — the `BlockPump` wiring lands in
-    /// ADR-006 slice 5; until then this panics to make the unwired state loud.
-    #[expect(clippy::unimplemented)] // deliberate until ADR-006 slice 5 wires BlockPump
+    /// Start the block pump. Not routed through `Bot`: a caller drives
+    /// [`crate::bot_core::block_pump::BlockPump`] with the `Arc<Bot>` it owns, so
+    /// this entry point panics to make the unwired call loud.
+    #[expect(clippy::unimplemented)] // deliberate: the pump is driven via BlockPump, not Bot
     pub fn start(&self) {
-        unimplemented!("BlockPump wiring lands in ADR-006 slice 5");
+        unimplemented!("drive BlockPump with the bot's `Arc<Bot>`; Bot::start is unwired");
     }
 }
 

@@ -79,7 +79,7 @@ pub trait FullStateDelta: BlockDelta {
 }
 
 // ---------------------------------------------------------------------------
-// Journal errors (landed-at semantics, ADR-005 slice 4)
+// Journal errors (landed-at semantics)
 // ---------------------------------------------------------------------------
 
 /// Error from a reorg journal restore/discard operation.
@@ -94,7 +94,7 @@ pub trait FullStateDelta: BlockDelta {
 ///   the target is past the newest delta.
 ///
 /// These used to be `assert!` panics; surfaced as values so callers can map
-/// them to Python exceptions without catching a panic (ADR-005 slice 4).
+/// them to Python exceptions without catching a panic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JournalError {
     /// No pool state is known prior to the target block — the target is at or
@@ -122,7 +122,7 @@ pub enum JournalError {
 /// its `before` == `after` == the registration reserves, at
 /// `block = update_block`. The genesis anchor is what makes "restore to the
 /// registration state" expressible — a `before`-only journal cannot represent
-/// the current state or the landed-at registration point (ADR-005 slice 4).
+/// the current state or the landed-at registration point.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct V2BlockDelta {
     /// Block number of this delta.
@@ -531,7 +531,7 @@ impl<D: BlockDelta> ReorgJournal<D> {
     /// The block number of the earliest (genesis) surviving delta, or `None`
     /// if the journal is empty.
     ///
-    /// ADR-006 slice 7: `ReorgCoordinator` checks `earliest_block() < block`
+    /// `ReorgCoordinator` checks `earliest_block() < block`
     /// (plus `newest_block().is_some()`) before calling `restore_before_block`
     /// for a V3/V4 pool — the V3/V4 journal `restore_before_block` panics on an
     /// empty journal, and the V2 path returns `Err(NoStatePriorToBlock)` when
@@ -580,12 +580,12 @@ impl<D: BlockDelta> ReorgJournal<D> {
     /// special — it is discarded like any other when the target is past it,
     /// as long as at least one delta remains.
     ///
-    /// Landed-at semantics (ADR-005 slice 4):
+    /// Landed-at semantics:
     /// - Earliest delta at/after the target → no-op (nothing to discard;
     ///   supports a continuously-running bot calling `discard(latest - N)` on
     ///   freshly-registered pools).
     /// - Newest delta before the target → `Err(NoStateAtOrAfterBlock)` (would
-    ///   remove every known state). Was a `panic!` pre-slice-4.
+    ///   remove every known state).
     /// - Otherwise → remove deltas with `block < target`.
     ///
     /// # Errors
@@ -779,7 +779,7 @@ impl FullStateDelta for BalancesBlockDelta {
 impl<D: FullStateDelta> ReorgJournal<D> {
     /// Generic landed-at restore for full-state delta stores (ADR-014 D3b).
     ///
-    /// Landed-at semantics (ADR-005 slice 4): returns the landed-at `*_after`
+    /// Landed-at semantics: returns the landed-at `*_after`
     /// projection (via [`FullStateDelta::landed`]) of the largest-block delta
     /// strictly less than `block`, and pops every delta at/after `block` so
     /// the journal's new newest IS that landed-at state.
@@ -921,7 +921,7 @@ mod tests {
         assert_eq!(j.deltas[0].block, 2);
     }
 
-    // --- discard_before_block (landed-at semantics, ADR-005 slice 4) ---
+    // --- discard_before_block (landed-at semantics) ---
 
     #[test]
     fn discard_removes_deltas_before_target_keeping_rest() {
@@ -960,8 +960,8 @@ mod tests {
 
     #[test]
     fn discard_errors_when_target_past_newest() {
-        // Would remove every known state. Was a panic pre-slice-4; now an
-        // error the PyO3 layer maps to ValueError.
+        // Would remove every known state: an error the PyO3 layer maps to
+        // ValueError.
         let mut j = ReorgJournal::<V2BlockDelta>::new(8);
         j.push_delta(genesis(1, 10, 20));
         j.push_delta(transition(3, 10, 20, 30, 40));
@@ -981,7 +981,7 @@ mod tests {
         assert!(j.is_empty());
     }
 
-    // --- restore_before_block (landed-at semantics, ADR-005 slice 4) ---
+    // --- restore_before_block (landed-at semantics) ---
 
     #[test]
     fn restore_lands_at_largest_block_below_target() {
@@ -992,8 +992,6 @@ mod tests {
         //   Update(7, after): (700, 800)
         // restore(5) lands at the largest block < 5, i.e. block 3, returning
         // block-3's AFTER values (300, 400) — the state landed at block 3.
-        // Pre-slice-4 this returned block-5's BEFORE values (also (300,400))
-        // AND block=5 (the target, not the landed block).
         let mut j = ReorgJournal::<V2BlockDelta>::new(8);
         j.push_delta(genesis(1, 10, 20));
         j.push_delta(transition(3, 10, 20, 300, 400));
@@ -1046,8 +1044,8 @@ mod tests {
     #[test]
     fn restore_noop_returns_current_when_newest_below_target() {
         // newest < target: no rollback, return the current (landed-at newest)
-        // state via AFTER. Pre-slice-4 this returned BEFORE (pre-newest state)
-        // — a silent wrong-answer footgun the after-values fix.
+        // state via AFTER. Returning BEFORE would be a silent wrong-answer
+        // footgun.
         let mut j = ReorgJournal::<V2BlockDelta>::new(8);
         j.push_delta(genesis(1, 10, 20));
         j.push_delta(transition(3, 10, 20, 100, 200));
@@ -1352,7 +1350,7 @@ mod v3_delta_priors_tests {
 
     /// Helper: construct a `V3BlockDelta` with explicit scalars AND a tick
     /// prior, so the no-op regression tests below can prove the newest delta's
-    /// priors are NOT propagated (the pre-slice-7 bug).
+    /// priors are NOT propagated.
     fn v3_delta_with_tick(block: u64, scalars: ScalarPriors, tick_idx: i32) -> V3BlockDelta {
         V3BlockDelta {
             block,
@@ -1715,7 +1713,7 @@ mod proptests {
 
     /// A faithful model that tracks exactly the same state as the journal — a
     /// bounded list subject to same-block replacement, discards, restores, and
-    /// `max_depth` eviction. Mirrors the post-slice-4 landed-at semantics:
+    /// `max_depth` eviction. Mirrors the landed-at semantics:
     /// genesis + `*_after`, `restore` lands at the largest delta below target,
     /// `discard` no-ops when earliest >= target and errors when newest < target.
     struct Model {

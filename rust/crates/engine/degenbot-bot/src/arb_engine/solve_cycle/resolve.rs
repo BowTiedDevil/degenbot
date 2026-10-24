@@ -114,10 +114,8 @@ pub(super) fn resolve_epoch(
     // without cloning unchanged entries.
     // Re-derive resolved hop states under the core lock — a single
     // consistent snapshot of BotState for the whole re-derive (ADR-003
-    // Option A: one core-lock window per `solve_dirty`). V3/V4 state still
-    // reads from the per-family block engines here; Slices 2/3 migrate
-    // those into BotState too. The guard drops before `solve_path` runs,
-    // which is pure `&self`.
+    // Option A: one core-lock window per `solve_dirty`). The guard drops
+    // before `solve_path` runs, which is pure `&self`.
     //
     // Lesson: a per-path `update_block`-MIX freshness gate was
     // attempted here and REVERTED — it deferred every legitimate

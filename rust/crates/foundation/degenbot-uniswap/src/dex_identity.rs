@@ -1,4 +1,4 @@
-//! DEX identity presets — the standalone Rust-core registry (ADR-005 slice 6).
+//! DEX identity presets — the standalone Rust-core registry.
 //!
 //! A `DexIdentity` is a frozen value object holding the per-DEX per-chain
 //! deployment identity: factory, deployer, CREATE2 init hash, default fee
@@ -24,15 +24,15 @@
 //! preset constructed this). So it's a construction/encoding parameter, not
 //! state (ADR-005: "identity is a construction/encoding parameter, not state").
 //!
-//! ## Fee convention (slice-5 lesson, encoded here)
+//! ## Fee convention
 //!
 //! `fee_tokenN: (u64, u64)` = `(gamma_numer, fee_denom)` where `gamma_numer`
 //! is the **retained post-fee fraction** numerator (e.g. `997` for a 0.3% fee,
 //! `fee_denom=1000`) — NOT the fee numerator. This matches `V2PoolState`'s
 //! `fee_tokenN` field doc + the `IntHopState` convention + `register_v2_pool`'s
-//! parameter meaning. Slice 5 fixed a latent bug where the fee numerator (3)
-//! was registered instead of the retained fraction (997); these presets bake
-//! the correct convention in by construction (e.g. `PancakeSwap`'s
+//! parameter meaning. The fee numerator (3) must never be registered instead of
+//! the retained fraction (997); these presets bake the correct convention in by
+//! construction (e.g. `PancakeSwap`'s
 //! `Fraction(25, 10000)` FEE → preset `(9975, 10_000)`).
 
 use alloy::primitives::{address, b256, Address, B256};
@@ -486,7 +486,7 @@ mod tests {
             b256!("96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f")
         );
         // Fraction(3, 1000) fee → RETAINED fraction (1000-3, 1000) = (997, 1000).
-        // Slice-5 convention: gamma_numer is the kept amount, NOT the fee.
+        // gamma_numer is the kept amount, NOT the fee.
         assert_eq!(ident.fee_token0, (997, 1000));
         assert_eq!(ident.fee_token1, (997, 1000));
         assert_eq!(ident.reserves_abi, ReservesAbi::Standard);

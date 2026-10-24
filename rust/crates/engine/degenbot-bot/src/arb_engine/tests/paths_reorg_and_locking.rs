@@ -408,7 +408,7 @@ fn handle_reorg_rolls_back_v2_sync_and_expires_delivered_result() {
     // creates a mispricing (arb appears, delivered to Python). A reorg
     // targeting block 5 rolls back that Sync; the next solve finds no arb
     // and the previously-delivered result expires.
-    // Why: ADR-006 slice 7 — a `removed: true` log drives
+    // Why: a `removed: true` log drives
     // `ReorgCoordinator::dispatch_reorg_log` (per-pool restore + notify →
     // engine dirties → re-solve), which restores BotState state and emits
     // an `expired` diff against `delivered`. This test exercises the
@@ -471,9 +471,9 @@ fn handle_reorg_rolls_back_v2_sync_and_expires_delivered_result() {
     // receive is the reorg batch.
     while rx.try_recv().is_ok() {}
     // Reorg: roll back block 5 (the Sync that created the arb). Inline the
-    // restore+re-dirty — `engine.handle_reorg` is deleted in slice 7
-    // (replaced by per-event `ReorgCoordinator::dispatch_reorg_log`);
-    // this test verifies the engine-level outcome holds under the restore.
+    // restore+re-dirty the per-event `ReorgCoordinator::dispatch_reorg_log`
+    // performs; this test verifies the engine-level outcome holds under the
+    // restore.
     engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
@@ -645,7 +645,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
         assert!(!s.tick_data.contains_key(&60) && !s.tick_data.contains_key(&120));
     }
 }
-/// ADR-006 Slice 1 (D1): `ArbitrageEngine::with_core` adopts an externally
+/// ADR-006 D1: `ArbitrageEngine::with_core` adopts an externally
 /// allocated `Arc<RwLock<BotState>>` so one shared `BotState` is read by both the
 /// engine and the `PyBot`/handle tree — dissolving the dual-`BotState` split
 /// (pump mutates `BotState` B; handles read `BotState` A). If the engine held its own
@@ -688,7 +688,7 @@ fn with_core_adopts_shared_bot_state() {
         "engine must read the shared BotState's pools via with_core"
     );
 }
-/// ADR-006 slice 2 (D3): the engine no longer constructs pools — it
+/// ADR-006 D3: the engine does not construct pools — it
 /// resolves `pool_id`s against the shared `BotState` at `register_path`
 /// time. A path hop referencing a `pool_id` that isn't registered in
 /// the associated `BotState` must be rejected with a clear error (rather
@@ -913,7 +913,7 @@ fn process_backfill_logs_stamps_per_log_block_number() {
     // for the per-log stamping; the scalar assertions above are the
     // restorability proof.
 }
-/// ADR-006 slice 10 acceptance: `ArbitrageEngine::with_core` shares the
+/// `ArbitrageEngine::with_core` shares the
 /// SAME `Arc<RwLock<BotState>>` as the peer `Bot`/`PyBot` — the structural
 /// unification that dissolves the dual-`BotState` split (the
 /// `rust-owned-bot.md` §17 stale-state root cause). Proven by pointer
@@ -934,7 +934,7 @@ fn with_core_shares_the_same_core_arc_as_a_peer_bot() {
              (ADR-006 D1+D4 shared-core topology)"
     );
 }
-/// ADR-006 slice 10 acceptance: characterize the engine-then-core lock
+/// Characterize the engine-then-core lock
 /// ordering under concurrent access. Engine paths hold the engine
 /// `Mutex<ArbitrageEngine>` and nest `core.write()`/`core.read()` inside;
 /// core-only paths (`PyBot`/`PyLiquidityPool` getters) take `core` alone
@@ -1000,7 +1000,7 @@ fn engine_then_core_lock_order_survives_concurrent_readers_and_writer() {
     }
     writer_result.expect("writer deadlocked (engine-then-core ordering broken)");
 }
-// --- ADR-005 slice 15b-1: Rust parallel solve fan-out -----------------
+// --- Rust parallel solve fan-out --------------------------------------
 //
 // `solve_dirty`'s affected-path solve loop is parallelized via executor bins
 // `par_iter`. The tracer bullet below pins the invariant the parallel
@@ -1079,8 +1079,8 @@ fn solve_all_parallel_fanout_matches_per_path_eager_baseline() {
         assert_functional_solve_parity(*pid, got, expected);
     }
 }
-/// ADR-006 slice 10 acceptance for the parallel solve fan-out
-/// (ADR-005 slice 15b-1): characterize the engine-then-core lock ordering
+/// Characterize the engine-then-core lock ordering for the parallel solve
+/// fan-out:
 /// when the engine's `solve_dirty` solve loop runs under executor bins.
 /// The `par_iter` workers operate only on owned/Cloned data (`ResolvedMixedPath`
 /// clones + collected `(pid, SolvePathResult)` pairs); they acquire NO

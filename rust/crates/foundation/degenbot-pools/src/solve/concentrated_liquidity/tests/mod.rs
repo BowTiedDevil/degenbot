@@ -120,7 +120,7 @@ fn int_simulate_concentrated_liquidity_path_n(
 }
 
 // ---------------------------------------------------------------------------
-// Integer V3-V3 Solver (Slice 14)
+// Integer V3-V3 Solver
 // ---------------------------------------------------------------------------
 
 /// Simulate a full V3-V3 path with tick crossings using integer arithmetic.
@@ -615,7 +615,7 @@ fn test_u512_to_u256_overflow() {
     let _ = u512_to_u256(v);
 }
 
-// --- Slice 13: compute_crossing tests ---
+// --- compute_crossing tests ---
 
 #[test]
 fn test_compute_crossing_k0_returns_identity() {
@@ -786,7 +786,7 @@ fn test_compute_crossing_matches_max_gross_input_k1() {
     );
 }
 
-// --- Slice 14: two-hop concentrated liquidity solve tests ---
+// --- two-hop concentrated liquidity solve tests ---
 
 #[test]
 fn test_solve_concentrated_liquidity_piecewise_two_hop_single_range_unprofitable() {

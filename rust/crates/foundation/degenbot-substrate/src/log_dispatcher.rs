@@ -4,9 +4,6 @@
 //! decode the log, apply the decoded event to `BotState` under a **write**
 //! guard, **release the guard**, then record the touched key into the epoch's
 //! `EpochDelta` ledger (the sole dirty-tracking mechanism).
-//!
-//! This module ships the dispatcher in isolation (ADR-006 slice 4). The pump
-//! driving the dispatcher lands in slice 5.
 
 #![expect(clippy::doc_markdown)]
 

@@ -49,9 +49,9 @@ class UniswapV2PoolCalc:
     reserves_token1: int
     state: UniswapV2PoolState
     tokens: tuple[Erc20Token, Erc20Token]
-    # Pool handle (set by the concrete UniswapV2Pool companion
-    # in MRO — ADR-005 slice 4). Calc delegation (slice 5) routes the
-    # constant-product math through it on the non-override path.
+    # Pool handle (set by the concrete UniswapV2Pool companion in MRO).
+    # Calc delegation routes the constant-product math through it on the
+    # non-override path.
     _py_pool: Pool
 
     # These can be overridden by subclasses (e.g., PancakeSwap uses different fee)
@@ -87,9 +87,9 @@ class UniswapV2PoolCalc:
             )
 
         if override_state is None:
-            # ADR-005 slice 5: delegate the constant-product math to the Rust
-            # pool handle. Rust reads reserves + fee under a single read guard
-            # (no separate Python state read beforehand — no pump-interleave risk).
+            # Delegate the constant-product math to the Rust pool handle. Rust
+            # reads reserves + fee under a single read guard (no separate Python
+            # state read beforehand — no pump-interleave risk).
             # Rust returns 0 on overdraw (amount_out >= reserve_out); convert to
             # the original Python contract's LiquidityPoolError.
             result: int = self._py_pool.calculate_tokens_in(
@@ -160,9 +160,9 @@ class UniswapV2PoolCalc:
             )
 
         if override_state is None:
-            # ADR-005 slice 5: delegate the constant-product math to the Rust
-            # pool handle. Rust reads reserves + fee under a single read guard
-            # (no separate Python state read beforehand — no pump-interleave).
+            # Delegate the constant-product math to the Rust pool handle. Rust
+            # reads reserves + fee under a single read guard (no separate Python
+            # state read beforehand — no pump-interleave).
             #
             # cdbc03bb: Rust mirrors on-chain `getAmountOut` SafeMath and
             # reverts on `uint256` overflow (e.g. `amount_in = 2**256 - 1`

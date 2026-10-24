@@ -117,7 +117,7 @@ class _FetchContext:
 
 # The tick-map shape a fetched word carries: ``{tick: (gross, net, block)}``.
 # The Rust ``TickWordFetcher`` seam (and the Python companion's sparse
-# write-back sites after slice 3b) consume this exact shape.
+# write-back sites) consume this exact shape.
 FetchedTickData = dict[int, tuple[int, int, int]]
 
 
@@ -131,9 +131,9 @@ def make_tick_data_fetcher(
 ) -> Callable[[int, int], FetchedTickData | None]:
     """Create a tick data fetcher callback for a concentrated-liquidity pool.
 
-    ADR-005 sparse-map parity (slice 3b): the returned fetcher RETURNS the
-    fetched word's tick data (``{tick: (liquidity_gross, liquidity_net,
-    block)}``) rather than writing it back into the pool. This is the contract
+    The returned fetcher RETURNS the fetched word's tick data
+    (``{tick: (liquidity_gross, liquidity_net, block)}``) rather than writing it
+    back into the pool. This is the contract
     the Rust ``TickWordFetcher`` seam expects — the write path holds the state
     lock across the fetch call (a write-back fetcher would re-enter it and
     deadlock), and the Rust loop merges the returned data itself so the
@@ -224,9 +224,8 @@ def _fetch_v3(*, ctx: _FetchContext) -> bool:
         if the bitmap RPC failed (the caller treats this as a fetch failure).
 
     """
-    # ADR-005 slice 14j: when io is a BotIo, delegate tick RPC calls to Rust.
-    # ADR-005 slice 14j: delegate tick RPC calls to Rust (BotIo is the only
-    # executor; the Python parity-gate fallback is retired).
+    # Delegate tick RPC calls to Rust (BotIo is the only executor; the Python
+    # parity-gate fallback is retired).
     _pace()
     try:
         bitmap_value = ctx.io.fetch_tick_bitmap(
@@ -285,8 +284,8 @@ def _fetch_v4(*, ctx: _FetchContext, state_view_address: str, pool_id: bytes) ->
         ``True`` if the bitmap RPC succeeded, ``False`` on failure.
 
     """
-    # ADR-005 slice 14k: delegate V4 tick RPCs to Rust (BotIo is the only
-    # executor; the Python parity-gate fallback is retired).
+    # Delegate V4 tick RPCs to Rust (BotIo is the only executor; the Python
+    # parity-gate fallback is retired).
     _pace()
     try:
         bitmap_value = ctx.io.fetch_v4_tick_bitmap(

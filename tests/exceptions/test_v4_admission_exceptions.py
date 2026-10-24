@@ -1,4 +1,4 @@
-"""Typed V4 pool-admission exceptions exposed by the Rust engine (Plan 102).
+"""Typed V4 pool-admission exceptions exposed by the Rust engine.
 
 Background — ``EngineRegistry.register_v4_pool`` and ``build_paths``
 previously classified V4 pool rejections by string-matching
@@ -31,7 +31,7 @@ The V4-specific admission names are reparented under a unified
 The ``PoolAlreadyRegisteredError`` upgrade replaces the previous
 "plain ``ValueError``" duplicate-registration behavior across the family
 (V2/V3/V4). These tests pin the V4 admission variants' public surface and
-the three admission outcomes documented in the original Plan 102 work:
+the three admission outcomes:
 
 - ``HookedPoolRejectedError`` — amount-modifying hook (``hook_flags & 0xCC``)
 - ``DynamicFeePoolRejectedError`` — dynamic fee (``fee == 0x100000``)

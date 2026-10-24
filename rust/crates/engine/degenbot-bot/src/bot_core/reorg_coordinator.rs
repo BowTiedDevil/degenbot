@@ -1,10 +1,8 @@
-//! `ReorgCoordinator` — optimistic per-event journal rollback (ADR-006 D4,
-//! slice 7; ADR-006 Q8-Q9 resolved).
+//! `ReorgCoordinator` — optimistic per-event journal rollback (ADR-006 D4).
 //!
-//! Replaces the bulk `engine.handle_reorg(block)` ADR-003 Option α path
-//! (which restored **every** pool + cleared all resolved hops + dirtied every
-//! path pool on a single `removed: true` log). The new path is per-event,
-//! per-pool, mirroring slice 5a's `dispatch_log` shape:
+//! The path is per-event and per-pool (the shape `dispatch_log` has), never a
+//! bulk restore that treats one `removed: true` log as "every pool + every
+//! resolved hop + every path pool":
 //!
 //! - Pump, on a WS log with `removed: true`, calls
 //!   `bot.dispatch_reorg_log(&log)` — reorg is a Bot concern, parallel to
@@ -31,9 +29,9 @@
 //! pre-checks `has_state_prior_to` to avoid the panic and return `Err`
 //! uniformly). `dispatch_reorg_log` returns `Result<(), ReorgError>`;
 //! the pump sees the error, logs it, sets its shutdown flag, and exits the
-//! loop — graceful shutdown, not a task panic. This is **stricter** than the
-//! slice-6 bulk path (which silently skipped too-deep pools); silently
-//! leaving stale state after a too-deep reorg is a correctness bug.
+//! loop — graceful shutdown, not a task panic. Skipping a too-deep pool
+//! silently would leave stale state, a correctness bug, so the restore is
+//! refused rather than skipped.
 //!
 //! **Lock order (D2):** `ReorgCoordinator` holds `Arc<Bot>`; restore takes
 //! the `BotState` write guard (under the `Bot`'s shared `RwLock`), applies +
@@ -235,7 +233,7 @@ mod tests {
         }
     }
 
-    /// ADR-006 slice 7: duplicate removed event (same pool, same block) is a
+    /// Duplicate removed event (same pool, same block) is a
     /// no-op — `restore_before_block` is idempotent. The second call finds the
     /// newest delta already below the target and returns the current state
     /// without mutating.
@@ -254,7 +252,7 @@ mod tests {
         assert_eq!(second, first, "second restore is a no-op");
     }
 
-    /// ADR-006 slice 7: chronological rollback (D then C, D > C) unwinds two
+    /// Chronological rollback (D then C, D > C) unwinds two
     /// single blocks, landing at pre-C. Order-insensitive by construction.
     #[test]
     fn chronological_rollback_lands_at_pre_c() {
@@ -269,7 +267,7 @@ mod tests {
         assert_eq!(r0, U112::from(1_000), "land at genesis (pre-C)");
     }
 
-    /// ADR-006 slice 7: reverse-chronological rollback (C then D) — first call
+    /// Reverse-chronological rollback (C then D) — first call
     /// pops both at-or-after-block-6 deltas, second is a no-op; lands at pre-C.
     #[test]
     fn reverse_chronological_rollback_lands_at_pre_c() {
@@ -287,7 +285,7 @@ mod tests {
         assert_eq!(r0_2, U112::from(1_000), "no-op: still at genesis");
     }
 
-    /// ADR-006 slice 7: a too-deep reorg (target at/below the journal's
+    /// A too-deep reorg (target at/below the journal's
     /// genesis) returns `Err(NoStatePriorToBlock)` — the coordinator propagates
     /// this so the pump can shut down gracefully (NOT panic).
     #[test]
@@ -306,8 +304,8 @@ mod tests {
         ));
     }
 
-    // --- Coordinator end-to-end: decode → restore → record delta (the real
-    //     slice-7 wiring). A registered V2 pool + a real Sync log + a
+    // --- Coordinator end-to-end: decode → restore → record delta. A
+    //     registered V2 pool + a real Sync log + a
     //     removed-flag variant. Verifies the per-event restore + the epoch
     //     ledger record.
 
@@ -379,7 +377,7 @@ mod tests {
         (bot, pool_id)
     }
 
-    /// ADR-006 slice 7 (coordinator e2e): a `removed: true` V2 Sync log at
+    /// Coordinator e2e: a `removed: true` V2 Sync log at
     /// block 7 restores the pool's state to the genesis reserves (block 5),
     /// then records the restored pool into the SAME epoch ledger a forward
     /// Sync records into. The per-event path lands at the same state as the
@@ -441,7 +439,7 @@ mod tests {
         );
     }
 
-    /// ADR-006 slice 7 (coordinator e2e): a too-deep reorg — the removed log's
+    /// Coordinator e2e: a too-deep reorg — the removed log's
     /// block is at the journal's genesis → `Err(NoStatePriorToBlock)` (the
     /// pump will shut down gracefully on this). Verify the pool's state is
     /// left UNCHANGED (no partial restore).

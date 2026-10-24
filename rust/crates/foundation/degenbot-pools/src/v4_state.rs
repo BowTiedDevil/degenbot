@@ -468,9 +468,8 @@ impl V4PoolState {
         state_walk::advance_tick_data_block(self, block);
     }
 
-    // `merge_tick_word` lives on the `ConcentratedLiquidityPoolMut` trait
-    // (ADR-017 slice 1) — the body was the byte-identical twin of
-    // `V3PoolState::merge_tick_word`; the trait dedups the two. See
+    // `merge_tick_word` lives on the `ConcentratedLiquidityPoolMut` trait —
+    // one body shared with `V3PoolState`. See
     // `impl ConcentratedLiquidityPoolMut for V4PoolState` in `registry.rs`.
 
     /// Construct from registration params with a journal of the given depth.
@@ -535,8 +534,7 @@ impl V4PoolState {
     }
 
     // `apply_swap` + `apply_liquidity_update` live on the
-    // `ConcentratedLiquidityPoolMut` trait (ADR-017 slice 2) — the bodies
-    // were byte-identical twins across V3/V4; the trait dedups the two.
+    // `ConcentratedLiquidityPoolMut` trait — one body shared by V3 and V4.
     // See `impl ConcentratedLiquidityPoolMut for V4PoolState` in `registry.rs`.
 
     /// Invalidate the cached tick ranges (call after any state mutation) —
@@ -916,7 +914,7 @@ pub fn v4_simulate_swap(
             tick = get_tick_at_sqrt_ratio_internal(sqrt_price_x96.to::<U160>())
                 .map_err(|_| SimulateSwapError::NotComputable)?
                 .as_i32();
-            // Slice-4 fix: an amount-capped step (the ELSE branch — the step
+            // An amount-capped step (the ELSE branch — the step
             // moved the price but did not reach `sqrt_price_next`) can land
             // inside an UNFETCHED word whose initialized ticks `gen_ticks`
             // never proposed (they are absent from `tick_data`). The CROSS
@@ -1069,7 +1067,7 @@ mod apply_inherent_tests {
 
     #[test]
     fn merge_tick_word_via_trait_merges_ticks_marks_word_known_invalidates_cache() {
-        // ADR-017 slice 1: `merge_tick_word` lives on the
+        // `merge_tick_word` lives on the
         // `ConcentratedLiquidityPoolMut` trait. Verify the trait-dispatch path
         // lands ticks + marks the word known + invalidates the cached ranges
         // (the same observable behavior the prior inherent method had, now

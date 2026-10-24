@@ -1,6 +1,6 @@
 """Factory helpers for I/O-free V2 pool construction in tests.
 
-Mirrors ``tests/helpers/erc20_factory.py`` (slice 3): every direct
+Mirrors ``tests/helpers/erc20_factory.py``: every direct
 ``UniswapV2Pool(...)`` / V2-subclass construction in the test suite routes
 through ``make_v2_pool`` so the ``Pool`` handle is wired through
 ``Bot::register_v2_pool`` → ``get_pool`` → companion, matching the
@@ -37,7 +37,7 @@ def _gamma_complement(fee: Fraction) -> tuple[int, int]:
 
     Rust's ``Bot::register_v2_pool`` and the Möbius ``IntHopState`` interpret
     ``gamma_numer`` as the post-fee RETAINED fraction (e.g. 997 for a 0.3% fee,
-    where ``fee_denom=1000`` and ``gamma_numer=1000-3=997`` — the slice-4
+    where ``fee_denom=1000`` and ``gamma_numer=1000-3=997`` — the
     parity tests confirm this). Source data from Python is the FEE ``Fraction``
     (e.g. ``Fraction(3, 1000)``), so we convert to the retained-fraction form.
     """
@@ -81,7 +81,7 @@ def make_v2_pool(
     ``pool_class`` defaults to ``UniswapV2Pool``; subclasses like
     ``SushiswapV2Pool`` inherit the companion ``__init__``.
 
-    ``dex`` (ADR-005 slice 7 step 3): the canonical DexIdentity preset. When
+    ``dex``: the canonical DexIdentity preset. When
     provided, fills in ``factory``/``fee_token0``/``fee_token1``/``init_hash``
     from the preset when those explicit params are ``None``. Also threaded
     through to ``UniswapV2Pool(dex=...)``. Explicit params always take

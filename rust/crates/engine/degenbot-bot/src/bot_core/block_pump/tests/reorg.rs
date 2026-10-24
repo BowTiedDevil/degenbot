@@ -6,7 +6,7 @@ use super::*;
 /// record it into the epoch `EpochDelta`, and the pump does NOT shut down
 /// (it continues processing).
 ///
-/// This pins the pump-level wiring of ADR-006 slice 7: the coordinator's
+/// This pins the pump-level reorg wiring: the coordinator's
 /// restore+notify (covered in `reorg_coordinator.rs`) is the downstream
 /// observable; what is asserted here is that the *pump* routes a
 /// `removed: true` log there, and that an in-depth reorg is non-fatal.

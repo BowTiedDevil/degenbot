@@ -174,7 +174,7 @@ pub use retune::EngineRetune;
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-// Engine phase state machine (Plan 098)
+// Engine phase state machine
 // ---------------------------------------------------------------------------
 /// The engine session's pump-protocol phase: the ordering machine for
 /// `subscribe()`, `load_snapshot()`, `backfill()`, and `resume()`.

@@ -1,7 +1,7 @@
 """UniswapV3Pool: concentrated liquidity AMM companion over a Pool handle.
 
-ADR-005 slice 8b — the V3 companion rewritten over the same `Pool`
-handle topology as the V2 `UniswapV2Pool`. Rust `BotState` is the single
+The V3 companion sits on the same `Pool` handle topology as the V2
+`UniswapV2Pool`. Rust `BotState` is the single
 source of truth for V3 mutable state (scalars, tick data, reorg journal);
 this companion reads it through `self._py_pool` (the atomic `snapshot_v3()`
 for scalars + `tick_data()`/`tick_bitmap` for the tick maps). The companion is

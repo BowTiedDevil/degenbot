@@ -158,8 +158,8 @@ class BalancerV2Pool(AbstractLiquidityPool):
     def balances(self) -> tuple[int, ...]:
         """Balances.
 
-        Read from the Rust core via the ``Pool`` handle
-        (ADR-005 slice 12b). Rust ``BotState`` is the single source of truth
+        Read from the Rust core via the ``Pool`` handle.
+        Rust ``BotState`` is the single source of truth
         for the mutable ``balances`` slot; this getter returns the live tuple.
         """
         return cast("tuple[int, ...]", tuple(self._py_pool.balance_vector().balances))
@@ -260,8 +260,8 @@ class BalancerV2Pool(AbstractLiquidityPool):
         Delegates to the Rust core
         (``Pool.apply_balancer_weighted_balance_update``) which
         journals the prior balances (genesis-anchor V2-style discipline) and
-        lands the new balances + ``update_block`` atomically
-        (ADR-005 slice 12b). The ``_state_lock`` + double-check-after-acquire
+        lands the new balances + ``update_block`` atomically. The
+        ``_state_lock`` + double-check-after-acquire
         pattern it used to apply is gone — Rust's internal write lock handles
         atomicity; the registration-state precondition is enforced by the
         Rust core's silent-no-op-on-older-block contract.

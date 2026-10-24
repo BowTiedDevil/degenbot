@@ -1,10 +1,10 @@
 //! `PyBotIo` — the Rust `#[pyclass]` I/O façade that pool builders receive in
-//! place of the Python `SyncPoolIO` adapter (ADR-005 slice 14a).
+//! place of the Python `SyncPoolIO` adapter.
 //!
 //! ## What it is
 //!
-//! Per slice 14, `Bot.build_pool`'s I/O choreography moves into Rust. Builders
-//! receive `PyBotIo` as their `io` parameter; it exposes the 7-method
+//! `Bot.build_pool`'s I/O choreography lives in Rust. Builders receive
+//! `PyBotIo` as their `io` parameter; it exposes the 7-method
 //! [`PoolIO`] surface (`get_block_number`, `get_block`, `get_block_timestamp`,
 //! `get_code`, `get_balance`, `call`, `call_raw`) by routing through the core
 //! [`ConstructionIo`] trait (ADR-023 D1/D3), plus ~50 `fetch_*` / `probe_*`
@@ -96,7 +96,7 @@ fn balancer_family_to_py(family: BalancerFamily) -> PyBalancerFamily {
     }
 }
 
-/// The Rust I/O façade for pool builders (ADR-005 slice 14a).
+/// The Rust I/O façade for pool builders.
 ///
 /// Construct with an existing `ProviderAdapter` (the `Bot.provider`):
 /// ```python
@@ -485,15 +485,13 @@ impl PyBotIo {
     }
 
     /// Fetch the factory address for a V2-style pool, performing the full
-    /// encode -> call -> decode -> checksum choreography in Rust (ADR-005 slice 14b).
+    /// encode -> call -> decode -> checksum choreography in Rust.
     ///
     /// Mirrors `degenbot/builders/type_resolution.py::fetch_factory_from_chain`:
     /// encode `factory()`, `eth_call` the pool, ABI-decode the right-aligned
     /// 20-byte `address`, EIP-55 checksum it. The RPC primitive (`call`)
-    /// still delegates to the held provider (the native-alloy swap is a later
-    /// slice); the *choreography* now lives in Rust — slice 14's
-    /// "methods for the builder I/O choreography … moved here, called from
-    /// Python via `PyBotIo`".
+    /// still delegates to the held provider; the *choreography* lives in Rust,
+    /// called from Python via `PyBotIo`.
     ///
     /// Returns `None` on any provider error, decode failure, or short result —
     /// mirrors the Python impl's `except (Web3Exception, DecodingError): return None`
@@ -562,7 +560,7 @@ impl PyBotIo {
     }
 
     /// Fetch a V2-style pool's reserves via `getReserves()`, performing the
-    /// encode -> call -> decode choreography in Rust (ADR-005 slice 14e).
+    /// encode -> call -> decode choreography in Rust.
     ///
     /// Mirrors the reserves-RPC block of `V2BuilderBase._fetch_v2_common_data`.
     /// Selector `0x0902f1ac`; no args; ABI-decodes a `(uint256, uint256)` tuple.
@@ -602,7 +600,7 @@ impl PyBotIo {
     }
 
     /// Fetch a V3-style pool's `slot0()` + `liquidity()` state — the 2-call
-    /// encode -> call -> decode choreography in Rust (ADR-005 slice 14f).
+    /// encode -> call -> decode choreography in Rust.
     ///
     /// Mirrors `V3PoolBuilder.build`'s slot0+liquidity RPC block. `slot0()`
     /// returns `(uint160 sqrtPriceX96, int24 tick, uint16, uint16, uint16, uint8,
@@ -648,12 +646,12 @@ impl PyBotIo {
     }
 
     /// Fetch a V4 pool's slot0 + liquidity via `getSlot0(bytes32)` +
-    /// `getLiquidity(bytes32)` on the state-view contract (ADR-005 slice 14o).
+    /// `getLiquidity(bytes32)` on the state-view contract.
     ///
     /// Mirrors `degenbot/builders/v4_pool_builder.py`'s slot0/liquidity RPC
     /// block in `_build_pool`. V4 differs from V3 in two ways:
     /// 1. Methods take a `bytes32 pool_id` prefix argument (like the V4 tick
-    ///    RPCs from slices 14j/14k).
+    ///    RPCs).
     /// 2. `getSlot0` returns `(uint160 sqrtPriceX96, int24 tick, uint24
     ///    protocolFee, uint24 lpFee)` — 4 fields, not 6. The protocolFee word
     ///    packs two uint12 fees; we return the raw `uint24` and leave that
@@ -704,8 +702,7 @@ impl PyBotIo {
         ))
     }
 
-    /// Fetch all Curve pool balances via `balances(uint256)` in a loop
-    /// (ADR-005 slice 14s).
+    /// Fetch all Curve pool balances via `balances(uint256)` in a loop.
     ///
     /// Mirrors `curve_pool_builder.py::_fetch_balances`'s snapshot-update loop.
     /// Issues `count` RPCs, indexing 0..count, gathering `uint256` results into
@@ -747,7 +744,7 @@ impl PyBotIo {
     }
 
     /// Fetch an ERC-20 token balance via `balanceOf(address)`, performing the
-    /// full encode -> call -> decode choreography in Rust (ADR-005 slice 14d).
+    /// full encode -> call -> decode choreography in Rust.
     ///
     /// Mirrors `degenbot/builders/erc20_builder.py::Erc20Builder.get_token_balance`'s
     /// I/O call path (cache + checksum are out of scope; the caller still owns
@@ -789,7 +786,7 @@ impl PyBotIo {
     }
 
     /// Fetch an ERC-20 token allowance via `allowance(address,address)`, the
-    /// two-address-arg parameterized-call pattern (ADR-005 slice 14d).
+    /// two-address-arg parameterized-call pattern.
     ///
     /// Mirrors `Erc20Builder.get_token_approval`'s I/O path. Selector
     /// `0xdd62ed3e`; two ABI-encoded `address` args; decoded `uint256` result.
@@ -831,7 +828,7 @@ impl PyBotIo {
     }
 
     /// Fetch an ERC-20 token's total supply via `totalSupply()`, the no-arg
-    /// uint256-returning call pattern (ADR-005 slice 14d).
+    /// uint256-returning call pattern.
     ///
     /// Mirrors `Erc20Builder.get_token_total_supply`'s I/O path. Selector
     /// `0x18160ddd`; no args; decoded `uint256` result. Errors propagate.
@@ -863,7 +860,7 @@ impl PyBotIo {
         crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
     }
 
-    /// Probe a pool's type by trying method calls in order (ADR-005 slice 14i).
+    /// Probe a pool's type by trying method calls in order.
     ///
     /// Mirrors `type_resolution.py::resolve_pool_type_by_probing`: tries V3
     /// (`slot0()`), then V2 (`getReserves()`), then Balancer (`getPoolId()` +
@@ -951,7 +948,7 @@ impl PyBotIo {
     }
 
     /// Fetch a V3 pool's tick bitmap word via `tickBitmap(int16)`, performing
-    /// the encode -> call -> decode choreography in Rust (ADR-005 slice 14j).
+    /// the encode -> call -> decode choreography in Rust.
     ///
     /// Calldata + return decode from `degenbot_rpc::abi` (B2) — no hand-rolled
     /// `selector` / `sign_extend_to_32_bytes` here. The encode/decode helpers
@@ -994,7 +991,7 @@ impl PyBotIo {
     }
 
     /// Fetch a V3 pool's tick liquidity data via `ticks(int24)`, performing
-    /// the encode -> call -> decode choreography in Rust (ADR-005 slice 14j).
+    /// the encode -> call -> decode choreography in Rust.
     ///
     /// Calldata + return decode from `degenbot_rpc::abi` (B2). The result's
     /// first two fields (`liquidity_gross: uint128`, `liquidity_net: int128`)
@@ -1038,7 +1035,7 @@ impl PyBotIo {
     }
 
     /// Fetch a V4 pool's tick bitmap via `getTickBitmap(bytes32,int16)` on the
-    /// state-view contract (ADR-005 slice 14k).
+    /// state-view contract.
     ///
     /// Calldata + return decode from `degenbot_rpc::abi` (B2). V4 adds a
     /// `pool_id` (`bytes32`) prefix argument before the `int16` word position.
@@ -1086,7 +1083,7 @@ impl PyBotIo {
     }
 
     /// Fetch a V4 pool's tick liquidity via `getTickLiquidity(bytes32,int24)`
-    /// on the state-view contract (ADR-005 slice 14k).
+    /// on the state-view contract.
     ///
     /// Calldata + return decode from `degenbot_rpc::abi` (B2). V4 adds a
     /// `pool_id` (`bytes32`) prefix argument before the `int24` tick. The V4
@@ -1137,7 +1134,7 @@ impl PyBotIo {
         ))
     }
 
-    /// Fetch a Balancer pool's `pool_id` via `getPoolId()` (ADR-005 slice 14l).
+    /// Fetch a Balancer pool's `pool_id` via `getPoolId()`.
     ///
     /// Mirrors `balancer_builder_base.py::_fetch_pool_id`. Returns the raw
     /// 32-byte `bytes32` value (no decode — bytes32 is already 32 bytes).
@@ -1171,8 +1168,7 @@ impl PyBotIo {
         Ok(PyBytes::new(py, &id).into())
     }
 
-    /// Fetch a Balancer pool's swap fee via `getSwapFeePercentage()`
-    /// (ADR-005 slice 14l).
+    /// Fetch a Balancer pool's swap fee via `getSwapFeePercentage()`.
     ///
     /// Mirrors `balancer_builder_base.py::_fetch_swap_fee`. Returns `uint256`.
     ///
@@ -1206,7 +1202,7 @@ impl PyBotIo {
     }
 
     /// Fetch a Balancer pool's amplification parameter via
-    /// `getAmplificationParameter()` (ADR-005 slice 14l).
+    /// `getAmplificationParameter()`.
     ///
     /// Mirrors `balancer_builder_base.py::_fetch_amp`. The full struct is
     /// `(uint256, bool, uint256)`; we only need the first word (amp value).
@@ -1241,7 +1237,7 @@ impl PyBotIo {
     }
 
     /// Fetch a Balancer weighted pool's normalized weights via
-    /// `getNormalizedWeights()` (ADR-005 slice 14l).
+    /// `getNormalizedWeights()`.
     ///
     /// Mirrors `balancer_builder_base.py::_fetch_weights`. Returns `uint256[]`
     /// as a Python list of ints. New decode pattern: ABI-encoded dynamic array
@@ -1280,8 +1276,7 @@ impl PyBotIo {
         Ok(list.into())
     }
 
-    /// Fetch a Balancer pool's rate providers via `getRateProviders()`
-    /// (ADR-005 slice 14l).
+    /// Fetch a Balancer pool's rate providers via `getRateProviders()`.
     ///
     /// Mirrors `balancer_builder_base.py::_fetch_rate_providers`. Returns
     /// `address[]` as a Python list of lowercase hex strings. Reverts propagate
@@ -1325,7 +1320,7 @@ impl PyBotIo {
     }
 
     /// Fetch a Balancer vault's pool tokens + balances via `getPoolTokens(
-    /// bytes32)` on the vault contract (ADR-005 slice 14m).
+    /// bytes32)` on the vault contract.
     ///
     /// Mirrors `balancer_builder_base.py::_fetch_vault_tokens`. The hardest
     /// Balancer decode: an ABI-encoded tuple `(address[], uint256[], uint256)`
@@ -1380,8 +1375,7 @@ impl PyBotIo {
         ))
     }
 
-    /// Fetch a single Balancer rate provider's rate via `getRate()` (ADR-005
-    /// slice 14n).
+    /// Fetch a single Balancer rate provider's rate via `getRate()`.
     ///
     /// Mirrors the per-provider loop body of `balancer_builder_base.py::
     /// _fetch_rates`. Each rate provider exposes a `getRate()` no-arg call
@@ -1459,7 +1453,7 @@ impl PyBotIo {
     }
 
     /// Probe a Balancer pool's sub-type by trying `getNormalizedWeights()` and
-    /// `getAmplificationParameter()` in order (ADR-005 slice 14n).
+    /// `getAmplificationParameter()` in order.
     ///
     /// Mirrors `balancer_builder_base.py::_detect_pool_type`. By the time this
     /// runs, the pool is already known to be Balancer (via `probe_pool_type`,

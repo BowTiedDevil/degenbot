@@ -1,6 +1,6 @@
-# ADR-005 slice 7 step 4b: this fork-gated test imports the deleted hollow V2
-# DEX subclasses (Sushi/Pancake/Swapbased/Camelot) and/or needs anvil. Skipping
-# at module level unblocks the offline collection; pending a full rewrite under
+# This fork-gated test targets the per-DEX V2 subclasses (Sushi/Pancake/
+# Swapbased/Camelot) that no longer exist, and/or needs anvil. Skipping at
+# module level unblocks the offline collection; pending a full rewrite under
 # anvil to the `UniswapV2Pool` + `dex.variant` model.
 import pathlib
 from typing import Any
@@ -9,7 +9,7 @@ import pydantic_core
 import pytest
 
 pytest.skip(
-    "ADR-005 slice 7 step 4b: fork test pending rewrite after DEX subclass collapse",
+    "fork test pending rewrite after the DEX subclass collapse",
     allow_module_level=True,
 )
 from degenbot.checksum_cache import get_checksum_address

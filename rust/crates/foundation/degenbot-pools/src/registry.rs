@@ -750,8 +750,8 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
     fn mark_bitmap_words_known(&mut self, words: &[i32]);
 
     /// Apply a Swap event to this pool's mutable `slot0` scalars + `tick_data`,
-    /// capturing reverse-apply priors into the reorg journal (ADR-014 D1,
-    /// ADR-017 slice 2). The delta carries `scalar_priors: Some(..)` (a Swap
+    /// capturing reverse-apply priors into the reorg journal (ADR-014 D1).
+    /// The delta carries `scalar_priors: Some(..)` (a Swap
     /// changes the slot0 head on every event) plus per-tick priors for any
     /// ticks this event mutates. A tick with no prior entry is journaled with
     /// `liquidity_gross_before: None` (on rollback, delete it).
@@ -772,7 +772,7 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
 
     /// Apply a liquidity update (V3 Mint/Burn, V4 `ModifyLiquidity`) to this
     /// pool's `tick_data`, capturing reverse-apply priors into the reorg
-    /// journal (ADR-014 D1, ADR-017 slice 2). Applies the delta via
+    /// journal (ADR-014 D1). Applies the delta via
     /// [`crate::tick_bitmap::apply_liquidity_to_tick_range`] (matching Solidity
     /// `Tick.update`), advances `update_block`, invalidates the tick-range
     /// cache.

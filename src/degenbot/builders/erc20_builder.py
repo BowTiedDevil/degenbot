@@ -309,8 +309,8 @@ class Erc20Builder:
         if (balance := token.get_cached_balance(address, block_number)) is not None:
             return balance
 
-        # ADR-005 slice 14d: delegate the balanceOf choreography to Rust
-        # (BotIo is the only executor; the Python parity-gate fallback is retired).
+        # Delegate the balanceOf choreography to Rust (BotIo is the only
+        # executor; the Python parity-gate fallback is retired).
         balance = io.fetch_token_balance(token.address, address, block=block_number)
 
         token.set_cached_balance(address, block_number, balance)
@@ -342,7 +342,7 @@ class Erc20Builder:
         if (approval := token.get_cached_approval(block_number, owner, spender)) is not None:
             return approval
 
-        # ADR-005 slice 14d: same delegation seam as `get_token_balance`.
+        # Same delegation seam as `get_token_balance`.
         approval = io.fetch_token_allowance(token.address, owner, spender, block=block_number)
 
         token.set_cached_approval(block_number, owner, spender, approval)
@@ -370,7 +370,7 @@ class Erc20Builder:
         if (total_supply := token.get_cached_total_supply(block_number)) is not None:
             return total_supply
 
-        # ADR-005 slice 14d: same delegation seam as `get_token_balance`.
+        # Same delegation seam as `get_token_balance`.
         total_supply = int(io.fetch_token_total_supply(token.address, block=block_number))
 
         token.set_cached_total_supply(block_number, total_supply)

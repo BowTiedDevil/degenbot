@@ -1,4 +1,4 @@
-"""The canonical bot-startup orchestrator (Plan 102, slice 3).
+"""The canonical bot-startup orchestrator.
 
 :class:`EngineRegistry` is the **one correct way to start** a
 :class:`~degenbot._ffi.ArbitrageEngine` operator: it runs the
@@ -191,7 +191,7 @@ class EngineRegistry:
     def register_v2_pool(pool: UniswapV2Pool) -> int:
         """Return the shared-core ``pool_id`` of a V2 pool.
 
-        ADR-006 slice 9: with the engine sharing the bot's BotState, the V2
+        The engine shares the bot's BotState, so the V2
         pool is ALREADY registered there by `bot.build_pool` (the V2 builder
         calls `py_bot.register_v2_pool` + hands back the Pool
         handle), and re-registering via `engine.register_v2_pool` would panic
@@ -240,7 +240,7 @@ class EngineRegistry:
         at ``Bot`` construction (``Bot.load_snapshot_from_db``). The engine
         applies buffered events on top of stale snapshot data.
 
-        ADR-006 slice 9 / D1: the engine shares the Bot's BotState, so the V3
+        ADR-006 D1: the engine shares the Bot's BotState, so the V3
         pool is ALREADY registered there by `bot.build_pool` (the V3 builder
         calls `py_bot.register_v3_pool` + hands back the Pool
         handle). Re-registering via `engine.register_v3_pool` would PANIC the
@@ -287,7 +287,7 @@ class EngineRegistry:
         typed ``HookedPoolRejectedError`` / ``DynamicFeePoolRejectedError``
         (both subclass ``ValueError``); ``build_paths`` classifies by type.
 
-        ADR-006 slice 9 / D1: the pool is ALREADY registered in the shared
+        ADR-006 D1: the pool is ALREADY registered in the shared
         ``BotState`` by `bot.build_managed_pool`; re-registering would raise
         ``ValueError("V4 pool already registered")`` for every V4 hop in every
         discovered path. V4 hook/dynamic-fee admission is enforced at

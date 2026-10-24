@@ -58,7 +58,7 @@ create_exception!(
     "A construction route refused a pool whose factory no rung serves (no built-in DEX variant preset, no identity selector answered, or CREATE2 verification failed). Loud typed abort under the loud-abort rule (ADR-055 D4) — never a silent skip."
 );
 
-// V4 pool-admission refusals (Plan 102, slice 2). The Rust core refuses
+// V4 pool-admission refusals. The Rust core refuses
 // amount-modifying-hook, dynamic-fee, and high-static-fee pools as a
 // *correctness floor* (the solver's V3-concentrated-liquidity math assumes no hook
 // intervention + a fixed fee; the cmd_executor encodes fee as u16 so

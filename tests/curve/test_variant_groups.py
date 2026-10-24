@@ -1,7 +1,7 @@
 """Tests for Curve variant group resolution.
 
-Plan 029: Externalize variant group addresses from the pool class into
-a configuration module with typed resolver functions.
+Variant group addresses live in a configuration module with typed resolver
+functions, externalized from the pool class.
 """
 
 from degenbot.checksum_cache import get_checksum_address

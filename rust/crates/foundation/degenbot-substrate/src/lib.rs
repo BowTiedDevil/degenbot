@@ -524,9 +524,9 @@ impl BotState {
         }
     }
 
-    // --- ADR-005 slice 12a: Balancer V2 weighted state port -------------
+    // --- Balancer V2 weighted state port ---------------------------------
 
-    // --- ADR-005 slice 12c: Balancer V2 stable state port --------------
+    // --- Balancer V2 stable state port -----------------------------------
 
     /// Return the pool-family tag for `pool_id` as a kebab-case string — the
     /// spelling [`RegisteredPoolFamily::tag`] owns — or `None` for an
@@ -684,11 +684,10 @@ impl BotState {
     /// Returns 0 if the pool ID is not registered.
     /// Restore **every** registered V2 pool's state to just before `target`.
     ///
-    /// Bulk restore helper. ADR-006 slice 7 replaced the engine-level
-    /// `handle_reorg` (which called this) with per-event
-    /// `ReorgCoordinator::dispatch_reorg_log` (per-pool `restore_before_block`).
-    /// This bulk helper survives as a `BotState` API (used by tests + available
-    /// for ad-hoc bulk rollback); the engine no longer calls it on the hot path.
+    /// Bulk restore helper. The engine's reorg path is per-event
+    /// `ReorgCoordinator::dispatch_reorg_log` (per-pool `restore_before_block`),
+    /// not this bulk call: this helper survives as a `BotState` API (used by
+    /// tests + available for ad-hoc bulk rollback), not on the hot path.
     ///
     /// Pools with no journal delta at/after `target` are left as-is (idempotent
     /// a reorg touches only a subset of pools). Returns the count of pools
@@ -808,8 +807,8 @@ impl BotState {
     /// Get the number of deltas in the reorg journal for a V3 pool.
     ///
     /// Returns 0 if the pool ID is not registered or is not a V3 pool.
-    /// Does `pool_id`'s journal have state at or before `block`? (ADR-006
-    /// slice 7.) `false` → a too-deep reorg; `ReorgCoordinator` returns
+    /// Does `pool_id`'s journal have state at or before `block`?
+    /// `false` → a too-deep reorg; `ReorgCoordinator` returns
     /// `Err(NoStatePriorToBlock)` and the pump shuts down gracefully.
     ///
     /// The predicate is **family-dependent** because the journals differ in
@@ -866,16 +865,15 @@ impl BotState {
                     .earliest_block()
                     .is_some_and(|earliest| earliest < block)
             }
-            // Balancer weighted carries a genesis delta (mirror of V2/Curve) —
-            // ADR-005 slice 12a. Same predicate: `earliest < block`.
+            // Balancer weighted carries a genesis delta (mirror of V2/Curve).
+            // Same predicate: `earliest < block`.
             PoolEntry::BalancerWeighted(p) => {
                 p.1.journal
                     .earliest_block()
                     .is_some_and(|earliest| earliest < block)
             }
             // Balancer stable carries a genesis delta (mirror of
-            // V2/Curve/BalancerWeighted) — ADR-005 slice 12c. Same predicate:
-            // `earliest < block`.
+            // V2/Curve/BalancerWeighted). Same predicate: `earliest < block`.
             PoolEntry::BalancerStable(p) => {
                 p.1.journal
                     .earliest_block()

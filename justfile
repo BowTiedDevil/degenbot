@@ -451,7 +451,7 @@ fmt-check: check-toolchain
         exit 1
     }
 
-# Enforce the no-pyo3-in-core invariant (Plan 103). Pure Rust core crates must
+# Enforce the no-pyo3-in-core invariant. Pure Rust core crates must
 # not depend on pyo3 under their default features. Add new core crates here.
 check-no-pyo3-in-cores:
     # C7: the gate body lives as a cargo test on the umbrella crate

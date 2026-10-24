@@ -10,8 +10,8 @@ Rust core (ADR-005 standalone-core constraint).
 
 Rejections surface as the typed :class:`~degenbot.exceptions.PathRejectedError`
 family (subclassing :class:`~degenbot.exceptions.ArbitrageError`, NOT
-``ValueError``) so callers classify by type — mirroring the Plan 102
-typed-exception pattern now used for pool admission + verification.
+``ValueError``) so callers classify by type — the same typed-exception
+pattern used for pool admission + verification.
 
 The predicate is a pluggable protocol: callers inject a
 :class:`PathPolicy` (or any structural implementation of

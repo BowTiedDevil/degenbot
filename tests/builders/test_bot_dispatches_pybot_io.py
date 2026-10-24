@@ -1,9 +1,8 @@
 """Tests documenting the BotIo wiring in `Bot.build_pool`.
 
-ADR-005 slice 14a: `Bot.build_pool` hands builders a `BotIo` (the Rust
-executor). The Python `SyncPoolIO` adapter + its parity gate are retired
-(slice 14 collapse) — `BotIo` is the sole executor, so there is no longer
-a second implementation to parity-check against.
+`Bot.build_pool` hands builders a `BotIo` (the Rust executor). There is no
+Python `SyncPoolIO` adapter and no parity gate: `BotIo` is the sole executor,
+so there is no second implementation to parity-check against.
 
 These tests pin the wiring (the `io` handed to builders is a `BotIo`),
 mirroring `test_bot_pool_io.py`'s mocked-io shape without requiring a live

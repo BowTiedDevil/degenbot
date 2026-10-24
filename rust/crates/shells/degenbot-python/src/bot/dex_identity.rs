@@ -1,10 +1,10 @@
 //! Python seam for the Rust-core [`DexIdentity`](degenbot_uniswap::dex_identity)
-//! presets (ADR-005 slice 6).
+//! presets.
 //!
 //! [`PyDexIdentity`] is a frozen read-only view over a `DexIdentity` preset.
 //! The free function [`dex_identity`] resolves a preset by its kebab-case
-//! variant string. Slice 7 (DEX subclass collapse) will be the first real
-//! consumer; this seam exists so the standalone claim is testable from Python:
+//! variant string. The DEX-subclass-collapsed builders are its consumers; this
+//! seam exists so the standalone claim is testable from Python:
 //!
 //! ```python
 //! from degenbot._ffi.dex_identity import dex_identity
@@ -25,7 +25,7 @@ use std::sync::OnceLock;
 use address_utils::{address_to_checksum_string, parse_address};
 use degenbot_uniswap::dex_identity::{DexIdentity, DexVariant, ReservesAbi};
 
-/// Frozen Python view over a `DexIdentity` preset (ADR-005 slice 6).
+/// Frozen Python view over a `DexIdentity` preset.
 ///
 /// Read-only — all fields are `#[getter]`. Carries the preset's deployment
 /// identity (factory, deployer, init hash, default fees, reserve ABI shape,
@@ -178,7 +178,7 @@ impl PyDexIdentity {
 
     /// `token0→token1` fee parameters: `(gamma_numer, fee_denom)` — the
     /// retained post-fee fraction (e.g. `(997, 1000)` for a 0.3% fee). NOT the
-    /// fee numerator. Slice-5 convention; matches `register_v2_pool`'s
+    /// fee numerator. Matches `register_v2_pool`'s
     /// `gamma_numerN` parameter meaning.
     #[getter]
     fn fee_token0(&self) -> (u64, u64) {
@@ -250,8 +250,8 @@ fn dex_identity(variant: &str) -> Option<PyDexIdentity> {
 /// Register the `dex_identity` free function + the `PyDexIdentity` class on
 /// the `degenbot._ffi.dex_identity` submodule.
 /// The `degenbot._ffi.dex_identity` Python submodule (declarative
-/// `#[pymodule]`), carrying the DEX-identity preset lookup (ADR-005 slice
-/// 6). The parent module registers the submodule itself and its
+/// `#[pymodule]`), carrying the DEX-identity preset lookup. The parent module
+/// registers the submodule itself and its
 /// `sys.modules` entry.
 #[pymodule(submodule)]
 #[pyo3(module = "degenbot._ffi", name = "dex_identity")]

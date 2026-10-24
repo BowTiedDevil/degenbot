@@ -1,7 +1,6 @@
 //! Balancer V2 math constants (18/20/36-decimal fixed-point bases, `PowVersion`).
 //!
 //! Direct port of `src/degenbot/balancer/libraries/constants.py`.
-//! ADR-005 slice 12e — the pure-math port sub-slice of slice 12.
 
 use alloy::primitives::U256;
 

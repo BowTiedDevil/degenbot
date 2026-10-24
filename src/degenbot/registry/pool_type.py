@@ -82,7 +82,7 @@ class PoolRegistration:
 
     ``family`` / ``variant`` override the class-derived identity when the class
     shape misleads :func:`_derive_family` (Balancer) or a collapsed subclass
-    hierarchy needs an explicit DB ``kind`` (ADR-005 slice 7 step 4b).
+    hierarchy needs an explicit DB ``kind``.
     ``dex_identity`` carries the canonical DEX preset when one exists.
     ``implementation_address`` is the EIP-1167 clone master for factories that
     use one.

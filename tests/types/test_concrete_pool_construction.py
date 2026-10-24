@@ -388,12 +388,12 @@ class TestV4PoolInterface:
 class TestInheritance:
     """Variant pools inherit from the correct base class."""
 
-    # ADR-005 slice 7 step 4b: the hollow V2 DEX subclasses are deleted, so the
-    # V2-inherits-UniswapV2Pool checks are now trivial (they all ARE
-    # UniswapV2Pool). C8b likewise collapsed the hollow SushiswapV3Pool — the
-    # sushiswap-v3 factory now yields a plain UniswapV3Pool (byte-identical
-    # slot0/tick layout, no ABI override needed). Only Pancakeswap/Aerodrome V3
-    # remain meaningful subclass checks (real SLOT0/TICK overrides).
+    # There are no per-DEX V2 subclasses, so the V2-inherits-UniswapV2Pool
+    # checks are trivial (they all ARE UniswapV2Pool). Sushiswap V3 has no
+    # subclass either — the sushiswap-v3 factory yields a plain UniswapV3Pool
+    # (byte-identical slot0/tick layout, no ABI override needed). Only
+    # Pancakeswap/Aerodrome V3 are meaningful subclass checks (real SLOT0/TICK
+    # overrides).
 
     def test_pancakeswap_v3_inherits_uniswap_v3(self):
         assert issubclass(PancakeswapV3Pool, UniswapV3Pool)

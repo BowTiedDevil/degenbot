@@ -29,7 +29,7 @@ use degenbot_substrate::swap_simulation::{Caveats, SwapOutcome, SwapRead, SwapRe
 use degenbot_substrate::{BotState, CurveInputsError};
 
 /// `PyO3` adapter wrapping a Python fetch-word callable as a
-/// [`TickWordFetcher`] (ADR-005 sparse-map parity, slice 3).
+/// [`TickWordFetcher`].
 /// The callable is `fetcher(word: int, block: int) ->
 /// dict[int, tuple[int, int, int]] | None`. It must RETURN the fetched tick data
 /// (writing it back would re-enter the state lock the caller holds) — the Rust
@@ -103,7 +103,7 @@ impl degenbot_pools::tick_fetch::TickWordFetcher for PyTickWordFetcher {
 }
 
 // ---------------------------------------------------------------------------
-// Balancer rate-provider Py adapter (ADR-005 slice 12c I/O trait object).
+// Balancer rate-provider Py adapter.
 // ---------------------------------------------------------------------------
 
 /// `PyO3` adapter wrapping a Python rate-provider callable (or any object
@@ -889,7 +889,7 @@ impl PyLiquidityPool {
         Ok(bound.unbind())
     }
 
-    /// Fetch+retry exact-input swap for sparse V3/V4 pools (ADR-005 slice 3).
+    /// Fetch+retry exact-input swap for sparse V3/V4 pools.
     /// Like [`calculate_tokens_out`][Self::calculate_tokens_out], but on a
     /// sparse tick-map miss it calls `fetcher(word, block)` to fetch the
     /// missing word's tick data, merges it, and retries (dedup-protected — a
@@ -1059,7 +1059,7 @@ impl PyLiquidityPool {
         }
     }
 
-    // --- State read getters (ADR-005 slice 4 step 2) ---
+    // --- State read getters ---
     // These read the shared `BotState` under a read guard. Immutable identity
     // (token0/token1/factory/fees/address) stays on the Python companion —
     // only mutable state + the reorg journal delegate to Rust.
@@ -1409,7 +1409,7 @@ impl PyLiquidityPool {
         })
     }
 
-    // --- V3 state read getters (plan-101 slice 8a) ---
+    // --- V3 state read getters ---
     // Mirror the V2 family but read the V3PoolState entry. All getters take
     // one read guard and return None-defaulted values when the pool_id is not
     // a registered V3 pool (matching the V2 getters' behavior on V2).
@@ -1636,7 +1636,7 @@ impl PyLiquidityPool {
         }
     }
 
-    // --- Curve state read getters + mutations (ADR-005 slice 11a state port) ---
+    // --- Curve state read getters + mutations ---
 
     // --- Curve identity getters (ADR-005 identity extension) ---
 
@@ -2297,11 +2297,9 @@ impl PyLiquidityPool {
         self.read_provider_opt(py, |p| p.virtual_price(block_number))
     }
 
-    // --- Balancer weighted state read getters + mutations
-    //     (ADR-005 slice 12a state port) ---
+    // --- Balancer weighted state read getters + mutations ---
 
-    // --- Balancer stable state read getters + mutations
-    //     (ADR-005 slice 12c state port) ---
+    // --- Balancer stable state read getters + mutations ---
 
     /// Token count for a Balancer stable pool (`balances.len()` — includes
     /// BPT for Composable pools).

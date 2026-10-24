@@ -5,8 +5,8 @@
 Register the `dex_identity` free function + the `PyDexIdentity` class on
 the `degenbot._ffi.dex_identity` submodule.
 The `degenbot._ffi.dex_identity` Python submodule (declarative
-`#[pymodule]`), carrying the DEX-identity preset lookup (ADR-005 slice
-6). The parent module registers the submodule itself and its
+`#[pymodule]`), carrying the DEX-identity preset lookup. The parent module
+registers the submodule itself and its
 `sys.modules` entry.
 """
 
@@ -19,7 +19,7 @@ __all__ = ["DexIdentity", "dex_identity"]
 @final
 class DexIdentity:
     """
-    Frozen Python view over a `DexIdentity` preset (ADR-005 slice 6).
+    Frozen Python view over a `DexIdentity` preset.
 
     Read-only — all fields are `#[getter]`. Carries the preset's deployment
     identity (factory, deployer, init hash, default fees, reserve ABI shape,
@@ -75,7 +75,7 @@ class DexIdentity:
         """
         `token0→token1` fee parameters: `(gamma_numer, fee_denom)` — the
         retained post-fee fraction (e.g. `(997, 1000)` for a 0.3% fee). NOT the
-        fee numerator. Slice-5 convention; matches `register_v2_pool`'s
+        fee numerator. Matches `register_v2_pool`'s
         `gamma_numerN` parameter meaning.
         """
     @property

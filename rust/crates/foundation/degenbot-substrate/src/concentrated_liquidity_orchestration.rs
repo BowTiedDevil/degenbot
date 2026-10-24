@@ -1596,9 +1596,9 @@ impl ConcentratedLiquidityOrchestration {
         pool_id: u64,
         fetched: &::degenbot_pools::tick_fetch::FetchedTickWord,
     ) -> bool {
-        // ADR-017 slice 1: dispatch through `ConcentratedLiquidityPoolMut`
-        // (the body lived inlined in V3/V4 arms here; the trait dedups the
-        // two). The `bool` wraps the trait's always-`true` return: `false`
+        // Dispatch through `ConcentratedLiquidityPoolMut` (one body shared by
+        // V3 and V4, not inlined per arm). The `bool` wraps the trait's
+        // always-`true` return: `false`
         // for non-concentrated-liquidity / unregistered pools (the non-concentrated-liquidity no-op).
         let Some(entry) = reg.pools.get_mut(&pool_id) else {
             return false;

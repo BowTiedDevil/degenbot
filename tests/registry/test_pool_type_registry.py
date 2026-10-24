@@ -1,7 +1,7 @@
 """Tests for PoolTypeRegistry — the unified pool type registration system.
 
-ADR-005 slice 7 step 4b: the hollow V2 DEX subclasses are deleted. The
-canonical ``UniswapV2Pool`` is registered for each V2 DEX factory with an
+There are no per-DEX V2 subclasses: the canonical ``UniswapV2Pool`` is
+registered for each V2 DEX factory with an
 explicit ``variant=`` override (preserving the DB ``kind`` — e.g.
 ``variant="sushiswap"`` → ``kind="sushiswap_v2"``) + a ``dex_identity``
 preset. The variant is now a REGISTRATION field (resolved via
@@ -171,7 +171,7 @@ class TestInvariantDerivation:
 
 
 class TestVariantFromRegistration:
-    """The variant is a registration field (post slice 7 step 4b collapse)."""
+    """The variant is a registration field."""
 
     def test_canonical_pool_has_none_variant(self) -> None:
         """UniswapV2Pool / UniswapV3Pool registered with no variant → variant=None."""

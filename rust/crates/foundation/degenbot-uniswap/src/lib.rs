@@ -20,8 +20,8 @@
 //! DEX identity presets (factory/init-hash/fees) are Uniswap-V2-domain data,
 //! not foundational utilities. `degenbot-core` stays leaf-focused (errors,
 //! hex, addresses, runtime); this crate owns the protocol-domain value
-//! objects. Plan 103's target diagram originally placed `dex_identity` in
-//! `degenbot-core`; this crate lands it in a more honest home.
+//! objects. `dex_identity` lives here rather than in `degenbot-core` because it
+//! is protocol-domain data.
 //!
 //! # Modules
 //!

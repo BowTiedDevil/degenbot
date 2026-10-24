@@ -31,7 +31,7 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
 
     variant: ClassVar[str | None] = None
 
-    # Camelot solidly-stable strategy (ADR-005 slice 7 step 4a fold). The
+    # Camelot solidly-stable strategy. The
     # companion sets these as INSTANCE attrs off the `Pool` handle's
     # `V2PoolDescriptor` (see `from_handle`) — `stable_swap` selects the
     # stable calc branch for Camelot stable pools; False
@@ -363,10 +363,10 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
     ) -> int:
         """Calculate the expected token OUTPUT for a target INPUT at current reserves.
 
-        Strategy dispatch (ADR-005 slice 7 step 4a fold): Camelot stable pools
+        Strategy dispatch: Camelot stable pools
         (``stable_swap=True``) use the solidly-stable invariant with Camelot's
         k/get_y; all other V2 pools fall through to ``super()`` — the
-        ``UniswapV2PoolCalc`` Rust-delegation path (slice 5) is unperturbed for
+        ``UniswapV2PoolCalc`` Rust-delegation path is unperturbed for
         the volatile majority.
 
         Returns:
@@ -395,7 +395,7 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
 
         Routes through the Rust ``degenbot-solidly-math`` core
         (``solidly_calc_exact_in_stable_camelot``), which bakes in Camelot's
-        ``k_camelot``/``get_y_camelot`` variant (ADR-005 slice 7).
+        ``k_camelot``/``get_y_camelot`` variant.
 
         ``fee_tokenN`` is the FEE ``Fraction`` (e.g. ``Fraction(3, 1000)``).
 

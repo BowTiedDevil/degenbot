@@ -1,10 +1,9 @@
 //! Aerodrome V2 pool state — the `BotState`-owned home for an Aerodrome V2
 //! pool (Solidly-style constant-product AMM on Base / Arbitrum).
 //!
-//! ADR-005 slice — the Aerodrome state port: Aerodrome reserves + reorg
-//! journal move OUT of the Python `StateCache` into Rust (the same migration
-//! V2 underwent). Adds the Aerodrome family as a seventh `PoolEntry`
-//! variant.
+//! The Aerodrome state port: Aerodrome reserves + the reorg journal live in
+//! Rust, not a Python `StateCache`. The Aerodrome family is a seventh
+//! `PoolEntry` variant.
 //!
 //! ## State shape
 //!
@@ -186,7 +185,7 @@ impl AerodromeV2PoolState {
 }
 
 impl AerodromeV2PoolState {
-    // Apply `Sync` is on `ReservePairPoolState` (ADR-017 slice 5 —
+    // Apply `Sync` is on `ReservePairPoolState` —
     // byte-identical to the V2 impl modulo the struct name). Aerodrome
     // shares the `V2BlockDelta` full-state delta with V2 (Solidly mirrors
     // v2-core's `Sync(uint112, uint112)`).

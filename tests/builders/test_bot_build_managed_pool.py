@@ -60,11 +60,11 @@ class TestBuildManagedPoolSignature:
             assert return_annotation is UniswapV4Pool
 
     def test_build_pool_still_exists(self):
-        """Bot.build_pool() still exists (not removed in Slice 1)."""
+        """Bot.build_pool() still exists."""
         assert hasattr(Bot, "build_pool")
 
     def test_build_pool_no_longer_accepts_pool_id(self):
-        """build_pool() no longer accepts pool_id kwarg after Slice 3."""
+        """build_pool() does not accept a pool_id kwarg."""
         sig = inspect.signature(Bot.build_pool)
         param_names = set(sig.parameters.keys())
         assert "pool_id" not in param_names

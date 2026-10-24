@@ -35,7 +35,7 @@ use super::{
 impl BotState {
     /// Register a Curve `StableSwap` pool by contract address.
     ///
-    /// ADR-005 slice 11a (state port) — the third `PoolEntry` family. Carries
+    /// Curve is the third `PoolEntry` family. Carries
     /// immutable config (tokens, A, fee, variant strategy enums, base-pool
     /// reference) + the registration-time mutable state (`balances`,
     /// `update_block`). Seeds the reorg journal with a genesis anchor (mirror

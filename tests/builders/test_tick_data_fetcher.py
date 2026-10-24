@@ -1,8 +1,8 @@
 """Tests for the unified tick data fetcher factory.
 
 Verifies that ``make_tick_data_fetcher`` produces a callback that RETURNS the
-fetched word's tick data (ADR-005 sparse-map parity, slice 3b return-data
-contract) for both V3 and V4 type variants.
+fetched word's tick data (the sparse-map return-data contract) for both V3 and
+V4 type variants.
 
 The fetcher no longer writes back via ``pool.update_tick_data`` — the Rust
 ``simulate_swap_with_fetch`` loop merges the returned data itself (holding the
@@ -11,7 +11,7 @@ The Python companion's sparse-write-back sites (``_apply_fetched_tick_word``)
 also consume the returned data explicitly. These tests assert on the RETURNED
 dict, not on pool-state side-effects.
 
-Post ADR-005 slice-14 collapse: the fetcher calls ``io.fetch_tick_bitmap()``
+The fetcher calls ``io.fetch_tick_bitmap()``
 / ``io.fetch_tick_data()`` directly (the Python ``io.call()`` parity-gate
 fallback is retired), so ``FakePoolIO`` exposes those methods with canned
 return values — no ABI encoding needed.

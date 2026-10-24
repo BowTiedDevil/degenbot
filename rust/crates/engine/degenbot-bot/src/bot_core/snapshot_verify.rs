@@ -1,4 +1,4 @@
-//! Snapshot store + concentrated-liquidity-registration orchestration (ADR-006 slice 5b / D4).
+//! Snapshot store + concentrated-liquidity-registration orchestration (ADR-006 D4).
 //!
 //! Extracted from `py_binding.rs` so the pure-logic core is testable without
 //! `PyO3`. `py_binding.rs` (in `degenbot-python`) keeps the `PyO3` arg-parsing
@@ -45,8 +45,7 @@ use crate::bot_core::{TickInfo, V3PoolState, V4PoolState};
 /// (`crate::bot_core::verification_retry`) can branch on the fatal split and
 /// the Python seam can fold the two transient origins into one retryable
 /// exception type.
-/// The minimal on-chain RPC surface the two-phase concentrated liquidity verification needs
-/// (ADR-006 slice-5 candidate-2 completion).
+/// The minimal on-chain RPC surface the two-phase concentrated liquidity verification needs.
 ///
 /// The pure orchestrator [`run_concentrated_liquidity_verification`] drives this trait without
 /// knowing `AlloyProvider`, `tokio`, or `PyResult`. The single concrete impl
@@ -55,7 +54,7 @@ use crate::bot_core::{TickInfo, V3PoolState, V4PoolState};
 /// `crate::bot_core::liquidity_verifier` calls, and maps a map divergence
 /// → [`VerifyOrigin::Mismatch`].
 ///
-/// Methods are **sync** (the impl blocks internally) per the slice-5 decision:
+/// Methods are **sync** (the impl blocks internally):
 /// keeping `async` out of the pure layer keeps `snapshot_verify.rs` tokio-free
 /// at the type level.
 pub trait VerifyRpc {
@@ -124,8 +123,7 @@ pub trait VerifyRpc {
 /// Run the two-phase concentrated liquidity verification (snapshot block + backfill block) if
 /// configured, in order.
 ///
-/// Lifted verbatim-in-shape from `py_binding.rs` (ADR-006 slice-5 candidate-2):
-/// the CORE control flow is pure — decide whether to run (via
+/// The CORE control flow is pure — decide whether to run (via
 /// [`VerifyRpc::enabled`]) → run the snapshot-verify phase → run the
 /// backfill-verify phase, in order. Only the `AlloyProvider`/`PyResult` I/O
 /// stays behind in `py_binding.rs` (inside the `VerifyRpc` impl).
@@ -222,7 +220,7 @@ mod tests {
     #[derive(Default)]
     struct DummyEngine;
 
-    /// ADR-006 slice 5b RED→GREEN: `register_with_concentrated_liquidity_buffers` runs register →
+    /// `register_with_concentrated_liquidity_buffers` runs register →
     /// `apply_backfill` → `take_backfill_snapshot` → `apply_pump` in ORDER under one
     /// lock acquisition, returning the key + the captured snapshot. (The
     /// ordering is load-bearing for the no-race guarantee.)
@@ -297,7 +295,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // run_concentrated_liquidity_verification orchestrator (ADR-006 slice-5 candidate-2)
+    // run_concentrated_liquidity_verification orchestrator
     // -----------------------------------------------------------------
 
     /// A fake `VerifyRpc` that records every call + can be made to fail at a

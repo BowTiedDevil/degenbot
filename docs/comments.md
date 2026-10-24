@@ -34,6 +34,12 @@ Anything that must be resolved outside the file AND is not permanent:
   reference). Git commit messages carry them. Measured 2026-09-15:
   237 in-code citations, zero resolvable. Task IDs are "planning"
   artifacts, not "explanation" artifacts.
+- **Migration work-item labels**: `ADR-005 slice 14j`, `Plan 102`, `slice-3b`.
+  A slice is an ephemeral work item exactly like a tracker ID: the rule it
+  introduced belongs in the comment, the sequencing history in the ADR. A
+  sentence describing a then-future ("the pump lands in slice 5") that has
+  since landed is stale on arrival — rewrite it in the present tense or delete
+  it.
 - **Gate narration**: "RED pin", "RED→GREEN", "post-fix", "until X
   merges". Code describes the present. Once a gate passes, the comment
   is sediment — delete it in the same change that proves it.

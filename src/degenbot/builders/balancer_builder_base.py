@@ -50,11 +50,10 @@ class BalancerBuilderBase:
     def pow_version_to_rust(pow_version: PowVersion | int) -> int:
         """Map a ``PowVersion`` enum (or raw int) → the ``u8`` discriminant Rust stores.
 
-        The Rust core (``register_balancer_weighted_pool``, ADR-005 slice
-        12a) carries ``PowVersion`` as an opaque ``u8`` (V1=1 / V2=2) for the
-        future Rust ``WeightedMath`` port (ADR-005 slice 12e). Not consumed by
-        slice 12b's companion — the Python companion keeps its own
-        ``PowVersion`` for legacy builder compatibility.
+        The Rust core (``register_balancer_weighted_pool``) carries
+        ``PowVersion`` as an opaque ``u8`` (V1=1 / V2=2) for the Rust
+        ``WeightedMath`` port. The Python companion keeps its own ``PowVersion``
+        for legacy builder compatibility.
 
         Returns:
             The computed value.
@@ -181,7 +180,7 @@ class BalancerBuilderBase:
         address: str,
         block: int,
     ) -> list[str]:
-        # ADR-005 slice 14n: delegate to Rust. WeightedPool2Tokens and
+        # Delegate to Rust. WeightedPool2Tokens and
         # MetaStablePools may not have getRateProviders; the Rust impl returns
         # an empty list there (mirrors the prior `except` -> []).
         try:
@@ -195,7 +194,7 @@ class BalancerBuilderBase:
         rate_providers: list[str],
         block: int,
     ) -> list[int]:
-        # ADR-005 slice 14n: delegate each per-provider getRate() to Rust.
+        # Delegate each per-provider getRate() to Rust.
         # The zero-address sentinel check stays.
         rates: list[int] = []
         for provider in rate_providers:
@@ -225,10 +224,10 @@ class BalancerBuilderBase:
             DegenbotValueError: If the operation fails.
 
         """
-        # ADR-005 slice 14n: delegate both probes to Rust
-        # (``BotIo.probe_balancer_pool_type``). BotIo is the only executor;
-        # the Python getNormalizedWeights/getAmplificationParameter probing
-        # fallback is retired.
+        # Delegate both probes to Rust (``BotIo.probe_balancer_pool_type``).
+        # BotIo is the only executor; the Python
+        # getNormalizedWeights/getAmplificationParameter probing fallback is
+        # retired.
         try:
             return io.probe_balancer_pool_type(address, block=block)
         except ValueError:

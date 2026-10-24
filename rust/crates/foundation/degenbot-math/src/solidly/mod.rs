@@ -12,14 +12,11 @@
 // Direct Solidity ports that mirror the deployed-contract control flow
 // (index-based loops, single-function 1:1 mirrors).
 //!
-//! ADR-005 slice 12f — the **pure-math port** sub-slice of slice 12 (the
-//! Solidly-derived DEX port: Solidly/Aerodrome/Camelot). Mirrors
-//! `degenbot-curve-math`'s shape (ADR-005 slice 11c) +
-//! `degenbot-balancer-math`'s shape (slice 12e): a standalone, `pyo3`-free,
-//! `tokio`-free crate depending only on `alloy::primitives`. Cross-checked
-//! against the Python oracle (`src/degenbot/calculations/{solidly_stable,
-//! camelot}.py`) by the frozen oracle snapshot in
-//! `tests/oracle_crosscheck.rs`.
+//! Solidly-derived DEX math (Solidly/Aerodrome/Camelot), shaped like the Curve
+//! and Balancer math crates: a standalone, `pyo3`-free, `tokio`-free crate
+//! depending only on `alloy::primitives`. Cross-checked against the Python
+//! oracle (`src/degenbot/calculations/{solidly_stable,camelot}.py`) by the
+//! frozen oracle snapshot in `tests/oracle_crosscheck.rs`.
 //!
 //! # Module layout (mirrors the Python module split)
 //!

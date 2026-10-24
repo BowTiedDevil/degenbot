@@ -619,9 +619,8 @@ impl V3PoolState {
         state_walk::advance_tick_data_block(self, block);
     }
 
-    // `merge_tick_word` lives on the `ConcentratedLiquidityPoolMut` trait
-    // (ADR-017 slice 1) — the body was the byte-identical twin of
-    // `V4PoolState::merge_tick_word`; the trait dedups the two. See
+    // `merge_tick_word` lives on the `ConcentratedLiquidityPoolMut` trait —
+    // one body shared with `V4PoolState`. See
     // `impl ConcentratedLiquidityPoolMut for V3PoolState` in `registry.rs`.
 
     /// Construct from registration params with a journal of the given depth.
@@ -697,8 +696,7 @@ impl V3PoolState {
     }
 
     // `apply_swap` + `apply_liquidity_update` live on the
-    // `ConcentratedLiquidityPoolMut` trait (ADR-017 slice 2) — the bodies
-    // were byte-identical twins across V3/V4; the trait dedups the two.
+    // `ConcentratedLiquidityPoolMut` trait — one body shared by V3 and V4.
     // See `impl ConcentratedLiquidityPoolMut for V3PoolState` in `registry.rs`.
     /// Invalidate the cached tick ranges (call after any state mutation) —
     /// the verb lives once in the concentrated liquidity family state module
@@ -885,8 +883,8 @@ pub struct V3SwapOutcome {
     pub amount0: U256,
     /// Absolute token1 amount moved (output for zfo swaps, input for ofz).
     pub amount1: U256,
-    /// Final `sqrtPriceX96` after the swap walk (ADR-005 slice 3b: the
-    /// companion's `simulate_exact_input_swap` builds `final_state` from this).
+    /// Final `sqrtPriceX96` after the swap walk — the companion's
+    /// `simulate_exact_input_swap` builds `final_state` from it.
     pub sqrt_price_x96: U256,
     /// Final active liquidity after the swap walk.
     pub liquidity: u128,
@@ -1215,7 +1213,7 @@ pub fn v3_simulate_swap(
             tick = get_tick_at_sqrt_ratio_internal(sqrt_price_x96.to::<U160>())
                 .map_err(|_| SimulateSwapError::NotComputable)?
                 .as_i32();
-            // Slice-4 fix (V3 mirror of the V4 ELSE-branch miss check): an
+            // V3 mirror of the V4 ELSE-branch miss check: an
             // amount-capped step can land inside an UNFETCHED word whose
             // initialized ticks `gen_ticks` never proposed (absent from
             // `tick_data`). The CROSS branch above guards its `tick_next`; this
@@ -1986,7 +1984,7 @@ mod tests {
 
     #[test]
     fn sparse_endpoint_in_unknown_word_signals_miss() {
-        // Slice-4 fix (V3 mirror of the V4 ELSE-branch miss check). A swap
+        // V3 mirror of the V4 ELSE-branch miss check. A swap
         // whose price endpoint lands in an UNFETCHED word must signal
         // `MissingTickWord` — the word may contain initialized ticks the walk
         // crossed but `gen_ticks` never proposed (they are absent from
@@ -2022,8 +2020,8 @@ mod tests {
 
     #[test]
     fn v3_simulate_swap_outcome_caries_final_state() {
-        // ADR-005 slice 3b: the companion's simulate_exact_input_swap builds
-        // final_state from the outcome, so v3_simulate_swap must return the
+        // The companion's simulate_exact_input_swap builds final_state from
+        // the outcome, so v3_simulate_swap must return the
         // post-walk sqrt_price_x96 / liquidity / tick (not just the amounts).
         let (identity, state) = pool_1to1_with_position(10_000_000_000_000u128);
         let amount_in = I256::try_from(1_000u128).unwrap();

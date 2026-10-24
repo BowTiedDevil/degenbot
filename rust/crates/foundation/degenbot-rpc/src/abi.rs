@@ -731,7 +731,7 @@ pub fn encode_balance_of(account: &Address) -> Vec<u8> {
 ///
 /// Called on the factory with the pool's address + stable flag (the Aerodrome
 /// volatile/stable pair shares one factory, so `getFee` returns the per-pool
-/// unidirectional fee — the ADR-005 slice 14g choreography's second call).
+/// unidirectional fee).
 #[must_use]
 pub fn encode_get_fee(pool: &Address, stable: bool) -> Vec<u8> {
     let mut calldata = Vec::with_capacity(4 + 64);

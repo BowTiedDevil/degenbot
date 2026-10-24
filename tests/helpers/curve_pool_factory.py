@@ -1,7 +1,7 @@
 """Factory helpers for I/O-free Curve StableSwap pool construction in tests.
 
-Mirrors ``tests/helpers/v3_pool_factory.py`` and ``v4_pool_factory.py``
-(ADR-005 slice 11b): every direct ``CurveStableswapPool(...)`` construction in
+Mirrors ``tests/helpers/v3_pool_factory.py`` and ``v4_pool_factory.py``:
+every direct ``CurveStableswapPool(...)`` construction in
 the test suite routes through ``make_curve_pool`` so the ``Pool``
 handle is wired through ``Bot::register_curve_pool`` → ``get_pool`` →
 companion, matching the ``Bot.build_pool()`` flow (ADR-005).
@@ -36,10 +36,9 @@ def _strategies_to_rust_enums(strategies: PoolStrategies) -> tuple[int, int, int
     """Map ``PoolStrategies`` enums → the ``u8`` discriminants Rust stores.
 
     The Rust core (``register_curve_pool``) carries the variant enums as
-    opaque ``u8`` for the future Rust ``get_dy`` (ADR-005 slice 11c). `auto()`
-    enums are 1-based; ``.value`` is forwarded verbatim. Not consumed in
-    slice 11b (the companion keeps its own ``PoolStrategies`` for the Python
-    calc path).
+    opaque ``u8`` for the Rust ``get_dy``. `auto()` enums are 1-based;
+    ``.value`` is forwarded verbatim. The companion keeps its own
+    ``PoolStrategies`` for the Python calc path.
     """
     return (
         strategies.swap_style.value,

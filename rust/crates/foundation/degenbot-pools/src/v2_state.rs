@@ -120,9 +120,8 @@ pub struct RegisterV2PoolParams {
     /// for non-JSON pools.
     pub init_hash: B256,
     /// Block number of the registration state — seeds the genesis reorg
-    /// journal delta (ADR-005 slice 4). The landed-at journal must anchor the
-    /// registration state at a real block so `restore_before_block` can land
-    /// on it; pre-slice-4 the journal was empty until the first Sync.
+    /// journal delta. The landed-at journal must anchor the registration state
+    /// at a real block so `restore_before_block` can land on it.
     pub update_block: u64,
     /// DEX+variant discriminator (registration metadata — see
     /// [`V2PoolIdentity`]).
@@ -217,7 +216,7 @@ impl V2PoolState {
         (identity, state)
     }
 
-    // Apply `Sync` is on `ReservePairPoolState` (ADR-017 slice 5 —
+    // Apply `Sync` is on `ReservePairPoolState` —
     // byte-identical to the Aerodrome impl modulo the struct name).
     //
     // Pushes a full-state `V2BlockDelta` (`before` = pre-sync reserves,

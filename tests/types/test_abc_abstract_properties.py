@@ -65,9 +65,9 @@ class TestConcretePoolsSatisfyProtocols:
         assert hasattr(AerodromeV2Pool, "reserves_token1")
 
     def test_liquidity_pool_satisfies_constant_product(self):
-        # ADR-005 slice 7 step 4b: the hollow V2 DEX subclasses (Sushi/Pancake/
-        # Swapbased/Camelot) collapsed into the canonical UniswapV2Pool — it's
-        # the single V2-family concrete class, so one shape test covers them all.
+        # The per-DEX V2 subclasses (Sushi/Pancake/Swapbased/Camelot) are the
+        # canonical UniswapV2Pool — the single V2-family concrete class, so one
+        # shape test covers them all.
         assert issubclass(UniswapV2Pool, AbstractLiquidityPool)
         assert hasattr(UniswapV2Pool, "fee_token0")
         assert hasattr(UniswapV2Pool, "fee_token1")
@@ -108,5 +108,5 @@ class TestPoolFamilyDerivation:
         assert _derive_family(CurveStableswapPool) == PoolFamily.STABLESWAP
 
     def test_camelot_is_constant_product(self):
-        # Camelot collapsed into UniswapV2Pool (slice 7 step 4b).
+        # Camelot is UniswapV2Pool (no Camelot subclass).
         assert _derive_family(UniswapV2Pool) == PoolFamily.CONSTANT_PRODUCT

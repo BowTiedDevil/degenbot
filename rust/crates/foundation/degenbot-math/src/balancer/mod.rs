@@ -11,9 +11,8 @@
 // patterns, single-function 1:1 mirrors of the deployed contract.
 #![expect(clippy::needless_range_loop)]
 //!
-//! ADR-005 slice 12e — the **pure-math port** sub-slice of slice 12 (the
-//! Balancer family port). Mirrors `degenbot-curve-math`'s shape
-//! (ADR-005 slice 11c): a standalone, `pyo3`-free, `tokio`-free crate
+//! The Balancer family port, shaped like `degenbot-curve-math`: a standalone,
+//! `pyo3`-free, `tokio`-free crate
 //! depending only on `alloy::primitives`. Cross-checked against the Python
 //! oracle (`src/degenbot/balancer/libraries/{fixed_point,log_exp_math,
 //! weighted_math,stable_math}.py`) by the property tests + the frozen

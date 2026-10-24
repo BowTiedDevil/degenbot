@@ -201,7 +201,7 @@ fn aerodrome_reserve_mutation_and_reorg_rollback() {
     assert_eq!(state.reserve1, U112::from(2_000u64));
     assert_eq!(state.update_block, 10);
 
-    // With ADR-017 slice 5 the Aerodrome + V2 `apply_sync` paths are
+    // The Aerodrome + V2 `apply_sync` paths are
     // one dispatcher (`apply_sync_by_pool_id` across both reserve-pair
     // families), so a V2 pool_id now lands too — the cross-family isolation
     // that the old per-family method provided is gone by design.

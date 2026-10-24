@@ -503,8 +503,8 @@ pub async fn build_v2(
     })
 }
 
-/// Build an Aerodrome V2 (constant-product, unidirectional-fee) pool (the
-/// ADR-005 slice 14g follow-up: a bare `(chain_id, address)` becomes
+/// Build an Aerodrome V2 (constant-product, unidirectional-fee) pool: a bare
+/// `(chain_id, address)` becomes
 /// a [`RegisterAerodromeV2PoolParams`] ready for `BotState::register_aerodrome_pool`.
 ///
 /// The Aerodrome volatile/stable pair shares one factory, so the two reads the
@@ -733,7 +733,7 @@ async fn balancer_scaling_factor(
 }
 
 /// Assemble `build_balancer_weighted` params for a Balancer V2 weighted pool
-/// (the ADR-005 slice 12b builder twin): reads the 32-byte `poolId`,
+/// (the Python builder's Rust twin): reads the 32-byte `poolId`,
 /// the Vault `getPoolTokens`, `getSwapFeePercentage`, `getNormalizedWeights`,
 /// detects the `PowVersion` from the deployed bytecode, and computes the token
 /// scaling factors from on-chain `decimals()` — producing a
@@ -803,7 +803,7 @@ pub async fn build_balancer_weighted(
 }
 
 /// Assemble `build_balancer_stable` params for a Balancer V2 stable pool (the
-/// ADR-005 slice 12d builder twin): reads the `poolId`, Vault
+/// Python builder's Rust twin): reads the `poolId`, Vault
 /// `getPoolTokens`, `getSwapFeePercentage`, `getAmplificationParameter`; detects
 /// the BPT index (token whose address matches the pool — `None` for
 /// `MetaStablePools`); reads `getRateProviders` + per-provider `getRate()`

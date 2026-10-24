@@ -170,14 +170,14 @@ pub use degenbot_rpc::{contract, provider, subscription};
 pub use degenbot_bot::bot_core;
 
 // The pure Uniswap V2/V3/V4 event-log decoders live in the `degenbot-decoders`
-// workspace member (Plan 104) — an alloy-only leaf (no pyo3/tokio/degenbot-core).
+// workspace member — an alloy-only leaf (no pyo3/tokio/degenbot-core).
 // No `pub use` re-export: the binding layer reaches the lone type it needs
 // (`degenbot_decoders::v4_swap_decoder::V4PoolId`) via the direct path dependency
 // in `bot::engine`. The state-coupled dispatch layer (`LogDecoder`,
 // `DecodedPoolEvent`, `LogDispatcher`) stays in `degenbot-bot`'s
 // `degenbot_substrate::log_dispatcher`.
 
-// The Uniswap-protocol domain crate `degenbot-uniswap` (Plan 105) holds the
+// The Uniswap-protocol domain crate `degenbot-uniswap` holds the
 // DEX identity presets (`DexIdentity`/`DexVariant`/`ReservesAbi`) and the V2
 // swap callldata encoder (`encode_v2_swap`/`EncodedCall`). No `pub use`
 // re-export: the binding layer reaches these via the direct path dependency in
@@ -734,7 +734,7 @@ mod _ffi {
                 "UnsupportedPoolFamilyError",
                 py.get_type::<crate::bot::engine::UnsupportedPoolFamilyError>(),
             )?;
-            // Typed pool-admission exceptions (Plan 102): a unified
+            // Typed pool-admission exceptions: a unified
             // `PoolRegistrationError` hierarchy so `build_paths` can classify
             // V2/V3/V4 admission refusals by type instead of fragile string
             // matching. The V4-specific `HookedPoolRejectedError` /

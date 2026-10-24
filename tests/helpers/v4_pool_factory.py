@@ -1,4 +1,4 @@
-"""I/O-free `UniswapV4Pool` construction helper for tests (ADR-005 slice 9b).
+"""I/O-free `UniswapV4Pool` construction helper for tests.
 
 Mirror of `make_v3_pool` — registers the V4 pool in Rust (Bot) and wraps the
 returned `Pool` handle in the V4 companion. The companion owns NO

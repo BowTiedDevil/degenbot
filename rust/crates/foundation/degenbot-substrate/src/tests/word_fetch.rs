@@ -336,7 +336,7 @@ fn ensure_word_known_checked_empty_marks_word_known() {
     assert!(known.contains(&3), "checked-empty word 3 must be known");
 }
 
-// --- ADR-005 sparse-map parity, slice 2: fetch-callback seam ---
+// --- sparse-map parity: fetch-callback seam ---
 #[test]
 fn swap_simulation_fills_missing_word_and_retries() {
     // A sparse V3 pool (empty tick_data, start tick 0, word 0 unknown)

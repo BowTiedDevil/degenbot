@@ -467,12 +467,9 @@ async fn log_applied_pairing_forward_records_reorg_does_not() {
     );
 }
 
-/// `resume_anchors_to_subscribe_block` invariant — with no out-of-order jump from 0.
-///
-/// Previously named `legacy_spawn_processes_blocks_in_order_…` and framed
-/// around the deleted `BlockPump::spawn` one-shot; the invariant it
-/// actually pins is `resume`/`run_with_stream`'s anchoring, which survives
-/// the Slice 1 deletion of `spawn` (Plan 102).
+/// `resume_anchors_to_subscribe_block`: the first drained-settle `on_drain(W)`
+/// anchors `last_processed_block` to W, so `resume`/`run_with_stream` starts at
+/// the subscribe block — with no out-of-order jump from 0.
 #[tokio::test]
 async fn resume_anchors_to_subscribe_block() {
     // Mimic resume's first step: start with no prior cursor, then

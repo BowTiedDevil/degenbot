@@ -1040,7 +1040,7 @@ impl BlockPump {
                     match log_decision {
                         LogDecision::EnterReorg(reorg_block) => {
                             // Reorg: per-event per-pool restore via the
-                            // coordinator (ADR-006 slice 7). A too-deep reorg
+                            // coordinator (ADR-006 D4). A too-deep reorg
                             // → graceful shutdown. The previous block was
                             // tombstoned; this `removed: true` log reopens it.
                             // Visible operator signal so an unwind is no longer

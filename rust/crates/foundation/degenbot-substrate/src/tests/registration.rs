@@ -412,7 +412,7 @@ fn pool_family_dispatches_every_registered_family() {
     assert_eq!(core.pool_family(aero_id), Some("aerodrome-v2"));
 }
 
-/// Plan 102, slice 2: `BotState::register_v4_pool` returns a typed
+/// `BotState::register_v4_pool` returns a typed
 /// `RegisterV4PoolError` (not a flat `String`) for each admission
 /// category, so the `PyO3` seam can surface distinct Python exception
 /// types. Pins the three variants the seam maps to

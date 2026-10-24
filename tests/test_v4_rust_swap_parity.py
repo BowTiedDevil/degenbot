@@ -147,10 +147,9 @@ def test_sparse_mainline_v4_swap_fetch_merge_matches_dense_oracle():
     return-data fetcher supplies the word's ticks; the Python sparse loop's
     ``_apply_fetched_tick_word`` merges them and retries; the result matches a
     dense pool (same position) computed via the dense Rust seam (full tick_data →
-    no miss). (The Rust mainline routing is deferred to slice 4 pending
-    fork-validated crossing-swap parity — see `test_cached_calculations`; the
-    fetch-callback return-data contract + V4 sparse-loop helper stay wired +
-    validated here.)
+    no miss). (The Rust mainline routing awaits fork-validated crossing-swap
+    parity — see `test_cached_calculations`; the fetch-callback return-data
+    contract + V4 sparse-loop helper are wired + validated here.)
     """
     py_bot = Bot()
 

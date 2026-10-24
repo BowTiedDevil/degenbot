@@ -29,8 +29,12 @@ found 237 in-code tracker citations, zero resolvable. The rules live in
 
 **Gate body.** `scripts/hooks/comment-hygiene.sh`, two detectors:
 
-- Detector 1 (anchored) — `ergo <ID>` / `epic|task|slice <ID>` citations and
-  RED/GREEN gate narration co-occurring with a six-char ID token, scanned over
+- Detector 1 (anchored) — `ergo <ID>` / `epic|task|slice <ID>` citations,
+  migration-work-item labels (`ADR-005 slice 14j`, `slice 14l`, `Plan 102`,
+  `plan-101` and the `slice-3b` hyphen form; the pattern requires a digit after
+  the label word, so data-slice prose and the `plan(..)`/`plan[..]` call and
+  index forms survive), and RED/GREEN gate narration co-occurring with a
+  six-char ID token, scanned over
   the *working tree* (`rg`, not `git grep`) for the code-ish file classes
   (`*.py`, `*.rs`, `*.pyi`, `*.toml`, `*.yml`, `*.yaml`, `*.sh`, `*.sol`, and
   the extensionless `justfile`; minus `executor/**` and the
@@ -63,7 +67,10 @@ found 237 in-code tracker citations, zero resolvable. The rules live in
   new ones. Empty today.
 
 **Adding an entry.** Strip the citation from the code instead — a tracker
-citation must NEVER be added to the census. Only a genuine identifier the
+citation must NEVER be added to the census. The same holds for a migration
+label: restate the rule it introduced in prose (or delete the sentence where
+the surrounding text already carries it), and never waive one, because the
+label names an ephemeral work item, not a fact about the code. Only a genuine identifier the
 matcher false-positives on goes into the lexicon (the known shape is the
 line-start deref: a Rust line whose first non-space char is `*` is read as a
 block-comment continuation, so a six-char UPPERCASE static name on it trips the

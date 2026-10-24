@@ -301,8 +301,8 @@ def fetch_factory_from_chain(
     """Fetch the factory address from the pool contract's factory() method.
 
     The encode → call → decode → checksum choreography is Rust-owned
-    (``BotIo.fetch_factory_address``, ADR-005 slice 14b). BotIo is the
-    only executor; the Python parity-gate fallback is retired.
+    (``BotIo.fetch_factory_address``). BotIo is the only executor; the Python
+    parity-gate fallback is retired.
 
     Returns:
         The computed value.
@@ -335,9 +335,9 @@ def resolve_pool_type_by_probing(
             Rust/Python wire-order drift, never silently classified.
 
     """
-    # ADR-005 slice 14i: delegate the probing choreography to Rust
-    # (``BotIo.probe_pool_type``). BotIo is the only executor; the
-    # Python slot0/getReserves/getPoolId probing fallback is retired.
+    # Delegate the probing choreography to Rust (``BotIo.probe_pool_type``).
+    # BotIo is the only executor; the Python slot0/getReserves/getPoolId probing
+    # fallback is retired.
     try:
         result = io.probe_pool_type(address)
     except ValueError as e:

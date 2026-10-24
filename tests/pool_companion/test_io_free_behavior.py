@@ -61,7 +61,7 @@ def _make_usdc() -> Erc20Token:
 class _DelegateSpy:
     """Wraps a ``Pool`` to record ``calculate_tokens_out/in`` calls.
 
-    ADR-005 slice 5 delegation-test for the V2 constant-product calc path:
+    Delegation test for the V2 constant-product calc path:
     ``UniswapV2Pool.calculate_tokens_out_from_tokens_in`` (no override) routes
     through ``Pool.calculate_tokens_out``. Pass-through for all other
     handle methods via ``__getattr__``.
@@ -85,7 +85,7 @@ class _DelegateSpy:
 
 
 class TestV2CalcDelegation:
-    """ADR-005 slice 5 - V2 calc delegation to ``Pool``.
+    """V2 calc delegation to ``Pool``.
 
     The constant-product calc math delegates to Rust's
     ``Pool.calculate_tokens_out/in`` when no ``override_state`` is
@@ -93,7 +93,7 @@ class TestV2CalcDelegation:
     so no pump-interleave risk). The override path calls the
     ``calc_exact_in/out_v2`` FFI seam against the override reserves so
     ``simulate_*`` can hold one snapshot Python-side for delta + final_state
-    consistency (slice 4's fix).
+    consistency.
     """
 
     @staticmethod

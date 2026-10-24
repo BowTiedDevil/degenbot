@@ -1,4 +1,4 @@
-"""ADR-006 slice 9 overall-acceptance: shared-state topology round-trip.
+"""Shared-state topology round-trip: the ADR-006 single-Bot-per-chain proof.
 
 Proves the ADR-006 single-``Bot``-per-chain topology end-to-end, the structural
 closure of the ``rust-owned-bot.md`` §17 stale-state caveat:
@@ -39,7 +39,7 @@ TOKEN0 = "0x" + "aa" * 20
 TOKEN1 = "0x" + "bb" * 20
 FACTORY = "0x" + "ff" * 20
 
-# ─── V3 topology round-trip fixtures (plan-101 slice 8a) ────────────────
+# ─── V3 topology round-trip fixtures ────────────────────────────────────
 # A V3 pool whose sqrt_price ~ 1 USDC per WETH-wei-fractal priced at ~2000.
 # Tick −76020 corresponds to ~2000 USDC per WETH on a 0.3% (fee=3000) V3 pool.
 V3_POOL_A = "0x" + "33" * 20
@@ -190,7 +190,7 @@ class TestSharedStateTopology:
 
         # Drive a synthetic V2 Sync log through the pump path: decode →
         # apply to BotState → notify the attached EngineSubscriber. This is
-        # exactly what BlockPump calls per WS log (ADR-006 D4, slice 5).
+        # exactly what BlockPump calls per WS log (ADR-006 D4).
         core.dispatch_log(
             address=V2_POOL_A,
             block_number=2,
@@ -216,7 +216,7 @@ class TestSharedStateTopology:
 
 
 class TestSharedStateTopologyV3:
-    """UniswapV3Pool over Pool — V3-specific §17 closure (plan-101 slice 8a).
+    """UniswapV3Pool over Pool — V3-specific §17 closure.
 
     Mirrors the V2 topology tests but for the V3 family: a pool registered via
     ``Bot.register_v3_pool`` is read through a ``Pool`` handle the
@@ -262,7 +262,7 @@ class TestSharedStateTopologyV3:
     def test_v3_dispatched_swap_is_visible_to_handle_reads(self) -> None:
         """A dispatched V3 Swap is immediately readable through the handle.
 
-        This is the deepest assertion of slice 8a: a swap driven through the
+        This is the deepest assertion of the file: a swap driven through the
         pump's own door (``Bot.dispatch_log`` → decode → apply) lands on the
         shared ``BotState`` and the next getter read sees the new scalars —
         the V3 family of the V2 ``dispatch_log → reserve0`` contract.
@@ -660,7 +660,7 @@ class TestSharedStateTopologyV4:
 
 
 class TestSharedStateTopologyConcurrency:
-    """ADR-006 slice 10 acceptance: the deadlock surface + atomic-read invariant.
+    """The deadlock surface + atomic-read invariant (ADR-006).
 
     The lock-ordering invariant is **engine-then-core**: every pump path holds
     the engine ``Mutex<ArbitrageEngine>`` and nests ``core.write()``/``core.read()``
@@ -862,12 +862,11 @@ class TestSharedStateTopologyConcurrency:
         assert not errors, errors
 
 
-# ─── Curve topology round-trip fixtures (ADR-005 slice 11a state port) ────
+# ─── Curve topology round-trip fixtures ──────────────────────────────────
 # A 3-coin Curve StableSwap pool registered via Bot.register_curve_pool
 # and read back through a Pool handle. This is the third family
 # ported into PoolEntry — the ADR-003 "third family ports, now's the moment"
-# decision point. The slice-11a state-port foundation; the Python companion
-# rewrite + Rust math port follow in 11b/11c.
+# decision point. The Python companion reads this state through its handle.
 CURVE_POOL_A = "0x" + "c1" * 20
 CURVE_TOKENS = ["0x" + "01" * 20, "0x" + "02" * 20, "0x" + "03" * 20]
 CURVE_A = 2000
@@ -878,7 +877,7 @@ CURVE_BALANCES = [1_500_000 * 10**18, 1_500_000 * 10**18, 1_500_000 * 10**18]
 
 
 class TestSharedStateTopologyCurve:
-    """Curve — the third ``PoolEntry`` family (ADR-005 slice 11a state port).
+    """Curve — the third ``PoolEntry`` family.
 
     Mirrors the V3/V4 topology class: register via ``Bot.register_curve_pool``,
     read independently via a ``Pool`` handle, and prove a live
@@ -950,8 +949,8 @@ class TestSharedStateTopologyCurve:
 
         All N balances + the block are read under one ``BotState`` read guard,
         so a reader can't observe a torn tuple (some balances from before a
-        write, some from after). The Python companion (slice 11b) will build
-        its ``CurveStableswapPoolState`` from this snapshot — coherent.
+        write, some from after). The Python companion builds its
+        ``CurveStableswapPoolState`` from this snapshot — coherent.
         """
         core = Bot()
         pool_id = core.register_curve_pool(
@@ -1024,8 +1023,7 @@ class TestSharedStateTopologyCurve:
         # crashes on `for b in handle.balance_vector().balances`.
 
 
-# ─── Balancer weighted topology round-trip fixtures
-#                   (ADR-005 slice 12a weighted state port) ──────────────
+# ─── Balancer weighted topology round-trip fixtures ─────────────────────
 # A 2-token Balancer V2 weighted pool registered via
 # Bot.register_balancer_weighted_pool and read back through a
 # Pool handle — the **fourth** ``PoolEntry`` family (alongside
@@ -1048,7 +1046,7 @@ BALANCER_WEIGHTED_BALANCES = [1_500_000 * WETH, 1_500_000 * WETH]
 
 
 class TestSharedStateTopologyBalancerWeighted:
-    """Balancer weighted — the fourth ``PoolEntry`` family (ADR-005 slice 12a).
+    """Balancer weighted — the fourth ``PoolEntry`` family.
 
     Mirrors the V3/V4/Curve topology class: register via
     ``Bot.register_balancer_weighted_pool``, read independently via a
@@ -1198,8 +1196,7 @@ class TestSharedStateTopologyBalancerWeighted:
         assert curve_handle.structure() == "balance_vector"
 
 
-# ─── Balancer stable topology round-trip fixtures
-#                   (ADR-005 slice 12c stable state port) ───────────────
+# ─── Balancer stable topology round-trip fixtures ───────────────────────
 # A 3-token ComposableStablePool registered via
 # Bot.register_balancer_stable_pool and read back through a
 # Pool handle — the **fifth** ``PoolEntry`` family (alongside
@@ -1227,7 +1224,7 @@ BALANCER_STABLE_BALANCES = [1_500_000 * WETH, 1_500_000 * WETH, 1_500_000 * WETH
 
 
 class TestSharedStateTopologyBalancerStable:
-    """Balancer stable — the fifth ``PoolEntry`` family (ADR-005 slice 12c).
+    """Balancer stable — the fifth ``PoolEntry`` family.
 
     Mirrors the V3/V4/Curve/BalancerWeighted topology class: register via
     ``Bot.register_balancer_stable_pool``, read independently via a

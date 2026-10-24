@@ -8,7 +8,7 @@
 //! (`sqrt_price_x96`, `liquidity`) are deliberately out of reach: callers
 //! that take `&impl TickMap` (the `verify_v3_pool` / `verify_v4_pool` verifier
 //! entry points in the bot layer, whose pure per-tick compare lives in
-//! [`crate::tick_map_verify`](crate::tick_map_verify) since ADR-021 D3 slice 2,
+//! [`crate::tick_map_verify`](crate::tick_map_verify) (ADR-021 D3),
 //! and the `apply_liquidity_update` apply entry point, for either key shape)
 //! cannot accidentally read
 //! or mutate them — the rule is carried by the type, not a module doc comment.

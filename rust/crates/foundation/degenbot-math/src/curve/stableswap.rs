@@ -20,7 +20,7 @@ use alloy::primitives::U256;
 /// Mirrors the Vyper contract's revert conditions: the Python oracle raises
 /// `ValueError` (non-convergence) or `AssertionError` (index / safety
 /// violations); the Rust port surfaces these as recoverable values so the
-/// eventual Rust `get_dy` (ADR-005 slice 11c follow-on) can map them to typed
+/// eventual Rust `get_dy` can map them to typed
 /// Python exceptions without catching a panic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CurveMathError {

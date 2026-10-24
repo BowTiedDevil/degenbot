@@ -1,4 +1,4 @@
-"""Tracer-bullet tests for BotIo (ADR-005 slice 14a).
+"""Tracer-bullet tests for BotIo.
 
 `BotIo` is the Rust `#[pyclass]` I/O façade that builders receive in place
 of the Python `SyncPoolIO` adapter. It holds a Python provider (the
@@ -71,16 +71,15 @@ def test_pybot_io_satisfies_pool_io_protocol(method: str):
     assert hasattr(io, method), f"BotIo missing PoolIO method {method!r}"
 
 
-# === I/O choreography methods (slice 14b) ===
+# === I/O choreography methods ===
 #
-# `fetch_factory_address` is the first choreography method moved into `BotIo`:
-# the multi-step (encode `factory()` selector -> `eth_call` -> ABI-decode `address`
-# -> EIP-55 checksum), previously `fetch_factory_from_chain` in
-# `type_resolution.py`, now reachable as a single Rust-owned method. The RPC
-# primitive (`call`) still delegates to the held provider (the native-alloy
-# swap is a later slice); the *choreography* -- the orchestration of those 4
-# steps -- now lives in Rust, satisfying slice 14's "methods for the builder
-# I/O choreography … moved here, called from Python via BotIo".
+# `fetch_factory_address` is the first Rust-owned choreography method on `BotIo`:
+# the multi-step (encode `factory()` selector -> `eth_call` -> ABI-decode
+# `address` -> EIP-55 checksum) work that `fetch_factory_from_chain` in
+# `type_resolution.py` would otherwise do in Python, now reachable as a single
+# method. The RPC primitive (`call`) still delegates to the held provider; the
+# *choreography* -- the orchestration of those 4 steps -- lives in Rust, so
+# builders call one method from Python via `BotIo`.
 
 
 class _FactoryCallProvider:
@@ -308,10 +307,11 @@ def test_pybot_io_probe_pool_type_returns_stableswap_when_coins_answers():
     assert io.probe_pool_type("0x" + "aa" * 20) == PoolProbe.STABLESWAP
 
 
-# === V3 tick bitmap + tick data RPCs (slice 14j) ===
+# === V3 tick bitmap + tick data RPCs ===
 #
-# `fetch_tick_bitmap` and `fetch_tick_data` move the two parameterized-call
-# sub-choreographies from `_fetch_v3` (tick_data_fetcher.py) into Rust.
+# `fetch_tick_bitmap` and `fetch_tick_data` own the two parameterized-call
+# sub-choreographies that `_fetch_v3` (tick_data_fetcher.py) would otherwise
+# run in Python.
 # New pattern: signed-integer argument encoding (int16 for word_position,
 # int24 for tick). The bitmap iteration + dict-building stays Python-side.
 
@@ -424,9 +424,9 @@ def test_pybot_io_probe_balancer_pool_type_raises_when_neither_works():
         BotIo(provider=provider).probe_balancer_pool_type("0x" + pool_addr)
 
 
-# === V4 slot0 + liquidity RPCs (slice 14o) ===
+# === V4 slot0 + liquidity RPCs ===
 #
-# `fetch_v4_slot0_liquidity` mirrors `fetch_v3_slot0_liquidity` (14f) but for
+# `fetch_v4_slot0_liquidity` mirrors `fetch_v3_slot0_liquidity` but for
 # V4 pools. V4 queries `getSlot0(bytes32)` + `getLiquidity(bytes32)` on a
 # state-view contract, passing `pool_id` as a bytes32 arg.
 

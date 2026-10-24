@@ -15,13 +15,11 @@ machine requires.
 
 The driver is ``stays-python`` (asyncio loop, SIGINT, deployment policy): it
 controls the Rust engine but owns no pool state (ADR-003: ``Bot`` is the
-single state owner; ADR-006: ``Bot`` is the per-chain orchestrator).
-**Sequencing supersedure (ADR-050, 2026-09-14):** the start/run sequencing
-described here is Rust-owned in ``EngineDriver``; only asyncio/SIGINT/
-deployment policy stays ``stays-python`` — see
-``docs/architecture/rust-settlement-bot-parity.md``. It
+single state owner; ADR-006: ``Bot`` is the per-chain orchestrator). The
+start/run sequencing above is Rust-owned in ``EngineDriver``; this facade
 delegates path registration to :mod:`~degenbot.runner.build_paths` and the
-main loop to :mod:`~degenbot.runner.consume`.
+main loop to :mod:`~degenbot.runner.consume`. The Python/Rust split is
+documented in ``docs/architecture/rust-settlement-bot-parity.md``.
 
 Testability seams (mirrors ``EngineRegistry``'s ``engine=`` seam): ``bot``,
 ``engine_registry``, ``async_w3``, ``path_builder``, and ``consumer`` are

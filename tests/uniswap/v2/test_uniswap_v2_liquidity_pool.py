@@ -137,16 +137,13 @@ def test_nominal_price_scaled_by_decimals(
         )
 
 
-@pytest.mark.skip(
-    reason="ADR-005 slice 7 step 4b: fork test pending rewrite after DEX subclass collapse"
-)
+@pytest.mark.skip(reason="fork test pending rewrite after the DEX subclass collapse")
 def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
     bot = _make_bot(fork_arbitrum_full)
     lp = bot.build_pool(CAMELOT_MIM_USDC_LP_ADDRESS)
-    # ADR-005 slice 7 step 4b: the hollow CamelotLiquidityPool subclass is
-    # deleted; Camelot pools are now canonical UniswapV2Pool instances whose
-    # DexIdentity variant tags them as Camelot. The stable pair resolves to
-    # the ``camelot-v2-stable`` preset.
+    # There is no CamelotLiquidityPool subclass; Camelot pools are canonical
+    # UniswapV2Pool instances whose DexIdentity variant tags them as Camelot.
+    # The stable pair resolves to the ``camelot-v2-stable`` preset.
     assert isinstance(lp, UniswapV2Pool)
     assert lp.dex.variant == "camelot-v2-stable"
 
@@ -172,10 +169,9 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
 def test_create_camelot_v2_pool(fork_arbitrum_full: AnvilFork):
     bot = _make_bot(fork_arbitrum_full)
     lp = bot.build_pool(CAMELOT_WETH_USDC_LP_ADDRESS)
-    # ADR-005 slice 7 step 4b: the hollow CamelotLiquidityPool subclass is
-    # deleted; Camelot pools are now canonical UniswapV2Pool instances whose
-    # DexIdentity variant tags them as Camelot. The volatile pair resolves to
-    # the ``camelot-v2-volatile`` preset.
+    # There is no CamelotLiquidityPool subclass; Camelot pools are canonical
+    # UniswapV2Pool instances whose DexIdentity variant tags them as Camelot.
+    # The volatile pair resolves to the ``camelot-v2-volatile`` preset.
     assert isinstance(lp, UniswapV2Pool)
     assert lp.dex.variant == "camelot-v2-volatile"
 
@@ -475,10 +471,10 @@ def test_simulations_with_override(
         final_state=UniswapV2PoolState(
             address=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.address,
             block=17_600_000,
-            # ADR-005 slice 4: simulate_with_override now builds final_state
-            # from the OVERRIDE reserves (consistent with the delta computed
-            # from them). Pre-slice-4 it mixed override reserves for the delta
-            # with LIVE reserves for the final_state base — a latent bug.
+            # simulate_with_override builds final_state from the OVERRIDE
+            # reserves (consistent with the delta computed from them); mixing
+            # override reserves for the delta with LIVE reserves for the
+            # final_state base is a latent bug.
             reserves_token0=pool_state_override.reserves_token0 + 8000000000,
             reserves_token1=pool_state_override.reserves_token1 - 864834865217768537471,
         ),
@@ -500,8 +496,8 @@ def test_simulations_with_override(
         final_state=UniswapV2PoolState(
             address=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.address,
             block=17_600_000,
-            # ADR-005 slice 4: final_state built from OVERRIDE reserves
-            # (consistent with the delta). Pre-slice-4 used LIVE reserves.
+            # final_state built from OVERRIDE reserves (consistent with the
+            # delta).
             reserves_token0=pool_state_override.reserves_token0 + 13752842264,
             reserves_token1=pool_state_override.reserves_token1 - 1200000000000000000000,
         ),

@@ -196,8 +196,8 @@ class Bot(AccountQueryMixin):
         # Multiple Python handles (this session, plus any ``Pool``/``Token``
         # handles it vends) share the same Rust-owned ``Bot`` thread-safely.
         #
-        # ADR-006 slice 8b: the facade is single-chain, so the configured
-        # ``default_chain_id`` is wired into the Rust ``Bot`` here (D4).
+        # The facade is single-chain, so the configured ``default_chain_id`` is
+        # wired into the Rust ``Bot`` here (D4).
         if py_bot is None:
             self._py_bot = _Engine(self._chain_id)
 

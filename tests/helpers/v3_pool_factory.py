@@ -1,10 +1,10 @@
 """Factory helpers for I/O-free V3 pool construction in tests.
 
-Mirrors ``tests/helpers/v2_pool_factory.py`` (ADR-005 slice 4): every direct
+Mirrors ``tests/helpers/v2_pool_factory.py``: every direct
 ``UniswapV3Pool(...)`` construction in the test suite routes through
 ``make_v3_pool`` so the ``Pool`` handle is wired through
 ``Bot::register_v3_pool`` → ``get_pool`` → companion, matching the
-``Bot.build_pool()`` flow (ADR-005 slice 8b).
+``Bot.build_pool()`` flow.
 
 Each call mints a FRESH ``Bot`` (via ``new_pool_bot``) so every built pool is
 isolated. The register entry is get-or-register — a same address + same
@@ -108,7 +108,7 @@ def make_v3_pool(
     Sparseness: when ``tick_data`` is ``None`` (the common test case for the
     I/O-free scalar-only construction), the companion is built sparse (the
     fetcher backfills on demand, mirroring the engine's authority over tick
-    data per plan-101). When ``tick_data`` is provided it is seeded into Rust
+    data). When ``tick_data`` is provided it is seeded into Rust
     inline at registration and the companion is built non-sparse. The retired
     ``tick_bitmap`` value arg is gone (Rust derives the words from the seeded
     tick rows).

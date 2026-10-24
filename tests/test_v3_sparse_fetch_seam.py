@@ -1,4 +1,4 @@
-"""ADR-005 sparse-map feature parity — slice 3a PyO3 fetch-callback seam.
+"""Sparse-map feature parity — the PyO3 fetch-callback seam.
 
 End-to-end gate for the Rust→PyO3→Python fetcher bridge:
 
@@ -16,9 +16,8 @@ End-to-end gate for the Rust→PyO3→Python fetcher bridge:
   give up with ``0`` rather than panic or spin.
 
 This proves the FFI seam works (GIL + Python dict → ``FetchedTickWord`` → Rust
-loop). Slice 3b routes the V3/V4 companions' non-override calc through this seam;
-slice 4 retires the Python simulators' swap-loop behind a dense-map parity
-corpus.
+loop). The V3/V4 companions' non-override calc routes through this seam; the
+Python simulators' swap-loop is retired behind a dense-map parity corpus.
 """
 
 from __future__ import annotations

@@ -249,7 +249,7 @@ fn test_python_string_non_address() {
 /// Test the `PyBalancerRateProvider` adapter: a Python object exposing
 /// `get_rates(block_identifier)` is wrapped as a stored
 /// `Arc<dyn BalancerRateProvider>` and the `is_static()` / `get_rates()`
-/// calls delegate to Python (ADR-005 slice 12c I/O trait object).
+/// calls delegate to Python.
 #[test]
 fn test_py_balancer_rate_provider_delegates() {
     use degenbot_rs::bot::pool::make_balancer_rate_provider;

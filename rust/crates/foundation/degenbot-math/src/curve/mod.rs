@@ -20,9 +20,9 @@
 #![expect(clippy::needless_range_loop)]
 #![expect(clippy::too_many_lines)]
 //!
-//! ADR-005 slice 11c (pure-math port). The counterpart of
-//! [`degenbot_math::concentrated_liquidity`] for the Curve StableSwap family: a standalone,
-//! `pyo3`-free, `tokio`-free crate depending only on `alloy::primitives`.
+//! The counterpart of [`degenbot_math::concentrated_liquidity`] for the Curve
+//! StableSwap family: a standalone, `pyo3`-free, `tokio`-free crate depending
+//! only on `alloy::primitives`.
 //! Cross-checked against the Python oracle
 //! (`src/degenbot/calculations/stableswap.py`) by the property tests in this
 //! crate.

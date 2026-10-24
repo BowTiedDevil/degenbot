@@ -40,9 +40,8 @@ use crate::solve::mixed::{
 /// - V3-V3 / V4-V4 / V3-V4 / V4-V3: integer piecewise-Möbius (concentrated liquidity × concentrated liquidity)
 /// - V2-V3 / V3-V2 / V2-V4 / V4-V2: mixed integer-exact solver
 ///
-/// ADR-005 slice 15b-1: signature dropped the `&self` receiver (it was
-/// `#[allow(clippy::unused_self)]` — body is pure dispatch to freestanding
-/// math helpers). The static form lets `rebuild_and_solve_affected` and
+/// A freestanding fn, not a method: the body is pure dispatch to the math
+/// helpers, and the static form lets `rebuild_and_solve_affected` and
 /// `solve_all` invoke `solve_path` from a rayon `par_iter` closure without
 /// borrowing `self` (which would conflict with the `&mut self` write to
 /// `self.results` that follows the solve).

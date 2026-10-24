@@ -19,7 +19,7 @@
 //! <result>` (or `= ERROR:<reason>`). This test parses each line, replays
 //! it through the Rust functions, and asserts byte-for-byte equality against
 //! the Python oracle — the "direct port of the deployed contract logic"
-//! contract (ADR-005 slice 12e).
+//! contract.
 
 use alloy::primitives::{I256, U256};
 use degenbot_math::balancer::{

@@ -1,8 +1,7 @@
 """PancakeSwap V2/V3 pool implementations.
 
-ADR-005 slice 7 step 4b: ``PancakeswapV2Pool`` (a hollow subclass carrying
-only a ``variant`` ClassVar + V2 fee/ABI constants, both superseded by the
-``pancakeswap-v2`` DexIdentity preset) is deleted — the canonical
+There is no ``PancakeswapV2Pool`` subclass: the ``pancakeswap-v2`` DexIdentity
+preset carries the V2 variant + fee/ABI constants, so the canonical
 ``UniswapV2Pool`` is registered for the PancakeSwap V2 factory (see
 ``pancakeswap/__init__.py``). ``PancakeswapV3Pool`` is retained.
 """

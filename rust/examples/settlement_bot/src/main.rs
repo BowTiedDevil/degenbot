@@ -1,5 +1,5 @@
-// Slice-1 driver has no panic/unwrap surfaces yet; keep only the lint
-// expectation the operator binary actually triggers (stdout diagnostics),
+// The driver has no panic/unwrap surfaces; keep only the lint expectation
+// the operator binary actually triggers (stdout diagnostics),
 // mirroring rust/crates/facade/degenbot/examples/standalone_consumer.rs.
 #![expect(
     clippy::print_stdout,
@@ -20,17 +20,16 @@
 //! every surface the Python driver reaches but a Rust consumer cannot is a
 //! compile wall here — recorded as a numbered gap in the ledger.
 //!
-//! Slice 1 covers ledger rows 1–5 (CLI, driver config, RPC-URI cascade, DB
-//! path, snapshot-load boot slice). Rows 6–8 (the engine handshake, the
-//! result-batch stream, and path registration) are driven through the public
-//! `degenbot::EngineDriver` (ADR-050 / Gap G1,):
+//! Ledger rows 1–5 (CLI, driver config, RPC-URI cascade, DB path,
+//! snapshot-load boot slice) are driven directly; rows 6–8 (the engine
+//! handshake, the result-batch stream, and path registration) go through the
+//! public `degenbot::EngineDriver` (ADR-050 / Gap G1):
 //! `EngineDriver::start` → `take_result_receiver` → `resume` (the driver owns
-//! the `S+1..W` auto-backfill) → `stop`. The G3 registration pipeline lands
-//! driver-side . Gap G4  adds the driver-side
-//! `consume`/`dispatch`/`submission` modules mirroring rows
-//! 15–18. Gap G5  adds `session_watch` (the typed end-state
-//! verdict ranking over the core session-end detection facts) and
-//! `operator_channel` (the `--operator-socket` JSON-lines channel; row 19/20).
+//! the `S+1..W` auto-backfill) → `stop`. The G3 registration pipeline is
+//! driver-side; Gap G4's `consume`/`dispatch`/`submission` modules mirror rows
+//! 15–18, and Gap G5's `session_watch` (the typed end-state verdict ranking
+//! over the core session-end detection facts) and `operator_channel` (the
+//! `--operator-socket` JSON-lines channel; row 19/20) cover the operator rows.
 //! The live handshake is gated behind `SMOKE_RPC_URL` so the example
 //! stays CI-runnable; without it (or with `--smoke-offline`) it stops after the
 //! parity-ledger print. Once live registration completes the arm enters the

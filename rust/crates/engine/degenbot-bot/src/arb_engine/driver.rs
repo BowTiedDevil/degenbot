@@ -249,7 +249,7 @@ pub struct EngineDriver {
     bot: Arc<Bot>,
     /// The engine's ONE public seam (ADR-049). Every engine touch crosses it.
     stages: Arc<EngineStages>,
-    /// The per-event reorg coordinator (ADR-006 slice 7).
+    /// The per-event reorg coordinator (ADR-006 D4).
     reorg_coordinator: Arc<ReorgCoordinator>,
     /// The cooperative shutdown flag shared with the pump.
     shutdown: Arc<AtomicBool>,

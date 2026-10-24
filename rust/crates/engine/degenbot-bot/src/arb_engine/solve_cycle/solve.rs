@@ -185,8 +185,8 @@ pub(super) fn solve_epoch(
         .collect();
     // Solve affected paths and insert new results.
     //
-    // ADR-005 slice 15b-1: the solve fans out across executor bins
-    // the affected-path set. The solve dispatch is a free-standing function
+    // The solve fans out across executor bins over the affected-path set. The
+    // solve dispatch is a free-standing function
     // (no cycle-state read); each work item takes the `path_id` + an **Arc-
     // shared** `ResolvedMixedPath` snapshot (f701ccd3 staging fix: the
     // former per-path deep clone copied every concentrated liquidity

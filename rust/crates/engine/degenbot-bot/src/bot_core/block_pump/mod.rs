@@ -165,8 +165,7 @@ struct PreSolveGapTrack {
 pub struct BlockPump {
     /// The per-chain orchestrator — owns `BotState` + the `LogDispatcher`. Per
     /// WS log, the pump calls `bot.dispatch_log(log)` (forward) or
-    /// `reorg_coordinator.dispatch_reorg_log(log)` (`removed: true`).
-    /// ADR-006 D4 + slice 7.
+    /// `reorg_coordinator.dispatch_reorg_log(log)` (`removed: true`); ADR-006 D4.
     bot: Arc<Bot>,
     /// The engine's stage surface (the ONE seam — the dissolved
     /// `SolveCoordinator`/`DrainSink` fan-out collapsed onto the arb

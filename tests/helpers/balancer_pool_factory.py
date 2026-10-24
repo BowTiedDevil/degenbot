@@ -1,8 +1,8 @@
 """Factory helpers for I/O-free Balancer V2 pool construction in tests.
 
 Mirrors ``tests/helpers/curve_pool_factory.py`` (and ``v3_pool_factory.py``
-/ ``v4_pool_factory.py``) — ADR-005 slice 12b (weighted) + 12d (stable):
-every direct ``BalancerV2Pool(...)`` / ``BalancerV2StablePool(...)``
+/ ``v4_pool_factory.py``): every direct ``BalancerV2Pool(...)`` /
+``BalancerV2StablePool(...)``
 construction in the test suite routes through ``make_balancer_weighted_pool``
 / ``make_balancer_stable_pool`` so the ``Pool`` handle is wired
 through ``Bot::register_balancer_weighted_pool`` /
@@ -130,8 +130,8 @@ def make_balancer_stable_pool(
 ) -> BalancerV2StablePool:
     """Construct an I/O-free Balancer V2 stable companion over a fresh Pool handle.
 
-    Production-path twin of ``BalancerBuilder._build_stable`` (ADR-005
-    slice 12d): mints a fresh ``Bot`` unless ``py_bot`` is injected, so each
+    Production-path twin of ``BalancerBuilder._build_stable``: mints a fresh
+    ``Bot`` unless ``py_bot`` is injected, so each
     pool is isolated; registration is get-or-register (a same-identity
     re-build answers the EXISTING handle). A caller that wants to share one
     bot passes ``py_bot=``. The token companions may live in a different

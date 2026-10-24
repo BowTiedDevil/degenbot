@@ -1733,12 +1733,10 @@ struct RevertedSwapMatch {
     /// Post-swap active-liquidity scalars captured at SIM time (the moment
     /// `actual_out` was produced), as the shared slot0 head-scalar fact type
     /// (`degenbot_pools::tick_map_verify::Slot0HeadScalars` — the same family
-    /// the solve-time tripwire's `SolverHopScalarState` pins; ADR-021 D3
-    /// slice 2). This is the fix-enabler: it pins the exact pool state the
-    /// oracle (`v4_simulate_swap`) must be driven at to reproduce a
-    /// recurrence, closing the solve-vs-sim state gap the log's solve-time
-    /// values cannot close (see the tracked-failures log review of 2026-08-03, a
-    /// gitignored logs/ artifact since removed).
+    /// the solve-time tripwire's `SolverHopScalarState` pins; ADR-021 D3).
+    /// It pins the exact pool state the oracle (`v4_simulate_swap`) must be
+    /// driven at to reproduce a recurrence, closing the solve-vs-sim state gap
+    /// the log's solve-time values cannot close.
     sim_scalars: degenbot_pools::tick_map_verify::Slot0HeadScalars,
     /// The exact-in amount the swap consumed (the negative-side delta
     /// magnitude) — the `amountSpecified` that produced `actual_out`.

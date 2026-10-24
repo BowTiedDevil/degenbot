@@ -42,8 +42,7 @@ def derive_rate_and_precision_multipliers(
 ) -> tuple[list, list]:
     """
     `derive_rate_and_precision_multipliers` — Rust-owned Curve
-    `rate_multipliers` / `precision_multipliers` derivation (ADR-005
-    slice 11c follow-up).
+    `rate_multipliers` / `precision_multipliers` derivation.
 
     The single Rust source of truth for the scaling a Curve pool's `xp`
     (rate-adjusted balances) and `get_dy` consume. `token_decimals` are the

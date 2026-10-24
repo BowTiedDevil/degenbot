@@ -59,9 +59,7 @@ use crate::pragma::apply_open_pragmas;
 /// The owned read handle wrapping a single pooled [`Connection`].
 ///
 /// Reads take a [`MutexGuard`][parking_lot::MutexGuard] via [`Self::lock`],
-/// run a prepared statement, and decode rows. The `PyO3` wrapper (sibling task,
-/// slice 14c) will hold an `Arc<DegenbotDb>` on `PyBotIo.db` in place of
-/// today's `Option<Py<PyAny>>`.
+/// run a prepared statement, and decode rows.
 pub struct DegenbotDb {
     pub(crate) conn: Mutex<Connection>,
 }

@@ -5,8 +5,8 @@ A bot can refuse an ``EngineRegistry.register_path`` candidate by *policy*
 duplicate-pool guard) — distinct from the Rust core's
 pool *admission* floor (``HookedPoolRejectedError`` /
 ``DynamicFeePoolRejectedError``). Policy rejections surface as a typed
-``PathRejectedError`` family so callers classify by type, mirroring the
-Plan 102 typed-exception pattern.
+``PathRejectedError`` family so callers classify by type, the same
+typed-exception pattern the core uses.
 """
 
 from __future__ import annotations

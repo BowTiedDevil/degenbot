@@ -6,6 +6,14 @@
 #   - "ergo <6-char ID>" / "ergo epic|task|slice <ID>" citations
 #   - "epic|task|slice <ID>" citations
 #   - RED/GREEN gate narration co-occurring with a 6-char ID token
+#   - migration-work-item labels: "slice <NN>[x]" / "slice-<NN>" and
+#     "Plan <NNN>" / "plan-<NNN>" (this header spells them with angle
+#     brackets so documenting the pattern does not cite one). A migration
+#     slice is an ephemeral work item exactly like a tracker ID: the rule it
+#     introduced belongs in the comment, the history in the ADR. A digit
+#     must follow the label word across whitespace or one hyphen, so
+#     ordinary prose about a data slice ("the two-slice intake") and the
+#     call/index forms ("plan(1.5)", "plan[0]") are untouched.
 #   Scope: the working tree, not the index. The search runs rg (same tool
 #   and ignore rules as Detector 2) over the whole repo for the code-ish
 #   file classes (*.py, *.rs, *.pyi, *.toml, *.yml, *.yaml, *.sh, *.sol,
@@ -61,7 +69,11 @@ cd "$(git rev-parse --show-toplevel)"
 
 waf="${WAF:-scripts/hooks/comment-hygiene-waivers.txt}"
 census="${CHF:-scripts/hooks/comment-hygiene-census.txt}"
-pat='([Ee]rgo[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|([Ee]rgo[^a-zA-Z0-9]{0,3}(epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|((epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]*[0-9][A-Z0-9]{5}\b)|((^|[^a-zA-Z])((RED)|(GREEN))[^a-zA-Z0-9]{0,24}[A-Z0-9]{6}([^A-Z0-9]|$))|([A-Z0-9]{6}([^A-Z0-9]|$)[^a-zA-Z0-9]{0,24}((RED)|(GREEN))([^a-zA-Z0-9]|$))'
+# Migration-work-item labels ("ADR-005 slice <NN>[x]", "Plan <NNN>")
+# join the anchored citation class: a digit must follow the label word, so
+# data-slice prose and the plan(..)/plan[..] call and index forms survive.
+label='(\b[Ss]lices?([[:space:]]+|-)[0-9]+[a-z]?\b)|(\b[Pp]lan([[:space:]]+|-)[0-9]+\b)'
+pat="(${label})|([Ee]rgo[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|([Ee]rgo[^a-zA-Z0-9]{0,3}(epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]{6}\b)|((epic|task|slice)[^a-zA-Z0-9]{0,3}[A-Z0-9]*[0-9][A-Z0-9]{5}\b)|((^|[^a-zA-Z])((RED)|(GREEN))[^a-zA-Z0-9]{0,24}[A-Z0-9]{6}([^A-Z0-9]|$))|([A-Z0-9]{6}([^A-Z0-9]|$)[^a-zA-Z0-9]{0,24}((RED)|(GREEN))([^a-zA-Z0-9]|$))"
 
 fail=0
 # rg, not git grep: git grep only sees files the index knows about, so a
@@ -83,9 +95,10 @@ if [ -n "$hits" ]; then
     path="${line%%:*}"
     if ! grep -Fxq "$path" "$waf"; then
       if [ "$fail" -eq 0 ]; then
-        echo "comment-hygiene: work-tracker IDs / gate narration are banned in code" >&2
-        echo "  (AGENTS.md 'Comment Hygiene', docs/comments.md). Strip the citation," >&2
-        echo "  restate the invariant in prose, or anchor the pinning test instead:" >&2
+        echo "comment-hygiene: work-tracker IDs / migration labels / gate narration" >&2
+        echo "  are banned in code (AGENTS.md 'Comment Hygiene', docs/comments.md)." >&2
+        echo "  Strip the citation, restate the rule it introduced in prose, or anchor" >&2
+        echo "  the pinning test instead:" >&2
       fi
       echo "  $line" >&2
       fail=1

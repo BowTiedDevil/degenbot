@@ -1,23 +1,19 @@
 //! Curve `StableSwap` pool state — the single `BotState`-owned home for Curve
 //! V1 (`StableSwap`) pool data (ADR-003 "third family").
 //!
-//! This is the **state-port sub-slice** of ADR-005 slice 11 (the plan's
-//! "state port" sub-slice, mirroring what slice 8a did for V3 before the V3
-//! companion rewrite). It adds a third family to `PoolEntry` — the
-//! ADR-003-deferred "third family ports, now's the moment" decision point —
-//! and confirms the inline-`PoolEntry` + `BotState::apply_*` pattern survives
-//! a third variant without extracting a `LiquidityMap` generic (the ADR-003
-//! ruling holds: a sample-of-one is not a pattern).
+//! Curve is a `PoolEntry` family alongside V2/V3/V4 and Balancer: the inline
+//! `PoolEntry` + `BotState::apply_*` pattern carries it without extracting a
+//! `LiquidityMap` generic (ADR-003's ruling holds: a sample-of-one is not a
+//! pattern).
 //!
-//! Scope of THIS sub-slice: the Rust state struct + `register_curve_pool` +
-//! `apply_balance_update_by_pool_id` + journal restore/discard +
-//! `PyBot.register_curve_pool` + Curve read getters on `PyLiquidityPool`
-//! (`balances`, `n_coins`, `update_block`, `snapshot_curve`). The Python
-//! `CurveStableswapPool` companion rewrite (delegating `self._state.balances`
-//! to the handle) + the pure-math Rust port (`stableswap_get_y`/
-//! `stableswap_newton_y`) + the `CurveDataProvider` Rust port are deferred to
-//! follow-on sub-slices (11b companion, 11c math, 11d provider) per the plan's
-//! sub-slicing note.
+//! This module owns the state struct, `register_curve_pool`,
+//! `apply_balance_update_by_pool_id`, the journal restore/discard paths,
+//! `PyBot.register_curve_pool`, and the Curve read getters on
+//! `PyLiquidityPool` (`balances`, `n_coins`, `update_block`,
+//! `snapshot_curve`). The Python `CurveStableswapPool` companion reads
+//! `self._state` through those getters; the swap math
+//! (`stableswap_get_y`/`stableswap_newton_y`) and the `CurveDataProvider` seam
+//! live in the pure-math crate.
 //!
 //! ## State shape
 //!
@@ -90,7 +86,7 @@ pub struct RegisterCurvePoolParams {
     /// Initial balances (one per token), captured at `update_block`.
     pub balances: Vec<U256>,
     /// Block number of the registration state — seeds the genesis reorg
-    /// journal delta (ADR-005 slice 4).
+    /// journal delta.
     pub update_block: u64,
 
     // --- Variant strategy enums (opaque to Rust; carried so the future
@@ -258,10 +254,9 @@ pub struct CurvePoolIdentity {
 ///
 /// Carries the mutable `balances`/`update_block` slot + a per-pool reorg
 /// journal. Immutable identity lives on [`CurvePoolIdentity`] (look it up via
-/// [`crate::BotState::get_curve_identity`]). The state-port
-/// sub-slice (ADR-005 slice 11a): the Python `CurveStableswapPool` companion
-/// (11b) reads `balances`/`update_block` from this struct via `PyLiquidityPool`
-/// getters and delegates `external_update` to
+/// [`crate::BotState::get_curve_identity`]). The Python
+/// `CurveStableswapPool` companion reads `balances`/`update_block` from this
+/// struct via `PyLiquidityPool` getters and delegates `external_update` to
 /// `apply_balance_update_by_pool_id`.
 #[derive(Clone, Debug)]
 pub struct CurvePoolState {

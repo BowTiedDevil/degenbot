@@ -262,7 +262,7 @@ class TestPoolHandle:
 
 
 class TestPoolHandleState:
-    """Pool state read getters + per-handle mutations (ADR-005 slice 4 step 2)."""
+    """Pool state read getters + per-handle mutations."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -440,8 +440,8 @@ class TestTokenHandle:
             decimals=18,
             chain_id=1,
         )
-        # ADR-003 Slice 5: register_token returns the Erc20Token handle; the
-        # getters read Rust-owned metadata back through Bot's token map.
+        # register_token returns the Erc20Token handle; the getters read
+        # Rust-owned metadata back through Bot's token map.
         assert token is not None
         assert token.address == self.TOKEN_ADDR  # alloy preserves checksum case
         assert token.symbol == "WETH"
@@ -823,10 +823,10 @@ class TestV3PoolState:
 
 
 class TestDexIdentityPresets:
-    """ADR-005 slice 6 — DEX identity presets exposed via the Rust extension.
+    """DEX identity presets exposed via the Rust extension.
 
     The Python seam (`dex_identity(variant)` → `DexIdentity`) exposes the
-    Rust-core `DexIdentity` preset registry so a slice-7 Python builder can
+    Rust-core `DexIdentity` preset registry so a Python builder can
     resolve a DEX's canonical-chain deployment data (factory, deployer, init
     hash, default fees, reserve ABI shape) without a Python-side preset table.
     The field values MUST match the Python ClassVars they supersede — these
@@ -846,7 +846,7 @@ class TestDexIdentityPresets:
         assert (
             ident.init_hash == "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
         )
-        # Fraction(3, 1000) fee → RETAINED fraction (997, 1000). Slice-5 convention.
+        # Fraction(3, 1000) fee → RETAINED fraction (997, 1000).
         assert ident.fee_token0 == (997, 1000)
         assert ident.fee_token1 == (997, 1000)
         assert ident.reserves_abi == ["uint112", "uint112"]

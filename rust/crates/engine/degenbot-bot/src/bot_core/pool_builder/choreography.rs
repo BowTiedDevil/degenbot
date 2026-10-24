@@ -135,7 +135,7 @@ async fn fetch_no_arg_int(
 
 /// Fetch a V3-style pool's immutable data — `factory()`, `token0()`,
 /// `token1()`, `fee()`, `tickSpacing()`. Mirrors the DB-miss fallback block of
-/// `v3_pool_builder.py::V3PoolBuilder.build` (ADR-005 slice 14f).
+/// `v3_pool_builder.py::V3PoolBuilder.build`.
 ///
 /// # Errors
 ///
@@ -160,7 +160,7 @@ pub async fn fetch_v3_immutable_data(
     })
 }
 
-/// Fetch a pool's `factory()` address (ADR-005 slice 14b).
+/// Fetch a pool's `factory()` address.
 ///
 /// Mirrors `type_resolution.py::fetch_factory_from_chain` — encode `factory()`,
 /// `eth_call`, decode the right-aligned 20-byte `address`, EIP-55 checksum.
@@ -177,8 +177,7 @@ pub async fn fetch_factory_address(
 }
 
 /// Fetch a V2-style pool's immutable data — `factory()`, `token0()`,
-/// `token1()`. Mirrors `v2_builder_base.py::_fetch_v2_common_data`'s fallback
-/// (ADR-005 slice 14e).
+/// `token1()`. Mirrors `v2_builder_base.py::_fetch_v2_common_data`'s fallback.
 ///
 /// # Errors
 ///
@@ -198,7 +197,7 @@ pub async fn fetch_v2_immutable_data(
     })
 }
 
-/// Fetch a V2 pool's reserves via `getReserves()` (ADR-005 slice 14e).
+/// Fetch a V2 pool's reserves via `getReserves()`.
 ///
 /// # Errors
 ///
@@ -276,8 +275,8 @@ pub async fn fetch_camelot_state(
     })
 }
 
-/// Aerodrome V2 common data read from the pool + factory (the ADR-005 slice
-/// 14g choreography): the `stable()` flag (called on the pool — disambiguates
+/// Aerodrome V2 common data read from the pool + factory: the `stable()` flag
+/// (called on the pool — disambiguates
 /// the shared volatile/stable factory) and the `getFee(address,bool)`
 /// unidirectional fee (called on the factory).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -314,7 +313,7 @@ pub async fn fetch_aerodrome_stable_and_fee(
     })
 }
 
-/// Fetch a V3 pool's `slot0()` + `liquidity()` (ADR-005 slice 14f).
+/// Fetch a V3 pool's `slot0()` + `liquidity()`.
 ///
 /// Returns `(sqrt_price_x96, tick, liquidity)` — tick is `int24` sign-extended
 /// into `I256`.
@@ -335,7 +334,7 @@ pub async fn fetch_v3_slot0_liquidity(
 }
 
 /// Fetch a V4 pool's `getSlot0(bytes32)` + `getLiquidity(bytes32)` on the
-/// state-view contract (ADR-005 slice 14o).
+/// state-view contract.
 ///
 /// Returns `(sqrt_price_x96, tick, protocol_fee, lp_fee, liquidity)`.
 ///
@@ -355,7 +354,7 @@ pub async fn fetch_v4_slot0_liquidity(
     Ok((sqrt, tick, protocol_fee, lp_fee, liquidity))
 }
 
-/// Fetch a V3 pool's tick bitmap word via `tickBitmap(int16)` (ADR-005 slice 14j).
+/// Fetch a V3 pool's tick bitmap word via `tickBitmap(int16)`.
 ///
 /// # Errors
 ///
@@ -371,7 +370,7 @@ pub async fn fetch_tick_bitmap(
     abi::decode_tick_bitmap(&bytes)
 }
 
-/// Fetch a V3 pool's tick liquidity via `ticks(int24)` (ADR-005 slice 14j).
+/// Fetch a V3 pool's tick liquidity via `ticks(int24)`.
 ///
 /// # Errors
 ///
@@ -387,7 +386,7 @@ pub async fn fetch_tick_data(
     abi::decode_tick_data(&bytes)
 }
 
-/// Fetch a V4 pool's tick bitmap via `getTickBitmap(bytes32,int16)` (ADR-005 slice 14k).
+/// Fetch a V4 pool's tick bitmap via `getTickBitmap(bytes32,int16)`.
 ///
 /// # Errors
 ///
@@ -410,8 +409,7 @@ pub async fn fetch_v4_tick_bitmap(
     abi::decode_v4_tick_bitmap(&bytes)
 }
 
-/// Fetch a V4 pool's tick liquidity via `getTickLiquidity(bytes32,int24)`
-/// (ADR-005 slice 14k).
+/// Fetch a V4 pool's tick liquidity via `getTickLiquidity(bytes32,int24)`.
 ///
 /// # Errors
 ///
@@ -434,8 +432,7 @@ pub async fn fetch_v4_tick_data(
     abi::decode_v4_tick_data(&bytes)
 }
 
-/// Fetch ERC-20 `name()` / `symbol()` / `decimals()` via three `eth_call`s
-/// (ADR-005 slice 14c).
+/// Fetch ERC-20 `name()` / `symbol()` / `decimals()` via three `eth_call`s.
 ///
 /// Returns `None` on any provider/decode error — mirrors the batched impl's
 /// caller-side `except (Web3Exception, DecodingError)` contract, which falls
@@ -560,7 +557,7 @@ pub async fn fetch_erc20_metadata_batch(
     out
 }
 
-/// Fetch an ERC-20 token balance via `balanceOf(address)` (ADR-005 slice 14d).
+/// Fetch an ERC-20 token balance via `balanceOf(address)`.
 ///
 /// Mirrors `Erc20Builder.get_token_balance`'s I/O path — encode
 /// `balanceOf(address)`, `eth_call`, decode the `uint256` return. Cross-cutting
@@ -580,8 +577,7 @@ pub async fn fetch_token_balance(
     abi::decode_balance_of(&bytes)
 }
 
-/// Fetch an ERC-20 token allowance via `allowance(address,address)` (ADR-005
-/// slice 14d).
+/// Fetch an ERC-20 token allowance via `allowance(address,address)`.
 ///
 /// Mirrors `Erc20Builder.get_token_approval`'s I/O path — two-address-arg call,
 /// decoded `uint256` return.
@@ -601,7 +597,7 @@ pub async fn fetch_token_allowance(
     abi::decode_allowance(&bytes)
 }
 
-/// Fetch an ERC-20 token's total supply via `totalSupply()` (ADR-005 slice 14d).
+/// Fetch an ERC-20 token's total supply via `totalSupply()`.
 ///
 /// Mirrors `Erc20Builder.get_token_total_supply`'s I/O path — no-arg call,
 /// decoded `uint256` return.
@@ -620,7 +616,7 @@ pub async fn fetch_token_total_supply(
 }
 
 /// Fetch an ERC-20 uint field via a dynamic no-arg signature (e.g.
-/// `decimals()` / `DECIMALS()`) (ADR-005 slice 14h).
+/// `decimals()` / `DECIMALS()`)
 ///
 /// Mirrors `Erc20Builder._fetch_decimals`: the caller passes the full function
 /// signature, which is hashed to a selector, called, and decoded as `uint256`.
@@ -640,7 +636,7 @@ pub async fn fetch_erc20_uint_field(
 }
 
 /// Fetch an ERC-20 string field via a dynamic no-arg signature (e.g.
-/// `name()` / `symbol()` / `NAME()`) (ADR-005 slice 14h).
+/// `name()` / `symbol()` / `NAME()`)
 ///
 /// Mirrors `Erc20Builder._fetch_name`/`_fetch_symbol`: tries a `string` decode,
 /// then falls back to a UTF-8 `bytes32` decode (tokens that store the field in

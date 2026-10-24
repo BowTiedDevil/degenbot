@@ -310,7 +310,7 @@ impl PyBot {
     #[pyo3(signature = (chain_id = 0))]
     #[must_use]
     pub fn new(chain_id: u64) -> Self {
-        // ADR-006 slice 8b: the Python ``Bot`` facade is now single-chain,
+        // The Python ``Bot`` facade is single-chain,
         // so it passes its ``config.default_chain_id`` here. The ``chain_id = 0``
         // default keeps the bare ``PyBot()`` lower-level test fixtures (which
         // only exercise the Rust core) working without a chain invariant.
@@ -2092,7 +2092,7 @@ impl PyBot {
     /// Register a V4 pool by `(pool_manager, pool_id)`.
     ///
     /// Returns the auto-assigned pool ID. The dynamic-fee admission floor
-    /// lives in `BotState::register_v4_pool` (ADR-005 slice 9a): pools with
+    /// lives in `BotState::register_v4_pool`: pools with
     /// dynamic fees (`fee == 0x100000`) or static fees exceeding the
     /// executor's 2-byte encoding limit (`fee > 65535`) are rejected here,
     /// surfacing as typed Python exceptions
@@ -2444,13 +2444,13 @@ impl PyBot {
         .map_err(|kind| map_build_refusal("build_curve_pool", kind))
     }
 
-    /// Register a Balancer V2 weighted pool (ADR-005 slice 12a state port).
+    /// Register a Balancer V2 weighted pool.
     ///
     /// Stores immutable pool config (`pool_id`, vault, tokens, weights,
     /// `scaling_factors`, `swap_fee`, `pow_version`) + registration balances + a
-    /// genesis reorg journal delta. The slice 12b Python `BalancerV2Pool`
-    /// companion is constructed over the returned `PyLiquidityPool` handle
-    /// (call `get_pool(id)` after this).
+    /// genesis reorg journal delta. The Python `BalancerV2Pool` companion is
+    /// constructed over the returned `PyLiquidityPool` handle (call
+    /// `get_pool(id)` after this).
     ///
     /// Returns the auto-assigned numeric pool ID. `tokens` / `weights` /
     /// `scaling_factors` / `balances` lists MUST all have length `N`.
@@ -2516,13 +2516,13 @@ impl PyBot {
         .map_err(map_refusal)
     }
 
-    /// Register a Balancer V2 stable pool (ADR-005 slice 12c state port).
+    /// Register a Balancer V2 stable pool.
     ///
     /// Stores immutable pool config (`pool_id`, vault, tokens, amp,
     /// `scaling_factors`, `swap_fee`, `bpt_idx`, `invariant_version`) +
-    /// registration balances + a genesis reorg journal delta. The slice 12d
-    /// Python `BalancerV2StablePool` companion will be constructed over the
-    /// returned `PyLiquidityPool` handle (call `get_pool(id)` after this).
+    /// registration balances + a genesis reorg journal delta. The Python
+    /// `BalancerV2StablePool` companion is constructed over the returned
+    /// `PyLiquidityPool` handle (call `get_pool(id)` after this).
     ///
     /// Returns the auto-assigned numeric pool ID. `tokens` / `scaling_factors`
     /// / `balances` lists MUST all have length `N`. `bpt_idx` is `None` for
