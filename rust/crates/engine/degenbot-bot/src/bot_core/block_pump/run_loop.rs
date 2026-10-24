@@ -801,7 +801,7 @@ impl BlockPump {
                                 // LW-T5 (Seam E), re-routed
                                 // Part A: the SAME per-block sample feeds
                                 // the ONE process fleet posture owner
-                                // (`degenbot_workers::posture::process()`
+                                // (`degenbot_workers::posture::process_owner()`
                                 // the Executor seam channel is
                                 // dissolved). The pump owns the
                                 // header-cadence delta

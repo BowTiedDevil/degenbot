@@ -618,7 +618,7 @@ pub struct PostureOwner {
 impl PostureOwner {
     /// A fresh owner in [`FleetPosture::Nominal`]. Hermetic tests build
     /// their own owner and inject it via `FleetBoot::owner` — NEVER the
-    /// process global ([`process`]/[`install_process_owner`]); posture
+    /// process global ([`process_owner`]/[`install_process_owner`]); posture
     /// leaking across tests is a failure class.
     #[must_use]
     pub fn new(policy: PosturePolicy) -> Self {
@@ -774,7 +774,7 @@ static PROCESS_OWNER: OnceLock<PostureOwner> = OnceLock::new();
 /// Install the process-level owner with `policy` (first-wins: the first
 /// fleet boot wins; later calls log at debug and return the existing
 /// owner). Production installs happen at `FleetHost::boot` — BEFORE the
-/// first throttle feed reaches [`process`]. Hermetic tests never call
+/// first throttle feed reaches [`process_owner`]. Hermetic tests never call
 /// this: they inject fresh owners via `FleetBoot::owner`.
 #[must_use]
 pub fn install_process_owner(policy: PosturePolicy) -> &'static PostureOwner {
@@ -784,7 +784,7 @@ pub fn install_process_owner(policy: PosturePolicy) -> &'static PostureOwner {
             "process owner already installed — first-wins, keeping the existing owner"
         );
     }
-    process()
+    process_owner()
 }
 
 /// The process-level owner, or a doc-default owner when nothing was
@@ -793,7 +793,7 @@ pub fn install_process_owner(policy: PosturePolicy) -> &'static PostureOwner {
 /// owner installs its policy here first-wins at boot time, which is why a
 /// production feed never lands on the doc-default stance.
 #[must_use]
-pub fn process() -> &'static PostureOwner {
+pub fn process_owner() -> &'static PostureOwner {
     PROCESS_OWNER.get_or_init(|| PostureOwner::new(PosturePolicy::doc_defaults()))
 }
 
@@ -1162,7 +1162,7 @@ mod tests {
             std::ptr::eq(first, second),
             "first-wins: a later install returns the existing owner"
         );
-        assert!(std::ptr::eq(first, process()));
+        assert!(std::ptr::eq(first, process_owner()));
         assert_eq!(
             second.policy().enter_events,
             first.policy().enter_events,

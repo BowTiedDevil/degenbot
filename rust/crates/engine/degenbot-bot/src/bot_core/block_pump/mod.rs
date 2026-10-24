@@ -104,7 +104,7 @@ static LAST_HEADER_SAMPLE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::
 /// Feed ONE per-header cgroup throttle sample to the ONE process-level
 /// fleet posture owner (the Executor seam's
 /// `observe_throttle` channel is dissolved; the pump feeds
-/// `degenbot_workers::posture::process()` directly and every fleet host
+/// `degenbot_workers::posture::process_owner()` directly and every fleet host
 /// consults that same owner). The pump owns the header sample cadence:
 /// `elapsed_usec` is the time since the previous sample (0 for the first
 /// sample, the `last_ms == 0` sentinel). Always fed.

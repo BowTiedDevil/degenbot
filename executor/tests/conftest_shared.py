@@ -94,7 +94,7 @@ USER1_SENTINEL = None  # USDC/WBTC are now regular t_addresses entries.
 # ── Encoding helpers ──
 
 
-def _e(v: int, n: int = 32, signed: bool = False) -> bytes:
+def _encode_word(v: int, n: int = 32, signed: bool = False) -> bytes:
     """Encode an integer as n big-endian bytes."""
     return v.to_bytes(n, "big", signed=signed)
 
@@ -109,10 +109,10 @@ def enc_v2_swap_compact(pool_idx, zfo, amount_out, recipient_idx, fee=30, forwar
     Written to t_v2_pair_fee[pool] before swap() for correct auto-pay.
     """
     return b"".join([
-        CMD_V2_SWAP_COMPACT, _e(pool_idx, 1),
+        CMD_V2_SWAP_COMPACT, _encode_word(pool_idx, 1),
         b"\x01" if zfo else b"\x00",
-        _e(amount_out, 12), _e(recipient_idx, 1), _e(fee, 2),
-        _e(len(forward_data), 1), forward_data,
+        _encode_word(amount_out, 12), _encode_word(recipient_idx, 1), _encode_word(fee, 2),
+        _encode_word(len(forward_data), 1), forward_data,
     ])
 
 
@@ -123,10 +123,10 @@ def enc_v3_swap_compact(pool_idx, zfo, amount_specified, recipient_idx, forward_
     = 17 + N bytes
     """
     return b"".join([
-        CMD_V3_SWAP_COMPACT, _e(pool_idx, 1),
+        CMD_V3_SWAP_COMPACT, _encode_word(pool_idx, 1),
         b"\x01" if zfo else b"\x00",
-        _e(amount_specified, 12), _e(recipient_idx, 1),
-        _e(len(forward_data), 1), forward_data,
+        _encode_word(amount_specified, 12), _encode_word(recipient_idx, 1),
+        _encode_word(len(forward_data), 1), forward_data,
     ])
 
 
@@ -137,9 +137,9 @@ def enc_v4_swap_compact(c0_idx, c1_idx, fee, tick_spacing, hooks_idx, zfo, amoun
     """
     return b"".join([
         CMD_V4_SWAP_COMPACT,
-        _e(c0_idx, 1), _e(c1_idx, 1), _e(fee, 2), _e(tick_spacing, 2, signed=True),
-        _e(hooks_idx, 1), b"\x01" if zfo else b"\x00",
-        _e(amount_u128, 12),
+        _encode_word(c0_idx, 1), _encode_word(c1_idx, 1), _encode_word(fee, 2), _encode_word(tick_spacing, 2, signed=True),
+        _encode_word(hooks_idx, 1), b"\x01" if zfo else b"\x00",
+        _encode_word(amount_u128, 12),
     ])
 
 
@@ -150,8 +150,8 @@ def enc_v4_swap_dynamic(c0_idx, c1_idx, fee, tick_spacing, hooks_idx, zfo):
     """
     return b"".join([
         CMD_V4_SWAP_DYNAMIC,
-        _e(c0_idx, 1), _e(c1_idx, 1), _e(fee, 2), _e(tick_spacing, 2, signed=True),
-        _e(hooks_idx, 1), b"\x01" if zfo else b"\x00",
+        _encode_word(c0_idx, 1), _encode_word(c1_idx, 1), _encode_word(fee, 2), _encode_word(tick_spacing, 2, signed=True),
+        _encode_word(hooks_idx, 1), b"\x01" if zfo else b"\x00",
     ])
 
 
@@ -172,13 +172,13 @@ def enc_v4_batch(swaps):
     Returns:
         Encoded command bytes
     """
-    inner = b"".join([CMD_V4_BATCH, _e(len(swaps), 1)])
+    inner = b"".join([CMD_V4_BATCH, _encode_word(len(swaps), 1)])
     for c0_idx, c1_idx, fee, tick_spacing, hooks_idx, zfo, amount_u128 in swaps:
         inner += b"".join([
-            _e(c0_idx, 1), _e(c1_idx, 1),
-            _e(fee, 2), _e(tick_spacing, 2, signed=True),
-            _e(hooks_idx, 1), b"\x01" if zfo else b"\x00",
-            _e(amount_u128, 12),
+            _encode_word(c0_idx, 1), _encode_word(c1_idx, 1),
+            _encode_word(fee, 2), _encode_word(tick_spacing, 2, signed=True),
+            _encode_word(hooks_idx, 1), b"\x01" if zfo else b"\x00",
+            _encode_word(amount_u128, 12),
         ])
     return inner
 
@@ -188,7 +188,7 @@ def enc_v3_swap_delta(pool_idx, zfo, recipient_idx):
     V3_SWAP_DELTA: [0x31][pool_idx:1][zfo:1][recipient_idx:1]
     = 4 bytes (amount from PM exttload + default sqrt + auto-pay)
     """
-    return b"".join([CMD_V3_SWAP_DELTA, _e(pool_idx, 1), b"\x01" if zfo else b"\x00", _e(recipient_idx, 1)])
+    return b"".join([CMD_V3_SWAP_DELTA, _encode_word(pool_idx, 1), b"\x01" if zfo else b"\x00", _encode_word(recipient_idx, 1)])
 
 
 def enc_v2_swap_calc(pool_idx, zfo, recipient_idx, fee=30):
@@ -196,7 +196,7 @@ def enc_v2_swap_calc(pool_idx, zfo, recipient_idx, fee=30):
     V2_SWAP_CALC: [0x21][pool_idx:1][zfo:1][recipient_idx:1][fee:2]
     fee is a fraction of 10000 (30 = 0.3% UniswapV2, 25 = 0.25% PancakeSwap).
     """
-    return b"".join([CMD_V2_SWAP_CALC, _e(pool_idx, 1), b"\x01" if zfo else b"\x00", _e(recipient_idx, 1), _e(fee, 2)])
+    return b"".join([CMD_V2_SWAP_CALC, _encode_word(pool_idx, 1), b"\x01" if zfo else b"\x00", _encode_word(recipient_idx, 1), _encode_word(fee, 2)])
 
 
 def enc_v2_swap_direct(pool_idx, zfo, amount_out, recipient_idx):
@@ -215,18 +215,18 @@ def enc_v2_swap_direct(pool_idx, zfo, amount_out, recipient_idx):
     No fee field needed — the V2 pair knows its own fee and enforces K.
     """
     return b"".join([
-        CMD_V2_SWAP_DIRECT, _e(pool_idx, 1),
+        CMD_V2_SWAP_DIRECT, _encode_word(pool_idx, 1),
         b"\x01" if zfo else b"\x00",
-        _e(amount_out, 12), _e(recipient_idx, 1),
+        _encode_word(amount_out, 12), _encode_word(recipient_idx, 1),
     ])
 
 
 def enc_v4_take(currency_idx, recipient_idx, amount):
-    return b"".join([CMD_V4_TAKE, _e(currency_idx, 1), _e(recipient_idx, 1), _e(amount)])
+    return b"".join([CMD_V4_TAKE, _encode_word(currency_idx, 1), _encode_word(recipient_idx, 1), _encode_word(amount)])
 
 
 def enc_v4_take_delta(currency_idx, recipient_idx):
-    return b"".join([CMD_V4_TAKE_DELTA, _e(currency_idx, 1), _e(recipient_idx, 1)])
+    return b"".join([CMD_V4_TAKE_DELTA, _encode_word(currency_idx, 1), _encode_word(recipient_idx, 1)])
 
 
 def enc_v4_take_compact(currency_idx, recipient_idx, amount_u128):
@@ -234,7 +234,7 @@ def enc_v4_take_compact(currency_idx, recipient_idx, amount_u128):
     V4_TAKE_COMPACT: [0x52][currency_idx:1][recipient_idx:1][amount:12]
     = 15 bytes (vs 35 for V4_TAKE, saves 20 bytes)
     """
-    return b"".join([CMD_V4_TAKE_COMPACT, _e(currency_idx, 1), _e(recipient_idx, 1), _e(amount_u128, 12)])
+    return b"".join([CMD_V4_TAKE_COMPACT, _encode_word(currency_idx, 1), _encode_word(recipient_idx, 1), _encode_word(amount_u128, 12)])
 
 
 def enc_v4_mint_compact(currency_idx, recipient_idx, amount_u128):
@@ -242,7 +242,7 @@ def enc_v4_mint_compact(currency_idx, recipient_idx, amount_u128):
     V4_MINT_COMPACT: [0x58][currency_idx:1][recipient_idx:1][amount:12]
     = 15 bytes. Converts positive PM delta → ERC6909 balance. No transfer out.
     """
-    return b"".join([CMD_V4_MINT_COMPACT, _e(currency_idx, 1), _e(recipient_idx, 1), _e(amount_u128, 12)])
+    return b"".join([CMD_V4_MINT_COMPACT, _encode_word(currency_idx, 1), _encode_word(recipient_idx, 1), _encode_word(amount_u128, 12)])
 
 
 def enc_v4_burn_compact(currency_idx, amount_u128):
@@ -250,11 +250,11 @@ def enc_v4_burn_compact(currency_idx, amount_u128):
     V4_BURN_COMPACT: [0x59][currency_idx:1][amount:12]
     = 14 bytes. Converts executor's own ERC6909 balance → payable PM delta.
     """
-    return b"".join([CMD_V4_BURN_COMPACT, _e(currency_idx, 1), _e(amount_u128, 12)])
+    return b"".join([CMD_V4_BURN_COMPACT, _encode_word(currency_idx, 1), _encode_word(amount_u128, 12)])
 
 
 def enc_v4_sync(currency_idx):
-    return b"".join([CMD_V4_SYNC, _e(currency_idx, 1)])
+    return b"".join([CMD_V4_SYNC, _encode_word(currency_idx, 1)])
 
 
 def enc_v4_settle():
@@ -262,7 +262,7 @@ def enc_v4_settle():
 
 
 def enc_v4_settle_delta(currency_idx):
-    return b"".join([CMD_V4_SETTLE_DELTA, _e(currency_idx, 1)])
+    return b"".join([CMD_V4_SETTLE_DELTA, _encode_word(currency_idx, 1)])
 
 
 def enc_v4_settle_all():
@@ -270,15 +270,15 @@ def enc_v4_settle_all():
 
 
 def enc_erc20_transfer(token_idx, recipient_idx, amount):
-    return b"".join([CMD_ERC20_TRANSFER, _e(token_idx, 1), _e(recipient_idx, 1), _e(amount, 12)])
+    return b"".join([CMD_ERC20_TRANSFER, _encode_word(token_idx, 1), _encode_word(recipient_idx, 1), _encode_word(amount, 12)])
 
 
 def enc_erc20_xfer_balance(token_idx, recipient_idx):
-    return b"".join([CMD_ERC20_XFER_BALANCE, _e(token_idx, 1), _e(recipient_idx, 1)])
+    return b"".join([CMD_ERC20_XFER_BALANCE, _encode_word(token_idx, 1), _encode_word(recipient_idx, 1)])
 
 
 def enc_weth_deposit(amount):
-    return b"".join([CMD_WETH_DEPOSIT, _e(amount)])
+    return b"".join([CMD_WETH_DEPOSIT, _encode_word(amount)])
 
 
 def enc_weth_deposit_all():
@@ -286,7 +286,7 @@ def enc_weth_deposit_all():
 
 
 def enc_weth_withdraw(amount):
-    return b"".join([CMD_WETH_WITHDRAW, _e(amount)])
+    return b"".join([CMD_WETH_WITHDRAW, _encode_word(amount)])
 
 
 def enc_weth_withdraw_all():
@@ -356,16 +356,16 @@ def enc_preamble(address_table, skip_profit=False):
 
 def enc_send_eth(recipient_idx, amount):
     """SEND_ETH: [0x16][recipient_idx:1][amount:16] — send uint128 ETH to address"""
-    return b"".join([CMD_SEND_ETH, _e(recipient_idx, 1), _e(amount, 12)])
+    return b"".join([CMD_SEND_ETH, _encode_word(recipient_idx, 1), _encode_word(amount, 12)])
 
 
 def enc_send_eth_all(recipient_idx):
     """SEND_ETH_ALL: [0x17][recipient_idx:1] — send all ETH to address"""
-    return b"".join([CMD_SEND_ETH_ALL, _e(recipient_idx, 1)])
+    return b"".join([CMD_SEND_ETH_ALL, _encode_word(recipient_idx, 1)])
 
 
 def enc_v4_unlock(forward_data):
-    return b"".join([CMD_V4_UNLOCK, _e(len(forward_data), 1), forward_data])
+    return b"".join([CMD_V4_UNLOCK, _encode_word(len(forward_data), 1), forward_data])
 
 
 # ── Shared test utilities ──

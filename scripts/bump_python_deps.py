@@ -19,8 +19,8 @@ left alone rather than made unsatisfiable.
 Only stable releases (no alpha/beta/rc/dev tail) uploaded before the
 project's `[tool.uv] exclude-newer` horizon (repo setting: 14 days) are
 considered, so the rewritten pins are always resolvable by uv under the very
-same setting. Stdlib + tomlkit only (a degenbot production dependency, found
-in the project venv by `uv run`).
+same setting. Stdlib + tomlkit only (tomlkit is a dev-group dependency, so it is
+in the project venv that `uv run` uses).
 
 Usage:
   uv run python scripts/bump_python_deps.py            # rewrite pyproject.toml + report
@@ -145,7 +145,10 @@ def exclude_newer_cutoff(doc: Any) -> datetime | None:
         dt = as_utc(raw)
         if dt is not None:
             return dt
-    print(f"warning: unparseable [tool.uv] exclude-newer {raw!r}; assuming no horizon", file=sys.stderr)
+    print(
+        f"warning: unparseable [tool.uv] exclude-newer {raw!r}; assuming no horizon",
+        file=sys.stderr,
+    )
     return None
 
 
@@ -214,10 +217,16 @@ def main() -> int:
         description="Bump pyproject.toml version requirements to the latest stable "
         "PyPI release (the cargo-upgrade analog for the Python side)."
     )
-    parser.add_argument("--dry-run", action="store_true",
-                        help="report the planned bumps without writing pyproject.toml")
-    parser.add_argument("--pyproject", default=str(REPO_ROOT / "pyproject.toml"),
-                        help="path to pyproject.toml (default: repo root)")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report the planned bumps without writing pyproject.toml",
+    )
+    parser.add_argument(
+        "--pyproject",
+        default=str(REPO_ROOT / "pyproject.toml"),
+        help="path to pyproject.toml (default: repo root)",
+    )
     args = parser.parse_args()
 
     path = Path(args.pyproject)
@@ -279,7 +288,9 @@ def main() -> int:
         print(f"dry run: {changed} requirement(s) would change in {path.name}")
     else:
         path.write_text(tomlkit.dumps(doc))
-        print(f"{changed} requirement(s) updated in {path.name}; next: uv lock --upgrade && uv sync")
+        print(
+            f"{changed} requirement(s) updated in {path.name}; next: uv lock --upgrade && uv sync"
+        )
     return 0
 
 

@@ -1,7 +1,7 @@
 //! Fleet host waker fan-out — the degenbot-bot side of the
 //! `PostureEdge` hint.
 //!
-//! The ONE posture owner (`degenbot_workers::posture::process()`) publishes
+//! The ONE posture owner (`degenbot_workers::posture::process_owner()`) publishes
 //! an edge on a real (non-`Held`) transition. The owner lives in
 //! `degenbot-workers` and cannot know about host channels (layering), so the
 //! BOT-side feeder sites wake the hosts: the block-pump throttle feed and
@@ -48,7 +48,7 @@ pub fn wake_hosts() {
 /// bot-side throttle feeder: the pairing is mechanical, asserted
 /// by `production_feeders_go_through_the_wrapper`.
 pub fn feed_throttle(now_ms: u64, sample: ThrottleSample) {
-    let change = degenbot_workers::posture::process().observe_throttle(now_ms, sample);
+    let change = degenbot_workers::posture::process_owner().observe_throttle(now_ms, sample);
     if !matches!(change, PostureChange::Held) {
         wake_hosts();
     }
@@ -59,7 +59,7 @@ pub fn feed_throttle(now_ms: u64, sample: ThrottleSample) {
 pub fn feed_cause(owner: Option<&PostureOwner>, cause: PostureCause) {
     let change = match owner {
         Some(owner) => owner.observe_cause(cause),
-        None => degenbot_workers::posture::process().observe_cause(cause),
+        None => degenbot_workers::posture::process_owner().observe_cause(cause),
     };
     if !matches!(change, PostureChange::Held) {
         wake_hosts();

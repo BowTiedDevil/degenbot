@@ -17,7 +17,7 @@ pub(crate) type SubmitWork = Box<dyn FnOnce(&LaneCtx) + Send + 'static>;
 /// The ONE executor seam (LW-T8): `boot/bin_count/submit` + the
 /// `LaneCtx`/`EscalationPort` contracts. (the retired
 /// `observe_throttle` absorb-by-contract default is dissolved — the ONE
-/// process posture owner (`degenbot_workers::posture::process`) is fed
+/// process posture owner (`degenbot_workers::posture::process_owner`) is fed
 /// by the block pump directly, and every fleet host consults the same
 /// owner; the seam carries no posture channel anymore.)
 pub(crate) trait Executor: Send + Sync {

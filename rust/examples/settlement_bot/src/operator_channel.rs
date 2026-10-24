@@ -22,7 +22,7 @@
 //!     {"ok": false, "error": "..."}
 //!
 //! The fleet-posture ops route through the `degenbot::workers::posture`
-//! umbrella surface (`process()` / `PosturePolicyPatch` / `PosturePolicy`) —
+//! umbrella surface (`process_owner()` / `PosturePolicyPatch` / `PosturePolicy`) —
 //! the same process owner the Python `degenbot._ffi.fleet` mirror mints, so
 //! the reach claim is proven by construction (row 20 is DRIVER-POLICY, not a
 //! new gap). The host is the driver-local transport: `add_path`/`discover`
@@ -420,7 +420,7 @@ fn effective_json(policy: PosturePolicy, posture: FleetPosture) -> String {
 /// Handle the two fleet-posture ops through `degenbot::workers::posture`
 /// (mirrors `handle_fleet_posture_op`).
 fn handle_fleet_posture(op: &str, payload: &Value) -> Result<HandlerResponse, String> {
-    let owner = degenbot::workers::posture::process();
+    let owner = degenbot::workers::posture::process_owner();
     if op == "get_fleet_posture" {
         return Ok(HandlerResponse {
             detail: String::new(),

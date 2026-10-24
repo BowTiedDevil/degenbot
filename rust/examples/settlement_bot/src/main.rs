@@ -393,7 +393,7 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("17-fee-determination", "REACHABLE", "degenbot::arbitrage::compute_priority_fee + degenbot::rpc::{fetch_priority_fee_percentiles,provider::AlloyProvider::eth_fee_history} + degenbot::submission::fetch_fee_history + degenbot_core::eip_1559::next_base_fee"),
         ("18-live-submission", "REACHABLE", "degenbot::submission::{TxSigner,dispatch_and_submit,monitor_pending_transaction,Dispatcher,PathSuppression}; submission.rs dry-run seam never signs"),
         ("19-session-watch", "DRIVER-POLICY", "session_watch.rs ranks the core detection facts (degenbot::session_end::{SessionEndCause,SessionEndFacts,SessionEndDetection} over EngineDriver::wait_session_end + the heartbeat stall watchdog) into SessionEndVerdict {PumpEnded,RegistrationFailed,WatchdogTripped} (watch-as-observer; ranking + teardown stay driver)"),
-        ("20-operator-channel", "DRIVER-POLICY", "operator_channel.rs: tokio UnixListener JSON-lines add_path/discover/set+get_fleet_posture; fleet posture through degenbot::workers::posture::process (reachable via the umbrella)"),
+        ("20-operator-channel", "DRIVER-POLICY", "operator_channel.rs: tokio UnixListener JSON-lines add_path/discover/set+get_fleet_posture; fleet posture through degenbot::workers::posture::process_owner (reachable via the umbrella)"),
     ];
     for (row, status, note) in rows {
         println!("parity-ledger row={row} status={status} note={note}");

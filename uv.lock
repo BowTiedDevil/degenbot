@@ -250,9 +250,6 @@ name = "degenbot"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "tenacity" },
-    { name = "tomlkit" },
 ]
 
 [package.dev-dependencies]
@@ -271,15 +268,11 @@ dev = [
     { name = "pytest-timeout" },
     { name = "python-dotenv" },
     { name = "sybil" },
+    { name = "tomlkit" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "pydantic", specifier = "~=2.14" },
-    { name = "pydantic-settings", specifier = "~=2.15" },
-    { name = "tenacity", specifier = "~=9.2" },
-    { name = "tomlkit", specifier = "~=0.15" },
-]
+requires-dist = [{ name = "pydantic", specifier = "~=2.14" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -297,6 +290,7 @@ dev = [
     { name = "pytest-timeout" },
     { name = "python-dotenv" },
     { name = "sybil" },
+    { name = "tomlkit" },
 ]
 
 [[package]]
@@ -911,20 +905,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pydantic-settings"
-version = "2.15.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "typing-inspection" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/68/ca/31c57507b13119d7d3cfa1576dad2911a4861e3be07b579395f4e9d393f9/pydantic_settings-2.15.0.tar.gz", hash = "sha256:694b793e84f766ba76a90ebdefc01d0a9a045dab0382bee70393da93712ad117", size = 261253, upload-time = "2026-08-07T09:24:57.419Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/30/a4/2bffa9f8e804325a09867f0e9d30795c80ea9f8d62560bd1b6ad6220eb2f/pydantic_settings-2.15.0-py3-none-any.whl", hash = "sha256:0ba092c291c94baceb5eff768aa0d56400a457585bc0175925a5a5510303da42", size = 69413, upload-time = "2026-08-07T09:24:55.839Z" },
-]
-
-[[package]]
 name = "pygments"
 version = "2.21.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1127,15 +1107,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/50135b55ba14509654b2f624eaf7e318d654182ebe9f712fb74e98e418d0/sybil-10.1.0.tar.gz", hash = "sha256:062249c8886a0ab19e45d1c3afd5631ec806e7a95cf5153c96560f5e47756cbd", size = 82376, upload-time = "2026-06-13T09:40:44.584Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f2/fe/4094754188b52f8333ba24b377192918936597769a574a9dd8446f69e1f1/sybil-10.1.0-py3-none-any.whl", hash = "sha256:b3015f7e0ca3fe197ae67117c440710b62ea500078d4414ebd0ab804d12c9897", size = 40930, upload-time = "2026-06-13T09:40:43.139Z" },
-]
-
-[[package]]
-name = "tenacity"
-version = "9.2.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/82/9e/497c1c8ebe5a5b5d1d4a7511aea22c0bb1a97e3170d98abdef0e1b34265a/tenacity-9.2.1.tar.gz", hash = "sha256:a606b5c808d0cded4a359d5b9932d867ff2a6a6b64d37350260fd01bbdf83839", size = 58261, upload-time = "2026-10-07T12:13:01.633Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d6/26/1ff2b0721ac66a3ec5b1402b333110b352ab0a8724052ac279a7b82d40c4/tenacity-9.2.1-py3-none-any.whl", hash = "sha256:9e56f17539296baab7beabb08b92f6ee3d7be92d8be72d763360677c2ad6580e", size = 32310, upload-time = "2026-10-07T12:13:00.102Z" },
 ]
 
 [[package]]

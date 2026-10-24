@@ -212,7 +212,7 @@ class AnvilFork:
     Dropped (no longer needed now that subprocess lifecycle is rust-owned):
     the `--auto-impersonate` CLI arg list construction, the
     `_setup_process` / `_setup_w3` / `_close_ipc_socket` block, the
-    `socket`-based free-port allocation, the `tenacity` spawn retry,
+    `socket`-based free-port allocation, the retry-with-backoff spawn loop,
     the `subprocess.Popen` capture-file management
     (`capture_path` / `preserve_capture` / `*_capture_filename` properties),
     the `web3.IPCProvider` client + `middleware_onion.inject(middleware)`

@@ -1,6 +1,6 @@
 //! The fleet operator seam: the runtime re-tune channel
 //! over the ONE process-level posture owner
-//! ([`degenbot_workers::posture::process`]).
+//! ([`degenbot_workers::posture::process_owner`]).
 //!
 //! Two pyfunctions on the real Python submodule `degenbot._ffi.fleet`:
 //!
@@ -286,7 +286,7 @@ pub fn set_posture_policy(patch: &Bound<'_, PyDict>) -> PyResult<Py<PyDict>> {
         .validate()
         .map_err(|err| PostureRetuneError::new_err(err.to_string()))?;
 
-    let owner = degenbot_workers::posture::process();
+    let owner = degenbot_workers::posture::process_owner();
     let current = owner.policy();
     let effective = current.patched_with(patch);
     owner.retune(effective);
@@ -318,7 +318,7 @@ pub fn set_posture_policy(patch: &Bound<'_, PyDict>) -> PyResult<Py<PyDict>> {
 /// Only on dict construction failure (never refuses a read).
 #[pyfunction]
 pub fn current_posture_policy(py: Python<'_>) -> PyResult<Py<PyDict>> {
-    let owner = degenbot_workers::posture::process();
+    let owner = degenbot_workers::posture::process_owner();
     effective_policy_dict(py, owner.policy(), owner.current())
 }
 
