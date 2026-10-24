@@ -269,7 +269,10 @@ pub fn resolve_dy_inputs(
     // Crypto d/gamma/price_scale.
     if swap_style == SwapStyle::Crypto {
         let p = provider.ok_or(CurveInputsError::NoProvider("crypto"))?;
-        inputs.d = Some(p.d(block_number).map_err(CurveInputsError::Provider)?);
+        inputs.d = Some(
+            p.invariant_d(block_number)
+                .map_err(CurveInputsError::Provider)?,
+        );
         inputs.gamma = Some(p.gamma(block_number).map_err(CurveInputsError::Provider)?);
         inputs.price_scale = Some(
             p.price_scale(block_number)

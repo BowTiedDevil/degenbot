@@ -68,7 +68,7 @@ struct StubProvider {
     lending_rates: Option<Vec<U256>>,
     virtual_price: Option<U256>,
     redemption_price: Option<U256>,
-    d: Option<U256>,
+    invariant_d: Option<U256>,
     gamma: Option<U256>,
     price_scale: Option<Vec<U256>>,
     token_balances: HashMap<Address, U256>,
@@ -102,8 +102,8 @@ impl CurveDataProvider for StubProvider {
     fn lending_rates(&self, _b: u64) -> Result<Vec<U256>, CurveDataProviderError> {
         self.lending_rates.clone().ok_or_else(missing)
     }
-    fn d(&self, _b: u64) -> Result<U256, CurveDataProviderError> {
-        self.d.ok_or_else(missing)
+    fn invariant_d(&self, _b: u64) -> Result<U256, CurveDataProviderError> {
+        self.invariant_d.ok_or_else(missing)
     }
     fn gamma(&self, _b: u64) -> Result<U256, CurveDataProviderError> {
         self.gamma.ok_or_else(missing)
@@ -171,7 +171,7 @@ fn lending_pool_reads_rates_from_provider() {
         base_virtual_price: None,
         virtual_price: None,
         redemption_price: None,
-        d: None,
+        invariant_d: None,
         gamma: None,
         price_scale: None,
         token_balances: HashMap::new(),
@@ -214,7 +214,7 @@ fn crypto_pool_reads_d_gamma_price_scale() {
         lending_rates: None,
         virtual_price: None,
         redemption_price: None,
-        d: Some(U256::from(123u64)),
+        invariant_d: Some(U256::from(123u64)),
         gamma: Some(U256::from(7_000_000_000_u64)),
         price_scale: Some(vec![E18, E18]),
         base_cache_updated: None,
@@ -247,7 +247,7 @@ fn live_admin_uses_effective_balances() {
         lending_rates: None,
         virtual_price: None,
         redemption_price: None,
-        d: None,
+        invariant_d: None,
         gamma: None,
         price_scale: None,
         token_balances: tb,
@@ -294,7 +294,7 @@ fn metapool_reads_virtual_and_redemption_prices() {
         // cache).
         base_cache_updated: None,
         base_virtual_price: None,
-        d: None,
+        invariant_d: None,
         gamma: None,
         price_scale: None,
         token_balances: HashMap::new(),
@@ -322,7 +322,7 @@ fn metapool_without_redemption_degrades_to_none() {
         redemption_price: None, // not supported -> must degrade, not fail
         base_cache_updated: None,
         base_virtual_price: None,
-        d: None,
+        invariant_d: None,
         gamma: None,
         price_scale: None,
         token_balances: HashMap::new(),
@@ -365,7 +365,7 @@ fn ramping_a_interpolates_with_timestamp() {
         lending_rates: None,
         virtual_price: None,
         redemption_price: None,
-        d: None,
+        invariant_d: None,
         gamma: None,
         price_scale: None,
         token_balances: HashMap::new(),
@@ -438,7 +438,7 @@ fn metapool_provider(block_timestamp: u64, base_cache_updated: Option<u64>) -> S
         lending_rates: None,
         virtual_price: Some(GUSD_LIVE_BASE_VP),
         redemption_price: None,
-        d: None,
+        invariant_d: None,
         gamma: None,
         price_scale: None,
         token_balances: HashMap::new(),

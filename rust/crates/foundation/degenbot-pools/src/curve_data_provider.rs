@@ -43,7 +43,7 @@ pub enum CurveDataProviderError {
     LengthMismatch,
     /// The requested block/value is outside the provider's supported range
     /// (e.g. a future block, or a method unsupported by this pool family —
-    /// `d`/`gamma`/`price_scale` are crypto-only).
+    /// `D`/`gamma`/`price_scale` are crypto-only).
     Unsupported,
 }
 
@@ -86,8 +86,9 @@ pub trait CurveDataProvider: Send + Sync + std::fmt::Debug {
     /// entry per pool coin; `0` for non-lending coins.
     fn lending_rates(&self, block_number: u64) -> Result<Vec<U256>, CurveDataProviderError>;
 
-    /// Crypto-pool `D` (the invariant) at `block_number`. Crypto pools only.
-    fn d(&self, block_number: u64) -> Result<U256, CurveDataProviderError>;
+    /// The Curve invariant `D` (the `D()` contract value) at `block_number`.
+    /// Crypto pools only.
+    fn invariant_d(&self, block_number: u64) -> Result<U256, CurveDataProviderError>;
 
     /// Crypto-pool `gamma` at `block_number`. Crypto pools only.
     fn gamma(&self, block_number: u64) -> Result<U256, CurveDataProviderError>;
@@ -128,7 +129,7 @@ mod tests {
         balance: U256,
         total_supply: U256,
         lending_rates: Vec<U256>,
-        d: U256,
+        invariant_d: U256,
         gamma: U256,
         price_scale: Vec<U256>,
         admin_balances: Vec<U256>,
@@ -163,8 +164,8 @@ mod tests {
         fn lending_rates(&self, _block_number: u64) -> Result<Vec<U256>, CurveDataProviderError> {
             Ok(self.lending_rates.clone())
         }
-        fn d(&self, _block_number: u64) -> Result<U256, CurveDataProviderError> {
-            Ok(self.d)
+        fn invariant_d(&self, _block_number: u64) -> Result<U256, CurveDataProviderError> {
+            Ok(self.invariant_d)
         }
         fn gamma(&self, _block_number: u64) -> Result<U256, CurveDataProviderError> {
             Ok(self.gamma)
@@ -197,7 +198,7 @@ mod tests {
             balance: U256::from(1_234_u64),
             total_supply: U256::from(9_876_u64),
             lending_rates: vec![U256::from(1_u64), U256::from(2_u64)],
-            d: U256::from(42_000_u64),
+            invariant_d: U256::from(42_000_u64),
             gamma: U256::from(7_000_000_000_u64),
             price_scale: vec![U256::from(10u64).pow(U256::from(18u64)); 2],
             admin_balances: vec![U256::from(0_u64), U256::from(0_u64)],
@@ -228,7 +229,10 @@ mod tests {
             provider.lending_rates(17_999_999).unwrap(),
             vec![U256::from(1_u64), U256::from(2_u64)]
         );
-        assert_eq!(provider.d(17_999_999).unwrap(), U256::from(42_000_u64));
+        assert_eq!(
+            provider.invariant_d(17_999_999).unwrap(),
+            U256::from(42_000_u64)
+        );
         assert_eq!(
             provider.gamma(17_999_999).unwrap(),
             U256::from(7_000_000_000_u64)

@@ -278,11 +278,13 @@ impl degenbot_pools::curve_data_provider::CurveDataProvider for PyCurveDataProvi
         self.read_u256_vec("lending_rates", block_number)
     }
 
-    fn d(
+    fn invariant_d(
         &self,
         block_number: u64,
     ) -> Result<alloy::primitives::U256, degenbot_pools::curve_data_provider::CurveDataProviderError>
     {
+        // The Python provider's method name is `d`; only the Rust trait method
+        // carries the referent.
         self.read_u256("d", block_number)
     }
 
@@ -2249,7 +2251,7 @@ impl PyLiquidityPool {
     }
 
     fn fetch_curve_d(&self, py: Python<'_>, block_number: u64) -> PyResult<Option<Py<PyAny>>> {
-        self.read_provider_opt(py, |p| p.d(block_number))
+        self.read_provider_opt(py, |p| p.invariant_d(block_number))
     }
 
     fn fetch_curve_gamma(&self, py: Python<'_>, block_number: u64) -> PyResult<Option<Py<PyAny>>> {

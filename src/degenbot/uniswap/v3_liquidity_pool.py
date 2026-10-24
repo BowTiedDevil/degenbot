@@ -41,7 +41,7 @@ from degenbot.exceptions.pool import (
     MissingLiquidityData,
 )
 from degenbot.uniswap import SwapSimulationStatus
-from degenbot.uniswap.concentrated_liquidity_companion import ConcentratedLiquidityCompanion
+from degenbot.uniswap.concentrated_liquidity_base import ConcentratedLiquidityBase
 from degenbot.uniswap.v3_pool_calc import UniswapV3PoolCalc
 from degenbot.uniswap.v3_pool_state import V3PoolState
 from degenbot.uniswap.v3_types import (
@@ -66,7 +66,7 @@ class LiquidityAtTickAsDict(TypedDict):
 class UniswapV3Pool(
     V3PoolState,
     UniswapV3PoolCalc,
-    ConcentratedLiquidityCompanion,
+    ConcentratedLiquidityBase,
 ):
     """A Uniswap V3 concentrated-liquidity pool companion over a ``Pool`` handle.
 

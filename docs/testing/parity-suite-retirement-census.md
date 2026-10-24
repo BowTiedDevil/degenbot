@@ -31,7 +31,7 @@ lane even when the test body no longer needs a chain).
 Two assertion classes needed care:
 
 - **Adapter-layer guards.** The Python companions (`external_update` on
-  `ConcentratedLiquidityCompanion` / V2 / Aerodrome pools) refuse a
+  `ConcentratedLiquidityBase` / V2 / Aerodrome pools) refuse a
   backward-stamped observation with `ExternalUpdateError` before delegating.
   That refusal is the shell's, and its Rust twin is the core's own
   backward-stamp policy: the journal drops an older-block delta

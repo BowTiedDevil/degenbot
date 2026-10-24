@@ -45,7 +45,7 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
 )
 from degenbot.uniswap import SwapSimulationStatus
-from degenbot.uniswap.concentrated_liquidity_companion import ConcentratedLiquidityCompanion
+from degenbot.uniswap.concentrated_liquidity_base import ConcentratedLiquidityBase
 from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc
 from degenbot.uniswap.v4_pool_state import V4PoolState
 from degenbot.uniswap.v4_types import (
@@ -147,7 +147,7 @@ class Hooks(Enum):
 class UniswapV4Pool(
     V4PoolState,
     UniswapV4PoolCalc,
-    ConcentratedLiquidityCompanion,
+    ConcentratedLiquidityBase,
 ):
     """A Uniswap V4 concentrated-liquidity pool companion over a ``Pool`` handle.
 

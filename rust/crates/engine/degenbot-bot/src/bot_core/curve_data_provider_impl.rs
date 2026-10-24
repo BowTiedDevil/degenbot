@@ -218,7 +218,7 @@ impl CurveDataProvider for RpcCurveDataProvider {
         Ok(result)
     }
 
-    fn d(&self, block_number: u64) -> Result<U256, CurveDataProviderError> {
+    fn invariant_d(&self, block_number: u64) -> Result<U256, CurveDataProviderError> {
         self.fetch_uint(self.pool_address, b"D()", block_number)
     }
 
@@ -711,12 +711,12 @@ mod tests {
     }
 
     #[test]
-    fn d_and_gamma_decode() {
+    fn invariant_d_and_gamma_decode() {
         let mut s = StubRpc::new();
         s.set(POOL, selector(b"D()").to_vec(), uint(42_000));
         s.set(POOL, selector(b"gamma()").to_vec(), uint(7_000_000_000));
         let p = provider(Arc::new(s));
-        assert_eq!(p.d(18_000_000).unwrap(), U256::from(42_000u64));
+        assert_eq!(p.invariant_d(18_000_000).unwrap(), U256::from(42_000u64));
         assert_eq!(p.gamma(18_000_000).unwrap(), U256::from(7_000_000_000u64));
     }
 

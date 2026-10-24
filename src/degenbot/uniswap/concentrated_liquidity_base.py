@@ -1,17 +1,17 @@
-"""Shared concentrated-liquidity companion surface.
+"""Shared concentrated-liquidity base.
 
 ``UniswapV3Pool`` and ``UniswapV4Pool`` carried duplicated copies of the
 same concentrated liquidity surface — the scalar/tick-map reads and the
 ``swap_is_viable`` predicate. This module collapses that surface into one base
 so the read path is written once. Writes are not on this surface: state moves
 only through the pump's own door (``Bot.dispatch_log`` →
-``LogDispatcher`` decode → apply), never through a companion method.
+``LogDispatcher`` decode → apply), never through a base method.
 
 What stays on the subclasses: identity (address/factory/tokens/fee/
 pool_key/hook/protocol-fees), the family calc mixins, and ``__eq__``/
 ``__hash__``. This base does no family math (ADR-005: the driver shell is
 not a co-implementation) and adds no cross-family Rust seam (ADR-014);
-the companions stay Python (ADR-023).
+the read surface stays Python (ADR-023).
 """
 
 from __future__ import annotations
@@ -32,8 +32,8 @@ if TYPE_CHECKING:
 type CLState = Any
 
 
-class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
-    """Shared concentrated liquidity companion surface.
+class ConcentratedLiquidityBase(AbstractLiquidityPool):
+    """Shared concentrated-liquidity base surface.
 
     Wraps a Rust-owned ``Pool`` handle.
 
@@ -142,4 +142,4 @@ class ConcentratedLiquidityCompanion(AbstractLiquidityPool):
         return cast("bool", state.sqrt_price_x96 > 1)
 
 
-__all__ = ["ConcentratedLiquidityCompanion"]
+__all__ = ["ConcentratedLiquidityBase"]

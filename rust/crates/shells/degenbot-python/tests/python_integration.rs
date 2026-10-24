@@ -335,7 +335,7 @@ fn test_py_curve_data_provider_delegates() {
         ]
     );
     assert_eq!(
-        provider.d(18_000_000).unwrap(),
+        provider.invariant_d(18_000_000).unwrap(),
         alloy::primitives::U256::from(42_000_u64)
     );
     assert_eq!(
