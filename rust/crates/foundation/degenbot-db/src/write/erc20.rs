@@ -15,74 +15,59 @@ fn existing_erc20_token(
     )
 }
 impl DegenbotDb {
-    /// Get-or-create an `erc20_tokens` row by `(chain, address)`. Port of
-    /// `db_assets.py::get_or_create_erc20_token` (L18–…). On create, inserts
-    /// with caller-supplied metadata (`name` / `symbol` / `decimals`); the
-    /// Python path RPC-fetches these via `_fetch_erc20_token_metadata` — that
-    /// fetch is `stays-python` (the driver computes + passes them in). Pass
-    /// `None` for each to leave the column `NULL` (matches the Python
-    /// "metadata fetch returned None" trajectory).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure. `address` stored
-    /// verbatim.
-    pub fn get_or_create_erc20_token(
-        &self,
-        chain: i64,
-        address: &str,
-        name: Option<&str>,
-        symbol: Option<&str>,
-        decimals: Option<i64>,
-    ) -> Result<i64, DbError> {
-        let conn = self.lock();
-        Self::get_or_create_erc20_token_on_conn(&conn, chain, address, name, symbol, decimals)
-    }
-
-    /// Connection-bound form of [`Self::get_or_create_erc20_token`].
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` form.
-    pub fn get_or_create_erc20_token_on_conn(
-        conn: &rusqlite::Connection,
-        chain: i64,
-        address: &str,
-        name: Option<&str>,
-        symbol: Option<&str>,
-        decimals: Option<i64>,
-    ) -> Result<i64, DbError> {
-        if let Some(id) = existing_erc20_token(conn, chain, address)? {
-            // backfill any NULL metadata cells on the existing row
-            // with the freshly-passed values. Mirrors the Python
-            // `activate_ethereum_aave_v3` pre-pass (commands.py:213) which
-            // drives `get_or_create_erc20_token` on a freshly-seeded row →
-            // `_fetch_erc20_token_metadata` (RPC `name()`/`symbol()`/`decimals()`) +
-            // INSERT with metadata. Rust defers the equivalent to drive-time:
-            // when `resolve_reserve_initialized` fetches the metadata via
-            // `fetch_erc20_metadata` + resolves the token here, the existing
-            // row's NULL cells get backfilled. Pre-populated cells are NOT
-            // clobbered (defensive guard — the `WHERE name IS NULL` etc. on
-            // each COALESCE branch ensures only-null cells update).
-            if name.is_some() || symbol.is_some() || decimals.is_some() {
-                conn.execute(
-                    "UPDATE erc20_tokens SET \
-                     name = COALESCE(name, ?3), \
-                     symbol = COALESCE(symbol, ?4), \
-                     decimals = COALESCE(decimals, ?5) \
-                     WHERE id = ?2 AND \
-                     (name IS NULL OR symbol IS NULL OR decimals IS NULL)",
-                    params![chain, id, name, symbol, decimals],
-                )?;
+    conn_writer! {
+        /// Get-or-create an `erc20_tokens` row by `(chain, address)`. Port of
+        /// `db_assets.py::get_or_create_erc20_token` (L18–…). On create, inserts
+        /// with caller-supplied metadata (`name` / `symbol` / `decimals`); the
+        /// Python path RPC-fetches these via `_fetch_erc20_token_metadata` — that
+        /// fetch is `stays-python` (the driver computes + passes them in). Pass
+        /// `None` for each to leave the column `NULL` (matches the Python
+        /// "metadata fetch returned None" trajectory).
+        ///
+        /// # Errors
+        ///
+        /// Returns [`DbError::Sqlite`] on a query failure. `address` stored
+        /// verbatim.
+        fn get_or_create_erc20_token, get_or_create_erc20_token_on_conn(
+            conn: &rusqlite::Connection,
+            chain: i64,
+            address: &str,
+            name: Option<&str>,
+            symbol: Option<&str>,
+            decimals: Option<i64>,
+        ) -> Result<i64, DbError> {
+            if let Some(id) = existing_erc20_token(conn, chain, address)? {
+                // backfill any NULL metadata cells on the existing row
+                // with the freshly-passed values. Mirrors the Python
+                // `activate_ethereum_aave_v3` pre-pass (commands.py:213) which
+                // drives `get_or_create_erc20_token` on a freshly-seeded row →
+                // `_fetch_erc20_token_metadata` (RPC `name()`/`symbol()`/`decimals()`) +
+                // INSERT with metadata. Rust defers the equivalent to drive-time:
+                // when `resolve_reserve_initialized` fetches the metadata via
+                // `fetch_erc20_metadata` + resolves the token here, the existing
+                // row's NULL cells get backfilled. Pre-populated cells are NOT
+                // clobbered (defensive guard — the `WHERE name IS NULL` etc. on
+                // each COALESCE branch ensures only-null cells update).
+                if name.is_some() || symbol.is_some() || decimals.is_some() {
+                    conn.execute(
+                        "UPDATE erc20_tokens SET \
+                         name = COALESCE(name, ?3), \
+                         symbol = COALESCE(symbol, ?4), \
+                         decimals = COALESCE(decimals, ?5) \
+                         WHERE id = ?2 AND \
+                         (name IS NULL OR symbol IS NULL OR decimals IS NULL)",
+                        params![chain, id, name, symbol, decimals],
+                    )?;
+                }
+                return Ok(id);
             }
-            return Ok(id);
+            conn.execute(
+                "INSERT INTO erc20_tokens (chain, address, name, symbol, decimals) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![chain, address, name, symbol, decimals],
+            )?;
+            Ok(conn.last_insert_rowid())
         }
-        conn.execute(
-            "INSERT INTO erc20_tokens (chain, address, name, symbol, decimals) \
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![chain, address, name, symbol, decimals],
-        )?;
-        Ok(conn.last_insert_rowid())
     }
 
     /// Update an existing `erc20_tokens` row's metadata (`name` / `symbol` /

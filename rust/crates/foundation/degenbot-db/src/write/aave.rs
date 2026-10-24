@@ -191,440 +191,330 @@ fn existing_user(
     )
 }
 impl DegenbotDb {
-    /// Get-or-create an `aave_v3_emode_categories` row by `(market_id,
-    /// category_id)`. Port of `db_market.py::get_or_create_e_mode_category`
-    /// (L37–L67). On create, the row is inserted with the Python ORM defaults
-    /// (`label=""`, `ltv=0`, `liquidation_threshold=0`, `liquidation_bonus=0`).
-    /// Returns the row `id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure (including
-    /// "attempt to write a readonly database" if called on a read-only handle).
-    pub fn get_or_create_e_mode_category(
-        &self,
-        market_id: i64,
-        category_id: i64,
-    ) -> Result<i64, DbError> {
-        let conn = self.lock();
-        Self::get_or_create_e_mode_category_on_conn(&conn, market_id, category_id)
-    }
-
-    /// Connection-bound form of [`Self::get_or_create_e_mode_category`].
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` form.
-    pub fn get_or_create_e_mode_category_on_conn(
-        conn: &rusqlite::Connection,
-        market_id: i64,
-        category_id: i64,
-    ) -> Result<i64, DbError> {
-        if let Some(id) = existing_emode_category(conn, market_id, category_id)? {
-            return Ok(id);
+    conn_writer! {
+        /// Get-or-create an `aave_v3_emode_categories` row by `(market_id,
+        /// category_id)`. Port of `db_market.py::get_or_create_e_mode_category`
+        /// (L37–L67). On create, the row is inserted with the Python ORM defaults
+        /// (`label=""`, `ltv=0`, `liquidation_threshold=0`, `liquidation_bonus=0`).
+        /// Returns the row `id`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`DbError::Sqlite`] on a query failure (including
+        /// "attempt to write a readonly database" if called on a read-only handle).
+        fn get_or_create_e_mode_category, get_or_create_e_mode_category_on_conn(
+            conn: &rusqlite::Connection,
+            market_id: i64,
+            category_id: i64,
+        ) -> Result<i64, DbError> {
+            if let Some(id) = existing_emode_category(conn, market_id, category_id)? {
+                return Ok(id);
+            }
+            conn.execute(
+                "INSERT INTO aave_v3_emode_categories \
+                    (market_id, category_id, label, ltv, liquidation_threshold, liquidation_bonus) \
+                 VALUES (?1, ?2, '', 0, 0, 0)",
+                params![market_id, category_id],
+            )?;
+            Ok(conn.last_insert_rowid())
         }
-        conn.execute(
-            "INSERT INTO aave_v3_emode_categories \
-                (market_id, category_id, label, ltv, liquidation_threshold, liquidation_bonus) \
-             VALUES (?1, ?2, '', 0, 0, 0)",
-            params![market_id, category_id],
-        )?;
-        Ok(conn.last_insert_rowid())
     }
 
-    /// Get-or-create an `aave_v3_asset_configs` row by `asset_id`. Port of
-    /// `db_market.py::get_or_create_asset_config` (L81–L129). On create, the
-    /// row is inserted with the Python ORM defaults (all zero/`false`/`None`).
-    /// Returns the row `id`.
-    ///
-    /// `get_or_create_asset_config` is the no-arg-defaults substrate variant;
-    /// the full-field apply path is
-    /// [`Self::apply_collateral_configuration_changed`] (which upserts the
-    /// decoded bitmap values rather than the defaults).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure (a write on a read-only
-    /// handle surfaces "attempt to write a readonly database").
-    pub fn get_or_create_asset_config(&self, asset_id: i64) -> Result<i64, DbError> {
-        let conn = self.lock();
-        Self::get_or_create_asset_config_on_conn(&conn, asset_id)
-    }
-
-    /// Connection-bound form of [`Self::get_or_create_asset_config`].
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` form.
-    pub fn get_or_create_asset_config_on_conn(
-        conn: &rusqlite::Connection,
-        asset_id: i64,
-    ) -> Result<i64, DbError> {
-        if let Some(id) = existing_asset_config(conn, asset_id)? {
-            return Ok(id);
+    conn_writer! {
+        /// Get-or-create an `aave_v3_asset_configs` row by `asset_id`. Port of
+        /// `db_market.py::get_or_create_asset_config` (L81–L129). On create, the
+        /// row is inserted with the Python ORM defaults (all zero/`false`/`None`).
+        /// Returns the row `id`.
+        ///
+        /// `get_or_create_asset_config` is the no-arg-defaults substrate variant;
+        /// the full-field apply path is
+        /// [`Self::apply_collateral_configuration_changed`] (which upserts the
+        /// decoded bitmap values rather than the defaults).
+        ///
+        /// # Errors
+        ///
+        /// Returns [`DbError::Sqlite`] on a query failure (a write on a read-only
+        /// handle surfaces "attempt to write a readonly database").
+        fn get_or_create_asset_config, get_or_create_asset_config_on_conn(
+            conn: &rusqlite::Connection,
+            asset_id: i64,
+        ) -> Result<i64, DbError> {
+            if let Some(id) = existing_asset_config(conn, asset_id)? {
+                return Ok(id);
+            }
+            conn.execute(
+                "INSERT INTO aave_v3_asset_configs \
+                    (asset_id, ltv, liquidation_threshold, liquidation_bonus, \
+                     e_mode_category_id, borrowing_enabled, stable_borrowing_enabled, \
+                     flash_loan_enabled, isolation_mode, borrowable_in_isolation, debt_ceiling) \
+                 VALUES (?1, 0, 0, 0, NULL, 0, 0, 0, 0, 0, NULL)",
+                params![asset_id],
+            )?;
+            Ok(conn.last_insert_rowid())
         }
-        conn.execute(
-            "INSERT INTO aave_v3_asset_configs \
-                (asset_id, ltv, liquidation_threshold, liquidation_bonus, \
-                 e_mode_category_id, borrowing_enabled, stable_borrowing_enabled, \
-                 flash_loan_enabled, isolation_mode, borrowable_in_isolation, debt_ceiling) \
-             VALUES (?1, 0, 0, 0, NULL, 0, 0, 0, 0, 0, NULL)",
-            params![asset_id],
-        )?;
-        Ok(conn.last_insert_rowid())
     }
 
-    /// Get-or-create an `aave_v3_user_collateral_configs` row by `(user_id,
-    /// asset_id)`. Port of
-    /// `db_market.py::get_or_create_user_collateral_config` (L131–L162). On
-    /// create, the row is inserted with `enabled=false` (the Python default).
-    /// Returns the row `id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure.
-    pub fn get_or_create_user_collateral_config(
-        &self,
-        user_id: i64,
-        asset_id: i64,
-    ) -> Result<i64, DbError> {
-        let conn = self.lock();
-        Self::get_or_create_user_collateral_config_on_conn(&conn, user_id, asset_id)
-    }
-
-    /// Connection-bound form of [`Self::get_or_create_user_collateral_config`].
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` form.
-    pub fn get_or_create_user_collateral_config_on_conn(
-        conn: &rusqlite::Connection,
-        user_id: i64,
-        asset_id: i64,
-    ) -> Result<i64, DbError> {
-        if let Some(id) = existing_user_collateral_config(conn, user_id, asset_id)? {
-            return Ok(id);
+    conn_writer! {
+        /// Get-or-create an `aave_v3_user_collateral_configs` row by `(user_id,
+        /// asset_id)`. Port of
+        /// `db_market.py::get_or_create_user_collateral_config` (L131–L162). On
+        /// create, the row is inserted with `enabled=false` (the Python default).
+        /// Returns the row `id`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`DbError::Sqlite`] on a query failure.
+        fn get_or_create_user_collateral_config, get_or_create_user_collateral_config_on_conn(
+            conn: &rusqlite::Connection,
+            user_id: i64,
+            asset_id: i64,
+        ) -> Result<i64, DbError> {
+            if let Some(id) = existing_user_collateral_config(conn, user_id, asset_id)? {
+                return Ok(id);
+            }
+            conn.execute(
+                "INSERT INTO aave_v3_user_collateral_configs (user_id, asset_id, enabled) \
+                 VALUES (?1, ?2, 0)",
+                params![user_id, asset_id],
+            )?;
+            Ok(conn.last_insert_rowid())
         }
-        conn.execute(
-            "INSERT INTO aave_v3_user_collateral_configs (user_id, asset_id, enabled) \
-             VALUES (?1, ?2, 0)",
-            params![user_id, asset_id],
-        )?;
-        Ok(conn.last_insert_rowid())
     }
 
-    /// Get-or-create an `aave_v3_users` row by `(market_id, address)`. Port of
-    /// `db_users.py::get_or_create_user` (L67–…). On create, the row is
-    /// inserted with the Python ORM defaults (`e_mode=0`, `gho_discount=0`,
-    /// `stk_aave_balance=NULL`, `isolation_mode_collateral_asset_id=NULL`,
-    /// `isolation_mode_debt="0"`).
-    ///
-    /// `gho_discount` is caller-supplied (the Python path RPC-fetches the
-    /// discount for GHO; that fetch is `stays-python` — the driver computes it
-    /// and passes it here). For non-GHO markets pass `0`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure. The `address` is stored
-    /// verbatim (no checksum normalization — byte-exact parity vs the Python
-    /// `String(42)` trajectory regardless of stored case).
-    pub fn get_or_create_user(
-        &self,
-        market_id: i64,
-        address: &str,
-        gho_discount: i64,
-    ) -> Result<i64, DbError> {
-        let conn = self.lock();
-        Self::get_or_create_user_on_conn(&conn, market_id, address, gho_discount)
-    }
-
-    /// Connection-bound form of [`Self::get_or_create_user`].
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` form.
-    pub fn get_or_create_user_on_conn(
-        conn: &rusqlite::Connection,
-        market_id: i64,
-        address: &str,
-        gho_discount: i64,
-    ) -> Result<i64, DbError> {
-        if let Some(id) = existing_user(conn, market_id, address)? {
-            return Ok(id);
+    conn_writer! {
+        /// Get-or-create an `aave_v3_users` row by `(market_id, address)`. Port of
+        /// `db_users.py::get_or_create_user` (L67–…). On create, the row is
+        /// inserted with the Python ORM defaults (`e_mode=0`, `gho_discount=0`,
+        /// `stk_aave_balance=NULL`, `isolation_mode_collateral_asset_id=NULL`,
+        /// `isolation_mode_debt="0"`).
+        ///
+        /// `gho_discount` is caller-supplied (the Python path RPC-fetches the
+        /// discount for GHO; that fetch is `stays-python` — the driver computes it
+        /// and passes it here). For non-GHO markets pass `0`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`DbError::Sqlite`] on a query failure. The `address` is stored
+        /// verbatim (no checksum normalization — byte-exact parity vs the Python
+        /// `String(42)` trajectory regardless of stored case).
+        fn get_or_create_user, get_or_create_user_on_conn(
+            conn: &rusqlite::Connection,
+            market_id: i64,
+            address: &str,
+            gho_discount: i64,
+        ) -> Result<i64, DbError> {
+            if let Some(id) = existing_user(conn, market_id, address)? {
+                return Ok(id);
+            }
+            conn.execute(
+                "INSERT INTO aave_v3_users \
+                    (market_id, address, e_mode, gho_discount, stk_aave_balance, \
+                     isolation_mode_collateral_asset_id, isolation_mode_debt) \
+                 VALUES (?1, ?2, 0, ?3, NULL, NULL, '0')",
+                params![market_id, address, gho_discount],
+            )?;
+            Ok(conn.last_insert_rowid())
         }
-        conn.execute(
-            "INSERT INTO aave_v3_users \
-                (market_id, address, e_mode, gho_discount, stk_aave_balance, \
-                 isolation_mode_collateral_asset_id, isolation_mode_debt) \
-             VALUES (?1, ?2, 0, ?3, NULL, NULL, '0')",
-            params![market_id, address, gho_discount],
-        )?;
-        Ok(conn.last_insert_rowid())
     }
 
     // ── the per-event apply fns (built on the upsert substrate) ──────────
 
-    /// Apply a `CollateralConfigurationChanged` event's decoded config
-    /// bitmap to the asset's `aave_v3_asset_configs` row. Port of
-    /// `event_handlers.py::_process_collateral_configuration_changed_event`
-    /// (L40-L131), minus the RPC fetch of the bitmap (the Python path
-    /// `raw_call`s `Pool.getConfiguration(address)`; the driver passes the
-    /// fetched bitmap here — the RPC fetch is `stays-python`).
-    ///
-    /// Decodes the bitmap via [`decode_reserve_configuration_bitmap`] then
-    /// upserts the `asset_config` row: on a new row, inserts every decoded
-    /// field; on an existing row, `UPDATE`s every field (matching the Python create vs
-    /// mutate-then-`session.add` trajectory — `stable_borrowing_enabled` is
-    /// NOT in the bitmap, left `false` on create, untouched on update, the
-    /// Python path). Returns the row `id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure (a write on a
-    /// read-only handle surfaces the readonly error).
-    pub fn apply_collateral_configuration_changed(
-        &self,
-        asset_id: i64,
-        config_bitmap: U256,
-    ) -> Result<i64, DbError> {
-        let conn = self.lock();
-        Self::apply_collateral_configuration_changed_on_conn(&conn, asset_id, config_bitmap)
-    }
-
-    /// Connection-bound form of [`Self::apply_collateral_configuration_changed`].
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` form.
-    pub fn apply_collateral_configuration_changed_on_conn(
-        conn: &rusqlite::Connection,
-        asset_id: i64,
-        config_bitmap: U256,
-    ) -> Result<i64, DbError> {
-        let decoded = decode_reserve_configuration_bitmap(config_bitmap);
-        if let Some(id) = existing_asset_config(conn, asset_id)? {
-            // UPDATE every bitmap-sourced field (matches the Python mutate path).
+    conn_writer! {
+        /// Apply a `CollateralConfigurationChanged` event's decoded config
+        /// bitmap to the asset's `aave_v3_asset_configs` row. Port of
+        /// `event_handlers.py::_process_collateral_configuration_changed_event`
+        /// (L40-L131), minus the RPC fetch of the bitmap (the Python path
+        /// `raw_call`s `Pool.getConfiguration(address)`; the driver passes the
+        /// fetched bitmap here — the RPC fetch is `stays-python`).
+        ///
+        /// Decodes the bitmap via [`decode_reserve_configuration_bitmap`] then
+        /// upserts the `asset_config` row: on a new row, inserts every decoded
+        /// field; on an existing row, `UPDATE`s every field (matching the Python create vs
+        /// mutate-then-`session.add` trajectory — `stable_borrowing_enabled` is
+        /// NOT in the bitmap, left `false` on create, untouched on update, the
+        /// Python path). Returns the row `id`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`DbError::Sqlite`] on a query failure (a write on a
+        /// read-only handle surfaces the readonly error).
+        fn apply_collateral_configuration_changed, apply_collateral_configuration_changed_on_conn(
+            conn: &rusqlite::Connection,
+            asset_id: i64,
+            config_bitmap: U256,
+        ) -> Result<i64, DbError> {
+            let decoded = decode_reserve_configuration_bitmap(config_bitmap);
+            if let Some(id) = existing_asset_config(conn, asset_id)? {
+                // UPDATE every bitmap-sourced field (matches the Python mutate path).
+                conn.execute(
+                    "UPDATE aave_v3_asset_configs SET \
+                        ltv = ?1, liquidation_threshold = ?2, liquidation_bonus = ?3, \
+                        borrowing_enabled = ?4, flash_loan_enabled = ?5, \
+                        borrowable_in_isolation = ?6, isolation_mode = ?7, \
+                        debt_ceiling = ?8, e_mode_category_id = ?9 \
+                     WHERE asset_id = ?10",
+                    params![
+                        i64::try_from(decoded.ltv).unwrap_or(i64::MAX),
+                        i64::try_from(decoded.liquidation_threshold).unwrap_or(i64::MAX),
+                        i64::try_from(decoded.liquidation_bonus).unwrap_or(i64::MAX),
+                        decoded.borrowing_enabled,
+                        decoded.flash_loan_enabled,
+                        decoded.borrowable_in_isolation,
+                        decoded.isolation_mode,
+                        decoded.debt_ceiling.to_string(),
+                        decoded.e_mode_category_id,
+                        asset_id,
+                    ],
+                )?;
+                return Ok(id);
+            }
+            // CREATE — matches the Python `AaveV3AssetConfig(...)` constructor:
+            // every decoded field + stable_borrowing_enabled=False (NOT in the
+            // bitmap; the Python create path hard-codes it False).
             conn.execute(
-                "UPDATE aave_v3_asset_configs SET \
-                    ltv = ?1, liquidation_threshold = ?2, liquidation_bonus = ?3, \
-                    borrowing_enabled = ?4, flash_loan_enabled = ?5, \
-                    borrowable_in_isolation = ?6, isolation_mode = ?7, \
-                    debt_ceiling = ?8, e_mode_category_id = ?9 \
-                 WHERE asset_id = ?10",
+                "INSERT INTO aave_v3_asset_configs \
+                    (asset_id, ltv, liquidation_threshold, liquidation_bonus, \
+                     e_mode_category_id, borrowing_enabled, stable_borrowing_enabled, \
+                     flash_loan_enabled, isolation_mode, borrowable_in_isolation, debt_ceiling) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9, ?10)",
                 params![
+                    asset_id,
                     i64::try_from(decoded.ltv).unwrap_or(i64::MAX),
                     i64::try_from(decoded.liquidation_threshold).unwrap_or(i64::MAX),
                     i64::try_from(decoded.liquidation_bonus).unwrap_or(i64::MAX),
+                    decoded.e_mode_category_id,
                     decoded.borrowing_enabled,
                     decoded.flash_loan_enabled,
-                    decoded.borrowable_in_isolation,
                     decoded.isolation_mode,
+                    decoded.borrowable_in_isolation,
                     decoded.debt_ceiling.to_string(),
-                    decoded.e_mode_category_id,
-                    asset_id,
                 ],
             )?;
-            return Ok(id);
+            Ok(conn.last_insert_rowid())
         }
-        // CREATE — matches the Python `AaveV3AssetConfig(...)` constructor:
-        // every decoded field + stable_borrowing_enabled=False (NOT in the
-        // bitmap; the Python create path hard-codes it False).
-        conn.execute(
-            "INSERT INTO aave_v3_asset_configs \
-                (asset_id, ltv, liquidation_threshold, liquidation_bonus, \
-                 e_mode_category_id, borrowing_enabled, stable_borrowing_enabled, \
-                 flash_loan_enabled, isolation_mode, borrowable_in_isolation, debt_ceiling) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9, ?10)",
-            params![
-                asset_id,
-                i64::try_from(decoded.ltv).unwrap_or(i64::MAX),
-                i64::try_from(decoded.liquidation_threshold).unwrap_or(i64::MAX),
-                i64::try_from(decoded.liquidation_bonus).unwrap_or(i64::MAX),
-                decoded.e_mode_category_id,
-                decoded.borrowing_enabled,
-                decoded.flash_loan_enabled,
-                decoded.isolation_mode,
-                decoded.borrowable_in_isolation,
-                decoded.debt_ceiling.to_string(),
-            ],
-        )?;
-        Ok(conn.last_insert_rowid())
     }
 
-    /// Apply an `EModeCategoryAdded` event's decoded fields to the
-    /// `aave_v3_emode_categories` row. Port of
-    /// `event_handlers.py::_process_e_mode_category_added_event` (L216-L277).
-    ///
-    /// On create, inserts `(label, ltv, liquidation_threshold, liquidation_bonus,
-    /// price_source)`; on existing, `UPDATE`s the same five fields (matching
-    /// the Python create-vs-mutate trajectory). `price_source` is the
-    /// checksummed oracle address — the canonical caller
-    /// (`degenbot_aave::config_dispatch::dispatch_e_mode_category_added`, a
-    /// crate-internal dispatch arm)
-    /// always passes `Some(checksum(&oracle))`, so a zero-oracle event
-    /// produces the literal `"0x0000000000000000000000000000000000000000"`
-    /// string (matching Python's `get_checksum_address(Address::ZERO)`
-    /// gold-parity reference behavior). Returns the row `id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure.
-    #[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
-    pub fn apply_e_mode_category_added(
-        &self,
-        market_id: i64,
-        category_id: i64,
-        ltv: u64,
-        liquidation_threshold: u64,
-        liquidation_bonus: u64,
-        price_source: Option<&str>,
-        label: &str,
-    ) -> Result<i64, DbError> {
-        let conn = self.lock();
-        Self::apply_e_mode_category_added_on_conn(
-            &conn,
-            market_id,
-            category_id,
-            ltv,
-            liquidation_threshold,
-            liquidation_bonus,
-            price_source,
-            label,
-        )
-    }
-
-    /// Connection-bound form of [`Self::apply_e_mode_category_added`].
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` form.
-    #[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
-    pub fn apply_e_mode_category_added_on_conn(
-        conn: &rusqlite::Connection,
-        market_id: i64,
-        category_id: i64,
-        ltv: u64,
-        liquidation_threshold: u64,
-        liquidation_bonus: u64,
-        price_source: Option<&str>,
-        label: &str,
-    ) -> Result<i64, DbError> {
-        if let Some(id) = existing_emode_category(conn, market_id, category_id)? {
+    conn_writer! {
+        /// Apply an `EModeCategoryAdded` event's decoded fields to the
+        /// `aave_v3_emode_categories` row. Port of
+        /// `event_handlers.py::_process_e_mode_category_added_event` (L216-L277).
+        ///
+        /// On create, inserts `(label, ltv, liquidation_threshold, liquidation_bonus,
+        /// price_source)`; on existing, `UPDATE`s the same five fields (matching
+        /// the Python create-vs-mutate trajectory). `price_source` is the
+        /// checksummed oracle address — the canonical caller
+        /// (`degenbot_aave::config_dispatch::dispatch_e_mode_category_added`, a
+        /// crate-internal dispatch arm)
+        /// always passes `Some(checksum(&oracle))`, so a zero-oracle event
+        /// produces the literal `"0x0000000000000000000000000000000000000000"`
+        /// string (matching Python's `get_checksum_address(Address::ZERO)`
+        /// gold-parity reference behavior). Returns the row `id`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`DbError::Sqlite`] on a query failure.
+        // mirrors the Python event arg list 1:1
+        #[expect(clippy::too_many_arguments)]
+        fn apply_e_mode_category_added, apply_e_mode_category_added_on_conn(
+            conn: &rusqlite::Connection,
+            market_id: i64,
+            category_id: i64,
+            ltv: u64,
+            liquidation_threshold: u64,
+            liquidation_bonus: u64,
+            price_source: Option<&str>,
+            label: &str,
+        ) -> Result<i64, DbError>;
+        // mirrors the Python event arg list 1:1
+        #[expect(clippy::too_many_arguments)]
+        {
+            if let Some(id) = existing_emode_category(conn, market_id, category_id)? {
+                conn.execute(
+                    "UPDATE aave_v3_emode_categories SET \
+                        label = ?1, ltv = ?2, liquidation_threshold = ?3, \
+                        liquidation_bonus = ?4, price_source = ?5 \
+                     WHERE id = ?6",
+                    params![
+                        label,
+                        i64::try_from(ltv).unwrap_or(i64::MAX),
+                        i64::try_from(liquidation_threshold).unwrap_or(i64::MAX),
+                        i64::try_from(liquidation_bonus).unwrap_or(i64::MAX),
+                        price_source,
+                        id,
+                    ],
+                )?;
+                return Ok(id);
+            }
             conn.execute(
-                "UPDATE aave_v3_emode_categories SET \
-                    label = ?1, ltv = ?2, liquidation_threshold = ?3, \
-                    liquidation_bonus = ?4, price_source = ?5 \
-                 WHERE id = ?6",
+                "INSERT INTO aave_v3_emode_categories \
+                    (market_id, category_id, label, ltv, liquidation_threshold, liquidation_bonus, price_source) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
+                    market_id,
+                    category_id,
                     label,
                     i64::try_from(ltv).unwrap_or(i64::MAX),
                     i64::try_from(liquidation_threshold).unwrap_or(i64::MAX),
                     i64::try_from(liquidation_bonus).unwrap_or(i64::MAX),
                     price_source,
-                    id,
                 ],
             )?;
-            return Ok(id);
+            Ok(conn.last_insert_rowid())
         }
-        conn.execute(
-            "INSERT INTO aave_v3_emode_categories \
-                (market_id, category_id, label, ltv, liquidation_threshold, liquidation_bonus, price_source) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                market_id,
-                category_id,
-                label,
-                i64::try_from(ltv).unwrap_or(i64::MAX),
-                i64::try_from(liquidation_threshold).unwrap_or(i64::MAX),
-                i64::try_from(liquidation_bonus).unwrap_or(i64::MAX),
-                price_source,
-            ],
-        )?;
-        Ok(conn.last_insert_rowid())
     }
 
-    /// Apply an `EModeAssetCategoryChanged` event's category assignment to
-    /// the asset's `aave_v3_asset_configs` row's `e_mode_category_id`.
-    /// Port of `_process_emode_asset_category_changed_event` (L279-L347) —
-    /// the older Aave variant. Unconditionally sets `e_mode_category_id` to
-    /// the new category (`None` when the category id is `0`). Returns the row
-    /// `id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure.
-    pub fn apply_emode_asset_category_changed(
-        &self,
-        asset_id: i64,
-        new_category_id: i64,
-    ) -> Result<i64, DbError> {
-        let conn = self.lock();
-        Self::apply_emode_asset_category_changed_on_conn(&conn, asset_id, new_category_id)
+    conn_writer! {
+        /// Apply an `EModeAssetCategoryChanged` event's category assignment to
+        /// the asset's `aave_v3_asset_configs` row's `e_mode_category_id`.
+        /// Port of `_process_emode_asset_category_changed_event` (L279-L347) —
+        /// the older Aave variant. Unconditionally sets `e_mode_category_id` to
+        /// the new category (`None` when the category id is `0`). Returns the row
+        /// `id`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`DbError::Sqlite`] on a query failure.
+        fn apply_emode_asset_category_changed, apply_emode_asset_category_changed_on_conn(
+            conn: &rusqlite::Connection,
+            asset_id: i64,
+            new_category_id: i64,
+        ) -> Result<i64, DbError> {
+            let new_value = (new_category_id > 0).then_some(new_category_id);
+            Self::set_asset_emode_category_on_conn(conn, asset_id, new_value)
+        }
     }
 
-    /// Connection-bound form of [`Self::apply_emode_asset_category_changed`].
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` form.
-    pub fn apply_emode_asset_category_changed_on_conn(
-        conn: &rusqlite::Connection,
-        asset_id: i64,
-        new_category_id: i64,
-    ) -> Result<i64, DbError> {
-        let new_value = (new_category_id > 0).then_some(new_category_id);
-        Self::set_asset_emode_category_on_conn(conn, asset_id, new_value)
-    }
-
-    /// Apply an `AssetCollateralInEModeChanged` event's category assignment
-    /// to the asset's `aave_v3_asset_configs` row's `e_mode_category_id`.
-    /// Port of `_process_asset_collateral_in_emode_changed_event`
-    /// (L349-L420) — the newer Aave v3.4+ variant. Sets `e_mode_category_id`
-    /// to the category ONLY when `is_collateral && category_id > 0`; when
-    /// `is_collateral` is false the row is LEFT UNCHANGED (the Python `elif`
-    /// branch does nothing on removal). Returns the row `id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure.
-    pub fn apply_asset_collateral_in_emode_changed(
-        &self,
-        asset_id: i64,
-        category_id: i64,
-        is_collateral: bool,
-    ) -> Result<i64, DbError> {
-        let conn = self.lock();
-        Self::apply_asset_collateral_in_emode_changed_on_conn(
-            &conn,
-            asset_id,
-            category_id,
-            is_collateral,
-        )
-    }
-
-    /// Connection-bound form of [`Self::apply_asset_collateral_in_emode_changed`].
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` form.
-    pub fn apply_asset_collateral_in_emode_changed_on_conn(
-        conn: &rusqlite::Connection,
-        asset_id: i64,
-        category_id: i64,
-        is_collateral: bool,
-    ) -> Result<i64, DbError> {
-        if is_collateral && category_id > 0 {
-            Self::set_asset_emode_category_on_conn(conn, asset_id, Some(category_id))
-        } else {
-            // the Python elif branch: removal (is_collateral=false) or
-            // category_id=0 leaves the row's e_mode_category_id unchanged.
-            // If there's no existing row, create one with the None category
-            // (matching the Python create-time `is_collateral && category_id
-            // > 0` gate evaluating to None here).
-            if let Some(id) = existing_asset_config(conn, asset_id)? {
-                Ok(id)
+    conn_writer! {
+        /// Apply an `AssetCollateralInEModeChanged` event's category assignment
+        /// to the asset's `aave_v3_asset_configs` row's `e_mode_category_id`.
+        /// Port of `_process_asset_collateral_in_emode_changed_event`
+        /// (L349-L420) — the newer Aave v3.4+ variant. Sets `e_mode_category_id`
+        /// to the category ONLY when `is_collateral && category_id > 0`; when
+        /// `is_collateral` is false the row is LEFT UNCHANGED (the Python `elif`
+        /// branch does nothing on removal). Returns the row `id`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`DbError::Sqlite`] on a query failure.
+        fn apply_asset_collateral_in_emode_changed, apply_asset_collateral_in_emode_changed_on_conn(
+            conn: &rusqlite::Connection,
+            asset_id: i64,
+            category_id: i64,
+            is_collateral: bool,
+        ) -> Result<i64, DbError> {
+            if is_collateral && category_id > 0 {
+                Self::set_asset_emode_category_on_conn(conn, asset_id, Some(category_id))
             } else {
-                Self::set_asset_emode_category_on_conn(conn, asset_id, None)
+                // the Python elif branch: removal (is_collateral=false) or
+                // category_id=0 leaves the row's e_mode_category_id unchanged.
+                // If there's no existing row, create one with the None category
+                // (matching the Python create-time `is_collateral && category_id
+                // > 0` gate evaluating to None here).
+                if let Some(id) = existing_asset_config(conn, asset_id)? {
+                    Ok(id)
+                } else {
+                    Self::set_asset_emode_category_on_conn(conn, asset_id, None)
+                }
             }
         }
     }
@@ -662,170 +552,125 @@ impl DegenbotDb {
         Ok(conn.last_insert_rowid())
     }
 
-    /// Apply a `ReserveUsedAsCollateralEnabled`/`Disabled` event to the
-    /// `aave_v3_user_collateral_configs` row's `enabled` flag. Ports
-    /// `_process_reserve_used_as_collateral_enabled_event` (L422-L483) AND
-    /// `_process_reserve_used_as_collateral_disabled_event` (L485-L547):
-    /// both collapse to setting `enabled` (`true` for enabled, `false` for
-    /// disabled). On create, inserts with the given `enabled` value; on
-    /// existing, `UPDATE`s the flag. Returns the row `id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure.
-    pub fn apply_reserve_used_as_collateral(
-        &self,
-        user_id: i64,
-        asset_id: i64,
-        enabled: bool,
-    ) -> Result<i64, DbError> {
-        let conn = self.lock();
-        Self::apply_reserve_used_as_collateral_on_conn(&conn, user_id, asset_id, enabled)
-    }
-
-    /// Connection-bound form of [`Self::apply_reserve_used_as_collateral`].
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` form.
-    pub fn apply_reserve_used_as_collateral_on_conn(
-        conn: &rusqlite::Connection,
-        user_id: i64,
-        asset_id: i64,
-        enabled: bool,
-    ) -> Result<i64, DbError> {
-        if let Some(id) = existing_user_collateral_config(conn, user_id, asset_id)? {
+    conn_writer! {
+        /// Apply a `ReserveUsedAsCollateralEnabled`/`Disabled` event to the
+        /// `aave_v3_user_collateral_configs` row's `enabled` flag. Ports
+        /// `_process_reserve_used_as_collateral_enabled_event` (L422-L483) AND
+        /// `_process_reserve_used_as_collateral_disabled_event` (L485-L547):
+        /// both collapse to setting `enabled` (`true` for enabled, `false` for
+        /// disabled). On create, inserts with the given `enabled` value; on
+        /// existing, `UPDATE`s the flag. Returns the row `id`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`DbError::Sqlite`] on a query failure.
+        fn apply_reserve_used_as_collateral, apply_reserve_used_as_collateral_on_conn(
+            conn: &rusqlite::Connection,
+            user_id: i64,
+            asset_id: i64,
+            enabled: bool,
+        ) -> Result<i64, DbError> {
+            if let Some(id) = existing_user_collateral_config(conn, user_id, asset_id)? {
+                conn.execute(
+                    "UPDATE aave_v3_user_collateral_configs SET enabled = ?1 \
+                     WHERE user_id = ?2 AND asset_id = ?3",
+                    params![enabled, user_id, asset_id],
+                )?;
+                return Ok(id);
+            }
             conn.execute(
-                "UPDATE aave_v3_user_collateral_configs SET enabled = ?1 \
-                 WHERE user_id = ?2 AND asset_id = ?3",
-                params![enabled, user_id, asset_id],
+                "INSERT INTO aave_v3_user_collateral_configs (user_id, asset_id, enabled) \
+                 VALUES (?1, ?2, ?3)",
+                params![user_id, asset_id, enabled],
             )?;
-            return Ok(id);
+            Ok(conn.last_insert_rowid())
         }
-        conn.execute(
-            "INSERT INTO aave_v3_user_collateral_configs (user_id, asset_id, enabled) \
-             VALUES (?1, ?2, ?3)",
-            params![user_id, asset_id, enabled],
-        )?;
-        Ok(conn.last_insert_rowid())
     }
 
-    /// Apply a `UserEModeSet` event to the user's `aave_v3_users.e_mode`
-    /// column. Port of `_process_user_e_mode_set_event` (L688-L715). The user
-    /// row must already exist (the Python path `get_or_create_user`s first;
-    /// the driver passes the existing `user_id` here). Returns the row `id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure.
-    pub fn apply_user_e_mode_set(&self, user_id: i64, e_mode: i64) -> Result<i64, DbError> {
-        let conn = self.lock();
-        Self::apply_user_e_mode_set_on_conn(&conn, user_id, e_mode)
-    }
-
-    /// Connection-bound form of [`Self::apply_user_e_mode_set`].
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` form.
-    pub fn apply_user_e_mode_set_on_conn(
-        conn: &rusqlite::Connection,
-        user_id: i64,
-        e_mode: i64,
-    ) -> Result<i64, DbError> {
-        conn.execute(
-            "UPDATE aave_v3_users SET e_mode = ?1 WHERE id = ?2",
-            params![e_mode, user_id],
-        )?;
-        Ok(user_id)
-    }
-
-    /// Apply a `PriceOracleUpdated` event: register the new `PRICE_ORACLE`
-    /// `aave_v3_contracts` row for `market_id`. Port of
-    /// `_process_price_oracle_updated_event` (L1080-L1126). The Python path
-    /// asserts no existing `PRICE_ORACLE` row (a fresh insert); this Rust fn
-    /// upserts — if a `PRICE_ORACLE` row exists it `UPDATE`s the address,
-    /// else it inserts (defensive vs the Python `assert existing_oracle is
-    /// None`). Returns the row `id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure.
-    pub fn apply_price_oracle_updated(
-        &self,
-        market_id: i64,
-        new_oracle_address: &str,
-    ) -> Result<i64, DbError> {
-        let conn = self.lock();
-        Self::apply_price_oracle_updated_on_conn(&conn, market_id, new_oracle_address)
-    }
-
-    /// Connection-bound form of [`Self::apply_price_oracle_updated`].
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` form.
-    pub fn apply_price_oracle_updated_on_conn(
-        conn: &rusqlite::Connection,
-        market_id: i64,
-        new_oracle_address: &str,
-    ) -> Result<i64, DbError> {
-        if let Some(id) = conn
-            .query_row::<i64, _, _>(
-                "SELECT id FROM aave_v3_contracts \
-                 WHERE market_id = ?1 AND name = 'PRICE_ORACLE'",
-                params![market_id],
-                |r| r.get(0),
-            )
-            .optional()?
-        {
+    conn_writer! {
+        /// Apply a `UserEModeSet` event to the user's `aave_v3_users.e_mode`
+        /// column. Port of `_process_user_e_mode_set_event` (L688-L715). The user
+        /// row must already exist (the Python path `get_or_create_user`s first;
+        /// the driver passes the existing `user_id` here). Returns the row `id`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`DbError::Sqlite`] on a query failure.
+        fn apply_user_e_mode_set, apply_user_e_mode_set_on_conn(
+            conn: &rusqlite::Connection,
+            user_id: i64,
+            e_mode: i64,
+        ) -> Result<i64, DbError> {
             conn.execute(
-                "UPDATE aave_v3_contracts SET address = ?1 WHERE id = ?2",
-                params![new_oracle_address, id],
+                "UPDATE aave_v3_users SET e_mode = ?1 WHERE id = ?2",
+                params![e_mode, user_id],
             )?;
-            return Ok(id);
+            Ok(user_id)
         }
-        conn.execute(
-            "INSERT INTO aave_v3_contracts (market_id, name, address, revision) \
-             VALUES (?1, 'PRICE_ORACLE', ?2, NULL)",
-            params![market_id, new_oracle_address],
-        )?;
-        Ok(conn.last_insert_rowid())
     }
 
-    /// Apply an `AssetSourceUpdated` event: set the asset's
-    /// `aave_v3_assets.price_source` column. Port of
-    /// `_process_asset_source_updated_event` (L1128-L1166). The `asset_id`
-    /// must already exist (the Python `assert asset is not None`). Returns the
-    /// row `id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure.
-    pub fn apply_asset_source_updated(
-        &self,
-        asset_id: i64,
-        source_address: &str,
-    ) -> Result<i64, DbError> {
-        let conn = self.lock();
-        Self::apply_asset_source_updated_on_conn(&conn, asset_id, source_address)
+    conn_writer! {
+        /// Apply a `PriceOracleUpdated` event: register the new `PRICE_ORACLE`
+        /// `aave_v3_contracts` row for `market_id`. Port of
+        /// `_process_price_oracle_updated_event` (L1080-L1126). The Python path
+        /// asserts no existing `PRICE_ORACLE` row (a fresh insert); this Rust fn
+        /// upserts — if a `PRICE_ORACLE` row exists it `UPDATE`s the address,
+        /// else it inserts (defensive vs the Python `assert existing_oracle is
+        /// None`). Returns the row `id`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`DbError::Sqlite`] on a query failure.
+        fn apply_price_oracle_updated, apply_price_oracle_updated_on_conn(
+            conn: &rusqlite::Connection,
+            market_id: i64,
+            new_oracle_address: &str,
+        ) -> Result<i64, DbError> {
+            if let Some(id) = conn
+                .query_row::<i64, _, _>(
+                    "SELECT id FROM aave_v3_contracts \
+                     WHERE market_id = ?1 AND name = 'PRICE_ORACLE'",
+                    params![market_id],
+                    |r| r.get(0),
+                )
+                .optional()?
+            {
+                conn.execute(
+                    "UPDATE aave_v3_contracts SET address = ?1 WHERE id = ?2",
+                    params![new_oracle_address, id],
+                )?;
+                return Ok(id);
+            }
+            conn.execute(
+                "INSERT INTO aave_v3_contracts (market_id, name, address, revision) \
+                 VALUES (?1, 'PRICE_ORACLE', ?2, NULL)",
+                params![market_id, new_oracle_address],
+            )?;
+            Ok(conn.last_insert_rowid())
+        }
     }
 
-    /// Connection-bound form of [`Self::apply_asset_source_updated`].
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` form.
-    pub fn apply_asset_source_updated_on_conn(
-        conn: &rusqlite::Connection,
-        asset_id: i64,
-        source_address: &str,
-    ) -> Result<i64, DbError> {
-        conn.execute(
-            "UPDATE aave_v3_assets SET price_source = ?1 WHERE id = ?2",
-            params![source_address, asset_id],
-        )?;
-        Ok(asset_id)
+    conn_writer! {
+        /// Apply an `AssetSourceUpdated` event: set the asset's
+        /// `aave_v3_assets.price_source` column. Port of
+        /// `_process_asset_source_updated_event` (L1128-L1166). The `asset_id`
+        /// must already exist (the Python `assert asset is not None`). Returns the
+        /// row `id`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`DbError::Sqlite`] on a query failure.
+        fn apply_asset_source_updated, apply_asset_source_updated_on_conn(
+            conn: &rusqlite::Connection,
+            asset_id: i64,
+            source_address: &str,
+        ) -> Result<i64, DbError> {
+            conn.execute(
+                "UPDATE aave_v3_assets SET price_source = ?1 WHERE id = ?2",
+                params![source_address, asset_id],
+            )?;
+            Ok(asset_id)
+        }
     }
 
     /// Resolve the asset-row id for an emitter token address (the
@@ -985,52 +830,43 @@ impl DegenbotDb {
         Ok(row)
     }
 
-    /// Register a supported Aave V3 market that is not found in the DB as an
-    /// INACTIVE, BARE row (`active = 0`, `last_update_block = NULL`). The
-    /// auto-registration seam the console's write arms run (fresh `database
-    /// reset` + the `pool update` / `aave update` arms): the operator then
-    /// flips it active with `aave activate`, which COMPLETES the row (the
-    /// contract/GHO substrate + the bootstrap stamp) in
-    /// `degenbot_aave::activate_aave_market_on_conn`.
-    ///
-    /// Returns `(market_id, created)` — `created` is `false` when the row
-    /// pre-existed (idempotent no-op).
-    ///
-    /// # Errors
-    ///
-    /// [`DbError::Sqlite`] on a query failure.
-    pub fn register_aave_market(
-        &self,
-        chain_id: i64,
-        market_name: &str,
-    ) -> Result<(i64, bool), DbError> {
-        let conn = self.lock();
-        Self::register_aave_market_on_conn(&conn, chain_id, market_name)
-    }
-
-    /// The `&Connection`-bound variant of [`Self::register_aave_market`].
-    #[expect(clippy::missing_errors_doc)]
-    pub fn register_aave_market_on_conn(
-        conn: &rusqlite::Connection,
-        chain_id: i64,
-        market_name: &str,
-    ) -> Result<(i64, bool), DbError> {
-        use rusqlite::OptionalExtension;
-        let existing: Option<i64> = conn
-            .query_row(
-                "SELECT id FROM aave_v3_markets WHERE chain_id = ?1 AND name = ?2",
+    conn_writer! {
+        /// Register a supported Aave V3 market that is not found in the DB as an
+        /// INACTIVE, BARE row (`active = 0`, `last_update_block = NULL`). The
+        /// auto-registration seam the console's write arms run (fresh `database
+        /// reset` + the `pool update` / `aave update` arms): the operator then
+        /// flips it active with `aave activate`, which COMPLETES the row (the
+        /// contract/GHO substrate + the bootstrap stamp) in
+        /// `degenbot_aave::activate_aave_market_on_conn`.
+        ///
+        /// Returns `(market_id, created)` — `created` is `false` when the row
+        /// pre-existed (idempotent no-op).
+        ///
+        /// # Errors
+        ///
+        /// [`DbError::Sqlite`] on a query failure.
+        fn register_aave_market, register_aave_market_on_conn(
+            conn: &rusqlite::Connection,
+            chain_id: i64,
+            market_name: &str,
+        ) -> Result<(i64, bool), DbError> {
+            use rusqlite::OptionalExtension;
+            let existing: Option<i64> = conn
+                .query_row(
+                    "SELECT id FROM aave_v3_markets WHERE chain_id = ?1 AND name = ?2",
+                    rusqlite::params![chain_id, market_name],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(id) = existing {
+                return Ok((id, false));
+            }
+            conn.execute(
+                "INSERT INTO aave_v3_markets (chain_id, name, active, last_update_block) \
+                 VALUES (?1, ?2, 0, NULL)",
                 rusqlite::params![chain_id, market_name],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(id) = existing {
-            return Ok((id, false));
+            )?;
+            Ok((conn.last_insert_rowid(), true))
         }
-        conn.execute(
-            "INSERT INTO aave_v3_markets (chain_id, name, active, last_update_block) \
-             VALUES (?1, ?2, 0, NULL)",
-            rusqlite::params![chain_id, market_name],
-        )?;
-        Ok((conn.last_insert_rowid(), true))
     }
 }

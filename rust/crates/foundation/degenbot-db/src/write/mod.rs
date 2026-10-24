@@ -39,6 +39,12 @@
 //! body. No write arm opens a connection or manages transaction scope on its
 //! own.
 //!
+//! Both forms of an operation are generated together by the `conn_writer!`
+//! macro below, from one parameter list: the `_on_conn` body is written once
+//! and the `&self` wrapper is derived from it, so the two surfaces cannot
+//! drift apart. Only the `_on_conn` form carries the operation's semantics +
+//! `# Errors` doc; the wrapper's doc points at it.
+//!
 //! # The bit-decode (the pure CPU seam)
 //!
 //! [`decode_reserve_configuration_bitmap`] ports
@@ -70,6 +76,94 @@
 //! The Rust core fns take these as caller-supplied `Option` params (the
 //! Python driver computes them + passes them in); no `RPC` in the core
 //! (ADR-005 standalone — `degenbot-db` has no `degenbot-rpc` dependency).
+
+/// Define one write operation's two call surfaces from a single parameter
+/// list.
+///
+/// Every write arm has exactly one body, in its `_on_conn` form: it takes a
+/// borrowed [`rusqlite::Connection`] so a chunk loop can call it on the
+/// connection its `Transaction` owns (the connection `Mutex` is
+/// non-reentrant, so a chunk task that re-locked would deadlock). The `&self`
+/// form is the one-shot caller's surface: it locks the shared connection for
+/// the call and delegates. This macro is the only place an operation's
+/// parameter list is written down.
+///
+/// The generated `_on_conn` variant carries the operation's semantics +
+/// `# Errors` doc; the generated `&self` wrapper's doc points at it instead of
+/// repeating it. The parameter list starts with the connection parameter
+/// (`macro_rules` binds locals hygienically, so a connection binding the macro
+/// introduced would be invisible to the invocation's body — the body's
+/// `conn` must name a parameter the invocation wrote down).
+///
+/// An argument list that trips `clippy::too_many_arguments` trips it on both
+/// generated fns, so such an operation adds `;` after the return type and puts
+/// the wrapper-only attributes after it (the leading attribute group lands on
+/// the `_on_conn` fn only).
+macro_rules! conn_writer {
+    (
+        $(#[$conn_meta:meta])*
+        fn $wrapper:ident, $on_conn:ident (
+            $conn_arg:ident : $conn_ty:ty,
+            $($arg:ident : $ty:ty),* $(,)?
+        ) -> $ret:ty
+        ; $(#[$wrapper_meta:meta])*
+        $body:block
+    ) => {
+        conn_writer!(@emit
+            ( $(#[$conn_meta])* )
+            ( $(#[$wrapper_meta])* )
+            ($wrapper, $on_conn) [$conn_arg : $conn_ty] [$($arg : $ty),*] -> $ret
+            $body
+        );
+    };
+    (
+        $(#[$conn_meta:meta])*
+        fn $wrapper:ident, $on_conn:ident (
+            $conn_arg:ident : $conn_ty:ty,
+            $($arg:ident : $ty:ty),* $(,)?
+        ) -> $ret:ty
+        $body:block
+    ) => {
+        conn_writer!(@emit
+            ( $(#[$conn_meta])* )
+            ()
+            ($wrapper, $on_conn) [$conn_arg : $conn_ty] [$($arg : $ty),*] -> $ret
+            $body
+        );
+    };
+    (@emit
+        ( $(#[$conn_meta:meta])* )
+        ( $(#[$wrapper_meta:meta])* )
+        ($wrapper:ident, $on_conn:ident) [$conn_arg:ident : $conn_ty:ty] [$($arg:ident : $ty:ty),*]
+        -> $ret:ty
+        $body:block
+    ) => {
+        $(#[$conn_meta])*
+        pub fn $on_conn(
+            $conn_arg : $conn_ty,
+            $($arg : $ty),*
+        ) -> $ret
+        $body
+
+        #[doc = concat!(
+            "Locks the shared connection for the call and delegates to ",
+            "[`Self::", stringify!($on_conn), "`], which owns this operation's ",
+            "body, semantics, and error contract."
+        )]
+        ///
+        /// # Errors
+        ///
+        #[doc = concat!("See [`Self::", stringify!($on_conn), "`].")]
+        $(#[$wrapper_meta])*
+        pub fn $wrapper(
+            &self,
+            $($arg : $ty),*
+        ) -> $ret {
+            let conn = self.lock();
+            Self::$on_conn(&conn, $($arg),*)
+        }
+    };
+}
 
 mod aave;
 mod erc20;

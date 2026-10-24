@@ -134,50 +134,40 @@ const GHO_CLEAR_PREDICATE: &str = "token_id IN (SELECT id FROM erc20_tokens WHER
           OR v_gho_discount_token IS NOT NULL)";
 
 impl DegenbotDb {
-    /// The per-relation row counts a purge of `market_id` would remove, in
-    /// [`PURGE_STEPS`] order with the GHO row last. Reads only — the `--dry-run`
-    /// preview.
-    ///
-    /// # Errors
-    ///
-    /// [`DbError::MissingRow`] when no market row matches `market_id`, or
-    /// [`DbError::Sqlite`] on a query failure.
-    pub fn count_aave_market_rows(
-        &self,
-        market_id: i64,
-    ) -> Result<Vec<AaveMarketPurgeCount>, DbError> {
-        Self::count_aave_market_rows_on_conn(&self.lock(), market_id)
-    }
-
-    /// The `&Connection`-bound variant of [`Self::count_aave_market_rows`].
-    ///
-    /// # Errors
-    ///
-    /// Same conditions as [`Self::count_aave_market_rows`].
-    pub fn count_aave_market_rows_on_conn(
-        conn: &Connection,
-        market_id: i64,
-    ) -> Result<Vec<AaveMarketPurgeCount>, DbError> {
-        let chain_id = market_chain_id(conn, market_id)?;
-        let mut counts = Vec::with_capacity(PURGE_STEPS.len() + 1);
-        for step in PURGE_STEPS {
-            let sql = format!(
-                "SELECT COUNT(*) FROM {} WHERE {}",
-                step.table, step.predicate
-            );
-            let rows: i64 = conn.query_row(&sql, params![market_id], |row| row.get(0))?;
+    conn_writer! {
+        /// The per-relation row counts a purge of `market_id` would remove, in
+        /// [`PURGE_STEPS`] order with the GHO row last. Reads only — the `--dry-run`
+        /// preview.
+        ///
+        /// # Errors
+        ///
+        /// [`DbError::MissingRow`] when no market row matches `market_id`, or
+        /// [`DbError::Sqlite`] on a query failure.
+        fn count_aave_market_rows, count_aave_market_rows_on_conn(
+            conn: &Connection,
+            market_id: i64,
+        ) -> Result<Vec<AaveMarketPurgeCount>, DbError> {
+            let chain_id = market_chain_id(conn, market_id)?;
+            let mut counts = Vec::with_capacity(PURGE_STEPS.len() + 1);
+            for step in PURGE_STEPS {
+                let sql = format!(
+                    "SELECT COUNT(*) FROM {} WHERE {}",
+                    step.table, step.predicate
+                );
+                let rows: i64 = conn.query_row(&sql, params![market_id], |row| row.get(0))?;
+                counts.push(AaveMarketPurgeCount {
+                    table: step.table,
+                    rows,
+                });
+            }
+            let sql = format!("SELECT COUNT(*) FROM {GHO_TABLE} WHERE {GHO_CLEAR_PREDICATE}");
+            let rows: i64 = conn.query_row(&sql, params![chain_id], |row| row.get(0))?;
             counts.push(AaveMarketPurgeCount {
-                table: step.table,
+                table: GHO_TABLE,
                 rows,
             });
+            Ok(counts)
         }
-        let sql = format!("SELECT COUNT(*) FROM {GHO_TABLE} WHERE {GHO_CLEAR_PREDICATE}");
-        let rows: i64 = conn.query_row(&sql, params![chain_id], |row| row.get(0))?;
-        counts.push(AaveMarketPurgeCount {
-            table: GHO_TABLE,
-            rows,
-        });
-        Ok(counts)
     }
 
     /// Remove every row `market_id` populated, returning the per-relation

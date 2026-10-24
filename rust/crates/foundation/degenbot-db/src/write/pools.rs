@@ -50,208 +50,161 @@ impl DegenbotDb {
     // directly — they're consumed by the parser (sibling OPERATIONSPARSER) to
     // GROUP ScaledToken events whose balance mutations live in SCALEAPPLY.
 
-    /// Apply a `ReserveDataUpdated` event's decoded fields to the
-    /// `aave_v3_assets` row. Port of
-    /// `event_handlers.py::_process_reserve_data_update_event` (L788–L847).
-    ///
-    /// Updates `liquidity_rate` / `borrow_rate` (= variable borrow rate;
-    /// stable borrow rate is deprecated on Aave V3, ignored as in Python) /
-    /// `liquidity_index` / `borrow_index` (= variable borrow index) /
-    /// `last_update_block` on the asset row keyed by `asset_id`. Unconditional
-    /// UPDATE (the Python path asserts the asset exists via a `select(...)` +
-    /// `assert ... is not None`; the apply fn's contract is the caller resolved
-    /// the `asset_id` already — a no-op UPDATE on a missing row surfaces as
-    /// [`DbError::NoRow`]).
-    ///
-    /// No ray-math: the indices/rates are stored raw (as the event emits them,
-    /// 27-decimal ray values persisted as decimal `VARCHAR(78)` per the schema).
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the `_on_conn` variant.
-    pub fn apply_reserve_data_updated(
-        &self,
-        asset_id: i64,
-        liquidity_rate: U256,
-        variable_borrow_rate: U256,
-        liquidity_index: U256,
-        variable_borrow_index: U256,
-        block_number: u64,
-    ) -> Result<(), DbError> {
-        let conn = self.lock();
-        Self::apply_reserve_data_updated_on_conn(
-            &conn,
-            asset_id,
-            liquidity_rate,
-            variable_borrow_rate,
-            liquidity_index,
-            variable_borrow_index,
-            block_number,
-        )
-    }
-
-    /// Connection-bound form of [`Self::apply_reserve_data_updated`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure.
-    pub fn apply_reserve_data_updated_on_conn(
-        conn: &rusqlite::Connection,
-        asset_id: i64,
-        liquidity_rate: U256,
-        variable_borrow_rate: U256,
-        liquidity_index: U256,
-        variable_borrow_index: U256,
-        block_number: u64,
-    ) -> Result<(), DbError> {
-        let block = i64::try_from(block_number).unwrap_or(i64::MAX);
-        let updated = conn.execute(
-            "UPDATE aave_v3_assets SET \
-                liquidity_rate = ?1, borrow_rate = ?2, \
-                liquidity_index = ?3, borrow_index = ?4, \
-                last_update_block = ?5 \
-             WHERE id = ?6",
-            params![
-                liquidity_rate.to_string(),
-                variable_borrow_rate.to_string(),
-                liquidity_index.to_string(),
-                variable_borrow_index.to_string(),
-                block,
-                asset_id,
-            ],
-        )?;
-        if updated == 0 {
-            return Err(DbError::MissingRow(format!(
-                "aave_v3_assets id={asset_id} (ReserveDataUpdated target)"
-            )));
-        }
-        Ok(())
-    }
-
-    /// Seed the `aave_v3_assets` row for a freshly-initialized reserve. Port
-    /// of `event_handlers.py::_process_asset_initialization_event`
-    /// (L549–L687). Get-or-create on `(market_id, underlying_asset_id)`:
-    /// - **create** — insert `a_token_id`/`a_token_revision`/`v_token_id`/
-    ///   `v_token_revision`/`price_source` + the zero defaults
-    ///   (`liquidity_index='0'`/`liquidity_rate='0'`/`borrow_index='0'`/
-    ///   `borrow_rate='0'`, matching the Python `AaveV3Asset` constructor's
-    ///   zero defaults — `event_handlers.py:645-651`).
-    /// - **existing** — `UPDATE` `a_token_id`/`a_token_revision`/`v_token_id`/
-    ///   `v_token_revision`/`price_source` to the event's current values (a
-    ///   reserve can be re-initialized across a Pool revision upgrade; the
-    ///   Python path re-runs `get_or_create` + mutates on the existing row).
-    ///
-    /// The RPC-resolved revisions (`ATOKEN_REVISION()`/`DEBT_TOKEN_REVISION()`
-    /// via the EIP-1967 implementation slot) + `price_source`
-    /// (`getSourceOfAsset`) happen in the orchestrator; the apply fn
-    /// takes pre-resolved fields (mirrors design decision #1 — the
-    /// apply core is pure substrate, no RPC). The GHO cross-link setup if the
-    /// asset IS the GHO token is a separate concern, NOT this fn's.
-    ///
-    /// Returns the asset row `id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::Sqlite`] on a query failure.
-    #[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
-    pub fn apply_reserve_initialized(
-        &self,
-        market_id: i64,
-        underlying_asset_id: i64,
-        a_token_id: i64,
-        a_token_revision: i64,
-        v_token_id: i64,
-        v_token_revision: i64,
-        price_source: Option<&str>,
-        gho_link_token_id: Option<i64>,
-    ) -> Result<i64, DbError> {
-        let conn = self.lock();
-        Self::apply_reserve_initialized_on_conn(
-            &conn,
-            market_id,
-            underlying_asset_id,
-            a_token_id,
-            a_token_revision,
-            v_token_id,
-            v_token_revision,
-            price_source,
-            gho_link_token_id,
-        )
-    }
-
-    /// Connection-bound form of [`Self::apply_reserve_initialized`].
-    ///
-    /// # Errors
-    ///
-    /// Same error conditions as the `&self` form.
-    #[expect(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
-    pub fn apply_reserve_initialized_on_conn(
-        conn: &rusqlite::Connection,
-        market_id: i64,
-        underlying_asset_id: i64,
-        a_token_id: i64,
-        a_token_revision: i64,
-        v_token_id: i64,
-        v_token_revision: i64,
-        price_source: Option<&str>,
-        gho_link_token_id: Option<i64>,
-    ) -> Result<i64, DbError> {
-        if let Some(id) = existing_aave_v3_asset(conn, market_id, underlying_asset_id)? {
-            // UPDATE the fields the Python `_process_asset_initialization_event`
-            // mutates on the existing row (event_handlers.py:643-685: the
-            // constructor overwrites a_token_id/a_token_revision/v_token_id/
-            // v_token_revision + the RPC-resolved price_source; the index/rate
-            // fields are left alone on existing rows — they're owned by
-            // `apply_reserve_data_updated_on_conn`).
-            conn.execute(
+    conn_writer! {
+        /// Apply a `ReserveDataUpdated` event's decoded fields to the
+        /// `aave_v3_assets` row. Port of
+        /// `event_handlers.py::_process_reserve_data_update_event` (L788–L847).
+        ///
+        /// Updates `liquidity_rate` / `borrow_rate` (= variable borrow rate;
+        /// stable borrow rate is deprecated on Aave V3, ignored as in Python) /
+        /// `liquidity_index` / `borrow_index` (= variable borrow index) /
+        /// `last_update_block` on the asset row keyed by `asset_id`. Unconditional
+        /// UPDATE (the Python path asserts the asset exists via a `select(...)` +
+        /// `assert ... is not None`; the apply fn's contract is the caller resolved
+        /// the `asset_id` already — a no-op UPDATE on a missing row surfaces as
+        /// [`DbError::MissingRow`]).
+        ///
+        /// No ray-math: the indices/rates are stored raw (as the event emits them,
+        /// 27-decimal ray values persisted as decimal `VARCHAR(78)` per the schema).
+        ///
+        /// # Errors
+        ///
+        /// Returns [`DbError::Sqlite`] on a query failure, or
+        /// [`DbError::MissingRow`] if no `aave_v3_assets` row matches
+        /// `asset_id`.
+        fn apply_reserve_data_updated, apply_reserve_data_updated_on_conn(
+            conn: &rusqlite::Connection,
+            asset_id: i64,
+            liquidity_rate: U256,
+            variable_borrow_rate: U256,
+            liquidity_index: U256,
+            variable_borrow_index: U256,
+            block_number: u64,
+        ) -> Result<(), DbError> {
+            let block = i64::try_from(block_number).unwrap_or(i64::MAX);
+            let updated = conn.execute(
                 "UPDATE aave_v3_assets SET \
-                    a_token_id = ?1, a_token_revision = ?2, \
-                    v_token_id = ?3, v_token_revision = ?4, \
-                    price_source = ?5 \
+                    liquidity_rate = ?1, borrow_rate = ?2, \
+                    liquidity_index = ?3, borrow_index = ?4, \
+                    last_update_block = ?5 \
                  WHERE id = ?6",
                 params![
+                    liquidity_rate.to_string(),
+                    variable_borrow_rate.to_string(),
+                    liquidity_index.to_string(),
+                    variable_borrow_index.to_string(),
+                    block,
+                    asset_id,
+                ],
+            )?;
+            if updated == 0 {
+                return Err(DbError::MissingRow(format!(
+                    "aave_v3_assets id={asset_id} (ReserveDataUpdated target)"
+                )));
+            }
+            Ok(())
+        }
+    }
+
+    conn_writer! {
+        /// Seed the `aave_v3_assets` row for a freshly-initialized reserve. Port
+        /// of `event_handlers.py::_process_asset_initialization_event`
+        /// (L549–L687). Get-or-create on `(market_id, underlying_asset_id)`:
+        /// - **create** — insert `a_token_id`/`a_token_revision`/`v_token_id`/
+        ///   `v_token_revision`/`price_source` + the zero defaults
+        ///   (`liquidity_index='0'`/`liquidity_rate='0'`/`borrow_index='0'`/
+        ///   `borrow_rate='0'`, matching the Python `AaveV3Asset` constructor's
+        ///   zero defaults — `event_handlers.py:645-651`).
+        /// - **existing** — `UPDATE` `a_token_id`/`a_token_revision`/`v_token_id`/
+        ///   `v_token_revision`/`price_source` to the event's current values (a
+        ///   reserve can be re-initialized across a Pool revision upgrade; the
+        ///   Python path re-runs `get_or_create` + mutates on the existing row).
+        ///
+        /// The RPC-resolved revisions (`ATOKEN_REVISION()`/`DEBT_TOKEN_REVISION()`
+        /// via the EIP-1967 implementation slot) + `price_source`
+        /// (`getSourceOfAsset`) happen in the orchestrator; the apply fn
+        /// takes pre-resolved fields (mirrors design decision #1 — the
+        /// apply core is pure substrate, no RPC). The GHO cross-link setup if the
+        /// asset IS the GHO token is a separate concern, NOT this fn's.
+        ///
+        /// Returns the asset row `id`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`DbError::Sqlite`] on a query failure.
+        // mirrors the Python event arg list 1:1
+        #[expect(clippy::too_many_arguments)]
+        fn apply_reserve_initialized, apply_reserve_initialized_on_conn(
+            conn: &rusqlite::Connection,
+            market_id: i64,
+            underlying_asset_id: i64,
+            a_token_id: i64,
+            a_token_revision: i64,
+            v_token_id: i64,
+            v_token_revision: i64,
+            price_source: Option<&str>,
+            gho_link_token_id: Option<i64>,
+        ) -> Result<i64, DbError>;
+        // mirrors the Python event arg list 1:1
+        #[expect(clippy::too_many_arguments)]
+        {
+            if let Some(id) = existing_aave_v3_asset(conn, market_id, underlying_asset_id)? {
+                // UPDATE the fields the Python `_process_asset_initialization_event`
+                // mutates on the existing row (event_handlers.py:643-685: the
+                // constructor overwrites a_token_id/a_token_revision/v_token_id/
+                // v_token_revision + the RPC-resolved price_source; the index/rate
+                // fields are left alone on existing rows — they're owned by
+                // `apply_reserve_data_updated_on_conn`).
+                conn.execute(
+                    "UPDATE aave_v3_assets SET \
+                        a_token_id = ?1, a_token_revision = ?2, \
+                        v_token_id = ?3, v_token_revision = ?4, \
+                        price_source = ?5 \
+                     WHERE id = ?6",
+                    params![
+                        a_token_id,
+                        a_token_revision,
+                        v_token_id,
+                        v_token_revision,
+                        price_source,
+                        id,
+                    ],
+                )?;
+                return Ok(id);
+            }
+            // CREATE — matches the Python `AaveV3Asset(...)` constructor's zero
+            // defaults for the index/rate fields (event_handlers.py:645-651).
+            conn.execute(
+                "INSERT INTO aave_v3_assets \
+                    (market_id, underlying_asset_id, a_token_id, a_token_revision, \
+                     v_token_id, v_token_revision, price_source, \
+                     liquidity_index, liquidity_rate, borrow_index, borrow_rate) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, '0', '0', '0', '0')",
+                params![
+                    market_id,
+                    underlying_asset_id,
                     a_token_id,
                     a_token_revision,
                     v_token_id,
                     v_token_revision,
                     price_source,
-                    id,
                 ],
             )?;
-            return Ok(id);
+            let asset_id = conn.last_insert_rowid();
+            // divergence #8: mirror the Python's GHO-vToken-FK link
+            // (event_handlers.py:689-698) — when the new asset's underlying IS
+            // the GHO token, set `aave_gho_tokens.v_token_id` to the new vToken's
+            // erc20 id. The FK is the precondition for the emitter guard
+            // (resolved via `gho_asset.v_token_address`). `None` for a regular
+            // reserve (no link).
+            if let Some(gho_id) = gho_link_token_id {
+                conn.execute(
+                    "UPDATE aave_gho_tokens SET v_token_id = ?1 WHERE id = ?2",
+                    params![v_token_id, gho_id],
+                )?;
+            }
+            Ok(asset_id)
         }
-        // CREATE — matches the Python `AaveV3Asset(...)` constructor's zero
-        // defaults for the index/rate fields (event_handlers.py:645-651).
-        conn.execute(
-            "INSERT INTO aave_v3_assets \
-                (market_id, underlying_asset_id, a_token_id, a_token_revision, \
-                 v_token_id, v_token_revision, price_source, \
-                 liquidity_index, liquidity_rate, borrow_index, borrow_rate) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, '0', '0', '0', '0')",
-            params![
-                market_id,
-                underlying_asset_id,
-                a_token_id,
-                a_token_revision,
-                v_token_id,
-                v_token_revision,
-                price_source,
-            ],
-        )?;
-        let asset_id = conn.last_insert_rowid();
-        // divergence #8: mirror the Python's GHO-vToken-FK link
-        // (event_handlers.py:689-698) — when the new asset's underlying IS
-        // the GHO token, set `aave_gho_tokens.v_token_id` to the new vToken's
-        // erc20 id. The FK is the precondition for the emitter guard
-        // (resolved via `gho_asset.v_token_address`). `None` for a regular
-        // reserve (no link).
-        if let Some(gho_id) = gho_link_token_id {
-            conn.execute(
-                "UPDATE aave_gho_tokens SET v_token_id = ?1 WHERE id = ?2",
-                params![v_token_id, gho_id],
-            )?;
-        }
-        Ok(asset_id)
     }
 
     // ── the 6 missing-variant config-event apply fns ──────────
