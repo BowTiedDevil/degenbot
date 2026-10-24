@@ -34,10 +34,16 @@ zstd.workspace = true
 # hotpath: solver-phase profiling (ADR-005 core, pyo3-free). Non-optional,
 # default-features = false -> no-op stubs in default builds; the
 # `hotpath` feature enables real instrumentation. Version matched to degenbot-bot.
-hotpath = { version = "^0.29.0", default-features = false }
+hotpath = { version = "^0.29.1", default-features = false }
 
 [features]
 hotpath = ["hotpath/hotpath", "hotpath/threads"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
+# Uploads the `hotpath_bench` example's report to hotpath.rs from CI.
+hotpath-cloud = ["hotpath", "hotpath/hotpath-cloud"]
+# Instruction counts per measured function when the example runs under
+# Valgrind's Callgrind (x86_64 Linux); native runs report timing as usual.
+hotpath-callgrind = ["hotpath", "hotpath/hotpath-callgrind"]
 # Ambient walk telemetry: the per-thread walk-combinator counters, event
 # census, and process-wide timing statics. Off by default so a release build
 # that never reads the counters pays nothing for them; enabling it turns
