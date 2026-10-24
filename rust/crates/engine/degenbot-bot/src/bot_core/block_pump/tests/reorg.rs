@@ -511,12 +511,15 @@ async fn late_forward_log_on_tombstoned_block_is_benign_late_admit() {
 ///
 /// This is the exact observed failure (block 25670138): catch-up OWNs the
 /// range, the delayed WS re-delivers it, and the pump must discard.
-#[tokio::test]
+///
+/// Paused clock: the only clock in the timeline is the production staleness
+/// interval; the "stall" itself is gated on the catch-up's own report.
+#[tokio::test(start_paused = true)]
 async fn recovery_single_writer_discards_stale_forward_after_backfill() {
     let pool_addr = Address::from([0x44u8; 20]);
     let (_bot, _pool_id) = bot_with_registered_v2(pool_addr, 5);
 
-    let (mut pump, _sink, asserter, shutdown) = pump_for_test_sink_and_asserter(Some(100));
+    let (mut pump, sink, asserter, shutdown) = pump_for_test_sink_and_asserter(Some(100));
     pump.set_header_staleness_for_test(Duration::from_millis(100));
 
     // Watchdog path: `get_block_number` → 102 (triggers backfill), then
@@ -528,10 +531,14 @@ async fn recovery_single_writer_discards_stale_forward_after_backfill() {
     asserter.push_success(&"0x66".to_string());
     asserter.push_success(&"0x66".to_string());
 
-    // Header 101 (anchor), then silence so the watchdog backfills to 102,
-    // then the recovering WS flushes a STALE forward sync at block 102.
+    // Header 101 (anchor), then silence until the watchdog's catch-up REPORTS
+    // the solved boundary at 102 — the stalled phase parks on the sink's
+    // solved-head latch (`set_last_solved_block(102)`), so the stall lasts
+    // exactly as long as the catch-up it is standing in for. Then the
+    // recovering WS flushes a STALE forward sync at block 102.
+    let solved_rx = sink.solved_head_rx();
     let stale = make_v2_sync_log(pool_addr, U256::from(9_999), U256::from(9_999), 102, false);
-    let combined = stream::unfold(0u8, move |phase| {
+    let combined = stream::unfold((0u8, Some(solved_rx)), move |(phase, rx_opt)| {
         let stale = stale.clone();
         async move {
             match phase {
@@ -543,11 +550,11 @@ async fn recovery_single_writer_discards_stale_forward_after_backfill() {
                         gas_used: 0,
                         gas_limit: 0,
                     },
-                    1,
+                    (1, rx_opt),
                 )),
                 1 => {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                    Some((WsEvent::Pool(PoolEvent::from_log(stale)), 2))
+                    wait_solved_head(rx_opt.unwrap(), 102).await;
+                    Some((WsEvent::Pool(PoolEvent::from_log(stale)), (2, None)))
                 }
                 _ => None,
             }
@@ -555,7 +562,7 @@ async fn recovery_single_writer_discards_stale_forward_after_backfill() {
     })
     .boxed();
 
-    pump.run_test_loop(combined, 100).await;
+    run_loop_guarded(&mut pump, combined, 100).await;
 
     assert!(
         !shutdown.load(Ordering::Relaxed),
@@ -571,12 +578,15 @@ async fn recovery_single_writer_discards_stale_forward_after_backfill() {
 /// it lands in the BENIGN late-admit drop: dropped un-applied, counted in
 /// `degenbot.late_log.admitted`, pump keeps running (the no-landmine
 /// ruling supersedes the retired ADR-008 D3 hard fault).
-#[tokio::test]
+///
+/// Paused clock: the only clock in the timeline is the production staleness
+/// interval; the "stall" is gated on the catch-up's own solved-boundary report.
+#[tokio::test(start_paused = true)]
 async fn recovery_anchor_stale_forward_above_anchor_is_benign_late_admit() {
     let pool_addr = Address::from([0x44u8; 20]);
     let (_bot, _pool_id) = bot_with_registered_v2(pool_addr, 5);
 
-    let (mut pump, _sink, asserter, shutdown) = pump_for_test_sink_and_asserter(Some(100));
+    let (mut pump, sink, asserter, shutdown) = pump_for_test_sink_and_asserter(Some(100));
     pump.set_header_staleness_for_test(Duration::from_millis(100));
 
     asserter.push_success(&"0x66".to_string()); // eth_blockNumber → 102
@@ -588,7 +598,11 @@ async fn recovery_anchor_stale_forward_above_anchor_is_benign_late_admit() {
     let s103 = make_v2_sync_log(pool_addr, U256::from(1_500), U256::from(2_500), 103, false);
     let s104 = make_v2_sync_log(pool_addr, U256::from(1_600), U256::from(2_600), 104, false);
     let late103 = make_v2_sync_log(pool_addr, U256::from(9_999), U256::from(9_999), 103, false);
-    let combined = stream::unfold(0u8, move |phase| {
+    // Phase 1 parks on the catch-up's solved-boundary report
+    // (`set_last_solved_block(102)` from `handle_timeout_eager`) instead of
+    // sleeping a fixed 250ms for the watchdog to get there.
+    let solved_rx = sink.solved_head_rx();
+    let combined = stream::unfold((0u8, Some(solved_rx)), move |(phase, rx_opt)| {
         let s103 = s103.clone();
         let s104 = s104.clone();
         let late103 = late103.clone();
@@ -602,21 +616,21 @@ async fn recovery_anchor_stale_forward_above_anchor_is_benign_late_admit() {
                         gas_used: 0,
                         gas_limit: 0,
                     },
-                    1,
+                    (1, rx_opt),
                 )),
                 1 => {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                    Some((WsEvent::Pool(PoolEvent::from_log(s103)), 2))
+                    wait_solved_head(rx_opt.unwrap(), 102).await;
+                    Some((WsEvent::Pool(PoolEvent::from_log(s103)), (2, None)))
                 }
-                2 => Some((WsEvent::Pool(PoolEvent::from_log(s104)), 3)),
-                3 => Some((WsEvent::Pool(PoolEvent::from_log(late103)), 4)),
+                2 => Some((WsEvent::Pool(PoolEvent::from_log(s104)), (3, None))),
+                3 => Some((WsEvent::Pool(PoolEvent::from_log(late103)), (4, None))),
                 _ => None,
             }
         }
     })
     .boxed();
 
-    pump.run_test_loop(combined, 100).await;
+    run_loop_guarded(&mut pump, combined, 100).await;
 
     assert!(
             !shutdown.load(Ordering::Relaxed),
@@ -637,11 +651,15 @@ async fn recovery_anchor_stale_forward_above_anchor_is_benign_late_admit() {
 ///      would overwrite the pool reserves back to the older 9999/9999.
 /// Asserts: the pump did NOT shut down (it survived the recovery) AND the
 /// V2 pool reserves are 2600/3600 (the stale log was not re-applied).
-#[tokio::test]
+///
+/// Paused clock: the only clock in the timeline is the production staleness
+/// interval; step 2's "stall" is gated on the catch-up's own
+/// `set_last_solved_block(103)` report rather than a fixed sleep.
+#[tokio::test(start_paused = true)]
 async fn fsm_lifecycle_recovers_and_does_not_reassert_stale() {
     let pool_addr = Address::from([0x44u8; 20]);
 
-    let (mut pump, _sink, asserter, shutdown) = pump_for_test_sink_and_asserter(Some(100));
+    let (mut pump, sink, asserter, shutdown) = pump_for_test_sink_and_asserter(Some(100));
     pump.set_header_staleness_for_test(Duration::from_millis(100));
     // Register the pool on the pump's OWN bot (the one it applies logs to),
     // so the V2 reserves reflect the dispatched Sync events.
@@ -679,7 +697,8 @@ async fn fsm_lifecycle_recovers_and_does_not_reassert_stale() {
     let s102 = make_v2_sync_log(pool_addr, U256::from(1_500), U256::from(2_500), 102, false);
     let s104 = make_v2_sync_log(pool_addr, U256::from(2_600), U256::from(3_600), 104, false);
     let stale103 = make_v2_sync_log(pool_addr, U256::from(9_999), U256::from(9_999), 103, false);
-    let combined = stream::unfold(0u8, move |phase| {
+    let solved_rx = sink.solved_head_rx();
+    let combined = stream::unfold((0u8, Some(solved_rx)), move |(phase, rx_opt)| {
         let s102 = s102.clone();
         let s104 = s104.clone();
         let stale103 = stale103.clone();
@@ -693,22 +712,23 @@ async fn fsm_lifecycle_recovers_and_does_not_reassert_stale() {
                         gas_used: 0,
                         gas_limit: 0,
                     },
-                    1,
+                    (1, rx_opt),
                 )),
-                1 => Some((WsEvent::Pool(PoolEvent::from_log(s102)), 2)),
+                1 => Some((WsEvent::Pool(PoolEvent::from_log(s102)), (2, rx_opt))),
                 2 => {
-                    // Stall: let the watchdog catch up, then the WS resumes.
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                    Some((WsEvent::Pool(PoolEvent::from_log(s104)), 3))
+                    // Stall: park until the watchdog's catch-up reports the
+                    // solved boundary at 103, then the WS resumes.
+                    wait_solved_head(rx_opt.unwrap(), 103).await;
+                    Some((WsEvent::Pool(PoolEvent::from_log(s104)), (3, None)))
                 }
-                3 => Some((WsEvent::Pool(PoolEvent::from_log(stale103)), 4)),
+                3 => Some((WsEvent::Pool(PoolEvent::from_log(stale103)), (4, None))),
                 _ => None,
             }
         }
     })
     .boxed();
 
-    pump.run_test_loop(combined, 100).await;
+    run_loop_guarded(&mut pump, combined, 100).await;
 
     assert!(
         !shutdown.load(Ordering::Relaxed),

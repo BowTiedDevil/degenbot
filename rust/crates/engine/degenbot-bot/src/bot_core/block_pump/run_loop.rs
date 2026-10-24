@@ -487,6 +487,12 @@ impl BlockPump {
                 // under ticks faster than the window neither `DEBOUNCE_MS` nor
                 // the 60s inactivity park could ever elapse.
                 _ = staleness_tick.tick() => {
+                    // Test-only cadence observable: the interval FIRED, before
+                    // the FSM decides. Negative watchdog tests assert a tick
+                    // landed inside their scenario so "must NOT fire" cannot
+                    // pass vacuously.
+                    #[cfg(test)]
+                    self.watchdog_ticks.fetch_add(1, Ordering::Relaxed);
                     // A4: the watchdog window decision lives in the FSM
                     // (`on_tick`), fed a synthetic `now_ms`; the interval only
                     // drives it. The driver executes the emitted decisions.

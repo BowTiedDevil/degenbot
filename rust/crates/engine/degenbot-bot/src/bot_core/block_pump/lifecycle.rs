@@ -39,6 +39,8 @@ impl BlockPump {
             ingestor,
             shutdown: Arc::clone(&shutdown),
             watchdog: Watchdog::new(),
+            #[cfg(test)]
+            watchdog_ticks: std::sync::atomic::AtomicU64::new(0),
             stage_max_age: Duration::from_secs(
                 crate::bot_core::stage_telemetry::STAGE_MAX_AGE_SECS,
             ),

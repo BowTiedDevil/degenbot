@@ -12,11 +12,13 @@ use super::*;
 /// never elapses — a silent `newHeads` goes undetected. The watchdog tick
 /// elapses on its OWN internal `Sleep`, racing `combined.next()`.
 ///
-/// Stream: header(101), then 250ms silence, then end. `header_staleness`
+/// Stream: header(101), then SILENCE until the watchdog has backfilled
+/// (the stream parks on the sink's solved-head latch, i.e. the pump's own
+/// `set_last_solved_block(102)` report), then end. `header_staleness`
 /// overridden to 100ms. Mock RPC: `eth_blockNumber` → 102,
 /// `eth_getLogs`(102) → empty. The only way `set_last_solved_block(102)`
 /// lands is the watchdog's backfill — the stream delivered only 101.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn header_staleness_watchdog_fires_under_silent_stream() {
     let (mut pump, sink, asserter, _shutdown) = pump_for_test_sink_and_asserter(Some(100));
     pump.set_header_staleness_for_test(Duration::from_millis(100));
@@ -33,9 +35,18 @@ async fn header_staleness_watchdog_fires_under_silent_stream() {
     asserter.push_success(&"0x66".to_string());
 
     // Stream: one header (anchors current_block=101, sets last_header_at),
-    // then 250ms of silence (combined.next() stays pending → only the
-    // watchdog tick can win the select), then end.
-    let combined = stream::unfold(0u8, |phase| async move {
+    // then silence (the parked phase stays Pending → only the watchdog tick
+    // can win the select), then end.
+    //
+    // The silence is gated, not timed: phase 1 parks on the sink's solved-head
+    // latch, which the pump fires from `handle_timeout_eager` via
+    // `set_last_solved_block(102)` — the very fact the assertion below reads.
+    // So the stream ends exactly when the watchdog has done its work, and the
+    // timeline contains no "long enough for the pump to notice" duration. The
+    // only clock left is the production staleness interval itself (100ms,
+    // virtual on this paused runtime).
+    let solved_rx = sink.solved_head_rx();
+    let combined = stream::unfold((0u8, Some(solved_rx)), move |(phase, rx_opt)| async move {
         match phase {
             0 => Some((
                 WsEvent::BlockHeader {
@@ -45,10 +56,10 @@ async fn header_staleness_watchdog_fires_under_silent_stream() {
                     gas_used: 0,
                     gas_limit: 0,
                 },
-                1,
+                (1, rx_opt),
             )),
             1 => {
-                tokio::time::sleep(Duration::from_millis(250)).await;
+                wait_solved_head(rx_opt.unwrap(), 102).await;
                 None
             }
             _ => None,
@@ -56,13 +67,17 @@ async fn header_staleness_watchdog_fires_under_silent_stream() {
     })
     .boxed();
 
-    pump.run_test_loop(combined, 100).await;
+    run_loop_guarded(&mut pump, combined, 100).await;
 
     let solved = sink.solved.lock().unwrap().clone();
     assert!(
         solved.contains(&102),
         "watchdog must backfill block 102 under a silent stream; \
              set_last_solved_block calls were {solved:?}"
+    );
+    assert!(
+        pump.watchdog_tick_count_for_test() >= 1,
+        "the staleness interval must have ticked for the backfill above to be a watchdog catch-up"
     );
 }
 
@@ -72,11 +87,16 @@ async fn header_staleness_watchdog_fires_under_silent_stream() {
 /// backfill under a live `newHeads` stream, even though the interval tick
 /// still elapses. Locks the guard so a future regression that drops it (and
 /// backfills on every tick) fails here.
-#[tokio::test]
+///
+/// The header cadence and the staleness window are this scenario's INPUTS (the
+/// assertion is a timer comparison), so they run on the paused clock: virtual,
+/// exact, and with the staleness tick's interleaving against the header
+/// arrivals fully deterministic. No wall-clock tolerance is involved.
+#[tokio::test(start_paused = true)]
 async fn header_staleness_watchdog_does_not_fire_when_headers_fresh() {
     let (mut pump, sink, asserter, _shutdown) = pump_for_test_sink_and_asserter(Some(100));
-    // Generous margin (200ms staleness, headers every 50ms) so the test is
-    // not timing-flaky: at any tick elapse, `last_header_at` is <100ms old.
+    // Generous margin (200ms staleness, headers every 50ms): the one staleness
+    // tick this scenario covers lands at t=200ms with `last_header_at` 50ms old.
     pump.set_header_staleness_for_test(Duration::from_millis(200));
 
     // If the watchdog fired spuriously, it would consume these and
@@ -87,7 +107,7 @@ async fn header_staleness_watchdog_does_not_fire_when_headers_fresh() {
     asserter.push_success(&Vec::<Log>::new());
 
     // Headers 101..105 arriving every 50ms (well within the 200ms
-    // staleness window), then end at 300ms.
+    // staleness window), then end right after the t=250ms header.
     let combined = stream::unfold((0u8, 101u64), |(phase, block)| async move {
         match phase {
             _ if block <= 105 => {
@@ -108,8 +128,16 @@ async fn header_staleness_watchdog_does_not_fire_when_headers_fresh() {
     })
     .boxed();
 
-    pump.run_test_loop(combined, 100).await;
+    run_loop_guarded(&mut pump, combined, 100).await;
 
+    // Non-vacuity: the staleness interval must actually have TICKED while the
+    // headers were fresh. Without this, "no backfill" could hold simply
+    // because no tick ever ran — the exact regression this negative cannot
+    // afford to mask.
+    assert!(
+        pump.watchdog_tick_count_for_test() >= 1,
+        "the staleness interval never ticked during the scenario — the negative assertion would be vacuous"
+    );
     let solved = sink.solved.lock().unwrap().clone();
     assert!(
         !solved.contains(&999),
@@ -128,7 +156,11 @@ async fn header_staleness_watchdog_does_not_fire_when_headers_fresh() {
 /// NOTHING for `log_silence` → one warning per silence episode. Proves the
 /// detector fires under the failure mode Alternative B's header-only
 /// handshake no longer catches at startup.
-#[tokio::test]
+///
+/// The silence threshold and the header cadence are the scenario's inputs (the
+/// subject IS a timer window), so they run on the paused clock — virtual and
+/// exact, with the staleness ticks interleaved deterministically.
+#[tokio::test(start_paused = true)]
 async fn logs_silence_watchdog_fires_when_headers_flow_but_no_logs() {
     let (mut pump, _sink, _asserter, _shutdown) = pump_for_test_sink_and_asserter(Some(100));
     // Tick every 100ms so the silence check runs often; headers fresh
@@ -157,7 +189,7 @@ async fn logs_silence_watchdog_fires_when_headers_flow_but_no_logs() {
     })
     .boxed();
 
-    pump.run_test_loop(combined, 100).await;
+    run_loop_guarded(&mut pump, combined, 100).await;
 
     assert!(
         pump.log_silence_alarm_count() >= 1,
@@ -171,7 +203,10 @@ async fn logs_silence_watchdog_fires_when_headers_flow_but_no_logs() {
 /// (each `WsEvent::Log` refreshes `last_log_at` and re-arms the alarm).
 /// Locks the refresh path so a regression that drops it (and alarms on
 /// every tick despite live logs) fails here.
-#[tokio::test]
+///
+/// Paused clock (virtual cadence/threshold inputs), with the tick count
+/// asserted so the negative cannot pass vacuously.
+#[tokio::test(start_paused = true)]
 async fn logs_silence_watchdog_does_not_fire_when_logs_flowing() {
     let (mut pump, _sink, _asserter, _shutdown) = pump_for_test_sink_and_asserter(Some(100));
     pump.set_header_staleness_for_test(Duration::from_millis(100));
@@ -206,8 +241,14 @@ async fn logs_silence_watchdog_does_not_fire_when_logs_flowing() {
     })
     .boxed();
 
-    pump.run_test_loop(combined, 100).await;
+    run_loop_guarded(&mut pump, combined, 100).await;
 
+    // Non-vacuity: at least one staleness tick ran inside the flowing-log
+    // scenario (this clock is deterministic, so "at least one" is exact).
+    assert!(
+        pump.watchdog_tick_count_for_test() >= 1,
+        "the staleness interval never ticked during the scenario — the negative assertion would be vacuous"
+    );
     assert_eq!(
         pump.log_silence_alarm_count(),
         0,
@@ -244,6 +285,14 @@ async fn logs_silence_watchdog_does_not_fire_when_logs_flowing() {
 /// dropped-timeout restarted its window at the t=120 tick and could only
 /// land the publish at t=170 (the restarted deadline) -- strictly after the
 /// tick and well after the original deadline.
+///
+/// The sleeps below stay, and they are not "give the pump time to notice"
+/// waits: on this paused clock they are the SCENARIO itself — virtual-time
+/// positions relative to the production staleness interval and the settle
+/// window, with the virtual publish instant as the oracle. There is no event to
+/// gate them on (the assertion IS the timer's position relative to an event), so
+/// a latch would delete the measurement. Nothing here reads the wall clock, so
+/// nothing here can flake.
 #[tokio::test(start_paused = true)]
 async fn watchdog_tick_mid_window_does_not_restart_settle_window() {
     let (mut pump, sink) = pump_for_test(Some(100));

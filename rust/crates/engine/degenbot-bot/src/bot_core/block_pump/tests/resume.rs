@@ -410,17 +410,10 @@ async fn log_applied_pairing_forward_records_reorg_does_not() {
         w,
     )
     .await;
-    // Sink ops are deferred to the background drainer — wait for the
-    // quiesce publish to land (same pattern as
-    // `decoupled_drain_still_publishes_with_block_metadata`).
-    let deadline = std::time::Instant::now() + Duration::from_secs(1);
-    loop {
-        if !sink.sends().is_empty() || std::time::Instant::now() >= deadline {
-            break;
-        }
-        tokio::task::yield_now().await;
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    // No settle wait: the stage hooks run INLINE on the pump task (there is no
+    // background drainer left to defer them), so every `PumpControl` /
+    // `StageHandlers` poke — including the quiesce publish — has already
+    // happened by the time `run_test_loop` returns.
     assert_eq!(
         sink.logs_recorded(),
         1,
@@ -452,9 +445,9 @@ async fn log_applied_pairing_forward_records_reorg_does_not() {
             w,
         )
         .await;
-    // Let the drainer settle any (nonexistent) work before asserting the
-    // negative.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // The negative needs no settle window: the stage hooks run INLINE, so a
+    // reorg arm that (wrongly) applied the log or armed a publish would already
+    // have done so before `run_test_loop` returned.
     assert!(!shutdown2.load(std::sync::atomic::Ordering::SeqCst));
     assert_eq!(
         sink2.logs_recorded(),

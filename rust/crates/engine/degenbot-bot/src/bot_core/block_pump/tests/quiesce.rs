@@ -102,20 +102,14 @@ async fn adaptive_quiesce_arms_the_estimator_window() {
         mode: QuiesceMode::Adaptive,
         ..QuiesceParams::default()
     });
-    // The fake engine's dirty flag is a static test toggle, so raise it
-    // at 35 ms VIRTUAL time — after the header, just before the first
-    // log lands at 40 ms — so every drain dispatch is attributable to
-    // the settle window alone (a pre-header dirty would dispatch at the
-    // window deadline with no logs at all).
-    {
-        let sink_flag = Arc::clone(&sink);
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(35)).await;
-            sink_flag.set_dirty(true);
-        });
-    }
-
-    let combined = gap_burst_stream(3, 40);
+    // The fake engine's dirty flag is a static test toggle, so raise it on an
+    // EVENT instead of at a chosen millisecond: the stream raises it at the
+    // instant it produces the FIRST log — inside the pump's own
+    // `combined.next()` poll, i.e. after the header was accepted and before the
+    // log is applied. That is exactly the window this assertion needs (a
+    // pre-header dirty would dispatch at the window deadline with no logs at
+    // all), expressed as a gate rather than a 35 ms sleep.
+    let combined = gap_burst_stream_with_dirty_edge(3, 40, Some(Arc::clone(&sink)));
     let t0 = tokio::time::Instant::now();
     pump.run_test_loop(combined, 100).await;
     drainer_settle(|| !sink.drained_blocks().is_empty()).await;

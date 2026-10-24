@@ -195,6 +195,14 @@ pub struct BlockPump {
     /// `degenbot-ingestion::Watchdog`). The tokio intervals stay in the
     /// driver's select (the FSM decides, the driver executes — ADR-008).
     watchdog: Watchdog,
+    /// Test-only count of header-staleness watchdog ticks — the interval
+    /// FIRING, before the FSM's `on_tick` decision. A "watchdog must NOT fire
+    /// while headers are fresh" test reads it (via
+    /// `watchdog_tick_count_for_test`) to prove a tick actually landed inside
+    /// its scenario; without that, the negative assertion could hold simply
+    /// because no tick ever ran. Absent from production builds.
+    #[cfg(test)]
+    watchdog_ticks: std::sync::atomic::AtomicU64,
     /// Wall-clock ms of the last accepted header — the anchor the driver
     /// measures `header_to_publish` (the ADR-041 epoch race) against
     /// (succeeds the dissolved `DispatchOwner`'s T2 header→solved anchor;

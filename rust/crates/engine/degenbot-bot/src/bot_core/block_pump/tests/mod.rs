@@ -41,6 +41,7 @@ impl BlockPump {
             ingestor: WsIngestor::with_provider(provider),
             shutdown,
             watchdog: Watchdog::new(),
+            watchdog_ticks: std::sync::atomic::AtomicU64::new(0),
             stage_max_age: Duration::from_secs(
                 crate::bot_core::stage_telemetry::STAGE_MAX_AGE_SECS,
             ),
@@ -118,6 +119,16 @@ impl BlockPump {
     pub fn log_silence_alarm_count(&self) -> u64 {
         self.watchdog.silence_alarm_count()
     }
+
+    /// Count of header-staleness watchdog ticks since the pump started — the
+    /// `tokio::time::interval` FIRING, independent of whether the FSM then
+    /// decided to recover. Negative watchdog tests ("must NOT fire while
+    /// headers are fresh") use this to prove a tick actually landed inside
+    /// their scenario, so the assertion cannot pass because no tick ever ran.
+    #[must_use]
+    pub fn watchdog_tick_count_for_test(&self) -> u64 {
+        self.watchdog_ticks.load(Ordering::Relaxed)
+    }
 }
 
 /// A `StageHandlers` test double (AGENTS.md: `Fake` prefix, no mocking).
@@ -142,6 +153,12 @@ struct FakeStageEngine {
     /// only the backfill path + the header anchor call this — the watchdog
     /// is the sole path that backfills past the stream's observed block).
     solved: Mutex<Vec<u64>>,
+    /// The newest `set_last_solved_block` value, monotonically, exposed as a
+    /// `watch` edge. Watchdog tests park their synthetic stream on this latch
+    /// instead of sleeping "long enough for the watchdog to catch up": the
+    /// edge IS the event the assertion is about (the pump reporting the
+    /// backfilled solve boundary), so the gate and the oracle are one fact.
+    solved_head: tokio::sync::watch::Sender<u64>,
     last_processed: AtomicU64,
     /// Test knob for the active-block promotion RED test:
     /// when `true`, `has_dirty_paths()` reports dirty so the top-of-loop
@@ -172,6 +189,7 @@ impl FakeStageEngine {
             drained: Mutex::new(Vec::new()),
             notified: Mutex::new(Vec::new()),
             solved: Mutex::new(Vec::new()),
+            solved_head: tokio::sync::watch::Sender::new(0),
             last_processed: AtomicU64::new(last_processed.unwrap_or(0)),
             dirty: AtomicBool::new(false),
             logs_recorded: std::sync::atomic::AtomicUsize::new(0),
@@ -217,6 +235,13 @@ impl FakeStageEngine {
     fn logs_recorded(&self) -> usize {
         self.logs_recorded
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Receiver for the [`Self::solved_head`] latch — parked by a synthetic
+    /// stream phase (or by the test) until the pump reports a solve boundary
+    /// at or above a given block.
+    fn solved_head_rx(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.solved_head.subscribe()
     }
 
     /// Quiesce publishes the sink received (`on_send` call log).
@@ -333,7 +358,14 @@ impl crate::bot_core::PumpControl for FakeStageEngine {
         self.dirty.load(Ordering::Relaxed)
     }
     fn set_last_solved_block(&self, solved: Epoch) {
-        self.solved.lock().unwrap().push(solved.block());
+        let block = solved.block();
+        self.solved.lock().unwrap().push(block);
+        // Monotonic by construction: a later `drive_solve` reports its own
+        // anchor through this same poke (the fake's `SolveOutcome::default()`
+        // anchors at 0), so the latch only ever RISES — a regressing head
+        // would strand every waiter.
+        self.solved_head
+            .send_modify(|head| *head = (*head).max(block));
     }
     fn set_solve_anchor(&self, _anchor: Epoch) {}
     fn record_logs_this_block(&self) {
@@ -438,14 +470,34 @@ fn pump_for_test_sink_and_asserter(
 /// debounce 50ms) resolves deterministically mid-burst. Logs must NOT
 /// reset the slice window — only headers do (one slice per BLOCK window).
 fn gap_burst_stream(logs: u64, gap_ms: u64) -> stream::BoxStream<'static, WsEvent> {
+    gap_burst_stream_with_dirty_edge(logs, gap_ms, None)
+}
+
+/// [`gap_burst_stream`] with an optional dirty-flag edge raised at the instant
+/// the FIRST log is produced. That instant is inside the pump's own
+/// `combined.next()` poll — synchronously AFTER the header was accepted and
+/// BEFORE the log is applied — which is exactly the window a settle-window test
+/// needs the dirty flag to appear in. A test that must place the edge there
+/// uses this instead of spawning a task that sleeps to a chosen millisecond.
+fn gap_burst_stream_with_dirty_edge(
+    logs: u64,
+    gap_ms: u64,
+    dirty_edge: Option<Arc<FakeStageEngine>>,
+) -> stream::BoxStream<'static, WsEvent> {
     use alloy::primitives::{Address as A, U256};
     use stream::StreamExt;
     let pool = A::from([0xccu8; 20]);
     stream::unfold(0u64, move |i| {
         let pool = pool;
+        let dirty_edge = dirty_edge.clone();
         async move {
             if i > 0 {
                 tokio::time::sleep(Duration::from_millis(gap_ms)).await;
+            }
+            if i == 1 {
+                if let Some(sink) = dirty_edge.as_ref() {
+                    sink.set_dirty(true);
+                }
             }
             let ev = if i == 0 {
                 WsEvent::BlockHeader {
@@ -831,6 +883,50 @@ fn pump_for_test_with_bot(
         Arc::clone(&shutdown),
     );
     (pump, sink, shutdown)
+}
+
+/// Deadline used by a DEADLOCK GUARD around a latched await. It is never an
+/// ordering assertion: the latch edge decides when the test proceeds, and the
+/// deadline only stops a regression (the signal never arrives) from parking the
+/// test forever. Under `start_paused` the deadline is virtual time, so it costs
+/// the test nothing.
+const DEADLOCK_GUARD: Duration = Duration::from_secs(5);
+
+/// Park until the pump reports a solve boundary at or above `block`, gated on
+/// [`FakeStageEngine::solved_head_rx`]. No wall clock: the gate is the pump's
+/// own `PumpControl::set_last_solved_block` edge — the same record the
+/// watchdog assertions read, so "what the test waits for" and "what the test
+/// asserts" are one fact. Callers wrap this in [`run_loop_guarded`] (or a
+/// `tokio::time::timeout` naming it a deadlock guard).
+async fn wait_solved_head(mut rx: tokio::sync::watch::Receiver<u64>, block: u64) {
+    loop {
+        if *rx.borrow_and_update() >= block {
+            return;
+        }
+        assert!(
+            rx.changed().await.is_ok(),
+            "solved-head latch closed before the pump reported block {block}"
+        );
+    }
+}
+
+/// Drive the pump loop under a DEADLOCK GUARD. The timeout is not an ordering
+/// assertion — every gated test's ordering comes from a latch — it only bounds
+/// a regression where the latched event never fires (the alternative is a test
+/// that hangs instead of failing with a message).
+async fn run_loop_guarded(
+    pump: &mut BlockPump,
+    combined: stream::BoxStream<'static, WsEvent>,
+    first_observed_block: u64,
+) {
+    tokio::time::timeout(
+        DEADLOCK_GUARD,
+        pump.run_test_loop(combined, first_observed_block),
+    )
+    .await
+    .expect(
+        "pump loop did not finish inside the deadlock-guard window — a latched signal never fired",
+    );
 }
 
 /// Wait (with a deadline, in `rt` runtime ticks) until `cond` returns true.
