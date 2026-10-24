@@ -23,6 +23,8 @@
 
 ---
 
+> **Resolution status (2026-10-23):** C3/C4/C5/C6/C7/C8/R1/R2/R3/T1/T5/T9 fixed earlier; C1 (`conn_writer!`, `d9fa6e763`), C2 (row-input newtypes, `77e710694`), C10 (`42d5be254`) fixed under ergo epic OE5II7. Deliberately not pursued: T7 (live-fork is chosen policy, `just test-fork`), T8 (handled as a new-test guideline), T6 (working dependency-bump tripwires), N1 `get`/`set` (mirror the CLI verbs). Full `just test` ladder green after each batch.
+
 # Technical debt survey — degenbot
 
 Scope: `src/degenbot/` (Python driver, 179 files), `rust/crates/**` (Rust core,
