@@ -34,6 +34,7 @@ from degenbot.db import (
     db_upsert_pool_manager,
 )
 from degenbot.types.rpc_types import LogReceipt
+from degenbot.updater import V2PoolRowInput, V3PoolRowInput, V4PoolRowInput
 from degenbot.updater.pool_updater_configs import (
     PoolUpdateRequest,
     V2PoolUpdateConfig,
@@ -634,3 +635,79 @@ def test_db_fetch_exchange_by_name_returns_row_and_none_when_missing(
         name="uniswap_v2",
     )
     assert cross_chain is None
+
+
+# ---------------------------------------------------------------------
+# Row-input constructor surface.
+# The three row-input pyclasses are newtypes over `degenbot-db`'s core row
+# structs, so the field list has exactly one owner. The Python constructor
+# surface — keyword names, the `stable` default, and `ValueError` on a
+# malformed address — is what every driver call site depends on, so it is
+# pinned here rather than left implicit in the seeding helpers.
+
+ROW_INPUT_POOL: ChecksummedAddress = get_checksum_address("0x" + "1" * 40)
+ROW_INPUT_TOKEN0: ChecksummedAddress = get_checksum_address("0x" + "a" * 40)
+ROW_INPUT_TOKEN1: ChecksummedAddress = get_checksum_address("0x" + "2" * 40)
+ROW_INPUT_V4_HASH = "0x" + "c" * 64
+
+# The three row-input pyclasses, for the parametrized tables below.
+type RowInputClass = type[V2PoolRowInput | V3PoolRowInput | V4PoolRowInput]
+
+# One fully-valid keyword record per class, as the driver shells build them.
+ROW_INPUT_RECORDS: dict[RowInputClass, dict[str, str | int]] = {
+    V2PoolRowInput: {
+        "address": ROW_INPUT_POOL,
+        "token0_address": ROW_INPUT_TOKEN0,
+        "token1_address": ROW_INPUT_TOKEN1,
+        "fee_token0": 3,
+        "fee_token1": 3,
+    },
+    V3PoolRowInput: {
+        "address": ROW_INPUT_POOL,
+        "token0_address": ROW_INPUT_TOKEN0,
+        "token1_address": ROW_INPUT_TOKEN1,
+        "fee": 500,
+        "tick_spacing": 10,
+    },
+    V4PoolRowInput: {
+        "pool_hash": ROW_INPUT_V4_HASH,
+        "hooks": ROW_INPUT_TOKEN1,
+        "currency0_address": ROW_INPUT_TOKEN0,
+        "currency1_address": ROW_INPUT_TOKEN1,
+        "fee": 3000,
+        "tick_spacing": 60,
+    },
+}
+
+# The address-typed fields of each class (the constructor's parse sites).
+ROW_INPUT_ADDRESS_FIELDS: dict[RowInputClass, tuple[str, ...]] = {
+    V2PoolRowInput: ("address", "token0_address", "token1_address"),
+    V3PoolRowInput: ("address", "token0_address", "token1_address"),
+    V4PoolRowInput: ("hooks", "currency0_address", "currency1_address"),
+}
+
+
+def test_row_input_constructors_accept_the_keyword_surface() -> None:
+    """Every driver call site uses keywords; the positional V2 form still
+    accepts the omitted `stable` (whose default lands as `NULL` for every
+    non-Aerodrome family — see the V2 upsert test above)."""
+    for row_cls, kwargs in ROW_INPUT_RECORDS.items():
+        assert row_cls(**kwargs) is not None
+
+    V2PoolRowInput(ROW_INPUT_POOL, ROW_INPUT_TOKEN0, ROW_INPUT_TOKEN1, 3, 3)
+
+
+@pytest.mark.parametrize(
+    ("row_cls", "field"),
+    [(row_cls, field) for row_cls, fields in ROW_INPUT_ADDRESS_FIELDS.items() for field in fields],
+)
+def test_row_input_constructor_rejects_a_malformed_address(
+    row_cls: RowInputClass,
+    field: str,
+) -> None:
+    """Every address field parses AT CONSTRUCTION, so a malformed address can
+    never reach an upsert batch as a partially-validated row."""
+    kwargs = {**ROW_INPUT_RECORDS[row_cls], field: "not-an-address"}
+
+    with pytest.raises(ValueError, match="Invalid address string"):
+        row_cls(**kwargs)
