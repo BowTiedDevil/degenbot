@@ -31,7 +31,7 @@ from degenbot.curve.types import (
 )
 
 if TYPE_CHECKING:
-    from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+    from degenbot.curve.types import BasePoolPort
     from degenbot.erc20 import Erc20Token
 
 
@@ -74,7 +74,7 @@ class StableswapPoolState:
     _admin_fee: int
     _rate_multipliers: tuple[int, ...]
     _precision_multipliers: tuple[int, ...]
-    _base_pool: CurveStableswapPool | None
+    _base_pool: BasePoolPort | None
     _tokens_underlying: tuple[Erc20Token, ...] | None
     _lp_token: Erc20Token
     _use_lending: tuple[bool, ...]
@@ -125,7 +125,7 @@ class StableswapPoolState:
         return self._precision_multipliers
 
     @property
-    def base_pool(self) -> CurveStableswapPool | None:
+    def base_pool(self) -> BasePoolPort | None:
         """Base pool."""
         return self._base_pool
 

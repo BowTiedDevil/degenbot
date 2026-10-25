@@ -74,12 +74,19 @@ class _AlloyBacked:
     """Structural base for the alloy mixins: the wrapped Rust provider.
 
     ``AlloyProvider`` owns construction and teardown; the mixins reach the
-    Rust pyclass only through these attributes.
+    Rust pyclass only through these attributes. ``rpc_url`` lives here as a
+    read-only property (not a bare annotation) so every mixin — including the
+    ones whose MRO excludes the endpoint mixin — resolves it, and so the
+    read-only shape is the declared contract.
     """
 
     _provider: RustAlloyProvider
-    rpc_url: str
     close: Callable[[], None]
+
+    @property
+    def rpc_url(self) -> str:
+        """The RPC URL."""
+        return self._provider.rpc_url
 
 
 class _AlloyEndpointMixin(_AlloyBacked):
@@ -88,11 +95,6 @@ class _AlloyEndpointMixin(_AlloyBacked):
     # =========================================================================
     # Properties
     # =========================================================================
-
-    @property
-    def rpc_url(self) -> str:
-        """The RPC URL."""
-        return self._provider.rpc_url
 
     @property
     def chain_id(self) -> int:

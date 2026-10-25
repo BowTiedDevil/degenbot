@@ -25,7 +25,11 @@ class AccountQueryHost(Protocol):
     _erc20_builder: Erc20Builder
     _io: BotIo
     chain_id: ChainId
-    provider: AlloyProvider
+
+    @property
+    def provider(self) -> AlloyProvider:
+        """The session provider (read-only on ``Bot``)."""
+        ...
 
 
 class AccountQueryMixin(AccountQueryHost):

@@ -92,12 +92,30 @@ class AerodromeV2PoolCalc:
     _token1: Erc20Token
     _fee: Fraction
 
-    # Attributes provided by the concrete pool class in the MRO
-    reserves_token0: int
-    reserves_token1: int
-    state: AerodromeV2PoolState
+    # Read-only views provided by the concrete pool class in the MRO (see
+    # UniswapV2PoolCalc for the rationale).
+    @property
+    def reserves_token0(self) -> int:
+        """Current token0 reserve (concrete pool provides)."""
+        raise NotImplementedError
+
+    @property
+    def reserves_token1(self) -> int:
+        """Current token1 reserve (concrete pool provides)."""
+        raise NotImplementedError
+
+    @property
+    def state(self) -> AerodromeV2PoolState:
+        """The pool's current state (concrete pool provides)."""
+        raise NotImplementedError
+
     tokens: tuple[Erc20Token, Erc20Token]
-    update_block: int
+
+    @property
+    def update_block(self) -> int:
+        """Block of the last state update (concrete pool provides)."""
+        raise NotImplementedError
+
     # Pool handle (set by the concrete AerodromeV2Pool companion in the MRO).
     # The volatile override read routes through it.
     _py_pool: Pool

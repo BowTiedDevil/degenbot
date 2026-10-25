@@ -32,10 +32,20 @@ class UniswapV4PoolCalc:
     # MRO-provided attributes (declared for type checking;
     # actual definitions live on V4PoolState and the pool class)
     tokens: tuple[Erc20Token, Erc20Token]
-    state: UniswapV4PoolState
     _token0: Erc20Token
     _token1: Erc20Token
-    fee: int
+
+    # Read-only views provided by the concrete pool class (see
+    # UniswapV2PoolCalc for the rationale).
+    @property
+    def state(self) -> UniswapV4PoolState:
+        """The pool's current state (concrete pool provides)."""
+        raise NotImplementedError
+
+    @property
+    def fee(self) -> int:
+        """The pool's fee (concrete pool provides)."""
+        raise NotImplementedError
 
     FEE_DENOMINATOR = 1_000_000
 

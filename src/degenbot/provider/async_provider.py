@@ -31,21 +31,25 @@ if TYPE_CHECKING:
 
 
 class _AsyncAlloyBacked:
-    """Structural base for the async alloy mixins: the wrapped Rust provider."""
+    """Structural base for the async alloy mixins: the wrapped Rust provider.
+
+    ``rpc_url`` lives here as a read-only property so every mixin — including
+    the ones whose MRO excludes the endpoint mixin — resolves it, and so the
+    read-only shape is the declared contract.
+    """
 
     _provider: RustAsyncAlloyProvider
-    rpc_url: str
+
+    @property
+    def rpc_url(self) -> str:
+        """The RPC endpoint URL."""
+        return self._provider.rpc_url
 
 
 class _AsyncAlloyEndpointMixin(_AsyncAlloyBacked):
     """Endpoint identity and chain-state scalars for ``AsyncAlloyProvider``."""
 
     # ----- Properties -----
-
-    @property
-    def rpc_url(self) -> str:
-        """The RPC endpoint URL."""
-        return self._provider.rpc_url
 
     @property
     def provider_type(self) -> str:

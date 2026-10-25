@@ -44,12 +44,32 @@ class UniswapV2PoolCalc:
     _fee_token0: Fraction
     _fee_token1: Fraction
 
-    # Attributes provided by the concrete pool class in the MRO
-    reserves_token0: int
-    reserves_token1: int
-    state: UniswapV2PoolState
+    # Read-only views provided by the concrete pool class in the MRO. Declared
+    # as properties because the concrete companions expose them read-only over
+    # Rust-owned state; a writable annotation would make every concrete
+    # read-only property an invalid override.
+    @property
+    def reserves_token0(self) -> int:
+        """Current token0 reserve (concrete pool provides)."""
+        raise NotImplementedError
+
+    @property
+    def reserves_token1(self) -> int:
+        """Current token1 reserve (concrete pool provides)."""
+        raise NotImplementedError
+
+    @property
+    def state(self) -> UniswapV2PoolState:
+        """The pool's current state (concrete pool provides)."""
+        raise NotImplementedError
+
     tokens: tuple[Erc20Token, Erc20Token]
-    update_block: int
+
+    @property
+    def update_block(self) -> int:
+        """Block of the last state update (concrete pool provides)."""
+        raise NotImplementedError
+
     # Pool handle (set by the concrete UniswapV2Pool companion in MRO).
     # Calc delegation routes the constant-product math through it — the
     # registered reads by direct delegation, the override reads through the

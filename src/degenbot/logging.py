@@ -94,8 +94,12 @@ class _LiveStdoutStreamHandler(logging.StreamHandler[TextIO]):
         # the stdlib precedent for exactly this shape.
         logging.Handler.__init__(self)
 
+    # ``StreamHandler`` declares ``stream`` as a writable attribute assigned in
+    # its ``__init__``; emit-time resolution needs a read-only property. This
+    # mirrors stdlib ``logging._StderrHandler``, which overrides the same
+    # attribute with a property — ty cannot model the stdlib's own shape.
     @property
-    def stream(self) -> TextIO:
+    def stream(self) -> TextIO:  # ty: ignore[invalid-property-type-override]
         current = sys.stdout
         if current is not None and not current.closed:
             return cast("TextIO", current)

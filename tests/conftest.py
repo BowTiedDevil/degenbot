@@ -33,7 +33,7 @@ from hypothesis import settings
 from degenbot._ffi import reinstall_config_holder_for_tests, shutdown_log_drainer
 from degenbot.bot import Bot
 from degenbot.fork import AnvilFork, ForkLaunchConfig
-from degenbot.logging import _LOG_LISTENER, _QUEUED_HANDLER, set_log_level
+from degenbot.logging import _LOG_LISTENER, _QUEUED_HANDLER, _STDOUT_HANDLER, set_log_level
 from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
 from tests.golden.recorded_pool import RecordedPool
 from tests.helpers.bot_factory import make_bot_with_provider
@@ -207,12 +207,24 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 
 @pytest.fixture(scope="session", autouse=True)
 def _set_degenbot_logging():
-    """Run the suite with Python-side DEBUG records visible on the console queue.
+    """Run the suite with loggers at DEBUG but a quiet console.
 
     ``set_log_level`` moves the package logger and the Rust-bridge loggers to
-    DEBUG, but a handler's own level is the ceiling every record passes at
-    ``callHandlers``: leaving the queued handler at INFO drops DEBUG before it
-    can be queued, so the handler must move with the loggers.
+    DEBUG, and the queued handler moves with them — its level is the ceiling
+    every record passes at ``callHandlers``, and the queue-visibility
+    contracts in ``tests/test_logging_level_ceiling.py`` and
+    ``tests/test_rust_logging_bridge.py`` pin DEBUG/INFO records reaching the
+    queue. Every record therefore still flows: ``caplog`` sees it, and those
+    contracts hold.
+
+    Console noise is gated one hop downstream: the queue listener's stdout
+    destination (``_STDOUT_HANDLER``, honored because the listener runs with
+    ``respect_handler_level=True``) defaults to ``WARNING`` for the test run,
+    so the deliberate sim-failure and fault-injection fixtures stop spraying
+    their ``INFO``/``DEBUG`` diagnostics while genuine ``WARN``/``ERROR``
+    lines stay visible. Set ``DEGENBOT_TEST_LOG_LEVEL`` (e.g. ``INFO`` or
+    ``DEBUG``) to reopen the full record stream on the console when
+    diagnosing a failing test.
 
     That covers the Python side only. The Rust ``tracing`` ``EnvFilter`` is the
     first gate and defaults to ``info`` for the Python driver, so Rust
@@ -221,6 +233,9 @@ def _set_degenbot_logging():
     """
     set_log_level(logging.DEBUG)
     _QUEUED_HANDLER.setLevel(logging.DEBUG)
+
+    console_level = os.environ.get("DEGENBOT_TEST_LOG_LEVEL", "WARNING").upper()
+    _STDOUT_HANDLER.setLevel(getattr(logging, console_level, logging.WARNING))
 
 
 # The harness's endpoint vocabulary: one row per (env-var name, default URI),

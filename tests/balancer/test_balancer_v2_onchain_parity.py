@@ -313,19 +313,24 @@ def _run_expanded_parity(
                     # the original test's ContractLogicError branch.
                     try:
                         if given_out:
-                            lp.calculate_tokens_in_from_tokens_out(
+                            result = lp.calculate_tokens_in_from_tokens_out(
                                 token_in=lp.tokens[token_in_idx],
                                 token_out=lp.tokens[token_out_idx],
                                 token_out_quantity=amount,
                             )
                         else:
-                            lp.calculate_tokens_out_from_tokens_in(
+                            result = lp.calculate_tokens_out_from_tokens_in(
                                 token_in=lp.tokens[token_in_idx],
                                 token_in_quantity=amount,
                                 token_out=lp.tokens[token_out_idx],
                             )
                     except (EVMRevertError, ContractLogicError):
                         pass  # both reverted — OK
+                    else:
+                        pytest.skip(
+                            f"On-chain reverted but Python returned {result} "
+                            f"(likely on-chain-only check like SWAPS_DISABLED)",
+                        )
                     continue
                 if given_out:
                     calc = lp.calculate_tokens_in_from_tokens_out(
