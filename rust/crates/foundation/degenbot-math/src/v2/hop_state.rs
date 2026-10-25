@@ -9,7 +9,7 @@
 //! The Möbius solver in `degenbot-bot` imports [`IntHopState`] from here and
 //! composes per-hop swaps into multi-hop arbitrage paths
 //! (`compute_int_mobius_coefficients`, `exact_mobius_solve`), which stay in
-//! the solver crate — only the primitive swap surface lives here.
+//! the solve tree — only the primitive swap surface lives here.
 
 use alloy::primitives::{U256, U512};
 

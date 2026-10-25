@@ -64,7 +64,7 @@ pub enum CaptureRefusal {
 
 /// The Balancer-weighted hop projection — everything one weighted hop
 /// contributes to a solve, derived purely from the family state slice. The
-/// substrate resolve row wraps this into the solver crate's hop vocabulary.
+/// substrate resolve row wraps this into the solve tree's hop vocabulary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BalancerWeightedHop {
     /// Balance of the input token (upscaled to 18-decimal fixed-point).
@@ -361,7 +361,7 @@ pub fn observe(state: &BalancerWeightedPoolState, probe: Observe) -> Observed {
 pub(crate) mod solve {
     //! The Balancer-weighted family module (ADR-071 D1).
     //!
-    //! GLOSSARY.md "Family module": the solver crate's single module owning
+    //! GLOSSARY.md "Family module": the solve tree's single module owning
     //! everything the Balancer V2 weighted hop family contributes to a solve and
     //! its bound.
     //!

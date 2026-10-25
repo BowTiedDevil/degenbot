@@ -203,7 +203,7 @@ machine). Source: `rust/crates/integrations/degenbot-ingestion/src/`
   rewind even though the block moves down); `ensure_current` fail-fasts stale
   contexts with `StaleEpoch`.
 - `bot_core/epoch_delta.rs` — `EpochDelta` (LXDY4C): the per-epoch touched-pool
-  ledger keyed by `AffectedKey` (`degenbot-solvers`), recorded as a byproduct of
+  ledger keyed by `AffectedKey` (`degenbot_pools::solve`), recorded as a byproduct of
   `Bot::dispatch_log`; `take_keys` is the drain's atomic consumption; a rewind
   RELABELS the ledger (`set_epoch`) and retains keys (solve-cursor state, not
   block-window state).

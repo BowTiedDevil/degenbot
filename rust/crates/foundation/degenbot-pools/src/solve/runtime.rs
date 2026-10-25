@@ -1,4 +1,4 @@
-//! The solver crate's injected runtime config: the
+//! The solve tree's injected runtime config: the
 //! tunables the perf campaign kept re-reading from the process environment
 //! become ONE plain-data config, packed by the outer owner and passed
 //! down through the call chain (the RUNTIME `OnceLock` is deleted;
@@ -17,7 +17,7 @@ pub enum AnchorSweep {
     Off,
 }
 
-/// The solver crate's runtime tunables. Defaults match the loop-17
+/// The solve tree's runtime tunables. Defaults match the loop-17
 /// production stances; the owner overrides at construction. The bool flags
 /// are deliberate — each names one rollout stance from the perf campaign
 /// (`clippy::struct_excessive_bools` accepted: a stance PACK is the point of

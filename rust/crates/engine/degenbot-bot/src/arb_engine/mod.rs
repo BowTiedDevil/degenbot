@@ -407,7 +407,7 @@ pub(crate) struct ArbitrageEngine {
     pub(crate) cfg: std::sync::Arc<::degenbot_config::BotConfig>,
     /// the instance solver runtime stance, built at construction from
     /// [`Self::cfg`] and threaded down into every solve cycle. Replaces the
-    /// solver crate's removed process-global RUNTIME `OnceLock`.
+    /// solve tree's removed process-global RUNTIME `OnceLock`.
     /// ADR-045 T4: the cycle owns its own copy.
     #[expect(dead_code)]
     runtime_cfg: ::degenbot_pools::solve::runtime::SolveRuntimeConfig,

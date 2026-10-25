@@ -17,7 +17,7 @@ partitions, the config-facet additions, and the test-surface pattern.
 | Layer | Owner | Notes |
 |---|---|---|
 | Pool state + identity values | `degenbot-pools` | `PoolEntry`, family states, `slot_layout` (the one location table) |
-| Solver math + envelopes | `degenbot-solvers` | value-only; no chain, no async; `SolveOutcome` carries the typed `Envelope` verdict to planning |
+| Solver math + envelopes | `degenbot-pools` (the `solve/` tree) | value-only; no chain, no async; `SolveOutcome` carries the typed `Envelope` verdict to planning |
 | Path enumeration primitive | `degenbot-pathfinding` | leaf `PathGraph` DFS; both discovery styles build on it |
 | Simulation engine | `degenbot-simulation` | `BlockSimHandle`, `ScratchEvm`, replay seam, journal extraction (V2/V3/V4) |
 | Command grammar | `degenbot-executor` | `encode_cmd_stream`, `EncodeRequest` |

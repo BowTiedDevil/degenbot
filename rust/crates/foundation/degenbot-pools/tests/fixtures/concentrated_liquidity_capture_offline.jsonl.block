@@ -1,2 +1,2 @@
 block=25879446
-regen: DEGENBOT_CLCAP_RPC=<rpc> DEGENBOT_CLCAP_BLOCK=25879446 DEGENBOT_CLCAP_MAX_FETCHES=320 cargo run -q -p degenbot-solvers --example concentrated_liquidity_capture_gen [-- <out.jsonl>]
+regen: DEGENBOT_CLCAP_RPC=<rpc> DEGENBOT_CLCAP_BLOCK=25879446 DEGENBOT_CLCAP_MAX_FETCHES=320 cargo run -q -p degenbot-rpc --example concentrated_liquidity_capture_gen [-- <out.jsonl>]

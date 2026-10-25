@@ -77,7 +77,7 @@ pub enum CaptureRefusal {
 
 /// The Curve stableswap hop projection — everything one Curve hop contributes
 /// to a solve, derived purely from the family state slice. The substrate
-/// resolve row wraps this into the solver crate's hop vocabulary.
+/// resolve row wraps this into the solve tree's hop vocabulary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CurveStableswapHop {
     /// `amp = a_coefficient * A_PRECISION` (Curve convention).
@@ -721,7 +721,7 @@ mod tests {
 pub(crate) mod solve {
     //! The Curve stableswap family module (ADR-071 D1).
     //!
-    //! GLOSSARY.md "Family module": the solver crate's single module owning
+    //! GLOSSARY.md "Family module": the solve tree's single module owning
     //! everything the Curve stableswap hop family contributes to a solve and its
     //! bound.
     //!

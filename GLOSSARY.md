@@ -479,18 +479,20 @@ and not math-leaf vocabulary.
 **Pool family axes**: two axes a species' family can live on — the **structural** axis (registry entry kind and state/delta shape: V2, Curve, Balancer meta/weighted/stable, concentrated liquidity) and the **behavioral** axis (math family: reserve-pair constant product, Curve, Balancer, Solidly — Camelot/Aerodrome stable — concentrated liquidity). They coincide for every species but two: Camelot-stable (V2-shaped entry, Solidly math) and Aerodrome-volatile (its own entry kind, reserve-pair math). **Reads route at the behavioral axis; state lives at the structural axis** — a `stable_swap` V2 entry reads through the Solidly door's Camelot arm with token scales carried at construction (ADR-003), never through constant-product math (ADR-073, ADR-059 D3).
 
 **Family module**:
-The solver crate's module owning everything one hop family contributes to a solve and
+The solve tree's module owning everything one hop family contributes to a solve and
 its bound: the gate projection (`to_math`), the V2-equivalent projection,
 the simulate triple, the solve entry (built on the shared golden template where the
 stable-family search applies), and the family's envelope lines (its rise line beside its
-cap, or a concentrated-liquidity family's tangent fan). One of the family's two homes — its read side lives
-in the **Family read module**, which defines the hop payload this module solves over.
+cap, or a concentrated-liquidity family's tangent fan). It is the nested
+`pub(crate) mod solve` inside the family's **Family read module** file (ADR-073
+amendment A5), so a family's read side and solve side are one file; that read module
+defines the hop payload this module solves over.
 The residual central sites are one dispatch row and one
 enum arm in each of `ResolvedHop` and `HopMath`; the shared kernels — the golden-section template,
 the integer-verification order, the envelope composition and caches — stay monomorphic and
 family-blind (ADR-059 D6).
-_Avoid_: a family's functions scattered across `mixed/mod.rs`, `mixed/solve.rs`, and
-`profit_envelope/derive.rs`; per-family copies of the search template.
+_Avoid_: a family's functions scattered across `solve/mixed/mod.rs`, `solve/mixed/solve.rs`,
+and `solve/profit_envelope/derive.rs`; per-family copies of the search template.
 
 **Family read module**:
 The foundation-layer module owning everything one hop family contributes to being read and
@@ -640,9 +642,10 @@ seam to produce the one prepared hop. The kernel carries no envelope vocabulary:
 `Line`, no verdict, no cap. The tangent fan is derived from the kernel's crossing tables
 by the family module's bound side, and the engine-owned fan cache stays borrowed, never
 owned. Home: `degenbot-math`'s `concentrated_liquidity` module (sibling of the `v2` and `balancer` leaves,
-ADR-035) once a second tier consumer reaches it; the solver crate's `concentrated_liquidity` tree until then.
+ADR-035) once a second tier consumer reaches it; the solve tree's `concentrated_liquidity`
+module until then.
 _Avoid_: a trait hierarchy over pools on the solve path; the kernel as an unowned tree
-inside the solver crate; envelope types inside the kernel; "concentrated-liquidity family" naming the kernel.
+under `degenbot-pools`; envelope types inside the kernel; "concentrated-liquidity family" naming the kernel.
 
 **Refine bound**:
 The walk-side refine-window bound in the kernel's own vocabulary: one affine upper bound on the

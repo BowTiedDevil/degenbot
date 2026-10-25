@@ -324,7 +324,7 @@ fn the_banned_tokens_are_still_the_families_leaves() {
         );
     }
     // The retired substrate wrapper names must not exist anywhere in the two
-    // central crates (exact names — the solvers crate's family-module entries
+    // central crates (exact names — the solve tree's family-module entries
     // legitimately carry `simulate_balancer_weighted_*` names and are NOT
     // these).
     let mut central_text = String::new();

@@ -1,8 +1,8 @@
 # degenbot-pools
 
-Value-only pool identity/state structs + stateless swap simulation for the degenbot pool families.
+Value-only pool identity/state structs, stateless swap simulation, and the multi-hop solve tree for the degenbot pool families.
 
-Value-only pool identity and state structs for every supported AMM topology (Uniswap V2/V3/V4, Curve, Balancer, Solidly family), plus the stateless swap-simulation entry points the solvers and engine drive.
+Value-only pool identity and state structs for every supported AMM topology (Uniswap V2/V3/V4, Curve, Balancer, Solidly family), plus the stateless swap-simulation entry points the solve tree and engine drive, and that solve tree itself (`solve/`: the family-blind kernels and one solve entry per family).
 
 ## Usage
 

@@ -8,7 +8,7 @@
 
 use super::{ArbitrageEngine, HashMap};
 use ::degenbot_pools::solve::mixed::{PoolHop, SolvePathResult};
-/// the solver crate's runtime stance is INSTANCE-SCOPED — built
+/// the solve tree's runtime stance is INSTANCE-SCOPED — built
 /// fresh per engine from the typed config and passed down; no `OnceLock`.
 #[must_use]
 pub(crate) fn solve_runtime_config_from_cfg(

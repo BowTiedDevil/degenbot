@@ -64,7 +64,7 @@ pub enum CaptureRefusal {
 
 /// The Balancer-stable hop projection — everything one stable hop contributes
 /// to a solve, derived purely from the family state slice. The substrate
-/// resolve row wraps this into the solver crate's hop vocabulary.
+/// resolve row wraps this into the solve tree's hop vocabulary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BalancerStableHop {
     /// Amplification coefficient `amp` (deployed convention, includes
@@ -524,7 +524,7 @@ mod tests {
 pub(crate) mod solve {
     //! The Balancer-stable family module (ADR-071 D1).
     //!
-    //! GLOSSARY.md "Family module": the solver crate's single module owning
+    //! GLOSSARY.md "Family module": the solve tree's single module owning
     //! everything the Balancer V2 stable (`StableSwap` invariant) hop family
     //! contributes to a solve and its bound.
     //!

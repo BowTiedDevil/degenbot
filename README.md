@@ -1654,7 +1654,7 @@ exhaustive build.
 | Workspace defaults | Every workspace member with its declared default features; no `--all-features` | `just lint-rust-check` or `just check-rust-default` |
 | Pure-Rust consumer | `degenbot` and its examples, with the umbrella's defaults and no PyO3 binding | `just check-rust-consumer` |
 | Binding defaults | `degenbot_rs` with its broad default domain features, without `extension-module` | `just check-rust-binding-default` |
-| Development wheel | `extension-module`, `degenbot-bot/hotpath`, `degenbot-bot/hotpath-prometheus`, `degenbot-solvers/hotpath`, `degenbot-bot/allocator-ctrl`, `otel`, and `mimalloc`; the recipe adds `RUSTFLAGS=--cfg tokio_unstable` for full Tokio runtime metrics | `just check-rust-dev-features` |
+| Development wheel | `extension-module`, `degenbot-bot/hotpath`, `degenbot-bot/hotpath-prometheus`, `degenbot-pools/hotpath`, `degenbot-bot/allocator-ctrl`, `otel`, and `mimalloc`; the recipe adds `RUSTFLAGS=--cfg tokio_unstable` for full Tokio runtime metrics | `just check-rust-dev-features` |
 | Release wheel | `extension-module` (forwards to `pyo3/extension-module`) plus `degenbot_rs` defaults; no dev-only profiling, telemetry, allocator-control, or mimalloc features | `just check-rust-extension-release` or `just build-rust-extension` |
 | Diagnostic | Workspace `--all-features`, including test-only and mutually exclusive variants | `just check-rust-all-features` |
 

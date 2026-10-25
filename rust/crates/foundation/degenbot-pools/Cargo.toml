@@ -1,6 +1,6 @@
 [package]
 name = "degenbot-pools"
-description = "Value-only pool identity/state structs + stateless swap simulation for the degenbot pool families."
+description = "Value-only pool identity/state structs, stateless swap simulation, and the multi-hop solve tree for the degenbot pool families."
 keywords = ["mev", "pools", "uniswap", "swap"]
 version.workspace = true
 edition.workspace = true

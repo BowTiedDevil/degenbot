@@ -230,7 +230,7 @@ pub(crate) struct SolveCycleShared {
     /// static read.
     pub(crate) clamp_margin: U256,
     /// the instance-scoped solver runtime stance, threaded down —
-    /// the solver crate has no process-global config anymore.
+    /// the solve tree has no process-global config anymore.
     pub(crate) runtime: ::degenbot_pools::solve::runtime::SolveRuntimeConfig,
     /// Every per-path cost sink — the pipeline instruments, the K-slowest
     /// retention, the two capture hooks, and the next-cycle LPT cost history —

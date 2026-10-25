@@ -208,7 +208,7 @@ impl PathCostLedger {
         // The Q3 dense one-shot alert: the first path whose concentrated liquidity walk crossed the
         // dense-word threshold logs once per process (harvest a real capture).
         // Same latch + threshold as the retired walk-side check; the threshold
-        // constant stays in the solver crate.
+        // constant stays in the solve tree.
         if ws.max_dense_words
             >= ::degenbot_pools::solve::concentrated_liquidity::DENSE_OBSERVE_THRESHOLD
             && !DENSE_ALERTED.swap(true, std::sync::atomic::Ordering::Relaxed)

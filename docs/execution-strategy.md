@@ -42,7 +42,7 @@ There is **one** seam — `degenbot-execution` — and two ways to reach it:
   # Cargo.toml
   degenbot-execution = "0.x"   # the seam (PayloadComposer, ExecutionAdapter, Probe/Assess/Fee types)
   degenbot-executor = "0.x"    # PathInfo / HopInfo hop descriptors
-  degenbot-solvers = "0.x"     # the solve result type (SolvePathResult)
+  degenbot-pools = "0.x"       # the solve result type (SolvePathResult)
   ```
   A complete, green reference is the `degenbot-execution-sample` crate in this
   repo — a foreign `SimpleExecutor` strategy wiring all four parts, with its

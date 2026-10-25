@@ -772,7 +772,7 @@ mod tests {
 pub(crate) mod solve {
     //! The Solidly family module (ADR-071 D1).
     //!
-    //! GLOSSARY.md "Family module": the solver crate's single module owning
+    //! GLOSSARY.md "Family module": the solve tree's single module owning
     //! everything the Solidly/Aerodrome/Camelot hop family contributes to a solve
     //! and its bound.
     //!

@@ -63,7 +63,7 @@ The outward API lives in `crates/facade/`; user-facing adaptations live in
 
 ### Engine crates
 
-`crates/engine/` owns the MEV lifecycle: state, strategy, solve, simulate,
+`crates/engine/` owns the MEV lifecycle: state, strategy, simulate,
 compose, and submit. These crates are stateful or coordinate multiple
 foundation capabilities.
 
@@ -73,7 +73,6 @@ foundation capabilities.
 | `degenbot-strategy` | Strategy vocabulary, host, and concrete executable strategy compositions. |
 | `degenbot-arbitrage` | Settlement-arbitrage searcher policy: pre/post balance checks, profit and priority-fee policy, and dispatch categorization. |
 | `degenbot-simulation` | The generic in-process revm executor and simulation dispatch. It does not own searcher-specific policy. |
-| `degenbot-solvers` | Value-only multi-hop solve math over injected hop state. |
 | `degenbot-execution` | The user-owned execution-adapter seam and its value/protocol types; it ships no default strategy. |
 | `degenbot-submission` | EIP-1559 signing, fee finalization, and typed transaction envelopes. |
 | `degenbot-workers` | Worker-role state machine, budget authority, priority dispatch, and cordon posture. |
@@ -110,7 +109,7 @@ meaningful without a complete bot runtime.
 | `degenbot-abi` | ABI types, encode/decode, and function-signature parsing. |
 | `degenbot-decoders` | Uniswap V2/V3/V4 event-log decoding. |
 | `degenbot-math` | Canonical AMM invariant math for V2, concentrated liquidity, Curve, Balancer, and Solidly families. |
-| `degenbot-pools` | Value-only pool identity/state and stateless swap simulation. |
+| `degenbot-pools` | Value-only pool identity/state, stateless swap simulation, and the family-blind multi-hop solve tree (`solve/` — the golden-section kernel, the integer-verification Möbius order, and the profit-envelope gate). |
 | `degenbot-uniswap` | Uniswap protocol identity presets and V2 swap calldata encoding. |
 | `degenbot-rpc` | Ethereum provider, contract interfaces, and subscription core. |
 | `degenbot-db` | Rust-owned SQLite schema, migrations, file operations, and persistence substrate. |
@@ -210,10 +209,10 @@ The direct-overlap decisions are intentional:
   Alloy/Arkworks and test/crypto stacks require 0.8/0.9, while upstream
   `tungstenite` 0.30 and QUIC also require 0.10. A direct downgrade would change
   source-facing traits without collapsing the resolved family.
-- `degenbot-solvers` exposes `num-bigint` 0.5 types in public coefficient
-  structs. Arkworks/revm retain 0.4; downgrading the solver would change its
-  public type identity and requires separate numerical-behavior validation, so it
-  is not a graph-only cleanup.
+- `degenbot-pools`' solve tree (`solve/mobius_shifted_piece.rs`) exposes
+  `num-bigint` 0.5 `BigInt` coefficients in a public struct. Arkworks/revm retain
+  0.4; downgrading the solver would change that public type identity and requires
+  separate numerical-behavior validation, so it is not a graph-only cleanup.
 - `sha2` 0.11 is a development-only artifact check; Alloy/revm retain 0.10 and
   revm also uses 0.11. The direct WebSocket 0.30 choice coexists with Alloy's
   upstream 0.29 requirement; this audit demonstrated no measured feature,
@@ -269,8 +268,9 @@ select or forward it, but must not duplicate its gate list.
   `degenbot-rpc/test-utils` and `degenbot-fork/test-utils`.
 - Performance and telemetry switches belong to their implementation crates:
   `degenbot-bot` owns hotpath, allocator-control, OpenTelemetry, and Prometheus
-  features; `degenbot-solvers` owns hotpath/telemetry features; `degenbot-runs`
-  owns its tracing feature; `degenbot-order-index` owns its envelope feature.
+  features; `degenbot-pools` owns the solve tree's hotpath/telemetry features;
+  `degenbot-runs` owns its tracing feature; `degenbot-order-index` owns its
+  envelope feature.
 - `degenbot/otel` is a narrow passthrough to `degenbot-bot/otel`, so the
   feature is reachable from the external product facade.
 - `degenbot_rs` owns Python domain selection, `extension-module`, PyO3
@@ -291,7 +291,7 @@ oracles have one shared source of truth.
 
 - **Crate-local behavior:** put a fixture under that crate's
   `tests/fixtures/`. Examples include solver captures under
-  `degenbot-solvers`, strategy frame captures under `degenbot-strategy`, and
+  `degenbot-pools`, strategy frame captures under `degenbot-strategy`, and
   observability snapshots under `degenbot-bot`.
 - **Rust/Python or umbrella parity:** put a shared oracle under
   `tests/standalone_parity/fixtures/` or `tests/fixtures/`, then have both
@@ -346,7 +346,7 @@ samples, and `--workspace` when a command must cover every member.
 
 The development-wheel feature list is exactly `extension-module`,
 `degenbot-bot/hotpath`, `degenbot-bot/hotpath-prometheus`,
-`degenbot-solvers/hotpath`, `degenbot-bot/allocator-ctrl`, `otel`, and
+`degenbot-pools/hotpath`, `degenbot-bot/allocator-ctrl`, `otel`, and
 `mimalloc`. Release wheels retain `degenbot_rs` defaults and
 `pyo3/extension-module`; they exclude development-only profiling,
 telemetry, allocator-control, and allocator-selection features.

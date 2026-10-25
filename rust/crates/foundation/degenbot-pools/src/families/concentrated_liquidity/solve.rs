@@ -1,6 +1,6 @@
 //! The concentrated-liquidity family module (ADR-071 D1/D2).
 //!
-//! GLOSSARY.md "Family module": the solver crate's single module owning
+//! GLOSSARY.md "Family module": the solve tree's single module owning
 //! everything the concentrated liquidity hop family contributes to a solve
 //! and its bound. concentrated liquidity is the extreme case: V3 and V4
 //! share one solve (ADR-069), so both project to the same gate view and walk

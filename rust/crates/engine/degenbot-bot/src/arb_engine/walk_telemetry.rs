@@ -354,7 +354,7 @@ mod tests {
 
     /// Solve the fixture once against the memo: the entry probes under
     /// `active()` (the only outside-reachable probe/store drive — probe,
-    /// `note_cost`, store are `pub(super)` in the solvers crate), so one call
+    /// `note_cost`, store are `pub(super)` in the solve tree), so one call
     /// is exactly one probe + one cache consult + a commit.
     fn solve_once(memo: &WalkMemo, prepared: &PreparedConcentratedLiquidityHop) {
         let cfg = SolveRuntimeConfig::default();

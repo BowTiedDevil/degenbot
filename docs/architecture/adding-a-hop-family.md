@@ -24,7 +24,8 @@ shape. The eight-site checklist stays superseded (see the appendix).
 
 This is the implementer's conductor for the new shape, written from the code that
 exists: every anchor below is a `file:line` copied from the tree, relative to
-`rust/crates/engine/degenbot-solvers`. The *why* behind each obligation — the
+`rust/crates/foundation/degenbot-pools/src` (bare `<family>.rs` names live in
+`families/`, and `concentrated_liquidity/` is that family's tree). The *why* behind each obligation — the
 concavity derivations, the measured allowances, the counterexamples, the
 drift-net methodology — lives in
 [the stableswap gate-bounds and solve-method evaluation](stableswap-gate-bounds-and-solve-method-evaluation.md);
@@ -38,7 +39,7 @@ read half teaches the REGISTRY how the family is read, applied, and resolved.
 Both halves are one family, two homes (ADR-073 D1): the **family read module**
 in `rust/crates/foundation/degenbot-pools/src/families/<family>.rs` (or a tree
 when the family has two designs — `concentrated_liquidity/{mod,v3,v4}.rs` is
-the template), and the **family module** of §2 in `degenbot-solvers`.
+the template), and the **family module** of §2 — the nested `pub(crate) mod solve` inside that same file.
 
 The landed census for the read half — everything a new family touches, and
 nothing else:
@@ -100,71 +101,72 @@ tree-shared `balance_vector.rs` event vocabulary beside them),
 
 ## 1. The change census
 
-One new file in `rust/crates/engine/degenbot-solvers` — `src/mixed/families/<family>.rs`,
-registered in the family tree `src/mixed/families/mod.rs:4` — plus the residual
+One new file in `rust/crates/foundation/degenbot-pools` — `src/families/<family>.rs`,
+carrying its own nested `pub(crate) mod solve`, registered in the family tree
+`src/families/mod.rs:22-29` — plus the residual
 central sites ADR-071 D4 permits: one `HopType` variant (and its `HopType::ALL`
 entry), one `ResolvedHop` arm, one `HopMath` arm, and one `FAMILY_DISPATCH` row.
-The glossary gains one entry per new concept. The five landed modules are the
-template: `concentrated_liquidity.rs`, `solidly.rs`, `balancer_weighted.rs`, `balancer_stable.rs`,
-and `curve_stableswap.rs` under `src/mixed/families/`.
+The glossary gains one entry per new concept. The landed modules are the
+template: `concentrated_liquidity/` (a tree — its solve half is `solve.rs`), `solidly.rs`,
+`balancer_weighted.rs`, `balancer_stable.rs`, and `curve_stableswap.rs`, under `src/families/`.
 
 ## 2. The family module — the export surface
 
-One module owns everything the family contributes to a solve and its bound
+The family's nested `pub(crate) mod solve` owns everything the family contributes to a solve and its bound
 (GLOSSARY.md "Family module"). Its exports are:
 
 - **the state slice** — the family's resolved state, carried by the `ResolvedHop`
-  variant: `SolidlyHopState` (`src/mixed/families/solidly.rs:57`),
-  `BalancerWeightedHopState` (`balancer_weighted.rs:44`), `BalancerStableHopState`
-  (`balancer_stable.rs:38`), `CurveStableswapHopState` (`curve_stableswap.rs:39`).
+  variant: `SolidlyHopState` (`src/families/solidly.rs:829`),
+  `BalancerWeightedHopState` (`balancer_weighted.rs:407`), `BalancerStableHopState`
+  (`balancer_stable.rs:564`), `CurveStableswapHopState` (`curve_stableswap.rs:762`).
 - **the gate projection `to_math`** — the family's `ResolvedHop -> Option<HopMath>`
-  arm, registered on the row: `solidly_to_math` (`solidly.rs:84`),
-  `weighted_to_math` (`balancer_weighted.rs:69`), `stable_to_math`
-  (`balancer_stable.rs:63`), `curve_to_math` (`curve_stableswap.rs:73`),
-  `concentrated_liquidity_to_math` (`concentrated_liquidity.rs:46`).
+  arm, registered on the row: `solidly_to_math` (`solidly.rs:856`),
+  `weighted_to_math` (`balancer_weighted.rs:432`), `stable_to_math`
+  (`balancer_stable.rs:589`), `curve_to_math` (`curve_stableswap.rs:796`),
+  `concentrated_liquidity_to_math` (`concentrated_liquidity/solve.rs:48`).
 - **the V2-equivalent projection** — the Möbius profitability precheck the shared
-  template consumes: `solidly_hop_v2_equiv` (`solidly.rs:167`),
-  `balancer_weighted_hop_v2_equiv` (`balancer_weighted.rs:134`),
-  `balancer_stable_hop_v2_equiv` (`balancer_stable.rs:119`),
-  `curve_hop_v2_equiv` (`curve_stableswap.rs:130`).
+  template consumes: `solidly_hop_v2_equiv` (`solidly.rs:939`),
+  `balancer_weighted_hop_v2_equiv` (`balancer_weighted.rs:497`),
+  `balancer_stable_hop_v2_equiv` (`balancer_stable.rs:645`),
+  `curve_hop_v2_equiv` (`curve_stableswap.rs:853`).
 - **the simulate triple** — path / path-outputs / single-hop over the family's
-  real math leaf: `simulate_solidly_path` (`solidly.rs:192`) /
-  `simulate_solidly_path_outputs` (`:205`) / `simulate_solidly_hop` (`:230`), and
-  the weighted (`balancer_weighted.rs:158` / `:166` / `:194`), stable
-  (`balancer_stable.rs:140` / `:146` / `:167`), and Curve
-  (`curve_stableswap.rs:151` / `:157` / `:178`) triples below them.
+  real math leaf: `simulate_solidly_path` (`solidly.rs:964`) /
+  `simulate_solidly_path_outputs` (`:977`) / `simulate_solidly_hop` (`:1002`), and
+  the weighted (`balancer_weighted.rs:521` / `:529` / `:557`), stable
+  (`balancer_stable.rs:666` / `:672` / `:695`), and Curve
+  (`curve_stableswap.rs:874` / `:880` / `:901`) triples below them.
 - **the solve entry** — the family's path-level solve, registered on the row: the
-  dispatch-row adapter (`solve_solidly_entry` `solidly.rs:122`) over the family's
-  own search (`solve_solidly_path_int` `:139`), built on the shared golden
-  template `solve_golden_section_path_int` (`src/mixed/solve.rs:497`) where the
+  dispatch-row adapter (`solve_solidly_entry` `solidly.rs:894`) over the family's
+  own search (`solve_solidly_path_int` `:911`), built on the shared golden
+  template `solve_golden_section_path_int` (`src/solve/mixed/solve.rs:545`) where the
   stable-family search applies. The template's family-specific parts enter as two
   closures (`simulate`, `simulate_outputs`); the ±3 integer-verification order
-  (`verify_best` `:576`, `ascending_sweep` `:608`) is shared by every arm, not a
+  (`verify_best` `:624`, `ascending_sweep` `:656`) is shared by every arm, not a
   per-family choice. A family whose search genuinely differs does not reuse the
   template — but it must still own the whole search (precheck, bracket, refine,
   verify), never a fragment.
 - **the envelope lines** — the family's line builder, registered on the row:
-  `solidly_hop_lines` (`solidly.rs:280`) delegating to `solidly_stable_lines`
-  (`:372`) / `solidly_stable_rise` (`:420`); `weighted_hop_lines`
-  (`balancer_weighted.rs:228`) / `weighted_lines` (`:261`);
-  `balancer_stable_hop_lines` (`balancer_stable.rs:195`) /
-  `stableswap_concave_at` (`:250`) / `balancer_stable_lines` (`:329`) /
-  `balancer_stable_rise` (`:371`); `curve_hop_lines` (`curve_stableswap.rs:213`) /
-  `curve_stableswap_lines` (`:247`).
+  `solidly_hop_lines` (`solidly.rs:1052`) delegating to `solidly_stable_lines`
+  (`:1144`) / `solidly_stable_rise` (`:1192`); `weighted_hop_lines`
+  (`balancer_weighted.rs:591`) / `weighted_lines` (`:624`);
+  `balancer_stable_hop_lines` (`balancer_stable.rs:723`) /
+  `stableswap_concave_at` (`:778`) / `balancer_stable_lines` (`:857`) /
+  `balancer_stable_rise` (`:899`); `curve_hop_lines` (`curve_stableswap.rs:936`) /
+  `curve_stableswap_lines` (`:970`).
 
 Concentrated liquidity is the extreme case: V3 and V4 share one solve (ADR-069), so `concentrated_liquidity.rs` owns
-`ConcentratedLiquidityHop` (`concentrated_liquidity.rs:37`), the walkable-path entry `solve_walkable_path_int` (`:84`),
-and the tangent-fan builder `concentrated_liquidity_hop_lines` (`:463`). It also owns `refine_bounds`
-(`:62`), the seam that translates the envelope's composed lines into the kernel's
+`ConcentratedLiquidityHop` (`concentrated_liquidity/solve.rs:39`), the walkable-path entry `solve_walkable_path_int` (`:86`),
+and the tangent-fan builder `concentrated_liquidity_hop_lines` (`:466`). It also owns `refine_bounds`
+(`:64`), the seam that translates the envelope's composed lines into the kernel's
 own refine-window vocabulary (`RefineBound`, `src/concentrated_liquidity/window.rs:18`) — the kernel
 names no envelope type.
 
 ## 3. The dispatch row — the row IS the registration
 
-`src/mixed/solve.rs` holds only the shared kernels plus the table. Add a
-`FamilyRow` (`:178`) whose four fn pointers (`solve`, `to_math`, `lines`,
+`src/solve/mixed/solve.rs` holds only the shared kernels plus the table. Add a
+`FamilyRow` (`:216`) whose four fn pointers (`solve`, `to_math`, `lines`,
 `label`) point at the family module's exports, and register it in the ordered
-`FAMILY_DISPATCH` (`:203`). Add **two** rows, in order:
+`FAMILY_DISPATCH` (`:241`). Add **two** rows, in order:
 
 - a narrow accept row `allowed: Some(&[HopType::V2, <Family>])` /
   `required: Some(<Family>)` selecting the family's entry;
@@ -174,8 +176,8 @@ names no envelope type.
 
 The order is load-bearing, not cosmetic: the narrow row sits above the wide
 refusal, and both above the mixed walk. A path is classified once by the SET of
-hop families present (`family_row`, `:320`), and a single hop's row is looked up
-by `family_row_for` (`:336`); both are set-membership tests against the table —
+hop families present (`family_row`, `:358`), and a single hop's row is looked up
+by `family_row_for` (`:374`); both are set-membership tests against the table —
 never a per-call if-chain.
 
 ## 4. The residual central sites — one enum arm per enum, one ALL entry
@@ -183,32 +185,32 @@ never a per-call if-chain.
 ADR-071 D4 permits exactly three residual central sites plus the `HopType`
 variant and its `ALL` entry:
 
-- **one `HopType` variant** (`src/mixed/mod.rs:58`) with a doc comment stating
+- **one `HopType` variant** (`src/solve/mixed/mod.rs:59`) with a doc comment stating
   the invariant and whether the family is concentrated-liquidity, and **one
-  `HopType::ALL` entry** (`:89`). `Ord` is the discriminant order, used only for
+  `HopType::ALL` entry** (`:90`). `Ord` is the discriminant order, used only for
   deterministic key sorting (`AffectedKey`), so append rather than reorder.
-  `is_concentrated_liquidity` (`:103`) needs no arm unless the family is concentrated liquidity.
-- **one `ResolvedHop` arm** (`:201`) plus its `hop_type()` arm (`:232`); add the
-  variant to the four non-concentrated-liquidity accessor `None` arms (`as_int_sequence` `:255`,
-  `as_word_profiles` `:271`, `as_crossing_table` `:286`, `as_prepared_concentrated_liquidity_hop`
-  `:300`). Add a family accessor (mirror `as_solidly_state` `:313`) only when a
+  `is_concentrated_liquidity` (`:104`) needs no arm unless the family is concentrated liquidity.
+- **one `ResolvedHop` arm** (`:202`) plus its `hop_type()` arm (`:237`); add the
+  variant to the four non-concentrated-liquidity accessor `None` arms (`as_int_sequence` `:260`,
+  `as_word_profiles` `:276`, `as_crossing_table` `:293`, `as_prepared_concentrated_liquidity_hop`
+  `:307`). Add a family accessor (mirror `as_solidly_state` `:322`) only when a
   caller needs one — the Balancer and Curve variants carry none and are matched
   directly at their use sites.
-- **one `HopMath` arm** (`src/profit_envelope/derive.rs:29`) plus the one-line
-  delegation in `HopMath::family_row()` (`:176`), which maps the arm to its
-  `family_row_for` lookup. `HopMath::lines` (`:194`) and `family_label` (`:208`)
+- **one `HopMath` arm** (`src/solve/profit_envelope/derive.rs:31`) plus the one-line
+  delegation in `HopMath::family_row()` (`:178`), which maps the arm to its
+  `family_row_for` lookup. `HopMath::lines` (`:196`) and `family_label` (`:210`)
   then read straight off the returned row, so the labelling site (`family_label`,
-  consumed by the degenerate-path capture row `capture.rs:65` and the gate's
-  diagnostic `gate.rs:956`) stays single.
+  consumed by the degenerate-path capture row `solve/profit_envelope/capture.rs:65` and the gate's
+  diagnostic `solve/profit_envelope/gate.rs:961`) stays single.
 
 The pin is the acceptance surface for this exhaustiveness. `expected_entry`
-(`src/mixed/solve.rs:754`) is a wildcard-free `match` over `HopType`, so a new
+(`src/solve/mixed/solve.rs:853`) is a wildcard-free `match` over `HopType`, so a new
 variant fails compilation of the test until its registration is named;
-`assert_all_variants_listed` (`:790`) then counts `HopType::ALL` against the same
+`assert_all_variants_listed` (`:906`) then counts `HopType::ALL` against the same
 or-pattern, so a variant left out of — or duplicated in — `ALL` fails the count.
 **That is why a new family needs its `HopType::ALL` entry: the pin iterates
 `ALL`, so a variant missing from `ALL` escapes the pin entirely.** The test
-`family_dispatch_table_selects_the_row_the_old_ladder_selected` (`:826`) then
+`family_dispatch_table_selects_the_row_the_old_ladder_selected` (`:942`) then
 asserts, per variant, that the row registers the exact `to_math` / `lines` /
 `solve` fn the family owns — positive identity, so a dropped row, a refusal stub,
 or a cross-wired builder fails.
@@ -222,11 +224,11 @@ Every family decides two things, and both are load-bearing for the bound:
    property of concave functions), so the family gets an entry-tangent rise
    beside its reserve cap — as Solidly stable and Balancer weighted do, and
    Balancer stable does wherever its closed-form curvature test
-   (`stableswap_concave_at`, `balancer_stable.rs:250`) holds. If the curve is not
+   (`stableswap_concave_at`, `balancer_stable.rs:778`) holds. If the curve is not
    concave, the family keeps the **reserve-cap bound alone** — the entry tangent
    would under-cut a real leaf and skip a profitable path. Curve stableswap is
    the measured counterexample: its out-curve was MEASURED non-concave
-   (`curve_stableswap_lines`, `curve_stableswap.rs:247`). The derivations and
+   (`curve_stableswap_lines`, `curve_stableswap.rs:970`). The derivations and
    counterexamples are in
    [the evaluation doc §1 and §4](stableswap-gate-bounds-and-solve-method-evaluation.md#1-solidly-stable-the-output-curve-is-concave-so-the-gate-carries-its-entry-tangent).
 
@@ -251,8 +253,8 @@ families with accessors; the rest carry none.
   family's real math leaf, never a reimplementation. One generic harness owns the
   shape strategy, the dense log-grid sweep, the point-wise dominance assertion,
   the counters, and the telemetry (`tests/profit_envelope_tests.rs`: the
-  `DominanceFamily` trait `:1168`, `dominance_case` `:1221`, `run_dominance_suite`
-  `:1300`); a family supplies only its shape strategy, its hop view, and its leaf
+  `DominanceFamily` trait `:1171`, `dominance_case` `:1224`, `run_dominance_suite`
+  `:1303`); a family supplies only its shape strategy, its hop view, and its leaf
   oracle. The run asserts non-vacuity floors on four counters — `shapes`,
   `asserts`, `rise_active`, and `guard_fired` — so a strategy that quietly stopped
   drawing the wide matrix fails rather than passes silently.
@@ -273,8 +275,8 @@ families with accessors; the rest carry none.
 
 ## 7. Worked checklist
 
-1. Create `src/mixed/families/<family>.rs` and register it in
-   `src/mixed/families/mod.rs` (§2). Move the family's state slice, `to_math`,
+1. Create `src/families/<family>.rs` (its own nested `pub(crate) mod solve` carries the
+   solve half) and register it in `src/families/mod.rs` (§2). Move the family's state slice, `to_math`,
    V2-equivalent projection, simulate triple, solve entry, and envelope lines in
    **byte-identical** (ADR-071 D5).
 2. Add the `HopType` variant, its doc comment, and its `HopType::ALL` entry (§4).

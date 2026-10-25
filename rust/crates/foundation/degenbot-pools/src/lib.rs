@@ -1,5 +1,5 @@
-//! Value-only pool identity/state structs + stateless swap simulation for the
-//! degenbot pool families — pure-Rust, `pyo3`-free.
+//! Value-only pool identity/state structs, stateless swap simulation, and the
+//! multi-hop solve tree for the degenbot pool families — pure-Rust, `pyo3`-free.
 //!
 //! This crate owns the **pure-data, pure-math** layer of the pool subsystem:
 //! the per-family `*PoolIdentity` / `*PoolState` value structs, the
@@ -9,6 +9,14 @@
 //! simulators (`v3_simulate_swap`, `v4_simulate_swap`, the V2 constant-product
 //! dispatch, and the Curve/Balancer sims) that compute a swap outcome purely
 //! from in-memory pool state with no chain / registry / async / tokio.
+//!
+//! The [`solve`] tree is the same bargain applied to arbitrage: the
+//! family-blind kernels (the golden-section template, the integer-verification
+//! Möbius order, the profit-envelope gate and its caches) plus one solve entry
+//! per family, all value-in / value-out over resolved hop state — no chain,
+//! registry, async, or tokio. It is the ADR-073 endgame re-home of the dissolved
+//! `degenbot-solvers` crate; the `degenbot` umbrella keeps the `solvers` name as
+//! a re-export of [`solve`].
 //!
 //! Nothing here performs I/O. The I/O-shaped *interface* traits
 //! (`TickWordFetcher`, `CurveDataProvider`, `BalancerRateProvider`) are defined
@@ -23,9 +31,9 @@
 //!
 //! > *Given all pool state in memory, can this compute deterministically with
 //! > no chain / registry / async / tokio?* **Yes →** this crate
-//! > (`degenbot-pools`). **No →** `degenbot-bot` (the `Bot`/`BotState` registry,
-//! > the block pump, the reorg *coordinator*, the fetch-retry shells, the
-//! > RPC/DB trait impls, the engine, the solvers).
+//! > (`degenbot-pools`, its solve tree included). **No →** `degenbot-bot` (the
+//! > `Bot`/`BotState` registry, the block pump, the reorg *coordinator*, the
+//! > fetch-retry shells, the RPC/DB trait impls, the engine).
 //!
 //! Concretely, the `BotState::simulate_swap_with_override` retry shell stays
 //! in `degenbot-bot`: it looks up `self.pools.get(id)` (`PoolEntry`), calls the
@@ -42,7 +50,7 @@
 //! submodules, inside the engine crate. That stranded standalone-usable pool
 //! *data* and pool-family *swap math* inside the bot's I/O/registry surface —
 //! a `cargo add degenbot` consumer wanting pool state + swap sims pulled the
-//! engine, the block pump, RPC clients, and the solvers. Moving the value-only
+//! engine, the block pump, and RPC clients. Moving the value-only
 //! layer out gives a clean Rust core that a standalone consumer (or the
 //! `degenbot` umbrella) can depend on without the I/O umbrella, while
 //! `degenbot-bot`'s `BotState` becomes a thin registry-lookup wrapper that
@@ -68,6 +76,9 @@
 //!   `TokenEntry` + `Register*Pool{Params,Error}`
 //! - **stateless swap sims** (`v3_simulate_swap`, `v4_simulate_swap`,
 //!   `SimulateSwapError`, `V3SwapOutcome`, the V2/Curve/Balancer dispatch)
+//! - **the solve tree** ([`solve`]: the family-blind kernels — golden-section
+//!   template, integer-verification Möbius order, profit-envelope composition and
+//!   caches — plus one solve entry per family module)
 
 pub mod aerodrome_v2_state;
 pub mod balancer_stable_state;
