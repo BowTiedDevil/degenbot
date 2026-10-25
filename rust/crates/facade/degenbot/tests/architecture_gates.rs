@@ -2005,33 +2005,7 @@ fn capability_catalog_covers_every_public_crate() {
     );
 
     // Publishable workspace members (publish != []).
-    let mut publishable = std::collections::BTreeSet::<String>::default();
-    let mut manifest_of = std::collections::BTreeMap::<String, String>::default();
-    let out = Command::new("cargo")
-        .arg("metadata")
-        .arg("--format-version")
-        .arg("1")
-        .arg("--manifest-path")
-        .arg(manifest_flag())
-        .arg("--no-deps")
-        .output()
-        .expect("cargo metadata spawn");
-    assert!(out.status.success(), "cargo metadata failed");
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("cargo metadata json");
-    for package in v["packages"].as_array().expect("packages array") {
-        let name = package["name"].as_str().expect("name").to_owned();
-        if package["publish"].as_array().is_some() {
-            continue; // publish = [] -> unpublishable
-        }
-        publishable.insert(name.clone());
-        manifest_of.insert(
-            name,
-            package["manifest_path"]
-                .as_str()
-                .expect("manifest")
-                .to_owned(),
-        );
-    }
+    let (publishable, manifest_of) = publishable_members();
     assert!(!publishable.is_empty(), "cargo metadata found no members");
 
     // Homes named by the catalog.
@@ -2069,25 +2043,12 @@ fn capability_catalog_covers_every_public_crate() {
          (add a catalog row or make the crate unpublishable)"
     );
 
-    // Every umbrella alias lands on a catalogged crate.
+    // Every umbrella alias lands on a catalogged crate, and the catalog's
+    // stated alias count matches the facade (the umbrella row is the map).
     let facade_lib =
         std::fs::read_to_string(workspace_root().join("crates/facade/degenbot/src/lib.rs"))
             .expect("read facade lib.rs");
-    for line in facade_lib.lines() {
-        let line = line.trim();
-        let Some(rest) = line.strip_prefix("pub use degenbot") else {
-            continue;
-        };
-        let end = rest
-            .find("::")
-            .or_else(|| rest.find(" as "))
-            .expect("alias target");
-        let target = format!("degenbot{}", &rest[..end]).replace('_', "-");
-        assert!(
-            catalogged.contains(&target),
-            "umbrella alias target {target:?} has no docs/capabilities.md row"
-        );
-    }
+    assert_umbrella_aliases_catalogged(&facade_lib, &catalogged);
 
     // The console rows carry consumer (v).
     for row in &rows {
@@ -2153,6 +2114,72 @@ fn mod_declared_in(file: &Path, segment: &str) -> bool {
             name == segment
         }),
         Err(_) => false,
+    }
+}
+
+/// Publishable workspace members (`publish != []`) with their manifest paths.
+fn publishable_members() -> (
+    std::collections::BTreeSet<String>,
+    std::collections::BTreeMap<String, String>,
+) {
+    let mut publishable = std::collections::BTreeSet::<String>::default();
+    let mut manifest_of = std::collections::BTreeMap::<String, String>::default();
+    let out = Command::new("cargo")
+        .arg("metadata")
+        .arg("--format-version")
+        .arg("1")
+        .arg("--manifest-path")
+        .arg(manifest_flag())
+        .arg("--no-deps")
+        .output()
+        .expect("cargo metadata spawn");
+    assert!(out.status.success(), "cargo metadata failed");
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("cargo metadata json");
+    for package in v["packages"].as_array().expect("packages array") {
+        let name = package["name"].as_str().expect("name").to_owned();
+        if package["publish"].as_array().is_some() {
+            continue; // publish = [] -> unpublishable
+        }
+        publishable.insert(name.clone());
+        manifest_of.insert(
+            name,
+            package["manifest_path"]
+                .as_str()
+                .expect("manifest")
+                .to_owned(),
+        );
+    }
+    (publishable, manifest_of)
+}
+
+/// Every umbrella alias lands on a catalogged crate, and the catalog's stated
+/// alias count matches the facade (the umbrella row is the capability map).
+fn assert_umbrella_aliases_catalogged(
+    facade_lib: &str,
+    catalogged: &std::collections::BTreeSet<String>,
+) {
+    let alias_count = facade_lib
+        .lines()
+        .filter(|line| line.trim().starts_with("pub use degenbot"))
+        .count();
+    assert_eq!(
+        alias_count, 49,
+        "the umbrella alias count moved; update the catalog row that states it"
+    );
+    for line in facade_lib.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("pub use degenbot") else {
+            continue;
+        };
+        let end = rest
+            .find("::")
+            .or_else(|| rest.find(" as "))
+            .expect("alias target");
+        let target = format!("degenbot{}", &rest[..end]).replace('_', "-");
+        assert!(
+            catalogged.contains(&target),
+            "umbrella alias target {target:?} has no docs/capabilities.md row"
+        );
     }
 }
 
@@ -2509,4 +2536,101 @@ fn collect_rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
             out.push(path);
         }
     }
+}
+
+/// ADR-084 W5 phase 0: the `degenbot-pools` root surface is pinned by
+/// `pools_root_surface_census.txt` (review-required diff). A module added,
+/// removed, or re-homed at the pools root must review the snapshot in the
+/// same change; the root `pub` item count is asserted so untracked surface
+/// growth fails loudly.
+#[test]
+fn pools_root_surface_is_pinned() {
+    let census = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pools_root_surface_census.txt"),
+    )
+    .expect("read pools_root_surface_census.txt");
+
+    // Pinned modules -> target capability rows.
+    let mut pinned = std::collections::BTreeMap::<String, String>::default();
+    for line in census.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (module, target) = line
+            .split_once(' ')
+            .expect("census row format: `<module> <target>`");
+        pinned.insert(module.to_owned(), target.to_owned());
+    }
+    assert_eq!(
+        pinned.len(),
+        34,
+        "the pools root surface moved off 34 modules; review the W5a snapshot"
+    );
+
+    // Live root modules.
+    let lib = std::fs::read_to_string(
+        workspace_root().join("crates/foundation/degenbot-pools/src/lib.rs"),
+    )
+    .expect("read pools lib.rs");
+    let mut live = std::collections::BTreeSet::<String>::default();
+    for line in lib.lines() {
+        if let Some(module) = line.trim().strip_prefix("pub mod ") {
+            live.insert(module.trim_end_matches(';').trim().to_owned());
+        }
+    }
+    assert_eq!(
+        live.len(),
+        pinned.len(),
+        "pools root `pub mod` count changed (live {live:?} vs pinned);          review tests/pools_root_surface_census.txt"
+    );
+    for module in &live {
+        assert!(
+            pinned.contains_key(module),
+            "pools root module {module:?} is not in the W5a snapshot; review the census"
+        );
+    }
+
+    // The root `pub` item count is part of the pin.
+    let item_count =
+        count_pub_items(&workspace_root().join("crates/foundation/degenbot-pools/src"));
+    assert_eq!(
+        item_count, 681,
+        "pools root `pub` item count moved from the W5a snapshot (681);          review tests/pools_root_surface_census.txt before growing the surface"
+    );
+}
+
+/// Count `pub` declarations in every `.rs` file under `dir` (the plan's
+/// appendix census regex).
+fn count_pub_items(dir: &Path) -> usize {
+    let mut total = 0;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    for line in text.lines() {
+                        let line = line.trim_start();
+                        if line.starts_with("pub ")
+                            && [
+                                "fn ", "struct ", "enum ", "trait ", "mod ", "const ", "type ",
+                                "use ",
+                            ]
+                            .iter()
+                            .any(|kw| line[4..].starts_with(kw))
+                        {
+                            total += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    total
 }

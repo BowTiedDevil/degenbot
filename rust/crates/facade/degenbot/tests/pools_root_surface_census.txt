@@ -1,0 +1,49 @@
+# ADR-084 W5 phase 0 — the degenbot-pools root surface snapshot.
+#
+# The 34 root `pub mod` entries of rust/crates/foundation/degenbot-pools/src/
+# lib.rs at the W5a landing, with the target capability module (W5 phase 1:
+# state / families / sim / solve) each moves to once ADR-080's CL state
+# extraction has landed and W5b executes the mapping. The pin is
+# review-required: `architecture_gates.rs::pools_root_surface_is_pinned`
+# fails when a module is added, removed, or re-homed without a review of this
+# file, and the root `pub` item count (681 at the snapshot; the precise count — keyword followed by whitespace — the plan appendix regex quoted 684, which over-matched three `pub use_*` struct fields) is asserted so
+# untracked surface growth fails loudly.
+#
+# Regenerate: rg -n '^pub mod' rust/crates/foundation/degenbot-pools/src/lib.rs
+# plus rg -c '^\s*pub (fn|struct|enum|trait|mod|const|type|use)' over src/.
+#
+# Format: <module> <target-capability>
+aerodrome_v2_state state
+balancer_stable_state state
+balancer_weighted_state state
+capability state
+curve_data_provider sim
+curve_dy_io sim
+buffered_event families
+curve_state state
+curve_strategies sim
+families families
+int_v3_hop state
+liquidity_event families
+liquidity_event_buffer families
+pool sim
+rate_provider sim
+registration_refusal sim
+registry sim
+simulate_swap sim
+slot_layout state
+state_update families
+affected solve
+solve solve
+spec_bounds state
+state_history state
+tick_bitmap state
+tick_fetch sim
+tick_map state
+tick_map_verify state
+v2_state state
+v3_pancakeswap_storage_slots state
+v3_state state
+v3_storage_slots state
+v4_state state
+v4_storage_slots state
