@@ -103,7 +103,7 @@ fn admission_zero_budget_sheds_the_whole_cycle() {
     let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
     for &p in &pool_ids {
         delta.record(
-            degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p),
+            degenbot_pools::affected::AffectedKey::new(HopType::V2, p),
             10,
         );
     }
@@ -216,7 +216,7 @@ fn admission_draw_zero_shed_preserves_pending_new_paths() {
     let delta = Arc::new(EpochDelta::new(0u64));
     let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
     delta.record(
-        degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, a),
+        degenbot_pools::affected::AffectedKey::new(HopType::V2, a),
         10,
     );
     let quiesced = QuiesceOutcome {
@@ -331,7 +331,7 @@ fn admission_race_positive_draw_never_sheds() {
     let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
     for &p in &pool_ids {
         delta.record(
-            degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p),
+            degenbot_pools::affected::AffectedKey::new(HopType::V2, p),
             10,
         );
     }
@@ -431,7 +431,7 @@ fn admission_carries_retained_keys_to_a_later_cycle() {
     let delta = Arc::new(EpochDelta::new(0u64));
     let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
     let keys: Vec<_> = (1..=3u64)
-        .map(|id| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, id))
+        .map(|id| degenbot_pools::affected::AffectedKey::new(HopType::V2, id))
         .collect();
     for key in &keys {
         delta.record(*key, 10);
@@ -520,8 +520,8 @@ fn admission_retention_window_expires_carried_leads() {
     engine.lock().cycle.set_admission_retention_blocks(5);
     let delta = Arc::new(EpochDelta::new(0u64));
     let stages = EngineStages::new(Arc::clone(&engine), Arc::clone(&delta));
-    let stale = degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, 1);
-    let fresh = degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, 2);
+    let stale = degenbot_pools::affected::AffectedKey::new(HopType::V2, 1);
+    let fresh = degenbot_pools::affected::AffectedKey::new(HopType::V2, 2);
     delta.record(stale, 10);
     delta.record(fresh, 100);
     let quiesced = QuiesceOutcome {
@@ -570,9 +570,9 @@ fn admission_off_keeps_take_all_and_never_sheds() {
         .detached_cycle
         .outstanding
         .store(8, std::sync::atomic::Ordering::Relaxed);
-    let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
+    let affected_keys_v2: Vec<degenbot_pools::affected::AffectedKey> = pool_ids
         .iter()
-        .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
+        .map(|&p| degenbot_pools::affected::AffectedKey::new(HopType::V2, p))
         .collect();
     run_test_cycle(
         &mut engine,
@@ -600,7 +600,7 @@ fn admission_off_keeps_take_all_and_never_sheds() {
     let stages = EngineStages::new(Arc::clone(&engine_arc), Arc::clone(&delta));
     for id in 1..=5u64 {
         delta.record(
-            degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, id),
+            degenbot_pools::affected::AffectedKey::new(HopType::V2, id),
             10,
         );
     }
@@ -631,9 +631,9 @@ fn admission_off_keeps_take_all_and_never_sheds() {
 #[test]
 fn duplicate_lane_outcome_does_not_double_apply() {
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
-    let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
+    let affected_keys_v2: Vec<degenbot_pools::affected::AffectedKey> = pool_ids
         .iter()
-        .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
+        .map(|&p| degenbot_pools::affected::AffectedKey::new(HopType::V2, p))
         .collect();
     run_test_cycle(
         &mut engine,

@@ -185,8 +185,8 @@ impl PathCostLedger {
     pub(crate) fn record(
         &self,
         pid: u64,
-        resolved: &::degenbot_pools::solve::mixed::ResolvedMixedPath,
-        outcome: &::degenbot_pools::solve::mixed::solve::SolveOutcome,
+        resolved: &::degenbot_pools::solve::ResolvedMixedPath,
+        outcome: &::degenbot_pools::solve::SolveOutcome,
         elapsed: std::time::Duration,
     ) {
         let micros = elapsed.as_micros();

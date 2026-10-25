@@ -17,9 +17,9 @@ fn detached_cycle_returns_at_enqueue_end_and_sidecar_merges() {
     let (engine, pool_ids, path_ids) = detached_fixture(400);
     let slow_pid = path_ids[0];
     let engine = std::sync::Arc::new(parking_lot::Mutex::new(engine));
-    let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
+    let affected_keys_v2: Vec<degenbot_pools::affected::AffectedKey> = pool_ids
         .iter()
-        .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
+        .map(|&p| degenbot_pools::affected::AffectedKey::new(HopType::V2, p))
         .collect();
     let handle = crate::arb_engine::EngineStages::new(
         std::sync::Arc::clone(&engine),
@@ -92,9 +92,9 @@ fn detached_straggler_with_stale_update_stamp_is_dropped() {
     // Q1a probe).
     const STRAGGLER_SEQ: u64 = 2;
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
-    let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
+    let affected_keys_v2: Vec<degenbot_pools::affected::AffectedKey> = pool_ids
         .iter()
-        .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
+        .map(|&p| degenbot_pools::affected::AffectedKey::new(HopType::V2, p))
         .collect();
     run_test_cycle(
         &mut engine,
@@ -193,9 +193,9 @@ fn detached_duplicate_straggler_trips_the_exactness_fuse() {
     // double-delivery).
     const STRAGGLER_SEQ: u64 = 2;
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
-    let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
+    let affected_keys_v2: Vec<degenbot_pools::affected::AffectedKey> = pool_ids
         .iter()
-        .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
+        .map(|&p| degenbot_pools::affected::AffectedKey::new(HopType::V2, p))
         .collect();
     run_test_cycle(
         &mut engine,
@@ -254,9 +254,9 @@ fn detached_duplicate_straggler_trips_the_exactness_fuse() {
 #[test]
 fn deregister_removes_status_and_update_snapshot() {
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
-    let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
+    let affected_keys_v2: Vec<degenbot_pools::affected::AffectedKey> = pool_ids
         .iter()
-        .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
+        .map(|&p| degenbot_pools::affected::AffectedKey::new(HopType::V2, p))
         .collect();
     run_test_cycle(
         &mut engine,
@@ -277,9 +277,9 @@ fn deregister_removes_status_and_update_snapshot() {
 #[test]
 fn detached_straggler_after_deregister_is_dropped() {
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
-    let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
+    let affected_keys_v2: Vec<degenbot_pools::affected::AffectedKey> = pool_ids
         .iter()
-        .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
+        .map(|&p| degenbot_pools::affected::AffectedKey::new(HopType::V2, p))
         .collect();
     run_test_cycle(
         &mut engine,
@@ -342,7 +342,7 @@ fn detached_merge_event_parents_under_the_carried_solve_span() {
     use crate::arb_engine::executor::LaneOutcome;
     use crate::{arb_engine::ArbitrageEngine, otel};
     use alloy::primitives::U256;
-    use degenbot_pools::solve::mixed::SolvePathResult;
+    use degenbot_pools::solve::SolvePathResult;
     use opentelemetry_sdk::trace::InMemorySpanExporter;
     use std::sync::Arc;
     use tracing_subscriber::layer::SubscriberExt;
@@ -470,9 +470,9 @@ async fn detached_stragglers_do_not_block_inline_stage_work() {
     let meta = BlockMetadata::default();
     // The affected keys the dissolved coordinator would have taken from
     // the epoch ledger before driving the engine's solve.
-    let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
+    let affected_keys_v2: Vec<degenbot_pools::affected::AffectedKey> = pool_ids
         .iter()
-        .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
+        .map(|&p| degenbot_pools::affected::AffectedKey::new(HopType::V2, p))
         .collect();
     let t0 = std::time::Instant::now();
     // The detached cycle: the solve call RETURNS (enqueue-end) while the

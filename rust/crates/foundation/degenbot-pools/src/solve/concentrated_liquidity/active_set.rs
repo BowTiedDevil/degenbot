@@ -63,7 +63,7 @@ enum PieceFamily<'a> {
         /// Optional precomputed forward word-boundary profile per `crossings[k]`
         /// (dense ranges only; `None` keeps those on the linear walk). Parallel to
         /// `crossings`. `Arc`-backed so the projection's precomputed profile (on
-        /// the [`crate::solve::mixed::ResolvedHop`]) is shared - not re-cloned - across
+        /// the [`crate::solve::ResolvedHop`]) is shared - not re-cloned - across
         /// every path reusing the hop (the hop-projection memoization).
         profiles: Arc<ConcentratedLiquidityProfileTable>,
     },

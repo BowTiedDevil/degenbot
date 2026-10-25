@@ -17,7 +17,7 @@ use crate::arb_engine::executor::{LaneOutcome, SolveOutcome};
 use crate::arb_engine::inline_sim::SimulatedPathResult;
 use crate::arb_engine::lane_walk::LaneArmPolicy;
 use crate::arb_engine::path_registry::PathRegistry;
-use ::degenbot_pools::solve::mixed::{HopType, MixedPoolRef, SolvePathResult};
+use ::degenbot_pools::solve::{HopType, MixedPoolRef, SolvePathResult};
 use alloy::primitives::{I256, U256};
 use degenbot_core::{diag, op_error, op_info};
 use degenbot_pools::v3_state::{v3_simulate_swap, V3PoolState};

@@ -34,7 +34,7 @@ pub mod v2;
 use hashbrown::HashMap;
 use std::sync::Arc;
 
-use degenbot_pools::solve::mixed::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
+use degenbot_pools::solve::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
 
 use super::BotState;
 
@@ -535,7 +535,7 @@ mod tests {
     use degenbot_pools::solve::concentrated_liquidity::{
         ConcentratedLiquidityWordProfile, IntTickRangeCrossing,
     };
-    use degenbot_pools::solve::mixed::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
+    use degenbot_pools::solve::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
 
     fn ref_v3(pool_key: u64) -> MixedPoolRef {
         MixedPoolRef {

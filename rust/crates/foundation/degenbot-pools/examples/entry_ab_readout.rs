@@ -171,7 +171,7 @@ fn main() {
     let memo_on = std::env::var("DR_AB_MEMO").is_ok_and(|v| v == "1");
     let cfg = SolveRuntimeConfig::default();
 
-    let content = degenbot_pools::solve::capture_fixture::read_fixture(&path);
+    let content = degenbot_pools::solve::fixtures::read_fixture(&path);
     println!(
         "Entry A/B readout: corpus={path} iters={iters} memo_stance={}",
         if memo_on {

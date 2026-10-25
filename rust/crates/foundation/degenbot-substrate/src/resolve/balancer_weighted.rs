@@ -9,7 +9,7 @@
 //! `ResolvedHop` wrap.
 
 use degenbot_pools::families::balancer_weighted as weighted_read;
-use degenbot_pools::solve::mixed::{BalancerWeightedHopState, MixedPoolRef, ResolvedHop};
+use degenbot_pools::solve::{BalancerWeightedHopState, MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -69,7 +69,7 @@ mod tests {
     use crate::{BotState, RegisterBalancerWeightedPoolParams};
     use alloy::primitives::{Address, U256};
     use degenbot_math::balancer::PowVersion;
-    use degenbot_pools::solve::mixed::{HopType, MixedPoolRef, ResolvedHop};
+    use degenbot_pools::solve::{HopType, MixedPoolRef, ResolvedHop};
 
     // -----------------------------------------------------------------
     // Per-family projection tests: `project_

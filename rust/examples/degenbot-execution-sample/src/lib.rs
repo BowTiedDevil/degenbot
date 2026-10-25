@@ -383,7 +383,7 @@ mod tests {
     /// calldata — the `(path, SolveResult) -> bytes` user path.
     #[test]
     fn compose_solution_projects_solve_result_view() {
-        use degenbot_pools::solve::mixed::SolvePathResult;
+        use degenbot_pools::solve::SolvePathResult;
         let (hop_outputs, consumed) = sample_inputs();
         let result = SolvePathResult {
             optimal_input: U256::from(hop_outputs[0]),

@@ -389,7 +389,7 @@ mod tests {
     )]
     #[test]
     fn same_cfg_ride_stays_legal() {
-        use degenbot_pools::solve::mixed::PoolHop;
+        use degenbot_pools::solve::PoolHop;
         use degenbot_substrate::state_lock::StateLock;
         use degenbot_substrate::BotState;
         use std::sync::Arc;

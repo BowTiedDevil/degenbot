@@ -78,7 +78,7 @@ use degenbot_core::{diag, op_error, op_info, op_warn};
 use degenbot_eventhub::Hub;
 use degenbot_executor::composers::PathInfo;
 use degenbot_ingestion::IngestEvent as WsEvent;
-use degenbot_pools::solve::mixed::{PoolHop, SolvePathResult};
+use degenbot_pools::solve::{PoolHop, SolvePathResult};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_substrate::path_info::PathInfoBuildError;
 use degenbot_substrate::session_registry::PoolIdentity;

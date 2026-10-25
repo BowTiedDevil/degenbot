@@ -43,7 +43,9 @@
 //! keeps that discipline label while making the layer of exactness explicit
 //! at each per-candidate symbol.
 
-#![expect(clippy::must_use_candidate)]
+// The module is `pub(crate)` since the W2 demotion, so
+// `clippy::must_use_candidate` (a public-API pedantic lint) no longer applies
+// here; the former module-level expectation was removed with the door cut.
 
 use alloy::primitives::{U256, U512};
 
@@ -81,6 +83,13 @@ pub struct ExactMobiusResult {
     /// Whether the path is profitable (K > M).
     pub is_profitable: bool,
     /// Whether the closed-form solution was used (as opposed to bounded search).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "kernel surface read by the in-crate labs (cfg(test)); unreached in the lib build (ADR-084 W2 demotion)"
+        )
+    )]
     pub used_closed_form: bool,
     /// Per-hop output amounts. `hop_outputs[i]` = output after hop `i`.
     /// Empty if not profitable.

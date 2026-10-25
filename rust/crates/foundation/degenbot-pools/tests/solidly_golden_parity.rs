@@ -23,10 +23,10 @@ pub mod common;
 
 use alloy::primitives::U256;
 use common::{faithful_base, path, solidly_hop, v2_hop};
-use degenbot_pools::solve::mixed::{
+use degenbot_pools::solve::gate::GateDeps;
+use degenbot_pools::solve::{
     simulate_solidly_path, solve_path, ResolvedMixedPath, SolvePathResult,
 };
-use degenbot_pools::solve::profit_envelope::GateDeps;
 
 /// Sweep half-width, in native input units, around the arm's returned answer.
 /// The arm's own integer verify only scans ±3, so this window is an

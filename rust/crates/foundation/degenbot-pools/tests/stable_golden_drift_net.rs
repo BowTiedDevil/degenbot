@@ -35,8 +35,8 @@ use alloy::primitives::U256;
 use common::{
     curve_hop, faithful_base, path, solidly_hop, stable_hop, v2_hop, weighted_hop, ONE_E18,
 };
-use degenbot_pools::solve::mixed::{solve_path, ResolvedMixedPath};
-use degenbot_pools::solve::profit_envelope::GateDeps;
+use degenbot_pools::solve::gate::GateDeps;
+use degenbot_pools::solve::{solve_path, ResolvedMixedPath};
 
 /// One corpus entry: the path plus a human-readable tag quoted in failure
 /// messages so a regression names the shape that broke.

@@ -104,13 +104,13 @@ use super::DeferredReRecordHook;
 #[cfg(test)]
 use crate::arb_engine::detached_cycle;
 use crate::arb_engine::executor::LaneOutcome;
-use ::degenbot_pools::solve::mixed::{
+use ::degenbot_pools::solve::{
     HopType, MixedPath, MixedPoolRef, PoolHop, ResolvedMixedPath, SolvePathResult,
 };
 use alloy::primitives::U256;
 use dashmap::DashMap;
 use degenbot_core::diag;
-use degenbot_pools::solve::affected_keys::AffectedKey;
+use degenbot_pools::affected::AffectedKey;
 use degenbot_substrate::resolve::resolve_hops;
 use degenbot_substrate::resolve::HopProjectionCache;
 use degenbot_substrate::{BlockMetadata, BotState, EpochDelta};
@@ -146,7 +146,7 @@ pub(crate) use merge::{clamp_skip_kind, recompute_clamped_profit};
 pub(crate) struct BlockScope {
     walk_memo: Arc<::degenbot_pools::solve::concentrated_liquidity::WalkMemo>,
     walk_telemetry: Arc<::degenbot_pools::solve::concentrated_liquidity::WalkTelemetry>,
-    prefix_cache: Arc<::degenbot_pools::solve::profit_envelope::PrefixCache>,
+    prefix_cache: Arc<::degenbot_pools::solve::gate::PrefixCache>,
     epoch: u64,
 }
 
@@ -160,7 +160,7 @@ impl BlockScope {
         Self {
             walk_memo,
             walk_telemetry,
-            prefix_cache: Arc::new(::degenbot_pools::solve::profit_envelope::PrefixCache::new()),
+            prefix_cache: Arc::new(::degenbot_pools::solve::gate::PrefixCache::new()),
             epoch: 0,
         }
     }
@@ -202,9 +202,7 @@ impl BlockScope {
 
     /// The engine-owned prefix-composition cache handle.
     #[must_use]
-    pub(crate) fn prefix_cache(
-        &self,
-    ) -> &Arc<::degenbot_pools::solve::profit_envelope::PrefixCache> {
+    pub(crate) fn prefix_cache(&self) -> &Arc<::degenbot_pools::solve::gate::PrefixCache> {
         &self.prefix_cache
     }
 }
@@ -1200,7 +1198,7 @@ impl SolveCycle {
             let run_bin = move || {
                 // Cold start: no capture wiring — deps with the
                 // registered-epoch guard + the engine walk-memo handle.
-                let gate_deps = ::degenbot_pools::solve::profit_envelope::GateDeps::per_block(
+                let gate_deps = ::degenbot_pools::solve::gate::GateDeps::per_block(
                     results_block,
                     &prefix_store,
                     None,
@@ -1211,7 +1209,7 @@ impl SolveCycle {
                 for &i in &bin {
                     let (path_id, resolved) = &to_solve_bin[i];
                     let _solve_ctx = solve_span_bin.enter();
-                    if let Some(mut r) = ::degenbot_pools::solve::mixed::solve_path_with_min_profit(
+                    if let Some(mut r) = ::degenbot_pools::solve::solve_path_with_min_profit(
                         resolved, min_floor, &gate_deps,
                     )
                     .result
@@ -1483,9 +1481,9 @@ impl SolveCycle {
         // Eagerly solve the newly registered path.
         if let Some(resolved) = registration.resolved.as_ref() {
             if resolved.valid {
-                if let Some(mut solve_result) = ::degenbot_pools::solve::mixed::solve_path(
+                if let Some(mut solve_result) = ::degenbot_pools::solve::solve_path(
                     resolved,
-                    &::degenbot_pools::solve::profit_envelope::GateDeps::offline(),
+                    &::degenbot_pools::solve::gate::GateDeps::offline(),
                 )
                 .result
                 {
@@ -1688,7 +1686,7 @@ impl SolveCycle {
 mod tests {
     use super::*;
     use crate::arb_engine::{ArbitrageEngine, BlockMetadata};
-    use ::degenbot_pools::solve::mixed::{HopType, PoolHop};
+    use ::degenbot_pools::solve::{HopType, PoolHop};
     use alloy::primitives::{aliases::U112, Address, U256};
     use hashbrown::HashSet;
     fn usdc(amount: u64) -> U112 {
@@ -1979,7 +1977,7 @@ mod tests {
 mod clamp_recompute_tests {
     #![expect(clippy::expect_used)] // tests assert recompute invariants
     use super::recompute_clamped_profit;
-    use ::degenbot_pools::solve::mixed::SolvePathResult;
+    use ::degenbot_pools::solve::SolvePathResult;
     use alloy::primitives::U256;
     /// Path-142603 (V4-V4-V3 @25723658) regression: the solver reported a
     /// phantom +346,369,630 wei profit because its V3 hop2 output

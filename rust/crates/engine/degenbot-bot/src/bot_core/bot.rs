@@ -357,7 +357,7 @@ impl Bot {
     pub fn record_pool_state_changed(
         &self,
         pool_id: u64,
-        hop: degenbot_pools::solve::mixed::HopType,
+        hop: degenbot_pools::solve::HopType,
         block: u64,
     ) {
         self.delta.record_affected(hop, pool_id, block);

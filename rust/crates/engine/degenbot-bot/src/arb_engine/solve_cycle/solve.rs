@@ -19,9 +19,9 @@ use crate::arb_engine::solver_capture::{gate_capture_from_cfg, CaptureVariant, H
 use crate::arb_engine::workload_partition::{
     lpt_partition, path_cost_proxy, plan_bins, sims_aware_cost, solve_bin_count,
 };
-use ::degenbot_pools::solve::mixed::{MixedPath, ResolvedMixedPath};
+use ::degenbot_pools::solve::{MixedPath, ResolvedMixedPath};
 use degenbot_core::diag;
-use degenbot_pools::solve::affected_keys::AffectedKey;
+use degenbot_pools::affected::AffectedKey;
 use degenbot_workers::dispatcher::SeatSurvivesPolicy;
 use degenbot_workers::lane::LaneCtx;
 use hashbrown::{HashMap, HashSet};

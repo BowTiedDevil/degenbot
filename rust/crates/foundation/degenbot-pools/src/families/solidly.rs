@@ -800,12 +800,12 @@ pub(crate) mod solve {
     use degenbot_math::solidly::SOLIDLY_MIN_SCALED_RESERVE;
     use degenbot_uniswap::dex_identity::DexVariant;
 
-    use crate::solve::mixed::solve::solve_golden_section_path_int;
-    use crate::solve::mixed::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
-    use crate::solve::profit_envelope::{
+    use crate::solve::gate::{
         mobius_lines, GateDeps, GateStats, HopMath, Line, PathBoundLines, PrefixCache,
     };
     use crate::solve::runtime::SolveRuntimeConfig;
+    use crate::solve::solve_golden_section_path_int;
+    use crate::solve::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
 
     /// Resolved state for a Solidly/Aerodrome/Camelot hop, ready for the
     /// Solidly solve branch. Carries everything the `degenbot-solidly-math`
@@ -895,8 +895,8 @@ pub(crate) mod solve {
         resolved: &ResolvedMixedPath,
         _gate: &GateDeps<'_>,
         _walk_env: Option<&PathBoundLines>,
-    ) -> crate::solve::mixed::SolveArmOutcome {
-        crate::solve::mixed::SolveArmOutcome::walked(
+    ) -> crate::solve::SolveArmOutcome {
+        crate::solve::SolveArmOutcome::walked(
             solve_solidly_path_int(resolved),
             crate::solve::concentrated_liquidity::WalkStats::default(),
         )
@@ -1316,8 +1316,8 @@ pub(crate) mod solve {
 
         use proptest::prelude::*;
 
-        use crate::solve::mixed::solve::solve_path_with_min_profit;
-        use crate::solve::profit_envelope::{path_output_bound_at, Envelope};
+        use crate::solve::gate::{path_output_bound_at, Envelope};
+        use crate::solve::solve_path_with_min_profit;
 
         #[test]
         fn m6776w_solidly_volatile_fee_floor_counterexample_is_bounded() {
@@ -1335,7 +1335,7 @@ pub(crate) mod solve {
                 &U256::from(x),
                 &crate::solve::runtime::SolveRuntimeConfig::default(),
             );
-            let state = crate::solve::mixed::SolidlyHopState {
+            let state = crate::solve::SolidlyHopState {
                 reserves_0: U256::from(r0),
                 reserves_1: U256::from(r1),
                 decimals_0: U256::from(1_000_000u64),
@@ -1363,7 +1363,7 @@ pub(crate) mod solve {
         /// `SolidlyStable`.
         #[test]
         fn solidly_stable_tangent_prunes_where_reserve_cap_cannot() {
-            use crate::solve::profit_envelope::path_profit_bound_with_floor;
+            use crate::solve::gate::path_profit_bound_with_floor;
 
             let reserve = U256::from(1_000_000_000_000_000_000_000_000u128); // 1e24
             let floor = U256::from(1_000_000_000_000_000_000u64); // 1e18
@@ -1387,7 +1387,7 @@ pub(crate) mod solve {
             );
 
             // The new mapping: entry tangent + cap.
-            let state = crate::solve::mixed::SolidlyHopState {
+            let state = crate::solve::SolidlyHopState {
                 reserves_0: reserve,
                 reserves_1: reserve,
                 decimals_0: U256::from(1_000_000_000_000_000_000u64),
@@ -1455,7 +1455,7 @@ pub(crate) mod solve {
                 };
                 let bound = path_output_bound_at(&[Some(hop)], &U256::from(x), &crate::solve::runtime::SolveRuntimeConfig::default())
                     .unwrap_or(U256::ZERO);
-                let state = crate::solve::mixed::SolidlyHopState {
+                let state = crate::solve::SolidlyHopState {
                     reserves_0: U256::from(r0),
                     reserves_1: U256::from(r1),
                     decimals_0: U256::from(1_000_000u64),
@@ -1486,7 +1486,7 @@ pub(crate) mod solve {
                 let hop = HopMath::ReserveCap { reserve_out: U256::from(reserve_out) };
                 let bound = path_output_bound_at(&[Some(hop)], &U256::from(x), &crate::solve::runtime::SolveRuntimeConfig::default())
                     .unwrap_or(U256::ZERO);
-                let state = crate::solve::mixed::SolidlyHopState {
+                let state = crate::solve::SolidlyHopState {
                     reserves_0: U256::from(r0),
                     reserves_1: U256::from(r1),
                     decimals_0: U256::from(1_000_000u64),

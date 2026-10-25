@@ -6,8 +6,8 @@
 //! Extracted from the retired grab file so the diagnostic corpus stops
 //! riding the hot solve-path file: its ~500 lines (writer + variants + tests)
 //! churn independently of the lane walk.
-use ::degenbot_pools::solve::mixed::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
-use ::degenbot_pools::solve::profit_envelope::{DegeneratePathEvent, DegeneratePathSink};
+use ::degenbot_pools::solve::gate::{DegeneratePathEvent, DegeneratePathSink};
+use ::degenbot_pools::solve::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
 
 /// Degenerate-path capture sink — the engine-owned FILE-WRITING adapter for
 /// the solver's degenerate-path capture events (C2.3). The solver builds the
@@ -357,7 +357,7 @@ mod heavy_path_capture_tests {
     use ::degenbot_config::schema::CaptureConfig;
     use ::degenbot_math::v2::IntHopState;
     use ::degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-    use ::degenbot_pools::solve::mixed::{ResolvedHop, ResolvedMixedPath};
+    use ::degenbot_pools::solve::{ResolvedHop, ResolvedMixedPath};
     use alloy::primitives::U256;
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -570,9 +570,7 @@ mod degenerate_path_file_sink_tests {
     #![expect(clippy::unwrap_used)] // known-good temp paths + JSONL parsing
 
     use super::DegeneratePathFileSink;
-    use ::degenbot_pools::solve::profit_envelope::{
-        DegeneratePathEvent, DegeneratePathSink, HopMath,
-    };
+    use ::degenbot_pools::solve::gate::{DegeneratePathEvent, DegeneratePathSink, HopMath};
 
     fn sink(out: std::path::PathBuf, max_paths: u64) -> DegeneratePathFileSink {
         DegeneratePathFileSink {

@@ -39,7 +39,7 @@ use degenbot::bot_core::Bot;
 use degenbot::db::discovery_read::DiscoveryPoolRow;
 use degenbot::db::snapshot::TickMapDb;
 use degenbot::pathfinding::PoolKind;
-use degenbot::solvers::mixed::PoolHop;
+use degenbot::solvers::PoolHop;
 use degenbot::substrate::state_lock::LockSite;
 use degenbot::substrate::PoolRegistration;
 use degenbot::EngineDriver;

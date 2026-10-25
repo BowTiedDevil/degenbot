@@ -374,6 +374,13 @@ fn fast_model_optimal_input(c: &FastShiftedCoeffs) -> Option<U256> {
 
 /// Fast-path slope check: `det > (C·x + D)²`. Computed in I2048 (`BigInt` when
 /// the fast path was not used — see [`shifted_piece_slope_exceeds_unity_at`]).
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "kernel surface read by the in-crate labs (cfg(test)); unreached in the lib build (ADR-084 W2 demotion)"
+    )
+)]
 fn fast_slope_exceeds_unity_at(c: &FastShiftedCoeffs, x: U256) -> bool {
     // Promote the fast coefficients to BigInt so the squared denominator
     // (which can exceed even I2048 for large x) is exact — this function is
@@ -399,6 +406,13 @@ fn bigint_from_u256(v: U256) -> BigInt {
 }
 
 /// Convert an [`I1024`] (signed) to a `BigInt`, preserving the sign.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "kernel surface read by the in-crate labs (cfg(test)); unreached in the lib build (ADR-084 W2 demotion)"
+    )
+)]
 fn bigint_from_u1024_signed(v: I1024) -> BigInt {
     let (sign, abs) = v.into_sign_and_abs();
     let bytes = abs.to_be_bytes::<128>();
@@ -507,6 +521,13 @@ fn big_model_optimal_input(c: &BigShiftedCoeffs) -> Option<U256> {
 ///
 /// Panics on an empty `hops` slice.
 #[must_use]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "shifted-piece kernel surface; unreached in the default feature set (ADR-084 W2 demotion)"
+    )
+)]
 pub fn compute_shifted_piece_mobius_coefficients(
     hops: &[ShiftedPieceHop],
 ) -> ShiftedMobiusPieceCoefficients {
@@ -692,6 +713,13 @@ impl ShiftedPieceComposer {
 
 /// Attempt the I1024 fast-path composition. Returns `None` as soon as any
 /// local-matrix construction or composition step overflows I1024.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "kernel surface read by the in-crate labs (cfg(test)); unreached in the lib build (ADR-084 W2 demotion)"
+    )
+)]
 fn try_compute_fast(hops: &[ShiftedPieceHop]) -> Option<FastShiftedCoeffs> {
     let mut acc: Option<FastShiftedCoeffs> = None;
     for shifted in hops {
@@ -705,6 +733,13 @@ fn try_compute_fast(hops: &[ShiftedPieceHop]) -> Option<FastShiftedCoeffs> {
 }
 
 /// `BigInt` fallback composition (used when the fast path overflowed).
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "kernel surface read by the in-crate labs (cfg(test)); unreached in the lib build (ADR-084 W2 demotion)"
+    )
+)]
 fn compute_big(hops: &[ShiftedPieceHop]) -> BigShiftedCoeffs {
     let mut acc: Option<BigShiftedCoeffs> = None;
     for shifted in hops {
@@ -743,6 +778,13 @@ pub fn shifted_piece_model_optimal_input(coeffs: &ShiftedMobiusPieceCoefficients
 /// can exceed I2048 for large `x`, and this check is test-only so the
 /// arbitrary-precision cost is acceptable).
 #[must_use]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "shifted-piece kernel surface; unreached in the default feature set (ADR-084 W2 demotion)"
+    )
+)]
 pub fn shifted_piece_slope_exceeds_unity_at(
     coeffs: &ShiftedMobiusPieceCoefficients,
     x: U256,

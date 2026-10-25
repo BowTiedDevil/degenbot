@@ -80,7 +80,7 @@ fn solve_result_projection_carries_amounts_and_hop_count() {
     let _ = path;
 
     // Build a SolvePathResult manually (the amounts ride this type, ADR-025 D4).
-    let result = degenbot_pools::solve::mixed::SolvePathResult {
+    let result = degenbot_pools::solve::SolvePathResult {
         optimal_input: U256::from(10u64),
         profit: U256::from(3u64),
         hop_outputs: vec![U256::from(20u64), U256::from(23u64)],

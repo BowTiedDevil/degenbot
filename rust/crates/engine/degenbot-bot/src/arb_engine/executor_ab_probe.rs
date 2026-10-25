@@ -35,7 +35,7 @@ fn fixture_path() -> std::path::PathBuf {
 /// `heavy_concentrated_liquidity_solve_captures.jsonl.zst` decodes transparently via
 /// `capture_fixture::read_fixture` (same corpus the probe measures).
 pub(in crate::arb_engine) fn load_corpus_fixture(
-) -> Vec<Arc<::degenbot_pools::solve::mixed::ResolvedMixedPath>> {
+) -> Vec<Arc<::degenbot_pools::solve::ResolvedMixedPath>> {
     load_corpus()
 }
 fn u256(s: &str) -> Result<U256, String> {
@@ -83,12 +83,11 @@ fn range(v: &Value) -> Result<IntV3TickRangeHop, String> {
         word_boundary_prices: wbp,
     })
 }
-pub(in crate::arb_engine) fn load_corpus(
-) -> Vec<Arc<::degenbot_pools::solve::mixed::ResolvedMixedPath>> {
+pub(in crate::arb_engine) fn load_corpus() -> Vec<Arc<::degenbot_pools::solve::ResolvedMixedPath>> {
     let path = fixture_path();
     // Zst-aware (packaged fixtures decode transparently; regenerated
     // plain captures still win the resolution order).
-    let content = ::degenbot_pools::solve::capture_fixture::read_fixture(&path);
+    let content = ::degenbot_pools::solve::fixtures::read_fixture(&path);
     let mut items = Vec::new();
     for line in content.lines().filter(|l| !l.trim().is_empty()) {
         let Ok(doc) = serde_json::from_str::<Value>(line) else {
@@ -111,7 +110,7 @@ pub(in crate::arb_engine) fn load_corpus(
             let seq = IntV3TickRangeSequence { ranges };
             let crossings = Arc::from(build_concentrated_liquidity_crossing_table(&seq));
             let profiles = Arc::from(build_concentrated_liquidity_word_profiles(&seq));
-            hops.push(::degenbot_pools::solve::mixed::ResolvedHop::V3 {
+            hops.push(::degenbot_pools::solve::ResolvedHop::V3 {
                 prepared: PreparedConcentratedLiquidityHop::from_parts(
                     Arc::new(seq),
                     crossings,
@@ -119,14 +118,12 @@ pub(in crate::arb_engine) fn load_corpus(
                 ),
             });
         }
-        items.push(Arc::new(
-            ::degenbot_pools::solve::mixed::ResolvedMixedPath {
-                hops,
-                valid: true,
-                state_nonces: Vec::new(),
-                max_update_block: 0,
-            },
-        ));
+        items.push(Arc::new(::degenbot_pools::solve::ResolvedMixedPath {
+            hops,
+            valid: true,
+            state_nonces: Vec::new(),
+            max_update_block: 0,
+        }));
     }
     assert!(!items.is_empty(), "fixture must load at least one path");
     items
@@ -146,7 +143,7 @@ pub(in crate::arb_engine) fn probe_ctx() -> Arc<SolveCycleShared> {
 /// LPT bins per the production cost fn (empty measured-history = first-cycle
 /// structural cost, exactly like an engine cold bucket).
 pub(in crate::arb_engine) fn prod_lpt_bins(
-    items: &[Arc<::degenbot_pools::solve::mixed::ResolvedMixedPath>],
+    items: &[Arc<::degenbot_pools::solve::ResolvedMixedPath>],
     threads: usize,
 ) -> Vec<Vec<usize>> {
     lpt_partition(items.len(), threads, |i| path_cost_proxy(&items[i]))

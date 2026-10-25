@@ -9,7 +9,7 @@
 //! ([`path_info_for`]) and the telemetry hop description — both ride the
 //! engine's path registry and core read lock.
 
-use ::degenbot_pools::solve::mixed::HopType;
+use ::degenbot_pools::solve::HopType;
 use degenbot_executor::composers::PathInfo;
 
 use super::ArbitrageEngine;
@@ -92,7 +92,7 @@ mod tests {
     use crate::arb_engine::ArbitrageEngine;
     use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, RegisterV4PoolParams};
     use ::degenbot_decoders::v4_swap_decoder::V4PoolId;
-    use ::degenbot_pools::solve::mixed::PoolHop;
+    use ::degenbot_pools::solve::PoolHop;
     use ::degenbot_pools::v4_state::V4PoolKey;
     use alloy::primitives::{aliases::U112, Address, U256};
     use degenbot_executor::composers::HopInfo;

@@ -26,7 +26,7 @@
 //! that can never self-heal. `register_path` REJECTS those loudly at
 //! construction — they never enter this machine as a state that could
 //! silently evade detection.
-use degenbot_pools::solve::mixed::HopType;
+use degenbot_pools::solve::HopType;
 use degenbot_substrate::resolve::HopDeficit;
 use hashbrown::HashSet;
 /// The set of pools a path is invalid because of (family, key). A

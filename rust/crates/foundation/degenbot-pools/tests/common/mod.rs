@@ -14,7 +14,7 @@ use degenbot_math::balancer::constants::PowVersion;
 use degenbot_math::curve::stableswap::{DVariant, YVariant};
 use degenbot_math::solidly::SOLIDLY_MIN_SCALED_RESERVE;
 use degenbot_math::v2::IntHopState;
-use degenbot_pools::solve::mixed::{
+use degenbot_pools::solve::{
     BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, ResolvedHop,
     ResolvedMixedPath, SolidlyHopState,
 };

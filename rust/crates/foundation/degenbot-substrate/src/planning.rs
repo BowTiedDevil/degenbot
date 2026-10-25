@@ -31,8 +31,8 @@
 
 use alloy::primitives::{aliases::U112, Address, B256, U256};
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
-use degenbot_pools::solve::mixed::{HopType, MixedPoolRef, ResolvedMixedPath, SolvePathResult};
-use degenbot_pools::solve::profit_envelope::{Envelope, GateDeps};
+use degenbot_pools::solve::gate::{Envelope, GateDeps};
+use degenbot_pools::solve::{HopType, MixedPoolRef, ResolvedMixedPath, SolvePathResult};
 use degenbot_pools::v2_state::RegisterV2PoolParams;
 use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
 use degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
@@ -585,7 +585,7 @@ impl Workspace {
             );
         }
 
-        let outcome = degenbot_pools::solve::mixed::solve_path_with_min_profit(
+        let outcome = degenbot_pools::solve::solve_path_with_min_profit(
             &resolved,
             min_profit,
             &GateDeps::offline(),
@@ -829,9 +829,7 @@ mod tests {
         assert!(matches!(
             classify_verbose(
                 None,
-                Envelope::Unsupported(
-                    degenbot_pools::solve::profit_envelope::GateSkipCause::UnmappedHop,
-                ),
+                Envelope::Unsupported(degenbot_pools::solve::gate::GateSkipCause::UnmappedHop,),
                 U256::ZERO,
             ),
             EvalVerbose::Unsolved

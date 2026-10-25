@@ -22,7 +22,7 @@
 //! added; the pre-existing Solidly/Balancer/Curve encoding gap is preserved.
 
 use ::degenbot_executor::composers::{HopInfo, PathInfo};
-use ::degenbot_pools::solve::mixed::{HopType, MixedPoolRef};
+use ::degenbot_pools::solve::{HopType, MixedPoolRef};
 use thiserror::Error;
 
 use crate::executor_hop::{v2_hop, v3_hop, v4_hop, V2Fee, V2FeeRefusal};

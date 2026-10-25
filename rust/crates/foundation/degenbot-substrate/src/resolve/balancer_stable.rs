@@ -9,7 +9,7 @@
 //! lookups, the refusal mapping, the nonce, and the one `ResolvedHop` wrap.
 
 use degenbot_pools::families::balancer_stable as stable_read;
-use degenbot_pools::solve::mixed::{BalancerStableHopState, MixedPoolRef, ResolvedHop};
+use degenbot_pools::solve::{BalancerStableHopState, MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -69,7 +69,7 @@ mod tests {
     use super::project_balancer_stable;
     use crate::{BotState, RegisterBalancerStablePoolParams};
     use alloy::primitives::{Address, U256};
-    use degenbot_pools::solve::mixed::{HopType, MixedPoolRef, ResolvedHop};
+    use degenbot_pools::solve::{HopType, MixedPoolRef, ResolvedHop};
 
     fn bs_ref(pool_key: u64, zero_for_one: bool) -> MixedPoolRef {
         MixedPoolRef {

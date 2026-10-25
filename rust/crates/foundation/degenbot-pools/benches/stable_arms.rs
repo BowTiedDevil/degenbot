@@ -45,11 +45,11 @@ use degenbot_math::balancer::constants::PowVersion;
 use degenbot_math::curve::stableswap::{DVariant, YVariant};
 use degenbot_math::solidly::SOLIDLY_MIN_SCALED_RESERVE;
 use degenbot_math::v2::IntHopState;
-use degenbot_pools::solve::mixed::{
+use degenbot_pools::solve::gate::GateDeps;
+use degenbot_pools::solve::{
     solve_path, BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState,
     ResolvedHop, ResolvedMixedPath, SolidlyHopState,
 };
-use degenbot_pools::solve::profit_envelope::GateDeps;
 use degenbot_uniswap::dex_identity::DexVariant;
 
 /// 18-decimal scale: the token decimals scale for Solidly hops and the

@@ -43,6 +43,10 @@ pub enum MobiusError {
     EmptyHops,
     /// V3 tick range sequence has inconsistent fees or swap directions.
     #[error("Inconsistent V3 tick range sequence: {message}")]
+    #[expect(
+        dead_code,
+        reason = "typed error arm kept for the widened solver paths; unreached today"
+    )]
     InconsistentSequence { message: String },
 }
 

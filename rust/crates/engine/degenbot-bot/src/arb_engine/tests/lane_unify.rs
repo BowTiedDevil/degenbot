@@ -15,9 +15,9 @@ use super::*;
 #[test]
 fn merged_ledger_rejects_same_seq_pid_replay() {
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
-    let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
+    let affected_keys_v2: Vec<degenbot_pools::affected::AffectedKey> = pool_ids
         .iter()
-        .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
+        .map(|&p| degenbot_pools::affected::AffectedKey::new(HopType::V2, p))
         .collect();
     // In-cycle solve of the same block: all 3 paths land in `results`.
     run_test_cycle(
@@ -91,9 +91,9 @@ fn merged_ledger_rejects_same_seq_pid_replay() {
 fn merged_ledger_prunes_only_past_ledger_age() {
     use std::sync::atomic::Ordering;
     let (mut engine, pool_ids, path_ids) = detached_fixture(0);
-    let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
+    let affected_keys_v2: Vec<degenbot_pools::affected::AffectedKey> = pool_ids
         .iter()
-        .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
+        .map(|&p| degenbot_pools::affected::AffectedKey::new(HopType::V2, p))
         .collect();
     run_test_cycle(
         &mut engine,
@@ -202,9 +202,9 @@ fn detached_undercount_trips_the_fan_in_assert() {
         }
         panic!("path killed mid-bin (red harness)");
     }));
-    let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
+    let affected_keys_v2: Vec<degenbot_pools::affected::AffectedKey> = pool_ids
         .iter()
-        .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
+        .map(|&p| degenbot_pools::affected::AffectedKey::new(HopType::V2, p))
         .collect();
     // Drive through the production stage seam so the sidecar spawns.
     let engine = std::sync::Arc::new(parking_lot::Mutex::new(engine));
@@ -286,9 +286,9 @@ fn detached_panic_does_not_leak_inflight_gauge() {
         .detached_cycle
         .outstanding
         .load(std::sync::atomic::Ordering::Relaxed);
-    let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
+    let affected_keys_v2: Vec<degenbot_pools::affected::AffectedKey> = pool_ids
         .iter()
-        .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
+        .map(|&p| degenbot_pools::affected::AffectedKey::new(HopType::V2, p))
         .collect();
     let engine = std::sync::Arc::new(parking_lot::Mutex::new(engine));
     let delta = std::sync::Arc::new(degenbot_substrate::EpochDelta::new(0u64));
@@ -357,9 +357,9 @@ fn retired_inflight_cap_no_longer_degrades() {
         .detached_cycle
         .outstanding
         .store(8, std::sync::atomic::Ordering::Relaxed); // == DETACHED_INFLIGHT_CAP
-    let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
+    let affected_keys_v2: Vec<degenbot_pools::affected::AffectedKey> = pool_ids
         .iter()
-        .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
+        .map(|&p| degenbot_pools::affected::AffectedKey::new(HopType::V2, p))
         .collect();
     run_test_cycle(
         &mut engine,
@@ -389,9 +389,9 @@ fn cycle_arm_label_latches_for_every_dispatch_arm() {
         "no cycle has been dispatched yet"
     );
     // Sub-cap under the detached stance: the detached arm.
-    let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
+    let affected_keys_v2: Vec<degenbot_pools::affected::AffectedKey> = pool_ids
         .iter()
-        .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
+        .map(|&p| degenbot_pools::affected::AffectedKey::new(HopType::V2, p))
         .collect();
     run_test_cycle(
         &mut engine,
@@ -439,7 +439,7 @@ fn cycle_arm_label_latches_for_every_dispatch_arm() {
         &mut engine,
         102,
         &BlockMetadata::default(),
-        &[degenbot_pools::solve::affected_keys::AffectedKey::new(
+        &[degenbot_pools::affected::AffectedKey::new(
             HopType::V2,
             orphan,
         )],
@@ -457,9 +457,9 @@ fn detached_solve_returns_at_enqueue_end_when_sync_drain_is_off() {
     // that OFF so this pins the PRODUCTION return semantics — enqueue end,
     // results ABSENT until the sidecar (or a later drain) lands them.
     engine.cycle.test_sync_merge = false;
-    let affected_keys_v2: Vec<degenbot_pools::solve::affected_keys::AffectedKey> = pool_ids
+    let affected_keys_v2: Vec<degenbot_pools::affected::AffectedKey> = pool_ids
         .iter()
-        .map(|&p| degenbot_pools::solve::affected_keys::AffectedKey::new(HopType::V2, p))
+        .map(|&p| degenbot_pools::affected::AffectedKey::new(HopType::V2, p))
         .collect();
     let outcome = run_test_cycle(
         &mut engine,

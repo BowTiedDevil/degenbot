@@ -13,7 +13,7 @@
 
 use alloy::primitives::{Address, B256, U256};
 use degenbot_pathfinding::PoolKind;
-use degenbot_pools::solve::mixed::SolvePathResult;
+use degenbot_pools::solve::SolvePathResult;
 use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant, TickInfo};
 
@@ -235,11 +235,11 @@ pub enum LaneFamilyTag {
 impl LaneFamilyTag {
     /// The solver hop engine this family tag dispatches to.
     #[must_use]
-    pub const fn hop_type(self) -> degenbot_pools::solve::mixed::HopType {
+    pub const fn hop_type(self) -> degenbot_pools::solve::HopType {
         match self {
-            Self::V2 => degenbot_pools::solve::mixed::HopType::V2,
-            Self::V3 => degenbot_pools::solve::mixed::HopType::V3,
-            Self::V4 => degenbot_pools::solve::mixed::HopType::V4,
+            Self::V2 => degenbot_pools::solve::HopType::V2,
+            Self::V3 => degenbot_pools::solve::HopType::V3,
+            Self::V4 => degenbot_pools::solve::HopType::V4,
         }
     }
 
@@ -296,7 +296,7 @@ impl LaneFamily {
     }
 
     #[must_use]
-    pub const fn hop_type(self) -> degenbot_pools::solve::mixed::HopType {
+    pub const fn hop_type(self) -> degenbot_pools::solve::HopType {
         self.tag().hop_type()
     }
 }
@@ -715,7 +715,7 @@ mod tests {
     #[test]
     fn settlement_and_backrun_project_v2_to_the_same_executor_bytes() {
         use crate::execution_context::ExecutionContext;
-        use degenbot_pools::solve::mixed::{HopType, MixedPoolRef};
+        use degenbot_pools::solve::{HopType, MixedPoolRef};
         use degenbot_substrate::{BotState, RegisterV2PoolParams};
 
         let mut core = BotState::new();
@@ -1038,7 +1038,7 @@ mod taxonomy_tests {
     use super::{LaneFamily, LaneFamilyTag};
     use alloy::primitives::{Address, B256};
     use degenbot_pathfinding::PoolKind;
-    use degenbot_pools::solve::mixed::HopType;
+    use degenbot_pools::solve::HopType;
     use degenbot_pools::{
         BalanceVectorVariant, BinnedLiquidityVariant, ConcentratedLiquidityVariant, Identity,
         ReservePairVariant,

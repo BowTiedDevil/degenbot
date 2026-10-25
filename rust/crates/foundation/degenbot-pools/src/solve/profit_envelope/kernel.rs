@@ -2034,7 +2034,7 @@ mod tests {
             let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures")
                 .join(name);
-            let content = crate::solve::capture_fixture::read_fixture(&fixture);
+            let content = crate::solve::fixtures::read_fixture(&fixture);
             let mut stats = GateStats::EMPTY;
             let mut n = 0usize;
             let mut tightened = 0usize;
@@ -2193,7 +2193,7 @@ mod tests {
     fn exact_compose_is_pointwise_exact_and_additive_on_fat_chains() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/synth_giant_concentrated_liquidity.jsonl");
-        let content = crate::solve::capture_fixture::read_fixture(&fixture);
+        let content = crate::solve::fixtures::read_fixture(&fixture);
         let cfg = SolveRuntimeConfig::default();
         let cap = cfg.sampled_compose_lines.max(1);
         let mut boundaries = 0usize;

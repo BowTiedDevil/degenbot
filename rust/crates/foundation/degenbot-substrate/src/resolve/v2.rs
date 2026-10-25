@@ -13,7 +13,7 @@
 //! identity (either design) refuses: it is the `SolidlyStable` lane's pool.
 
 use degenbot_pools::families::reserve_pair as reserve_pair_read;
-use degenbot_pools::solve::mixed::{MixedPoolRef, ResolvedHop};
+use degenbot_pools::solve::{MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -70,7 +70,7 @@ mod tests {
     use super::project_v2;
     use crate::{BotState, RegisterAerodromeV2PoolParams, RegisterV2PoolParams};
     use alloy::primitives::{aliases::U112, Address, U256};
-    use degenbot_pools::solve::mixed::{HopType, MixedPoolRef, ResolvedMixedPath};
+    use degenbot_pools::solve::{HopType, MixedPoolRef, ResolvedMixedPath};
     use degenbot_uniswap::dex_identity::DexVariant;
 
     // -----------------------------------------------------------------

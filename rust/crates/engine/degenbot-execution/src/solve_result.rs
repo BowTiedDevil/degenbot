@@ -1,7 +1,7 @@
 //! The solve-result **view contract** (ADR-025 D4).
 //!
 //! Today the per-hop solve amounts do not cross to Python on the clean path —
-//! [`degenbot_pools::solve::mixed::SolvePathResult`] carries
+//! [`degenbot_pools::solve::SolvePathResult`] carries
 //! `optimal_input` / `hop_outputs` / `consumed_inputs`, and
 //! `degenbot_executor::composers::PathInfo` carries the hop descriptors, but
 //! neither is exposed to Python as a typed view. This module owns the one
@@ -13,7 +13,7 @@
 use alloy::primitives::U256;
 
 use degenbot_executor::composers::{HopInfo, PathInfo};
-use degenbot_pools::solve::mixed::SolvePathResult;
+use degenbot_pools::solve::SolvePathResult;
 
 /// Which engine family owns a hop — the descriptor's family tag.
 ///

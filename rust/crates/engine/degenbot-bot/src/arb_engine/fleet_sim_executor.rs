@@ -404,7 +404,7 @@ mod fleet_sim_stance_tests {
     use crate::arb_engine::solve_cycle::SolveCycleShared;
     use crate::arb_engine::BlockMetadata;
     use alloy::primitives::{I256, U256};
-    use degenbot_pools::solve::mixed::{HopType, MixedPath, MixedPoolRef, SolvePathResult};
+    use degenbot_pools::solve::{HopType, MixedPath, MixedPoolRef, SolvePathResult};
     use std::sync::Arc;
     // ---- deterministic sim stub ------------------------------------------------
     /// Deterministic primitive-payload sim: the payload is a pure function
@@ -494,14 +494,14 @@ mod fleet_sim_stance_tests {
     /// Stride the committed capture corpus down to `want` items (the corpus
     /// is the request-shape oracle — hop counts and magnitude spreads ride
     /// the real capture, not synthesized round numbers).
-    fn strided_corpus(want: usize) -> Vec<Arc<degenbot_pools::solve::mixed::ResolvedMixedPath>> {
+    fn strided_corpus(want: usize) -> Vec<Arc<degenbot_pools::solve::ResolvedMixedPath>> {
         let items = load_corpus_fixture();
         assert!(!items.is_empty(), "capture corpus must load");
         let stride = items.len().saturating_sub(1) / want + 1;
         items.into_iter().step_by(stride).take(want).collect()
     }
     fn pool_refs_for(
-        items: &[Arc<degenbot_pools::solve::mixed::ResolvedMixedPath>],
+        items: &[Arc<degenbot_pools::solve::ResolvedMixedPath>],
     ) -> Vec<Arc<MixedPath>> {
         items
             .iter()

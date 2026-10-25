@@ -23,7 +23,7 @@ use std::hint::black_box;
 
 use degenbot_math::balancer::stable_math::calculate_invariant_deployed;
 use degenbot_math::curve::stableswap::{DVariant, YVariant};
-use degenbot_pools::solve::mixed::{
+use degenbot_pools::solve::{
     solve_path, BalancerStableHopState, CurveStableswapHopState, ResolvedHop, ResolvedMixedPath,
 };
 
@@ -259,10 +259,7 @@ fn bench_digest_curve_xp(c: &mut Criterion) {
 fn bench_solve_balancer_stable(c: &mut Criterion) {
     let path = balancer_stable_path();
     // Sanity: confirm the fixture is profitable (so the 25-iter search runs).
-    let probe = solve_path(
-        &path,
-        &::degenbot_pools::solve::profit_envelope::GateDeps::offline(),
-    );
+    let probe = solve_path(&path, &::degenbot_pools::solve::gate::GateDeps::offline());
     assert!(
         probe.result.is_some(),
         "balancer-stable path must be profitable"
@@ -273,7 +270,7 @@ fn bench_solve_balancer_stable(c: &mut Criterion) {
         bencher.iter(|| {
             let r = solve_path(
                 black_box(&path),
-                &::degenbot_pools::solve::profit_envelope::GateDeps::offline(),
+                &::degenbot_pools::solve::gate::GateDeps::offline(),
             );
             black_box(r);
         });
@@ -282,10 +279,7 @@ fn bench_solve_balancer_stable(c: &mut Criterion) {
 
 fn bench_solve_curve(c: &mut Criterion) {
     let path = curve_stable_path();
-    let probe = solve_path(
-        &path,
-        &::degenbot_pools::solve::profit_envelope::GateDeps::offline(),
-    );
+    let probe = solve_path(&path, &::degenbot_pools::solve::gate::GateDeps::offline());
     assert!(
         probe.result.is_some(),
         "curve-stable path must be profitable"
@@ -296,7 +290,7 @@ fn bench_solve_curve(c: &mut Criterion) {
         bencher.iter(|| {
             let r = solve_path(
                 black_box(&path),
-                &::degenbot_pools::solve::profit_envelope::GateDeps::offline(),
+                &::degenbot_pools::solve::gate::GateDeps::offline(),
             );
             black_box(r);
         });

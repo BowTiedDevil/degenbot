@@ -26,7 +26,7 @@
 
 use std::sync::Arc;
 
-use ::degenbot_pools::solve::mixed::PoolHop;
+use ::degenbot_pools::solve::PoolHop;
 use parking_lot::Mutex;
 
 use crate::arb_engine::lifecycle::{register_path, PathRegistrationError};

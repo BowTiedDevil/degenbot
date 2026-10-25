@@ -85,7 +85,7 @@ impl PySolveResult {
     pub fn from_solve_path(
         py: Python<'_>,
         path_id: u64,
-        result: &degenbot_pools::solve::mixed::SolvePathResult,
+        result: &degenbot_pools::solve::SolvePathResult,
         path: &PathInfo,
     ) -> PyResult<Py<Self>> {
         Self::wrap(py, SolveResult::from_solve_path(path_id, result, path))
@@ -463,7 +463,7 @@ mod tests {
         // `PySolveResult::from_solve_path` projects the typed view from
         // the canonical `SolvePathResult` (amounts) + `PathInfo` (hop
         // descriptors) — the "one genuinely new surface" (ADR-025 D4).
-        use degenbot_pools::solve::mixed::SolvePathResult;
+        use degenbot_pools::solve::SolvePathResult;
         Python::attach(|py| {
             let result = SolvePathResult {
                 optimal_input: U256::from(1_000_000_000_000_000_000u64),

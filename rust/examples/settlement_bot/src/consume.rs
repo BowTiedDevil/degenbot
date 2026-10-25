@@ -443,7 +443,7 @@ mod tests {
     use degenbot::bot::arb_engine::SimulatedPathResult;
     use degenbot::cmd_executor::composers::{HopInfo, PathInfo, V2HopInfo};
     use degenbot::core::address_utils::parse_address;
-    use degenbot::solvers::mixed::SolvePathResult;
+    use degenbot::solvers::SolvePathResult;
     use degenbot::submission::{
         Dispatcher, NonceLane, PathSuppression, ReceiptProbe, SubmissionLedger, SubmissionTarget,
         TxSigner,

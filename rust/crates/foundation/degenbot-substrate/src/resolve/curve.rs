@@ -8,7 +8,7 @@
 //! lookups, the refusal mapping, the nonce, and the one `ResolvedHop` wrap.
 
 use degenbot_pools::families::curve_stableswap as curve_read;
-use degenbot_pools::solve::mixed::{CurveStableswapHopState, MixedPoolRef, ResolvedHop};
+use degenbot_pools::solve::{CurveStableswapHopState, MixedPoolRef, ResolvedHop};
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -67,7 +67,7 @@ mod tests {
     use super::project_curve;
     use crate::{BotState, RegisterCurvePoolParams};
     use alloy::primitives::{Address, U256};
-    use degenbot_pools::solve::mixed::{HopType, MixedPoolRef, ResolvedHop};
+    use degenbot_pools::solve::{HopType, MixedPoolRef, ResolvedHop};
 
     // -----------------------------------------------------------------
     // Per-family projection tests: `project_curve`

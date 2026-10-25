@@ -21,7 +21,7 @@
 use super::delivery_lifecycle::DeliveryLifecycle;
 use super::{ArbitrageEngine, BlockMetadata, ResultBatch};
 use crate::arb_engine::inline_sim::SimulatedPathResult;
-use ::degenbot_pools::solve::mixed::SolvePathResult;
+use ::degenbot_pools::solve::SolvePathResult;
 use alloy::primitives::U256;
 use degenbot_core::op_warn;
 use hashbrown::HashMap;

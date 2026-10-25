@@ -435,15 +435,15 @@ pub struct SolvePathResult {
 pub mod solve;
 
 // Re-export the solve dispatcher + the simulate entry points reached by the
-// orchestrator/tests so callers can use `crate::solve::mixed::solve_path`
+// orchestrator/tests so callers can use `crate::solve::solve_path`
 // without descending into `solve`. Each family module owns its resolved state
 // slice (ADR-071 D1); the Solidly simulate entry is re-exported here too. The
 // dispatcher stays in `solve`.
 pub use crate::families::balancer_stable::solve::BalancerStableHopState;
 pub use crate::families::balancer_weighted::solve::BalancerWeightedHopState;
 pub use crate::families::curve_stableswap::solve::CurveStableswapHopState;
-pub use crate::families::solidly::solve::{simulate_solidly_path, SolidlyHopState};
-pub use solve::{solve_path, solve_path_with_min_profit};
+pub use crate::families::solidly::solve::SolidlyHopState;
+// The solve entry re-exports live at the `solve` root door (ADR-084 W2).
 
 #[cfg(test)]
 mod taxonomy_tests {

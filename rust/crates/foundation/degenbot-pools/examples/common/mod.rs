@@ -69,7 +69,7 @@ pub fn range(v: &Value) -> Result<IntV3TickRangeHop, String> {
 /// fixture resolved through `capture_fixture::fixture_path`.
 pub fn capture_arg(args: &[String], default_fixture: &str) -> String {
     args.get(1).cloned().unwrap_or_else(|| {
-        degenbot_pools::solve::capture_fixture::fixture_path(default_fixture)
+        degenbot_pools::solve::fixtures::fixture_path(default_fixture)
             .to_string_lossy()
             .into_owned()
     })

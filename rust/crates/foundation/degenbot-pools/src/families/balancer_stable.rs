@@ -546,12 +546,10 @@ pub(crate) mod solve {
 
     use alloy::primitives::{aliases::I512, U256, U512};
 
-    use crate::solve::mixed::solve::solve_golden_section_path_int;
-    use crate::solve::mixed::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
-    use crate::solve::profit_envelope::{
-        GateDeps, GateStats, HopMath, Line, PathBoundLines, PrefixCache,
-    };
+    use crate::solve::gate::{GateDeps, GateStats, HopMath, Line, PathBoundLines, PrefixCache};
     use crate::solve::runtime::SolveRuntimeConfig;
+    use crate::solve::solve_golden_section_path_int;
+    use crate::solve::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
 
     /// Resolved state for a Balancer V2 stable pool hop (`StableSwap` invariant),
     /// ready for the stable solve branch.
@@ -609,8 +607,8 @@ pub(crate) mod solve {
         resolved: &ResolvedMixedPath,
         _gate: &GateDeps<'_>,
         _walk_env: Option<&PathBoundLines>,
-    ) -> crate::solve::mixed::SolveArmOutcome {
-        crate::solve::mixed::SolveArmOutcome::walked(
+    ) -> crate::solve::SolveArmOutcome {
+        crate::solve::SolveArmOutcome::walked(
             solve_balancer_stable_path_int(resolved),
             crate::solve::concentrated_liquidity::WalkStats::default(),
         )

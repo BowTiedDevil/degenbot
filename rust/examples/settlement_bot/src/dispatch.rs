@@ -35,7 +35,7 @@ use degenbot::batch_executor::{BatchWork, PathResolver, PayloadFailure, PayloadR
 use degenbot::bot::arb_engine::{ResultBatch, SimulatedPathResult};
 use degenbot::cmd_executor::composers::PathInfo;
 use degenbot::rpc::provider::AlloyProvider;
-use degenbot::solvers::mixed::SolvePathResult;
+use degenbot::solvers::SolvePathResult;
 use degenbot::submission::{Dispatcher, ReceiptProbe, SubmissionError, SubmissionResult};
 
 /// Translate one engine solve row into the executor's raw row — the seam

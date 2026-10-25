@@ -2,7 +2,7 @@
 //! and the path-index key type the affected-path derivation is keyed on
 //!.
 
-use crate::solve::mixed::HopType;
+use crate::solve::HopType;
 
 /// One affected (hop family, pool id) key — the `pool_to_paths` reverse
 /// index key (the "path-index role" of this module). The affected-path

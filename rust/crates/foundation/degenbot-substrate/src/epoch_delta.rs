@@ -4,7 +4,7 @@
 //! pool classification are retired in favor of this type. Log application
 //! (`LogDispatcher::dispatch`) records the touched `(HopType, pool_id)`
 //! key — the `pool_to_paths` reverse-index key, i.e. an
-//! [`AffectedKey`](degenbot_pools::solve::affected_keys::AffectedKey) — as a
+//! [`AffectedKey`](degenbot_pools::affected::AffectedKey) — as a
 //! BYPRODUCT of `Bot::dispatch_log`, one ledger per block epoch.
 //! Affected-path derivation reads the ledger directly at the drain; no
 //! subscriber-side classification and no dirty-set machinery survive the
@@ -43,7 +43,7 @@ use indexmap::IndexSet;
 use parking_lot::Mutex;
 
 use super::epoch::Epoch;
-use degenbot_pools::solve::affected_keys::AffectedKey;
+use degenbot_pools::affected::AffectedKey;
 
 /// The ordered key buckets backing [`EpochDelta`].
 ///
@@ -137,12 +137,7 @@ impl EpochDelta {
     }
 
     /// Convenience: record a (hop family, pool id) pair at `block`.
-    pub fn record_affected(
-        &self,
-        hop: degenbot_pools::solve::mixed::HopType,
-        pool_id: u64,
-        block: u64,
-    ) {
+    pub fn record_affected(&self, hop: degenbot_pools::solve::HopType, pool_id: u64, block: u64) {
         self.record(AffectedKey::new(hop, pool_id), block);
     }
 
@@ -262,7 +257,7 @@ impl std::fmt::Debug for EpochDelta {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use degenbot_pools::solve::mixed::HopType;
+    use degenbot_pools::solve::HopType;
 
     fn key(hop: HopType, pool_id: u64) -> AffectedKey {
         AffectedKey::new(hop, pool_id)

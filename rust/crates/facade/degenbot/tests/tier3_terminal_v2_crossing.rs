@@ -34,7 +34,7 @@ use degenbot::investigation::{
     v2_get_amount_out, v3_hop_output, v4_hop_output, OracleOutcome, PathFixture, PoolData,
 };
 use degenbot_math::v2::IntHopState;
-use degenbot_pools::solve::mixed::PoolHop;
+use degenbot_pools::solve::PoolHop;
 
 const FIXTURE_182449: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),

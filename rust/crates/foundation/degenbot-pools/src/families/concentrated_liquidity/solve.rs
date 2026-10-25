@@ -28,11 +28,11 @@ use alloy::primitives::{aliases::I512, U256, U512};
 use crate::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
 
 use crate::solve::concentrated_liquidity::{ConcentratedLiquidityCrossingTable, RefineBound};
-use crate::solve::mixed::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
-use crate::solve::profit_envelope::{
+use crate::solve::gate::{
     content_mix_u256, record_gate, GateDeps, GateStats, HopMath, Line, PathBoundLines, PrefixCache,
 };
 use crate::solve::runtime::SolveRuntimeConfig;
+use crate::solve::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
 
 /// One concentrated liquidity hop's gate view: the sequence plus its crossing table.
 #[derive(Clone, Debug)]
@@ -87,9 +87,9 @@ pub(crate) fn solve_walkable_path_int(
     resolved: &ResolvedMixedPath,
     gate: &GateDeps<'_>,
     walk_env: Option<&PathBoundLines>,
-) -> crate::solve::mixed::SolveArmOutcome {
+) -> crate::solve::SolveArmOutcome {
     if resolved.hops.len() < 2 {
-        return crate::solve::mixed::SolveArmOutcome::refused(
+        return crate::solve::SolveArmOutcome::refused(
             crate::solve::concentrated_liquidity::WalkRefusal::TooShort,
         );
     }
@@ -126,7 +126,7 @@ pub(crate) fn solve_walkable_path_int(
             // Not a walkable V2/concentrated liquidity path (the caller routes other families
             // elsewhere); refuse rather than solve a partial composition.
             _ => {
-                return crate::solve::mixed::SolveArmOutcome::refused(
+                return crate::solve::SolveArmOutcome::refused(
                     crate::solve::concentrated_liquidity::WalkRefusal::NotWalkable,
                 )
             }
@@ -141,7 +141,7 @@ pub(crate) fn solve_walkable_path_int(
         window.as_deref(),
     );
 
-    crate::solve::mixed::SolveArmOutcome {
+    crate::solve::SolveArmOutcome {
         result: out.result.map(|(optimal_input, profit, hop_outputs)| {
             // consumed_inputs[0] = optimal_input (first hop consumes full input).
             // consumed_inputs[i>0] = hop_outputs[i-1] (previous hop's output
@@ -589,7 +589,7 @@ mod tests {
     use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
 
     use crate::solve::concentrated_liquidity::build_concentrated_liquidity_crossing_table;
-    use crate::solve::profit_envelope::{GateStats, HopMath, Line, PrefixCache};
+    use crate::solve::gate::{GateStats, HopMath, Line, PrefixCache};
     use crate::solve::runtime::SolveRuntimeConfig;
 
     fn sp_at(tick: i32) -> U256 {

@@ -21,7 +21,7 @@ use super::solve_cycle::SolveCycleShared;
 use super::{BlockMetadata, HashMap};
 use crate::arb_engine::executor::{SolveLane, SolveOutcome};
 use crate::arb_engine::inline_sim::{PipelinedSims, SimulatedPathResult};
-use ::degenbot_pools::solve::mixed::{ResolvedMixedPath, SolvePathResult};
+use ::degenbot_pools::solve::{ResolvedMixedPath, SolvePathResult};
 use degenbot_core::diag;
 // ===========================================================================
 // the walk-adjacent helpers, moved here with the walk they
@@ -147,12 +147,12 @@ pub(crate) fn solve_one_path(
     // memo + prefix-cache handles AND the epoch, so the deps for this block
     // can never disagree with the memo's epoch. Same semantics as the old
     // single borrowed GateDeps shared by the scope workers.
-    let gate_deps = ::degenbot_pools::solve::profit_envelope::GateDeps::per_block(
+    let gate_deps = ::degenbot_pools::solve::gate::GateDeps::per_block(
         ctx.scope.epoch(),
         ctx.scope.prefix_cache(),
         ctx.gate_capture
             .as_ref()
-            .map(|s| s as &dyn ::degenbot_pools::solve::profit_envelope::DegeneratePathSink),
+            .map(|s| s as &dyn ::degenbot_pools::solve::gate::DegeneratePathSink),
         Some(&**ctx.scope.walk_memo()),
         ctx.runtime,
     )
@@ -178,11 +178,8 @@ pub(crate) fn solve_one_path(
     );
     let _path_ctx = path_span.enter();
     let t0 = std::time::Instant::now();
-    let outcome = ::degenbot_pools::solve::mixed::solve_path_with_min_profit(
-        resolved,
-        ctx.min_profit,
-        &gate_deps,
-    );
+    let outcome =
+        ::degenbot_pools::solve::solve_path_with_min_profit(resolved, ctx.min_profit, &gate_deps);
     // The solve wall time is measured ONCE: it feeds the tracing
     // span attributes here and the ledger's single `record` call below.
     let elapsed = t0.elapsed();
@@ -462,7 +459,7 @@ fn stamp_outcome(
 mod solve_path_span_tests {
     use super::*;
     use crate::otel;
-    use degenbot_pools::solve::mixed::ResolvedMixedPath;
+    use degenbot_pools::solve::ResolvedMixedPath;
     use opentelemetry_sdk::trace::InMemorySpanExporter;
     use tracing_subscriber::layer::SubscriberExt;
     /// ADR-043 §8 behavioral volume gate : one fixture solve

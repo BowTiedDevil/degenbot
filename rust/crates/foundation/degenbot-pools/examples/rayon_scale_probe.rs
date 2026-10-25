@@ -49,7 +49,7 @@ use degenbot_pools::solve::concentrated_liquidity::{
     build_concentrated_liquidity_crossing_table, build_concentrated_liquidity_word_profiles,
     PreparedConcentratedLiquidityHop, WalkStats,
 };
-use degenbot_pools::solve::mixed::{solve_path_with_min_profit, ResolvedHop, ResolvedMixedPath};
+use degenbot_pools::solve::{solve_path_with_min_profit, ResolvedHop, ResolvedMixedPath};
 use rayon::prelude::*;
 use serde_json::Value;
 
@@ -202,13 +202,13 @@ fn solve_measure(
     u128,
     bool,
     WalkStats,
-    ::degenbot_pools::solve::profit_envelope::GateStats,
+    ::degenbot_pools::solve::gate::GateStats,
 ) {
     let t0 = Instant::now();
     let out = solve_path_with_min_profit(
         p.as_ref(),
         U256::ZERO,
-        &::degenbot_pools::solve::profit_envelope::GateDeps::offline(),
+        &::degenbot_pools::solve::gate::GateDeps::offline(),
     );
     (
         t0.elapsed().as_micros(),
@@ -362,7 +362,7 @@ fn run_static(
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mut fixture = degenbot_pools::solve::capture_fixture::fixture_path(
+    let mut fixture = degenbot_pools::solve::fixtures::fixture_path(
         "heavy_concentrated_liquidity_solve_captures.jsonl",
     )
     .to_string_lossy()
@@ -427,11 +427,11 @@ fn main() {
         "thread_counts={:?} static_counts={:?} bare_only={} skip_control={}",
         thread_counts, static_counts, bare_only, skip_control
     );
-    let content = degenbot_pools::solve::capture_fixture::read_fixture(&fixture);
+    let content = degenbot_pools::solve::fixtures::read_fixture(&fixture);
     let mut items: Vec<Arc<ResolvedMixedPath>> = Vec::new();
     let mut golden: Vec<Option<u128>> = Vec::new();
     let mut pids: Vec<u64> = Vec::new();
-    for doc in degenbot_pools::solve::capture_fixture::rows(&content) {
+    for doc in degenbot_pools::solve::fixtures::rows(&content) {
         if items.len() >= cap {
             break;
         }
@@ -459,7 +459,7 @@ loaded {} paths",
             let r = solve_path_with_min_profit(
                 p.as_ref(),
                 U256::ZERO,
-                &::degenbot_pools::solve::profit_envelope::GateDeps::offline(),
+                &::degenbot_pools::solve::gate::GateDeps::offline(),
             )
             .result;
             match (&r, golden[idx]) {

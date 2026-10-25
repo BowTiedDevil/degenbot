@@ -25,13 +25,13 @@ use crate::families::concentrated_liquidity::solve::{
 };
 use crate::families::curve_stableswap::solve::{curve_hop_lines, curve_to_math, solve_curve_entry};
 use crate::families::solidly::solve::{solidly_hop_lines, solidly_to_math, solve_solidly_entry};
-use crate::solve::profit_envelope::{
+use crate::solve::gate::{
     path_profit_bound_with_floor, refuse_lines, reserve_cap_hop_lines, v2_hop_lines, Envelope,
     GateDeps, GateStats, HopMath, Line, PathBoundLines, PrefixCache,
 };
 use crate::solve::runtime::SolveRuntimeConfig;
 
-use crate::solve::mixed::{
+use crate::solve::{
     HopType, ResolvedHop, ResolvedMixedPath, SolveArmOutcome, SolvePathResult, INT128_MAX,
 };
 
@@ -83,7 +83,7 @@ pub fn solve_path_with_min_profit(
     gate: &GateDeps<'_>,
 ) -> SolveOutcome {
     // Hard cutover : the gate is unconditional.
-    let views: Vec<Option<crate::solve::profit_envelope::HopMath<'_>>> =
+    let views: Vec<Option<crate::solve::gate::HopMath<'_>>> =
         resolved.hops.iter().map(hop_math_for).collect();
     let (envelope, mut gate_stats) = path_profit_bound_with_floor(&views, gate, min_profit);
     match envelope {
@@ -115,7 +115,7 @@ pub fn solve_path_with_min_profit(
     // counters merge into the same returned `GateStats` the gate call
     // produced.
     let walk_env = if gate.runtime.envelope_pruned_refine {
-        crate::solve::profit_envelope::path_bound_lines_with_stats(
+        crate::solve::gate::path_bound_lines_with_stats(
             &views,
             &gate.runtime,
             gate.fan_cache(),
@@ -140,7 +140,7 @@ pub fn solve_path_with_min_profit(
 /// delegation to that row's `to_math` projection (ADR-071 D3). Each family's
 /// projection lives in its own fn so the two stableswap arms can BORROW the
 /// leaf's state slices instead of cloning a `Vec` per hop per candidate path.
-fn hop_math_for(hop: &ResolvedHop) -> Option<crate::solve::profit_envelope::HopMath<'_>> {
+fn hop_math_for(hop: &ResolvedHop) -> Option<crate::solve::gate::HopMath<'_>> {
     (family_row_for(hop.hop_type()).to_math.f)(hop)
 }
 
@@ -440,7 +440,7 @@ fn solve_exact_v2_entry(
 pub fn solve_path_inner(
     resolved: &ResolvedMixedPath,
     gate: &GateDeps<'_>,
-    walk_env: Option<&crate::solve::profit_envelope::PathBoundLines>,
+    walk_env: Option<&crate::solve::gate::PathBoundLines>,
 ) -> SolveArmOutcome {
     // An invalid (partially-resolved) path has hops missing — don't solve.
     if !resolved.valid {
@@ -693,7 +693,7 @@ mod gate_tests {
     use crate::families::concentrated_liquidity::solve::{
         concentrated_liquidity_hop_lines, concentrated_liquidity_to_math, solve_walkable_path_int,
     };
-    use crate::solve::mixed::ResolvedMixedPath;
+    use crate::solve::ResolvedMixedPath;
     use degenbot_math::v2::IntHopState;
     use degenbot_uniswap::dex_identity::DexVariant;
 
@@ -768,7 +768,7 @@ mod gate_tests {
         // than SOLVED unscreened. A single Solidly-stable hop yields a
         // `Some` bound (reserve cap) → `evaluated`, NOT `unsupported`.
         let solidly = ResolvedHop::SolidlyStable {
-            state: crate::solve::mixed::SolidlyHopState {
+            state: crate::solve::SolidlyHopState {
                 reserves_0: U256::from(1_000_000u64),
                 reserves_1: U256::from(1_000_000u64),
                 decimals_0: U256::from(1_000_000_000_000_000_000u64),

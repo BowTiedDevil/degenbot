@@ -22,7 +22,7 @@ use degenbot_math::concentrated_liquidity::swap_math::compute_swap_step_v3;
 use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_math::v2::IntHopState;
 use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use degenbot_pools::solve::profit_envelope::{
+use degenbot_pools::solve::gate::{
     path_output_bound_at, path_profit_bound, ConcentratedLiquidityHop, Envelope, GateDeps,
     GateSkipCause, HopMath,
 };
@@ -300,7 +300,7 @@ fn m6776w_overflow_paths_compose_without_poisoning() {
     // Multi-hop paths with 1e24+ reserves previously overflowed I512 during
     // compose, returning None (unsupported). The sound-reduction fix must
     // return Some WITHOUT under-cutting the true curve.
-    use degenbot_pools::solve::profit_envelope::{path_output_bound_at, HopMath};
+    use degenbot_pools::solve::gate::{path_output_bound_at, HopMath};
     // 4-hop V2 path with 1e24-scale reserves: coefficient product ~1e96.
     let big = U256::from_limbs([0, 0, 0x0DE0_B6B3_A764_0000u64, 0]); // ~1e24
     let v2 = HopMath::V2(&IntHopState::new(big, big, 997_000, 1_000_000));
@@ -338,7 +338,7 @@ fn m6776w_balancer_weighted_3hop_no_overflow() {
     // The real prod overflow: 3-hop Balancer weighted with 1e24-scale balances
     // and 1e18 weights. The slope coefficients are ~1e54 per hop; chaining
     // 3 gives ~1e162 which overflows I512 (max ~6.7e153).
-    use degenbot_pools::solve::profit_envelope::{path_output_bound_at, HopMath};
+    use degenbot_pools::solve::gate::{path_output_bound_at, HopMath};
     let one = U256::from(1_000_000_000_000_000_000u64); // 1e18
     let half = one / U256::from(2u64);
     let bal = U256::from(1_000_000u64) * one; // 1e24 (upscaled)
@@ -372,7 +372,7 @@ fn m6776w_none_cause_classifies_each_exit() {
     // The typed verdict + per-cause counters classify WHY the gate returned
     // Unsupported — used to diagnose the prod soak's unsupported rate. The
     // counters now ride the gate's returned value, not a thread-local.
-    use degenbot_pools::solve::profit_envelope::path_profit_bound_with_stats;
+    use degenbot_pools::solve::gate::path_profit_bound_with_stats;
     // Hop unmapped: a None slot (a hop family the gate doesn't map OR a
     // degenerate hop_state the caller couldn't build).
     let (env, s) = path_profit_bound_with_stats(&[None], &GateDeps::offline());
@@ -385,12 +385,8 @@ fn m6776w_none_cause_classifies_each_exit() {
     assert_eq!(s.none_overflow, 0);
     // Degenerate: a HopMath slot whose hops_lines_and_cap rejects
     // (zero reserves — a V2 hop with both reserves 0).
-    let v2_zero = degenbot_pools::solve::profit_envelope::HopMath::V2(&IntHopState::new(
-        U256::ZERO,
-        U256::ZERO,
-        0,
-        1,
-    ));
+    let v2_zero =
+        degenbot_pools::solve::gate::HopMath::V2(&IntHopState::new(U256::ZERO, U256::ZERO, 0, 1));
     let (env, s) = path_profit_bound_with_stats(&[Some(v2_zero)], &GateDeps::offline());
     assert!(matches!(
         env,
@@ -407,7 +403,7 @@ fn m6776w_none_cause_classifies_each_exit() {
 // ---------------------------------------------------------------------------
 
 static CAPTURES: LazyLock<String> = LazyLock::new(|| {
-    degenbot_pools::solve::capture_fixture::read_fixture(
+    degenbot_pools::solve::fixtures::read_fixture(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl")
             .as_path(),
@@ -500,18 +496,16 @@ fn prefix_cache_reuse_is_byte_identical_and_counts_hits() {
         .collect();
 
     // Same epoch both calls: populate the (content-keyed) cache, then reuse.
-    let store = degenbot_pools::solve::profit_envelope::PrefixCache::new();
-    let deps = degenbot_pools::solve::profit_envelope::GateDeps::per_block(
+    let store = degenbot_pools::solve::gate::PrefixCache::new();
+    let deps = degenbot_pools::solve::gate::GateDeps::per_block(
         1,
         &store,
         None,
         None,
         SolveRuntimeConfig::default(),
     );
-    let (first, _gs1) =
-        degenbot_pools::solve::profit_envelope::path_profit_bound_with_stats(&views, &deps);
-    let (second, gs2) =
-        degenbot_pools::solve::profit_envelope::path_profit_bound_with_stats(&views, &deps);
+    let (first, _gs1) = degenbot_pools::solve::gate::path_profit_bound_with_stats(&views, &deps);
+    let (second, gs2) = degenbot_pools::solve::gate::path_profit_bound_with_stats(&views, &deps);
     assert_eq!(first, second, "prefix reuse must be byte-identical");
     assert!(
         gs2.prefix_hits > 0,
@@ -522,7 +516,7 @@ fn prefix_cache_reuse_is_byte_identical_and_counts_hits() {
         "prefix reuse should cut composed boundaries"
     );
     // No cache reset exists — a new epoch in GateDeps drops older entries.
-    let (dropped, gs3) = degenbot_pools::solve::profit_envelope::path_profit_bound_with_stats(
+    let (dropped, gs3) = degenbot_pools::solve::gate::path_profit_bound_with_stats(
         &views,
         &GateDeps::per_block(2, &store, None, None, SolveRuntimeConfig::default()),
     );
@@ -578,7 +572,7 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
     let expected_small = path_profit_bound(&small_views, &GateDeps::offline());
     let expected_large = path_profit_bound(&large_views, &GateDeps::offline());
     // Populate the cache under the SMALL domain first.
-    let store = degenbot_pools::solve::profit_envelope::PrefixCache::new();
+    let store = degenbot_pools::solve::gate::PrefixCache::new();
     let _ = path_profit_bound(
         &small_views,
         &GateDeps::per_block(3, &store, None, None, SolveRuntimeConfig::default()),
@@ -625,7 +619,7 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
     ];
     let expected_tiny = path_profit_bound(&tiny_views, &GateDeps::offline());
     let expected_huge = path_profit_bound(&huge_views, &GateDeps::offline());
-    let store = degenbot_pools::solve::profit_envelope::PrefixCache::new();
+    let store = degenbot_pools::solve::gate::PrefixCache::new();
     let _ = path_profit_bound(
         &tiny_views,
         &GateDeps::per_block(4, &store, None, None, SolveRuntimeConfig::default()),
@@ -675,13 +669,13 @@ fn prefix_cache_chains_through_v2_hops() {
     // C4: the cache is an owner-scoped value this test holds — populate once,
     // then the warm solve must hit DETERMINISTICALLY (no spin; C4 retired the
     // process-global store that made cross-test interference possible).
-    let store = degenbot_pools::solve::profit_envelope::PrefixCache::new();
+    let store = degenbot_pools::solve::gate::PrefixCache::new();
     let cold = path_profit_bound(
         &views,
         &GateDeps::per_block(5, &store, None, None, SolveRuntimeConfig::default()),
     );
     assert_eq!(cold, expected, "cold populate must be byte-identical");
-    let (warm, gs) = degenbot_pools::solve::profit_envelope::path_profit_bound_with_stats(
+    let (warm, gs) = degenbot_pools::solve::gate::path_profit_bound_with_stats(
         &views,
         &GateDeps::per_block(5, &store, None, None, SolveRuntimeConfig::default()),
     );
@@ -782,7 +776,7 @@ fn bound_dominates_golden_profit_on_heavy_concentrated_liquidity_captures() {
 // M6776W degenerate-path golden capture harness tests
 // ---------------------------------------------------------------------------
 
-/// In-memory [`degenbot_pools::solve::profit_envelope::DegeneratePathSink`] — the
+/// In-memory [`degenbot_pools::solve::gate::DegeneratePathSink`] — the
 /// test stand-in for the engine's file-writing adapter. The solver performs no
 /// I/O, so a harness collects the serialized JSONL rows in memory and asserts
 /// on them directly (no temp file).
@@ -807,14 +801,14 @@ impl InMemoryCaptureSink {
     }
 }
 
-impl degenbot_pools::solve::profit_envelope::DegeneratePathSink for InMemoryCaptureSink {
+impl degenbot_pools::solve::gate::DegeneratePathSink for InMemoryCaptureSink {
     fn try_reserve(&self) -> bool {
         self.reserved
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             < self.max_paths
     }
 
-    fn capture(&self, event: &degenbot_pools::solve::profit_envelope::DegeneratePathEvent<'_>) {
+    fn capture(&self, event: &degenbot_pools::solve::gate::DegeneratePathEvent<'_>) {
         self.rows
             .lock()
             .expect("capture rows lock")
@@ -842,8 +836,8 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
     let sink = InMemoryCaptureSink::new(10);
     // The constructor requires the store; the degenerate reject fires before
     // any prefix lookup, so the cache stays empty and the outcome is identical.
-    let store = degenbot_pools::solve::profit_envelope::PrefixCache::new();
-    let deps = degenbot_pools::solve::profit_envelope::GateDeps::per_block(
+    let store = degenbot_pools::solve::gate::PrefixCache::new();
+    let deps = degenbot_pools::solve::gate::GateDeps::per_block(
         0,
         &store,
         Some(&sink),
@@ -852,8 +846,8 @@ fn m6776w_capture_harness_writes_jsonl_for_zero_liq_rejection() {
     );
     assert!(matches!(
         path_profit_bound(&views, &deps),
-        degenbot_pools::solve::profit_envelope::Envelope::Unsupported(
-            degenbot_pools::solve::profit_envelope::GateSkipCause::DegenerateHop
+        degenbot_pools::solve::gate::Envelope::Unsupported(
+            degenbot_pools::solve::gate::GateSkipCause::DegenerateHop
         )
     ));
 
@@ -1509,14 +1503,14 @@ fn solidly_stable_tangent_tightens_below_reserve_cap() {
 /// floor while their reserve caps sit far above it.
 #[test]
 fn solidly_stable_tangent_raises_skip_count_on_synthesized_corpus() {
-    use degenbot_pools::solve::mixed::solve_path_with_min_profit;
-    use degenbot_pools::solve::mixed::{ResolvedHop, ResolvedMixedPath, SolidlyHopState};
-    use degenbot_pools::solve::profit_envelope::{path_profit_bound_with_floor, GateDeps};
+    use degenbot_pools::solve::gate::{path_profit_bound_with_floor, GateDeps};
+    use degenbot_pools::solve::solve_path_with_min_profit;
+    use degenbot_pools::solve::{ResolvedHop, ResolvedMixedPath, SolidlyHopState};
     use degenbot_uniswap::dex_identity::DexVariant;
 
     // The committed mixed corpus has no Solidly leg.
-    let committed = degenbot_pools::solve::capture_fixture::load_rows(
-        degenbot_pools::solve::capture_fixture::fixture_path("heavy_mixed_solve_captures.jsonl"),
+    let committed = degenbot_pools::solve::fixtures::load_rows(
+        degenbot_pools::solve::fixtures::fixture_path("heavy_mixed_solve_captures.jsonl"),
     );
     let solidly_rows = committed
         .iter()

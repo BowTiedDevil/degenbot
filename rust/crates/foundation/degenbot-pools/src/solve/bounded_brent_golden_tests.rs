@@ -14,7 +14,7 @@
 
 #![expect(clippy::doc_markdown, clippy::float_cmp, clippy::unreadable_literal)]
 
-use degenbot_pools::solve::bounded_brent::{minimize_scalar_bounded, BrentMinimize};
+use crate::solve::bounded_brent::{minimize_scalar_bounded, BrentMinimize};
 
 struct Golden {
     name: &'static str,

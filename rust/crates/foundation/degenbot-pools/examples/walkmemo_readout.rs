@@ -86,7 +86,7 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(5)
         .max(1);
-    let content = degenbot_pools::solve::capture_fixture::read_fixture(&path);
+    let content = degenbot_pools::solve::fixtures::read_fixture(&path);
 
     // Parse every row; a parse failure is fatal (exit nonzero) — the readout
     // must never silently shrink the path set it reports on.

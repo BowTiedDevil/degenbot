@@ -12,7 +12,7 @@
 use alloy::primitives::{Address, U256};
 
 use degenbot_pools::families::solidly::{self, SolidlyHopProjection, SolidlyState};
-use degenbot_pools::solve::mixed::{MixedPoolRef, ResolvedHop, SolidlyHopState};
+use degenbot_pools::solve::{MixedPoolRef, ResolvedHop, SolidlyHopState};
 
 use super::super::BotState;
 use super::MissingHopReason;
@@ -109,7 +109,7 @@ mod tests {
     use super::project_solidly;
     use crate::{BotState, RegisterAerodromeV2PoolParams, RegisterV2PoolParams};
     use alloy::primitives::{aliases::U112, Address, U256};
-    use degenbot_pools::solve::mixed::{HopType, MixedPoolRef};
+    use degenbot_pools::solve::{HopType, MixedPoolRef};
     use degenbot_uniswap::dex_identity::DexVariant;
 
     // -----------------------------------------------------------------

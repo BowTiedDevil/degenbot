@@ -31,7 +31,7 @@
 use alloy::primitives::U256;
 use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 use degenbot_pools::solve::concentrated_liquidity::WalkEventCensus;
-use degenbot_pools::solve::profit_envelope::{path_profit_bound, GateDeps, HopMath};
+use degenbot_pools::solve::gate::{path_profit_bound, GateDeps, HopMath};
 use serde_json::Value;
 
 #[path = "common/mod.rs"]
@@ -61,7 +61,7 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(9)
         .max(1);
-    let content = degenbot_pools::solve::capture_fixture::read_fixture(&path);
+    let content = degenbot_pools::solve::fixtures::read_fixture(&path);
     let mut n_paths = 0u64;
     // Loop-18 T4: DR_REPLAY_REGEN=1 refreshes goldens that the solver now
     // EXCEEDS (over-shoot only; under-shoot stays a hard fail) — the loud,
@@ -125,8 +125,8 @@ fn main() {
             .collect();
         let bound_t0 = std::time::Instant::now();
         let bound = match path_profit_bound(&views, &GateDeps::offline()) {
-            degenbot_pools::solve::profit_envelope::Envelope::Bound(b) => Some(b),
-            degenbot_pools::solve::profit_envelope::Envelope::Unsupported(cause) => {
+            degenbot_pools::solve::gate::Envelope::Bound(b) => Some(b),
+            degenbot_pools::solve::gate::Envelope::Unsupported(cause) => {
                 eprintln!("path {pid}: gate unsupported: {cause:?}");
                 None
             }

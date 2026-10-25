@@ -93,15 +93,11 @@ impl DecodedPoolEvent {
     /// knows it directly: the retired `EngineSubscriber` classification
     /// (BotState bucket lookups per notify) is subsumed by this method
     #[must_use]
-    pub fn hop_type(&self) -> degenbot_pools::solve::mixed::HopType {
+    pub fn hop_type(&self) -> degenbot_pools::solve::HopType {
         match self {
-            Self::V2Sync { .. } => degenbot_pools::solve::mixed::HopType::V2,
-            Self::V3Swap { .. } | Self::V3Liquidity { .. } => {
-                degenbot_pools::solve::mixed::HopType::V3
-            }
-            Self::V4Swap { .. } | Self::V4Liquidity { .. } => {
-                degenbot_pools::solve::mixed::HopType::V4
-            }
+            Self::V2Sync { .. } => degenbot_pools::solve::HopType::V2,
+            Self::V3Swap { .. } | Self::V3Liquidity { .. } => degenbot_pools::solve::HopType::V3,
+            Self::V4Swap { .. } | Self::V4Liquidity { .. } => degenbot_pools::solve::HopType::V4,
         }
     }
 

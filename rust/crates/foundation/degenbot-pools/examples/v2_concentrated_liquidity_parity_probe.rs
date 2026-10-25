@@ -311,11 +311,11 @@ fn main() {
 
     // ── real corpus: heavy mixed captures ────────────────────────────────
     let capture_path =
-        degenbot_pools::solve::capture_fixture::fixture_path("heavy_mixed_solve_captures.jsonl");
-    let content = degenbot_pools::solve::capture_fixture::read_fixture(&capture_path);
+        degenbot_pools::solve::fixtures::fixture_path("heavy_mixed_solve_captures.jsonl");
+    let content = degenbot_pools::solve::fixtures::read_fixture(&capture_path);
     let mut unique = BTreeMap::<String, V2State>::new();
     let mut occurrences = 0u64;
-    for doc in degenbot_pools::solve::capture_fixture::rows(&content) {
+    for doc in degenbot_pools::solve::fixtures::rows(&content) {
         let Some(hops) = doc.get("hops").and_then(Value::as_array) else {
             continue;
         };

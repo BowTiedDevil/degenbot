@@ -112,6 +112,7 @@ pub use state_update::{PoolRefusal, PoolStateUpdate};
 /// envelope composition and its caches) live here beside the family read
 /// modules, and each family's solve entry lives inside its family module
 /// under [`families`].
+pub mod affected;
 pub mod solve;
 pub mod spec_bounds;
 pub mod state_history;

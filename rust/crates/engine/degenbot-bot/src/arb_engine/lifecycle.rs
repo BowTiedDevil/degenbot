@@ -7,7 +7,7 @@
 //! remains outside `arb_engine/mod.rs` (the one-impl-block structural gate).
 
 use super::{ArbitrageEngine, HashMap};
-use ::degenbot_pools::solve::mixed::{PoolHop, SolvePathResult};
+use ::degenbot_pools::solve::{PoolHop, SolvePathResult};
 /// the solve tree's runtime stance is INSTANCE-SCOPED — built
 /// fresh per engine from the typed config and passed down; no `OnceLock`.
 #[must_use]

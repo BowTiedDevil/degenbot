@@ -2384,3 +2384,129 @@ fn role_edge_direction_is_enforced() {
         "upward role edges outside the census (ADR-084 D4,          role_edge_direction_census.txt): {violations:#?}"
     );
 }
+
+/// ADR-084 D2/W2: the solve door census is the external naming surface. No
+/// crate outside `degenbot-pools` may name a solve-tree module that is not in
+/// `solve_door_census.txt` (or a `pools::affected_keys` path — the module
+/// moved to the pools root as `affected`).
+#[test]
+fn solve_door_census_is_the_external_surface() {
+    let census = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/solve_door_census.txt"),
+    )
+    .expect("read solve_door_census.txt");
+    let allowed: std::collections::BTreeSet<String> = census
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        allowed.contains("degenbot_pools::solve"),
+        "solve door census lost its root door"
+    );
+
+    // Every `degenbot_pools::solve::<segment>` (and the retired
+    // `affected_keys`) path named outside the pools crate, collected from
+    // source with an anchored scan — the same command family the census was
+    // generated from, over the union of fully-qualified and bare-import
+    // (`use degenbot_pools::solve;` + `solve::…`) reference forms.
+    let mut files = Vec::new();
+    for root in ["crates", "../examples"] {
+        collect_rust_sources(&workspace_root().join(root), &mut files);
+    }
+    let mut offenders: Vec<String> = Vec::new();
+    for file in &files {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        if file.to_string_lossy().contains("degenbot-pools")
+            || file.file_name().and_then(|n| n.to_str()) == Some("architecture_gates.rs")
+        {
+            continue;
+        }
+        for (offset, _) in text.match_indices("solve::") {
+            // The path segment before `solve::` decides the form: a
+            // `degenbot_pools::` prefix is fully qualified; a start-of-path
+            // segment is a bare import — considered only when the file
+            // imports the solve door.
+            let prefix_start = text[..offset]
+                .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != ':')
+                .map_or(0, |i| i + 1);
+            let prefix = &text[prefix_start..offset];
+            let qualified_form = prefix == "degenbot_pools::";
+            let bare_form = prefix.is_empty() && text.contains("use degenbot_pools::solve");
+            if !qualified_form && !bare_form {
+                continue;
+            }
+            let segments: Vec<&str> = text[offset..]
+                .trim_start_matches("solve::")
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .filter(|s| !s.is_empty())
+                .collect();
+            let Some(first) = segments.first() else {
+                continue;
+            };
+            // Retired module names must never reappear in external naming.
+            let retired = [
+                "mixed",
+                "profit_envelope",
+                "affected_keys",
+                "capture_fixture",
+            ];
+            if retired.contains(first) {
+                offenders.push(format!(
+                    "{}: retired solve path segment `{first}`",
+                    file.display()
+                ));
+                continue;
+            }
+            if qualified_form {
+                // The physical `pub mod` tree beneath the solve door. A named
+                // segment must be a census row's module (or a retired name,
+                // caught above); anything else is a door item at the root
+                // door, which the census closes over by construction.
+                const SOLVE_SUBMODULES: [&str; 10] = [
+                    "basket",
+                    "concentrated_liquidity",
+                    "fixtures",
+                    "gate",
+                    "mixed",
+                    "mobius_int",
+                    "mobius_int_exact",
+                    "mobius_shifted_piece",
+                    "profit_envelope",
+                    "runtime",
+                ];
+                if SOLVE_SUBMODULES.contains(first) {
+                    let path = format!("degenbot_pools::solve::{first}");
+                    if !allowed.contains(&path) {
+                        offenders.push(format!(
+                            "{}: solve path outside the census: {path}",
+                            file.display()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "external solve-tree naming outside the census (ADR-084 D2): {offenders:#?}"
+    );
+}
+
+/// Collect `.rs` files under `dir` (bounded: the workspace source tree).
+fn collect_rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rust_sources(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            out.push(path);
+        }
+    }
+}

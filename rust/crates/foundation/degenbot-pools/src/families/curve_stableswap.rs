@@ -745,12 +745,10 @@ pub(crate) mod solve {
 
     use degenbot_math::curve::stableswap::{DVariant, YVariant};
 
-    use crate::solve::mixed::solve::solve_golden_section_path_int;
-    use crate::solve::mixed::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
-    use crate::solve::profit_envelope::{
-        GateDeps, GateStats, HopMath, Line, PathBoundLines, PrefixCache,
-    };
+    use crate::solve::gate::{GateDeps, GateStats, HopMath, Line, PathBoundLines, PrefixCache};
     use crate::solve::runtime::SolveRuntimeConfig;
+    use crate::solve::solve_golden_section_path_int;
+    use crate::solve::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
 
     /// Resolved state for a Curve stableswap pool hop, ready for the curve
     /// solve branch.
@@ -822,8 +820,8 @@ pub(crate) mod solve {
         resolved: &ResolvedMixedPath,
         _gate: &GateDeps<'_>,
         _walk_env: Option<&PathBoundLines>,
-    ) -> crate::solve::mixed::SolveArmOutcome {
-        crate::solve::mixed::SolveArmOutcome::walked(
+    ) -> crate::solve::SolveArmOutcome {
+        crate::solve::SolveArmOutcome::walked(
             solve_curve_path_int(resolved),
             crate::solve::concentrated_liquidity::WalkStats::default(),
         )
@@ -996,7 +994,7 @@ pub(crate) mod solve {
 
         use proptest::prelude::*;
 
-        use crate::solve::profit_envelope::path_output_bound_at;
+        use crate::solve::gate::path_output_bound_at;
 
         proptest! {
             /// Curve stableswap: the reserve cap (`xp[out]·PRECISION/rate_out` = the
@@ -1038,7 +1036,7 @@ pub(crate) mod solve {
                 };
                 let bound = path_output_bound_at(&[Some(hop)], &U256::from(x), &crate::solve::runtime::SolveRuntimeConfig::default())
                     .unwrap_or(U256::ZERO);
-                let state = crate::solve::mixed::CurveStableswapHopState {
+                let state = crate::solve::CurveStableswapHopState {
                     amp: U256::from(1000u64),
                     a_precision: U256::from(100u64),
                     xp: xp.clone(),

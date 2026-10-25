@@ -149,7 +149,7 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(9)
         .max(1);
-    let content = degenbot_pools::solve::capture_fixture::read_fixture(&path);
+    let content = degenbot_pools::solve::fixtures::read_fixture(&path);
 
     let mut n_paths = 0u64;
     let mut n_golden_ok = 0u64;
@@ -172,7 +172,7 @@ fn main() {
         "status"
     );
 
-    for doc in degenbot_pools::solve::capture_fixture::rows(&content) {
+    for doc in degenbot_pools::solve::fixtures::rows(&content) {
         let pid: u64 = doc.get("path_id").and_then(Value::as_u64).unwrap_or(0);
         let n_hops = doc.get("n_hops").and_then(Value::as_u64).unwrap_or(0);
         let live_us: u128 = doc

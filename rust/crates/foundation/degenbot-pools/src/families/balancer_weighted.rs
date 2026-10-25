@@ -384,12 +384,10 @@ pub(crate) mod solve {
 
     use degenbot_math::balancer::constants::PowVersion;
 
-    use crate::solve::mixed::solve::solve_golden_section_path_int;
-    use crate::solve::mixed::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
-    use crate::solve::profit_envelope::{
-        GateDeps, GateStats, HopMath, Line, PathBoundLines, PrefixCache,
-    };
+    use crate::solve::gate::{GateDeps, GateStats, HopMath, Line, PathBoundLines, PrefixCache};
     use crate::solve::runtime::SolveRuntimeConfig;
+    use crate::solve::solve_golden_section_path_int;
+    use crate::solve::{ResolvedHop, ResolvedMixedPath, SolvePathResult};
 
     /// Resolved state for a Balancer V2 weighted pool hop, ready for the
     /// weighted solve branch. Carries everything the
@@ -451,8 +449,8 @@ pub(crate) mod solve {
         resolved: &ResolvedMixedPath,
         _gate: &GateDeps<'_>,
         _walk_env: Option<&PathBoundLines>,
-    ) -> crate::solve::mixed::SolveArmOutcome {
-        crate::solve::mixed::SolveArmOutcome::walked(
+    ) -> crate::solve::SolveArmOutcome {
+        crate::solve::SolveArmOutcome::walked(
             solve_balancer_weighted_path_int(resolved),
             crate::solve::concentrated_liquidity::WalkStats::default(),
         )
@@ -666,7 +664,7 @@ pub(crate) mod solve {
 
         use proptest::prelude::*;
 
-        use crate::solve::profit_envelope::path_output_bound_at;
+        use crate::solve::gate::path_output_bound_at;
         use degenbot_math::balancer::constants::ONE;
 
         proptest! {
@@ -681,7 +679,7 @@ pub(crate) mod solve {
             ) {
                 let weight_in = U256::from(w_in_pct) * ONE / U256::from(100u32);
                 let weight_out = ONE - weight_in;
-                let state = crate::solve::mixed::BalancerWeightedHopState {
+                let state = crate::solve::BalancerWeightedHopState {
                     balance_in: U256::from(b_in),
                     balance_out: U256::from(b_out),
                     weight_in,

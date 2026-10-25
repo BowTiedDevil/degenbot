@@ -46,7 +46,7 @@ pub(crate) use degenbot_bot::bot_core::{Bot, V4StateSync};
 pub(crate) use degenbot_bot::arb_engine::EngineStages;
 
 pub(crate) use degenbot_bot::arb_engine::{BlockNotification, ResultBatch};
-pub(crate) use degenbot_pools::solve::mixed::{HopType, PoolHop, SolvePathResult};
+pub(crate) use degenbot_pools::solve::{HopType, PoolHop, SolvePathResult};
 
 /// Python-facing mixed V2/V3 arbitrage engine.
 ///

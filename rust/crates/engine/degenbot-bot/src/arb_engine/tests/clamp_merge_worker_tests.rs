@@ -4,7 +4,7 @@ use crate::arb_engine::lifecycle::register_path;
 use crate::arb_engine::solve_cycle::SolveCycleShared;
 use crate::arb_engine::{ArbitrageEngine, BlockMetadata};
 use crate::bot_core::{TickInfo, V4PoolKey};
-use ::degenbot_pools::solve::mixed::{MixedPath, SolvePathResult};
+use ::degenbot_pools::solve::{MixedPath, SolvePathResult};
 use alloy::primitives::U256;
 use hashbrown::HashMap;
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use std::sync::Arc;
 fn clamp_skip_kind_names_every_non_twin_family() {
     use crate::arb_engine::solve_cycle::clamp_skip_kind;
     use crate::telemetry::error_kind;
-    use ::degenbot_pools::solve::mixed::HopType;
+    use ::degenbot_pools::solve::HopType;
 
     assert_eq!(clamp_skip_kind(HopType::V2), None);
     assert_eq!(clamp_skip_kind(HopType::V3), None);
@@ -107,11 +107,11 @@ fn overfed_v4_engine() -> (ArbitrageEngine, u64, Vec<std::sync::Arc<MixedPath>>)
     let path_id = register_path(
         &mut engine,
         vec![
-            ::degenbot_pools::solve::mixed::PoolHop {
+            ::degenbot_pools::solve::PoolHop {
                 pool_id: v2,
                 zero_for_one: true,
             },
-            ::degenbot_pools::solve::mixed::PoolHop {
+            ::degenbot_pools::solve::PoolHop {
                 pool_id: v4_id,
                 zero_for_one: false,
             },
@@ -139,7 +139,7 @@ fn worker_probe_ctx(
 /// two call sites: byte-identical result + twin count on identical input.
 #[test]
 fn worker_clamp_matches_engine_clamp_bit_for_bit() {
-    use ::degenbot_pools::solve::mixed::MixedPoolRef;
+    use ::degenbot_pools::solve::MixedPoolRef;
     let (engine, path_id, pool_refs) = overfed_v4_engine();
     let mk = || {
         let committed = U256::from(1u128) << 120;

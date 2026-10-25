@@ -138,7 +138,7 @@ fn solve_reference(
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let path = args.get(1).cloned().unwrap_or_else(|| {
-        degenbot_pools::solve::capture_fixture::fixture_path(
+        degenbot_pools::solve::fixtures::fixture_path(
             "heavy_concentrated_liquidity_solve_captures.jsonl",
         )
         .to_string_lossy()
@@ -153,7 +153,7 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(6);
 
-    let content = degenbot_pools::solve::capture_fixture::read_fixture(&path);
+    let content = degenbot_pools::solve::fixtures::read_fixture(&path);
     // The engine-owned collector every solve merges its tally into; the readout
     // below drains it once, at the end.
     let tele = WalkTelemetry::new();
@@ -169,7 +169,7 @@ fn main() {
     let mut micro_seqs: Option<Vec<IntV3TickRangeSequence>> = None;
     let mut micro_best: usize = 0;
 
-    for (line_no, doc) in degenbot_pools::solve::capture_fixture::rows(&content)
+    for (line_no, doc) in degenbot_pools::solve::fixtures::rows(&content)
         .into_iter()
         .enumerate()
     {

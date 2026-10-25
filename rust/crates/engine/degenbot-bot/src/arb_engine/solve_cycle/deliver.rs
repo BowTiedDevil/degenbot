@@ -10,7 +10,7 @@
 use super::EpochContext;
 use crate::arb_engine::delivery_policy::DeliveryPolicy;
 use crate::arb_engine::inline_sim::SimulatedPathResult;
-use ::degenbot_pools::solve::mixed::SolvePathResult;
+use ::degenbot_pools::solve::SolvePathResult;
 use degenbot_core::diag;
 use degenbot_substrate::BlockMetadata;
 

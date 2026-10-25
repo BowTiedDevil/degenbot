@@ -13,7 +13,7 @@ use degenbot_pathfinding::PoolKind;
 use degenbot_pools::capability::{
     capabilities, Arm, Family, ENCODER_FAMILIES, V4_FEE_CEILING_EXCLUSIVE, V4_HOOKLESS_ONLY,
 };
-use degenbot_pools::solve::mixed::HopType;
+use degenbot_pools::solve::HopType;
 use degenbot_pools::{
     BalanceVectorVariant, BinnedLiquidityVariant, ConcentratedLiquidityVariant, Identity,
     ReservePairVariant,

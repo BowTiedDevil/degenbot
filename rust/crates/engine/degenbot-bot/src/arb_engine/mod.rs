@@ -45,7 +45,7 @@ use self::boot_stamp::BootStamp;
 use self::delivery_policy::DeliveryPolicy;
 use self::path_registry::PathRegistry;
 use self::solve_cycle::{BlockScope, SolveCycle};
-use ::degenbot_pools::solve::mixed::{MixedPath, SolvePathResult};
+use ::degenbot_pools::solve::{MixedPath, SolvePathResult};
 #[cfg(test)]
 use alloy::primitives::aliases::U112;
 #[cfg(test)]
@@ -338,12 +338,12 @@ impl PumpPhase {
 /// illiquid); `Sparse` = no snapshot data — solver results may be inaccurate.
 pub use crate::bot_core::PoolTickCoverage;
 // ADR-015: the path/snapshot/hop-state value types + INT128_MAX constant
-// now live in `degenbot_pools::solve::mixed` (the solver's intake contract). The
+// now live in `degenbot_pools::solve` (the solver's intake contract). The
 // re-export shim that lived here during the staged relocation has been
 // dropped — callers import the solver types directly from
-// `::degenbot_pools::solve::mixed::{...}`. `BlockMetadata`, `PoolTickCoverage`,
+// `::degenbot_pools::solve::{...}`. `BlockMetadata`, `PoolTickCoverage`,
 // `V3SnapshotData`/`V4SnapshotData` (if needed) resolve to their original
-// homes (`bot_core`, `degenbot_pools::solve::mixed`).
+// homes (`bot_core`, `degenbot_pools::solve`).
 // `BlockMetadata` lives in `bot_core` (general block data); re-exported here so
 // engine code + external references (`crate::arb_engine::BlockMetadata`)
 // keep working (ADR-006 D4).
@@ -390,7 +390,7 @@ pub struct ResultBatch {
 /// cold-start `solve_all`): the deferral then keeps its pre-fold dropped
 /// behavior.
 pub(crate) type DeferredReRecordHook =
-    std::sync::Arc<dyn Fn(&[degenbot_pools::solve::affected_keys::AffectedKey], u64) + Send + Sync>;
+    std::sync::Arc<dyn Fn(&[degenbot_pools::affected::AffectedKey], u64) + Send + Sync>;
 /// The unified Uniswap engine — owns V2, V3, and V4 pool state and solves
 /// mixed arbitrage paths.
 ///

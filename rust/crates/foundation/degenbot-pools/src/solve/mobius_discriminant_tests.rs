@@ -17,14 +17,14 @@
 
 #![expect(clippy::unwrap_used, clippy::many_single_char_names)]
 
-use alloy::primitives::U256;
-use degenbot_math::v2::{int_simulate_path, IntHopState};
-use degenbot_pools::solve::concentrated_liquidity::{solve_piecewise, MixedHopView};
-use degenbot_pools::solve::mobius_int::{compute_int_mobius_coefficients, IntMobiusCoefficients};
-use degenbot_pools::solve::mobius_int_exact::{
+use crate::solve::concentrated_liquidity::{solve_piecewise, MixedHopView};
+use crate::solve::mobius_int::{compute_int_mobius_coefficients, IntMobiusCoefficients};
+use crate::solve::mobius_int_exact::{
     compute_mobius_model_optimal_input, exact_mobius_solve, isqrt_u512, narrow_u512_to_u256,
 };
-use degenbot_pools::solve::runtime::SolveRuntimeConfig;
+use crate::solve::runtime::SolveRuntimeConfig;
+use alloy::primitives::U256;
+use degenbot_math::v2::{int_simulate_path, IntHopState};
 
 /// The exact closed-form discriminant is trustworthy only when the U512
 /// product does not wrap. This is the code-checkable precondition over the

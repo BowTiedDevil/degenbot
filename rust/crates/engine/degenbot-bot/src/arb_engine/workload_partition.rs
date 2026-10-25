@@ -7,7 +7,7 @@
 //!
 //! Extracted from the retired grab file so the pure binning/costing seams and their invariants live at their
 //! own interface, independently of the lane walk.
-use ::degenbot_pools::solve::mixed::ResolvedMixedPath;
+use ::degenbot_pools::solve::ResolvedMixedPath;
 use degenbot_core::op_info;
 // ---------------------------------------------------------------------------
 // LPT-pre-balanced scoped-thread partition
@@ -309,7 +309,7 @@ mod dispatch_binning_properties {
     //! as a shrunk counterexample, not a host-only SIGABRT.
     use super::lpt_partition;
     use crate::arb_engine::executor_ab_probe::prod_lpt_bins;
-    use degenbot_pools::solve::mixed::ResolvedMixedPath;
+    use degenbot_pools::solve::ResolvedMixedPath;
     use proptest::prelude::*;
     use std::sync::Arc;
     /// Synthesized fixture paths (empty hops = zero structural cost; the
@@ -405,7 +405,7 @@ mod direct_seam_tests {
     use super::{path_cost_proxy, solve_bin_count};
     use crate::arb_engine::ArbitrageEngine;
     use ::degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-    use ::degenbot_pools::solve::mixed::{ResolvedHop, ResolvedMixedPath};
+    use ::degenbot_pools::solve::{ResolvedHop, ResolvedMixedPath};
     use alloy::primitives::U256;
     use std::sync::Arc;
     /// `solve_bin_count` is the ONE solve-bin sizing seam: it answers

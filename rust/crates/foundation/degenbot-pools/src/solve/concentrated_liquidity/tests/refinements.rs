@@ -32,7 +32,7 @@ use crate::solve::concentrated_liquidity::{
     build_concentrated_liquidity_crossing_table, derive_and_solve_concentrated_liquidity_piecewise,
     solve_concentrated_liquidity_piecewise, solve_piecewise, MixedHopView,
 };
-use crate::solve::profit_envelope::{
+use crate::solve::gate::{
     path_bound_lines, path_output_bound_at, path_profit_bound, GateDeps, HopMath,
 };
 use crate::solve::runtime::{AnchorSweep, SolveRuntimeConfig};
@@ -306,7 +306,7 @@ fn loop6_walker_dominates_dense_scan_and_envelope_never_undercuts() {
         // envelope bound + per-x soundness
         let bound = path_profit_bound(&views, &GateDeps::offline());
         let b_val = match bound {
-            crate::solve::profit_envelope::Envelope::Bound(b) => b,
+            crate::solve::gate::Envelope::Bound(b) => b,
             other => panic!("{name}: gate unsupported: {other:?}"),
         };
         let mut samples_checked = 0u32;
@@ -456,12 +456,12 @@ fn loop20_mass_sampling_stays_sound_and_measures_tightness() {
         };
         let deps_even = GateDeps::offline_with_runtime(cfg_even);
         let b_even = match path_profit_bound(&views, &deps_even) {
-            crate::solve::profit_envelope::Envelope::Bound(b) => b,
+            crate::solve::gate::Envelope::Bound(b) => b,
             other => panic!("case{case}: even gate failed: {other:?}"),
         };
         let deps_mass = GateDeps::offline_with_runtime(cfg_mass);
         let b_mass = match path_profit_bound(&views, &deps_mass) {
-            crate::solve::profit_envelope::Envelope::Bound(b) => b,
+            crate::solve::gate::Envelope::Bound(b) => b,
             other => panic!("case{case}: mass gate failed: {other:?}"),
         };
         // soundness: neither bound may under-cut the oracle's max profit
