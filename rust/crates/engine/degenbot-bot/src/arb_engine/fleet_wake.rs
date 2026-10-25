@@ -92,7 +92,17 @@ mod tests {
                     continue;
                 }
                 let text = std::fs::read_to_string(&path).expect("read source file");
-                let production = text.split("#[cfg(test)]").next().unwrap_or("");
+                // Test modules conventionally live at the end of a file; the
+                // scan stops at the first test-gated mod. Feature-gated
+                // islands (`#[cfg(all(test, feature = ...))]`, ADR-084 D3)
+                // count as test modules too, so both markers cut.
+                let cut = text
+                    .find("#[cfg(test)]")
+                    .into_iter()
+                    .chain(text.find("#[cfg(all(test,"))
+                    .min()
+                    .unwrap_or(text.len());
+                let production = &text[..cut];
                 for needle in ["observe_throttle(", "observe_cause("] {
                     if production.contains(needle) {
                         offenders.push(format!("{}: {needle}", path.display()));
