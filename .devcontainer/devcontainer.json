@@ -31,7 +31,7 @@
 //         - build.dockerfile            (the image itself; always honored)
 //         - runArgs                     (e.g. --pids-limit=-1 is live)
 //         - mounts                      (the ~/.agents, ~/.config/degenbot,
-//                                        ~/.foundry, ~/.pi bind mounts)
+//                                        ~/.pi bind mounts)
 //         - containerEnv                (LOCAL_BIN, FOUNDRY_DIR,
 //                                        UV_PROJECT_ENVIRONMENT,
 //                                        PYTHONPYCACHEPREFIX, the RPC URIs,
@@ -152,7 +152,6 @@
     "source=${localEnv:HOME}/.agents,target=/home/dev/.agents,type=bind",
     "source=${localEnv:HOME}/.config/degenbot,target=/home/dev/.config/degenbot,type=bind",
     "source=${localEnv:HOME}/.local/state/degenbot,target=/home/dev/.local/state/degenbot,type=bind",
-    "source=${localEnv:HOME}/.foundry,target=/home/dev/.foundry,type=bind",
     "source=${localEnv:HOME}/.pi,target=/home/dev/.pi,type=bind",
     // Persist the VS Code server + extensions across rebuilds via the
     // existing 'vscode' named podman volume (created 2026-07-24; orphaned

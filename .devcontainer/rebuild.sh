@@ -45,7 +45,7 @@ fi
 # (e.g. ~/.local/state/degenbot on a fresh checkout) fails the create with
 # "statfs ...: no such file or directory". Mirror every localEnv:HOME mount
 # from devcontainer.json here.
-for d in .agents .config/degenbot .local/state/degenbot .foundry .pi; do
+for d in .agents .config/degenbot .local/state/degenbot .pi; do
   mkdir -p "$HOME/$d"
 done
 
