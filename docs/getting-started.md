@@ -97,6 +97,7 @@ pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 
 ## Where to go next
 
+- **The capability catalog** — [docs/capabilities.md](capabilities.md): what each capability is, where it lives, and what it must not make you pull. Breaking Rust path changes (e.g. the ADR-084 solve-door cut) carry a was → is migration table in the [Rust changelog](rust/CHANGELOG.md).
 - **Architecture** — {doc}`/architecture/io-free-pools` (the foundation), {doc}`/architecture/block-state-machine`, {doc}`/architecture/rust-owned-bot`
 - **Design rationale** — {doc}`/adr/README` (start with ADR-003 and ADR-005)
 - **CLI reference** — {doc}`/cli/pool`, {doc}`/cli/database`, {doc}`/cli/aave`
