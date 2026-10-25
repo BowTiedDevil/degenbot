@@ -284,15 +284,13 @@ fn rfc3339_now() -> String {
 /// per-epoch and were just reset inside the memo), the running
 /// `negative_entries` gauge records last-value-wins.
 fn record_instruments(stats: &WalkMemoStats) {
-    if let Some(pipeline) = crate::instruments::pipeline() {
-        pipeline.add_walk_memo_epoch(
-            stats.probes,
-            stats.hits,
-            stats.cache_plays,
-            stats.negatives_played,
-            stats.negative_entries,
-        );
-    }
+    crate::instruments::record(crate::instruments::CensusEvent::WalkMemoEpoch {
+        probes: stats.probes,
+        hits: stats.hits,
+        cache_plays: stats.cache_plays,
+        negatives_played: stats.negatives_played,
+        negative_entries: stats.negative_entries,
+    });
 }
 
 #[cfg(test)]

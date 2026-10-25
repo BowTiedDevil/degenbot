@@ -204,9 +204,9 @@ impl StageTelemetry {
     pub fn on_publish(&mut self, parent: &Span, epoch: Epoch) {
         let age = self.close_open();
         if let Some(started) = self.cycle_started_at.take() {
-            if let Some(p) = crate::instruments::pipeline() {
-                p.observe_publish_cycle(started.elapsed().as_secs_f64());
-            }
+            crate::instruments::record(crate::instruments::CensusEvent::PublishCycleDone {
+                secs: started.elapsed().as_secs_f64(),
+            });
         }
         drop(point_span!(
             parent,
@@ -226,9 +226,7 @@ impl StageTelemetry {
         self.close_open();
         self.open_interval(parent, OpenKind::Rewind, epoch, from);
         self.rewind_opened_at = Some(Instant::now());
-        if let Some(p) = crate::instruments::pipeline() {
-            p.count_rewind();
-        }
+        crate::instruments::record(crate::instruments::CensusEvent::RewindEntered);
     }
 
     /// `CloseReorg`: the unwind window closed at `new_head`. Closes the Rewind
@@ -320,9 +318,9 @@ impl StageTelemetry {
             u64::try_from(age.as_micros()).unwrap_or(u64::MAX),
         );
         if open.kind == OpenKind::Streaming {
-            if let Some(p) = crate::instruments::pipeline() {
-                p.observe_streaming_age(age.as_secs_f64());
-            }
+            crate::instruments::record(crate::instruments::CensusEvent::StreamingStageWait {
+                secs: age.as_secs_f64(),
+            });
         }
         Some(age)
     }
@@ -331,9 +329,9 @@ impl StageTelemetry {
     fn close_rewind_and_record(&mut self) {
         self.close_open();
         if let Some(opened) = self.rewind_opened_at.take() {
-            if let Some(p) = crate::instruments::pipeline() {
-                p.observe_rewind_duration(opened.elapsed().as_secs_f64());
-            }
+            crate::instruments::record(crate::instruments::CensusEvent::RewindClosed {
+                secs: opened.elapsed().as_secs_f64(),
+            });
         }
     }
 }

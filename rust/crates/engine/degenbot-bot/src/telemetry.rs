@@ -192,9 +192,7 @@ pub fn record_exception(kind: &'static str, err: impl std::fmt::Display) {
         exception_message = %err,
         "exception"
     );
-    if let Some(p) = crate::instruments::pipeline() {
-        p.count_error(kind);
-    }
+    crate::instruments::record(crate::instruments::CensusEvent::EngineError { kind });
 }
 
 /// No-`otel`-feature twin: the console error line still fires (failures are

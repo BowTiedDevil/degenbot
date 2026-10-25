@@ -206,14 +206,10 @@ pub(crate) fn drain_death_response(
 ) {
     match failure {
         DrainFailure::SendFailed { .. } | DrainFailure::Stranded { .. } => {
-            if let Some(p) = crate::instruments::pipeline() {
-                p.count_detached_send_failed();
-            }
+            crate::instruments::record(crate::instruments::CensusEvent::StragglerSendFailed);
         }
         DrainFailure::MergePanic { .. } => {
-            if let Some(p) = crate::instruments::pipeline() {
-                p.count_detached_merge_panic();
-            }
+            crate::instruments::record(crate::instruments::CensusEvent::MergePanic);
         }
     }
     // Feeder-site contract (T3/T9): the wrapper feeds the owner AND wakes

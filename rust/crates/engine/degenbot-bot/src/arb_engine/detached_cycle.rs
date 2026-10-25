@@ -338,9 +338,9 @@ impl DetachedCycle {
             .outstanding
             .fetch_sub(1, Ordering::Relaxed)
             .saturating_sub(1);
-        if let Some(p) = crate::instruments::pipeline() {
-            p.set_detached_in_flight(outstanding_now);
-        }
+        crate::instruments::record(crate::instruments::CensusEvent::MergeInFlight {
+            count: outstanding_now,
+        });
         hotpath::gauge!("detached_solve_in_flight").set(f64::from(
             u32::try_from(outstanding_now).unwrap_or(u32::MAX),
         ));
@@ -350,9 +350,9 @@ impl DetachedCycle {
     /// post-submit read).
     pub(crate) fn publish_gauge(&self) {
         let outstanding_now = self.outstanding.load(Ordering::Relaxed);
-        if let Some(p) = crate::instruments::pipeline() {
-            p.set_detached_in_flight(outstanding_now);
-        }
+        crate::instruments::record(crate::instruments::CensusEvent::MergeInFlight {
+            count: outstanding_now,
+        });
         hotpath::gauge!("detached_solve_in_flight").set(f64::from(
             u32::try_from(outstanding_now).unwrap_or(u32::MAX),
         ));
@@ -364,9 +364,7 @@ impl DetachedCycle {
     /// this is a pure counter event.
     pub(crate) fn shed(&self) {
         self.shed_cycles.fetch_add(1, Ordering::Relaxed);
-        if let Some(p) = crate::instruments::pipeline() {
-            p.count_detached_shed();
-        }
+        crate::instruments::record(crate::instruments::CensusEvent::CycleShed);
     }
     /// `n` retained admission keys expired by the retention window
     /// (`head − W`) on a block advance — the machine counter + its pipeline
@@ -377,9 +375,9 @@ impl DetachedCycle {
             return;
         }
         self.leads_expired.fetch_add(expired, Ordering::Relaxed);
-        if let Some(p) = crate::instruments::pipeline() {
-            p.count_detached_leads_expired(expired);
-        }
+        crate::instruments::record(crate::instruments::CensusEvent::AdmissionKeysExpired {
+            n: expired,
+        });
     }
     /// ONE terminal disposition: land it on the machine's counter (+ the
     /// pipeline meter it feeds). The per-item LOG LINES stay at the call
@@ -389,21 +387,15 @@ impl DetachedCycle {
         match kind {
             Disposition::Applied => {
                 self.applied.fetch_add(1, Ordering::Relaxed);
-                if let Some(p) = crate::instruments::pipeline() {
-                    p.count_detached_applied();
-                }
+                crate::instruments::record(crate::instruments::CensusEvent::StragglerApplied);
             }
             Disposition::DroppedStale => {
                 self.dropped_stale.fetch_add(1, Ordering::Relaxed);
-                if let Some(p) = crate::instruments::pipeline() {
-                    p.count_detached_stale_dropped();
-                }
+                crate::instruments::record(crate::instruments::CensusEvent::StragglerDropped);
             }
             Disposition::DroppedDeregistered => {
                 self.dropped_deregistered.fetch_add(1, Ordering::Relaxed);
-                if let Some(p) = crate::instruments::pipeline() {
-                    p.count_detached_stale_dropped();
-                }
+                crate::instruments::record(crate::instruments::CensusEvent::StragglerDropped);
             }
             Disposition::Duplicate => {
                 self.duplicate_outcomes.fetch_add(1, Ordering::Relaxed);

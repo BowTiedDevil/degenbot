@@ -27,9 +27,7 @@ impl BlockPump {
             "BlockPump: backfilling blocks"
         );
         // T2: one counter per executed backfill range.
-        if let Some(p) = crate::instruments::pipeline() {
-            p.count_backfill();
-        }
+        crate::instruments::record(crate::instruments::CensusEvent::BackfillExecuted);
 
         // The transport fetch is degenbot-ingestion's; the
         // apply/solve loop below stays on the driver (its FSM + dispatch).

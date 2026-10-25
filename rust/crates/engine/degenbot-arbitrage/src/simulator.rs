@@ -987,15 +987,21 @@ impl Drop for SimSpanVerdict {
             self.span.record("simulate.expected_profit", profit);
         }
         // T3: verdict counter (labeled, small closed set) + duration histogram.
-        if let Some(p) = degenbot_bot::instruments::pipeline() {
-            p.count_simulate_verdict(self.verdict.as_str());
-            p.observe_simulate_duration(self.started.elapsed().as_secs_f64());
-            // ADR-040: error-outcome sims tally by closed reason (the bucket
-            // table keys the reaction; the label set stays closed).
-            if self.verdict == SimVerdict::Error {
-                if let Some(reason) = self.error_reason {
-                    p.count_sim_error_reason(reason);
-                }
+        degenbot_bot::instruments::record(
+            degenbot_bot::instruments::CensusEvent::SimulateVerdict {
+                verdict: self.verdict.as_str(),
+            },
+        );
+        degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::PathSimulated {
+            secs: self.started.elapsed().as_secs_f64(),
+        });
+        // ADR-040: error-outcome sims tally by closed reason (the bucket
+        // table keys the reaction; the label set stays closed).
+        if self.verdict == SimVerdict::Error {
+            if let Some(reason) = self.error_reason {
+                degenbot_bot::instruments::record(
+                    degenbot_bot::instruments::CensusEvent::SimErrorReason { reason },
+                );
             }
         }
         if self.verdict == SimVerdict::Error {

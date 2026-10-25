@@ -495,9 +495,9 @@ pub fn dispatch_profitable_results(
     let pre_filter_count = candidates.len();
     // T3: candidates entering the fan-out (pre-filter sizes summed; the
     // per-stage drop counts live on `DispatchOutcome` for the logs).
-    if let Some(p) = degenbot_bot::instruments::pipeline() {
-        p.count_candidates_found(u64::try_from(pre_filter_count).unwrap_or(u64::MAX));
-    }
+    degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::CandidatesFanOut {
+        n: u64::try_from(pre_filter_count).unwrap_or(u64::MAX),
+    });
 
     // 1. Pre-filter — suppression (L2486–L2490). Lock the suppression arc
     //    ONLY for this synchronous retain (the guard is dropped before the

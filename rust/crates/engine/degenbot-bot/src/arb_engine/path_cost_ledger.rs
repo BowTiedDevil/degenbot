@@ -193,12 +193,14 @@ impl PathCostLedger {
         let gs = outcome.gate_stats;
         let gate_us = u64::try_from(gs.duration_ns / 1_000).unwrap_or(u64::MAX);
 
-        if let Some(p) = crate::instruments::pipeline() {
-            #[expect(clippy::cast_precision_loss)]
-            {
-                p.observe_per_path_solve_duration(micros as f64 / 1e6);
-                p.observe_per_path_gate_duration(gs.duration_ns as f64 / 1e9);
-            }
+        #[expect(clippy::cast_precision_loss)]
+        {
+            crate::instruments::record(crate::instruments::CensusEvent::PerPathSolved {
+                secs: micros as f64 / 1e6,
+            });
+            crate::instruments::record(crate::instruments::CensusEvent::PerPathGated {
+                secs: gs.duration_ns as f64 / 1e9,
+            });
         }
 
         let ws = outcome.stats;

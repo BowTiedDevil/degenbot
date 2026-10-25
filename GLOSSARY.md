@@ -1022,6 +1022,16 @@ The typed operator re-parameterization applied at construction and at runtime.
 _Avoid_: "stance" (the fleet-migration concept), "engine config" (the config-schema value
 that feeds it).
 
+**Pipeline census**:
+The drain path's one owner of the event→metric map (`degenbot-bot/src/instruments.rs`):
+every pipeline stage reports happenings as closed **census events** — the ADR-041 stage
+table's and the Batch outcome record's own vocabulary — and the census alone decides which
+instrument, labels, and buckets answer an event. Metric names, the Grafana/alert couplings
+that quote them verbatim, and the None-guard live here and nowhere else; emit sites never
+name a metric. The trace-span channel stays separate (ADR-043: one fact per channel).
+_Avoid_: naming a metric at an emit site; a per-site `pipeline()` None-guard; a census
+event named after the metric it feeds; absorbing trace spans into the census.
+
 ## Solve cycle
 
 **Solve cycle**:

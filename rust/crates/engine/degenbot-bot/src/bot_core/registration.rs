@@ -690,9 +690,9 @@ impl Bot {
     /// `degenbot.registration.skips` metric family (Rust meter), collapsing
     /// `reason` onto the closed label set ([`registration_skip_kind`]).
     pub fn record_registration_skip(&self, reason: &str) {
-        if let Some(p) = crate::instruments::pipeline() {
-            p.count_registration_skip(registration_skip_kind(reason));
-        }
+        crate::instruments::record(crate::instruments::CensusEvent::RegistrationSkip {
+            reason: registration_skip_kind(reason),
+        });
     }
 
     /// Resolve the V4 identity (currency0/1, fee, `tick_spacing`, hook,

@@ -1341,9 +1341,9 @@ impl SolveCycle {
             // PRG-4: the duplicate never crosses the FFI as a skip — the
             // engine counts it for the registration skip telemetry itself.
             registry.note_dedup();
-            if let Some(p) = crate::instruments::pipeline() {
-                p.count_registration_skip("dup");
-            }
+            crate::instruments::record(crate::instruments::CensusEvent::RegistrationSkip {
+                reason: "dup",
+            });
             return Ok(Registration {
                 path_id: existing_id,
                 created: false,

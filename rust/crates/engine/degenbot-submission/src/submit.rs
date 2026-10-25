@@ -183,8 +183,8 @@ pub enum SubmitRecord {
 /// `[dispatch]` summary).
 ///
 /// `records` is the single result channel: [`Self::submitted_count`] and
-/// [`Self::skipped_count`] derive from it. The `instruments::pipeline()`
-/// counters written alongside in `dispatch_and_submit` are a telemetry
+/// [`Self::skipped_count`] derive from it. The `instruments::record`
+/// census events written alongside in `dispatch_and_submit` are a telemetry
 /// projection of the same events, not a second result store.
 #[derive(Debug, Default)]
 pub struct SubmitOutcome {
@@ -359,13 +359,22 @@ pub async fn dispatch_and_submit(
     for candidate in candidates {
         // T4: per-candidate economics (histograms; f64 wei for dashboards —
         // they chart magnitudes, not exact wei; clamped at u128::MAX).
-        if let Some(p) = degenbot_bot::instruments::pipeline() {
+        {
             #[expect(clippy::cast_precision_loss)]
             let gross = u128::try_from(candidate.gross_profit).unwrap_or(u128::MAX) as f64;
             #[expect(clippy::cast_precision_loss)]
             let net = u128::try_from(candidate.net_profit).unwrap_or(u128::MAX) as f64;
-            p.observe_dispatch_profits(gross, net);
-            p.observe_dispatch_gas(candidate.gas_used);
+            degenbot_bot::instruments::record(
+                degenbot_bot::instruments::CensusEvent::CandidateEconomics {
+                    gross_wei: gross,
+                    net_wei: net,
+                },
+            );
+            degenbot_bot::instruments::record(
+                degenbot_bot::instruments::CensusEvent::CandidateGas {
+                    gas: candidate.gas_used,
+                },
+            );
         }
         let path_pools = candidate.path_pools.clone();
 
@@ -376,10 +385,16 @@ pub async fn dispatch_and_submit(
             d.is_path_blocked(&path_pools, &committed_pools)
         };
         if blocked {
-            if let Some(p) = degenbot_bot::instruments::pipeline() {
-                p.count_submit_outcome("skipped_pools_claimed");
-                p.add_profit_missed(candidate_net_wei(&candidate));
-            }
+            degenbot_bot::instruments::record(
+                degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+                    outcome: "skipped_pools_claimed",
+                },
+            );
+            degenbot_bot::instruments::record(
+                degenbot_bot::instruments::CensusEvent::ProfitMissed {
+                    wei: candidate_net_wei(&candidate),
+                },
+            );
             outcome.records.push(SubmitRecord::Skipped {
                 path_id: candidate.path_id,
                 reason: SkipReason::PoolsClaimed,
@@ -391,9 +406,11 @@ pub async fn dispatch_and_submit(
         //     exclusivity) + skip.
         if dry_run {
             // Dry-run is a MODE, not missed money — counted, not profit-summed.
-            if let Some(p) = degenbot_bot::instruments::pipeline() {
-                p.count_submit_outcome("skipped_dry_run");
-            }
+            degenbot_bot::instruments::record(
+                degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+                    outcome: "skipped_dry_run",
+                },
+            );
             committed_pools.extend(path_pools.clone());
             outcome.records.push(SubmitRecord::Skipped {
                 path_id: candidate.path_id,
@@ -405,10 +422,16 @@ pub async fn dispatch_and_submit(
         // 2c. inject_code guard (L2666). The injected contract doesn't exist
         //     on-chain, so live submission is unsafe. Commit pools + skip.
         if inject_code {
-            if let Some(p) = degenbot_bot::instruments::pipeline() {
-                p.count_submit_outcome("skipped_inject_code");
-                p.add_profit_missed(candidate_net_wei(&candidate));
-            }
+            degenbot_bot::instruments::record(
+                degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+                    outcome: "skipped_inject_code",
+                },
+            );
+            degenbot_bot::instruments::record(
+                degenbot_bot::instruments::CensusEvent::ProfitMissed {
+                    wei: candidate_net_wei(&candidate),
+                },
+            );
             committed_pools.extend(path_pools.clone());
             outcome.records.push(SubmitRecord::Skipped {
                 path_id: candidate.path_id,
@@ -525,9 +548,11 @@ pub async fn dispatch_and_submit(
                         .unwrap_or_default();
                     let hash = alloy::hex::FromHex::from_hex(raw)
                         .unwrap_or_else(|_| alloy::primitives::keccak256(&raw_signed));
-                    if let Some(p) = degenbot_bot::instruments::pipeline() {
-                        p.count_submit_outcome("bundle_accepted");
-                    }
+                    degenbot_bot::instruments::record(
+                        degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+                            outcome: "bundle_accepted",
+                        },
+                    );
                     nonce_lane
                         .authority()
                         .record_broadcast(&lease)
@@ -548,10 +573,16 @@ pub async fn dispatch_and_submit(
                         degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
                         format_args!("path {} mevblocker bundle rejected: {e}", candidate.path_id),
                     );
-                    if let Some(p) = degenbot_bot::instruments::pipeline() {
-                        p.count_submit_outcome("skipped_broadcast_failed");
-                        p.add_profit_missed(candidate_net_wei(&candidate));
-                    }
+                    degenbot_bot::instruments::record(
+                        degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+                            outcome: "skipped_broadcast_failed",
+                        },
+                    );
+                    degenbot_bot::instruments::record(
+                        degenbot_bot::instruments::CensusEvent::ProfitMissed {
+                            wei: candidate_net_wei(&candidate),
+                        },
+                    );
                     crate::bundle::trace_wire_jsonl(
                         "bundle_wire_error",
                         &json!({
@@ -599,10 +630,16 @@ pub async fn dispatch_and_submit(
                         degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
                         format_args!("path {} relay signature failed: {e}", candidate.path_id),
                     );
-                    if let Some(p) = degenbot_bot::instruments::pipeline() {
-                        p.count_submit_outcome("skipped_broadcast_failed");
-                        p.add_profit_missed(candidate_net_wei(&candidate));
-                    }
+                    degenbot_bot::instruments::record(
+                        degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+                            outcome: "skipped_broadcast_failed",
+                        },
+                    );
+                    degenbot_bot::instruments::record(
+                        degenbot_bot::instruments::CensusEvent::ProfitMissed {
+                            wei: candidate_net_wei(&candidate),
+                        },
+                    );
                     let _ = nonce_lane.release(&lease);
                     outcome.records.push(SubmitRecord::Skipped {
                         path_id: candidate.path_id,
@@ -615,9 +652,11 @@ pub async fn dispatch_and_submit(
             let accepted = crate::relay::accepted_count(&outcomes);
             if accepted > 0 {
                 let hash = alloy::primitives::keccak256(&raw_signed);
-                if let Some(p) = degenbot_bot::instruments::pipeline() {
-                    p.count_submit_outcome("builder_relay_accepted");
-                }
+                degenbot_bot::instruments::record(
+                    degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+                        outcome: "builder_relay_accepted",
+                    },
+                );
                 nonce_lane
                     .authority()
                     .record_broadcast(&lease)
@@ -642,10 +681,16 @@ pub async fn dispatch_and_submit(
                     candidate.path_id
                 ),
             );
-            if let Some(p) = degenbot_bot::instruments::pipeline() {
-                p.count_submit_outcome("skipped_broadcast_failed");
-                p.add_profit_missed(candidate_net_wei(&candidate));
-            }
+            degenbot_bot::instruments::record(
+                degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+                    outcome: "skipped_broadcast_failed",
+                },
+            );
+            degenbot_bot::instruments::record(
+                degenbot_bot::instruments::CensusEvent::ProfitMissed {
+                    wei: candidate_net_wei(&candidate),
+                },
+            );
             let _ = nonce_lane.release(&lease);
             outcome.records.push(SubmitRecord::Skipped {
                 path_id: candidate.path_id,
@@ -682,9 +727,11 @@ pub async fn dispatch_and_submit(
             }
         }
         let tx_hash = if let Some(hash) = accepted_hash {
-            if let Some(p) = degenbot_bot::instruments::pipeline() {
-                p.count_submit_outcome("relay_accepted");
-            }
+            degenbot_bot::instruments::record(
+                degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+                    outcome: "relay_accepted",
+                },
+            );
             nonce_lane
                 .authority()
                 .record_broadcast(&lease)
@@ -700,10 +747,16 @@ pub async fn dispatch_and_submit(
             // (ports the `continue` on Web3Exception — the nonce is
             // leaked until a manual cleanup or the dispatcher's reap).
             // The monitor is NOT spawned (no tx to track).
-            if let Some(p) = degenbot_bot::instruments::pipeline() {
-                p.count_submit_outcome("skipped_broadcast_failed");
-                p.add_profit_missed(candidate_net_wei(&candidate));
-            }
+            degenbot_bot::instruments::record(
+                degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+                    outcome: "skipped_broadcast_failed",
+                },
+            );
+            degenbot_bot::instruments::record(
+                degenbot_bot::instruments::CensusEvent::ProfitMissed {
+                    wei: candidate_net_wei(&candidate),
+                },
+            );
             // Every relay rejected the raw transaction: free the lease so the
             // next candidate can stamp.
             let _ = nonce_lane.release(&lease);
@@ -724,10 +777,12 @@ pub async fn dispatch_and_submit(
         }
         committed_pools.extend(path_pools.clone());
 
-        if let Some(p) = degenbot_bot::instruments::pipeline() {
-            p.count_submit_outcome("submitted");
-            p.observe_submit_latency(batch_start.elapsed().as_secs_f64());
-        }
+        degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+            outcome: "submitted",
+        });
+        degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::SubmitLatency {
+            secs: batch_start.elapsed().as_secs_f64(),
+        });
         outcome.records.push(SubmitRecord::Submitted {
             path_id: candidate.path_id,
             tx_hash,
@@ -766,15 +821,33 @@ pub async fn dispatch_and_submit(
                     if matches!(outcome, Ok(ref o) if o.is_expired()) {
                         let _ = lane_clone.release_broadcast(nonce);
                     }
-                    if let Some(p) = degenbot_bot::instruments::pipeline() {
+                    {
                         match &outcome {
                             Ok(o) if o.is_confirmed() => {
-                                p.count_monitor_outcome("confirmed");
-                                p.add_profit_realized(candidate_net);
+                                degenbot_bot::instruments::record(
+                                    degenbot_bot::instruments::CensusEvent::MonitorOutcome {
+                                        outcome: "confirmed",
+                                    },
+                                );
+                                degenbot_bot::instruments::record(
+                                    degenbot_bot::instruments::CensusEvent::ProfitRealized {
+                                        wei: candidate_net,
+                                    },
+                                );
                             }
-                            Ok(_) => p.count_monitor_outcome("expired"),
+                            Ok(_) => {
+                                degenbot_bot::instruments::record(
+                                    degenbot_bot::instruments::CensusEvent::MonitorOutcome {
+                                        outcome: "expired",
+                                    },
+                                );
+                            }
                             Err(ref e) => {
-                                p.count_monitor_outcome("error");
+                                degenbot_bot::instruments::record(
+                                    degenbot_bot::instruments::CensusEvent::MonitorOutcome {
+                                        outcome: "error",
+                                    },
+                                );
                                 degenbot_bot::telemetry::record_exception(
                                     degenbot_bot::telemetry::error_kind::MONITOR_FAILURE,
                                     format_args!("tx monitor error: {e}"),

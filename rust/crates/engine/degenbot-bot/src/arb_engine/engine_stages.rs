@@ -448,9 +448,9 @@ impl EngineStages {
         // attributes the span + the duration/hold histograms below.
         let cycle_outcome;
         {
-            if let Some(p) = crate::instruments::pipeline() {
-                p.set_registered_paths(u64::try_from(path_count(&engine)).unwrap_or(u64::MAX));
-            }
+            crate::instruments::record(crate::instruments::CensusEvent::RegisteredPaths {
+                count: u64::try_from(path_count(&engine)).unwrap_or(u64::MAX),
+            });
             hotpath::gauge!("engine_registered_paths").set(f64::from(
                 u32::try_from(path_count(&engine)).unwrap_or(u32::MAX),
             ));
@@ -479,12 +479,10 @@ impl EngineStages {
             // already emitted; the solved-block is the cycle's anchor).
             let _ = cycle_outcome.solved_block();
             let _ = cycle_outcome.census;
-            if let Some(p) = crate::instruments::pipeline() {
-                p.observe_mutex_hold_duration(
-                    hold_start.elapsed().as_secs_f64(),
-                    cycle_outcome.arm_label(),
-                );
-            }
+            crate::instruments::record(crate::instruments::CensusEvent::SolveMutexHeld {
+                secs: hold_start.elapsed().as_secs_f64(),
+                arm: cycle_outcome.arm_label(),
+            });
             // spawn the detached merge sidecar at the FIRST
             // detached enqueue (rx take + spawn atomic under the held guard).
             // THE ONE spawn — the machine owns the census register +
@@ -493,13 +491,11 @@ impl EngineStages {
                 super::detached_cycle::spawn_merge_sidecar(&self.engine, merge_rx);
             }
         }
-        if let Some(p) = crate::instruments::pipeline() {
-            p.observe_solve_duration(
-                solve_start.elapsed().as_secs_f64(),
-                cycle_outcome.arm_label(),
-            );
-            p.count_solves_executed();
-        }
+        crate::instruments::record(crate::instruments::CensusEvent::SolveCycleRan {
+            secs: solve_start.elapsed().as_secs_f64(),
+            arm: cycle_outcome.arm_label(),
+        });
+        crate::instruments::record(crate::instruments::CensusEvent::SolveCycleDirty);
         cycle_outcome
     }
     /// if the empty-affected solve path took the parked

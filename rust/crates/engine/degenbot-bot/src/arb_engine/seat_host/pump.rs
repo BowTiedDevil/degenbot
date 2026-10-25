@@ -202,9 +202,10 @@ impl HostPump<'_> {
     /// gauge. Called at every pump exit and after a fault drain,
     /// so a stalled held backlog is observable.
     fn publish_backlog(&self) {
-        if let Some(pipeline) = crate::instruments::pipeline() {
-            pipeline.set_intake_backlog(self.role.label(), self.backlog.len() as u64);
-        }
+        crate::instruments::record(crate::instruments::CensusEvent::IntakeBacklog {
+            role: self.role.label(),
+            depth: self.backlog.len() as u64,
+        });
     }
     /// The Faulted arm: drain the backlog AND the role queue and
     /// report the held count to the S2 fault watch. Granted in-flight units

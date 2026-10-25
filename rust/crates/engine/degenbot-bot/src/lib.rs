@@ -55,6 +55,10 @@ compile_error!(
 
 pub mod bot_core;
 
+/// The pipeline census event vocabulary (feature-independent — both the
+/// otel-gated instrument set and the default-build stub re-export it).
+mod census;
+
 /// Default-build stub for the instruments module: same call surface, always
 /// `None`. Observation sites stay ungated (`if let Some(p) = pipeline()`) so
 /// the hot path reads identically in both builds — the compiler drops the
@@ -244,6 +248,15 @@ pub mod instruments {
 
     /// no-op (FF-T5 fleet profile metric)
     pub fn note_fleet_profile(_summary: &crate::arb_engine::fleet_status::FleetProfileSummary) {}
+
+    /// The census vocabulary, shared with the otel build (data-only here;
+    /// the default build compiles zero metrics code).
+    pub use crate::census::CensusEvent;
+
+    /// no-op census door: metrics are compiled out of this build. The
+    /// event still type-checks the emit sites so both builds share one
+    /// call surface.
+    pub fn record(_event: CensusEvent) {}
 
     /// Always `None` — metrics are compiled out of this build.
     #[must_use]

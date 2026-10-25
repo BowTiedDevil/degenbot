@@ -118,23 +118,31 @@ impl PumpTelemetry {
         self.stat_emissions += 1;
         // T2: the freeze-signature divergence as a scrapeable gauge (the
         // [DIAG] log below stays for the investigation trail).
-        if let Some(p) = crate::instruments::pipeline() {
+        {
             let head = i64::from(u32::try_from(pool_state_head).unwrap_or(i32::MAX as u32));
             let clock = i64::from(u32::try_from(current_block).unwrap_or(i32::MAX as u32));
-            p.set_state_head_lag(head - clock);
+            crate::instruments::record(crate::instruments::CensusEvent::HeadLag {
+                blocks: head - clock,
+            });
             // Liveness ages (freeze/stall detection): `seconds_since_header`
             // grows if the newHeads feed stops; `seconds_since_apply` grows if
             // the pump stops applying logs to state. A freeze = headers still
             // arriving (header age low) while the apply age rises and
             // state_head_lag goes more negative - not a single-number level.
-            p.set_seconds_since_header(self.last_header_at.elapsed().as_secs_f64());
-            p.set_seconds_since_apply(self.last_apply_at.elapsed().as_secs_f64());
+            crate::instruments::record(crate::instruments::CensusEvent::HeaderAge {
+                secs: self.last_header_at.elapsed().as_secs_f64(),
+            });
+            crate::instruments::record(crate::instruments::CensusEvent::ApplyAge {
+                secs: self.last_apply_at.elapsed().as_secs_f64(),
+            });
             // RSS drift-watch: RSS creeps linearly with the
             // registry (tick maps + revm working set) and a container
             // OOM-kill presents as an overnight availability failure, not a
             // solver symptom - sample it on the same periodic heartbeat.
             if let Some(bytes) = crate::instruments::read_process_rss_bytes() {
-                p.set_process_rss_bytes(bytes);
+                crate::instruments::record(crate::instruments::CensusEvent::ResidentSetBytes {
+                    bytes,
+                });
             }
         }
         let last_header_secs = self.last_header_at.elapsed().as_secs();

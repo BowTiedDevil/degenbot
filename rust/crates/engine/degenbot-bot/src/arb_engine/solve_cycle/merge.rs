@@ -218,9 +218,9 @@ pub(crate) fn clamp_result_with_state(
             | HopType::BalancerStable
             | HopType::CurveStableswap => {
                 if let Some(kind) = clamp_skip_kind(pool_ref.hop_type) {
-                    if let Some(p) = crate::instruments::pipeline() {
-                        p.count_error(kind);
-                    }
+                    crate::instruments::record(crate::instruments::CensusEvent::EngineError {
+                        kind,
+                    });
                 }
                 continue;
             }
@@ -229,9 +229,7 @@ pub(crate) fn clamp_result_with_state(
         // `input_consumed - margin` when over-fed (the empty-march class).
         if let Some(clamped) = input_clamp {
             if clamped < requested {
-                if let Some(p) = crate::instruments::pipeline() {
-                    p.count_clamp();
-                }
+                crate::instruments::record(crate::instruments::CensusEvent::SolverClampApplied);
                 op_info!(
                     domain = solver,
                     "path_id={path_id} hop={i} family={:?} input requested={requested} \
@@ -249,9 +247,7 @@ pub(crate) fn clamp_result_with_state(
         // truth, so the published hop_outputs become byte-exact too.
         if let Some(hop_out) = result.hop_outputs.get_mut(i) {
             if *hop_out != out {
-                if let Some(p) = crate::instruments::pipeline() {
-                    p.count_clamp();
-                }
+                crate::instruments::record(crate::instruments::CensusEvent::SolverClampApplied);
                 op_info!(
                     domain = solver,
                     "path_id={path_id} hop={i} family={:?} hop_outputs={hop_out} \
@@ -274,9 +270,7 @@ pub(crate) fn clamp_result_with_state(
         if i + 1 < pools.len() {
             let forward = result.consumed_inputs[i + 1];
             if out < forward {
-                if let Some(p) = crate::instruments::pipeline() {
-                    p.count_clamp();
-                }
+                crate::instruments::record(crate::instruments::CensusEvent::SolverClampApplied);
                 op_info!(
                     domain = solver,
                     "path_id={path_id} hop={i} family={:?} forward={forward} \

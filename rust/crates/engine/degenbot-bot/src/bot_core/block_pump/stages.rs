@@ -56,9 +56,7 @@ impl BlockPump {
                 observed_seq,
                 "reorg-flying stage work: stale epoch dropped instead of consuming epoch.block() (I3)"
             );
-            if let Some(p) = crate::instruments::pipeline() {
-                p.count_stale_drop();
-            }
+            crate::instruments::record(crate::instruments::CensusEvent::StaleEpochDrop);
             return true;
         }
         false
@@ -132,9 +130,9 @@ impl BlockPump {
         // Single-writer: the pump task alone stores `header_ms`.
         let header_ms = self.header_ms.load(std::sync::atomic::Ordering::Relaxed);
         if header_ms != 0 {
-            if let Some(p) = crate::instruments::pipeline() {
-                p.observe_header_to_publish(ms_to_secs(wall_ms().saturating_sub(header_ms)));
-            }
+            crate::instruments::record(crate::instruments::CensusEvent::HeaderPublished {
+                secs: ms_to_secs(wall_ms().saturating_sub(header_ms)),
+            });
         }
         if let Err(error) = self.engine.on_publish(&Publish {
             ctx,

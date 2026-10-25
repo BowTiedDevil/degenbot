@@ -567,9 +567,11 @@ impl BlockPump {
                     if pregap.logs > 0 {
                         fsm.observe_settle_gap(block_max_gap_us / 1000, now_ms());
                     }
-                    if let Some(p) = crate::instruments::pipeline() {
-                        p.observe_quiesce_window(fsm.settle_window_ms());
-                    }
+                    crate::instruments::record(
+                        crate::instruments::CensusEvent::QuiesceWindowArmed {
+                            ms: fsm.settle_window_ms(),
+                        },
+                    );
                     let settle_decisions =
                         hotpath::measure_block!("pump.settle_decision", fsm.on_settle());
                     for decision in settle_decisions {
@@ -621,17 +623,26 @@ impl BlockPump {
                                             span_ref.record("settle_wait_us", us);
                                         }
                                     }
-                                    if let Some(p) = crate::instruments::pipeline() {
-                                        if let Some(us) = header_us {
-                                            p.observe_header_to_first_log(us_to_secs(us));
-                                            // ok: us is small
-                                        }
-                                        if let Some(us) = burst_us {
-                                            p.observe_log_burst(us_to_secs(us));
-                                        }
-                                        if let Some(us) = settle_us {
-                                            p.observe_settle_wait(us_to_secs(us));
-                                        }
+                                    if let Some(us) = header_us {
+                                        crate::instruments::record(
+                                            crate::instruments::CensusEvent::FirstLogDelivered {
+                                                secs: us_to_secs(us), // ok: us is small
+                                            },
+                                        );
+                                    }
+                                    if let Some(us) = burst_us {
+                                        crate::instruments::record(
+                                            crate::instruments::CensusEvent::LogBurstDelivered {
+                                                secs: us_to_secs(us),
+                                            },
+                                        );
+                                    }
+                                    if let Some(us) = settle_us {
+                                        crate::instruments::record(
+                                            crate::instruments::CensusEvent::SettleDecided {
+                                                secs: us_to_secs(us),
+                                            },
+                                        );
                                     }
                                 }
                                 // the publish stage span (parented to
@@ -764,15 +775,13 @@ impl BlockPump {
                     // the epoch that just closed is fully accounted —
                     // sample its log ledger into the per-block funnel gauges.
                     let ledger = self.bot.dispatcher().snapshot_epoch_logs_and_reset();
-                    if let Some(p) = crate::instruments::pipeline() {
-                        p.observe_epoch_logs(
-                            ledger.seen,
-                            ledger.received,
-                            ledger.applied,
-                            ledger.undecoded + ledger.apply_missed,
-                            number,
-                        );
-                    }
+                    crate::instruments::record(crate::instruments::CensusEvent::EpochLogsClosed {
+                        seen: ledger.seen,
+                        received: ledger.received,
+                        applied: ledger.applied,
+                        ignored: ledger.undecoded + ledger.apply_missed,
+                        closing_block: number,
+                    });
                     // Sync-only header-processing scope: this enter
                     // guard dies before the first await below, so it can never
                     // leak across a task migration. The backfill future below
@@ -787,31 +796,30 @@ impl BlockPump {
                         // option write; no-op unless allocator-ctrl + auto).
                         crate::allocator_ctrl::on_header_observed();
                         // T2: blocks-observed counter + the header→solved anchor.
-                        if let Some(p) = crate::instruments::pipeline() {
-                            p.count_block();
-                            // follow-up: the kernel throttle counters
-                            // that identified the >10s solve p95 belong on the
-                            // dashboard, one sample per block cadence.
-                            if let Some(stats) = degenbot_core::cpu_budget::cgroup_throttle_delta()
-                            {
-                                p.observe_cgroup_throttled(
-                                    stats.nr_throttled,
-                                    stats.throttled_usec,
-                                );
-                                // LW-T5 (Seam E), re-routed
-                                // Part A: the SAME per-block sample feeds
-                                // the ONE process fleet posture owner
-                                // (`degenbot_workers::posture::process_owner()`
-                                // the Executor seam channel is
-                                // dissolved). The pump owns the
-                                // header-cadence delta
-                                // (LAST_HEADER_SAMPLE_MS). Always fed.
-                                feed_executor_throttle_sample(
-                                    wall_ms(),
-                                    stats.nr_throttled,
-                                    stats.throttled_usec,
-                                );
-                            }
+                        crate::instruments::record(crate::instruments::CensusEvent::HeaderAccepted);
+                        // follow-up: the kernel throttle counters
+                        // that identified the >10s solve p95 belong on the
+                        // dashboard, one sample per block cadence.
+                        if let Some(stats) = degenbot_core::cpu_budget::cgroup_throttle_delta() {
+                            crate::instruments::record(
+                                crate::instruments::CensusEvent::CgroupThrottleDelta {
+                                    events: stats.nr_throttled,
+                                    usecs: stats.throttled_usec,
+                                },
+                            );
+                            // LW-T5 (Seam E), re-routed
+                            // Part A: the SAME per-block sample feeds
+                            // the ONE process fleet posture owner
+                            // (`degenbot_workers::posture::process_owner()`
+                            // the Executor seam channel is
+                            // dissolved). The pump owns the
+                            // header-cadence delta
+                            // (LAST_HEADER_SAMPLE_MS). Always fed.
+                            feed_executor_throttle_sample(
+                                wall_ms(),
+                                stats.nr_throttled,
+                                stats.throttled_usec,
+                            );
                         }
                         // ADR-041: the header→publish epoch-race anchor
                         // (the dissolved DispatchOwner drainer's header→solved
@@ -892,9 +900,7 @@ impl BlockPump {
                     // `degenbot.logs.received` (relevant subset) so a WS feed
                     // that stops delivering relevant logs stays distinguishable
                     // from one that stopped delivering logs at all.
-                    if let Some(p) = crate::instruments::pipeline() {
-                        p.count_ws_log_seen();
-                    }
+                    crate::instruments::record(crate::instruments::CensusEvent::WsLogReceived);
                     // the funnel's `seen` leg — tallied at the event
                     // source (pre topic-filter) exactly like the instrument.
                     self.bot.dispatcher().inc_seen();
@@ -980,9 +986,9 @@ impl BlockPump {
                                 reorg.block = log_block,
                             ));
                         }
-                        if let Some(p) = crate::instruments::pipeline() {
-                            p.count_reorg_recovery_dropped();
-                        }
+                        crate::instruments::record(
+                            crate::instruments::CensusEvent::RecoveryAnchorDropped,
+                        );
                         degenbot_substrate::apply_telemetry::trace_ws_log_dispatch(
                             log.address(),
                             log.topics(),
@@ -1082,10 +1088,14 @@ impl BlockPump {
                             );
                             crate::telemetry::make_trace_root(&window);
                             // Metrics: episode count + entry depth.
-                            if let Some(p) = crate::instruments::pipeline() {
-                                p.count_reorg_window();
-                                p.observe_reorg_depth(depth_blocks);
-                            }
+                            crate::instruments::record(
+                                crate::instruments::CensusEvent::ReorgWindowEntered,
+                            );
+                            crate::instruments::record(
+                                crate::instruments::CensusEvent::ReorgDepth {
+                                    blocks: depth_blocks,
+                                },
+                            );
                             if let Some(bs) = block_span.as_ref() {
                                 bs.record("reorg.entry_block", reorg_block);
                             }
@@ -1100,9 +1110,9 @@ impl BlockPump {
                             match outcome {
                                 Ok(crate::bot_core::reorg_coordinator::ReorgOutcome::Restored) => {
                                     reorg_pools_restored += 1;
-                                    if let Some(p) = crate::instruments::pipeline() {
-                                        p.count_reorg_unwound_pool();
-                                    }
+                                crate::instruments::record(
+                                    crate::instruments::CensusEvent::PoolStateUnwound,
+                                );
                                 }
                                 Ok(
                                     crate::bot_core::reorg_coordinator::ReorgOutcome::IdempotentNoop,
@@ -1145,9 +1155,9 @@ impl BlockPump {
                             match outcome {
                                 Ok(crate::bot_core::reorg_coordinator::ReorgOutcome::Restored) => {
                                     reorg_pools_restored += 1;
-                                    if let Some(p) = crate::instruments::pipeline() {
-                                        p.count_reorg_unwound_pool();
-                                    }
+                                crate::instruments::record(
+                                    crate::instruments::CensusEvent::PoolStateUnwound,
+                                );
                                 }
                                 Ok(
                                     crate::bot_core::reorg_coordinator::ReorgOutcome::IdempotentNoop,
@@ -1289,9 +1299,9 @@ impl BlockPump {
                             // structural bug. The completeness verify at the
                             // tombstone/Published edge stays the loud safety
                             // net for genuinely dropped WS logs.
-                            if let Some(p) = crate::instruments::pipeline() {
-                                p.count_late_log_admitted();
-                            }
+                            crate::instruments::record(
+                                crate::instruments::CensusEvent::LateLogAdmitted,
+                            );
                             // feed the estimator's sliding-hour
                             // ledger — sustained budget overruns hold the
                             // adaptive window at the ceiling (backstop contract).

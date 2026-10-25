@@ -1237,6 +1237,167 @@ impl PipelineInstruments {
     }
 }
 
+impl PipelineInstruments {
+    /// The census dispatch: one variant → one instrument answer, each arm
+    /// byte-identical to the pre-census method body. Private — emit sites go
+    /// through [`record`]; the instrument methods stay public for the otel
+    /// plumbing tests, which construct a local meter and read values back.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the dispatch IS one flat 1:1 table over the closed census \n  vocabulary; hiding rows in helpers would obscure the event→instrument map"
+    )]
+    fn apply(&self, event: CensusEvent) {
+        match event {
+            CensusEvent::HeaderPublished { secs } => self.observe_header_to_publish(secs),
+            CensusEvent::StreamingStageWait { secs } => self.observe_streaming_age(secs),
+            CensusEvent::StaleEpochDrop => self.count_stale_drop(),
+            CensusEvent::FirstLogDelivered { secs } => self.observe_header_to_first_log(secs),
+            CensusEvent::LogBurstDelivered { secs } => self.observe_log_burst(secs),
+            CensusEvent::SettleDecided { secs } => self.observe_settle_wait(secs),
+            CensusEvent::LogDecodePhase { secs } => self.observe_log_decode(secs),
+            CensusEvent::StateApplyPhase { secs } => self.observe_state_apply(secs),
+            CensusEvent::HeaderAccepted => self.count_block(),
+            CensusEvent::LogDispatched => self.count_log_received(),
+            CensusEvent::LogApplied => self.count_log_applied(),
+            CensusEvent::LogUnmatched => self.count_log_apply_missed(),
+            CensusEvent::ReorgWindowEntered => self.count_reorg_window(),
+            CensusEvent::PoolStateUnwound => self.count_reorg_unwound_pool(),
+            CensusEvent::ReorgDepth { blocks } => self.observe_reorg_depth(blocks),
+            CensusEvent::RecoveryAnchorDropped => self.count_reorg_recovery_dropped(),
+            CensusEvent::LateLogAdmitted => self.count_late_log_admitted(),
+            CensusEvent::QuiesceWindowArmed { ms } => self.observe_quiesce_window(ms),
+            CensusEvent::WsLogReceived => self.count_ws_log_seen(),
+            CensusEvent::LogDecoded => self.count_log_decoded(),
+            CensusEvent::LogUndecoded => self.count_log_undecoded(),
+            CensusEvent::CgroupThrottleDelta { events, usecs } => {
+                self.observe_cgroup_throttled(events, usecs);
+            }
+            CensusEvent::BackfillExecuted => self.count_backfill(),
+            CensusEvent::HeadLag { blocks } => self.set_state_head_lag(blocks),
+            CensusEvent::HeaderAge { secs } => self.set_seconds_since_header(secs),
+            CensusEvent::ApplyAge { secs } => self.set_seconds_since_apply(secs),
+            CensusEvent::BackrunFeedSample {
+                connected,
+                seconds_since_event,
+                frames,
+                dropped_ring,
+                rejected_parse,
+                rejected_chain_id,
+                reconnects,
+            } => {
+                self.record_backrun_feed(
+                    connected,
+                    seconds_since_event,
+                    frames,
+                    dropped_ring,
+                    rejected_parse,
+                    rejected_chain_id,
+                    reconnects,
+                );
+            }
+            CensusEvent::BackrunFrameDecided { decision, reason } => {
+                self.count_backrun_frame(decision, reason);
+            }
+            CensusEvent::SolveMutexHeld { secs, arm } => {
+                self.observe_mutex_hold_duration(secs, arm);
+            }
+            CensusEvent::SolveCycleRan { secs, arm } => self.observe_solve_duration(secs, arm),
+            CensusEvent::PerPathSolved { secs } => self.observe_per_path_solve_duration(secs),
+            CensusEvent::PerPathGated { secs } => self.observe_per_path_gate_duration(secs),
+            CensusEvent::SolveCycleDirty => self.count_solves_executed(),
+            CensusEvent::RegisteredPaths { count } => self.set_registered_paths(count),
+            CensusEvent::IntakeBacklog { role, depth } => self.set_intake_backlog(role, depth),
+            CensusEvent::WorkerCensusRow { resource, workers } => {
+                self.set_worker_census(resource, workers);
+            }
+            CensusEvent::FleetProfileResolved {
+                profile,
+                binding,
+                oversubscribed,
+            } => {
+                self.set_fleet_profile(&crate::arb_engine::fleet_status::FleetProfileSummary {
+                    profile,
+                    binding,
+                    oversubscribed,
+                });
+            }
+            CensusEvent::CandidatesFanOut { n } => self.count_candidates_found(n),
+            CensusEvent::SolverClampApplied => self.count_clamp(),
+            CensusEvent::EngineError { kind } => self.count_error(kind),
+            CensusEvent::PathSimulated { secs } => self.observe_simulate_duration(secs),
+            CensusEvent::SimulateVerdict { verdict } => self.count_simulate_verdict(verdict),
+            CensusEvent::CandidateEconomics { gross_wei, net_wei } => {
+                self.observe_dispatch_profits(gross_wei, net_wei);
+            }
+            CensusEvent::CandidateGas { gas } => self.observe_dispatch_gas(gas),
+            CensusEvent::SubmitOutcome { outcome } => self.count_submit_outcome(outcome),
+            CensusEvent::RegistrationSkip { reason } => self.count_registration_skip(reason),
+            CensusEvent::SubmitLatency { secs } => self.observe_submit_latency(secs),
+            CensusEvent::ProfitRealized { wei } => self.add_profit_realized(wei),
+            CensusEvent::ProfitMissed { wei } => self.add_profit_missed(wei),
+            CensusEvent::MonitorOutcome { outcome } => self.count_monitor_outcome(outcome),
+            CensusEvent::MergeInFlight { count } => self.set_detached_in_flight(count),
+            CensusEvent::StragglerDropped => self.count_detached_stale_dropped(),
+            CensusEvent::StragglerSendFailed => self.count_detached_send_failed(),
+            CensusEvent::MergePanic => self.count_detached_merge_panic(),
+            CensusEvent::CycleShed => self.count_detached_shed(),
+            CensusEvent::AdmissionKeysExpired { n } => self.count_detached_leads_expired(n),
+            CensusEvent::StragglerApplied => self.count_detached_applied(),
+            CensusEvent::CycleDegraded => self.count_detached_degraded_cycle(),
+            CensusEvent::StateLockWait { site, mode, secs } => {
+                self.observe_state_lock_wait(site, mode, secs);
+            }
+            CensusEvent::StateLockHold { site, mode, secs } => {
+                self.observe_state_lock_hold(site, mode, secs);
+            }
+            CensusEvent::EpochLogsClosed {
+                seen,
+                received,
+                applied,
+                ignored,
+                closing_block,
+            } => {
+                self.observe_epoch_logs(seen, received, applied, ignored, closing_block);
+            }
+            CensusEvent::PublishCycleDone { secs } => self.observe_publish_cycle(secs),
+            CensusEvent::RewindEntered => self.count_rewind(),
+            CensusEvent::RewindClosed { secs } => self.observe_rewind_duration(secs),
+            CensusEvent::SimErrorReason { reason } => self.count_sim_error_reason(reason),
+            CensusEvent::QuarantineDepth { count } => self.set_quarantined_pools(count),
+            CensusEvent::ResidentSetBytes { bytes } => self.set_process_rss_bytes(bytes),
+            CensusEvent::WalkMemoEpoch {
+                probes,
+                hits,
+                cache_plays,
+                negatives_played,
+                negative_entries,
+            } => {
+                self.add_walk_memo_epoch(
+                    probes,
+                    hits,
+                    cache_plays,
+                    negatives_played,
+                    negative_entries,
+                );
+            }
+        }
+    }
+}
+
+/// The pipeline census's one door: fold the lazy/None-guard inside (one
+/// branch per observation, the same discipline as `log::debug!`) and dispatch
+/// the event. Emit sites call this unconditionally; no site names a metric or
+/// touches [`pipeline`].
+pub fn record(event: CensusEvent) {
+    if let Some(p) = pipeline() {
+        p.apply(event);
+    }
+}
+
+/// Re-export the census vocabulary so emit sites read
+/// `instruments::record(instruments::CensusEvent::…)` through one path.
+pub use crate::census::CensusEvent;
+
 /// Read the process resident set size in bytes from `/proc/self/statm`
 /// (second field: resident pages; page size classically 4096 — the runs
 /// this gauges are Linux `x86_64`). `None` when statm is unavailable or
@@ -1519,7 +1680,7 @@ static PIPELINE: OnceLock<Option<PipelineInstruments>> = OnceLock::new();
 /// (otel feature off is compiled out entirely; gate off / not yet initialized
 /// lands here). Idempotent — cheap to call per observation.
 #[must_use]
-pub fn pipeline() -> Option<&'static PipelineInstruments> {
+fn pipeline() -> Option<&'static PipelineInstruments> {
     PIPELINE
         .get_or_init(|| {
             // NOTE: do NOT "touch" an instrument with a marker attribute here.
