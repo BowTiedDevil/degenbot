@@ -381,7 +381,11 @@ mod tests {
         );
     }
 }
-#[cfg(test)]
+// The stance tests derive requests from the committed capture corpus
+// (`executor_ab_probe::load_corpus_fixture`), so they ride the
+// `executor-ab-probe` lane feature (ADR-084 D3): the test lanes enable it; a
+// default-feature build skips them.
+#[cfg(all(test, feature = "executor-ab-probe"))]
 #[expect(clippy::expect_used)]
 mod fleet_sim_stance_tests {
     //! ADR-042 F4 fixtures: the inline-sim runtime on the

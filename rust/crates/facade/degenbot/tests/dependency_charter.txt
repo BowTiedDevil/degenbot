@@ -1,0 +1,23 @@
+# ADR-084 D3 - the dependency charter is the published contract.
+#
+# Format (one rule per line; `#` comments; blank lines ignored):
+#   <crate|*> : <forbidden package-name prefixes...> [; except <crate>...]
+#
+# The gate (`dependency_charter_is_respected` in architecture_gates.rs) runs
+# `cargo tree -p <crate> -e normal --locked` at single-package, default-feature
+# resolution and fails if any tree package name starts with a forbidden
+# prefix. A `*` rule applies to every publishable workspace member except the
+# `except` list.
+#
+# Add a rule when a crate's published contract must exclude a dependency
+# class; never widen a crate's tree silently - either fix the leak or widen
+# the charter WITH a rationale in the same commit.
+#
+# pyo3: the pure-Rust core must stay importable without a Python interpreter
+# (ADR-005); only the binding shell may carry it.
+#
+# zstd/zstd-sys: the C-build capture-fixture dependency (ADR-084 D3). pools
+# keeps it behind the non-default `capture-fixtures` feature, which
+# single-package default-feature resolution does not enable; opt-in lanes
+# (`executor-ab-probe`, the test lanes) still compile it, documented residual.
+*: pyo3 zstd ; except degenbot-python

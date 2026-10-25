@@ -1018,6 +1018,8 @@ fn compose_boundary_reference(
 mod tests {
     use super::*;
 
+    // The corpus tests (feature-gated, ADR-084 D3) parse fixture hops.
+    #[cfg(feature = "capture-fixtures")]
     use crate::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use crate::solve::profit_envelope::derive::tests::hop_lines_and_cap;
     use crate::solve::profit_envelope::derive::HopMath;
@@ -2006,6 +2008,7 @@ mod tests {
     /// the stride-sample threshold); the giant synthetic corpus exercises the
     /// additive hull where the old pipeline dropped lines.
     #[test]
+    #[cfg(feature = "capture-fixtures")]
     #[expect(
         clippy::print_stdout,
         clippy::unwrap_used,
@@ -2185,6 +2188,7 @@ mod tests {
     /// equal — if the selection ever missed an active pair the exact bound
     /// would sit above the product's min somewhere on the grid.
     #[test]
+    #[cfg(feature = "capture-fixtures")]
     #[expect(clippy::print_stdout, clippy::unwrap_used)]
     fn exact_compose_is_pointwise_exact_and_additive_on_fat_chains() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -2259,6 +2263,8 @@ mod tests {
         assert!(boundaries > 0);
     }
 
+    // Only the capture-corpus tests (feature-gated, ADR-084 D3) parse hops.
+    #[cfg(feature = "capture-fixtures")]
     fn parse_hop_json(v: &serde_json::Value) -> Option<IntV3TickRangeSequence> {
         let arr = v.as_array()?;
         let mut ranges = Vec::with_capacity(arr.len());

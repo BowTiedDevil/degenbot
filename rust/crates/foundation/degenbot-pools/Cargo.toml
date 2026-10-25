@@ -29,8 +29,13 @@ serde_json = { version = "^1.0" }
 num-bigint = { version = "^0.5" }
 num-integer = { version = "^0.1" }
 # Capture-fixture transparent decompress (src/solve/capture_fixture.rs); large
-# fixtures ship as .jsonl.zst, readers decode in memory.
-zstd.workspace = true
+# fixtures ship as .jsonl.zst, readers decode in memory. Optional behind
+# `capture-fixtures` (ADR-084 D3): the C-build dependency is fixture machinery,
+# not part of the value/solve charter, so `cargo add degenbot-pools` (and every
+# downstream tree) compiles no zstd by default. `serde_json` stays mandatory:
+# `DegeneratePathEvent::to_jsonl_row` is production capture API (bot's
+# solver_capture sink), not fixture machinery.
+zstd = { workspace = true, optional = true }
 # hotpath: solver-phase profiling (ADR-005 core, pyo3-free). Non-optional,
 # default-features = false -> no-op stubs in default builds; the
 # `hotpath` feature enables real instrumentation. Version matched to degenbot-bot.
@@ -38,6 +43,10 @@ hotpath = { version = "^0.29.0", default-features = false }
 
 [features]
 hotpath = ["hotpath/hotpath", "hotpath/threads"]
+# Fixture capture/replay I/O (src/solve/capture_fixture.rs, the profit-envelope
+# capture writer, and the fixture-reading test modules). Test lanes enable it
+# explicitly so the golden corpora stay executed, not silently skipped.
+capture-fixtures = ["dep:zstd"]
 # Ambient walk telemetry: the per-thread walk-combinator counters, event
 # census, and process-wide timing statics. Off by default so a release build
 # that never reads the counters pays nothing for them; enabling it turns
@@ -65,6 +74,53 @@ hex = "^0.4"
 # default features excludes dev-deps), so the no-pyo3-in-cores invariant is
 # unaffected.
 revm = { version = "^43.0", default-features = true }
+
+# Fixture-reading integration tests: required-features keeps the default
+# `-p degenbot-pools` build compiling while the lanes that own the corpora
+# enable `capture-fixtures` explicitly.
+[[test]]
+name = "offline_heavy_replay"
+required-features = ["capture-fixtures"]
+
+[[test]]
+name = "profit_envelope_tests"
+required-features = ["capture-fixtures"]
+
+[[test]]
+name = "concentrated_liquidity_cache_lab_goldens"
+required-features = ["capture-fixtures"]
+
+# Fixture-reading examples ([[example]] sections exist only to carry
+# required-features; unlisted examples auto-discover and compile everywhere).
+# The pre-push/CI lanes that run them enable the feature explicitly.
+
+[[example]]
+name = "concentrated_liquidity_cache_lab"
+required-features = ["capture-fixtures"]
+
+[[example]]
+name = "concentrated_liquidity_solve_replay"
+required-features = ["capture-fixtures"]
+
+[[example]]
+name = "entry_ab_readout"
+required-features = ["capture-fixtures"]
+
+[[example]]
+name = "mixed_solve_replay"
+required-features = ["capture-fixtures"]
+
+[[example]]
+name = "rayon_scale_probe"
+required-features = ["capture-fixtures"]
+
+[[example]]
+name = "v2_concentrated_liquidity_parity_probe"
+required-features = ["capture-fixtures"]
+
+[[example]]
+name = "walkmemo_readout"
+required-features = ["capture-fixtures"]
 
 [[bench]]
 name = "digest"

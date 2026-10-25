@@ -85,6 +85,11 @@ tokio-util = { version = "0.7.20", optional = true }
 libmimalloc-sys = { version = "^0.1", optional = true }
 
 [features]
+# The executor A/B probe corpus lane: pools' capture-fixture I/O plus the
+# fixture-loading test islands that consume it (ADR-084 D3). Off by default so
+# the production bot tree compiles no zstd; the test lanes enable it so the
+# golden corpora stay executed, not silently skipped.
+executor-ab-probe = ["degenbot-pools/capture-fixtures"]
 # Runtime allocator tuning from observed block cadence: lets the
 # engine call mi_option_set on mimalloc's purge delay. Optional + off-by-default:
 # same policy as hotpath/otel, the binding's `dev-features` alias enables it

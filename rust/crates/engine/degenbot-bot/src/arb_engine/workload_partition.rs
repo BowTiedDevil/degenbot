@@ -296,7 +296,10 @@ mod lpt_partition_tests {
         assert!(bins.is_empty());
     }
 }
-#[cfg(test)]
+// The properties bind through `executor_ab_probe::prod_lpt_bins`, so the
+// island rides the `executor-ab-probe` lane feature with the rest of the
+// corpus consumers (ADR-084 D3).
+#[cfg(all(test, feature = "executor-ab-probe"))]
 mod dispatch_binning_properties {
     //! Solver dispatch binning properties over
     //! ARBITRARY item counts, cost shapes and seat shapes. The spawn-seam

@@ -454,6 +454,10 @@ fn stamp_outcome(
 }
 // ----------------- PER-PATH SPAN TELEMETRY-----------------
 #[cfg(all(test, feature = "otel"))]
+// The island loads the committed capture corpus (`executor_ab_probe::
+// load_corpus_fixture`), so it rides the `executor-ab-probe` lane feature
+// (ADR-084 D3): the test lanes enable it; a default-feature build skips it.
+#[cfg(all(test, feature = "executor-ab-probe"))]
 #[expect(clippy::expect_used)] // otel tests assert loudly, per telemetry.rs otel_tests
 mod solve_path_span_tests {
     use super::*;

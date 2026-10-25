@@ -35,6 +35,10 @@ compile_error!(
 pub mod affected_keys;
 pub mod basket;
 pub mod bounded_brent;
+// Fixture I/O: transparent .zst corpus decode (ADR-084 D3). Feature-gated so
+// the C-build dependency (zstd) stays out of every default dependency tree;
+// test lanes enable `capture-fixtures` explicitly.
+#[cfg(feature = "capture-fixtures")]
 pub mod capture_fixture;
 pub mod mixed;
 pub mod mobius_int;

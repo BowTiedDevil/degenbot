@@ -93,7 +93,7 @@ pub(crate) struct FleetSolveExecutor {
     solver_seats: usize,
     /// The resolved lane-to-thread binding (FF-T4 — test-facing
     /// parity assertions; the host itself moved into the host thread).
-    #[cfg(test)]
+    #[cfg(all(test, feature = "executor-ab-probe"))]
     binding: degenbot_workers::plan::Binding,
 }
 impl crate::arb_engine::executor::Executor for FleetSolveExecutor {
@@ -159,7 +159,7 @@ impl FleetSolveExecutor {
     /// `{n}`-templated thread name (pinned: the solver seats; serial:
     /// the ONE serial-0 cycle seat).
     fn boot_seats(host: FleetHost, seat_name_pattern: &'static str) -> Self {
-        #[cfg(test)]
+        #[cfg(all(test, feature = "executor-ab-probe"))]
         let binding = host.plan().binding;
         let solver_seats = host.budget().solver_pin_count;
         let (tx, rx) = mpsc::channel::<HostMsg>();
@@ -263,13 +263,14 @@ impl FleetSolveExecutor {
             unit_seq: AtomicU64::new(0),
             solver_seats,
             solver_queue_len,
-            #[cfg(test)]
+            #[cfg(all(test, feature = "executor-ab-probe"))]
             binding,
         }
     }
     /// Test-facing: the resolved plan binding (FF-T4 — the parity
-    /// tests assert the tier each boot instantiated).
-    #[cfg(test)]
+    /// tests assert the tier each boot instantiated). Rides the
+    /// `executor-ab-probe` lane with its only consumer (ADR-084 D3).
+    #[cfg(all(test, feature = "executor-ab-probe"))]
     fn plan_binding_for_test(&self) -> degenbot_workers::plan::Binding {
         self.binding
     }
@@ -510,7 +511,10 @@ pub(crate) fn global_fleet_solve_executor() -> &'static FleetSolveExecutor {
 // `crate::arb_engine::executor`: the former provisional
 // lane module folded there per the placement. The fleet executor
 // retains SOLVE_BIN_KEY_BASE and its host machinery here.
-#[cfg(test)]
+// The island drives the committed capture corpus through the fleet executor
+// (`executor_ab_probe`), so it rides the `executor-ab-probe` lane feature
+// (ADR-084 D3): the test lanes enable it; a default-feature build skips it.
+#[cfg(all(test, feature = "executor-ab-probe"))]
 #[expect(clippy::expect_used)]
 mod tests {
     use super::super::executor_ab_probe::{load_corpus_fixture, probe_ctx, prod_lpt_bins};

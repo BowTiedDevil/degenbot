@@ -2155,3 +2155,137 @@ fn mod_declared_in(file: &Path, segment: &str) -> bool {
         Err(_) => false,
     }
 }
+
+/// Expand charter rules into per-crate (crate, forbidden prefixes) pairs.
+fn expand_charter_rules(
+    rules: &[(Vec<String>, Vec<String>, Vec<String>)],
+    members: &[String],
+) -> Vec<(String, Vec<String>)> {
+    let mut checks: Vec<(String, Vec<String>)> = Vec::new();
+    for (targets, prefixes, except) in rules {
+        if targets.len() == 1 && targets[0] == "*" {
+            for member in members {
+                if except.contains(member) {
+                    continue;
+                }
+                checks.push((member.clone(), prefixes.clone()));
+            }
+        } else {
+            for target in targets {
+                assert!(
+                    members.contains(target),
+                    "charter rule names non-member crate {target:?}"
+                );
+                checks.push((target.clone(), prefixes.clone()));
+            }
+        }
+    }
+    checks
+}
+
+/// ADR-084 D3: the dependency charter is the published contract. Every rule
+/// in `dependency_charter.txt` is asserted over `cargo tree -p X -e normal`
+/// at single-package, default-feature resolution.
+#[test]
+fn dependency_charter_is_respected() {
+    let charter_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dependency_charter.txt");
+    let charter = std::fs::read_to_string(&charter_path).expect("read dependency_charter.txt");
+
+    // Publishable workspace members.
+    let out = Command::new("cargo")
+        .arg("metadata")
+        .arg("--format-version")
+        .arg("1")
+        .arg("--manifest-path")
+        .arg(manifest_flag())
+        .arg("--no-deps")
+        .output()
+        .expect("cargo metadata spawn");
+    assert!(out.status.success(), "cargo metadata failed");
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("cargo metadata json");
+    let members: Vec<String> = v["packages"]
+        .as_array()
+        .expect("packages array")
+        .iter()
+        .filter(|package| package["publish"].as_array().is_none())
+        .filter_map(|package| package["name"].as_str())
+        .map(str::to_owned)
+        .collect();
+    assert!(!members.is_empty(), "no publishable members found");
+
+    // Parse rules.
+    let mut rules: Vec<(Vec<String>, Vec<String>, Vec<String>)> = Vec::new();
+    for line in charter.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (head, except) = match line.split_once(';') {
+            Some((head, except)) => (
+                head,
+                except
+                    .trim()
+                    .strip_prefix("except")
+                    .expect("except clause")
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>(),
+            ),
+            None => (line, Vec::new()),
+        };
+        let (targets, prefixes) = head
+            .split_once(':')
+            .expect("charter rule needs `<targets> : <prefixes>`");
+        let targets = targets
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let prefixes = prefixes
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert!(
+            !targets.is_empty() && !prefixes.is_empty(),
+            "empty rule: {line}"
+        );
+        rules.push((targets, prefixes, except));
+    }
+    assert!(!rules.is_empty(), "dependency charter lost its rules");
+
+    // Expand rules into (crate, forbidden prefixes) pairs.
+    let checks = expand_charter_rules(&rules, &members);
+    assert!(
+        checks.len() >= 30,
+        "charter coverage collapsed: {} checks",
+        checks.len()
+    );
+
+    let mut violations: Vec<String> = Vec::new();
+    for (crate_name, prefixes) in &checks {
+        let tree = cargo_tree_of(crate_name);
+        for line in tree.lines().skip(1) {
+            // Strip the tree glyphs, then take `<name>` from `<name> v<version>`.
+            // Unicode box-drawing glyphs (`│ ├── └ ─`), not ASCII, prefix
+            // every non-root tree line.
+            let entry = line
+                .trim_start_matches([' ', '│', '├', '└', '─', '|', '`', '+', '-', '\\'])
+                .trim();
+            if entry.is_empty() {
+                continue;
+            }
+            let name = entry.split(" v").next().unwrap_or(entry).trim();
+            if name.is_empty() {
+                continue;
+            }
+            for prefix in prefixes {
+                if name.starts_with(prefix.as_str()) {
+                    violations.push(format!("{crate_name}: {name} (prefix {prefix})"));
+                }
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "dependency charter violations (ADR-084 D3): {violations:#?}"
+    );
+}

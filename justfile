@@ -171,7 +171,11 @@ test-rust: check-toolchain test-standalone
     # Python-tree registry file byte-for-byte: a crate can only embed
     # in-tarball files, so the embed uses the in-crate mirror
     cmp -s src/degenbot/registry/deployments.json rust/crates/foundation/degenbot-uniswap/src/deployments.json || { echo 'ERROR: deployments.json vendor drift (canonical vs degenbot-uniswap mirror)' >&2; exit 1; }
-    cargo test --locked --manifest-path rust/Cargo.toml --workspace
+    # The fixture-corpus features ride every workspace lane (ADR-084 D3): the
+    # corpora stay EXECUTED here, never silently skipped behind required-
+    # features, and the assertion-free green exit of a zero-match filter can
+    # not hide a lost corpus.
+    cargo test --locked --manifest-path rust/Cargo.toml --workspace --features degenbot-pools/capture-fixtures,degenbot-bot/executor-ab-probe
 
 # Reproduce CI's test-binary build exactly (ci.yml sets these two globally):
 # a crate-private fn's LAYOUT can depend on profile flags -- the ADR-071 D3
@@ -187,15 +191,18 @@ test-rust-ci:
 # fleet-tier regression is readable in any check log, CI's or the hook's.
 test-fleet-parity:
     cd rust && cargo test --locked -p degenbot-workers -- plan budget
-    cd rust && cargo test --locked -p degenbot-bot -- the_outcome_corpus lane_death
+    # executor-ab-probe: the outcome corpus lives in a feature-gated island
+    # (ADR-084 D3) — without the feature this filter would match zero tests
+    # and exit green over a silently skipped corpus.
+    cd rust && cargo test --locked -p degenbot-bot --features executor-ab-probe -- the_outcome_corpus lane_death
 
 
 # Two-sided golden replay gate (offline, seconds): profit under/over-shoot and
 # nondeterminism across reps, on the single-block anchor + the 156-row heavy
 # corpus. Blocks merge in CI; named here so the pre-push gate runs it too.
 test-golden-replay:
-    cd rust && cargo run --locked -q -p degenbot-pools --example concentrated_liquidity_solve_replay -- crates/foundation/degenbot-pools/tests/fixtures/concentrated_liquidity_capture_offline.jsonl
-    cd rust && cargo run --locked -q -p degenbot-pools --example concentrated_liquidity_solve_replay -- crates/foundation/degenbot-pools/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl
+    cd rust && cargo run --locked -q -p degenbot-pools --features capture-fixtures --example concentrated_liquidity_solve_replay -- crates/foundation/degenbot-pools/tests/fixtures/concentrated_liquidity_capture_offline.jsonl
+    cd rust && cargo run --locked -q -p degenbot-pools --features capture-fixtures --example concentrated_liquidity_solve_replay -- crates/foundation/degenbot-pools/tests/fixtures/heavy_concentrated_liquidity_solve_captures.jsonl
 
 
 # Run the cargo workspace suite under cargo-nextest: per-process test
@@ -226,7 +233,9 @@ test-rust-nextest *args: check-toolchain
             -p|--package|--package=*) selection="" ;;
         esac
     done
-    cargo nextest run --locked --manifest-path rust/Cargo.toml $selection --profile ci --no-fail-fast "$@"
+    # Fixture-corpus features ride every lane (ADR-084 D3): the golden corpora
+    # are executed here, never silently skipped behind required-features.
+    cargo nextest run --locked --manifest-path rust/Cargo.toml $selection --profile ci --no-fail-fast --features degenbot-pools/capture-fixtures,degenbot-bot/executor-ab-probe "$@"
 
 # Run the fork/RPC-gated suites — the legs every offline gate (test, pre-push,
 # CI) deliberately deselects:
@@ -352,7 +361,7 @@ crates-io-pending *args:
 # reference toolchain this is CI-identical (`--deny warnings`); on any other
 # supported toolchain it runs clippy's deny-by-default floor only, because the
 # lint surface drifts with the toolchain and CI is the strict authority.
-lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics check-capability-catalog
+lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics check-capability-catalog check-dependency-charter
     #!/usr/bin/env bash
     set -euo pipefail
     tier="$(scripts/toolchain_tier.sh)"
@@ -517,6 +526,14 @@ check-config-derived-statics:
 # Wired into `lint-rust-check` (hence `just lint` / CI).
 check-capability-catalog:
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- capability_catalog_covers_every_public_crate --exact --nocapture
+
+# ADR-084 D3 dependency-charter gate: every deny rule in
+# rust/crates/facade/degenbot/tests/dependency_charter.txt asserted over
+# `cargo tree -p X -e normal` at single-package, default-feature resolution.
+# A new C-build or pyo3 leak into a seam crate's published dependency set
+# fails here. Wired into `lint-rust-check`.
+check-dependency-charter:
+    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- dependency_charter_is_respected --exact --nocapture
 
 # Build Rust extension module in the release-equivalent feature set. This uses
 # the workspace development profile (opt-level = 1, no LTO or stripping) for
@@ -1407,16 +1424,16 @@ lint-stub-drift:
 # for the all-CL intake vs the direct entry over a capture corpus, parity-gated
 # (exits 1 on divergence). DR_AB_ITERS / DR_AB_MEMO shape the run.
 entry-ab corpus="heavy_concentrated_liquidity_solve_captures.jsonl":
-    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-pools --example entry_ab_readout -- rust/crates/foundation/degenbot-pools/tests/fixtures/{{corpus}}
+    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-pools --features capture-fixtures --example entry_ab_readout -- rust/crates/foundation/degenbot-pools/tests/fixtures/{{corpus}}
 
 # The same run instrumented: functions-timing over the concentrated_liquidity_solve.* labels.
 # HOTPATH_OUTPUT_PATH (default hp.json) names the report — a runtime artifact,
 # never committed.
 entry-ab-telemetry corpus="heavy_concentrated_liquidity_solve_captures.jsonl":
-    HOTPATH_OUTPUT_FORMAT=json HOTPATH_OUTPUT_PATH="${HOTPATH_OUTPUT_PATH:-hp.json}" HOTPATH_REPORT=functions-timing,threads cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-pools --features hotpath --example entry_ab_readout -- rust/crates/foundation/degenbot-pools/tests/fixtures/{{corpus}}
+    HOTPATH_OUTPUT_FORMAT=json HOTPATH_OUTPUT_PATH="${HOTPATH_OUTPUT_PATH:-hp.json}" HOTPATH_REPORT=functions-timing,threads cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-pools --features hotpath,capture-fixtures --example entry_ab_readout -- rust/crates/foundation/degenbot-pools/tests/fixtures/{{corpus}}
 
 # The WalkMemo cross-block reuse readout: the fixture A/B (memo off vs on)
 # over the captured corpus. DR_READOUT_EPOCHS sets the epoch count.
 walkmemo-readout:
-    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-pools --example walkmemo_readout
+    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-pools --features capture-fixtures --example walkmemo_readout
 

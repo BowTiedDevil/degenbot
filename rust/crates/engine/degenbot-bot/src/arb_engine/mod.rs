@@ -154,8 +154,11 @@ mod solve_cycle;
 pub(crate) use solve_cycle::CycleTicket;
 // the executor A/B probe fixtures (heavy-concentrated-liquidity corpus loader, shared
 // solve-cycle fixture, production LPT bin packer) live test-only beside their
-// consumers; `#[cfg(test)]` so the fixtures never compile into production.
-#[cfg(test)]
+// consumers; `#[cfg(all(test, feature = "executor-ab-probe"))]` so the fixtures
+// never compile into production AND the fixture-loading corpus lane (pools'
+// zstd-backed `capture-fixtures`) stays out of the default test build (ADR-084
+// D3). The test lanes enable the feature explicitly.
+#[cfg(all(test, feature = "executor-ab-probe"))]
 mod executor_ab_probe;
 #[cfg(test)]
 mod test_harness;
