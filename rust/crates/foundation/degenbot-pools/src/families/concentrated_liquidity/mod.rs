@@ -80,10 +80,10 @@ use hashbrown::{HashMap, HashSet};
 
 use super::door::{Observe, Observed, ReadOutcome, SwapReadRequest};
 
-use crate::int_v3_hop::IntV3TickRangeSequence;
-use crate::registry::ConcentratedLiquidityPoolMut;
-use crate::tick_fetch::{FetchedTickWord, TickWordFetcher};
-use crate::v3_state::{SimulateSwapError, V3SwapOutcome};
+use crate::sim::registry::ConcentratedLiquidityPoolMut;
+use crate::sim::tick_fetch::{FetchedTickWord, TickWordFetcher};
+use crate::state::int_v3_hop::IntV3TickRangeSequence;
+use crate::state::v3_state::{SimulateSwapError, V3SwapOutcome};
 pub use crate::TickInfo;
 
 /// The state slices and event/registration DTOs, presented at the tree root
@@ -578,8 +578,8 @@ mod tests {
     #![expect(clippy::panic)]
 
     use super::*;
-    use crate::tick_fetch::FetchTickWordError;
-    use crate::v3_state::PoolTickCoverage;
+    use crate::sim::tick_fetch::FetchTickWordError;
+    use crate::state::v3_state::PoolTickCoverage;
 
     // -------------------------------------------------------------------
     // THE drive-policy pin (moved with the family from the substrate
@@ -590,7 +590,7 @@ mod tests {
         fetched: std::cell::RefCell<Vec<i32>>,
     }
 
-    impl crate::registry::ConcentratedLiquidityPool for ScriptedMergeTarget {
+    impl crate::sim::registry::ConcentratedLiquidityPool for ScriptedMergeTarget {
         fn sqrt_price_x96(&self) -> U256 {
             U256::ONE
         }

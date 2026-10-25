@@ -64,11 +64,13 @@ use degenbot_decoders::v3_pancakeswap_swap_decoder::{
 };
 use degenbot_decoders::v3_swap_decoder::{decode_v3_swap_log, V3_SWAP_TOPIC};
 use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
-use degenbot_pools::v3_pancakeswap_storage_slots::{
+use degenbot_pools::state::v3_pancakeswap_storage_slots::{
     encode_pancake_v3_slot0_word1, pancake_v3_tick_bitmap_word_slot, pancake_v3_tick_mapping_slot,
 };
-use degenbot_pools::v3_state::{v3_simulate_swap, SimulateSwapError, V3PoolState, V3SwapOutcome};
-use degenbot_pools::v3_storage_slots::{
+use degenbot_pools::state::v3_state::{
+    v3_simulate_swap, SimulateSwapError, V3PoolState, V3SwapOutcome,
+};
+use degenbot_pools::state::v3_storage_slots::{
     compute_v3_tick_bitmap_word_from_raw, encode_v3_liquidity_slot, encode_v3_slot0_fresh,
     encode_v3_tick_info_slot,
 };

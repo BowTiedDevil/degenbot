@@ -14,7 +14,7 @@
 use alloy::primitives::{Address, B256, U256};
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::solve::SolvePathResult;
-use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
+use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant, TickInfo};
 
 use degenbot_substrate::executor_hop::{V2FeePair, V2FeeRefusal, V2Fees};

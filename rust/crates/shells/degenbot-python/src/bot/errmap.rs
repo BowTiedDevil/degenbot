@@ -425,8 +425,8 @@ mod tests {
         RegisterAerodromePoolError, RegisterV2PoolError, RegisterV3PoolError, RegisterV4PoolError,
     };
     use degenbot_core::errors::ProviderError;
-    use degenbot_pools::registration_refusal::SpecRefusal;
-    use degenbot_pools::spec_bounds::{SpecValue, SpecViolation};
+    use degenbot_pools::sim::registration_refusal::SpecRefusal;
+    use degenbot_pools::state::spec_bounds::{SpecValue, SpecViolation};
 
     fn addr(s: &str) -> Address {
         s.parse().unwrap()

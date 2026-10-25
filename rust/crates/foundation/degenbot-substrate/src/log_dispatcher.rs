@@ -22,7 +22,7 @@ use degenbot_decoders::v3_pancakeswap_swap_decoder::decode_v3_pancakeswap_swap_l
 use degenbot_decoders::v3_swap_decoder::decode_v3_swap_log;
 use degenbot_decoders::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
 use degenbot_decoders::v4_swap_decoder::decode_v4_swap_log;
-use degenbot_pools::buffered_event::BufferedPoolEvent;
+use degenbot_pools::families::buffered_event::BufferedPoolEvent;
 
 /// Whether `topic0` is one of the six degenbot pool-event signatures we
 /// dispatch on (`crate::RELEVANT_TOPICS`). A log carrying
@@ -238,7 +238,7 @@ impl DecodedPoolEvent {
             } => (
                 PoolLookup::from_address(pool_address),
                 BufferedPoolEvent::V3(crate::BufferedV3PoolEvent::Swap(
-                    degenbot_pools::v3_state::BufferedV3SwapEvent {
+                    degenbot_pools::state::v3_state::BufferedV3SwapEvent {
                         sqrt_price_x96,
                         liquidity: liquidity.to::<u128>(),
                         tick,
@@ -255,7 +255,7 @@ impl DecodedPoolEvent {
             } => (
                 PoolLookup::from_address(pool_address),
                 BufferedPoolEvent::V3(crate::BufferedV3PoolEvent::Liquidity(
-                    degenbot_pools::v3_state::BufferedV3LiquidityUpdate {
+                    degenbot_pools::state::v3_state::BufferedV3LiquidityUpdate {
                         tick_lower,
                         tick_upper,
                         liquidity_delta,
@@ -276,7 +276,7 @@ impl DecodedPoolEvent {
                     pool_id,
                 },
                 BufferedPoolEvent::V4(crate::BufferedV4PoolEvent::Swap(
-                    degenbot_pools::v4_state::BufferedV4SwapEvent {
+                    degenbot_pools::state::v4_state::BufferedV4SwapEvent {
                         sqrt_price_x96,
                         liquidity: liquidity.to::<u128>(),
                         tick,
@@ -297,7 +297,7 @@ impl DecodedPoolEvent {
                     pool_id,
                 },
                 BufferedPoolEvent::V4(crate::BufferedV4PoolEvent::Liquidity(
-                    degenbot_pools::v4_state::BufferedV4LiquidityUpdate {
+                    degenbot_pools::state::v4_state::BufferedV4LiquidityUpdate {
                         tick_lower,
                         tick_upper,
                         liquidity_delta,
@@ -1249,7 +1249,7 @@ mod tests {
 
         let s = state.read_at(crate::state_lock::LockSite::Core);
         let pool = s
-            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
             .expect("pool registered");
         let t201020 = pool.tick_data.get(&201_020).cloned().expect("tick 201020");
         let t203350 = pool.tick_data.get(&203_350).cloned().expect("tick 203350");

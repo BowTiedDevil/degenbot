@@ -18,7 +18,7 @@
 #![expect(clippy::unwrap_used)]
 
 use alloy::primitives::{aliases::U112, keccak256, B256, U256};
-use degenbot_pools::slot_layout::{
+use degenbot_pools::state::slot_layout::{
     concentrated_liquidity_liquidity_tracked_word, concentrated_liquidity_slot0_tracked_word,
     concentrated_liquidity_tick_bitmap_word_slot, concentrated_liquidity_tick_mapping_slot,
     decode_tick_word, decode_v2_reserves_word, low_bits_mask, pack_v2_reserves_word,
@@ -26,9 +26,8 @@ use degenbot_pools::slot_layout::{
     CONCENTRATED_LIQUIDITY_LIQUIDITY_TRACKED_MASK, CONCENTRATED_LIQUIDITY_SLOT0_TRACKED_MASK,
     CONCENTRATED_LIQUIDITY_TICK_WORD_MASK, V2_RESERVES_SLOT, V2_RESERVES_TRACKED_MASK,
 };
-use degenbot_pools::{
-    v3_pancakeswap_storage_slots, v3_storage_slots, ConcentratedLiquiditySlotLayout,
-};
+use degenbot_pools::state::{v3_pancakeswap_storage_slots, v3_storage_slots};
+use degenbot_pools::ConcentratedLiquiditySlotLayout;
 
 // Independent trusted literals (not computed by any pack helper here): the
 // reserves pair from the bot fixture, spelled out as bytes.

@@ -2,14 +2,14 @@
 
 #![expect(clippy::expect_used)]
 use alloy::primitives::{Address, U256};
-use degenbot_pools::balancer_stable_state::{
+use degenbot_pools::sim::registry::PoolEntry;
+use degenbot_pools::state::balancer_stable_state::{
     BalancerStablePoolState, RegisterBalancerStablePoolParams,
 };
-use degenbot_pools::balancer_weighted_state::{
+use degenbot_pools::state::balancer_weighted_state::{
     BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
 };
-use degenbot_pools::curve_state::{CurvePoolState, RegisterCurvePoolParams};
-use degenbot_pools::registry::PoolEntry;
+use degenbot_pools::state::curve_state::{CurvePoolState, RegisterCurvePoolParams};
 use degenbot_pools::{BalanceVectorVariant, Identity, Pool, Structure};
 
 fn make_curve_pool() -> PoolEntry {

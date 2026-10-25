@@ -20,6 +20,13 @@
 //! `stable_swap`) share the state slices and the Sync shape, so one
 //! [`door::SyncEvent`] and one [`door::FamilyApply`] impl serve both.
 pub mod balance_vector;
+
+pub mod buffered_event;
+
+pub mod liquidity_event;
+
+pub mod liquidity_event_buffer;
+
 pub mod balancer_stable;
 pub mod balancer_weighted;
 pub mod concentrated_liquidity;
@@ -27,3 +34,4 @@ pub mod curve_stableswap;
 pub mod door;
 pub mod reserve_pair;
 pub mod solidly;
+pub mod state_update;

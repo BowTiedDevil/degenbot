@@ -29,7 +29,7 @@
 use hashbrown::HashMap;
 use std::sync::Arc;
 
-use ::degenbot_pools::tick_fetch::TickWordFetcher;
+use ::degenbot_pools::sim::tick_fetch::TickWordFetcher;
 
 use alloy::primitives::aliases::U112;
 use alloy::primitives::{I256, U256};
@@ -38,9 +38,9 @@ use ::degenbot_pools::families::concentrated_liquidity;
 use ::degenbot_pools::families::door::{Observe, Observed, ReadOutcome, SwapReadRequest};
 use ::degenbot_pools::families::reserve_pair;
 use ::degenbot_pools::families::{balancer_stable, balancer_weighted};
-use ::degenbot_pools::registry::PoolEntry;
-use ::degenbot_pools::simulate_swap::simulate_swap;
-use ::degenbot_pools::v3_state::{PoolTickCoverage, V3SwapOutcome};
+use ::degenbot_pools::sim::registry::PoolEntry;
+use ::degenbot_pools::sim::simulate_swap::simulate_swap;
+use ::degenbot_pools::state::v3_state::{PoolTickCoverage, V3SwapOutcome};
 
 use super::BotState;
 
@@ -1098,7 +1098,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    use ::degenbot_pools::v3_state::RegisterV3PoolParams;
+    use ::degenbot_pools::state::v3_state::RegisterV3PoolParams;
 
     // ---------------------------------------------------------------------
     // the staged pre-pass + DISARMED sim contract.
@@ -1108,18 +1108,18 @@ mod tests {
     fn counting_fetcher_setup(calls: Arc<AtomicUsize>) -> (BotState, u64) {
         #[derive(Debug)]
         struct CountingFetcher(Arc<AtomicUsize>);
-        impl ::degenbot_pools::tick_fetch::TickWordFetcher for CountingFetcher {
+        impl ::degenbot_pools::sim::tick_fetch::TickWordFetcher for CountingFetcher {
             fn fetch_missing_tick_word(
                 &self,
                 _pool_id: u64,
                 word: i32,
                 _block: u64,
             ) -> Result<
-                ::degenbot_pools::tick_fetch::FetchedTickWord,
-                ::degenbot_pools::tick_fetch::FetchTickWordError,
+                ::degenbot_pools::sim::tick_fetch::FetchedTickWord,
+                ::degenbot_pools::sim::tick_fetch::FetchTickWordError,
             > {
                 self.0.fetch_add(1, Ordering::Relaxed);
-                Ok(::degenbot_pools::tick_fetch::FetchedTickWord {
+                Ok(::degenbot_pools::sim::tick_fetch::FetchedTickWord {
                     word,
                     ticks: HashMap::new(),
                 })
@@ -1259,7 +1259,7 @@ mod tests {
                 },
             );
         }
-        bot.register_v3_pool(&degenbot_pools::v3_state::RegisterV3PoolParams {
+        bot.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
             address: "0x00000000000000000000000000000000000d0001"
                 .parse()
                 .unwrap(),

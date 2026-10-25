@@ -76,7 +76,7 @@ use crate::backrun_engine::BackrunSolver;
 use crate::backrun_engine::PathReject;
 use crate::backrun_strategy::SolveStats;
 use alloy::primitives::{Address, Bytes, B256, U256};
-use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
+use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
 use degenbot_simulation::sim::evm::frame_replay::{

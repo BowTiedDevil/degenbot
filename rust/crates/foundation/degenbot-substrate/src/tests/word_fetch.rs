@@ -5,7 +5,7 @@ use super::*;
 #[expect(clippy::expect_used, clippy::too_many_lines)]
 fn staged_word_fetch_install_races_on_interleaved_pool_write() {
     use crate::InstallWordOutcome;
-    use ::degenbot_pools::tick_fetch::{FetchedTickWord, TickWordFetcher};
+    use ::degenbot_pools::sim::tick_fetch::{FetchedTickWord, TickWordFetcher};
 
     // Scripted fetcher (red shape): attempt 1 -> empty
     // word (checked-empty, RACED); attempt 2 -> the stale tick-60 value
@@ -43,7 +43,8 @@ fn staged_word_fetch_install_races_on_interleaved_pool_write() {
             _pool_id: u64,
             word: i32,
             _block: u64,
-        ) -> Result<FetchedTickWord, ::degenbot_pools::tick_fetch::FetchTickWordError> {
+        ) -> Result<FetchedTickWord, ::degenbot_pools::sim::tick_fetch::FetchTickWordError>
+        {
             self.script
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -52,7 +53,7 @@ fn staged_word_fetch_install_races_on_interleaved_pool_write() {
                     w.word = word;
                     w
                 })
-                .ok_or(::degenbot_pools::tick_fetch::FetchTickWordError::FetchFailed)
+                .ok_or(::degenbot_pools::sim::tick_fetch::FetchTickWordError::FetchFailed)
         }
     }
 
@@ -166,7 +167,7 @@ fn ensure_word_known_no_fetcher_returns_false() {
 
 #[test]
 fn ensure_word_known_merges_ticks_and_marks_word_known() {
-    use ::degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+    use ::degenbot_pools::sim::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
     use ::degenbot_pools::TickInfo;
     use alloy::primitives::U128;
 
@@ -234,7 +235,7 @@ fn ensure_word_known_merges_ticks_and_marks_word_known() {
 
 #[test]
 fn ensure_word_known_fetch_error_returns_false() {
-    use ::degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+    use ::degenbot_pools::sim::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
 
     #[derive(Debug)]
     struct FailingWordFetcher;
@@ -286,7 +287,7 @@ fn ensure_word_known_fetch_error_returns_false() {
 
 #[test]
 fn ensure_word_known_checked_empty_marks_word_known() {
-    use ::degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+    use ::degenbot_pools::sim::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
 
     #[derive(Debug)]
     struct EmptyWordFetcher;
@@ -343,7 +344,7 @@ fn swap_simulation_fills_missing_word_and_retries() {
     // misses on the starting word. The gate's fetch seam fills the missing
     // word (via a fake fetcher), merges, and retries; the result must be
     // non-zero, record the fetch, and carry the sparse caveat.
-    use ::degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+    use ::degenbot_pools::sim::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
 
     #[derive(Debug)]
     struct FakeFetcher;
@@ -417,7 +418,7 @@ fn swap_simulation_fills_missing_word_and_retries() {
     }
     // The fetch merged word 0 into known_bitmap_words (no further miss).
     let state = core
-        .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
         .expect("pool registered");
     assert!(
         state.known_bitmap_words.contains(&0),
@@ -430,7 +431,7 @@ fn swap_simulation_fetcher_error_surfaces_fetch_failed() {
     // If the fetcher cannot satisfy the missing word (RPC error / out of
     // range), the calc must give up with `U256::ZERO` rather than panic or
     // spin. Covers the `Err(_)` arm of the fetch+retry loop.
-    use ::degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+    use ::degenbot_pools::sim::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
 
     #[derive(Debug)]
     struct FailingFetcher;
@@ -491,7 +492,7 @@ fn swap_simulation_empty_word_not_refetched() {
     // the fetcher — the empty word survived in the bitmap (ADR-006/005
     // stored-tick-fetcher ). This is the bitmap empty-word fix
     // that lets the companion delete `_bitmap_override`.
-    use ::degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+    use ::degenbot_pools::sim::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 

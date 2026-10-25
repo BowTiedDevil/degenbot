@@ -16,8 +16,8 @@
 
 use alloy::primitives::{address, aliases::U112, Address, B256, U256};
 use degenbot_db::connection::DegenbotDb;
-use degenbot_pools::slot_layout;
-use degenbot_pools::v4_storage_slots::{
+use degenbot_pools::state::slot_layout;
+use degenbot_pools::state::v4_storage_slots::{
     encode_v4_liquidity_slot, encode_v4_slot0, v4_liquidity_slot, v4_pool_state_base_slot,
     v4_slot0_slot, V4Slot0Parts,
 };

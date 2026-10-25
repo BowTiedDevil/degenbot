@@ -16,11 +16,11 @@ use crate::arb_engine::solve_cycle::SolveCycleShared;
 use crate::arb_engine::workload_partition::{lpt_partition, path_cost_proxy};
 use crate::arb_engine::BlockMetadata;
 use alloy::primitives::U256;
-use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_pools::solve::concentrated_liquidity::{
     build_concentrated_liquidity_crossing_table, build_concentrated_liquidity_word_profiles,
     PreparedConcentratedLiquidityHop,
 };
+use degenbot_pools::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use serde_json::Value;
 use std::sync::Arc;
 fn fixture_path() -> std::path::PathBuf {

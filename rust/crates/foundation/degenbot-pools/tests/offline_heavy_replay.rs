@@ -14,9 +14,9 @@
 )]
 
 use alloy::primitives::U256;
-use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_pools::solve::concentrated_liquidity::WalkStats;
 use degenbot_pools::solve::gate::{GateDeps, HopMath};
+use degenbot_pools::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use serde_json::Value;
 use std::time::Instant;
 

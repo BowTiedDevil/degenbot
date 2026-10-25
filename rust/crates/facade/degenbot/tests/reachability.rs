@@ -107,7 +107,7 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 ///
 /// Matches the leading crate segment of any path expression rooted at a
 /// degenbot core crate (`degenbot_pools::…`, `degenbot_db::…`, …). It does
-/// NOT depend on `use`-tree form — an inline `degenbot_pools::spec_bounds::
+/// NOT depend on `use`-tree form — an inline `degenbot_pools::state::spec_bounds::
 /// narrow_v2_reserve(...)` call-site is captured too, which is the actual
 /// delegation signal.
 fn consumed_core_crates(src_dir: &Path) -> BTreeSet<String> {

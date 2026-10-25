@@ -36,14 +36,14 @@ use std::collections::BTreeSet;
 
 use alloy::primitives::Address;
 use degenbot_pathfinding::PoolKind;
-use degenbot_pools::aerodrome_v2_state::RegisterAerodromePoolError;
-use degenbot_pools::registration_refusal::SpecRefusal;
-use degenbot_pools::v2_state::RegisterV2PoolError;
-use degenbot_pools::v3_state::RegisterV3PoolError;
+use degenbot_pools::sim::registration_refusal::SpecRefusal;
+use degenbot_pools::state::aerodrome_v2_state::RegisterAerodromePoolError;
+use degenbot_pools::state::v2_state::RegisterV2PoolError;
+use degenbot_pools::state::v3_state::RegisterV3PoolError;
 use degenbot_substrate::RegistrationVerdict;
 
-pub use degenbot_pools::registration_refusal::{BuildFailure, RegisterRefusal};
-pub use degenbot_pools::registry::RegisteredPoolFamily;
+pub use degenbot_pools::sim::registration_refusal::{BuildFailure, RegisterRefusal};
+pub use degenbot_pools::sim::registry::RegisteredPoolFamily;
 
 use super::pool_builder::builder::PoolBuilderError;
 use super::pool_builder::parity::IdentityDivergence;
@@ -1551,7 +1551,7 @@ impl PipelineReport {
 #[expect(clippy::unwrap_used, reason = "tests assert on known-valid inputs")]
 mod tests {
     use super::*;
-    use degenbot_pools::v4_state::RegisterV4PoolError;
+    use degenbot_pools::state::v4_state::RegisterV4PoolError;
     use degenbot_uniswap::deployments::AddressMismatch;
 
     /// The vocabulary is a cross-language contract, so its exact tag set is
@@ -1666,7 +1666,7 @@ mod tests {
     /// different ways.
     #[test]
     fn v4_admission_refusal_maps_to_one_build_failure_taxonomy() {
-        use degenbot_pools::v4_state::RegisterV4PoolError;
+        use degenbot_pools::state::v4_state::RegisterV4PoolError;
 
         assert_eq!(
             BuildFailure::from(RegisterV4PoolError::HookedPool { hook_flags: 0xCC }),
@@ -1985,9 +1985,9 @@ mod tests {
     use degenbot_core::errors::ProviderError;
     use degenbot_core::hex_utils::HexError;
     use degenbot_db::error::DbError;
-    use degenbot_pools::registration_refusal::SpecRefusal;
-    use degenbot_pools::spec_bounds::{SpecValue, SpecViolation};
-    use degenbot_pools::tick_fetch::BootstrapTickError;
+    use degenbot_pools::sim::registration_refusal::SpecRefusal;
+    use degenbot_pools::sim::tick_fetch::BootstrapTickError;
+    use degenbot_pools::state::spec_bounds::{SpecValue, SpecViolation};
     use degenbot_substrate::tick_assembly::TickMapAssemblyError;
 
     /// The family/phase tags a kind carries — an exhaustive classifier, so a

@@ -18,14 +18,14 @@
 use alloy::primitives::U256;
 
 use degenbot_math::curve::calculate_dy_underlying;
-use degenbot_pools::balancer_stable_state::{
+use degenbot_pools::families::curve_stableswap as curve_read;
+use degenbot_pools::state::balancer_stable_state::{
     BalancerStablePoolState, RegisterBalancerStablePoolParams,
 };
-use degenbot_pools::balancer_weighted_state::{
+use degenbot_pools::state::balancer_weighted_state::{
     BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
 };
-use degenbot_pools::curve_state::{CurvePoolState, RegisterCurvePoolParams};
-use degenbot_pools::families::curve_stableswap as curve_read;
+use degenbot_pools::state::curve_state::{CurvePoolState, RegisterCurvePoolParams};
 use degenbot_pools::CurveInputsError;
 
 use super::{

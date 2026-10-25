@@ -44,9 +44,9 @@ fn the_cl_state_module_owns_each_shared_state_verb_and_the_design_files_only_for
         ("state_journal.rs", include_str!("state_journal.rs")),
         ("state_seeding.rs", include_str!("state_seeding.rs")),
         ("state_walk.rs", include_str!("state_walk.rs")),
-        ("v3_state.rs", include_str!("../../v3_state.rs")),
-        ("v4_state.rs", include_str!("../../v4_state.rs")),
-        ("registry.rs", include_str!("../../registry.rs")),
+        ("v3_state.rs", include_str!("../../state/v3_state.rs")),
+        ("v4_state.rs", include_str!("../../state/v4_state.rs")),
+        ("registry.rs", include_str!("../../sim/registry.rs")),
     ];
     // (owning module, verb needle, forwarder definitions expected in
     // v3_state, in v4_state, in the shared trait impl in registry.rs). A verb

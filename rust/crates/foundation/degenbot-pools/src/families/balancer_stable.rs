@@ -36,8 +36,8 @@ use degenbot_math::balancer::fixed_point::{div_down, div_up, mul_down};
 use degenbot_math::balancer::stable_math;
 use degenbot_math::balancer::weighted_math;
 
-use crate::state_history::BalanceVectorPoolState as _;
-use crate::v3_state::SimulateSwapError;
+use crate::state::state_history::BalanceVectorPoolState as _;
+use crate::state::v3_state::SimulateSwapError;
 
 use super::balance_vector::BalanceVectorEvent;
 use super::door::{FamilyApply, Observe, Observed, ReadOutcome, SwapReadRequest};
@@ -45,7 +45,7 @@ use super::door::{FamilyApply, Observe, Observed, ReadOutcome, SwapReadRequest};
 /// The state slice + its registration DTOs — the family's read surface lives
 /// in `crate::balancer_stable_state` (I/O-free per ADR-001) and is re-exported
 /// here so the family tree presents the whole read story under one path.
-pub use crate::balancer_stable_state::{
+pub use crate::state::balancer_stable_state::{
     BalancerStablePoolIdentity, BalancerStablePoolState, RegisterBalancerStablePoolParams,
 };
 
@@ -381,7 +381,7 @@ fn skip_bpt(
 /// The apply door — one buffered balance event (a Balancer Vault
 /// `PoolBalanceChanged`) onto one slice. The journal + clock discipline lives
 /// on the slice itself
-/// ([`crate::state_history::BalanceVectorPoolState::apply_balance_update`],
+/// ([`crate::state::state_history::BalanceVectorPoolState::apply_balance_update`],
 /// ADR-017 D1); the door is the family's named apply arm. The neutral
 /// `apply_balance_update_by_pool_id` orchestration row stays on the
 /// family-blind trait projection (`PoolEntry::as_balance_vector_mut`) — a

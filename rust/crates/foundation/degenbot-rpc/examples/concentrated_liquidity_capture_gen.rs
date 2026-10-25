@@ -55,10 +55,10 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, I256, U256};
-use degenbot_pools::registry::ConcentratedLiquidityPoolMut;
+use degenbot_pools::sim::registry::ConcentratedLiquidityPoolMut;
+use degenbot_pools::sim::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
 use degenbot_pools::solve::concentrated_liquidity::IntV3TickRangeSequence;
-use degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
-use degenbot_pools::v3_state::{
+use degenbot_pools::state::v3_state::{
     v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, SimulateSwapError, V3PoolState,
 };
 use degenbot_pools::TickBootstrapRpc;
@@ -258,7 +258,8 @@ fn main() -> ExitCode {
             fetcher: Some(fetcher.clone()),
             deployer: Address::ZERO,
             init_hash: B256::ZERO,
-            slot_layout: degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
+            slot_layout:
+                degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
             known_bitmap_words: Vec::new(),
         };
         let (_identity, mut state) = V3PoolState::from_params(params, 8);

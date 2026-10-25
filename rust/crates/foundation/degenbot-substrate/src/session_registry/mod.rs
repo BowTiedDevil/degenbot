@@ -73,7 +73,7 @@ use std::sync::{Arc, OnceLock};
 use alloy::primitives::Address;
 use dashmap::DashMap;
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
-use degenbot_pools::registry::RegisteredPoolFamily;
+use degenbot_pools::sim::registry::RegisteredPoolFamily;
 
 /// Canonical identity of one session's pool object.
 ///
@@ -83,7 +83,7 @@ use degenbot_pools::registry::RegisteredPoolFamily;
 /// manager address alone) names one.
 ///
 /// Distinct from the live-state identity types
-/// ([`V4PoolIdentity`](degenbot_pools::v4_state::V4PoolIdentity) and
+/// ([`V4PoolIdentity`](degenbot_pools::state::v4_state::V4PoolIdentity) and
 /// siblings), which describe a *registered pool's* immutable registration data
 /// inside [`BotState`]. This type describes which object the session names.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

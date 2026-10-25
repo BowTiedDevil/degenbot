@@ -24,12 +24,12 @@ pub(crate) fn project_balancer_stable(
     pool_ref: &MixedPoolRef,
 ) -> Result<(ResolvedHop, u64), MissingHopReason> {
     let id = core
-        .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(
+        .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(
             pool_ref.pool_key,
         )
         .ok_or(MissingHopReason::MissingIdentity)?;
     let state = core
-        .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolState>(
+        .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolState>(
             pool_ref.pool_key,
         )
         .ok_or(MissingHopReason::MissingState)?;
@@ -135,7 +135,7 @@ mod tests {
         assert_eq!(s.token_index_out, 0);
         assert_eq!(
             nonce,
-            core.pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolState>(
+            core.pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolState>(
                 bs_id
             )
             .expect("state")

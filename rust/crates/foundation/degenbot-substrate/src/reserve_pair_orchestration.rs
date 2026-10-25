@@ -17,10 +17,10 @@
 
 use alloy::primitives::{aliases::U112, Address, U256};
 
-use degenbot_pools::aerodrome_v2_state::{
+use degenbot_pools::state::aerodrome_v2_state::{
     AerodromeV2PoolState, RegisterAerodromePoolError, RegisterAerodromeV2PoolParams,
 };
-use degenbot_pools::v2_state::{RegisterV2PoolError, RegisterV2PoolParams, V2PoolState};
+use degenbot_pools::state::v2_state::{RegisterV2PoolError, RegisterV2PoolParams, V2PoolState};
 
 use super::{BotState, PoolEntry};
 
@@ -47,8 +47,8 @@ impl BotState {
         // downstream swap-math U512→U256 narrowing would silently degrade to
         // `U256::MAX` under the prior sat-cap, or panic — see the helper's
         // `# Panics` section committed in `19218a2c`).
-        ::degenbot_pools::spec_bounds::validate_v2_reserve(params.reserve0, "reserve0")?;
-        ::degenbot_pools::spec_bounds::validate_v2_reserve(params.reserve1, "reserve1")?;
+        ::degenbot_pools::state::spec_bounds::validate_v2_reserve(params.reserve0, "reserve0")?;
+        ::degenbot_pools::state::spec_bounds::validate_v2_reserve(params.reserve1, "reserve1")?;
         if self.registry.pool_addresses.contains_key(&params.address) {
             return Err(RegisterV2PoolError::AlreadyRegistered {
                 address: params.address,
@@ -170,8 +170,8 @@ impl BotState {
         // Spec-bound admission (parity with `register_v2_pool`): the reserves
         // are already `U112`-typed, so this only rejects a re-widened params
         // layer — kept so the admission contract matches its V2 sibling.
-        ::degenbot_pools::spec_bounds::validate_v2_reserve(params.reserve0, "reserve0")?;
-        ::degenbot_pools::spec_bounds::validate_v2_reserve(params.reserve1, "reserve1")?;
+        ::degenbot_pools::state::spec_bounds::validate_v2_reserve(params.reserve0, "reserve0")?;
+        ::degenbot_pools::state::spec_bounds::validate_v2_reserve(params.reserve1, "reserve1")?;
         if self.registry.pool_addresses.contains_key(&params.address) {
             return Err(RegisterAerodromePoolError::AlreadyRegistered {
                 address: params.address,
@@ -207,10 +207,10 @@ impl BotState {
             .values()
             .filter(|entry| {
                 entry
-                    .slice::<degenbot_pools::v2_state::V2PoolIdentity>()
+                    .slice::<degenbot_pools::state::v2_state::V2PoolIdentity>()
                     .is_some_and(|i| !i.stable_swap)
                     || entry
-                        .slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>()
+                        .slice::<degenbot_pools::state::aerodrome_v2_state::AerodromeV2PoolIdentity>()
                         .is_some_and(|i| !i.stable)
             })
             .count()

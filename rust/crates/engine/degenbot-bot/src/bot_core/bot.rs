@@ -406,10 +406,10 @@ impl Bot {
     ) -> bool {
         match family {
             RegisteredPoolFamily::V2 => state
-                .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
+                .pool_slice::<degenbot_pools::state::v2_state::V2PoolState>(pool_id)
                 .is_some(),
             RegisteredPoolFamily::V3 | RegisteredPoolFamily::V4 => state
-                .pool_slice::<dyn degenbot_pools::registry::ConcentratedLiquidityPool>(pool_id)
+                .pool_slice::<dyn degenbot_pools::sim::registry::ConcentratedLiquidityPool>(pool_id)
                 .is_some(),
             _ => false,
         }
@@ -451,17 +451,17 @@ impl Bot {
 
     /// Discard V2 reorg journal deltas earlier than `block`. `Ok(())` when
     /// the id is unregistered or not a V2 pool — the V2 no-op contract — and
-    /// a [`degenbot_pools::state_history::JournalError`] when the target is
+    /// a [`degenbot_pools::state::state_history::JournalError`] when the target is
     /// past the newest delta (it would remove every known state).
     ///
     /// # Errors
-    /// [`degenbot_pools::state_history::JournalError`] when `block` is past
+    /// [`degenbot_pools::state::state_history::JournalError`] when `block` is past
     /// the newest delta.
     pub fn v2_discard_before_block(
         &self,
         pool_id: u64,
         block: u64,
-    ) -> Result<(), degenbot_pools::state_history::JournalError> {
+    ) -> Result<(), degenbot_pools::state::state_history::JournalError> {
         let mut state = self
             .state
             .write_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
@@ -479,12 +479,12 @@ impl Bot {
     /// [`Bot::v2_discard_before_block`]: non-concentrated-liquidity ids are `Ok(())` no-ops.
     ///
     /// # Errors
-    /// [`JournalError`](degenbot_pools::state_history::JournalError) when `block` is past the newest delta.
+    /// [`JournalError`](degenbot_pools::state::state_history::JournalError) when `block` is past the newest delta.
     pub fn v3_discard_before_block(
         &self,
         pool_id: u64,
         block: u64,
-    ) -> Result<(), degenbot_pools::state_history::JournalError> {
+    ) -> Result<(), degenbot_pools::state::state_history::JournalError> {
         let mut state = self
             .state
             .write_at(degenbot_substrate::state_lock::LockSite::Orchestrator);
@@ -506,7 +506,7 @@ impl Bot {
     /// V2 pool (the no-op contract).
     ///
     /// # Errors
-    /// [`JournalError`](degenbot_pools::state_history::JournalError) when the target is at/before the
+    /// [`JournalError`](degenbot_pools::state::state_history::JournalError) when the target is at/before the
     /// registration delta (too deep).
     ///
     /// # Panics
@@ -518,7 +518,7 @@ impl Bot {
         block: u64,
     ) -> Result<
         Option<(alloy::primitives::U256, alloy::primitives::U256, u64)>,
-        degenbot_pools::state_history::JournalError,
+        degenbot_pools::state::state_history::JournalError,
     > {
         let mut state = self
             .state
@@ -534,7 +534,7 @@ impl Bot {
             Some(Ok(())) => {
                 #[expect(clippy::expect_used)] // invariant-guarded (family confirmed above)
                 let s = state
-                    .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
+                    .pool_slice::<degenbot_pools::state::v2_state::V2PoolState>(pool_id)
                     .expect("V2 pool confirmed above");
                 Ok(Some((
                     s.reserve0.to::<alloy::primitives::U256>(),
@@ -552,7 +552,7 @@ impl Bot {
     /// unregistered or not a concentrated liquidity pool.
     ///
     /// # Errors
-    /// [`JournalError`](degenbot_pools::state_history::JournalError) when the target is at/before the
+    /// [`JournalError`](degenbot_pools::state::state_history::JournalError) when the target is at/before the
     /// registration delta.
     ///
     /// # Panics
@@ -566,7 +566,7 @@ impl Bot {
         block: u64,
     ) -> Result<
         Option<(alloy::primitives::U256, u128, i32, u64)>,
-        degenbot_pools::state_history::JournalError,
+        degenbot_pools::state::state_history::JournalError,
     > {
         let mut state = self
             .state
@@ -582,7 +582,9 @@ impl Bot {
             Some(Ok(())) => {
                 #[expect(clippy::expect_used)] // invariant-guarded (family confirmed above)
                 let s = state
-                    .pool_slice::<dyn degenbot_pools::registry::ConcentratedLiquidityPool>(pool_id)
+                    .pool_slice::<dyn degenbot_pools::sim::registry::ConcentratedLiquidityPool>(
+                        pool_id,
+                    )
                     .expect("V3/V4 pool confirmed above");
                 Ok(Some((
                     s.sqrt_price_x96(),
@@ -957,7 +959,11 @@ mod tests {
         // A target at/before the genesis delta is too deep: typed error.
         assert_eq!(
             bot.v2_restore_before_block(v2_id, 5),
-            Err(degenbot_pools::state_history::JournalError::NoStatePriorToBlock { block: 5 })
+            Err(
+                degenbot_pools::state::state_history::JournalError::NoStatePriorToBlock {
+                    block: 5
+                }
+            )
         );
 
         // Off-family / unregistered: Ok(None) — the PyO3 no-op contract.
@@ -980,7 +986,11 @@ mod tests {
         );
         assert_eq!(
             bot.v2_discard_before_block(v2_id, 100),
-            Err(degenbot_pools::state_history::JournalError::NoStateAtOrAfterBlock { block: 100 })
+            Err(
+                degenbot_pools::state::state_history::JournalError::NoStateAtOrAfterBlock {
+                    block: 100
+                }
+            )
         );
 
         // Off-family / unregistered discards are Ok no-ops.

@@ -16,9 +16,9 @@ use alloy::primitives::{U128, U256};
 use crate::families::concentrated_liquidity::state_journal::JournalHost;
 use crate::families::concentrated_liquidity::state_seeding::SeedingHost;
 use crate::families::concentrated_liquidity::state_walk::{CachedTickRanges, WalkHost};
-use crate::int_v3_hop::IntV3TickRangeSequence;
-use crate::state_history::ReorgPoolState;
-use crate::v3_state::PoolTickCoverage;
+use crate::state::int_v3_hop::IntV3TickRangeSequence;
+use crate::state::state_history::ReorgPoolState;
+use crate::state::v3_state::PoolTickCoverage;
 use crate::TickInfo;
 
 /// Registration block of the seeded pool: the genesis anchor lands here and

@@ -19,8 +19,8 @@ use super::{
 use crate::families::concentrated_liquidity::state_fixture::ClStateFixture;
 use crate::families::concentrated_liquidity::state_journal::JournalHost;
 use crate::families::concentrated_liquidity::state_walk::WalkHost;
-use crate::v3_state::V3PoolState;
-use crate::v4_state::V4PoolState;
+use crate::state::v3_state::V3PoolState;
+use crate::state::v4_state::V4PoolState;
 use crate::TickInfo;
 
 // ------------------------------------------------------------------

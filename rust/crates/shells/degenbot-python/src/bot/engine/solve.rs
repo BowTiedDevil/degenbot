@@ -8,9 +8,9 @@
 use super::{hex_string_to_pool_id, Address, PyArbEngine, PyList, V4StateSync};
 use crate::bot::pool::TickData;
 use crate::prelude::*;
-use degenbot_pools::buffered_event::PoolLiquidityUpdate;
-use degenbot_pools::state_update::PoolStateUpdate;
-use degenbot_pools::v3_state::V3StateSync;
+use degenbot_pools::families::buffered_event::PoolLiquidityUpdate;
+use degenbot_pools::families::state_update::PoolStateUpdate;
+use degenbot_pools::state::v3_state::V3StateSync;
 use degenbot_substrate::PoolLookup;
 use std::sync::Arc;
 
@@ -316,7 +316,7 @@ impl PyArbEngine {
         // owned tick data comes out, the dict is built under the GIL below.
         let tick_data = self.with_core(py, |s| {
             let key = s.pool_id_by_address(&addr)?;
-            let pool = s.pool_slice::<degenbot_pools::v3_state::V3PoolState>(key)?;
+            let pool = s.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(key)?;
             Some(pool.tick_data.clone())
         });
         let Some(tick_data) = tick_data else {

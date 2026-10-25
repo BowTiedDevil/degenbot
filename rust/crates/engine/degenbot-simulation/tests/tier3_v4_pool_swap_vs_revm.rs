@@ -70,9 +70,9 @@ use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
 
 use degenbot_decoders::revert::RevertClass;
 use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
-use degenbot_pools::v3_state::{PoolTickCoverage, SimulateSwapError};
-use degenbot_pools::v4_state::{v4_simulate_swap, V4PoolKey, V4PoolState};
-use degenbot_pools::v4_storage_slots::{
+use degenbot_pools::state::v3_state::{PoolTickCoverage, SimulateSwapError};
+use degenbot_pools::state::v4_state::{v4_simulate_swap, V4PoolKey, V4PoolState};
+use degenbot_pools::state::v4_storage_slots::{
     encode_v4_liquidity_slot, encode_v4_slot0, encode_v4_tick_info_slot, v4_liquidity_slot,
     v4_pool_id, v4_pool_state_base_slot, v4_slot0_slot, v4_tick_bitmap_word_slot,
     v4_tick_mapping_slot, V4Slot0Parts,
@@ -140,7 +140,7 @@ fn compute_v4_word_from_raw(
     tick_spacing: i32,
     word_pos: i16,
 ) -> U256 {
-    degenbot_pools::v3_storage_slots::compute_v3_tick_bitmap_word_from_raw(
+    degenbot_pools::state::v3_storage_slots::compute_v3_tick_bitmap_word_from_raw(
         tick_data,
         tick_spacing,
         word_pos,
@@ -255,7 +255,7 @@ fn dense_v4_state(
             entry.liquidity_net += net;
         }
     }
-    let params = degenbot_pools::v4_state::RegisterV4PoolParams {
+    let params = degenbot_pools::state::v4_state::RegisterV4PoolParams {
         pool_manager: Address::ZERO,
         pool_id: [0u8; 32],
         pool_key: V4PoolKey {
@@ -329,7 +329,7 @@ fn build_arbitrary_v4_state(
         );
         hi.liquidity_net = hi.liquidity_net.saturating_sub(p.liquidity as i128);
     }
-    let params = degenbot_pools::v4_state::RegisterV4PoolParams {
+    let params = degenbot_pools::state::v4_state::RegisterV4PoolParams {
         pool_manager: Address::ZERO,
         pool_id: [0u8; 32],
         pool_key: V4PoolKey {
@@ -1270,7 +1270,7 @@ fn v4_pool_fee1_valid_single_position_matches_sim() {
             block: 0,
         },
     );
-    let params = degenbot_pools::v4_state::RegisterV4PoolParams {
+    let params = degenbot_pools::state::v4_state::RegisterV4PoolParams {
         pool_manager: Address::ZERO,
         pool_id: [0u8; 32],
         pool_key: V4PoolKey {
@@ -1364,7 +1364,7 @@ fn fee1_protocol_fee_state(protocol_fee: u32, lp_fee: u32) -> V4PoolState {
             block: 0,
         },
     );
-    let params = degenbot_pools::v4_state::RegisterV4PoolParams {
+    let params = degenbot_pools::state::v4_state::RegisterV4PoolParams {
         pool_manager: Address::ZERO,
         pool_id: [0u8; 32],
         pool_key: V4PoolKey {

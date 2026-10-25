@@ -117,7 +117,6 @@ impl ConcentratedLiquidityPathSim {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use crate::solve::concentrated_liquidity::active_set::{simulate_walk_path, PieceView};
     use crate::solve::concentrated_liquidity::crossings::{
         build_concentrated_liquidity_crossing_table, concentrated_liquidity_walk_hop,
@@ -128,6 +127,7 @@ mod tests {
     };
     use crate::solve::concentrated_liquidity::WalkTally;
     use crate::solve::runtime::SolveRuntimeConfig;
+    use crate::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
 
     fn sp_at(tick: i32) -> U256 {

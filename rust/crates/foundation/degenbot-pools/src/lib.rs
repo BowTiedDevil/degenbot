@@ -64,110 +64,95 @@
 //! `degenbot-bot` and re-exported by the `degenbot` umbrella for standalone
 //! Rust consumers.
 //!
-//! ## Contents (added incrementally)
+//! ## Contents (ADR-084 W5: four capability modules at the root)
 //!
-//! The crate is organized one concern per module:
+//! - [`state`] - per-family value structs + storage slots, the tick
+//!   map/bitmap machinery, spec-bound validators, the reorg-journal data, and
+//!   the family-capability declarations
+//! - [`families`] - the family read doors + projections (ADR-073), the CL
+//!   state module (ADR-080), and the family event plumbing
+//! - [`sim`] - the stateless swap simulators, the `PoolEntry` dispatch row +
+//!   registry, the seam traits (whose implementations live one layer up), and
+//!   the registration-refusal vocabulary
+//! - [`solve`] - the family-blind kernels (golden-section template,
+//!   integer-verification Mobius order, profit-envelope composition and
+//!   caches) plus one solve entry per family module
 //!
-//! - **trait definitions** (`TickWordFetcher`, `CurveDataProvider`,
-//!   `BalancerRateProvider` + their error/return types + `StaticRateProvider`)
-//! - **leaf value modules** (`spec_bounds`, `state_history`, `tick_bitmap`,
-//!   `tick_map`)
-//! - **per-family state structs** + `PoolEntry` / `ConcentratedLiquidityPool` / `TickInfo` /
-//!   `TokenEntry` + `Register*Pool{Params,Error}`
-//! - **stateless swap sims** (`v3_simulate_swap`, `v4_simulate_swap`,
-//!   `SimulateSwapError`, `V3SwapOutcome`, the V2/Curve/Balancer dispatch)
-//! - **the solve tree** ([`solve`]: the family-blind kernels — golden-section
-//!   template, integer-verification Möbius order, profit-envelope composition and
-//!   caches — plus one solve entry per family module)
+//! The crate root keeps the umbrella-grade re-exports (`TickInfo`, the
+//! storage-slot encoders, the seam traits) so standalone consumers keep a
+//! flat surface; the module trees beneath are the homes.
 
-pub mod aerodrome_v2_state;
-pub mod balancer_stable_state;
-pub mod balancer_weighted_state;
-pub mod capability;
-pub mod curve_data_provider;
-pub mod curve_dy_io;
-pub use curve_dy_io::{
-    check_metapool_liquidity, check_pool_liquidity, resolve_dy_inputs, CurveInputsError,
-};
-pub mod buffered_event;
-pub mod curve_state;
-pub mod curve_strategies;
 pub mod families;
-#[expect(clippy::doc_markdown)]
-pub mod int_v3_hop;
-pub mod liquidity_event;
-pub mod liquidity_event_buffer;
-pub mod pool;
-pub mod rate_provider;
-pub mod registration_refusal;
-pub mod registry;
-pub mod simulate_swap;
-pub mod slot_layout;
-pub mod state_update;
 
-pub use buffered_event::{BufferedPoolEvent, PoolLiquidityUpdate};
-pub use state_update::{PoolRefusal, PoolStateUpdate};
+pub mod sim;
+
 /// The solver-kernel tree (ADR-073 endgame re-home): the family-blind kernels
 /// (the golden-section template, the integer-verification Möbius order, the
 /// envelope composition and its caches) live here beside the family read
 /// modules, and each family's solve entry lives inside its family module
 /// under [`families`].
-pub mod affected;
 pub mod solve;
-pub mod spec_bounds;
-pub mod state_history;
+
+pub mod state;
+
+pub use sim::curve_dy_io::{
+    check_metapool_liquidity, check_pool_liquidity, resolve_dy_inputs, CurveInputsError,
+};
+
+pub use families::buffered_event::{BufferedPoolEvent, PoolLiquidityUpdate};
+
+pub use families::state_update::{PoolRefusal, PoolStateUpdate};
+
 /// Re-export the *`PancakeSwap` V3 fork* storage-slot encoders at the crate root
 /// (the fork's layout diverges from Uniswap V3: two-word `slot0`, liquidity@5,
 /// ticks@6, tickBitmap@7). A standalone consumer seeding/serving a pancake pool
 /// directly MUST use these, never the Uniswap `v3_storage_slots` constants.
-pub use v3_pancakeswap_storage_slots::{
+pub use state::v3_pancakeswap_storage_slots::{
     encode_pancake_v3_slot0_word1, pancake_v3_tick_bitmap_word_slot, pancake_v3_tick_mapping_slot,
     PANCAKE_V3_LIQUIDITY_SLOT, PANCAKE_V3_SLOT0_WORD0_SLOT, PANCAKE_V3_SLOT0_WORD1_SLOT,
     PANCAKE_V3_TICKS_MAPPING_SLOT, PANCAKE_V3_TICK_BITMAP_MAPPING_SLOT,
 };
+
 /// Re-export the V3 storage-slot encoders at the crate root so the Tier-3b
 /// seeding layer + standalone consumers reach them without a long path.
-pub use v3_state::{ConcentratedLiquiditySlotLayout, V3PoolState};
-pub use v3_storage_slots::{
+pub use state::v3_state::{ConcentratedLiquiditySlotLayout, V3PoolState};
+
+pub use state::v3_storage_slots::{
     compute_v3_tick_bitmap_word, compute_v3_tick_bitmap_word_from_raw, decode_v3_slot0,
     encode_v3_liquidity_slot, encode_v3_slot0, encode_v3_slot0_fresh, encode_v3_tick_info_slot,
     sign_extend_int16, sign_extend_int24, v3_tick_bitmap_word_slot, v3_tick_mapping_slot,
     V3Slot0Parts,
 };
+
 /// Re-export the V4 storage-slot encoders at the crate root (Tier-3b seeding).
-pub use v4_storage_slots::{
+pub use state::v4_storage_slots::{
     compute_v4_tick_bitmap_word, decode_v4_slot0, encode_v4_liquidity_slot, encode_v4_slot0,
     encode_v4_tick_info_slot, v4_liquidity_slot, v4_pool_id, v4_pool_state_base_slot,
     v4_slot0_slot, v4_tick_bitmap_word_slot, v4_tick_mapping_slot, V4Slot0Parts,
 };
-pub mod tick_bitmap;
-pub mod tick_fetch;
-pub mod tick_map;
-pub mod tick_map_verify;
-pub mod v2_state;
-pub mod v3_pancakeswap_storage_slots;
-pub mod v3_state;
-pub mod v3_storage_slots;
-pub mod v4_state;
-pub mod v4_storage_slots;
 
 // Re-export the seam traits + their value-only error/return types at the crate
 // root, so `degenbot-bot`'s transient shim modules can write
 // `::degenbot_pools::{TickWordFetcher, …}` and so standalone consumers get a
 // flat surface.
-pub use curve_data_provider::{CurveDataProvider, CurveDataProviderError};
-pub use rate_provider::{BalancerRateProvider, RateProviderError, StaticRateProvider};
-pub use spec_bounds::{SpecValue, SpecViolation};
-pub use state_history::ReorgPoolState;
-pub use tick_bitmap::V3TickRangeForSolver;
-pub use tick_fetch::{
+pub use sim::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
+
+pub use sim::rate_provider::{BalancerRateProvider, RateProviderError, StaticRateProvider};
+
+pub use state::spec_bounds::{SpecValue, SpecViolation};
+
+pub use state::state_history::ReorgPoolState;
+
+pub use state::tick_bitmap::V3TickRangeForSolver;
+
+pub use sim::tick_fetch::{
     BootstrapTickError, BootstrapTickWord, FetchTickWordError, FetchedTickWord, TickBootstrapRpc,
     TickWordFetcher,
 };
 
-pub use registration_refusal::{BuildFailure, RegisterRefusal, SpecRefusal};
+pub use sim::registration_refusal::{BuildFailure, RegisterRefusal, SpecRefusal};
 
-pub use pool::{
+pub use sim::pool::{
     BalanceVectorVariant, BalanceVectorView, BinnedLiquidityVariant, ConcentratedLiquidityVariant,
     ConcentratedLiquidityView, Identity, Pool, ReservePairVariant, ReservePairView, Structure,
 };

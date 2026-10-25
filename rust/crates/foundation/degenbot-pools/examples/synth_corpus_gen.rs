@@ -13,7 +13,7 @@
 //! walk solves correctly (optimum beyond the legacy enumeration prefix).
 
 use alloy::primitives::U256;
-use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use degenbot_pools::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use serde_json::{json, Value};
 
 fn sp_at(tick: i32) -> U256 {

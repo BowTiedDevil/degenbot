@@ -58,19 +58,19 @@ pub(crate) fn describe_hop(
     let zfo = u8::from(zero_for_one);
     match hop_type {
         HopType::V2 => core
-            .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_id)
+            .pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(pool_id)
             .map_or_else(
                 || format!("V2:pool_id={pool_id}(zfo={zfo})"),
                 |id| format!("V2:{:#x}(zfo={zfo})", id.address),
             ),
         HopType::V3 => core
-            .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(pool_id)
+            .pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(pool_id)
             .map_or_else(
                 || format!("V3:pool_id={pool_id}(zfo={zfo})"),
                 |id| format!("V3:{:#x}(zfo={zfo})", id.address),
             ),
         HopType::V4 => core
-            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(pool_id)
+            .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(pool_id)
             .map_or_else(
                 || format!("V4:pool_id={pool_id}(zfo={zfo})"),
                 |id| {
@@ -93,7 +93,7 @@ mod tests {
     use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, RegisterV4PoolParams};
     use ::degenbot_decoders::v4_swap_decoder::V4PoolId;
     use ::degenbot_pools::solve::PoolHop;
-    use ::degenbot_pools::v4_state::V4PoolKey;
+    use ::degenbot_pools::state::v4_state::V4PoolKey;
     use alloy::primitives::{aliases::U112, Address, U256};
     use degenbot_executor::composers::HopInfo;
     use hashbrown::HashMap;

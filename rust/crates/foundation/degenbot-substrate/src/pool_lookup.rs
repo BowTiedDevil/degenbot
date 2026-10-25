@@ -75,10 +75,10 @@ impl PoolLookup {
     /// The canonical tag is `RegisteredPoolFamily`; a lookup narrows it to the
     /// two concentrated-liquidity families it can express.
     #[must_use]
-    pub const fn family(&self) -> degenbot_pools::registry::RegisteredPoolFamily {
+    pub const fn family(&self) -> degenbot_pools::sim::registry::RegisteredPoolFamily {
         match self {
-            Self::Address(_) => degenbot_pools::registry::RegisteredPoolFamily::V3,
-            Self::V4 { .. } => degenbot_pools::registry::RegisteredPoolFamily::V4,
+            Self::Address(_) => degenbot_pools::sim::registry::RegisteredPoolFamily::V3,
+            Self::V4 { .. } => degenbot_pools::sim::registry::RegisteredPoolFamily::V4,
         }
     }
 

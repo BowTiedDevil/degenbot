@@ -45,12 +45,12 @@
 //! refused here) — the decision record's traffic-mix input.
 
 use alloy::primitives::U256;
-use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 use degenbot_pools::solve::concentrated_liquidity::{
     solve_concentrated_liquidity_piecewise, solve_piecewise, MixedHopView,
     PreparedConcentratedLiquidityHop, WalkMemo,
 };
 use degenbot_pools::solve::runtime::SolveRuntimeConfig;
+use degenbot_pools::state::int_v3_hop::IntV3TickRangeSequence;
 use serde_json::Value;
 
 #[path = "common/mod.rs"]

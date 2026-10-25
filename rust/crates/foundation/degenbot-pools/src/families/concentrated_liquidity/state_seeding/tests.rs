@@ -7,8 +7,8 @@
 use super::{seed_checked_bitmap_words, seed_known_bitmap_words, word_of, SeedingHost};
 use crate::families::concentrated_liquidity::state_fixture::ClStateFixture;
 use crate::families::concentrated_liquidity::state_journal::JournalHost;
-use crate::v3_state::{PoolTickCoverage, V3PoolState};
-use crate::v4_state::V4PoolState;
+use crate::state::v3_state::{PoolTickCoverage, V3PoolState};
+use crate::state::v4_state::V4PoolState;
 use crate::TickInfo;
 use alloy::primitives::U128;
 use hashbrown::HashSet;

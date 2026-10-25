@@ -43,7 +43,7 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 use degenbot_core::runtime::get_runtime;
-use degenbot_pools::tick_fetch::{BootstrapTickError, BootstrapTickWord, TickBootstrapRpc};
+use degenbot_pools::sim::tick_fetch::{BootstrapTickError, BootstrapTickWord, TickBootstrapRpc};
 use degenbot_pools::TickInfo;
 
 use crate::abi::{fetch_tick_bitmap, fetch_tick_data, fetch_v4_tick_bitmap, fetch_v4_tick_data};

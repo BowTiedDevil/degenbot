@@ -1,6 +1,6 @@
 use super::*;
 use crate::bot_core::PoolLookup;
-use degenbot_pools::buffered_event::PoolLiquidityUpdate;
+use degenbot_pools::families::buffered_event::PoolLiquidityUpdate;
 use degenbot_substrate::concentrated_liquidity_route::ApplyOutcome;
 
 #[test]
@@ -92,18 +92,18 @@ fn inspect_path_returns_hop_details() {
     let v2_addr = engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(v2_fwd)
+        .pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(v2_fwd)
         .map(|p| p.address);
     assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
     let core = engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-    let v3_pool = core.pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(v3_key);
+    let v3_pool = core.pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(v3_key);
     assert_eq!(
         v3_pool.map(|p| p.address),
         Some(Address::from([0x22u8; 20]))
     );
-    let v4_pool = core.pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(v4_key);
+    let v4_pool = core.pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(v4_key);
     assert_eq!(
         v4_pool.map(|p| p.pool_manager),
         Some(Address::from([0x33u8; 20]))
@@ -481,11 +481,11 @@ fn handle_reorg_rolls_back_v2_sync_and_expires_delivered_result() {
     engine.cycle.path_resolved.clear();
     // the re-restored pools re-enter the epoch delta; the solve
     // consumes the delta's taken keys (all registered hop keys here).
-    let reorg_keys: Vec<degenbot_pools::affected::AffectedKey> = engine
+    let reorg_keys: Vec<degenbot_pools::solve::affected::AffectedKey> = engine
         .registry
         .pool_to_paths
         .keys()
-        .map(|(hop, pool)| degenbot_pools::affected::AffectedKey::new(*hop, *pool))
+        .map(|(hop, pool)| degenbot_pools::solve::affected::AffectedKey::new(*hop, *pool))
         .collect();
     run_test_cycle(&mut engine, 5, &BlockMetadata::default(), &reorg_keys);
     compute_diff_and_send(&mut engine, &BlockMetadata::default());
@@ -600,7 +600,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let s = core
-            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
             .expect("v3 pool registered");
         assert_eq!(s.sqrt_price_x96, swapped_sp, "swap applied at block 5");
         assert_eq!(
@@ -629,7 +629,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let s = core
-            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
             .expect("v3 pool still registered");
         assert_eq!(
             s.sqrt_price_x96, reg_sp,
@@ -860,7 +860,7 @@ fn process_backfill_logs_stamps_per_log_block_number() {
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
     let s = core
-        .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
         .expect("v3 pool registered");
     // Two distinct-block swaps must produce two journal deltas — NOT one
     // collapsed delta stamped at chunk_end.
@@ -899,7 +899,7 @@ fn process_backfill_logs_stamps_per_log_block_number() {
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
     let s = core
-        .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
         .expect("v3 pool registered");
     assert_eq!(
         s.sqrt_price_x96, sp_b1,
@@ -986,7 +986,7 @@ fn engine_then_core_lock_order_survives_concurrent_readers_and_writer() {
             while !done.load(std::sync::atomic::Ordering::Relaxed) {
                 let r = core.read_at(degenbot_substrate::state_lock::LockSite::Solver);
                 // Read is coherent under one guard — no torn state.
-                let _pool = r.pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id);
+                let _pool = r.pool_slice::<degenbot_pools::state::v2_state::V2PoolState>(pool_id);
             }
         }));
     }

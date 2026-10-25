@@ -1,11 +1,11 @@
 use crate::families::concentrated_liquidity::solve::{
     ConcentratedLiquidityFan, ConcentratedLiquidityFanKey, ConcentratedLiquidityHop,
 };
-use crate::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
 use crate::solve::concentrated_liquidity::build_concentrated_liquidity_crossing_table;
 use crate::solve::runtime::SolveRuntimeConfig;
 use crate::solve::HopType;
 use crate::solve::{family_row_for, FamilyRow, RESERVE_CAP_ROW};
+use crate::state::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
 use alloy::primitives::{aliases::I512, U256, U512};
 use degenbot_math::v2::IntHopState;
 use std::sync::Arc;

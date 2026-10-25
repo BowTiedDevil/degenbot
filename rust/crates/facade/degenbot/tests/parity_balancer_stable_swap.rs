@@ -52,7 +52,7 @@
 #![expect(clippy::doc_markdown)]
 
 use alloy::primitives::{address, I256, U256};
-use degenbot::pools::balancer_stable_state::RegisterBalancerStablePoolParams;
+use degenbot::pools::state::balancer_stable_state::RegisterBalancerStablePoolParams;
 use degenbot::substrate::swap_simulation::{SwapRead, SwapRequest};
 use degenbot::BotState;
 

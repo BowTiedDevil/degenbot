@@ -2564,8 +2564,8 @@ fn pools_root_surface_is_pinned() {
     }
     assert_eq!(
         pinned.len(),
-        34,
-        "the pools root surface moved off 34 modules; review the W5a snapshot"
+        4,
+        "the pools root surface moved off 4 capability modules; review the W5 snapshot"
     );
 
     // Live root modules.
@@ -2595,8 +2595,8 @@ fn pools_root_surface_is_pinned() {
     let item_count =
         count_pub_items(&workspace_root().join("crates/foundation/degenbot-pools/src"));
     assert_eq!(
-        item_count, 681,
-        "pools root `pub` item count moved from the W5a snapshot (681);          review tests/pools_root_surface_census.txt before growing the surface"
+        item_count, 683,
+        "pools root `pub` item count moved from the W5b snapshot (683);          review tests/pools_root_surface_census.txt before growing the surface"
     );
 }
 

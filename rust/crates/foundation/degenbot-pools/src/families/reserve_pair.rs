@@ -16,7 +16,7 @@
 //! # The family map
 //!
 //! Reserve-pair = two `U112` reserves + `update_block`, full-state block
-//! deltas ([`crate::state_history::V2BlockDelta`]). The two designs are
+//! deltas ([`crate::state::state_history::V2BlockDelta`]). The two designs are
 //! SPECIES of one structure (ADR-059 D3 — manifest entries, never new
 //! types): V2 carries the per-direction RETAINED fraction
 //! `(gamma_numer, fee_denom)`; Aerodrome V2 volatile carries the
@@ -60,7 +60,7 @@
 //! enforcement, not a header comment. What the two designs DO share is only
 //! the door plumbing and the event/probe vocabulary below (the ADR-017 D3
 //! collapse: both slices' `apply_sync` bodies are byte-identical full-state
-//! [`crate::state_history::V2BlockDelta`] pushes).
+//! [`crate::state::state_history::V2BlockDelta`] pushes).
 
 use alloy::primitives::aliases::U112;
 use alloy::primitives::U256;
@@ -70,8 +70,8 @@ use degenbot_math::v2::IntHopState;
 
 use crate::families::solidly as solidly_read;
 
-use crate::state_history::{ReorgJournal, ReservePairPoolState, V2BlockDelta};
-use crate::v3_state::SimulateSwapError;
+use crate::state::state_history::{ReorgJournal, ReservePairPoolState, V2BlockDelta};
+use crate::state::v3_state::SimulateSwapError;
 
 use super::door::{FamilyApply, Observe, Observed, ReadOutcome, SwapReadRequest, SyncEvent};
 
@@ -79,11 +79,13 @@ use super::door::{FamilyApply, Observe, Observed, ReadOutcome, SwapReadRequest, 
 /// lives in `crate::v2_state` / `crate::aerodrome_v2_state` (I/O-free per
 /// ADR-001) and is re-exported here so the family module presents the whole
 /// read story under one path.
-pub use crate::aerodrome_v2_state::{
+pub use crate::state::aerodrome_v2_state::{
     AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromePoolError,
     RegisterAerodromeV2PoolParams,
 };
-pub use crate::v2_state::{RegisterV2PoolError, RegisterV2PoolParams, V2PoolIdentity, V2PoolState};
+pub use crate::state::v2_state::{
+    RegisterV2PoolError, RegisterV2PoolParams, V2PoolIdentity, V2PoolState,
+};
 
 /// Design selection by state slice (read-only): the variant IS the design —
 /// the V2/Aerodrome match happens inside the module, never at the callers.
@@ -434,7 +436,7 @@ fn transient_aerodrome(
 /// The apply door — one buffered Sync event onto a reserve-pair slice
 /// ([`door::FamilyApply`]): both designs' apply bodies are byte-identical
 /// (the ADR-017 D3 collapse — full-state
-/// [`crate::state_history::V2BlockDelta`] push + reserve overwrite + clock
+/// [`crate::state::state_history::V2BlockDelta`] push + reserve overwrite + clock
 /// advance), so one shared event ([`door::SyncEvent`]) and one impl per
 /// slice serve BOTH structural families — the Solidly family's designs
 /// (Aerodrome V2 stable, Camelot `stable_swap`) land on these same slices.
@@ -582,7 +584,7 @@ mod tests {
     use alloy::primitives::aliases::U112;
     use alloy::primitives::U512;
 
-    use crate::state_history::{ReorgJournal, V2BlockDelta};
+    use crate::state::state_history::{ReorgJournal, V2BlockDelta};
 
     // -------------------------------------------------------------------
     // Family pins (the sentinel + closed-form constants are the canonical

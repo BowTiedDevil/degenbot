@@ -13,7 +13,7 @@
 use super::{CycleArm, CycleOutcome, CycleTicket, EpochContext, ResolveCensus};
 use crate::arb_engine::detached_cycle::DetachedCycle;
 use degenbot_core::op_info;
-use degenbot_pools::affected::AffectedKey;
+use degenbot_pools::solve::affected::AffectedKey;
 use degenbot_substrate::EpochDelta;
 use hashbrown::HashSet;
 

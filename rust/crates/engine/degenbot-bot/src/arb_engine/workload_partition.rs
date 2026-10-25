@@ -404,8 +404,8 @@ mod direct_seam_tests {
     #![expect(clippy::expect_used)] // known-good tick-range fixture
     use super::{path_cost_proxy, solve_bin_count};
     use crate::arb_engine::ArbitrageEngine;
-    use ::degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use ::degenbot_pools::solve::{ResolvedHop, ResolvedMixedPath};
+    use ::degenbot_pools::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use alloy::primitives::U256;
     use std::sync::Arc;
     /// `solve_bin_count` is the ONE solve-bin sizing seam: it answers

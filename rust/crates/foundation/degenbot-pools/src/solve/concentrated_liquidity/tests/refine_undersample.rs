@@ -19,8 +19,8 @@
     clippy::unreadable_literal
 )]
 
-use crate::v3_state::ConcentratedLiquiditySlotLayout;
-use crate::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
+use crate::state::v3_state::ConcentratedLiquiditySlotLayout;
+use crate::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
 use crate::TickInfo;
 use alloy::primitives::{Address, U128, U256, U512};
 use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;

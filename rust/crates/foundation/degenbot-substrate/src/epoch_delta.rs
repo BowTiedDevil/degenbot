@@ -4,7 +4,7 @@
 //! pool classification are retired in favor of this type. Log application
 //! (`LogDispatcher::dispatch`) records the touched `(HopType, pool_id)`
 //! key — the `pool_to_paths` reverse-index key, i.e. an
-//! [`AffectedKey`](degenbot_pools::affected::AffectedKey) — as a
+//! [`AffectedKey`](degenbot_pools::solve::affected::AffectedKey) — as a
 //! BYPRODUCT of `Bot::dispatch_log`, one ledger per block epoch.
 //! Affected-path derivation reads the ledger directly at the drain; no
 //! subscriber-side classification and no dirty-set machinery survive the
@@ -43,7 +43,7 @@ use indexmap::IndexSet;
 use parking_lot::Mutex;
 
 use super::epoch::Epoch;
-use degenbot_pools::affected::AffectedKey;
+use degenbot_pools::solve::affected::AffectedKey;
 
 /// The ordered key buckets backing [`EpochDelta`].
 ///

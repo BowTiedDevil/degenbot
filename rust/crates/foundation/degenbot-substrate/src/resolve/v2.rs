@@ -32,19 +32,22 @@ pub(crate) fn project_v2(
     core: &BotState,
     pool_ref: &MixedPoolRef,
 ) -> Result<(ResolvedHop, u64), MissingHopReason> {
-    let v2_state = core.pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_ref.pool_key);
+    let v2_state =
+        core.pool_slice::<degenbot_pools::state::v2_state::V2PoolState>(pool_ref.pool_key);
     if let Some(v2_state) = v2_state {
         let identity = core
-            .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_ref.pool_key)
+            .pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(pool_ref.pool_key)
             .ok_or(MissingHopReason::MissingIdentity)?;
         let hop_state = reserve_pair_read::capture_hop(v2_state, identity, pool_ref.zero_for_one);
         return Ok((ResolvedHop::V2 { state: hop_state }, v2_state.state_nonce));
     }
     if let Some(state) = core
-        .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolState>(pool_ref.pool_key)
+        .pool_slice::<degenbot_pools::state::aerodrome_v2_state::AerodromeV2PoolState>(
+            pool_ref.pool_key,
+        )
     {
         let identity = core
-            .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+            .pool_slice::<degenbot_pools::state::aerodrome_v2_state::AerodromeV2PoolIdentity>(
                 pool_ref.pool_key,
             )
             .ok_or(MissingHopReason::MissingIdentity)?;
@@ -126,7 +129,7 @@ mod tests {
         assert_eq!(s.gamma_numer, U256::from(997u64));
         assert_eq!(
             nonce,
-            core.pool_slice::<degenbot_pools::v2_state::V2PoolState>(v2_id)
+            core.pool_slice::<degenbot_pools::state::v2_state::V2PoolState>(v2_id)
                 .expect("state")
                 .state_nonce
         );

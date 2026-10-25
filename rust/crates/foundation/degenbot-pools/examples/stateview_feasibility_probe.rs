@@ -22,7 +22,7 @@ use std::time::Instant;
 
 use alloy::primitives::aliases::U112;
 use alloy::primitives::{U128, U256};
-use degenbot_pools::state_history::{
+use degenbot_pools::state::state_history::{
     ReorgJournal, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta,
 };
 use degenbot_pools::TickInfo;
@@ -107,7 +107,7 @@ fn jade_journal(k: usize) -> ReorgJournal<V3BlockDelta> {
 
 fn apply_v3(
     target: &mut HashMap<i32, TickInfo>,
-    res: &degenbot_pools::state_history::V3RestoreResult,
+    res: &degenbot_pools::state::state_history::V3RestoreResult,
 ) {
     if let Some(p) = res.scalar_priors {
         std::hint::black_box((p.sqrt_price_x96_before, p.liquidity_before, p.tick_before));

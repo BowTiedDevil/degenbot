@@ -32,8 +32,8 @@ use std::path::PathBuf;
 use hashbrown::{HashMap, HashSet};
 
 use alloy::primitives::{aliases::I256, Address, Bytes, U160, U256};
-use degenbot_pools::v4_state::{V4PoolKey, V4PoolState};
-use degenbot_pools::v4_storage_slots::{
+use degenbot_pools::state::v4_state::{V4PoolKey, V4PoolState};
+use degenbot_pools::state::v4_storage_slots::{
     encode_v4_liquidity_slot, encode_v4_slot0, encode_v4_tick_info_slot, v4_liquidity_slot,
     v4_pool_id, v4_pool_state_base_slot, v4_slot0_slot, v4_tick_bitmap_word_slot,
     v4_tick_mapping_slot, V4Slot0Parts,
@@ -83,7 +83,7 @@ fn compute_v4_word_from_raw(
     tick_spacing: i32,
     word_pos: i16,
 ) -> U256 {
-    degenbot_pools::v3_storage_slots::compute_v3_tick_bitmap_word_from_raw(
+    degenbot_pools::state::v3_storage_slots::compute_v3_tick_bitmap_word_from_raw(
         tick_data,
         tick_spacing,
         word_pos,

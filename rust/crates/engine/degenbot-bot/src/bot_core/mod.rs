@@ -70,18 +70,18 @@ pub mod stage_telemetry;
 
 // Re-export the merged V3/V4/Curve state types (ADR-003: BotState owns
 // pool state; Curve is the ADR-003 "third family").
-pub use ::degenbot_pools::aerodrome_v2_state::{
+pub use ::degenbot_pools::sim::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
+pub use ::degenbot_pools::sim::curve_dy_io::{resolve_dy_inputs, CurveInputsError};
+pub use ::degenbot_pools::sim::rate_provider::{
+    BalancerRateProvider, RateProviderError, StaticRateProvider,
+};
+pub use ::degenbot_pools::state::aerodrome_v2_state::{
     AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromePoolError,
     RegisterAerodromeV2PoolParams,
 };
-pub use ::degenbot_pools::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
-pub use ::degenbot_pools::curve_dy_io::{resolve_dy_inputs, CurveInputsError};
-pub use ::degenbot_pools::rate_provider::{
-    BalancerRateProvider, RateProviderError, StaticRateProvider,
-};
-pub use ::degenbot_pools::spec_bounds::{SpecValue, SpecViolation, UINT112_MAX};
-pub use ::degenbot_pools::state_history::BalancesBlockDelta;
-pub use ::degenbot_pools::v3_state::{
+pub use ::degenbot_pools::state::spec_bounds::{SpecValue, SpecViolation, UINT112_MAX};
+pub use ::degenbot_pools::state::state_history::BalancesBlockDelta;
+pub use ::degenbot_pools::state::v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, BufferedV3PoolEvent, BufferedV3SwapEvent,
     ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams,
     RegistrationLifecycle, SimulateSwapError, V3PoolIdentity, V3PoolState, V3SwapOutcome,
@@ -119,19 +119,19 @@ pub use stage_handlers::{
 };
 pub use verify_claims::{PoolVerifications, VerifyClaims};
 
-pub use ::degenbot_pools::v4_state::{
+pub use ::degenbot_pools::state::v4_state::{
     v4_simulate_swap, BufferedV4LiquidityUpdate, BufferedV4PoolEvent, BufferedV4SwapEvent,
     RegisterV4PoolError, RegisterV4PoolParams, V4PoolIdentity, V4PoolKey, V4PoolState, V4StateSync,
     V4SwapUpdate, AMOUNT_MODIFYING_HOOK_MASK, V4_DYNAMIC_FEE_FLAG,
 };
 
-pub use degenbot_pools::state_update::{PoolRefusal, PoolStateUpdate};
-pub use degenbot_pools::v3_state::V3StateSync;
+pub use degenbot_pools::families::state_update::{PoolRefusal, PoolStateUpdate};
+pub use degenbot_pools::state::v3_state::V3StateSync;
 
 // Re-export the ADR-004 typed TickMap boundary trait (V3 + V4 impls both live
 // in `tick_map.rs`). State structs stay flat; only verifier/apply views are
 // typed-narrowed.
-pub use ::degenbot_pools::tick_map::{TickMap, TickMapMut};
+pub use ::degenbot_pools::state::tick_map::{TickMap, TickMapMut};
 
 // Re-export the unified block stage machine : the
 // per-block state map + decision producer + watchdogs + gates in ONE pure
@@ -149,12 +149,12 @@ pub use stage_machine::{
 // `bot_core::*` paths so consumers resolve unchanged.
 // Transient re-export — repointed at `degenbot_pools::*` natively.
 // ---------------------------------------------------------------------------
-pub use ::degenbot_pools::registry::{
+pub use ::degenbot_pools::sim::registry::{
     ConcentratedLiquidityPool, ConcentratedLiquidityPoolMut, PoolEntry, RegisteredPoolFamily,
     TokenEntry,
 };
-pub use ::degenbot_pools::simulate_swap::simulate_swap;
-pub use ::degenbot_pools::v2_state::{
+pub use ::degenbot_pools::sim::simulate_swap::simulate_swap;
+pub use ::degenbot_pools::state::v2_state::{
     RegisterV2PoolError, RegisterV2PoolParams, V2PoolIdentity, V2PoolState,
 };
 pub use ::degenbot_pools::TickInfo;

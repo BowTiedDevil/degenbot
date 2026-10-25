@@ -12,11 +12,11 @@
 )]
 
 use alloy::primitives::U256;
-use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_pools::solve::concentrated_liquidity::cache::{
     strategy_catalog, CacheEvent, ConcentratedLiquidityCacheStrategy,
 };
 use degenbot_pools::solve::concentrated_liquidity::solve_concentrated_liquidity_piecewise;
+use degenbot_pools::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use serde_json::Value;
 
 const PROFIT_EPS: u128 = 100_000;

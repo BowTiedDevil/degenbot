@@ -25,7 +25,8 @@ use alloy::primitives::{Address, U256};
 use degenbot::substrate::BotState;
 use degenbot::PoolEntry;
 use degenbot::RegisterV3PoolParams;
-use degenbot_pools::{v3_state::PoolTickCoverage, TickInfo};
+use degenbot_pools::state::v3_state::PoolTickCoverage;
+use degenbot_pools::TickInfo;
 use hashbrown::HashMap;
 
 /// Path to the shared builder fixture (loaded by both this Rust test and the

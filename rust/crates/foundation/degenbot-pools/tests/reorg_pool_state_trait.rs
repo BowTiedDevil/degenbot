@@ -29,12 +29,14 @@
 //! mocked, no `BotState`.
 
 use alloy::primitives::{aliases::U112, Address, U256};
-use degenbot_pools::aerodrome_v2_state::AerodromeV2PoolState;
-use degenbot_pools::balancer_stable_state::BalancerStablePoolState;
-use degenbot_pools::balancer_weighted_state::BalancerWeightedPoolState;
-use degenbot_pools::curve_state::CurvePoolState;
-use degenbot_pools::state_history::{BalancesBlockDelta, JournalError, ReorgJournal, V2BlockDelta};
-use degenbot_pools::v2_state::V2PoolState;
+use degenbot_pools::state::aerodrome_v2_state::AerodromeV2PoolState;
+use degenbot_pools::state::balancer_stable_state::BalancerStablePoolState;
+use degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolState;
+use degenbot_pools::state::curve_state::CurvePoolState;
+use degenbot_pools::state::state_history::{
+    BalancesBlockDelta, JournalError, ReorgJournal, V2BlockDelta,
+};
+use degenbot_pools::state::v2_state::V2PoolState;
 use degenbot_pools::ReorgPoolState;
 
 const GENESIS_BLOCK: u64 = 10;
@@ -361,20 +363,21 @@ fn balancer_stable_restore_before_block_at_genesis_is_hard_error() {
     // build_stable already pushes a swap delta on top of genesis; use a
     // genesis-only construction for the hard-error case.
     let mut state = {
-        let params = degenbot_pools::balancer_stable_state::RegisterBalancerStablePoolParams {
-            address: Address::ZERO,
-            vault: Address::ZERO,
-            pool_id: [0u8; 32],
-            tokens: vec![Address::ZERO; 2],
-            amp: 200u128,
-            scaling_factors: vec![U256::from(1u64); 2],
-            swap_fee: 0u128,
-            bpt_idx: None,
-            invariant_version: 1u8,
-            balances: fixture.genesis.clone(),
-            update_block: GENESIS_BLOCK,
-            rate_provider: None,
-        };
+        let params =
+            degenbot_pools::state::balancer_stable_state::RegisterBalancerStablePoolParams {
+                address: Address::ZERO,
+                vault: Address::ZERO,
+                pool_id: [0u8; 32],
+                tokens: vec![Address::ZERO; 2],
+                amp: 200u128,
+                scaling_factors: vec![U256::from(1u64); 2],
+                swap_fee: 0u128,
+                bpt_idx: None,
+                invariant_version: 1u8,
+                balances: fixture.genesis.clone(),
+                update_block: GENESIS_BLOCK,
+                rate_provider: None,
+            };
         BalancerStablePoolState::from_params(params, 8).1
     };
 

@@ -26,10 +26,12 @@ use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_int
 use degenbot_pools::solve::concentrated_liquidity::{
     simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally,
 };
-use degenbot_pools::v3_state::{
+use degenbot_pools::state::v3_state::{
     v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, V3PoolState, V3SwapOutcome,
 };
-use degenbot_pools::v4_state::{v4_simulate_swap, RegisterV4PoolParams, V4PoolKey, V4PoolState};
+use degenbot_pools::state::v4_state::{
+    v4_simulate_swap, RegisterV4PoolParams, V4PoolKey, V4PoolState,
+};
 use degenbot_pools::TickInfo;
 
 const TICK_SPACING: i32 = 60;

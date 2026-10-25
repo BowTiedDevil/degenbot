@@ -23,8 +23,8 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 use degenbot_db::snapshot::TickMapDb;
-use degenbot_pools::tick_fetch::TickWordFetcher;
-use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
+use degenbot_pools::sim::tick_fetch::TickWordFetcher;
+use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
 
 use super::builder::V4PoolBuildOverrides;
 use super::route::{

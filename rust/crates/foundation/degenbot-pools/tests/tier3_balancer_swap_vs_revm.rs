@@ -40,14 +40,14 @@ use revm::primitives::TxKind;
 use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
 
 use degenbot_decoders::revert::RevertClass;
-use degenbot_pools::balancer_stable_state::{
+use degenbot_pools::sim::registry::PoolEntry;
+use degenbot_pools::sim::simulate_swap::simulate_swap;
+use degenbot_pools::state::balancer_stable_state::{
     BalancerStablePoolState, RegisterBalancerStablePoolParams,
 };
-use degenbot_pools::balancer_weighted_state::{
+use degenbot_pools::state::balancer_weighted_state::{
     BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
 };
-use degenbot_pools::registry::PoolEntry;
-use degenbot_pools::simulate_swap::simulate_swap;
 
 /// 1.0 in 18-decimal fixed point.
 const ONE: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);

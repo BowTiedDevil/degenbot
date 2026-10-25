@@ -898,10 +898,10 @@ fn clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
     let state = core
-        .pool_slice::<degenbot_pools::v2_state::V2PoolState>(v2)
+        .pool_slice::<degenbot_pools::state::v2_state::V2PoolState>(v2)
         .unwrap();
     let identity = core
-        .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(v2)
+        .pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(v2)
         .unwrap();
     let expected = IntHopState::new(
         state.reserve1.to::<U256>(),
@@ -937,8 +937,8 @@ fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
     use crate::arb_engine::PoolTickCoverage;
     use crate::bot_core::TickInfo;
     use alloy::primitives::I256;
-    use degenbot_pools::v3_state::V3PoolState;
-    use degenbot_pools::v4_state::v4_simulate_swap;
+    use degenbot_pools::state::v3_state::V3PoolState;
+    use degenbot_pools::state::v4_state::v4_simulate_swap;
     let mut engine = ArbitrageEngine::new();
     // V2 pool: reserves sized so its output (fed to V4) is enormous
     // relative to the V4 pool's capacity (token1 ≫ the V4 twin's
@@ -1030,10 +1030,10 @@ fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let state = core
-            .pool_slice::<degenbot_pools::v4_state::V4PoolState>(v4_id)
+            .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(v4_id)
             .unwrap();
         let identity = core
-            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(v4_id)
+            .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(v4_id)
             .unwrap();
         let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
         let limit = V3PoolState::default_sqrt_price_limit(false);
@@ -1056,10 +1056,10 @@ fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let state = core
-            .pool_slice::<degenbot_pools::v4_state::V4PoolState>(v4_id)
+            .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(v4_id)
             .unwrap();
         let identity = core
-            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(v4_id)
+            .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(v4_id)
             .unwrap();
         let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
         let limit = V3PoolState::default_sqrt_price_limit(false);
@@ -1109,8 +1109,8 @@ fn clamp_concentrated_liquidity_hop_capacity_aligns_v4_first_hop0_outputs() {
     use crate::arb_engine::PoolTickCoverage;
     use crate::bot_core::TickInfo;
     use alloy::primitives::I256;
-    use degenbot_pools::v3_state::V3PoolState;
-    use degenbot_pools::v4_state::v4_simulate_swap;
+    use degenbot_pools::state::v3_state::V3PoolState;
+    use degenbot_pools::state::v4_state::v4_simulate_swap;
     let mut engine = ArbitrageEngine::new();
     // V4 pool (hop0), narrow ±60 band, low liquidity — over-fed later.
     let mut tick_data = HashMap::new();
@@ -1194,10 +1194,10 @@ fn clamp_concentrated_liquidity_hop_capacity_aligns_v4_first_hop0_outputs() {
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let state = core
-            .pool_slice::<degenbot_pools::v4_state::V4PoolState>(v4_id)
+            .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(v4_id)
             .unwrap();
         let identity = core
-            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(v4_id)
+            .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(v4_id)
             .unwrap();
         let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
         let limit = V3PoolState::default_sqrt_price_limit(true);

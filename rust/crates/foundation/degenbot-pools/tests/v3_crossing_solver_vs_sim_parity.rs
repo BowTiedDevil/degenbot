@@ -76,7 +76,7 @@ use hashbrown::HashMap;
 
 use alloy::primitives::{B256, I256, U128, U256};
 
-use degenbot_pools::v3_state::{
+use degenbot_pools::state::v3_state::{
     v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, V3PoolState, V3SwapOutcome,
 };
 use degenbot_pools::TickInfo;

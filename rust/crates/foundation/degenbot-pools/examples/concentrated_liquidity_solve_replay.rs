@@ -29,9 +29,9 @@
 //! or (c) is nondeterministic across reps.
 
 use alloy::primitives::U256;
-use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 use degenbot_pools::solve::concentrated_liquidity::WalkEventCensus;
 use degenbot_pools::solve::gate::{path_profit_bound, GateDeps, HopMath};
+use degenbot_pools::state::int_v3_hop::IntV3TickRangeSequence;
 use serde_json::Value;
 
 #[path = "common/mod.rs"]

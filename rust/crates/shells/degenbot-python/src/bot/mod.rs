@@ -45,7 +45,7 @@ fn narrow_reserve(
     value: alloy::primitives::U256,
     field: &'static str,
 ) -> PyResult<alloy::primitives::aliases::U112> {
-    degenbot_pools::spec_bounds::narrow_v2_reserve(value, field)
+    degenbot_pools::state::spec_bounds::narrow_v2_reserve(value, field)
         .map_err(|sv| SpecViolationError::new_err(format!("{sv}")))
 }
 pub use crate::bot::pool::PyLiquidityPool;
@@ -59,7 +59,7 @@ use degenbot_bot::bot_core::{
     RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
     RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey,
 };
-use degenbot_pools::registration_refusal::SpecRefusal;
+use degenbot_pools::sim::registration_refusal::SpecRefusal;
 use degenbot_substrate::{PoolLookup, PoolRegistration};
 use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
@@ -1145,8 +1145,8 @@ impl PyBot {
                 // builder's deployment-table resolution.
                 let slot_override = match slot_layout {
                     None => None,
-                    Some("pancakeswap") => Some(degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout::PancakeV3),
-                    Some("uniswap") => Some(degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3),
+                    Some("pancakeswap") => Some(degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout::PancakeV3),
+                    Some("uniswap") => Some(degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3),
                     Some(other) => {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "build_v3_pool: slot_layout must be 'uniswap' or 'pancakeswap', got {other:?}"
@@ -1851,7 +1851,7 @@ impl PyBot {
         // `AlloyTickBootstrapRpc` (Option B — pure-Rust choreography, no GIL
         // re-entry per RPC). `None` when `io=None` or the provider isn't
         // alloy-backed → Chain arm short-circuits (current behavior).
-        let chain: Option<std::sync::Arc<dyn degenbot_pools::tick_fetch::TickBootstrapRpc>> =
+        let chain: Option<std::sync::Arc<dyn degenbot_pools::sim::tick_fetch::TickBootstrapRpc>> =
             io.as_ref().and_then(|io_bound| {
                 io_bound
                     .try_borrow()
@@ -1935,7 +1935,7 @@ impl PyBot {
         };
         let db = self.db_handle();
         let pool_id_inner: degenbot_decoders::v4_swap_decoder::V4PoolId = pool_id_hash.0; // B256 = FixedBytes<32>; .0 is [u8; 32]
-        let chain: Option<std::sync::Arc<dyn degenbot_pools::tick_fetch::TickBootstrapRpc>> =
+        let chain: Option<std::sync::Arc<dyn degenbot_pools::sim::tick_fetch::TickBootstrapRpc>> =
             io.as_ref().and_then(|io_bound| {
                 io_bound
                     .try_borrow()
@@ -2043,7 +2043,7 @@ impl PyBot {
         // argument behind a CREATE2 verify).
         let slot_override = match slot_layout {
             Some("pancakeswap") => {
-                Some(degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout::PancakeV3)
+                Some(degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout::PancakeV3)
             }
             Some("uniswap") | None => None,
             Some(other) => {

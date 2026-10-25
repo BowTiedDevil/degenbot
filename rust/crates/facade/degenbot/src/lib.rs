@@ -198,7 +198,7 @@ pub use degenbot_bot::bot_core::registration_lifecycle::{
 /// The reason a build refused a pool as out of spec — [`PoolBuilderError::Spec`]'s
 /// payload, so a consumer can name the refusal without reaching into the pools
 /// crate.
-pub use degenbot_pools::registration_refusal::SpecRefusal;
+pub use degenbot_pools::sim::registration_refusal::SpecRefusal;
 
 /// The session object registry — the per-session owner of pool/token
 /// canonical identity, the path-identity and position seams (also available

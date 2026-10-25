@@ -9,8 +9,8 @@ use std::sync::Arc;
 use alloy::primitives::{address, aliases::U112, Address, Bytes, U256};
 use degenbot_db::{DegenbotDb, V2PoolRowInput};
 use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
-use degenbot_pools::slot_layout::V2ReservesParts;
 use degenbot_pools::solve::{HopType, MixedPoolRef};
+use degenbot_pools::state::slot_layout::V2ReservesParts;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };

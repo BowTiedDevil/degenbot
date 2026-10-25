@@ -566,7 +566,7 @@ impl Fold {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::int_v3_hop::IntV3TickRangeHop;
+    use crate::state::int_v3_hop::IntV3TickRangeHop;
 
     /// Fixture range with arbitrary (fingerprint-opaque) small Q128.96-style
     /// prices; no semantic validity is required — only that every folded

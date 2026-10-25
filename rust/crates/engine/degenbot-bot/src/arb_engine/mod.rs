@@ -390,7 +390,7 @@ pub struct ResultBatch {
 /// cold-start `solve_all`): the deferral then keeps its pre-fold dropped
 /// behavior.
 pub(crate) type DeferredReRecordHook =
-    std::sync::Arc<dyn Fn(&[degenbot_pools::affected::AffectedKey], u64) + Send + Sync>;
+    std::sync::Arc<dyn Fn(&[degenbot_pools::solve::affected::AffectedKey], u64) + Send + Sync>;
 /// The unified Uniswap engine — owns V2, V3, and V4 pool state and solves
 /// mixed arbitrage paths.
 ///

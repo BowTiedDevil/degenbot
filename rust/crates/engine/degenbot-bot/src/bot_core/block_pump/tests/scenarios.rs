@@ -382,7 +382,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
             let core = state.read_at(degenbot_substrate::state_lock::LockSite::Pump);
             let pool_id = core.pool_id_by_address(addr).unwrap();
             let pool = core
-                .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+                .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
                 .unwrap();
             for &t in &FUZZ_TICKS {
                 let actual = pool
@@ -482,7 +482,7 @@ async fn fuwyur_live_mint_for_unregistered_pool_survives_late_registration() {
         PoolLookup::from_address(*pool_addr).pump(&mut core);
         PoolLookup::from_address(pool_addr).mark_registration_live(&mut core);
         let pool_id = core.pool_id_by_address(&pool_addr).unwrap();
-        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+        core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
             .expect("registered")
             .tick_data
             .clone()
@@ -612,7 +612,7 @@ async fn scenario_a_race_concurrent_drain_cannot_produce_symptom() {
         let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         PoolLookup::from_address(*pool_addr).pump(&mut core);
         let pool_id = core.pool_id_by_address(&pool_addr).unwrap();
-        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+        core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
             .unwrap()
             .tick_data
             .get(&7)

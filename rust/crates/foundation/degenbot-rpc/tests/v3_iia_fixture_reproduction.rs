@@ -50,12 +50,12 @@ use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U256};
 
-use degenbot_pools::registry::ConcentratedLiquidityPoolMut;
+use degenbot_pools::sim::registry::ConcentratedLiquidityPoolMut;
+use degenbot_pools::sim::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
 use degenbot_pools::solve::concentrated_liquidity::{
     simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally,
 };
-use degenbot_pools::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
-use degenbot_pools::v3_state::{
+use degenbot_pools::state::v3_state::{
     v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, SimulateSwapError, V3PoolState,
     V3SwapOutcome,
 };

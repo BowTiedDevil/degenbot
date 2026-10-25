@@ -80,7 +80,7 @@ use degenbot_decoders::v4_swap_decoder::V4PoolId;
 // crate root; `bot_core::mod` re-exports them via `pub use v3_state::…` +
 // `pub use ::degenbot_pools::TickInfo`. Use those re-exports to avoid coupling
 // this submodule to `degenbot_pools::v3_state`'s private path.
-use degenbot_pools::tick_fetch::{BootstrapTickError, TickBootstrapRpc};
+use degenbot_pools::sim::tick_fetch::{BootstrapTickError, TickBootstrapRpc};
 
 use crate::planning::{TickMapPoolIdentity, TickMapSeed};
 use crate::{PoolTickCoverage, TickInfo};

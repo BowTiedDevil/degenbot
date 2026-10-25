@@ -56,15 +56,18 @@ implementor · **(v)** console operator (`degenbot`).
 - The C5 probes run under `just check-consumer-probes` (also part of
   `just test`): the pools-path solve example, the Python FFI solve probe, and
   the console's offline `config show --resolved` task.
-- **W5 phase 0 (ADR-084/W5a):** the current 34-module `degenbot-pools` root
-  surface is pinned by
-  `rust/crates/facade/degenbot/tests/pools_root_surface_census.txt`, with the
-  target capability module (`state` / `families` / `sim` / `solve`) recorded
-  for each row. ADR-080's concentrated-liquidity state module lands at
+- **W5 (ADR-084/W5a+W5b):** the `degenbot-pools` root surface is now the four
+  capability modules - `state` / `families` / `sim` / `solve` - with the
+  umbrella-grade re-exports (`TickInfo`, the storage-slot encoders, the seam
+  traits) kept at the crate root. The executed mapping is pinned by
+  `rust/crates/facade/degenbot/tests/pools_root_surface_census.txt` (the
+  phase-0 34-row record is preserved in the ADR-084 plan). ADR-080's
+  concentrated-liquidity state module lives at
   `families/concentrated_liquidity/` with `v3_state`/`v4_state` as its
-  storage adapters, so the two plans cannot claim the same files. Phase 1
-  (`W5b`) executes the mapping — 34 root entry points collapse to 4 — only
-  after ADR-080 lands.
+  storage adapters; the shared state verbs live once in
+  `state_journal`/`state_seeding`/`state_walk` over the
+  `JournalHost`/`WalkHost` seams (the ADR README's decisions table briefly
+  lagged at ADR-074, which mis-gated W5b on a landed ADR).
 - The door discipline (ADR-084 D2): `pub` items are a curated surface, the
   trees beneath are `pub(crate)` unless a named consumer needs them, and a
   type reachable through a door item's public fields is itself a door item.

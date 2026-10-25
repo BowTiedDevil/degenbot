@@ -33,10 +33,10 @@ use alloy::primitives::{aliases::U112, Address, B256, U256};
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 use degenbot_pools::solve::gate::{Envelope, GateDeps};
 use degenbot_pools::solve::{HopType, MixedPoolRef, ResolvedMixedPath, SolvePathResult};
-use degenbot_pools::v2_state::RegisterV2PoolParams;
-use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
-use degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
-use degenbot_pools::v4_state::{RegisterV4PoolParams, V4PoolKey};
+use degenbot_pools::state::v2_state::RegisterV2PoolParams;
+use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
+use degenbot_pools::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
+use degenbot_pools::state::v4_state::{RegisterV4PoolParams, V4PoolKey};
 use degenbot_pools::TickInfo;
 
 use super::resolve::{resolve_hops, HopProjectionCache};
@@ -239,9 +239,9 @@ pub enum ExplicitPoolState {
 /// means the state itself violates the on-chain invariants (bad data).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanningAdmissionError {
-    V2(::degenbot_pools::v2_state::RegisterV2PoolError),
-    V3(::degenbot_pools::v3_state::RegisterV3PoolError),
-    V4(::degenbot_pools::v4_state::RegisterV4PoolError),
+    V2(::degenbot_pools::state::v2_state::RegisterV2PoolError),
+    V3(::degenbot_pools::state::v3_state::RegisterV3PoolError),
+    V4(::degenbot_pools::state::v4_state::RegisterV4PoolError),
 }
 
 /// One declared hop: the family-tagged solver key of a cycle step. Cycle
@@ -922,7 +922,7 @@ mod tests {
     fn workspace_scope_never_touches_a_coexisting_canonical_state() {
         let mut canonical = BotState::new();
         let canonical_id = canonical
-            .register_v2_pool(&::degenbot_pools::v2_state::RegisterV2PoolParams {
+            .register_v2_pool(&::degenbot_pools::state::v2_state::RegisterV2PoolParams {
                 address: P,
                 token0: TOK,
                 token1: WETH,
@@ -931,11 +931,12 @@ mod tests {
                 fee_token0: (997, 1000),
                 fee_token1: (997, 1000),
                 update_block: 7,
-                ..::degenbot_pools::v2_state::RegisterV2PoolParams::default()
+                ..::degenbot_pools::state::v2_state::RegisterV2PoolParams::default()
             })
             .expect("canonical P");
         let canonical_before = canonical.pool_reserves(canonical_id);
-        let count_before = canonical.pool_count_of::<degenbot_pools::v2_state::V2PoolState>();
+        let count_before =
+            canonical.pool_count_of::<degenbot_pools::state::v2_state::V2PoolState>();
 
         {
             let mut w = Workspace::new();
@@ -956,7 +957,7 @@ mod tests {
         } // scope dropped
 
         assert_eq!(
-            canonical.pool_count_of::<degenbot_pools::v2_state::V2PoolState>(),
+            canonical.pool_count_of::<degenbot_pools::state::v2_state::V2PoolState>(),
             count_before,
             "no pool leaked in"
         );
@@ -976,7 +977,7 @@ mod tests {
         let id = admitted_v4(&mut w, 1_000_000_000, 1_234);
         let pool = w
             .state
-            .pool_slice::<degenbot_pools::v4_state::V4PoolState>(id)
+            .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(id)
             .expect("V4 state admitted");
         assert_eq!(pool.sqrt_price_x96, U256::from(1u128) << 96);
         assert_eq!(pool.liquidity, 1_000_000_000);
@@ -999,7 +1000,7 @@ mod tests {
 
         let identity = w
             .state
-            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(id)
+            .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(id)
             .expect("V4 identity");
         assert_eq!(identity.pool_manager, PM);
         assert_eq!(identity.pool_id, V4_POOL_ID);

@@ -2,8 +2,8 @@
 
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 use alloy::primitives::{Address, B256, U128, U256};
-use degenbot_pools::registry::PoolEntry;
-use degenbot_pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
+use degenbot_pools::sim::registry::PoolEntry;
+use degenbot_pools::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
 use degenbot_pools::TickInfo;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, Pool, Structure};
 use hashbrown::HashMap;

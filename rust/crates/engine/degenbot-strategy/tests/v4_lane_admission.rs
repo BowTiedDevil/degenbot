@@ -18,7 +18,7 @@ use alloy::primitives::{address, aliases::U112, Address, B256, I256, U256};
 
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::ApplyLiquidityAtTick;
-use degenbot_pools::slot_layout::V2ReservesParts;
+use degenbot_pools::state::slot_layout::V2ReservesParts;
 use degenbot_rpc::liquidity_verifier::LiquidityMap as RpcLiquidityMap;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TouchedTickWord, TypedPoolPost, V4PoolSet,

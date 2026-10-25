@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{aliases::I512, U256, U512};
 
-use crate::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
+use crate::state::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
 
 use crate::solve::concentrated_liquidity::{ConcentratedLiquidityCrossingTable, RefineBound};
 use crate::solve::gate::{
@@ -584,7 +584,7 @@ fn concentrated_liquidity_fan_key(
 mod tests {
     use super::*;
 
-    use crate::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeHop};
+    use crate::state::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeHop};
     use alloy::primitives::U256;
     use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
 

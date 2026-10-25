@@ -40,8 +40,8 @@ use revm::database::CacheDB;
 use revm::database_interface::EmptyDB;
 
 use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
-use degenbot_pools::state_history::{ReorgJournal, V3BlockDelta};
-use degenbot_pools::v3_state::{
+use degenbot_pools::state::state_history::{ReorgJournal, V3BlockDelta};
+use degenbot_pools::state::v3_state::{
     PoolTickCoverage, RegistrationLifecycle, TickRangeCache, V3PoolState,
 };
 use degenbot_pools::TickInfo;

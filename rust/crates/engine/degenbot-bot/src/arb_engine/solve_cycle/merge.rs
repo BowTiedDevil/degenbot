@@ -20,8 +20,8 @@ use crate::arb_engine::path_registry::PathRegistry;
 use ::degenbot_pools::solve::{HopType, MixedPoolRef, SolvePathResult};
 use alloy::primitives::{I256, U256};
 use degenbot_core::{diag, op_error, op_info};
-use degenbot_pools::v3_state::{v3_simulate_swap, V3PoolState};
-use degenbot_pools::v4_state::v4_simulate_swap;
+use degenbot_pools::state::v3_state::{v3_simulate_swap, V3PoolState};
+use degenbot_pools::state::v4_state::v4_simulate_swap;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::{BlockMetadata, BotState};
 use std::sync::Arc;
@@ -108,8 +108,12 @@ pub(crate) fn clamp_result_with_state(
         let (out, input_clamp): (U256, Option<U256>) = match pool_ref.hop_type {
             HopType::V3 => {
                 let (Some(state), Some(identity)) = (
-                    core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_ref.pool_key),
-                    core.pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(pool_ref.pool_key),
+                    core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(
+                        pool_ref.pool_key,
+                    ),
+                    core.pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(
+                        pool_ref.pool_key,
+                    ),
                 ) else {
                     continue; // Pool state unavailable → can't clamp
                 };
@@ -138,8 +142,12 @@ pub(crate) fn clamp_result_with_state(
             }
             HopType::V4 => {
                 let (Some(state), Some(identity)) = (
-                    core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_ref.pool_key),
-                    core.pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(pool_ref.pool_key),
+                    core.pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(
+                        pool_ref.pool_key,
+                    ),
+                    core.pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(
+                        pool_ref.pool_key,
+                    ),
                 ) else {
                     continue;
                 };
@@ -176,8 +184,12 @@ pub(crate) fn clamp_result_with_state(
                 // report once (b) has forward-clamped its input upstream.
                 // Orientation mirrors `simulate_swap`'s V2 arm.
                 let (Some(state), Some(identity)) = (
-                    core.pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_ref.pool_key),
-                    core.pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_ref.pool_key),
+                    core.pool_slice::<degenbot_pools::state::v2_state::V2PoolState>(
+                        pool_ref.pool_key,
+                    ),
+                    core.pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(
+                        pool_ref.pool_key,
+                    ),
                 ) else {
                     continue; // Pool state unavailable → can't clamp
                 };

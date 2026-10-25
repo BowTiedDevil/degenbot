@@ -3822,7 +3822,7 @@ class PoolTickCoverage:
     """
     The concentrated liquidity tick-map coverage discriminant crossing the FFI (survey C7):
     Python compares this enum instead of probing a stringified twin.
-    Mirrors `degenbot_pools::v3_state::PoolTickCoverage` (the fact's home).
+    Mirrors `degenbot_pools::state::v3_state::PoolTickCoverage` (the fact's home).
     """
 
     Sparse: Final[PoolTickCoverage]

@@ -10,7 +10,7 @@
 //! byte-identical to the pre-extraction per-example parsers.
 
 use alloy::primitives::U256;
-use degenbot_pools::int_v3_hop::IntV3TickRangeHop;
+use degenbot_pools::state::int_v3_hop::IntV3TickRangeHop;
 use serde_json::Value;
 
 /// Parse a captured decimal `u256` string (the capture format serializes

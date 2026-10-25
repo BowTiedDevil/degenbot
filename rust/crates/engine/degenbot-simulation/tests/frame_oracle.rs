@@ -55,7 +55,8 @@ use alloy::primitives::aliases::U112;
 use alloy::primitives::{address, keccak256, Address, Bytes, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use degenbot_executor::WarmupSlots;
-use degenbot_pools::{slot_layout, ConcentratedLiquiditySlotLayout};
+use degenbot_pools::state::slot_layout;
+use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_simulation::sim::evm::frame_replay::{ReplayStatus, ReplayableTx};
 use degenbot_simulation::sim::evm::journal_pools::{
     extract_pool_post_states, PoolFamily, PoolPostKind, PoolPostState, TouchedTickWord,

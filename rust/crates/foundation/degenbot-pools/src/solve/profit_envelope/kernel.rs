@@ -1019,13 +1019,13 @@ mod tests {
     use super::*;
 
     // The corpus tests (feature-gated, ADR-084 D3) parse fixture hops.
-    #[cfg(feature = "capture-fixtures")]
-    use crate::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use crate::solve::profit_envelope::derive::tests::hop_lines_and_cap;
     use crate::solve::profit_envelope::derive::HopMath;
     use crate::solve::profit_envelope::gate::tests::prune;
     use crate::solve::profit_envelope::gate::{GateSkipCause, GateStats};
     use crate::solve::runtime::SolveRuntimeConfig;
+    #[cfg(feature = "capture-fixtures")]
+    use crate::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use degenbot_math::v2::IntHopState;
 
     // Test shims: the production helpers now thread a caller-owned

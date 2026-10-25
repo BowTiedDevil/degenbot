@@ -15,7 +15,7 @@ use alloy::dyn_abi::DynSolValue;
 use alloy::primitives::{aliases::U112, aliases::U128, Address, Bytes, FixedBytes, I256, U256};
 use async_trait::async_trait;
 use degenbot_core::errors::ProviderError;
-use degenbot_pools::registration_refusal::SpecRefusal;
+use degenbot_pools::sim::registration_refusal::SpecRefusal;
 use degenbot_rpc::abi;
 
 use super::{builder, choreography, curve_choreography};
@@ -746,7 +746,7 @@ async fn build_v2_assembles_register_params_from_onchain() {
     assert!(!params.stable_swap);
     // Proxy preserves the resulting identity/state build.
     let (identity, state) =
-        degenbot_pools::v2_state::V2PoolState::from_params(&params, 8, (None, None));
+        degenbot_pools::state::v2_state::V2PoolState::from_params(&params, 8, (None, None));
     assert_eq!(identity.address, pool);
     assert_eq!(state.reserve0, U112::from(123_456_789u64));
 }
@@ -762,8 +762,8 @@ async fn build_v2_assembles_register_params_from_onchain() {
 #[test]
 fn v2_reserve_refusal_names_its_reason() {
     assert!(
-        degenbot_pools::spec_bounds::narrow_v2_reserve(
-            degenbot_pools::spec_bounds::UINT112_MAX + U256::from(1u64),
+        degenbot_pools::state::spec_bounds::narrow_v2_reserve(
+            degenbot_pools::state::spec_bounds::UINT112_MAX + U256::from(1u64),
             "reserve0",
         )
         .is_err(),

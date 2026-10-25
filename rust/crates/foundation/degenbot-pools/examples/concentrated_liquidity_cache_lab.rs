@@ -26,13 +26,13 @@
 extern crate degenbot_pools;
 
 use alloy::primitives::U256;
-use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 use degenbot_pools::solve::concentrated_liquidity::cache::{
     strategy_catalog, CacheEvent, ConcentratedLiquidityCacheStrategy,
 };
 use degenbot_pools::solve::concentrated_liquidity::{
     solve_concentrated_liquidity_piecewise, PreparedConcentratedLiquidityHop, WalkTelemetry,
 };
+use degenbot_pools::state::int_v3_hop::IntV3TickRangeSequence;
 use serde_json::Value;
 
 fn u256(s: &str) -> Result<U256, String> {
@@ -63,7 +63,7 @@ fn parse_hop(v: &Value) -> Result<IntV3TickRangeSequence, String> {
                     .and_then(u256)
             })
             .collect::<Result<Vec<_>, String>>()?;
-        ranges.push(degenbot_pools::int_v3_hop::IntV3TickRangeHop {
+        ranges.push(degenbot_pools::state::int_v3_hop::IntV3TickRangeHop {
             liquidity,
             sqrt_price_x96: u256(str_of(item, "sqrt_price_x96")?)?,
             sqrt_price_lower_x96: u256(str_of(item, "sqrt_price_lower_x96")?)?,

@@ -21,7 +21,7 @@
 
 use std::borrow::Cow;
 
-use crate::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use crate::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use alloy::primitives::U256;
 use degenbot_math::concentrated_liquidity::swap_math::compute_swap_step_v3;
 use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;

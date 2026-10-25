@@ -1630,8 +1630,11 @@ fn range_hop_at_tick(tick_cur: i32, spacing: i32, liquidity: u128, zfo: bool) ->
     }
 }
 
-use crate::v3_state::{PoolTickCoverage, V3PoolState};
-use crate::{state_history::ReorgJournal, state_history::V3BlockDelta, TickInfo};
+use crate::state::v3_state::{PoolTickCoverage, V3PoolState};
+use crate::{
+    state::state_history::{ReorgJournal, V3BlockDelta},
+    TickInfo,
+};
 /// RED→GREEN: `simulate_v3_range_swap` for a swap that does NOT reach the
 /// lower boundary (zfo) MUST match the on-chain `compute_swap_step_v3`
 /// step (`output`, `consumed_input`, and the implied `sqrt_price_next`).
@@ -1676,7 +1679,7 @@ fn pool_at_tick0(
         tick_data_block: 0,
         initial_state_block: 0,
         state_nonce: 0,
-        registration_lifecycle: crate::v3_state::RegistrationLifecycle::default(),
+        registration_lifecycle: crate::state::v3_state::RegistrationLifecycle::default(),
         tick_data,
         coverage: PoolTickCoverage::Tracked,
         known_bitmap_words: HashSet::new(),
@@ -1684,7 +1687,9 @@ fn pool_at_tick0(
         journal: ReorgJournal::<V3BlockDelta>::new(8),
         snapshot_seed: None,
         post_drain_snapshot: None,
-        cached_tick_ranges: parking_lot::Mutex::new(crate::v3_state::TickRangeCache::default()),
+        cached_tick_ranges: parking_lot::Mutex::new(
+            crate::state::v3_state::TickRangeCache::default(),
+        ),
     };
     (state, tick_spacing, fee)
 }
@@ -1730,8 +1735,8 @@ fn oracle_swap(
     fee: u32,
     zero_for_one: bool,
     amount_in: U256,
-) -> Option<crate::v3_state::V3SwapOutcome> {
-    crate::v3_state::v3_simulate_swap(
+) -> Option<crate::state::v3_state::V3SwapOutcome> {
+    crate::state::v3_state::v3_simulate_swap(
         state,
         fee,
         tick_spacing,
@@ -3279,7 +3284,7 @@ fn exact_shifted_anchor_matches_refined_argmax_on_interior_optima() {
 #[test]
 #[expect(clippy::too_many_lines)] // still >100 in hotpath builds (test-only, never instrumented)
 fn block_25641093_pool_feed_hop2_predicts_revm_output() {
-    use crate::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
+    use crate::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
     use crate::TickInfo;
     use alloy::primitives::{Address, B256, U128, U512};
     use hashbrown::HashMap;
@@ -3363,7 +3368,7 @@ fn block_25641093_pool_feed_hop2_predicts_revm_output() {
         fetcher: None,
         deployer: Address::ZERO,
         init_hash: B256::ZERO,
-        slot_layout: crate::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
+        slot_layout: crate::state::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
         known_bitmap_words: Vec::new(),
     };
     let (_, state) = V3PoolState::from_params(params, 4);

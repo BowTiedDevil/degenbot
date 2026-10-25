@@ -61,7 +61,7 @@
 //! two designs DO share is only the door plumbing and the event/probe
 //! vocabulary below (the ADR-017 D3 collapse: both slices' `apply_sync`
 //! bodies are byte-identical full-state
-//! [`crate::state_history::V2BlockDelta`] pushes — Solidly mirrors v2-core's
+//! [`crate::state::state_history::V2BlockDelta`] pushes — Solidly mirrors v2-core's
 //! `Sync(uint112, uint112)`).
 //!
 //! # Decimal scales (the one caller-supplied input)
@@ -82,7 +82,7 @@ use alloy::primitives::U256;
 use degenbot_math::solidly;
 use degenbot_uniswap::dex_identity::DexVariant;
 
-use crate::v3_state::SimulateSwapError;
+use crate::state::v3_state::SimulateSwapError;
 
 use super::door::{Observe, Observed, ReadOutcome, SwapReadRequest};
 
@@ -93,8 +93,8 @@ use super::door::{Observe, Observed, ReadOutcome, SwapReadRequest};
 /// owner's named seams (`reserve_pair_orchestration` rows: Aerodrome pools
 /// register through `register_aerodrome_pool`, Camelot stable pools through
 /// `register_v2_pool`) — the Solidly family adds no registration surface.
-pub use crate::aerodrome_v2_state::{AerodromeV2PoolIdentity, AerodromeV2PoolState};
-pub use crate::v2_state::{V2PoolIdentity, V2PoolState};
+pub use crate::state::aerodrome_v2_state::{AerodromeV2PoolIdentity, AerodromeV2PoolState};
+pub use crate::state::v2_state::{V2PoolIdentity, V2PoolState};
 
 /// Design selection by state slice (read-only): the variant IS the design —
 /// the Aerodrome/Camelot match happens inside the module, never at the
@@ -389,7 +389,7 @@ mod tests {
     use alloy::primitives::aliases::U112;
     use alloy::primitives::Address;
 
-    use crate::state_history::{ReorgJournal, V2BlockDelta};
+    use crate::state::state_history::{ReorgJournal, V2BlockDelta};
 
     // -------------------------------------------------------------------
     // Family pins. The Aerodrome stable constant is the canonical

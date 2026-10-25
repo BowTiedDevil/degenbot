@@ -5,14 +5,14 @@
 //! through the `BotState` registry, which stays in bot). Transient re-export —
 //! repointed at `degenbot_pools::balancer_weighted_state` natively.
 
-pub use ::degenbot_pools::balancer_weighted_state::*;
+pub use ::degenbot_pools::state::balancer_weighted_state::*;
 
 #[expect(clippy::expect_used, unused_imports)]
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::bot_core::RegisterBalancerWeightedPoolParams;
-    use ::degenbot_pools::state_history::{BlockDelta, ReorgJournal};
+    use ::degenbot_pools::state::state_history::{BlockDelta, ReorgJournal};
     use alloy::primitives::{aliases::U112, Address, U256};
     use degenbot_substrate::BotState;
 
@@ -40,12 +40,12 @@ mod tests {
         let mut core = BotState::new();
         let pool_id = core.register_balancer_weighted_pool(&two_token_params(10, &[1_000, 2_000]));
         let s = core
-            .pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolState>(
+            .pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolState>(
                 pool_id,
             )
             .expect("balancer weighted pool registered");
         let id = core
-            .pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolIdentity>(
+            .pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolIdentity>(
                 pool_id,
             )
             .expect("balancer weighted identity registered");
@@ -70,7 +70,7 @@ mod tests {
         );
         assert_eq!(affected, Some(pool_id));
         let s = core
-            .pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolState>(
+            .pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolState>(
                 pool_id,
             )
             .expect("balancer weighted pool registered");
@@ -127,7 +127,7 @@ mod tests {
             .expect("Some on a registered Balancer weighted pool")
             .expect("Ok (target > genesis block)");
         let s = core
-            .pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolState>(
+            .pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolState>(
                 pool_id,
             )
             .expect("balancer weighted pool registered");

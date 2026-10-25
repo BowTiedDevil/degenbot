@@ -18,9 +18,9 @@ use crate::families::concentrated_liquidity::state_seeding::SeedingHost;
 use crate::families::concentrated_liquidity::state_walk::{
     get_cached_tick_ranges, CachedTickRanges, WalkHost,
 };
-use crate::state_history::{JournalError, ReorgPoolState, V3BlockDelta};
-use crate::v3_state::V3PoolState;
-use crate::v4_state::V4PoolState;
+use crate::state::state_history::{JournalError, ReorgPoolState, V3BlockDelta};
+use crate::state::v3_state::V3PoolState;
+use crate::state::v4_state::V4PoolState;
 use crate::TickInfo;
 use proptest::prelude::*;
 

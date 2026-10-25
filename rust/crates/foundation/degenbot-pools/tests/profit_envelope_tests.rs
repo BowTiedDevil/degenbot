@@ -21,12 +21,12 @@ use alloy::primitives::{I256, U256, U512};
 use degenbot_math::concentrated_liquidity::swap_math::compute_swap_step_v3;
 use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_math::v2::IntHopState;
-use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_pools::solve::gate::{
     path_output_bound_at, path_profit_bound, ConcentratedLiquidityHop, Envelope, GateDeps,
     GateSkipCause, HopMath,
 };
 use degenbot_pools::solve::runtime::SolveRuntimeConfig;
+use degenbot_pools::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use std::borrow::Cow;
 
 /// The gate through its one entry at offline deps, unwrapped to the bound
@@ -41,7 +41,7 @@ fn bound(hops: &[Option<HopMath<'_>>]) -> Option<U256> {
 /// ConcentratedLiquidity-carrying view helper: sequence + a borrowed table (the carried shape).
 fn concentrated_liquidity_carried<'a>(
     seq: &'a IntV3TickRangeSequence,
-    table: &'a Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing>,
+    table: &'a Vec<degenbot_pools::state::int_v3_hop::IntTickRangeCrossing>,
 ) -> HopMath<'a> {
     HopMath::ConcentratedLiquidity(ConcentratedLiquidityHop {
         seq,
@@ -449,10 +449,11 @@ fn precomputed_crossings_match_self_derived_bound() {
             .iter()
             .map(|s| Some(HopMath::concentrated_liquidity_derived(s)))
             .collect();
-        let crossing_owned: Vec<Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing>> = owned_seqs
-            .iter()
-            .map(degenbot_pools::int_v3_hop::IntV3TickRangeSequence::crossings)
-            .collect();
+        let crossing_owned: Vec<Vec<degenbot_pools::state::int_v3_hop::IntTickRangeCrossing>> =
+            owned_seqs
+                .iter()
+                .map(degenbot_pools::state::int_v3_hop::IntV3TickRangeSequence::crossings)
+                .collect();
         let carried: Vec<Option<HopMath<'_>>> = owned_seqs
             .iter()
             .zip(crossing_owned.iter())
@@ -549,8 +550,8 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
         p_at_tick(-30),
         p_at_tick(60),
     )]);
-    let crossings1: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> = seq1.crossings();
-    let crossings2: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> = seq2.crossings();
+    let crossings1: Vec<degenbot_pools::state::int_v3_hop::IntTickRangeCrossing> = seq1.crossings();
+    let crossings2: Vec<degenbot_pools::state::int_v3_hop::IntTickRangeCrossing> = seq2.crossings();
     let small_tail = IntHopState::new(U256::from(1_000_u64), U256::from(40_000_u64), 997, 1000);
     let large_tail = IntHopState::new(
         U256::from(1_000_u64) << 140,
@@ -600,7 +601,7 @@ fn prefix_cache_cross_domain_reuse_stays_exact_on_these_shapes() {
         ));
     }
     let ladder = mk_seq(ranges);
-    let ladder_crossings: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> =
+    let ladder_crossings: Vec<degenbot_pools::state::int_v3_hop::IntTickRangeCrossing> =
         ladder.crossings();
     let tiny_tail = IntHopState::new(U256::from(100u64), U256::from(200u64), 997, 1000);
     let huge_tail = IntHopState::new(
@@ -658,8 +659,8 @@ fn prefix_cache_chains_through_v2_hops() {
         p_at_tick(-30),
         p_at_tick(60),
     )]);
-    let c1: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> = ladder1.crossings();
-    let c2: Vec<degenbot_pools::int_v3_hop::IntTickRangeCrossing> = ladder2.crossings();
+    let c1: Vec<degenbot_pools::state::int_v3_hop::IntTickRangeCrossing> = ladder1.crossings();
+    let c2: Vec<degenbot_pools::state::int_v3_hop::IntTickRangeCrossing> = ladder2.crossings();
     let views = vec![
         Some(HopMath::V2(&v2)),
         Some(concentrated_liquidity_carried(&ladder1, &c1)),

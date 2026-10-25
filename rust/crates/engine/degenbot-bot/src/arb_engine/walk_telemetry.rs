@@ -297,11 +297,11 @@ fn record_instruments(stats: &WalkMemoStats) {
 mod tests {
     use super::*;
     use ::alloy::primitives::U256;
-    use ::degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use ::degenbot_pools::solve::concentrated_liquidity::{
         solve_concentrated_liquidity_piecewise, PreparedConcentratedLiquidityHop,
     };
     use ::degenbot_pools::solve::runtime::SolveRuntimeConfig;
+    use ::degenbot_pools::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use parking_lot::Mutex;
 
     /// Capturing sink — lines land in a buffer, never the production

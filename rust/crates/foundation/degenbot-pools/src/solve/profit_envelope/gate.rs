@@ -1078,13 +1078,13 @@ pub(crate) mod tests {
     use super::*;
 
     use crate::families::concentrated_liquidity::solve::ConcentratedLiquidityHop;
-    use crate::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use crate::solve::concentrated_liquidity::{
         build_concentrated_liquidity_crossing_table, simulate_v3_range_swap, WalkTally,
     };
     use crate::solve::profit_envelope::derive::tests::hop_lines_and_cap;
     use crate::solve::profit_envelope::derive::HopMath;
     use crate::solve::profit_envelope::kernel::{Line, COMPOSE_TARGET_BITS};
+    use crate::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
 
     // Test shims: the production helpers now thread a caller-owned

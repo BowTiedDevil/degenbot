@@ -698,7 +698,7 @@ fn run_reorg_stream(capture: ReorgSpanCapture, pump: &mut BlockPump, events: Vec
 
 use crate::bot_core::RegisterV2PoolParams;
 use alloy::primitives::{aliases::U112, Address, Bytes, U256};
-use degenbot_pools::affected::AffectedKey;
+use degenbot_pools::solve::affected::AffectedKey;
 use degenbot_pools::solve::HopType;
 use degenbot_substrate::BlockContext;
 

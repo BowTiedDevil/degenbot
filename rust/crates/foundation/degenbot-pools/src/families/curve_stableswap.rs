@@ -44,9 +44,9 @@ use alloy::primitives::U256;
 
 use degenbot_math::curve::resolve_ramping_a;
 
-use crate::curve_dy_io::{check_pool_liquidity, resolve_dy_inputs, CurveInputsError};
-use crate::state_history::BalanceVectorPoolState as _;
-use crate::v3_state::SimulateSwapError;
+use crate::sim::curve_dy_io::{check_pool_liquidity, resolve_dy_inputs, CurveInputsError};
+use crate::state::state_history::BalanceVectorPoolState as _;
+use crate::state::v3_state::SimulateSwapError;
 
 use super::balance_vector::BalanceVectorEvent;
 use super::door::{FamilyApply, Observe, Observed, ReadOutcome, SwapReadRequest};
@@ -60,7 +60,7 @@ pub(crate) const CURVE_FEE_DENOMINATOR: u64 = 10_000_000_000;
 /// The state slice + its registration DTOs — the family's read surface lives
 /// in `crate::curve_state` (I/O-free per ADR-001) and is re-exported here so
 /// the family tree presents the whole read story under one path.
-pub use crate::curve_state::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams};
+pub use crate::state::curve_state::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams};
 
 /// Why [`capture_hop`] refused to project a hop — the projection is refused,
 /// never defaulted. The dispatch row maps these onto its own invalidation
@@ -321,7 +321,7 @@ fn read_standard_swap(
 
 /// The apply door — one buffered balance event (a Curve `Exchange`) onto one
 /// slice. The journal + clock discipline lives on the slice itself
-/// ([`crate::state_history::BalanceVectorPoolState::apply_balance_update`],
+/// ([`crate::state::state_history::BalanceVectorPoolState::apply_balance_update`],
 /// ADR-017 D1); the door is the family's named apply arm. The neutral
 /// `apply_balance_update_by_pool_id` orchestration row stays on the
 /// family-blind trait projection (`PoolEntry::as_balance_vector_mut`) — a
@@ -538,7 +538,7 @@ fn curve_ramping_params(identity: &CurvePoolIdentity) -> degenbot_math::curve::A
 /// return `0` and `resolve_ramping_a` ignores it.
 fn curve_block_timestamp(
     identity: &CurvePoolIdentity,
-    provider: Option<&dyn crate::curve_data_provider::CurveDataProvider>,
+    provider: Option<&dyn crate::sim::curve_data_provider::CurveDataProvider>,
     block_number: u64,
 ) -> Result<u64, CurveInputsError> {
     if identity.future_a_coefficient_time.is_none() {
@@ -553,7 +553,7 @@ fn curve_block_timestamp(
 /// falling back to the pool token when the LP IS the pool token).
 fn curve_total_supply(
     identity: &CurvePoolIdentity,
-    provider: Option<&dyn crate::curve_data_provider::CurveDataProvider>,
+    provider: Option<&dyn crate::sim::curve_data_provider::CurveDataProvider>,
     block_number: u64,
 ) -> Result<U256, CurveInputsError> {
     let p = provider.ok_or(CurveInputsError::NoProvider("token_total_supply"))?;
@@ -565,7 +565,7 @@ fn curve_total_supply(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::curve_state::CurvePoolIdentity;
+    use crate::state::curve_state::CurvePoolIdentity;
 
     // A non-STANDARD Curve swap style answers the TYPED refusal at the read
     // door, never a zero output (the companion's Curve read path consumes
@@ -608,7 +608,7 @@ mod tests {
             balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)].into(),
             update_block: 1,
             state_nonce: 1,
-            journal: crate::state_history::ReorgJournal::new(8),
+            journal: crate::state::state_history::ReorgJournal::new(8),
             data_provider: None,
         };
         let verdict = read_swap(
@@ -670,7 +670,7 @@ mod tests {
             balances: vec![U256::from(1_000_000u64); n_balances].into(),
             update_block: 1,
             state_nonce: 1,
-            journal: crate::state_history::ReorgJournal::new(8),
+            journal: crate::state::state_history::ReorgJournal::new(8),
             data_provider: None,
         }
     }

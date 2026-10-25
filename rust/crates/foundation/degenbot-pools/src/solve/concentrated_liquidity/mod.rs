@@ -59,8 +59,8 @@
 
 use std::sync::Arc;
 
-pub(crate) use crate::int_v3_hop::IntV3TickRangeHop;
-pub use crate::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
+pub(crate) use crate::state::int_v3_hop::IntV3TickRangeHop;
+pub use crate::state::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
 
 /// Cached per-ending-range crossing table, parallel to `IntV3TickRangeSequence`.
 pub type ConcentratedLiquidityCrossingTable = Vec<IntTickRangeCrossing>;

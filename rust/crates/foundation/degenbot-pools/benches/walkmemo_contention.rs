@@ -46,11 +46,11 @@ use std::sync::Arc;
 use alloy::primitives::U256;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
-use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_pools::solve::concentrated_liquidity::{
     solve_concentrated_liquidity_piecewise, PreparedConcentratedLiquidityHop, WalkMemo, WalkOutcome,
 };
 use degenbot_pools::solve::runtime::SolveRuntimeConfig;
+use degenbot_pools::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 /// Worker counts swept for every arm; 1 is the uncontended baseline.

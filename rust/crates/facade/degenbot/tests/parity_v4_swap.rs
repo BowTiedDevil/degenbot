@@ -43,7 +43,7 @@ use alloy::primitives::{I256, U256};
 use degenbot::substrate::swap_simulation::{SwapRead, SwapRequest};
 use degenbot::substrate::BotState;
 use degenbot::{RegisterV4PoolParams, V4PoolKey};
-use degenbot_pools::v3_state::PoolTickCoverage;
+use degenbot_pools::state::v3_state::PoolTickCoverage;
 use degenbot_pools::TickInfo;
 use hashbrown::HashMap;
 

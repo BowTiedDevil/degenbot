@@ -1,0 +1,1481 @@
+//! Pool-registry sum type (`PoolEntry`) + V3/V4 concentrated-liquidity
+//! family reader trait + token-entry metadata. **Relocated** from
+//! `degenbot-bot/src/bot_core/mod.rs`.
+
+use crate::families::concentrated_liquidity::state_seeding;
+use crate::state::aerodrome_v2_state::{AerodromeV2PoolIdentity, AerodromeV2PoolState};
+use crate::state::balancer_stable_state::{BalancerStablePoolIdentity, BalancerStablePoolState};
+use crate::state::balancer_weighted_state::{
+    BalancerWeightedPoolIdentity, BalancerWeightedPoolState,
+};
+use crate::state::curve_state::{CurvePoolIdentity, CurvePoolState};
+use crate::state::state_history::{
+    BalanceVectorPoolState, ReservePairPoolState, ScalarPriors, TickBefore, V3BlockDelta,
+};
+use crate::state::v2_state::{V2PoolIdentity, V2PoolState};
+use crate::state::v3_state::{PoolTickCoverage, V3PoolIdentity, V3PoolState};
+use crate::state::v4_state::{V4PoolIdentity, V4PoolState};
+use crate::TickInfo;
+use alloy::primitives::{Address, I256, U256};
+use hashbrown::{HashMap, HashSet};
+
+/// A single pool's state. Pool-type-specific fields are in the enum variants.
+#[derive(Clone, Debug)]
+pub enum PoolEntry {
+    V2(Box<(V2PoolIdentity, V2PoolState)>),
+    V3(Box<(V3PoolIdentity, V3PoolState)>),
+    V4(Box<(V4PoolIdentity, V4PoolState)>),
+    Curve(Box<(CurvePoolIdentity, CurvePoolState)>),
+    BalancerWeighted(Box<(BalancerWeightedPoolIdentity, BalancerWeightedPoolState)>),
+    BalancerStable(Box<(BalancerStablePoolIdentity, BalancerStablePoolState)>),
+    AerodromeV2(Box<(AerodromeV2PoolIdentity, AerodromeV2PoolState)>),
+}
+
+/// The ONE family tag: which structural family a registration concerns.
+///
+/// It serves two readers, and there is deliberately only one type for both —
+/// the address-keyed registration readers (PRG-1 registry unification) return
+/// it so a `PyO3` build adapter can fast-path onto the registered entry of
+/// record, and the registration-refusal vocabulary
+/// ([`RegisterRefusal`](crate::sim::registration_refusal::RegisterRefusal)) rides
+/// it beside a refusal so a consumer never re-derives the family from the
+/// request. A second tag type would be a mirror.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum RegisteredPoolFamily {
+    V2,
+    V3,
+    /// V4 registers under `(PoolManager, pool_id)`, not an address — one
+    /// manager hosts many pool ids — so this arm is resolved only by the
+    /// `(pool_manager, pool_id)`-keyed reader; an address query cannot name a
+    /// V4 pool and stays `None` there.
+    V4,
+    AerodromeV2,
+    BalancerWeighted,
+    BalancerStable,
+    Curve,
+}
+
+impl RegisteredPoolFamily {
+    /// Every variant, in declaration order — the closed set
+    /// [`Self::from_tag`] admits a tag against, and the census [`Self::tag`]
+    /// is pinned over.
+    pub const ALL: [Self; 7] = [
+        Self::V2,
+        Self::V3,
+        Self::V4,
+        Self::AerodromeV2,
+        Self::BalancerWeighted,
+        Self::BalancerStable,
+        Self::Curve,
+    ];
+
+    /// The kebab-case tag naming this family — the ONE spelling of the tag
+    /// vocabulary.
+    ///
+    /// The registered-entry projection (`PoolEntry::registered_family`), the
+    /// session identity (`PoolIdentity::family_tag`), and `BotState`'s
+    /// `pool_family` string reader all render through here, so a family tag
+    /// cannot be spelled two ways.
+    #[must_use]
+    pub const fn tag(self) -> &'static str {
+        match self {
+            Self::V2 => "v2",
+            Self::V3 => "v3",
+            Self::V4 => "v4",
+            Self::AerodromeV2 => "aerodrome-v2",
+            Self::BalancerWeighted => "balancer-weighted",
+            Self::BalancerStable => "balancer-stable",
+            Self::Curve => "curve",
+        }
+    }
+
+    /// Parse a family tag back into the enum — the inverse of [`Self::tag`],
+    /// and the closed set a tag received as a string is admitted against.
+    ///
+    /// `None` for anything outside the vocabulary. The vocabulary is
+    /// deliberately exact (kebab-case, no aliases, case-sensitive): the tag
+    /// is a wire value the core itself emits, so a near-miss is a caller bug,
+    /// never a spelling to tolerate.
+    #[must_use]
+    pub const fn from_tag(tag: &str) -> Option<Self> {
+        match tag.as_bytes() {
+            b"v2" => Some(Self::V2),
+            b"v3" => Some(Self::V3),
+            b"v4" => Some(Self::V4),
+            b"aerodrome-v2" => Some(Self::AerodromeV2),
+            b"balancer-weighted" => Some(Self::BalancerWeighted),
+            b"balancer-stable" => Some(Self::BalancerStable),
+            b"curve" => Some(Self::Curve),
+            _ => None,
+        }
+    }
+}
+
+impl PoolEntry {
+    /// Project the entry onto its registration family tag (ADR-059 D1). Total
+    /// over the variants; the address-keyed reader consults it and rejects
+    /// [`RegisteredPoolFamily::V4`] because an address query cannot name a
+    /// V4 pool.
+    #[must_use]
+    pub const fn registered_family(&self) -> RegisteredPoolFamily {
+        match self {
+            Self::V2(..) => RegisteredPoolFamily::V2,
+            Self::V3(..) => RegisteredPoolFamily::V3,
+            Self::V4(..) => RegisteredPoolFamily::V4,
+            Self::Curve(..) => RegisteredPoolFamily::Curve,
+            Self::BalancerWeighted(..) => RegisteredPoolFamily::BalancerWeighted,
+            Self::BalancerStable(..) => RegisteredPoolFamily::BalancerStable,
+            Self::AerodromeV2(..) => RegisteredPoolFamily::AerodromeV2,
+        }
+    }
+}
+
+#[cfg(test)]
+mod family_tag_tests {
+    use super::RegisteredPoolFamily;
+
+    #[test]
+    fn tags_are_the_kebab_vocabulary_in_declaration_order() {
+        // What: the closed set and its one spelling. A variant added to `ALL`
+        // without a `tag` arm (or the reverse) fails to compile; the array
+        // length is the census.
+        assert_eq!(
+            RegisteredPoolFamily::ALL.map(RegisteredPoolFamily::tag),
+            [
+                "v2",
+                "v3",
+                "v4",
+                "aerodrome-v2",
+                "balancer-weighted",
+                "balancer-stable",
+                "curve",
+            ],
+        );
+    }
+
+    #[test]
+    fn from_tag_inverts_tag_over_the_closed_set() {
+        for family in RegisteredPoolFamily::ALL {
+            assert_eq!(RegisteredPoolFamily::from_tag(family.tag()), Some(family));
+        }
+    }
+
+    #[test]
+    fn from_tag_refuses_anything_outside_the_closed_set() {
+        // The parse is exact: no aliases, no case folding, no trimming. The tag
+        // is a value the core itself emits, so a near miss is a caller bug.
+        for raw in [
+            "",
+            "V2",
+            "v2 ",
+            " v2",
+            "uniswap_v2",
+            "aerodrome",
+            "concentrated_liquidity",
+            "constant_product",
+            "weighted",
+            "stableswap",
+        ] {
+            assert_eq!(RegisteredPoolFamily::from_tag(raw), None, "{raw:?}");
+        }
+    }
+}
+
+/// Per-variant projection methods for [`PoolEntry`] (ADR-014 D5).
+///
+/// Each `vN()` / `vN_mut()` returns the `(identity, state)` pair when the
+/// entry matches the family, `None` otherwise — replacing the per-reader
+/// `match` arms that listed all sibling variants only to return `None`
+/// (`V3 | V4 | Curve | … => None`). Readers on `BotState` now collapse to
+/// `self.pools.get(&pool_id).and_then(PoolEntry::vN).map(|(i,_)| i)`.
+///
+/// The identity/state sibling split in each variant is preserved — callers
+/// asking for state get `&VxPoolState`, callers asking for identity get
+/// `&VxPoolIdentity`, both via the same projection destructured differently.
+impl PoolEntry {
+    /// V2 `(identity, state)` borrow, or `None` for a different family.
+    #[must_use]
+    pub fn v2(&self) -> Option<(&V2PoolIdentity, &V2PoolState)> {
+        if let Self::V2(p) = self {
+            Some((&p.0, &p.1))
+        } else {
+            None
+        }
+    }
+    /// V2 `(identity, state)` mutable borrow, or `None` for a different family.
+    #[must_use]
+    pub fn v2_mut(&mut self) -> Option<(&mut V2PoolIdentity, &mut V2PoolState)> {
+        if let Self::V2(p) = self {
+            Some((&mut p.0, &mut p.1))
+        } else {
+            None
+        }
+    }
+
+    /// V3 `(identity, state)` borrow, or `None` for a different family.
+    #[must_use]
+    pub fn v3(&self) -> Option<(&V3PoolIdentity, &V3PoolState)> {
+        if let Self::V3(p) = self {
+            Some((&p.0, &p.1))
+        } else {
+            None
+        }
+    }
+    /// V3 `(identity, state)` mutable borrow, or `None` for a different family.
+    #[must_use]
+    pub fn v3_mut(&mut self) -> Option<(&mut V3PoolIdentity, &mut V3PoolState)> {
+        if let Self::V3(p) = self {
+            Some((&mut p.0, &mut p.1))
+        } else {
+            None
+        }
+    }
+
+    /// V4 `(identity, state)` borrow, or `None` for a different family.
+    #[must_use]
+    pub fn v4(&self) -> Option<(&V4PoolIdentity, &V4PoolState)> {
+        if let Self::V4(p) = self {
+            Some((&p.0, &p.1))
+        } else {
+            None
+        }
+    }
+    /// V4 `(identity, state)` mutable borrow, or `None` for a different family.
+    #[must_use]
+    pub fn v4_mut(&mut self) -> Option<(&mut V4PoolIdentity, &mut V4PoolState)> {
+        if let Self::V4(p) = self {
+            Some((&mut p.0, &mut p.1))
+        } else {
+            None
+        }
+    }
+
+    /// Curve `(identity, state)` borrow, or `None` for a different family.
+    #[must_use]
+    pub fn curve(&self) -> Option<(&CurvePoolIdentity, &CurvePoolState)> {
+        if let Self::Curve(p) = self {
+            Some((&p.0, &p.1))
+        } else {
+            None
+        }
+    }
+    /// Curve `(identity, state)` mutable borrow, or `None` for a different family.
+    #[must_use]
+    pub fn curve_mut(&mut self) -> Option<(&mut CurvePoolIdentity, &mut CurvePoolState)> {
+        if let Self::Curve(p) = self {
+            Some((&mut p.0, &mut p.1))
+        } else {
+            None
+        }
+    }
+
+    /// Balancer weighted `(identity, state)` borrow, or `None` for a different family.
+    #[must_use]
+    pub fn balancer_weighted(
+        &self,
+    ) -> Option<(&BalancerWeightedPoolIdentity, &BalancerWeightedPoolState)> {
+        if let Self::BalancerWeighted(p) = self {
+            Some((&p.0, &p.1))
+        } else {
+            None
+        }
+    }
+    /// Balancer weighted `(identity, state)` mutable borrow, or `None` for a different family.
+    #[must_use]
+    pub fn balancer_weighted_mut(
+        &mut self,
+    ) -> Option<(
+        &mut BalancerWeightedPoolIdentity,
+        &mut BalancerWeightedPoolState,
+    )> {
+        if let Self::BalancerWeighted(p) = self {
+            Some((&mut p.0, &mut p.1))
+        } else {
+            None
+        }
+    }
+
+    /// Balancer stable `(identity, state)` borrow, or `None` for a different family.
+    #[must_use]
+    pub fn balancer_stable(
+        &self,
+    ) -> Option<(&BalancerStablePoolIdentity, &BalancerStablePoolState)> {
+        if let Self::BalancerStable(p) = self {
+            Some((&p.0, &p.1))
+        } else {
+            None
+        }
+    }
+    /// Balancer stable `(identity, state)` mutable borrow, or `None` for a different family.
+    #[must_use]
+    pub fn balancer_stable_mut(
+        &mut self,
+    ) -> Option<(
+        &mut BalancerStablePoolIdentity,
+        &mut BalancerStablePoolState,
+    )> {
+        if let Self::BalancerStable(p) = self {
+            Some((&mut p.0, &mut p.1))
+        } else {
+            None
+        }
+    }
+
+    /// Aerodrome V2 `(identity, state)` borrow, or `None` for a different family.
+    #[must_use]
+    pub fn aerodrome_v2(&self) -> Option<(&AerodromeV2PoolIdentity, &AerodromeV2PoolState)> {
+        if let Self::AerodromeV2(p) = self {
+            Some((&p.0, &p.1))
+        } else {
+            None
+        }
+    }
+    /// Aerodrome V2 `(identity, state)` mutable borrow, or `None` for a different family.
+    #[must_use]
+    pub fn aerodrome_v2_mut(
+        &mut self,
+    ) -> Option<(&mut AerodromeV2PoolIdentity, &mut AerodromeV2PoolState)> {
+        if let Self::AerodromeV2(p) = self {
+            Some((&mut p.0, &mut p.1))
+        } else {
+            None
+        }
+    }
+
+    /// Project to `&mut dyn ConcentratedLiquidityPoolMut` (ADR-017) — the
+    /// mutable concentrated-liquidity-family apply-twin of [`Self::as_reorg_state_mut`] (the
+    /// reorg projection from ADR-016). Used by `BotState`'s concentrated liquidity apply
+    /// dispatchers (`merge_tick_word`, and the future `apply_swap` /
+    /// `apply_liquidity_update` slices) to reach the trait method without a
+    /// per-family variant match at each call site.
+    #[must_use]
+    pub fn as_concentrated_liquidity_mut(
+        &mut self,
+    ) -> Option<&mut dyn ConcentratedLiquidityPoolMut> {
+        some_concentrated_liquidity_mut(self)
+    }
+
+    /// Bump the state nonce WITHOUT a semantic state change — the external
+    /// invalidation seam (ADR-040): quarantine/release transitions bump the
+    /// nonce so cached hop projections invalidate and in-flight solver
+    /// snapshots (solve-time nonce vs sim-time re-read) drop their stale
+    /// candidates. Deliberately does NOT touch `update_block`: a quarantine
+    /// is not a chain event, and fishing `update_block` would corrupt the
+    /// tripwire's anchor model.
+    pub fn bump_state_nonce(&mut self) {
+        match self {
+            PoolEntry::V2(p) => p.1.state_nonce = p.1.state_nonce.wrapping_add(1),
+            PoolEntry::V3(p) => p.1.state_nonce = p.1.state_nonce.wrapping_add(1),
+            PoolEntry::V4(p) => p.1.state_nonce = p.1.state_nonce.wrapping_add(1),
+            PoolEntry::Curve(p) => p.1.state_nonce = p.1.state_nonce.wrapping_add(1),
+            PoolEntry::BalancerWeighted(p) => p.1.state_nonce = p.1.state_nonce.wrapping_add(1),
+            PoolEntry::BalancerStable(p) => p.1.state_nonce = p.1.state_nonce.wrapping_add(1),
+            PoolEntry::AerodromeV2(p) => p.1.state_nonce = p.1.state_nonce.wrapping_add(1),
+        }
+    }
+
+    /// The pool's per-mutation state nonce. Bumped on every state
+    /// change (`apply_swap`, `apply_liquidity_update`, `replace_tick_data`,
+    /// `merge_tick_word`, `apply_sync`, `apply_balance_update`,
+    /// `restore_before_block`). The solver snapshots this per-hop at resolve
+    /// time so the dispatch seam can detect staleness: if a pool's current
+    /// nonce has advanced past the snapshot, the solver computed its result
+    /// against state that has since been superseded → skip the stale
+    /// candidate (the block-N solve used pool@N-1 while on-chain@N has pool@N
+    /// after a user swap landed between the solve and the sim).
+    #[must_use]
+    pub fn state_nonce(&self) -> u64 {
+        match self {
+            PoolEntry::V2(p) => p.1.state_nonce,
+            PoolEntry::V3(p) => p.1.state_nonce,
+            PoolEntry::V4(p) => p.1.state_nonce,
+            PoolEntry::Curve(p) => p.1.state_nonce,
+            PoolEntry::BalancerWeighted(p) => p.1.state_nonce,
+            PoolEntry::BalancerStable(p) => p.1.state_nonce,
+            PoolEntry::AerodromeV2(p) => p.1.state_nonce,
+        }
+    }
+
+    /// The block the pool's reserves / `sqrt_price` / `tick` / liquidity were
+    /// last mutated by a forward event — the freshness signal for the per-path
+    /// mid-block solve gate . A path is solved at `solve_block`
+    /// only when EVERY hop's `update_block >= solve_block`; a stale pool defers
+    /// its path until its block-N log lands and re-dirties it (the settlement-arbitrage
+    /// otherwise lands at a block where one pool still holds N-1 state).
+    #[must_use]
+    pub fn update_block(&self) -> u64 {
+        match self {
+            PoolEntry::V2(p) => p.1.update_block,
+            PoolEntry::V3(p) => p.1.update_block,
+            PoolEntry::V4(p) => p.1.update_block,
+            PoolEntry::Curve(p) => p.1.update_block,
+            PoolEntry::BalancerWeighted(p) => p.1.update_block,
+            PoolEntry::BalancerStable(p) => p.1.update_block,
+            PoolEntry::AerodromeV2(p) => p.1.update_block,
+        }
+    }
+
+    /// The **liquidity** clock — the block the tick map reflects (two-stamp
+    /// the `tick_data_block` twin of [`Self::update_block`]). Only
+    /// the concentrated-liquidity families carry a tick map; the AMM/Curve/
+    /// Balancer variants have no tick-data clock and fall back to their
+    /// `update_block`. A concentrated liquidity pool can have a FRESH price clock but a liquidity
+    /// map that lags (the staged-clock `0x5653` class) — consumers that read
+    /// the tick map MUST key on this clock, not `update_block`.
+    #[must_use]
+    pub fn tick_data_block(&self) -> u64 {
+        match self {
+            PoolEntry::V3(p) => p.1.tick_data_block,
+            PoolEntry::V4(p) => p.1.tick_data_block,
+            // No tick-data clock on these families — fall back to the price
+            // clock so the accessor is total.
+            PoolEntry::V2(p) => p.1.update_block,
+            PoolEntry::Curve(p) => p.1.update_block,
+            PoolEntry::BalancerWeighted(p) => p.1.update_block,
+            PoolEntry::BalancerStable(p) => p.1.update_block,
+            PoolEntry::AerodromeV2(p) => p.1.update_block,
+        }
+    }
+
+    /// Project to `&dyn ReorgPoolState` (ADR-016). One match over all 7
+    /// variants — used by `BotState`'s unified reorg dispatchers
+    /// (`restore_pool_before_block` / `discard_pool_before_block` /
+    /// `pool_journal_len`) to dispatch through the trait without re-matching
+    /// family inline.
+    #[must_use]
+    pub fn as_reorg_state(&self) -> Option<&dyn crate::state::state_history::ReorgPoolState> {
+        Some(match self {
+            PoolEntry::V2(p) => &p.1,
+            PoolEntry::V3(p) => &p.1,
+            PoolEntry::V4(p) => &p.1,
+            PoolEntry::Curve(p) => &p.1,
+            PoolEntry::BalancerWeighted(p) => &p.1,
+            PoolEntry::BalancerStable(p) => &p.1,
+            PoolEntry::AerodromeV2(p) => &p.1,
+        })
+    }
+
+    /// Mutable projection to `&mut dyn ReorgPoolState` (ADR-016) — the write
+    /// twin of [`as_reorg_state`](Self::as_reorg_state).
+    #[must_use]
+    pub fn as_reorg_state_mut(
+        &mut self,
+    ) -> Option<&mut dyn crate::state::state_history::ReorgPoolState> {
+        Some(match self {
+            PoolEntry::V2(p) => &mut p.1,
+            PoolEntry::V3(p) => &mut p.1,
+            PoolEntry::V4(p) => &mut p.1,
+            PoolEntry::Curve(p) => &mut p.1,
+            PoolEntry::BalancerWeighted(p) => &mut p.1,
+            PoolEntry::BalancerStable(p) => &mut p.1,
+            PoolEntry::AerodromeV2(p) => &mut p.1,
+        })
+    }
+
+    /// Project to `&mut dyn BalanceVectorPoolState` (ADR-017 D1) — the
+    /// forward-apply view over the three balance-vector families
+    /// (Curve / `BalancerWeighted` / `BalancerStable`). Used by `BotState`'s
+    /// unified `apply_balance_update_by_pool_id` dispatcher to reach the
+    /// trait method without a per-family variant match. Returns `None` for
+    /// the four non-balance-vector families.
+    #[must_use]
+    pub fn as_balance_vector_mut(&mut self) -> Option<&mut dyn BalanceVectorPoolState> {
+        match self {
+            PoolEntry::Curve(p) => Some(&mut p.1),
+            PoolEntry::BalancerWeighted(p) => Some(&mut p.1),
+            PoolEntry::BalancerStable(p) => Some(&mut p.1),
+            PoolEntry::V2(..)
+            | PoolEntry::V3(..)
+            | PoolEntry::V4(..)
+            | PoolEntry::AerodromeV2(..) => None,
+        }
+    }
+
+    /// Project to `&mut dyn ReservePairPoolState` (ADR-017 D3) — the
+    /// forward-apply view over the two reserve-pair families (V2 /
+    /// `AerodromeV2`). Used by `BotState`'s unified `apply_sync_by_pool_id`
+    /// dispatcher to reach the trait method without a per-family variant
+    /// match. Returns `None` for the five non-reserve-pair families.
+    #[must_use]
+    pub fn as_reserve_pair_mut(&mut self) -> Option<&mut dyn ReservePairPoolState> {
+        match self {
+            PoolEntry::V2(p) => Some(&mut p.1),
+            PoolEntry::AerodromeV2(p) => Some(&mut p.1),
+            PoolEntry::V3(..)
+            | PoolEntry::V4(..)
+            | PoolEntry::Curve(..)
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => None,
+        }
+    }
+}
+
+/// The typed lens over a [`PoolEntry`] — one closed projection per registered
+/// state or identity slice (the GLOSSARY "state slice" vocabulary). The
+/// family-neutral registry rows read a slice through this trait, so the
+/// family knowledge lives in the caller's type parameter, never in a method
+/// name (ADR-073 D3: the surface names do not re-declare the family
+/// taxonomy).
+///
+/// The projection set is closed in substance: every implementing type is a
+/// slice this crate owns, and the orphan rule keeps foreign crates from
+/// implementing this trait for them — a new family extends the impl block
+/// below, not the call sites.
+pub trait PoolEntrySlice: 'static {
+    /// The slice of `entry`'s family this type projects, or `None` when the
+    /// entry belongs to a different family.
+    fn from_entry(entry: &PoolEntry) -> Option<&Self>;
+}
+
+macro_rules! entry_slice {
+    ($($ty:ty => $variant:ident . $field:tt),* $(,)?) => {
+        $(
+            impl PoolEntrySlice for $ty {
+                fn from_entry(pooled: &PoolEntry) -> Option<&Self> {
+                    match pooled {
+                        PoolEntry::$variant(p) => Some(&p.$field),
+                        _ => None,
+                    }
+                }
+            }
+        )*
+    };
+}
+
+entry_slice! {
+    V2PoolState => V2 . 1,
+    V2PoolIdentity => V2 . 0,
+    V3PoolState => V3 . 1,
+    V3PoolIdentity => V3 . 0,
+    V4PoolState => V4 . 1,
+    V4PoolIdentity => V4 . 0,
+    CurvePoolState => Curve . 1,
+    CurvePoolIdentity => Curve . 0,
+    BalancerWeightedPoolState => BalancerWeighted . 1,
+    BalancerWeightedPoolIdentity => BalancerWeighted . 0,
+    BalancerStablePoolState => BalancerStable . 1,
+    BalancerStablePoolIdentity => BalancerStable . 0,
+    AerodromeV2PoolState => AerodromeV2 . 1,
+    AerodromeV2PoolIdentity => AerodromeV2 . 0,
+}
+
+impl PoolEntrySlice for dyn ConcentratedLiquidityPool {
+    fn from_entry(pooled: &PoolEntry) -> Option<&Self> {
+        match pooled {
+            PoolEntry::V3(p) => Some(&p.1),
+            PoolEntry::V4(p) => Some(&p.1),
+            _ => None,
+        }
+    }
+}
+
+impl PoolEntry {
+    /// Project this entry onto the slice type `T` (the family-neutral typed
+    /// lens; see [`PoolEntrySlice`]). `None` when the entry's family does not
+    /// carry a `T`.
+    #[must_use]
+    pub fn slice<T: PoolEntrySlice + ?Sized>(&self) -> Option<&T> {
+        T::from_entry(self)
+    }
+}
+
+/// `PoolEntry::as_concentrated_liquidity_mut` helper — one match over V3 | V4. Free-standing so
+/// `PoolEntry::as_concentrated_liquidity_mut` stays a one-liner (matches the `as_reorg_state`
+/// shape). Returns `None` for the five non-concentrated-liquidity families.
+fn some_concentrated_liquidity_mut(
+    entry: &mut PoolEntry,
+) -> Option<&mut dyn ConcentratedLiquidityPoolMut> {
+    match entry {
+        PoolEntry::V3(p) => Some(&mut p.1),
+        PoolEntry::V4(p) => Some(&mut p.1),
+        PoolEntry::V2(..)
+        | PoolEntry::Curve(..)
+        | PoolEntry::BalancerWeighted(..)
+        | PoolEntry::BalancerStable(..)
+        | PoolEntry::AerodromeV2(..) => None,
+    }
+}
+
+/// Read-only surface shared by [`V3PoolState`] and [`V4PoolState`] — the
+/// fields the per-handle `PyLiquidityPool` reader API presents uniformly
+/// across the V3/V4 concentrated-liquidity families.
+///
+/// Both variants store the same mutable scalars (`sqrt_price_x96`/
+/// `liquidity`/`tick`/`update_block`) and an identical `tick_data:
+/// HashMap<i32, TickInfo>`; V4 additionally nests `fee`/`tick_spacing`
+/// inside `pool_key`, which the impl projects out. The trait lets
+/// [`BotState::get_v3_or_v4_pool`] return one borrowed view covering both
+/// families without cloning — the reader twin of the apply dispatchers.
+///
+/// V2 is intentionally excluded (different state shape — reserves, not
+/// scalars); a V2 `pool_id` yields `None` from the accessor, matching the
+/// prior V3-only contract.
+/// Mutable-reader trait for V3/V4 concentrated-liquidity pools.
+///
+/// Projects only mutable runtime scalars (`sqrt_price_x96`/`liquidity`/`tick`/
+/// `update_block`/`tick_data`) — the values a swap calc consumes. Immutable
+/// config (`fee`/`tick_spacing`) lives on `V3PoolIdentity`/`V4PoolIdentity`;
+/// read it via `BotState::pool_slice`.
+/// The dyn-dispatch surface is a `&VxPoolState` borrowed from the registry.
+pub trait ConcentratedLiquidityPool {
+    fn sqrt_price_x96(&self) -> U256;
+    fn liquidity(&self) -> u128;
+    fn tick(&self) -> i32;
+    /// The **price** clock — block the slot0 scalars reflect (two-stamp rule).
+    fn update_block(&self) -> u64;
+    /// The **liquidity** clock — block the `tick_data` map reflects (the
+    /// two-stamp rule). A pool can have a fresh price but a liquidity map
+    /// that lags.
+    fn tick_data_block(&self) -> u64;
+    fn tick_data(&self) -> &HashMap<i32, TickInfo>;
+    /// Registration coverage (Sparse/Tracked). Sparse pools consult
+    /// `known_bitmap_words` for miss-detection; a Tracked pool's bitmap is
+    /// derived from its complete tick rows (word absent = known-empty).
+    fn coverage(&self) -> PoolTickCoverage;
+    /// The checked tick-bitmap words (the sparse miss-detection set).
+    /// Sparse-only state: seeded at registration from the initial tick
+    /// keys, grown by fetch-merge + full-sync + the FFI checked-word seam;
+    /// never written for Tracked pools.
+    fn known_bitmap_words(&self) -> &HashSet<i32>;
+}
+
+impl ConcentratedLiquidityPool for V3PoolState {
+    fn sqrt_price_x96(&self) -> U256 {
+        self.sqrt_price_x96
+    }
+    fn liquidity(&self) -> u128 {
+        self.liquidity
+    }
+    fn tick(&self) -> i32 {
+        self.tick
+    }
+    fn update_block(&self) -> u64 {
+        self.update_block
+    }
+    fn tick_data_block(&self) -> u64 {
+        self.tick_data_block
+    }
+    fn tick_data(&self) -> &HashMap<i32, TickInfo> {
+        &self.tick_data
+    }
+    fn coverage(&self) -> PoolTickCoverage {
+        self.coverage
+    }
+    fn known_bitmap_words(&self) -> &HashSet<i32> {
+        &self.known_bitmap_words
+    }
+}
+
+impl ConcentratedLiquidityPool for V4PoolState {
+    fn sqrt_price_x96(&self) -> U256 {
+        self.sqrt_price_x96
+    }
+    fn liquidity(&self) -> u128 {
+        self.liquidity
+    }
+    fn tick(&self) -> i32 {
+        self.tick
+    }
+    fn update_block(&self) -> u64 {
+        self.update_block
+    }
+    fn tick_data_block(&self) -> u64 {
+        self.tick_data_block
+    }
+    fn tick_data(&self) -> &HashMap<i32, TickInfo> {
+        &self.tick_data
+    }
+    fn coverage(&self) -> PoolTickCoverage {
+        self.coverage
+    }
+    fn known_bitmap_words(&self) -> &HashSet<i32> {
+        &self.known_bitmap_words
+    }
+}
+
+/// Mutable concentrated-liquidity-family trait — the write twin of [`ConcentratedLiquidityPool`]
+/// (ADR-014 D2b). Carries the concentrated liquidity mutators previously inlined twice in
+/// `BotState` (one arm per family); the body lives once in the trait impl.
+///
+/// `tick_spacing` is passed in (it lives on the identity slice, not the state
+/// struct) — the caller reads it off `V3PoolIdentity.tick_spacing` /
+/// `V4PoolIdentity.pool_key.tick_spacing` before dispatching, so the trait
+/// stays identity-agnostic and the two state-struct impls are byte-identical.
+pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
+    /// Wholesale-replace the `tick_data` map, advance the **liquidity** clock
+    /// (`tick_data_block`) if newer (monotonic — a backward stamp panics),
+    /// re-seed `known_bitmap_words` from the new keys' word positions, and
+    /// invalidate the cached tick ranges. Scalars (`sqrt_price_x96`/
+    /// `liquidity`/`tick`) ARE untouched and the **price** clock (`update_block`)
+    /// is NOT advanced — a tick-map replace never claims the price is fresh
+    /// (two-stamp rule). `tick_data_block` is the block the new tick map is
+    /// from.
+    ///
+    /// No journal delta — a wholesale replace has undefined rollback
+    /// semantics; the pump is the authority for event-derived ticks (mirrors
+    /// `sync_v3_pool_state`).
+    ///
+    /// Returns `true` (the concentrated liquidity mutator always succeeds; the dispatch site's
+    /// `false` return is reserved for V2 / non-concentrated-liquidity / unregistered pools).
+    fn replace_tick_data(
+        &mut self,
+        tick_data: HashMap<i32, TickInfo>,
+        tick_data_block: u64,
+        tick_spacing: i32,
+    ) -> bool;
+
+    /// Merge a fetched tick-bitmap word's ticks into this state's `tick_data`,
+    /// mark the word as known in `known_bitmap_words`, and invalidate the
+    /// cached tick ranges. Scalars (`sqrt_price_x96`/`liquidity`/`tick`)
+    /// are untouched. Used by the fetch+retry miss path
+    /// ([`crate::sim::tick_fetch::miss::TickWordFetcher`]) and the
+    /// `simulate_swap_with_override` transient-state merge loop.
+    ///
+    /// No journal delta — a fetched-word merge mutates `tick_data` only;
+    /// reorg rollback covers it via the surrounding event's delta, not a
+    /// merge delta (mirrors the no-journal contract of [`Self::replace_tick_data`]).
+    ///
+    /// Returns `true` (the concentrated liquidity mutator always succeeds; the dispatch site's
+    /// `false` return is reserved for non-concentrated-liquidity / unregistered pools — same
+    /// convention as [`Self::replace_tick_data`]).
+    fn merge_tick_word(&mut self, fetched: &crate::sim::tick_fetch::FetchedTickWord) -> bool;
+
+    /// Record `words` as known in `known_bitmap_words` (arch-review cand 4,
+    /// T1) — **Sparse pools only**: a Tracked pool's bitmap is complete, so
+    /// the known set is never written (writing it would be dead state). The
+    /// word discipline: a word is known only when its WHOLE tick set is
+    /// established (a fetched word, a full-sync replace, or checked words
+    /// passed at the FFI `update_tick_data` boundary) — an apply event NEVER
+    /// marks its touched word.
+    ///
+    /// No journal delta (the known set is a miss-detection fact, not a
+    /// tick-map mutation); no cache invalidation (the known set does not
+    /// feed the cached tick ranges).
+    fn mark_bitmap_words_known(&mut self, words: &[i32]);
+
+    /// Apply a Swap event to this pool's mutable `slot0` scalars + `tick_data`,
+    /// capturing reverse-apply priors into the reorg journal (ADR-014 D1).
+    /// The delta carries `scalar_priors: Some(..)` (a Swap
+    /// changes the slot0 head on every event) plus per-tick priors for any
+    /// ticks this event mutates. A tick with no prior entry is journaled with
+    /// `liquidity_gross_before: None` (on rollback, delete it).
+    ///
+    /// `tick_priors`: ticks the event reports as changed, with their new
+    /// `TickInfo`. The method *writes* the passed tick info into `tick_data`
+    /// (it carries new tick values from the event), whereas [`Self::apply_liquidity_update`]
+    /// *reads* the current tick priors before mutating — same loop shape,
+    /// different work.
+    fn apply_swap(
+        &mut self,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    );
+
+    /// Apply a liquidity update (V3 Mint/Burn, V4 `ModifyLiquidity`) to this
+    /// pool's `tick_data`, capturing reverse-apply priors into the reorg
+    /// journal (ADR-014 D1). Applies the delta via
+    /// [`crate::state::tick_bitmap::apply_liquidity_to_tick_range`] (matching Solidity
+    /// `Tick.update`), advances `update_block`, invalidates the tick-range
+    /// cache.
+    ///
+    /// Journal-capture policy: when the `[tick_lower, tick_upper)` region
+    /// straddles the pool's current `tick`, the event ALSO changes the on-chain
+    /// active `liquidity` scalar by `delta` (a Mint adds range liquidity to the
+    /// active pool; a Burn removes it). In that case the delta carries
+    /// `scalar_priors: Some(..)` so restore rolls the scalar back. Out-of-range
+    /// events mutate `tick_data` only and carry `scalar_priors: None` (ADR-004
+    /// — restore skips the scalar write-back). The two boundary-tick priors
+    /// (captured BEFORE mutation) are reverse-applied in both cases.
+    fn apply_liquidity_update(
+        &mut self,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    );
+
+    /// Push the registration/seed genesis anchor: a `before == after` journal
+    /// delta at `block`, advancing NO clock.
+    ///
+    /// The delta records the CURRENT scalars + both clocks as its “before”
+    /// priors, so a restore pops to the exact seeded state, and the non-empty
+    /// journal keeps `has_state_prior_to` true from registration — a
+    /// mid-window reorg restores to the seeded state instead of the graceful
+    /// `NoStatePriorToBlock` pump shutdown an empty journal triggers.
+    ///
+    /// Advancing no clock is the point, not an omission: registration can seed
+    /// price at HEAD past the DB map block, so an `apply_swap`-shaped genesis
+    /// would backward-panic the price clock and falsely claim the tick map
+    /// reaches head. Because `before == after` it is safe; call once at
+    /// registration, mirroring the V2/Curve genesis-anchor pattern.
+    fn seed_genesis(&mut self, block: u64);
+}
+
+/// Compute the new active (in-range) `liquidity` scalar when a Mint/Burn/
+/// `ModifyLiquidity` event's `[tick_lower, tick_upper)` region straddles the
+/// pool's current `tick`.
+///
+/// Parity with the pure reference
+/// `degenbot-concentrated-liquidity-math::liquidity_mapping::apply_liquidity_mapping_update`
+/// and the Python companions (`UniswapV3Pool`/`UniswapV4Pool.update_liquidity_map`):
+/// an in-range liquidity event changes the pool's on-chain `liquidity` field by
+/// `delta` in addition to the boundary-tick map mutation. Without this the
+/// solver's active-liquidity scalar drifts from on-chain even though
+/// `sqrt_price_x96` / `tick` stay byte-identical — an in-range Burn leaves it
+/// too high (capable of overdrawing / wrong-crossing estimates), an in-range
+/// Mint leaves it too low.
+///
+/// Computed in wide `I256` so the intermediate never overflows for valid
+/// inputs. Returns `Some(new_liquidity)` when the current tick is in range,
+/// else `None` (out-of-range events leave the scalar untouched).
+///
+/// # Panics
+///
+/// Panics if the in-range result would be negative (an invariant violation —
+/// on-chain liquidity can never be negative) or exceeds `u128::MAX` (real
+/// surprise overflow). Out-of-range events never reach the arithmetic.
+#[expect(clippy::expect_used)] // invariant-guarded conversions panic loudly on a true break
+fn in_range_active_liquidity(
+    current_liquidity: u128,
+    current_tick: i32,
+    tick_lower: i32,
+    tick_upper: i32,
+    liquidity_delta: i128,
+) -> Option<u128> {
+    if !(tick_lower <= current_tick && current_tick < tick_upper) {
+        return None;
+    }
+    let base = I256::try_from(U256::from(current_liquidity)).expect("u128 fits I256");
+    let delta = I256::try_from(liquidity_delta).expect("i128 fits I256");
+    let new_active = base + delta;
+    assert!(
+        new_active >= I256::ZERO,
+        "in-range liquidity adjustment violated invariant: {base} + {delta} < 0"
+    );
+    let narrowed =
+        u128::try_from(new_active).expect("non-negative in-range reachable liquidity fits u128");
+    Some(narrowed)
+}
+
+impl ConcentratedLiquidityPoolMut for V3PoolState {
+    fn replace_tick_data(
+        &mut self,
+        tick_data: HashMap<i32, TickInfo>,
+        tick_data_block: u64,
+        tick_spacing: i32,
+    ) -> bool {
+        self.tick_data = tick_data;
+        self.advance_tick_data_block(tick_data_block);
+        self.seed_known_bitmap_words(tick_spacing);
+        self.invalidate_tick_range_cache();
+        true
+    }
+
+    // Finding 1(a): the fetched word can predate an event the pump
+    // applied while its staged fetch was in flight (the word re-fetches at
+    // its context block after a Raced retry). A fetched tick with an OLDER
+    // stamp than a resident tick must never regress the resident value -
+    // the two-stamp discipline, enforced at the insert.
+    fn merge_tick_word(&mut self, fetched: &crate::sim::tick_fetch::FetchedTickWord) -> bool {
+        for (tick, info) in &fetched.ticks {
+            match self.tick_data.get(tick) {
+                // Resident is fresher: keep it (the fetched word is a B-1
+                // snapshot; a newer stamped entry is a later event truth).
+                Some(resident) if resident.block > info.block => {}
+                _ => {
+                    self.tick_data.insert(*tick, info.clone());
+                }
+            }
+        }
+        self.known_bitmap_words.insert(fetched.word);
+        self.invalidate_tick_range_cache();
+        true
+    }
+
+    fn mark_bitmap_words_known(&mut self, words: &[i32]) {
+        if self.coverage == PoolTickCoverage::Sparse {
+            self.known_bitmap_words.extend(words.iter().copied());
+        }
+    }
+
+    fn apply_swap(
+        &mut self,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    ) {
+        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(tick_priors.len());
+        for &(tick_index, ref new_info) in tick_priors {
+            let prior = self.tick_data.get(&tick_index).cloned();
+            journaled_priors.push((
+                tick_index,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior.as_ref().map_or(0, |p| p.liquidity_net),
+                    block_before: prior.as_ref().map_or(0, |p| p.block),
+                },
+            ));
+            self.tick_data.insert(tick_index, new_info.clone());
+        }
+
+        // A Swap rewrites the slot0 head AND crosses ticks: it advances BOTH
+        // clocks, and records both pre-event clock values for reorg restore
+        // (two-stamp rule).
+        let tick_before = self.tick;
+        let update_block_before = self.update_block;
+        let tick_data_block_before = self.tick_data_block;
+        self.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            scalar_priors: Some(ScalarPriors {
+                sqrt_price_x96_before: self.sqrt_price_x96,
+                liquidity_before: self.liquidity,
+                tick_before: self.tick,
+            }),
+            update_block_before: Some(update_block_before),
+            tick_data_block_before: Some(tick_data_block_before),
+            tick_priors: journaled_priors,
+        });
+
+        self.sqrt_price_x96 = sqrt_price_x96;
+        self.liquidity = liquidity;
+        self.tick = tick;
+        // A Swap arrives LIVE (block > seed) in the steady state or as a
+        // backfill replay (block <= seed). Live applies are STRICT monotonic
+        // (a backward stamp outside a reorg panics); backfill replays drain
+        // older events and are a sanctioned monotonic no-op on clocks they
+        // already cover (never rewind a head-fresh pool below seed).
+        if block_number > self.initial_state_block {
+            self.advance_update_block(block_number);
+            self.advance_tick_data_block(block_number);
+        } else {
+            if block_number > self.update_block {
+                self.update_block = block_number;
+            }
+            if block_number > self.tick_data_block {
+                self.tick_data_block = block_number;
+            }
+        }
+        self.state_nonce = self.state_nonce.wrapping_add(1);
+        // Only invalidate the tick-range cache when the swap actually
+        // changes the walk inputs (tick_data via tick_priors, or current
+        // tick). An in-range swap that stays at the same tick without
+        // crossing any initialized ticks leaves the walk result identical,
+        // so the cache is preserved (the dominant case for active
+        // pools — they swap within their current range every block).
+        if tick != tick_before || !tick_priors.is_empty() {
+            self.invalidate_tick_range_cache();
+        }
+    }
+
+    fn apply_liquidity_update(
+        &mut self,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) {
+        // Historical-replay guard (the Python `_initial_state_block` guard):
+        // only a genuinely in-range event STRICTLY AFTER the seed block adjusts
+        // the active-liquidity scalar. The seed's `liquidity` already reflects
+        // every on-chain event <= initial_state_block, so replaying one (e.g. a
+        // backfilled Burn applied after registration against head) would
+        // double-count it. Such a replay still mutates the tick map, but the
+        // scalar write-back + journal stay tick-only (scalar_priors: None).
+        let in_range = tick_lower <= self.tick
+            && self.tick < tick_upper
+            && block_number > self.initial_state_block;
+
+        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
+        for &tick_idx in &[tick_lower, tick_upper] {
+            let prior = self.tick_data.get(&tick_idx).cloned();
+            journaled_priors.push((
+                tick_idx,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior.as_ref().map_or(0, |p| p.liquidity_net),
+                    block_before: prior.as_ref().map_or(0, |p| p.block),
+                },
+            ));
+        }
+
+        crate::state::tick_bitmap::apply_liquidity_to_tick_range(
+            &mut self.tick_data,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+        );
+
+        // A liquidity event ALWAYS mutates the tick map (advance the liquidity
+        // clock); it advances the PRICE clock only when in-range post-seed (the
+        // scalar adjust). An out-of-range or historical-replay event leaves the
+        // slot0 head byte-identical, so the price clock must NOT move (the
+        // two-stamp rule). The price-clock prior is `None` in that case so a
+        // reorg restore leaves `update_block` untouched.
+        self.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            scalar_priors: if in_range {
+                Some(ScalarPriors {
+                    sqrt_price_x96_before: self.sqrt_price_x96,
+                    liquidity_before: self.liquidity,
+                    tick_before: self.tick,
+                })
+            } else {
+                None
+            },
+            update_block_before: if in_range {
+                Some(self.update_block)
+            } else {
+                None
+            },
+            tick_data_block_before: Some(self.tick_data_block),
+            tick_priors: journaled_priors,
+        });
+
+        if in_range {
+            // Invariant-guarded: the in-range branch implies the range straddles
+            // the current tick, so `Some` is guaranteed (loud panic on a real break).
+            #[expect(clippy::expect_used)]
+            {
+                self.liquidity = in_range_active_liquidity(
+                    self.liquidity,
+                    self.tick,
+                    tick_lower,
+                    tick_upper,
+                    liquidity_delta,
+                )
+                .expect("in-range branch implies the range straddles the current tick");
+            }
+        }
+
+        if block_number > self.initial_state_block {
+            self.advance_tick_data_block(block_number);
+            if in_range {
+                self.advance_update_block(block_number);
+            }
+        } else {
+            // Backfill replay (block <= seed): sanctioned monotonic no-op —
+            // mutate the tick map but never rewind the liquidity clock it
+            // already covers.
+            if block_number > self.tick_data_block {
+                self.tick_data_block = block_number;
+            }
+        }
+        self.state_nonce = self.state_nonce.wrapping_add(1);
+        self.invalidate_tick_range_cache();
+    }
+
+    fn seed_genesis(&mut self, block: u64) {
+        state_seeding::seed_genesis(self, block);
+    }
+}
+
+impl ConcentratedLiquidityPoolMut for V4PoolState {
+    fn replace_tick_data(
+        &mut self,
+        tick_data: HashMap<i32, TickInfo>,
+        tick_data_block: u64,
+        tick_spacing: i32,
+    ) -> bool {
+        self.tick_data = tick_data;
+        self.advance_tick_data_block(tick_data_block);
+        self.state_nonce = self.state_nonce.wrapping_add(1);
+        self.seed_known_bitmap_words(tick_spacing);
+        self.invalidate_tick_range_cache();
+        true
+    }
+
+    fn merge_tick_word(&mut self, fetched: &crate::sim::tick_fetch::FetchedTickWord) -> bool {
+        for (tick, info) in &fetched.ticks {
+            match self.tick_data.get(tick) {
+                Some(resident) if resident.block > info.block => {}
+                _ => {
+                    self.tick_data.insert(*tick, info.clone());
+                }
+            }
+        }
+        self.known_bitmap_words.insert(fetched.word);
+        self.state_nonce = self.state_nonce.wrapping_add(1);
+        self.invalidate_tick_range_cache();
+        true
+    }
+
+    fn mark_bitmap_words_known(&mut self, words: &[i32]) {
+        if self.coverage == PoolTickCoverage::Sparse {
+            self.known_bitmap_words.extend(words.iter().copied());
+        }
+    }
+
+    fn apply_swap(
+        &mut self,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    ) {
+        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(tick_priors.len());
+        for &(tick_index, ref new_info) in tick_priors {
+            let prior = self.tick_data.get(&tick_index).cloned();
+            journaled_priors.push((
+                tick_index,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior.as_ref().map_or(0, |p| p.liquidity_net),
+                    block_before: prior.as_ref().map_or(0, |p| p.block),
+                },
+            ));
+            self.tick_data.insert(tick_index, new_info.clone());
+        }
+
+        // A Swap rewrites the slot0 head AND crosses ticks: it advances BOTH
+        // clocks, and records both pre-event clock values for reorg restore
+        // (two-stamp rule).
+        let tick_before = self.tick;
+        let update_block_before = self.update_block;
+        let tick_data_block_before = self.tick_data_block;
+        self.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            scalar_priors: Some(ScalarPriors {
+                sqrt_price_x96_before: self.sqrt_price_x96,
+                liquidity_before: self.liquidity,
+                tick_before: self.tick,
+            }),
+            update_block_before: Some(update_block_before),
+            tick_data_block_before: Some(tick_data_block_before),
+            tick_priors: journaled_priors,
+        });
+
+        self.sqrt_price_x96 = sqrt_price_x96;
+        self.liquidity = liquidity;
+        self.tick = tick;
+        // A Swap arrives LIVE (block > seed) in the steady state or as a
+        // backfill replay (block <= seed). Live applies are STRICT monotonic
+        // (a backward stamp outside a reorg panics); backfill replays drain
+        // older events and are a sanctioned monotonic no-op on clocks they
+        // already cover (never rewind a head-fresh pool below seed).
+        if block_number > self.initial_state_block {
+            self.advance_update_block(block_number);
+            self.advance_tick_data_block(block_number);
+        } else {
+            if block_number > self.update_block {
+                self.update_block = block_number;
+            }
+            if block_number > self.tick_data_block {
+                self.tick_data_block = block_number;
+            }
+        }
+        self.state_nonce = self.state_nonce.wrapping_add(1);
+        // Only invalidate the tick-range cache when the swap actually
+        // changes the walk inputs (tick_data via tick_priors, or current
+        // tick). An in-range swap that stays at the same tick without
+        // crossing any initialized ticks leaves the walk result identical,
+        // so the cache is preserved (the dominant case for active
+        // pools — they swap within their current range every block).
+        if tick != tick_before || !tick_priors.is_empty() {
+            self.invalidate_tick_range_cache();
+        }
+    }
+
+    fn apply_liquidity_update(
+        &mut self,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) {
+        let in_range = tick_lower <= self.tick
+            && self.tick < tick_upper
+            && block_number > self.initial_state_block;
+
+        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
+        for &tick_idx in &[tick_lower, tick_upper] {
+            let prior = self.tick_data.get(&tick_idx).cloned();
+            journaled_priors.push((
+                tick_idx,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior.as_ref().map_or(0, |p| p.liquidity_net),
+                    block_before: prior.as_ref().map_or(0, |p| p.block),
+                },
+            ));
+        }
+
+        crate::state::tick_bitmap::apply_liquidity_to_tick_range(
+            &mut self.tick_data,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+        );
+
+        // See the V3 `apply_liquidity_update` — same two-stamp discipline.
+        self.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            scalar_priors: if in_range {
+                Some(ScalarPriors {
+                    sqrt_price_x96_before: self.sqrt_price_x96,
+                    liquidity_before: self.liquidity,
+                    tick_before: self.tick,
+                })
+            } else {
+                None
+            },
+            update_block_before: if in_range {
+                Some(self.update_block)
+            } else {
+                None
+            },
+            tick_data_block_before: Some(self.tick_data_block),
+            tick_priors: journaled_priors,
+        });
+
+        if in_range {
+            // Invariant-guarded: the in-range branch implies the range straddles
+            // the current tick, so `Some` is guaranteed (loud panic on a real break).
+            #[expect(clippy::expect_used)]
+            {
+                self.liquidity = in_range_active_liquidity(
+                    self.liquidity,
+                    self.tick,
+                    tick_lower,
+                    tick_upper,
+                    liquidity_delta,
+                )
+                .expect("in-range branch implies the range straddles the current tick");
+            }
+        }
+
+        if block_number > self.initial_state_block {
+            self.advance_tick_data_block(block_number);
+            if in_range {
+                self.advance_update_block(block_number);
+            }
+        } else {
+            // Backfill replay (block <= seed): sanctioned monotonic no-op —
+            // mutate the tick map but never rewind the liquidity clock it
+            // already covers.
+            if block_number > self.tick_data_block {
+                self.tick_data_block = block_number;
+            }
+        }
+        self.state_nonce = self.state_nonce.wrapping_add(1);
+        self.invalidate_tick_range_cache();
+    }
+
+    fn seed_genesis(&mut self, block: u64) {
+        state_seeding::seed_genesis(self, block);
+    }
+}
+
+/// ERC20 token metadata.
+#[derive(Clone, Debug)]
+pub struct TokenEntry {
+    pub address: Address,
+    pub name: String,
+    pub symbol: String,
+    pub decimals: u8,
+    pub chain_id: u64,
+}
+
+#[expect(clippy::unwrap_used)]
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+    use crate::state::v3_state::{
+        ConcentratedLiquiditySlotLayout, RegisterV3PoolParams, V3PoolState,
+    };
+
+    fn v3_entry() -> PoolEntry {
+        let (identity, state) = V3PoolState::from_params(
+            RegisterV3PoolParams {
+                address: Address::ZERO,
+                token0: Address::ZERO,
+                token1: Address::ZERO,
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 10_000_000_000_000u128,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                tick_data_block: None,
+                coverage: PoolTickCoverage::Sparse,
+                fetcher: None,
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
+                slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
+                known_bitmap_words: Vec::new(),
+            },
+            8,
+        );
+        PoolEntry::V3(Box::new((identity, state)))
+    }
+
+    #[test]
+    fn v3_projection_returns_some_for_v3_and_none_for_sibling_families() {
+        // What: v3() returns Some when the entry is V3, None for every other
+        // family. The sibling-family None is the collapse that removes the
+        // variant-exhaustion arms in the get_* readers (D5).
+        let entry = v3_entry();
+        assert!(entry.v3().is_some());
+        assert!(entry.v2().is_none());
+        assert!(entry.v4().is_none());
+        assert!(entry.curve().is_none());
+        assert!(entry.balancer_weighted().is_none());
+        assert!(entry.balancer_stable().is_none());
+        assert!(entry.aerodrome_v2().is_none());
+    }
+
+    #[test]
+    fn v3_mut_projection_returns_mutable_borrow() {
+        // What: v3_mut() returns a mutable (identity, state) borrow.
+        let mut entry = v3_entry();
+        if let Some((_, state)) = entry.v3_mut() {
+            state.update_block = 7;
+        }
+        assert_eq!(entry.v3().unwrap().1.update_block, 7);
+    }
+}
+
+// --- arch-review candidate 4: the known-word writer + coverage reader
+// (the FFI checked-word invariant contract, tested at the trait seam).
+
+#[cfg(test)]
+mod known_word_tests {
+    use hashbrown::HashMap;
+
+    use alloy::primitives::{Address, U256};
+
+    use super::ConcentratedLiquidityPool;
+    use crate::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
+    use crate::state::v4_state::{RegisterV4PoolParams, V4PoolKey, V4PoolState};
+
+    fn v3_state(coverage: PoolTickCoverage) -> V3PoolState {
+        let (_, state) = V3PoolState::from_params(
+            RegisterV3PoolParams {
+                address: Address::ZERO,
+                token0: Address::ZERO,
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 10_000_000_000_000u128,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                tick_data_block: None,
+                coverage,
+                fetcher: None,
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
+                slot_layout: crate::state::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
+                known_bitmap_words: Vec::new(),
+            },
+            8,
+        );
+        state
+    }
+
+    fn v4_state(coverage: PoolTickCoverage) -> V4PoolState {
+        let pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId = [0x99u8; 32];
+        let (_, state) = V4PoolState::from_params(
+            RegisterV4PoolParams {
+                pool_manager: Address::from([0x88u8; 20]),
+                pool_id,
+                pool_key: V4PoolKey {
+                    currency0: Address::ZERO,
+                    currency1: Address::from([1u8; 20]),
+                    fee: 500,
+                    tick_spacing: 10,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                protocol_fee: 0,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                tick_data_block: None,
+                coverage,
+                fetcher: None,
+                known_bitmap_words: Vec::new(),
+            },
+            8,
+        );
+        state
+    }
+
+    #[test]
+    fn mark_bitmap_words_known_extends_sparse_known_set() {
+        // A checked word passed at the FFI boundary must land in
+        // known_bitmap_words for a Sparse pool (the fetch contract breaks
+        // otherwise — the companion's `_bitmap_override` existed for this).
+        let mut state = v3_state(PoolTickCoverage::Sparse);
+        super::ConcentratedLiquidityPoolMut::mark_bitmap_words_known(&mut state, &[5, 9]);
+        assert!(
+            state.known_bitmap_words.contains(&5),
+            "sparse word 5 must be marked"
+        );
+        assert!(
+            state.known_bitmap_words.contains(&9),
+            "sparse word 9 must be marked"
+        );
+    }
+
+    #[test]
+    fn mark_bitmap_words_known_is_noop_for_tracked() {
+        // A Tracked pool's bitmap is COMPLETE — absent means known-empty — so
+        // the known set is never written (writing it would be dead state).
+        let mut state = v3_state(PoolTickCoverage::Tracked);
+        super::ConcentratedLiquidityPoolMut::mark_bitmap_words_known(&mut state, &[5]);
+        assert!(
+            state.known_bitmap_words.is_empty(),
+            "Tracked pools must not write known_bitmap_words"
+        );
+    }
+
+    #[test]
+    fn coverage_reader_reports_registration_coverage() {
+        let sparse = v3_state(PoolTickCoverage::Sparse);
+        let tracked = v3_state(PoolTickCoverage::Tracked);
+        assert_eq!(sparse.coverage(), PoolTickCoverage::Sparse);
+        assert_eq!(tracked.coverage(), PoolTickCoverage::Tracked);
+    }
+
+    #[test]
+    fn v4_mark_bitmap_words_known_extends_sparse_known_set() {
+        let mut state = v4_state(PoolTickCoverage::Sparse);
+        super::ConcentratedLiquidityPoolMut::mark_bitmap_words_known(&mut state, &[2]);
+        assert!(
+            state.known_bitmap_words.contains(&2),
+            "V4 sparse word must be marked"
+        );
+    }
+
+    #[test]
+    fn v4_mark_bitmap_words_known_is_noop_for_tracked() {
+        let mut state = v4_state(PoolTickCoverage::Tracked);
+        super::ConcentratedLiquidityPoolMut::mark_bitmap_words_known(&mut state, &[2]);
+        assert!(
+            state.known_bitmap_words.is_empty(),
+            "V4 Tracked pools must not write known_bitmap_words"
+        );
+    }
+
+    #[test]
+    fn v4_coverage_reader_reports_registration_coverage() {
+        let sparse = v4_state(PoolTickCoverage::Sparse);
+        let tracked = v4_state(PoolTickCoverage::Tracked);
+        assert_eq!(sparse.coverage(), PoolTickCoverage::Sparse);
+        assert_eq!(tracked.coverage(), PoolTickCoverage::Tracked);
+    }
+}

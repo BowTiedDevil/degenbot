@@ -20,7 +20,8 @@ use degenbot_executor::composers::EncodeOptions;
 use degenbot_executor::encoders::V4_FEE_ENCODER_MAX;
 use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
 use degenbot_pathfinding::PoolKind;
-use degenbot_pools::{slot_layout, TickInfo};
+use degenbot_pools::state::slot_layout;
+use degenbot_pools::TickInfo;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,

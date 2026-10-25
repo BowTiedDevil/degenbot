@@ -17,8 +17,8 @@ use std::sync::Arc;
 use alloy::primitives::{U160, U256};
 use hashbrown::HashMap;
 
-use crate::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
-use crate::tick_bitmap::{compute_tick_ranges, V3TickRangeForSolver};
+use crate::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use crate::state::tick_bitmap::{compute_tick_ranges, V3TickRangeForSolver};
 use crate::TickInfo;
 use degenbot_math::concentrated_liquidity::swap_math::{
     calculate_swap_fee, protocol_fee_one_for_zero, protocol_fee_zero_for_one,

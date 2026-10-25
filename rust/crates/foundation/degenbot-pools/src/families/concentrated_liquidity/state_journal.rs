@@ -11,7 +11,7 @@
 
 use hashbrown::HashMap;
 
-use crate::state_history::{JournalError, ReorgJournal, ScalarPriors, V3BlockDelta};
+use crate::state::state_history::{JournalError, ReorgJournal, ScalarPriors, V3BlockDelta};
 use crate::TickInfo;
 
 /// The field seam the shared journal verbs write through — implemented by

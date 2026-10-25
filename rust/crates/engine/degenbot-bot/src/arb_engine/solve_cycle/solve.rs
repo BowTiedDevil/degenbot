@@ -21,7 +21,7 @@ use crate::arb_engine::workload_partition::{
 };
 use ::degenbot_pools::solve::{MixedPath, ResolvedMixedPath};
 use degenbot_core::diag;
-use degenbot_pools::affected::AffectedKey;
+use degenbot_pools::solve::affected::AffectedKey;
 use degenbot_workers::dispatcher::SeatSurvivesPolicy;
 use degenbot_workers::lane::LaneCtx;
 use hashbrown::{HashMap, HashSet};

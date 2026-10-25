@@ -22,10 +22,10 @@ pub(crate) fn project_curve(
     pool_ref: &MixedPoolRef,
 ) -> Result<(ResolvedHop, u64), MissingHopReason> {
     let id = core
-        .pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(pool_ref.pool_key)
+        .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
     let state = core
-        .pool_slice::<degenbot_pools::curve_state::CurvePoolState>(pool_ref.pool_key)
+        .pool_slice::<degenbot_pools::state::curve_state::CurvePoolState>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingState)?;
     let hop = curve_read::capture_hop(state, id, pool_ref.zero_for_one).map_err(curve_refusal)?;
     Ok((
@@ -165,7 +165,7 @@ mod tests {
         assert_eq!(s.rate_multiplier_in, one_e18);
         assert_eq!(
             nonce,
-            core.pool_slice::<degenbot_pools::curve_state::CurvePoolState>(cr_id)
+            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolState>(cr_id)
                 .expect("state")
                 .state_nonce
         );

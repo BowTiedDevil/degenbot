@@ -11,8 +11,8 @@ use hashbrown::HashMap;
 use alloy::primitives::{aliases::U112, Address, B256, U256};
 
 use crate::decoders::v4_swap_decoder::V4PoolId;
-use crate::pools::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
-use crate::pools::v4_state::{RegisterV4PoolParams, V4PoolKey, V4PoolState};
+use crate::pools::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
+use crate::pools::state::v4_state::{RegisterV4PoolParams, V4PoolKey, V4PoolState};
 use crate::pools::TickInfo;
 use crate::substrate::BotState;
 use crate::{DexVariant, RegisterV2PoolParams};
@@ -252,7 +252,7 @@ mod hook_wiring_tests {
         hook_bytes[19] = 0x80; // low16 = 0x0080 = BEFORE_SWAP (amount-modifying)
         let hook = Address::new(hook_bytes);
         let pm = Address::new([0x44u8; 20]);
-        let pool_id = crate::pools::v4_storage_slots::v4_pool_id(&V4PoolKey {
+        let pool_id = crate::pools::state::v4_storage_slots::v4_pool_id(&V4PoolKey {
             currency0: t0,
             currency1: t1,
             fee: 100,
@@ -276,14 +276,14 @@ mod hook_wiring_tests {
         let mut core = BotState::new();
         let registered = register_v4(&mut core, &p).expect("register");
         let identity = core
-            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(registered)
+            .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(registered)
             .expect("identity");
         assert_eq!(
             identity.pool_key.hooks, hook,
             "hook address must survive replay registration"
         );
         assert_eq!(
-            crate::pools::v4_storage_slots::v4_pool_id(&identity.pool_key),
+            crate::pools::state::v4_storage_slots::v4_pool_id(&identity.pool_key),
             identity.pool_id,
             "replayed identity must round-trip the pool_id hash",
         );

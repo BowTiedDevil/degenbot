@@ -28,8 +28,8 @@
 
 use alloy::primitives::U256;
 use degenbot_core::errors::ProviderError;
-use degenbot_pools::registry::RegisteredPoolFamily;
-use degenbot_pools::spec_bounds::narrow_v2_reserve;
+use degenbot_pools::sim::registry::RegisteredPoolFamily;
+use degenbot_pools::state::spec_bounds::narrow_v2_reserve;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::BotState;
 
@@ -126,11 +126,11 @@ async fn refresh_reserve_pair(
     let address = {
         let guard = state.read_at(LockSite::Orchestrator);
         guard
-            .pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_id)
+            .pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(pool_id)
             .map(|identity| identity.address)
             .or_else(|| {
                 guard
-                    .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                    .pool_slice::<degenbot_pools::state::aerodrome_v2_state::AerodromeV2PoolIdentity>(
                         pool_id,
                     )
                     .map(|identity| identity.address)
@@ -149,11 +149,13 @@ async fn refresh_reserve_pair(
 
     let mut guard = state.write_at(LockSite::Orchestrator);
     let (current0, current1, update_block) = guard
-        .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v2_state::V2PoolState>(pool_id)
         .map(|s| (s.reserve0, s.reserve1, s.update_block))
         .or_else(|| {
             guard
-                .pool_slice::<degenbot_pools::aerodrome_v2_state::AerodromeV2PoolState>(pool_id)
+                .pool_slice::<degenbot_pools::state::aerodrome_v2_state::AerodromeV2PoolState>(
+                    pool_id,
+                )
                 .map(|s| (s.reserve0, s.reserve1, s.update_block))
         })
         .ok_or(RefreshError::MissingIdentity { pool_id })?;
@@ -175,7 +177,7 @@ async fn refresh_v3(
     let address = {
         let guard = state.read_at(LockSite::Orchestrator);
         guard
-            .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(pool_id)
+            .pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(pool_id)
             .map(|identity| identity.address)
             .ok_or(RefreshError::MissingIdentity { pool_id })?
     };
@@ -186,7 +188,7 @@ async fn refresh_v3(
 
     let mut guard = state.write_at(LockSite::Orchestrator);
     let (current_sqrt, current_liquidity, current_tick, update_block) = guard
-        .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
         .map(|s| (s.sqrt_price_x96, s.liquidity, s.tick, s.update_block))
         .ok_or(RefreshError::MissingIdentity { pool_id })?;
     if block < update_block
@@ -212,7 +214,7 @@ async fn refresh_v4(
     let (state_view, v4_pool_id) = {
         let guard = state.read_at(LockSite::Orchestrator);
         let identity = guard
-            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(pool_id)
+            .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(pool_id)
             .ok_or(RefreshError::MissingIdentity { pool_id })?;
         let state_view = guard
             .state_view_for_pool(pool_id)
@@ -226,7 +228,7 @@ async fn refresh_v4(
 
     let mut guard = state.write_at(LockSite::Orchestrator);
     let (current_sqrt, current_liquidity, current_tick, update_block) = guard
-        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
         .map(|s| (s.sqrt_price_x96, s.liquidity, s.tick, s.update_block))
         .ok_or(RefreshError::MissingIdentity { pool_id })?;
     if block < update_block
@@ -251,7 +253,7 @@ async fn refresh_curve(
     let (address, coin_count) = {
         let guard = state.read_at(LockSite::Orchestrator);
         guard
-            .pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(pool_id)
+            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(pool_id)
             .map(|identity| (identity.address, identity.tokens.len()))
             .ok_or(RefreshError::MissingIdentity { pool_id })?
     };
@@ -259,7 +261,7 @@ async fn refresh_curve(
         curve_choreography::fetch_curve_balances(io, address, coin_count, Some(block)).await?;
     apply_balances(state, pool_id, balances, block, |guard, pool_id| {
         guard
-            .pool_slice::<degenbot_pools::curve_state::CurvePoolState>(pool_id)
+            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolState>(pool_id)
             .map(|s| (s.balances.to_vec(), s.update_block))
     })
 }
@@ -276,11 +278,11 @@ async fn refresh_balancer(
         let guard = state.read_at(LockSite::Orchestrator);
         if stable {
             guard
-                .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(pool_id)
+                .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(pool_id)
                 .map(|identity| (identity.vault, identity.pool_id))
         } else {
             guard
-                .pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolIdentity>(pool_id)
+                .pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolIdentity>(pool_id)
                 .map(|identity| (identity.vault, identity.pool_id))
         }
         .ok_or(RefreshError::MissingIdentity { pool_id })?
@@ -299,13 +301,13 @@ async fn refresh_balancer(
         move |guard, pool_id| {
             if stable {
                 guard
-                    .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolState>(
+                    .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolState>(
                         pool_id,
                     )
                     .map(|s| (s.balances.to_vec(), s.update_block))
             } else {
                 guard
-                    .pool_slice::<degenbot_pools::balancer_weighted_state::BalancerWeightedPoolState>(pool_id)
+                    .pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolState>(pool_id)
                     .map(|s| (s.balances.to_vec(), s.update_block))
             }
         },
@@ -540,7 +542,7 @@ mod tests {
         let (reserve0, reserve1, update_block) = {
             let guard = state.read_at(LockSite::Orchestrator);
             let pool = guard
-                .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
+                .pool_slice::<degenbot_pools::state::v2_state::V2PoolState>(pool_id)
                 .expect("registered");
             (pool.reserve0, pool.reserve1, pool.update_block)
         };
@@ -564,7 +566,7 @@ mod tests {
         );
         let guard = state.read_at(LockSite::Orchestrator);
         let pool = guard
-            .pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_id)
+            .pool_slice::<degenbot_pools::state::v2_state::V2PoolState>(pool_id)
             .expect("registered");
         assert_eq!(
             (pool.reserve0, pool.reserve1),

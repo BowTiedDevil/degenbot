@@ -723,7 +723,7 @@ fn registration_lifecycle_standalone_slice() {
         .expect("standalone: Tracked V3 registration");
     assert_eq!(
         core.read_at(degenbot_substrate::state_lock::LockSite::Core)
-            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pid)
+            .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pid)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Quarantined,
@@ -745,7 +745,7 @@ fn registration_lifecycle_standalone_slice() {
         .expect("standalone: lifecycle must pass");
     assert_eq!(
         core.read_at(degenbot_substrate::state_lock::LockSite::Core)
-            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pid)
+            .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pid)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Live,

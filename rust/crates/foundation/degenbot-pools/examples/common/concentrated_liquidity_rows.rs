@@ -7,7 +7,7 @@
 //! `#[path = "common/concentrated_liquidity_rows.rs"] mod concentrated_liquidity_rows;`.
 
 use crate::common::range;
-use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
+use degenbot_pools::state::int_v3_hop::IntV3TickRangeSequence;
 use serde_json::Value;
 
 /// Parse a captured `hops` array into one [`IntV3TickRangeSequence`] per hop.

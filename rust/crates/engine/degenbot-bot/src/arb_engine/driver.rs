@@ -1840,7 +1840,7 @@ mod tests {
     fn register_sparse_v4(driver: &EngineDriver, pool_manager: Address, pool_id: V4PoolId) -> u64 {
         use crate::bot_core::{PoolTickCoverage, RegisterV4PoolParams};
         use alloy::primitives::U256;
-        use degenbot_pools::v4_state::V4PoolKey;
+        use degenbot_pools::state::v4_state::V4PoolKey;
         use hashbrown::HashMap;
         driver
             .stages()

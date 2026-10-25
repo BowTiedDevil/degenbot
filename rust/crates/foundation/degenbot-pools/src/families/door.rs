@@ -15,7 +15,7 @@
 
 use alloy::primitives::{aliases::U112, I256, U256};
 
-use crate::v3_state::{PoolTickCoverage, SimulateSwapError, V3SwapOutcome};
+use crate::state::v3_state::{PoolTickCoverage, SimulateSwapError, V3SwapOutcome};
 
 /// The ONE swap-read request vocabulary — EVERY family read variant, keyed by
 /// direction (and, for the pair reads, token selection). The token0/1
@@ -218,7 +218,7 @@ pub enum Observed {
 /// shared event. The reserve-pair family's designs (V2, Aerodrome V2
 /// volatile) and the Solidly family's designs (Aerodrome V2 stable, Camelot
 /// `stable_swap`) land on the same state slices, whose apply bodies are the
-/// ADR-017 D3 collapse (full-state [`crate::state_history::V2BlockDelta`]
+/// ADR-017 D3 collapse (full-state [`crate::state::state_history::V2BlockDelta`]
 /// push + reserve overwrite + clock advance) — so one event and one
 /// [`FamilyApply`] impl serve both families.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

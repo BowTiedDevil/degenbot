@@ -30,11 +30,13 @@ use crate::concentrated_liquidity_route::{
     PinProvenance, PoolPresence, RouteAction,
 };
 use crate::pool_lookup::PoolLookup;
-use degenbot_pools::buffered_event::{BufferedPoolEvent, PoolLiquidityUpdate};
-use degenbot_pools::state_history::{ScalarPriors, TickBefore, V3BlockDelta};
-use degenbot_pools::state_update::{PoolRefusal, PoolStateUpdate};
-use degenbot_pools::v3_state::{BufferedV3LiquidityUpdate, BufferedV3SwapEvent, V3StateSync};
-use degenbot_pools::v4_state::{
+use degenbot_pools::families::buffered_event::{BufferedPoolEvent, PoolLiquidityUpdate};
+use degenbot_pools::families::state_update::{PoolRefusal, PoolStateUpdate};
+use degenbot_pools::state::state_history::{ScalarPriors, TickBefore, V3BlockDelta};
+use degenbot_pools::state::v3_state::{
+    BufferedV3LiquidityUpdate, BufferedV3SwapEvent, V3StateSync,
+};
+use degenbot_pools::state::v4_state::{
     BufferedV4LiquidityUpdate, BufferedV4SwapEvent, V4PoolKey, V4StateSync, V4_DYNAMIC_FEE_FLAG,
 };
 
@@ -63,13 +65,13 @@ pub struct ConcentratedLiquidityOrchestration {
     /// Dual-buffer for V3 liquidity (Mint/Burn) events awaiting pool
     /// registration (ADR-003: the accurate-state buffer lives on the state
     /// owner, not the dissolved `V3BlockEngine`).
-    pub(crate) v3_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer<
+    pub(crate) v3_buffer: ::degenbot_pools::families::liquidity_event_buffer::LiquidityEventBuffer<
         Address,
         BufferedV3PoolEvent,
     >,
     /// Dual-buffer for V4 `ModifyLiquidity` events awaiting pool registration.
     /// Keyed by `(pool_manager, pool_id)`.
-    pub(crate) v4_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer<
+    pub(crate) v4_buffer: ::degenbot_pools::families::liquidity_event_buffer::LiquidityEventBuffer<
         (Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
         BufferedV4PoolEvent,
     >,
@@ -155,7 +157,7 @@ pub(crate) trait LiquidityFamily {
     /// The pool's pre-registration key: its address, or its V4 `(manager, id)`.
     type Key: Copy + Eq + std::hash::Hash;
     /// The event this family's buffer holds.
-    type Event: ::degenbot_pools::liquidity_event::LiquidityEvent;
+    type Event: ::degenbot_pools::families::liquidity_event::LiquidityEvent;
     /// This family's registered pool state.
     type State: RegistrationState;
 
@@ -661,8 +663,10 @@ impl ConcentratedLiquidityOrchestration {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {
-            v3_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer::new(),
-            v4_buffer: ::degenbot_pools::liquidity_event_buffer::LiquidityEventBuffer::new(),
+            v3_buffer:
+                ::degenbot_pools::families::liquidity_event_buffer::LiquidityEventBuffer::new(),
+            v4_buffer:
+                ::degenbot_pools::families::liquidity_event_buffer::LiquidityEventBuffer::new(),
             v4_pool_ids: HashMap::new(),
             v4_state_views: HashMap::new(),
             registration_gate: crate::registration_gate::RegistrationGate::default(),
@@ -690,7 +694,7 @@ pub struct StagedWordFetch {
     pub pool_id: u64,
     pub word: i32,
     pub block: u64,
-    fetcher: std::sync::Arc<dyn degenbot_pools::tick_fetch::TickWordFetcher>,
+    fetcher: std::sync::Arc<dyn degenbot_pools::sim::tick_fetch::TickWordFetcher>,
     fingerprint: (u64, usize, u64),
 }
 
@@ -706,8 +710,8 @@ impl StagedWordFetch {
     pub fn fetch(
         &self,
     ) -> Result<
-        ::degenbot_pools::tick_fetch::FetchedTickWord,
-        ::degenbot_pools::tick_fetch::FetchTickWordError,
+        ::degenbot_pools::sim::tick_fetch::FetchedTickWord,
+        ::degenbot_pools::sim::tick_fetch::FetchTickWordError,
     > {
         self.fetcher
             .fetch_missing_tick_word(self.pool_id, self.word, self.block)
@@ -757,7 +761,7 @@ impl ConcentratedLiquidityOrchestration {
         reg: &mut RegistryCore,
         params: &RegisterV3PoolParams,
     ) -> Result<u64, RegisterV3PoolError> {
-        use ::degenbot_pools::spec_bounds as sb;
+        use ::degenbot_pools::state::spec_bounds as sb;
         sb::validate_sqrt_price(params.sqrt_price_x96)
             .map_err(RegisterV3PoolError::SpecViolation)?;
         sb::validate_tick(params.tick).map_err(RegisterV3PoolError::SpecViolation)?;
@@ -1527,7 +1531,7 @@ impl ConcentratedLiquidityOrchestration {
         &mut self,
         reg: &mut RegistryCore,
         staged: &StagedWordFetch,
-        fetched: &::degenbot_pools::tick_fetch::FetchedTickWord,
+        fetched: &::degenbot_pools::sim::tick_fetch::FetchedTickWord,
     ) -> InstallWordOutcome {
         use InstallWordOutcome::{Failed, Merged, Raced};
         match self.tick_fingerprint(reg, staged.pool_id) {
@@ -1594,7 +1598,7 @@ impl ConcentratedLiquidityOrchestration {
         &mut self,
         reg: &mut RegistryCore,
         pool_id: u64,
-        fetched: &::degenbot_pools::tick_fetch::FetchedTickWord,
+        fetched: &::degenbot_pools::sim::tick_fetch::FetchedTickWord,
     ) -> bool {
         // Dispatch through `ConcentratedLiquidityPoolMut` (one body shared by
         // V3 and V4, not inlined per arm). The `bool` wraps the trait's
@@ -1669,7 +1673,7 @@ impl ConcentratedLiquidityOrchestration {
         reg: &mut RegistryCore,
         params: &RegisterV4PoolParams,
     ) -> Result<u64, RegisterV4PoolError> {
-        use ::degenbot_pools::spec_bounds as sb;
+        use ::degenbot_pools::state::spec_bounds as sb;
         sb::validate_sqrt_price(params.sqrt_price_x96)
             .map_err(RegisterV4PoolError::SpecViolation)?;
         sb::validate_tick(params.tick).map_err(RegisterV4PoolError::SpecViolation)?;
@@ -1971,7 +1975,7 @@ impl ConcentratedLiquidityOrchestration {
         if let Some(buffered) = F::drain_pump(self, &key) {
             let blocks: Vec<u64> = buffered
                 .iter()
-                .map(::degenbot_pools::liquidity_event::LiquidityEvent::block_number)
+                .map(::degenbot_pools::families::liquidity_event::LiquidityEvent::block_number)
                 .collect();
             let mut distinct_blocks = blocks.clone();
             distinct_blocks.sort_unstable();
@@ -2430,7 +2434,7 @@ impl BotState {
     pub fn install_word_fetch(
         &mut self,
         staged: &StagedWordFetch,
-        fetched: &::degenbot_pools::tick_fetch::FetchedTickWord,
+        fetched: &::degenbot_pools::sim::tick_fetch::FetchedTickWord,
     ) -> InstallWordOutcome {
         self.concentrated_liquidity
             .install_word_fetch(&mut self.registry, staged, fetched)
@@ -2465,7 +2469,7 @@ impl BotState {
     pub fn merge_tick_word(
         &mut self,
         pool_id: u64,
-        fetched: &::degenbot_pools::tick_fetch::FetchedTickWord,
+        fetched: &::degenbot_pools::sim::tick_fetch::FetchedTickWord,
     ) -> bool {
         self.concentrated_liquidity
             .merge_tick_word(&mut self.registry, pool_id, fetched)
@@ -2488,7 +2492,7 @@ impl BotState {
     #[must_use]
     pub fn state_view_for_pool(&self, pool_id: u64) -> Option<Address> {
         let manager = self
-            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(pool_id)?
+            .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(pool_id)?
             .pool_manager;
         self.concentrated_liquidity.state_view_for(manager)
     }
@@ -2767,8 +2771,8 @@ pub struct RegisteredV4 {
 mod registered_v4_fast_path_tests {
     use alloy::primitives::{Address, U256};
     use degenbot_decoders::v4_swap_decoder::V4PoolId;
-    use degenbot_pools::v3_state::PoolTickCoverage;
-    use degenbot_pools::v4_state::V4PoolKey;
+    use degenbot_pools::state::v3_state::PoolTickCoverage;
+    use degenbot_pools::state::v4_state::V4PoolKey;
     use hashbrown::HashMap;
 
     use super::{BotState, RegisterV4PoolParams};
@@ -2869,7 +2873,7 @@ mod known_word_dispatcher_tests {
 
     use alloy::primitives::{Address, U256};
 
-    use degenbot_pools::v3_state::{PoolTickCoverage, V3PoolState};
+    use degenbot_pools::state::v3_state::{PoolTickCoverage, V3PoolState};
 
     use super::{BotState, RegisterV3PoolParams};
 
@@ -2907,7 +2911,7 @@ mod known_word_dispatcher_tests {
             "dispatcher must report a concentrated liquidity apply"
         );
         let state = core
-            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
             .expect("registered");
         assert!(state.known_bitmap_words.contains(&7));
     }
@@ -2918,7 +2922,7 @@ mod known_word_dispatcher_tests {
         let (mut core, pool_id) = register_v3(PoolTickCoverage::Tracked);
         let _ = core.mark_bitmap_words_known_by_pool_id(pool_id, &[7]);
         let state = core
-            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
             .expect("registered");
         assert!(
             !state.known_bitmap_words.contains(&7),
@@ -2944,7 +2948,7 @@ mod known_word_dispatcher_tests {
             .apply_liquidity_update_by_pool_id(pool_id, 15360, 15420, 1, 5)
             .is_ok());
         let state = core
-            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+            .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
             .expect("registered");
         assert!(
             state.tick_data.contains_key(&15360),

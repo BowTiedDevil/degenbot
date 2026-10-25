@@ -5,15 +5,15 @@
 //! through the `BotState` registry, which stays in bot). Transient re-export —
 //! repointed at `degenbot_pools::balancer_stable_state` natively.
 
-pub use ::degenbot_pools::balancer_stable_state::*;
+pub use ::degenbot_pools::state::balancer_stable_state::*;
 
 #[expect(clippy::expect_used, unused_imports)]
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::bot_core::RegisterBalancerStablePoolParams;
-    use ::degenbot_pools::rate_provider::BalancerRateProvider;
-    use ::degenbot_pools::state_history::{BlockDelta, ReorgJournal};
+    use ::degenbot_pools::sim::rate_provider::BalancerRateProvider;
+    use ::degenbot_pools::state::state_history::{BlockDelta, ReorgJournal};
     use alloy::primitives::{aliases::U112, Address, U256};
     use degenbot_substrate::BotState;
     use std::sync::Arc;
@@ -55,10 +55,12 @@ mod tests {
             1,
         ));
         let s = core
-            .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolState>(pool_id)
+            .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolState>(
+                pool_id,
+            )
             .expect("balancer stable pool registered");
         let id = core
-            .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(
+            .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(
                 pool_id,
             )
             .expect("balancer stable identity registered");
@@ -88,7 +90,7 @@ mod tests {
             2,
         ));
         let id = core
-            .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolIdentity>(
+            .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(
                 pool_id,
             )
             .expect("balancer stable identity registered");
@@ -112,7 +114,9 @@ mod tests {
         );
         assert_eq!(affected, Some(pool_id));
         let s = core
-            .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolState>(pool_id)
+            .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolState>(
+                pool_id,
+            )
             .expect("balancer stable pool registered");
         assert_eq!(
             s.balances.to_vec(),
@@ -172,7 +176,9 @@ mod tests {
             .expect("Some on a registered Balancer stable pool")
             .expect("Ok (target > genesis block)");
         let s = core
-            .pool_slice::<degenbot_pools::balancer_stable_state::BalancerStablePoolState>(pool_id)
+            .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolState>(
+                pool_id,
+            )
             .expect("balancer stable pool registered");
         assert_eq!(
             s.balances.to_vec(),

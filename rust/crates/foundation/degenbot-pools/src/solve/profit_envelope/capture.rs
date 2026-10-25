@@ -11,7 +11,7 @@
 //! so the row stays byte-identical to the historical in-solver capture while
 //! the file handling leaves the crate.
 
-use crate::int_v3_hop::IntV3TickRangeSequence;
+use crate::state::int_v3_hop::IntV3TickRangeSequence;
 
 use super::derive::HopMath;
 

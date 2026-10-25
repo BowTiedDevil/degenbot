@@ -326,11 +326,11 @@ mod tests {
     use std::sync::Arc;
 
     use alloy::primitives::{Address, U128, U256};
-    use degenbot_pools::buffered_event::PoolLiquidityUpdate;
+    use degenbot_pools::families::buffered_event::PoolLiquidityUpdate;
     use degenbot_substrate::state_lock::{LockSite, StateLock};
 
     use degenbot_decoders::v4_swap_decoder::V4PoolId;
-    use degenbot_pools::v4_state::V4PoolKey;
+    use degenbot_pools::state::v4_state::V4PoolKey;
 
     use crate::bot_core::{
         LifecyclePrecondition, PoolTickCoverage, RefusalKind, RegisterV3PoolParams,
@@ -431,13 +431,13 @@ mod tests {
     }
 
     fn lifecycle_v3(core: &BotState, pool_id: u64) -> RegistrationLifecycle {
-        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+        core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
             .expect("registered V3 pool")
             .registration_lifecycle
     }
 
     fn lifecycle_v4(core: &BotState, pool_id: u64) -> RegistrationLifecycle {
-        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        core.pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
             .expect("registered V4 pool")
             .registration_lifecycle
     }
@@ -685,7 +685,7 @@ mod tests {
             );
             // Verify it buffered (Quarantined → not applied yet).
             assert_eq!(
-                c.pool_slice::<degenbot_pools::v3_state::V3PoolState>(pid)
+                c.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pid)
                     .unwrap()
                     .tick_data
                     .len(),
@@ -704,7 +704,7 @@ mod tests {
         assert!(result.is_ok());
         let c = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
         let state = c
-            .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pid)
+            .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pid)
             .unwrap();
         // The burn zeroed gross → tick removed (not stranded in the buffer).
         assert!(

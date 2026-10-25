@@ -33,9 +33,9 @@ use revm::primitives::TxKind;
 use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
 
 use degenbot_decoders::revert::RevertClass;
-use degenbot_pools::curve_state::{CurvePoolState, RegisterCurvePoolParams};
-use degenbot_pools::registry::PoolEntry;
-use degenbot_pools::simulate_swap::simulate_swap;
+use degenbot_pools::sim::registry::PoolEntry;
+use degenbot_pools::sim::simulate_swap::simulate_swap;
+use degenbot_pools::state::curve_state::{CurvePoolState, RegisterCurvePoolParams};
 
 /// Curve native precision scale (`1e18`) — mirrors the engine constant.
 const CURVE_PRECISION: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);

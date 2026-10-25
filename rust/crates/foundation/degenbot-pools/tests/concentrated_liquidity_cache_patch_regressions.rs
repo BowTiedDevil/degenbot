@@ -17,10 +17,12 @@
 #![expect(clippy::doc_markdown, clippy::expect_used)]
 
 use alloy::primitives::U256;
-use degenbot_pools::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_pools::solve::concentrated_liquidity::cache::{strategy_catalog, CacheEvent};
 use degenbot_pools::solve::concentrated_liquidity::{
     build_concentrated_liquidity_crossing_table, ConcentratedLiquidityCrossingTable,
+};
+use degenbot_pools::state::int_v3_hop::{
+    IntTickRangeCrossing, IntV3TickRangeHop, IntV3TickRangeSequence,
 };
 
 fn single_range_seq() -> IntV3TickRangeSequence {

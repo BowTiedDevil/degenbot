@@ -25,15 +25,17 @@ use alloy::primitives::I256;
 use super::{CaptureRefusal, DesignScalars, Observe, Observed, OverrideScalars};
 
 use crate::families::door::FamilyApply;
-use crate::int_v3_hop::IntV3TickRangeSequence;
-use crate::registry::ConcentratedLiquidityPoolMut as _;
-use crate::v3_state::{v3_simulate_swap, PoolTickCoverage, SimulateSwapError, V3SwapOutcome};
+use crate::sim::registry::ConcentratedLiquidityPoolMut as _;
+use crate::state::int_v3_hop::IntV3TickRangeSequence;
+use crate::state::v3_state::{
+    v3_simulate_swap, PoolTickCoverage, SimulateSwapError, V3SwapOutcome,
+};
 
 /// The V3 state slice + its event/registration DTOs — the design's read
 /// surface lives in `crate::v3_state` (I/O-free per ADR-001) and is
 /// re-exported here so the family tree presents the whole read story under
 /// one path.
-pub use crate::v3_state::{
+pub use crate::state::v3_state::{
     BufferedV3LiquidityUpdate, BufferedV3PoolEvent, BufferedV3SwapEvent, RegisterV3PoolError,
     RegisterV3PoolParams, V3PoolIdentity, V3PoolState, V3SwapUpdate,
 };

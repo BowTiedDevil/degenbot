@@ -17,7 +17,7 @@ use alloy::primitives::U256;
 /// One buffered balance-vector event (a Curve `Exchange` or a Balancer Vault
 /// `PoolBalanceChanged`): the new balance vector and the block it landed at.
 /// The event type pairs with the family's state slice at the apply door; the
-/// slice's own [`crate::state_history::BalanceVectorPoolState::apply_balance_update`]
+/// slice's own [`crate::state::state_history::BalanceVectorPoolState::apply_balance_update`]
 /// owns the journal + clock discipline (ADR-017 D1).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BalanceVectorEvent {

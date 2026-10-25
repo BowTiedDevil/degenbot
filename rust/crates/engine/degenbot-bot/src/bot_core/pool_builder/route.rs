@@ -33,8 +33,8 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 use degenbot_db::snapshot::TickMapDb;
-use degenbot_pools::tick_fetch::TickWordFetcher;
-use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
+use degenbot_pools::sim::tick_fetch::TickWordFetcher;
+use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
 
 use super::builder::{self, PoolBuilderError, V4BuildResult, V4PoolBuildOverrides};
 use super::choreography;
@@ -442,7 +442,7 @@ mod route_tests {
     #![expect(clippy::expect_used)] // test assertions read the refusal arms directly
     use super::*;
     use alloy::primitives::B256;
-    use degenbot_pools::registration_refusal::SpecRefusal;
+    use degenbot_pools::sim::registration_refusal::SpecRefusal;
     use degenbot_uniswap::deployments::AddressMismatch;
 
     use crate::bot_core::pool_builder::parity;
@@ -545,9 +545,9 @@ mod route_tests {
         assert!(matches!(missed, ConstructionRefusal::Skipped(_)));
         let refused = fold_already_registered::<RegisterV3PoolError>(
             Err(RegisterV3PoolError::SpecViolation(
-                degenbot_pools::spec_bounds::SpecViolation {
+                degenbot_pools::state::spec_bounds::SpecViolation {
                     field: "fee",
-                    value: degenbot_pools::spec_bounds::SpecValue::U32(3_000),
+                    value: degenbot_pools::state::spec_bounds::SpecValue::U32(3_000),
                     bound: "uint24",
                 },
             )),

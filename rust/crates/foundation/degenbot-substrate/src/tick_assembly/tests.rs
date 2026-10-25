@@ -26,7 +26,7 @@ use degenbot_db::ApplyLiquidityAtTick;
 
 use super::{assemble_v3_tick_map, assemble_v4_tick_map, TickMapAssemblyError};
 use crate::{PoolTickCoverage, TickInfo};
-use degenbot_pools::tick_fetch::{BootstrapTickError, BootstrapTickWord, TickBootstrapRpc};
+use degenbot_pools::sim::tick_fetch::{BootstrapTickError, BootstrapTickWord, TickBootstrapRpc};
 
 // ── fixtures ──────────────────────────────────────────────────────────────
 
@@ -400,7 +400,7 @@ fn v4_db_none_cold_start_returns_miss() {
 //  gain the Chain arm").
 
 /// A `TickBootstrapRpc` fake for the Chain-arm tests. Mirrors
-/// `degenbot_pools::tick_fetch::bootstrap::tests::FakeBootstrapRpc` but lives
+/// `degenbot_pools::sim::tick_fetch::bootstrap::tests::FakeBootstrapRpc` but lives
 /// here so the assemble-helper tests stay self-contained.
 #[derive(Debug)]
 struct FakeChainRpc {

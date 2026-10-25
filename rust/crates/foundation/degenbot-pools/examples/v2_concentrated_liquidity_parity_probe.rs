@@ -42,8 +42,8 @@ use std::path::PathBuf;
 
 use alloy::primitives::{U256, U512};
 use degenbot_math::v2::IntHopState;
-use degenbot_pools::int_v3_hop::IntV3TickRangeHop;
 use degenbot_pools::solve::concentrated_liquidity::{simulate_v3_range_swap, WalkTally};
+use degenbot_pools::state::int_v3_hop::IntV3TickRangeHop;
 use num_bigint::BigUint;
 use serde_json::{json, Value};
 

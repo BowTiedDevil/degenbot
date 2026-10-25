@@ -29,15 +29,15 @@
 //! by hand-written `From` impls.
 
 use alloy::primitives::Address;
-use degenbot_pools::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
-use degenbot_pools::balancer_stable_state::RegisterBalancerStablePoolParams;
-use degenbot_pools::balancer_weighted_state::RegisterBalancerWeightedPoolParams;
-use degenbot_pools::curve_state::RegisterCurvePoolParams;
-use degenbot_pools::registration_refusal::RegisterRefusal;
-use degenbot_pools::registry::RegisteredPoolFamily;
-use degenbot_pools::v2_state::RegisterV2PoolParams;
-use degenbot_pools::v3_state::RegisterV3PoolParams;
-use degenbot_pools::v4_state::RegisterV4PoolParams;
+use degenbot_pools::sim::registration_refusal::RegisterRefusal;
+use degenbot_pools::sim::registry::RegisteredPoolFamily;
+use degenbot_pools::state::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
+use degenbot_pools::state::balancer_stable_state::RegisterBalancerStablePoolParams;
+use degenbot_pools::state::balancer_weighted_state::RegisterBalancerWeightedPoolParams;
+use degenbot_pools::state::curve_state::RegisterCurvePoolParams;
+use degenbot_pools::state::v2_state::RegisterV2PoolParams;
+use degenbot_pools::state::v3_state::RegisterV3PoolParams;
+use degenbot_pools::state::v4_state::RegisterV4PoolParams;
 
 use super::BotState;
 

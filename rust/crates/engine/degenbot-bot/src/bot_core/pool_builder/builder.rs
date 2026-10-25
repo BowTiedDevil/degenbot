@@ -21,17 +21,17 @@ use degenbot_core::address_utils::address_to_checksum_string;
 use degenbot_core::errors::ProviderError;
 use degenbot_db::error::DbError;
 use degenbot_db::snapshot::TickMapDb;
-use degenbot_pools::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
-use degenbot_pools::balancer_stable_state::RegisterBalancerStablePoolParams;
-use degenbot_pools::balancer_weighted_state::RegisterBalancerWeightedPoolParams;
-use degenbot_pools::curve_data_provider::CurveDataProvider;
-use degenbot_pools::curve_state::RegisterCurvePoolParams;
-use degenbot_pools::curve_strategies::resolve_curve_strategy_discriminants;
-use degenbot_pools::registration_refusal::SpecRefusal;
-use degenbot_pools::spec_bounds;
-use degenbot_pools::v2_state::RegisterV2PoolParams;
-use degenbot_pools::v3_state::{ConcentratedLiquiditySlotLayout, RegisterV3PoolParams};
-use degenbot_pools::v4_state::{RegisterV4PoolParams, V4PoolKey};
+use degenbot_pools::sim::curve_data_provider::CurveDataProvider;
+use degenbot_pools::sim::curve_strategies::resolve_curve_strategy_discriminants;
+use degenbot_pools::sim::registration_refusal::SpecRefusal;
+use degenbot_pools::state::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
+use degenbot_pools::state::balancer_stable_state::RegisterBalancerStablePoolParams;
+use degenbot_pools::state::balancer_weighted_state::RegisterBalancerWeightedPoolParams;
+use degenbot_pools::state::curve_state::RegisterCurvePoolParams;
+use degenbot_pools::state::spec_bounds;
+use degenbot_pools::state::v2_state::RegisterV2PoolParams;
+use degenbot_pools::state::v3_state::{ConcentratedLiquiditySlotLayout, RegisterV3PoolParams};
+use degenbot_pools::state::v4_state::{RegisterV4PoolParams, V4PoolKey};
 use degenbot_pools::{
     BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
 };

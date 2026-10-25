@@ -53,10 +53,10 @@ use std::sync::Arc;
 
 use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
-use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 use degenbot_pools::solve::concentrated_liquidity::{
     solve_piecewise, MixedHopView, PreparedConcentratedLiquidityHop, WalkStats,
 };
+use degenbot_pools::state::int_v3_hop::IntV3TickRangeSequence;
 use serde_json::Value;
 
 #[path = "common/mod.rs"]

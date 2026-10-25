@@ -3,9 +3,9 @@
 #![expect(clippy::expect_used)]
 use alloy::primitives::{Address, U256};
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
-use degenbot_pools::registry::PoolEntry;
-use degenbot_pools::v3_state::PoolTickCoverage;
-use degenbot_pools::v4_state::{RegisterV4PoolParams, V4PoolKey, V4PoolState};
+use degenbot_pools::sim::registry::PoolEntry;
+use degenbot_pools::state::v3_state::PoolTickCoverage;
+use degenbot_pools::state::v4_state::{RegisterV4PoolParams, V4PoolKey, V4PoolState};
 use degenbot_pools::TickInfo;
 use degenbot_pools::{ConcentratedLiquidityVariant, Identity, Pool, Structure};
 use hashbrown::HashMap;

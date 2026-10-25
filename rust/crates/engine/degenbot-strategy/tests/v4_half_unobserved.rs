@@ -11,7 +11,7 @@
 use alloy::primitives::{address, aliases::U112, Address};
 
 use degenbot_db::connection::DegenbotDb;
-use degenbot_pools::slot_layout::V2ReservesParts;
+use degenbot_pools::state::slot_layout::V2ReservesParts;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost, V4PoolSet,
 };

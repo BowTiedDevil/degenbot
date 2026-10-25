@@ -53,8 +53,10 @@ use hashbrown::HashMap;
 
 use alloy::primitives::{I256, U128, U256};
 
-use degenbot_pools::v3_state::{PoolTickCoverage, V3PoolState, V3SwapOutcome};
-use degenbot_pools::v4_state::{v4_simulate_swap, RegisterV4PoolParams, V4PoolKey, V4PoolState};
+use degenbot_pools::state::v3_state::{PoolTickCoverage, V3PoolState, V3SwapOutcome};
+use degenbot_pools::state::v4_state::{
+    v4_simulate_swap, RegisterV4PoolParams, V4PoolKey, V4PoolState,
+};
 use degenbot_pools::TickInfo;
 
 use degenbot_pools::solve::concentrated_liquidity::{

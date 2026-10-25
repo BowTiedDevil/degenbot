@@ -30,12 +30,12 @@
 //! that WOULD decide the live questions (probes vs hits vs `cache_plays`
 //! divergence across blocks) are all in place and reported here.
 
-use degenbot_pools::int_v3_hop::IntV3TickRangeSequence;
 use degenbot_pools::solve::concentrated_liquidity::{
     solve_concentrated_liquidity_piecewise, PreparedConcentratedLiquidityHop, WalkMemo,
     WalkMemoStats,
 };
 use degenbot_pools::solve::runtime::SolveRuntimeConfig;
+use degenbot_pools::state::int_v3_hop::IntV3TickRangeSequence;
 use serde_json::Value;
 
 #[path = "common/mod.rs"]

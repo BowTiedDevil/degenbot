@@ -184,25 +184,25 @@ where
             _ => "",
         };
         let (Some(rpc), Some(block)) = (&self.code_probe_rpc, self.code_probe_block) else {
-            return format!("{acct};; no-probe (code probe unconfigured)");
+            return format!("{acct}; no-probe (code probe unconfigured)");
         };
         let fresh = blocking_raw_uncached_eth_get_code(rpc, address, block);
         match fresh {
             Some(code) if code.len() > 2 && code != "0x" => format!(
-                "{acct}{absent_hint};; FRESH UNCACHED GET eth_getCode({address},\
+                "{acct}{absent_hint}; FRESH UNCACHED GET eth_getCode({address},\
                  0x{block:x}) => {:x}-byte code -> CACHE-SERVED EMPTY (the alloy \
                  with_default_caching() LRU persisted a spurious 0x; the node HAS the pool\
                  at THIS block, so the empty is NOT a stale-block issue on the live read)",
                 (code.len() - 2) / 2
             ),
             Some(code) => format!(
-                "{acct}{absent_hint};; FRESH UNCACHED GET eth_getCode({address},\
+                "{acct}{absent_hint}; FRESH UNCACHED GET eth_getCode({address},\
                  {block}) => ALSO EMPTY ({code:?}) -> NODE/BLOCK-ORIGIN (the live node returns\
                  empty at this exact block — a stale/bad block WOULD explain this; cross-check\
                  the block against live head)"
             ),
             None => format!(
-                "{acct};; PROBE-FAILED — raw eth_getCode HTTP error (cannot attribute layer)"
+                "{acct}; PROBE-FAILED — raw eth_getCode HTTP error (cannot attribute layer)"
             ),
         }
     }

@@ -454,9 +454,9 @@ fn build_engine_pool_state(
     match pool_ref.hop_type {
         HopType::V2 => {
             let state =
-                core.pool_slice::<degenbot_pools::v2_state::V2PoolState>(pool_ref.pool_key)?;
-            let identity =
-                core.pool_slice::<degenbot_pools::v2_state::V2PoolIdentity>(pool_ref.pool_key)?;
+                core.pool_slice::<degenbot_pools::state::v2_state::V2PoolState>(pool_ref.pool_key)?;
+            let identity = core
+                .pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(pool_ref.pool_key)?;
             let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one {
                 (
                     state.reserve0.to::<U256>(),
@@ -482,9 +482,9 @@ fn build_engine_pool_state(
         }
         HopType::V3 => {
             let state =
-                core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_ref.pool_key)?;
-            let identity =
-                core.pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(pool_ref.pool_key)?;
+                core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_ref.pool_key)?;
+            let identity = core
+                .pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(pool_ref.pool_key)?;
             Some(DiagnosticPoolState::V3 {
                 address: fmt_addr(identity.address),
                 token0: fmt_addr(identity.token0),
@@ -498,9 +498,9 @@ fn build_engine_pool_state(
         }
         HopType::V4 => {
             let state =
-                core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_ref.pool_key)?;
-            let identity =
-                core.pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(pool_ref.pool_key)?;
+                core.pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_ref.pool_key)?;
+            let identity = core
+                .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(pool_ref.pool_key)?;
             Some(DiagnosticPoolState::V4 {
                 pool_manager: fmt_addr(identity.pool_manager),
                 pool_id: format!("0x{}", alloy::hex::encode(identity.pool_id)),

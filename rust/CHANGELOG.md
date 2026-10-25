@@ -32,6 +32,21 @@ All notable changes to the Rust workspace crates are recorded here.
   `architecture_gates.rs::solve_door_census_is_the_external_surface` over
   `rust/crates/facade/degenbot/tests/solve_door_census.txt`.
 
+- **ADR-084 W5 (pools namespacing, phase 1):** the 34 root modules of
+  `degenbot-pools` moved under the four capability modules. The was-to-is
+  rule is uniform: every `degenbot_pools::<module>` path (and every
+  `crate::<module>` path inside the crate) gained its capability segment -
+  `state::` for the per-family value structs, storage slots, tick map/bitmap,
+  spec bounds, journal data, and family-capability declarations; `sim::` for
+  the simulators, `PoolEntry`/registry, seam traits, and registration
+  refusals; `families::` for the event plumbing (`buffered_event`,
+  `liquidity_event`, `liquidity_event_buffer`, `state_update`); `solve::` for
+  `affected`. The crate root keeps the umbrella-grade re-exports (`TickInfo`,
+  the storage-slot encoders, the seam traits, `CurveInputsError`, the
+  buffered-event/`PoolStateUpdate` types) so a flat import continues to work
+  for the major types; module-qualified paths must add the segment. The root
+  `pub mod` surface is 4, pinned by `pools_root_surface_is_pinned`.
+
 - **ADR-084 D3 (W3 - `capture-fixtures`):** `zstd` (the C-build fixture
   dependency) is optional in `degenbot-pools` behind the non-default
   `capture-fixtures` feature; the default dependency tree of every crate -

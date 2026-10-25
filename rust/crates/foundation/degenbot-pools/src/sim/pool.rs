@@ -1,0 +1,454 @@
+//! Structural `Pool` handle — the primary shared seam across all pool families.
+//!
+//! This module exposes a single [`Pool`] handle that projects a registered
+//! [`PoolEntry`] into one of three structural shapes:
+//!
+//! - [`Structure::ReservePair`] — two-token reserve pools (Uniswap V2, Aerodrome V2)
+//! - [`Structure::ConcentratedLiquidity`] — tick-based concentrated liquidity pools (Uniswap V3, Uniswap V4)
+//! - [`Structure::BalanceVector`] — N-token balance pools (Curve, Balancer weighted/stable)
+//! - [`Structure::BinnedLiquidity`] — discrete-bin liquidity (LFJ `LBPairs`); the
+//!   roadmap-only structure no tier admits yet
+//!
+//! The handle distinguishes the protocol family (V3 vs. V4, Curve vs. Balancer)
+//! because those families have materially different state shapes. It ALSO
+//! resolves the DEX name (`Uniswap` vs `SushiSwap` …) on [`Identity::dex`] for a
+//! known `(chain_id, factory)` deployment via `degenbot-uniswap::deployments`
+//! — Rust-owned, single-source — carrying the chain id on the handle.
+//! An unknown deployment degrades to a generic variant (`dex: None`), never an
+//! error.
+
+use crate::sim::registry::PoolEntry;
+use crate::sim::simulate_swap::simulate_swap;
+use crate::state::aerodrome_v2_state::{AerodromeV2PoolIdentity, AerodromeV2PoolState};
+use crate::state::balancer_stable_state::{BalancerStablePoolIdentity, BalancerStablePoolState};
+use crate::state::balancer_weighted_state::{
+    BalancerWeightedPoolIdentity, BalancerWeightedPoolState,
+};
+use crate::state::curve_state::{CurvePoolIdentity, CurvePoolState};
+use crate::state::v2_state::{V2PoolIdentity, V2PoolState};
+use crate::state::v3_state::{V3PoolIdentity, V3PoolState};
+use crate::state::v4_state::{V4PoolIdentity, V4PoolState};
+use alloy::primitives::{Address, U256};
+use degenbot_uniswap::deployments::resolve_dex_name;
+use degenbot_uniswap::dex_identity::DexName;
+
+/// Structural family of a pool.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Structure {
+    ReservePair,
+    ConcentratedLiquidity,
+    BalanceVector,
+    /// Discrete-bin liquidity (LFJ Trader Joe `LBPairs`): price granularity is
+    /// a fixed `binStep` over indexed bins, not continuous ticks. Declared here
+    /// as the taxonomy of record; no tier admits it yet (ADR-059 D8).
+    BinnedLiquidity,
+}
+
+/// Identity value object — structural projection over a registered pool.
+///
+/// Surfaces the protocol family sub-variant AND the resolved DEX name
+/// (`Uniswap` vs `SushiSwap` …). `dex: None` means the `(chain_id, factory)`
+/// deployment is unknown — the caller degrades to the generic family variant,
+/// never an error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Identity {
+    ReservePair {
+        variant: ReservePairVariant,
+        dex: Option<DexName>,
+    },
+    ConcentratedLiquidity {
+        variant: ConcentratedLiquidityVariant,
+        dex: Option<DexName>,
+    },
+    BalanceVector {
+        variant: BalanceVectorVariant,
+        dex: Option<DexName>,
+    },
+    BinnedLiquidity {
+        variant: BinnedLiquidityVariant,
+        dex: Option<DexName>,
+    },
+}
+
+impl Identity {
+    /// The [`Structure`] this identity belongs to.
+    ///
+    /// ADR-059 D1: the structural taxonomy is the source every tier's family
+    /// vocabulary projects from; this accessor names the coarse structure
+    /// without a `DexName` lookup, so a projection at a tier that lacks the
+    /// `(chain, factory)` resolution still classifies the pool.
+    #[must_use]
+    pub const fn structure(&self) -> Structure {
+        match self {
+            Self::ReservePair { .. } => Structure::ReservePair,
+            Self::ConcentratedLiquidity { .. } => Structure::ConcentratedLiquidity,
+            Self::BalanceVector { .. } => Structure::BalanceVector,
+            Self::BinnedLiquidity { .. } => Structure::BinnedLiquidity,
+        }
+    }
+}
+
+/// Concrete DEX variant behind a [`Structure::ReservePair`] pool.
+///
+/// Distinguishes the Uniswap-V2-style constant-product family from the
+/// Aerodrome-V2 volatile/stable pair.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReservePairVariant {
+    UniswapV2,
+    AerodromeV2 { stable: bool },
+}
+
+/// Concrete DEX variant behind a [`Structure::ConcentratedLiquidity`] pool.
+///
+/// Distinguishes Uniswap V3 (factory-addressed pool) from Uniswap V4
+/// (singleton + `PoolId`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConcentratedLiquidityVariant {
+    UniswapV3,
+    UniswapV4,
+}
+
+/// Concrete DEX variant behind a [`Structure::BalanceVector`] pool.
+///
+/// Distinguishes the N-token balance-pool families: Curve stableswap and
+/// the Balancer weighted / stable subsets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BalanceVectorVariant {
+    Curve,
+    BalancerWeighted,
+    BalancerStable,
+}
+
+/// Concrete DEX variant behind a [`Structure::BinnedLiquidity`] pool.
+///
+/// LFJ (Trader Joe Liquidity Book) is the first binned-liquidity family; the
+/// variant exists so a later binned fork lands as a sibling arm rather than a
+/// new structure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BinnedLiquidityVariant {
+    Lfj,
+}
+
+/// Shared pool handle presenting a structural interface over `BotState`.
+///
+/// Carries the chain id so [`Pool::identity`] can resolve the DEX name for a
+/// `(chain_id, factory)` deployment via the Rust deployments lookup.
+pub struct Pool<'a> {
+    entry: &'a PoolEntry,
+    chain_id: u64,
+}
+
+impl<'a> Pool<'a> {
+    #[must_use]
+    pub fn new(entry: &'a PoolEntry, chain_id: u64) -> Self {
+        Self { entry, chain_id }
+    }
+
+    /// The chain id this pool's (`chain, factory`) deployment belongs to —
+    /// required to resolve the DEX name via `deployments.json`.
+    #[must_use]
+    pub const fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
+    #[must_use]
+    pub fn structure(&self) -> Structure {
+        match self.entry {
+            PoolEntry::V2(..) | PoolEntry::AerodromeV2(..) => Structure::ReservePair,
+            PoolEntry::V3(..) | PoolEntry::V4(..) => Structure::ConcentratedLiquidity,
+            PoolEntry::Curve(..)
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => Structure::BalanceVector,
+        }
+    }
+
+    #[must_use]
+    pub fn identity(&self) -> Identity {
+        match self.entry {
+            PoolEntry::V2(p) => Identity::ReservePair {
+                variant: ReservePairVariant::UniswapV2,
+                dex: resolve_dex_name(self.chain_id, p.0.factory),
+            },
+            PoolEntry::AerodromeV2(p) => Identity::ReservePair {
+                variant: ReservePairVariant::AerodromeV2 { stable: p.0.stable },
+                dex: resolve_dex_name(self.chain_id, p.0.factory),
+            },
+            PoolEntry::V3(p) => Identity::ConcentratedLiquidity {
+                variant: ConcentratedLiquidityVariant::UniswapV3,
+                dex: resolve_dex_name(self.chain_id, p.0.factory),
+            },
+            PoolEntry::V4(..) => Identity::ConcentratedLiquidity {
+                variant: ConcentratedLiquidityVariant::UniswapV4,
+                // V4 is the Uniswap singleton; no `(chain, factory)` deployment
+                // row exists, so it degrades to the generic variant for now.
+                dex: None,
+            },
+            PoolEntry::Curve(..) => Identity::BalanceVector {
+                variant: BalanceVectorVariant::Curve,
+                dex: None,
+            },
+            PoolEntry::BalancerWeighted(..) => Identity::BalanceVector {
+                variant: BalanceVectorVariant::BalancerWeighted,
+                // Balancer/Curve balance-vector pools don't carry a `factory`
+                // on the identity; DEX-name resolution is scoped to V2/V3/V4.
+                dex: None,
+            },
+            PoolEntry::BalancerStable(..) => Identity::BalanceVector {
+                variant: BalanceVectorVariant::BalancerStable,
+                dex: None,
+            },
+        }
+    }
+
+    #[must_use]
+    pub fn reserve_pair(&self) -> Option<ReservePairView<'a>> {
+        match self.entry {
+            PoolEntry::V2(p) => Some(ReservePairView::V2(&p.0, &p.1)),
+            PoolEntry::AerodromeV2(p) => Some(ReservePairView::Aerodrome(&p.0, &p.1)),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn concentrated_liquidity(&self) -> Option<ConcentratedLiquidityView<'a>> {
+        match self.entry {
+            PoolEntry::V3(p) => Some(ConcentratedLiquidityView::V3(&p.0, &p.1)),
+            PoolEntry::V4(p) => Some(ConcentratedLiquidityView::V4(&p.0, &p.1)),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn balance_vector(&self) -> Option<BalanceVectorView<'a>> {
+        match self.entry {
+            PoolEntry::Curve(p) => Some(BalanceVectorView::Curve(&p.0, &p.1)),
+            PoolEntry::BalancerWeighted(p) => Some(BalanceVectorView::BalancerWeighted(&p.0, &p.1)),
+            PoolEntry::BalancerStable(p) => Some(BalanceVectorView::BalancerStable(&p.0, &p.1)),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn calculate_tokens_out(&self, zero_for_one: bool, amount_in: U256) -> Option<U256> {
+        simulate_swap(self.entry, zero_for_one, amount_in).ok()
+    }
+}
+
+/// Read-only reserve-pair view over V2 or AerodromeV2 state.
+#[expect(clippy::doc_markdown)]
+pub enum ReservePairView<'a> {
+    V2(&'a V2PoolIdentity, &'a V2PoolState),
+    Aerodrome(&'a AerodromeV2PoolIdentity, &'a AerodromeV2PoolState),
+}
+
+impl ReservePairView<'_> {
+    #[must_use]
+    pub fn reserve0(&self) -> U256 {
+        match self {
+            Self::V2(_, s) => s.reserve0.to::<U256>(),
+            Self::Aerodrome(_, s) => s.reserve0.to::<U256>(),
+        }
+    }
+
+    #[must_use]
+    pub fn reserve1(&self) -> U256 {
+        match self {
+            Self::V2(_, s) => s.reserve1.to::<U256>(),
+            Self::Aerodrome(_, s) => s.reserve1.to::<U256>(),
+        }
+    }
+
+    #[must_use]
+    pub fn token0(&self) -> Address {
+        match self {
+            Self::V2(id, _) => id.token0,
+            Self::Aerodrome(id, _) => id.token0,
+        }
+    }
+
+    #[must_use]
+    pub fn token1(&self) -> Address {
+        match self {
+            Self::V2(id, _) => id.token1,
+            Self::Aerodrome(id, _) => id.token1,
+        }
+    }
+}
+
+/// Read-only concentrated-liquidity view over V3 or V4 state.
+pub enum ConcentratedLiquidityView<'a> {
+    V3(&'a V3PoolIdentity, &'a V3PoolState),
+    V4(&'a V4PoolIdentity, &'a V4PoolState),
+}
+
+impl ConcentratedLiquidityView<'_> {
+    #[must_use]
+    pub fn token0(&self) -> Address {
+        match self {
+            Self::V3(id, _) => id.token0,
+            Self::V4(id, _) => id.pool_key.currency0,
+        }
+    }
+
+    #[must_use]
+    pub fn token1(&self) -> Address {
+        match self {
+            Self::V3(id, _) => id.token1,
+            Self::V4(id, _) => id.pool_key.currency1,
+        }
+    }
+
+    #[must_use]
+    pub fn fee(&self) -> u32 {
+        match self {
+            Self::V3(id, _) => id.fee,
+            Self::V4(id, _) => id.pool_key.fee,
+        }
+    }
+
+    #[must_use]
+    pub fn tick_spacing(&self) -> i32 {
+        match self {
+            Self::V3(id, _) => id.tick_spacing,
+            Self::V4(id, _) => id.pool_key.tick_spacing,
+        }
+    }
+
+    #[must_use]
+    pub fn sqrt_price_x96(&self) -> U256 {
+        match self {
+            Self::V3(_, s) => s.sqrt_price_x96,
+            Self::V4(_, s) => s.sqrt_price_x96,
+        }
+    }
+
+    #[must_use]
+    pub fn liquidity(&self) -> u128 {
+        match self {
+            Self::V3(_, s) => s.liquidity,
+            Self::V4(_, s) => s.liquidity,
+        }
+    }
+
+    #[must_use]
+    pub fn tick(&self) -> i32 {
+        match self {
+            Self::V3(_, s) => s.tick,
+            Self::V4(_, s) => s.tick,
+        }
+    }
+}
+
+/// Read-only N-token balance view over Curve or Balancer state.
+pub enum BalanceVectorView<'a> {
+    Curve(&'a CurvePoolIdentity, &'a CurvePoolState),
+    BalancerWeighted(
+        &'a BalancerWeightedPoolIdentity,
+        &'a BalancerWeightedPoolState,
+    ),
+    BalancerStable(&'a BalancerStablePoolIdentity, &'a BalancerStablePoolState),
+}
+
+impl BalanceVectorView<'_> {
+    #[must_use]
+    pub fn tokens(&self) -> &[Address] {
+        match self {
+            Self::Curve(id, _) => &id.tokens,
+            Self::BalancerWeighted(id, _) => &id.tokens,
+            Self::BalancerStable(id, _) => &id.tokens,
+        }
+    }
+
+    #[must_use]
+    pub fn balances(&self) -> &[U256] {
+        match self {
+            Self::Curve(_, s) => &s.balances,
+            Self::BalancerWeighted(_, s) => &s.balances,
+            Self::BalancerStable(_, s) => &s.balances,
+        }
+    }
+
+    #[must_use]
+    pub fn n_tokens(&self) -> usize {
+        self.tokens().len()
+    }
+}
+
+#[cfg(test)]
+mod structure_tests {
+    //! ADR-059 D1: the identity's coarse structure is the taxonomy accessor
+    //! every tier's projection starts from.
+    use super::*;
+
+    #[test]
+    fn identity_projects_onto_its_structure() {
+        let cases: &[(Identity, Structure)] = &[
+            (
+                Identity::ReservePair {
+                    variant: ReservePairVariant::UniswapV2,
+                    dex: None,
+                },
+                Structure::ReservePair,
+            ),
+            (
+                Identity::ReservePair {
+                    variant: ReservePairVariant::AerodromeV2 { stable: true },
+                    dex: None,
+                },
+                Structure::ReservePair,
+            ),
+            (
+                Identity::ReservePair {
+                    variant: ReservePairVariant::AerodromeV2 { stable: false },
+                    dex: None,
+                },
+                Structure::ReservePair,
+            ),
+            (
+                Identity::ConcentratedLiquidity {
+                    variant: ConcentratedLiquidityVariant::UniswapV3,
+                    dex: None,
+                },
+                Structure::ConcentratedLiquidity,
+            ),
+            (
+                Identity::ConcentratedLiquidity {
+                    variant: ConcentratedLiquidityVariant::UniswapV4,
+                    dex: None,
+                },
+                Structure::ConcentratedLiquidity,
+            ),
+            (
+                Identity::BalanceVector {
+                    variant: BalanceVectorVariant::Curve,
+                    dex: None,
+                },
+                Structure::BalanceVector,
+            ),
+            (
+                Identity::BalanceVector {
+                    variant: BalanceVectorVariant::BalancerWeighted,
+                    dex: None,
+                },
+                Structure::BalanceVector,
+            ),
+            (
+                Identity::BalanceVector {
+                    variant: BalanceVectorVariant::BalancerStable,
+                    dex: None,
+                },
+                Structure::BalanceVector,
+            ),
+            (
+                Identity::BinnedLiquidity {
+                    variant: BinnedLiquidityVariant::Lfj,
+                    dex: None,
+                },
+                Structure::BinnedLiquidity,
+            ),
+        ];
+        for (identity, structure) in cases {
+            assert_eq!(identity.structure(), *structure);
+        }
+    }
+}

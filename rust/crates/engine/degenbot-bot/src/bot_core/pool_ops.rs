@@ -15,8 +15,8 @@
 use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U256};
-use degenbot_pools::curve_data_provider::CurveDataProvider;
-use degenbot_pools::registry::RegisteredPoolFamily;
+use degenbot_pools::sim::curve_data_provider::CurveDataProvider;
+use degenbot_pools::sim::registry::RegisteredPoolFamily;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::swap_simulation::{
     simulate_pair_in_given_out, simulate_pair_out, Caveats, OverrideOutcome, OverrideState,
@@ -125,7 +125,7 @@ pub fn curve_data_provider(
 ) -> Option<Arc<dyn CurveDataProvider>> {
     let guard = state.read_at(LockSite::Orchestrator);
     guard
-        .pool_slice::<degenbot_pools::curve_state::CurvePoolState>(pool_id)?
+        .pool_slice::<degenbot_pools::state::curve_state::CurvePoolState>(pool_id)?
         .data_provider
         .clone()
 }

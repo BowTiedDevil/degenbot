@@ -92,7 +92,7 @@ pub enum HopSwapError {
 /// Reserves are held as `U256` to match the on-chain `getAmountOut` arithmetic
 /// width (`uint256`): the pair contract stores reserves as `uint112`, but the
 /// swap math widens them to `uint256` (`SafeMath`). Reserves sourced from
-/// [`V2PoolState`](degenbot_pools::v2_state::V2PoolState) (`uint112`) are
+/// [`V2PoolState`](degenbot_pools::state::v2_state::V2PoolState) (`uint112`) are
 /// widened at the call site — the same widening `Solidity` performs.
 ///
 /// `gamma_numer` / `fee_denom` are likewise held as `U256` (the swap-math

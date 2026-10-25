@@ -12,15 +12,17 @@
 //! Vecs). When a task intentionally changes a size, update the assert AND cite
 //! the epic task in a comment beside the new number.
 
-use degenbot_pools::balancer_stable_state::{BalancerStablePoolIdentity, BalancerStablePoolState};
-use degenbot_pools::balancer_weighted_state::{
+use degenbot_pools::sim::registry::PoolEntry;
+use degenbot_pools::state::balancer_stable_state::{
+    BalancerStablePoolIdentity, BalancerStablePoolState,
+};
+use degenbot_pools::state::balancer_weighted_state::{
     BalancerWeightedPoolIdentity, BalancerWeightedPoolState,
 };
-use degenbot_pools::curve_state::{CurvePoolIdentity, CurvePoolState};
-use degenbot_pools::registry::PoolEntry;
-use degenbot_pools::v2_state::V2PoolState;
-use degenbot_pools::v3_state::V3PoolState;
-use degenbot_pools::v4_state::V4PoolState;
+use degenbot_pools::state::curve_state::{CurvePoolIdentity, CurvePoolState};
+use degenbot_pools::state::v2_state::V2PoolState;
+use degenbot_pools::state::v3_state::V3PoolState;
+use degenbot_pools::state::v4_state::V4PoolState;
 use degenbot_pools::TickInfo;
 use std::mem::size_of;
 

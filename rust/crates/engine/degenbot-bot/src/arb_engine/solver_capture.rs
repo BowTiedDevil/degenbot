@@ -229,7 +229,7 @@ impl CaptureVariant {
 /// no alloy serde) — shared by both capture variants and matching the all-concentrated-liquidity
 /// JSONL schema.
 fn concentrated_liquidity_ranges_json(
-    seq: &::degenbot_pools::int_v3_hop::IntV3TickRangeSequence,
+    seq: &::degenbot_pools::state::int_v3_hop::IntV3TickRangeSequence,
 ) -> serde_json::Value {
     serde_json::Value::Array(
         seq.ranges
@@ -356,8 +356,8 @@ mod heavy_path_capture_tests {
     use super::{CaptureVariant, HeavyPathCapture};
     use ::degenbot_config::schema::CaptureConfig;
     use ::degenbot_math::v2::IntHopState;
-    use ::degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use ::degenbot_pools::solve::{ResolvedHop, ResolvedMixedPath};
+    use ::degenbot_pools::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use alloy::primitives::U256;
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);

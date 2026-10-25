@@ -1,6 +1,6 @@
 use super::*;
 use crate::concentrated_liquidity_route::{ApplyOutcome, BufferKind};
-use degenbot_pools::buffered_event::PoolLiquidityUpdate;
+use degenbot_pools::families::buffered_event::PoolLiquidityUpdate;
 
 /// ADR-040: the quarantine seam is idempotent, counts depth,
 /// and bumps the pool's `state_nonce` (dirties the pool) on BOTH transitions
@@ -123,7 +123,7 @@ fn fresh_pool_lifecycle_is_coverage_aware() {
     // Tracked V4 → Quarantined (register_v4_on_core uses Tracked).
     let tracked_v4 = register_v4_on_core(&mut core, 0);
     assert_eq!(
-        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(tracked_v4)
+        core.pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(tracked_v4)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Quarantined
@@ -132,7 +132,7 @@ fn fresh_pool_lifecycle_is_coverage_aware() {
     // Sparse V3 → Live (register_v3_on_core uses Sparse).
     let sparse_v3 = register_v3_on_core(&mut core, Address::from([0x88u8; 20]), 0);
     assert_eq!(
-        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(sparse_v3)
+        core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(sparse_v3)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Live
@@ -177,7 +177,7 @@ fn fresh_pool_lifecycle_is_coverage_aware() {
         })
         .expect("sparse V4 registration");
     assert_eq!(
-        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(sparse_v4)
+        core.pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(sparse_v4)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Live
@@ -214,7 +214,7 @@ fn fresh_pool_lifecycle_is_coverage_aware() {
         })
         .expect("tracked V3 registration");
     assert_eq!(
-        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(tracked_v3)
+        core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(tracked_v3)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Quarantined
@@ -234,7 +234,7 @@ fn sparse_pool_ignores_set_quarantined() {
     register_v3_on_core(&mut core, pool_addr, 0);
     PoolLookup::from_address(pool_addr).begin_registration_quarantine(&mut core);
     assert_eq!(
-        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(
+        core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(
             core.pool_id_by_address(&pool_addr).unwrap()
         )
         .unwrap()
@@ -287,13 +287,13 @@ fn release_all_quarantined_flushes_and_marks_live() {
     let tracked_v4 = register_v4_on_core(&mut core, 0);
     let _ = tracked_v3; // Sparse → Live from the start, not in the sweep.
     assert_eq!(
-        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(tracked_v3b)
+        core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(tracked_v3b)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Quarantined
     );
     assert_eq!(
-        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(tracked_v4)
+        core.pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(tracked_v4)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Quarantined
@@ -302,13 +302,13 @@ fn release_all_quarantined_flushes_and_marks_live() {
     core.release_all_quarantined();
 
     assert_eq!(
-        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(tracked_v3b)
+        core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(tracked_v3b)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Live
     );
     assert_eq!(
-        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(tracked_v4)
+        core.pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(tracked_v4)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Live
@@ -316,7 +316,7 @@ fn release_all_quarantined_flushes_and_marks_live() {
     // The Sparse V3 (register_v3_on_core) was already Live; release
     // (which would be idempotent) is safe here too.
     assert_eq!(
-        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(tracked_v3)
+        core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(tracked_v3)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Live
@@ -341,14 +341,14 @@ fn quarantined_v4_pool_defers_live_swap_to_pump_buffer() {
     }
     .begin_registration_quarantine(&mut core);
     assert_eq!(
-        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        core.pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Quarantined
     );
     // Snapshot the pre-swap state.
     let pre = core
-        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
         .unwrap()
         .clone();
     let pre_count = core
@@ -373,7 +373,7 @@ fn quarantined_v4_pool_defers_live_swap_to_pump_buffer() {
     );
     // The swap was deferred: scalars + update_block unchanged.
     let s = core
-        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
         .unwrap();
     assert_eq!(
         s.update_block, pre.update_block,
@@ -414,14 +414,14 @@ fn quarantined_v4_pool_defers_live_modify_liquidity_to_pump_buffer() {
     }
     .begin_registration_quarantine(&mut core);
     let pre_t60 = core
-        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
         .unwrap()
         .tick_data
         .get(&60)
         .unwrap()
         .clone();
     let pre_update_block = core
-        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
         .unwrap()
         .update_block;
     let pre_count = core
@@ -442,7 +442,7 @@ fn quarantined_v4_pool_defers_live_modify_liquidity_to_pump_buffer() {
         "a quarantined pool's live Burn is staged, not dropped"
     );
     let s = core
-        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
         .unwrap();
     assert_eq!(
         *s.tick_data.get(&60).unwrap(),
@@ -601,7 +601,7 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
     }
     .mark_registration_live(&mut core);
     let s = core
-        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
         .unwrap();
     assert_eq!(s.registration_lifecycle, RegistrationLifecycle::Live);
     assert_eq!(s.update_block, 11, "flush applied both events at block 11");
@@ -640,7 +640,7 @@ fn set_v4_pool_live_flushes_retained_tail_and_marks_live() {
         "Live pool applies directly — no buffering"
     );
     let s = core
-        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
         .unwrap();
     assert_eq!(
         s.tick_data.get(&60).unwrap().liquidity_gross,
@@ -686,7 +686,7 @@ fn live_pool_applies_modify_liquidity_directly() {
         "Live pool never buffers"
     );
     let s = core
-        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
         .unwrap();
     // Two-stamp rule: tick-map-only ModifyLiquidity → liquidity clock
     // advances; the price clock stays at the seed block 10.
@@ -804,7 +804,7 @@ fn quarantined_pool_dual_buffer_drain_correctness() {
     }
     .mark_registration_live(&mut core);
     let s = core
-        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
         .unwrap();
     // Two-stamp rule: the retained-tail Burn (block 11) is tick-map-only,
     // so it advances the LIQUIDITY clock; the price clock stays at 10.
@@ -987,21 +987,21 @@ fn concurrent_registration_lifecycle_invariant() {
     // tick 60 unchanged (block-11 Mint retained). Pool 1's scalars
     // unchanged (block-11 Swap retained).
     let s0 = core
-        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_ids[0].1)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_ids[0].1)
         .unwrap();
     assert_eq!(
         s0.tick_data.get(&60).unwrap().liquidity_gross,
         U128::from(100)
     );
     let s2 = core
-        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_ids[2].1)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_ids[2].1)
         .unwrap();
     assert_eq!(
         s2.tick_data.get(&60).unwrap().liquidity_gross,
         U128::from(100)
     );
     let s1 = core
-        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_ids[1].1)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_ids[1].1)
         .unwrap();
     assert_eq!(s1.sqrt_price_x96, U256::from(1u128) << 96, "swap deferred");
 }
@@ -1146,7 +1146,7 @@ fn reorg_during_quarantine_pin_is_independent_of_live_rollback() {
     // (which lacks the Mint) → mismatch → fail-fast (the reorg surfaces).
     core.restore_pool_before_block(pool_id, 10);
     let s = core
-        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
         .unwrap();
     assert_eq!(
         s.tick_data.get(&60).unwrap().liquidity_gross,
@@ -1208,7 +1208,7 @@ fn v3_liquidity_update_door_reports_the_pump_buffer_for_a_quarantined_pool() {
     // is exercised against the not-yet-live pool explicitly.
     PoolLookup::from_address(pool_addr).begin_registration_quarantine(&mut core);
     assert_eq!(
-        core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_id)
+        core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Quarantined,
@@ -1242,7 +1242,7 @@ fn v4_liquidity_update_door_reports_the_pump_buffer_for_a_quarantined_pool() {
     }
     .begin_registration_quarantine(&mut core);
     assert_eq!(
-        core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_id)
+        core.pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
             .unwrap()
             .registration_lifecycle,
         RegistrationLifecycle::Quarantined,

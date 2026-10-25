@@ -14,7 +14,7 @@ use crate::{
     RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolError,
     RegisterV3PoolParams, RegisterV4PoolParams,
 };
-use degenbot_pools::registry::RegisteredPoolFamily;
+use degenbot_pools::sim::registry::RegisteredPoolFamily;
 
 // ---------------------------------------------------------------------------
 // Params builders (one per family), mirroring the direct-entry tests.

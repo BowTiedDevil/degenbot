@@ -44,8 +44,8 @@ use degenbot_math::concentrated_liquidity::liquidity_mapping::{
     apply_liquidity_mapping_update, LiquidityAtTick as ApplyLiquidityAtTick,
 };
 pub use degenbot_pool_updater::fetch::{AlloyLiquidityLogSource, LiquidityLogSource};
-use degenbot_pools::tick_fetch::TickBootstrapRpc;
-use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
+use degenbot_pools::sim::tick_fetch::TickBootstrapRpc;
+use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
 use degenbot_pools::TickInfo;
 use degenbot_rpc::liquidity_verifier::{
     verify_liquidity_map, LiquidityMap as RpcLiquidityMap, LiquidityMapTarget,
@@ -613,7 +613,7 @@ impl PoolIngress {
         let Some(verifier) = self.verifier.as_ref() else {
             return Ok(());
         };
-        if seed.coverage != degenbot_pools::v3_state::PoolTickCoverage::Tracked {
+        if seed.coverage != degenbot_pools::state::v3_state::PoolTickCoverage::Tracked {
             return Ok(());
         }
         if self.verify_level == VerifyLevel::Bootstrap
@@ -981,8 +981,8 @@ mod tests {
     use degenbot_db::error::DbError;
     use degenbot_db::snapshot::LiquidityAtTick;
     use degenbot_db::{ApplyLiquidityAtTick, ExchangeFamily};
-    use degenbot_pools::tick_fetch::{BootstrapTickError, BootstrapTickWord};
-    use degenbot_pools::v3_state::PoolTickCoverage;
+    use degenbot_pools::sim::tick_fetch::{BootstrapTickError, BootstrapTickWord};
+    use degenbot_pools::state::v3_state::PoolTickCoverage;
 
     const CHAIN: i64 = 1;
     const POOL: Address = Address::new([0x11; 20]);

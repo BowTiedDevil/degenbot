@@ -47,43 +47,45 @@ pub mod tick_assembly;
 // Re-export the pool-registry + family-state types the substrate modules
 // share (the same set `degenbot-bot::bot_core` re-exports at its historical
 // paths — ADR-003: family states live in `degenbot-pools`).
-pub use ::degenbot_pools::aerodrome_v2_state::{
-    AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromePoolError,
-    RegisterAerodromeV2PoolParams,
-};
-pub use ::degenbot_pools::balancer_stable_state::RegisterBalancerStablePoolParams;
-pub use ::degenbot_pools::balancer_weighted_state::RegisterBalancerWeightedPoolParams;
-pub use ::degenbot_pools::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
-pub use ::degenbot_pools::curve_dy_io::{
+pub use ::degenbot_pools::sim::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
+pub use ::degenbot_pools::sim::curve_dy_io::{
     check_metapool_liquidity, check_pool_liquidity, resolve_dy_inputs, CurveInputsError,
 };
-pub use ::degenbot_pools::curve_state::{
-    CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams,
-};
-pub use ::degenbot_pools::rate_provider::{
+pub use ::degenbot_pools::sim::rate_provider::{
     BalancerRateProvider, RateProviderError, StaticRateProvider,
 };
-pub use ::degenbot_pools::registration_refusal::{BuildFailure, RegisterRefusal, SpecRefusal};
-pub use ::degenbot_pools::registry::{
+pub use ::degenbot_pools::sim::registration_refusal::{BuildFailure, RegisterRefusal, SpecRefusal};
+pub use ::degenbot_pools::sim::registry::{
     ConcentratedLiquidityPool, ConcentratedLiquidityPoolMut, PoolEntry, PoolEntrySlice,
     RegisteredPoolFamily, TokenEntry,
 };
-pub use ::degenbot_pools::simulate_swap::simulate_swap;
-pub use ::degenbot_pools::spec_bounds::{SpecValue, SpecViolation, UINT112_MAX};
-pub use ::degenbot_pools::state_history::{BalancesBlockDelta, JournalError, ReorgPoolState};
-pub use ::degenbot_pools::tick_map::{TickMap, TickMapMut};
-pub use ::degenbot_pools::v2_state::{
+pub use ::degenbot_pools::sim::simulate_swap::simulate_swap;
+pub use ::degenbot_pools::state::aerodrome_v2_state::{
+    AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromePoolError,
+    RegisterAerodromeV2PoolParams,
+};
+pub use ::degenbot_pools::state::balancer_stable_state::RegisterBalancerStablePoolParams;
+pub use ::degenbot_pools::state::balancer_weighted_state::RegisterBalancerWeightedPoolParams;
+pub use ::degenbot_pools::state::curve_state::{
+    CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams,
+};
+pub use ::degenbot_pools::state::spec_bounds::{SpecValue, SpecViolation, UINT112_MAX};
+pub use ::degenbot_pools::state::state_history::{
+    BalancesBlockDelta, JournalError, ReorgPoolState,
+};
+pub use ::degenbot_pools::state::tick_map::{TickMap, TickMapMut};
+pub use ::degenbot_pools::state::v2_state::{
     RegisterV2PoolError, RegisterV2PoolParams, V2PoolIdentity, V2PoolState,
 };
-pub use ::degenbot_pools::v3_state::{
+pub use ::degenbot_pools::state::v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, BufferedV3PoolEvent, BufferedV3SwapEvent,
     ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams,
     RegistrationLifecycle, SimulateSwapError, V3PoolIdentity, V3PoolState, V3StateSync,
     V3SwapOutcome, V3SwapUpdate,
 };
 
-pub use ::degenbot_pools::state_update::{PoolRefusal, PoolStateUpdate};
-pub use ::degenbot_pools::v4_state::{
+pub use ::degenbot_pools::families::state_update::{PoolRefusal, PoolStateUpdate};
+pub use ::degenbot_pools::state::v4_state::{
     v4_simulate_swap, BufferedV4LiquidityUpdate, BufferedV4PoolEvent, BufferedV4SwapEvent,
     RegisterV4PoolError, RegisterV4PoolParams, V4PoolIdentity, V4PoolKey, V4PoolState, V4StateSync,
     V4SwapUpdate, AMOUNT_MODIFYING_HOOK_MASK, V4_DYNAMIC_FEE_FLAG,
@@ -266,13 +268,16 @@ pub struct BotCurveBasePoolPort<'a> {
 impl CurveBasePoolPort for BotCurveBasePoolPort<'_> {
     fn token_count(&self) -> usize {
         self.state
-            .pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.base_id)
-            .map_or(0, degenbot_pools::curve_state::CurvePoolIdentity::n_coins)
+            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.base_id)
+            .map_or(
+                0,
+                degenbot_pools::state::curve_state::CurvePoolIdentity::n_coins,
+            )
     }
 
     fn fee(&self) -> U256 {
         self.state
-            .pool_slice::<degenbot_pools::curve_state::CurvePoolIdentity>(self.base_id)
+            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.base_id)
             .map_or(U256::ZERO, |id| U256::from(id.fee))
     }
 

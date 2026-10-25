@@ -13,7 +13,7 @@ use alloy::primitives::{address, Address, I256, U256};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::discovery::V3PoolRowInput;
 use degenbot_db::ApplyLiquidityAtTick;
-use degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout;
+use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };

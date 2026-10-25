@@ -53,10 +53,10 @@ pub(crate) fn project_v3(
     pool_ref: &MixedPoolRef,
 ) -> Result<(ResolvedHop, u64), MissingHopReason> {
     let pool_state = core
-        .pool_slice::<degenbot_pools::v3_state::V3PoolState>(pool_ref.pool_key)
+        .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingState)?;
     let identity = core
-        .pool_slice::<degenbot_pools::v3_state::V3PoolIdentity>(pool_ref.pool_key)
+        .pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
     // Build the sequence ONCE through the family door and Arc-share it -
     // every path reusing this (pool, direction) clones an Arc, not the
@@ -88,10 +88,10 @@ pub(crate) fn project_v4(
     pool_ref: &MixedPoolRef,
 ) -> Result<(ResolvedHop, u64), MissingHopReason> {
     let pool_state = core
-        .pool_slice::<degenbot_pools::v4_state::V4PoolState>(pool_ref.pool_key)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingState)?;
     let identity = core
-        .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(pool_ref.pool_key)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
     // ADR-037: hooked pools are ADMITTED at registration but are
     // not solvable — the concentrated liquidity math assumes no hook intervention. Paths that
@@ -99,7 +99,7 @@ pub(crate) fn project_v4(
     // invalidation telemetry counts them. The door re-checks in capture
     // order (viability, then hook, then walk) — this row-side check keeps
     // the hook refusal ahead of the stateless-mode compute path.
-    if ::degenbot_pools::v4_state::has_amount_modifying_hook(identity.pool_key.hooks) {
+    if ::degenbot_pools::state::v4_state::has_amount_modifying_hook(identity.pool_key.hooks) {
         return Err(MissingHopReason::HookedPool);
     }
     let int_seq = concentrated_liquidity_read::capture_hop(
@@ -289,7 +289,7 @@ mod tests {
             );
             assert_eq!(
                 nonce,
-                core.pool_slice::<degenbot_pools::v3_state::V3PoolState>(v3_id)
+                core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(v3_id)
                     .expect("state")
                     .state_nonce
             );
@@ -368,7 +368,7 @@ mod tests {
         );
         assert_eq!(
             nonce,
-            core.pool_slice::<degenbot_pools::v4_state::V4PoolState>(v4_id)
+            core.pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(v4_id)
                 .expect("state")
                 .state_nonce
         );

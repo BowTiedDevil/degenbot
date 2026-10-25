@@ -8,7 +8,7 @@
 //! (`make_v3_hop_at_1to1`, `multi_range_sequence`, the mixed memo fixtures)
 //! stay in `super`.
 
-use crate::int_v3_hop::IntV3TickRangeSequence;
+use crate::state::int_v3_hop::IntV3TickRangeSequence;
 use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
 

@@ -34,10 +34,10 @@
 use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, U256};
-use degenbot_pools::slot_layout;
+use degenbot_pools::state::slot_layout;
+use degenbot_pools::state::{v3_storage_slots, v4_storage_slots};
 use degenbot_pools::{
-    v3_storage_slots, v4_storage_slots, ConcentratedLiquiditySlotLayout,
-    ConcentratedLiquidityVariant, Identity, ReservePairVariant,
+    ConcentratedLiquiditySlotLayout, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
 };
 use hashbrown::HashMap;
 

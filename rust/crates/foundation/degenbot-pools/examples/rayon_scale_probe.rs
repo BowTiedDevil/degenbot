@@ -44,12 +44,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use alloy::primitives::U256;
-use degenbot_pools::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_pools::solve::concentrated_liquidity::{
     build_concentrated_liquidity_crossing_table, build_concentrated_liquidity_word_profiles,
     PreparedConcentratedLiquidityHop, WalkStats,
 };
 use degenbot_pools::solve::{solve_path_with_min_profit, ResolvedHop, ResolvedMixedPath};
+use degenbot_pools::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use rayon::prelude::*;
 use serde_json::Value;
 

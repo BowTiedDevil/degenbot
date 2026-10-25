@@ -2,9 +2,9 @@
 
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 use alloy::primitives::{aliases::U112, Address, B256, U256};
-use degenbot_pools::registry::PoolEntry;
-use degenbot_pools::state_history::{ReorgJournal, V2BlockDelta};
-use degenbot_pools::v2_state::{V2PoolIdentity, V2PoolState};
+use degenbot_pools::sim::registry::PoolEntry;
+use degenbot_pools::state::state_history::{ReorgJournal, V2BlockDelta};
+use degenbot_pools::state::v2_state::{V2PoolIdentity, V2PoolState};
 use degenbot_pools::{Identity, Pool, ReservePairVariant, Structure};
 use degenbot_uniswap::dex_identity::DexVariant;
 

@@ -29,17 +29,17 @@ use alloy::primitives::{Address, I256};
 use super::{CaptureRefusal, DesignScalars, Observe, Observed, OverrideScalars};
 
 use crate::families::door::FamilyApply;
-use crate::int_v3_hop::IntV3TickRangeSequence;
-use crate::registry::ConcentratedLiquidityPoolMut as _;
-use crate::v3_state::V3SwapOutcome;
-use crate::v3_state::{PoolTickCoverage, SimulateSwapError};
-use crate::v4_state::{has_amount_modifying_hook, v4_simulate_swap};
+use crate::sim::registry::ConcentratedLiquidityPoolMut as _;
+use crate::state::int_v3_hop::IntV3TickRangeSequence;
+use crate::state::v3_state::V3SwapOutcome;
+use crate::state::v3_state::{PoolTickCoverage, SimulateSwapError};
+use crate::state::v4_state::{has_amount_modifying_hook, v4_simulate_swap};
 
 /// The V4 state slice + its event/registration DTOs — the design's read
 /// surface lives in `crate::v4_state` (I/O-free per ADR-001) and is
 /// re-exported here so the family tree presents the whole read story under
 /// one path.
-pub use crate::v4_state::{
+pub use crate::state::v4_state::{
     BufferedV4LiquidityUpdate, BufferedV4PoolEvent, BufferedV4SwapEvent, RegisterV4PoolError,
     RegisterV4PoolParams, V4PoolIdentity, V4PoolKey, V4PoolState, V4StateSync, V4SwapUpdate,
 };

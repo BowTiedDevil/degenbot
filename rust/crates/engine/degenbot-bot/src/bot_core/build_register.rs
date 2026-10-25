@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U256};
 use degenbot_db::snapshot::TickMapDb;
-use degenbot_pools::tick_fetch::TickWordFetcher;
+use degenbot_pools::sim::tick_fetch::TickWordFetcher;
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
 use degenbot_substrate::PoolRegistration;
@@ -475,7 +475,7 @@ impl Bot {
         if let Some(registered_identity) = self
             .state_arc()
             .read_at(LockSite::Orchestrator)
-            .pool_slice::<degenbot_pools::v4_state::V4PoolIdentity>(registered)
+            .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(registered)
             .map(|i| parity::V4Identity {
                 currency0: i.pool_key.currency0,
                 currency1: i.pool_key.currency1,
@@ -688,7 +688,8 @@ mod tests {
             tick_data: hashbrown::HashMap::new(),
             update_block: 100,
             coverage: PoolTickCoverage::Sparse,
-            slot_layout: degenbot_pools::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
+            slot_layout:
+                degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
             ..Default::default()
         }
     }

@@ -16,8 +16,8 @@ use hashbrown::{HashMap, HashSet};
 
 use alloy::primitives::U256;
 
-use crate::state_history::{ReorgJournal, ScalarPriors, V3BlockDelta};
-use crate::v3_state::{PoolTickCoverage, RegistrationLifecycle};
+use crate::state::state_history::{ReorgJournal, ScalarPriors, V3BlockDelta};
+use crate::state::v3_state::{PoolTickCoverage, RegistrationLifecycle};
 use crate::TickInfo;
 use degenbot_math::concentrated_liquidity::functions::tick_position;
 
