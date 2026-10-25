@@ -4,9 +4,11 @@ An index of the repo's **ratchets** and the `architecture_gates.rs` family: a
 ratchet is a gate that fails on *new* occurrences of a defect class while
 grandfathering the existing ones in a census, so the count can only shrink.
 This page is the entry point for finding the right gate, reading its census,
-and adding an entry correctly. Each ratchet below lists the failure class it
-prevents (with the incident where known), where the gate body lives, where its
-census/data file lives, how to add an entry, and how to run it locally.
+and adding an entry correctly (the capability-home gates are decided by
+[ADR-084](adr/ADR-084-capability-homes.md)). Each ratchet below lists the
+failure class it prevents (with the incident where known), where the gate body
+lives, where its census/data file lives, how to add an entry, and how to run it
+locally.
 
 The five ratchets:
 
