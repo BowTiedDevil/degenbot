@@ -134,7 +134,7 @@ test-standalone:
 # net-gated suites (`test-fork`, `record-golden`, `verify-deployments`).
 
 # Default gate: workspace lint (fails fast) + standalone smoke + cargo workspace + full pytest.
-test: lint-rust-check test-rust-nextest test-python
+test: lint-rust-check test-rust-nextest test-python check-consumer-probes
 
 # Run the pre-push gates before `git push`. prek.toml's
 # `stages = ["pre-push"]` entries are the single owner of the gate list (the
@@ -534,6 +534,17 @@ check-capability-catalog:
 # fails here. Wired into `lint-rust-check`.
 check-dependency-charter:
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- dependency_charter_is_respected --exact --nocapture
+
+# ADR-084 D1/C5 consumer probes: each named catalog consumer completes a real
+# task through its own surface. (ii) the pools-only Rust consumer solves a
+# path through the solve door; (iii) the Python driver solves through the FFI
+# seam; (v) the console operator runs the offline `config show --resolved`
+# task. Wired into `just test`; `check-rust-consumer` only checks the umbrella
+# and never runs pools' examples, so it cannot satisfy C5.
+check-consumer-probes:
+    cargo run --locked --manifest-path rust/Cargo.toml -p degenbot-pools --features capture-fixtures --example solve_path_probe
+    {{py_run}} pytest tests/standalone_parity/test_solve_surface_probe.py -q -p no:cacheprovider
+    {{py_run}} degenbot config show --resolved > /dev/null
 
 # Build Rust extension module in the release-equivalent feature set. This uses
 # the workspace development profile (opt-level = 1, no LTO or stripping) for
