@@ -6,10 +6,6 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Changed
 
-## Unreleased
-
-### Changed
-
 - **ADR-084 capability-surface cut (W2 - the solve door):** the
   `degenbot-pools` solve tree is curated behind intent-named doors. The
   published-path removals, with their replacements:
