@@ -10,7 +10,7 @@ failure class it prevents (with the incident where known), where the gate body
 lives, where its census/data file lives, how to add an entry, and how to run it
 locally.
 
-The five ratchets:
+The six ratchets:
 
 | Ratchet | Gate body | Census / data | Local command |
 | --- | --- | --- | --- |
@@ -19,6 +19,7 @@ The five ratchets:
 | Worker census | `rust/crates/foundation/degenbot-core/src/worker_census.rs` (+ `pubsub_runtime.rs` live counts) | the `register(...)` call sites themselves | `cargo test -p degenbot-core worker_census` |
 | Stub drift | `prek.toml` `stub-drift-staged` -> `just gen-stubs --check`; `tests/ffi/test_ffi_stub_drift.py` (compile-coupled test carries the `stub_drift` marker; runs once as the CI `stub-drift` job) | the committed `src/degenbot/_ffi/*.pyi` tree | `just lint-stub-drift` |
 | pytest noise gate | `scripts/pytest_noise_gate.sh` | the `signatures` array in that script | `just test-python-noise-gate` |
+| Capability catalog | `rust/crates/facade/degenbot/tests/architecture_gates.rs::capability_catalog_covers_every_public_crate` | `docs/capabilities.md` (the catalog itself) | `just check-capability-catalog` |
 
 ---
 

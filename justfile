@@ -352,7 +352,7 @@ crates-io-pending *args:
 # reference toolchain this is CI-identical (`--deny warnings`); on any other
 # supported toolchain it runs clippy's deny-by-default floor only, because the
 # lint surface drifts with the toolchain and CI is the strict authority.
-lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics
+lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics check-capability-catalog
     #!/usr/bin/env bash
     set -euo pipefail
     tier="$(scripts/toolchain_tier.sh)"
@@ -509,6 +509,14 @@ check-config-derived-statics:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- config_derived_statics_are_classified --exact --nocapture
+
+# ADR-084 D1 capability-catalog ratchet: docs/capabilities.md must name every
+# publishable crate at least once, resolve every home path against the module
+# tree, land every umbrella alias on a catalogged crate, and keep the console
+# rows on consumer (v). A new capability without a catalog row fails here.
+# Wired into `lint-rust-check` (hence `just lint` / CI).
+check-capability-catalog:
+    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- capability_catalog_covers_every_public_crate --exact --nocapture
 
 # Build Rust extension module in the release-equivalent feature set. This uses
 # the workspace development profile (opt-level = 1, no LTO or stripping) for

@@ -1981,3 +1981,177 @@ fn param_types_of(text: &str, function: &str) -> Vec<String> {
         })
         .collect()
 }
+
+/// ADR-084 D1: the capability catalog is authoritative and mechanically
+/// pinned. `docs/capabilities.md` must name every publishable crate at least
+/// once, every home path must resolve against the module tree, every umbrella
+/// alias must land on a catalogged crate, and the console rows must carry the
+/// consumer (v) task.
+#[test]
+fn capability_catalog_covers_every_public_crate() {
+    let catalog_path = repo_root().join("docs/capabilities.md");
+    let catalog = std::fs::read_to_string(&catalog_path).expect("read docs/capabilities.md");
+
+    // Parse catalog table rows (skip header and separator lines).
+    let rows: Vec<Vec<String>> = catalog
+        .lines()
+        .filter(|line| line.trim_start().starts_with("| **"))
+        .map(catalog_cells)
+        .collect();
+    assert!(
+        rows.len() >= 30,
+        "capability catalog lost rows: {}",
+        rows.len()
+    );
+
+    // Publishable workspace members (publish != []).
+    let mut publishable = std::collections::BTreeSet::<String>::default();
+    let mut manifest_of = std::collections::BTreeMap::<String, String>::default();
+    let out = Command::new("cargo")
+        .arg("metadata")
+        .arg("--format-version")
+        .arg("1")
+        .arg("--manifest-path")
+        .arg(manifest_flag())
+        .arg("--no-deps")
+        .output()
+        .expect("cargo metadata spawn");
+    assert!(out.status.success(), "cargo metadata failed");
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("cargo metadata json");
+    for package in v["packages"].as_array().expect("packages array") {
+        let name = package["name"].as_str().expect("name").to_owned();
+        if package["publish"].as_array().is_some() {
+            continue; // publish = [] -> unpublishable
+        }
+        publishable.insert(name.clone());
+        manifest_of.insert(
+            name,
+            package["manifest_path"]
+                .as_str()
+                .expect("manifest")
+                .to_owned(),
+        );
+    }
+    assert!(!publishable.is_empty(), "cargo metadata found no members");
+
+    // Homes named by the catalog.
+    let mut catalogged = std::collections::BTreeSet::<String>::default();
+    for row in &rows {
+        assert!(row.len() >= 6, "catalog row malformed: {row:?}");
+        for token in backtick_spans(&row[1]) {
+            if !token.starts_with("degenbot") {
+                continue;
+            }
+            let mut parts = token.split("::");
+            let crate_name = parts.next().expect("crate token");
+            let package_name = crate_name.replace('_', "-");
+            assert!(
+                publishable.contains(&package_name),
+                "catalog home {crate_name:?} is not a publishable workspace member"
+            );
+            let modules: Vec<&str> = parts.collect();
+            if !modules.is_empty() {
+                let src = Path::new(manifest_of.get(&package_name).expect("manifest"))
+                    .parent()
+                    .expect("manifest parent")
+                    .join("src");
+                resolve_module_path(&src, &modules, &token);
+            }
+            catalogged.insert(package_name);
+        }
+    }
+
+    // Every publishable crate appears at least once.
+    let uncovered: Vec<&String> = publishable.difference(&catalogged).collect();
+    assert!(
+        uncovered.is_empty(),
+        "publishable crates missing from docs/capabilities.md: {uncovered:?} \
+         (add a catalog row or make the crate unpublishable)"
+    );
+
+    // Every umbrella alias lands on a catalogged crate.
+    let facade_lib =
+        std::fs::read_to_string(workspace_root().join("crates/facade/degenbot/src/lib.rs"))
+            .expect("read facade lib.rs");
+    for line in facade_lib.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("pub use degenbot") else {
+            continue;
+        };
+        let end = rest
+            .find("::")
+            .or_else(|| rest.find(" as "))
+            .expect("alias target");
+        let target = format!("degenbot{}", &rest[..end]).replace('_', "-");
+        assert!(
+            catalogged.contains(&target),
+            "umbrella alias target {target:?} has no docs/capabilities.md row"
+        );
+    }
+
+    // The console rows carry consumer (v).
+    for row in &rows {
+        let console_row = backtick_spans(&row[1])
+            .iter()
+            .any(|t| t.starts_with("degenbot_cli"));
+        if console_row {
+            assert!(
+                row[4].contains("(v)"),
+                "console catalog row lost consumer (v): {row:?}"
+            );
+        }
+    }
+}
+
+/// Split a markdown table row into cells (leading empty cell dropped).
+fn catalog_cells(line: &str) -> Vec<String> {
+    line.split('|')
+        .map(str::trim)
+        .map(str::to_owned)
+        .skip(1)
+        .collect()
+}
+
+/// Backtick-delimited spans in `s` (the odd-indexed segments of a split on
+/// the backtick character).
+fn backtick_spans(s: &str) -> Vec<String> {
+    s.split('`')
+        .enumerate()
+        .filter(|(index, _)| index % 2 == 1)
+        .map(|(_, span)| span.to_owned())
+        .collect()
+}
+
+/// Every segment of `modules` must be a declared `pub mod` or a real file
+/// under `src` — the catalog may not name a path that does not compile.
+fn resolve_module_path(src: &Path, modules: &[&str], token: &str) {
+    let mut dir = src.to_path_buf();
+    for segment in modules {
+        let file = dir.join(format!("{segment}.rs"));
+        let nested = dir.join(segment).join("mod.rs");
+        let declared = file.exists()
+            || nested.exists()
+            || mod_declared_in(&dir.join("lib.rs"), segment)
+            || mod_declared_in(&dir.join("mod.rs"), segment);
+        assert!(
+            declared,
+            "catalog home {token:?}: segment {segment:?} does not resolve under {}",
+            src.display()
+        );
+        dir = dir.join(segment);
+    }
+}
+
+fn mod_declared_in(file: &Path, segment: &str) -> bool {
+    match std::fs::read_to_string(file) {
+        Ok(text) => text.lines().any(|line| {
+            let line = line.trim();
+            let Some(rest) = line.strip_prefix("pub mod ") else {
+                return false;
+            };
+            let name = rest.trim_end_matches([';', '{']).trim();
+            name == segment
+        }),
+        Err(_) => false,
+    }
+}

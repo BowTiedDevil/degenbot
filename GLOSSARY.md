@@ -514,6 +514,40 @@ state owner as inherent methods; a family read module that reaches back into `Bo
 a family- or design-shaped method name on the state owner's surface (the taxonomy lives
 in the slice type and the family paths, not in row names).
 
+**Capability home**:
+
+The one crate (and module inside it) that owns a user-visible capability
+(ADR-084 D1): the answer to "where do I call this" in `docs/capabilities.md`.
+Every publishable crate appears in the catalog at least once, every home path
+resolves to real code, and the catalog gate fails when a new capability lands
+without a row.
+
+_Avoid_: a second home for one capability; a capability that exists only as an
+uncatalogued module tree; a catalog row whose path does not compile.
+
+**Capability door**:
+
+The curated `pub` surface a capability home presents (ADR-084 D2): intent-named
+entry points plus the types reachable through their public fields (the door is
+*closed* under that rule, enforced by `clippy --deny warnings`). Distinct from
+ADR-078's **Family write door**, which is the registration seam specifically.
+
+_Avoid_: exposing a module tree where a door was asked for; a public field
+whose type is `pub(crate)` (private-types-in-public-interface); a lab example
+that reaches past the door (it earns door items, moves into `#[cfg(test)]`, or
+is deleted).
+
+**Dependency charter**:
+
+The declared set of dependency prefixes a crate may carry, treated as its
+published contract (ADR-084 D3) and asserted by `just check-dependency-charter`
+over `cargo tree -p X -e normal`. Seam crates add "no C-build dep" and
+"no pyo3".
+
+_Avoid_: growing a foundation crate's dependency set for fixture or lab
+machinery; a charter row without a rationale; whitelisting a leak instead of
+fixing it.
+
 **Family write door**:
 The one registration/construction entry on the state owner (ADR-078): ONE
 `PoolRegistration` request whose per-family params ride as additive variants, ONE
