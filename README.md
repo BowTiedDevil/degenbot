@@ -50,6 +50,8 @@ The Rust core is the engine; Python is a driver shell, not a co-implementation. 
 
 ## Overview
 
+> **Capability map:** every capability's Rust home, Python name, door items, and consumer probe is cataloged in [`docs/capabilities.md`](docs/capabilities.md) (ADR-084).
+
 Degenbot abstracts the implementation details of Uniswap liquidity pools and their underlying ERC-20 tokens into a set of Rust core crates exposed to Python through a thin PyO3 binding layer. The Rust core owns all performance-critical and stateful logic — pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding — while the Python companion provides the user-facing API, docstrings, and I/O orchestration.
 
 The Rust core also owns the operator-facing infrastructure: the settlement-arbitrage engine and pump loop, the in-process revm simulation engine, on-chain price readers, the DB-aware pool/Aave updaters, EIP-1559 transaction signing and submission, and WS/HTTP pub-sub. Python remains the user-facing API, configuration, and registry driver, while the Rust `degenbot-db` crate owns the SQLite schema, file lifecycle, and read/write operations. Python consumers use the stable typed mirror in `degenbot.db`; there is no Python SQLAlchemy session or ORM layer.
