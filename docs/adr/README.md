@@ -104,8 +104,18 @@ The load-bearing decisions behind the two-consumer architecture:
 | [069](ADR-069-prepared-hop-entry-surface.md) | The prepared hop becomes one value | accepted |
 | [070](ADR-070-updaters-are-the-sole-db-writers.md) | Updaters are the sole DB writers — the `writer` cargo fence, read-only opens, path-only schema init | accepted |
 | [071](ADR-071-family-modules-and-concentrated-liquidity-kernel.md) | Family modules and the Concentrated Liquidity Kernel — one module, one row, one enum arm supersedes the eight-site family change | accepted |
-| [073](ADR-073-family-read-modules.md) | The family read module — one family, two homes, rows at the seams; `concentrated_liquidity` naming | proposed |
+| [073](ADR-073-family-read-modules.md) | The family read module — one family, two homes, rows at the seams; `concentrated_liquidity` naming | accepted / implemented (landed across epic JE3DED; A5 amendment dissolved `degenbot-solvers`) |
 | [074](ADR-074-push-gate-manifest.md) | The push-gate manifest — `just pre-push` delegates to prek.toml's pre-push entries | accepted |
+| [075](ADR-075-mirrored-engine-surfaces-stay.md) | The mirrored engine surfaces stay — the driver/stages mirror is accepted, policed by the drift gates | accepted |
+| [076](ADR-076-epoch-phases.md) | The epoch phases — `SolveCycle::run_epoch` decomposes into named phases behind one interface | accepted |
+| [077](ADR-077-refusal-vocabulary.md) | The refusal vocabulary — one `RefusalKind` owned by the registration outcome ledger, and the eligibility gate moves core-side | accepted |
+| [078](ADR-078-family-write-door.md) | The family write door — one `PoolRegistration` request, one verdict, family as data | accepted |
+| [079](ADR-079-seat-host-split.md) | The seat host split — two seat models behind one host loop | accepted |
+| [080](ADR-080-cl-state-module.md) | The concentrated-liquidity state module — the Concentrated Liquidity Kernel's state-side sibling | accepted / implemented (journals, bitmap seeding, and viability/cache extracted into `families/concentrated_liquidity/{state_journal,state_seeding,state_walk}` over the `JournalHost`/`WalkHost` seams; test suites merged at `state_fixture`) |
+| [081](ADR-081-one-pool-lookup.md) | One pool lookup at the state seam | accepted |
+| [082](ADR-082-family-in-the-value.md) | Family lives in the value, not the name | accepted |
+| [083](ADR-083-pipeline-census-event-vocabulary.md) | The pipeline census — one event vocabulary behind one dispatch door | accepted |
+| [084](ADR-084-capability-homes.md) | Capability homes — doors, charters, one home per capability | accepted |
 
 ## Historical — provenance only
 
