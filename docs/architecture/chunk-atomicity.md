@@ -62,10 +62,10 @@ single-transaction-bound forms of the write surface.
 
 ## The pinned tests
 
-- `rust/crates/integrations/degenbot-pool-updater/tests/chunk_atomicity_contract.rs`
+- `rust/crates/foundation/degenbot-pool-updater/tests/chunk_atomicity_contract.rs`
   — interrupt → full rollback → restart clean (the original bug's regression:
   pools committed mid-chunk, stamp stale, restart hit `UNIQUE constraint`).
-- `rust/crates/integrations/degenbot-pool-updater/tests/no_duplicate_writer_contract.rs`
+- `rust/crates/foundation/degenbot-pool-updater/tests/no_duplicate_writer_contract.rs`
   — a second writer on the same file serializes via the SQLite file lock.
 - `rust/crates/foundation/degenbot-db/tests/writer_parity.rs` and the
   `degenbot-aave` atomicity tests — replaying the same event sequence twice

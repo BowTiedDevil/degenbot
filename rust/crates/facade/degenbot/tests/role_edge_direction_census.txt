@@ -1,0 +1,15 @@
+# ADR-084 D4 - capability layers, honestly named.
+#
+# Format (one allowed UPWARD edge per line; `#` comments; blank lines ignored):
+#   <dependent> -> <dependency> : rationale
+#
+# The gate (`role_edge_direction_is_enforced` in architecture_gates.rs)
+# resolves every normal `degenbot-*` dependency edge through the role
+# directories (foundation=0 < engine=1 < integrations=2) and fails on any
+# upward edge (a crate depending on something ranked above it) that is not
+# allowlisted here. The census can only shrink: every row needs a rationale,
+# and removing a row is the celebrate-able direction.
+#
+# At the W4 landing (ingestion/runs/pool-updater moved to foundation) the
+# allowlist is EMPTY: zero upward edges exist. Add a row only with a rationale
+# in the same commit that introduces the edge.

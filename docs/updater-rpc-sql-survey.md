@@ -1,6 +1,6 @@
 # Updater RPC/SQL survey — golden captures, measurement, and the perf program
 
-Survey of the pool updater (`rust/crates/integrations/degenbot-pool-updater`) and the
+Survey of the pool updater (`rust/crates/foundation/degenbot-pool-updater`; surveyed at its former integrations home) and the
 Aave updater (`rust/crates/integrations/degenbot-aave/src/updater`) for RPC- and
 SQL-level inefficiencies and the testability gap around their coherence mechanism.
 The decision this survey feeds is {doc}`adr/ADR-068-updater-golden-capture-replay`;

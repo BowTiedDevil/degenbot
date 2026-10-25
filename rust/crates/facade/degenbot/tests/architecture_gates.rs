@@ -2289,3 +2289,98 @@ fn dependency_charter_is_respected() {
         "dependency charter violations (ADR-084 D3): {violations:#?}"
     );
 }
+
+/// ADR-084 D4: capability layers, honestly named — edge direction is enforced
+/// over the `role_edge_direction_census.txt` allowlist, which can only shrink.
+#[test]
+fn role_edge_direction_is_enforced() {
+    let census_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/role_edge_direction_census.txt");
+    let census =
+        std::fs::read_to_string(&census_path).expect("read role_edge_direction_census.txt");
+    let allowed: std::collections::BTreeSet<String> = census
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            line.split(" :")
+                .next()
+                .expect("allowlist row")
+                .trim()
+                .to_owned()
+        })
+        .collect();
+
+    let out = Command::new("cargo")
+        .arg("metadata")
+        .arg("--format-version")
+        .arg("1")
+        .arg("--manifest-path")
+        .arg(manifest_flag())
+        .arg("--no-deps")
+        .output()
+        .expect("cargo metadata spawn");
+    assert!(out.status.success(), "cargo metadata failed");
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("cargo metadata json");
+
+    // Role rank per member: foundation=0 < engine=1 < integrations=2.
+    // shells/facade compose and stay unranked.
+    let rank = |role: &str| match role {
+        "foundation" => Some(0u8),
+        "engine" => Some(1),
+        "integrations" => Some(2),
+        _ => None,
+    };
+    let mut role_of = std::collections::BTreeMap::<String, String>::default();
+    let mut deps_of = std::collections::BTreeMap::<String, Vec<String>>::default();
+    for package in v["packages"].as_array().expect("packages array") {
+        let name = package["name"].as_str().expect("name").to_owned();
+        let manifest = package["manifest_path"].as_str().expect("manifest");
+        let crates_marker = format!("{}/crates/", workspace_root().display());
+        if let Some(rest) = manifest.strip_prefix(&crates_marker) {
+            role_of.insert(
+                name.clone(),
+                rest.split('/').next().expect("role").to_owned(),
+            );
+        }
+        let deps: Vec<String> = package["dependencies"]
+            .as_array()
+            .expect("dependencies array")
+            .iter()
+            .filter(|d| d["kind"].as_str().is_none())
+            .filter_map(|d| d["name"].as_str())
+            .filter(|n| n.starts_with("degenbot"))
+            .map(str::to_owned)
+            .collect();
+        deps_of.insert(name, deps);
+    }
+    assert!(role_of.len() >= 30, "role map collapsed: {}", role_of.len());
+
+    let mut violations: Vec<String> = Vec::new();
+    for (dependent, role) in &role_of {
+        let Some(dependent_rank) = rank(role) else {
+            continue;
+        };
+        for dep in &deps_of[dependent] {
+            let Some(dep_role) = role_of.get(dep) else {
+                continue;
+            };
+            let Some(dep_rank) = rank(dep_role) else {
+                continue;
+            };
+            if dep_rank <= dependent_rank {
+                continue;
+            }
+            let edge = format!("{dependent} -> {dep}");
+            if !allowed.contains(&edge) {
+                violations.push(format!(
+                    "{edge} ({dependent}:{role} depends on {dep}:{dep_role})"
+                ));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "upward role edges outside the census (ADR-084 D4,          role_edge_direction_census.txt): {violations:#?}"
+    );
+}

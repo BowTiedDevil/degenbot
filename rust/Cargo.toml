@@ -105,15 +105,15 @@ degenbot-execution = { version = "0.6.0-alpha.17", path = "crates/engine/degenbo
 degenbot-executor = { version = "0.6.0-alpha.17", path = "crates/foundation/degenbot-executor" }
 degenbot-eventhub = { version = "0.6.0-alpha.17", path = "crates/foundation/degenbot-eventhub" }
 degenbot-fork = { version = "0.6.0-alpha.17", path = "crates/integrations/degenbot-fork" }
-degenbot-ingestion = { version = "0.6.0-alpha.17", path = "crates/integrations/degenbot-ingestion" }
+degenbot-ingestion = { version = "0.6.0-alpha.17", path = "crates/foundation/degenbot-ingestion" }
 degenbot-math = { version = "0.6.0-alpha.17", path = "crates/foundation/degenbot-math" }
 degenbot-order-index = { version = "0.6.0-alpha.17", path = "crates/foundation/degenbot-order-index" }
 degenbot-pathfinding = { version = "0.6.0-alpha.17", path = "crates/foundation/degenbot-pathfinding" }
-degenbot-pool-updater = { version = "0.6.0-alpha.17", path = "crates/integrations/degenbot-pool-updater" }
+degenbot-pool-updater = { version = "0.6.0-alpha.17", path = "crates/foundation/degenbot-pool-updater" }
 degenbot-pools = { version = "0.6.0-alpha.17", path = "crates/foundation/degenbot-pools" }
 degenbot-price = { version = "0.6.0-alpha.17", path = "crates/integrations/degenbot-price" }
 degenbot-rpc = { version = "0.6.0-alpha.17", path = "crates/foundation/degenbot-rpc" }
-degenbot-runs = { version = "0.6.0-alpha.17", path = "crates/integrations/degenbot-runs" }
+degenbot-runs = { version = "0.6.0-alpha.17", path = "crates/foundation/degenbot-runs" }
 degenbot-simulation = { version = "0.6.0-alpha.17", path = "crates/engine/degenbot-simulation" }
 degenbot-strategy = { version = "0.6.0-alpha.17", path = "crates/engine/degenbot-strategy" }
 degenbot-submission = { version = "0.6.0-alpha.17", path = "crates/engine/degenbot-submission" }
@@ -165,10 +165,12 @@ members = [
     "crates/engine/degenbot-workers",
     "crates/integrations/degenbot-aave",
     "crates/integrations/degenbot-fork",
-    "crates/integrations/degenbot-ingestion",
-    "crates/integrations/degenbot-pool-updater",
     "crates/integrations/degenbot-price",
-    "crates/integrations/degenbot-runs",
+    # ADR-084 D4: transport/IO the stack depends on is foundation — ingestion,
+    # runs, and pool-updater moved out of integrations (W4).
+    "crates/foundation/degenbot-ingestion",
+    "crates/foundation/degenbot-pool-updater",
+    "crates/foundation/degenbot-runs",
     "crates/shells/degenbot-cli",
     "crates/shells/degenbot-cli-core",
     "crates/shells/degenbot-python",

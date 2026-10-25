@@ -89,12 +89,9 @@ on-chain systems, and operator infrastructure.
 
 | Crate | Capability ownership |
 | --- | --- |
-| `degenbot-ingestion` | WebSocket block/log intake, filtering, backfill, and watchdog policy. |
-| `degenbot-pool-updater` | Typed pool-event fetching and transactional chunk application. |
 | `degenbot-aave` | Aave V3 updater, position analysis, and Aave fixed-point math integration. |
 | `degenbot-price` | On-chain Chainlink and Aave-oracle price readers. |
 | `degenbot-fork` | Anvil fork lifecycle and development RPC support. |
-| `degenbot-runs` | Per-session run artifacts (stdout log and trace JSONL). |
 
 ### Foundation crates
 
@@ -117,6 +114,9 @@ meaningful without a complete bot runtime.
 | `degenbot-order-index` | Net-profit order indexing under variable gas price. |
 | `degenbot-executor` | Cmd-executor domain layout and storage math. |
 | `degenbot-eventhub` | Transport-pure event vocabulary and overflow policy for in-process fan-out. |
+| `degenbot-ingestion` | WebSocket block/log intake, filtering, backfill, and watchdog policy (moved from integrations — ADR-084 D4: the stack depends on it). |
+| `degenbot-runs` | Per-session run artifacts (stdout log and trace JSONL) (moved from integrations — ADR-084 D4). |
+| `degenbot-pool-updater` | Typed pool-event fetching and transactional chunk application (moved from integrations — ADR-084 D4). |
 
 ### Non-publishable examples
 

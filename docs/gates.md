@@ -291,6 +291,9 @@ current gates:
 - `core_public_docs_do_not_define_contracts_through_python_symbols`
 - `no_timeout_wrapped_value_sends_or_write_all`
 - `config_derived_statics_are_classified`
+- `capability_catalog_covers_every_public_crate` (ratchet #6 — cataloged in the table above)
+- `dependency_charter_is_respected` (ratchet #7 — cataloged in the table above)
+- `role_edge_direction_is_enforced` (ADR-084 D4 — upward role edges over `tests/role_edge_direction_census.txt`, allowlist empty at the W4 landing)
 
 Several are aliased as `check-*` recipes (`check-no-inner-allow`,
 `check-engine-impl-blocks`, `check-cli-shell-purity`,
