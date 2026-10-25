@@ -19,6 +19,10 @@ Every build and test command goes through the justfile. **Never hand-type `cargo
 - **Tight red-green loops only.** Inside a tight loop you may narrow with the recipe's argument forwarding — `just test-rust-nextest -p <crate>` or `just test-rust-nextest -E 'test(name)'` — and then re-run `just test` whole before declaring work done. Narrow Rust runs still go through the recipe, not `cargo test`.
 - **Before pushing**, check the gates with `just pre-push`, which delegates to the prek pre-push stage (`prek run --stage pre-push`): prek.toml's `stages = ["pre-push"]` entries are the one push-gate manifest, so the recipe cannot run a shorter list than `git push` does (ADR-074).
 
+## ADRs
+
+New and modified ADRs live in `docs/adr/` and follow `docs/adr/README.md`. Whenever an ADR is created or its status/decision changes, update the decisions table in `docs/adr/README.md` in the same change — the table is the entry point consumers plan against, and a stale row misroutes work (ADR-080 sat implemented while the table's lag made a downstream task block on it). Keep the row's status terse and true to the ADR file's own status line.
+
 ## Backwards Compatibility
 Design standalone features without a backwards compatibility layer. Add a feature flag to allow parallel implementations if necessary, followed by a hard cutover and flag removal.
 
