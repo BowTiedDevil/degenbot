@@ -149,7 +149,6 @@ pub fn register_v4_with(
             // and blind the ADR-037 guards in replay.
             hooks: p.hooks.unwrap_or_default(),
         },
-        state_view: Address::ZERO,
         hook_flags: crate::bot_core::pool_builder::builder::derive_hook_flags(
             p.hooks.unwrap_or_default(),
         ),
@@ -162,10 +161,8 @@ pub fn register_v4_with(
             p.liquidity_update_block.expect("v4 update_block"),
         ),
         update_block: p.liquidity_update_block.expect("v4 update_block"),
-        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
-        fetcher: None,
-        known_bitmap_words: Vec::new(),
+        ..Default::default()
     })
     .map_err(|e| format!("register_v4: {e:?}"))
 }
@@ -214,7 +211,6 @@ pub fn build_v4_state(p: &PoolData) -> V4PoolState {
             // Same as register_v4_with: carry the REAL hook address.
             hooks: p.hooks.unwrap_or_default(),
         },
-        state_view: Address::ZERO,
         hook_flags: crate::bot_core::pool_builder::builder::derive_hook_flags(
             p.hooks.unwrap_or_default(),
         ),
@@ -227,10 +223,8 @@ pub fn build_v4_state(p: &PoolData) -> V4PoolState {
             p.liquidity_update_block.expect("v4 update_block"),
         ),
         update_block: p.liquidity_update_block.expect("v4 update_block"),
-        tick_data_block: None,
         coverage: PoolTickCoverage::Tracked,
-        fetcher: None,
-        known_bitmap_words: Vec::new(),
+        ..Default::default()
     };
     let (_identity, state) = V4PoolState::from_params(params, 8);
     state

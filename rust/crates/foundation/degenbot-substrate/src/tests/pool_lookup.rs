@@ -18,18 +18,12 @@ fn register_v4(core: &mut BotState) -> u64 {
             tick_spacing: 10,
             hooks: Address::ZERO,
         },
-        state_view: Address::ZERO,
         hook_flags: 0,
-        protocol_fee: 0,
         sqrt_price_x96: U256::from(1u128) << 96,
         liquidity: 0,
         tick: 0,
         tick_data: HashMap::new(),
-        update_block: 0,
-        tick_data_block: None,
-        coverage: PoolTickCoverage::Sparse,
-        fetcher: None,
-        known_bitmap_words: Vec::new(),
+        ..Default::default()
     })
     .expect("test setup: V4 registration")
 }

@@ -30,7 +30,7 @@ from degenbot.exceptions.pool import (
     InvalidSwapInputAmount,
     LiquidityPoolError,
 )
-from degenbot.uniswap import SwapRefused
+from degenbot.uniswap import SwapRefusalKind, SwapRefused, swap_refusal_to_error
 
 if TYPE_CHECKING:
     from degenbot.aerodrome.types import AerodromeV2PoolState
@@ -229,6 +229,8 @@ class AerodromeV2PoolCalc:
             DegenbotValueError: See function documentation.
             InvalidSwapInputAmount: See function documentation.
             LiquidityPoolError: See function documentation.
+            swap_refusal_to_error: See function documentation — renders a
+                refusal that is not a swap-geometry verdict.
 
         """
         if token_in not in self.tokens:  # pragma: no cover
@@ -254,6 +256,10 @@ class AerodromeV2PoolCalc:
                     override_state=override_state,
                 )
             except SwapRefused as exc:
+                if exc.args[0] is not SwapRefusalKind.NotComputable:
+                    # An infrastructure failure (an unfetchable word), not a
+                    # swap-geometry verdict — render it honestly.
+                    raise swap_refusal_to_error(exc) from exc
                 raise LiquidityPoolError(
                     message=(
                         f"Input amount ({token_in_quantity}) overflows "

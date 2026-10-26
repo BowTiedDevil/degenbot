@@ -2545,6 +2545,9 @@ fn collect_rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
 /// growth fails loudly.
 #[test]
 fn pools_root_surface_is_pinned() {
+    // The root `pub` item count is part of the pin. ONE const: the count and
+    // the failure message derive from it, so a snapshot bump is one edit.
+    const POOLS_ROOT_PUB_ITEMS: usize = 680;
     let census = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pools_root_surface_census.txt"),
     )
@@ -2591,12 +2594,11 @@ fn pools_root_surface_is_pinned() {
         );
     }
 
-    // The root `pub` item count is part of the pin.
     let item_count =
         count_pub_items(&workspace_root().join("crates/foundation/degenbot-pools/src"));
     assert_eq!(
-        item_count, 680,
-        "pools root `pub` item count moved from the tick-source seam snapshot (680);          review tests/pools_root_surface_census.txt before growing the surface"
+        item_count, POOLS_ROOT_PUB_ITEMS,
+        "pools root `pub` item count moved from the pinned snapshot ({POOLS_ROOT_PUB_ITEMS});          review tests/pools_root_surface_census.txt before growing the surface"
     );
 }
 

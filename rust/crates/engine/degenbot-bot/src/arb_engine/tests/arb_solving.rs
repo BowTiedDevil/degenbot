@@ -707,18 +707,13 @@ fn v4_int128_overflow_path_rejected() {
                 tick_spacing: 200,
                 hooks: Address::ZERO,
             },
-            state_view: Address::ZERO,
             hook_flags: 0,
-            protocol_fee: 0,
             sqrt_price_x96: U256::from(sp_extreme),
             liquidity: extreme_liquidity,
             tick: -886_983,
             tick_data: HashMap::new(),
-            update_block: 0,
-            tick_data_block: None,
             coverage: crate::arb_engine::PoolTickCoverage::Tracked,
-            fetcher: None,
-            known_bitmap_words: Vec::new(),
+            ..Default::default()
         })
         .expect("V4 registration failed");
     // Register path: V3 (zfo) → V4 (ofz, which will produce huge token0 output)

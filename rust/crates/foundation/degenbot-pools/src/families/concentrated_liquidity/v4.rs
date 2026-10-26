@@ -172,16 +172,13 @@ pub(super) fn discovery_state(
             pool_key: identity.pool_key.clone(),
             state_view: identity.state_view,
             hook_flags: 0,
-            protocol_fee: 0,
             sqrt_price_x96: state.sqrt_price_x96,
             liquidity: state.liquidity,
             tick: state.tick,
             tick_data: state.tick_data.clone(),
             update_block: state.update_block,
-            tick_data_block: None,
             coverage: state.coverage,
-            fetcher: None,
-            known_bitmap_words: Vec::new(),
+            ..Default::default()
         },
         journal_depth,
     )

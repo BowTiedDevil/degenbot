@@ -11,10 +11,10 @@ fn staged_word_fetch_install_races_on_interleaved_pool_write() {
     // word (checked-empty, RACED); attempt 2 -> the stale tick-60 value
     // (block 99) the retried context returns.
     #[derive(Debug)]
-    struct ScriptedWordFetcher {
+    struct ScriptedTickWordSource {
         script: std::sync::Mutex<std::collections::VecDeque<FetchedTickWord>>,
     }
-    impl ScriptedWordFetcher {
+    impl ScriptedTickWordSource {
         fn new_scripted() -> Self {
             Self {
                 script: std::sync::Mutex::new(std::collections::VecDeque::from([
@@ -39,7 +39,7 @@ fn staged_word_fetch_install_races_on_interleaved_pool_write() {
             }
         }
     }
-    impl TickWordSource for ScriptedWordFetcher {
+    impl TickWordSource for ScriptedTickWordSource {
         fn fetch_tick_word(
             &self,
             _key: &TickWordKey,
@@ -75,7 +75,7 @@ fn staged_word_fetch_install_races_on_interleaved_pool_write() {
             update_block: 0,
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
-            fetcher: Some(std::sync::Arc::new(ScriptedWordFetcher::new_scripted())),
+            fetcher: Some(std::sync::Arc::new(ScriptedTickWordSource::new_scripted())),
             ..Default::default()
         })
         .expect("test setup: V3 registration");
@@ -176,8 +176,8 @@ fn ensure_word_known_merges_ticks_and_marks_word_known() {
     use alloy::primitives::U128;
 
     #[derive(Debug)]
-    struct WordFetcher;
-    impl TickWordSource for WordFetcher {
+    struct ScriptedTickWordSource;
+    impl TickWordSource for ScriptedTickWordSource {
         fn fetch_tick_word(
             &self,
             _key: &TickWordKey,
@@ -215,7 +215,7 @@ fn ensure_word_known_merges_ticks_and_marks_word_known() {
             update_block: 0,
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
-            fetcher: Some(std::sync::Arc::new(WordFetcher)),
+            fetcher: Some(std::sync::Arc::new(ScriptedTickWordSource)),
             ..Default::default()
         })
         .expect("test setup: V3 registration");
@@ -245,8 +245,8 @@ fn ensure_word_known_fetch_error_returns_false() {
     };
 
     #[derive(Debug)]
-    struct FailingWordFetcher;
-    impl TickWordSource for FailingWordFetcher {
+    struct FailingTickWordSource;
+    impl TickWordSource for FailingTickWordSource {
         fn fetch_tick_word(
             &self,
             _key: &TickWordKey,
@@ -273,7 +273,7 @@ fn ensure_word_known_fetch_error_returns_false() {
             update_block: 0,
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
-            fetcher: Some(std::sync::Arc::new(FailingWordFetcher)),
+            fetcher: Some(std::sync::Arc::new(FailingTickWordSource)),
             ..Default::default()
         })
         .expect("test setup: V3 registration");
@@ -299,8 +299,8 @@ fn ensure_word_known_checked_empty_marks_word_known() {
     };
 
     #[derive(Debug)]
-    struct EmptyWordFetcher;
-    impl TickWordSource for EmptyWordFetcher {
+    struct EmptyTickWordSource;
+    impl TickWordSource for EmptyTickWordSource {
         fn fetch_tick_word(
             &self,
             _key: &TickWordKey,
@@ -331,7 +331,7 @@ fn ensure_word_known_checked_empty_marks_word_known() {
             update_block: 0,
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
-            fetcher: Some(std::sync::Arc::new(EmptyWordFetcher)),
+            fetcher: Some(std::sync::Arc::new(EmptyTickWordSource)),
             ..Default::default()
         })
         .expect("test setup: V3 registration");
@@ -359,8 +359,8 @@ fn swap_simulation_fills_missing_word_and_retries() {
     };
 
     #[derive(Debug)]
-    struct FakeFetcher;
-    impl TickWordSource for FakeFetcher {
+    struct FakeTickWordSource;
+    impl TickWordSource for FakeTickWordSource {
         fn fetch_tick_word(
             &self,
             _key: &TickWordKey,
@@ -392,7 +392,7 @@ fn swap_simulation_fills_missing_word_and_retries() {
             update_block: 0,
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
-            fetcher: Some(std::sync::Arc::new(FakeFetcher)),
+            fetcher: Some(std::sync::Arc::new(FakeTickWordSource)),
             ..Default::default()
         })
         .expect("test setup: V3 registration");
@@ -449,8 +449,8 @@ fn swap_simulation_fetcher_error_surfaces_fetch_failed() {
     };
 
     #[derive(Debug)]
-    struct FailingFetcher;
-    impl TickWordSource for FailingFetcher {
+    struct FailingTickWordSource;
+    impl TickWordSource for FailingTickWordSource {
         fn fetch_tick_word(
             &self,
             _key: &TickWordKey,
@@ -477,7 +477,7 @@ fn swap_simulation_fetcher_error_surfaces_fetch_failed() {
             update_block: 0,
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
-            fetcher: Some(std::sync::Arc::new(FailingFetcher)),
+            fetcher: Some(std::sync::Arc::new(FailingTickWordSource)),
             ..Default::default()
         })
         .expect("test setup: V3 registration");
@@ -515,10 +515,10 @@ fn swap_simulation_empty_word_not_refetched() {
     use std::sync::Arc;
 
     #[derive(Debug)]
-    struct CountingFetcher {
+    struct CountingTickWordSource {
         calls: AtomicU32,
     }
-    impl TickWordSource for CountingFetcher {
+    impl TickWordSource for CountingTickWordSource {
         fn fetch_tick_word(
             &self,
             _key: &TickWordKey,
@@ -534,7 +534,7 @@ fn swap_simulation_empty_word_not_refetched() {
         }
     }
 
-    let counter = Arc::new(CountingFetcher {
+    let counter = Arc::new(CountingTickWordSource {
         calls: AtomicU32::new(0),
     });
     let mut core = BotState::new();

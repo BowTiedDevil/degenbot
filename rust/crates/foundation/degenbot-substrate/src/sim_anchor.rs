@@ -255,18 +255,13 @@ mod tests {
                     tick_spacing: 10,
                     hooks: Address::ZERO,
                 },
-                state_view: Address::ZERO,
                 hook_flags: 0,
-                protocol_fee: 0,
                 sqrt_price_x96: U256::from(1u128) << 96,
                 liquidity: 1_000_000,
                 tick: 0,
                 tick_data: hashbrown::HashMap::new(),
                 update_block: 17_999_999,
-                tick_data_block: None,
-                coverage: PoolTickCoverage::Sparse,
-                fetcher: None,
-                known_bitmap_words: Vec::new(),
+                ..Default::default()
             })
             .expect("V4 registration");
         }

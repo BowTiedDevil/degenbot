@@ -20,7 +20,7 @@ from degenbot.exceptions.pool import (
     InvalidSwapInputAmount,
     LiquidityPoolError,
 )
-from degenbot.uniswap import SwapRefused
+from degenbot.uniswap import SwapRefusalKind, SwapRefused, swap_refusal_to_error
 
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
@@ -161,6 +161,9 @@ class UniswapV2PoolCalc:
             InvalidSwapInputAmount: If token_in_quantity is not positive.
             DegenbotValueError: If token_in is not held by this pool.
             LiquidityPoolError: If `uint256` swap math overflows (on-chain revert).
+            swap_refusal_to_error: Renders a refusal that is not a
+                swap-geometry verdict — the walk entered an unfetched word
+                and the on-demand fetch failed (MissingLiquidityData).
 
         """
         if token_in_quantity <= 0:  # pragma: no cover
@@ -217,6 +220,10 @@ class UniswapV2PoolCalc:
                 override_state=override_state,
             )
         except SwapRefused as exc:
+            if exc.args[0] is not SwapRefusalKind.NotComputable:
+                # An infrastructure failure (an unfetchable word), not a
+                # swap-geometry verdict — render it honestly.
+                raise swap_refusal_to_error(exc) from exc
             raise LiquidityPoolError(
                 message=(
                     f"Input amount ({token_in_quantity}) overflows "

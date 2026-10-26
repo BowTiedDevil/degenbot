@@ -17,7 +17,7 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
 )
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.uniswap import SwapRefused
+from degenbot.uniswap import SwapRefusalKind, SwapRefused, swap_refusal_to_error
 from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
 from degenbot.uniswap.v2_pool_state import V2PoolState
 from degenbot.uniswap.v2_types import (
@@ -290,6 +290,9 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
         Raises:
             DegenbotValueError: If token_in is unknown.
             InvalidSwapInputAmount: If token_in_quantity is not positive.
+            swap_refusal_to_error: Renders a refusal that is not a
+                swap-geometry verdict — the walk entered an unfetched word
+                and the on-demand fetch failed (MissingLiquidityData).
             LiquidityPoolError: If the swap cannot compute against the pool state.
 
         """
@@ -339,6 +342,10 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
                 override_state=state,
             )
         except SwapRefused as exc:
+            if exc.args[0] is not SwapRefusalKind.NotComputable:
+                # An infrastructure failure (an unfetchable word), not a
+                # swap-geometry verdict — render it honestly.
+                raise swap_refusal_to_error(exc) from exc
             raise LiquidityPoolError(
                 message=(
                     f"Input amount ({token_in_quantity}) overflows "
@@ -371,6 +378,9 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
         Raises:
             DegenbotValueError: If token_out is unknown.
             InvalidSwapInputAmount: If token_out_quantity is not positive.
+            swap_refusal_to_error: Renders a refusal that is not a
+                swap-geometry verdict — the walk entered an unfetched word
+                and the on-demand fetch failed (MissingLiquidityData).
             LiquidityPoolError: If the requested output exceeds the pool reserves.
 
         """
@@ -394,6 +404,10 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
                 override_state=state,
             )
         except SwapRefused as exc:
+            if exc.args[0] is not SwapRefusalKind.NotComputable:
+                # An infrastructure failure (an unfetchable word), not a
+                # swap-geometry verdict — render it honestly.
+                raise swap_refusal_to_error(exc) from exc
             reserves_out = state.reserves_token1 if zero_for_one else state.reserves_token0
             raise LiquidityPoolError(
                 message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})",  # ruff:ignore[line-too-long]

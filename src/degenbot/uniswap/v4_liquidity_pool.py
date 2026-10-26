@@ -45,7 +45,7 @@ from degenbot.exceptions.pool import (
     IncompleteSwap,
     LiquidityPoolError,
 )
-from degenbot.uniswap import SwapRefused
+from degenbot.uniswap import SwapRefusalKind, SwapRefused, swap_refusal_to_error
 from degenbot.uniswap.concentrated_liquidity_base import ConcentratedLiquidityBase
 from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc
 from degenbot.uniswap.v4_pool_state import V4PoolState
@@ -371,6 +371,9 @@ class UniswapV4Pool(
             HookedPoolResult: If the pool has active hooks that affect the swap.
             IncompleteSwap: If the swap cannot fulfill the full output amount.
             LiquidityPoolError: If the simulated execution cannot compute.
+            swap_refusal_to_error: Renders a refusal that is not a
+                swap-geometry verdict — the walk entered an unfetched word
+                and the on-demand fetch failed (MissingLiquidityData).
 
         """
         if token_out not in self.tokens:  # pragma: no cover
@@ -386,6 +389,10 @@ class UniswapV4Pool(
                 override_state=override_state,
             )
         except SwapRefused as exc:
+            if exc.args[0] is not SwapRefusalKind.NotComputable:
+                # An infrastructure failure (an unfetchable word), not a
+                # swap-geometry verdict — render it honestly.
+                raise swap_refusal_to_error(exc) from exc
             raise LiquidityPoolError(
                 message=(
                     f"Simulated execution could not compute. "
@@ -430,6 +437,9 @@ class UniswapV4Pool(
             HookedPoolResult: If the pool has active hooks that affect the swap.
             IncompleteSwap: If the swap cannot fulfill the full input amount.
             LiquidityPoolError: If the simulated execution cannot compute.
+            swap_refusal_to_error: Renders a refusal that is not a
+                swap-geometry verdict — the walk entered an unfetched word
+                and the on-demand fetch failed (MissingLiquidityData).
 
         """
         if token_in not in self.tokens:  # pragma: no cover
@@ -445,6 +455,10 @@ class UniswapV4Pool(
                 override_state=override_state,
             )
         except SwapRefused as exc:
+            if exc.args[0] is not SwapRefusalKind.NotComputable:
+                # An infrastructure failure (an unfetchable word), not a
+                # swap-geometry verdict — render it honestly.
+                raise swap_refusal_to_error(exc) from exc
             raise LiquidityPoolError(
                 message=(
                     f"Simulated execution could not compute. "

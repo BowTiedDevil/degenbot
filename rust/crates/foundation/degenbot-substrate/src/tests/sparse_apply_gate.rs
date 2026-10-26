@@ -61,13 +61,13 @@ fn tick_info(gross: u128, net: i128) -> TickInfo {
 /// every `(word, block)` request and answers with one fixed word — or fails, the
 /// RPC-down shape.
 #[derive(Debug)]
-struct GateFetcher {
+struct GateTickWordSource {
     calls: std::sync::Mutex<Vec<(i32, u64)>>,
     ticks: Vec<(i32, TickInfo)>,
     fail: bool,
 }
 
-impl GateFetcher {
+impl GateTickWordSource {
     fn returning(ticks: Vec<(i32, TickInfo)>) -> Arc<Self> {
         Arc::new(Self {
             calls: std::sync::Mutex::new(Vec::new()),
@@ -92,7 +92,7 @@ impl GateFetcher {
     }
 }
 
-impl TickWordSource for GateFetcher {
+impl TickWordSource for GateTickWordSource {
     fn fetch_tick_word(
         &self,
         _key: &TickWordKey,
@@ -114,10 +114,10 @@ impl TickWordSource for GateFetcher {
     }
 }
 
-/// The stored fetcher handle: the `Arc<GateFetcher>` a test keeps to assert on
+/// The stored fetcher handle: the `Arc<GateTickWordSource>` a test keeps to assert on
 /// the recorded calls, widened to the trait object the pool stores.
-fn word_fetcher(fetcher: &Arc<GateFetcher>) -> Arc<dyn TickWordSource> {
-    let concrete: Arc<GateFetcher> = Arc::clone(fetcher);
+fn word_fetcher(fetcher: &Arc<GateTickWordSource>) -> Arc<dyn TickWordSource> {
+    let concrete: Arc<GateTickWordSource> = Arc::clone(fetcher);
     concrete
 }
 
@@ -274,7 +274,7 @@ fn v3_tick_gross(state: &StateLock<BotState>, tick: i32) -> Option<u128> {
 fn v3_sparse_gate_backfills_the_boundary_word_before_applying() {
     // Tick 30 is in word 0 but outside the event's range, so a gross of 1_000
     // at it is pure backfill evidence; the boundary ticks carry the event alone.
-    let fetcher = GateFetcher::returning(vec![(30, tick_info(1_000, 0))]);
+    let fetcher = GateTickWordSource::returning(vec![(30, tick_info(1_000, 0))]);
     let state = Arc::new(sparse_v3_state(Some(word_fetcher(&fetcher)), true));
     let dispatcher = LogDispatcher::with_uniswap_decoders();
 
@@ -306,7 +306,7 @@ fn v3_sparse_gate_backfills_the_boundary_word_before_applying() {
 /// door reports the typed outcome rather than dropping the event silently.
 #[test]
 fn v3_sparse_gate_fetch_failure_refuses_and_does_not_apply() {
-    let fetcher = GateFetcher::failing();
+    let fetcher = GateTickWordSource::failing();
     let state = Arc::new(sparse_v3_state(Some(word_fetcher(&fetcher)), true));
     let dispatcher = LogDispatcher::with_uniswap_decoders();
 
@@ -360,7 +360,7 @@ fn v3_sparse_gate_fetch_failure_refuses_and_does_not_apply() {
 /// word 0.
 #[test]
 fn v3_sparse_gate_does_not_refetch_a_known_word() {
-    let fetcher = GateFetcher::returning(vec![(60, tick_info(1_000, 0))]);
+    let fetcher = GateTickWordSource::returning(vec![(60, tick_info(1_000, 0))]);
     let state = Arc::new(sparse_v3_state(Some(word_fetcher(&fetcher)), true));
     let dispatcher = LogDispatcher::with_uniswap_decoders();
 
@@ -383,7 +383,7 @@ fn v3_sparse_gate_does_not_refetch_a_known_word() {
 /// word is left for solve-time backfill (the lazy production behavior).
 #[test]
 fn v3_sparse_apply_gate_defaults_off_and_stays_lazy() {
-    let fetcher = GateFetcher::returning(vec![(60, tick_info(1_000, 0))]);
+    let fetcher = GateTickWordSource::returning(vec![(60, tick_info(1_000, 0))]);
     let state = Arc::new(sparse_v3_state(Some(word_fetcher(&fetcher)), false));
     assert!(
         !state.read_at(LockSite::Core).strict_sparse_apply(),
@@ -464,7 +464,7 @@ fn v4_tick_gross(state: &StateLock<BotState>, tick: i32) -> Option<u128> {
 /// first, and a failed fetch leaves the event unapplied.
 #[test]
 fn v4_sparse_gate_backfills_and_refuses_like_v3() {
-    let fetcher = GateFetcher::returning(vec![(30, tick_info(1_000, 0))]);
+    let fetcher = GateTickWordSource::returning(vec![(30, tick_info(1_000, 0))]);
     let state = Arc::new(sparse_v4_state(Some(word_fetcher(&fetcher)), true));
     let dispatcher = LogDispatcher::with_uniswap_decoders();
 
@@ -482,7 +482,7 @@ fn v4_sparse_gate_backfills_and_refuses_like_v3() {
     assert_eq!(v4_tick_gross(&state, 30), Some(1_000), "the fetched row");
     assert_eq!(v4_tick_gross(&state, 0), Some(MINT_AMOUNT), "the event");
 
-    let failing = GateFetcher::failing();
+    let failing = GateTickWordSource::failing();
     let state = Arc::new(sparse_v4_state(Some(word_fetcher(&failing)), true));
     dispatcher.dispatch(
         &v4_modify_liquidity_log(0, 60, MINT_DELTA, EVENT_BLOCK),

@@ -210,6 +210,39 @@ pub struct RegisterV4PoolParams {
     pub known_bitmap_words: Vec<i32>,
 }
 
+impl Default for RegisterV4PoolParams {
+    /// The fixture/struct-update base: fixture geometry is Uniswap-shaped,
+    /// no `StateView` (the fixture pools never chain-read — their stored
+    /// source, when any, ignores the key). PRODUCTION registrations must
+    /// not rely on this — the door path resolves `state_view` from the
+    /// deployment roster and the read descriptors from the built identity.
+    fn default() -> Self {
+        Self {
+            pool_manager: Address::ZERO,
+            pool_id: [0u8; 32],
+            pool_key: V4PoolKey {
+                currency0: Address::ZERO,
+                currency1: Address::ZERO,
+                fee: 500,
+                tick_spacing: 10,
+                hooks: Address::ZERO,
+            },
+            state_view: Address::ZERO,
+            hook_flags: 0,
+            protocol_fee: 0,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 0,
+            tick: 0,
+            tick_data: hashbrown::HashMap::new(),
+            update_block: 0,
+            tick_data_block: None,
+            coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
+            known_bitmap_words: Vec::new(),
+        }
+    }
+}
+
 /// Typed rejection from [`crate::BotState::register_v4_pool`].
 ///
 /// Pool admission is a *correctness floor*: the solver's V3-concentrated-liquidity math assumes

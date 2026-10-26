@@ -425,7 +425,6 @@ fn register_v4_pool_admits_amount_modifying_hook_with_caveat() {
     // gone) — their sims carry Caveats::HOOKED_POOL and paths through
     // them are excluded from solving at projection time.
     use crate::swap_simulation::{Caveats, SwapOutcome, SwapRead, SwapRequest};
-    use crate::PoolTickCoverage;
     use crate::{RegisterV4PoolParams, V4PoolKey};
     use hashbrown::HashMap;
 
@@ -446,9 +445,7 @@ fn register_v4_pool_admits_amount_modifying_hook_with_caveat() {
                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x80,
                 ]),
             },
-            state_view: Address::ZERO,
             hook_flags: 0x80,
-            protocol_fee: 0,
             sqrt_price_x96: U256::from(1u128) << 96,
             liquidity: 1_000_000,
             tick: 0,
@@ -462,11 +459,8 @@ fn register_v4_pool_admits_amount_modifying_hook_with_caveat() {
                     block: 0,
                 },
             )]),
-            update_block: 0,
-            tick_data_block: None,
             coverage: PoolTickCoverage::Tracked,
-            fetcher: None,
-            known_bitmap_words: Vec::new(),
+            ..Default::default()
         })
         .expect("hooked pool must now be admitted");
 
@@ -493,7 +487,6 @@ fn register_v4_pool_admits_amount_modifying_hook_with_caveat() {
 
 #[test]
 fn register_v4_pool_rejects_dynamic_fee_with_typed_error() {
-    use crate::PoolTickCoverage;
     use crate::{RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey};
     use hashbrown::HashMap;
 
@@ -509,18 +502,12 @@ fn register_v4_pool_rejects_dynamic_fee_with_typed_error() {
                 tick_spacing: 10,
                 hooks: Address::ZERO,
             },
-            state_view: Address::ZERO,
             hook_flags: 0,
-            protocol_fee: 0,
             sqrt_price_x96: U256::from(1u128) << 96,
             liquidity: 1_000_000,
             tick: 0,
             tick_data: HashMap::new(),
-            update_block: 0,
-            tick_data_block: None,
-            coverage: PoolTickCoverage::Sparse,
-            fetcher: None,
-            known_bitmap_words: Vec::new(),
+            ..Default::default()
         })
         .expect_err("dynamic-fee pool must be rejected");
     assert_eq!(
@@ -534,7 +521,6 @@ fn register_v4_pool_rejects_dynamic_fee_with_typed_error() {
 
 #[test]
 fn register_v4_pool_rejects_duplicate_with_already_registered_variant() {
-    use crate::PoolTickCoverage;
     use crate::{RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey};
     use hashbrown::HashMap;
 
@@ -596,7 +582,6 @@ fn register_v4_pool_rejects_duplicate_with_already_registered_variant() {
 /// `tick_spacing=10`. Each spec-violation test below derives a
 /// broken-on-one-field copy.
 fn make_v4_params_in_spec() -> crate::RegisterV4PoolParams {
-    use crate::PoolTickCoverage;
     use crate::{RegisterV4PoolParams, V4PoolKey};
     use hashbrown::HashMap;
     RegisterV4PoolParams {
@@ -819,7 +804,6 @@ fn unregister_v2_pool_returns_true_then_re_register_allocates_fresh_id() {
 // -----------------------------------------------------------------------
 #[test]
 fn admission_refusal_records_a_consultable_gate_verdict() {
-    use crate::PoolTickCoverage;
     use crate::{
         registration_gate::AdmissionVerdict, RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey,
     };
@@ -838,18 +822,12 @@ fn admission_refusal_records_a_consultable_gate_verdict() {
             tick_spacing: 10,
             hooks: Address::ZERO,
         },
-        state_view: Address::ZERO,
         hook_flags: 0,
-        protocol_fee: 0,
         sqrt_price_x96: U256::from(1u128) << 96,
         liquidity: 1_000_000,
         tick: 0,
         tick_data: HashMap::new(),
-        update_block: 0,
-        tick_data_block: None,
-        coverage: PoolTickCoverage::Sparse,
-        fetcher: None,
-        known_bitmap_words: Vec::new(),
+        ..Default::default()
     };
 
     // Dynamic-fee refusal records a consultable verdict.
@@ -1409,7 +1387,6 @@ fn unregister_v3_pool_discards_buffered_liquidity_events() {
 
 #[test]
 fn unregister_v4_pool_by_tuple_key_discards_buffered_modify_liquidity() {
-    use crate::PoolTickCoverage;
     use crate::{RegisterV4PoolParams, V4PoolKey};
 
     let pool_manager = Address::from([0x44u8; 20]);
