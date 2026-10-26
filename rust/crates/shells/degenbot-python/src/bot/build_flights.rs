@@ -46,6 +46,7 @@ pub(crate) mod flight_family {
     pub(crate) const AERODROME: u8 = b'A';
     pub(crate) const BALANCER_WEIGHTED: u8 = b'W';
     pub(crate) const BALANCER_STABLE: u8 = b'S';
+    pub(crate) const CURVE: u8 = b'C';
 }
 
 /// Slot state inside one in-flight (or just-published) build.

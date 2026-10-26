@@ -31,6 +31,7 @@ use super::route::{
     self, ConstructedPool, ConstructionRefusal, ConstructionRoute, RequestedPool, V3RouteInputs,
 };
 use crate::bot_core::construction_io::ConstructionIo;
+use crate::bot_core::pool_builder::parity;
 use crate::bot_core::{Bot, RegisteredPoolFamily};
 
 /// The ONE construction-request vocabulary — every structural family's
@@ -359,7 +360,50 @@ impl Bot {
         let family = request.family();
         let (requested, v3) = request.into_route_request();
         match route::construct_pool(self, plan, &requested, io, v3, block).await {
-            Ok(pool) => ConstructionVerdict::constructed(family, pool),
+            Ok(pool) => {
+                if let Some(built) = &pool.built {
+                    // Mint-site parity guard: the identity the build minted
+                    // must equal the one the registry of record now holds for
+                    // `pool_id`. A divergence is a core seam bug — refused
+                    // here rather than trusted across any tier boundary.
+                    if let Some(registered) =
+                        parity::registered_address_identity(self, pool.pool_id)
+                    {
+                        if let (Some(token0), Some(token1)) =
+                            (built.tokens.first(), built.tokens.get(1))
+                        {
+                            let minted = parity::AddressIdentity {
+                                token0: *token0,
+                                token1: *token1,
+                                address: built.address,
+                            };
+                            if let Err(divergence) =
+                                parity::verify_address_identity(minted, registered)
+                            {
+                                return ConstructionVerdict::refused(
+                                    family,
+                                    ConstructionRefusal::IdentityMismatch(Box::new(divergence)),
+                                );
+                            }
+                        }
+                    }
+                    // Telemetry: one Jaeger node per pool construction +
+                    // registration (zero-duration span carrying the full
+                    // identity).
+                    let (token0, token1) = built.pair().unwrap_or_default();
+                    let _reg = tracing::info_span!(
+                        "degenbot.pool.register",
+                        pool.version = family.tag(),
+                        pool.address = %built.address.to_checksum(None),
+                        token0 = %token0.to_checksum(None),
+                        token1 = %token1.to_checksum(None),
+                        dex = %built.variant,
+                        pool.id = pool.pool_id,
+                    )
+                    .entered();
+                }
+                ConstructionVerdict::constructed(family, pool)
+            }
             Err(refusal) => ConstructionVerdict::refused(family, refusal),
         }
     }

@@ -915,50 +915,6 @@ class Bot:
             `chain_id`: chain ID.
             `block`: optional block to read on-chain at (None = head).
         """
-    def build_v2_pool(
-        self, /, address: str, block: SupportsIndex | None = None
-    ) -> tuple[int, str, str, str, str]:
-        """
-        Build + register a V2 pool through the Rust `PoolBuilder` (
-        delegation adapter). Runs the core async builder — ALL the io
-        choreography in Rust: immutable data, reserves, DEX-resolution incl.
-        the Camelot branch, CREATE2 verify, deployer/init-hash, narrow reserves
-        — on the attached `ConstructionIo`, registers into `BotState`, and
-        returns the auto-assigned pool id for the Python caller to wrap.
-
-        The `PoolBuilder` is alloy-only (Q6-narrow `ConstructionIo`): this
-        requires an attached construction-I/O (D-B single `AlloyProvider`).
-
-        # Errors
-
-        `RuntimeError` if no `ConstructionIo` is attached (and for a DB-read or
-        transient builder failure). A pool refusal is a `PoolRegistrationError`
-        subclass — `PoolBuildRpcError` (a read failed: retryable),
-        `PoolBuildDecodeError` (a read answered a value no pool can hold),
-        `SpecViolationError` (out of spec), or `PoolAlreadyRegisteredError`
-        (duplicate registration); a CREATE2 identity divergence stays a plain
-        `ValueError`.
-        """
-    def build_v3_pool(
-        self,
-        /,
-        address: str,
-        block: SupportsIndex | None = None,
-        db: bool = True,
-        slot_layout: str | None = None,
-        factories: SupportsGetItem[int, str] | None = None,
-    ) -> tuple[int, str, str, str, str]:
-        """
-        Build + register a V3 pool through the Rust `PoolBuilder` (
-        delegation adapter) — the V3 twin of [`Self::build_v2_pool`]. The tick
-        map is assembled DB-first (a `TickMapDb` hit → `Tracked`, feeding the
-        quarantine→verify lifecycle; `db=false` forces the Chain-arm
-        Sparse path). `block` defaults to the current chain head.
-
-        # Errors
-
-        As [`Self::build_v2_pool`].
-        """
     def build_v4_pool(
         self,
         /,

@@ -573,11 +573,10 @@ impl BotState {
 
     /// The address-keyed registration of record, family-tagged (PRG-1 /
     /// registry unification). `BotState` is the sole pool registry,
-    /// so the `PyO3` build adapters (`build_v2_pool` / `build_v3_pool` /
-    /// `build_aerodrome_v2_pool` / `build_balancer_*_pool`) consult this
-    /// pre-check INSTEAD of a Python-mirror registry: an address this core
-    /// already registered is answered by this reader — identity straight off
-    /// the registered entry — with no duplicate-handed builder replay and no
+    /// so the `PyO3` construction door's flight pre-check consults this
+    /// reader INSTEAD of a Python-mirror registry: an address this core
+    /// already registered is answered here — identity straight off the
+    /// registered entry — with no duplicate-handed builder replay and no
     /// terminal `AlreadyRegistered` refusal.
     ///
     /// V4 pools are NOT address-keyed (one `PoolManager` hosts many pool ids,

@@ -33,9 +33,9 @@ use super::construction_io::ConstructionIo;
 use super::pool_builder::builder;
 use super::pool_builder::construction_door::PoolConstruction;
 use super::pool_builder::parity;
-use super::pool_builder::route::{self, ConstructedPool};
+use super::pool_builder::route;
 use super::registration_ledger::{RefusalKind, RegisteredPoolFamily, RegistrationPhase};
-use super::{ConcentratedLiquiditySlotLayout, PoolTickCoverage};
+use super::PoolTickCoverage;
 
 /// The `calculate_tokens_out` refusal (the legacy Python surface: a
 /// `ValueError` for the overflow/on-chain-revert and unknown-pool classes,
@@ -79,180 +79,6 @@ impl Bot {
     ) -> Result<Arc<ConstructionIo>, RefusalKind> {
         self.construction_io_arc()
             .ok_or_else(|| RefusalKind::missing_construction_io(family, RegistrationPhase::Build))
-    }
-
-    /// Build + register a V2 pool: the core `builder::build_v2` choreography
-    /// (immutable data, reserves, DEX resolution incl. the Camelot branch,
-    /// CREATE2 verify, deployer/init-hash, narrow reserves) on the attached
-    /// `ConstructionIo`, then the family write door's registration
-    /// (`BotState::register_pool`, ADR-078 D3) under ONE core write guard.
-    /// Returns `(pool_id, identity)` with the core-computed
-    /// identity `(token0, token1, address, variant)` — the builder's return
-    /// surface, so a facade-free registration driver consumes it directly.
-    ///
-    /// # Errors
-    /// [`RefusalKind::MissingConstructionIo`] when no construction I/O is
-    /// attached, [`RefusalKind::BuildRefused`] on a builder failure,
-    /// [`RefusalKind::RegisterRefused`] when the registry refuses.
-    pub fn build_and_register_v2(
-        &self,
-        address: Address,
-        block: Option<u64>,
-    ) -> Result<PoolBuildPayload, RefusalKind> {
-        let io = self.construction_io_required(Some(RegisteredPoolFamily::V2))?;
-        let params = degenbot_core::runtime::get_runtime()
-            .block_on(builder::build_v2(self.chain_id(), address, &io, block))
-            .map_err(|err| {
-                RefusalKind::from_builder_error(
-                    &err,
-                    Some(RegisteredPoolFamily::V2),
-                    RegistrationPhase::Build,
-                )
-            })?;
-        let identity = (
-            params.token0.to_checksum(None),
-            params.token1.to_checksum(None),
-            params.address.to_checksum(None),
-            params.variant.as_str().to_string(),
-        );
-        // The minted identity rides the parity guard; capture it before
-        // `params` moves into the door's request.
-        let minted = parity::AddressIdentity {
-            token0: params.token0,
-            token1: params.token1,
-            address: params.address,
-        };
-        let pool_id = RefusalKind::from_registration_verdict(
-            self.state_arc()
-                .write_at(LockSite::Orchestrator)
-                .register_pool(PoolRegistration::V2(Box::new(params))),
-        )?;
-        // Core-side identity-parity guard (at the mint site): the echo minted
-        // from `params` must equal the identity the registry of record now
-        // holds for `pool_id`. A divergence is a core/driver seam bug — refused
-        // here rather than trusted across the FFI seam.
-        if let Some(registered) = parity::registered_address_identity(self, pool_id) {
-            parity::verify_address_identity(minted, registered).map_err(|divergence| {
-                RefusalKind::from_identity_divergence(Some(RegisteredPoolFamily::V2), &divergence)
-            })?;
-        }
-
-        // Telemetry: one Jaeger node per pool construction+registration
-        // (zero-duration span carrying the full identity).
-        let _reg = tracing::info_span!(
-            "degenbot.pool.register",
-            pool.version = "v2",
-            pool.address = %identity.2,
-            token0 = %identity.0,
-            token1 = %identity.1,
-            dex = %identity.3,
-            pool.id = pool_id,
-        )
-        .entered();
-        Ok((pool_id, identity))
-    }
-
-    /// Build + register an Aerodrome V2 pool — the Aerodrome twin of
-    /// [`Self::build_and_register_v2`] (the `stable()` + `getFee()` +
-    /// reserves + CREATE2 choreography, registered into
-    /// `PoolEntry::AerodromeV2` through the family write door).
-    ///
-    /// # Errors
-    /// [`RefusalKind::MissingConstructionIo`] / [`RefusalKind::BuildRefused`]
-    /// / [`RefusalKind::RegisterRefused`] (the duplicate-address / spec
-    /// refusal — previously an `assert!` panic that killed the process).
-    pub fn build_and_register_aerodrome_v2(
-        &self,
-        address: Address,
-        block: Option<u64>,
-    ) -> Result<u64, RefusalKind> {
-        let io = self.construction_io_required(Some(RegisteredPoolFamily::AerodromeV2))?;
-        let constructed = degenbot_core::runtime::get_runtime()
-            .block_on(self.construct_pool(
-                &route::ConstructionRoute::generic_only(),
-                PoolConstruction::AerodromeV2 { address },
-                &io,
-                block,
-            ))
-            .into_result()
-            .map_err(|refusal| {
-                RefusalKind::from_construction_refusal(
-                    &refusal,
-                    Some(RegisteredPoolFamily::AerodromeV2),
-                )
-            })?;
-        Ok(constructed.pool_id)
-    }
-
-    /// Build + register a Balancer V2 **weighted** pool (the `getPoolId` +
-    /// Vault `getPoolTokens` + `getSwapFeePercentage` +
-    /// `getNormalizedWeights` + bytecode `PowVersion` detect + `decimals()`
-    /// scaling-factor choreography, registered into
-    /// `PoolEntry::BalancerWeighted`).
-    ///
-    /// # Errors
-    /// [`RefusalKind::MissingConstructionIo`] / [`RefusalKind::BuildRefused`].
-    pub fn build_and_register_balancer_weighted(
-        &self,
-        vault: Address,
-        address: Address,
-        block: Option<u64>,
-    ) -> Result<u64, RefusalKind> {
-        let io = self.construction_io_required(None)?;
-        let constructed = degenbot_core::runtime::get_runtime()
-            .block_on(self.construct_pool(
-                &route::ConstructionRoute::generic_only(),
-                PoolConstruction::BalancerWeighted { vault, address },
-                &io,
-                block,
-            ))
-            .into_result()
-            .map_err(|refusal| {
-                RefusalKind::from_construction_refusal(
-                    &refusal,
-                    Some(RegisteredPoolFamily::BalancerWeighted),
-                )
-            })?;
-        Ok(constructed.pool_id)
-    }
-
-    /// Build + register a Balancer V2 **stable** pool (the `getPoolId` +
-    /// Vault `getPoolTokens` + `getSwapFeePercentage` +
-    /// `getAmplificationParameter` + BPT-detect + rate-provider/rate +
-    /// scaling-factor + `invariant_version` resolution choreography,
-    /// registered into `PoolEntry::BalancerStable`). `invariant_version`
-    /// overrides the shape-derived invariant version (BPT among the Vault
-    /// tokens → V1, else V2).
-    ///
-    /// # Errors
-    /// [`RefusalKind::MissingConstructionIo`] / [`RefusalKind::BuildRefused`].
-    pub fn build_and_register_balancer_stable(
-        &self,
-        vault: Address,
-        address: Address,
-        block: Option<u64>,
-        invariant_version: Option<u8>,
-    ) -> Result<u64, RefusalKind> {
-        let io = self.construction_io_required(None)?;
-        let constructed = degenbot_core::runtime::get_runtime()
-            .block_on(self.construct_pool(
-                &route::ConstructionRoute::generic_only(),
-                PoolConstruction::BalancerStable {
-                    vault,
-                    address,
-                    invariant_version,
-                },
-                &io,
-                block,
-            ))
-            .into_result()
-            .map_err(|refusal| {
-                RefusalKind::from_construction_refusal(
-                    &refusal,
-                    Some(RegisteredPoolFamily::BalancerStable),
-                )
-            })?;
-        Ok(constructed.pool_id)
     }
 
     /// Build + register a Curve `StableSwap` pool (the full detection
@@ -316,104 +142,6 @@ impl Bot {
             .write_at(LockSite::Orchestrator)
             .register_token(address, name.clone(), symbol.clone(), decimals, chain_id);
         Ok((name, symbol, decimals))
-    }
-
-    /// Build + register a V3 pool through the ONE core construction door
-    /// ([`Bot::construct_pool`](super::pool_builder::construction_door) —
-    /// get-or-register + route order + build + register over the route
-    /// interior), then shape the identity echo via
-    /// [`Self::finalize_v3_construct`].
-    ///
-    /// The construction io is a parameter (the shell fetched it via
-    /// [`Self::require_construction_io`] — its error message carries the
-    /// pymethod prefix); the sparse-backfill fetcher, DB handle, and slot
-    /// layout ride the door's [`PoolConstruction::V3`] variant.
-    ///
-    /// # Errors
-    /// [`RefusalKind::BuildRefused`] (or [`RefusalKind::UnsupportedFamily`])
-    /// from the construction route, [`RefusalKind::UnreadableIdentity`] on
-    /// the race-answer arm.
-    #[expect(clippy::too_many_arguments)]
-    pub fn build_and_register_v3(
-        &self,
-        io: &ConstructionIo,
-        plan: &route::ConstructionRoute,
-        db: Option<&dyn TickMapDb>,
-        fetcher: Option<Arc<dyn TickWordFetcher>>,
-        slot_layout: Option<ConcentratedLiquiditySlotLayout>,
-        address: Address,
-        block: Option<u64>,
-    ) -> Result<PoolBuildPayload, RefusalKind> {
-        let constructed = degenbot_core::runtime::get_runtime()
-            .block_on(self.construct_pool(
-                plan,
-                PoolConstruction::V3 {
-                    address,
-                    db,
-                    fetcher,
-                    slot_layout,
-                },
-                io,
-                block,
-            ))
-            .into_result()
-            .map_err(|refusal| {
-                RefusalKind::from_construction_refusal(&refusal, Some(RegisteredPoolFamily::V3))
-            })?;
-        self.finalize_v3_construct(constructed, address)
-    }
-
-    /// Shape the V3 identity echo from a constructed pool: the fresh build's
-    /// echo rides the built identity (the arm derives the variant from the
-    /// builder-verified `factory` via `resolve_dex_name`, kebab-case, e.g.
-    /// "uniswap", falling back to the generic "uniswap-v3"); a registry-GET
-    /// race answer (`built == None`) echoes the already-registered payload
-    /// from the registry of record. Emits the `degenbot.pool.register`
-    /// telemetry span (one Jaeger node per V3 registration).
-    ///
-    /// # Errors
-    /// [`RefusalKind::UnreadableIdentity`] when the race answer's registry
-    /// entry carried no readable V3 identity.
-    pub fn finalize_v3_construct(
-        &self,
-        constructed: ConstructedPool,
-        address: Address,
-    ) -> Result<PoolBuildPayload, RefusalKind> {
-        let (pool_id, identity) = if let Some(built) = constructed.built {
-            let (token0, token1) = built.pair().unwrap_or_default();
-            (
-                constructed.pool_id,
-                (
-                    token0.to_checksum(None),
-                    token1.to_checksum(None),
-                    built.address.to_checksum(None),
-                    built.variant,
-                ),
-            )
-        } else {
-            let payload = self
-                .registered_v3_payload(&address, self.chain_id())
-                .ok_or_else(|| {
-                    RefusalKind::unreadable_identity(
-                        Some(RegisteredPoolFamily::V3),
-                        RegistrationPhase::Register,
-                        address,
-                        format!("registry GET answered {address} with no readable V3 identity"),
-                    )
-                })?;
-            (payload.0, (payload.1, payload.2, payload.3, payload.4))
-        };
-        let _reg = tracing::info_span!(
-            "degenbot.pool.register",
-            pool.version = "v3",
-            pool.address = %identity.2,
-            token0 = %identity.0,
-            token1 = %identity.1,
-            dex = %identity.3,
-            pool.id = pool_id,
-        )
-        .entered();
-        Ok((pool_id, identity))
     }
 
     /// Build + register a V4 pool: the core `builder::build_v4` (LIVE
@@ -734,27 +462,13 @@ mod tests {
 
     /// A fresh build with no `ConstructionIo` attached is refused with the
     /// typed no-io arm BEFORE any registry write (the shell maps this to the
-    /// pymethod-prefixed `RuntimeError`).
+    /// pymethod-prefixed `RuntimeError`). The construction door's own io
+    /// requirement is pinned at the seam
+    /// (`construct_pool_unregistered_address_requires_construction_io`).
     #[test]
     fn build_entries_require_construction_io() {
         let bot = Bot::new(1);
         let addr = Address::from([0x11u8; 20]);
-        assert!(matches!(
-            bot.build_and_register_v2(addr, None),
-            Err(RefusalKind::MissingConstructionIo { .. })
-        ));
-        assert!(matches!(
-            bot.build_and_register_aerodrome_v2(addr, None),
-            Err(RefusalKind::MissingConstructionIo { .. })
-        ));
-        assert!(matches!(
-            bot.build_and_register_balancer_weighted(addr, addr, None),
-            Err(RefusalKind::MissingConstructionIo { .. })
-        ));
-        assert!(matches!(
-            bot.build_and_register_balancer_stable(addr, addr, None, None),
-            Err(RefusalKind::MissingConstructionIo { .. })
-        ));
         assert!(matches!(
             bot.build_and_register_curve_pool(addr, &[], None),
             Err(RefusalKind::MissingConstructionIo { .. })
@@ -923,70 +637,6 @@ mod tests {
             matches!(err, super::super::CurveInputsError::UnknownPool(_)),
             "{err:?}"
         );
-    }
-
-    /// The V3 identity echo: a fresh build resolves the family from the
-    /// built factory (generic "uniswap-v3" off the JSON deployments), a
-    /// registry-GET race answer echoes the registered payload, and an
-    /// unregistered race answer is the typed no-readable-identity refusal.
-    #[test]
-    fn finalize_v3_construct_shapes_the_identity_echo() {
-        let bot = Bot::new(1);
-        let addr = Address::from([0x22u8; 20]);
-
-        // Fresh-build arm (no RPC involved — the identity is shaped
-        // core-side from the built identity).
-        let built = route::BuiltIdentity {
-            address: addr,
-            tokens: vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])],
-            variant: "uniswap-v3".to_string(),
-            factory: Some(adhoc_factory()),
-            v4_pool_id: None,
-        };
-        let (pool_id, identity) = bot
-            .finalize_v3_construct(
-                ConstructedPool {
-                    pool_id: 7,
-                    built: Some(built),
-                },
-                addr,
-            )
-            .expect("fresh build shapes its identity");
-        assert_eq!(pool_id, 7);
-        assert_eq!(identity.3, "uniswap-v3");
-
-        // Race-answer arm: `built == None` echoes the registered payload.
-        let registered = bot
-            .register(PoolRegistration::V3(Box::new(RegisterV3PoolParams {
-                address: addr,
-                factory: adhoc_factory(),
-                ..v3_fixture_params()
-            })))
-            .expect("test setup: V3 registration");
-        let (pool_id, identity) = bot
-            .finalize_v3_construct(
-                ConstructedPool {
-                    pool_id: 0,
-                    built: None,
-                },
-                addr,
-            )
-            .expect("registered race answer echoes its payload");
-        assert_eq!(pool_id, registered);
-        assert_eq!(identity.3, "uniswap-v3");
-
-        // Unregistered race answer: the typed refusal (the shell's
-        // method-prefixed `RuntimeError`).
-        let err = bot
-            .finalize_v3_construct(
-                ConstructedPool {
-                    pool_id: 0,
-                    built: None,
-                },
-                Address::from([0xEE; 20]),
-            )
-            .expect_err("unregistered race answer refuses");
-        assert!(matches!(err, RefusalKind::UnreadableIdentity { .. }));
     }
 
     /// `update_v2_pool` lands the Sync reserves under the core write guard

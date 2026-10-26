@@ -51,6 +51,8 @@ fn narrow_reserve(
 pub use crate::bot::pool::PyLiquidityPool;
 use crate::bot::pool::TickData;
 use crate::bot::token::PyErc20Token;
+use degenbot_bot::bot_core::pool_builder::construction_door::PoolConstruction;
+use degenbot_bot::bot_core::pool_builder::route;
 use degenbot_bot::bot_core::registration_ledger::RefusalKind;
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::RegisteredPoolFamily;
@@ -282,6 +284,151 @@ impl PyBot {
         // GIL across the read and maps the typed refusal.
         py.detach(|| self.bot.registered_v4_payload(pm, pid))
             .map_err(map_refusal)
+    }
+
+    /// The ONE translation: the family-tagged construction request -> the core
+    /// door's request. `pair_echo` is the seam's echo convention — the pair-keyed
+    /// families echo their identity pair, the multi-token ones echo empty token
+    /// strings (their list rides the handle).
+    fn translate_construction_request<'a>(
+        request: &PyPoolConstructionRequest,
+        addr: Address,
+        db: Option<&'a dyn degenbot_db::snapshot::TickMapDb>,
+    ) -> PyResult<(PoolConstruction<'a>, bool)> {
+        let variant = request.variant.as_deref();
+        let vault = request.vault.as_deref();
+        // An empty hint list is "the caller supplied none": the per-family arms
+        // read `Option` (absent = use the family's own default route).
+        let registries = (!request.registries.is_empty()).then(|| request.registries.clone());
+        match request.family.as_str() {
+            "constant_product" if variant == Some("aerodrome") => {
+                Ok((PoolConstruction::AerodromeV2 { address: addr }, false))
+            }
+            "constant_product" => Ok((PoolConstruction::V2 { address: addr }, true)),
+            // The fork storage layout is resolved CORE-side from the deployment
+            // table, so the driver never names a fork.
+            "concentrated_liquidity" => Ok((
+                PoolConstruction::V3 {
+                    address: addr,
+                    db,
+                    fetcher: None,
+                    slot_layout: None,
+                },
+                true,
+            )),
+            "weighted" => {
+                let vault = vault.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "construct_pool: the weighted family requires `vault`",
+                    )
+                })?;
+                Ok((
+                    PoolConstruction::BalancerWeighted {
+                        vault: parse_address(vault)?,
+                        address: addr,
+                    },
+                    false,
+                ))
+            }
+            "stableswap" if variant == Some("balancer_stable") => {
+                let vault = vault.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "construct_pool: the stableswap family requires `vault`",
+                    )
+                })?;
+                Ok((
+                    PoolConstruction::BalancerStable {
+                        vault: parse_address(vault)?,
+                        address: addr,
+                        invariant_version: request.invariant_version,
+                    },
+                    false,
+                ))
+            }
+            // Curve — the discovery-only stableswap family with no `factory()`.
+            // The driver supplies the registry/factory addresses the LP-token +
+            // metapool lookups consult (driver values, like the V3 route's factory
+            // rungs).
+            "stableswap" => {
+                let registries = registries.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "construct_pool: the Curve family requires `registries`",
+                    )
+                })?;
+                let registry = registries
+                    .iter()
+                    .map(|s| parse_address(s))
+                    .collect::<PyResult<Vec<Address>>>()?;
+                Ok((
+                    PoolConstruction::Curve {
+                        address: addr,
+                        registries: registry,
+                    },
+                    false,
+                ))
+            }
+            other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "construct_pool: unsupported family {other:?}"
+            ))),
+        }
+    }
+
+    /// The single-flight key family for a construction request — the concurrency
+    /// class a build of this family+address takes part in.
+    fn flight_family_of(family: &str, variant: Option<&str>) -> u8 {
+        match family {
+            "constant_product" if variant == Some("aerodrome") => {
+                build_flights::flight_family::AERODROME
+            }
+            "constant_product" => build_flights::flight_family::V2,
+            "concentrated_liquidity" => build_flights::flight_family::V3,
+            "weighted" => build_flights::flight_family::BALANCER_WEIGHTED,
+            "stableswap" if variant == Some("balancer_stable") => {
+                build_flights::flight_family::BALANCER_STABLE
+            }
+            _ => build_flights::flight_family::CURVE,
+        }
+    }
+
+    /// The registry-of-record identity echo for an already-registered
+    /// address — the flight pre-check AND the door's registry-GET race
+    /// answer read the SAME shaping. The pair-keyed families echo their
+    /// registered identity (parity with the builder's return surface); the
+    /// multi-token ones echo the family's own spelling with empty token
+    /// strings (their list rides the handle).
+    fn registered_echo(
+        &self,
+        py: Python<'_>,
+        family: &str,
+        variant: Option<&str>,
+        addr: &Address,
+    ) -> Option<(u64, String, String, String, String)> {
+        let echo = |pool_id: u64, variant: &str| {
+            (
+                pool_id,
+                String::new(),
+                String::new(),
+                addr.to_checksum(None),
+                variant.to_string(),
+            )
+        };
+        match family {
+            "constant_product" if variant == Some("aerodrome") => self
+                .registered_family_pool_id(py, addr, RegisteredPoolFamily::AerodromeV2)
+                .map(|pool_id| echo(pool_id, "aerodrome")),
+            "constant_product" => self.registered_v2_payload(py, addr),
+            "concentrated_liquidity" => self.registered_v3_payload(py, addr, self.bot.chain_id()),
+            "weighted" => self
+                .registered_family_pool_id(py, addr, RegisteredPoolFamily::BalancerWeighted)
+                .map(|pool_id| echo(pool_id, "balancer_weighted")),
+            "stableswap" if variant == Some("balancer_stable") => self
+                .registered_family_pool_id(py, addr, RegisteredPoolFamily::BalancerStable)
+                .map(|pool_id| echo(pool_id, "balancer_stable")),
+            "stableswap" => self
+                .registered_family_pool_id(py, addr, RegisteredPoolFamily::Curve)
+                .map(|pool_id| echo(pool_id, "stableswap")),
+            _ => None,
+        }
     }
 
     /// ADR-006 D4 (T3): attach the pump lifecycle state owned by a
@@ -731,7 +878,8 @@ impl PyBot {
                     })))
             })
             .map_err(map_refusal)?;
-        // Telemetry: see build_v2_pool — one Jaeger node per V2 registration.
+        // Telemetry: one Jaeger node per V2 registration (the fresh-build
+        // twin lives at the construction door).
         let _reg = tracing::info_span!(
             "degenbot.pool.register",
             pool.version = "v2",
@@ -742,205 +890,6 @@ impl PyBot {
         )
         .entered();
         Ok(pool_id)
-    }
-
-    /// Build + register a V2 pool through the Rust `PoolBuilder` (
-    /// delegation adapter). Runs the core async builder — ALL the io
-    /// choreography in Rust: immutable data, reserves, DEX-resolution incl.
-    /// the Camelot branch, CREATE2 verify, deployer/init-hash, narrow reserves
-    /// — on the attached `ConstructionIo`, registers into `BotState`, and
-    /// returns the auto-assigned pool id for the Python caller to wrap.
-    ///
-    /// The `PoolBuilder` is alloy-only (Q6-narrow `ConstructionIo`): this
-    /// requires an attached construction-I/O (D-B single `AlloyProvider`).
-    ///
-    /// # Errors
-    ///
-    /// `RuntimeError` if no `ConstructionIo` is attached (and for a DB-read or
-    /// transient builder failure). A pool refusal is a `PoolRegistrationError`
-    /// subclass — `PoolBuildRpcError` (a read failed: retryable),
-    /// `PoolBuildDecodeError` (a read answered a value no pool can hold),
-    /// `SpecViolationError` (out of spec), or `PoolAlreadyRegisteredError`
-    /// (duplicate registration); a CREATE2 identity divergence stays a plain
-    /// `ValueError`.
-    #[pyo3(signature = (address, block=None))]
-    fn build_v2_pool(
-        &self,
-        py: Python<'_>,
-        address: &str,
-        block: Option<u64>,
-    ) -> PyResult<(u64, String, String, String, String)> {
-        let addr = parse_address(address)?;
-        let chain_id = self.bot.chain_id();
-        // PRG-1 registry unification: the build (pre-check → build →
-        // publish) runs under the engine-internal single flight keyed by
-        // (V2, chain, address). The registry-of-record pre-check answers a
-        // registered address with its identity — no duplicate builder replay
-        // racing into an AlreadyRegistered refusal (a race class).
-        let key = build_flights::FlightKey(
-            build_flights::flight_family::V2,
-            chain_id,
-            addr.to_checksum(None).to_lowercase(),
-        );
-        self.run_flight(
-            py,
-            &key,
-            || Ok(self.registered_v2_payload(py, &addr)),
-            || {
-                // The fetch/build/register choreography is core-owned
-                // ([`Bot::build_and_register_v2`]); the GIL is released
-                // across the whole scope — never hold the GIL while parked
-                // on the runtime or the BotState write.
-                let (pool_id, identity) = py
-                    .detach(|| self.bot.build_and_register_v2(addr, block))
-                    .map_err(|kind| map_build_refusal("build_v2_pool", kind))?;
-                Ok((
-                    pool_id,
-                    (pool_id, identity.0, identity.1, identity.2, identity.3),
-                ))
-            },
-        )
-    }
-}
-
-/// The family build arms `construct_pool` dispatches to.
-///
-/// They are internal: ADR-085 D2 keeps ONE public construction verb on the seam and
-/// makes a family a request variant, not a pymethod. They stay pymethod-shaped
-/// (`Python`-taking, `PyResult`-returning) because the interpreter's GIL discipline
-/// is theirs to hold.
-impl PyBot {
-    /// Build + register an Aerodrome V2 pool through the Rust `PoolBuilder`
-    /// (the delegation adapter) — the Aerodrome twin of
-    /// [`Self::build_v2_pool`]. The core `builder::build_aerodrome_v2` runs the
-    /// full `stable()`+`getFee()` + reserves + CREATE2 choreography and returns
-    /// a [`RegisterAerodromeV2PoolParams`]; this adapter registers it into
-    /// [`PoolEntry::AerodromeV2`]. Returns the `pool_id`.
-    fn build_aerodrome_v2_pool(
-        &self,
-        py: Python<'_>,
-        address: &str,
-        block: Option<u64>,
-    ) -> PyResult<u64> {
-        let addr = parse_address(address)?;
-        let chain_id = self.bot.chain_id();
-        // PRG-1 registry unification: single-flight + registry-of-record
-        // pre-check (see `build_v2_pool`).
-        let key = build_flights::FlightKey(
-            build_flights::flight_family::AERODROME,
-            chain_id,
-            addr.to_checksum(None).to_lowercase(),
-        );
-        self.run_flight(
-            py,
-            &key,
-            || Ok(self.registered_family_pool_id(py, &addr, RegisteredPoolFamily::AerodromeV2)),
-            || {
-                // Core-owned ([`Bot::build_and_register_aerodrome_v2`] — io
-                // fetch, builder run, registration write; see `build_v2_pool`
-                // for the GIL note).
-                let pool_id = py
-                    .detach(|| self.bot.build_and_register_aerodrome_v2(addr, block))
-                    .map_err(|kind| map_build_refusal("build_aerodrome_v2_pool", kind))?;
-                Ok((pool_id, pool_id))
-            },
-        )
-    }
-
-    /// Build + register a Balancer V2 **weighted** pool through the Rust
-    /// `PoolBuilder` (the delegation adapter). The core
-    /// `builder::build_balancer_weighted` runs the full `getPoolId` + Vault
-    /// `getPoolTokens` + `getSwapFeePercentage` + `getNormalizedWeights` +
-    /// bytecode `PowVersion` detect + `decimals()` scaling-factor choreography
-    /// and returns a [`RegisterBalancerWeightedPoolParams`]; this adapter
-    /// registers it into [`PoolEntry::BalancerWeighted`]. Returns the `pool_id`.
-    fn build_balancer_weighted_pool(
-        &self,
-        py: Python<'_>,
-        address: &str,
-        vault: &str,
-        block: Option<u64>,
-    ) -> PyResult<u64> {
-        let addr = parse_address(address)?;
-        let vault_addr = parse_address(vault)?;
-        // PRG-1 registry unification: single-flight + registry-of-record
-        // pre-check (see `build_v2_pool`).
-        let key = build_flights::FlightKey(
-            build_flights::flight_family::BALANCER_WEIGHTED,
-            self.bot.chain_id(),
-            addr.to_checksum(None).to_lowercase(),
-        );
-        self.run_flight(
-            py,
-            &key,
-            || {
-                Ok(self.registered_family_pool_id(
-                    py,
-                    &addr,
-                    RegisteredPoolFamily::BalancerWeighted,
-                ))
-            },
-            || {
-                // Core-owned ([`Bot::build_and_register_balancer_weighted`]
-                // — see `build_v2_pool`).
-                let pool_id = py
-                    .detach(|| {
-                        self.bot
-                            .build_and_register_balancer_weighted(vault_addr, addr, block)
-                    })
-                    .map_err(|kind| map_build_refusal("build_balancer_weighted_pool", kind))?;
-                Ok((pool_id, pool_id))
-            },
-        )
-    }
-
-    /// Build + register a Balancer V2 **stable** pool through the Rust
-    /// `PoolBuilder` (the delegation adapter). The core
-    /// `builder::build_balancer_stable` runs the `getPoolId` + Vault
-    /// `getPoolTokens` + `getSwapFeePercentage` + `getAmplificationParameter`
-    /// plus BPT-detect + rate-provider/rate + scaling-factor + `invariant_version`
-    /// resolution choreography and returns a [`RegisterBalancerStablePoolParams`];
-    /// this adapter registers it into [`PoolEntry::BalancerStable`].
-    /// `invariant_version` overrides the shape-derived invariant version (BPT
-    /// among the Vault tokens → V1, else V2).
-    /// Returns the `pool_id`.
-    fn build_balancer_stable_pool(
-        &self,
-        py: Python<'_>,
-        address: &str,
-        vault: &str,
-        block: Option<u64>,
-        invariant_version: Option<u8>,
-    ) -> PyResult<u64> {
-        let addr = parse_address(address)?;
-        let vault_addr = parse_address(vault)?;
-        // PRG-1 registry unification: single-flight + registry-of-record
-        // pre-check (see `build_v2_pool`).
-        let key = build_flights::FlightKey(
-            build_flights::flight_family::BALANCER_STABLE,
-            self.bot.chain_id(),
-            addr.to_checksum(None).to_lowercase(),
-        );
-        self.run_flight(
-            py,
-            &key,
-            || Ok(self.registered_family_pool_id(py, &addr, RegisteredPoolFamily::BalancerStable)),
-            || {
-                // Core-owned ([`Bot::build_and_register_balancer_stable`] —
-                // see `build_v2_pool`).
-                let pool_id = py
-                    .detach(|| {
-                        self.bot.build_and_register_balancer_stable(
-                            vault_addr,
-                            addr,
-                            block,
-                            invariant_version,
-                        )
-                    })
-                    .map_err(|kind| map_build_refusal("build_balancer_stable_pool", kind))?;
-                Ok((pool_id, pool_id))
-            },
-        )
     }
 }
 
@@ -1307,212 +1256,120 @@ impl PyBot {
         let variant = request.variant.as_deref();
         let block = request.block;
         let db = request.db;
-        let vault = request.vault.as_deref();
-        let invariant_version = request.invariant_version;
-        // An empty hint list is "the caller supplied none": the per-family arms read
-        // `Option` (absent = use the family's own default route).
+        // An empty hint list is "the caller supplied none": the route plan
+        // reads `Option` (absent = the generic-only route).
         let factories = (!request.factories.is_empty()).then(|| request.factories.clone());
-        let registries = (!request.registries.is_empty()).then(|| request.registries.clone());
-        let echo = |pool_id: u64, variant: &str| {
-            (
-                pool_id,
-                String::new(),
-                String::new(),
-                address.to_string(),
-                variant.to_string(),
-            )
-        };
-        match family {
-            // Concentrated liquidity: the V3 construction route (get-or-
-            // register + the route walk + the DB-first tick map). The fork
-            // storage layout is resolved CORE-side from the deployment table,
-            // so the driver never names a fork.
-            "concentrated_liquidity" => self.build_v3_pool(py, address, block, db, None, factories),
-            // Constant product: the V2-style families. Aerodrome is a distinct
-            // structural family with its own core entry; every other V2
-            // variant (Uniswap / Camelot / Sushi / Pancake) shares the V2 entry.
-            "constant_product" => {
-                if variant == Some("aerodrome") {
-                    let pool_id = self.build_aerodrome_v2_pool(py, address, block)?;
-                    Ok(echo(pool_id, "aerodrome"))
-                } else {
-                    self.build_v2_pool(py, address, block)
-                }
-            }
-            // Weighted: Balancer V2 weighted.
-            "weighted" => {
-                let vault = vault.ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(
-                        "construct_pool: the weighted family requires `vault`",
-                    )
-                })?;
-                let pool_id = self.build_balancer_weighted_pool(py, address, vault, block)?;
-                Ok(echo(pool_id, "balancer_weighted"))
-            }
-            // Stableswap: two arms. Balancer stable builds through the Vault
-            // entry (requires `vault`). Curve — the discovery-only stableswap
-            // family with no `factory()` — builds through the core Curve
-            // detection choreography, so its identity is resolved by the core
-            // builder, never a second Python path. The driver supplies the
-            // Curve registry/factory addresses the LP-token + metapool lookups
-            // consult (driver VALUES, like the V3 route's factory rungs).
-            "stableswap" => {
-                if variant == Some("balancer_stable") {
-                    let vault = vault.ok_or_else(|| {
-                        pyo3::exceptions::PyValueError::new_err(
-                            "construct_pool: the stableswap family requires `vault`",
-                        )
-                    })?;
-                    let pool_id = self.build_balancer_stable_pool(
-                        py,
-                        address,
-                        vault,
-                        block,
-                        invariant_version,
-                    )?;
-                    Ok(echo(pool_id, "balancer_stable"))
-                } else {
-                    let registries = registries.ok_or_else(|| {
-                        pyo3::exceptions::PyValueError::new_err(
-                            "construct_pool: the Curve family requires `registries`",
-                        )
-                    })?;
-                    let addr = parse_address(address)?;
-                    let registry = registries
-                        .iter()
-                        .map(|s| parse_address(s))
-                        .collect::<PyResult<Vec<Address>>>()?;
-                    let pool_id = py
-                        .detach(|| {
-                            self.bot
-                                .build_and_register_curve_pool(addr, &registry, block)
-                        })
-                        .map_err(|kind| map_build_refusal("construct_pool", kind))?;
-                    Ok(echo(pool_id, "stableswap"))
-                }
-            }
-            // An identity the engine does not model: a positively probed
-            // Balancer Vault pool (`getPoolId()` answered) whose family probe
-            // did not, so neither weighted nor stable — a linear pool, a
-            // boosted pool's linear constituent, a gyro/quant-amm shape. There
-            // is no shape to build, so the refusal rides the ledger's spec
-            // taxonomy under the identity's own name. Routing it through any
-            // other family's builder instead reports that builder's failure
-            // for a pool the family never owned (the measured mislabel was the
-            // Curve arm's "curve required read reverted").
-            "unmodeled" => Err(map_refusal(RefusalKind::unbuilt_spec_refusal(
+        // An identity the engine does not model: a positively probed Balancer
+        // Vault pool (`getPoolId()` answered) whose family probe did not, so
+        // neither weighted nor stable — a linear pool, a boosted pool's linear
+        // constituent, a gyro/quant-amm shape. There is no shape to build, so
+        // the refusal rides the ledger's spec taxonomy under the identity's
+        // own name. Routing it through any other family's builder instead
+        // reports that builder's failure for a pool the family never owned
+        // (the measured mislabel was the Curve arm's "curve required read
+        // reverted").
+        if family == "unmodeled" {
+            return Err(map_refusal(RefusalKind::unbuilt_spec_refusal(
                 SpecRefusal::BalancerUnmodeledFamily,
-            ))),
-            other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "construct_pool: unsupported family {other:?}"
-            ))),
+            )));
         }
-    }
-}
-
-#[pymethods]
-impl PyBot {
-    /// Build + register a V3 pool through the Rust `PoolBuilder` (
-    /// delegation adapter) — the V3 twin of [`Self::build_v2_pool`]. The tick
-    /// map is assembled DB-first (a `TickMapDb` hit → `Tracked`, feeding the
-    /// quarantine→verify lifecycle; `db=false` forces the Chain-arm
-    /// Sparse path). `block` defaults to the current chain head.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::build_v2_pool`].
-    #[pyo3(signature = (address, block=None, db=true, slot_layout=None, factories=None))]
-    fn build_v3_pool(
-        &self,
-        py: Python<'_>,
-        address: &str,
-        block: Option<u64>,
-        db: bool,
-        slot_layout: Option<&str>,
-        factories: Option<Vec<String>>,
-    ) -> PyResult<(u64, String, String, String, String)> {
         let addr = parse_address(address)?;
-        let chain_id = self.bot.chain_id();
-        // PRG-1 registry unification: single-flight + registry-of-record
-        // pre-check (see `build_v2_pool`) — a registered V3 address answers
-        // with its identity instead of replaying the RPC tick-map assembly
-        // into an AlreadyRegistered refusal.
+        // The DB tick-map handle (the V3 `Tracked` arm) lives as long as the
+        // request that borrows it.
+        let db_arc: Option<std::sync::Arc<degenbot_db::snapshot_db::SnapshotDb>> =
+            if family == "concentrated_liquidity" && db {
+                self.db_handle()
+            } else {
+                None
+            };
+        let db_ref: Option<&dyn degenbot_db::snapshot::TickMapDb> = db_arc
+            .as_deref()
+            .map(|d| d as &dyn degenbot_db::snapshot::TickMapDb);
+        let (construction, pair_echo) =
+            Self::translate_construction_request(request, addr, db_ref)?;
+        let family_tag = construction.family();
         let key = build_flights::FlightKey(
-            build_flights::flight_family::V3,
-            chain_id,
+            Self::flight_family_of(family, variant),
+            self.bot.chain_id(),
             addr.to_checksum(None).to_lowercase(),
         );
         self.run_flight(
             py,
             &key,
-            || Ok(self.registered_v3_payload(py, &addr, chain_id)),
+            || Ok(self.registered_echo(py, family, variant, &addr)),
             || {
-                use degenbot_bot::bot_core::pool_builder::route;
-                // The io fetch is core-owned ([`Bot::require_construction_io`]);
-                // the failure maps to the method-prefixed legacy `RuntimeError`.
+                // The io fetch is core-owned; the failure maps to the
+                // method-prefixed legacy `RuntimeError`.
                 let io = py
                     .detach(|| self.bot.require_construction_io())
-                    .map_err(|_| map_no_construction_io("build_v3_pool"))?;
-                let db_arc: Option<std::sync::Arc<degenbot_db::snapshot_db::SnapshotDb>> =
-                    if db { self.db_handle() } else { None };
-                let db_ref: Option<&dyn degenbot_db::snapshot::TickMapDb> = db_arc
-                    .as_deref()
-                    .map(|d| d as &dyn degenbot_db::snapshot::TickMapDb);
-                // The construction route (pool-construction card): ONE core
-                // entry — get-or-register + route order + build + register,
-                // classified on the registration taxonomy. The cockpit's
-                // resolved route (the ordered factory rungs) rides the call;
-                // `None` is the generic-only route (the behavior-preserving
-                // default), and the LOUD unsupported-family refusal surfaces
-                // as `UnsupportedPoolFamilyError` — never swallowed into
-                // another rung.
-                let route_plan = route::ConstructionRoute {
+                    .map_err(|_| map_no_construction_io("construct_pool"))?;
+                // The construction route (pool-construction card): the
+                // cockpit's resolved route (the ordered factory rungs) rides
+                // the call; an absent list is the generic-only route (the
+                // behavior-preserving default).
+                let plan = route::ConstructionRoute {
                     factories: factories
+                        .clone()
                         .unwrap_or_default()
                         .iter()
                         .filter_map(|f| parse_address(f).ok())
                         .collect(),
                     generic: true,
                 };
-                // ADR-005 sparse-map parity: the core builder registers a single tick
-                // word (Sparse) and attaches its own `ConstructionIo`-backed
-                // tick-word source for the live-miss backfill, so no driver
-                // callback is needed (nor accepted) here.
-                let fetcher = None;
-                // concentrated liquidity slot layout : explicit override (the Python
-                // driver knows the pool class for non-JSON deployments) wins over the
-                // builder's deployment-table resolution.
-                let slot_override = match slot_layout {
-                    None => None,
-                    Some("pancakeswap") => Some(degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout::PancakeV3),
-                    Some("uniswap") => Some(degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3),
-                    Some(other) => {
-                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                            "build_v3_pool: slot_layout must be 'uniswap' or 'pancakeswap', got {other:?}"
-                        )));
-                    }
-                };
-                // The get-or-register + route-order + build + register
-                // choreography is core-owned ([`Bot::build_and_register_v3`]);
-                // the GIL is released across the whole scope.
-                let (pool_id, identity) = py
+                // The get-or-register + route order + build + register
+                // choreography is core-owned ([`Bot::construct_pool`]); the
+                // GIL is released across the whole scope.
+                let constructed = py
                     .detach(|| {
-                        self.bot.build_and_register_v3(
+                        degenbot_core::runtime::get_runtime().block_on(self.bot.construct_pool(
+                            &plan,
+                            construction,
                             &io,
-                            &route_plan,
-                            db_ref,
-                            fetcher,
-                            slot_override,
-                            addr,
                             block,
-                        )
+                        ))
                     })
-                    .map_err(|kind| map_build_refusal("build_v3_pool", kind))?;
-                Ok((pool_id, (pool_id, identity.0, identity.1, identity.2, identity.3)))
+                    .into_result()
+                    .map_err(|refusal| {
+                        map_build_refusal(
+                            "construct_pool",
+                            RefusalKind::from_construction_refusal(&refusal, Some(family_tag)),
+                        )
+                    })?;
+                let pool_id = constructed.pool_id;
+                let echo = match constructed.built.as_ref() {
+                    Some(built) => {
+                        let (token0, token1) = if pair_echo {
+                            let (t0, t1) = built.pair().unwrap_or_default();
+                            (t0.to_checksum(None), t1.to_checksum(None))
+                        } else {
+                            (String::new(), String::new())
+                        };
+                        (
+                            pool_id,
+                            token0,
+                            token1,
+                            built.address.to_checksum(None),
+                            built.variant.clone(),
+                        )
+                    }
+                    // The registry-GET race answer: the same shaping the
+                    // flight pre-check reads.
+                    None => self
+                        .registered_echo(py, family, variant, &addr)
+                        .ok_or_else(|| {
+                            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                "construct_pool: registration answered pool id {pool_id} with no identity"
+                            ))
+                        })?,
+                };
+                Ok((pool_id, echo))
             },
         )
     }
+}
 
+#[pymethods]
+impl PyBot {
     /// Build a V4 pool via the Rust `PoolBuilder` ), registered
     /// into `BotState` via `register_v4_pool`.
     ///
@@ -3219,14 +3076,14 @@ mod tests {
     #![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
     use super::*;
 
-    /// PRG-1 registry unification: `build_v2_pool` answers an
+    /// PRG-1 registry unification: `construct_pool` answers an
     /// address that is already registered in `BotState` (the registry of
     /// record) WITHOUT replaying the RPC choreography — proven by giving it
     /// NO `ConstructionIo` at all: the legacy path raised
     /// "no `ConstructionIo` attached" here; the pre-check answers identity
     /// straight off the registered entry instead.
     #[test]
-    fn build_v2_pool_answers_registered_address_from_the_registry_of_record() {
+    fn construct_pool_answers_registered_address_from_the_registry_of_record() {
         pyo3::Python::attach(|py| {
             let bot = PyBot::new(1);
             let addr = "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa";
@@ -3257,22 +3114,21 @@ mod tests {
 
             // No ConstructionIo attached — the registry-of-record pre-check
             // must answer before the io fetch.
-            let (pid, token0, token1, addr_ret, variant) = bot
-                .build_v2_pool(py, addr, Some(5))
+            let outcome = bot
+                .construct_pool(py, &PyPoolConstructionRequest::v2(addr, Some(5), true))
                 .expect("registered address answers from the registry of record");
-            assert_eq!(pid, pool_id);
-            assert_eq!(token0.to_lowercase(), t0);
-            assert_eq!(token1.to_lowercase(), t1);
-            assert_eq!(addr_ret.to_lowercase(), addr.to_lowercase());
-            assert_eq!(variant, "uniswap-v2");
+            assert_eq!(outcome.pool_id, pool_id);
+            assert_eq!(outcome.token0.to_lowercase(), t0);
+            assert_eq!(outcome.token1.to_lowercase(), t1);
+            assert_eq!(outcome.variant, "uniswap-v2");
 
             // And the single-flight twin: the peer path (claim window
             // closed) re-answers through the same pre-check.
-            let (pid2, ..) = bot
-                .build_v2_pool(py, addr, None)
+            let outcome2 = bot
+                .construct_pool(py, &PyPoolConstructionRequest::v2(addr, None, true))
                 .expect("second build answers from the registry of record");
             assert_eq!(
-                pid2, pool_id,
+                outcome2.pool_id, pool_id,
                 "same registered pool id — no duplicate build"
             );
         });
@@ -3282,12 +3138,20 @@ mod tests {
     /// still raises the legacy `RuntimeError` (the pre-check only answers
     /// registry hits; a fresh build still requires the choreography io).
     #[test]
-    fn build_v2_pool_unregistered_address_requires_construction_io() {
+    fn construct_pool_unregistered_address_requires_construction_io() {
         pyo3::Python::attach(|py| {
             let bot = PyBot::new(1);
             let err = bot
-                .build_v2_pool(py, "0xbBbBbBbbBbbbBbbBbbBBbbbBbBbbBBBbbBBBbbbb", None)
-                .expect_err("no ConstructionIo attached");
+                .construct_pool(
+                    py,
+                    &PyPoolConstructionRequest::v2(
+                        "0xbBbBbBbbBbbbBbbBbbBBbbbBbBbbBBBbbBBBbbbb",
+                        None,
+                        true,
+                    ),
+                )
+                .err()
+                .expect("no ConstructionIo attached");
             assert!(
                 err.to_string().contains("no ConstructionIo attached"),
                 "legacy io requirement preserved for fresh builds: {err}"
