@@ -2913,6 +2913,24 @@ async fn construction_door_v4_matches_the_route_interior() {
         Some(direct.pool_id),
     );
 
+    // The door owns the StateView registration (the solver-state gate's
+    // registry) and the sparse-backfill tick-word source — both
+    // driver-side responsibilities under the retired verb.
+    assert_eq!(
+        door_bot
+            .state_arc()
+            .read_at(LockSite::Core)
+            .state_view_for_pool(direct.pool_id),
+        Some(pm),
+    );
+    let fetcher_attached = door_bot
+        .state_arc()
+        .read_at(LockSite::Core)
+        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(direct.pool_id)
+        .map(|state| state.fetcher.is_some())
+        .unwrap_or_default();
+    assert!(fetcher_attached, "the door attaches the tick-word source");
+
     // The door's `(manager, pool_id)`-keyed get half answers without I/O.
     let io_down = io_with(FakeRpc::new());
     let again = door_bot

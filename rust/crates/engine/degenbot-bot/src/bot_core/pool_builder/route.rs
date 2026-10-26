@@ -39,6 +39,7 @@ use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
 
 use super::builder::{self, PoolBuilderError, V4BuildResult, V4PoolBuildOverrides};
 use super::choreography;
+use super::tick_source::{ConstructionIoTickWordSource, TickWordSourcePool};
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::registration_ledger::BuildFailure;
 use crate::bot_core::{Bot, RegisteredPoolFamily};
@@ -500,9 +501,24 @@ async fn construct_v4(
                 }
                 other => classify_builder_error(other, pool_manager),
             })?;
-    let built: V4BuildResult = builder::build_v4(identity, db, io, block)
+    // The solver-state gate's StateView registry: the OLD FFI verb made
+    // this registration driver-side before the build; the door owns it (the
+    // resolved identity names the StateView, so no caller value is needed).
+    bot.register_state_view(pool_manager, identity.state_view);
+    let mut built: V4BuildResult = builder::build_v4(identity, db, io, block)
         .await
         .map_err(|err| classify_builder_error(err, pool_manager))?;
+    // Sparse-map parity (the V4 twin of the V3 door arm): the core attaches
+    // its own ConstructionIo-backed tick-word source for the live-miss
+    // backfill, so no caller callback is needed.
+    built.params.fetcher = Some(ConstructionIoTickWordSource::attached(
+        io,
+        TickWordSourcePool::V4 {
+            state_view: identity.state_view,
+            pool_id,
+            tick_spacing: identity.tick_spacing,
+        },
+    ));
     let verdict = bot
         .state_arc()
         .write_at(LockSite::Core)
