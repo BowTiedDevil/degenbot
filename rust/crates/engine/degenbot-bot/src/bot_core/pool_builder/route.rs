@@ -33,6 +33,7 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 use degenbot_db::snapshot::TickMapDb;
+use degenbot_pools::sim::registration_refusal::RegisterRefusal;
 use degenbot_pools::sim::tick_fetch::TickWordFetcher;
 use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
 
@@ -40,10 +41,9 @@ use super::builder::{self, PoolBuilderError, V4BuildResult, V4PoolBuildOverrides
 use super::choreography;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::registration_ledger::BuildFailure;
-use crate::bot_core::{
-    Bot, RegisterV2PoolError, RegisterV3PoolError, RegisterV4PoolError, RegisteredPoolFamily,
-};
+use crate::bot_core::{Bot, RegisteredPoolFamily};
 use degenbot_substrate::state_lock::LockSite;
+use degenbot_substrate::{PoolRegistration, RegistrationVerdict};
 
 /// The resolved construction-route policy: the ordered rungs one construction
 /// attempt tries, terminating in the generic builder. A driver VALUE — the
@@ -211,24 +211,28 @@ fn registered_v4_pool(bot: &Bot, pool_manager: Address, pool_id: &[u8; 32]) -> O
         .map(|registered| registered.pool_id)
 }
 
-/// Fold an admission result into a registry reuse when the state reports a
-/// concurrent `AlreadyRegistered` — a benign race artifact (the pre-check
-/// raced a concurrent writer), never a pool fact. A re-read miss stays a
-/// transient refusal.
-fn fold_already_registered<E: std::fmt::Debug>(
-    result: Result<u64, E>,
-    is_already_registered: impl FnOnce(&E) -> bool,
+/// Fold the write door's ONE verdict into a registry reuse when the state
+/// reports a concurrent `AlreadyRegistered` — a benign race artifact (the
+/// pre-check raced a concurrent writer), never a pool fact. A re-read miss
+/// stays a transient refusal; every other refusal classifies through the
+/// family's own posture.
+fn fold_registration_verdict(
+    verdict: RegistrationVerdict,
     reuse: impl FnOnce() -> Option<u64>,
-    map_refusal: impl FnOnce(E) -> ConstructionRefusal,
+    classify: impl FnOnce(&RegisterRefusal) -> ConstructionRefusal,
 ) -> Result<u64, ConstructionRefusal> {
-    match result {
-        Ok(pool_id) => Ok(pool_id),
-        Err(err) if is_already_registered(&err) => reuse().ok_or_else(|| {
-            ConstructionRefusal::Skipped(BuildFailure::Transient(format!(
-                "already-registered admission race with no registry entry to reuse ({err:?})"
-            )))
-        }),
-        Err(err) => Err(map_refusal(err)),
+    match verdict {
+        RegistrationVerdict::Registered { pool_id, .. } => Ok(pool_id),
+        RegistrationVerdict::Refused { refusal, .. }
+            if matches!(refusal, RegisterRefusal::AlreadyRegistered { .. }) =>
+        {
+            reuse().ok_or_else(|| {
+                ConstructionRefusal::Skipped(BuildFailure::Transient(format!(
+                    "already-registered admission race with no registry entry to reuse ({refusal:?})"
+                )))
+            })
+        }
+        RegistrationVerdict::Refused { refusal, .. } => Err(classify(&refusal)),
     }
 }
 
@@ -256,17 +260,42 @@ fn classify_builder_error(err: PoolBuilderError, address: Address) -> Constructi
     }
 }
 
+/// Classify a V2 registration refusal. The V2 register entry refuses only on
+/// an out-of-spec field — a pool fact, never a family-level abort — so every
+/// refusal is a transient skip carrying the source rendering.
+fn classify_register_v2(refusal: &RegisterRefusal) -> ConstructionRefusal {
+    ConstructionRefusal::Skipped(BuildFailure::Transient(format!("{refusal:?}")))
+}
+
 /// Classify a V3 registration refusal. A spec violation deliberately maps to
 /// a TRANSIENT skip here: the V3 use site's existing taxonomy application
 /// treats an out-of-spec field as a retriable skip (the registration stage
 /// validates live scalars whose reads can straddle a boundary), distinct
 /// from the V4 admission taxonomy's stable arms.
-fn classify_register_v3(err: RegisterV3PoolError) -> ConstructionRefusal {
-    match err {
-        RegisterV3PoolError::SpecViolation(v) => ConstructionRefusal::Skipped(
-            BuildFailure::Transient(format!("V3 pool registration failed: {v}")),
+fn classify_register_v3(refusal: &RegisterRefusal) -> ConstructionRefusal {
+    match refusal {
+        RegisterRefusal::SpecViolation { detail } => ConstructionRefusal::Skipped(
+            BuildFailure::Transient(format!("V3 pool registration failed: {detail}")),
         ),
-        other @ RegisterV3PoolError::AlreadyRegistered { .. } => {
+        // The V3 register entry refuses nothing else (its `RegisterV3PoolError`
+        // has no admission arm) — the shared vocabulary is wider than this
+        // family's, and anything it cannot produce stays a transient skip.
+        other => ConstructionRefusal::Skipped(BuildFailure::Transient(format!("{other:?}"))),
+    }
+}
+
+/// Classify a V4 registration refusal: the admission classes carry their
+/// taxonomy (hook/dynamic-fee/encoder-limit), and an out-of-spec V4 field
+/// classifies with the fee facts (`HighFee`) — the posture
+/// `From<RegisterV4PoolError> for BuildFailure` defines, preserved so the
+/// write door's vocabulary and the taxonomy agree on every V4 refusal.
+fn classify_register_v4(refusal: &RegisterRefusal) -> ConstructionRefusal {
+    match refusal {
+        RegisterRefusal::Admission { failure, .. } => ConstructionRefusal::Skipped(failure.clone()),
+        RegisterRefusal::SpecViolation { .. } => {
+            ConstructionRefusal::Skipped(BuildFailure::HighFee)
+        }
+        other @ RegisterRefusal::AlreadyRegistered { .. } => {
             ConstructionRefusal::Skipped(BuildFailure::Transient(format!("{other:?}")))
         }
     }
@@ -290,25 +319,27 @@ async fn construct_v2(
     let params = builder::build_v2(bot.chain_id(), address, io, block)
         .await
         .map_err(|err| classify_builder_error(err, address))?;
-    let result = bot
+    // The minted identity rides the fold; capture it before `params` moves
+    // into the write door's request.
+    let minted = BuiltIdentity {
+        address,
+        token0: params.token0,
+        token1: params.token1,
+        factory: Some(params.factory),
+        v4_pool_id: None,
+    };
+    let verdict = bot
         .state_arc()
         .write_at(LockSite::Core)
-        .register_v2_pool(&params);
-    let pool_id = fold_already_registered(
-        result,
-        |err| matches!(err, RegisterV2PoolError::AlreadyRegistered { .. }),
+        .register_pool(PoolRegistration::V2(Box::new(params)));
+    let pool_id = fold_registration_verdict(
+        verdict,
         || registered_address_pool(bot, address, RegisteredPoolFamily::V2),
-        |err| ConstructionRefusal::Skipped(BuildFailure::Transient(format!("{err:?}"))),
+        classify_register_v2,
     )?;
     Ok(ConstructedPool {
         pool_id,
-        built: Some(BuiltIdentity {
-            address,
-            token0: params.token0,
-            token1: params.token1,
-            factory: Some(params.factory),
-            v4_pool_id: None,
-        }),
+        built: Some(minted),
     })
 }
 
@@ -369,25 +400,27 @@ async fn construct_v3(
     if let Some(slot_layout) = v3.slot_layout {
         params.slot_layout = slot_layout;
     }
-    let result = bot
+    // The minted identity rides the fold; capture it before `params` moves
+    // into the write door's request.
+    let minted = BuiltIdentity {
+        address,
+        token0: params.token0,
+        token1: params.token1,
+        factory: Some(params.factory),
+        v4_pool_id: None,
+    };
+    let verdict = bot
         .state_arc()
         .write_at(LockSite::Core)
-        .register_v3_pool(&params);
-    let pool_id = fold_already_registered(
-        result,
-        |err| matches!(err, RegisterV3PoolError::AlreadyRegistered { .. }),
+        .register_pool(PoolRegistration::V3(Box::new(params)));
+    let pool_id = fold_registration_verdict(
+        verdict,
         || registered_address_pool(bot, address, RegisteredPoolFamily::V3),
         classify_register_v3,
     )?;
     Ok(ConstructedPool {
         pool_id,
-        built: Some(BuiltIdentity {
-            address,
-            token0: params.token0,
-            token1: params.token1,
-            factory: Some(params.factory),
-            v4_pool_id: None,
-        }),
+        built: Some(minted),
     })
 }
 
@@ -426,15 +459,14 @@ async fn construct_v4(
     let built: V4BuildResult = builder::build_v4(identity, db, io, block)
         .await
         .map_err(|err| classify_builder_error(err, pool_manager))?;
-    let result = bot
+    let verdict = bot
         .state_arc()
         .write_at(LockSite::Core)
-        .register_v4_pool(&built.params);
-    let registered = fold_already_registered(
-        result,
-        |err| matches!(err, RegisterV4PoolError::AlreadyRegistered { .. }),
+        .register_pool(PoolRegistration::V4(Box::new(built.params)));
+    let registered = fold_registration_verdict(
+        verdict,
         || registered_v4_pool(bot, pool_manager, &pool_id),
-        |err| ConstructionRefusal::Skipped(BuildFailure::from(err)),
+        classify_register_v4,
     )?;
     Ok(ConstructedPool {
         pool_id: registered,
@@ -457,6 +489,7 @@ mod route_tests {
     use degenbot_uniswap::deployments::AddressMismatch;
 
     use crate::bot_core::pool_builder::parity;
+    use crate::bot_core::{RegisterV3PoolError, RegisterV4PoolError};
 
     #[test]
     fn route_serves_answers_the_policy_order() {
@@ -512,61 +545,86 @@ mod route_tests {
 
     #[test]
     fn classify_maps_v4_admission_through_the_taxonomy() {
-        // The V4 arm reuses the taxonomy's own From<RegisterV4PoolError> —
-        // stable admission facts (hook/dynamic fee) classify exactly as the
-        // ledger's V4 arms do, never as loud aborts.
+        // The V4 arm classifies the write door's refusals through the
+        // taxonomy's own `From<RegisterV4PoolError>` folds — stable admission
+        // facts (hook/dynamic fee) classify exactly as the ledger's V4 arms
+        // do, never as loud aborts.
         let refusal =
-            ConstructionRefusal::Skipped(BuildFailure::from(RegisterV4PoolError::DynamicFee {
+            classify_register_v4(&RegisterRefusal::from(&RegisterV4PoolError::DynamicFee {
                 fee: 0x100_000,
             }));
         assert!(matches!(
             refusal,
             ConstructionRefusal::Skipped(BuildFailure::DynamicFee)
         ));
-        let high = ConstructionRefusal::Skipped(BuildFailure::from(
-            RegisterV4PoolError::FeeExceedsEncoderLimit { fee: 65_536 },
+        let high = classify_register_v4(&RegisterRefusal::from(
+            &RegisterV4PoolError::FeeExceedsEncoderLimit { fee: 65_536 },
         ));
         assert!(matches!(
             high,
+            ConstructionRefusal::Skipped(BuildFailure::HighFee)
+        ));
+        // An out-of-spec V4 field classifies with the fee facts (the
+        // taxonomy's `From<RegisterV4PoolError> for BuildFailure` fold), not
+        // as a transient read failure.
+        let spec =
+            classify_register_v4(&RegisterRefusal::from(&RegisterV4PoolError::SpecViolation(
+                degenbot_pools::state::spec_bounds::SpecViolation {
+                    field: "fee",
+                    value: degenbot_pools::state::spec_bounds::SpecValue::U32(3_000),
+                    bound: "uint24",
+                },
+            )));
+        assert!(matches!(
+            spec,
             ConstructionRefusal::Skipped(BuildFailure::HighFee)
         ));
     }
 
     #[test]
     fn fold_folds_an_admission_race_and_keeps_other_refusals() {
-        let folded = fold_already_registered::<RegisterV3PoolError>(
-            Err(RegisterV3PoolError::AlreadyRegistered {
-                address: Address::new([0x55u8; 20]),
-            }),
-            |err| matches!(err, RegisterV3PoolError::AlreadyRegistered { .. }),
+        let race = RegisterRefusal::from(&RegisterV3PoolError::AlreadyRegistered {
+            address: Address::new([0x55u8; 20]),
+        });
+        let folded = fold_registration_verdict(
+            RegistrationVerdict::refused(RegisteredPoolFamily::V3, race.clone()),
             || Some(42),
             classify_register_v3,
         )
         .expect("race folds to the winner's pool id");
         assert_eq!(folded, 42);
-        let missed = fold_already_registered::<RegisterV3PoolError>(
-            Err(RegisterV3PoolError::AlreadyRegistered {
-                address: Address::new([0x55u8; 20]),
-            }),
-            |err| matches!(err, RegisterV3PoolError::AlreadyRegistered { .. }),
+        let missed = fold_registration_verdict(
+            RegistrationVerdict::refused(RegisteredPoolFamily::V3, race),
             || None,
             classify_register_v3,
         )
         .expect_err("a race fold with no registry entry stays a skip");
         assert!(matches!(missed, ConstructionRefusal::Skipped(_)));
-        let refused = fold_already_registered::<RegisterV3PoolError>(
-            Err(RegisterV3PoolError::SpecViolation(
-                degenbot_pools::state::spec_bounds::SpecViolation {
-                    field: "fee",
-                    value: degenbot_pools::state::spec_bounds::SpecValue::U32(3_000),
-                    bound: "uint24",
-                },
-            )),
-            |err| matches!(err, RegisterV3PoolError::AlreadyRegistered { .. }),
+        let refused = fold_registration_verdict(
+            RegistrationVerdict::refused(
+                RegisteredPoolFamily::V3,
+                RegisterRefusal::from(&RegisterV3PoolError::SpecViolation(
+                    degenbot_pools::state::spec_bounds::SpecViolation {
+                        field: "fee",
+                        value: degenbot_pools::state::spec_bounds::SpecValue::U32(3_000),
+                        bound: "uint24",
+                    },
+                )),
+            ),
             || Some(7),
             classify_register_v3,
         )
         .expect_err("a non-race refusal is not folded");
         assert!(matches!(refused, ConstructionRefusal::Skipped(_)));
+        // V2's posture: any registration refusal is a transient skip carrying
+        // the source rendering — the V2 register entry refuses only on an
+        // out-of-spec field, a pool fact, never a loud abort.
+        let v2 = classify_register_v2(&RegisterRefusal::SpecViolation {
+            detail: "v2 reserve out of bounds".to_owned(),
+        });
+        assert!(matches!(
+            v2,
+            ConstructionRefusal::Skipped(BuildFailure::Transient(_))
+        ));
     }
 }
