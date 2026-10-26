@@ -2205,37 +2205,6 @@ impl PyBot {
             .map_err(map_refusal)
     }
 
-    /// Seed the Rust-owned V4 `StateView` registry (ADR-005 / Option 2):
-    /// record the canonical `StateView` contract whose `getSlot0(bytes32)` /
-    /// `getLiquidity(bytes32)` read a `pool_manager`'s pool state on-chain.
-    /// Called once per `pool_manager` (the driver reads `state_view` from the
-    /// `pool_managers` DB row) before V4 pools solve, so the solver-state
-    /// accuracy gate can verify each V4 hop's state against the chain.
-    ///
-    /// Raises:
-    ///     `ValueError`: If either address is malformed.
-    fn register_v4_state_view(
-        &self,
-        py: Python<'_>,
-        pool_manager: &str,
-        state_view: &str,
-    ) -> PyResult<()> {
-        let pm = parse_address(pool_manager).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "register_v4_state_view: malformed pool_manager {pool_manager:?}: {e}"
-            ))
-        })?;
-        let sv = parse_address(state_view).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "register_v4_state_view: malformed state_view {state_view:?}: {e}"
-            ))
-        })?;
-        // The write guard is acquired inside the core method under this
-        // py.detach (see `register_token`).
-        py.detach(|| self.bot.register_state_view(pm, sv));
-        Ok(())
-    }
-
     /// Register a Curve `StableSwap` pool by contract address.
     ///
     /// Returns the auto-assigned pool ID. The `tokens` / `rate_multipliers` /

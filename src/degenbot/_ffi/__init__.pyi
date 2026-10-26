@@ -1590,18 +1590,6 @@ class Bot:
         (on-chain-empty) tick-bitmap WORD positions, seeded INLINE in the
         registration (Sparse pools only; Tracked pools ignore them).
         """
-    def register_v4_state_view(self, /, pool_manager: str, state_view: str) -> None:
-        """
-        Seed the Rust-owned V4 `StateView` registry (ADR-005 / Option 2):
-        record the canonical `StateView` contract whose `getSlot0(bytes32)` /
-        `getLiquidity(bytes32)` read a `pool_manager`'s pool state on-chain.
-        Called once per `pool_manager` (the driver reads `state_view` from the
-        `pool_managers` DB row) before V4 pools solve, so the solver-state
-        accuracy gate can verify each V4 hop's state against the chain.
-
-        Raises:
-            `ValueError`: If either address is malformed.
-        """
     def registration_fleet_hosted(self, /) -> bool:
         """
         PRG-3: whether the fleet hosts the registration intake (the
