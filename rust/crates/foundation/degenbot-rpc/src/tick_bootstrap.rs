@@ -1,44 +1,53 @@
-//! Pure-Rust [`TickWordSource`] impl backed by an [`AlloyProvider`].
+//! The tick-word I/O layer: the [`AlloyTickWordSource`] plus the ONE
+//! transport-generic choreography loop (`fetch_tick_word_via`) every Rust
+//! tick-word read shares (GLOSSARY **Tick-word source**).
 //!
 //! This is the standalone-consumer path: a `cargo add degenbot` Rust consumer
-//! passes this impl to `assemble_{v3,v4}_tick_map`'s `chain: Option<&dyn
-//! TickWordSource>` parameter; no Python, no `PyBotIo`, no GIL. The
-//! `degenbot-python` shell constructs the same impl over a `PyBotIo`'s native
-//! provider (`make_tick_bootstrap_rpc`).
+//! passes [`AlloyTickWordSource`] to `assemble_{v3,v4}_tick_map`'s
+//! `chain: Option<&dyn TickWordSource>` parameter; no Python, no `PyBotIo`,
+//! no GIL. The `degenbot-python` shell constructs the same impl over a
+//! `PyBotIo`'s native provider (`make_tick_bootstrap_rpc`); the bot core's
+//! `ConstructionIoTickWordSource` reads the same loop through its own
+//! [`TickWordTransport`] impl over the construction I/O seam.
 //!
-//! ## Choreography
+//! ## One choreography, two transports
 //!
 //! The read ports the Python Branch 3 sparse-RPC loop verbatim:
-//! 1. `eth_call` the word's bitmap (`tickBitmap(int16)` for V3;
-//!    `getTickBitmap(bytes32,int16)` for V4).
-//! 2. If the bitmap is zero → return `Ok(None)` (no initialized ticks in this
-//!    word — matches the Python "don't seed empty" rule).
-//! 3. Enumerate the 256 bits; for each set bit, `eth_call` the tick's liquidity
+//! 1. read the word's bitmap (`tickBitmap(int16)` for V3;
+//!    `getTickBitmap(bytes32,int16)` for V4);
+//! 2. if the bitmap is zero → return `Ok(None)` (no initialized ticks in this
+//!    word — matches the Python "don't seed empty" rule);
+//! 3. enumerate the 256 bits; for each set bit, read the tick's liquidity
 //!    (`ticks(int24)` for V3; `getTickLiquidity(bytes32,int24)` for V4) and
-//!    decode into `TickInfo { liquidity_gross, liquidity_net, block }`.
-//! 4. Return `Ok(Some(FetchedTickWord { word, ticks, bitmap }))`.
+//!    decode into `TickInfo { liquidity_gross, liquidity_net, block }`;
+//! 4. return `Ok(Some(FetchedTickWord { word, ticks, bitmap }))`.
 //!
-//! The choreography is identical to the Python Branch 3 path in
-//! `src/degenbot/builders/v3_pool_builder.py::V3PoolBuilder.build` and its V4
-//! twin — same word computation, same bit enumeration order, same decode
-//! shapes. Behavior preservation is exact for live pools.
+//! [`fetch_tick_word_via`] is that loop, written once, generic over
+//! [`TickWordTransport`] — the two raw contract reads (bitmap, tick
+//! liquidity). The transports: [`AlloyProvider`] here, and the bot core's
+//! `ConstructionIo` (paced, `PyBotIo`-mirroring) over the same trait. The
+//! loop is also where the unreadable-bitmap contract decision lives
+//! ([`UnreadableBitmapPolicy`]): the registration arm degrades a malformed
+//! bitmap return to an empty word (the legacy graceful fallback — the pool
+//! registers Sparse instead of failing the build), while the miss path
+//! refuses. Before this loop the two arms carried divergent hand-rolled
+//! copies of the enumeration.
 //!
 //! ## Sync bridging
 //!
-//! The trait method is `fn ... -> Result<...>` (synchronous). The underlying
-//! `AlloyProvider::eth_call` is `async`. The alloy impl bridges this via
-//! [`degenbot_core::runtime::get_runtime`] + `Runtime::block_on(async { ... })`
-//! — the same pattern `PyBotIo::forward_call_to_provider` uses for its native
-//! fast path. This is safe inside the synchronous callsite (`assemble_*` runs
-//! in a synchronous callsite already wrapped in `py.detach` when invoked from
-//! the pyo3 adapter), and for the standalone consumer that has no GIL at all.
-//!
-//! A future pure-async standalone `Bot` API can introduce a sibling `async`
+//! [`TickWordSource`] is synchronous; the transports are `async`. The source
+//! impls bridge via [`degenbot_core::runtime::get_runtime`] + `block_on` (the
+//! bot core adds `block_in_place` under a running runtime) — the same pattern
+//! `PyBotIo::forward_call_to_provider` uses for its native fast path. A
+//! future pure-async standalone `Bot` API can introduce a sibling `async`
 //! trait sharing the same value types — out of scope here.
 
 use hashbrown::HashMap;
+use std::future::Future;
 use std::sync::Arc;
 
+use alloy::primitives::{U128, U256};
+use degenbot_core::errors::ProviderError;
 use degenbot_core::runtime::get_runtime;
 use degenbot_pools::sim::tick_fetch::{
     FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource,
@@ -47,6 +56,119 @@ use degenbot_pools::TickInfo;
 
 use crate::abi::{fetch_tick_bitmap, fetch_tick_data, fetch_v4_tick_bitmap, fetch_v4_tick_data};
 use crate::provider::AlloyProvider;
+
+/// The policy for a bitmap read whose return data fails to decode — the
+/// graceful-degrade contract decision for the tick-word choreography.
+///
+/// The two arms of the tick-word read disagree on purpose:
+///
+/// - the **registration arm** (`bootstrap_{v3,v4}_tick_map`, the build path)
+///   tolerates it: a provider that cannot serve `tickBitmap` registers the
+///   pool Sparse (`tick_data=None`, empty word) instead of failing the
+///   build — the legacy builder's graceful fallback, load-bearing for
+///   degraded providers;
+/// - the **miss path** (sparse swap simulation backfill) refuses: an
+///   unfetchable word is a fetch failure that must surface, not a silently
+///   empty region the walker would treat as authoritative and cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnreadableBitmapPolicy {
+    /// A malformed bitmap return fails the whole word read.
+    Refuse,
+    /// A malformed bitmap return degrades to an empty word (no initialized
+    /// ticks). Only the bitmap read is tolerated — a malformed TICK read
+    /// still fails the word under both policies.
+    TreatAsEmpty,
+}
+
+/// The two raw contract reads one tick-word choreography needs, addressed
+/// by the pool descriptor the key carries.
+///
+/// The ABI shapes (`tickBitmap`/`ticks` for V3,
+/// `getTickBitmap`/`getTickLiquidity` for V4) and their decode are the
+/// impl's business; [`fetch_tick_word_via`] only orchestrates. Errors are
+/// the transport's native [`ProviderError`] so the registration arm keeps
+/// full error fidelity — the [`TickWordSource`] boundary buckets them into
+/// [`TickWordFetchError`] (`map_provider_err`).
+pub trait TickWordTransport: Send + Sync {
+    /// Read the pool's tick-bitmap word `word` as a `U256`.
+    fn read_bitmap(
+        &self,
+        key: &TickWordKey,
+        word: i16,
+        block: u64,
+    ) -> impl Future<Output = Result<U256, ProviderError>> + Send;
+
+    /// Read one initialized tick's `(liquidity_gross, liquidity_net)`.
+    fn read_tick(
+        &self,
+        key: &TickWordKey,
+        tick: i32,
+        block: u64,
+    ) -> impl Future<Output = Result<(U128, i128), ProviderError>> + Send;
+}
+
+/// The ONE tick-word choreography: read the bitmap (policy-guarded), skip
+/// an empty word, enumerate the 256 bits, read each initialized tick's
+/// liquidity, and stamp every `TickInfo` with `block`.
+///
+/// Written once so the registration arm and the miss path cannot diverge;
+/// the transports (`AlloyProvider`, the bot core's `ConstructionIo`)
+/// supply the contract reads. `word` is the raw `int16` the bitmap
+/// selectors take — the caller converts and maps its own out-of-range
+/// verdict ([`TickWordFetchError::OutOfRange`] at the
+/// [`TickWordSource`] boundary).
+///
+/// # Errors
+///
+/// Returns the transport's [`ProviderError`] unchanged. The only
+/// reinterpretation is the [`UnreadableBitmapPolicy::TreatAsEmpty`] arm: a
+/// `DecodingError` on the bitmap read becomes an empty word.
+pub async fn fetch_tick_word_via<T: TickWordTransport>(
+    transport: &T,
+    key: &TickWordKey,
+    word: i16,
+    block: u64,
+    policy: UnreadableBitmapPolicy,
+) -> Result<Option<FetchedTickWord>, ProviderError> {
+    let bitmap = match transport.read_bitmap(key, word, block).await {
+        Ok(b) => b,
+        Err(ProviderError::DecodingError { .. })
+            if policy == UnreadableBitmapPolicy::TreatAsEmpty =>
+        {
+            U256::ZERO
+        }
+        Err(e) => return Err(e),
+    };
+    if bitmap.is_zero() {
+        return Ok(None);
+    }
+    let tick_spacing = match key {
+        TickWordKey::V3 { tick_spacing, .. } | TickWordKey::V4 { tick_spacing, .. } => {
+            *tick_spacing
+        }
+    };
+    let mut ticks: HashMap<i32, TickInfo> = HashMap::new();
+    for i in 0..=255u8 {
+        if bitmap.bit(i.into()) {
+            let active_tick = ((i32::from(word) << 8) + i32::from(i)) * tick_spacing;
+            let (liquidity_gross, liquidity_net) =
+                transport.read_tick(key, active_tick, block).await?;
+            ticks.insert(
+                active_tick,
+                TickInfo {
+                    liquidity_gross,
+                    liquidity_net,
+                    block,
+                },
+            );
+        }
+    }
+    Ok(Some(FetchedTickWord {
+        word: i32::from(word),
+        ticks,
+        bitmap: Some(bitmap),
+    }))
+}
 
 /// [`TickWordSource`] impl backed by an [`AlloyProvider`].
 ///
@@ -75,6 +197,46 @@ impl AlloyTickWordSource {
     }
 }
 
+/// The alloy transport: the same `eth_call` reads the source used to carry
+/// inline, now the [`TickWordTransport`] impl the shared loop drives.
+impl TickWordTransport for AlloyProvider {
+    async fn read_bitmap(
+        &self,
+        key: &TickWordKey,
+        word: i16,
+        block: u64,
+    ) -> Result<U256, ProviderError> {
+        match key {
+            TickWordKey::V3 { address, .. } => {
+                fetch_tick_bitmap(self, address, word, Some(block)).await
+            }
+            TickWordKey::V4 {
+                state_view,
+                pool_id,
+                ..
+            } => fetch_v4_tick_bitmap(self, state_view, pool_id, word, Some(block)).await,
+        }
+    }
+
+    async fn read_tick(
+        &self,
+        key: &TickWordKey,
+        tick: i32,
+        block: u64,
+    ) -> Result<(U128, i128), ProviderError> {
+        match key {
+            TickWordKey::V3 { address, .. } => {
+                fetch_tick_data(self, address, tick, Some(block)).await
+            }
+            TickWordKey::V4 {
+                state_view,
+                pool_id,
+                ..
+            } => fetch_v4_tick_data(self, state_view, pool_id, tick, Some(block)).await,
+        }
+    }
+}
+
 impl TickWordSource for AlloyTickWordSource {
     fn fetch_tick_word(
         &self,
@@ -87,101 +249,26 @@ impl TickWordSource for AlloyTickWordSource {
         let word_i16 = i16::try_from(word).map_err(|_| TickWordFetchError::OutOfRange)?;
 
         let provider = Arc::clone(&self.provider);
-        get_runtime().block_on(async move {
-            match *key {
-                TickWordKey::V3 {
-                    address,
-                    tick_spacing,
-                } => {
-                    let bitmap = fetch_tick_bitmap(&provider, &address, word_i16, Some(block))
-                        .await
-                        .map_err(map_provider_err)?;
-
-                    if bitmap.is_zero() {
-                        return Ok(None);
-                    }
-
-                    let mut ticks: HashMap<i32, TickInfo> = HashMap::new();
-                    for i in 0..=255u8 {
-                        if bitmap.bit(i.into()) {
-                            let active_tick = ((word << 8) + i32::from(i)) * tick_spacing;
-                            let (liquidity_gross, liquidity_net) =
-                                fetch_tick_data(&provider, &address, active_tick, Some(block))
-                                    .await
-                                    .map_err(map_provider_err)?;
-                            ticks.insert(
-                                active_tick,
-                                TickInfo {
-                                    liquidity_gross,
-                                    liquidity_net,
-                                    block,
-                                },
-                            );
-                        }
-                    }
-
-                    Ok(Some(FetchedTickWord {
-                        bitmap: Some(bitmap),
-                        word,
-                        ticks,
-                    }))
-                }
-                TickWordKey::V4 {
-                    state_view,
-                    ref pool_id,
-                    tick_spacing,
-                } => {
-                    let bitmap = fetch_v4_tick_bitmap(
-                        &provider,
-                        &state_view,
-                        pool_id,
-                        word_i16,
-                        Some(block),
-                    )
-                    .await
-                    .map_err(map_provider_err)?;
-
-                    if bitmap.is_zero() {
-                        return Ok(None);
-                    }
-
-                    let mut ticks: HashMap<i32, TickInfo> = HashMap::new();
-                    for i in 0..=255u8 {
-                        if bitmap.bit(i.into()) {
-                            let active_tick = ((word << 8) + i32::from(i)) * tick_spacing;
-                            let (liquidity_gross, liquidity_net) = fetch_v4_tick_data(
-                                &provider,
-                                &state_view,
-                                pool_id,
-                                active_tick,
-                                Some(block),
-                            )
-                            .await
-                            .map_err(map_provider_err)?;
-                            ticks.insert(
-                                active_tick,
-                                TickInfo {
-                                    liquidity_gross,
-                                    liquidity_net,
-                                    block,
-                                },
-                            );
-                        }
-                    }
-
-                    Ok(Some(FetchedTickWord {
-                        bitmap: Some(bitmap),
-                        word,
-                        ticks,
-                    }))
-                }
-            }
-        })
+        get_runtime()
+            .block_on(async move {
+                fetch_tick_word_via(
+                    &*provider,
+                    key,
+                    word_i16,
+                    block,
+                    // The miss path refuses: an unfetchable word must surface
+                    // as a fetch error, not degrade to a silently empty region.
+                    UnreadableBitmapPolicy::Refuse,
+                )
+                .await
+            })
+            .map_err(map_provider_err)
     }
 }
 
-/// Map a `ProviderError` to a [`TickWordFetchError`]. RPC failures (transport,
-/// revert, timeout) → [`TickWordFetchError::FetchFailed`]; decode failures →
+/// Bucket a [`ProviderError`] into the [`TickWordFetchError`] vocabulary the
+/// [`TickWordSource`] boundary speaks: RPC failures (transport, revert,
+/// timeout) → [`TickWordFetchError::FetchFailed`]; decode failures →
 /// [`TickWordFetchError::InvalidReturn`]. Both are explicitly bucketed — a
 /// caller that wants to retry only on RPC errors can match on the variant.
 ///
@@ -191,8 +278,8 @@ impl TickWordSource for AlloyTickWordSource {
     clippy::needless_pass_by_value,
     reason = "map_err passes the error by value"
 )]
-fn map_provider_err(err: degenbot_core::errors::ProviderError) -> TickWordFetchError {
-    use degenbot_core::errors::ProviderError;
+#[must_use]
+pub fn map_provider_err(err: ProviderError) -> TickWordFetchError {
     match err {
         ProviderError::DecodingError { .. } => TickWordFetchError::InvalidReturn,
         _ => TickWordFetchError::FetchFailed,

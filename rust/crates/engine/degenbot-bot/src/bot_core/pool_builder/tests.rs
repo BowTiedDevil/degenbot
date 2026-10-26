@@ -3111,9 +3111,10 @@ async fn the_curve_door_arm_constructs_registers_and_reuses() {
 
 #[test]
 fn an_unbound_word_source_reads_a_checked_empty_word() {
-    // An all-zero bitmap is a KNOWN word with no ticks — the source reports it
-    // as fetched-and-empty, never as a failure, so the caller marks the word
-    // known and stops re-fetching it.
+    // An all-zero bitmap is a KNOWN word with no ticks — per the trait
+    // contract the source reports it as `Ok(None)` (a known-empty word the
+    // caller records in `known_bitmap_words` and stops re-fetching), never
+    // as a failure.
     let mut f = FakeRpc::new();
     f.set(
         choreography::selector(b"tickBitmap(int16)"),
@@ -3127,12 +3128,10 @@ fn an_unbound_word_source_reads_a_checked_empty_word() {
     };
     let fetched = source
         .fetch_tick_word(&key, 0, 100)
-        .expect("the source reads through the construction io seam")
-        .expect("a non-empty bitmap fetch returns Some");
-    assert_eq!(fetched.word, 0);
+        .expect("the source reads through the construction io seam");
     assert!(
-        fetched.ticks.is_empty(),
-        "an all-zero bitmap is a checked-empty word"
+        fetched.is_none(),
+        "an all-zero bitmap is the documented known-empty verdict"
     );
 }
 

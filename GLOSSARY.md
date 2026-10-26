@@ -416,9 +416,14 @@ initialized ticks of one word at one block. One trait serves both call sites —
 registration-time seed and the live-miss backfill — addressed by one key value
 (`TickWordKey`: the pool's read descriptor — V3 address + spacing, or V4 `StateView` +
 pool id + spacing, the word position being a per-call argument). The V4 identity carries
-its `StateView` so the registered pool can name its own read descriptor.
-_Avoid_: one trait per call site for one choreography; a driver-supplied fetch callback;
-a fetcher that reads the state owner it is fetching for.
+its `StateView` so the registered pool can name its own read descriptor. Under the
+trait sits one transport-generic choreography (bitmap read → 256-bit enumeration →
+per-tick liquidity reads) shared by both arms; the arms differ only in the
+unreadable-bitmap policy — registration degrades to an empty word (the graceful
+fallback), the miss path refuses.
+_Avoid_: one trait per call site for one choreography; a second hand-rolled copy of
+the enumerate loop per transport; a driver-supplied fetch callback; a fetcher that
+reads the state owner it is fetching for.
 
 **Snapshot seed**:
 The registration-time (pinned) tick data captured for a Tracked pool, verified exactly

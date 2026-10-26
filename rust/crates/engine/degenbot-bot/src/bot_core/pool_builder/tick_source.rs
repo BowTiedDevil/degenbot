@@ -9,10 +9,14 @@
 //! Python path stores a `PyTickWordSource` callback instead; a pure-Rust
 //! consumer wires this impl and still gets sparse-map backfill.
 
-//! The read a word backfill needs already exists in this crate:
-//! [`super::builder::bootstrap_v3_tick_map`] / `bootstrap_v4_tick_map` perform it
-//! for the registration Chain arm over the generic RPC primitive. This impl
-//! reuses them, so one read implementation serves both call sites.
+//! The read itself is the ONE transport-generic choreography
+//! ([`degenbot_rpc::tick_bootstrap::fetch_tick_word_via`]): this source and
+//! the registration Chain arm (`bootstrap_{v3,v4}_tick_map`) drive the same
+//! loop, differing only in the unreadable-bitmap policy — this miss path
+//! REFUSES, the registration arm degrades to an empty word (the legacy
+//! graceful fallback). This source is also the [`ConstructionIo`]
+//! [`TickWordTransport`] impl's home, so the loop's io-side contract reads
+//! are the paced choreography fns.
 
 //! ## Sync bridging
 
@@ -25,9 +29,16 @@
 
 use std::sync::Arc;
 
+use alloy::primitives::{U128, U256};
+use degenbot_core::errors::ProviderError;
 use degenbot_pools::sim::tick_fetch::{
     FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource,
 };
+use degenbot_rpc::tick_bootstrap::{
+    fetch_tick_word_via, map_provider_err, TickWordTransport, UnreadableBitmapPolicy,
+};
+
+use super::choreography::{self};
 
 use crate::bot_core::construction_io::{ConstructionIo, NoDb};
 
@@ -76,51 +87,66 @@ impl TickWordSource for ConstructionIoTickWordSource {
         word: i32,
         block: u64,
     ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
-        let tick_spacing = match key {
-            TickWordKey::V3 { tick_spacing, .. } | TickWordKey::V4 { tick_spacing, .. } => {
-                *tick_spacing
+        // The Solidity bitmap selector takes an int16; a word outside that
+        // range cannot name a real bitmap slot.
+        let word_i16 = i16::try_from(word).map_err(|_| TickWordFetchError::OutOfRange)?;
+        // The miss path REFUSES an unreadable bitmap: an unfetchable word is a
+        // fetch error, never a silently empty region (the registration arm's
+        // graceful degrade lives in the loop policy, not here).
+        let read = fetch_tick_word_via(
+            &self.io,
+            key,
+            word_i16,
+            block,
+            UnreadableBitmapPolicy::Refuse,
+        );
+        bridge(read).map_err(map_provider_err)
+    }
+}
+
+/// The construction-I/O transport: the paced contract reads the builder's
+/// bootstrap used to drive inline, now the [`TickWordTransport`] impl the
+/// shared loop drives (the V3/V4 ABI shapes live in the choreography fns).
+impl TickWordTransport for ConstructionIo {
+    async fn read_bitmap(
+        &self,
+        key: &TickWordKey,
+        word: i16,
+        block: u64,
+    ) -> Result<U256, ProviderError> {
+        match key {
+            TickWordKey::V3 { address, .. } => {
+                choreography::fetch_tick_bitmap(self, *address, word, Some(block)).await
             }
-        };
-        // The word's first tick: `(word << 8) * spacing`, the same mapping the
-        // registration Chain arm starts from.
-        let tick = word
-            .checked_mul(256)
-            .and_then(|t| t.checked_mul(tick_spacing))
-            .ok_or(TickWordFetchError::OutOfRange)?;
-        let read = async {
-            match *key {
-                TickWordKey::V3 { address, .. } => {
-                    super::builder::bootstrap_v3_tick_map(
-                        &self.io,
-                        address,
-                        tick,
-                        tick_spacing,
-                        block,
-                    )
+            TickWordKey::V4 {
+                state_view,
+                pool_id,
+                ..
+            } => {
+                choreography::fetch_v4_tick_bitmap(self, *state_view, *pool_id, word, Some(block))
                     .await
-                }
-                TickWordKey::V4 {
-                    state_view,
-                    pool_id,
-                    ..
-                } => {
-                    super::builder::bootstrap_v4_tick_map(
-                        &self.io,
-                        state_view,
-                        pool_id,
-                        tick,
-                        tick_spacing,
-                        block,
-                    )
-                    .await
-                }
             }
-        };
-        let (ticks, bitmap) = bridge(read).map_err(|_| TickWordFetchError::FetchFailed)?;
-        Ok(Some(FetchedTickWord {
-            word,
-            ticks,
-            bitmap: Some(bitmap),
-        }))
+        }
+    }
+
+    async fn read_tick(
+        &self,
+        key: &TickWordKey,
+        tick: i32,
+        block: u64,
+    ) -> Result<(U128, i128), ProviderError> {
+        match key {
+            TickWordKey::V3 { address, .. } => {
+                choreography::fetch_tick_data(self, *address, tick, Some(block)).await
+            }
+            TickWordKey::V4 {
+                state_view,
+                pool_id,
+                ..
+            } => {
+                choreography::fetch_v4_tick_data(self, *state_view, *pool_id, tick, Some(block))
+                    .await
+            }
+        }
     }
 }

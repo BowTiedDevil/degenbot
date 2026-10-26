@@ -24,6 +24,7 @@ use degenbot_db::snapshot::TickMapDb;
 use degenbot_pools::sim::curve_data_provider::CurveDataProvider;
 use degenbot_pools::sim::curve_strategies::resolve_curve_strategy_discriminants;
 use degenbot_pools::sim::registration_refusal::SpecRefusal;
+use degenbot_pools::sim::tick_fetch::TickWordKey;
 use degenbot_pools::state::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
 use degenbot_pools::state::balancer_stable_state::RegisterBalancerStablePoolParams;
 use degenbot_pools::state::balancer_weighted_state::RegisterBalancerWeightedPoolParams;
@@ -36,6 +37,7 @@ use degenbot_pools::{
     BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
 };
 use degenbot_rpc::abi;
+use degenbot_rpc::tick_bootstrap::{fetch_tick_word_via, UnreadableBitmapPolicy};
 use degenbot_uniswap::deployments;
 use degenbot_uniswap::dex_identity::{self, DexIdentity, DexVariant};
 
@@ -1108,36 +1110,27 @@ pub(crate) async fn bootstrap_v3_tick_map(
         );
     #[expect(clippy::expect_used)] // invariant-guarded (documented)
     let word_i16 = i16::try_from(word).expect("V3 tick word fits in int16");
-    // Best-effort single-word probe for a Sparse pool: an unreadable word
-    // (decode error on a provider that can't serve `tickBitmap`) degrades to
-    // an empty word → empty ticks → Sparse, preserving the legacy builder's
-    // graceful fallback (`tick_data=None, coverage=sparse`). Only the
-    // mis-shaped-response decode error is tolerated; genuine transport/network
-    // failures still propagate.
-    let bitmap = match choreography::fetch_tick_bitmap(io, address, word_i16, Some(block)).await {
-        Ok(b) => b,
-        Err(degenbot_core::errors::ProviderError::DecodingError { .. }) => U256::ZERO,
-        Err(e) => return Err(e),
+    // The registration arm TOLERATES an unreadable bitmap (a provider that
+    // can't serve `tickBitmap` degrades to an empty word → empty ticks →
+    // Sparse, preserving the legacy builder's graceful fallback). The policy
+    // lives in the shared loop; genuine transport/network and tick-read
+    // failures still propagate, with full error fidelity.
+    let key = TickWordKey::V3 {
+        address,
+        tick_spacing,
     };
-
-    let mut ticks = HashMap::new();
-    for i in 0..=255u8 {
-        if bitmap.bit(i.into()) {
-            let active_tick = ((word << 8) + i32::from(i)) * tick_spacing;
-            let (liquidity_gross, liquidity_net) =
-                choreography::fetch_tick_data(io, address, active_tick, Some(block)).await?;
-            ticks.insert(
-                active_tick,
-                TickInfo {
-                    liquidity_gross,
-                    liquidity_net,
-                    block,
-                },
-            );
-        }
+    match fetch_tick_word_via(
+        io,
+        &key,
+        word_i16,
+        block,
+        UnreadableBitmapPolicy::TreatAsEmpty,
+    )
+    .await?
+    {
+        Some(fetched) => Ok((fetched.ticks, fetched.bitmap.unwrap_or(U256::ZERO))),
+        None => Ok((HashMap::new(), U256::ZERO)),
     }
-
-    Ok((ticks, bitmap))
 }
 
 /// The Curve V1 pools known to be broken beyond repair: stale or disabled
@@ -1483,36 +1476,27 @@ pub(crate) async fn bootstrap_v4_tick_map(
         );
     #[expect(clippy::expect_used)] // invariant-guarded (documented)
     let word_i16 = i16::try_from(word).expect("V4 tick word fits in int16");
-    // Same best-effort single-word probe + graceful decode-error degradation as
-    // the V3 arm (`bootstrap_v3_tick_map`): an unreadable word → empty/Sparse.
-    let bitmap =
-        match choreography::fetch_v4_tick_bitmap(io, state_view, pool_id, word_i16, Some(block))
-            .await
-        {
-            Ok(b) => b,
-            Err(degenbot_core::errors::ProviderError::DecodingError { .. }) => U256::ZERO,
-            Err(e) => return Err(e),
-        };
-
-    let mut ticks = HashMap::new();
-    for i in 0..=255u8 {
-        if bitmap.bit(i.into()) {
-            let active_tick = ((word << 8) + i32::from(i)) * tick_spacing;
-            let (liquidity_gross, liquidity_net) =
-                choreography::fetch_v4_tick_data(io, state_view, pool_id, active_tick, Some(block))
-                    .await?;
-            ticks.insert(
-                active_tick,
-                TickInfo {
-                    liquidity_gross,
-                    liquidity_net,
-                    block,
-                },
-            );
-        }
+    // Same graceful decode-error degradation as the V3 arm
+    // (`bootstrap_v3_tick_map`): an unreadable word → empty/Sparse. The
+    // policy lives in the shared loop; genuine transport/network and
+    // tick-read failures still propagate, with full error fidelity.
+    let key = TickWordKey::V4 {
+        state_view,
+        pool_id,
+        tick_spacing,
+    };
+    match fetch_tick_word_via(
+        io,
+        &key,
+        word_i16,
+        block,
+        UnreadableBitmapPolicy::TreatAsEmpty,
+    )
+    .await?
+    {
+        Some(fetched) => Ok((fetched.ticks, fetched.bitmap.unwrap_or(U256::ZERO))),
+        None => Ok((HashMap::new(), U256::ZERO)),
     }
-
-    Ok((ticks, bitmap))
 }
 
 /// Caller-supplied V4 pool identity (mirrors the `register_v4_pool` argument
