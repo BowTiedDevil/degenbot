@@ -130,6 +130,12 @@ pub enum ConstructionRefusal {
     /// site aborts loudly.
     #[error("unsupported pool family at {address}: {detail}")]
     UnsupportedFamily { address: Address, detail: String },
+    /// The identity verdict's divergence (the CREATE2 arm) — LOUD like
+    /// [`Self::UnsupportedFamily`] (ADR-055 D4), but carrying the divergence
+    /// so the use site's identity rendering
+    /// (`RefusalKind::IdentityMismatch` -> plain `ValueError`) is unchanged.
+    #[error("pool identity mismatch: {0:?}")]
+    IdentityMismatch(Box<super::parity::IdentityDivergence>),
     /// Skip semantics — the refusal classifies on the build-refusal taxonomy
     /// (a stable pool fact memoizes; a transient failure stays retryable and
     /// is never memoized). The use site folds `BuildFailure` into its ledger
@@ -257,13 +263,10 @@ fn classify_builder_error(err: PoolBuilderError, address: Address) -> Constructi
             address,
             detail: "no identity selector answered".to_owned(),
         },
-        // The identity verdict's CREATE2 arm keeps the loud-abort class
-        // (ADR-055 D4); the route's refusal vocabulary is a separate axis from
-        // the ledger's identity kind, so the classification is unchanged.
-        PoolBuilderError::Identity(_) => ConstructionRefusal::UnsupportedFamily {
-            address,
-            detail: "CREATE2 address verification failed".to_owned(),
-        },
+        // The identity verdict's divergence keeps the loud-abort class
+        // (ADR-055 D4) and crosses as the identity refusal it is, so the use
+        // site renders it exactly as the direct build entries do.
+        PoolBuilderError::Identity(divergence) => ConstructionRefusal::IdentityMismatch(divergence),
         // The skip arms carry the taxonomy's OWN classes: the stable-vs-
         // transient fact must reach the ledger/metrics fold unchanged
         // (ADR-055 D4) — a spec refusal keeps its pool-fact reason, a
@@ -497,22 +500,28 @@ mod route_tests {
                 factory: Address::new([0x44u8; 20]),
             },
             PoolBuilderError::UnknownPoolIdentity { address },
-            PoolBuilderError::Identity(Box::new(parity::IdentityDivergence::Create2(
-                AddressMismatch {
-                    chain_id: 1,
-                    factory: Address::new([0x55u8; 20]),
-                    deployer: Address::new([0x55u8; 20]),
-                    init_hash: B256::ZERO,
-                    expected: address,
-                    computed: Address::new([0x66u8; 20]),
-                },
-            ))),
         ] {
             assert!(matches!(
                 classify_builder_error(err, address),
                 ConstructionRefusal::UnsupportedFamily { .. }
             ));
         }
+        // The CREATE2 divergence is loud like the factory-identity family but
+        // crosses as the identity refusal it is: the use site's identity
+        // rendering (`RefusalKind::IdentityMismatch` -> plain `ValueError`)
+        // must not change to the unsupported-family RuntimeError.
+        let divergence = parity::IdentityDivergence::Create2(AddressMismatch {
+            chain_id: 1,
+            factory: Address::new([0x55u8; 20]),
+            deployer: Address::new([0x55u8; 20]),
+            init_hash: B256::ZERO,
+            expected: address,
+            computed: Address::new([0x66u8; 20]),
+        });
+        assert!(matches!(
+            classify_builder_error(PoolBuilderError::Identity(Box::new(divergence)), address),
+            ConstructionRefusal::IdentityMismatch(_)
+        ));
         // The skip arms carry the taxonomy's OWN classes (ADR-055 D4): a
         // spec refusal keeps its pool-fact reason and a transport/decoding
         // failure keeps its retryable class — the use site's ledger/metrics

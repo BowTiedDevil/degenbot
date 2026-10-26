@@ -530,6 +530,12 @@ impl RefusalKind {
                 phase: RegistrationPhase::Build,
                 failure: failure.clone(),
             },
+            // The identity divergence crosses as the identity refusal it
+            // already is — the same fold `from_builder_error`'s `Identity`
+            // arm produces.
+            ConstructionRefusal::IdentityMismatch(divergence) => {
+                Self::from_identity_divergence(family, divergence)
+            }
             // The write door's refusal crosses as the registration refusal it
             // already is — the same fold `from_registration_verdict` produces.
             ConstructionRefusal::Registration(reason) => Self::RegisterRefused {
