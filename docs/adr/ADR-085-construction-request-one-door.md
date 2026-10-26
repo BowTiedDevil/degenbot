@@ -78,10 +78,15 @@ follow. The measured shape:
    seam, where a mismatch is the seam's bug rather than a driver check.
 5. **Post-construction finalize is the core arm's, or driven by the verdict.**
    The steps the core holds the facts for (V3 genesis seed, V4's resolve-then-
-   build sequence, Curve base-pool recursion) move into the construction arm.
-   The one remaining driver loop — building the ERC20 companions the companion's
-   reads resolve against — iterates the verdict's token identity instead of
-   branching on family, so it is data-driven, not family knowledge.
+   build sequence) move into the construction arm. The driver loop that builds
+   the ERC20 companions the companion's reads resolve against iterates the
+   verdict's token identity instead of branching on family — data, not family
+   knowledge. **Decided during implementation:** the Curve base-pool recursion
+   stays a driver-side companion phase, NOT a construction arm — the recursion
+   re-enters the driver's family resolution (a full `build_pool` for the base
+   pool), which is companion construction, not this pool's construction. The
+   coin / underlying / LP builds it drives are that same data-driven companion
+   loop's business, sourced from the registered handle.
 
 ## Consequences
 
