@@ -801,7 +801,15 @@ impl PyBot {
             },
         )
     }
+}
 
+/// The family build arms `construct_pool` dispatches to.
+///
+/// They are internal: ADR-085 D2 keeps ONE public construction verb on the seam and
+/// makes a family a request variant, not a pymethod. They stay pymethod-shaped
+/// (`Python`-taking, `PyResult`-returning) because the interpreter's GIL discipline
+/// is theirs to hold.
+impl PyBot {
     /// Build + register an Aerodrome V2 pool through the Rust `PoolBuilder`
     /// (the delegation adapter) — the Aerodrome twin of
     /// [`Self::build_v2_pool`]. The core `builder::build_aerodrome_v2` runs the
@@ -890,13 +898,12 @@ impl PyBot {
     /// `PoolBuilder` (the delegation adapter). The core
     /// `builder::build_balancer_stable` runs the `getPoolId` + Vault
     /// `getPoolTokens` + `getSwapFeePercentage` + `getAmplificationParameter`
-    /// + BPT-detect + rate-provider/rate + scaling-factor + `invariant_version`
+    /// plus BPT-detect + rate-provider/rate + scaling-factor + `invariant_version`
     /// resolution choreography and returns a [`RegisterBalancerStablePoolParams`];
     /// this adapter registers it into [`PoolEntry::BalancerStable`].
     /// `invariant_version` overrides the shape-derived invariant version (BPT
     /// among the Vault tokens → V1, else V2).
     /// Returns the `pool_id`.
-    #[pyo3(signature = (address, vault, block=None, invariant_version=None))]
     fn build_balancer_stable_pool(
         &self,
         py: Python<'_>,
@@ -935,7 +942,10 @@ impl PyBot {
             },
         )
     }
+}
 
+#[pymethods]
+impl PyBot {
     /// Construct + register a pool of ANY family through ONE entry — the
     /// construction switchboard's FFI face (ADR-059 D6: dispatch at the tier
     /// boundary, then monomorphic). The Python driver resolves the pool's

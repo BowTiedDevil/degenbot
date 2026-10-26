@@ -871,47 +871,6 @@ class Bot:
         `RuntimeError` if no pump state is attached (no engine constructed
         against this bot) or the receiver was already handed out.
         """
-    def build_aerodrome_v2_pool(self, /, address: str, block: SupportsIndex | None) -> int:
-        """
-        Build + register an Aerodrome V2 pool through the Rust `PoolBuilder`
-        (the delegation adapter) — the Aerodrome twin of
-        [`Self::build_v2_pool`]. The core `builder::build_aerodrome_v2` runs the
-        full `stable()`+`getFee()` + reserves + CREATE2 choreography and returns
-        a [`RegisterAerodromeV2PoolParams`]; this adapter registers it into
-        [`PoolEntry::AerodromeV2`]. Returns the `pool_id`.
-        """
-    def build_balancer_stable_pool(
-        self,
-        /,
-        address: str,
-        vault: str,
-        block: SupportsIndex | None = None,
-        invariant_version: SupportsIndex | None = None,
-    ) -> int:
-        """
-        Build + register a Balancer V2 **stable** pool through the Rust
-        `PoolBuilder` (the delegation adapter). The core
-        `builder::build_balancer_stable` runs the `getPoolId` + Vault
-        `getPoolTokens` + `getSwapFeePercentage` + `getAmplificationParameter`
-        + BPT-detect + rate-provider/rate + scaling-factor + `invariant_version`
-        resolution choreography and returns a [`RegisterBalancerStablePoolParams`];
-        this adapter registers it into [`PoolEntry::BalancerStable`].
-        `invariant_version` overrides the shape-derived invariant version (BPT
-        among the Vault tokens → V1, else V2).
-        Returns the `pool_id`.
-        """
-    def build_balancer_weighted_pool(
-        self, /, address: str, vault: str, block: SupportsIndex | None
-    ) -> int:
-        """
-        Build + register a Balancer V2 **weighted** pool through the Rust
-        `PoolBuilder` (the delegation adapter). The core
-        `builder::build_balancer_weighted` runs the full `getPoolId` + Vault
-        `getPoolTokens` + `getSwapFeePercentage` + `getNormalizedWeights` +
-        bytecode `PowVersion` detect + `decimals()` scaling-factor choreography
-        and returns a [`RegisterBalancerWeightedPoolParams`]; this adapter
-        registers it into [`PoolEntry::BalancerWeighted`]. Returns the `pool_id`.
-        """
     def build_curve_pool(
         self, /, address: str, registry_addresses: list, block: SupportsIndex | None = None
     ) -> int:
