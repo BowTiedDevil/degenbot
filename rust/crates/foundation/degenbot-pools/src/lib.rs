@@ -19,7 +19,7 @@
 //! a re-export of [`solve`].
 //!
 //! Nothing here performs I/O. The I/O-shaped *interface* traits
-//! (`TickWordFetcher`, `CurveDataProvider`, `BalancerRateProvider`) are defined
+//! (`TickWordSource`, `CurveDataProvider`, `BalancerRateProvider`) are defined
 //! in this crate — but their RPC/DB *implementations* live in
 //! `degenbot-bot`, exactly as `std::io::Read` defines an interface in the
 //! standard library while its implementors (`File`, `BufReader`, …) live
@@ -39,7 +39,7 @@
 //! in `degenbot-bot`: it looks up `self.pools.get(id)` (`PoolEntry`), calls the
 //! stateless sim in this crate, and — for V3/V4 — catches a
 //! `MissingTickWord(word)` *value* error, fetches the tick word via the (state
-//! crate's) `TickWordFetcher` trait impl that the bot registered, and retries.
+//! crate's) `TickWordSource` trait impl that the bot registered, and retries.
 //! This is "Pattern B": the value crate returns a `MissingTickWord(i32)` value
 //! error; the fetch-and-retry loop lives one layer up in the bot.
 //!
@@ -133,7 +133,7 @@ pub use state::v4_storage_slots::{
 
 // Re-export the seam traits + their value-only error/return types at the crate
 // root, so `degenbot-bot`'s transient shim modules can write
-// `::degenbot_pools::{TickWordFetcher, …}` and so standalone consumers get a
+// `::degenbot_pools::{TickWordSource, …}` and so standalone consumers get a
 // flat surface.
 pub use sim::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
 
@@ -145,10 +145,7 @@ pub use state::state_history::ReorgPoolState;
 
 pub use state::tick_bitmap::V3TickRangeForSolver;
 
-pub use sim::tick_fetch::{
-    FetchTickWordError, FetchedTickWord, TickWordFetchError, TickWordFetcher, TickWordKey,
-    TickWordSource,
-};
+pub use sim::tick_fetch::{FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource};
 
 pub use sim::registration_refusal::{BuildFailure, RegisterRefusal, SpecRefusal};
 
@@ -162,7 +159,7 @@ pub use sim::pool::{
 /// Mirrors the Python `LiquidityAtTick` from `concentrated/types.py`. Used by
 /// the V3/V4 pool-state structs and by [`tick_fetch::FetchedTickWord`]. Pulled
 /// into this crate ahead of the full state-struct move
-/// because the `TickWordFetcher` seam returns `HashMap<i32, TickInfo>`.
+/// because the `TickWordSource` seam returns `HashMap<i32, TickInfo>`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TickInfo {
     /// The total liquidity that references this tick.

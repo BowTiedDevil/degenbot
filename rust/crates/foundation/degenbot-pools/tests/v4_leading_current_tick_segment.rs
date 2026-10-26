@@ -80,6 +80,7 @@ fn build_v4(liquidity: u128, tick_data: HashMap<i32, TickInfo>) -> V4PoolState {
             tick_spacing: TICK_SPACING,
             hooks: Address::ZERO,
         },
+        state_view: Address::ZERO,
         hook_flags: 0,
         protocol_fee: 0,
         sqrt_price_x96: price_inside_current_tick(),

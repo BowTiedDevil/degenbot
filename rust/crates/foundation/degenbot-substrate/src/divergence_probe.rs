@@ -553,6 +553,7 @@ mod tests {
                 tick_spacing: 10,
                 hooks: Address::ZERO,
             },
+            state_view: Address::ZERO,
             hook_flags: 0,
             protocol_fee: 0,
             sqrt_price_x96: U256::from(1u128) << 96,

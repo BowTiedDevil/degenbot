@@ -11,7 +11,7 @@
 //! drift the semantics.
 //!
 //! The Chain transport deliberately keeps two adapters: the sync
-//! [`TickBootstrapRpc`] trait object (used by the sync wrappers and the
+//! [`TickWordSource`] trait object (used by the sync wrappers and the
 //! per-frame ingress) and the builder's async-native `ConstructionIo`
 //! bootstrap. The builder runs on the async registration runtime and cannot
 //! `block_on` the sync helper (the nested-`block_on` deadlock class), so the
@@ -25,7 +25,7 @@
 //! A Chain hit seeds only the **one** tick-bitmap word containing the pool's
 //! current `tick`, so coverage is [`PoolTickCoverage::Sparse`] (NOT `Tracked`
 //! — the live-pump miss-detection must still backfill neighbouring words via
-//! `TickWordFetcher` during swap simulation). A Chain arm returning `None`
+//! `TickWordSource` during swap simulation). A Chain arm returning `None`
 //! (all-zero bitmap) means the pool genuinely has no initialized ticks within
 //! the current word — the caller registers with `tick_data=None,
 //! coverage="sparse"` (mirrors Python Branch 3 when `bitmap_at_word == 0`).
@@ -222,7 +222,7 @@ impl TickMapArm {
 /// forensic dump, and the loud error posture all live here, so every
 /// transport shares identical semantics. The
 /// Chain transport stays outside because it keeps two adapters — the sync
-/// [`TickBootstrapRpc`] trait object and the builder's async-native
+/// [`TickWordSource`] trait object and the builder's async-native
 /// `ConstructionIo`, which cannot `block_on` the sync helper (the
 /// nested-`block_on` deadlock class; see the module doc). Both mint through
 /// [`TickMapArm::into_seed`].
@@ -274,7 +274,7 @@ pub fn chain_arm(ticks: Option<HashMap<i32, TickInfo>>) -> TickMapArm {
 /// Assemble a V3 pool's tick map with `Db → Chain` precedence.
 ///
 /// Tries the Db snapshot arm first (through [`resolve_tick_map_arm`]); on a Db
-/// miss, falls back to the sync [`TickBootstrapRpc`] Chain transport and mints
+/// miss, falls back to the sync [`TickWordSource`] Chain transport and mints
 /// a `Sparse` seed. A Chain miss (all-zero bitmap / no transport) is reported
 /// as `None`, the historical sync contract.
 ///
@@ -335,7 +335,7 @@ pub fn assemble_v3_tick_map(
 ///
 /// V4 twin of [`assemble_v3_tick_map`]: the Db arm calls
 /// `db.fetch_liquidity_map_v4(pool_manager, pool_id_hash)`, and the Chain arm
-/// calls [`TickBootstrapRpc::bootstrap_v4_tick_word`] with `(state_view,
+/// calls [`TickWordSource::fetch_tick_word`] with `(state_view,
 /// pool_id)` — `state_view` is the V4 `StateView` contract address (the
 /// contract exposing `getTickBitmap`/`getTickLiquidity`, NOT the
 /// `PoolManager`). Identical hit/miss/error semantics; both arms share
@@ -344,7 +344,7 @@ pub fn assemble_v3_tick_map(
 /// # Errors
 ///
 /// Propagates [`TickMapAssemblyError::Db`] from `fetch_liquidity_map_v4` and
-/// [`TickMapAssemblyError::Chain`] from `bootstrap_v4_tick_word`.
+/// [`TickMapAssemblyError::Chain`] from `fetch_tick_word`.
 #[expect(
     clippy::too_many_arguments,
     reason = "precedence helper composes 2 arms; a params struct would obscure it"

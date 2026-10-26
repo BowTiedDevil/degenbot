@@ -734,6 +734,7 @@ impl PoolIngress {
                 pool_id: params.pool_id.0,
                 fee: params.fee,
                 tick_spacing: params.tick_spacing,
+                state_view: params.state_view.unwrap_or(Address::ZERO),
                 hooks: params.hooks,
                 hook_flags: derive_hook_flags(params.hooks),
                 protocol_fee: 0,

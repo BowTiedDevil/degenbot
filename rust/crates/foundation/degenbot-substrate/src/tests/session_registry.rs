@@ -55,6 +55,7 @@ pub(super) fn v4_params(pool_manager: Address, pool_id: V4PoolId) -> RegisterV4P
             tick_spacing: 60,
             hooks: Address::ZERO,
         },
+        state_view: Address::ZERO,
         hook_flags: 0,
         protocol_fee: 0,
         sqrt_price_x96: U256::from(1u128) << 96,

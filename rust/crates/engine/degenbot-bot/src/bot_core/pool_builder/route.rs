@@ -34,12 +34,12 @@ use std::sync::Arc;
 use alloy::primitives::Address;
 use degenbot_db::snapshot::TickMapDb;
 use degenbot_pools::sim::registration_refusal::RegisterRefusal;
-use degenbot_pools::sim::tick_fetch::TickWordFetcher;
+use degenbot_pools::sim::tick_fetch::TickWordSource;
 use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
 
 use super::builder::{self, PoolBuilderError, V4BuildResult, V4PoolBuildOverrides};
 use super::choreography;
-use super::tick_source::{ConstructionIoTickWordSource, TickWordSourcePool};
+use super::tick_source::ConstructionIoTickWordSource;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::registration_ledger::BuildFailure;
 use crate::bot_core::{Bot, RegisteredPoolFamily};
@@ -126,7 +126,7 @@ pub struct V3RouteInputs<'a> {
     pub db: Option<&'a dyn TickMapDb>,
     /// The lazy tick-word fetcher stored on the registered V3 pool for
     /// swap-time boundary detection.
-    pub fetcher: Option<Arc<dyn TickWordFetcher>>,
+    pub fetcher: Option<Arc<dyn TickWordSource>>,
     /// Explicit concentrated liquidity slot-layout override (a non-JSON fork deployment the
     /// caller resolved from the DB descriptor); `None` = the builder's
     /// deployment-table resolution wins.
@@ -433,13 +433,9 @@ async fn construct_v3(
     // the build just resolved. A pure-Rust consumer supplies nothing and still
     // gets sparse-map backfill.
     params.fetcher = match &v3.fetcher {
-        Some(fetcher) => Some(Arc::clone(fetcher)),
+        Some(source) => Some(Arc::clone(source)),
         None => Some(super::tick_source::ConstructionIoTickWordSource::attached(
             io,
-            super::tick_source::TickWordSourcePool::V3 {
-                address,
-                tick_spacing: params.tick_spacing,
-            },
         )),
     };
     if let Some(slot_layout) = v3.slot_layout {
@@ -507,14 +503,7 @@ async fn construct_v4(
     // Sparse-map parity (the V4 twin of the V3 door arm): the core attaches
     // its own ConstructionIo-backed tick-word source for the live-miss
     // backfill, so no caller callback is needed.
-    built.params.fetcher = Some(ConstructionIoTickWordSource::attached(
-        io,
-        TickWordSourcePool::V4 {
-            state_view: identity.state_view,
-            pool_id,
-            tick_spacing: identity.tick_spacing,
-        },
-    ));
+    built.params.fetcher = Some(ConstructionIoTickWordSource::attached(io));
     let verdict = bot
         .state_arc()
         .write_at(LockSite::Core)

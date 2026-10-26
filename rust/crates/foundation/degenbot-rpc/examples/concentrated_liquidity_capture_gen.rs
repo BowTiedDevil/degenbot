@@ -56,7 +56,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, I256, U256};
 use degenbot_pools::sim::registry::ConcentratedLiquidityPoolMut;
-use degenbot_pools::sim::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+use degenbot_pools::sim::tick_fetch::FetchedTickWord;
 use degenbot_pools::solve::concentrated_liquidity::IntV3TickRangeSequence;
 use degenbot_pools::state::v3_state::{
     v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, SimulateSwapError, V3PoolState,
@@ -135,36 +135,23 @@ const POOLS: &[Pool] = &[
     ),
 ];
 
-#[derive(Debug)]
-struct BootstrapFetcher {
+/// The miss-path fetch over the one unified source: build the pool's read
+/// descriptor key and map `Ok(None)` (all-zero bitmap) to a known-empty word.
+fn fetch_word(
+    source: &AlloyTickWordSource,
     address: Address,
-    source: Arc<AlloyTickWordSource>,
+    word: i32,
+    block: u64,
+) -> Result<FetchedTickWord, degenbot_pools::sim::tick_fetch::TickWordFetchError> {
+    let key = TickWordKey::V3 {
+        address,
+        tick_spacing: 10,
+    };
+    source
+        .fetch_tick_word(&key, word, block)
+        .map(|hit| hit.unwrap_or_else(|| FetchedTickWord::new(word, HashMap::new())))
 }
-impl TickWordFetcher for BootstrapFetcher {
-    fn fetch_missing_tick_word(
-        &self,
-        _pool_id: u64,
-        word: i32,
-        block: u64,
-    ) -> Result<FetchedTickWord, FetchTickWordError> {
-        let key = TickWordKey::V3 {
-            address: self.address,
-            tick_spacing: 10,
-        };
-        match self
-            .source
-            .fetch_tick_word(&key, word, block)
-            .map_err(|_| FetchTickWordError::FetchFailed)?
-        {
-            None => Ok(FetchedTickWord::new(word, HashMap::new())),
-            Some(fw) => Ok(FetchedTickWord {
-                word,
-                ticks: fw.ticks,
-                bitmap: fw.bitmap,
-            }),
-        }
-    }
-}
+
 fn addr(s: &str) -> Address {
     s.parse().expect("address")
 }
@@ -237,10 +224,8 @@ fn main() -> ExitCode {
         let (a, ts, fee, t0s, t1s) = pool;
         let (sqrt, tick_i256, liq_u256) = &setup[i];
         let p = addr(a);
-        let fetcher: Arc<dyn TickWordFetcher> = Arc::new(BootstrapFetcher {
-            address: p,
-            source: Arc::clone(&bootstrap),
-        });
+        let fetcher: Arc<dyn degenbot_pools::sim::tick_fetch::TickWordSource> =
+            Arc::new(AlloyTickWordSource::clone(&bootstrap));
         let params = RegisterV3PoolParams {
             address: p,
             token0: addr(t0s),
@@ -279,7 +264,7 @@ fn main() -> ExitCode {
                             eprintln!("pool {i} {a}: fetch cap {max_fetches}");
                             break;
                         }
-                        match fetcher.fetch_missing_tick_word(0, word, block) {
+                        match fetch_word(&bootstrap, p, word, block) {
                             Ok(w) => {
                                 state.merge_tick_word(&w);
                             }

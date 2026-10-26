@@ -694,7 +694,9 @@ pub struct StagedWordFetch {
     pub pool_id: u64,
     pub word: i32,
     pub block: u64,
-    fetcher: std::sync::Arc<dyn degenbot_pools::sim::tick_fetch::TickWordFetcher>,
+    /// The pool's tick-word read descriptor (its own identity).
+    pub key: degenbot_pools::sim::tick_fetch::TickWordKey,
+    source: std::sync::Arc<dyn degenbot_pools::sim::tick_fetch::TickWordSource>,
     fingerprint: (u64, usize, u64),
 }
 
@@ -705,16 +707,27 @@ impl StagedWordFetch {
     /// parked the whole pump inside.
     ///
     /// # Errors
-    /// Propagates the stored fetcher's [`FetchTickWordError`] (RPC/transport
+    /// Propagates the stored source's [`TickWordFetchError`] (RPC/transport
     /// or tick-word decode); the caller owns retry semantics, nothing panics.
     pub fn fetch(
         &self,
     ) -> Result<
         ::degenbot_pools::sim::tick_fetch::FetchedTickWord,
-        ::degenbot_pools::sim::tick_fetch::FetchTickWordError,
+        ::degenbot_pools::sim::tick_fetch::TickWordFetchError,
     > {
-        self.fetcher
-            .fetch_missing_tick_word(self.pool_id, self.word, self.block)
+        // A miss-path fetch maps `Ok(None)` (all-zero bitmap) to a
+        // known-empty word — the word is now "known" (recorded) even though
+        // it holds no ticks.
+        self.source
+            .fetch_tick_word(&self.key, self.word, self.block)
+            .map(|hit| {
+                hit.unwrap_or_else(|| {
+                    ::degenbot_pools::sim::tick_fetch::FetchedTickWord::new(
+                        self.word,
+                        hashbrown::HashMap::new(),
+                    )
+                })
+            })
     }
 }
 
@@ -1483,11 +1496,25 @@ impl ConcentratedLiquidityOrchestration {
         block: u64,
         retried: bool,
     ) -> Option<StagedWordFetch> {
-        let fetcher = match reg.pools.get(&pool_id) {
-            Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
-            Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
-            _ => None,
-        }?;
+        let (key, fetcher) = match reg.pools.get(&pool_id) {
+            Some(PoolEntry::V3(p)) => (
+                degenbot_pools::sim::tick_fetch::TickWordKey::V3 {
+                    address: p.0.address,
+                    tick_spacing: p.0.tick_spacing,
+                },
+                p.1.fetcher.clone(),
+            ),
+            Some(PoolEntry::V4(p)) => (
+                degenbot_pools::sim::tick_fetch::TickWordKey::V4 {
+                    state_view: p.0.state_view,
+                    pool_id: p.0.pool_id,
+                    tick_spacing: p.0.pool_key.tick_spacing,
+                },
+                p.1.fetcher.clone(),
+            ),
+            _ => return None,
+        };
+        let fetcher = fetcher?;
         // The fetch context must reflect the CURRENT
         // pool clock on a retry, not the (stale) companion block — a fetch
         // at the original context after an interleaved event snapshots the
@@ -1516,7 +1543,8 @@ impl ConcentratedLiquidityOrchestration {
             pool_id,
             word,
             block: fetch_context,
-            fetcher,
+            key,
+            source: fetcher,
             fingerprint,
         })
     }
@@ -1567,17 +1595,43 @@ impl ConcentratedLiquidityOrchestration {
         word: i32,
         block: u64,
     ) -> bool {
-        // Clone the stored fetcher off the state first: the fetch call must
+        // Clone the stored source off the state first: the fetch call must
         // not hold the pool borrow, and `merge_tick_word` re-borrows `self`.
-        let fetcher = match reg.pools.get(&pool_id) {
-            Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
-            Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
+        let attempt = match reg.pools.get(&pool_id) {
+            Some(PoolEntry::V3(p)) => p.1.fetcher.clone().map(|source| {
+                (
+                    source,
+                    degenbot_pools::sim::tick_fetch::TickWordKey::V3 {
+                        address: p.0.address,
+                        tick_spacing: p.0.tick_spacing,
+                    },
+                )
+            }),
+            Some(PoolEntry::V4(p)) => p.1.fetcher.clone().map(|source| {
+                (
+                    source,
+                    degenbot_pools::sim::tick_fetch::TickWordKey::V4 {
+                        state_view: p.0.state_view,
+                        pool_id: p.0.pool_id,
+                        tick_spacing: p.0.pool_key.tick_spacing,
+                    },
+                )
+            }),
             _ => None,
         };
-        let Some(fetcher) = fetcher else {
+        let Some((source, key)) = attempt else {
             return false;
         };
-        let Ok(fetched_word) = fetcher.fetch_missing_tick_word(pool_id, word, block) else {
+        // A miss-path fetch maps `Ok(None)` (all-zero bitmap) to a known-empty
+        // word.
+        let Ok(fetched_word) = source.fetch_tick_word(&key, word, block).map(|hit| {
+            hit.unwrap_or_else(|| {
+                degenbot_pools::sim::tick_fetch::FetchedTickWord::new(
+                    word,
+                    hashbrown::HashMap::new(),
+                )
+            })
+        }) else {
             return false;
         };
         self.merge_tick_word(reg, pool_id, &fetched_word)
@@ -2794,6 +2848,7 @@ mod registered_v4_fast_path_tests {
                 tick_spacing: 10,
                 hooks: Address::from([0x22u8; 20]),
             },
+            state_view: Address::ZERO,
             hook_flags: 0,
             protocol_fee,
             sqrt_price_x96: U256::from(1u128) << 96,

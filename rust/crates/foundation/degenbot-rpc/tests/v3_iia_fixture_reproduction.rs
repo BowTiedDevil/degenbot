@@ -51,7 +51,7 @@ use std::sync::Arc;
 use alloy::primitives::{Address, I256, U256};
 
 use degenbot_pools::sim::registry::ConcentratedLiquidityPoolMut;
-use degenbot_pools::sim::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+use degenbot_pools::sim::tick_fetch::FetchedTickWord;
 use degenbot_pools::solve::concentrated_liquidity::{
     simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally,
 };
@@ -77,39 +77,21 @@ const AMOUNT_IN: u128 = 50_868_891_135; // hop[0] matched output → hop[1] amou
 const CAPTURED_ACTUAL: u128 = 150_836_781_502; // revm sim measured hop[1] output
 const CAPTURED_PREDICTED: u128 = 150_836_781_515; // solver hop_outputs[1] (+13)
 
-/// `TickWordFetcher` backed by `AlloyTickWordSource` (address-keyed bootstrap
-/// impl). The miss-path trait passes `word`; this picks a tick landing in that
-/// word and delegates to the bootstrap (which recomputes the word internally).
-#[derive(Debug)]
-struct BootstrapFetcher {
+/// The miss-path fetch over the one unified source: build the pool's read
+/// descriptor key and map `Ok(None)` (all-zero bitmap) to a known-empty word.
+fn fetch_word(
+    source: &AlloyTickWordSource,
     address: Address,
-    source: Arc<AlloyTickWordSource>,
-}
-
-impl TickWordFetcher for BootstrapFetcher {
-    fn fetch_missing_tick_word(
-        &self,
-        _pool_id: u64,
-        word: i32,
-        block: u64,
-    ) -> Result<FetchedTickWord, FetchTickWordError> {
-        let key = TickWordKey::V3 {
-            address: self.address,
-            tick_spacing: TICK_SPACING,
-        };
-        match self
-            .source
-            .fetch_tick_word(&key, word, block)
-            .map_err(|_| FetchTickWordError::FetchFailed)?
-        {
-            None => Ok(FetchedTickWord::new(word, HashMap::new())),
-            Some(fw) => Ok(FetchedTickWord {
-                word,
-                ticks: fw.ticks,
-                bitmap: fw.bitmap,
-            }),
-        }
-    }
+    word: i32,
+    block: u64,
+) -> Result<FetchedTickWord, degenbot_pools::sim::tick_fetch::TickWordFetchError> {
+    let key = TickWordKey::V3 {
+        address,
+        tick_spacing: TICK_SPACING,
+    };
+    source
+        .fetch_tick_word(&key, word, block)
+        .map(|hit| hit.unwrap_or_else(|| FetchedTickWord::new(word, HashMap::new())))
 }
 
 /// The solver's concentrated-liquidity-hop output for `amount_in` (mirrors
@@ -154,7 +136,7 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
     let pool: Address = POOL_ADDRESS.parse().expect("valid address");
     // Run ONLY the async I/O setup (provider construction + slot0/liquidity
     // fetch) on a throwaway tokio runtime, then DROP it so the subsequent
-    // `bootstrap_v3_tick_word` calls (which internally call
+    // `fetch_tick_word` calls (which internally call
     // `degenbot_core::runtime::get_runtime().block_on(...)`) do not nest a
     // block_on inside this test's runtime (which panics with
     // "Cannot start a runtime from within a runtime").
@@ -172,12 +154,8 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
     let liquidity: u128 = liquidity_u256.to::<u128>();
     eprintln!("block={block} sqrtPriceX96={sqrt_price_x96} tick={tick} liquidity={liquidity}");
 
-    // 2. Build a Sparse V3PoolState with the bootstrap-backed fetcher.
+    // 2. Build a Sparse V3PoolState with the bootstrap-backed source.
     let bootstrap = Arc::new(AlloyTickWordSource::new(Arc::clone(&provider)));
-    let fetcher: Arc<dyn TickWordFetcher> = Arc::new(BootstrapFetcher {
-        address: pool,
-        source: Arc::clone(&bootstrap),
-    });
     let params = RegisterV3PoolParams {
         address: pool,
         token0: Address::ZERO,
@@ -192,7 +170,9 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
         update_block: block,
         tick_data_block: None,
         coverage: PoolTickCoverage::Sparse,
-        fetcher: Some(Arc::clone(&fetcher)),
+        fetcher: Some(
+            Arc::clone(&bootstrap) as Arc<dyn degenbot_pools::sim::tick_fetch::TickWordSource>
+        ),
         deployer: Address::ZERO,
         init_hash: alloy::primitives::B256::ZERO,
         slot_layout: degenbot_pools::ConcentratedLiquiditySlotLayout::UniswapV3,
@@ -217,9 +197,8 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
         ) {
             Ok(o) => break v3_exact_in_output_ofz(&o),
             Err(SimulateSwapError::MissingTickWord(word)) => {
-                let new_word = fetcher
-                    .fetch_missing_tick_word(0, word, block)
-                    .expect("fetch missing word");
+                let new_word =
+                    fetch_word(&bootstrap, pool, word, block).expect("fetch missing word");
                 // `merge_tick_word` marks the word known + invalidates the
                 // tick-range cache (so the retry sees the new ticks).
                 state.merge_tick_word(&new_word);

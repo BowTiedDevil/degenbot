@@ -728,7 +728,7 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
     /// mark the word as known in `known_bitmap_words`, and invalidate the
     /// cached tick ranges. Scalars (`sqrt_price_x96`/`liquidity`/`tick`)
     /// are untouched. Used by the fetch+retry miss path
-    /// ([`crate::sim::tick_fetch::miss::TickWordFetcher`]) and the
+    /// ([`crate::sim::tick_fetch::TickWordSource`]) and the
     /// `simulate_swap_with_override` transient-state merge loop.
     ///
     /// No journal delta — a fetched-word merge mutates `tick_data` only;
@@ -1397,6 +1397,7 @@ mod known_word_tests {
                     tick_spacing: 10,
                     hooks: Address::ZERO,
                 },
+                state_view: Address::ZERO,
                 hook_flags: 0,
                 protocol_fee: 0,
                 sqrt_price_x96: U256::from(1u128) << 96,

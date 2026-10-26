@@ -918,7 +918,7 @@ pub async fn build_balancer_stable(
 /// `tick_assembly::assemble_v3_tick_map`), then runs the async-native Chain
 /// transport only on a Db miss. This module's `bootstrap_v3_tick_map` is the
 /// builder's own Chain adapter: it cannot `block_on` the sync
-/// [`TickBootstrapRpc`] trait object from the async registration runtime (the
+/// [`TickWordSource`] trait object from the async registration runtime (the
 /// nested-`block_on` deadlock class). Both arms mint through the shared
 /// [`chain_arm`](degenbot_substrate::tick_assembly::chain_arm) /
 /// `resolve_tick_map_arm` seed vocabulary.
@@ -1085,8 +1085,8 @@ fn tick_word_i16(word: i64) -> Result<i16, PoolBuilderError> {
 
 /// Chain-arm single-word tick bootstrap over [`ConstructionIo`] — the V3
 /// portion of `assemble_v3_tick_map`'s Chain arm, inlined over the generic RPC
-/// primitive so a bare `ConstructionIo` (no `TickBootstrapRpc`/db) can seed a
-/// Sparse pool. Mirrors `AlloyTickBootstrapRpc::bootstrap_v3_tick_word` and
+/// primitive so a bare `ConstructionIo` (no `TickWordSource`/db) can seed a
+/// Sparse pool. Mirrors `AlloyTickWordSource::fetch_tick_word` and
 /// the Python Branch 3 loop verbatim: compute the word, read `tickBitmap`, on a
 /// non-zero bitmap enumerate the 256 set bits and read each tick's
 /// `ticks(int24)` liquidity.
@@ -1638,6 +1638,7 @@ pub async fn build_v4(
                 // has_amount_modifying_hook guards (both read the identity).
                 hooks: id.hook_address,
             },
+            state_view: Address::ZERO,
             hook_flags: derive_hook_flags(id.hook_address),
             protocol_fee,
             sqrt_price_x96,

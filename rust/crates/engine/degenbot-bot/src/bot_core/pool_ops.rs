@@ -17,6 +17,7 @@ use std::sync::Arc;
 use alloy::primitives::{Address, I256, U256};
 use degenbot_pools::sim::curve_data_provider::CurveDataProvider;
 use degenbot_pools::sim::registry::RegisteredPoolFamily;
+use degenbot_pools::sim::tick_fetch::FetchedTickWord;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::swap_simulation::{
     simulate_pair_in_given_out, simulate_pair_out, Caveats, OverrideOutcome, OverrideState,
@@ -442,22 +443,28 @@ pub fn simulate_override_with_fetch(
         let staged = {
             let guard = state.read_at(LockSite::Orchestrator);
             let fetcher = guard.stored_fetcher_for_pool(over.pool_id);
+            let key = guard.word_key_for_pool(over.pool_id);
             let missing = guard.override_missing_words(over);
-            missing.map(|missing| (fetcher, missing))
+            missing.map(|missing| (fetcher.zip(key), missing))
         };
-        let (fetcher, missing) = staged?;
+        let (pair, missing) = staged?;
         if missing.is_empty() {
             break;
         }
         // Misses exist but no fetcher is stored: the hypothetical cannot be
         // backfilled — fail as `None` exactly like the disarmed sim's
         // FetchExhausted arm.
-        let fetcher = fetcher?;
+        let (fetcher, key) = pair?;
         // Fetches: NO state lock held.
         let mut staged_words = Vec::new();
         for word in &missing {
-            match fetcher.fetch_missing_tick_word(over.pool_id, *word, block) {
-                Ok(f) => staged_words.push(f),
+            match fetcher.fetch_tick_word(&key, *word, block) {
+                // A miss-path fetch maps `Ok(None)` (all-zero bitmap) to a
+                // known-empty word.
+                Ok(Some(f)) => staged_words.push(f),
+                Ok(None) => {
+                    staged_words.push(FetchedTickWord::new(*word, hashbrown::HashMap::new()));
+                }
                 Err(_) => return None,
             }
         }

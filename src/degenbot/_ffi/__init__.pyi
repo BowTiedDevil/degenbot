@@ -1446,6 +1446,7 @@ class Bot:
         protocol_fee: SupportsIndex = 0,
         tick_data_block: SupportsIndex | None = None,
         known_bitmap_words: Any | None = None,
+        state_view: str | None = None,
     ) -> int:
         """
         Register a V4 pool by `(pool_manager, pool_id)`.
@@ -1880,7 +1881,7 @@ class BotIo:
 
         Calldata + return decode from `degenbot_rpc::abi` (B2) — no hand-rolled
         `selector` / `sign_extend_to_32_bytes` here. The encode/decode helpers
-        are shared with `AlloyTickBootstrapRpc` (the standalone-Rust `cargo add
+        are shared with `AlloyTickWordSource` (the standalone-Rust `cargo add
         degenbot` consumer path), so the choreography stays byte-identical
         across the pyo3 adapter and the alloy impl ).
 

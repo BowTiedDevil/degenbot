@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 use degenbot_db::snapshot::TickMapDb;
-use degenbot_pools::sim::tick_fetch::TickWordFetcher;
+use degenbot_pools::sim::tick_fetch::TickWordSource;
 use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
 
 use super::builder::V4PoolBuildOverrides;
@@ -58,7 +58,7 @@ pub enum PoolConstruction<'a> {
         db: Option<&'a dyn TickMapDb>,
         /// The lazy tick-word fetcher stored on the registered V3 pool for
         /// swap-time boundary detection.
-        fetcher: Option<Arc<dyn TickWordFetcher>>,
+        fetcher: Option<Arc<dyn TickWordSource>>,
         /// An explicit concentrated liquidity slot-layout override (a non-JSON fork deployment
         /// the caller resolved from the DB descriptor); `None` = the
         /// builder's deployment-table resolution wins.

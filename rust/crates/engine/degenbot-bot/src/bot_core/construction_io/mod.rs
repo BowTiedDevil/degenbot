@@ -6,18 +6,18 @@
 //! through these traits — no `pyo3` here (the no-pyo3-in-cores invariant,
 //! enforced by `just check-no-pyo3-in-cores`).
 //!
-//! # Shape — mirrors the `TickMapDb` / `TickBootstrapRpc` precedent
+//! # Shape — mirrors the `TickMapDb` / `TickWordSource` precedent
 //!
 //! `tick_assembly` already composes two core traits: [`TickMapDb`] (the
 //! DB-read seam, `degenbot_db::snapshot::TickMapDb`) and
-//! [`TickBootstrapRpc`] (the RPC-read seam,
-//! `degenbot_pools::sim::tick_fetch::TickBootstrapRpc`). Each is one trait per
+//! [`TickWordSource`] (the RPC-read seam,
+//! `degenbot_pools::sim::tick_fetch::TickWordSource`). Each is one trait per
 //! concern, with real adapters. This module follows the same shape: one
 //! trait per concern (`DbConstruction` for DB, `RpcConstruction` for RPC),
 //! composed into one handle.
 //!
 //! [`TickMapDb`]: degenbot_db::snapshot::TickMapDb
-//! [`TickBootstrapRpc`]: degenbot_pools::sim::tick_fetch::TickBootstrapRpc
+//! [`TickWordSource`]: degenbot_pools::sim::tick_fetch::TickWordSource
 //!
 //! # Posture — Decision 8 (A), loud errors
 //!

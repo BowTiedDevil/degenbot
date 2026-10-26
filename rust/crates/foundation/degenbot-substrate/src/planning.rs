@@ -222,6 +222,10 @@ pub enum ExplicitPoolState {
         pool_id: V4PoolId,
         fee: u32,
         tick_spacing: i32,
+        /// The `StateView` contract for tick-word reads (NOT the
+        /// `PoolManager`); `Address::ZERO` when the admitting path does not
+        /// know one.
+        state_view: Address,
         hooks: Address,
         hook_flags: u16,
         protocol_fee: u32,
@@ -421,6 +425,7 @@ impl Workspace {
                 pool_id,
                 fee,
                 tick_spacing,
+                state_view,
                 hooks,
                 hook_flags,
                 protocol_fee,
@@ -440,6 +445,7 @@ impl Workspace {
                         tick_spacing,
                         hooks,
                     },
+                    state_view,
                     hook_flags,
                     protocol_fee,
                     sqrt_price_x96,
@@ -688,6 +694,7 @@ mod tests {
                 pool_id: V4_POOL_ID,
                 fee: 500,
                 tick_spacing: 10,
+                state_view: Address::ZERO,
                 hooks: Address::ZERO,
                 hook_flags: 0,
                 protocol_fee,

@@ -149,6 +149,7 @@ pub fn register_v4_with(
             // and blind the ADR-037 guards in replay.
             hooks: p.hooks.unwrap_or_default(),
         },
+        state_view: Address::ZERO,
         hook_flags: crate::bot_core::pool_builder::builder::derive_hook_flags(
             p.hooks.unwrap_or_default(),
         ),
@@ -213,6 +214,7 @@ pub fn build_v4_state(p: &PoolData) -> V4PoolState {
             // Same as register_v4_with: carry the REAL hook address.
             hooks: p.hooks.unwrap_or_default(),
         },
+        state_view: Address::ZERO,
         hook_flags: crate::bot_core::pool_builder::builder::derive_hook_flags(
             p.hooks.unwrap_or_default(),
         ),

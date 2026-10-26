@@ -45,7 +45,7 @@
 
 use hashbrown::HashMap;
 
-use alloy::primitives::{I256, U128, U256};
+use alloy::primitives::{Address, I256, U128, U256};
 
 use degenbot_pools::state::v3_state::PoolTickCoverage;
 use degenbot_pools::state::v4_state::{
@@ -96,6 +96,7 @@ fn onchain_v4_state_at_block_25635461(protocol_fee: u32) -> V4PoolState {
             tick_spacing: TICK_SPACING,
             hooks: alloy::primitives::Address::ZERO,
         },
+        state_view: Address::ZERO,
         hook_flags: 0,
         protocol_fee,
         sqrt_price_x96,

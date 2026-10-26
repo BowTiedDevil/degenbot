@@ -33,33 +33,33 @@ use super::narrow_reserve;
 use degenbot_substrate::{BotState, CurveInputsError};
 
 /// `PyO3` adapter wrapping a Python fetch-word callable as a
-/// [`TickWordFetcher`].
+/// [`TickWordSource`].
 /// The callable is `fetcher(word: int, block: int) ->
 /// dict[int, tuple[int, int, int]] | None`. It must RETURN the fetched tick data
 /// (writing it back would re-enter the state lock the caller holds) — the Rust
 /// loop merges the returned [`FetchedTickWord`] itself. See [`PyLiquidityPool::calculate_tokens_out_with_fetch`].
 #[derive(Debug)]
-struct PyTickWordFetcher {
+struct PyTickWordSource {
     callback: pyo3::Py<pyo3::PyAny>,
 }
 
-/// Wrap a Python callable as a stored `Arc<dyn TickWordFetcher>` for
+/// Wrap a Python callable as a stored `Arc<dyn TickWordSource>` for
 /// registration-time storage on `V3PoolState`/`V4PoolState` (ADR-006 I/O trait
 /// object). The callable signature is `fetcher(word, block) -> dict | None`
 /// (same as the per-call path this replaces).
 pub(crate) fn make_tick_fetcher(
     callback: pyo3::Py<pyo3::PyAny>,
-) -> std::sync::Arc<dyn degenbot_pools::sim::tick_fetch::TickWordFetcher> {
-    std::sync::Arc::new(PyTickWordFetcher { callback })
+) -> std::sync::Arc<dyn degenbot_pools::sim::tick_fetch::TickWordSource> {
+    std::sync::Arc::new(PyTickWordSource { callback })
 }
 
-/// Construct a Chain-arm `TickBootstrapRpc` from a `PyBotIo`'s native alloy
+/// Construct a Chain-arm tick-word source from a `PyBotIo`'s native alloy
 /// provider, if present (Option B: route the Chain arm
-/// through the pure-Rust [`AlloyTickBootstrapRpc`]).
+/// through the pure-Rust [`degenbot_rpc::AlloyTickWordSource`]).
 /// Returns `None` when the `PyBotIo` has no native alloy provider (legacy
 /// Python test doubles) → the caller passes `chain=None` to the assemble helper,
 /// preserving the current (no-Chain-arm) behavior.
-/// The returned `Arc<dyn TickBootstrapRpc>` is `Send + Sync` + holds no GIL
+/// The returned `Arc<dyn TickWordSource>` is `Send + Sync` + holds no GIL
 /// state — the full choreography (bitmap decode, bit enumeration, per-tick
 /// `eth_call`) runs in pure Rust under `py.detach`, no per-RPC GIL re-entry
 /// (the architectural end state: Rust is the engine; Python is a driver
@@ -74,39 +74,39 @@ pub(crate) fn make_tick_bootstrap_rpc(
     })
 }
 
-impl degenbot_pools::sim::tick_fetch::TickWordFetcher for PyTickWordFetcher {
-    fn fetch_missing_tick_word(
+impl degenbot_pools::sim::tick_fetch::TickWordSource for PyTickWordSource {
+    fn fetch_tick_word(
         &self,
-        _pool_id: u64,
+        _key: &degenbot_pools::sim::tick_fetch::TickWordKey,
         word: i32,
         block: u64,
     ) -> Result<
-        degenbot_pools::sim::tick_fetch::FetchedTickWord,
-        degenbot_pools::sim::tick_fetch::FetchTickWordError,
+        Option<degenbot_pools::sim::tick_fetch::FetchedTickWord>,
+        degenbot_pools::sim::tick_fetch::TickWordFetchError,
     > {
-        use degenbot_pools::sim::tick_fetch::{FetchTickWordError, FetchedTickWord};
+        use degenbot_pools::sim::tick_fetch::{FetchedTickWord, TickWordFetchError};
         Python::attach(|py| {
             let result = self
                 .callback
                 .call1(py, (word, block))
-                .map_err(|_| FetchTickWordError::FetchFailed)?;
+                .map_err(|_| TickWordFetchError::FetchFailed)?;
             // `None` or `{}` → empty word (known, no initialized ticks).
             let bound = result.bind(py);
             if bound.is_none() {
-                return Ok(FetchedTickWord {
+                return Ok(Some(FetchedTickWord {
                     bitmap: None,
                     word,
                     ticks: HashMap::new(),
-                });
+                }));
             }
             // The seed boundary owns the arity, the `U128` narrowing, and the
             // malformed-container error.
-            let ticks = TickData::from_py(bound).map_err(|_| FetchTickWordError::FetchFailed)?;
-            Ok(FetchedTickWord {
+            let ticks = TickData::from_py(bound).map_err(|_| TickWordFetchError::FetchFailed)?;
+            Ok(Some(FetchedTickWord {
                 bitmap: None,
                 word,
                 ticks,
-            })
+            }))
         })
     }
 }
@@ -121,7 +121,7 @@ impl degenbot_pools::sim::tick_fetch::TickWordFetcher for PyTickWordFetcher {
 /// `BalancerStablePoolState`.
 /// The callable signature is `get_rates(block_identifier: int | None) ->
 /// tuple[int, ...]` (one rate per token, `1e18` for tokens without a rate
-/// provider). Mirrors [`PyTickWordFetcher`]'s GIL re-entry discipline: the
+/// provider). Mirrors [`PyTickWordSource`]'s GIL re-entry discipline: the
 /// provider re-enters via `Python::attach`, holds no `BotState` lock across
 /// the call, and returns the rates for the caller to merge.
 #[derive(Debug)]

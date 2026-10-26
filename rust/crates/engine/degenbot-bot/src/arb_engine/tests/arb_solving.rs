@@ -707,6 +707,7 @@ fn v4_int128_overflow_path_rejected() {
                 tick_spacing: 200,
                 hooks: Address::ZERO,
             },
+            state_view: Address::ZERO,
             hook_flags: 0,
             protocol_fee: 0,
             sqrt_price_x96: U256::from(sp_extreme),
@@ -843,6 +844,7 @@ fn clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_
                 tick_spacing: 10,
                 hooks: Address::ZERO,
             },
+            state_view: Address::ZERO,
             hook_flags: 0,
             protocol_fee: 0,
             sqrt_price_x96: U256::from(1u128) << 96,
@@ -936,6 +938,7 @@ fn clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_
 fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
     use crate::arb_engine::PoolTickCoverage;
     use crate::bot_core::TickInfo;
+    use alloy::primitives::Address;
     use alloy::primitives::I256;
     use degenbot_pools::state::v3_state::V3PoolState;
     use degenbot_pools::state::v4_state::v4_simulate_swap;
@@ -981,6 +984,7 @@ fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
                 tick_spacing: 10,
                 hooks: Address::ZERO,
             },
+            state_view: Address::ZERO,
             hook_flags: 0,
             protocol_fee: 0,
             sqrt_price_x96: U256::from(1u128) << 96,
@@ -1141,6 +1145,7 @@ fn clamp_concentrated_liquidity_hop_capacity_aligns_v4_first_hop0_outputs() {
                 tick_spacing: 10,
                 hooks: Address::ZERO,
             },
+            state_view: Address::ZERO,
             hook_flags: 0,
             protocol_fee: 0,
             sqrt_price_x96: U256::from(1u128) << 96,
@@ -1259,6 +1264,7 @@ fn clamp_concentrated_liquidity_hop_capacity_noop_within_capacity() {
                 tick_spacing: 10,
                 hooks: Address::ZERO,
             },
+            state_view: Address::ZERO,
             hook_flags: 0,
             protocol_fee: 0,
             sqrt_price_x96: U256::from(1u128) << 96,

@@ -3110,7 +3110,7 @@ async fn the_curve_door_arm_constructs_registers_and_reuses() {
 // --- The Tick-word source (GLOSSARY): the live-miss backfill is core-owned ---
 
 #[test]
-fn a_bound_word_source_reads_a_checked_empty_word() {
+fn an_unbound_word_source_reads_a_checked_empty_word() {
     // An all-zero bitmap is a KNOWN word with no ticks — the source reports it
     // as fetched-and-empty, never as a failure, so the caller marks the word
     // known and stops re-fetching it.
@@ -3120,16 +3120,15 @@ fn a_bound_word_source_reads_a_checked_empty_word() {
         enc(DynSolValue::Uint(U256::ZERO, 256)),
     );
     let io = io_with(f);
-    let source = super::tick_source::ConstructionIoTickWordSource::attached(
-        &io,
-        super::tick_source::TickWordSourcePool::V3 {
-            address: TO,
-            tick_spacing: 1,
-        },
-    );
+    let source = super::tick_source::ConstructionIoTickWordSource::attached(&io);
+    let key = degenbot_pools::sim::tick_fetch::TickWordKey::V3 {
+        address: TO,
+        tick_spacing: 1,
+    };
     let fetched = source
-        .fetch_missing_tick_word(0, 0, 100)
-        .expect("a bound source reads through the construction io seam");
+        .fetch_tick_word(&key, 0, 100)
+        .expect("the source reads through the construction io seam")
+        .expect("a non-empty bitmap fetch returns Some");
     assert_eq!(fetched.word, 0);
     assert!(
         fetched.ticks.is_empty(),
@@ -3138,19 +3137,17 @@ fn a_bound_word_source_reads_a_checked_empty_word() {
 }
 
 #[test]
-fn a_bound_word_source_refuses_an_overrunning_word() {
+fn an_unbound_word_source_refuses_an_overrunning_word() {
     // The word -> tick mapping (`(word << 8) * spacing`) is checked before any
     // RPC: an overrunning word is a typed refusal, never a wrapped bogus tick.
     let io = io_with(FakeRpc::new());
-    let source = super::tick_source::ConstructionIoTickWordSource::attached(
-        &io,
-        super::tick_source::TickWordSourcePool::V3 {
-            address: TO,
-            tick_spacing: 1,
-        },
-    );
+    let source = super::tick_source::ConstructionIoTickWordSource::attached(&io);
+    let key = degenbot_pools::sim::tick_fetch::TickWordKey::V3 {
+        address: TO,
+        tick_spacing: 1,
+    };
     assert_eq!(
-        source.fetch_missing_tick_word(0, i32::MAX, 1).unwrap_err(),
-        degenbot_pools::sim::tick_fetch::FetchTickWordError::OutOfRange
+        source.fetch_tick_word(&key, i32::MAX, 1).unwrap_err(),
+        degenbot_pools::sim::tick_fetch::TickWordFetchError::OutOfRange
     );
 }

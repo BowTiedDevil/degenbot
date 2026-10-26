@@ -17,7 +17,7 @@ use alloy::primitives::{Address, B256, I256, U160, U256};
 use crate::families::concentrated_liquidity::state_journal;
 use crate::families::concentrated_liquidity::state_seeding;
 use crate::families::concentrated_liquidity::state_walk;
-use crate::sim::tick_fetch::TickWordFetcher;
+use crate::sim::tick_fetch::TickWordSource;
 use crate::state::int_v3_hop::IntV3TickRangeSequence;
 use crate::state::state_history::{
     JournalError, ReorgJournal, ReorgPoolState, ScalarPriors, V3BlockDelta,
@@ -257,9 +257,9 @@ pub struct RegisterV3PoolParams {
     /// Sparse-tick backfill fetcher (stored on `V3PoolState` at
     /// registration; `None` for `Tracked` pools or when no Python fetcher
     /// was supplied). ADR-006 I/O trait object — pyo3-free trait, the
-    /// `PyTickWordFetcher` adapter in `degenbot-python` wraps a Python
+    /// `PyTickWordSource` adapter in `degenbot-python` wraps a Python
     /// callable.
-    pub fetcher: Option<Arc<dyn TickWordFetcher>>,
+    pub fetcher: Option<Arc<dyn TickWordSource>>,
     /// The CREATE2 deployer the Rust builder verified this pool's address
     /// against (Fork A). Equals the JSON row's `deployer`, or `factory`
     /// when the row had `null` (the `None -> factory` convention). For non-JSON
@@ -513,7 +513,7 @@ pub struct V3PoolState {
     /// this `Arc` out and calls it on a `MissingTickWord` miss. `None` for
     /// `Tracked` pools (complete tick data) or when no Python fetcher was
     /// supplied at registration.
-    pub fetcher: Option<Arc<dyn TickWordFetcher>>,
+    pub fetcher: Option<Arc<dyn TickWordSource>>,
 
     /// Reorg journal — scalar priors + per-tick priors for rollback.
     pub journal: ReorgJournal<V3BlockDelta>,

@@ -1,29 +1,22 @@
 //! The live-miss tick-word source over [`ConstructionIo`] — the **Tick-word source**
 //! capability's miss-path call site (GLOSSARY).
-//!
+
 //! The sparse-map miss path (`swap_simulation` -> `MissingTickWord`) reaches the
-//! pool state's stored [`TickWordFetcher`] when a walk enters an unfetched bitmap
-//! word. Until this adapter the only production impl wrapped a Python callable
-//! (`PyTickWordFetcher`), so a pure-Rust consumer had no backfill at all: an
-//! unfetched word was a hard `FetchFailed` while Python backfilled transparently.
-//!
+//! pool state's stored [`TickWordSource`] when a walk enters an unfetched bitmap
+//! word. This impl is the core's own source: UNBOUND — one instance reads any
+//! pool the key names, because the key carries the pool's read descriptor
+//! (V3 address + spacing, or V4 `StateView` + pool id + spacing). The legacy
+//! Python path stores a `PyTickWordSource` callback instead; a pure-Rust
+//! consumer wires this impl and still gets sparse-map backfill.
+
 //! The read a word backfill needs already exists in this crate:
 //! [`super::builder::bootstrap_v3_tick_map`] / `bootstrap_v4_tick_map` perform it
-//! for the registration Chain arm over the generic RPC primitive. This adapter
+//! for the registration Chain arm over the generic RPC primitive. This impl
 //! reuses them, so one read implementation serves both call sites.
-//!
-//! ## Binding
-//!
-//! A word read needs the pool's descriptor — `address` + `tick_spacing`, or
-//! `state_view` + `pool_id` + `tick_spacing` — facts only the construction arm
-//! holds. The source is therefore constructed at the param-application site
-//! (`route.rs` for V3, `build_register.rs` for V4) once the build resolved them,
-//! and stored on the pooled state by registration. A source never reads the state
-//! owner it is fetching for (that is the re-entrancy trap the trait documents).
-//!
+
 //! ## Sync bridging
-//!
-//! [`TickWordFetcher::fetch_missing_tick_word`] is synchronous and the io
+
+//! [`TickWordSource::fetch_tick_word`] is synchronous and the io
 //! primitives are `async`. The read is a rare, multi-second RPC on a miss path
 //! that already released every state lock, so it bridges through the shared
 //! runtime: `block_in_place` when the calling thread is already inside a Tokio
@@ -32,69 +25,36 @@
 
 use std::sync::Arc;
 
-use alloy::primitives::Address;
-use degenbot_pools::sim::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+use degenbot_pools::sim::tick_fetch::{
+    FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource,
+};
 
 use crate::bot_core::construction_io::{ConstructionIo, NoDb};
 
-/// Which pool a bound source reads for.
-#[derive(Debug, Clone, Copy)]
-pub enum TickWordSourcePool {
-    /// A V3-style concentrated-liquidity pool.
-    V3 {
-        /// The pool contract address (`tickBitmap(int16)` target).
-        address: Address,
-        /// The pool's tick spacing (bit -> tick resolution).
-        tick_spacing: i32,
-    },
-    /// A V4 managed pool.
-    V4 {
-        /// The `StateView` contract exposing `getTickBitmap(bytes32,int16)`.
-        state_view: Address,
-        /// The pool's on-chain id.
-        pool_id: [u8; 32],
-        /// The pool's tick spacing.
-        tick_spacing: i32,
-    },
-}
-
-impl TickWordSourcePool {
-    /// The tick spacing that maps a word position back to a tick.
-    #[must_use]
-    const fn tick_spacing(&self) -> i32 {
-        match self {
-            Self::V3 { tick_spacing, .. } | Self::V4 { tick_spacing, .. } => *tick_spacing,
-        }
-    }
-}
-
-/// A [`TickWordFetcher`] bound to one pool's descriptor, reading through the
-/// construction I/O seam.
+/// A [`TickWordSource`] reading through the construction I/O seam — unbound,
+/// so ONE instance serves every pool the session constructs.
 pub struct ConstructionIoTickWordSource {
     io: ConstructionIo,
-    pool: TickWordSourcePool,
 }
 
 impl std::fmt::Debug for ConstructionIoTickWordSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ConstructionIoTickWordSource")
-            .field("pool", &self.pool)
             .finish_non_exhaustive()
     }
 }
 
 impl ConstructionIoTickWordSource {
-    /// Bind a source to one pool.
+    /// Build the shared source over the session's construction I/O.
     ///
     /// The DB half is unused by a tick-word read, so the handle is rebuilt from
     /// the RPC half alone ([`NoDb`] supplies the no-database arm) — the source
     /// stays independent of whether the session opened a database.
     #[must_use]
-    pub fn attached(io: &ConstructionIo, pool: TickWordSourcePool) -> Arc<dyn TickWordFetcher> {
+    pub fn attached(io: &ConstructionIo) -> Arc<dyn TickWordSource> {
         let rpc = Arc::clone(&io.rpc);
         Arc::new(Self {
             io: ConstructionIo::new(Arc::new(NoDb), rpc),
-            pool,
         })
     }
 }
@@ -109,26 +69,27 @@ fn bridge<F: std::future::Future>(fut: F) -> F::Output {
     }
 }
 
-impl TickWordFetcher for ConstructionIoTickWordSource {
-    fn fetch_missing_tick_word(
+impl TickWordSource for ConstructionIoTickWordSource {
+    fn fetch_tick_word(
         &self,
-        _pool_id: u64,
+        key: &TickWordKey,
         word: i32,
         block: u64,
-    ) -> Result<FetchedTickWord, FetchTickWordError> {
-        let tick_spacing = self.pool.tick_spacing();
+    ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
+        let tick_spacing = match key {
+            TickWordKey::V3 { tick_spacing, .. } | TickWordKey::V4 { tick_spacing, .. } => {
+                *tick_spacing
+            }
+        };
         // The word's first tick: `(word << 8) * spacing`, the same mapping the
         // registration Chain arm starts from.
         let tick = word
             .checked_mul(256)
             .and_then(|t| t.checked_mul(tick_spacing))
-            .ok_or(FetchTickWordError::OutOfRange)?;
+            .ok_or(TickWordFetchError::OutOfRange)?;
         let read = async {
-            match self.pool {
-                TickWordSourcePool::V3 {
-                    address,
-                    tick_spacing,
-                } => {
+            match *key {
+                TickWordKey::V3 { address, .. } => {
                     super::builder::bootstrap_v3_tick_map(
                         &self.io,
                         address,
@@ -138,10 +99,10 @@ impl TickWordFetcher for ConstructionIoTickWordSource {
                     )
                     .await
                 }
-                TickWordSourcePool::V4 {
+                TickWordKey::V4 {
                     state_view,
                     pool_id,
-                    tick_spacing,
+                    ..
                 } => {
                     super::builder::bootstrap_v4_tick_map(
                         &self.io,
@@ -155,11 +116,11 @@ impl TickWordFetcher for ConstructionIoTickWordSource {
                 }
             }
         };
-        let (ticks, _bitmap) = bridge(read).map_err(|_| FetchTickWordError::FetchFailed)?;
-        Ok(FetchedTickWord {
-            bitmap: None,
+        let (ticks, bitmap) = bridge(read).map_err(|_| TickWordFetchError::FetchFailed)?;
+        Ok(Some(FetchedTickWord {
             word,
             ticks,
-        })
+            bitmap: Some(bitmap),
+        }))
     }
 }

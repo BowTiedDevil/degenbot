@@ -39,7 +39,7 @@
 
 #![expect(clippy::doc_markdown)]
 
-use alloy::primitives::{I256, U256};
+use alloy::primitives::{Address, I256, U256};
 use degenbot::substrate::swap_simulation::{SwapRead, SwapRequest};
 use degenbot::substrate::BotState;
 use degenbot::{RegisterV4PoolParams, V4PoolKey};
@@ -157,6 +157,7 @@ fn standalone_rust_consumer_v4_swap_matches_recorded_constant() {
             tick_spacing: fx.fixture.tick_spacing,
             hooks,
         },
+        state_view: Address::ZERO,
         hook_flags: 0,
         protocol_fee: 0,
         sqrt_price_x96,

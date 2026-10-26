@@ -2595,8 +2595,8 @@ fn pools_root_surface_is_pinned() {
     let item_count =
         count_pub_items(&workspace_root().join("crates/foundation/degenbot-pools/src"));
     assert_eq!(
-        item_count, 684,
-        "pools root `pub` item count moved from the tick-source seam snapshot (684);          review tests/pools_root_surface_census.txt before growing the surface"
+        item_count, 680,
+        "pools root `pub` item count moved from the tick-source seam snapshot (680);          review tests/pools_root_surface_census.txt before growing the surface"
     );
 }
 

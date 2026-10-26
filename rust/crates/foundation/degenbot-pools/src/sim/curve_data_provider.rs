@@ -17,7 +17,7 @@
 //! in core, no debt across the crate boundary).
 //!
 //! Mirrors [`crate::sim::rate_provider::BalancerRateProvider`] and
-//! [`crate::sim::tick_fetch::TickWordFetcher`]: `Send + Sync` so it can live
+//! [`crate::sim::tick_fetch::TickWordSource`]: `Send + Sync` so it can live
 //! behind `Option<Arc<dyn …>>` on a `PoolState`, with the Py adapter
 //! re-entering via `Python::attach`. Caching stays in the adapter / the
 //! Python `PerBlockCache` (the trait is the *read* interface).
@@ -52,7 +52,7 @@ pub enum CurveDataProviderError {
 /// Implementations may do I/O (RPC). The core calc path holds no `BotState`
 /// lock across the call — a fetcher that re-enters `BotState` returns the
 /// value here rather than mutating state in place, matching the
-/// [`TickWordFetcher`] discipline.
+/// [`TickWordSource`] discipline.
 ///
 /// `Send + Sync` so it can live behind an `Option<Arc<dyn …>>` on a
 /// `PoolState`.

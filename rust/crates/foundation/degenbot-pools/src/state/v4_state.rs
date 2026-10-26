@@ -17,7 +17,7 @@ use crate::families::concentrated_liquidity::state_journal;
 use crate::families::concentrated_liquidity::state_seeding;
 use crate::families::concentrated_liquidity::state_walk::{self, TickRangeCache};
 use crate::families::liquidity_event::LiquidityEvent;
-use crate::sim::tick_fetch::TickWordFetcher;
+use crate::sim::tick_fetch::TickWordSource;
 use crate::state::int_v3_hop::IntV3TickRangeSequence;
 use crate::state::state_history::{
     JournalError, ReorgJournal, ReorgPoolState, ScalarPriors, V3BlockDelta,
@@ -167,6 +167,10 @@ pub struct RegisterV4PoolParams {
     pub pool_manager: Address,
     pub pool_id: V4PoolId,
     pub pool_key: V4PoolKey,
+    /// The `StateView` contract for the pool's tick-word reads (NOT the
+    /// `PoolManager`). `Address::ZERO` when the registering path does not
+    /// know one — such pools never build a chain read key.
+    pub state_view: Address,
     /// Pre-decoded hook flags bitmask (low 16 bits of the hook address).
     /// Amount-modifying hooks (`& 0xCC != 0`, ADR-037) no longer block
     /// admission — such pools register with `Caveats::HOOKED_POOL` on every
@@ -197,7 +201,7 @@ pub struct RegisterV4PoolParams {
     /// Sparse-tick backfill fetcher (stored on `V4PoolState` at registration;
     /// `None` for `Tracked` pools or when no Python fetcher was supplied).
     /// ADR-006 I/O trait object — same shape as V3.
-    pub fetcher: Option<Arc<dyn TickWordFetcher>>,
+    pub fetcher: Option<Arc<dyn TickWordSource>>,
     /// Checked tick-bitmap WORD positions the caller looked up on-chain at
     /// registration and found EMPTY — the V4 twin of
     /// `RegisterV3PoolParams::known_bitmap_words`. Seeded inline with the
@@ -295,14 +299,21 @@ pub struct V4SwapUpdate {
 
 /// Immutable V4 registration identity (ADR-005 identity slice).
 ///
-/// Pure registration data — the pool manager, on-chain `pool_id`, and
-/// the V4 pool key (`currency0/currency1/fee/tick_spacing/hooks`). Set once at
+/// Pure registration data — the pool manager, on-chain `pool_id`, the V4
+/// pool key (`currency0/currency1/fee/tick_spacing/hooks`), and the
+/// `StateView` contract the pool's tick-word reads target. Set once at
 /// `register_v4_pool` and never mutated. Mirrors `V3PoolIdentity`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct V4PoolIdentity {
     pub pool_manager: Address,
     pub pool_id: V4PoolId,
     pub pool_key: V4PoolKey,
+    /// The `StateView` contract exposing `getTickBitmap`/`getTickLiquidity`
+    /// (NOT the `PoolManager`) — the tick-word read target.
+    /// [`Address::ZERO`] when the registering path does not know one (the
+    /// raw registration with no `StateView` deployment); such pools never
+    /// build a chain read key (their stored source ignores the key).
+    pub state_view: Address,
 }
 
 /// V4 concentrated-liquidity pool state owned by [`crate::BotState`].
@@ -379,7 +390,7 @@ pub struct V4PoolState {
     /// this `Arc` out and calls it on a `MissingTickWord` miss. `None` for
     /// `Tracked` pools (complete tick data) or when no Python fetcher was
     /// supplied at registration.
-    pub fetcher: Option<Arc<dyn TickWordFetcher>>,
+    pub fetcher: Option<Arc<dyn TickWordSource>>,
 
     /// Reorg journal — scalar priors + per-tick priors for rollback (V4 uses
     /// the same `V3BlockDelta` shape; `tick_priors` store `ModifyLiquidity` reversal
@@ -514,6 +525,7 @@ impl V4PoolState {
             pool_manager: params.pool_manager,
             pool_id: params.pool_id,
             pool_key: params.pool_key,
+            state_view: params.state_view,
         };
         // Seed the known-bitmap-word set from the tick_data keys for EVERY
         // coverage (mirrors `sync_tick_data_by_pool_id`). Pre-fix this only ran

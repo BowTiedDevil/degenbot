@@ -5,7 +5,7 @@ use crate::arb_engine::solve_cycle::SolveCycleShared;
 use crate::arb_engine::{ArbitrageEngine, BlockMetadata};
 use crate::bot_core::{TickInfo, V4PoolKey};
 use ::degenbot_pools::solve::{MixedPath, SolvePathResult};
-use alloy::primitives::U256;
+use alloy::primitives::{Address, U256};
 use hashbrown::HashMap;
 use std::sync::Arc;
 
@@ -91,6 +91,7 @@ fn overfed_v4_engine() -> (ArbitrageEngine, u64, Vec<std::sync::Arc<MixedPath>>)
                 tick_spacing: 10,
                 hooks: alloy::primitives::Address::ZERO,
             },
+            state_view: Address::ZERO,
             hook_flags: 0,
             protocol_fee: 0,
             sqrt_price_x96: U256::from(1u128) << 96,

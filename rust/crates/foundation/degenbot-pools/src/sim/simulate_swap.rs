@@ -4,7 +4,7 @@
 //!
 //! Returns [`SimulateSwapError::MissingTickWord(word)`] as **data** for V3/V4
 //! sparse-map misses (Pattern B); the fetch+retry shell lives in `degenbot-bot`
-//! (it catches the value error + calls the pools-defined `TickWordFetcher`
+//! (it catches the value error + calls the pools-defined `TickWordSource`
 //! trait to fill the word, then retries).
 //!
 //! The **not-yet-Rust-side** sentinel (`Ok(U256::ZERO)`) is RETIRED (C6): the

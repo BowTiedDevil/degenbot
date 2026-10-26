@@ -45,6 +45,7 @@ fn inspect_path_returns_hop_details() {
                 tick_spacing: 100,
                 hooks: Address::ZERO,
             },
+            state_view: Address::ZERO,
             hook_flags: 0,
             protocol_fee: 0,
             sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
@@ -761,7 +762,7 @@ fn register_path_rejects_pool_id_not_in_bot() {
 #[expect(clippy::too_many_lines)]
 fn process_backfill_logs_stamps_per_log_block_number() {
     use crate::arb_engine::PoolTickCoverage;
-    use alloy::primitives::{Bytes, B256};
+    use alloy::primitives::{Address, Bytes, B256};
     use alloy::rpc::types::Log;
     use degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
     /// Build a V3 Swap log carrying post-swap scalars, at `block_number`.

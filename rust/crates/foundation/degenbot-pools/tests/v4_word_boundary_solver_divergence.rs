@@ -47,7 +47,7 @@
 
 use hashbrown::HashMap;
 
-use alloy::primitives::{I256, U128, U256};
+use alloy::primitives::{Address, I256, U128, U256};
 
 use degenbot_pools::state::v3_state::{PoolTickCoverage, V3PoolState, V3SwapOutcome};
 use degenbot_pools::state::v4_state::{
@@ -100,6 +100,7 @@ fn build_sparse_v4_state(base_liquidity: u128, ticks: &[(i32, i128)]) -> V4PoolS
             tick_spacing: TICK_SPACING,
             hooks: alloy::primitives::Address::ZERO,
         },
+        state_view: Address::ZERO,
         hook_flags: 0,
         protocol_fee: 0,
         sqrt_price_x96: sp_0,

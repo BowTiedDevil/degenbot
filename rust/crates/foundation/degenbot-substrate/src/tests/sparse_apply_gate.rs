@@ -20,7 +20,9 @@ use super::*;
 use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, I256, U128, U256};
-use degenbot_pools::sim::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+use degenbot_pools::sim::tick_fetch::{
+    FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource,
+};
 
 use crate::concentrated_liquidity_route::{ApplyOutcome, Phase};
 use crate::log_dispatcher::LogDispatcher;
@@ -90,31 +92,31 @@ impl GateFetcher {
     }
 }
 
-impl TickWordFetcher for GateFetcher {
-    fn fetch_missing_tick_word(
+impl TickWordSource for GateFetcher {
+    fn fetch_tick_word(
         &self,
-        _pool_id: u64,
+        _key: &TickWordKey,
         word: i32,
         block: u64,
-    ) -> Result<FetchedTickWord, FetchTickWordError> {
+    ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
         self.calls
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push((word, block));
         if self.fail {
-            return Err(FetchTickWordError::FetchFailed);
+            return Err(TickWordFetchError::FetchFailed);
         }
-        Ok(FetchedTickWord {
+        Ok(Some(FetchedTickWord {
             word,
             ticks: self.ticks.iter().cloned().collect(),
             bitmap: None,
-        })
+        }))
     }
 }
 
 /// The stored fetcher handle: the `Arc<GateFetcher>` a test keeps to assert on
 /// the recorded calls, widened to the trait object the pool stores.
-fn word_fetcher(fetcher: &Arc<GateFetcher>) -> Arc<dyn TickWordFetcher> {
+fn word_fetcher(fetcher: &Arc<GateFetcher>) -> Arc<dyn TickWordSource> {
     let concrete: Arc<GateFetcher> = Arc::clone(fetcher);
     concrete
 }
@@ -200,7 +202,7 @@ fn v4_modify_liquidity_log(
 
 /// A Sparse V3 pool (no tick rows at registration, so no bitmap word is
 /// checked) carrying the scripted fetcher; `strict` arms the gate on the owner.
-fn sparse_v3_state(fetcher: Option<Arc<dyn TickWordFetcher>>, strict: bool) -> StateLock<BotState> {
+fn sparse_v3_state(fetcher: Option<Arc<dyn TickWordSource>>, strict: bool) -> StateLock<BotState> {
     let mut core = BotState::new();
     core.set_strict_sparse_apply(strict);
     core.register_v3_pool(&RegisterV3PoolParams {
@@ -225,7 +227,7 @@ fn sparse_v3_state(fetcher: Option<Arc<dyn TickWordFetcher>>, strict: bool) -> S
 }
 
 /// A V4 twin of [`sparse_v3_state`], keyed `(pool_manager, pool_id)`.
-fn sparse_v4_state(fetcher: Option<Arc<dyn TickWordFetcher>>, strict: bool) -> StateLock<BotState> {
+fn sparse_v4_state(fetcher: Option<Arc<dyn TickWordSource>>, strict: bool) -> StateLock<BotState> {
     let mut core = BotState::new();
     core.set_strict_sparse_apply(strict);
     core.register_v4_pool(&RegisterV4PoolParams {
@@ -238,6 +240,7 @@ fn sparse_v4_state(fetcher: Option<Arc<dyn TickWordFetcher>>, strict: bool) -> S
             tick_spacing: 60,
             hooks: Address::ZERO,
         },
+        state_view: Address::ZERO,
         hook_flags: 0,
         protocol_fee: 0,
         sqrt_price_x96: U256::from(1u128) << 96,

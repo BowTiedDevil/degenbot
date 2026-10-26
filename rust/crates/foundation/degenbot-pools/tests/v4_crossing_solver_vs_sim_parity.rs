@@ -51,7 +51,7 @@
 
 use hashbrown::HashMap;
 
-use alloy::primitives::{I256, U128, U256};
+use alloy::primitives::{Address, I256, U128, U256};
 
 use degenbot_pools::state::v3_state::{PoolTickCoverage, V3PoolState, V3SwapOutcome};
 use degenbot_pools::state::v4_state::{
@@ -117,6 +117,7 @@ fn build_multi_tick_v4_state(
             tick_spacing: 60,
             hooks: alloy::primitives::Address::ZERO,
         },
+        state_view: Address::ZERO,
         hook_flags: 0,
         protocol_fee: 0,
         sqrt_price_x96: sp_0,
@@ -365,6 +366,7 @@ fn build_fee1_tiny_state(
             tick_spacing: 1,
             hooks: alloy::primitives::Address::ZERO,
         },
+        state_view: Address::ZERO,
         hook_flags: 0,
         protocol_fee: 0,
         sqrt_price_x96,
@@ -1547,6 +1549,7 @@ fn build_uni_9a5c1d2f_v4_state() -> V4PoolState {
             tick_spacing: 60,
             hooks: alloy::primitives::Address::ZERO,
         },
+        state_view: Address::ZERO,
         hook_flags: 0,
         protocol_fee: 2_048_500,
         sqrt_price_x96: "159369389255773083394993".parse().unwrap(),
@@ -1639,6 +1642,7 @@ fn build_fee1_76f75965_v4_state() -> V4PoolState {
             tick_spacing: 1,
             hooks: alloy::primitives::Address::ZERO,
         },
+        state_view: Address::ZERO,
         hook_flags: 0,
         protocol_fee: 53_261,
         sqrt_price_x96: "79231869042278935382727675145".parse().unwrap(),

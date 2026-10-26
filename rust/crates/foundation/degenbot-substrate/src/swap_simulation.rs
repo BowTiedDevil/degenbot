@@ -29,7 +29,7 @@
 use hashbrown::HashMap;
 use std::sync::Arc;
 
-use ::degenbot_pools::sim::tick_fetch::TickWordFetcher;
+use ::degenbot_pools::sim::tick_fetch::{TickWordKey, TickWordSource};
 
 use alloy::primitives::aliases::U112;
 use alloy::primitives::{I256, U256};
@@ -535,10 +535,28 @@ impl BotState {
     /// registration-time fact on the slice; cloning it here keeps the read
     /// lock-free).
     #[must_use]
-    pub fn stored_fetcher_for_pool(&self, pool_id: u64) -> Option<Arc<dyn TickWordFetcher>> {
+    pub fn stored_fetcher_for_pool(&self, pool_id: u64) -> Option<Arc<dyn TickWordSource>> {
         match self.registry.pools.get(&pool_id) {
             Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
             Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
+            _ => None,
+        }
+    }
+
+    /// The registered pool's tick-word read descriptor (its own identity) —
+    /// the key a stored-source fetch addresses words by.
+    #[must_use]
+    pub fn word_key_for_pool(&self, pool_id: u64) -> Option<TickWordKey> {
+        match self.registry.pools.get(&pool_id) {
+            Some(PoolEntry::V3(p)) => Some(TickWordKey::V3 {
+                address: p.0.address,
+                tick_spacing: p.0.tick_spacing,
+            }),
+            Some(PoolEntry::V4(p)) => Some(TickWordKey::V4 {
+                state_view: p.0.state_view,
+                pool_id: p.0.pool_id,
+                tick_spacing: p.0.pool_key.tick_spacing,
+            }),
             _ => None,
         }
     }
@@ -761,8 +779,12 @@ impl BotState {
         // One concentrated liquidity dispatch row (ADR-073 D2): the override sim is the family
         // read module's read_swap door over a Sparse transient the door
         // builds from the override state.
-        let (fetcher, source) = match entry {
+        let (key, fetcher, source) = match entry {
             PoolEntry::V3(p) => (
+                TickWordKey::V3 {
+                    address: p.0.address,
+                    tick_spacing: p.0.tick_spacing,
+                },
                 p.1.fetcher.clone(),
                 concentrated_liquidity::SwapReadSource::Override(
                     concentrated_liquidity::ConcentratedLiquidityTransientSource::V3 {
@@ -775,6 +797,11 @@ impl BotState {
                 ),
             ),
             PoolEntry::V4(p) => (
+                TickWordKey::V4 {
+                    state_view: p.0.state_view,
+                    pool_id: p.0.pool_id,
+                    tick_spacing: p.0.pool_key.tick_spacing,
+                },
                 p.1.fetcher.clone(),
                 concentrated_liquidity::SwapReadSource::Override(
                     concentrated_liquidity::ConcentratedLiquidityTransientSource::V4 {
@@ -791,8 +818,8 @@ impl BotState {
         };
         let mode = match &fetcher {
             Some(f) if !disarm_fetch => concentrated_liquidity::FetchMode::Armed {
-                fetcher: f,
-                pool_id: over.pool_id,
+                source: f,
+                key,
                 block,
             },
             _ => concentrated_liquidity::FetchMode::Disarmed,
@@ -952,12 +979,16 @@ impl BotState {
         block: u64,
         disarm_fetch: bool,
     ) -> SwapRead {
-        let (coverage, extra_caveats, outcome_family, fetcher, scalars, hooks) = {
+        let (coverage, extra_caveats, outcome_family, fetcher, scalars, hooks, key) = {
             let Some(entry) = self.registry.pools.get(&pool_id) else {
                 return SwapRead::NotComputable;
             };
             match entry {
                 PoolEntry::V3(p) => {
+                    let key = TickWordKey::V3 {
+                        address: p.0.address,
+                        tick_spacing: p.0.tick_spacing,
+                    };
                     let design = concentrated_liquidity::ConcentratedLiquidityState::V3 {
                         state: &p.1,
                         scalars: concentrated_liquidity::DesignScalars::new(
@@ -977,9 +1008,15 @@ impl BotState {
                         p.1.fetcher.clone(),
                         concentrated_liquidity::DesignScalars::new(p.0.fee, p.0.tick_spacing),
                         None,
+                        key,
                     )
                 }
                 PoolEntry::V4(p) => {
+                    let key = TickWordKey::V4 {
+                        state_view: p.0.state_view,
+                        pool_id: p.0.pool_id,
+                        tick_spacing: p.0.pool_key.tick_spacing,
+                    };
                     let hooks = p.0.pool_key.hooks;
                     let design = concentrated_liquidity::ConcentratedLiquidityState::V4 {
                         state: &p.1,
@@ -1014,6 +1051,7 @@ impl BotState {
                             p.0.pool_key.tick_spacing,
                         ),
                         Some(hooks),
+                        key,
                     )
                 }
                 _ => return SwapRead::NotComputable,
@@ -1021,8 +1059,8 @@ impl BotState {
         };
         let mode = match &fetcher {
             Some(f) if !disarm_fetch => concentrated_liquidity::FetchMode::Armed {
-                fetcher: f,
-                pool_id,
+                source: f,
+                key,
                 block,
             },
             _ => concentrated_liquidity::FetchMode::Disarmed,
@@ -1108,22 +1146,22 @@ mod tests {
     fn counting_fetcher_setup(calls: Arc<AtomicUsize>) -> (BotState, u64) {
         #[derive(Debug)]
         struct CountingFetcher(Arc<AtomicUsize>);
-        impl ::degenbot_pools::sim::tick_fetch::TickWordFetcher for CountingFetcher {
-            fn fetch_missing_tick_word(
+        impl ::degenbot_pools::sim::tick_fetch::TickWordSource for CountingFetcher {
+            fn fetch_tick_word(
                 &self,
-                _pool_id: u64,
+                _key: &::degenbot_pools::sim::tick_fetch::TickWordKey,
                 word: i32,
                 _block: u64,
             ) -> Result<
-                ::degenbot_pools::sim::tick_fetch::FetchedTickWord,
-                ::degenbot_pools::sim::tick_fetch::FetchTickWordError,
+                Option<::degenbot_pools::sim::tick_fetch::FetchedTickWord>,
+                ::degenbot_pools::sim::tick_fetch::TickWordFetchError,
             > {
                 self.0.fetch_add(1, Ordering::Relaxed);
-                Ok(::degenbot_pools::sim::tick_fetch::FetchedTickWord {
+                Ok(Some(::degenbot_pools::sim::tick_fetch::FetchedTickWord {
                     word,
                     ticks: HashMap::new(),
                     bitmap: None,
-                })
+                }))
             }
         }
         let mut core = BotState::new();

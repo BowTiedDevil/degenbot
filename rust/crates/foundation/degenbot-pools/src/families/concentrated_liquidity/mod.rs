@@ -81,7 +81,7 @@ use hashbrown::{HashMap, HashSet};
 use super::door::{Observe, Observed, ReadOutcome, SwapReadRequest};
 
 use crate::sim::registry::ConcentratedLiquidityPoolMut;
-use crate::sim::tick_fetch::{FetchedTickWord, TickWordFetcher};
+use crate::sim::tick_fetch::{FetchedTickWord, TickWordKey, TickWordSource};
 use crate::state::int_v3_hop::IntV3TickRangeSequence;
 use crate::state::v3_state::{SimulateSwapError, V3SwapOutcome};
 pub use crate::TickInfo;
@@ -189,14 +189,15 @@ pub enum FetchMode<'a> {
     /// as DATA ([`ReadOutcome::Stateless`] carrying
     /// [`SimulateSwapError::MissingTickWord`]); the caller owns fetch + retry.
     Stateless,
-    /// Miss recovery ARMED: a miss fetches `word` through the stored fetcher
+    /// Miss recovery ARMED: a miss fetches `word` through the stored source
     /// at `block`, merges, and retries (single-strike per word).
     Armed {
-        /// The pool's stored fetcher, cloned off the registered state before
+        /// The pool's stored source, cloned off the registered state before
         /// the read began.
-        fetcher: &'a Arc<dyn TickWordFetcher>,
-        /// The pool id the fetcher is bound to.
-        pool_id: u64,
+        source: &'a Arc<dyn TickWordSource>,
+        /// The pool's tick-word read descriptor (its own identity — V3
+        /// address + spacing, or V4 `StateView` + pool id + spacing).
+        key: TickWordKey,
         /// The fetch context block.
         block: u64,
     },
@@ -436,13 +437,9 @@ fn downgrade_discovery<'a>(mode: &'a FetchMode<'a>) -> FetchMode<'a> {
     match mode {
         FetchMode::Discovery | FetchMode::Stateless => FetchMode::Stateless,
         FetchMode::Disarmed => FetchMode::Disarmed,
-        FetchMode::Armed {
-            fetcher,
-            pool_id,
-            block,
-        } => FetchMode::Armed {
-            fetcher,
-            pool_id: *pool_id,
+        FetchMode::Armed { source, key, block } => FetchMode::Armed {
+            source,
+            key: key.clone(),
             block: *block,
         },
     }
@@ -557,16 +554,14 @@ fn drive<S: ConcentratedLiquidityPoolMut>(
 /// staged the missing words beforehand and the typed contract answers
 /// `FetchExhausted` for any residual miss.
 fn fetch_word(mode: &FetchMode<'_>, word: i32) -> Result<FetchedTickWord, FetchVerdict> {
-    let FetchMode::Armed {
-        fetcher,
-        pool_id,
-        block,
-    } = mode
-    else {
+    let FetchMode::Armed { source, key, block } = mode else {
         return Err(FetchVerdict::NoFetcher);
     };
-    fetcher
-        .fetch_missing_tick_word(*pool_id, word, *block)
+    // A miss-path caller maps `Ok(None)` (all-zero bitmap) to a known-empty
+    // word — the word is now "known" even though it holds no ticks.
+    source
+        .fetch_tick_word(key, word, *block)
+        .map(|hit| hit.unwrap_or_else(|| FetchedTickWord::new(word, hashbrown::HashMap::new())))
         .map_err(|_| FetchVerdict::Errored)
 }
 
@@ -575,7 +570,7 @@ mod tests {
     #![expect(clippy::panic)]
 
     use super::*;
-    use crate::sim::tick_fetch::FetchTickWordError;
+    use crate::sim::tick_fetch::{TickWordFetchError, TickWordKey};
     use crate::state::v3_state::PoolTickCoverage;
 
     // -------------------------------------------------------------------
@@ -655,23 +650,23 @@ mod tests {
         calls: std::sync::atomic::AtomicUsize,
     }
 
-    impl TickWordFetcher for ScriptedFetcher {
-        fn fetch_missing_tick_word(
+    impl TickWordSource for ScriptedFetcher {
+        fn fetch_tick_word(
             &self,
-            _pool_id: u64,
+            _key: &TickWordKey,
             word: i32,
             _block: u64,
-        ) -> Result<FetchedTickWord, FetchTickWordError> {
+        ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if self.ok {
-                Ok(FetchedTickWord {
+                Ok(Some(FetchedTickWord {
                     word,
                     ticks: HashMap::new(),
                     bitmap: None,
-                })
+                }))
             } else {
-                Err(FetchTickWordError::FetchFailed)
+                Err(TickWordFetchError::FetchFailed)
             }
         }
     }
@@ -714,7 +709,7 @@ mod tests {
         let mut target = ScriptedMergeTarget {
             fetched: std::cell::RefCell::new(Vec::new()),
         };
-        let fetcher: Arc<dyn TickWordFetcher> = Arc::new(ScriptedFetcher {
+        let source: Arc<dyn TickWordSource> = Arc::new(ScriptedFetcher {
             ok: true,
             calls: std::sync::atomic::AtomicUsize::new(0),
         });
@@ -725,8 +720,11 @@ mod tests {
                 Ok(outcome_stub()),
             ]),
             &FetchMode::Armed {
-                fetcher: &fetcher,
-                pool_id: 17,
+                source: &source,
+                key: TickWordKey::V3 {
+                    address: Address::new([0x11; 20]),
+                    tick_spacing: 10,
+                },
                 block: 17,
             },
         );
@@ -742,7 +740,7 @@ mod tests {
         let mut target = ScriptedMergeTarget {
             fetched: std::cell::RefCell::new(Vec::new()),
         };
-        let fetcher: Arc<dyn TickWordFetcher> = Arc::new(ScriptedFetcher {
+        let source: Arc<dyn TickWordSource> = Arc::new(ScriptedFetcher {
             ok: true,
             calls: std::sync::atomic::AtomicUsize::new(0),
         });
@@ -751,8 +749,11 @@ mod tests {
             &mut target,
             scripted_compute(vec![miss.clone(), miss, Ok(outcome_stub())]),
             &FetchMode::Armed {
-                fetcher: &fetcher,
-                pool_id: 17,
+                source: &source,
+                key: TickWordKey::V3 {
+                    address: Address::new([0x11; 20]),
+                    tick_spacing: 10,
+                },
                 block: 17,
             },
         );
@@ -778,7 +779,7 @@ mod tests {
         let mut errored_target = ScriptedMergeTarget {
             fetched: std::cell::RefCell::new(Vec::new()),
         };
-        let fetcher: Arc<dyn TickWordFetcher> = Arc::new(ScriptedFetcher {
+        let source: Arc<dyn TickWordSource> = Arc::new(ScriptedFetcher {
             ok: false,
             calls: std::sync::atomic::AtomicUsize::new(0),
         });
@@ -786,8 +787,11 @@ mod tests {
             &mut errored_target,
             scripted_compute(vec![Err(SimulateSwapError::MissingTickWord(2))]),
             &FetchMode::Armed {
-                fetcher: &fetcher,
-                pool_id: 17,
+                source: &source,
+                key: TickWordKey::V3 {
+                    address: Address::new([0x11; 20]),
+                    tick_spacing: 10,
+                },
                 block: 17,
             },
         );

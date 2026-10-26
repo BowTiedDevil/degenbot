@@ -2051,7 +2051,7 @@ impl PyBot {
             .map_err(|_| pyo3::exceptions::PyValueError::new_err("tick_spacing out of range"))?;
         let db = self.db_handle();
         // extract the native alloy provider from `io` + construct an
-        // `AlloyTickBootstrapRpc` (Option B — pure-Rust choreography, no GIL
+        // `AlloyTickWordSource` (Option B — pure-Rust choreography, no GIL
         // re-entry per RPC). `None` when `io=None` or the provider isn't
         // alloy-backed → Chain arm short-circuits (current behavior).
         let chain: Option<std::sync::Arc<dyn degenbot_pools::sim::tick_fetch::TickWordSource>> =
@@ -2325,7 +2325,7 @@ impl PyBot {
     /// `known_bitmap_words`: V4 twin of the V3 argument — the checked
     /// (on-chain-empty) tick-bitmap WORD positions, seeded INLINE in the
     /// registration (Sparse pools only; Tracked pools ignore them).
-    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_address, sqrt_price_x96, liquidity, tick, block, tick_data=None, coverage="sparse", tick_data_fetcher=None, protocol_fee=0, tick_data_block=None, known_bitmap_words=None))]
+    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_address, sqrt_price_x96, liquidity, tick, block, tick_data=None, coverage="sparse", tick_data_fetcher=None, protocol_fee=0, tick_data_block=None, known_bitmap_words=None, state_view=None))]
     fn register_v4_pool(
         &self,
         py: Python<'_>,
@@ -2350,7 +2350,23 @@ impl PyBot {
         protocol_fee: u32,
         tick_data_block: Option<u64>,
         known_bitmap_words: Option<&Bound<'_, PyAny>>,
+        // The V4 `StateView` contract for the pool's tick-word reads (NOT
+        // the `PoolManager`). `None` when the registering path does not know
+        // one — such pools never build a chain read key (their stored source
+        // ignores the key).
+        state_view: Option<&str>,
     ) -> PyResult<u64> {
+        let state_view_addr = state_view
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                s.parse::<Address>().map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid state_view address: {e}"
+                    ))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
         let pm = pool_manager.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
         })?;
@@ -2396,6 +2412,7 @@ impl PyBot {
                 // keccak(abi.encode(pool_key)) (pool-ID mismatch).
                 hooks: hook_addr,
             },
+            state_view: state_view_addr,
             hook_flags: degenbot_bot::bot_core::pool_builder::builder::derive_hook_flags(hook_addr),
             protocol_fee,
             sqrt_price_x96: sp,
@@ -3347,7 +3364,7 @@ mod tests {
     /// with an `io=Some(PyBotIo)` backed by an `OfflineProvider`-recorded alloy
     /// provider routes through the Chain arm + returns `Some((ticks, "sparse"))`
     /// with the recorded tick liquidity. Verifies wiring: `io=Some` → Chain arm
-    /// fires → `AlloyTickBootstrapRpc` choreography runs pure-Rust under
+    /// fires → `AlloyTickWordSource` choreography runs pure-Rust under
     /// `py.detach`.
     #[test]
     fn assemble_v3_tick_map_chain_arm_fires_with_offline_io() {

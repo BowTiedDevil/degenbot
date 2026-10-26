@@ -1453,6 +1453,7 @@ mod tests {
                 tick_spacing: 60,
                 hooks: hook,
             },
+            state_view: Address::ZERO,
             hook_flags: crate::bot_core::pool_builder::builder::derive_hook_flags(hook),
             protocol_fee: 0,
             sqrt_price_x96: alloy::primitives::U256::from(1u128) << 96,

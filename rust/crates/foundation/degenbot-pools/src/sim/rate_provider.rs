@@ -10,7 +10,7 @@
 //! adapter wrapping a Python callable, and pure-Rust consumers (e.g. a static-rate
 //! fallback) supply a pure-Rust `impl` — no Python in the hot path.
 //!
-//! Mirrors [`crate::sim::tick_fetch::TickWordFetcher`] (the first stored I/O trait
+//! Mirrors [`crate::sim::tick_fetch::TickWordSource`] (the first stored I/O trait
 //! object): `Send + Sync` so it can live behind `Option<Arc<dyn …>>` on a
 //! `PoolState`, with the Py adapter re-entering via `Python::attach`.
 //!
@@ -42,7 +42,7 @@ pub enum RateProviderError {
 /// provider contract). The core calc path holds no `BotState` lock across the
 /// call (it merges the returned rates separately), so a fetcher that re-enters
 /// `BotState` is re-entrancy-safe as long as it returns here rather than
-/// mutating state in place — mirroring [`TickWordFetcher`]'s discipline.
+/// mutating state in place — mirroring [`TickWordSource`]'s discipline.
 ///
 /// `Send + Sync` so it can live behind an `Option<Arc<dyn …>>` on a
 /// `PoolState`.
