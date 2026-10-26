@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Self, cast
 
 from degenbot._ffi import Bot as _Engine
 from degenbot._ffi import BotIo
-from degenbot.builders.construction import PoolConstructionRequest
+from degenbot.builders.construction import request_for
 
 # Import-order anchor: the aerodrome package must initialize before the
 # builders below pull in `degenbot.uniswap`; the facade does not name the
@@ -579,14 +579,14 @@ class Bot(AccountQueryMixin):
         # layout is resolved core-side from the deployment table.
         is_concentrated_liquidity = family is PoolFamily.CONCENTRATED_LIQUIDITY
         outcome = self._py_bot.construct_pool(
-            PoolConstructionRequest(
+            request_for(
                 address,
-                family=family.value,
+                family=family,
                 variant=variant,
                 block=block,
                 db=db_seed,
-                factories=list(route.factories) or None,
-                registries=list(_CURVE_REGISTRIES) if is_curve else None,
+                factories=route.factories,
+                registries=_CURVE_REGISTRIES if is_curve else (),
                 vault=BALANCER_V2_VAULT_ADDRESS,
                 invariant_version=request.invariant_version,
             )

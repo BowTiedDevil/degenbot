@@ -1031,16 +1031,15 @@ pub struct PyPoolConstructionRequest {
     invariant_version: Option<u8>,
 }
 
-#[pymethods]
 impl PyPoolConstructionRequest {
-    /// Build a request from the resolved identity plus the family's hints.
-    #[new]
-    #[pyo3(signature = (address, family, variant=None, block=None, db=true, factories=None, registries=None, vault=None, invariant_version=None))]
-    #[expect(clippy::too_many_arguments)] // the resolved identity + the per-family hints, one value
-    fn new(
+    /// Assemble a request (the per-family constructors are this type's only
+    /// Python entry points, so a family's required hints are checked where the
+    /// family is chosen rather than where the request is consumed).
+    #[expect(clippy::too_many_arguments)] // the assembler every constructor funnels through
+    fn make(
         address: &str,
         family: &str,
-        variant: Option<String>,
+        variant: Option<&str>,
         block: Option<u64>,
         db: bool,
         factories: Option<Vec<String>>,
@@ -1049,9 +1048,9 @@ impl PyPoolConstructionRequest {
         invariant_version: Option<u8>,
     ) -> Self {
         Self {
-            address: address.to_string(),
-            family: family.to_string(),
-            variant,
+            address: String::from(address),
+            family: String::from(family),
+            variant: variant.map(str::to_string),
             block,
             db,
             factories: factories.unwrap_or_default(),
@@ -1059,6 +1058,119 @@ impl PyPoolConstructionRequest {
             vault,
             invariant_version,
         }
+    }
+}
+
+#[pymethods]
+impl PyPoolConstructionRequest {
+    /// A Uniswap-style V2 constant-product pool.
+    #[staticmethod]
+    #[pyo3(signature = (address, *, block=None, db=true))]
+    fn v2(address: &str, block: Option<u64>, db: bool) -> Self {
+        Self::make(
+            address,
+            "constant_product",
+            None,
+            block,
+            db,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    /// An Aerodrome V2 (volatile/stable) pool.
+    #[staticmethod]
+    #[pyo3(signature = (address, *, block=None, db=true))]
+    fn aerodrome_v2(address: &str, block: Option<u64>, db: bool) -> Self {
+        Self::make(
+            address,
+            "constant_product",
+            Some("aerodrome"),
+            block,
+            db,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    /// A Balancer V2 weighted pool — `vault` is required, so it cannot be
+    /// omitted at construction.
+    #[staticmethod]
+    #[pyo3(signature = (address, vault, *, block=None, db=true))]
+    fn weighted(address: &str, vault: &str, block: Option<u64>, db: bool) -> Self {
+        Self::make(
+            address,
+            "weighted",
+            Some("balancer_weighted"),
+            block,
+            db,
+            None,
+            None,
+            Some(vault.to_string()),
+            None,
+        )
+    }
+
+    /// A Balancer V2 stable pool — `vault` is required.
+    #[staticmethod]
+    #[pyo3(signature = (address, vault, *, block=None, db=true))]
+    fn balancer_stable(address: &str, vault: &str, block: Option<u64>, db: bool) -> Self {
+        Self::make(
+            address,
+            "stableswap",
+            Some("balancer_stable"),
+            block,
+            db,
+            None,
+            None,
+            Some(vault.to_string()),
+            None,
+        )
+    }
+
+    /// A Curve `StableSwap` pool — `registries` is required (the LP-token and
+    /// metapool lookups have no default).
+    #[staticmethod]
+    #[pyo3(signature = (address, registries, *, block=None, db=true))]
+    fn curve(address: &str, registries: Vec<String>, block: Option<u64>, db: bool) -> Self {
+        Self::make(
+            address,
+            "stableswap",
+            None,
+            block,
+            db,
+            None,
+            Some(registries),
+            None,
+            None,
+        )
+    }
+
+    /// A Uniswap V3 concentrated-liquidity pool.
+    #[staticmethod]
+    #[pyo3(signature = (address, *, factories=None, invariant_version=None, block=None, db=true))]
+    fn concentrated_liquidity(
+        address: &str,
+        factories: Option<Vec<String>>,
+        invariant_version: Option<u8>,
+        block: Option<u64>,
+        db: bool,
+    ) -> Self {
+        Self::make(
+            address,
+            "concentrated_liquidity",
+            None,
+            block,
+            db,
+            factories,
+            None,
+            None,
+            invariant_version,
+        )
     }
 
     /// The pool address the request builds.

@@ -3781,31 +3781,53 @@ class PoolConstructionRequest:
     instead of a positional/string-kwarg protocol: the family is a field the core
     dispatches on, not the verb's name or its argument order.
     """
-    def __new__(
-        cls,
-        /,
-        address: str,
-        family: str,
-        variant: str | None = None,
-        block: SupportsIndex | None = None,
-        db: bool = True,
-        factories: SupportsGetItem[int, str] | None = None,
-        registries: SupportsGetItem[int, str] | None = None,
-        vault: str | None = None,
-        invariant_version: SupportsIndex | None = None,
-    ) -> PoolConstructionRequest:
-        """
-        Build a request from the resolved identity plus the family's hints.
-        """
     @property
     def address(self, /) -> str:
         """
         The pool address the request builds.
         """
+    @staticmethod
+    def aerodrome_v2(
+        address: str, *, block: SupportsIndex | None = None, db: bool = True
+    ) -> PoolConstructionRequest:
+        """
+        An Aerodrome V2 (volatile/stable) pool.
+        """
+    @staticmethod
+    def balancer_stable(
+        address: str, vault: str, *, block: SupportsIndex | None = None, db: bool = True
+    ) -> PoolConstructionRequest:
+        """
+        A Balancer V2 stable pool — `vault` is required.
+        """
     @property
     def block(self, /) -> int | None:
         """
         The snapshot block (`None` = chain head, resolved core-side).
+        """
+    @staticmethod
+    def concentrated_liquidity(
+        address: str,
+        *,
+        factories: SupportsGetItem[int, str] | None = None,
+        invariant_version: SupportsIndex | None = None,
+        block: SupportsIndex | None = None,
+        db: bool = True,
+    ) -> PoolConstructionRequest:
+        """
+        A Uniswap V3 concentrated-liquidity pool.
+        """
+    @staticmethod
+    def curve(
+        address: str,
+        registries: SupportsGetItem[int, str],
+        *,
+        block: SupportsIndex | None = None,
+        db: bool = True,
+    ) -> PoolConstructionRequest:
+        """
+        A Curve `StableSwap` pool — `registries` is required (the LP-token and
+        metapool lookups have no default).
         """
     @property
     def db(self, /) -> bool:
@@ -3832,6 +3854,13 @@ class PoolConstructionRequest:
         """
         Curve registry addresses for the LP-token/metapool lookups.
         """
+    @staticmethod
+    def v2(
+        address: str, *, block: SupportsIndex | None = None, db: bool = True
+    ) -> PoolConstructionRequest:
+        """
+        A Uniswap-style V2 constant-product pool.
+        """
     @property
     def variant(self, /) -> str | None:
         """
@@ -3841,6 +3870,14 @@ class PoolConstructionRequest:
     def vault(self, /) -> str | None:
         """
         Balancer V2 Vault address (the `weighted`/`balancer_stable` families).
+        """
+    @staticmethod
+    def weighted(
+        address: str, vault: str, *, block: SupportsIndex | None = None, db: bool = True
+    ) -> PoolConstructionRequest:
+        """
+        A Balancer V2 weighted pool — `vault` is required, so it cannot be
+        omitted at construction.
         """
 
 @final
