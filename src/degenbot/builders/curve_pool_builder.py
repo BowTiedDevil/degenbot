@@ -70,14 +70,13 @@ class CurvePoolBuilder:
 
         # The ONE core construction entry (its Curve arm) — never a second
         # Python construction path.
-        pool_id, *_rest = self._py_bot.construct_pool(
+        outcome = self._py_bot.construct_pool(
             pool_address,
             family="stableswap",
             block=state_block,
             registries=list(_REGISTRY_ADDRESSES),
         )
-        handle = self._py_bot.get_pool(pool_id)
-        assert handle is not None, "construct_pool returned a pool_id with no handle"
+        handle = outcome.pool
 
         self.finalize(
             handle,

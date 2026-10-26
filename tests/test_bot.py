@@ -94,6 +94,18 @@ class _PoolHandle:
 
 
 @dataclass
+class _ConstructionOutcome:
+    """The one construction answer the driver reads: handle + registered identity."""
+
+    pool_id: int
+    pool: _PoolHandle
+    family: str
+    variant: str
+    token0: str
+    token1: str
+
+
+@dataclass
 class _ScriptedEngine:
     """Engine (``py_bot``) double for build-path tests.
 
@@ -228,17 +240,17 @@ class TestBuildDelegatedIdentityReturnSurface:
             probe_pool_type=lambda address: int(PoolProbe.V2),
         )
 
-        # Engine double: build_v2_pool returns the tuple return surface (core
-        # identity), get_pool returns a handle whose tokens DIFFER -> the
-        # parity guard must raise.
+        # Engine double: the construction answer carries an identity (core echo)
+        # whose tokens DIFFER from the handle's -> the parity guard must raise.
         handle = _PoolHandle(token0_address="0x" + "a" * 40, token1_address="0x" + "b" * 40)
         py_bot = _ScriptedEngine(
-            construct_pool=lambda address, family, **kwargs: (
-                7,
-                "0x" + "C" * 40,
-                "0x" + "D" * 40,
-                "0x" + "E" * 40,
-                "uniswap-v2",
+            construct_pool=lambda address, family, **kwargs: _ConstructionOutcome(
+                pool_id=7,
+                pool=handle,
+                family=family,
+                variant="uniswap-v2",
+                token0="0x" + "C" * 40,
+                token1="0x" + "D" * 40,
             ),
             get_pool=lambda pid: handle,
         )

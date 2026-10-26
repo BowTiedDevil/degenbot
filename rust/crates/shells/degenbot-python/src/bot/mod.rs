@@ -944,6 +944,66 @@ impl PyBot {
     }
 }
 
+/// The one construction answer (ADR-085 D3).
+///
+/// The registered handle plus the identity the seam registered, so a caller never
+/// re-reads the registry for the handle nor re-derives the echo the core already
+/// answered. Minted by [`PyBot::construct_pool`].
+#[pyclass(name = "ConstructionOutcome", module = "degenbot._ffi")]
+pub struct PyConstructionOutcome {
+    /// The registered pool handle (the registry's own object).
+    pool: Py<PyLiquidityPool>,
+    /// The auto-assigned pool id.
+    pool_id: u64,
+    /// The requested family tag.
+    family: String,
+    /// The normalized variant echo the core registered.
+    variant: String,
+    /// Token0 (empty for the multi-token families).
+    token0: String,
+    /// Token1 (empty for the multi-token families).
+    token1: String,
+}
+
+#[pymethods]
+impl PyConstructionOutcome {
+    /// The registered pool handle.
+    #[getter]
+    fn pool(&self, py: Python<'_>) -> Py<PyLiquidityPool> {
+        self.pool.clone_ref(py)
+    }
+
+    /// The auto-assigned pool id.
+    #[getter]
+    const fn pool_id(&self) -> u64 {
+        self.pool_id
+    }
+
+    /// The requested family tag.
+    #[getter]
+    fn family(&self) -> String {
+        self.family.clone()
+    }
+
+    /// The normalized variant echo the core registered.
+    #[getter]
+    fn variant(&self) -> String {
+        self.variant.clone()
+    }
+
+    /// Token0 (empty for the multi-token families).
+    #[getter]
+    fn token0(&self) -> String {
+        self.token0.clone()
+    }
+
+    /// Token1 (empty for the multi-token families).
+    #[getter]
+    fn token1(&self) -> String {
+        self.token1.clone()
+    }
+}
+
 #[pymethods]
 impl PyBot {
     /// Construct + register a pool of ANY family through ONE entry — the
@@ -954,10 +1014,12 @@ impl PyBot {
     /// per-family core builders so a NEW family is a new arm here — never a
     /// new branch in the Python driver.
     ///
-    /// Returns the normalized identity echo `(pool_id, token0, token1,
-    /// address, variant)`. The multi-token families (Balancer weighted/stable)
-    /// echo empty token strings — the companion reads its token list off the
-    /// registered handle.
+    /// Returns the one construction answer ([`PyConstructionOutcome`]): the
+    /// registered handle, its pool id, the registered family, and the identity
+    /// echo — so a caller never re-reads the registry for the handle nor
+    /// re-derives what the core already registered. The multi-token families
+    /// (Balancer weighted/stable) echo empty token strings; their token list
+    /// rides on the handle.
     ///
     /// # Errors
     ///
@@ -966,6 +1028,49 @@ impl PyBot {
     #[pyo3(signature = (address, family, variant=None, block=None, db=true, factories=None, registries=None, vault=None, invariant_version=None))]
     #[expect(clippy::too_many_arguments)] // the family identity + the per-family hints, one flat surface
     fn construct_pool(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        family: &str,
+        variant: Option<&str>,
+        block: Option<u64>,
+        db: bool,
+        factories: Option<Vec<String>>,
+        registries: Option<Vec<String>>,
+        vault: Option<&str>,
+        invariant_version: Option<u8>,
+    ) -> PyResult<PyConstructionOutcome> {
+        let (pool_id, token0, token1, _address, echoed_variant) = self.construct_pool_payload(
+            py,
+            address,
+            family,
+            variant,
+            block,
+            db,
+            factories,
+            registries,
+            vault,
+            invariant_version,
+        )?;
+        let pool = self.get_pool(py, pool_id).ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "construct_pool: registration answered pool id {pool_id} with no handle"
+            ))
+        })?;
+        Ok(PyConstructionOutcome {
+            pool: Py::new(py, pool)?,
+            pool_id,
+            family: family.to_string(),
+            variant: echoed_variant,
+            token0,
+            token1,
+        })
+    }
+
+    /// The construction switchboard's payload arm: the flat per-family dispatch
+    /// ([`Self::construct_pool`] wraps it into the one answer).
+    #[expect(clippy::too_many_arguments)] // the family identity + the per-family hints, one flat surface
+    fn construct_pool_payload(
         &self,
         py: Python<'_>,
         address: &str,

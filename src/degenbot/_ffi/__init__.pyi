@@ -1029,7 +1029,7 @@ class Bot:
         registries: SupportsGetItem[int, str] | None = None,
         vault: str | None = None,
         invariant_version: SupportsIndex | None = None,
-    ) -> tuple[int, str, str, str, str]:
+    ) -> ConstructionOutcome:
         """
         Construct + register a pool of ANY family through ONE entry — the
         construction switchboard's FFI face (ADR-059 D6: dispatch at the tier
@@ -1039,15 +1039,34 @@ class Bot:
         per-family core builders so a NEW family is a new arm here — never a
         new branch in the Python driver.
 
-        Returns the normalized identity echo `(pool_id, token0, token1,
-        address, variant)`. The multi-token families (Balancer weighted/stable)
-        echo empty token strings — the companion reads its token list off the
-        registered handle.
+        Returns the one construction answer ([`PyConstructionOutcome`]): the
+        registered handle, its pool id, the registered family, and the identity
+        echo — so a caller never re-reads the registry for the handle nor
+        re-derives what the core already registered. The multi-token families
+        (Balancer weighted/stable) echo empty token strings; their token list
+        rides on the handle.
 
         # Errors
 
         As the dispatched per-family builder; `ValueError` on an unknown family
         or a missing required argument (Balancer's `vault`).
+        """
+    def construct_pool_payload(
+        self,
+        /,
+        address: str,
+        family: str,
+        variant: str | None,
+        block: SupportsIndex | None,
+        db: bool,
+        factories: SupportsGetItem[int, str] | None,
+        registries: SupportsGetItem[int, str] | None,
+        vault: str | None,
+        invariant_version: SupportsIndex | None,
+    ) -> tuple[int, str, str, str, str]:
+        """
+        The construction switchboard's payload arm: the flat per-family dispatch
+        ([`Self::construct_pool`] wraps it into the one answer).
         """
     def curve_get_dy(
         self,
@@ -2759,6 +2778,46 @@ class ConfigValues(_ConfigValuesFace):
     here the moment it is declared, and a name outside the declaration raises
     `AttributeError` rather than projecting a default.
     """
+
+@final
+class ConstructionOutcome:
+    """
+    The one construction answer (ADR-085 D3).
+
+    The registered handle plus the identity the seam registered, so a caller never
+    re-reads the registry for the handle nor re-derives the echo the core already
+    answered. Minted by [`PyBot::construct_pool`].
+    """
+    @property
+    def family(self, /) -> str:
+        """
+        The requested family tag.
+        """
+    @property
+    def pool(self, /) -> Pool:
+        """
+        The registered pool handle.
+        """
+    @property
+    def pool_id(self, /) -> int:
+        """
+        The auto-assigned pool id.
+        """
+    @property
+    def token0(self, /) -> str:
+        """
+        Token0 (empty for the multi-token families).
+        """
+    @property
+    def token1(self, /) -> str:
+        """
+        Token1 (empty for the multi-token families).
+        """
+    @property
+    def variant(self, /) -> str:
+        """
+        The normalized variant echo the core registered.
+        """
 
 @final
 class Erc20Token:
@@ -5077,6 +5136,7 @@ __all__ = [
     "ConcentratedLiquidityView",
     "ConfigSectionValues",
     "ConfigValues",
+    "ConstructionOutcome",
     "DynamicFeePoolRejectedError",
     "Erc20Token",
     "Erc20TokenRow",

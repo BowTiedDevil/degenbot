@@ -577,7 +577,7 @@ class Bot(AccountQueryMixin):
         # species-manifest entry — never a new branch here. The V3 fork storage
         # layout is resolved core-side from the deployment table.
         is_concentrated_liquidity = family is PoolFamily.CONCENTRATED_LIQUIDITY
-        pool_id, b_t0, b_t1, _b_addr, b_var = self._py_bot.construct_pool(
+        outcome = self._py_bot.construct_pool(
             address,
             family=family.value,
             variant=variant,
@@ -589,10 +589,15 @@ class Bot(AccountQueryMixin):
             invariant_version=request.invariant_version,
         )
 
-        py_pool = self._py_bot.get_pool(pool_id)
-        if py_pool is None:  # pragma: no cover
-            msg = f"build_pool: register returned pool_id {pool_id} with no handle"
-            raise DegenbotValueError(message=msg)
+        # One answer carries the handle and the identity: no second registry read,
+        # no re-derivation of what the core registered.
+        pool_id, py_pool, b_t0, b_t1, b_var = (
+            outcome.pool_id,
+            outcome.pool,
+            outcome.token0,
+            outcome.token1,
+            outcome.variant,
+        )
 
         # Return-surface parity: the core entry echoes its own token0/token1
         # identity, which must equal what the registered handle exposes (a
