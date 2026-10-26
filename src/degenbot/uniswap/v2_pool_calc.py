@@ -20,7 +20,7 @@ from degenbot.exceptions.pool import (
     InvalidSwapInputAmount,
     LiquidityPoolError,
 )
-from degenbot.uniswap import SwapSimulationStatus
+from degenbot.uniswap import SwapRefused
 
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
@@ -129,20 +129,22 @@ class UniswapV2PoolCalc:
         # fee fractions from the registration), so the companion holds no swap
         # math. A refusal is the historical overdraw verdict — the requested
         # output is not available against those reserves.
-        read = self._py_pool.simulate(
-            zero_for_one=zero_for_one,
-            amount_specified=token_out_quantity,
-            block=self.update_block,
-            override_state=override_state,
-        )
-        if read.get("status") is not SwapSimulationStatus.Computed:
+        # The typed read (ADR-037/t2): a refusal is the overdraw verdict.
+        try:
+            read = self._py_pool.simulate(
+                zero_for_one=zero_for_one,
+                amount_specified=token_out_quantity,
+                block=self.update_block,
+                override_state=override_state,
+            )
+        except SwapRefused as exc:
             reserves_out = (
                 override_state.reserves_token1 if zero_for_one else override_state.reserves_token0
             )
             raise LiquidityPoolError(
                 message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})",  # ruff:ignore[line-too-long]
-            )
-        return int(read["amount0_delta"] if zero_for_one else read["amount1_delta"])
+            ) from exc
+        return int(read.amount0_delta if zero_for_one else read.amount1_delta)
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -206,20 +208,22 @@ class UniswapV2PoolCalc:
         # fee fractions from the registration), so the companion holds no swap
         # math. The read's signed deltas ARE the answer: the output side is the
         # negative of the token that left the pool.
-        read = self._py_pool.simulate(
-            zero_for_one=zero_for_one,
-            amount_specified=-token_in_quantity,
-            block=self.update_block,
-            override_state=override_state,
-        )
-        if read.get("status") is not SwapSimulationStatus.Computed:
+        # The typed read (ADR-037/t2): a refusal is the overflow verdict.
+        try:
+            read = self._py_pool.simulate(
+                zero_for_one=zero_for_one,
+                amount_specified=-token_in_quantity,
+                block=self.update_block,
+                override_state=override_state,
+            )
+        except SwapRefused as exc:
             raise LiquidityPoolError(
                 message=(
                     f"Input amount ({token_in_quantity}) overflows "
                     "uint256 swap math (on-chain revert)"
                 ),
-            )
-        return -int(read["amount1_delta"] if zero_for_one else read["amount0_delta"])
+            ) from exc
+        return -int(read.amount1_delta if zero_for_one else read.amount0_delta)
 
     def get_absolute_price(
         self,

@@ -17,7 +17,7 @@ from degenbot.exceptions.pool import (
     LiquidityPoolError,
 )
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.uniswap import SwapSimulationStatus
+from degenbot.uniswap import SwapRefused
 from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
 from degenbot.uniswap.v2_pool_state import V2PoolState
 from degenbot.uniswap.v2_types import (
@@ -329,27 +329,30 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
                 ),
             )
 
-        read = self._py_pool.simulate(
-            zero_for_one=zero_for_one,
-            amount_specified=-token_in_quantity,
-            block=self.update_block,
-            override_state=state,
-        )
-        if read.get("status") is not SwapSimulationStatus.Computed:
+        # The typed read (ADR-037/t2): a refusal is the overdraw verdict —
+        # the requested input is not computable against those reserves.
+        try:
+            read = self._py_pool.simulate(
+                zero_for_one=zero_for_one,
+                amount_specified=-token_in_quantity,
+                block=self.update_block,
+                override_state=state,
+            )
+        except SwapRefused as exc:
             raise LiquidityPoolError(
                 message=(
                     f"Input amount ({token_in_quantity}) overflows "
                     "uint256 swap math (on-chain revert)"
                 ),
-            )
+            ) from exc
         return UniswapV2PoolSimulationResult(
-            amount0_delta=int(read["amount0_delta"]),
-            amount1_delta=int(read["amount1_delta"]),
+            amount0_delta=int(read.amount0_delta),
+            amount1_delta=int(read.amount1_delta),
             initial_state=state,
             final_state=dataclasses.replace(
                 state,
-                reserves_token0=int(read["reserves_token0"]),
-                reserves_token1=int(read["reserves_token1"]),
+                reserves_token0=int(read.reserves_token0),
+                reserves_token1=int(read.reserves_token1),
                 block=self.update_block if override_state is not None else None,
             ),
         )
@@ -381,25 +384,28 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
         # end state is the read's own post-swap reserves.
         state = override_state if override_state is not None else self.state
         zero_for_one = token_out == self._token1
-        read = self._py_pool.simulate(
-            zero_for_one=zero_for_one,
-            amount_specified=token_out_quantity,
-            block=self.update_block,
-            override_state=state,
-        )
-        if read.get("status") is not SwapSimulationStatus.Computed:
+        # The typed read (ADR-037/t2): a refusal is the overdraw verdict —
+        # the requested output exceeds the pool's reserves.
+        try:
+            read = self._py_pool.simulate(
+                zero_for_one=zero_for_one,
+                amount_specified=token_out_quantity,
+                block=self.update_block,
+                override_state=state,
+            )
+        except SwapRefused as exc:
             reserves_out = state.reserves_token1 if zero_for_one else state.reserves_token0
             raise LiquidityPoolError(
                 message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})",  # ruff:ignore[line-too-long]
-            )
+            ) from exc
         return UniswapV2PoolSimulationResult(
-            amount0_delta=int(read["amount0_delta"]),
-            amount1_delta=int(read["amount1_delta"]),
+            amount0_delta=int(read.amount0_delta),
+            amount1_delta=int(read.amount1_delta),
             initial_state=state,
             final_state=dataclasses.replace(
                 state,
-                reserves_token0=int(read["reserves_token0"]),
-                reserves_token1=int(read["reserves_token1"]),
+                reserves_token0=int(read.reserves_token0),
+                reserves_token1=int(read.reserves_token1),
                 block=self.update_block if override_state is not None else None,
             ),
         )

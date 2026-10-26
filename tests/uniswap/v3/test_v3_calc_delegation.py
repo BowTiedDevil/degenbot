@@ -182,17 +182,17 @@ class TestV3CalcDelegation:
         handle = _make_dense_pool(py_bot)._py_pool
 
         exact_in_zfo = handle.simulate(zero_for_one=True, amount_specified=-1_000, block=0)
-        assert exact_in_zfo["amount0_delta"] == 1_000
-        assert exact_in_zfo["amount1_delta"] < 0
+        assert exact_in_zfo.amount0_delta == 1_000
+        assert exact_in_zfo.amount1_delta < 0
 
         exact_in_ofz = handle.simulate(zero_for_one=False, amount_specified=-1_000, block=0)
-        assert exact_in_ofz["amount0_delta"] < 0
-        assert exact_in_ofz["amount1_delta"] == 1_000
+        assert exact_in_ofz.amount0_delta < 0
+        assert exact_in_ofz.amount1_delta == 1_000
 
         exact_out_zfo = handle.simulate(zero_for_one=True, amount_specified=1_000, block=0)
-        assert exact_out_zfo["amount0_delta"] > 0
-        assert exact_out_zfo["amount1_delta"] == -1_000
+        assert exact_out_zfo.amount0_delta > 0
+        assert exact_out_zfo.amount1_delta == -1_000
 
         exact_out_ofz = handle.simulate(zero_for_one=False, amount_specified=1_000, block=0)
-        assert exact_out_ofz["amount0_delta"] == -1_000
-        assert exact_out_ofz["amount1_delta"] > 0
+        assert exact_out_ofz.amount0_delta == -1_000
+        assert exact_out_ofz.amount1_delta > 0

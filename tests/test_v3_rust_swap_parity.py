@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import Bot, SwapSimulationStatus
+from degenbot._ffi import Bot, SwapRefused
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.math import MIN_SQRT_RATIO
 from tests.helpers.erc20_factory import make_erc20
@@ -96,29 +96,30 @@ def _unsigned_swap(handle, *, zero_for_one: bool, amount_in: int, block: int = 0
 
     ``None`` mirrors the retired bare-``None`` not-computable contract.
     """
-    read = handle.simulate(
-        zero_for_one=zero_for_one,
-        amount_specified=-amount_in,
-        block=block,
-    )
-    if read.get("status") is not SwapSimulationStatus.Computed:
+    try:
+        read = handle.simulate(
+            zero_for_one=zero_for_one,
+            amount_specified=-amount_in,
+            block=block,
+        )
+    except SwapRefused:
         return None
-    amount0_delta = int(read["amount0_delta"])
-    amount1_delta = int(read["amount1_delta"])
+    amount0_delta = int(read.amount0_delta)
+    amount1_delta = int(read.amount1_delta)
     if zero_for_one:
         return (
             amount0_delta,
             -amount1_delta,
-            int(read["sqrt_price_x96"]),
-            int(read["liquidity"]),
-            int(read["tick"]),
+            int(read.sqrt_price_x96),
+            int(read.liquidity),
+            int(read.tick),
         )
     return (
         -amount0_delta,
         amount1_delta,
-        int(read["sqrt_price_x96"]),
-        int(read["liquidity"]),
-        int(read["tick"]),
+        int(read.sqrt_price_x96),
+        int(read.liquidity),
+        int(read.tick),
     )
 
 

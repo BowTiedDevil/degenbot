@@ -3639,7 +3639,7 @@ class Pool:
         block: SupportsIndex,
         sqrt_price_limit_x96: Any | None = None,
         override_state: Any | None = None,
-    ) -> Any:
+    ) -> SwapRead:
         """
         THE swap-simulation seam (ADR-037): one verb behind every "what would
         this swap do against current pool state" read. `amount_specified` is
@@ -4433,40 +4433,101 @@ class StrategyReadinessView:
     def txpool_backrun_endpoints(self, /) -> list[str]: ...
 
 @final
-class SwapSimulationStatus:
+class SwapRead:
     """
-    The terminal verdict of one [`PyLiquidityPool::simulate`] read — the FFI
-    projection of the `SwapRead` discriminants that reach Python as a status.
+    THE computed swap-simulation read (ADR-037/t2): `Pool.simulate` returns
+    this value; every refusal RAISES [`SwapRefused`] instead of borrowing a
+    status key. The arm is named by [`Self::family`] (data, never a subclass
+    test); the arm's own fields carry its end state (the other arm's are
+    `None` by construction).
+    """
+    @property
+    def amount0_delta(self, /) -> Any:
+        """
+        Signed token0 delta (deposited `+`, sent `-`).
+        """
+    @property
+    def amount1_delta(self, /) -> Any:
+        """
+        Signed token1 delta (deposited `+`, sent `-`).
+        """
+    @property
+    def family(self, /) -> SwapReadFamily:
+        """
+        The family arm this read computed.
+        """
+    @property
+    def liquidity(self, /) -> int | None:
+        """
+        The end in-range liquidity (the concentrated-liquidity arm).
+        """
+    @property
+    def reserves_token0(self, /) -> int | None:
+        """
+        The POST-swap token0 reserve (the reserve-pair arm).
+        """
+    @property
+    def reserves_token1(self, /) -> int | None:
+        """
+        The POST-swap token1 reserve (the reserve-pair arm).
+        """
+    @property
+    def specified_met(self, /) -> bool:
+        """
+        Whether the requested side was fully met (the concentrated-liquidity
+        arm).
+        """
+    @property
+    def sqrt_price_x96(self, /) -> Any | None:
+        """
+        The end `sqrt_price_x96` (the concentrated-liquidity arm).
+        """
+    @property
+    def tick(self, /) -> int | None:
+        """
+        The end tick (the concentrated-liquidity arm).
+        """
 
-    `SwapRead` (in `degenbot_substrate::swap_simulation`) stays the semantic
-    owner; this mirrors exactly the verdicts the seam reports, so a call site
-    compares an enum member instead of string-matching the wire. Its
-    `UnknownPool` / `UnsupportedFamily` variants are raised as exceptions at the
-    seam (a registration refusal, not a swap verdict), so they carry no member
-    here — and `simulate`'s exhaustive `match` on `SwapRead` means a new core
-    variant cannot silently become a wrong status.
+@final
+class SwapReadFamily:
+    """
+    The swap-simulation read's family arm (ADR-037/t2): the computed read is
+    a sum by family, carried as data (never a subclass test).
     """
 
-    Computed: Final[SwapSimulationStatus]
+    ConcentratedLiquidity: Final[SwapReadFamily]
     """
-    The swap computed: the read carries the signed deltas, end state, and
-    `specified_met`.
+    A concentrated-liquidity read: the deltas plus the end price state.
     """
-    FetchExhausted: Final[SwapSimulationStatus]
+    ReservePair: Final[SwapReadFamily]
     """
-    Miss recovery was impossible or exhausted for the read's `word`.
-    """
-    FetchFailed: Final[SwapSimulationStatus]
-    """
-    Miss recovery ran but the fetch itself failed for the read's `word`.
-    """
-    NotComputable: Final[SwapSimulationStatus]
-    """
-    Zero amount, a non-computable arithmetic/invariant outcome, or a
-    non-concentrated-liquidity payload the seam does not project.
+    A constant-product read: the deltas plus the POST-swap reserves.
     """
     def __eq__(self, value: object, /) -> bool: ...
-    def __hash__(self, /) -> int: ...
+    def __int__(self, /) -> int: ...
+    def __ne__(self, value: object, /) -> bool: ...
+
+@final
+class SwapRefusalKind:
+    """
+    The swap-simulation refusal vocabulary (ADR-037/t2): the kind the ONE
+    Python adapter maps to the companions' exception tree.
+    """
+
+    FetchExhausted: Final[SwapRefusalKind]
+    """
+    Miss recovery was impossible or exhausted for the refused word.
+    """
+    FetchFailed: Final[SwapRefusalKind]
+    """
+    Miss recovery ran but the fetch itself failed for the refused word.
+    """
+    NotComputable: Final[SwapRefusalKind]
+    """
+    Zero amount, a non-computable arithmetic/invariant outcome, or a
+    non-computable family payload.
+    """
+    def __eq__(self, value: object, /) -> bool: ...
     def __int__(self, /) -> int: ...
     def __ne__(self, value: object, /) -> bool: ...
 
@@ -5237,7 +5298,9 @@ __all__ = [
     "SpecViolationError",
     "StrategyHostError",
     "StrategyReadinessView",
-    "SwapSimulationStatus",
+    "SwapRead",
+    "SwapReadFamily",
+    "SwapRefusalKind",
     "UnconfiguredStrategyError",
     "UnknownStrategyError",
     "UnregistrablePoolRecord",

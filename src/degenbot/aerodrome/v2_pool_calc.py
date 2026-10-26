@@ -30,7 +30,7 @@ from degenbot.exceptions.pool import (
     InvalidSwapInputAmount,
     LiquidityPoolError,
 )
-from degenbot.uniswap import SwapSimulationStatus
+from degenbot.uniswap import SwapRefused
 
 if TYPE_CHECKING:
     from degenbot.aerodrome.types import AerodromeV2PoolState
@@ -245,20 +245,22 @@ class AerodromeV2PoolCalc:
             # fee is borrowed from the registration, never re-sent). The stable
             # arm below keeps the Solidly leaf — the door refuses a `stable`
             # identity, since the Solidly family's read arm owns that invariant.
-            read = self._py_pool.simulate(
-                zero_for_one=token_in_dir == 0,
-                amount_specified=-token_in_quantity,
-                block=self.update_block,
-                override_state=override_state,
-            )
-            if read.get("status") is not SwapSimulationStatus.Computed:
+            # The typed read (ADR-037/t2): a refusal is the overflow verdict.
+            try:
+                read = self._py_pool.simulate(
+                    zero_for_one=token_in_dir == 0,
+                    amount_specified=-token_in_quantity,
+                    block=self.update_block,
+                    override_state=override_state,
+                )
+            except SwapRefused as exc:
                 raise LiquidityPoolError(
                     message=(
                         f"Input amount ({token_in_quantity}) overflows "
                         "uint256 swap math (on-chain revert)"
                     ),
-                )
-            return -int(read["amount1_delta"] if token_in_dir == 0 else read["amount0_delta"])
+                ) from exc
+            return -int(read.amount1_delta if token_in_dir == 0 else read.amount0_delta)
 
         reserves_0 = (
             override_state.reserves_token0 if override_state is not None else self.reserves_token0

@@ -34,13 +34,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self, TypedDict, cast
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import (
-    IncompleteSwap,
-    InvalidSwapInputAmount,
-    LiquidityPoolError,
-    MissingLiquidityData,
-)
-from degenbot.uniswap import SwapSimulationStatus
+from degenbot.exceptions.pool import InvalidSwapInputAmount
+from degenbot.uniswap import SwapRefused, swap_refusal_to_error
 from degenbot.uniswap.concentrated_liquidity_base import ConcentratedLiquidityBase
 from degenbot.uniswap.v3_pool_calc import UniswapV3PoolCalc
 from degenbot.uniswap.v3_pool_state import V3PoolState
@@ -348,12 +343,12 @@ class UniswapV3Pool(
             The simulation result with signed deltas and the end state.
 
         Raises:
-            IncompleteSwap: If the swap cannot be fulfilled by the pool's
-                tick range (the real pool's revert-analog).
-            MissingLiquidityData: If the walk entered an unfetched word and
-                the on-demand fetch failed.
             InvalidSwapInputAmount: On a zero-amount swap.
-            LiquidityPoolError: If the seam reports an unexpected status.
+            swap_refusal_to_error: Renders the seam's typed refusal as
+                IncompleteSwap (the real pool's revert-analog — the walk
+                exhausted the tick range with input remaining) or
+                MissingLiquidityData (the walk entered an unfetched word and
+                the on-demand fetch failed).
 
         """
         initial_state = override_state if override_state is not None else self.state
@@ -361,37 +356,29 @@ class UniswapV3Pool(
             # The real pool reverts a zero-amount swap; mirror that honestly
             # instead of flattening it into a generic compute failure.
             raise InvalidSwapInputAmount
-        read = self._py_pool.simulate(
-            zero_for_one=zero_for_one,
-            amount_specified=amount_specified,
-            block=self.update_block,
-            sqrt_price_limit_x96=sqrt_price_limit_x96,
-            override_state=override_state,
-        )
-        status = read.get("status")
-        if status is SwapSimulationStatus.NotComputable:
-            # The rust engine's verdict for a swap the real pool would REVERT:
-            # the walk exhausted the pool's tick range with input remaining
-            # (the price would invert past the protocol bound). The offline
-            # struct's revert-analog is the python-era IncompleteSwap.
-            raise IncompleteSwap(amount_in=0, amount_out=0)
-        if status in {SwapSimulationStatus.FetchFailed, SwapSimulationStatus.FetchExhausted}:
-            # The walk entered a word the map lacks and the on-demand fetch
-            # could not provide (e.g. rate-limited fork sources). Distinct
-            # from the swap being impossible.
-            word = read.get("word")
-            raise MissingLiquidityData(word=int(word) if word is not None else -1)
-        if status is not SwapSimulationStatus.Computed:
-            raise LiquidityPoolError(message=f"Unexpected simulation status {status!r}")
+        # The typed read + the ONE refusal adapter (ADR-037/t2): the seam
+        # raises `SwapRefused` with a typed kind; the adapter renders the
+        # historical exceptions (IncompleteSwap for the revert-analog
+        # verdict, MissingLiquidityData for the unfetchable word).
+        try:
+            read = self._py_pool.simulate(
+                zero_for_one=zero_for_one,
+                amount_specified=amount_specified,
+                block=self.update_block,
+                sqrt_price_limit_x96=sqrt_price_limit_x96,
+                override_state=override_state,
+            )
+        except SwapRefused as exc:
+            raise swap_refusal_to_error(exc) from exc
         return UniswapV3PoolSimulationResult(
-            amount0_delta=int(read["amount0_delta"]),
-            amount1_delta=int(read["amount1_delta"]),
+            amount0_delta=int(read.amount0_delta),
+            amount1_delta=int(read.amount1_delta),
             initial_state=initial_state,
             final_state=dataclasses.replace(
                 initial_state,
-                liquidity=int(read["liquidity"]),
-                sqrt_price_x96=int(read["sqrt_price_x96"]),
-                tick=int(read["tick"]),
+                liquidity=int(read.liquidity),
+                sqrt_price_x96=int(read.sqrt_price_x96),
+                tick=int(read.tick),
                 block=self.update_block if override_state is None else initial_state.block,
             ),
         )

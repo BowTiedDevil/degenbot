@@ -45,7 +45,7 @@ from degenbot.exceptions.pool import (
     IncompleteSwap,
     LiquidityPoolError,
 )
-from degenbot.uniswap import SwapSimulationStatus
+from degenbot.uniswap import SwapRefused
 from degenbot.uniswap.concentrated_liquidity_base import ConcentratedLiquidityBase
 from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc
 from degenbot.uniswap.v4_pool_state import V4PoolState
@@ -58,9 +58,10 @@ from degenbot.utils.bytes import to_0x_hex
 if TYPE_CHECKING:
     from degenbot.types import Pool
     from degenbot.types.chain import ChecksummedAddress
+    from degenbot.uniswap import SwapRead
 
 
-def _signed_amounts(read: dict[str, Any], *, zero_for_one: bool) -> tuple[int, int]:
+def _signed_amounts(read: SwapRead, *, zero_for_one: bool) -> tuple[int, int]:
     """Split a computed swap read's signed deltas into (amount_in, amount_out).
 
     The Rust seam returns the deposited-`+`/sent-`-` per-token deltas; the
@@ -70,8 +71,8 @@ def _signed_amounts(read: dict[str, Any], *, zero_for_one: bool) -> tuple[int, i
         The ``(amount_in, amount_out)`` unsigned magnitudes.
 
     """
-    amount0_delta = int(read["amount0_delta"])
-    amount1_delta = int(read["amount1_delta"])
+    amount0_delta = int(read.amount0_delta)
+    amount1_delta = int(read.amount1_delta)
     if zero_for_one:
         return amount0_delta, -amount1_delta
     return amount1_delta, -amount0_delta
@@ -375,20 +376,23 @@ class UniswapV4Pool(
         if token_out not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_out not found!")
         zero_for_one = token_out == self._token1
-        read = self._py_pool.simulate(
-            zero_for_one=zero_for_one,
-            amount_specified=token_out_quantity,
-            block=self.update_block,
-            override_state=override_state,
-        )
-        if read.get("status") is not SwapSimulationStatus.Computed:
+        # The typed read (ADR-037/t2): a refusal is the not-computable
+        # verdict (the real pool's revert-analog).
+        try:
+            read = self._py_pool.simulate(
+                zero_for_one=zero_for_one,
+                amount_specified=token_out_quantity,
+                block=self.update_block,
+                override_state=override_state,
+            )
+        except SwapRefused as exc:
             raise LiquidityPoolError(
                 message=(
                     f"Simulated execution could not compute. "
                     f"pool={self.address} zfo={zero_for_one} "
                     f"amount_out={token_out_quantity}"
                 ),
-            )
+            ) from exc
         amount_in, amount_out = _signed_amounts(read, zero_for_one=zero_for_one)
         if override_state is not None:
             conflicting_hooks = {
@@ -431,20 +435,23 @@ class UniswapV4Pool(
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_in not found!")
         zero_for_one = token_in == self._token0
-        read = self._py_pool.simulate(
-            zero_for_one=zero_for_one,
-            amount_specified=-token_in_quantity,
-            block=self.update_block,
-            override_state=override_state,
-        )
-        if read.get("status") is not SwapSimulationStatus.Computed:
+        # The typed read (ADR-037/t2): a refusal is the not-computable
+        # verdict (the real pool's revert-analog).
+        try:
+            read = self._py_pool.simulate(
+                zero_for_one=zero_for_one,
+                amount_specified=-token_in_quantity,
+                block=self.update_block,
+                override_state=override_state,
+            )
+        except SwapRefused as exc:
             raise LiquidityPoolError(
                 message=(
                     f"Simulated execution could not compute. "
                     f"pool={self.address} zfo={zero_for_one} "
                     f"amount_in={token_in_quantity}"
                 ),
-            )
+            ) from exc
         amount_in, amount_out = _signed_amounts(read, zero_for_one=zero_for_one)
         if override_state is not None:
             conflicting_hooks = {

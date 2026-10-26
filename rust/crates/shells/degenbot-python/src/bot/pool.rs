@@ -1025,7 +1025,7 @@ impl PyLiquidityPool {
         block: u64,
         sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
         override_state: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
+    ) -> PyResult<PySwapRead> {
         let amount_specified = extract_signed_amount(amount_specified)?;
         if let Some(state) = override_state.filter(|s| !s.is_none()) {
             let outcome = self.sim_override_inner(
@@ -1037,18 +1037,15 @@ impl PyLiquidityPool {
                 sqrt_price_limit_x96,
             )?;
             return match outcome {
-                Some(OverrideOutcome::ConcentratedLiquidity(o)) => build_simulate_read(
-                    py,
+                Some(OverrideOutcome::ConcentratedLiquidity(o)) => Ok(cl_swap_read(
                     zero_for_one,
                     amount_specified,
                     o.amount0,
                     o.amount1,
                     (o.sqrt_price_x96, o.liquidity, o.tick),
-                ),
-                Some(OverrideOutcome::ReservePair(o)) => {
-                    build_reserve_pair_simulate_read(py, zero_for_one, &o)
-                }
-                None => not_computable_read(py),
+                )),
+                Some(OverrideOutcome::ReservePair(o)) => Ok(rp_swap_read(zero_for_one, &o)),
+                None => Err(swap_refused_err(py, PySwapRefusalKind::NotComputable, None)),
             };
         }
         let request = SwapRequest {
@@ -1071,22 +1068,33 @@ impl PyLiquidityPool {
                     ));
                 }
                 let (amount0, amount1) = o.raw_token_amounts(zero_for_one);
-                build_simulate_read(
-                    py,
+                Ok(cl_swap_read(
                     zero_for_one,
                     amount_specified,
                     amount0,
                     amount1,
                     (o.end_sqrt_price_x96, o.end_liquidity, o.end_tick),
-                )
+                ))
             }
-            SwapRead::Computed(_) | SwapRead::NotComputable => not_computable_read(py),
-            SwapRead::FetchFailed { word } => {
-                status_word_read(py, PySwapSimulationStatus::FetchFailed, word)
+            // The mainline route is concentrated-liquidity-only by contract:
+            // a reserve-pair payload here would be the route's bug, never a
+            // computable read (the retired flat read answered NotComputable).
+            SwapRead::Computed(_) => {
+                Err(swap_refused_err(py, PySwapRefusalKind::NotComputable, None))
             }
-            SwapRead::FetchExhausted { word } => {
-                status_word_read(py, PySwapSimulationStatus::FetchExhausted, word)
+            SwapRead::NotComputable => {
+                Err(swap_refused_err(py, PySwapRefusalKind::NotComputable, None))
             }
+            SwapRead::FetchFailed { word } => Err(swap_refused_err(
+                py,
+                PySwapRefusalKind::FetchFailed,
+                Some(word),
+            )),
+            SwapRead::FetchExhausted { word } => Err(swap_refused_err(
+                py,
+                PySwapRefusalKind::FetchExhausted,
+                Some(word),
+            )),
             SwapRead::UnsupportedFamily { pool_id, family } => {
                 Err(swap_family_gap(pool_id, family))
             }
@@ -2910,36 +2918,160 @@ fn i256_to_py(py: Python<'_>, value: I256) -> PyResult<Py<PyAny>> {
     Ok(signed.into_pyobject(py)?.into_any().unbind())
 }
 
-/// The terminal verdict of one [`PyLiquidityPool::simulate`] read — the FFI
-/// projection of the `SwapRead` discriminants that reach Python as a status.
-///
-/// `SwapRead` (in `degenbot_substrate::swap_simulation`) stays the semantic
-/// owner; this mirrors exactly the verdicts the seam reports, so a call site
-/// compares an enum member instead of string-matching the wire. Its
-/// `UnknownPool` / `UnsupportedFamily` variants are raised as exceptions at the
-/// seam (a registration refusal, not a swap verdict), so they carry no member
-/// here — and `simulate`'s exhaustive `match` on `SwapRead` means a new core
-/// variant cannot silently become a wrong status.
+/// The swap-simulation read's family arm (ADR-037/t2): the computed read is
+/// a sum by family, carried as data (never a subclass test).
 #[pyclass(
-    name = "SwapSimulationStatus",
+    name = "SwapReadFamily",
     eq,
-    hash,
+    eq_int,
     frozen,
     from_py_object,
     module = "degenbot._ffi"
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum PySwapSimulationStatus {
-    /// The swap computed: the read carries the signed deltas, end state, and
-    /// `specified_met`.
-    Computed,
+pub enum PySwapReadFamily {
+    /// A constant-product read: the deltas plus the POST-swap reserves.
+    ReservePair,
+    /// A concentrated-liquidity read: the deltas plus the end price state.
+    ConcentratedLiquidity,
+}
+
+/// THE computed swap-simulation read (ADR-037/t2): `Pool.simulate` returns
+/// this value; every refusal RAISES [`SwapRefused`] instead of borrowing a
+/// status key. The arm is named by [`Self::family`] (data, never a subclass
+/// test); the arm's own fields carry its end state (the other arm's are
+/// `None` by construction).
+#[pyclass(name = "SwapRead", module = "degenbot._ffi")]
+pub struct PySwapRead {
+    family: PySwapReadFamily,
+    /// Signed per-token deltas, deposited-`+`/sent-`-` (the input side
+    /// positive, the output side negative), keyed by token index.
+    amount0_delta: I256,
+    amount1_delta: I256,
+    /// The concentrated-liquidity end price state (`None` on the
+    /// reserve-pair arm: a constant-product pool has no price/tick state).
+    sqrt_price_x96: Option<U256>,
+    liquidity: Option<u128>,
+    tick: Option<i32>,
+    /// Whether the requested side was fully met (the concentrated-liquidity
+    /// arm; the reserve-pair arm's exact-output semantics answer on the
+    /// deltas alone).
+    specified_met: bool,
+    /// The POST-swap reserves (the reserve-pair arm only — the hypothetical
+    /// read's own end state, which no caller may re-derive from the deltas).
+    reserves_token0: Option<u128>,
+    reserves_token1: Option<u128>,
+}
+
+#[pymethods]
+impl PySwapRead {
+    /// The family arm this read computed.
+    #[getter]
+    const fn family(&self) -> PySwapReadFamily {
+        self.family
+    }
+
+    /// Signed token0 delta (deposited `+`, sent `-`).
+    #[getter]
+    fn amount0_delta(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        i256_to_py(py, self.amount0_delta)
+    }
+
+    /// Signed token1 delta (deposited `+`, sent `-`).
+    #[getter]
+    fn amount1_delta(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        i256_to_py(py, self.amount1_delta)
+    }
+
+    /// The end `sqrt_price_x96` (the concentrated-liquidity arm).
+    #[getter]
+    fn sqrt_price_x96(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        self.sqrt_price_x96
+            .map(|v| crate::conversion::alloy::u256_to_py(py, &v).map(pyo3::Bound::unbind))
+            .transpose()
+    }
+
+    /// The end in-range liquidity (the concentrated-liquidity arm).
+    #[getter]
+    const fn liquidity(&self) -> Option<u128> {
+        self.liquidity
+    }
+
+    /// The end tick (the concentrated-liquidity arm).
+    #[getter]
+    const fn tick(&self) -> Option<i32> {
+        self.tick
+    }
+
+    /// Whether the requested side was fully met (the concentrated-liquidity
+    /// arm).
+    #[getter]
+    const fn specified_met(&self) -> bool {
+        self.specified_met
+    }
+
+    /// The POST-swap token0 reserve (the reserve-pair arm).
+    #[getter]
+    const fn reserves_token0(&self) -> Option<u128> {
+        self.reserves_token0
+    }
+
+    /// The POST-swap token1 reserve (the reserve-pair arm).
+    #[getter]
+    const fn reserves_token1(&self) -> Option<u128> {
+        self.reserves_token1
+    }
+}
+
+/// The swap-simulation refusal vocabulary (ADR-037/t2): the kind the ONE
+/// Python adapter maps to the companions' exception tree.
+#[pyclass(
+    name = "SwapRefusalKind",
+    eq,
+    eq_int,
+    frozen,
+    from_py_object,
+    module = "degenbot._ffi"
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PySwapRefusalKind {
     /// Zero amount, a non-computable arithmetic/invariant outcome, or a
-    /// non-concentrated-liquidity payload the seam does not project.
+    /// non-computable family payload.
     NotComputable,
-    /// Miss recovery ran but the fetch itself failed for the read's `word`.
+    /// Miss recovery ran but the fetch itself failed for the refused word.
     FetchFailed,
-    /// Miss recovery was impossible or exhausted for the read's `word`.
+    /// Miss recovery was impossible or exhausted for the refused word.
     FetchExhausted,
+}
+
+pyo3::create_exception!(
+    degenbot._ffi,
+    SwapRefused,
+    pyo3::exceptions::PyException,
+    "The swap-simulation seam refused the read (ADR-037). args: (kind, word) —
+     `kind` is a `SwapRefusalKind` member; `word` is the bitmap word the walk
+     stalled on for the fetch arms, `None` elsewhere."
+);
+
+/// Raise the typed [`SwapRefused`] with `(kind, word)` args.
+pub(crate) fn swap_refused_err(
+    py: Python<'_>,
+    kind: PySwapRefusalKind,
+    word: Option<i32>,
+) -> PyErr {
+    let word_arg: Py<PyAny> = match word {
+        // `i32::into_pyobject` is infallible; the arm documents that.
+        Some(w) => match w.into_pyobject(py) {
+            Ok(o) => o.into_any().unbind(),
+            Err(e) => match e {},
+        },
+        None => py.None(),
+    };
+    let kind_arg: Py<PyAny> = match Bound::new(py, kind) {
+        Ok(b) => b.unbind().into_any(),
+        Err(e) => return e,
+    };
+    SwapRefused::new_err((kind_arg, word_arg))
 }
 
 /// THE sign-mapping site (ADR-037): an unsigned per-token amount pair becomes
@@ -2955,16 +3087,15 @@ fn token_deltas(zero_for_one: bool, input: U256, output: U256) -> (I256, I256) {
     }
 }
 
-/// The concentrated-liquidity read dict: the deltas, the end scalars, and
-/// whether the requested side was fully met.
-fn build_simulate_read(
-    py: Python<'_>,
+/// The concentrated-liquidity computed read: the signed deltas, the end
+/// price state, and whether the requested side was fully met.
+fn cl_swap_read(
     zero_for_one: bool,
     amount_specified: I256,
     amount0: U256,
     amount1: U256,
     end: (U256, u128, i32),
-) -> PyResult<Py<PyAny>> {
+) -> PySwapRead {
     let (sqrt_price_x96, liquidity, tick) = end;
     let (input, output) = if zero_for_one {
         (amount0, amount1)
@@ -2977,67 +3108,38 @@ fn build_simulate_read(
     } else {
         amount_specified.into_raw() <= output
     };
-    let read = PyDict::new(py);
-    read.set_item("status", PySwapSimulationStatus::Computed)?;
-    read.set_item("amount0_delta", i256_to_py(py, amount0_delta)?)?;
-    read.set_item("amount1_delta", i256_to_py(py, amount1_delta)?)?;
-    read.set_item(
-        "sqrt_price_x96",
-        crate::conversion::alloy::u256_to_py(py, &sqrt_price_x96)?,
-    )?;
-    read.set_item("liquidity", liquidity)?;
-    read.set_item("tick", tick)?;
-    read.set_item("specified_met", specified_met)?;
-    Ok(read.into_any().unbind())
+    PySwapRead {
+        family: PySwapReadFamily::ConcentratedLiquidity,
+        amount0_delta,
+        amount1_delta,
+        sqrt_price_x96: Some(sqrt_price_x96),
+        liquidity: Some(liquidity),
+        tick: Some(tick),
+        specified_met,
+        reserves_token0: None,
+        reserves_token1: None,
+    }
 }
 
-/// The reserve-pair read dict — the frozen cross-chunk contract: the same
-/// `status` / `amount0_delta` / `amount1_delta` keys every computed read
-/// carries, PLUS the POST-swap `reserves_token0` / `reserves_token1` (the
-/// hypothetical read's own end state, which no caller may re-derive from the
-/// deltas). The concentrated-liquidity end scalars are absent by construction:
-/// a constant-product pool has no price or tick state.
-fn build_reserve_pair_simulate_read(
-    py: Python<'_>,
-    zero_for_one: bool,
-    outcome: &ReservePairSwapOutcome,
-) -> PyResult<Py<PyAny>> {
+/// The reserve-pair computed read — the deltas PLUS the POST-swap reserves
+/// (the hypothetical read's own end state, which no caller may re-derive
+/// from the deltas). The concentrated-liquidity end scalars are absent by
+/// construction: a constant-product pool has no price or tick state.
+fn rp_swap_read(zero_for_one: bool, outcome: &ReservePairSwapOutcome) -> PySwapRead {
     let input = (-outcome.consumed).into_raw();
     let output = outcome.delivered.into_raw();
     let (amount0_delta, amount1_delta) = token_deltas(zero_for_one, input, output);
-    let read = PyDict::new(py);
-    read.set_item("status", PySwapSimulationStatus::Computed)?;
-    read.set_item("amount0_delta", i256_to_py(py, amount0_delta)?)?;
-    read.set_item("amount1_delta", i256_to_py(py, amount1_delta)?)?;
-    read.set_item(
-        "reserves_token0",
-        crate::conversion::alloy::u256_to_py(py, &U256::from(outcome.end_reserves_token0))?,
-    )?;
-    read.set_item(
-        "reserves_token1",
-        crate::conversion::alloy::u256_to_py(py, &U256::from(outcome.end_reserves_token1))?,
-    )?;
-    Ok(read.into_any().unbind())
-}
-
-/// The `NotComputable` typed read (zero amount, a miss, or a family the seam
-/// does not project a computed read for).
-fn not_computable_read(py: Python<'_>) -> PyResult<Py<PyAny>> {
-    let read = PyDict::new(py);
-    read.set_item("status", PySwapSimulationStatus::NotComputable)?;
-    Ok(read.into_any().unbind())
-}
-
-/// A typed miss read carrying the bitmap `word` the walk stalled on.
-fn status_word_read(
-    py: Python<'_>,
-    status: PySwapSimulationStatus,
-    word: i32,
-) -> PyResult<Py<PyAny>> {
-    let read = PyDict::new(py);
-    read.set_item("status", status)?;
-    read.set_item("word", word)?;
-    Ok(read.into_any().unbind())
+    PySwapRead {
+        family: PySwapReadFamily::ReservePair,
+        amount0_delta,
+        amount1_delta,
+        sqrt_price_x96: None,
+        liquidity: None,
+        tick: None,
+        specified_met: false,
+        reserves_token0: Some(outcome.end_reserves_token0.try_into().unwrap_or(u128::MAX)),
+        reserves_token1: Some(outcome.end_reserves_token1.try_into().unwrap_or(u128::MAX)),
+    }
 }
 
 /// The registration-lifecycle tick-data seed boundary: a Python
@@ -3198,47 +3300,35 @@ mod tests {
         });
     }
 
-    /// The read dict's `status` is the typed pyclass enum member, never a wire
-    /// string: the Python call sites compare members with `is`.
+    /// The computed read is the typed `SwapRead` pyclass with the CL arm's
+    /// scalars; a refusal RAISES `SwapRefused` carrying `(kind, word)` —
+    /// no status key anywhere.
     #[test]
-    fn simulate_read_status_is_the_typed_enum_member() {
+    fn simulate_read_is_the_typed_value_and_refusals_raise() {
         Python::attach(|py| {
-            let status_of = |read: Py<PyAny>| -> PySwapSimulationStatus {
-                read.into_bound(py)
-                    .cast_into::<PyDict>()
-                    .unwrap()
-                    .get_item("status")
-                    .unwrap()
-                    .unwrap()
-                    .extract()
-                    .unwrap()
-            };
-
-            let computed = build_simulate_read(
-                py,
+            let computed = cl_swap_read(
                 true,
                 I256::try_from(-1_000_i64).unwrap(),
                 U256::from(1_000_u64),
                 U256::from(400_u64),
                 (U256::from(1_u64), 7, 3),
-            )
-            .unwrap();
-            assert_eq!(status_of(computed), PySwapSimulationStatus::Computed);
+            );
+            assert_eq!(computed.family, PySwapReadFamily::ConcentratedLiquidity);
+            assert!(computed.specified_met);
+            assert_eq!(computed.liquidity, Some(7));
+            assert_eq!(computed.tick, Some(3));
 
-            assert_eq!(
-                status_of(not_computable_read(py).unwrap()),
-                PySwapSimulationStatus::NotComputable
-            );
-            assert_eq!(
-                status_of(status_word_read(py, PySwapSimulationStatus::FetchFailed, -7).unwrap()),
-                PySwapSimulationStatus::FetchFailed
-            );
-            assert_eq!(
-                status_of(
-                    status_word_read(py, PySwapSimulationStatus::FetchExhausted, -8).unwrap()
-                ),
-                PySwapSimulationStatus::FetchExhausted
-            );
+            let err = swap_refused_err(py, PySwapRefusalKind::FetchFailed, Some(-7));
+            let args = err.value(py).getattr("args").unwrap();
+            let kind: PySwapRefusalKind = args.get_item(0).unwrap().extract().unwrap();
+            assert_eq!(kind, PySwapRefusalKind::FetchFailed);
+            assert_eq!(args.get_item(1).unwrap().extract::<i32>().unwrap(), -7);
+
+            let err = swap_refused_err(py, PySwapRefusalKind::NotComputable, None);
+            let args = err.value(py).getattr("args").unwrap();
+            let kind: PySwapRefusalKind = args.get_item(0).unwrap().extract().unwrap();
+            assert_eq!(kind, PySwapRefusalKind::NotComputable);
+            assert!(args.get_item(1).unwrap().is_none());
         });
     }
 

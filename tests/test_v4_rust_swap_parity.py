@@ -17,7 +17,7 @@ import pathlib
 
 import pytest
 
-from degenbot._ffi import Bot, SwapSimulationStatus
+from degenbot._ffi import Bot, SwapRefused
 from degenbot.abi import encode as abi_encode
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.crypto import keccak256
@@ -114,29 +114,30 @@ def _unsigned_swap(handle, *, zero_for_one: bool, amount_in: int, block: int = 0
 
     ``None`` mirrors the retired bare-``None`` not-computable contract.
     """
-    read = handle.simulate(
-        zero_for_one=zero_for_one,
-        amount_specified=-amount_in,
-        block=block,
-    )
-    if read.get("status") is not SwapSimulationStatus.Computed:
+    try:
+        read = handle.simulate(
+            zero_for_one=zero_for_one,
+            amount_specified=-amount_in,
+            block=block,
+        )
+    except SwapRefused:
         return None
-    amount0_delta = int(read["amount0_delta"])
-    amount1_delta = int(read["amount1_delta"])
+    amount0_delta = int(read.amount0_delta)
+    amount1_delta = int(read.amount1_delta)
     if zero_for_one:
         return (
             amount0_delta,
             -amount1_delta,
-            int(read["sqrt_price_x96"]),
-            int(read["liquidity"]),
-            int(read["tick"]),
+            int(read.sqrt_price_x96),
+            int(read.liquidity),
+            int(read.tick),
         )
     return (
         -amount0_delta,
         amount1_delta,
-        int(read["sqrt_price_x96"]),
-        int(read["liquidity"]),
-        int(read["tick"]),
+        int(read.sqrt_price_x96),
+        int(read.liquidity),
+        int(read.tick),
     )
 
 
@@ -282,7 +283,7 @@ def _build_pool_from_corpus(
             ),
         ).hex()
     )
-    pool = make_v4_pool(
+    return make_v4_pool(
         pool_id=pool_id,
         pool_manager_address=_V4_MGR,
         token0=token0,
@@ -302,7 +303,6 @@ def _build_pool_from_corpus(
         coverage="sparse" if sparse else "tracked",
         tick_data_fetcher=fetcher if sparse else None,
     )
-    return pool
 
 
 def test_rust_v4_dense_corpus_matches_on_chain_quoter():
