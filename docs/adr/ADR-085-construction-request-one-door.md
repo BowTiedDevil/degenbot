@@ -52,7 +52,11 @@ follow. The measured shape:
    values (route, block, DB eligibility, registry lists). One
    `construct_and_register(state, request) -> ConstructionVerdict` walks the
    route, builds, registers, and folds the result. The per-family
-   `build_and_register_*` entries become private helpers behind it.
+   `build_and_register_*` entries become private helpers behind it. The request and
+   verdict already exist — `pool_builder/construction_door.rs` landed them
+   additively under ADR-078 D2, with `route::construct_pool` as the interior — so
+   this decision's core half is the *rewiring*: the outer verbs move behind the
+   door, and the FFI tier gets the same one-verb shape.
 2. **The verdict carries the answer, not an echo.** `ConstructionVerdict::Registered
    { pool_id, pool: PoolHandle, identity }` or `Refused { family, refusal }`,
    where `refusal` is the shared vocabulary ADR-077/ADR-078 already own. The
