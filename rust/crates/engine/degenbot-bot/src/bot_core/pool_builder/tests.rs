@@ -2495,8 +2495,7 @@ async fn route_matched_rung_builds_and_registers() {
     .expect("a served factory constructs and registers");
     let identity = built.built.expect("a fresh build carries its identity");
     assert_eq!(identity.address, pool);
-    assert_eq!(identity.token0, tok0);
-    assert_eq!(identity.token1, tok1);
+    assert_eq!(identity.pair(), Some((tok0, tok1)));
     assert_eq!(identity.factory, Some(factory));
     assert_eq!(
         bot.state_arc()
@@ -3028,6 +3027,62 @@ async fn construction_door_refusals_match_the_route_interior() {
             ..
         }
     ));
+}
+
+// --- The construction door's family arms (ADR-085 D1) ---
+
+#[tokio::test]
+async fn the_curve_door_arm_constructs_registers_and_reuses() {
+    let mut f = FakeRpc::new();
+    let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000001");
+    let coin1: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000002");
+    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
+    f.set_full(abi::encode_curve_coins_uint(1), addr_word(coin1));
+    f.set_full(
+        abi::encode_curve_balances_uint(0),
+        enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
+    );
+    f.set_full(
+        abi::encode_curve_balances_uint(1),
+        enc(DynSolValue::Uint(U256::from(2_000_000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"A()"),
+        enc(DynSolValue::Uint(U256::from(2000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"admin_fee()"),
+        enc(DynSolValue::Uint(U256::from(500_000_000u64), 256)),
+    );
+    f.set(
+        choreography::selector(b"decimals()"),
+        enc(DynSolValue::Uint(U256::from(6u64), 256)),
+    );
+    let io = io_with(f);
+    let bot = Bot::new(1);
+    let plan = route::ConstructionRoute::generic_only();
+    let request = || route::RequestedPool::Curve {
+        address: TO,
+        registries: vec![REGISTRY],
+    };
+    let first = route::construct_pool(&bot, &plan, &request(), &io, v3_route(), Some(123))
+        .await
+        .expect("the curve arm constructs and registers");
+    let built = first.built.expect("a fresh build carries its identity");
+    assert_eq!(built.tokens, vec![coin0, coin1]);
+    assert_eq!(built.pair(), Some((coin0, coin1)));
+    // Get-or-register: the second attempt answers the winner's id with no
+    // rebuild (`built: None`) — the door's contract, never the direct
+    // entries' rebuild-then-refuse race.
+    let second = route::construct_pool(&bot, &plan, &request(), &io, v3_route(), Some(123))
+        .await
+        .expect("the door reuses the registered pool");
+    assert_eq!(second.pool_id, first.pool_id);
+    assert!(second.built.is_none());
 }
 
 // --- The Tick-word source (GLOSSARY): the live-miss backfill is core-owned ---

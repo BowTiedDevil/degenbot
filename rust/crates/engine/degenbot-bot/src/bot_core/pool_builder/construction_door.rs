@@ -78,6 +78,37 @@ pub enum PoolConstruction<'a> {
         /// `Sparse` via the chain arm.
         db: Option<&'a dyn TickMapDb>,
     },
+    /// An Aerodrome V2 (Solidly) pair.
+    AerodromeV2 {
+        /// The pool contract address.
+        address: Address,
+    },
+    /// A Curve `StableSwap` pool (the discovery-only stableswap family with
+    /// no `factory()`).
+    Curve {
+        /// The pool contract address.
+        address: Address,
+        /// The registry/factory addresses the LP-token and metapool lookups
+        /// consult (driver values, like the V3 route's factory rungs).
+        registries: Vec<Address>,
+    },
+    /// A Balancer V2 weighted pool keyed by its singleton Vault.
+    BalancerWeighted {
+        /// The Balancer V2 singleton Vault contract.
+        vault: Address,
+        /// The pool contract address.
+        address: Address,
+    },
+    /// A Balancer V2 stable pool keyed by its singleton Vault.
+    BalancerStable {
+        /// The Balancer V2 singleton Vault contract.
+        vault: Address,
+        /// The pool contract address.
+        address: Address,
+        /// `None` = the shape-derived invariant version wins (BPT among the
+        /// Vault tokens → V1, else V2).
+        invariant_version: Option<u8>,
+    },
 }
 
 impl PoolConstruction<'_> {
@@ -88,6 +119,10 @@ impl PoolConstruction<'_> {
             Self::V2 { .. } => RegisteredPoolFamily::V2,
             Self::V3 { .. } => RegisteredPoolFamily::V3,
             Self::V4 { .. } => RegisteredPoolFamily::V4,
+            Self::AerodromeV2 { .. } => RegisteredPoolFamily::AerodromeV2,
+            Self::Curve { .. } => RegisteredPoolFamily::Curve,
+            Self::BalancerWeighted { .. } => RegisteredPoolFamily::BalancerWeighted,
+            Self::BalancerStable { .. } => RegisteredPoolFamily::BalancerStable,
         }
     }
 }
@@ -130,6 +165,36 @@ impl<'a> PoolConstruction<'a> {
                     ..V3RouteInputs::default()
                 },
             ),
+            Self::AerodromeV2 { address } => (
+                RequestedPool::AerodromeV2 { address },
+                V3RouteInputs::default(),
+            ),
+            Self::Curve {
+                address,
+                registries,
+            } => (
+                RequestedPool::Curve {
+                    address,
+                    registries,
+                },
+                V3RouteInputs::default(),
+            ),
+            Self::BalancerWeighted { vault, address } => (
+                RequestedPool::BalancerWeighted { vault, address },
+                V3RouteInputs::default(),
+            ),
+            Self::BalancerStable {
+                vault,
+                address,
+                invariant_version,
+            } => (
+                RequestedPool::BalancerStable {
+                    vault,
+                    address,
+                    invariant_version,
+                },
+                V3RouteInputs::default(),
+            ),
         }
     }
 }
@@ -156,6 +221,33 @@ impl std::fmt::Debug for PoolConstruction<'_> {
                 .debug_struct("PoolConstruction::V4")
                 .field("pool_manager", pool_manager)
                 .field("pool_id", pool_id)
+                .finish(),
+            Self::AerodromeV2 { address } => f
+                .debug_struct("PoolConstruction::AerodromeV2")
+                .field("address", address)
+                .finish(),
+            Self::Curve {
+                address,
+                registries,
+            } => f
+                .debug_struct("PoolConstruction::Curve")
+                .field("address", address)
+                .field("registries", registries)
+                .finish(),
+            Self::BalancerWeighted { vault, address } => f
+                .debug_struct("PoolConstruction::BalancerWeighted")
+                .field("vault", vault)
+                .field("address", address)
+                .finish(),
+            Self::BalancerStable {
+                vault,
+                address,
+                invariant_version,
+            } => f
+                .debug_struct("PoolConstruction::BalancerStable")
+                .field("vault", vault)
+                .field("address", address)
+                .field("invariant_version", invariant_version)
                 .finish(),
         }
     }

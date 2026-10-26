@@ -82,7 +82,7 @@ impl ConstructionRoute {
 }
 
 /// One requested pool — the family plus the identity that names it.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum RequestedPool {
     /// A single-address V2 pair.
     V2 { address: Address },
@@ -94,6 +94,24 @@ pub enum RequestedPool {
         pool_manager: Address,
         pool_id: [u8; 32],
         overrides: V4PoolBuildOverrides,
+    },
+    /// An Aerodrome V2 (Solidly) pair.
+    AerodromeV2 { address: Address },
+    /// A Curve `StableSwap` pool — the registry/factory addresses the
+    /// LP-token and metapool lookups consult (driver values, like the V3
+    /// route's factory rungs).
+    Curve {
+        address: Address,
+        registries: Vec<Address>,
+    },
+    /// A Balancer V2 weighted pool keyed by its singleton Vault.
+    BalancerWeighted { vault: Address, address: Address },
+    /// A Balancer V2 stable pool keyed by its singleton Vault.
+    BalancerStable {
+        vault: Address,
+        address: Address,
+        /// `None` = the shape-derived invariant version wins.
+        invariant_version: Option<u8>,
     },
 }
 
@@ -151,11 +169,15 @@ pub enum ConstructionRefusal {
 }
 
 /// The identity of a FRESH build.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltIdentity {
     pub address: Address,
-    pub token0: Address,
-    pub token1: Address,
+    /// The pool's token set in canonical order: the pair for the pair-keyed
+    /// families, the Vault/coin order for the multi-token ones. The verdict
+    /// carries it so a consumer builds token companions off the answer
+    /// instead of re-reading the registry or asking the handle by family
+    /// (ADR-085 D5).
+    pub tokens: Vec<Address>,
     /// The factory the build resolved (`None` for V4 — a manager-hosted pool
     /// has no factory).
     pub factory: Option<Address>,
@@ -163,8 +185,19 @@ pub struct BuiltIdentity {
     pub v4_pool_id: Option<[u8; 32]>,
 }
 
+impl BuiltIdentity {
+    /// The pair-keyed families' `(token0, token1)` echo.
+    #[must_use]
+    pub fn pair(&self) -> Option<(Address, Address)> {
+        match self.tokens.as_slice() {
+            [token0, token1] => Some((*token0, *token1)),
+            _ => None,
+        }
+    }
+}
+
 /// The constructed, registered pool.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstructedPool {
     /// The pool's engine `pool_id` in the shared `BotState`.
     pub pool_id: u64,
@@ -197,6 +230,21 @@ pub async fn construct_pool(
             pool_id,
             overrides,
         } => construct_v4(bot, *pool_manager, *pool_id, overrides, v3.db, io, block).await,
+        RequestedPool::AerodromeV2 { address } => {
+            construct_aerodrome_v2(bot, *address, io, block).await
+        }
+        RequestedPool::Curve {
+            address,
+            registries,
+        } => construct_curve(bot, *address, registries, io, block).await,
+        RequestedPool::BalancerWeighted { vault, address } => {
+            construct_balancer_weighted(bot, *vault, *address, io, block).await
+        }
+        RequestedPool::BalancerStable {
+            vault,
+            address,
+            invariant_version,
+        } => construct_balancer_stable(bot, *vault, *address, *invariant_version, io, block).await,
     }
 }
 
@@ -315,8 +363,7 @@ async fn construct_v2(
     // into the write door's request.
     let minted = BuiltIdentity {
         address,
-        token0: params.token0,
-        token1: params.token1,
+        tokens: vec![params.token0, params.token1],
         factory: Some(params.factory),
         v4_pool_id: None,
     };
@@ -394,8 +441,7 @@ async fn construct_v3(
     // into the write door's request.
     let minted = BuiltIdentity {
         address,
-        token0: params.token0,
-        token1: params.token1,
+        tokens: vec![params.token0, params.token1],
         factory: Some(params.factory),
         v4_pool_id: None,
     };
@@ -457,11 +503,166 @@ async fn construct_v4(
         pool_id: registered,
         built: Some(BuiltIdentity {
             address: pool_manager,
-            token0: identity.currency0,
-            token1: identity.currency1,
+            tokens: vec![identity.currency0, identity.currency1],
             factory: None,
             v4_pool_id: Some(pool_id),
         }),
+    })
+}
+
+/// The Aerodrome V2 arm: registry GET, the Aerodrome builder (the `stable()` +
+/// `getFee()` + reserves + CREATE2 choreography), register + race fold.
+async fn construct_aerodrome_v2(
+    bot: &Bot,
+    address: Address,
+    io: &ConstructionIo,
+    block: Option<u64>,
+) -> Result<ConstructedPool, ConstructionRefusal> {
+    if let Some(pool_id) = registered_address_pool(bot, address, RegisteredPoolFamily::AerodromeV2)
+    {
+        return Ok(ConstructedPool {
+            pool_id,
+            built: None,
+        });
+    }
+    let params = builder::build_aerodrome_v2(bot.chain_id(), address, io, block)
+        .await
+        .map_err(|err| classify_builder_error(err, address))?;
+    let minted = BuiltIdentity {
+        address,
+        tokens: vec![params.token0, params.token1],
+        factory: Some(params.factory),
+        v4_pool_id: None,
+    };
+    let verdict = bot
+        .state_arc()
+        .write_at(LockSite::Core)
+        .register_pool(PoolRegistration::AerodromeV2(Box::new(params)));
+    let pool_id = fold_registration_verdict(verdict, || {
+        registered_address_pool(bot, address, RegisteredPoolFamily::AerodromeV2)
+    })?;
+    Ok(ConstructedPool {
+        pool_id,
+        built: Some(minted),
+    })
+}
+
+/// The Curve arm: registry GET, the Curve detection choreography (the
+/// driver-supplied registry addresses serve the LP-token + metapool lookups),
+/// register + race fold.
+async fn construct_curve(
+    bot: &Bot,
+    address: Address,
+    registries: &[Address],
+    io: &ConstructionIo,
+    block: Option<u64>,
+) -> Result<ConstructedPool, ConstructionRefusal> {
+    if let Some(pool_id) = registered_address_pool(bot, address, RegisteredPoolFamily::Curve) {
+        return Ok(ConstructedPool {
+            pool_id,
+            built: None,
+        });
+    }
+    let params = builder::build_curve_pool(address, registries, io, block)
+        .await
+        .map_err(|err| classify_builder_error(err, address))?;
+    let minted = BuiltIdentity {
+        address,
+        tokens: params.tokens.clone(),
+        factory: None,
+        v4_pool_id: None,
+    };
+    let verdict = bot
+        .state_arc()
+        .write_at(LockSite::Core)
+        .register_pool(PoolRegistration::Curve(Box::new(params)));
+    let pool_id = fold_registration_verdict(verdict, || {
+        registered_address_pool(bot, address, RegisteredPoolFamily::Curve)
+    })?;
+    Ok(ConstructedPool {
+        pool_id,
+        built: Some(minted),
+    })
+}
+
+/// The Balancer weighted arm: registry GET, the Vault choreography
+/// (`getPoolId` + `getPoolTokens` + `getSwapFeePercentage` +
+/// `getNormalizedWeights` + decimals scaling), register + race fold.
+async fn construct_balancer_weighted(
+    bot: &Bot,
+    vault: Address,
+    address: Address,
+    io: &ConstructionIo,
+    block: Option<u64>,
+) -> Result<ConstructedPool, ConstructionRefusal> {
+    if let Some(pool_id) =
+        registered_address_pool(bot, address, RegisteredPoolFamily::BalancerWeighted)
+    {
+        return Ok(ConstructedPool {
+            pool_id,
+            built: None,
+        });
+    }
+    let params = builder::build_balancer_weighted(vault, address, io, block)
+        .await
+        .map_err(|err| classify_builder_error(err, address))?;
+    let minted = BuiltIdentity {
+        address,
+        tokens: params.tokens.clone(),
+        factory: None,
+        v4_pool_id: None,
+    };
+    let verdict = bot
+        .state_arc()
+        .write_at(LockSite::Core)
+        .register_pool(PoolRegistration::BalancerWeighted(Box::new(params)));
+    let pool_id = fold_registration_verdict(verdict, || {
+        registered_address_pool(bot, address, RegisteredPoolFamily::BalancerWeighted)
+    })?;
+    Ok(ConstructedPool {
+        pool_id,
+        built: Some(minted),
+    })
+}
+
+/// The Balancer stable arm: registry GET, the Vault choreography (the
+/// weighted twin plus `getAmplificationParameter` + BPT/rate-provider
+/// resolution), register + race fold.
+async fn construct_balancer_stable(
+    bot: &Bot,
+    vault: Address,
+    address: Address,
+    invariant_version: Option<u8>,
+    io: &ConstructionIo,
+    block: Option<u64>,
+) -> Result<ConstructedPool, ConstructionRefusal> {
+    if let Some(pool_id) =
+        registered_address_pool(bot, address, RegisteredPoolFamily::BalancerStable)
+    {
+        return Ok(ConstructedPool {
+            pool_id,
+            built: None,
+        });
+    }
+    let params = builder::build_balancer_stable(vault, address, io, block, invariant_version)
+        .await
+        .map_err(|err| classify_builder_error(err, address))?;
+    let minted = BuiltIdentity {
+        address,
+        tokens: params.tokens.clone(),
+        factory: None,
+        v4_pool_id: None,
+    };
+    let verdict = bot
+        .state_arc()
+        .write_at(LockSite::Core)
+        .register_pool(PoolRegistration::BalancerStable(Box::new(params)));
+    let pool_id = fold_registration_verdict(verdict, || {
+        registered_address_pool(bot, address, RegisteredPoolFamily::BalancerStable)
+    })?;
+    Ok(ConstructedPool {
+        pool_id,
+        built: Some(minted),
     })
 }
 

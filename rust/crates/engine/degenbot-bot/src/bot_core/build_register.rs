@@ -167,25 +167,21 @@ impl Bot {
         block: Option<u64>,
     ) -> Result<u64, RefusalKind> {
         let io = self.construction_io_required(Some(RegisteredPoolFamily::AerodromeV2))?;
-        let params = degenbot_core::runtime::get_runtime()
-            .block_on(builder::build_aerodrome_v2(
-                self.chain_id(),
-                address,
+        let constructed = degenbot_core::runtime::get_runtime()
+            .block_on(self.construct_pool(
+                &route::ConstructionRoute::generic_only(),
+                PoolConstruction::AerodromeV2 { address },
                 &io,
                 block,
             ))
-            .map_err(|err| {
-                RefusalKind::from_builder_error(
-                    &err,
+            .into_result()
+            .map_err(|refusal| {
+                RefusalKind::from_construction_refusal(
+                    &refusal,
                     Some(RegisteredPoolFamily::AerodromeV2),
-                    RegistrationPhase::Build,
                 )
             })?;
-        RefusalKind::from_registration_verdict(
-            self.state_arc()
-                .write_at(LockSite::Orchestrator)
-                .register_pool(PoolRegistration::AerodromeV2(Box::new(params))),
-        )
+        Ok(constructed.pool_id)
     }
 
     /// Build + register a Balancer V2 **weighted** pool (the `getPoolId` +
@@ -203,14 +199,21 @@ impl Bot {
         block: Option<u64>,
     ) -> Result<u64, RefusalKind> {
         let io = self.construction_io_required(None)?;
-        let params = degenbot_core::runtime::get_runtime()
-            .block_on(builder::build_balancer_weighted(vault, address, &io, block))
-            .map_err(|err| RefusalKind::from_builder_error(&err, None, RegistrationPhase::Build))?;
-        RefusalKind::from_registration_verdict(
-            self.state_arc()
-                .write_at(LockSite::Orchestrator)
-                .register_pool(PoolRegistration::BalancerWeighted(Box::new(params))),
-        )
+        let constructed = degenbot_core::runtime::get_runtime()
+            .block_on(self.construct_pool(
+                &route::ConstructionRoute::generic_only(),
+                PoolConstruction::BalancerWeighted { vault, address },
+                &io,
+                block,
+            ))
+            .into_result()
+            .map_err(|refusal| {
+                RefusalKind::from_construction_refusal(
+                    &refusal,
+                    Some(RegisteredPoolFamily::BalancerWeighted),
+                )
+            })?;
+        Ok(constructed.pool_id)
     }
 
     /// Build + register a Balancer V2 **stable** pool (the `getPoolId` +
@@ -231,20 +234,25 @@ impl Bot {
         invariant_version: Option<u8>,
     ) -> Result<u64, RefusalKind> {
         let io = self.construction_io_required(None)?;
-        let params = degenbot_core::runtime::get_runtime()
-            .block_on(builder::build_balancer_stable(
-                vault,
-                address,
+        let constructed = degenbot_core::runtime::get_runtime()
+            .block_on(self.construct_pool(
+                &route::ConstructionRoute::generic_only(),
+                PoolConstruction::BalancerStable {
+                    vault,
+                    address,
+                    invariant_version,
+                },
                 &io,
                 block,
-                invariant_version,
             ))
-            .map_err(|err| RefusalKind::from_builder_error(&err, None, RegistrationPhase::Build))?;
-        RefusalKind::from_registration_verdict(
-            self.state_arc()
-                .write_at(LockSite::Orchestrator)
-                .register_pool(PoolRegistration::BalancerStable(Box::new(params))),
-        )
+            .into_result()
+            .map_err(|refusal| {
+                RefusalKind::from_construction_refusal(
+                    &refusal,
+                    Some(RegisteredPoolFamily::BalancerStable),
+                )
+            })?;
+        Ok(constructed.pool_id)
     }
 
     /// Build + register a Curve `StableSwap` pool (the full detection
@@ -262,19 +270,21 @@ impl Bot {
         block: Option<u64>,
     ) -> Result<u64, RefusalKind> {
         let io = self.construction_io_required(None)?;
-        let params = degenbot_core::runtime::get_runtime()
-            .block_on(builder::build_curve_pool(
-                address,
-                registry_addresses,
+        let constructed = degenbot_core::runtime::get_runtime()
+            .block_on(self.construct_pool(
+                &route::ConstructionRoute::generic_only(),
+                PoolConstruction::Curve {
+                    address,
+                    registries: registry_addresses.to_vec(),
+                },
                 &io,
                 block,
             ))
-            .map_err(|err| RefusalKind::from_builder_error(&err, None, RegistrationPhase::Build))?;
-        RefusalKind::from_registration_verdict(
-            self.state_arc()
-                .write_at(LockSite::Orchestrator)
-                .register_pool(PoolRegistration::Curve(Box::new(params))),
-        )
+            .into_result()
+            .map_err(|refusal| {
+                RefusalKind::from_construction_refusal(&refusal, Some(RegisteredPoolFamily::Curve))
+            })?;
+        Ok(constructed.pool_id)
     }
 
     /// Build + register an ERC-20 token: `builder::build_erc20_metadata`
@@ -378,8 +388,8 @@ impl Bot {
             (
                 constructed.pool_id,
                 (
-                    built.token0.to_checksum(None),
-                    built.token1.to_checksum(None),
+                    built.pair().unwrap_or_default().0.to_checksum(None),
+                    built.pair().unwrap_or_default().1.to_checksum(None),
                     built.address.to_checksum(None),
                     family,
                 ),
@@ -932,8 +942,7 @@ mod tests {
         // core-side from the built identity).
         let built = route::BuiltIdentity {
             address: addr,
-            token0: Address::from([0x01u8; 20]),
-            token1: Address::from([0x02u8; 20]),
+            tokens: vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])],
             factory: Some(adhoc_factory()),
             v4_pool_id: None,
         };
