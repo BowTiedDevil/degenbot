@@ -1094,7 +1094,7 @@ fn tick_word_i16(word: i64) -> Result<i16, PoolBuilderError> {
 /// Coverage is always [`PoolTickCoverage::Sparse`] (only the single current
 /// word is seeded), so the pool is **live immediately** (decision D4) and the
 /// live-pump miss-detection backfills neighbour words during swap simulation.
-async fn bootstrap_v3_tick_map(
+pub(crate) async fn bootstrap_v3_tick_map(
     io: &ConstructionIo,
     address: Address,
     tick: i32,
@@ -1468,7 +1468,7 @@ pub async fn build_v3(
 /// int24)` on the `pool_manager` (which exposes the same state-view getters);
 /// coverage is always [`PoolTickCoverage::Sparse`] so the pool is live
 /// immediately (D4).
-async fn bootstrap_v4_tick_map(
+pub(crate) async fn bootstrap_v4_tick_map(
     io: &ConstructionIo,
     state_view: Address,
     pool_id: [u8; 32],

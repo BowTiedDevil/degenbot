@@ -455,10 +455,23 @@ impl Bot {
         // inside build_v4 (no second fetch_v4_slot0_liquidity each pool).
         let lp_fee = result.lp_fee;
         let protocol_fee = params.protocol_fee;
-        // Sparse-map parity (the V4 twin of the V3 build): the builder leaves
-        // the backfill fetcher `None`; the driver's Python-wrapped fetcher
-        // rides in here.
-        params.fetcher = fetcher;
+        // Sparse-map parity (the V4 twin of the V3 build): the driver's fetcher
+        // when it supplies one (the legacy Python path), else the core's own
+        // source bound to the identity this build resolved — a pure-Rust
+        // consumer supplies nothing and still gets sparse-map backfill.
+        params.fetcher = match fetcher {
+            Some(fetcher) => Some(fetcher),
+            None => Some(
+                crate::bot_core::pool_builder::tick_source::ConstructionIoTickWordSource::attached(
+                    &io,
+                    crate::bot_core::pool_builder::tick_source::TickWordSourcePool::V4 {
+                        state_view: identity.state_view,
+                        pool_id: identity.pool_id,
+                        tick_spacing: identity.tick_spacing,
+                    },
+                ),
+            ),
+        };
         let coverage = match params.coverage {
             PoolTickCoverage::Tracked => "tracked",
             PoolTickCoverage::Sparse => "sparse",

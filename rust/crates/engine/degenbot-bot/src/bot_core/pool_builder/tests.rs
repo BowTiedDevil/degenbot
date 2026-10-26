@@ -3029,3 +3029,51 @@ async fn construction_door_refusals_match_the_route_interior() {
         }
     ));
 }
+
+// --- The Tick-word source (GLOSSARY): the live-miss backfill is core-owned ---
+
+#[test]
+fn a_bound_word_source_reads_a_checked_empty_word() {
+    // An all-zero bitmap is a KNOWN word with no ticks — the source reports it
+    // as fetched-and-empty, never as a failure, so the caller marks the word
+    // known and stops re-fetching it.
+    let mut f = FakeRpc::new();
+    f.set(
+        choreography::selector(b"tickBitmap(int16)"),
+        enc(DynSolValue::Uint(U256::ZERO, 256)),
+    );
+    let io = io_with(f);
+    let source = super::tick_source::ConstructionIoTickWordSource::attached(
+        &io,
+        super::tick_source::TickWordSourcePool::V3 {
+            address: TO,
+            tick_spacing: 1,
+        },
+    );
+    let fetched = source
+        .fetch_missing_tick_word(0, 0, 100)
+        .expect("a bound source reads through the construction io seam");
+    assert_eq!(fetched.word, 0);
+    assert!(
+        fetched.ticks.is_empty(),
+        "an all-zero bitmap is a checked-empty word"
+    );
+}
+
+#[test]
+fn a_bound_word_source_refuses_an_overrunning_word() {
+    // The word -> tick mapping (`(word << 8) * spacing`) is checked before any
+    // RPC: an overrunning word is a typed refusal, never a wrapped bogus tick.
+    let io = io_with(FakeRpc::new());
+    let source = super::tick_source::ConstructionIoTickWordSource::attached(
+        &io,
+        super::tick_source::TickWordSourcePool::V3 {
+            address: TO,
+            tick_spacing: 1,
+        },
+    );
+    assert_eq!(
+        source.fetch_missing_tick_word(0, i32::MAX, 1).unwrap_err(),
+        degenbot_pools::sim::tick_fetch::FetchTickWordError::OutOfRange
+    );
+}

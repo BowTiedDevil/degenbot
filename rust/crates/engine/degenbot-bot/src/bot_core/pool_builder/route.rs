@@ -352,9 +352,20 @@ async fn construct_v3(
     let mut params = builder::build_v3(bot.chain_id(), address, v3.db, io, block)
         .await
         .map_err(|err| classify_builder_error(err, address))?;
-    if let Some(fetcher) = &v3.fetcher {
-        params.fetcher = Some(Arc::clone(fetcher));
-    }
+    // The live-miss backfill source: the driver's fetcher when it supplies one
+    // (the legacy Python path), else the core's own source bound to the identity
+    // the build just resolved. A pure-Rust consumer supplies nothing and still
+    // gets sparse-map backfill.
+    params.fetcher = match &v3.fetcher {
+        Some(fetcher) => Some(Arc::clone(fetcher)),
+        None => Some(super::tick_source::ConstructionIoTickWordSource::attached(
+            io,
+            super::tick_source::TickWordSourcePool::V3 {
+                address,
+                tick_spacing: params.tick_spacing,
+            },
+        )),
+    };
     if let Some(slot_layout) = v3.slot_layout {
         params.slot_layout = slot_layout;
     }

@@ -35,6 +35,7 @@ pub mod construction_door;
 pub mod curve_choreography;
 pub mod parity;
 pub mod route;
+pub mod tick_source;
 
 #[cfg(test)]
 mod tests;
