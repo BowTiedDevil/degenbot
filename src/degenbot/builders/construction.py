@@ -13,16 +13,19 @@ resolver answered onto the matching one.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 from degenbot._ffi import PoolConstructionRequest
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types.pool_type import PoolFamily
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
 __all__ = ["PoolConstructionRequest", "request_for"]
 
 
-def request_for(
+def request_for(  # ruff: ignore[too-many-arguments, too-many-return-statements] - one arm per sealed family; each family's required hints are arguments by design
     address: str,
     *,
     family: PoolFamily,
@@ -84,7 +87,15 @@ def request_for(
 
 
 def _required_vault(family: PoolFamily, vault: str | None) -> str:
-    """Return the configured Vault address, or refuse the build loudly."""
+    """Resolve the Vault hint shared by the Vault-settled families.
+
+    Returns:
+        The configured Vault address.
+
+    Raises:
+        DegenbotValueError: If the family requires a Vault and none was supplied.
+
+    """
     if vault is None:
         msg = f"construct_pool: the {family.value!r} family requires a Vault address"
         raise DegenbotValueError(message=msg)

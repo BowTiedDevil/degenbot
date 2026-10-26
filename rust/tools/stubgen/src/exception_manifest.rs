@@ -189,6 +189,13 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         message: "The endpoint serves a different chain than the one it was bound to.",
     },
     ExceptionIsland {
+        python_module: "degenbot._ffi",
+        rust_path: "bot::pool",
+        name: "SwapRefused",
+        base: "Exception",
+        message: "The swap-simulation seam refused the read (ADR-037). args: (kind, word) — `kind` is a `SwapRefusalKind` member; `word` is the bitmap word the walk stalled on for the fetch arms, `None` elsewhere.",
+    },
+    ExceptionIsland {
         python_module: "degenbot._ffi.fleet",
         rust_path: "fleet",
         name: "PostureRetuneError",
@@ -623,7 +630,7 @@ mod tests {
         }
         assert_eq!(
             EXCEPTION_ISLANDS.len(),
-            20,
+            21,
             "one entry per create_exception! island"
         );
     }

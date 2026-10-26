@@ -370,15 +370,18 @@ class UniswapV3Pool(
             )
         except SwapRefused as exc:
             raise swap_refusal_to_error(exc) from exc
+        assert read.liquidity is not None  # pragma: no cover — concentrated-liquidity arm asserted
+        assert read.sqrt_price_x96 is not None  # pragma: no cover — CL arm asserted
+        assert read.tick is not None  # pragma: no cover — concentrated-liquidity arm asserted
         return UniswapV3PoolSimulationResult(
             amount0_delta=int(read.amount0_delta),
             amount1_delta=int(read.amount1_delta),
             initial_state=initial_state,
             final_state=dataclasses.replace(
                 initial_state,
-                liquidity=int(read.liquidity),
-                sqrt_price_x96=int(read.sqrt_price_x96),
-                tick=int(read.tick),
+                liquidity=read.liquidity,
+                sqrt_price_x96=read.sqrt_price_x96,
+                tick=read.tick,
                 block=self.update_block if override_state is None else initial_state.block,
             ),
         )

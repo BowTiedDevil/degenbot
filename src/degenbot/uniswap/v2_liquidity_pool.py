@@ -352,14 +352,16 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
                     "uint256 swap math (on-chain revert)"
                 ),
             ) from exc
+        assert read.reserves_token0 is not None  # pragma: no cover — reserve-pair arm asserted
+        assert read.reserves_token1 is not None  # pragma: no cover — reserve-pair arm asserted
         return UniswapV2PoolSimulationResult(
             amount0_delta=int(read.amount0_delta),
             amount1_delta=int(read.amount1_delta),
             initial_state=state,
             final_state=dataclasses.replace(
                 state,
-                reserves_token0=int(read.reserves_token0),
-                reserves_token1=int(read.reserves_token1),
+                reserves_token0=read.reserves_token0,
+                reserves_token1=read.reserves_token1,
                 block=self.update_block if override_state is not None else None,
             ),
         )
@@ -412,14 +414,16 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
             raise LiquidityPoolError(
                 message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})",  # ruff:ignore[line-too-long]
             ) from exc
+        assert read.reserves_token0 is not None  # pragma: no cover — reserve-pair arm asserted
+        assert read.reserves_token1 is not None  # pragma: no cover — reserve-pair arm asserted
         return UniswapV2PoolSimulationResult(
             amount0_delta=int(read.amount0_delta),
             amount1_delta=int(read.amount1_delta),
             initial_state=state,
             final_state=dataclasses.replace(
                 state,
-                reserves_token0=int(read.reserves_token0),
-                reserves_token1=int(read.reserves_token1),
+                reserves_token0=read.reserves_token0,
+                reserves_token1=read.reserves_token1,
                 block=self.update_block if override_state is not None else None,
             ),
         )

@@ -157,6 +157,11 @@ class StrategyHostError(RuntimeError):
     A strategy-host operator verb was refused (a lifecycle transition the FSM does not allow).
     """
 
+class SwapRefused(Exception):
+    """
+    The swap-simulation seam refused the read (ADR-037). args: (kind, word) — `kind` is a `SwapRefusalKind` member; `word` is the bitmap word the walk stalled on for the fetch arms, `None` elsewhere.
+    """
+
 class UnconfiguredStrategyError(StrategyHostError):
     """
     The named strategy is registered but unconfigured: no config facet with its required keys was booted, so it cannot be enabled.
@@ -5302,6 +5307,7 @@ __all__ = [
     "SwapRead",
     "SwapReadFamily",
     "SwapRefusalKind",
+    "SwapRefused",
     "UnconfiguredStrategyError",
     "UnknownStrategyError",
     "UnregistrablePoolRecord",
