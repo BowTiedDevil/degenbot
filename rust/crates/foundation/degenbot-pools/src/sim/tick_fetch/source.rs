@@ -39,6 +39,10 @@ use degenbot_decoders::v4_swap_decoder::V4PoolId;
 
 use crate::TickInfo;
 
+use crate::state::v3_state::V3PoolIdentity;
+
+use crate::state::v4_state::V4PoolIdentity;
+
 /// One pool's tick-word read descriptor — the identity a
 /// [`TickWordSource`] addresses a word read by.
 ///
@@ -68,6 +72,25 @@ pub enum TickWordKey {
         /// The pool's tick spacing.
         tick_spacing: i32,
     },
+}
+
+impl From<&V3PoolIdentity> for TickWordKey {
+    fn from(identity: &V3PoolIdentity) -> Self {
+        Self::V3 {
+            address: identity.address,
+            tick_spacing: identity.tick_spacing,
+        }
+    }
+}
+
+impl From<&V4PoolIdentity> for TickWordKey {
+    fn from(identity: &V4PoolIdentity) -> Self {
+        Self::V4 {
+            state_view: identity.state_view,
+            pool_id: identity.pool_id,
+            tick_spacing: identity.pool_key.tick_spacing,
+        }
+    }
 }
 
 /// One fetched tick-bitmap word's data, returned by [`TickWordSource`].

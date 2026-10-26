@@ -442,19 +442,18 @@ pub fn simulate_override_with_fetch(
     for _ in 0..3u8 {
         let staged = {
             let guard = state.read_at(LockSite::Orchestrator);
-            let fetcher = guard.stored_fetcher_for_pool(over.pool_id);
-            let key = guard.word_key_for_pool(over.pool_id);
+            let reader = guard.tick_word_reader_for_pool(over.pool_id);
             let missing = guard.override_missing_words(over);
-            missing.map(|missing| (fetcher.zip(key), missing))
+            missing.map(|missing| (reader, missing))
         };
-        let (pair, missing) = staged?;
+        let (reader, missing) = staged?;
         if missing.is_empty() {
             break;
         }
         // Misses exist but no fetcher is stored: the hypothetical cannot be
         // backfilled — fail as `None` exactly like the disarmed sim's
         // FetchExhausted arm.
-        let (fetcher, key) = pair?;
+        let (key, fetcher) = reader?;
         // Fetches: NO state lock held.
         let mut staged_words = Vec::new();
         for word in &missing {

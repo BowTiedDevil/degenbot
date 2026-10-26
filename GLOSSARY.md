@@ -412,9 +412,11 @@ known-empty on a Tracked pool (the map is complete).
 
 **Tick-word source**:
 The core's one capability that backfills a tick-bitmap word over RPC, answering the
-initialized ticks of one word at one block. One capability serves both call sites — the
-registration-time seed and the live-miss backfill — because only the naming key differs
-(pool address before registration, pool id after).
+initialized ticks of one word at one block. One trait serves both call sites — the
+registration-time seed and the live-miss backfill — addressed by one key value
+(`TickWordKey`: the pool's read descriptor — V3 address + spacing, or V4 `StateView` +
+pool id + spacing, the word position being a per-call argument). The V4 identity carries
+its `StateView` so the registered pool can name its own read descriptor.
 _Avoid_: one trait per call site for one choreography; a driver-supplied fetch callback;
 a fetcher that reads the state owner it is fetching for.
 

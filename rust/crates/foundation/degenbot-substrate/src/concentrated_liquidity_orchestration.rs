@@ -1498,18 +1498,11 @@ impl ConcentratedLiquidityOrchestration {
     ) -> Option<StagedWordFetch> {
         let (key, fetcher) = match reg.pools.get(&pool_id) {
             Some(PoolEntry::V3(p)) => (
-                degenbot_pools::sim::tick_fetch::TickWordKey::V3 {
-                    address: p.0.address,
-                    tick_spacing: p.0.tick_spacing,
-                },
+                degenbot_pools::sim::tick_fetch::TickWordKey::from(&p.0),
                 p.1.fetcher.clone(),
             ),
             Some(PoolEntry::V4(p)) => (
-                degenbot_pools::sim::tick_fetch::TickWordKey::V4 {
-                    state_view: p.0.state_view,
-                    pool_id: p.0.pool_id,
-                    tick_spacing: p.0.pool_key.tick_spacing,
-                },
+                degenbot_pools::sim::tick_fetch::TickWordKey::from(&p.0),
                 p.1.fetcher.clone(),
             ),
             _ => return None,
@@ -1601,20 +1594,13 @@ impl ConcentratedLiquidityOrchestration {
             Some(PoolEntry::V3(p)) => p.1.fetcher.clone().map(|source| {
                 (
                     source,
-                    degenbot_pools::sim::tick_fetch::TickWordKey::V3 {
-                        address: p.0.address,
-                        tick_spacing: p.0.tick_spacing,
-                    },
+                    degenbot_pools::sim::tick_fetch::TickWordKey::from(&p.0),
                 )
             }),
             Some(PoolEntry::V4(p)) => p.1.fetcher.clone().map(|source| {
                 (
                     source,
-                    degenbot_pools::sim::tick_fetch::TickWordKey::V4 {
-                        state_view: p.0.state_view,
-                        pool_id: p.0.pool_id,
-                        tick_spacing: p.0.pool_key.tick_spacing,
-                    },
+                    degenbot_pools::sim::tick_fetch::TickWordKey::from(&p.0),
                 )
             }),
             _ => None,

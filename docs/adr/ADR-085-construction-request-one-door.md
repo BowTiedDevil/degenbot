@@ -104,5 +104,6 @@ follow. The measured shape:
 - Deliberately **not** decided here: making the companion getters
   registration-free (the deeper deletion, which changes when an RPC happens), and
   consolidating the two tick-word traits (`TickBootstrapRpc` /
-  `TickWordFetcher`) into the one **Tick-word source** capability. Both are
-  recorded in GLOSSARY and land on their own gates.
+  `TickWordFetcher`) into the one **Tick-word source** capability. The
+  getter decision stays open; the trait consolidation has since LANDED
+  (one `TickWordSource` seam — see GLOSSARY **Tick-word source**).

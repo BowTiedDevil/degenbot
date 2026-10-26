@@ -529,34 +529,22 @@ impl BotState {
     /// through [`Self::override_missing_words`] + the lock-free fetch
     /// choreography before entering.
     ///
-    /// The stored word fetcher for a registered pool, if any — the staged
-    /// pre-pass fetches through it OUTSIDE any state lock. The registry seam
-    /// for the family door's [`concentrated_liquidity::FetchMode::Armed`] mode (the fetcher is a
+    /// The registered pool's tick-word READ HANDLE: the descriptor key (its
+    /// own identity) paired with the stored source, if any. The staged
+    /// pre-pass fetches through the source OUTSIDE any state lock (the
+    /// registry seam for the family door's
+    /// [`concentrated_liquidity::FetchMode::Armed`] mode — the source is a
     /// registration-time fact on the slice; cloning it here keeps the read
-    /// lock-free).
+    /// lock-free). `None` when the pool is not concentrated-liquidity or
+    /// stores no source.
     #[must_use]
-    pub fn stored_fetcher_for_pool(&self, pool_id: u64) -> Option<Arc<dyn TickWordSource>> {
+    pub fn tick_word_reader_for_pool(
+        &self,
+        pool_id: u64,
+    ) -> Option<(TickWordKey, Arc<dyn TickWordSource>)> {
         match self.registry.pools.get(&pool_id) {
-            Some(PoolEntry::V3(p)) => p.1.fetcher.clone(),
-            Some(PoolEntry::V4(p)) => p.1.fetcher.clone(),
-            _ => None,
-        }
-    }
-
-    /// The registered pool's tick-word read descriptor (its own identity) —
-    /// the key a stored-source fetch addresses words by.
-    #[must_use]
-    pub fn word_key_for_pool(&self, pool_id: u64) -> Option<TickWordKey> {
-        match self.registry.pools.get(&pool_id) {
-            Some(PoolEntry::V3(p)) => Some(TickWordKey::V3 {
-                address: p.0.address,
-                tick_spacing: p.0.tick_spacing,
-            }),
-            Some(PoolEntry::V4(p)) => Some(TickWordKey::V4 {
-                state_view: p.0.state_view,
-                pool_id: p.0.pool_id,
-                tick_spacing: p.0.pool_key.tick_spacing,
-            }),
+            Some(PoolEntry::V3(p)) => Some((TickWordKey::from(&p.0), p.1.fetcher.clone()?)),
+            Some(PoolEntry::V4(p)) => Some((TickWordKey::from(&p.0), p.1.fetcher.clone()?)),
             _ => None,
         }
     }
@@ -781,10 +769,7 @@ impl BotState {
         // builds from the override state.
         let (key, fetcher, source) = match entry {
             PoolEntry::V3(p) => (
-                TickWordKey::V3 {
-                    address: p.0.address,
-                    tick_spacing: p.0.tick_spacing,
-                },
+                TickWordKey::from(&p.0),
                 p.1.fetcher.clone(),
                 concentrated_liquidity::SwapReadSource::Override(
                     concentrated_liquidity::ConcentratedLiquidityTransientSource::V3 {
@@ -797,11 +782,7 @@ impl BotState {
                 ),
             ),
             PoolEntry::V4(p) => (
-                TickWordKey::V4 {
-                    state_view: p.0.state_view,
-                    pool_id: p.0.pool_id,
-                    tick_spacing: p.0.pool_key.tick_spacing,
-                },
+                TickWordKey::from(&p.0),
                 p.1.fetcher.clone(),
                 concentrated_liquidity::SwapReadSource::Override(
                     concentrated_liquidity::ConcentratedLiquidityTransientSource::V4 {
@@ -985,10 +966,7 @@ impl BotState {
             };
             match entry {
                 PoolEntry::V3(p) => {
-                    let key = TickWordKey::V3 {
-                        address: p.0.address,
-                        tick_spacing: p.0.tick_spacing,
-                    };
+                    let key = TickWordKey::from(&p.0);
                     let design = concentrated_liquidity::ConcentratedLiquidityState::V3 {
                         state: &p.1,
                         scalars: concentrated_liquidity::DesignScalars::new(
@@ -1012,11 +990,7 @@ impl BotState {
                     )
                 }
                 PoolEntry::V4(p) => {
-                    let key = TickWordKey::V4 {
-                        state_view: p.0.state_view,
-                        pool_id: p.0.pool_id,
-                        tick_spacing: p.0.pool_key.tick_spacing,
-                    };
+                    let key = TickWordKey::from(&p.0);
                     let hooks = p.0.pool_key.hooks;
                     let design = concentrated_liquidity::ConcentratedLiquidityState::V4 {
                         state: &p.1,
