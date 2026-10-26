@@ -530,6 +530,13 @@ impl RefusalKind {
                 phase: RegistrationPhase::Build,
                 failure: failure.clone(),
             },
+            // The write door's refusal crosses as the registration refusal it
+            // already is — the same fold `from_registration_verdict` produces.
+            ConstructionRefusal::Registration(reason) => Self::RegisterRefused {
+                family,
+                phase: RegistrationPhase::Register,
+                reason: reason.clone(),
+            },
         }
     }
 
@@ -2506,6 +2513,30 @@ mod tests {
             RegistrationPhase::Build,
         );
         assert_eq!(build_failure(&skipped), Some(&BuildFailure::HighFee));
+
+        // The write door's typed refusal crosses as the registration refusal
+        // it already is — the same fold `from_registration_verdict` produces,
+        // so one refusal has one rendering wherever it crossed.
+        let register = RegisterRefusal::SpecViolation {
+            detail: "fee out of bounds".to_owned(),
+        };
+        let crossed = RefusalKind::from_construction_refusal(
+            &ConstructionRefusal::Registration(register),
+            Some(RegisteredPoolFamily::V3),
+        );
+        assert_tags(
+            &crossed,
+            Some(RegisteredPoolFamily::V3),
+            RegistrationPhase::Register,
+        );
+        assert!(matches!(
+            crossed,
+            RefusalKind::RegisterRefused {
+                family: Some(RegisteredPoolFamily::V3),
+                phase: RegistrationPhase::Register,
+                reason: RegisterRefusal::SpecViolation { .. },
+            }
+        ));
     }
 
     #[test]
