@@ -38,6 +38,10 @@ _ENGINE_HANDLE_MODULES = frozenset({_FFI_ROOT, f"{_FFI_ROOT}.db"})
 # the exact process-entry module (module imports and other symbols still fail).
 ALLOWED_LEAF_FFI_IMPORTS: dict[str, frozenset[str]] = {
     "src/degenbot/_cli.py": frozenset({"cli_main"}),
+    # ADR-085 D2: the construction request is the seam's one input — a resolved
+    # identity carried as a value, with no Python twin to translate to. This
+    # module is its domain home; every caller imports it from here.
+    "src/degenbot/builders/construction.py": frozenset({"PoolConstructionRequest"}),
     # S12: the registration outcome ledger moved into the Rust core
     # (`degenbot_bot::bot_core::registration_ledger`), so this adapter calls
     # the core's pyclass and the two classification verbs directly. There is

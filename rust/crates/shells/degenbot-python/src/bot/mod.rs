@@ -1004,6 +1004,118 @@ impl PyConstructionOutcome {
     }
 }
 
+/// The one construction request (ADR-085 D2).
+///
+/// The identity a caller resolved plus the per-family hints, carried as ONE value
+/// instead of a positional/string-kwarg protocol: the family is a field the core
+/// dispatches on, not the verb's name or its argument order.
+#[pyclass(name = "PoolConstructionRequest", module = "degenbot._ffi")]
+pub struct PyPoolConstructionRequest {
+    /// The pool address the request builds.
+    address: String,
+    /// The family tag the core dispatches on.
+    family: String,
+    /// The variant the resolver identified (within the family).
+    variant: Option<String>,
+    /// The snapshot block (`None` = chain head, resolved core-side).
+    block: Option<u64>,
+    /// Whether the DB tick-map arm may seed the construction.
+    db: bool,
+    /// V3 factory rungs for the address→identity derivation.
+    factories: Vec<String>,
+    /// Curve registry addresses for the LP-token/metapool lookups.
+    registries: Vec<String>,
+    /// Balancer V2 Vault address (the `weighted`/`balancer_stable` families).
+    vault: Option<String>,
+    /// The requested invariant version (family-specific).
+    invariant_version: Option<u8>,
+}
+
+#[pymethods]
+impl PyPoolConstructionRequest {
+    /// Build a request from the resolved identity plus the family's hints.
+    #[new]
+    #[pyo3(signature = (address, family, variant=None, block=None, db=true, factories=None, registries=None, vault=None, invariant_version=None))]
+    #[expect(clippy::too_many_arguments)] // the resolved identity + the per-family hints, one value
+    fn new(
+        address: &str,
+        family: &str,
+        variant: Option<String>,
+        block: Option<u64>,
+        db: bool,
+        factories: Option<Vec<String>>,
+        registries: Option<Vec<String>>,
+        vault: Option<String>,
+        invariant_version: Option<u8>,
+    ) -> Self {
+        Self {
+            address: address.to_string(),
+            family: family.to_string(),
+            variant,
+            block,
+            db,
+            factories: factories.unwrap_or_default(),
+            registries: registries.unwrap_or_default(),
+            vault,
+            invariant_version,
+        }
+    }
+
+    /// The pool address the request builds.
+    #[getter]
+    fn address(&self) -> String {
+        self.address.clone()
+    }
+
+    /// The family tag the core dispatches on.
+    #[getter]
+    fn family(&self) -> String {
+        self.family.clone()
+    }
+
+    /// The variant the resolver identified.
+    #[getter]
+    fn variant(&self) -> Option<String> {
+        self.variant.clone()
+    }
+
+    /// The snapshot block (`None` = chain head, resolved core-side).
+    #[getter]
+    const fn block(&self) -> Option<u64> {
+        self.block
+    }
+
+    /// Whether the DB tick-map arm may seed the construction.
+    #[getter]
+    const fn db(&self) -> bool {
+        self.db
+    }
+
+    /// V3 factory rungs for the address→identity derivation.
+    #[getter]
+    fn factories(&self) -> Vec<String> {
+        self.factories.clone()
+    }
+
+    /// Curve registry addresses for the LP-token/metapool lookups.
+    #[getter]
+    fn registries(&self) -> Vec<String> {
+        self.registries.clone()
+    }
+
+    /// Balancer V2 Vault address (the `weighted`/`balancer_stable` families).
+    #[getter]
+    fn vault(&self) -> Option<String> {
+        self.vault.clone()
+    }
+
+    /// The requested invariant version (family-specific).
+    #[getter]
+    const fn invariant_version(&self) -> Option<u8> {
+        self.invariant_version
+    }
+}
+
 #[pymethods]
 impl PyBot {
     /// Construct + register a pool of ANY family through ONE entry — the
@@ -1025,33 +1137,13 @@ impl PyBot {
     ///
     /// As the dispatched per-family builder; `ValueError` on an unknown family
     /// or a missing required argument (Balancer's `vault`).
-    #[pyo3(signature = (address, family, variant=None, block=None, db=true, factories=None, registries=None, vault=None, invariant_version=None))]
-    #[expect(clippy::too_many_arguments)] // the family identity + the per-family hints, one flat surface
     fn construct_pool(
         &self,
         py: Python<'_>,
-        address: &str,
-        family: &str,
-        variant: Option<&str>,
-        block: Option<u64>,
-        db: bool,
-        factories: Option<Vec<String>>,
-        registries: Option<Vec<String>>,
-        vault: Option<&str>,
-        invariant_version: Option<u8>,
+        request: &PyPoolConstructionRequest,
     ) -> PyResult<PyConstructionOutcome> {
-        let (pool_id, token0, token1, _address, echoed_variant) = self.construct_pool_payload(
-            py,
-            address,
-            family,
-            variant,
-            block,
-            db,
-            factories,
-            registries,
-            vault,
-            invariant_version,
-        )?;
+        let (pool_id, token0, token1, _address, echoed_variant) =
+            self.construct_pool_payload(py, request)?;
         let pool = self.get_pool(py, pool_id).ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(format!(
                 "construct_pool: registration answered pool id {pool_id} with no handle"
@@ -1060,7 +1152,7 @@ impl PyBot {
         Ok(PyConstructionOutcome {
             pool: Py::new(py, pool)?,
             pool_id,
-            family: family.to_string(),
+            family: request.family.clone(),
             variant: echoed_variant,
             token0,
             token1,
@@ -1072,20 +1164,22 @@ impl PyBot {
     /// The construction switchboard's payload arm: the flat per-family dispatch
     /// ([`Self::construct_pool`] wraps it into the one answer). Not a pymethod:
     /// the seam presents one construction verb.
-    #[expect(clippy::too_many_arguments)] // the family identity + the per-family hints, one flat surface
     fn construct_pool_payload(
         &self,
         py: Python<'_>,
-        address: &str,
-        family: &str,
-        variant: Option<&str>,
-        block: Option<u64>,
-        db: bool,
-        factories: Option<Vec<String>>,
-        registries: Option<Vec<String>>,
-        vault: Option<&str>,
-        invariant_version: Option<u8>,
+        request: &PyPoolConstructionRequest,
     ) -> PyResult<(u64, String, String, String, String)> {
+        let address = request.address.as_str();
+        let family = request.family.as_str();
+        let variant = request.variant.as_deref();
+        let block = request.block;
+        let db = request.db;
+        let vault = request.vault.as_deref();
+        let invariant_version = request.invariant_version;
+        // An empty hint list is "the caller supplied none": the per-family arms read
+        // `Option` (absent = use the family's own default route).
+        let factories = (!request.factories.is_empty()).then(|| request.factories.clone());
+        let registries = (!request.registries.is_empty()).then(|| request.registries.clone());
         let echo = |pool_id: u64, variant: &str| {
             (
                 pool_id,

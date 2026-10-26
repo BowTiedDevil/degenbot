@@ -1017,19 +1017,7 @@ class Bot:
         # Errors
         `PyRuntimeError` if the `COMMIT` fails.
         """
-    def construct_pool(
-        self,
-        /,
-        address: str,
-        family: str,
-        variant: str | None = None,
-        block: SupportsIndex | None = None,
-        db: bool = True,
-        factories: SupportsGetItem[int, str] | None = None,
-        registries: SupportsGetItem[int, str] | None = None,
-        vault: str | None = None,
-        invariant_version: SupportsIndex | None = None,
-    ) -> ConstructionOutcome:
+    def construct_pool(self, /, request: PoolConstructionRequest) -> ConstructionOutcome:
         """
         Construct + register a pool of ANY family through ONE entry — the
         construction switchboard's FFI face (ADR-059 D6: dispatch at the tier
@@ -3785,6 +3773,77 @@ class Pool:
         """
 
 @final
+class PoolConstructionRequest:
+    """
+    The one construction request (ADR-085 D2).
+
+    The identity a caller resolved plus the per-family hints, carried as ONE value
+    instead of a positional/string-kwarg protocol: the family is a field the core
+    dispatches on, not the verb's name or its argument order.
+    """
+    def __new__(
+        cls,
+        /,
+        address: str,
+        family: str,
+        variant: str | None = None,
+        block: SupportsIndex | None = None,
+        db: bool = True,
+        factories: SupportsGetItem[int, str] | None = None,
+        registries: SupportsGetItem[int, str] | None = None,
+        vault: str | None = None,
+        invariant_version: SupportsIndex | None = None,
+    ) -> PoolConstructionRequest:
+        """
+        Build a request from the resolved identity plus the family's hints.
+        """
+    @property
+    def address(self, /) -> str:
+        """
+        The pool address the request builds.
+        """
+    @property
+    def block(self, /) -> int | None:
+        """
+        The snapshot block (`None` = chain head, resolved core-side).
+        """
+    @property
+    def db(self, /) -> bool:
+        """
+        Whether the DB tick-map arm may seed the construction.
+        """
+    @property
+    def factories(self, /) -> list[str]:
+        """
+        V3 factory rungs for the address→identity derivation.
+        """
+    @property
+    def family(self, /) -> str:
+        """
+        The family tag the core dispatches on.
+        """
+    @property
+    def invariant_version(self, /) -> int | None:
+        """
+        The requested invariant version (family-specific).
+        """
+    @property
+    def registries(self, /) -> list[str]:
+        """
+        Curve registry addresses for the LP-token/metapool lookups.
+        """
+    @property
+    def variant(self, /) -> str | None:
+        """
+        The variant the resolver identified.
+        """
+    @property
+    def vault(self, /) -> str | None:
+        """
+        Balancer V2 Vault address (the `weighted`/`balancer_stable` families).
+        """
+
+@final
 class PoolKind:
     """
     The pool-family discriminant crossing the FFI.
@@ -5138,6 +5197,7 @@ __all__ = [
     "PoolAlreadyRegisteredError",
     "PoolBuildDecodeError",
     "PoolBuildRpcError",
+    "PoolConstructionRequest",
     "PoolKind",
     "PoolRegistrationError",
     "PoolTickCoverage",

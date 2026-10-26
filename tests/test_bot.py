@@ -244,10 +244,10 @@ class TestBuildDelegatedIdentityReturnSurface:
         # whose tokens DIFFER from the handle's -> the parity guard must raise.
         handle = _PoolHandle(token0_address="0x" + "a" * 40, token1_address="0x" + "b" * 40)
         py_bot = _ScriptedEngine(
-            construct_pool=lambda address, family, **kwargs: _ConstructionOutcome(
+            construct_pool=lambda request: _ConstructionOutcome(
                 pool_id=7,
                 pool=handle,
-                family=family,
+                family=request.family,
                 variant="uniswap-v2",
                 token0="0x" + "C" * 40,
                 token1="0x" + "D" * 40,
@@ -389,8 +389,18 @@ class TestBuildPoolDbArmEligibility:
 
     @staticmethod
     def _capturing_engine(captured: dict[str, object]) -> _ScriptedEngine:
-        def construct_pool(address: str, family: str, **kwargs: object) -> object:
-            captured.update(kwargs)
+        def construct_pool(request: object) -> object:
+            captured.update(
+                address=request.address,
+                family=request.family,
+                variant=request.variant,
+                block=request.block,
+                db=request.db,
+                factories=request.factories,
+                registries=request.registries,
+                vault=request.vault,
+                invariant_version=request.invariant_version,
+            )
             raise _SeamCaptured
 
         return _ScriptedEngine(construct_pool=construct_pool)

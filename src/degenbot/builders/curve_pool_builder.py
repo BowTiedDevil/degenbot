@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from degenbot.builders.construction import PoolConstructionRequest
 from degenbot.builders.request import BuildPoolRequest, BuildRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
@@ -71,10 +72,12 @@ class CurvePoolBuilder:
         # The ONE core construction entry (its Curve arm) — never a second
         # Python construction path.
         outcome = self._py_bot.construct_pool(
-            pool_address,
-            family="stableswap",
-            block=state_block,
-            registries=list(_REGISTRY_ADDRESSES),
+            PoolConstructionRequest(
+                pool_address,
+                family="stableswap",
+                block=state_block,
+                registries=list(_REGISTRY_ADDRESSES),
+            )
         )
         handle = outcome.pool
 
