@@ -3855,6 +3855,17 @@ class PoolConstructionRequest:
         Curve registry addresses for the LP-token/metapool lookups.
         """
     @staticmethod
+    def unmodeled(
+        address: str, *, block: SupportsIndex | None = None, db: bool = True
+    ) -> PoolConstructionRequest:
+        """
+        A positively identified pool whose shape no construction arm models —
+        a Balancer Vault pool that is neither weighted nor stable (a linear
+        pool, a boosted pool's linear constituent, a gyro/quant-amm shape).
+        The request exists so the refusal reaches the seam under THIS
+        identity's own name, never another family's builder failure.
+        """
+    @staticmethod
     def v2(
         address: str, *, block: SupportsIndex | None = None, db: bool = True
     ) -> PoolConstructionRequest:

@@ -48,6 +48,11 @@ def request_for(
             or the family has no construction arm.
 
     """
+    if family is PoolFamily.UNMODELED:
+        # The refusal-only identity: the request reaches the seam so the
+        # refusal names this family, never another arm's builder failure.
+        return PoolConstructionRequest.unmodeled(address, block=block, db=db)
+
     if family is PoolFamily.CONSTANT_PRODUCT:
         if variant == "aerodrome":
             return PoolConstructionRequest.aerodrome_v2(address, block=block, db=db)
@@ -75,7 +80,7 @@ def request_for(
         return PoolConstructionRequest.curve(address, [*registries], block=block, db=db)
 
     msg = f"construct_pool: the {family.value!r} family has no construction arm"
-    raise DegenbotValueError(message=msg)
+    raise DegenbotValueError(message=msg)  # pragma: no cover - exhaustiveness guard
 
 
 def _required_vault(family: PoolFamily, vault: str | None) -> str:

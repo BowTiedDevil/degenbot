@@ -1097,6 +1097,27 @@ impl PyPoolConstructionRequest {
         )
     }
 
+    /// A positively identified pool whose shape no construction arm models —
+    /// a Balancer Vault pool that is neither weighted nor stable (a linear
+    /// pool, a boosted pool's linear constituent, a gyro/quant-amm shape).
+    /// The request exists so the refusal reaches the seam under THIS
+    /// identity's own name, never another family's builder failure.
+    #[staticmethod]
+    #[pyo3(signature = (address, *, block=None, db=true))]
+    fn unmodeled(address: &str, block: Option<u64>, db: bool) -> Self {
+        Self::make(
+            address,
+            "unmodeled",
+            None,
+            block,
+            db,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
     /// A Balancer V2 weighted pool — `vault` is required, so it cannot be
     /// omitted at construction.
     #[staticmethod]
