@@ -3608,6 +3608,12 @@ class Pool:
         Number of reorg journal deltas for this registered pool.
         """
     @property
+    def lp_fee(self, /) -> int:
+        """
+        The static pool-key fee (the LP fee — dynamic-fee pools are
+        admission-rejected and never registered). `0` if not a V4 pool.
+        """
+    @property
     def pool_family(self, /) -> str:
         """
         The pool-family tag for this handle's registered pool (`"v2"`,
@@ -3635,6 +3641,13 @@ class Pool:
         """
         Pool manager contract address (EIP-55 checksummed hex). Empty string if
         not a V4 pool.
+        """
+    @property
+    def protocol_fee(self, /) -> int:
+        """
+        The packed `slot0.protocolFee` the core's state machine tracks
+        (`zero_for_one` in the low 12 bits, `one_for_zero` in the high 12).
+        `0` if not a V4 pool.
         """
     def refresh_via(self, /, io: BotIo, block_number: Any | None = None) -> bool:
         """
@@ -3700,6 +3713,14 @@ class Pool:
         """
         Camelot solidly-stable strategy flag. `false` for all non-Camelot V2
         and for non-V2 `pool_ids`.
+        """
+    @property
+    def state_view_address(self, /) -> str:
+        """
+        The `StateView` contract this pool's manager registered (EIP-55
+        checksummed hex). Empty string if not a V4 pool or no state view was
+        registered for its manager — the companion's `from_handle` reads it
+        so no builder-supplied override threads the value (ADR-085 D4).
         """
     def structure(self, /) -> str:
         """

@@ -13,9 +13,10 @@ There is no `_state_mgr` / `_state_cache` / `state_cache_depth`: the
 `StateCache` temporal-navigation layer lives in Rust (journal +
 discard/restore).
 
-V4-specific identity (pool_id, pool_manager_address, pool_key, hook_address,
-protocol_fee, lp_fee, state_view_address) stays Python-side — matches V3
-keeping tokens/factory/fee Python-side. The hook admission floor (reject
+V4-specific identity (pool_id, pool_manager_address, pool_key, hook_address)
+stays Python-side — matches V3 keeping tokens/factory/fee Python-side; the
+fee/state-view values read off the handle (self-describing, ADR-085 D4). The
+hook admission floor (reject
 amount-modifying hooks + dynamic fees) lives in Rust
 (`BotState::register_v4_pool`), surfaced at `Bot.register_v4_pool`, so the
 companion never holds a hooked pool.
@@ -224,9 +225,9 @@ class UniswapV4Pool(
         immutable registration metadata as ``V4PoolIdentity``; this companion
         reads both through ``self._py_pool``.
 
-        Protocol fee / LP fee / state_view_address are builder-supplied
-        values the seam defaults; the builder overrides them after
-        ``from_handle`` (matches V3's deployer/init_hash override).
+        Protocol fee / LP fee / state_view_address are read off the handle
+        like every identity field (the handle is self-describing, ADR-085
+        D4) — no builder-supplied override threads them.
 
         Returns:
             A ``cls`` instance wrapping ``py_pool``.
@@ -298,10 +299,19 @@ class UniswapV4Pool(
 
         self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, id={to_0x_hex(self.pool_id)})"  # ruff:ignore[line-too-long]
 
-        # Protocol fee / LP fee / initial state block — builder-supplied values
-        # the seam defaults; the builder overrides after from_handle.
-        self.protocol_fee = ProtocolFee(zero_for_one=0, one_for_zero=0)
-        self.lp_fee = self.pool_key.fee
+        # Protocol fee / LP fee / state view — read off the SAME handle as
+        # every identity field (the handle is self-describing: the core's
+        # state machine owns the packed slot0.protocolFee, the pool key owns
+        # the static LP fee, and the manager's state-view registration owns
+        # the StateView address).
+        packed_protocol_fee = py_pool.protocol_fee
+        self.protocol_fee = ProtocolFee(
+            zero_for_one=packed_protocol_fee & 0xFFF,
+            one_for_zero=packed_protocol_fee >> 12,
+        )
+        self.lp_fee = py_pool.lp_fee
+        state_view = py_pool.state_view_address
+        self._state_view_address = get_checksum_address(state_view) if state_view else ZERO_ADDRESS
         self._initial_state_block = self._py_pool.concentrated_liquidity().update_block
 
         return self

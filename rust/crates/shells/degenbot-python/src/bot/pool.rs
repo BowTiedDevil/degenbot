@@ -1524,6 +1524,45 @@ impl PyLiquidityPool {
         })
     }
 
+    /// The `StateView` contract this pool's manager registered (EIP-55
+    /// checksummed hex). Empty string if not a V4 pool or no state view was
+    /// registered for its manager — the companion's `from_handle` reads it
+    /// so no builder-supplied override threads the value (ADR-085 D4).
+    #[getter]
+    fn state_view_address(&self, py: Python<'_>) -> String {
+        self.with_state(py, |core| {
+            core.state_view_for_pool(self.pool_id)
+                .map(|a| address_utils::address_to_checksum_string(&a))
+                .unwrap_or_default()
+        })
+    }
+
+    /// The packed `slot0.protocolFee` the core's state machine tracks
+    /// (`zero_for_one` in the low 12 bits, `one_for_zero` in the high 12).
+    /// `0` if not a V4 pool.
+    #[getter]
+    fn protocol_fee(&self, py: Python<'_>) -> u32 {
+        self.with_state(py, |core| {
+            let identity =
+                core.pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(self.pool_id);
+            identity
+                .and_then(|i| core.try_registered(i.pool_manager, &i.pool_id))
+                .map(|registered| registered.protocol_fee)
+                .unwrap_or_default()
+        })
+    }
+
+    /// The static pool-key fee (the LP fee — dynamic-fee pools are
+    /// admission-rejected and never registered). `0` if not a V4 pool.
+    #[getter]
+    fn lp_fee(&self, py: Python<'_>) -> u32 {
+        self.with_state(py, |core| {
+            core.pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(self.pool_id)
+                .map(|i| i.pool_key.fee)
+                .unwrap_or_default()
+        })
+    }
+
     // --- Aerodrome V2 identity getters (ADR-005 Aerodrome state port) ---
 
     /// Aerodrome V2 Solidly stable-invariant flag. `false` for volatile mode
