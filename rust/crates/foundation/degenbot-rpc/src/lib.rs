@@ -38,4 +38,4 @@ pub mod txpool_feed;
 
 pub use fees::{fetch_priority_fee_percentiles, BlockPriorityFees};
 pub use head_watch::{HeadWatch, HeadWatchConfig, HeadWatchError};
-pub use tick_bootstrap::AlloyTickBootstrapRpc;
+pub use tick_bootstrap::AlloyTickWordSource;

@@ -59,10 +59,11 @@ use degenbot_pools::state::v3_state::{
     v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, SimulateSwapError, V3PoolState,
     V3SwapOutcome,
 };
-use degenbot_pools::TickBootstrapRpc;
+use degenbot_pools::TickWordKey;
+use degenbot_pools::TickWordSource;
 use degenbot_rpc::abi::fetch_v3_slot0_liquidity;
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_rpc::AlloyTickBootstrapRpc;
+use degenbot_rpc::AlloyTickWordSource;
 
 /// Hardcoded fixture from the captured `DEGENBOT_SIM_EXIT_ON_FAIL=1` trap
 /// (`logs/bot_run.log` block 25647669, path 7724). Pool `0x57D7…dF80`,
@@ -76,13 +77,13 @@ const AMOUNT_IN: u128 = 50_868_891_135; // hop[0] matched output → hop[1] amou
 const CAPTURED_ACTUAL: u128 = 150_836_781_502; // revm sim measured hop[1] output
 const CAPTURED_PREDICTED: u128 = 150_836_781_515; // solver hop_outputs[1] (+13)
 
-/// `TickWordFetcher` backed by `AlloyTickBootstrapRpc` (address-keyed bootstrap
+/// `TickWordFetcher` backed by `AlloyTickWordSource` (address-keyed bootstrap
 /// impl). The miss-path trait passes `word`; this picks a tick landing in that
 /// word and delegates to the bootstrap (which recomputes the word internally).
 #[derive(Debug)]
 struct BootstrapFetcher {
     address: Address,
-    rpc: Arc<AlloyTickBootstrapRpc>,
+    source: Arc<AlloyTickWordSource>,
 }
 
 impl TickWordFetcher for BootstrapFetcher {
@@ -92,27 +93,22 @@ impl TickWordFetcher for BootstrapFetcher {
         word: i32,
         block: u64,
     ) -> Result<FetchedTickWord, FetchTickWordError> {
-        // tick whose word-position == `word`: `word * 256 * spacing`.
-        // `tick.div_euclid(spacing) >> 8 == word` holds for both signs
-        // (arithmetic shift; exact divisibility by spacing).
-        let tick = word
-            .checked_mul(256)
-            .and_then(|t| t.checked_mul(TICK_SPACING))
-            .ok_or(FetchTickWordError::OutOfRange)?;
-        let result = self
-            .rpc
-            .bootstrap_v3_tick_word(&self.address.to_string(), tick, TICK_SPACING, block)
-            .map_err(|_| FetchTickWordError::FetchFailed)?;
-        Ok(match result {
-            None => FetchedTickWord {
+        let key = TickWordKey::V3 {
+            address: self.address,
+            tick_spacing: TICK_SPACING,
+        };
+        match self
+            .source
+            .fetch_tick_word(&key, word, block)
+            .map_err(|_| FetchTickWordError::FetchFailed)?
+        {
+            None => Ok(FetchedTickWord::new(word, HashMap::new())),
+            Some(fw) => Ok(FetchedTickWord {
                 word,
-                ticks: HashMap::new(),
-            },
-            Some(b) => FetchedTickWord {
-                word: b.word,
-                ticks: b.ticks,
-            },
-        })
+                ticks: fw.ticks,
+                bitmap: fw.bitmap,
+            }),
+        }
     }
 }
 
@@ -177,10 +173,10 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
     eprintln!("block={block} sqrtPriceX96={sqrt_price_x96} tick={tick} liquidity={liquidity}");
 
     // 2. Build a Sparse V3PoolState with the bootstrap-backed fetcher.
-    let bootstrap = Arc::new(AlloyTickBootstrapRpc::new(Arc::clone(&provider)));
+    let bootstrap = Arc::new(AlloyTickWordSource::new(Arc::clone(&provider)));
     let fetcher: Arc<dyn TickWordFetcher> = Arc::new(BootstrapFetcher {
         address: pool,
-        rpc: Arc::clone(&bootstrap),
+        source: Arc::clone(&bootstrap),
     });
     let params = RegisterV3PoolParams {
         address: pool,

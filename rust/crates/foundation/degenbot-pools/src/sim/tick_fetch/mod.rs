@@ -1,21 +1,21 @@
-//! Fetch-callback seams for sparse tick-map reads.
-//!
-//! Two sibling traits serve two distinct callsites, kept separate for now
-//! (consolidation is a follow-up):
-//!
-//! - [`miss::TickWordFetcher`] — the **live-pump miss path** during swap
-//!   simulation (`v3_simulate_swap` / `v4_simulate_swap` →
-//!   `MissingTickWord`). Keyed by the internal `pool_id` (already-registered
-//!   pools). Owns the `FetchedTickWord` + `FetchTickWordError` value types.
-//! - [`bootstrap::TickBootstrapRpc`] — the **registration-time** Chain arm of
-//!   `assemble_{v3,v4}_tick_map` (the Store → Db → Chain precedence chain).
-//!   Keyed by pool address (V3) or pool-manager + pool-id (V4) (the pool's
-//!   identity is known BEFORE `register_*_pool` assigns the internal
-//!   `pool_id`). Owns the `BootstrapTickWord` + `BootstrapTickError` value
-//!   types.
+//! The tick-word read seam for sparse tick-map reads (GLOSSARY
+//! **Tick-word source**).
 
-pub mod bootstrap;
+//! ONE trait serves both callsites (the two-trait stopgap is gone):
+
+//! - [`source::TickWordSource`] — the **registration-time Chain arm** of
+//!   `assemble_{v3,v4}_tick_map` (the Store -> Db -> Chain precedence chain)
+//!   AND the **live-pump miss path** during swap simulation
+//!   (`v3_simulate_swap` / `v4_simulate_swap` -> `MissingTickWord`). The
+//!   read is addressed by a [`source::TickWordKey`] (the pool's read
+//!   descriptor) plus the word position; both call sites hold the
+//!   descriptor (the registration arm from the pool being assembled, the
+//!   miss path from the registered pool's own identity).
+
 pub mod miss;
 
-pub use bootstrap::{BootstrapTickError, BootstrapTickWord, TickBootstrapRpc};
-pub use miss::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+pub mod source;
+
+pub use miss::{FetchTickWordError, TickWordFetcher};
+
+pub use source::{FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource};

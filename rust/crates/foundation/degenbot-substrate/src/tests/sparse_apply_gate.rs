@@ -107,6 +107,7 @@ impl TickWordFetcher for GateFetcher {
         Ok(FetchedTickWord {
             word,
             ticks: self.ticks.iter().cloned().collect(),
+            bitmap: None,
         })
     }
 }

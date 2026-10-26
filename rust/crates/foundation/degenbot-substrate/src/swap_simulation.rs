@@ -1122,6 +1122,7 @@ mod tests {
                 Ok(::degenbot_pools::sim::tick_fetch::FetchedTickWord {
                     word,
                     ticks: HashMap::new(),
+                    bitmap: None,
                 })
             }
         }

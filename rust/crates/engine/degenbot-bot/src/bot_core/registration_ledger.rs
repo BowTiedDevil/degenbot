@@ -1999,7 +1999,7 @@ mod tests {
     use degenbot_core::hex_utils::HexError;
     use degenbot_db::error::DbError;
     use degenbot_pools::sim::registration_refusal::SpecRefusal;
-    use degenbot_pools::sim::tick_fetch::BootstrapTickError;
+    use degenbot_pools::sim::tick_fetch::TickWordFetchError;
     use degenbot_pools::state::spec_bounds::{SpecValue, SpecViolation};
     use degenbot_substrate::tick_assembly::TickMapAssemblyError;
 
@@ -2627,7 +2627,7 @@ mod tests {
             ),
             (
                 PoolBuilderError::TickAssembly(TickMapAssemblyError::Chain(
-                    BootstrapTickError::Rpc,
+                    TickWordFetchError::FetchFailed,
                 )),
                 |failure| matches!(failure, BuildFailure::TickAssembly(_)),
             ),

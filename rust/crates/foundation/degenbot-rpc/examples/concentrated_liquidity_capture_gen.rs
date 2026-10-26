@@ -61,10 +61,11 @@ use degenbot_pools::solve::concentrated_liquidity::IntV3TickRangeSequence;
 use degenbot_pools::state::v3_state::{
     v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, SimulateSwapError, V3PoolState,
 };
-use degenbot_pools::TickBootstrapRpc;
+use degenbot_pools::TickWordKey;
+use degenbot_pools::TickWordSource;
 use degenbot_rpc::abi::fetch_v3_slot0_liquidity;
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_rpc::AlloyTickBootstrapRpc;
+use degenbot_rpc::AlloyTickWordSource;
 use serde_json::{json, Value};
 
 const MAX_FETCHES: usize = 320; // per-pool tick-word fetch cap, overridable
@@ -137,7 +138,7 @@ const POOLS: &[Pool] = &[
 #[derive(Debug)]
 struct BootstrapFetcher {
     address: Address,
-    rpc: Arc<AlloyTickBootstrapRpc>,
+    source: Arc<AlloyTickWordSource>,
 }
 impl TickWordFetcher for BootstrapFetcher {
     fn fetch_missing_tick_word(
@@ -146,23 +147,22 @@ impl TickWordFetcher for BootstrapFetcher {
         word: i32,
         block: u64,
     ) -> Result<FetchedTickWord, FetchTickWordError> {
-        let tick = word
-            .checked_mul(256 * 10)
-            .ok_or(FetchTickWordError::OutOfRange)?;
-        let res = self
-            .rpc
-            .bootstrap_v3_tick_word(&self.address.to_string(), tick, 10, block)
-            .map_err(|_| FetchTickWordError::FetchFailed)?;
-        Ok(match res {
-            None => FetchedTickWord {
+        let key = TickWordKey::V3 {
+            address: self.address,
+            tick_spacing: 10,
+        };
+        match self
+            .source
+            .fetch_tick_word(&key, word, block)
+            .map_err(|_| FetchTickWordError::FetchFailed)?
+        {
+            None => Ok(FetchedTickWord::new(word, HashMap::new())),
+            Some(fw) => Ok(FetchedTickWord {
                 word,
-                ticks: HashMap::new(),
-            },
-            Some(b) => FetchedTickWord {
-                word: b.word,
-                ticks: b.ticks,
-            },
-        })
+                ticks: fw.ticks,
+                bitmap: fw.bitmap,
+            }),
+        }
     }
 }
 fn addr(s: &str) -> Address {
@@ -230,7 +230,7 @@ fn main() -> ExitCode {
     let provider = tokio::runtime::Runtime::new()
         .expect("rt")
         .block_on(async { Arc::new(AlloyProvider::new(&rpc, 10).await.expect("p")) });
-    let bootstrap = Arc::new(AlloyTickBootstrapRpc::new(Arc::clone(&provider)));
+    let bootstrap = Arc::new(AlloyTickWordSource::new(Arc::clone(&provider)));
 
     let mut seqs: Vec<(usize, IntV3TickRangeSequence)> = Vec::new();
     for (i, pool) in POOLS.iter().enumerate() {
@@ -239,7 +239,7 @@ fn main() -> ExitCode {
         let p = addr(a);
         let fetcher: Arc<dyn TickWordFetcher> = Arc::new(BootstrapFetcher {
             address: p,
-            rpc: Arc::clone(&bootstrap),
+            source: Arc::clone(&bootstrap),
         });
         let params = RegisterV3PoolParams {
             address: p,

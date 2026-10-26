@@ -7,8 +7,8 @@
 //! silently producing a wrong amount, the calc path delegates the recovery to
 //! a [`TickWordFetcher`]: on a miss it calls the fetcher for the missing
 //! `word`, merges the result into the pool state (growing `known_bitmap_words`),
-//! and retries — mirroring the Python companion's `MissingLiquidityData` →
-//! `_tick_data_fetcher` → retry loop.
+//! and retries — mirroring the Python companion's `MissingLiquidityData` ->
+//! `_tick_data_fetcher` -> retry loop.
 //!
 //! The fetcher *returns* the fetched data (it does not write back into
 //! `BotState` itself), so the calc holds no lock across the fetch — the Rust
@@ -22,39 +22,18 @@
 //! `V4PoolState`), which hold an `Option<Arc<dyn TickWordFetcher>>` field — so
 //! the trait type must be visible to this crate. Following the `std::io::Read`
 //! precedent (defining an interface pulls no I/O), the trait *definition* +
-//! its value-only error/return types live here, while the RPC/DB
+//! its value-only error type live here, while the RPC/DB
 //! *implementations* (and the `PyTickWordFetcher` `PyO3` adapter) live in
 //! `degenbot-bot` / `degenbot-python`.
 //!
-//! ## Relationship to `super::bootstrap::TickBootstrapRpc`
+//! ## Relationship to [`super::source::TickWordSource`]
 //!
-//! The bootstrap trait (sibling module) serves the **registration-time** Chain
-//! arm of `assemble_*_tick_map` — keyed by *address* (the pool's contract
-//! address is known BEFORE `register_*_pool` assigns the internal `pool_id`).
-//! This miss-path trait serves the **live-pump miss-detection path** during
-//! swap simulation — keyed by *`pool_id`* (already-registered pools). The two
-//! traits share the same choreography (compute word → fetch bitmap → enumerate
-//! bits → fetch ticks) but differ in key type and call site. Keep two
-//! traits for now; consolidation is a follow-up.
+//! This trait is the C2-transition shim over the unified source seam: it
+//! adapts the miss-path call convention (bound fetcher, internal `pool_id`)
+//! onto [`FetchedTickWord`]. The consolidation onto one
+//! [`TickWordSource`] deletes this trait and the `pool_id` plumbing.
 
-use hashbrown::HashMap;
-
-use crate::TickInfo;
-
-/// A fetched tick-bitmap word's data, returned by [`TickWordFetcher`].
-///
-/// `ticks` may be empty — a fetched word whose bitmap is all-zero has no
-/// initialized ticks, but the `word` is nonetheless now "known" (the caller
-/// records it in `known_bitmap_words` so it is not re-fetched). This mirrors
-/// the Python bitmap-store rule: in sparse mode a region is unknown unless its
-/// word key is in the lazy-loaded map, regardless of the bitmap value.
-#[derive(Debug, Clone)]
-pub struct FetchedTickWord {
-    /// The tick-bitmap word position that was fetched (`tick_position(tick.div_euclid(spacing))`).
-    pub word: i32,
-    /// The initialized ticks within this word (`{tick: TickInfo}`). May be empty.
-    pub ticks: HashMap<i32, TickInfo>,
-}
+use super::source::FetchedTickWord;
 
 /// Why a [`TickWordFetcher`] could not fulfil a missing-word fetch.
 #[derive(Debug, Clone, PartialEq, Eq)]

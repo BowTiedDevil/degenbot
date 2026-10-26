@@ -1,24 +1,22 @@
-//! Pure-Rust `TickBootstrapRpc` impl backed by an [`AlloyProvider`].
+//! Pure-Rust [`TickWordSource`] impl backed by an [`AlloyProvider`].
 //!
 //! This is the standalone-consumer path: a `cargo add degenbot` Rust consumer
 //! passes this impl to `assemble_{v3,v4}_tick_map`'s `chain: Option<&dyn
-//! TickBootstrapRpc>` parameter; no Python, no `PyBotIo`, no GIL. The
-//! `degenbot-python` wrapper has its own pyo3 adapter (`PyTickBootstrapRpc`,
-//! lives in `degenbot-python/src/bot/py_bot_io.rs`'s sibling `tick_bootstrap`
-//! module) that wraps a `PyBotIo` and delegates per-call via GIL re-entry.
+//! TickWordSource>` parameter; no Python, no `PyBotIo`, no GIL. The
+//! `degenbot-python` shell constructs the same impl over a `PyBotIo`'s native
+//! provider (`make_tick_bootstrap_rpc`).
 //!
 //! ## Choreography
 //!
-//! Both methods port the Python Branch 3 sparse-RPC loop verbatim:
-//! 1. Compute the tick-bitmap word via
-//!    [`degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position`].
-//! 2. `eth_call` the bitmap (`tickBitmap(int16)` for V3; `getTickBitmap(bytes32,int16)` for V4).
-//! 3. If the bitmap is zero → return `Ok(None)` (no initialized ticks in this
+//! The read ports the Python Branch 3 sparse-RPC loop verbatim:
+//! 1. `eth_call` the word's bitmap (`tickBitmap(int16)` for V3;
+//!    `getTickBitmap(bytes32,int16)` for V4).
+//! 2. If the bitmap is zero → return `Ok(None)` (no initialized ticks in this
 //!    word — matches the Python "don't seed empty" rule).
-//! 4. Enumerate the 256 bits; for each set bit, `eth_call` the tick's liquidity
+//! 3. Enumerate the 256 bits; for each set bit, `eth_call` the tick's liquidity
 //!    (`ticks(int24)` for V3; `getTickLiquidity(bytes32,int24)` for V4) and
 //!    decode into `TickInfo { liquidity_gross, liquidity_net, block }`.
-//! 5. Return `Ok(Some(BootstrapTickWord { word, ticks }))`.
+//! 4. Return `Ok(Some(FetchedTickWord { word, ticks, bitmap }))`.
 //!
 //! The choreography is identical to the Python Branch 3 path in
 //! `src/degenbot/builders/v3_pool_builder.py::V3PoolBuilder.build` and its V4
@@ -41,175 +39,150 @@
 use hashbrown::HashMap;
 use std::sync::Arc;
 
-use alloy::primitives::Address;
 use degenbot_core::runtime::get_runtime;
-use degenbot_pools::sim::tick_fetch::{BootstrapTickError, BootstrapTickWord, TickBootstrapRpc};
+use degenbot_pools::sim::tick_fetch::{
+    FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource,
+};
 use degenbot_pools::TickInfo;
 
 use crate::abi::{fetch_tick_bitmap, fetch_tick_data, fetch_v4_tick_bitmap, fetch_v4_tick_data};
 use crate::provider::AlloyProvider;
 
-/// `TickBootstrapRpc` impl backed by an [`AlloyProvider`].
+/// [`TickWordSource`] impl backed by an [`AlloyProvider`].
 ///
 /// Holds the provider by value (cloning is cheap — inner is `Arc`-shared) so
 /// the struct is `Send + Sync` (the trait bounds). Construct via
-/// [`AlloyTickBootstrapRpc::new`]. Manual `Debug` impl because `AlloyProvider`
+/// [`AlloyTickWordSource::new`]. Manual `Debug` impl because `AlloyProvider`
 /// itself doesn't impl `Debug` (its inner `dyn Provider<Ethereum>` doesn't).
 #[derive(Clone)]
-pub struct AlloyTickBootstrapRpc {
+pub struct AlloyTickWordSource {
     provider: Arc<AlloyProvider>,
 }
 
-impl std::fmt::Debug for AlloyTickBootstrapRpc {
+impl std::fmt::Debug for AlloyTickWordSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AlloyTickBootstrapRpc")
+        f.debug_struct("AlloyTickWordSource")
             .field("provider", &"Arc<AlloyProvider>")
             .finish()
     }
 }
 
-impl AlloyTickBootstrapRpc {
-    /// Construct a new bootstrap RPC impl wrapping the given provider.
+impl AlloyTickWordSource {
+    /// Construct a new tick-word source wrapping the given provider.
     #[must_use]
     pub fn new(provider: Arc<AlloyProvider>) -> Self {
         Self { provider }
     }
 }
 
-impl TickBootstrapRpc for AlloyTickBootstrapRpc {
-    fn bootstrap_v3_tick_word(
+impl TickWordSource for AlloyTickWordSource {
+    fn fetch_tick_word(
         &self,
-        pool_address: &str,
-        tick: i32,
-        tick_spacing: i32,
+        key: &TickWordKey,
+        word: i32,
         block: u64,
-    ) -> Result<Option<BootstrapTickWord>, BootstrapTickError> {
-        // Parse the address outside the runtime (no async needed).
-        let pool = parse_address(pool_address)?;
+    ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
+        // The Solidity bitmap selector takes an int16; a word outside that
+        // range cannot name a real bitmap slot.
+        let word_i16 = i16::try_from(word).map_err(|_| TickWordFetchError::OutOfRange)?;
 
         let provider = Arc::clone(&self.provider);
         get_runtime().block_on(async move {
-            // 1. Compute the tick-bitmap word containing `tick`.
-            let (word, _) = degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
-                tick,
-                tick_spacing,
-            );
-            // The Solidity `tickBitmap(int16)` selector takes an int16; the
-            // helper's `word: i32` is guaranteed to fit in int16 for any valid
-            // V3 tick (tick range is int24, word = tick.div_euclid(spacing) >> 8).
-            #[expect(clippy::expect_used)] // V3 tick word always fits in int16
-            let word_i16 = i16::try_from(word).expect("tick word fits in int16");
+            match *key {
+                TickWordKey::V3 {
+                    address,
+                    tick_spacing,
+                } => {
+                    let bitmap = fetch_tick_bitmap(&provider, &address, word_i16, Some(block))
+                        .await
+                        .map_err(map_provider_err)?;
 
-            // 2. Fetch the bitmap for this word.
-            let bitmap = fetch_tick_bitmap(&provider, &pool, word_i16, Some(block))
-                .await
-                .map_err(map_provider_err)?;
+                    if bitmap.is_zero() {
+                        return Ok(None);
+                    }
 
-            // 3. Zero bitmap → no initialized ticks in this word.
-            if bitmap.is_zero() {
-                return Ok(None);
-            }
+                    let mut ticks: HashMap<i32, TickInfo> = HashMap::new();
+                    for i in 0..=255u8 {
+                        if bitmap.bit(i.into()) {
+                            let active_tick = ((word << 8) + i32::from(i)) * tick_spacing;
+                            let (liquidity_gross, liquidity_net) =
+                                fetch_tick_data(&provider, &address, active_tick, Some(block))
+                                    .await
+                                    .map_err(map_provider_err)?;
+                            ticks.insert(
+                                active_tick,
+                                TickInfo {
+                                    liquidity_gross,
+                                    liquidity_net,
+                                    block,
+                                },
+                            );
+                        }
+                    }
 
-            // 4. Enumerate set bits + fetch each tick's liquidity.
-            let mut ticks: HashMap<i32, TickInfo> = HashMap::new();
-            for i in 0..=255u8 {
-                if bitmap.bit(i.into()) {
-                    let active_tick = ((word << 8) + i32::from(i)) * tick_spacing;
-                    let (liquidity_gross, liquidity_net) =
-                        fetch_tick_data(&provider, &pool, active_tick, Some(block))
-                            .await
-                            .map_err(map_provider_err)?;
-                    ticks.insert(
-                        active_tick,
-                        TickInfo {
-                            liquidity_gross,
-                            liquidity_net,
-                            block,
-                        },
-                    );
+                    Ok(Some(FetchedTickWord {
+                        bitmap: Some(bitmap),
+                        word,
+                        ticks,
+                    }))
                 }
-            }
-
-            Ok(Some(BootstrapTickWord {
-                bitmap,
-                word,
-                ticks,
-            }))
-        })
-    }
-
-    fn bootstrap_v4_tick_word(
-        &self,
-        state_view: &str,
-        pool_id: &[u8; 32],
-        tick: i32,
-        tick_spacing: i32,
-        block: u64,
-    ) -> Result<Option<BootstrapTickWord>, BootstrapTickError> {
-        let state_view_addr = parse_address(state_view)?;
-
-        let provider = Arc::clone(&self.provider);
-        get_runtime().block_on(async move {
-            let (word, _) = degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
-                tick,
-                tick_spacing,
-            );
-            #[expect(clippy::expect_used)] // V3 tick word always fits in int16
-            let word_i16 = i16::try_from(word).expect("tick word fits in int16");
-
-            let bitmap =
-                fetch_v4_tick_bitmap(&provider, &state_view_addr, pool_id, word_i16, Some(block))
-                    .await
-                    .map_err(map_provider_err)?;
-
-            if bitmap.is_zero() {
-                return Ok(None);
-            }
-
-            let mut ticks: HashMap<i32, TickInfo> = HashMap::new();
-            for i in 0..=255u8 {
-                if bitmap.bit(i.into()) {
-                    let active_tick = ((word << 8) + i32::from(i)) * tick_spacing;
-                    let (liquidity_gross, liquidity_net) = fetch_v4_tick_data(
+                TickWordKey::V4 {
+                    state_view,
+                    ref pool_id,
+                    tick_spacing,
+                } => {
+                    let bitmap = fetch_v4_tick_bitmap(
                         &provider,
-                        &state_view_addr,
+                        &state_view,
                         pool_id,
-                        active_tick,
+                        word_i16,
                         Some(block),
                     )
                     .await
                     .map_err(map_provider_err)?;
-                    ticks.insert(
-                        active_tick,
-                        TickInfo {
-                            liquidity_gross,
-                            liquidity_net,
-                            block,
-                        },
-                    );
+
+                    if bitmap.is_zero() {
+                        return Ok(None);
+                    }
+
+                    let mut ticks: HashMap<i32, TickInfo> = HashMap::new();
+                    for i in 0..=255u8 {
+                        if bitmap.bit(i.into()) {
+                            let active_tick = ((word << 8) + i32::from(i)) * tick_spacing;
+                            let (liquidity_gross, liquidity_net) = fetch_v4_tick_data(
+                                &provider,
+                                &state_view,
+                                pool_id,
+                                active_tick,
+                                Some(block),
+                            )
+                            .await
+                            .map_err(map_provider_err)?;
+                            ticks.insert(
+                                active_tick,
+                                TickInfo {
+                                    liquidity_gross,
+                                    liquidity_net,
+                                    block,
+                                },
+                            );
+                        }
+                    }
+
+                    Ok(Some(FetchedTickWord {
+                        bitmap: Some(bitmap),
+                        word,
+                        ticks,
+                    }))
                 }
             }
-
-            Ok(Some(BootstrapTickWord {
-                bitmap,
-                word,
-                ticks,
-            }))
         })
     }
 }
 
-/// Map a hex-string pool address into `alloy::primitives::Address`. The pool's
-/// contract address comes from Python's `ChecksummedAddress` / `str` form in the
-/// pyo3 adapter path; the standalone Rust consumer passes the same hex string.
-fn parse_address(s: &str) -> Result<Address, BootstrapTickError> {
-    s.parse::<Address>()
-        .map_err(|_| BootstrapTickError::InvalidReturn)
-}
-
-/// Map a `ProviderError` to a `BootstrapTickError`. RPC failures (transport,
-/// revert, timeout) → [`BootstrapTickError::Rpc`]; decode failures →
-/// [`BootstrapTickError::InvalidReturn`]. Both are explicitly bucketed — a
+/// Map a `ProviderError` to a [`TickWordFetchError`]. RPC failures (transport,
+/// revert, timeout) → [`TickWordFetchError::FetchFailed`]; decode failures →
+/// [`TickWordFetchError::InvalidReturn`]. Both are explicitly bucketed — a
 /// caller that wants to retry only on RPC errors can match on the variant.
 ///
 /// Takes the error by value to match the `Result::map_err` callsite contract
@@ -218,11 +191,11 @@ fn parse_address(s: &str) -> Result<Address, BootstrapTickError> {
     clippy::needless_pass_by_value,
     reason = "map_err passes the error by value"
 )]
-fn map_provider_err(err: degenbot_core::errors::ProviderError) -> BootstrapTickError {
+fn map_provider_err(err: degenbot_core::errors::ProviderError) -> TickWordFetchError {
     use degenbot_core::errors::ProviderError;
     match err {
-        ProviderError::DecodingError { .. } => BootstrapTickError::InvalidReturn,
-        _ => BootstrapTickError::Rpc,
+        ProviderError::DecodingError { .. } => TickWordFetchError::InvalidReturn,
+        _ => TickWordFetchError::FetchFailed,
     }
 }
 
@@ -231,7 +204,7 @@ fn map_provider_err(err: degenbot_core::errors::ProviderError) -> BootstrapTickE
 mod tests {
     use super::*;
     use crate::offline::OfflineProvider;
-    use alloy::primitives::{address, U128, U256};
+    use alloy::primitives::{address, Address, U128, U256};
     use serde_json::json;
 
     /// The V3 pool address used in the recorded-call fixtures.
@@ -336,10 +309,17 @@ mod tests {
 
         let provider = v3_offline_provider(0, bitmap, &[(10, 1_000, -500), (20, 2_000, 750)], 100);
 
-        let rpc = AlloyTickBootstrapRpc::new(Arc::new(provider));
+        let rpc = AlloyTickWordSource::new(Arc::new(provider));
 
         let result = rpc
-            .bootstrap_v3_tick_word(&V3_POOL.to_string(), 10, 1, 100)
+            .fetch_tick_word(
+                &TickWordKey::V3 {
+                    address: V3_POOL,
+                    tick_spacing: 1,
+                },
+                0,
+                100,
+            )
             .expect("ok");
 
         let fetched = result.expect("non-zero bitmap → Some");
@@ -360,10 +340,17 @@ mod tests {
     #[test]
     fn v3_all_zero_bitmap_returns_none() {
         let provider = v3_offline_provider(0, U256::ZERO, &[], 100);
-        let rpc = AlloyTickBootstrapRpc::new(Arc::new(provider));
+        let rpc = AlloyTickWordSource::new(Arc::new(provider));
 
         let result = rpc
-            .bootstrap_v3_tick_word(&V3_POOL.to_string(), 10, 1, 100)
+            .fetch_tick_word(
+                &TickWordKey::V3 {
+                    address: V3_POOL,
+                    tick_spacing: 1,
+                },
+                0,
+                100,
+            )
             .expect("ok");
 
         assert!(result.is_none(), "all-zero bitmap → None");
@@ -373,14 +360,21 @@ mod tests {
     fn v3_unrecorded_tick_bitmap_returns_rpc_err() {
         // Empty recorded data → every eth_call returns "unrecorded".
         let provider = v3_offline_provider(0, U256::ZERO, &[], 100);
-        let rpc = AlloyTickBootstrapRpc::new(Arc::new(provider));
+        let rpc = AlloyTickWordSource::new(Arc::new(provider));
 
         // Use a different word position so the bitmap lookup misses the (empty)
         // recorded data.
         let err = rpc
-            .bootstrap_v3_tick_word(&V3_POOL.to_string(), 27_000, 100, 100)
+            .fetch_tick_word(
+                &TickWordKey::V3 {
+                    address: V3_POOL,
+                    tick_spacing: 100,
+                },
+                1,
+                100,
+            )
             .expect_err("unrecorded eth_call → Err");
-        assert_eq!(err, BootstrapTickError::Rpc);
+        assert_eq!(err, TickWordFetchError::FetchFailed);
     }
 
     #[test]
@@ -393,10 +387,17 @@ mod tests {
         let expected_active_tick = ((-1i32) << 8) + 246;
         let provider =
             v3_offline_provider(-1, bitmap_val, &[(expected_active_tick, 500, 250)], 100);
-        let rpc = AlloyTickBootstrapRpc::new(Arc::new(provider));
+        let rpc = AlloyTickWordSource::new(Arc::new(provider));
 
         let result = rpc
-            .bootstrap_v3_tick_word(&V3_POOL.to_string(), -10, 1, 100)
+            .fetch_tick_word(
+                &TickWordKey::V3 {
+                    address: V3_POOL,
+                    tick_spacing: 1,
+                },
+                -1,
+                100,
+            )
             .expect("ok");
         let fetched = result.expect("non-zero bitmap → Some");
         assert_eq!(fetched.word, -1);
@@ -438,10 +439,18 @@ mod tests {
         let provider = OfflineProvider::from_json_str(&json.to_string())
             .expect("valid JSON")
             .as_alloy_provider();
-        let rpc = AlloyTickBootstrapRpc::new(Arc::new(provider));
+        let rpc = AlloyTickWordSource::new(Arc::new(provider));
 
         let result = rpc
-            .bootstrap_v4_tick_word(&V4_STATE_VIEW.to_string(), &pool_id, 10, 1, 9_999)
+            .fetch_tick_word(
+                &TickWordKey::V4 {
+                    state_view: V4_STATE_VIEW,
+                    pool_id,
+                    tick_spacing: 1,
+                },
+                0,
+                9_999,
+            )
             .expect("ok");
 
         let fetched = result.expect("non-zero bitmap → Some");
@@ -451,19 +460,5 @@ mod tests {
         assert_eq!(tick_info.liquidity_gross, U128::from(42u64));
         assert_eq!(tick_info.liquidity_net, -7i128);
         assert_eq!(tick_info.block, 9_999);
-    }
-
-    #[test]
-    fn v3_bad_address_returns_invalid_return_err() {
-        // Pair a valid provider with an unparseable address — the parse
-        // failure surfaces as InvalidReturn (it's a "malformed client input"
-        // bucketed with malformed-return for now; no separate variant).
-        let provider = v3_offline_provider(0, U256::ZERO, &[], 100);
-        let rpc = AlloyTickBootstrapRpc::new(Arc::new(provider));
-
-        let err = rpc
-            .bootstrap_v3_tick_word("0xnot-an-address", 10, 1, 100)
-            .expect_err("bad address → Err");
-        assert_eq!(err, BootstrapTickError::InvalidReturn);
     }
 }

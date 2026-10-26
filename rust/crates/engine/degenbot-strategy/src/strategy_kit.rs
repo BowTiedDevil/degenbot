@@ -27,7 +27,7 @@
 
 use std::sync::Arc;
 
-use degenbot_pools::sim::tick_fetch::TickBootstrapRpc;
+use degenbot_pools::sim::tick_fetch::TickWordSource;
 use degenbot_substrate::pool_ingress::{
     DbArm, IngressWitness, PoolIngress, TickMapPoolIdentity, TickMapSampleVerifier, VerifyLevel,
 };
@@ -55,7 +55,7 @@ pub struct DiscoveryHandles {
 /// The boot-resolved composition of clustered cells a strategy drives.
 ///
 /// Fields are concrete where variation is hypothetical; `dyn` appears only at
-/// the ingress's real adapter seams (`TickMapDb`, `TickBootstrapRpc`). There
+/// the ingress's real adapter seams (`TickMapDb`, `TickWordSource`). There
 /// are no defaulted traits: a strategy cannot answer a cell with something it
 /// built itself.
 pub struct StrategyKit {
@@ -125,7 +125,7 @@ impl StrategyKit {
     pub fn resolve(
         registry: Option<Arc<RouteRegistry>>,
         db: Option<DbArm>,
-        chain: Option<Arc<dyn TickBootstrapRpc>>,
+        chain: Option<Arc<dyn TickWordSource>>,
         verify: VerifyLevel,
         verifier: Option<Arc<dyn TickMapSampleVerifier>>,
     ) -> Self {

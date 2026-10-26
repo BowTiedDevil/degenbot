@@ -60,11 +60,11 @@
 //!
 //! # Chain error handling (Decision 8 (A) — extended to the Chain arm)
 //!
-//! A [`BootstrapTickError`] from the Chain arm is **propagated** as
+//! A [`TickWordFetchError`] from the Chain arm is **propagated** as
 //! [`TickMapAssemblyError::Chain`] — same loud-failure posture as the Db arm.
 //! A transient RPC failure (timeout, transport, revert) surfaces as
-//! [`BootstrapTickError::Rpc`]; a malformed return as
-//! [`BootstrapTickError::InvalidReturn`]. Neither is swallowed: the caller
+//! [`TickWordFetchError::FetchFailed`]; a malformed return as
+//! [`TickWordFetchError::InvalidReturn`]. Neither is swallowed: the caller
 //! raises a typed exception rather than silently degrading to a solver-unsafe
 //! empty state. If a retry-only-on-RPC-errors policy is later needed, match on
 //! the variant at the `PyO3` boundary.
@@ -80,13 +80,13 @@ use degenbot_decoders::v4_swap_decoder::V4PoolId;
 // crate root; `bot_core::mod` re-exports them via `pub use v3_state::…` +
 // `pub use ::degenbot_pools::TickInfo`. Use those re-exports to avoid coupling
 // this submodule to `degenbot_pools::v3_state`'s private path.
-use degenbot_pools::sim::tick_fetch::{BootstrapTickError, TickBootstrapRpc};
+use degenbot_pools::sim::tick_fetch::{TickWordFetchError, TickWordKey, TickWordSource};
 
 use crate::planning::{TickMapPoolIdentity, TickMapSeed};
 use crate::{PoolTickCoverage, TickInfo};
 
 /// The helper's error envelope: a `DbError` from the Db arm OR a
-/// [`BootstrapTickError`] from the Chain arm. Both are propagated loudly
+/// [`TickWordFetchError`] from the Chain arm. Both are propagated loudly
 /// (Decision 8 (A)) — never swallowed. The `PyO3` wrapper maps each variant to
 /// the appropriate Python exception (`RuntimeError` for Db, a typed RPC error
 /// for Chain).
@@ -100,7 +100,7 @@ pub enum TickMapAssemblyError {
     /// Same loud-failure posture as the Db arm — the caller surfaces it as a
     /// typed exception rather than silently degrading.
     #[error(transparent)]
-    Chain(#[from] BootstrapTickError),
+    Chain(#[from] TickWordFetchError),
     /// A Tracked snapshot reached the registration gate with no chain transport
     /// wired, so the on-chain word reconciliation could not run. The gate fails
     /// loudly rather than registering an unverified complete map — a silent
@@ -289,7 +289,7 @@ pub fn assemble_v3_tick_map(
     tick: i32,
     tick_spacing: i32,
     block: u64,
-    chain: Option<&dyn TickBootstrapRpc>,
+    chain: Option<&dyn TickWordSource>,
 ) -> TickMapAssemblyResult {
     let db_arm = resolve_tick_map_arm::<TickMapAssemblyError, _>(
         &format!("{address}"),
@@ -309,11 +309,20 @@ pub fn assemble_v3_tick_map(
     }
     // 2. Chain arm — RPC trait object, no BotState guard. `chain=None`
     // short-circuits (no RPC bootstrap wired).
+    let (word, _) =
+        degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
+            tick,
+            tick_spacing,
+        );
+    let key = TickWordKey::V3 {
+        address,
+        tick_spacing,
+    };
     let chain_hit = match chain {
         Some(chain) => chain
-            .bootstrap_v3_tick_word(&address.to_checksum(None), tick, tick_spacing, block)
+            .fetch_tick_word(&key, word, block)
             .map_err(TickMapAssemblyError::Chain)?
-            .map(|word| word.ticks),
+            .map(|hit| hit.ticks),
         None => None,
     };
     Ok(match chain_hit {
@@ -348,7 +357,7 @@ pub fn assemble_v4_tick_map(
     tick: i32,
     tick_spacing: i32,
     block: u64,
-    chain: Option<&dyn TickBootstrapRpc>,
+    chain: Option<&dyn TickWordSource>,
 ) -> TickMapAssemblyResult {
     // `fetch_liquidity_map_v4` takes a `B256`; `V4PoolId` is `[u8; 32]` and
     // `B256` is `FixedBytes<32>` — same layout, so the conversion is
@@ -374,17 +383,21 @@ pub fn assemble_v4_tick_map(
         return Ok(Some((seed.ticks, seed.coverage)));
     }
     // 2. Chain arm.
+    let (word, _) =
+        degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
+            tick,
+            tick_spacing,
+        );
+    let key = TickWordKey::V4 {
+        state_view,
+        pool_id,
+        tick_spacing,
+    };
     let chain_hit = match chain {
         Some(chain) => chain
-            .bootstrap_v4_tick_word(
-                &state_view.to_checksum(None),
-                &pool_id,
-                tick,
-                tick_spacing,
-                block,
-            )
+            .fetch_tick_word(&key, word, block)
             .map_err(TickMapAssemblyError::Chain)?
-            .map(|word| word.ticks),
+            .map(|hit| hit.ticks),
         None => None,
     };
     Ok(match chain_hit {
@@ -403,7 +416,7 @@ fn reconcile_db_seed_v3(
     address: Address,
     tick_spacing: i32,
     block: u64,
-    chain: Option<&dyn TickBootstrapRpc>,
+    chain: Option<&dyn TickWordSource>,
 ) -> Result<(), TickMapAssemblyError> {
     if seed.coverage != PoolTickCoverage::Tracked || seed.ticks.is_empty() {
         return Ok(());
@@ -411,13 +424,17 @@ fn reconcile_db_seed_v3(
     let Some(chain) = chain else {
         return Err(TickMapAssemblyError::ChainUnavailable);
     };
-    let address_str = address.to_checksum(None);
+    let key = TickWordKey::V3 {
+        address,
+        tick_spacing,
+    };
     reconcile_tracked_seed_with_chain(seed, tick_spacing, |word| {
-        let representative = word_representative_tick(word, tick_spacing)?;
+        let word = i32::try_from(word)
+            .map_err(|_| TickMapAssemblyError::Chain(TickWordFetchError::OutOfRange))?;
         chain
-            .bootstrap_v3_tick_word(&address_str, representative, tick_spacing, block)
+            .fetch_tick_word(&key, word, block)
             .map_err(TickMapAssemblyError::Chain)
-            .map(|hit| hit.map_or(U256::ZERO, |word| word.bitmap))
+            .map(|hit| hit.map_or(U256::ZERO, |hit| hit.bitmap.unwrap_or(U256::ZERO)))
     })
 }
 
@@ -428,7 +445,7 @@ fn reconcile_db_seed_v4(
     pool_id: V4PoolId,
     tick_spacing: i32,
     block: u64,
-    chain: Option<&dyn TickBootstrapRpc>,
+    chain: Option<&dyn TickWordSource>,
 ) -> Result<(), TickMapAssemblyError> {
     if seed.coverage != PoolTickCoverage::Tracked || seed.ticks.is_empty() {
         return Ok(());
@@ -436,19 +453,18 @@ fn reconcile_db_seed_v4(
     let Some(chain) = chain else {
         return Err(TickMapAssemblyError::ChainUnavailable);
     };
-    let state_view_str = state_view.to_checksum(None);
+    let key = TickWordKey::V4 {
+        state_view,
+        pool_id,
+        tick_spacing,
+    };
     reconcile_tracked_seed_with_chain(seed, tick_spacing, |word| {
-        let representative = word_representative_tick(word, tick_spacing)?;
+        let word = i32::try_from(word)
+            .map_err(|_| TickMapAssemblyError::Chain(TickWordFetchError::OutOfRange))?;
         chain
-            .bootstrap_v4_tick_word(
-                &state_view_str,
-                &pool_id,
-                representative,
-                tick_spacing,
-                block,
-            )
+            .fetch_tick_word(&key, word, block)
             .map_err(TickMapAssemblyError::Chain)
-            .map(|hit| hit.map_or(U256::ZERO, |word| word.bitmap))
+            .map(|hit| hit.map_or(U256::ZERO, |hit| hit.bitmap.unwrap_or(U256::ZERO)))
     })
 }
 
@@ -604,23 +620,6 @@ pub fn reconcile_tracked_rows(
     tick_spacing: i32,
 ) -> Result<(), TickMapAssemblyError> {
     verify_tracked_tick_map(chain_words, rows, tick_spacing)
-}
-
-/// A tick inside `word`, used to key a single-word chain fetch by position.
-/// Valid V3/V4 ticks keep the product within `i32`, so the failure arm is
-/// defensive.
-fn word_representative_tick(word: i64, tick_spacing: i32) -> Result<i32, TickMapAssemblyError> {
-    let spacing = i64::from(tick_spacing.max(1));
-    word.checked_mul(256)
-        .and_then(|v| v.checked_mul(spacing))
-        .and_then(|v| i32::try_from(v).ok())
-        .ok_or(TickMapAssemblyError::InconsistentTickMap {
-            word,
-            bit: 0,
-            tick: i32::MIN,
-            bitmap_bit: true,
-            row_gross_positive: false,
-        })
 }
 
 /// Convert `HashMap<i32, LiquidityAtTick>` → `HashMap<i32, TickInfo>`.

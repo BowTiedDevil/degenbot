@@ -18,7 +18,7 @@ use crate::strategy_kit::StrategyKit;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_eventhub::Hub;
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_rpc::AlloyTickBootstrapRpc;
+use degenbot_rpc::AlloyTickWordSource;
 use degenbot_substrate::connector_index::{OnChainLiquidityRanker, V2ConnectorIndex};
 use degenbot_substrate::driver_spawn::{DriverExit, DriverFuture, DriverSpawnFactory};
 use degenbot_substrate::pool_ingress::{AlloyLiquidityLogSource, AlloySampleVerifier, DbArm};
@@ -282,7 +282,7 @@ impl BackrunBootResources {
             db_arm,
             provider
                 .as_ref()
-                .map(|provider| Arc::new(AlloyTickBootstrapRpc::new(Arc::clone(provider))) as _),
+                .map(|provider| Arc::new(AlloyTickWordSource::new(Arc::clone(provider))) as _),
             cfg.verify_ticks,
             provider
                 .as_ref()

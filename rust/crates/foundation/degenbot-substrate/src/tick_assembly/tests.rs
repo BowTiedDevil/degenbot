@@ -26,7 +26,9 @@ use degenbot_db::ApplyLiquidityAtTick;
 
 use super::{assemble_v3_tick_map, assemble_v4_tick_map, TickMapAssemblyError};
 use crate::{PoolTickCoverage, TickInfo};
-use degenbot_pools::sim::tick_fetch::{BootstrapTickError, BootstrapTickWord, TickBootstrapRpc};
+use degenbot_pools::sim::tick_fetch::{
+    FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource,
+};
 
 // ── fixtures ──────────────────────────────────────────────────────────────
 
@@ -392,51 +394,35 @@ fn v4_db_none_cold_start_returns_miss() {
 //
 //  (a) Chain hit after Store+Db miss → Some((ticks, Sparse)).
 //  (b) Chain returns zero-bitmap → None.
-//  (c) Chain error propagation (BootstrapTickError::Rpc surfaces as
+//  (c) Chain error propagation (TickWordFetchError::FetchFailed surfaces as
 //      TickMapAssemblyError::Chain, NOT swallowed — Decision 8 (A)).
 //  (d) chain=None falls through to current behavior (Ok(None)).
 //
 //  V3 + V4 variants both gain the Chain arm (AC: "V3 + V4 variants both
 //  gain the Chain arm").
 
-/// A `TickBootstrapRpc` fake for the Chain-arm tests. Mirrors
-/// `degenbot_pools::sim::tick_fetch::bootstrap::tests::FakeBootstrapRpc` but lives
-/// here so the assemble-helper tests stay self-contained.
+/// A `TickWordSource` fake for the Chain-arm tests, so the assemble-helper
+/// tests stay self-contained.
 #[derive(Debug)]
 struct FakeChainRpc {
-    /// The `BootstrapTickWord` to return on a hit. `None` → the trait method
+    /// The `FetchedTickWord` to return on a hit. `None` → the trait method
     /// returns `Ok(None)` (all-zero bitmap).
-    hit: Option<BootstrapTickWord>,
-    /// If `true`, the trait method returns `Err(BootstrapTickError::Rpc)`.
+    hit: Option<FetchedTickWord>,
+    /// If `true`, the trait method returns `Err(TickWordFetchError::FetchFailed)`.
     fail_rpc: bool,
 }
 
-impl TickBootstrapRpc for FakeChainRpc {
-    fn bootstrap_v3_tick_word(
+impl TickWordSource for FakeChainRpc {
+    fn fetch_tick_word(
         &self,
-        _pool_address: &str,
-        _tick: i32,
-        _tick_spacing: i32,
+        _key: &TickWordKey,
+        word: i32,
         _block: u64,
-    ) -> Result<Option<BootstrapTickWord>, BootstrapTickError> {
+    ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
         if self.fail_rpc {
-            return Err(BootstrapTickError::Rpc);
+            return Err(TickWordFetchError::FetchFailed);
         }
-        Ok(self.hit.clone())
-    }
-
-    fn bootstrap_v4_tick_word(
-        &self,
-        _state_view: &str,
-        _pool_id: &[u8; 32],
-        _tick: i32,
-        _tick_spacing: i32,
-        _block: u64,
-    ) -> Result<Option<BootstrapTickWord>, BootstrapTickError> {
-        if self.fail_rpc {
-            return Err(BootstrapTickError::Rpc);
-        }
-        Ok(self.hit.clone())
+        Ok(self.hit.clone().map(|hit| FetchedTickWord { word, ..hit }))
     }
 }
 
@@ -449,41 +435,24 @@ struct WordMapChainRpc {
 }
 
 impl WordMapChainRpc {
-    fn word_for(tick: i32, tick_spacing: i32) -> i32 {
-        tick.div_euclid(tick_spacing.max(1)) >> 8
-    }
-
-    fn fetch(&self, tick: i32, tick_spacing: i32) -> BootstrapTickWord {
-        let word = Self::word_for(tick, tick_spacing);
+    fn fetch(&self, word: i32) -> FetchedTickWord {
         let bitmap = self.words.get(&word).copied().unwrap_or(U256::ZERO);
-        BootstrapTickWord {
-            bitmap,
+        FetchedTickWord {
+            bitmap: Some(bitmap),
             word,
             ticks: HashMap::new(),
         }
     }
 }
 
-impl TickBootstrapRpc for WordMapChainRpc {
-    fn bootstrap_v3_tick_word(
+impl TickWordSource for WordMapChainRpc {
+    fn fetch_tick_word(
         &self,
-        _pool_address: &str,
-        tick: i32,
-        tick_spacing: i32,
+        _key: &TickWordKey,
+        word: i32,
         _block: u64,
-    ) -> Result<Option<BootstrapTickWord>, BootstrapTickError> {
-        Ok(Some(self.fetch(tick, tick_spacing)))
-    }
-
-    fn bootstrap_v4_tick_word(
-        &self,
-        _state_view: &str,
-        _pool_id: &[u8; 32],
-        tick: i32,
-        tick_spacing: i32,
-        _block: u64,
-    ) -> Result<Option<BootstrapTickWord>, BootstrapTickError> {
-        Ok(Some(self.fetch(tick, tick_spacing)))
+    ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
+        Ok(Some(self.fetch(word)))
     }
 }
 
@@ -502,8 +471,8 @@ fn v3_chain_hit_after_store_db_miss_returns_sparse_ticks() {
     // now a Tracked-empty pool, so it no longer exercises the Chain arm.
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     let addr = make_pool_addr();
-    let chain_hit = BootstrapTickWord {
-        bitmap: U256::ZERO,
+    let chain_hit = FetchedTickWord {
+        bitmap: Some(U256::ZERO),
         word: 0,
         ticks: [(10, chain_tick_info(10)), (20, chain_tick_info(20))]
             .into_iter()
@@ -542,7 +511,7 @@ fn v3_chain_zero_bitmap_returns_none() {
 
 #[test]
 fn v3_chain_rpc_error_is_propagated_not_swallowed() {
-    // (c) Genuine Db miss (pool absent) + BootstrapTickError::Rpc surfaces as
+    // (c) Genuine Db miss (pool absent) + TickWordFetchError::FetchFailed surfaces as
     // TickMapAssemblyError::Chain — NOT swallowed (Decision 8 (A)).
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     let addr = make_pool_addr();
@@ -554,8 +523,11 @@ fn v3_chain_rpc_error_is_propagated_not_swallowed() {
     let result = assemble_v3_tick_map(Some(&db), addr, 10, 1, 100, Some(&rpc));
     let err = result.expect_err("Chain Rpc error must propagate (Decision 8 (A))");
     assert!(
-        matches!(err, TickMapAssemblyError::Chain(BootstrapTickError::Rpc)),
-        "expected Chain(BootstrapTickError::Rpc), got {err:?}"
+        matches!(
+            err,
+            TickMapAssemblyError::Chain(TickWordFetchError::FetchFailed)
+        ),
+        "expected Chain(TickWordFetchError::FetchFailed), got {err:?}"
     );
 }
 
@@ -577,8 +549,8 @@ fn v4_chain_hit_after_store_db_miss_returns_sparse_ticks() {
     let (db, _state) = DegenbotDb::open_in_memory_for_writes().unwrap();
     let pool_id = [0xee; 32];
     let mgr = make_manager();
-    let chain_hit = BootstrapTickWord {
-        bitmap: U256::ZERO,
+    let chain_hit = FetchedTickWord {
+        bitmap: Some(U256::ZERO),
         word: 0,
         ticks: [(-10, chain_tick_info(-10)), (10, chain_tick_info(10))]
             .into_iter()
@@ -633,8 +605,11 @@ fn v4_chain_rpc_error_is_propagated_not_swallowed() {
     );
     let err = result.expect_err("Chain Rpc error must propagate");
     assert!(
-        matches!(err, TickMapAssemblyError::Chain(BootstrapTickError::Rpc)),
-        "expected Chain(BootstrapTickError::Rpc), got {err:?}"
+        matches!(
+            err,
+            TickMapAssemblyError::Chain(TickWordFetchError::FetchFailed)
+        ),
+        "expected Chain(TickWordFetchError::FetchFailed), got {err:?}"
     );
 }
 
@@ -654,8 +629,8 @@ fn v4_chain_rpc_error_is_propagated_not_swallowed() {
 /// chain at the snapshot block drives the whole reconciliation.
 fn chain_word_rpc(bitmap: U256) -> FakeChainRpc {
     FakeChainRpc {
-        hit: Some(BootstrapTickWord {
-            bitmap,
+        hit: Some(FetchedTickWord {
+            bitmap: Some(bitmap),
             word: 0,
             ticks: HashMap::new(),
         }),
@@ -818,7 +793,10 @@ fn v3_tracked_chain_fetch_error_is_a_typed_failure() {
     let err = assemble_v3_tick_map(Some(&db), make_pool_addr(), 0, 10, 0, Some(&rpc))
         .expect_err("a chain fetch failure must be a typed refusal");
     assert!(
-        matches!(err, TickMapAssemblyError::Chain(BootstrapTickError::Rpc)),
+        matches!(
+            err,
+            TickMapAssemblyError::Chain(TickWordFetchError::FetchFailed)
+        ),
         "expected Chain(Rpc), got {err:?}"
     );
 }

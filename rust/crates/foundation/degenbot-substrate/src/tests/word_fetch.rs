@@ -21,6 +21,7 @@ fn staged_word_fetch_install_races_on_interleaved_pool_write() {
                     FetchedTickWord {
                         word: 0,
                         ticks: HashMap::new(),
+                        bitmap: None,
                     },
                     FetchedTickWord {
                         word: 0,
@@ -32,6 +33,7 @@ fn staged_word_fetch_install_races_on_interleaved_pool_write() {
                                 block: 99,
                             },
                         )]),
+                        bitmap: None,
                     },
                 ])),
             }
@@ -190,6 +192,7 @@ fn ensure_word_known_merges_ticks_and_marks_word_known() {
                         block: 99,
                     },
                 )]),
+                bitmap: None,
             })
         }
     }
@@ -301,6 +304,7 @@ fn ensure_word_known_checked_empty_marks_word_known() {
             Ok(FetchedTickWord {
                 word,
                 ticks: HashMap::new(),
+                bitmap: None,
             })
         }
     }
@@ -359,6 +363,7 @@ fn swap_simulation_fills_missing_word_and_retries() {
             Ok(FetchedTickWord {
                 word,
                 ticks: HashMap::new(),
+                bitmap: None,
             })
         }
     }
@@ -511,6 +516,7 @@ fn swap_simulation_empty_word_not_refetched() {
             Ok(FetchedTickWord {
                 word,
                 ticks: HashMap::new(),
+                bitmap: None,
             })
         }
     }

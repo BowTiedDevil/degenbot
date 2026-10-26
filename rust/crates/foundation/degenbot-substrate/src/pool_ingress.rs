@@ -44,7 +44,7 @@ use degenbot_math::concentrated_liquidity::liquidity_mapping::{
     apply_liquidity_mapping_update, LiquidityAtTick as ApplyLiquidityAtTick,
 };
 pub use degenbot_pool_updater::fetch::{AlloyLiquidityLogSource, LiquidityLogSource};
-use degenbot_pools::sim::tick_fetch::TickBootstrapRpc;
+use degenbot_pools::sim::tick_fetch::{TickWordKey, TickWordSource};
 use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
 use degenbot_pools::TickInfo;
 use degenbot_rpc::liquidity_verifier::{
@@ -337,7 +337,7 @@ impl MapMemo {
 /// with a per-block memo of the Db reads.
 pub struct PoolIngress {
     db: Option<DbArm>,
-    chain: Option<Arc<dyn TickBootstrapRpc>>,
+    chain: Option<Arc<dyn TickWordSource>>,
     memo: Mutex<MapMemo>,
     /// The chain-sample policy (default [`VerifyLevel::Bootstrap`]).
     verify_level: VerifyLevel,
@@ -359,7 +359,7 @@ impl PoolIngress {
     /// backfill transport, so the Db and its window-closing source cannot
     /// drift apart.
     #[must_use]
-    pub fn new(db: Option<DbArm>, chain: Option<Arc<dyn TickBootstrapRpc>>) -> Self {
+    pub fn new(db: Option<DbArm>, chain: Option<Arc<dyn TickWordSource>>) -> Self {
         Self {
             db,
             chain,
@@ -373,7 +373,7 @@ impl PoolIngress {
 
     /// Attach the Chain-arm RPC after construction (the driver resolves the
     /// provider after the runtime is built).
-    pub fn set_chain(&mut self, chain: Arc<dyn TickBootstrapRpc>) {
+    pub fn set_chain(&mut self, chain: Arc<dyn TickWordSource>) {
         self.chain = Some(chain);
     }
 
@@ -452,11 +452,19 @@ impl PoolIngress {
             return Ok(seed);
         }
         // Chain arm: the Db missed (or no Db handle is wired).
+        let (word, _) = degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
+            tick,
+            tick_spacing,
+        );
+        let key = TickWordKey::V3 {
+            address,
+            tick_spacing,
+        };
         let chain_hit = match self.chain.as_deref() {
             Some(chain) => chain
-                .bootstrap_v3_tick_word(&address.to_checksum(None), tick, tick_spacing, block)
+                .fetch_tick_word(&key, word, block)
                 .map_err(TickMapAssemblyError::Chain)?
-                .map(|word| word.ticks),
+                .map(|hit| hit.ticks),
             None => None,
         };
         let ticks = chain_hit.unwrap_or_default();
@@ -499,17 +507,20 @@ impl PoolIngress {
             seed.source_block = source_block;
             return Ok(seed);
         }
-        let chain_hit = match (self.chain.as_deref(), state_view) {
-            (Some(chain), Some(state_view)) => chain
-                .bootstrap_v4_tick_word(
-                    &state_view.to_checksum(None),
-                    &pool_id.0,
-                    tick,
-                    tick_spacing,
-                    block,
-                )
+        let (word, _) = degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
+            tick,
+            tick_spacing,
+        );
+        let key = state_view.map(|state_view| TickWordKey::V4 {
+            state_view,
+            pool_id: pool_id.0,
+            tick_spacing,
+        });
+        let chain_hit = match (self.chain.as_deref(), key) {
+            (Some(chain), Some(key)) => chain
+                .fetch_tick_word(&key, word, block)
                 .map_err(TickMapAssemblyError::Chain)?
-                .map(|word| word.ticks),
+                .map(|hit| hit.ticks),
             _ => None,
         };
         let ticks = chain_hit.unwrap_or_default();
@@ -981,7 +992,9 @@ mod tests {
     use degenbot_db::error::DbError;
     use degenbot_db::snapshot::LiquidityAtTick;
     use degenbot_db::{ApplyLiquidityAtTick, ExchangeFamily};
-    use degenbot_pools::sim::tick_fetch::{BootstrapTickError, BootstrapTickWord};
+    use degenbot_pools::sim::tick_fetch::{
+        FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource,
+    };
     use degenbot_pools::state::v3_state::PoolTickCoverage;
 
     const CHAIN: i64 = 1;
@@ -1043,14 +1056,13 @@ mod tests {
         net: i128,
     }
 
-    impl TickBootstrapRpc for FakeChain {
-        fn bootstrap_v3_tick_word(
+    impl TickWordSource for FakeChain {
+        fn fetch_tick_word(
             &self,
-            _pool_address: &str,
-            _tick: i32,
-            _tick_spacing: i32,
+            _key: &TickWordKey,
+            word: i32,
             block: u64,
-        ) -> Result<Option<BootstrapTickWord>, BootstrapTickError> {
+        ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
             let mut ticks = HashMap::new();
             ticks.insert(
                 self.tick,
@@ -1060,22 +1072,11 @@ mod tests {
                     block,
                 },
             );
-            Ok(Some(BootstrapTickWord {
-                bitmap: U256::from(1u8),
-                word: 0,
+            Ok(Some(FetchedTickWord {
+                bitmap: Some(U256::from(1u8)),
+                word,
                 ticks,
             }))
-        }
-
-        fn bootstrap_v4_tick_word(
-            &self,
-            _state_view: &str,
-            _pool_id: &[u8; 32],
-            _tick: i32,
-            _tick_spacing: i32,
-            _block: u64,
-        ) -> Result<Option<BootstrapTickWord>, BootstrapTickError> {
-            Ok(None)
         }
     }
 

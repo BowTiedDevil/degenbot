@@ -156,6 +156,10 @@ impl TickWordFetcher for ConstructionIoTickWordSource {
             }
         };
         let (ticks, _bitmap) = bridge(read).map_err(|_| FetchTickWordError::FetchFailed)?;
-        Ok(FetchedTickWord { word, ticks })
+        Ok(FetchedTickWord {
+            bitmap: None,
+            word,
+            ticks,
+        })
     }
 }

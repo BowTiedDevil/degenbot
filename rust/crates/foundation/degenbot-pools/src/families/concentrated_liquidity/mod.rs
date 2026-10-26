@@ -527,10 +527,7 @@ fn drive<S: ConcentratedLiquidityPoolMut>(
                         return ReadOutcome::MissingWords(fetched_words);
                     }
                     fetched_words.push(word);
-                    let _ = state.merge_tick_word(&FetchedTickWord {
-                        word,
-                        ticks: HashMap::new(),
-                    });
+                    let _ = state.merge_tick_word(&FetchedTickWord::new(word, HashMap::new()));
                 }
                 FetchMode::Armed { .. } | FetchMode::Disarmed => {
                     if !attempted.insert(word) {
@@ -671,6 +668,7 @@ mod tests {
                 Ok(FetchedTickWord {
                     word,
                     ticks: HashMap::new(),
+                    bitmap: None,
                 })
             } else {
                 Err(FetchTickWordError::FetchFailed)

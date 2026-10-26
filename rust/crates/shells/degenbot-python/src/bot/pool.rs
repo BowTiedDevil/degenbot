@@ -67,10 +67,10 @@ pub(crate) fn make_tick_fetcher(
 #[must_use]
 pub(crate) fn make_tick_bootstrap_rpc(
     io: &crate::bot::py_bot_io::PyBotIo,
-) -> Option<std::sync::Arc<dyn degenbot_pools::sim::tick_fetch::TickBootstrapRpc>> {
+) -> Option<std::sync::Arc<dyn degenbot_pools::sim::tick_fetch::TickWordSource>> {
     io.alloy_provider().map(|provider| {
-        std::sync::Arc::new(degenbot_rpc::AlloyTickBootstrapRpc::new(provider))
-            as std::sync::Arc<dyn degenbot_pools::sim::tick_fetch::TickBootstrapRpc>
+        std::sync::Arc::new(degenbot_rpc::AlloyTickWordSource::new(provider))
+            as std::sync::Arc<dyn degenbot_pools::sim::tick_fetch::TickWordSource>
     })
 }
 
@@ -94,6 +94,7 @@ impl degenbot_pools::sim::tick_fetch::TickWordFetcher for PyTickWordFetcher {
             let bound = result.bind(py);
             if bound.is_none() {
                 return Ok(FetchedTickWord {
+                    bitmap: None,
                     word,
                     ticks: HashMap::new(),
                 });
@@ -101,7 +102,11 @@ impl degenbot_pools::sim::tick_fetch::TickWordFetcher for PyTickWordFetcher {
             // The seed boundary owns the arity, the `U128` narrowing, and the
             // malformed-container error.
             let ticks = TickData::from_py(bound).map_err(|_| FetchTickWordError::FetchFailed)?;
-            Ok(FetchedTickWord { word, ticks })
+            Ok(FetchedTickWord {
+                bitmap: None,
+                word,
+                ticks,
+            })
         })
     }
 }
@@ -1079,10 +1084,8 @@ impl PyLiquidityPool {
             // The mainline route is concentrated-liquidity-only by contract:
             // a reserve-pair payload here would be the route's bug, never a
             // computable read (the retired flat read answered NotComputable).
-            SwapRead::Computed(_) => {
-                Err(swap_refused_err(py, PySwapRefusalKind::NotComputable, None))
-            }
-            SwapRead::NotComputable => {
+            // Both the verdict and the refusal cross as NotComputable.
+            SwapRead::Computed(_) | SwapRead::NotComputable => {
                 Err(swap_refused_err(py, PySwapRefusalKind::NotComputable, None))
             }
             SwapRead::FetchFailed { word } => Err(swap_refused_err(

@@ -20,7 +20,7 @@
 use std::fmt;
 
 use alloy::primitives::Address;
-use degenbot_pools::sim::tick_fetch::TickBootstrapRpc;
+use degenbot_pools::sim::tick_fetch::TickWordSource;
 use degenbot_substrate::registration_gate::AdmissionVerdict;
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::tick_assembly::TickMapAssemblyError;
@@ -734,7 +734,7 @@ impl Bot {
         tick: i32,
         tick_spacing: i32,
         block: u64,
-        chain: Option<&dyn TickBootstrapRpc>,
+        chain: Option<&dyn TickWordSource>,
     ) -> Result<Option<(Vec<TickRow>, PoolTickCoverage)>, TickMapAssemblyError> {
         let hit = degenbot_substrate::tick_assembly::assemble_v3_tick_map(
             db,
@@ -762,7 +762,7 @@ impl Bot {
         tick: i32,
         tick_spacing: i32,
         block: u64,
-        chain: Option<&dyn TickBootstrapRpc>,
+        chain: Option<&dyn TickWordSource>,
     ) -> Result<Option<(Vec<TickRow>, PoolTickCoverage)>, TickMapAssemblyError> {
         let hit = degenbot_substrate::tick_assembly::assemble_v4_tick_map(
             db,

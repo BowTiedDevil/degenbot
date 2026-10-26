@@ -1092,6 +1092,7 @@ mod apply_inherent_tests {
                 );
                 m
             },
+            bitmap: None,
         };
         let before_len = state.journal.len();
 

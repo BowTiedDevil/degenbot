@@ -146,8 +146,8 @@ pub use state::state_history::ReorgPoolState;
 pub use state::tick_bitmap::V3TickRangeForSolver;
 
 pub use sim::tick_fetch::{
-    BootstrapTickError, BootstrapTickWord, FetchTickWordError, FetchedTickWord, TickBootstrapRpc,
-    TickWordFetcher,
+    FetchTickWordError, FetchedTickWord, TickWordFetchError, TickWordFetcher, TickWordKey,
+    TickWordSource,
 };
 
 pub use sim::registration_refusal::{BuildFailure, RegisterRefusal, SpecRefusal};
