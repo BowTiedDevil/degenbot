@@ -238,7 +238,8 @@ fn fold_registration_verdict(
 
 /// Classify a builder failure. The factory-identity family (unknown preset,
 /// unknown identity, CREATE2 contradiction) is the loud-abort class; every
-/// other builder failure is I/O-derived and stays a retriable skip.
+/// other builder failure stays a skip whose `BuildFailure` class rides the
+/// ledger taxonomy's own stable-vs-transient fact.
 fn classify_builder_error(err: PoolBuilderError, address: Address) -> ConstructionRefusal {
     match err {
         PoolBuilderError::UnknownVariant { factory } => ConstructionRefusal::UnsupportedFamily {
@@ -256,7 +257,29 @@ fn classify_builder_error(err: PoolBuilderError, address: Address) -> Constructi
             address,
             detail: "CREATE2 address verification failed".to_owned(),
         },
-        other => ConstructionRefusal::Skipped(BuildFailure::Transient(other.to_string())),
+        // The skip arms carry the taxonomy's OWN classes: the stable-vs-
+        // transient fact must reach the ledger/metrics fold unchanged
+        // (ADR-055 D4) — a spec refusal keeps its pool-fact reason, a
+        // transport/DB/decoding failure keeps its retryable class. The FFI
+        // renders each class (`SpecViolationError` / `PoolBuildRpcError` /
+        // `PoolBuildDecodeError` / ...), so flattening one into a transient
+        // string would rename the refusal at the seam.
+        PoolBuilderError::Spec(reason) => ConstructionRefusal::Skipped(BuildFailure::Spec(reason)),
+        PoolBuilderError::Rpc(inner) => {
+            ConstructionRefusal::Skipped(BuildFailure::Rpc(inner.to_string()))
+        }
+        PoolBuilderError::Decoding { message } => {
+            ConstructionRefusal::Skipped(BuildFailure::Decoding(message))
+        }
+        PoolBuilderError::Db(inner) => {
+            ConstructionRefusal::Skipped(BuildFailure::Db(inner.to_string()))
+        }
+        PoolBuilderError::MissingIdentity { message } => {
+            ConstructionRefusal::Skipped(BuildFailure::MissingIdentity(message))
+        }
+        PoolBuilderError::TickAssembly(inner) => {
+            ConstructionRefusal::Skipped(BuildFailure::TickAssembly(inner.to_string()))
+        }
     }
 }
 
@@ -485,6 +508,7 @@ mod route_tests {
     #![expect(clippy::expect_used)] // test assertions read the refusal arms directly
     use super::*;
     use alloy::primitives::B256;
+    use degenbot_core::errors::ProviderError;
     use degenbot_pools::sim::registration_refusal::SpecRefusal;
     use degenbot_uniswap::deployments::AddressMismatch;
 
@@ -530,17 +554,37 @@ mod route_tests {
                 ConstructionRefusal::UnsupportedFamily { .. }
             ));
         }
-        for err in [
-            PoolBuilderError::Spec(SpecRefusal::CurveTooFewCoins),
-            PoolBuilderError::Decoding {
-                message: "x".to_owned(),
-            },
-        ] {
-            assert!(matches!(
-                classify_builder_error(err, address),
-                ConstructionRefusal::Skipped(BuildFailure::Transient(_))
-            ));
-        }
+        // The skip arms carry the taxonomy's OWN classes (ADR-055 D4): a
+        // spec refusal keeps its pool-fact reason and a transport/decoding
+        // failure keeps its retryable class — the use site's ledger/metrics
+        // fold must see the fact, never one flattened transient string (the
+        // FFI renders each class: `SpecViolationError` / `PoolBuildRpcError` /
+        // `PoolBuildDecodeError`).
+        assert!(matches!(
+            classify_builder_error(
+                PoolBuilderError::Spec(SpecRefusal::CurveTooFewCoins),
+                address
+            ),
+            ConstructionRefusal::Skipped(BuildFailure::Spec(_))
+        ));
+        assert!(matches!(
+            classify_builder_error(
+                PoolBuilderError::Rpc(ProviderError::ConnectionFailed {
+                    message: "x".to_owned(),
+                }),
+                address
+            ),
+            ConstructionRefusal::Skipped(BuildFailure::Rpc(_))
+        ));
+        assert!(matches!(
+            classify_builder_error(
+                PoolBuilderError::Decoding {
+                    message: "x".to_owned(),
+                },
+                address
+            ),
+            ConstructionRefusal::Skipped(BuildFailure::Decoding(_))
+        ));
     }
 
     #[test]
