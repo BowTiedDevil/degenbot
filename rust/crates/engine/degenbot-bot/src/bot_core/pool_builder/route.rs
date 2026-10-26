@@ -178,6 +178,12 @@ pub struct BuiltIdentity {
     /// instead of re-reading the registry or asking the handle by family
     /// (ADR-085 D5).
     pub tokens: Vec<Address>,
+    /// The identity echo's variant: the DEX name the builder/deployment table
+    /// resolved (the pair-keyed families), the family's own spelling (the
+    /// multi-token ones), or empty where the family answers a structured
+    /// identity instead (V4). Shaped core-side so the verdict answers the
+    /// echo without a second derivation (ADR-085 D2).
+    pub variant: String,
     /// The factory the build resolved (`None` for V4 — a manager-hosted pool
     /// has no factory).
     pub factory: Option<Address>,
@@ -364,6 +370,7 @@ async fn construct_v2(
     let minted = BuiltIdentity {
         address,
         tokens: vec![params.token0, params.token1],
+        variant: params.variant.as_str().to_string(),
         factory: Some(params.factory),
         v4_pool_id: None,
     };
@@ -438,10 +445,13 @@ async fn construct_v3(
         params.slot_layout = slot_layout;
     }
     // The minted identity rides the fold; capture it before `params` moves
-    // into the write door's request.
+    // into the write door's request. The variant echo is the deployment
+    // table's DEX name for the built factory, the generic spelling otherwise.
     let minted = BuiltIdentity {
         address,
         tokens: vec![params.token0, params.token1],
+        variant: degenbot_uniswap::deployments::resolve_dex_name(bot.chain_id(), params.factory)
+            .map_or_else(|| "uniswap-v3".to_string(), |d| d.as_str().to_string()),
         factory: Some(params.factory),
         v4_pool_id: None,
     };
@@ -504,6 +514,7 @@ async fn construct_v4(
         built: Some(BuiltIdentity {
             address: pool_manager,
             tokens: vec![identity.currency0, identity.currency1],
+            variant: String::new(),
             factory: None,
             v4_pool_id: Some(pool_id),
         }),
@@ -531,6 +542,7 @@ async fn construct_aerodrome_v2(
     let minted = BuiltIdentity {
         address,
         tokens: vec![params.token0, params.token1],
+        variant: "aerodrome".to_string(),
         factory: Some(params.factory),
         v4_pool_id: None,
     };
@@ -569,6 +581,7 @@ async fn construct_curve(
     let minted = BuiltIdentity {
         address,
         tokens: params.tokens.clone(),
+        variant: "stableswap".to_string(),
         factory: None,
         v4_pool_id: None,
     };
@@ -609,6 +622,7 @@ async fn construct_balancer_weighted(
     let minted = BuiltIdentity {
         address,
         tokens: params.tokens.clone(),
+        variant: "balancer_weighted".to_string(),
         factory: None,
         v4_pool_id: None,
     };
@@ -650,6 +664,7 @@ async fn construct_balancer_stable(
     let minted = BuiltIdentity {
         address,
         tokens: params.tokens.clone(),
+        variant: "balancer_stable".to_string(),
         factory: None,
         v4_pool_id: None,
     };

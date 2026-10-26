@@ -363,13 +363,13 @@ impl Bot {
         self.finalize_v3_construct(constructed, address)
     }
 
-    /// Shape the V3 identity echo from a constructed pool: a fresh build
-    /// resolves the family from the builder-verified `factory` via
-    /// `resolve_dex_name` (kebab-case, e.g. "uniswap"), falling back to the
-    /// generic "uniswap-v3" for an unknown deployment; a registry-GET race
-    /// answer (`built == None`) echoes the already-registered payload from
-    /// the registry of record. Emits the `degenbot.pool.register` telemetry
-    /// span (one Jaeger node per V3 registration).
+    /// Shape the V3 identity echo from a constructed pool: the fresh build's
+    /// echo rides the built identity (the arm derives the variant from the
+    /// builder-verified `factory` via `resolve_dex_name`, kebab-case, e.g.
+    /// "uniswap", falling back to the generic "uniswap-v3"); a registry-GET
+    /// race answer (`built == None`) echoes the already-registered payload
+    /// from the registry of record. Emits the `degenbot.pool.register`
+    /// telemetry span (one Jaeger node per V3 registration).
     ///
     /// # Errors
     /// [`RefusalKind::UnreadableIdentity`] when the race answer's registry
@@ -380,18 +380,14 @@ impl Bot {
         address: Address,
     ) -> Result<PoolBuildPayload, RefusalKind> {
         let (pool_id, identity) = if let Some(built) = constructed.built {
-            let family = degenbot_uniswap::deployments::resolve_dex_name(
-                self.chain_id(),
-                built.factory.unwrap_or_default(),
-            )
-            .map_or_else(|| "uniswap-v3".to_string(), |d| d.as_str().to_string());
+            let (token0, token1) = built.pair().unwrap_or_default();
             (
                 constructed.pool_id,
                 (
-                    built.pair().unwrap_or_default().0.to_checksum(None),
-                    built.pair().unwrap_or_default().1.to_checksum(None),
+                    token0.to_checksum(None),
+                    token1.to_checksum(None),
                     built.address.to_checksum(None),
-                    family,
+                    built.variant,
                 ),
             )
         } else {
@@ -943,6 +939,7 @@ mod tests {
         let built = route::BuiltIdentity {
             address: addr,
             tokens: vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])],
+            variant: "uniswap-v3".to_string(),
             factory: Some(adhoc_factory()),
             v4_pool_id: None,
         };

@@ -2497,6 +2497,9 @@ async fn route_matched_rung_builds_and_registers() {
     assert_eq!(identity.address, pool);
     assert_eq!(identity.pair(), Some((tok0, tok1)));
     assert_eq!(identity.factory, Some(factory));
+    // The variant echo is derived core-side from the built factory (the
+    // deployment table's DEX name, "uniswap-v3" for an unknown deployment).
+    assert_eq!(identity.variant, "uniswap-v3");
     assert_eq!(
         bot.state_arc()
             .read_at(LockSite::Core)
@@ -3075,6 +3078,7 @@ async fn the_curve_door_arm_constructs_registers_and_reuses() {
     let built = first.built.expect("a fresh build carries its identity");
     assert_eq!(built.tokens, vec![coin0, coin1]);
     assert_eq!(built.pair(), Some((coin0, coin1)));
+    assert_eq!(built.variant, "stableswap");
     // Get-or-register: the second attempt answers the winner's id with no
     // rebuild (`built: None`) — the door's contract, never the direct
     // entries' rebuild-then-refuse race.
