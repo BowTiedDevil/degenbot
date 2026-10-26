@@ -953,7 +953,7 @@ impl PyBot {
     ///
     /// As the dispatched per-family builder; `ValueError` on an unknown family
     /// or a missing required argument (Balancer's `vault`).
-    #[pyo3(signature = (address, family, variant=None, block=None, db=true, tick_data_fetcher=None, factories=None, registries=None, vault=None, invariant_version=None))]
+    #[pyo3(signature = (address, family, variant=None, block=None, db=true, factories=None, registries=None, vault=None, invariant_version=None))]
     #[expect(clippy::too_many_arguments)] // the family identity + the per-family hints, one flat surface
     fn construct_pool(
         &self,
@@ -963,7 +963,6 @@ impl PyBot {
         variant: Option<&str>,
         block: Option<u64>,
         db: bool,
-        tick_data_fetcher: Option<Bound<'_, PyAny>>,
         factories: Option<Vec<String>>,
         registries: Option<Vec<String>>,
         vault: Option<&str>,
@@ -983,9 +982,7 @@ impl PyBot {
             // register + the route walk + the DB-first tick map). The fork
             // storage layout is resolved CORE-side from the deployment table,
             // so the driver never names a fork.
-            "concentrated_liquidity" => {
-                self.build_v3_pool(py, address, block, db, tick_data_fetcher, None, factories)
-            }
+            "concentrated_liquidity" => self.build_v3_pool(py, address, block, db, None, factories),
             // Constant product: the V2-style families. Aerodrome is a distinct
             // structural family with its own core entry; every other V2
             // variant (Uniswap / Camelot / Sushi / Pancake) shares the V2 entry.
@@ -1076,15 +1073,13 @@ impl PyBot {
     /// # Errors
     ///
     /// As [`Self::build_v2_pool`].
-    #[pyo3(signature = (address, block=None, db=true, tick_data_fetcher=None, slot_layout=None, factories=None))]
-    #[expect(clippy::too_many_arguments)] // the resolved construction route + the fetcher/layout hints are driver VALUES, not a struct-able choreography
+    #[pyo3(signature = (address, block=None, db=true, slot_layout=None, factories=None))]
     fn build_v3_pool(
         &self,
         py: Python<'_>,
         address: &str,
         block: Option<u64>,
         db: bool,
-        tick_data_fetcher: Option<Bound<'_, PyAny>>,
         slot_layout: Option<&str>,
         factories: Option<Vec<String>>,
     ) -> PyResult<(u64, String, String, String, String)> {
@@ -1132,14 +1127,10 @@ impl PyBot {
                     generic: true,
                 };
                 // ADR-005 sparse-map parity: the core builder registers a single tick
-                // word (Sparse). The core builder leaves the backfill fetcher `None`; the
-                // Python driver injects a `PyTickWordFetcher` wrapping the legacy
-                // web3-sync `tick_data_fetcher` here (GIL held) so swap-time
-                // boundary-detection can pull neighbouring words without re-entering
-                // the asyncio runtime (a Rust `block_on` fetcher would deadlock).
-                let fetcher = tick_data_fetcher
-                    .filter(|f| !f.is_none())
-                    .map(|f| crate::bot::pool::make_tick_fetcher(f.unbind()));
+                // word (Sparse) and attaches its own `ConstructionIo`-backed
+                // tick-word source for the live-miss backfill, so no driver
+                // callback is needed (nor accepted) here.
+                let fetcher = None;
                 // concentrated liquidity slot layout : explicit override (the Python
                 // driver knows the pool class for non-JSON deployments) wins over the
                 // builder's deployment-table resolution.
@@ -1261,10 +1252,9 @@ impl PyBot {
         ))
     }
 
-    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_address, state_view_address, block=None, db=true, tick_data_fetcher=None))]
+    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_address, state_view_address, block=None, db=true))]
     #[expect(clippy::too_many_arguments)]
     #[expect(clippy::type_complexity)]
-    #[expect(clippy::too_many_lines)] // PyO3 V4 build surface: full build + already-registered fast path in one tuple contract
     fn build_v4_pool(
         &self,
         py: Python<'_>,
@@ -1282,7 +1272,6 @@ impl PyBot {
         state_view_address: &str,
         block: Option<u64>,
         db: bool,
-        tick_data_fetcher: Option<Bound<'_, PyAny>>,
     ) -> PyResult<(
         u64,
         String,
@@ -1320,7 +1309,7 @@ impl PyBot {
         // immutable key, protocol_fee from the core's state machine, coverage
         // as recorded — under ONE read guard and with NO RPC (the
         // missed-WS-pong 2026-08-28 fast path, now shared by single-flight
-        // peers too). `block`, `db`, and `tick_data_fetcher` are no-ops on
+        // peers too). `block` and `db` are no-ops on
         // this path: the core-tracked state is the freshest source, and the
         // driver still runs the registration lifecycle off the returned
         // handle as usual. hook_address is NOT re-resolved here: the Python
@@ -1382,13 +1371,10 @@ impl PyBot {
                     builder::derive_hook_flags(hook_addr),
                     format!("0x{}", alloy::hex::encode(pool_id)),
                 );
-                // Sparse-map parity (V4 twin of `build_v3_pool`): `build_v4`
-                // leaves the backfill fetcher `None`; the Python web3-sync
-                // fetcher rides into the core entry here (wrapped GIL-held —
-                // a Python callback cannot cross into the core closure).
-                let fetcher = tick_data_fetcher
-                    .filter(|f| !f.is_none())
-                    .map(|f| crate::bot::pool::make_tick_fetcher(f.unbind()));
+                // Sparse-map parity (V4 twin of `build_v3_pool`): the core
+                // attaches its own `ConstructionIo`-backed tick-word source for
+                // the live-miss backfill, so no driver callback is needed here.
+                let fetcher = None;
                 // The fetch/build/register choreography is core-owned
                 // ([`Bot::build_and_register_v4`]); the GIL is released
                 // across the whole scope.

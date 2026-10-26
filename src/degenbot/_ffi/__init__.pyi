@@ -986,7 +986,6 @@ class Bot:
         address: str,
         block: SupportsIndex | None = None,
         db: bool = True,
-        tick_data_fetcher: Any | None = None,
         slot_layout: str | None = None,
         factories: SupportsGetItem[int, str] | None = None,
     ) -> tuple[int, str, str, str, str]:
@@ -1014,7 +1013,6 @@ class Bot:
         state_view_address: str,
         block: SupportsIndex | None = None,
         db: bool = True,
-        tick_data_fetcher: Any | None = None,
     ) -> tuple[int, str, str, str, str, int, int, int, str, int, int]: ...
     def calculate_tokens_in(
         self, /, pool_id: SupportsIndex, zero_for_one: bool, amount_out: Any
@@ -1068,7 +1066,6 @@ class Bot:
         variant: str | None = None,
         block: SupportsIndex | None = None,
         db: bool = True,
-        tick_data_fetcher: Any | None = None,
         factories: SupportsGetItem[int, str] | None = None,
         registries: SupportsGetItem[int, str] | None = None,
         vault: str | None = None,

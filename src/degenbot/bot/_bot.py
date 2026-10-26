@@ -27,11 +27,6 @@ from degenbot.builders.request import (
     BuildRequest,
     ConstructionRoute,
 )
-from degenbot.builders.tick_data_fetcher import (
-    FetchedTickData,
-    TickDataTypes,
-    make_tick_data_fetcher,
-)
 from degenbot.builders.type_resolution import (
     pool_class_for_descriptor,
 )
@@ -588,11 +583,6 @@ class Bot(AccountQueryMixin):
             variant=variant,
             block=block,
             db=db_seed,
-            tick_data_fetcher=(
-                self._make_v3_tick_data_fetcher(address, chain_id)
-                if is_concentrated_liquidity
-                else None
-            ),
             factories=list(route.factories) or None,
             registries=list(_CURVE_REGISTRIES) if is_curve else None,
             vault=BALANCER_V2_VAULT_ADDRESS,
@@ -749,82 +739,6 @@ class Bot(AccountQueryMixin):
             token_a,
             token_b,
             pool_kinds=pool_kinds,
-        )
-
-    def _make_v3_tick_data_fetcher(
-        self,
-        pool_address: str,
-        chain_id: ChainId,
-    ) -> Callable[[int, int], FetchedTickData | None]:
-        """Create the V3 tick-data backfill fetcher for a pool address.
-
-        The legacy web3-sync fetcher factory formerly on the
-        retired `V3PoolBuilder`, relocated into this delegating shell. The
-        returned fetcher lazily pulls neighbouring tick words during swap
-        boundary-crossing (ADR-005 sparse-map parity), attached to the
-        Rust-registered pool as a `PyTickWordFetcher` so a Rust `block_on`
-        helper would not re-enter the shared runtime during swap simulation.
-
-        Returns:
-            A callable pulling ``{tick: (liquidity_gross, liquidity_net,
-            block)}`` for an out-of-range bitmap word, or ``None`` when the
-            pool/bitmap is unavailable.
-
-        """
-        return make_tick_data_fetcher(
-            pool_lookup=lambda _block: cast(
-                "UniswapV3Pool | None",
-                self.pools.get(
-                    chain_id=chain_id,
-                    pool_address=get_checksum_address(pool_address),
-                ),
-            ),
-            io=self._io,
-            types=TickDataTypes(
-                liquidity_at_tick=LiquidityAtTick,
-                tick_struct_types=UniswapV3Pool.TICK_STRUCT_TYPES,
-            ),
-        )
-
-    def _make_v4_tick_data_fetcher(
-        self,
-        pool_id: bytes,
-        pool_manager_address: str,
-        state_view_address: str,
-        chain_id: ChainId,
-    ) -> Callable[[int, int], FetchedTickData | None]:
-        """Create the V4 tick-data backfill fetcher for a managed pool.
-
-        The legacy web3-sync fetcher factory formerly on the
-        retired `V4PoolBuilder`, relocated into this delegating shell. The
-        returned fetcher lazily pulls neighbouring tick words during swap
-        boundary-crossing via the state-view (`getTickBitmap` /
-        `getTickLiquidity`), attached to the Rust-registered pool as a
-        `PyTickWordFetcher` (ADR-005 sparse-map parity).
-
-        Returns:
-            A callable pulling ``{tick: (liquidity_gross, liquidity_net,
-            block)}`` for an out-of-range bitmap word, or ``None`` when the
-            pool/bitmap is unavailable.
-
-        """
-        pool_manager_address_ = get_checksum_address(pool_manager_address)
-        return make_tick_data_fetcher(
-            pool_lookup=lambda _: cast(
-                "UniswapV4Pool | None",
-                self.managed_pools.get(
-                    chain_id=chain_id,
-                    pool_manager_address=pool_manager_address_,
-                    pool_id=pool_id,
-                ),
-            ),
-            io=self._io,
-            types=TickDataTypes(
-                liquidity_at_tick=LiquidityAtTick,
-                tick_struct_types=("uint128", "int128"),
-            ),
-            state_view_address=state_view_address,
-            pool_id=bytes(pool_id),
         )
 
     @staticmethod
@@ -1024,12 +938,6 @@ class Bot(AccountQueryMixin):
             state_view_address=state_view_address,
             block=int(state_block) if state_block is not None else None,
             db=db_seed,
-            tick_data_fetcher=self._make_v4_tick_data_fetcher(
-                pool_id_bytes,
-                pool_manager_address,
-                state_view_address,
-                chain_id,
-            ),
         )
         # Return-surface parity: the identity the builder echoes
         # back must match what the core resolver produced (a divergence is a
