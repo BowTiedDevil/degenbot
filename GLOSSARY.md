@@ -341,6 +341,14 @@ supplies resolved policy values, never construction code.
 _Avoid_: a driver-side construction fallback chain; bare except-and-continue over
 construction failures.
 
+**Construction request**:
+The one family-tagged value a caller hands the construction entry: the pool's identity,
+the resolved policy values, and the family's own parameters riding as additive variants.
+A family the value cannot name does not exist at the interface, so a new family adds a
+variant rather than a verb.
+_Avoid_: a family×verb method set on any consumer; per-family optional arguments on one
+flat call.
+
 **Construction route**:
 One ordered attempt to construct a pool at a factory or the generic builder; the
 module's policy ordering, tried in turn. A route failure is a typed build refusal, never
@@ -401,6 +409,14 @@ Sparse pools; the on-disk bitmap itself is derived from the pool's tick rows.
 A checked bitmap word that holds no initialized ticks, kept present-but-zero. A word
 *absent* from a bitmap snapshot is indeterminate on a Sparse pool (fetch before use) and
 known-empty on a Tracked pool (the map is complete).
+
+**Tick-word source**:
+The core's one capability that backfills a tick-bitmap word over RPC, answering the
+initialized ticks of one word at one block. One capability serves both call sites — the
+registration-time seed and the live-miss backfill — because only the naming key differs
+(pool address before registration, pool id after).
+_Avoid_: one trait per call site for one choreography; a driver-supplied fetch callback;
+a fetcher that reads the state owner it is fetching for.
 
 **Snapshot seed**:
 The registration-time (pinned) tick data captured for a Tracked pool, verified exactly
