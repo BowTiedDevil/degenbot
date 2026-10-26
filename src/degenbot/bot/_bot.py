@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, Self, cast
 
 from degenbot._ffi import Bot as _Engine
 from degenbot._ffi import BotIo
-from degenbot.builders.construction import request_for
 
 # Import-order anchor: the aerodrome package must initialize before the
 # builders below pull in `degenbot.uniswap`; the facade does not name the
@@ -19,6 +18,7 @@ from degenbot.bot_lifecycle import close as _close_handles
 from degenbot.bot_lifecycle import (
     release_python_state as _release_python_state,
 )
+from degenbot.builders.construction import PoolConstructionRequest, request_for
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
@@ -55,9 +55,7 @@ from degenbot.types.pool_type import (
     classify_pool_variant,
     derive_kind,
 )
-from degenbot.uniswap.concentrated.types import LiquidityAtTick
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
+from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.utils.bytes import to_0x_hex, to_bytes
 
 from ._account_queries import AccountQueryMixin
@@ -594,7 +592,7 @@ class Bot(AccountQueryMixin):
 
         # One answer carries the handle and the identity: no second registry read,
         # no re-derivation of what the core registered.
-        pool_id, py_pool, b_t0, b_t1, b_var = (
+        _pool_id, py_pool, b_t0, b_t1, b_var = (
             outcome.pool_id,
             outcome.pool,
             outcome.token0,
@@ -809,7 +807,7 @@ class Bot(AccountQueryMixin):
             io=self._io,
         )
 
-    def build_managed_pool(  # ruff:ignore[too-many-locals] - the single V4 facade delegation
+    def build_managed_pool(
         self,
         address: str,
         request: BuildManagedPoolRequest,
@@ -824,23 +822,22 @@ class Bot(AccountQueryMixin):
         ``state_view_address``, ``tokens``, ``fee``, ``tick_spacing`` must
         all be provided.
 
-        The build is one delegation to the core: ``resolve_v4_identity``
-        performs the DB two-step (manager → v4 row → per-FK tokens) first,
-        else the request's caller-supplied overrides; the pool's two tokens
-        build in ONE batched metadata read; then ``build_v4_pool`` fetches
-        slot0/liquidity FRESH, assembles the tick map (Db → Chain precedence),
-        and registers into ``BotState`` atomically, echoing the identity back
-        for the parity guard. The fee overrides ride back from the SAME
-        head-stamped slot0 read, so the companion never issues a second
-        ``fetch_v4_slot0_liquidity`` per pool.
+        The build is ONE delegation to the core (ADR-085 D4): the
+        ``managed_v4`` construction request resolves the identity (the DB
+        two-step, manager → v4 row → per-FK tokens, first; else the
+        request's caller-supplied overrides), fetches slot0/liquidity FRESH,
+        assembles the tick map (Db → Chain precedence), and registers into
+        ``BotState`` atomically. The fee/state-view values ride the SAME
+        head-stamped slot0 read and come back ON the registered handle, so
+        the companion never issues a second ``fetch_v4_slot0_liquidity`` per
+        pool and no per-value threading crosses the seam.
 
         Returns:
             A `UniswapV4Pool` companion wrapping the Rust-registered pool.
 
         Raises:
             DegenbotValueError: If neither the DB two-step nor the request
-                overrides complete the identity, or if the builder-echoed
-                identity diverges from the core-resolved identity.
+                overrides complete the identity.
 
         """
         address = get_checksum_address(address)
@@ -878,106 +875,50 @@ class Bot(AccountQueryMixin):
         # row → per-FK tokens) first, else the request's caller-supplied
         # overrides — the driver neither reads the DB nor assembles the
         # identity itself.
-        over_tokens = request.tokens
+        # ONE construction call (ADR-085 D4): the core resolves the identity
+        # (the DB two-step first, else the request's caller-supplied
+        # overrides — the driver neither reads the DB nor assembles the
+        # identity), fetches slot0/liquidity FRESH, assembles the tick map
+        # (Db → Chain precedence), registers into `BotState` atomically, and
+        # answers the registered handle. The fee/state-view values ride the
+        # SAME head-stamped slot0 read and come back ON the handle (the
+        # handle is self-describing) — no per-value threading, and the
+        # echo-parity guard is core-side now.
+        construction_request = PoolConstructionRequest.managed_v4(
+            pool_manager_address,
+            to_0x_hex(pool_id_bytes),
+            tokens=[str(t) for t in request.tokens] if request.tokens else None,
+            fee=int(request.fee) if request.fee is not None else None,
+            tick_spacing=int(request.tick_spacing) if request.tick_spacing is not None else None,
+            hook_address=request.hook_address,
+            state_view_address=request.state_view_address,
+            block=int(state_block) if state_block is not None else None,
+            db=db_seed,
+        )
         try:
-            (
-                currency0_address,
-                currency1_address,
-                fee_for_pool,
-                tick_spacing_for_pool,
-                hook_flags,
-                hook_address,
-                state_view_hex,
-            ) = self._py_bot.resolve_v4_identity(
-                chain_id=int(chain_id),
-                pool_manager=pool_manager_address,
-                pool_id_hex=to_0x_hex(pool_id_bytes),
-                currency0=over_tokens[0] if over_tokens else None,
-                currency1=over_tokens[1] if over_tokens else None,
-                fee=int(request.fee) if request.fee is not None else None,
-                tick_spacing=(
-                    int(request.tick_spacing) if request.tick_spacing is not None else None
-                ),
-                hook_address=request.hook_address,
-                state_view_address=request.state_view_address,
-            )
+            outcome = self._py_bot.construct_pool(construction_request)
         except ValueError as exc:
-            # The core raises a typed `MissingIdentity` (mapped to PyValueError)
-            # when neither the DB two-step nor the overrides are complete.
+            # The core raises the typed `MissingIdentity` (mapped to
+            # PyValueError) when neither the DB two-step nor the overrides
+            # are complete.
             raise DegenbotValueError(
                 message=exc.args[0] if exc.args else "V4 identity resolution failed"
             ) from exc
-        state_view_address = get_checksum_address(state_view_hex)
+        py_pool_handle = outcome.pool
 
         # The pool's two tokens build in ONE batched metadata read:
         # `build_many` collapses the two per-token fetch_erc20_metadata
         # round-trips into a single Multicall3 aggregate3 eth_call for
-        # network-missing metadata.
+        # network-missing metadata. The currency pair is the outcome's
+        # identity echo.
         token0, token1 = self._erc20_builder.build_many(
-            [currency0_address, currency1_address],
+            [outcome.token0, outcome.token1],
             chain_id=chain_id,
             silent=request.silent,
             io=self._io,
         )
 
-        (
-            pool_handle_pool_id,
-            _coverage,
-            b_cur0,
-            b_cur1,
-            b_pm,
-            b_fee,
-            b_ts,
-            b_hf,
-            b_pool_id_hex,
-            b_protocol_fee,
-            b_lp_fee,
-        ) = self._py_bot.build_v4_pool(
-            pool_manager=pool_manager_address,
-            pool_id_hex=to_0x_hex(pool_id_bytes),
-            currency0=currency0_address,
-            currency1=currency1_address,
-            fee=fee_for_pool,
-            tick_spacing=tick_spacing_for_pool,
-            # The REAL hook address (pool-ID mismatch regression): the
-            # core registers it in the pool key so the identity round-trips
-            # keccak(abi.encode(pool_key)). The flag mask is derived core-side.
-            hook_address=hook_address,
-            state_view_address=state_view_address,
-            block=int(state_block) if state_block is not None else None,
-            db=db_seed,
-        )
-        # Return-surface parity: the identity the builder echoes
-        # back must match what the core resolver produced (a divergence is a
-        # real seam bug), and the pool_id must round-trip the requested hash.
-        # hook flags are derived from the same hook address on both sides.
-        if not all([
-            b_cur0.lower() == currency0_address.lower(),
-            b_cur1.lower() == currency1_address.lower(),
-            b_pm.lower() == pool_manager_address.lower(),
-            int(b_fee) == int(fee_for_pool),
-            int(b_ts) == int(tick_spacing_for_pool),
-            int(b_hf) == int(hook_flags),
-            b_pool_id_hex.lower() == to_0x_hex(pool_id_bytes).lower(),
-        ]):
-            raise DegenbotValueError(
-                message=(
-                    "V4 builder identity `build_v4_pool` diverged from the "
-                    "resolved identity (currency0/1, pool_manager, fee, "
-                    "tick_spacing, hook_flags, pool_id)."
-                )
-            )
-        py_pool_handle = self._py_bot.get_pool(pool_handle_pool_id)
-        assert py_pool_handle is not None, "build_v4_pool returned a pool_id with no handle"
-
         pool = UniswapV4Pool.from_handle(py_pool_handle)
-        # Builder-supplied values the seam defaults; override from RPC.
-        pool._state_view_address = state_view_address  # ruff:ignore[private-member-access]
-        pool.protocol_fee = ProtocolFee(
-            zero_for_one=b_protocol_fee & 0xFFF,
-            one_for_zero=b_protocol_fee >> 12,
-        )
-        pool.lp_fee = int(b_lp_fee)
 
         # Register pool in managed pool registry
         pool = cast(

@@ -52,7 +52,7 @@ pub use crate::bot::pool::PyLiquidityPool;
 use crate::bot::pool::TickData;
 use crate::bot::token::PyErc20Token;
 use degenbot_bot::bot_core::pool_builder::construction_door::PoolConstruction;
-use degenbot_bot::bot_core::pool_builder::route;
+use degenbot_bot::bot_core::pool_builder::route::{self, BuiltIdentity};
 use degenbot_bot::bot_core::registration_ledger::RefusalKind;
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::RegisteredPoolFamily;
@@ -269,21 +269,122 @@ impl PyBot {
     /// twin uses the same identity/fee/coverage surface as the original
     /// inline block: identity from the core's immutable pool key,
     /// protocol fee from the core's state machine, coverage as recorded.
-    fn registered_v4_payload(
+    fn registered_v4_echo(
         &self,
         py: Python<'_>,
         pm: Address,
         pid: &[u8; 32],
-    ) -> PyResult<Option<degenbot_bot::bot_core::registration::V4RegisteredPayload>> {
+    ) -> PyResult<Option<degenbot_bot::bot_core::registration::V4RegisteredEcho>> {
         // PRG-2: the keyed registration gate refuses an immutable-admission
         // pool (dynamic fee / fee-exceeds-encoder-limit) BEFORE any RPC work
         // on the registration path, with the exact exception class the live
         // registration refusal would have raised (map_refusal). The
-        // verdict consult + payload shaping are core-owned
-        // ([`Bot::registered_v4_payload`]); this wrapper only releases the
+        // verdict consult + echo shaping are core-owned
+        // ([`Bot::registered_v4_echo`]); this wrapper only releases the
         // GIL across the read and maps the typed refusal.
-        py.detach(|| self.bot.registered_v4_payload(pm, pid))
+        py.detach(|| self.bot.registered_v4_echo(pm, pid))
             .map_err(map_refusal)
+    }
+
+    /// The `managed_v4` translation arm: `(pool_manager, pool_id)`-keyed, the
+    /// id validated at construction. The identity overrides fill the DB
+    /// two-step's gaps (all optional; the resolver prefers the DB row).
+    fn translate_v4_request<'a>(
+        request: &PyPoolConstructionRequest,
+        addr: Address,
+        db: Option<&'a dyn degenbot_db::snapshot::TickMapDb>,
+    ) -> PyResult<PoolConstruction<'a>> {
+        let pool_id_hex = request.pool_id.as_deref().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "construct_pool: the managed_v4 family requires `pool_id`",
+            )
+        })?;
+        let pool_id = hex_string_to_pool_id(pool_id_hex)?;
+        let parse_opt = |s: Option<&String>, name: &str| -> PyResult<Option<Address>> {
+            s.map(|s| {
+                parse_address(s).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "construct_pool: malformed {name} {s:?}: {e}"
+                    ))
+                })
+            })
+            .transpose()
+        };
+        let tokens = request.tokens.as_deref();
+        let overrides = degenbot_bot::bot_core::pool_builder::builder::V4PoolBuildOverrides {
+            currency0: parse_opt(tokens.and_then(|t| t.first()), "currency0")?,
+            currency1: parse_opt(tokens.and_then(|t| t.get(1)), "currency1")?,
+            fee: request.fee,
+            tick_spacing: request.tick_spacing,
+            hook_address: parse_opt(request.hook_address.as_ref(), "hook_address")?,
+            state_view: parse_opt(request.state_view_address.as_ref(), "state_view_address")?,
+        };
+        Ok(PoolConstruction::V4 {
+            pool_manager: addr,
+            pool_id,
+            overrides,
+            db,
+        })
+    }
+
+    /// Shape the ONE construction echo from the door's verdict: the fresh
+    /// build's minted identity (the pair-keyed families echo their pair),
+    /// else the registry-GET race answer (the same shaping the flight
+    /// pre-check reads).
+    #[expect(clippy::too_many_arguments)]
+    fn shape_outcome_echo(
+        &self,
+        py: Python<'_>,
+        pool_id: u64,
+        built: Option<&BuiltIdentity>,
+        pair_echo: bool,
+        family: &str,
+        variant: Option<&str>,
+        addr: &Address,
+    ) -> PyResult<(u64, String, String, String, String)> {
+        match built {
+            Some(built) => {
+                let (token0, token1) = if pair_echo {
+                    let (t0, t1) = built.pair().unwrap_or_default();
+                    (t0.to_checksum(None), t1.to_checksum(None))
+                } else {
+                    (String::new(), String::new())
+                };
+                Ok((
+                    pool_id,
+                    token0,
+                    token1,
+                    built.address.to_checksum(None),
+                    built.variant.clone(),
+                ))
+            }
+            None => self
+                .registered_echo(py, family, variant, addr)
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "construct_pool: registration answered pool id {pool_id} with no identity"
+                    ))
+                }),
+        }
+    }
+
+    /// The V4 registry-of-record pre-check: the keyed echo read (the PRG-2
+    /// gate consult rides it, so an immutable-admission refusal surfaces
+    /// HERE, before any build work), shaped to the shared 5-tuple.
+    #[expect(clippy::type_complexity)]
+    fn v4_flight_precheck(
+        &self,
+        py: Python<'_>,
+        addr: Address,
+        pool_id: Option<&String>,
+    ) -> PyResult<Option<(u64, String, String, String, String)>> {
+        let pid = match pool_id {
+            Some(s) => hex_string_to_pool_id(s)?,
+            None => return Ok(None),
+        };
+        Ok(self
+            .registered_v4_echo(py, addr, &pid)?
+            .map(|echo| (echo.0, echo.1, echo.2, echo.3, String::new())))
     }
 
     /// The ONE translation: the family-tagged construction request -> the core
@@ -345,6 +446,7 @@ impl PyBot {
                     false,
                 ))
             }
+            "managed_v4" => Ok((Self::translate_v4_request(request, addr, db)?, true)),
             // Curve — the discovery-only stableswap family with no `factory()`.
             // The driver supplies the registry/factory addresses the LP-token +
             // metapool lookups consult (driver values, like the V3 route's factory
@@ -382,6 +484,7 @@ impl PyBot {
             }
             "constant_product" => build_flights::flight_family::V2,
             "concentrated_liquidity" => build_flights::flight_family::V3,
+            "managed_v4" => build_flights::flight_family::V4,
             "weighted" => build_flights::flight_family::BALANCER_WEIGHTED,
             "stableswap" if variant == Some("balancer_stable") => {
                 build_flights::flight_family::BALANCER_STABLE
@@ -978,6 +1081,19 @@ pub struct PyPoolConstructionRequest {
     vault: Option<String>,
     /// The requested invariant version (family-specific).
     invariant_version: Option<u8>,
+    /// The V4 on-chain pool id (normalized lowercase `0x`-prefixed 64-hex;
+    /// the `managed_v4` family, validated at construction).
+    pool_id: Option<String>,
+    /// V4 identity overrides (the DB two-step's fallback): the currency pair.
+    tokens: Option<Vec<String>>,
+    /// V4 identity overrides: the pool-key fee.
+    fee: Option<u32>,
+    /// V4 identity overrides: the tick spacing.
+    tick_spacing: Option<i32>,
+    /// V4 identity overrides: the hook contract address.
+    hook_address: Option<String>,
+    /// V4 identity overrides: the `StateView` contract address.
+    state_view_address: Option<String>,
 }
 
 impl PyPoolConstructionRequest {
@@ -1006,6 +1122,12 @@ impl PyPoolConstructionRequest {
             registries: registries.unwrap_or_default(),
             vault,
             invariant_version,
+            pool_id: None,
+            tokens: None,
+            fee: None,
+            tick_spacing: None,
+            hook_address: None,
+            state_view_address: None,
         }
     }
 }
@@ -1143,6 +1265,48 @@ impl PyPoolConstructionRequest {
         )
     }
 
+    /// A V4 managed pool keyed by its `PoolManager` + on-chain pool id —
+    /// `pool_id` is required and validated HERE (ADR-085 D3: a family's
+    /// required hint is an argument, not a runtime check at the verb). The
+    /// identity overrides fill the DB two-step's gaps for a pool not in the
+    /// database.
+    #[staticmethod]
+    #[pyo3(signature = (pool_manager, pool_id, *, tokens=None, fee=None, tick_spacing=None, hook_address=None, state_view_address=None, block=None, db=true))]
+    #[expect(clippy::too_many_arguments)]
+    fn managed_v4(
+        pool_manager: &str,
+        pool_id: &str,
+        tokens: Option<Vec<String>>,
+        fee: Option<u32>,
+        tick_spacing: Option<i32>,
+        hook_address: Option<String>,
+        state_view_address: Option<String>,
+        block: Option<u64>,
+        db: bool,
+    ) -> PyResult<Self> {
+        // Fail fast on a malformed id, and normalize so the single-flight
+        // key and the core's parse see ONE spelling.
+        let pid = hex_string_to_pool_id(pool_id)?;
+        let mut request = Self::make(
+            pool_manager,
+            "managed_v4",
+            None,
+            block,
+            db,
+            None,
+            None,
+            None,
+            None,
+        );
+        request.pool_id = Some(format!("0x{}", alloy::hex::encode(pid)));
+        request.tokens = tokens;
+        request.fee = fee;
+        request.tick_spacing = tick_spacing;
+        request.hook_address = hook_address;
+        request.state_view_address = state_view_address;
+        Ok(request)
+    }
+
     /// The pool address the request builds.
     #[getter]
     fn address(&self) -> String {
@@ -1195,6 +1359,42 @@ impl PyPoolConstructionRequest {
     #[getter]
     const fn invariant_version(&self) -> Option<u8> {
         self.invariant_version
+    }
+
+    /// The V4 on-chain pool id (`None` off the `managed_v4` family).
+    #[getter]
+    fn pool_id(&self) -> Option<String> {
+        self.pool_id.clone()
+    }
+
+    /// V4 identity overrides: the currency pair.
+    #[getter]
+    fn tokens(&self) -> Option<Vec<String>> {
+        self.tokens.clone()
+    }
+
+    /// V4 identity overrides: the pool-key fee.
+    #[getter]
+    const fn fee(&self) -> Option<u32> {
+        self.fee
+    }
+
+    /// V4 identity overrides: the tick spacing.
+    #[getter]
+    const fn tick_spacing(&self) -> Option<i32> {
+        self.tick_spacing
+    }
+
+    /// V4 identity overrides: the hook contract address.
+    #[getter]
+    fn hook_address(&self) -> Option<String> {
+        self.hook_address.clone()
+    }
+
+    /// V4 identity overrides: the `StateView` contract address.
+    #[getter]
+    fn state_view_address(&self) -> Option<String> {
+        self.state_view_address.clone()
     }
 }
 
@@ -1288,15 +1488,38 @@ impl PyBot {
         let (construction, pair_echo) =
             Self::translate_construction_request(request, addr, db_ref)?;
         let family_tag = construction.family();
+        // The V4 family is `(pool_manager, pool_id)`-keyed — two pools on one
+        // manager are distinct single flights (the retired verb's key shape).
+        let flight_target = if family == "managed_v4" {
+            format!(
+                "{}:{}",
+                addr.to_checksum(None).to_lowercase(),
+                request
+                    .pool_id
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_lowercase()
+            )
+        } else {
+            addr.to_checksum(None).to_lowercase()
+        };
         let key = build_flights::FlightKey(
             Self::flight_family_of(family, variant),
             self.bot.chain_id(),
-            addr.to_checksum(None).to_lowercase(),
+            flight_target,
         );
         self.run_flight(
             py,
             &key,
-            || Ok(self.registered_echo(py, family, variant, &addr)),
+            // The registry-of-record pre-check: the string-keyed families
+            // shape off the address; the V4 family reads its keyed payload.
+            || {
+                if family == "managed_v4" {
+                    self.v4_flight_precheck(py, addr, request.pool_id.as_ref())
+                } else {
+                    Ok(self.registered_echo(py, family, variant, &addr))
+                }
+            },
             || {
                 // The io fetch is core-owned; the failure maps to the
                 // method-prefixed legacy `RuntimeError`.
@@ -1336,297 +1559,28 @@ impl PyBot {
                         )
                     })?;
                 let pool_id = constructed.pool_id;
-                let echo = match constructed.built.as_ref() {
-                    Some(built) => {
-                        let (token0, token1) = if pair_echo {
-                            let (t0, t1) = built.pair().unwrap_or_default();
-                            (t0.to_checksum(None), t1.to_checksum(None))
-                        } else {
-                            (String::new(), String::new())
-                        };
-                        (
-                            pool_id,
-                            token0,
-                            token1,
-                            built.address.to_checksum(None),
-                            built.variant.clone(),
-                        )
-                    }
-                    // The registry-GET race answer: the same shaping the
-                    // flight pre-check reads.
-                    None => self
-                        .registered_echo(py, family, variant, &addr)
-                        .ok_or_else(|| {
-                            pyo3::exceptions::PyRuntimeError::new_err(format!(
-                                "construct_pool: registration answered pool id {pool_id} with no identity"
-                            ))
-                        })?,
-                };
+                let echo = self.shape_outcome_echo(
+                    py,
+                    pool_id,
+                    constructed.built.as_ref(),
+                    pair_echo,
+                    family,
+                    variant,
+                    &addr,
+                )?;
                 Ok((pool_id, echo))
             },
         )
     }
 }
 
+// (The `resolve_v4_identity` / `build_v4_pool` pymethod pair retired with
+// the V4 fold: ONE `construct_pool` request carries the identity overrides,
+// the core door resolves + builds + registers, and the registered handle is
+// self-describing — no two-call choreography, no caller-supplied-identity
+// echo to guard.)
 #[pymethods]
 impl PyBot {
-    /// Build a V4 pool via the Rust `PoolBuilder` ), registered
-    /// into `BotState` via `register_v4_pool`.
-    ///
-    /// V4 identity is **caller-supplied** (mirrors `register_v4_pool`: the
-    /// core never reads `getToken0`/`getHooks` on-chain). The builder fetches
-    /// only the LIVE scalars (`getSlot0` + `getLiquidity` on `state_view`)
-    /// and assembles/seeds a Sparse tick map via the Chain arm — reusing the
-    /// StateView-backed choreography with no new ABI.
-    ///
-    /// The caller must register the V4 `state_view` mapping for
-    /// `pool_manager` (done here, idempotent) before this returns, so the
-    /// solver-state accuracy gate can verify V4 hops on-chain.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::register_v4_pool`] (builder RPC/decode errors and
-    /// admission/filtering errors both map through the one refusal mapper).
-    #[pyo3(signature = (chain_id, pool_manager, pool_id_hex, currency0=None, currency1=None, fee=None, tick_spacing=None, hook_address=None, state_view_address=None))]
-    #[expect(clippy::too_many_arguments)]
-    fn resolve_v4_identity(
-        &self,
-        py: Python<'_>,
-        chain_id: u64,
-        pool_manager: &str,
-        pool_id_hex: &str,
-        currency0: Option<&str>,
-        currency1: Option<&str>,
-        fee: Option<u32>,
-        tick_spacing: Option<i32>,
-        hook_address: Option<&str>,
-        state_view_address: Option<&str>,
-    ) -> PyResult<(String, String, u32, i32, u16, String, String)> {
-        use degenbot_bot::bot_core::pool_builder::builder;
-        let pm = parse_address(pool_manager).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "resolve_v4_identity: malformed pool_manager {pool_manager:?}: {e}"
-            ))
-        })?;
-        let pool_id = hex_string_to_pool_id(pool_id_hex)?;
-        let parse_opt = |s: Option<&str>, name: &str| -> PyResult<Option<Address>> {
-            s.map(|s| {
-                parse_address(s).map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!(
-                        "resolve_v4_identity: malformed {name} {s:?}: {e}"
-                    ))
-                })
-            })
-            .transpose()
-        };
-        // the V4 identity (currency0/1, fee, tick_spacing, hook,
-        // state_view) is resolved CORE-side — the DB two-step (manager → V4 row
-        // → per-FK tokens) first, else these raw caller overrides. The override
-        // fields are all optional; the resolver raises a typed `MissingIdentity`
-        // (mapped to PyValueError) when neither source is complete.
-        let overrides = builder::V4PoolBuildOverrides {
-            currency0: parse_opt(currency0, "currency0")?,
-            currency1: parse_opt(currency1, "currency1")?,
-            fee,
-            tick_spacing,
-            hook_address: parse_opt(hook_address, "hook_address")?,
-            state_view: parse_opt(state_view_address, "state_view_address")?,
-        };
-        // The ConstructionIo requirement + the DB-two-step/override
-        // resolution live inside the core method
-        // ([`Bot::resolve_v4_identity`]); this wrapper maps the typed
-        // refusal to the historical method-prefixed `RuntimeError`.
-        let id = py
-            .detach(|| {
-                self.bot
-                    .resolve_v4_identity(chain_id, pm, pool_id, &overrides)
-            })
-            .map_err(|kind| map_build_refusal("resolve_v4_identity", kind))?;
-        Ok((
-            id.currency0.to_checksum(None),
-            id.currency1.to_checksum(None),
-            id.fee,
-            id.tick_spacing,
-            // Derived mask — kept for the driver's existing flag-parity check.
-            degenbot_bot::bot_core::pool_builder::builder::derive_hook_flags(id.hook_address),
-            // The REAL hook address (pool-ID mismatch regression): the
-            // driver must thread this through to build_v4_pool so the
-            // registered pool key round-trips keccak(abi.encode(pool_key)).
-            id.hook_address.to_checksum(None),
-            id.state_view.to_checksum(None),
-        ))
-    }
-
-    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_address, state_view_address, block=None, db=true))]
-    #[expect(clippy::too_many_arguments)]
-    #[expect(clippy::type_complexity)]
-    fn build_v4_pool(
-        &self,
-        py: Python<'_>,
-        pool_manager: &str,
-        pool_id_hex: &str,
-        currency0: &str,
-        currency1: &str,
-        fee: u32,
-        tick_spacing: i32,
-        // The REAL hook contract address (from resolve_v4_identity — DB
-        // two-step or caller override; None/empty = no hook). The flag mask
-        // is DERIVED here: the address is the single identity source so the
-        // registered pool key round-trips keccak(abi.encode(pool_key)).
-        hook_address: Option<&str>,
-        state_view_address: &str,
-        block: Option<u64>,
-        db: bool,
-    ) -> PyResult<(
-        u64,
-        String,
-        String,
-        String,
-        String,
-        u32,
-        i32,
-        u16,
-        String,
-        u32,
-        u32,
-    )> {
-        let pm = parse_address(pool_manager).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "build_v4_pool: malformed pool_manager {pool_manager:?}: {e}"
-            ))
-        })?;
-        let pool_id = hex_string_to_pool_id(pool_id_hex)?;
-        let state_view = parse_address(state_view_address).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "build_v4_pool: malformed state_view_address {state_view_address:?}: {e}"
-            ))
-        })?;
-        // Register the Rust-owned V4 StateView registry first (ADR-005 /
-        // Option 2) — the solver-state gate reads it to verify V4 hops.
-        // Core-owned ([`Bot::register_v4_state_view`], LockSite::Core) under
-        // this py.detach (inversion class).
-        py.detach(|| self.bot.register_state_view(pm, state_view));
-
-        // PRG-1 registry unification: the build (pre-check → build → publish)
-        // runs under the engine-internal single flight keyed by
-        // (V4, chain, pool_manager:pool_id). The registry-of-record pre-check
-        // returns the existing registration — identity from the core's
-        // immutable key, protocol_fee from the core's state machine, coverage
-        // as recorded — under ONE read guard and with NO RPC (the
-        // missed-WS-pong 2026-08-28 fast path, now shared by single-flight
-        // peers too). `block` and `db` are no-ops on
-        // this path: the core-tracked state is the freshest source, and the
-        // driver still runs the registration lifecycle off the returned
-        // handle as usual. hook_address is NOT re-resolved here: the Python
-        // driver resolves the identity (DB two-step, no RPC) before this call
-        // and passes the same immutable hook address the core registered
-        // with.
-        let key = build_flights::FlightKey(
-            build_flights::flight_family::V4,
-            self.bot.chain_id(),
-            format!(
-                "{}:{}",
-                pm.to_checksum(None).to_lowercase(),
-                pool_id_hex.to_lowercase()
-            ),
-        );
-        self.run_flight(
-            py,
-            &key,
-            || self.registered_v4_payload(py, pm, &pool_id),
-            // registered_v4_payload is now PyResult-returning (PRG-2 gate
-            // consult); no further wrapping needed.
-            || {
-                use degenbot_bot::bot_core::pool_builder::builder;
-                let db_arc: Option<std::sync::Arc<degenbot_db::snapshot_db::SnapshotDb>> =
-                    if db { self.db_handle() } else { None };
-                let db_ref: Option<&dyn degenbot_db::snapshot::TickMapDb> = db_arc
-                    .as_deref()
-                    .map(|d| d as &dyn degenbot_db::snapshot::TickMapDb);
-                let hook_addr = hook_address
-                    .filter(|s| !s.is_empty())
-                    .map(|s| {
-                        parse_address(s).map_err(|e| {
-                            pyo3::exceptions::PyValueError::new_err(format!(
-                                "build_v4_pool: malformed hook_address {s:?}: {e}"
-                            ))
-                        })
-                    })
-                    .transpose()?
-                    .unwrap_or_default();
-                let currency0_addr = parse_address(currency0).map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!(
-                        "build_v4_pool: malformed currency0 {currency0:?}: {e}"
-                    ))
-                })?;
-                let currency1_addr = parse_address(currency1).map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!(
-                        "build_v4_pool: malformed currency1 {currency1:?}: {e}"
-                    ))
-                })?;
-                // (builder return surface): the normalized identity echo is
-                // the parsed caller-supplied identity's checksums + the
-                // derived hook mask.
-                let identity_ret = (
-                    currency0_addr.to_checksum(None),
-                    currency1_addr.to_checksum(None),
-                    pm.to_checksum(None),
-                    fee,
-                    tick_spacing,
-                    builder::derive_hook_flags(hook_addr),
-                    format!("0x{}", alloy::hex::encode(pool_id)),
-                );
-                // Sparse-map parity (V4 twin of `build_v3_pool`): the core
-                // attaches its own `ConstructionIo`-backed tick-word source for
-                // the live-miss backfill, so no driver callback is needed here.
-                let fetcher = None;
-                // The fetch/build/register choreography is core-owned
-                // ([`Bot::build_and_register_v4`]); the GIL is released
-                // across the whole scope.
-                let (registered, coverage, protocol_fee, lp_fee) = py
-                    .detach(|| {
-                        self.bot.build_and_register_v4(
-                            builder::V4PoolBuildIdentity {
-                                pool_manager: pm,
-                                state_view,
-                                pool_id,
-                                currency0: currency0_addr,
-                                currency1: currency1_addr,
-                                fee,
-                                tick_spacing,
-                                hook_address: hook_addr,
-                            },
-                            db_ref,
-                            block,
-                            fetcher,
-                        )
-                    })
-                    .map_err(|kind| map_build_refusal("build_v4_pool", kind))?;
-                // Return `(pool_id, coverage, identity..., protocol_fee, lp_fee)` so the
-                // Python driver can set the companion's `_sparse_liquidity_map` (from
-                // coverage), the normalized identity, and the fee overrides
-                // (protocol_fee/lp_fee from the builder's own slot0 read) in one return
-                // surface.
-                Ok((
-                    registered,
-                    (
-                        registered,
-                        coverage,
-                        identity_ret.0,
-                        identity_ret.1,
-                        identity_ret.2,
-                        identity_ret.3,
-                        identity_ret.4,
-                        identity_ret.5,
-                        identity_ret.6,
-                        protocol_fee,
-                        lp_fee,
-                    ),
-                ))
-            },
-        )
-    }
-
     /// Prototype test-only V2 registration that bypasses CREATE2 verification.
     /// Wire to a new method on Python so tests can build a synthetic V2 pool.
     #[expect(clippy::too_many_arguments)]

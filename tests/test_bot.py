@@ -44,6 +44,7 @@ from dataclasses import dataclass
 import pytest
 
 from degenbot._ffi import Bot as _Engine
+from degenbot._ffi import PoolConstructionRequest
 from degenbot.bot import Bot
 from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.exceptions.base import DegenbotValueError
@@ -115,8 +116,6 @@ class _ScriptedEngine:
 
     construct_pool: Callable[..., object] | None = None
     get_pool: Callable[..., object] | None = None
-    resolve_v4_identity: Callable[..., object] | None = None
-    build_v4_pool: Callable[..., object] | None = None
 
     def __post_init__(self) -> None:
         for name, method in session_registry_methods().items():
@@ -260,76 +259,80 @@ class TestBuildDelegatedIdentityReturnSurface:
             bot.build_pool("0x" + "e" * 40)
 
 
-class TestBuildManagedPoolIdentityReturnSurface:
-    """The V4 build path resolves identity core-side via ``resolve_v4_identity``
-    (DB two-step else overrides) then echoes it back through ``build_v4_pool``;
-    the build verifies the two agree."""
+class TestBuildManagedPoolRequestShape:
+    """``build_managed_pool`` issues ONE construction request: the
+    ``managed_v4`` family carrying the pool id and the caller-supplied
+    identity overrides. The engine double captures the request at the seam
+    and halts the build."""
 
-    def test_build_v4_parity_mismatch_raises(self, tmp_path: pathlib.Path) -> None:
-        """A builder identity that diverges from the resolver identity raises
-        — the return-surface parity guard."""
-        session = _test_session(tmp_path)
-        io = _ScriptedIo()
+    @staticmethod
+    def _capturing_engine(captured: dict[str, object]) -> _ScriptedEngine:
+        def construct_pool(request: object) -> object:
+            captured.update(
+                address=request.address,
+                family=request.family,
+                pool_id=request.pool_id,
+                tokens=request.tokens,
+                fee=request.fee,
+                tick_spacing=request.tick_spacing,
+                hook_address=request.hook_address,
+                state_view_address=request.state_view_address,
+                block=request.block,
+                db=request.db,
+            )
+            raise _SeamCaptured
 
-        # Token-builder double: the real Erc20Builder's per-token build needs
-        # DB/RPC reads the io double does not carry.
+        return _ScriptedEngine(construct_pool=construct_pool)
+
+    def _bot(self, tmp_path: pathlib.Path, captured: dict[str, object]) -> Bot:
         token = FakeToken(address="0x" + "cc" * 20)
         erc20_builder = _ScriptedErc20Builder(
             build=lambda *a, **k: token,
             build_many=lambda *a, **k: [token, token],
         )
-
-        pm = "0x" + "aa" * 20
-        pool_id_hex = "0x" + "11" * 32
-        tokens = ["0x" + "cc" * 20, "0x" + "dd" * 20]  # cc<dd -> cc is currency0
-
-        # Engine double: the resolver returns identity A; build_v4_pool echoes
-        # a DIFFERENT currency0 -> parity guard must raise. Return surface:
-        # (pool_id, coverage, currency0, currency1, pool_manager, fee,
-        # tick_spacing, hook_flags, pool_id_hex, protocol_fee, lp_fee).
-        py_bot = _ScriptedEngine(
-            resolve_v4_identity=lambda **k: (
-                "0x" + "cc" * 20,
-                "0x" + "dd" * 20,
-                5000,
-                1,
-                0,  # hook flag mask 0 (hook address defaults to ZERO)
-                "0x" + "00" * 20,
-                "0x" + "bb" * 20,  # state-view caller override
-            ),
-            build_v4_pool=lambda **k: (
-                7,
-                "sparse",
-                "0x" + "ee" * 20,  # currency0 mismatch vs resolver
-                "0x" + "dd" * 20,
-                pm,
-                5000,
-                1,
-                0,
-                pool_id_hex,
-                5000,  # protocol_fee
-                0,  # lp_fee
-            ),
-        )
-        bot = Bot(
-            **session,
+        return Bot(
+            **_test_session(tmp_path),
             provider=_fake_provider(1),
-            py_bot=py_bot,
-            io=io,
+            py_bot=self._capturing_engine(captured),
+            io=_ScriptedIo(),
             erc20_builder=erc20_builder,
         )
 
-        with pytest.raises(DegenbotValueError):
-            bot.build_managed_pool(
-                pm,
+    def test_request_carries_the_managed_v4_vocabulary(self, tmp_path: pathlib.Path) -> None:
+        """The request is family-tagged ``managed_v4`` with the pool id (the
+        constructor validates + normalizes it) and the identity overrides
+        threaded verbatim."""
+        captured: dict[str, object] = {}
+        with pytest.raises(_SeamCaptured):
+            self._bot(tmp_path, captured).build_managed_pool(
+                "0x" + "aa" * 20,
                 BuildManagedPoolRequest(
-                    pool_id=pool_id_hex,
+                    pool_id="0x" + "11" * 32,
                     state_block=100,
                     state_view_address="0x" + "bb" * 20,
-                    tokens=tokens,
+                    tokens=["0x" + "cc" * 20, "0x" + "dd" * 20],
                     fee=5000,
                     tick_spacing=1,
+                    hook_address=None,
                 ),
+            )
+        assert captured["family"] == "managed_v4"
+        # The driver checksums the manager before the request.
+        assert captured["address"].lower() == "0x" + "aa" * 20
+        assert captured["pool_id"] == "0x" + "11" * 32
+        assert captured["tokens"] == ["0x" + "cc" * 20, "0x" + "dd" * 20]
+        assert captured["fee"] == 5000
+        assert captured["tick_spacing"] == 1
+        assert captured["state_view_address"] == "0x" + "bb" * 20
+
+    def test_malformed_pool_id_refuses_at_the_request(self) -> None:
+        """The pool id is validated where the family is chosen (a required
+        hint is an argument, ADR-085 D3) — at the constructor, before any
+        verb or registry ever sees it."""
+        with pytest.raises(ValueError, match="Pool ID hex string"):
+            PoolConstructionRequest.managed_v4(
+                "0x" + "aa" * 20,
+                "0x" + "11" * 8,  # 8 bytes, not 32
             )
 
 
@@ -338,12 +341,12 @@ class TestBuildManagedPoolResolveErrorMapping:
     PyValueError at the seam) surfaces as DegenbotValueError."""
 
     def test_resolve_missing_identity_raises_degenbot(self, tmp_path: pathlib.Path) -> None:
-        """When resolve_v4_identity raises ValueError (no DB row, no overrides),
-        the V4 build path re-raises DegenbotValueError."""
+        """When the ONE construction verb raises ValueError (no DB row, no
+        overrides), the V4 build path re-raises DegenbotValueError."""
         session = _test_session(tmp_path)
         io = _ScriptedIo()
         py_bot = _ScriptedEngine(
-            resolve_v4_identity=lambda **k: (_ for _ in ()).throw(
+            construct_pool=lambda request: (_ for _ in ()).throw(
                 ValueError("V4 identity incomplete: pool not in the database")
             ),
         )
@@ -441,8 +444,9 @@ class TestBuildPoolDbArmEligibility:
 
 class TestBuildManagedPoolDbArmEligibility:
     """The V4 twin of ``TestBuildPoolDbArmEligibility``: a pinned historical
-    ``state_block`` forwards ``db=False`` to ``build_v4_pool`` (Chain-arm
-    Sparse tick map at the pinned block); a head build keeps ``db=True``."""
+    ``state_block`` forwards ``db=False`` to the ONE construction verb
+    (Chain-arm Sparse tick map at the pinned block); a head build keeps
+    ``db=True``."""
 
     @staticmethod
     def _bot(tmp_path: pathlib.Path, captured: dict[str, object]) -> Bot:
@@ -452,22 +456,11 @@ class TestBuildManagedPoolDbArmEligibility:
             build_many=lambda *a, **k: [token, token],
         )
 
-        def build_v4_pool(**kwargs: object) -> object:
-            captured.update(kwargs)
+        def construct_pool(request: object) -> object:
+            captured.update(db=request.db, block=request.block)
             raise _SeamCaptured
 
-        py_bot = _ScriptedEngine(
-            resolve_v4_identity=lambda **k: (
-                "0x" + "cc" * 20,
-                "0x" + "dd" * 20,
-                5000,
-                1,
-                0,
-                "0x" + "00" * 20,
-                "0x" + "bb" * 20,
-            ),
-            build_v4_pool=build_v4_pool,
-        )
+        py_bot = _ScriptedEngine(construct_pool=construct_pool)
         return Bot(
             **_test_session(tmp_path),
             provider=_fake_provider(1),

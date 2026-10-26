@@ -489,18 +489,14 @@ async fn construct_v4(
             built: None,
         });
     }
+    // An incomplete identity classifies through the ONE taxonomy arm
+    // (`BuildFailure::MissingIdentity` -> the use site's ValueError) — the
+    // same class the retired verb's direct callers saw, never a family
+    // verdict and never flattened to transient.
     let identity =
         builder::resolve_v4_identity(bot.chain_id(), pool_manager, pool_id, overrides, io)
             .await
-            .map_err(|err| match err {
-                // An incomplete identity is a data problem (an in-flight DB
-                // row or a caller that under-specified the overrides) —
-                // retriable, never a family verdict.
-                builder::PoolBuilderError::MissingIdentity { message } => {
-                    ConstructionRefusal::Skipped(BuildFailure::Transient(message))
-                }
-                other => classify_builder_error(other, pool_manager),
-            })?;
+            .map_err(|err| classify_builder_error(err, pool_manager))?;
     // The solver-state gate's StateView registry: the OLD FFI verb made
     // this registration driver-side before the build; the door owns it (the
     // resolved identity names the StateView, so no caller value is needed).

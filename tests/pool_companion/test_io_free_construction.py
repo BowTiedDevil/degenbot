@@ -627,7 +627,11 @@ class TestBotBuildV4Pool:
         assert pool.sqrt_price_x96 == sqrt_price
         assert pool.tick == tick
         assert pool.liquidity == liquidity
-        assert pool.lp_fee == lp_fee
+        # The registered handle's LP fee IS the pool key's static fee (the
+        # engine's swap-fee input; the handle is self-describing, ADR-085
+        # D4). The mock's slot0 lpFee read is a transient, not a registered
+        # fact — it no longer threads across the seam.
+        assert pool.lp_fee == V4_FEE
 
         found = bot.managed_pools.get(
             chain_id=1,

@@ -1054,16 +1054,16 @@ mod tests {
     }
 
     #[test]
-    fn resolve_v4_identity_refusals_pin_the_no_io_refusal() {
+    fn construct_pool_refusals_pin_the_v4_no_io_refusal() {
         assert_eq!(
             message(&map_build_refusal(
-                "resolve_v4_identity",
+                "construct_pool",
                 RefusalKind::missing_construction_io(
                     Some(RegisteredPoolFamily::V4),
                     RegistrationPhase::Identity,
                 ),
             )),
-            "resolve_v4_identity: no ConstructionIo attached (requires an alloy provider)"
+            "construct_pool: no ConstructionIo attached (requires an alloy provider)"
         );
     }
 

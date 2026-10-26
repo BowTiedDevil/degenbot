@@ -2825,6 +2825,7 @@ async fn construction_door_v3_matches_the_route_interior() {
 }
 
 #[tokio::test]
+#[expect(clippy::too_many_lines)] // the door/interior parity + the V4 ownership pins read as one walk
 async fn construction_door_v4_matches_the_route_interior() {
     let pm: Address = alloy::primitives::address!("0x3333333333333333333333333333333333333333");
     let pid: [u8; 32] = [0xcd; 32];
@@ -2927,8 +2928,7 @@ async fn construction_door_v4_matches_the_route_interior() {
         .state_arc()
         .read_at(LockSite::Core)
         .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(direct.pool_id)
-        .map(|state| state.fetcher.is_some())
-        .unwrap_or_default();
+        .is_some_and(|state| state.fetcher.is_some());
     assert!(fetcher_attached, "the door attaches the tick-word source");
 
     // The door's `(manager, pool_id)`-keyed get half answers without I/O.

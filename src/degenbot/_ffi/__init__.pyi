@@ -915,20 +915,6 @@ class Bot:
             `chain_id`: chain ID.
             `block`: optional block to read on-chain at (None = head).
         """
-    def build_v4_pool(
-        self,
-        /,
-        pool_manager: str,
-        pool_id_hex: str,
-        currency0: str,
-        currency1: str,
-        fee: SupportsIndex,
-        tick_spacing: SupportsIndex,
-        hook_address: str | None,
-        state_view_address: str,
-        block: SupportsIndex | None = None,
-        db: bool = True,
-    ) -> tuple[int, str, str, str, str, int, int, int, str, int, int]: ...
     def calculate_tokens_in(
         self, /, pool_id: SupportsIndex, zero_for_one: bool, amount_out: Any
     ) -> Any:
@@ -1532,38 +1518,6 @@ class Bot:
         """
         The session's canonical token object for this address, or `None` when
         this session does not hold it. Registers nothing.
-        """
-    def resolve_v4_identity(
-        self,
-        /,
-        chain_id: SupportsIndex,
-        pool_manager: str,
-        pool_id_hex: str,
-        currency0: str | None = None,
-        currency1: str | None = None,
-        fee: SupportsIndex | None = None,
-        tick_spacing: SupportsIndex | None = None,
-        hook_address: str | None = None,
-        state_view_address: str | None = None,
-    ) -> tuple[str, str, int, int, int, str, str]:
-        """
-        Build a V4 pool via the Rust `PoolBuilder` ), registered
-        into `BotState` via `register_v4_pool`.
-
-        V4 identity is **caller-supplied** (mirrors `register_v4_pool`: the
-        core never reads `getToken0`/`getHooks` on-chain). The builder fetches
-        only the LIVE scalars (`getSlot0` + `getLiquidity` on `state_view`)
-        and assembles/seeds a Sparse tick map via the Chain arm — reusing the
-        StateView-backed choreography with no new ABI.
-
-        The caller must register the V4 `state_view` mapping for
-        `pool_manager` (done here, idempotent) before this returns, so the
-        solver-state accuracy gate can verify V4 hops on-chain.
-
-        # Errors
-
-        As [`Self::register_v4_pool`] (builder RPC/decode errors and
-        admission/filtering errors both map through the one refusal mapper).
         """
     def resume(self, /) -> None:
         """
@@ -3822,14 +3776,64 @@ class PoolConstructionRequest:
         The family tag the core dispatches on.
         """
     @property
+    def fee(self, /) -> int | None:
+        """
+        V4 identity overrides: the pool-key fee.
+        """
+    @property
+    def hook_address(self, /) -> str | None:
+        """
+        V4 identity overrides: the hook contract address.
+        """
+    @property
     def invariant_version(self, /) -> int | None:
         """
         The requested invariant version (family-specific).
+        """
+    @staticmethod
+    def managed_v4(
+        pool_manager: str,
+        pool_id: str,
+        *,
+        tokens: SupportsGetItem[int, str] | None = None,
+        fee: SupportsIndex | None = None,
+        tick_spacing: SupportsIndex | None = None,
+        hook_address: str | None = None,
+        state_view_address: str | None = None,
+        block: SupportsIndex | None = None,
+        db: bool = True,
+    ) -> PoolConstructionRequest:
+        """
+        A V4 managed pool keyed by its `PoolManager` + on-chain pool id —
+        `pool_id` is required and validated HERE (ADR-085 D3: a family's
+        required hint is an argument, not a runtime check at the verb). The
+        identity overrides fill the DB two-step's gaps for a pool not in the
+        database.
+        """
+    @property
+    def pool_id(self, /) -> str | None:
+        """
+        The V4 on-chain pool id (`None` off the `managed_v4` family).
         """
     @property
     def registries(self, /) -> list[str]:
         """
         Curve registry addresses for the LP-token/metapool lookups.
+        """
+    @property
+    def state_view_address(self, /) -> str | None:
+        """
+        V4 identity overrides: the `StateView` contract address.
+        """
+    @property
+    def tick_spacing(self, /) -> int | None:
+        """
+        V4 identity overrides: the tick spacing.
+        """
+    @property
+    def tokens(self, /) -> list[str] | None:
+        """
+        V4 identity overrides: the currency pair.
         """
     @staticmethod
     def unmodeled(

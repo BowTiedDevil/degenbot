@@ -30,7 +30,6 @@ use super::bot::Bot;
 use super::registration_ledger::{
     BuildFailure, RefusalKind, RegisterRefusal, RegisteredPoolFamily, RegistrationPhase,
 };
-use crate::bot_core::pool_builder::builder::{self};
 use crate::bot_core::pool_builder::parity;
 use crate::bot_core::{
     ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterAerodromePoolError,
@@ -62,24 +61,12 @@ impl std::error::Error for RegistrationIntakeNotHosted {}
 /// `build_tick_rows_py` turns into a Python `{tick: (gross, net, block)}`.
 pub type TickRow = (i32, u128, i128, u64);
 
-/// The already-registered V4 fast-path payload: `(pool_id, coverage,
-/// currency0, currency1, pool_manager, fee, tick_spacing, hook_flags,
-/// pool_id_hex, protocol_fee, lp_fee)` — the builder's return surface, read
-/// from the registry of record (identity from the core's immutable pool
-/// key, protocol fee from the state machine, coverage as recorded).
-pub type V4RegisteredPayload = (
-    u64,
-    String,
-    String,
-    String,
-    String,
-    u32,
-    i32,
-    u16,
-    String,
-    u32,
-    u32,
-);
+/// The already-registered V4 registry-of-record echo: `(pool_id,
+/// currency0, currency1, pool_manager)` — identity straight off the core's
+/// immutable pool key. The fee/state-view values a consumer needs read off
+/// the registered handle itself (the handle is self-describing, ADR-085
+/// D4); this echo answers the ONE construction verb's GET arm.
+pub type V4RegisteredEcho = (u64, String, String, String);
 
 /// Parse one address string with the shell's historical message vocabulary.
 ///
@@ -624,11 +611,11 @@ impl Bot {
     /// # Errors
     /// [`RefusalKind::RegisterRefused`] (the V4 admission arms) when a
     /// recorded admission verdict refuses the pool.
-    pub fn registered_v4_payload(
+    pub fn registered_v4_echo(
         &self,
         pm: Address,
         pid: &[u8; 32],
-    ) -> Result<Option<V4RegisteredPayload>, RefusalKind> {
+    ) -> Result<Option<V4RegisteredEcho>, RefusalKind> {
         if let Some(verdict) = self
             .state_arc()
             .read_at(LockSite::Orchestrator)
@@ -660,29 +647,12 @@ impl Bot {
         else {
             return Ok(None);
         };
-        let coverage_str = match existing.coverage {
-            PoolTickCoverage::Tracked => "tracked",
-            PoolTickCoverage::Sparse => "sparse",
-        };
         let key = existing.pool_key;
-        // `lp_fee` = the static pool-key fee: dynamic-fee pools are
-        // admission-rejected and never registered, so they never reach this
-        // branch.
         Ok(Some((
             existing.pool_id,
-            coverage_str.to_string(),
             key.currency0.to_checksum(None),
             key.currency1.to_checksum(None),
             pm.to_checksum(None),
-            key.fee,
-            key.tick_spacing,
-            // Derived mask — the driver's parity check compares it against
-            // the resolve_v4_identity mask, both derived from the same hook
-            // address.
-            crate::bot_core::pool_builder::builder::derive_hook_flags(key.hooks),
-            format!("0x{}", alloy::hex::encode(pid)),
-            existing.protocol_fee,
-            key.fee,
         )))
     }
 
@@ -693,46 +663,6 @@ impl Bot {
         crate::instruments::record(crate::instruments::CensusEvent::RegistrationSkip {
             reason: registration_skip_kind(reason),
         });
-    }
-
-    /// Resolve the V4 identity (currency0/1, fee, `tick_spacing`, hook,
-    /// `state_view`): the DB two-step (manager → V4 row → per-FK tokens) on
-    /// the attached `ConstructionIo` first, else the caller-supplied
-    /// overrides. Runs the core builder's async resolution on the shared
-    /// runtime (the shell detaches the GIL around this call).
-    ///
-    /// # Errors
-    /// [`RefusalKind::MissingConstructionIo`] when no construction I/O is
-    /// attached, [`RefusalKind::BuildRefused`] on a builder failure (a typed
-    /// `MissingIdentity` when neither source is complete).
-    pub fn resolve_v4_identity(
-        &self,
-        chain_id: u64,
-        pool_manager: Address,
-        pool_id: [u8; 32],
-        overrides: &builder::V4PoolBuildOverrides,
-    ) -> Result<builder::V4PoolBuildIdentity, RefusalKind> {
-        let io = self.construction_io_arc().ok_or_else(|| {
-            RefusalKind::missing_construction_io(
-                Some(RegisteredPoolFamily::V4),
-                RegistrationPhase::Identity,
-            )
-        })?;
-        degenbot_core::runtime::get_runtime()
-            .block_on(builder::resolve_v4_identity(
-                chain_id,
-                pool_manager,
-                pool_id,
-                overrides,
-                &io,
-            ))
-            .map_err(|err| {
-                RefusalKind::from_builder_error(
-                    &err,
-                    Some(RegisteredPoolFamily::V4),
-                    RegistrationPhase::Identity,
-                )
-            })
     }
 
     /// Assemble a V3 pool's tick map with the `Db → Chain` precedence
@@ -1141,10 +1071,10 @@ mod tests {
             "{err:?}"
         );
 
-        // The gate verdict (recorded at refusal) is what the payload read
+        // The gate verdict (recorded at refusal) is what the echo read
         // answers — before (and independent of) any registry entry.
         let gate_err = bot
-            .registered_v4_payload(pm, &pid)
+            .registered_v4_echo(pm, &pid)
             .expect_err("the recorded verdict refuses the fast path too");
         assert!(matches!(
             gate_err,
@@ -1158,12 +1088,10 @@ mod tests {
         ));
     }
 
-    /// The registered V4 fast path shapes the identity from the core's
-    /// immutable pool key, the protocol fee from the state machine, and the
-    /// coverage as recorded — with the hook-flag mask derived from the SAME
-    /// hook address the resolve path derives it from.
+    /// The registered V4 echo shapes the identity from the core's
+    /// immutable pool key — the ONE construction verb's GET arm answer.
     #[test]
-    fn registered_v4_payload_shapes_the_registered_identity() {
+    fn registered_v4_echo_shapes_the_registered_identity() {
         let bot = Bot::new(8453);
         let pm = Address::from([0x51u8; 20]);
         let pid = [0xCDu8; 32];
@@ -1175,32 +1103,25 @@ mod tests {
                 Address::ZERO,
             ))))
             .expect("a static-fee V4 pool registers");
-        let payload = bot
-            .registered_v4_payload(pm, &pid)
+        let echo = bot
+            .registered_v4_echo(pm, &pid)
             .expect("no verdict refusal")
             .expect("registered → Some");
-        assert_eq!(payload.0, pool_id);
-        assert_eq!(payload.1, "sparse", "coverage as registered");
+        assert_eq!(echo.0, pool_id);
         assert_eq!(
-            payload.2.to_lowercase(),
+            echo.1.to_lowercase(),
             "0x0101010101010101010101010101010101010101"
         );
         assert_eq!(
-            payload.3.to_lowercase(),
+            echo.2.to_lowercase(),
             "0x0202020202020202020202020202020202020202"
         );
-        assert_eq!(payload.4.to_lowercase(), format!("{pm}").to_lowercase());
-        assert_eq!(payload.5, 3_000);
-        assert_eq!(payload.6, 60);
-        assert_eq!(payload.7, 0, "no hook → zero mask");
-        assert_eq!(payload.8, format!("0x{}", alloy::hex::encode(pid)));
-        assert_eq!(payload.9, 0, "protocol fee as registered");
-        assert_eq!(payload.10, 3_000, "lp_fee = the static pool-key fee");
+        assert_eq!(echo.3.to_lowercase(), format!("{pm}").to_lowercase());
 
         // An unregistered (manager, id) answers Ok(None) — the miss the
         // single-flight lead path builds on.
         assert!(bot
-            .registered_v4_payload(pm, &[0u8; 32])
+            .registered_v4_echo(pm, &[0u8; 32])
             .expect("no verdict for an unregistered id")
             .is_none());
     }
@@ -1338,24 +1259,9 @@ mod tests {
 
     /// `resolve_v4_identity` requires an attached `ConstructionIo` — the
     /// typed `NoConstructionIo` arm the shell maps to its historical
-    /// "<method>: no `ConstructionIo` attached" `RuntimeError`.
-    #[test]
-    fn resolve_v4_identity_refuses_without_construction_io() {
-        let bot = Bot::new(1);
-        let err = bot
-            .resolve_v4_identity(
-                1,
-                Address::from([0x50u8; 20]),
-                [0u8; 32],
-                &builder::V4PoolBuildOverrides::default(),
-            )
-            .expect_err("no ConstructionIo attached");
-        assert!(
-            matches!(err, RefusalKind::MissingConstructionIo { .. }),
-            "{err:?}"
-        );
-    }
-
+    /// "<method>: no `ConstructionIo` attached" `RuntimeError` — the V4
+    /// twin retired with the identity-verb fold (the door's io requirement
+    /// is pinned at the seam's V4 flight test).
     /// The assemble entry points keep the Db→Chain precedence contract: with
     /// no Db handle and no Chain transport, a miss is `Ok(None)` (the
     /// cold-start path the shell's `None` return preserves).

@@ -22,20 +22,15 @@
 use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U256};
-use degenbot_db::snapshot::TickMapDb;
-use degenbot_pools::sim::tick_fetch::TickWordFetcher;
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::swap_simulation::{SwapOutcome, SwapRead, SwapRequest};
-use degenbot_substrate::PoolRegistration;
 
 use super::bot::Bot;
 use super::construction_io::ConstructionIo;
 use super::pool_builder::builder;
 use super::pool_builder::construction_door::PoolConstruction;
-use super::pool_builder::parity;
 use super::pool_builder::route;
 use super::registration_ledger::{RefusalKind, RegisteredPoolFamily, RegistrationPhase};
-use super::PoolTickCoverage;
 
 /// The `calculate_tokens_out` refusal (the legacy Python surface: a
 /// `ValueError` for the overflow/on-chain-revert and unknown-pool classes,
@@ -144,115 +139,10 @@ impl Bot {
         Ok((name, symbol, decimals))
     }
 
-    /// Build + register a V4 pool: the core `builder::build_v4` (LIVE
-    /// scalars off `state_view` + the Chain/Db tick-map arm) with the
-    /// caller-supplied identity, then the family write door's registration
-    /// under ONE core write guard. Returns `(pool_id, coverage,
-    /// protocol_fee, lp_fee)`; the identity echo is derived from the
-    /// caller-supplied
-    /// `identity` (the shell keeps shaping its own parsed values).
-    ///
-    /// # Errors
-    /// [`RefusalKind::MissingConstructionIo`], [`RefusalKind::BuildRefused`],
-    /// [`RefusalKind::RegisterRefused`].
-    pub fn build_and_register_v4(
-        &self,
-        identity: builder::V4PoolBuildIdentity,
-        db: Option<&dyn TickMapDb>,
-        block: Option<u64>,
-        fetcher: Option<Arc<dyn TickWordFetcher>>,
-    ) -> Result<(u64, String, u32, u32), RefusalKind> {
-        let io = self.construction_io_required(Some(RegisteredPoolFamily::V4))?;
-        // Capture the span identity before `identity` moves into build_v4.
-        let span_manager = identity.pool_manager;
-        let span_pool_id = format!("0x{}", alloy::hex::encode(identity.pool_id));
-        let span_fee = identity.fee;
-        let span_tick_spacing = identity.tick_spacing;
-        // The minted construction identity (the immutable pool-key fields).
-        let minted_identity = parity::V4Identity {
-            currency0: identity.currency0,
-            currency1: identity.currency1,
-            fee: identity.fee,
-            tick_spacing: identity.tick_spacing,
-        };
-        let result = degenbot_core::runtime::get_runtime()
-            .block_on(builder::build_v4(identity, db, &io, block))
-            .map_err(|err| {
-                RefusalKind::from_builder_error(
-                    &err,
-                    Some(RegisteredPoolFamily::V4),
-                    RegistrationPhase::Build,
-                )
-            })?;
-        let mut params = result.params;
-        // lp_fee + protocol_fee come from the SAME head-stamped slot0 read
-        // inside build_v4 (no second fetch_v4_slot0_liquidity each pool).
-        let lp_fee = result.lp_fee;
-        let protocol_fee = params.protocol_fee;
-        // Sparse-map parity (the V4 twin of the V3 build): the driver's fetcher
-        // when it supplies one (the legacy Python path), else the core's own
-        // source bound to the identity this build resolved — a pure-Rust
-        // consumer supplies nothing and still gets sparse-map backfill.
-        params.fetcher = match fetcher {
-            Some(fetcher) => Some(fetcher),
-            None => Some(
-                crate::bot_core::pool_builder::tick_source::ConstructionIoTickWordSource::attached(
-                    &io,
-                    crate::bot_core::pool_builder::tick_source::TickWordSourcePool::V4 {
-                        state_view: identity.state_view,
-                        pool_id: identity.pool_id,
-                        tick_spacing: identity.tick_spacing,
-                    },
-                ),
-            ),
-        };
-        let coverage = match params.coverage {
-            PoolTickCoverage::Tracked => "tracked",
-            PoolTickCoverage::Sparse => "sparse",
-        };
-        let registered = RefusalKind::from_registration_verdict(
-            self.state_arc()
-                .write_at(LockSite::Orchestrator)
-                .register_pool(PoolRegistration::V4(Box::new(params))),
-        )?;
-        // Core-side identity-parity guard (at the mint site): the minted
-        // pool-key identity must equal the registered identity's key. A
-        // divergence is a core/driver seam bug — refused here rather than
-        // trusted across the FFI seam.
-        if let Some(registered_identity) = self
-            .state_arc()
-            .read_at(LockSite::Orchestrator)
-            .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(registered)
-            .map(|i| parity::V4Identity {
-                currency0: i.pool_key.currency0,
-                currency1: i.pool_key.currency1,
-                fee: i.pool_key.fee,
-                tick_spacing: i.pool_key.tick_spacing,
-            })
-        {
-            parity::verify_v4_identity(minted_identity, registered_identity).map_err(
-                |divergence| {
-                    RefusalKind::from_identity_divergence(
-                        Some(RegisteredPoolFamily::V4),
-                        &divergence,
-                    )
-                },
-            )?;
-        }
-
-        // Telemetry: one Jaeger node per V4 registration (pool.manager is
-        // the PoolManager; pool.id is the 32-byte id).
-        let _reg = tracing::info_span!(
-            "degenbot.pool.register",
-            pool.version = "v4",
-            pool.manager = %span_manager,
-            pool.id = %span_pool_id,
-            fee = span_fee,
-            tick_spacing = span_tick_spacing,
-        )
-        .entered();
-        Ok((registered, coverage.to_string(), protocol_fee, lp_fee))
-    }
+    // (The `build_and_register_v4` verb retired with the V4 fold: the
+    // construction door's `route::construct_v4` arm composes the same
+    // builder + write door from the request's resolved identity, and the
+    // caller-supplied-identity echo it guarded no longer exists.)
 
     /// The attached `ConstructionIo` or the typed no-io refusal — for the
     /// families whose build entry takes the io as a parameter (the V3 route),
@@ -416,6 +306,8 @@ impl Bot {
 mod tests {
     use super::super::{RegisterCurvePoolParams, RegisterV2PoolParams, RegisterV3PoolParams};
     use super::*;
+    use degenbot_pools::state::v3_state::PoolTickCoverage;
+    use degenbot_substrate::PoolRegistration;
 
     /// A non-JSON factory (CREATE2 verify skipped).
     fn adhoc_factory() -> Address {
@@ -475,24 +367,6 @@ mod tests {
         ));
         assert!(matches!(
             bot.build_and_register_erc20_token(1, addr, None),
-            Err(RefusalKind::MissingConstructionIo { .. })
-        ));
-        assert!(matches!(
-            bot.build_and_register_v4(
-                builder::V4PoolBuildIdentity {
-                    pool_manager: addr,
-                    state_view: addr,
-                    pool_id: [0xAB; 32],
-                    currency0: addr,
-                    currency1: addr,
-                    fee: 3_000,
-                    tick_spacing: 60,
-                    hook_address: Address::ZERO,
-                },
-                None,
-                None,
-                None,
-            ),
             Err(RefusalKind::MissingConstructionIo { .. })
         ));
         assert_eq!(bot.pool_count(), 0, "nothing registered on refusal");
