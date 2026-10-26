@@ -104,6 +104,7 @@ class _ConstructionOutcome:
     variant: str
     token0: str
     token1: str
+    tokens: list[str]
 
 
 @dataclass
@@ -250,6 +251,7 @@ class TestBuildDelegatedIdentityReturnSurface:
                 variant="uniswap-v2",
                 token0="0x" + "C" * 40,
                 token1="0x" + "D" * 40,
+                tokens=["0x" + "C" * 40, "0x" + "D" * 40],
             ),
             get_pool=lambda pid: handle,
         )

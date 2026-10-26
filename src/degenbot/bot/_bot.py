@@ -67,7 +67,6 @@ if TYPE_CHECKING:
     from degenbot.builders.protocol import PoolBuilder
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.pathfinding import PoolKind
-    from degenbot.types import Pool
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.chain import ChecksummedAddress
     from degenbot.types.rpc_types import BlockIdentifier
@@ -642,9 +641,11 @@ class Bot(AccountQueryMixin):
                 io=io,
             )
         else:
+            # The token companions iterate the outcome's FULL registered
+            # token set (ADR-085 D5) — one shape for every family, no
+            # variant branch, no family-specific handle getter.
             self._register_delegated_tokens(
-                py_pool,
-                variant=variant,
+                outcome.tokens,
                 chain_id=chain_id,
                 request=request,
             )
@@ -766,46 +767,24 @@ class Bot(AccountQueryMixin):
 
     def _register_delegated_tokens(
         self,
-        py_pool: Pool,
+        token_addresses: list[str],
         *,
-        variant: str | None,
         chain_id: ChainId,
         request: BuildPoolRequest,
     ) -> None:
         """Register a delegated pool's tokens in this Bot (ADR-006).
 
-        V2/V3 families expose exactly two (`token0_address`/`token1_address`);
-        Balancer exposes N via the family-specific token-address getter, keyed
-        by the descriptor `variant` (data), never a subclass test.
+        The token set is the construction outcome's FULL registered answer
+        (ADR-085 D5) — one shape for every family, no variant branch.
 
         """
-        if variant in {"balancer_weighted", "balancer_stable"}:
-            token_addresses = (
-                py_pool.balancer_token_addresses
-                if variant == "balancer_weighted"
-                else py_pool.balancer_stable_token_addresses
+        for token_address in token_addresses:
+            self._erc20_builder.build(
+                token_address,
+                chain_id=chain_id,
+                silent=request.silent,
+                io=self._io,
             )
-            for token_address in token_addresses:
-                self._erc20_builder.build(
-                    token_address,
-                    chain_id=chain_id,
-                    silent=request.silent,
-                    io=self._io,
-                )
-            return
-
-        self._erc20_builder.build(
-            py_pool.token0_address,
-            chain_id=chain_id,
-            silent=request.silent,
-            io=self._io,
-        )
-        self._erc20_builder.build(
-            py_pool.token1_address,
-            chain_id=chain_id,
-            silent=request.silent,
-            io=self._io,
-        )
 
     def build_managed_pool(
         self,

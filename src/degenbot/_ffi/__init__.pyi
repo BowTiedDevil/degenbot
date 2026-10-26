@@ -972,9 +972,9 @@ class Bot:
         Returns the one construction answer ([`PyConstructionOutcome`]): the
         registered handle, its pool id, the registered family, and the identity
         echo — so a caller never re-reads the registry for the handle nor
-        re-derives what the core already registered. The multi-token families
-        (Balancer weighted/stable) echo empty token strings; their token list
-        rides on the handle.
+        re-derives what the core already registered. `tokens` is the FULL
+        registered token set (the companion loop iterates it, ADR-085 D5);
+        `token0`/`token1` stay the pair-keyed families' pair echo.
 
         # Errors
 
@@ -2695,6 +2695,11 @@ class ConstructionOutcome:
         Token1 (empty for the multi-token families).
         """
     @property
+    def tokens(self, /) -> list[str]:
+        """
+        The FULL registered token set, canonical order.
+        """
+    @property
     def variant(self, /) -> str:
         """
         The normalized variant echo the core registered.
@@ -3123,12 +3128,6 @@ class Pool:
         not a Balancer stable pool.
         """
     @property
-    def balancer_stable_token_addresses(self, /) -> list[str]:
-        """
-        Balancer stable token addresses (EIP-55 checksummed hex). Empty list
-        if not a Balancer stable pool.
-        """
-    @property
     def balancer_stable_vault(self, /) -> str:
         """
         Balancer V2 stable pool's Vault singleton (EIP-55 checksummed). Empty
@@ -3139,12 +3138,6 @@ class Pool:
         """
         Balancer weighted swap fee (fixed-point, 1e18 scale). 0 if not a
         Balancer weighted pool.
-        """
-    @property
-    def balancer_token_addresses(self, /) -> list[str]:
-        """
-        Balancer weighted token addresses (EIP-55 checksummed hex). Empty list
-        if not a Balancer weighted pool.
         """
     @property
     def balancer_vault(self, /) -> str:

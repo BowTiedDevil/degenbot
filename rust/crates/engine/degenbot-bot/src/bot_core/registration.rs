@@ -586,19 +586,73 @@ impl Bot {
         ))
     }
 
-    /// The id-only registry-of-record payload for the Aerodrome / Balancer
-    /// builds (their build adapters return just the pool id). `None` when
+    /// The registered pool's token set in canonical order — the ONE
+    /// identity fact every family slice carries, read once for the
+    /// construction outcome's token-companion loop (ADR-085 D5). `None`
+    /// when the id is not a constructed pool.
+    #[must_use]
+    pub fn registered_pool_tokens(&self, pool_id: u64) -> Option<Vec<Address>> {
+        let core = self.state_arc();
+        let state = core.read_at(LockSite::Orchestrator);
+        if let Some(i) =
+            state.pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(pool_id)
+        {
+            return Some(vec![i.token0, i.token1]);
+        }
+        if let Some(i) =
+            state.pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(pool_id)
+        {
+            return Some(vec![i.token0, i.token1]);
+        }
+        if let Some(i) =
+            state.pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(pool_id)
+        {
+            return Some(vec![i.pool_key.currency0, i.pool_key.currency1]);
+        }
+        if let Some(i) = state
+            .pool_slice::<degenbot_pools::state::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                pool_id,
+            )
+        {
+            return Some(vec![i.token0, i.token1]);
+        }
+        if let Some(i) =
+            state.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(pool_id)
+        {
+            return Some(i.tokens.to_vec());
+        }
+        if let Some(i) = state.pool_slice::<
+            degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolIdentity,
+        >(pool_id)
+        {
+            return Some(i.tokens.to_vec());
+        }
+        state
+            .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(
+                pool_id,
+            )
+            .map(|i| i.tokens.to_vec())
+    }
+
+    /// The family-guarded registry-of-record identity for the multi-token
+    /// families: `(pool_id, tokens)` — the id-only payload plus the token
+    /// set the outcome's companion loop iterates (ADR-085 D5). `None` when
     /// the address is unregistered or the family differs from `want`.
     #[must_use]
-    pub fn registered_family_pool_id(
+    pub fn registered_family_identity(
         &self,
         addr: &Address,
         want: RegisteredPoolFamily,
-    ) -> Option<u64> {
+    ) -> Option<(u64, Vec<Address>)> {
         let core = self.state_arc();
         let state = core.read_at(LockSite::Orchestrator);
         let (pool_id, family) = state.registered_pool_by_address(addr)?;
-        (family == want).then_some(pool_id)
+        if family != want {
+            return None;
+        }
+        drop(state);
+        let tokens = self.registered_pool_tokens(pool_id)?;
+        Some((pool_id, tokens))
     }
 
     /// The V4 registry-of-record payload (`pool_manager`, `pool_id`)-keyed —
@@ -994,6 +1048,7 @@ mod tests {
         assert_eq!(variant, "uniswap-v2");
 
         // Wrong family: a V2 address answers None on the V3 read.
+        // (kept below; the family identity read shares the guard)
         assert!(bot.registered_v3_payload(&v2_addr, 1).is_none());
         assert!(bot.registered_v2_payload(&v3_addr).is_none());
         assert!(bot
@@ -1033,12 +1088,13 @@ mod tests {
                 },
             )))
             .expect("non-JSON factory registers (CREATE2 verify skipped)");
+        let (family_pool_id, tokens) = bot
+            .registered_family_identity(&addr, RegisteredPoolFamily::AerodromeV2)
+            .expect("the wanted family answers its identity");
+        assert_eq!(family_pool_id, pool_id);
+        assert_eq!(tokens.len(), 2, "the pair rides the identity read");
         assert_eq!(
-            bot.registered_family_pool_id(&addr, RegisteredPoolFamily::AerodromeV2),
-            Some(pool_id)
-        );
-        assert_eq!(
-            bot.registered_family_pool_id(&addr, RegisteredPoolFamily::BalancerWeighted),
+            bot.registered_family_identity(&addr, RegisteredPoolFamily::BalancerWeighted),
             None,
             "wrong family answers None"
         );

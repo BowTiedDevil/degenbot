@@ -1650,21 +1650,9 @@ impl PyLiquidityPool {
         })
     }
 
-    /// Balancer weighted token addresses (EIP-55 checksummed hex). Empty list
-    /// if not a Balancer weighted pool.
-    #[getter]
-    fn balancer_token_addresses(&self, py: Python<'_>) -> Vec<String> {
-        self.with_state(py, |core| {
-            match core.pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolIdentity>(self.pool_id) {
-                Some(i) => i
-                    .tokens
-                    .iter()
-                    .map(address_utils::address_to_checksum_string)
-                    .collect(),
-                None => Vec::new(),
-            }
-        })
-    }
+    // (The `balancer_token_addresses` getter retired with ADR-085 D5: the
+    // construction outcome's `tokens` answer is the companion loop's ONE
+    // iteration source, so no family-specific handle getter is read.)
 
     /// Balancer weighted denormalized weights (one `U256` per token).
     /// Empty list if not a Balancer weighted pool.
@@ -2508,24 +2496,8 @@ impl PyLiquidityPool {
         })
     }
 
-    /// Balancer stable token addresses (EIP-55 checksummed hex). Empty list
-    /// if not a Balancer stable pool.
-    #[getter]
-    fn balancer_stable_token_addresses(&self, py: Python<'_>) -> Vec<String> {
-        self.with_state(py, |core| {
-            match core
-                .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(
-                    self.pool_id,
-                ) {
-                Some(i) => i
-                    .tokens
-                    .iter()
-                    .map(address_utils::address_to_checksum_string)
-                    .collect(),
-                None => Vec::new(),
-            }
-        })
-    }
+    // (The `balancer_stable_token_addresses` getter retired with ADR-085
+    // D5 — see the weighted twin's note.)
 
     /// Balancer stable ``PyErc20Token`` companions (one per token, including
     /// BPT for Composable). Includes only tokens registered in this pool's

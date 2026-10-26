@@ -251,17 +251,17 @@ impl PyBot {
         py.detach(|| self.bot.registered_v3_payload(addr, chain_id))
     }
 
-    /// The id-only registry-of-record payload for the Aerodrome / Balancer
-    /// builds (their build adapters return just the pool id).
-    fn registered_family_pool_id(
+    /// The family-guarded registry-of-record identity for the multi-token
+    /// families: `(pool_id, tokens)`.
+    fn registered_family_identity(
         &self,
         py: Python<'_>,
         addr: &Address,
         want: RegisteredPoolFamily,
-    ) -> Option<u64> {
+    ) -> Option<(u64, Vec<Address>)> {
         // GIL hygiene: the read guard is acquired inside the core method,
         // which runs under this py.detach (inversion class).
-        py.detach(|| self.bot.registered_family_pool_id(addr, want))
+        py.detach(|| self.bot.registered_family_identity(addr, want))
     }
 
     /// The V4 registry-of-record payload (`pool_manager`, `pool_id`)-keyed — the
@@ -328,9 +328,9 @@ impl PyBot {
     }
 
     /// Shape the ONE construction echo from the door's verdict: the fresh
-    /// build's minted identity (the pair-keyed families echo their pair),
-    /// else the registry-GET race answer (the same shaping the flight
-    /// pre-check reads).
+    /// build's minted identity (the pair-keyed families echo their pair;
+    /// EVERY family answers its full token set), else the registry-GET race
+    /// answer (the same shaping the flight pre-check reads).
     #[expect(clippy::too_many_arguments)]
     fn shape_outcome_echo(
         &self,
@@ -341,7 +341,8 @@ impl PyBot {
         family: &str,
         variant: Option<&str>,
         addr: &Address,
-    ) -> PyResult<(u64, String, String, String, String)> {
+        pool_id_hex: Option<&str>,
+    ) -> PyResult<ConstructionEcho> {
         match built {
             Some(built) => {
                 let (token0, token1) = if pair_echo {
@@ -350,41 +351,22 @@ impl PyBot {
                 } else {
                     (String::new(), String::new())
                 };
-                Ok((
+                Ok(ConstructionEcho {
                     pool_id,
                     token0,
                     token1,
-                    built.address.to_checksum(None),
-                    built.variant.clone(),
-                ))
+                    tokens: built.tokens.iter().map(|t| t.to_checksum(None)).collect(),
+                    variant: built.variant.clone(),
+                })
             }
             None => self
-                .registered_echo(py, family, variant, addr)
+                .registered_echo(py, family, variant, addr, pool_id_hex)?
                 .ok_or_else(|| {
                     pyo3::exceptions::PyRuntimeError::new_err(format!(
                         "construct_pool: registration answered pool id {pool_id} with no identity"
                     ))
                 }),
         }
-    }
-
-    /// The V4 registry-of-record pre-check: the keyed echo read (the PRG-2
-    /// gate consult rides it, so an immutable-admission refusal surfaces
-    /// HERE, before any build work), shaped to the shared 5-tuple.
-    #[expect(clippy::type_complexity)]
-    fn v4_flight_precheck(
-        &self,
-        py: Python<'_>,
-        addr: Address,
-        pool_id: Option<&String>,
-    ) -> PyResult<Option<(u64, String, String, String, String)>> {
-        let pid = match pool_id {
-            Some(s) => hex_string_to_pool_id(s)?,
-            None => return Ok(None),
-        };
-        Ok(self
-            .registered_v4_echo(py, addr, &pid)?
-            .map(|echo| (echo.0, echo.1, echo.2, echo.3, String::new())))
     }
 
     /// The ONE translation: the family-tagged construction request -> the core
@@ -499,45 +481,101 @@ impl PyBot {
     /// registered identity (parity with the builder's return surface); the
     /// multi-token ones echo the family's own spelling with empty token
     /// strings (their list rides the handle).
+    /// The registry-of-record identity echo for an already-registered
+    /// address — the flight pre-check AND the door's registry-GET race
+    /// answer read the SAME shaping. The pair-keyed families echo their
+    /// registered pair (parity with the builder's return surface); every
+    /// family answers its FULL token set (`tokens`, ADR-085 D5). The V4
+    /// family reads its keyed echo (the PRG-2 gate consult rides it).
     fn registered_echo(
         &self,
         py: Python<'_>,
         family: &str,
         variant: Option<&str>,
         addr: &Address,
-    ) -> Option<(u64, String, String, String, String)> {
-        let echo = |pool_id: u64, variant: &str| {
-            (
-                pool_id,
-                String::new(),
-                String::new(),
-                addr.to_checksum(None),
-                variant.to_string(),
-            )
-        };
+        pool_id_hex: Option<&str>,
+    ) -> PyResult<Option<ConstructionEcho>> {
+        let keyed =
+            |pool_id: u64, token0: String, token1: String, tokens: Vec<String>, variant: &str| {
+                ConstructionEcho {
+                    pool_id,
+                    token0,
+                    token1,
+                    tokens,
+                    variant: variant.to_string(),
+                }
+            };
         match family {
-            "constant_product" if variant == Some("aerodrome") => self
-                .registered_family_pool_id(py, addr, RegisteredPoolFamily::AerodromeV2)
-                .map(|pool_id| echo(pool_id, "aerodrome")),
-            "constant_product" => self.registered_v2_payload(py, addr),
-            "concentrated_liquidity" => self.registered_v3_payload(py, addr, self.bot.chain_id()),
-            "weighted" => self
-                .registered_family_pool_id(py, addr, RegisteredPoolFamily::BalancerWeighted)
-                .map(|pool_id| echo(pool_id, "balancer_weighted")),
-            "stableswap" if variant == Some("balancer_stable") => self
-                .registered_family_pool_id(py, addr, RegisteredPoolFamily::BalancerStable)
-                .map(|pool_id| echo(pool_id, "balancer_stable")),
-            "stableswap" => self
-                .registered_family_pool_id(py, addr, RegisteredPoolFamily::Curve)
-                .map(|pool_id| echo(pool_id, "stableswap")),
-            _ => None,
+            "managed_v4" => {
+                let Some(pid) = pool_id_hex.map(hex_string_to_pool_id).transpose()? else {
+                    return Ok(None);
+                };
+                Ok(self.registered_v4_echo(py, *addr, &pid)?.map(|echo| {
+                    let t0 = echo.1.clone();
+                    let t1 = echo.2.clone();
+                    keyed(echo.0, t0.clone(), t1.clone(), vec![t0, t1], "")
+                }))
+            }
+            "constant_product" if variant == Some("aerodrome") => Ok(self
+                .registered_family_identity(py, addr, RegisteredPoolFamily::AerodromeV2)
+                .map(|(pool_id, tokens)| {
+                    keyed(
+                        pool_id,
+                        String::new(),
+                        String::new(),
+                        tokens.iter().map(|t| t.to_checksum(None)).collect(),
+                        "aerodrome",
+                    )
+                })),
+            "constant_product" => {
+                Ok(self
+                    .registered_v2_payload(py, addr)
+                    .map(|(pool_id, t0, t1, _address, v)| {
+                        keyed(pool_id, t0.clone(), t1.clone(), vec![t0, t1], &v)
+                    }))
+            }
+            "concentrated_liquidity" => Ok(self
+                .registered_v3_payload(py, addr, self.bot.chain_id())
+                .map(|(pool_id, t0, t1, _address, v)| {
+                    keyed(pool_id, t0.clone(), t1.clone(), vec![t0, t1], &v)
+                })),
+            "weighted" => Ok(self
+                .registered_family_identity(py, addr, RegisteredPoolFamily::BalancerWeighted)
+                .map(|(pool_id, tokens)| {
+                    keyed(
+                        pool_id,
+                        String::new(),
+                        String::new(),
+                        tokens.iter().map(|t| t.to_checksum(None)).collect(),
+                        "balancer_weighted",
+                    )
+                })),
+            "stableswap" if variant == Some("balancer_stable") => Ok(self
+                .registered_family_identity(py, addr, RegisteredPoolFamily::BalancerStable)
+                .map(|(pool_id, tokens)| {
+                    keyed(
+                        pool_id,
+                        String::new(),
+                        String::new(),
+                        tokens.iter().map(|t| t.to_checksum(None)).collect(),
+                        "balancer_stable",
+                    )
+                })),
+            "stableswap" => Ok(self
+                .registered_family_identity(py, addr, RegisteredPoolFamily::Curve)
+                .map(|(pool_id, tokens)| {
+                    keyed(
+                        pool_id,
+                        String::new(),
+                        String::new(),
+                        tokens.iter().map(|t| t.to_checksum(None)).collect(),
+                        "stableswap",
+                    )
+                })),
+            _ => Ok(None),
         }
     }
 
-    /// ADR-006 D4 (T3): attach the pump lifecycle state owned by a
-    /// `PyArbEngine` constructed against this bot. Called from
-    /// `PyArbEngine::new` when `py_bot` is supplied. After this, the
-    /// pump methods on `PyBot` drive the same `PumpState` the engine reads.
     pub(crate) fn attach_pump_state(&self, driver: Arc<degenbot_bot::arb_engine::EngineDriver>) {
         *self.pump.lock() = Some(driver);
     }
@@ -996,6 +1034,20 @@ impl PyBot {
     }
 }
 
+/// The construction echo — the identity the seam registered, ONE shape
+/// shared by the flight pre-check, the GET-race arm, and the fresh build
+/// (ADR-085 D5). `token0`/`token1` stay the pair-keyed families' pair echo
+/// (the driver's identity guard reads them); `tokens` is the FULL token set
+/// every family answers — the companion loop iterates it.
+#[derive(Clone)]
+struct ConstructionEcho {
+    pool_id: u64,
+    token0: String,
+    token1: String,
+    tokens: Vec<String>,
+    variant: String,
+}
+
 /// The one construction answer (ADR-085 D3).
 ///
 /// The registered handle plus the identity the seam registered, so a caller never
@@ -1015,6 +1067,9 @@ pub struct PyConstructionOutcome {
     token0: String,
     /// Token1 (empty for the multi-token families).
     token1: String,
+    /// The FULL registered token set, canonical order — the companion
+    /// loop's iteration source (ADR-085 D5).
+    tokens: Vec<String>,
 }
 
 #[pymethods]
@@ -1053,6 +1108,12 @@ impl PyConstructionOutcome {
     #[getter]
     fn token1(&self) -> String {
         self.token1.clone()
+    }
+
+    /// The FULL registered token set, canonical order.
+    #[getter]
+    fn tokens(&self) -> Vec<String> {
+        self.tokens.clone()
     }
 }
 
@@ -1411,9 +1472,9 @@ impl PyBot {
     /// Returns the one construction answer ([`PyConstructionOutcome`]): the
     /// registered handle, its pool id, the registered family, and the identity
     /// echo — so a caller never re-reads the registry for the handle nor
-    /// re-derives what the core already registered. The multi-token families
-    /// (Balancer weighted/stable) echo empty token strings; their token list
-    /// rides on the handle.
+    /// re-derives what the core already registered. `tokens` is the FULL
+    /// registered token set (the companion loop iterates it, ADR-085 D5);
+    /// `token0`/`token1` stay the pair-keyed families' pair echo.
     ///
     /// # Errors
     ///
@@ -1424,20 +1485,21 @@ impl PyBot {
         py: Python<'_>,
         request: &PyPoolConstructionRequest,
     ) -> PyResult<PyConstructionOutcome> {
-        let (pool_id, token0, token1, _address, echoed_variant) =
-            self.construct_pool_payload(py, request)?;
-        let pool = self.get_pool(py, pool_id).ok_or_else(|| {
+        let echo = self.construct_pool_payload(py, request)?;
+        let pool = self.get_pool(py, echo.pool_id).ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "construct_pool: registration answered pool id {pool_id} with no handle"
+                "construct_pool: registration answered pool id {} with no handle",
+                echo.pool_id
             ))
         })?;
         Ok(PyConstructionOutcome {
             pool: Py::new(py, pool)?,
-            pool_id,
+            pool_id: echo.pool_id,
             family: request.family.clone(),
-            variant: echoed_variant,
-            token0,
-            token1,
+            variant: echo.variant,
+            token0: echo.token0,
+            token1: echo.token1,
+            tokens: echo.tokens,
         })
     }
 }
@@ -1450,7 +1512,7 @@ impl PyBot {
         &self,
         py: Python<'_>,
         request: &PyPoolConstructionRequest,
-    ) -> PyResult<(u64, String, String, String, String)> {
+    ) -> PyResult<ConstructionEcho> {
         let address = request.address.as_str();
         let family = request.family.as_str();
         let variant = request.variant.as_deref();
@@ -1511,15 +1573,10 @@ impl PyBot {
         self.run_flight(
             py,
             &key,
-            // The registry-of-record pre-check: the string-keyed families
-            // shape off the address; the V4 family reads its keyed payload.
-            || {
-                if family == "managed_v4" {
-                    self.v4_flight_precheck(py, addr, request.pool_id.as_ref())
-                } else {
-                    Ok(self.registered_echo(py, family, variant, &addr))
-                }
-            },
+            // The registry-of-record pre-check: ONE shaping for every
+            // family (the V4 keyed read rides inside it, so the PRG-2
+            // admission-gate consult surfaces HERE, before any build work).
+            || self.registered_echo(py, family, variant, &addr, request.pool_id.as_deref()),
             || {
                 // The io fetch is core-owned; the failure maps to the
                 // method-prefixed legacy `RuntimeError`.
@@ -1567,6 +1624,7 @@ impl PyBot {
                     family,
                     variant,
                     &addr,
+                    request.pool_id.as_deref(),
                 )?;
                 Ok((pool_id, echo))
             },
