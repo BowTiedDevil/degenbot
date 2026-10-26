@@ -1066,9 +1066,12 @@ impl PyBot {
             token1,
         })
     }
+}
 
+impl PyBot {
     /// The construction switchboard's payload arm: the flat per-family dispatch
-    /// ([`Self::construct_pool`] wraps it into the one answer).
+    /// ([`Self::construct_pool`] wraps it into the one answer). Not a pymethod:
+    /// the seam presents one construction verb.
     #[expect(clippy::too_many_arguments)] // the family identity + the per-family hints, one flat surface
     fn construct_pool_payload(
         &self,
@@ -1178,7 +1181,10 @@ impl PyBot {
             ))),
         }
     }
+}
 
+#[pymethods]
+impl PyBot {
     /// Build + register a V3 pool through the Rust `PoolBuilder` (
     /// delegation adapter) — the V3 twin of [`Self::build_v2_pool`]. The tick
     /// map is assembled DB-first (a `TickMapDb` hit → `Tracked`, feeding the

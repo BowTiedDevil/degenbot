@@ -1051,23 +1051,6 @@ class Bot:
         As the dispatched per-family builder; `ValueError` on an unknown family
         or a missing required argument (Balancer's `vault`).
         """
-    def construct_pool_payload(
-        self,
-        /,
-        address: str,
-        family: str,
-        variant: str | None,
-        block: SupportsIndex | None,
-        db: bool,
-        factories: SupportsGetItem[int, str] | None,
-        registries: SupportsGetItem[int, str] | None,
-        vault: str | None,
-        invariant_version: SupportsIndex | None,
-    ) -> tuple[int, str, str, str, str]:
-        """
-        The construction switchboard's payload arm: the flat per-family dispatch
-        ([`Self::construct_pool`] wraps it into the one answer).
-        """
     def curve_get_dy(
         self,
         /,
