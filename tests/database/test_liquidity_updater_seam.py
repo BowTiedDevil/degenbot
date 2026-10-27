@@ -140,7 +140,8 @@ def _v4_modify_log(
 class _DummyProvider:
     """Minimal provider shim carrying just the `chain_id` the V3 apply reads."""
 
-    chain_id = CHAIN
+    def get_chain_id(self) -> int:
+        return CHAIN
 
 
 def _checkpoint(path: pathlib.Path) -> None:

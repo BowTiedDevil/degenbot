@@ -15,6 +15,7 @@ Resolution order (first hit wins, NO walk):
 
 No live RPC / no anvil: pure file + config behavior.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -27,6 +28,7 @@ from tests.helpers import verdict_probe as probe
 from tests.helpers.identity_env import identity_env
 
 FILE = "cmd_executor_runtime_bytecode.txt"
+
 
 def _cfg(env: dict[str, str] | None = None) -> ArbitrageConfig:
     base: dict[str, str] = {

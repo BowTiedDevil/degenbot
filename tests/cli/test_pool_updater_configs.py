@@ -22,7 +22,8 @@ from degenbot.updater.pool_updater_configs import (
 class _FakeProvider:
     """The provider slice the updater configs read: the chain id."""
 
-    chain_id: int = 1
+    def get_chain_id(self) -> int:
+        return 1
 
 
 def test_pool_updater_requests_accept_rust_backed_rows(tmp_path: Path) -> None:

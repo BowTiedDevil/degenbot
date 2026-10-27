@@ -17,8 +17,8 @@ Example:
     >>> provider = AlloyProvider("https://eth-mainnet.example.com")
     >>>
     >>> # Direct property access
-    >>> chain_id = provider.chain_id
-    >>> block_number = provider.block_number
+    >>> chain_id = provider.get_chain_id()
+    >>> block_number = provider.get_block_number()
     >>>
     >>> # Log fetching with LogFilter
     >>> logs = provider.get_logs(

@@ -128,7 +128,9 @@ class TestBootGate:
 
         def readiness() -> Any:
             refusal = "no strategy facet is active: activate one with "
-            raise ValueError(refusal + "`degenbot strategy activate settlement --endpoints-default`")
+            raise ValueError(
+                refusal + "`degenbot strategy activate settlement --endpoints-default`"
+            )
 
         def settlement_endpoints() -> list[str]:
             pytest.fail("an empty-fleet boot consulted the settlement endpoints")

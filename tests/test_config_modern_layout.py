@@ -56,9 +56,7 @@ def test_the_core_creates_the_database_with_its_schema(tmp_path: Path) -> None:
     with contextlib.closing(sqlite3.connect(db_path)) as connection:
         tables = {
             row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
     assert {"erc20_tokens", "exchanges", "pools"} <= tables
     assert RUST_STAMP_TABLE in tables

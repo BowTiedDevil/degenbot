@@ -24,9 +24,9 @@ def test_web3_endpoints(standalone_anvil: AnvilFork):
     assert fork.http_url == f"http://127.0.0.1:{fork.port}"
     assert fork.ws_url == f"ws://127.0.0.1:{fork.port}"
 
-    current_block = fork.provider.block_number
-    assert AlloyProvider(fork.http_url).block_number == current_block
-    assert AlloyProvider(fork.ws_url).block_number == current_block
+    current_block = fork.provider.get_block_number()
+    assert AlloyProvider(fork.http_url).get_block_number() == current_block
+    assert AlloyProvider(fork.ws_url).get_block_number() == current_block
 
 
 def test_set_bytecode(anvil_factory: AnvilFactory):
@@ -123,7 +123,7 @@ def test_fork_from_transaction_hash(anvil_factory: AnvilFactory):
             ),
         ),
     )
-    assert fork.provider.block_number == 20987963
+    assert fork.provider.get_block_number() == 20987963
 
 
 def test_set_next_block_base_fee(standalone_anvil: AnvilFork):
@@ -166,10 +166,10 @@ def test_reset_to_new_endpoint(anvil_factory: AnvilFactory):
         fork_url=TEST_ETHEREUM_FULL_NODE_HTTP_URI,
         launch=ForkLaunchConfig(storage_caching=False),
     )
-    assert fork.provider.chain_id == 1
+    assert fork.provider.get_chain_id() == 1
 
     fork.reset(fork_url=TEST_BASE_FULL_NODE_HTTP_URI)
-    assert fork.provider.chain_id == 8453
+    assert fork.provider.get_chain_id() == 8453
 
 
 @pytest.mark.online_rpc
@@ -180,7 +180,7 @@ def test_reset_to_new_transaction_hash(anvil_factory: AnvilFactory):
     fork.reset(
         transaction_hash="0x12167fa2a4cd676a6e740edb09427469ecb8718d84ef4d0d5819fe8b527964d6",
     )
-    assert fork.provider.block_number == 20987963
+    assert fork.provider.get_block_number() == 20987963
 
 
 @pytest.mark.online_rpc

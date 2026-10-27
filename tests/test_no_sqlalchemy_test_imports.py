@@ -23,12 +23,7 @@ FORBIDDEN_SYMBOLS = {
 
 
 def _python_sources() -> list[Path]:
-    return sorted(
-        path
-        for root in PYTHON_ROOTS
-        if root.exists()
-        for path in root.rglob("*.py")
-    )
+    return sorted(path for root in PYTHON_ROOTS if root.exists() for path in root.rglob("*.py"))
 
 
 def _dotted_name(node: ast.AST) -> str | None:
@@ -97,9 +92,7 @@ def _requirements(value: object):
 
 def test_no_sqlalchemy_imports_or_orm_symbols() -> None:
     violations = [
-        violation
-        for path in _python_sources()
-        for violation in _violations_for_source(path)
+        violation for path in _python_sources() for violation in _violations_for_source(path)
     ]
     assert not violations, "retired SQLAlchemy/ORM references remain:\n" + "\n".join(violations)
 
@@ -113,9 +106,7 @@ def test_no_sqlalchemy_root_dependency_declarations() -> None:
         pyproject.get("dependency-groups", {}),
     ]
     direct_requirements = [
-        requirement
-        for value in dependency_values
-        for requirement in _requirements(value)
+        requirement for value in dependency_values for requirement in _requirements(value)
     ]
     assert not any(
         _requirement_name(requirement) == FORBIDDEN_PACKAGE for requirement in direct_requirements

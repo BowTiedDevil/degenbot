@@ -5,11 +5,11 @@ deliberately parallel: 20 of the 22 methods they share are logic-identical
 modulo ``await``, and nearly all of those are single-line pass-throughs to
 the wrapped Rust pyclass -- the sync/await duality IS the code. The
 multi-line logic both trees need (block-tag resolution, block-timestamp
-extraction) lives once in :mod:`degenbot.provider.block_helpers`.
-``get_logs`` genuinely differs: the sync surface accepts a ``LogFilter`` or
-individual keyword arguments with range validation; this surface takes
-keyword arguments only. The sync tree also carries the context-manager and
-scalar-property surface this tree exposes as awaited methods.
+extraction) lives once in :mod:`degenbot.provider.block_helpers`; the ``get_logs`` filter
+normalization lives once on the provider surface
+(:mod:`degenbot.provider.surface`), so both call conventions answer the
+same contract. The sync tree also carries the context-manager surface this
+tree exposes as awaited lifecycle methods.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from degenbot.provider._rust import RustAsyncAlloyProvider
 from degenbot.provider.block_helpers import block_timestamp_from, resolve_block_tag
+from degenbot.provider.surface import LogFilter, normalize_get_logs
 from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
@@ -131,25 +132,37 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
 
     async def get_logs(
         self,
+        filter_param: LogFilter | None = None,
         *,
-        from_block: int,
-        to_block: int,
+        from_block: BlockNumber | None = None,
+        to_block: BlockNumber | None = None,
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
     ) -> list[LogData]:
         """Fetch event logs matching the filter.
 
+        Accepts a :class:`LogFilter` or individual keyword arguments — the
+        same contract as the sync tree; the resolution + range validation
+        live once on the provider surface (ADR-086).
+
         Returns:
             A list of matching log entries.
 
         """
+        from_block_val, to_block_val, addresses_val, topics_val = normalize_get_logs(
+            filter_param,
+            from_block=from_block,
+            to_block=to_block,
+            addresses=addresses,
+            topics=topics,
+        )
         return cast(
             "list[LogData]",
             await self._provider.get_logs(
-                from_block=from_block,
-                to_block=to_block,
-                addresses=addresses,
-                topics=topics,
+                from_block=from_block_val,
+                to_block=to_block_val,
+                addresses=addresses_val,
+                topics=topics_val,
             ),
         )
 

@@ -75,9 +75,7 @@ print('BOOT_OK')
     # its stream is the handler's choice — assert it surfaces exactly once in
     # whichever stream carries it.
     surfaces = out.stdout + out.stderr
-    assert surfaces.count("boot table full") <= 1, (
-        f"census boot line must not repeat: {surfaces!r}"
-    )
+    assert surfaces.count("boot table full") <= 1, f"census boot line must not repeat: {surfaces!r}"
 
 
 def test_console_script_silent_by_default() -> None:

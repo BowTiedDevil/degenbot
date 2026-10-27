@@ -55,7 +55,7 @@ def _test_session(tmp_path: pathlib.Path, chain_id: int = 1) -> dict[str, object
 
 def _fake_provider(chain_id: int = 1) -> AlloyProvider:
     provider = MagicMock(spec=AlloyProvider)
-    provider.chain_id = chain_id
+    provider.get_chain_id.return_value = chain_id
     return provider
 
 

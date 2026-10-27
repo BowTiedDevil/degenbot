@@ -79,8 +79,7 @@ def test_no_crate_name_in_exported_type_modules() -> None:
     assert not bad, (
         f"{len(bad)} of {checked} exported pyclasses leak the internal "
         f"crate name through __module__ (repr / pickle / IDE introspection "
-        f"see it; the registration must name its Python module):\n  "
-        + "\n  ".join(bad)
+        f"see it; the registration must name its Python module):\n  " + "\n  ".join(bad)
     )
 
 
@@ -102,8 +101,7 @@ def test_exported_classes_report_their_exporting_module() -> None:
             wrong.append(f"{source_path}.{name}: __module__={module!r}")
     assert not wrong, (
         f"{len(wrong)} of {checked} exported pyclasses report a module "
-        f"other than the one they are exported from:\n  "
-        + "\n  ".join(wrong)
+        f"other than the one they are exported from:\n  " + "\n  ".join(wrong)
     )
 
 

@@ -284,7 +284,7 @@ class TestBotTokenIOMethods:
 
         database = make_test_database(tmp_path)
         provider = MagicMock()
-        provider.chain_id = 1
+        provider.get_chain_id.return_value = 1
         bot = Bot(database=database, chain_id=1, provider=provider)
         provider.is_connected.return_value = True
 
@@ -344,7 +344,7 @@ class TestBotTokenIOMethods:
 
         database = make_test_database(tmp_path)
         provider = MagicMock()
-        provider.chain_id = 1
+        provider.get_chain_id.return_value = 1
         bot = Bot(database=database, chain_id=1, provider=provider)
         provider.is_connected.return_value = True
 
@@ -365,7 +365,7 @@ class TestBotTokenIOMethods:
 
         database = make_test_database(tmp_path)
         provider = MagicMock()
-        provider.chain_id = 1
+        provider.get_chain_id.return_value = 1
         bot = Bot(database=database, chain_id=1, provider=provider)
         provider.is_connected.return_value = True
 

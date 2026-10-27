@@ -224,19 +224,12 @@ print("BOOT-OK")
 """
     # Process-level: driver_boot installs process-global runtimes.
     proc = subprocess.run(
-
         [sys.executable, "-c", child],
-
         capture_output=True,
-
         text=True,
-
         cwd=str(Path(__file__).parents[2]),
-
         timeout=120,
-
         check=False,
-
     )
 
     assert "BOOT-OK" in proc.stdout, f"stdout={proc.stdout!r} stderr_tail={proc.stderr[-1500:]!r}"

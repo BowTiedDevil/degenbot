@@ -328,7 +328,7 @@ class Bot(AccountQueryMixin):
             DegenbotValueError: If the provider's ``chain_id`` != ``expected``.
 
         """
-        actual = provider.chain_id
+        actual = provider.get_chain_id()
         if actual != expected:
             msg = (
                 f"Provider chain_id ({actual}) does not match the configured "

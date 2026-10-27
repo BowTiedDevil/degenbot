@@ -87,15 +87,9 @@ class _OfflineDataMixin(_OfflineBacked):
         recorded_json = json.dumps({"chain_id": chain_id, "blocks": blocks})
         self._alloy: RustAlloyProvider = RustAlloyProvider.offline_from_json_string(recorded_json)
 
-    @property
-    def chain_id(self) -> int:
-        """The chain ID."""
+    def get_chain_id(self) -> int:
+        """The chain ID (the one chain-scalar spelling, ADR-086 D3)."""
         return self._chain_id
-
-    @property
-    def block_number(self) -> int:
-        """The latest recorded block number."""
-        return max(self._block_numbers)
 
     @property
     def block_numbers(self) -> list[int]:
@@ -109,6 +103,9 @@ class _OfflineDataMixin(_OfflineBacked):
 
     def get_block_number(self) -> int:
         """Get the current (latest recorded) block number.
+
+        The one chain-scalar spelling (ADR-086 D3) — there is no
+        ``block_number`` property.
 
         Returns:
             The latest recorded block number.

@@ -309,7 +309,7 @@ def apply_v3_liquidity_updates(
     in_scope_exchange_ids = {exchange.id for exchange in exchanges_in_scope}
     pool_row = db_fetch_pool_row(
         database_path=database_path,
-        chain_id=provider.chain_id,
+        chain_id=provider.get_chain_id(),
         address=pool_address,
     )
     if pool_row is None or pool_row.exchange_id not in in_scope_exchange_ids:
@@ -347,7 +347,7 @@ def apply_v3_liquidity_updates(
 
     db_apply_v3_liquidity_updates(
         database_path=database_path,
-        chain_id=provider.chain_id,
+        chain_id=provider.get_chain_id(),
         pool_address=pool_address,
         events=decoded_events,
     )

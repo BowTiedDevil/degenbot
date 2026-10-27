@@ -59,6 +59,9 @@ class _BoundaryProvider:
         self.chain_id = chain_id
         self.closed = False
 
+    def get_chain_id(self) -> int:
+        return self.chain_id
+
     def close(self) -> None:
         if self.closed:
             msg = "provider closed twice"

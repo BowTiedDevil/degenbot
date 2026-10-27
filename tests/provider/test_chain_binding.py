@@ -183,7 +183,7 @@ class TestBindingTheMatchingChain:
     def test_the_factory_binds_a_matching_endpoint(self, http_node: _FakeHttpNode) -> None:
         provider = get_provider_from_config(chain_id=8453, node=http_node.url)
 
-        assert provider.chain_id == 8453
+        assert provider.get_chain_id() == 8453
         assert http_node.chain_id_reads == 1
 
 

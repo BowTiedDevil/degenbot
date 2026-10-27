@@ -16,7 +16,7 @@ def make_bot_with_provider(
     it outranks every configured layer; ``Bot`` then enforces that the
     provider's ``eth_chainId`` matches.
     """
-    resolved_chain_id = chain_id if chain_id is not None else provider.chain_id
+    resolved_chain_id = chain_id if chain_id is not None else provider.get_chain_id()
     return Bot(
         chain_id=resolved_chain_id,
         database=database_path,

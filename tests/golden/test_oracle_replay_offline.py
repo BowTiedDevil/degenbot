@@ -630,8 +630,8 @@ def test_offline_provider_replays_the_recorded_calls(scenario: Scenario) -> None
         pytest.skip(_PENDING_CORPUS_REASON)
     recorded = json.loads(scenario.corpus_path.read_text())
     provider = OfflineProvider.from_json_file(scenario.corpus_path)
-    assert provider.chain_id == scenario.chain_id
-    assert provider.block_number == scenario.block
+    assert provider.get_chain_id() == scenario.chain_id
+    assert provider.get_block_number() == scenario.block
 
     for call_key, result_hex in recorded["calls"].items():
         to, data_hex = call_key.split(":0x")

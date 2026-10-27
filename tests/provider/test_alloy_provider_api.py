@@ -41,12 +41,6 @@ EXTRA_METHODS: list[str] = [
 class TestAlloyProviderApi:
     """AlloyProvider exposes the surface callers rely on."""
 
-    def test_chain_id_is_property(self) -> None:
-        assert isinstance(inspect.getattr_static(AlloyProvider, "chain_id"), property)
-
-    def test_block_number_is_property(self) -> None:
-        assert isinstance(inspect.getattr_static(AlloyProvider, "block_number"), property)
-
     @pytest.mark.parametrize(
         "method_name",
         [m for m in PROVIDER_PROTOCOL_METHODS if m not in {"chain_id", "block_number"}],

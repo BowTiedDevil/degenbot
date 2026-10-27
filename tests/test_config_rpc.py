@@ -146,6 +146,9 @@ class _BoundaryProvider:
     def __init__(self, chain_id: int) -> None:
         self.chain_id = chain_id
 
+    def get_chain_id(self) -> int:
+        return self.chain_id
+
     def close(self) -> None:
         """No-op: the real provider's close releases an Arc with no flag."""
 

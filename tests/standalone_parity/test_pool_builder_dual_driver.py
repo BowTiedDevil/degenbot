@@ -78,7 +78,9 @@ def test_python_consumer_pool_builder_identity_state_matches_fixture() -> None:
     assert py_pool is not None, "registered pool must be retrievable by id"
 
     # Identity (the builder's on-chain/DB-resolved immutable values).
-    assert py_pool.concentrated_liquidity().fee == _FEE, f"fee identity diverged (got {py_pool.concentrated_liquidity().fee}, want {_FEE})"
+    assert py_pool.concentrated_liquidity().fee == _FEE, (
+        f"fee identity diverged (got {py_pool.concentrated_liquidity().fee}, want {_FEE})"
+    )
     assert py_pool.concentrated_liquidity().tick_spacing == _TICK_SPACING, (
         f"tick_spacing identity diverged (got {py_pool.concentrated_liquidity().tick_spacing}, want {_TICK_SPACING})"
     )
@@ -86,11 +88,15 @@ def test_python_consumer_pool_builder_identity_state_matches_fixture() -> None:
     assert py_pool.get_token1().address.lower() == _TOKEN1, "token1 identity diverged"
 
     # State (the builder's live scalars).
-    assert py_pool.concentrated_liquidity().sqrt_price_x96 == _SQRT_PRICE_X96, "sqrt_price state diverged"
+    assert py_pool.concentrated_liquidity().sqrt_price_x96 == _SQRT_PRICE_X96, (
+        "sqrt_price state diverged"
+    )
     assert py_pool.concentrated_liquidity().liquidity == _LIQUIDITY, "liquidity state diverged"
     assert py_pool.concentrated_liquidity().tick == _TICK, "tick state diverged"
 
     # Coverage: a Tracked (dense) registration carries the assembled tick map —
     # the sparse fallback returns an empty snapshot. Proves the builder's
     # DB-tracked decision is identical across consumers.
-    assert len(py_pool.concentrated_liquidity().tick_data) != 0, "Tracked pool must carry its tick data"
+    assert len(py_pool.concentrated_liquidity().tick_data) != 0, (
+        "Tracked pool must carry its tick data"
+    )

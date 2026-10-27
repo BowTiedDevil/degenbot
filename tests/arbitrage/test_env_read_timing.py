@@ -49,10 +49,7 @@ _OVERRIDE = RpcCascadeOverrides(chain_id=1, node="wss://override.example")
 #: The env-read gate's Python sanction for the retired-knob refusal. The gate
 #: is a cross-language scanner and cannot import the runner's list, so it names
 #: the home instead; the names themselves live only in ``config``.
-_ENV_READ_GATE = (
-    _REPO_ROOT / "rust/crates/foundation/degenbot-config/tests/no_stray_env_reads.rs"
-)
-
+_ENV_READ_GATE = _REPO_ROOT / "rust/crates/foundation/degenbot-config/tests/no_stray_env_reads.rs"
 
 
 def _run(code: str, **env: str) -> subprocess.CompletedProcess[str]:

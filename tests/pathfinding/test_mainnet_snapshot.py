@@ -110,9 +110,7 @@ def test_recorded_bridges_are_single_pool_pairs() -> None:
     snap = sqlite3.connect(f"file:{SNAPSHOT_PATH}?mode=ro", uri=True)
     try:
         multiplicity: dict[tuple[int, int], int] = defaultdict(int)
-        for t0, t1 in snap.execute(
-            "SELECT token0_id, token1_id FROM pools WHERE chain = 1"
-        ):
+        for t0, t1 in snap.execute("SELECT token0_id, token1_id FROM pools WHERE chain = 1"):
             key = (t0, t1) if t0 < t1 else (t1, t0)
             multiplicity[key] += 1
         for c0, c1 in snap.execute(

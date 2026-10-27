@@ -59,9 +59,7 @@ def test_rust_example_cites_the_identity_home() -> None:
         "the retired _driver_constants module must not be cited; the identity "
         "home is src/degenbot/runner/identity.py"
     )
-    assert "runner/identity.py" in source, (
-        "the example must cite the identity home it mirrors"
-    )
+    assert "runner/identity.py" in source, "the example must cite the identity home it mirrors"
 
 
 def test_rust_example_mirrors_the_python_identity_literals() -> None:
@@ -82,6 +80,6 @@ def test_rust_example_mirrors_the_python_identity_literals() -> None:
         ("WETH_ADDRESS", identity_module.WETH_ADDRESS),
     )
     for name, value in mirrors:
-        assert re.search(
-            rf'{name}:\s*&str\s*=\s*"{re.escape(value)}"', source
-        ), f"the example must mirror identity.{name} = {value}"
+        assert re.search(rf'{name}:\s*&str\s*=\s*"{re.escape(value)}"', source), (
+            f"the example must mirror identity.{name} = {value}"
+        )

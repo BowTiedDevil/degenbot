@@ -24,7 +24,7 @@ def _test_session(tmp_path: pathlib.Path, chain_id: int = 1) -> dict[str, object
 def _fake_provider(chain_id: int = 1) -> OfflineProvider:
     """A real offline provider (recorded JSON, no RPC) with the given chain_id.
 
-    `Bot.__init__` reads `provider.chain_id` (the recorded chain_id) to enforce
+    `Bot.__init__` reads `provider.get_chain_id()` (the recorded chain_id) to enforce
     session/chain alignment; no RPC is issued at construction, so an offline
     provider over an in-memory Rust transport suffices — no MagicMock double
     (see O3).

@@ -32,6 +32,9 @@ class _BoundaryProvider:
     def __init__(self, chain_id: int = 1) -> None:
         self.chain_id = chain_id
 
+    def get_chain_id(self) -> int:
+        return self.chain_id
+
     def close(self) -> None:
         """No-op: the real provider's close releases an Arc with no flag."""
 
@@ -75,10 +78,13 @@ class TestBotChainWiring:
     def test_a_provider_from_another_chain_is_refused(self, tmp_path: Path) -> None:
         from degenbot.exceptions.base import DegenbotValueError
 
-        with pytest.raises(DegenbotValueError, match="wrong chain"), Bot(
-            chain_id=4242,
-            database=str(tmp_path / "t.db"),
-            provider=_BoundaryProvider(1),
+        with (
+            pytest.raises(DegenbotValueError, match="wrong chain"),
+            Bot(
+                chain_id=4242,
+                database=str(tmp_path / "t.db"),
+                provider=_BoundaryProvider(1),
+            ),
         ):
             pass
 

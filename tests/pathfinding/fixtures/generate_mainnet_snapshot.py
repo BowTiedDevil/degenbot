@@ -177,9 +177,7 @@ def _resolve_token_ids(cursor: sqlite3.Cursor) -> tuple[dict[str, int], list[int
     if missing:
         print(f"note: {len(missing)} anchor tokens absent from live DB: {missing}")
 
-    anchor_ids = sorted({
-        by_address[a] for a in ANCHOR_TOKENS | {WETH_ADDRESS} if a in by_address
-    })
+    anchor_ids = sorted({by_address[a] for a in ANCHOR_TOKENS | {WETH_ADDRESS} if a in by_address})
     return by_address, anchor_ids, by_address[NATIVE_ADDRESS], missing
 
 

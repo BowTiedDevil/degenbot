@@ -302,7 +302,7 @@ def test_construction_touches_no_provider(case: NoIOCase, tmp_path: pathlib.Path
     the engine). Injected-data construction must not issue any RPC.
     """
     provider = MagicMock()
-    provider.chain_id = 1
+    provider.get_chain_id.return_value = 1
     provider.is_connected.return_value = True
     bot = Bot(database=make_test_database(tmp_path), chain_id=1, provider=provider)
 

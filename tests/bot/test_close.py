@@ -43,8 +43,11 @@ class _BoundaryProvider:
     """
 
     def __init__(self, chain_id: int = 1) -> None:
-        self.chain_id = chain_id
+        self._chain_id = chain_id
         self.closed = False
+
+    def get_chain_id(self) -> int:
+        return self._chain_id
 
     def close(self) -> None:
         if self.closed:

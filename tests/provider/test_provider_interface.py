@@ -67,7 +67,7 @@ class TestAlloyProviderWithLiveConnection:
 
     def test_get_chain_id(self, standalone_provider: AlloyProvider):
         """Test getting chain ID."""
-        assert standalone_provider.chain_id == seed_catalog.CHAIN_ID
+        assert standalone_provider.get_chain_id() == seed_catalog.CHAIN_ID
 
     def test_get_block_number(self, standalone_provider: AlloyProvider):
         """Test getting block number."""
@@ -131,9 +131,9 @@ class TestAlloyProviderWithLiveConnection:
         assert len(storage) == 32
 
     def test_properties(self, standalone_provider: AlloyProvider):
-        """Test adapter properties."""
-        assert standalone_provider.chain_id == seed_catalog.CHAIN_ID
-        assert standalone_provider.block_number > 0
+        """Test adapter chain-state scalars."""
+        assert standalone_provider.get_chain_id() == seed_catalog.CHAIN_ID
+        assert standalone_provider.get_block_number() > 0
         assert standalone_provider.provider_type == "alloy"
 
 

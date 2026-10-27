@@ -6,9 +6,10 @@ logic-identical modulo ``await``, and nearly all of those are single-line
 pass-throughs to the wrapped Rust pyclass -- the sync/await duality IS the
 code. The multi-line logic both trees need (block-tag resolution,
 block-timestamp extraction) lives once in
-:mod:`degenbot.provider.block_helpers`. ``get_logs`` genuinely differs: the
-sync surface accepts a :class:`LogFilter` or individual keyword arguments
-with range validation; the async surface takes keyword arguments only.
+:mod:`degenbot.provider.block_helpers`; the ``get_logs`` filter
+normalization lives once on the provider surface
+(:mod:`degenbot.provider.surface`), so both call conventions answer the
+same contract.
 """
 
 from __future__ import annotations
@@ -18,7 +19,10 @@ from typing import TYPE_CHECKING, Any, Self, cast
 
 from degenbot.provider._rust import RustAlloyProvider
 from degenbot.provider.block_helpers import block_timestamp_from, resolve_block_tag
+from degenbot.provider.surface import LogFilter, normalize_get_logs
 from degenbot.utils.bytes import to_bytes
+
+__all__ = ["AlloyProvider", "LogFilter"]
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -31,43 +35,6 @@ if TYPE_CHECKING:
         TransactionReceiptData,
         TxParams,
     )
-
-
-@dataclass(frozen=True, slots=True)
-class LogFilter:
-    """Filter criteria for log fetching.
-
-    Args:
-        from_block: Starting block number (inclusive)
-        to_block: Ending block number (inclusive)
-        addresses: Contract addresses to filter (optional)
-        topics: Event topic signatures, nested by position (optional)
-
-    Example:
-        >>> filter = LogFilter(
-        ...     from_block=18_000_000,
-        ...     to_block=18_010_000,
-        ...     addresses=["0xContractAddress..."],
-        ...     topics=[["0xTransfer..."]],  # Match first topic
-        ... )
-
-    """
-
-    from_block: BlockNumber
-    to_block: BlockNumber
-    addresses: list[str] = field(default_factory=list)
-    topics: list[list[str]] = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        """Post-initialization hook.
-
-        Raises:
-            ValueError: If to_block is less than from_block.
-
-        """
-        if self.to_block < self.from_block:
-            msg = "to_block must be >= from_block"
-            raise ValueError(msg)
 
 
 class _AlloyBacked:
@@ -91,24 +58,6 @@ class _AlloyBacked:
 
 class _AlloyEndpointMixin(_AlloyBacked):
     """Endpoint identity and chain-state scalars for ``AlloyProvider``."""
-
-    # =========================================================================
-    # Properties
-    # =========================================================================
-
-    @property
-    def chain_id(self) -> int:
-        """The chain ID."""
-        return self._provider.get_chain_id()
-
-    @property
-    def block_number(self) -> int:
-        """The current block number."""
-        return self._provider.get_block_number()
-
-    # =========================================================================
-    # Methods
-    # =========================================================================
 
     def get_block_number(self) -> int:
         """Get current block number.
@@ -249,30 +198,15 @@ class _AlloyQueryMixin(_AlloyBacked):
             ... )
 
         """
-        # Determine filter parameters
-        if filter_param is not None:
-            # Use LogFilter object
-            from_block_val = filter_param.from_block
-            to_block_val = filter_param.to_block
-            addresses_val = filter_param.addresses or None
-            topics_val = filter_param.topics or None
-        else:
-            # Use keyword arguments
-            if from_block is None or to_block is None:
-                msg = "Either filter_param or from_block/to_block must be provided"
-                raise ValueError(msg)
-            from_block_val = from_block
-            to_block_val = to_block
-            addresses_val = addresses
-            topics_val = topics
-
-        # Validate block range
-        if from_block_val > to_block_val:
-            msg = f"from_block ({from_block_val}) must be <= to_block ({to_block_val})"
-            raise ValueError(msg)
-
-        # Call Rust provider's get_logs with keyword arguments
-        # The Rust provider returns list[LogData] with bytes for hex fields
+        # The filter resolution + range validation live once on the provider
+        # surface (ADR-086) — both call conventions answer the same contract.
+        from_block_val, to_block_val, addresses_val, topics_val = normalize_get_logs(
+            filter_param,
+            from_block=from_block,
+            to_block=to_block,
+            addresses=addresses,
+            topics=topics,
+        )
         return cast(
             "list[LogData]",
             self._provider.get_logs(
@@ -550,8 +484,8 @@ class AlloyProvider(
         >>> provider = AlloyProvider("https://eth-mainnet.example.com")
         >>>
         >>> # Properties
-        >>> chain_id = provider.chain_id
-        >>> block_number = provider.block_number
+        >>> chain_id = provider.get_chain_id()
+        >>> block_number = provider.get_block_number()
         >>>
         >>> # Methods
         >>> block = provider.get_block(18_000_000)
