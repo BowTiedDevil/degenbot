@@ -14,7 +14,6 @@ same contract.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Self, cast
 
 from degenbot.provider._rust import RustAlloyProvider
@@ -181,9 +180,9 @@ class _AlloyQueryMixin(_AlloyBacked):
             - transactionHash: Transaction hash
             - logIndex: Log index within block
 
-        Raises:
-            ValueError: If neither filter_param nor from_block/to_block are provided,
-                       or if from_block > to_block
+        The filter resolution and range validation (including the ``ValueError``
+        for a missing or reversed range) live on the provider surface
+        (:func:`degenbot.provider.surface.normalize_get_logs`).
 
         Example:
             >>> # Using LogFilter

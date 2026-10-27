@@ -36,7 +36,9 @@ from degenbot.types.rpc_types import BlockTag
 from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
-    from degenbot.types.rpc_types import BlockData, TxParams
+    from degenbot.provider.surface import LogFilter
+    from degenbot.types.aliases import BlockNumber
+    from degenbot.types.rpc_types import BlockData, LogData, TxParams
 
 # The format marker the corpus recorder stamps into per-block chain-data JSON
 # (the wire-cassette `degenbot.cassette/v1` convention). Legacy recorded-pool
@@ -88,7 +90,12 @@ class _OfflineDataMixin(_OfflineBacked):
         self._alloy: RustAlloyProvider = RustAlloyProvider.offline_from_json_string(recorded_json)
 
     def get_chain_id(self) -> int:
-        """The chain ID (the one chain-scalar spelling, ADR-086 D3)."""
+        """Return the recorded chain ID (the one chain-scalar spelling, ADR-086 D3).
+
+        Returns:
+            The chain ID.
+
+        """
         return self._chain_id
 
     @property
@@ -252,12 +259,19 @@ class _OfflineDataMixin(_OfflineBacked):
 
     def get_logs(
         self,
-        from_block: int,
-        to_block: int,
+        filter_param: LogFilter | None = None,
+        *,
+        from_block: BlockNumber | None = None,
+        to_block: BlockNumber | None = None,
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[LogData]:
         """Fetch event logs.
+
+        Accepts the one ``get_logs`` contract the alloy trees answer — a
+        :class:`LogFilter` or keyword arguments, with the range validated once
+        on the provider surface (ADR-086 D2) — so a consumer written against a
+        live provider reaches the same refusal here instead of a ``TypeError``.
 
         Note: Log fetching is not implemented in OfflineProvider.
         This method always raises NotImplementedError.
@@ -272,8 +286,7 @@ class _OfflineDataMixin(_OfflineBacked):
         )
         raise NotImplementedError(msg)
 
-    @staticmethod
-    def is_connected() -> bool:
+    def is_connected(self) -> bool:  # ruff:ignore[no-self-use]
         """Check if the provider is connected.
 
         OfflineProvider is always considered connected.

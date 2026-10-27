@@ -9,6 +9,7 @@ local-endpoint exemption predicate. The parent module registers the
 submodule itself and its `sys.modules` entry.
 """
 
+from collections.abc import Awaitable
 from typing import Any, SupportsIndex, final
 
 from _typeshed import SupportsGetItem
@@ -117,7 +118,6 @@ class AlloyProvider:
     def get_logs(
         self,
         /,
-        *,
         from_block: SupportsIndex,
         to_block: SupportsIndex,
         addresses: SupportsGetItem[int, str] | None = None,
@@ -320,12 +320,8 @@ class AsyncAlloyProvider:
         of creating its own runtime.
         """
     def call(
-        self,
-        /,
-        to: str,
-        data: SupportsGetItem[int, SupportsIndex],
-        block_number: SupportsIndex | None = None,
-    ) -> Any:
+        self, /, to: str, data: bytes, block_number: SupportsIndex | None = None
+    ) -> Awaitable[Any]:
         """
         Execute an `eth_call` to a contract asynchronously.
         """
@@ -341,7 +337,7 @@ class AsyncAlloyProvider:
         requests_per_second: SupportsIndex | None = None,
         burst: SupportsIndex | None = None,
         chain_id: SupportsIndex | None = None,
-    ) -> Any:
+    ) -> Awaitable[AsyncAlloyProvider]:
         """
         Create a new async provider from RPC URL.
 
@@ -360,35 +356,39 @@ class AsyncAlloyProvider:
         self,
         /,
         to: str,
-        data: SupportsGetItem[int, SupportsIndex],
+        data: bytes,
         from_: str | None = None,
         value: SupportsIndex | None = None,
         block_number: SupportsIndex | None = None,
-    ) -> Any:
+    ) -> Awaitable[int]:
         """
         Estimate gas for a transaction asynchronously.
         """
-    def get_balance(self, /, address: str, block_number: SupportsIndex | None = None) -> Any:
+    def get_balance(
+        self, /, address: str, block_number: SupportsIndex | None = None
+    ) -> Awaitable[Any]:
         """
         Get the balance of an address in wei asynchronously.
         """
-    def get_block(self, /, block_number: SupportsIndex) -> Any:
+    def get_block(self, /, block_number: SupportsIndex) -> Awaitable[Any | None]:
         """
         Get a block by number asynchronously.
         """
-    def get_block_number(self, /) -> Any:
+    def get_block_number(self, /) -> Awaitable[int]:
         """
         Get current block number asynchronously.
         """
-    def get_chain_id(self, /) -> Any:
+    def get_chain_id(self, /) -> Awaitable[int]:
         """
         Get chain ID asynchronously.
         """
-    def get_code(self, /, address: str, block_number: SupportsIndex | None = None) -> Any:
+    def get_code(
+        self, /, address: str, block_number: SupportsIndex | None = None
+    ) -> Awaitable[Any]:
         """
         Get contract code at an address asynchronously.
         """
-    def get_gas_price(self, /) -> Any:
+    def get_gas_price(self, /) -> Awaitable[int]:
         """
         Get current gas price asynchronously.
         """
@@ -399,31 +399,31 @@ class AsyncAlloyProvider:
         to_block: SupportsIndex,
         addresses: SupportsGetItem[int, str] | None = None,
         topics: SupportsGetItem[int, SupportsGetItem[int, str]] | None = None,
-    ) -> Any:
+    ) -> Awaitable[list]:
         """
         Get logs asynchronously with chunked fetching.
         """
     def get_storage_at(
         self, /, address: str, position: Any, block_number: SupportsIndex | None = None
-    ) -> Any:
+    ) -> Awaitable[Any]:
         """
         Get storage at a given address and position asynchronously.
         """
-    def get_transaction(self, /, tx_hash: str) -> Any:
+    def get_transaction(self, /, tx_hash: str) -> Awaitable[Any | None]:
         """
         Get a transaction by hash asynchronously.
         """
     def get_transaction_count(
         self, /, address: str, block_number: SupportsIndex | None = None
-    ) -> Any:
+    ) -> Awaitable[int]:
         """
         Get the transaction count (nonce) for an address asynchronously.
         """
-    def get_transaction_receipt(self, /, tx_hash: str) -> Any:
+    def get_transaction_receipt(self, /, tx_hash: str) -> Awaitable[Any | None]:
         """
         Get a transaction receipt by hash asynchronously.
         """
-    def make_request(self, /, method: str, params: list) -> Any:
+    def make_request(self, /, method: str, params: list) -> Awaitable[Any]:
         """
         Make a raw JSON-RPC request asynchronously.
 

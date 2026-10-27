@@ -22,6 +22,7 @@ from degenbot.provider.surface import LogFilter, normalize_get_logs
 from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
+    from degenbot.types.aliases import BlockNumber
     from degenbot.types.rpc_types import (
         BlockData,
         LogData,

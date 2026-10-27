@@ -77,6 +77,7 @@ def normalize_get_logs(
     Raises:
         ValueError: If neither a filter nor a block range is provided, or if
             the keyword range is reversed.
+
     """
     if filter_param is not None:
         return (

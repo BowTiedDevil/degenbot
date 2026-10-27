@@ -6,6 +6,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
 
+mod annotation_imports;
 mod config_projection;
 mod exception_manifest;
 use exception_manifest::EXCEPTION_ISLANDS;
@@ -396,7 +397,9 @@ fn main() -> Result<()> {
             .map_err(|err| anyhow!("exception island splice failed: {err}"))?;
         let stamped = format!(
             "{GENERATED_HEADER}{}",
-            append_dunder_all(&rewrite_orphan_setters(&mangle_keyword_params(&spliced)))
+            append_dunder_all(&rewrite_orphan_setters(&annotation_imports::apply(
+                &mangle_keyword_params(&spliced)
+            )))
         );
         std::fs::write(&dest, &stamped).with_context(|| format!("write {}", dest.display()))?;
         eprintln!("wrote {} ({} bytes)", dest.display(), stamped.len());

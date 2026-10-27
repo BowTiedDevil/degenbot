@@ -178,7 +178,7 @@ impl PyAlloyProvider {
     }
 
     /// Fetch logs synchronously (blocking).
-    #[pyo3(signature = (*, from_block, to_block, addresses=None, topics=None))]
+    #[pyo3(signature = (from_block, to_block, addresses=None, topics=None))]
     fn get_logs(
         &self,
         py: Python<'_>,

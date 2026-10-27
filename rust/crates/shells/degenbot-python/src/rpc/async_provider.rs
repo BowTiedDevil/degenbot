@@ -23,7 +23,7 @@ use crate::prelude::*;
 use crate::provider::{AlloyProvider, LogFetcher};
 use crate::rpc::provider::PyAlloyProvider;
 use pyo3::exceptions::PyValueError;
-use pyo3::types::PyList;
+use pyo3::types::{PyBytes, PyList};
 use std::sync::Arc;
 
 /// Python wrapper for async provider operations.
@@ -70,7 +70,7 @@ impl PyAsyncAlloyProvider {
     /// * `chain_id` - Chain the endpoint is bound to; the core reads
     ///   `eth_chainId` once and raises `ValueError` on a disagreement
     #[staticmethod]
-    #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000, requests_per_second=None, burst=None, chain_id=None))]
+    #[pyo3(signature = (rpc_url, max_retries=10, max_blocks_per_request=5000, requests_per_second=None, burst=None, chain_id=None) -> "Awaitable[AsyncAlloyProvider]")]
     fn create(
         py: Python<'_>,
         rpc_url: String,
@@ -127,6 +127,7 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Get current block number asynchronously.
+    #[pyo3(signature = () -> "Awaitable[int]")]
     fn get_block_number<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let provider = Arc::clone(&self.provider);
         future_into_py(py, async move {
@@ -138,6 +139,7 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Get chain ID asynchronously.
+    #[pyo3(signature = () -> "Awaitable[int]")]
     fn get_chain_id<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let provider = Arc::clone(&self.provider);
         future_into_py(py, async move {
@@ -146,7 +148,7 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Get logs asynchronously with chunked fetching.
-    #[pyo3(signature = (from_block, to_block, addresses=None, topics=None))]
+    #[pyo3(signature = (from_block, to_block, addresses=None, topics=None) -> "Awaitable[list]")]
     fn get_logs<'py>(
         &self,
         py: Python<'py>,
@@ -184,6 +186,7 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Get a block by number asynchronously.
+    #[pyo3(signature = (block_number) -> "Awaitable[Any | None]")]
     fn get_block<'py>(&self, py: Python<'py>, block_number: u64) -> PyResult<Bound<'py, PyAny>> {
         let provider = Arc::clone(&self.provider);
 
@@ -211,17 +214,17 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Execute an `eth_call` to a contract asynchronously.
-    #[pyo3(signature = (to, data, block_number=None))]
+    #[pyo3(signature = (to, data, block_number=None) -> "Awaitable[Any]")]
     fn call<'py>(
         &self,
         py: Python<'py>,
         to: &str,
-        data: Vec<u8>,
+        data: &Bound<'_, PyBytes>,
         block_number: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let to_address = crate::address_utils::parse_address(to)
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
-        let data_bytes = alloy::primitives::Bytes::from(data);
+        let data_bytes = alloy::primitives::Bytes::from(data.as_bytes().to_vec());
         let provider = Arc::clone(&self.provider);
         let to_owned = to.to_string();
 
@@ -242,7 +245,7 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Get contract code at an address asynchronously.
-    #[pyo3(signature = (address, block_number=None))]
+    #[pyo3(signature = (address, block_number=None) -> "Awaitable[Any]")]
     fn get_code<'py>(
         &self,
         py: Python<'py>,
@@ -264,6 +267,7 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Get current gas price asynchronously.
+    #[pyo3(signature = () -> "Awaitable[int]")]
     fn get_gas_price<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let provider = Arc::clone(&self.provider);
 
@@ -273,23 +277,23 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Estimate gas for a transaction asynchronously.
-    #[pyo3(signature = (to, data, from=None, value=None, block_number=None))]
+    #[pyo3(signature = (to, data, from=None, value=None, block_number=None) -> "Awaitable[int]")]
     fn estimate_gas<'py>(
         &self,
         py: Python<'py>,
         to: &str,
-        data: Vec<u8>,
-        from: Option<String>,
+        data: &Bound<'_, PyBytes>,
+        from: Option<&str>,
         value: Option<u128>,
         block_number: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let to_address = crate::address_utils::parse_address(to)
             .map_err(|e| PyValueError::new_err(format!("Invalid 'to' address: {e}")))?;
         let from_address = from
-            .map(|s| crate::address_utils::parse_address(&s))
+            .map(crate::address_utils::parse_address)
             .transpose()
             .map_err(|e| PyValueError::new_err(format!("Invalid 'from' address: {e}")))?;
-        let data_bytes = alloy::primitives::Bytes::from(data);
+        let data_bytes = alloy::primitives::Bytes::from(data.as_bytes().to_vec());
         let provider = Arc::clone(&self.provider);
 
         future_into_py(py, async move {
@@ -309,6 +313,7 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Get a transaction by hash asynchronously.
+    #[pyo3(signature = (tx_hash) -> "Awaitable[Any | None]")]
     fn get_transaction<'py>(
         &self,
         py: Python<'py>,
@@ -339,6 +344,7 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Get a transaction receipt by hash asynchronously.
+    #[pyo3(signature = (tx_hash) -> "Awaitable[Any | None]")]
     fn get_transaction_receipt<'py>(
         &self,
         py: Python<'py>,
@@ -371,7 +377,7 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Get storage at a given address and position asynchronously.
-    #[pyo3(signature = (address, position, block_number=None))]
+    #[pyo3(signature = (address, position, block_number=None) -> "Awaitable[Any]")]
     fn get_storage_at<'py>(
         &self,
         py: Python<'py>,
@@ -395,7 +401,7 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Get the balance of an address in wei asynchronously.
-    #[pyo3(signature = (address, block_number=None))]
+    #[pyo3(signature = (address, block_number=None) -> "Awaitable[Any]")]
     fn get_balance<'py>(
         &self,
         py: Python<'py>,
@@ -419,7 +425,7 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Get the transaction count (nonce) for an address asynchronously.
-    #[pyo3(signature = (address, block_number=None))]
+    #[pyo3(signature = (address, block_number=None) -> "Awaitable[int]")]
     fn get_transaction_count<'py>(
         &self,
         py: Python<'py>,
@@ -443,7 +449,7 @@ impl PyAsyncAlloyProvider {
     /// Make a raw JSON-RPC request asynchronously.
     ///
     /// This allows calling arbitrary RPC methods that don't have typed wrappers.
-    #[pyo3(signature = (method, params))]
+    #[pyo3(signature = (method, params) -> "Awaitable[Any]")]
     fn make_request<'py>(
         &self,
         py: Python<'py>,
