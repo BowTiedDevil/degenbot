@@ -12,28 +12,32 @@
 //!   their verify companions, the contract wrappers — reaches the transport
 //!   through one construction path, and a test can drive the same seam
 //!   entries with a recorded cassette instead of a node.
-//! - [`drive`] is the ONE runtime-mode decision: the caller's ambient tokio
-//!   context when it has one (the verify seams, entered by a Python driver
-//!   through `call_on_ambient_runtime`), the process-wide shared runtime
-//!   otherwise (the updater entries, which arrive on a Python worker thread
-//!   with no runtime context at all).
+//! - [`drive`] is the shell's synchronous drive: the seam bodies hand their
+//!   futures to the core bridge
+//!   ([`degenbot_core::runtime::bridged_block_on`]), which owns the one
+//!   in-runtime hand-off — an ambient multi-threaded runtime parks the worker
+//!   and drives its own handle (the verify seams, entered by a Python driver
+//!   through `call_on_ambient_runtime`), while an off-runtime thread drives
+//!   the process-wide shared runtime (the updater entries, which arrive on a
+//!   Python worker thread with no runtime context at all).
 //! - [`UPDATER_MAX_RETRIES`] is the updater family's ONE retry budget (the
 //!   literal that used to sit at every entry).
 //! - [`require_ambient_runtime`] is the ONE spelling of the verify seams'
 //!   ambient-runtime policy.
 //!
-//! # Why the runtime mode is not simply "always the shared runtime"
+//! # Why the verify seams refuse a missing ambient runtime
 //!
 //! The updater chunk loops block on the shared runtime themselves, so a
-//! nested drive would panic; the verify seams are refused a missing ambient
-//! runtime rather than silently driven, because their callers are Python
-//! drivers that satisfy the policy explicitly (`tests/test_ambient_runtime.py`
-//! pins both faces). One decision routine, two consistent policies.
+//! nested drive would panic — the hazard [`drive`] hands to the core bridge.
+//! The verify seams are refused a missing ambient runtime rather than
+//! silently driven, because their callers are Python drivers that satisfy the
+//! policy explicitly (`tests/test_ambient_runtime.py` pins both faces). One
+//! bridge, two consistent policies.
 
 use std::future::Future;
 
 use degenbot_core::errors::ProviderResult;
-use degenbot_core::runtime::get_runtime;
+use degenbot_core::runtime::bridged_block_on;
 use degenbot_rpc::provider::AlloyProvider;
 use tokio::runtime::Handle;
 
@@ -64,21 +68,11 @@ pub async fn live_provider(rpc_url: &str, max_retries: u32) -> ProviderResult<Al
     AlloyProvider::new(rpc_url, max_retries).await
 }
 
-/// Drive `fut` to completion on the runtime the caller stands in — the
-/// shell's ONE runtime-mode decision.
-///
-/// An ambient tokio context wins: the thread already belongs to a runtime, so
-/// the drive parks it with `block_in_place` and blocks on that handle —
-/// blocking on it directly would nest an executor and panic. With no ambient
-/// context (the updater entries, called from Python on a bare worker thread)
-/// the process-wide shared runtime drives instead, which is the same runtime
-/// the updater cores block on for their chunk loop.
+/// Drive `fut` to completion from a synchronous seam body — the shell's name
+/// for [`bridged_block_on`], the ONE home of the in-runtime panic hazard.
 #[must_use]
 pub fn drive<F: Future>(fut: F) -> F::Output {
-    match Handle::try_current() {
-        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
-        Err(_) => get_runtime().block_on(fut),
-    }
+    bridged_block_on(fut)
 }
 
 /// The verify seams' runtime policy: the calling thread MUST already stand in

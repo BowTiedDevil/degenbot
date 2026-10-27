@@ -30,7 +30,7 @@ impl PyContract {
         let address = address.to_string();
 
         // Release GIL during provider creation; the seam edge owns the
-        // transport build (and the runtime-mode decision behind it).
+        // transport build (and the core bridge behind it).
         let provider = py
             .detach(|| {
                 crate::provider_seam::drive(crate::provider_seam::live_provider(

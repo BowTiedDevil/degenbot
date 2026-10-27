@@ -458,6 +458,12 @@ impl EngineStages {
             // pump-runtime worker while it runs. Seam #4: under the
             // detached stance the engine Mutex hold collapses to enqueue end
             // (µs); the in-cycle arm is the backpressure safety valve only.
+            //
+            // Not `degenbot_core::runtime::bridged_block_on`: that helper
+            // drives a future, and the cycle is synchronous CPU work with
+            // nothing to await. Parking the worker for CPU is the reason
+            // here, and the no-runtime case deliberately runs inline instead
+            // of asserting a multi-threaded ambience.
             let hold_start = std::time::Instant::now();
             cycle_outcome = if is_multi_thread_runtime() {
                 tokio::task::block_in_place(|| {
@@ -634,6 +640,10 @@ fn expire_buffered_telemetry(
 // naming and census row).
 /// Is the caller inside an ambient multi-thread tokio runtime? `block_in_place`
 /// is only valid there; a current-thread runtime or no runtime runs inline.
+///
+/// The cycle the gate guards is synchronous CPU work, not a future, so the
+/// core bridge that owns the future-driving hazard does not apply and this
+/// must not borrow its assert.
 fn is_multi_thread_runtime() -> bool {
     tokio::runtime::Handle::try_current()
         .is_ok_and(|handle| handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)

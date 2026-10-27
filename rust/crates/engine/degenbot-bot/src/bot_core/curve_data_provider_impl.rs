@@ -12,19 +12,16 @@
 //!
 //! ## Sync-over-async (the trait is sync; `RpcConstruction::call` is async)
 //!
-//! `CurveDataProvider` methods are synchronous, so each call bridges via
-//! [`block_on`]. If invoked inside a Tokio runtime (the bot's pump loop, a
-//! `#[tokio::test(flavor = "multi_thread")]`), it uses
-//! `Handle::block_on` inside `block_in_place`; if invoked outside any runtime
-//! (a standalone sync consumer), it builds a throwaway current-thread runtime.
-//! Callers that are themselves on a multi-threaded runtime need no special
-//! handling.
+//! `CurveDataProvider` methods are synchronous, so each call bridges through
+//! [`degenbot_core::runtime::bridged_block_on`] — the one in-runtime
+//! hand-off, valid on the bot's multi-threaded pump loop, a bare construction
+//! thread, and a standalone sync consumer alike.
 
 use hashbrown::HashMap;
-use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 use alloy::primitives::{Address, Bytes, B256, U256};
+use degenbot_core::runtime::bridged_block_on;
 use degenbot_pools::sim::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
 use degenbot_rpc::abi;
 
@@ -119,7 +116,7 @@ impl RpcCurveDataProvider {
         calldata: Bytes,
         block: u64,
     ) -> Result<U256, CurveDataProviderError> {
-        let bytes = block_on(self.rpc.call(to, calldata, Some(block)))
+        let bytes = bridged_block_on(self.rpc.call(to, calldata, Some(block)))
             .map_err(|_| CurveDataProviderError::FetchFailed)?;
         abi::decode_uint256(&bytes).map_err(|_| CurveDataProviderError::FetchFailed)
     }
@@ -131,7 +128,7 @@ impl RpcCurveDataProvider {
         calldata: Bytes,
         block: u64,
     ) -> Result<Address, CurveDataProviderError> {
-        let bytes = block_on(self.rpc.call(to, calldata, Some(block)))
+        let bytes = bridged_block_on(self.rpc.call(to, calldata, Some(block)))
             .map_err(|_| CurveDataProviderError::FetchFailed)?;
         abi::decode_curve_redemption_price_snap(&bytes)
             .map_err(|_| CurveDataProviderError::FetchFailed)
@@ -150,11 +147,12 @@ impl RpcCurveDataProvider {
 
 impl CurveDataProvider for RpcCurveDataProvider {
     fn block_number(&self) -> Result<u64, CurveDataProviderError> {
-        block_on(self.rpc.get_block_number()).map_err(|_| CurveDataProviderError::FetchFailed)
+        bridged_block_on(self.rpc.get_block_number())
+            .map_err(|_| CurveDataProviderError::FetchFailed)
     }
 
     fn block_timestamp(&self, block_number: u64) -> Result<u64, CurveDataProviderError> {
-        match block_on(self.rpc.get_block_timestamp(block_number)) {
+        match bridged_block_on(self.rpc.get_block_timestamp(block_number)) {
             Ok(Some(ts)) => Ok(ts),
             _ => Err(CurveDataProviderError::FetchFailed),
         }
@@ -167,7 +165,7 @@ impl CurveDataProvider for RpcCurveDataProvider {
         block_number: u64,
     ) -> Result<U256, CurveDataProviderError> {
         let calldata = Bytes::from(abi::encode_balance_of(&holder_address));
-        let bytes = block_on(self.rpc.call(token_address, calldata, Some(block_number)))
+        let bytes = bridged_block_on(self.rpc.call(token_address, calldata, Some(block_number)))
             .map_err(|_| CurveDataProviderError::FetchFailed)?;
         abi::decode_balance_of(&bytes).map_err(|_| CurveDataProviderError::FetchFailed)
     }
@@ -178,7 +176,7 @@ impl CurveDataProvider for RpcCurveDataProvider {
         block_number: u64,
     ) -> Result<U256, CurveDataProviderError> {
         let calldata = Bytes::from(abi::encode_total_supply());
-        let bytes = block_on(self.rpc.call(token_address, calldata, Some(block_number)))
+        let bytes = bridged_block_on(self.rpc.call(token_address, calldata, Some(block_number)))
             .map_err(|_| CurveDataProviderError::FetchFailed)?;
         abi::decode_total_supply(&bytes).map_err(|_| CurveDataProviderError::FetchFailed)
     }
@@ -391,31 +389,6 @@ impl RpcCurveDataProvider {
             self.rate_multipliers[0],
             self.rate_multipliers[1] * oracle_rate / precision,
         ])
-    }
-}
-
-/// Bridge a future to blocking, matching the codebase's sync-over-async
-/// pattern (see `degenbot-python/pool/mod.rs`).
-///
-/// # Panics
-///
-/// Panics if called from inside a single-threaded Tokio runtime
-/// (`block_in_place` requires multi-threaded). Providers are constructed and
-/// read from the multi-threaded pump loop or standalone sync consumers, both
-/// outside that case.
-fn block_on<F, T>(fut: F) -> T
-where
-    F: Future<Output = T> + Send,
-{
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        tokio::task::block_in_place(|| handle.block_on(fut))
-    } else {
-        #[expect(clippy::expect_used)] // driver-thread runtime build cannot fail
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("failed to build driver runtime");
-        rt.block_on(fut)
     }
 }
 
