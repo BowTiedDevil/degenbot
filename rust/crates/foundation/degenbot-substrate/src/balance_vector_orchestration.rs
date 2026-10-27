@@ -2,8 +2,9 @@
 //!
 //! Carved out of `bot_core/mod.rs` (the `BotState` god-file). This module owns the balance-vector
 //! capability's LIVE-STATE surfaces — `Curve` and `Balancer` (weighted + stable) registration,
-//! the unified balance-apply row, and the identity/state getters. State ownership is NOT family
-//! behavior (GLOSSARY "concentrated liquidity orchestration capability" pattern): the registration entries and the
+//! the unified balance-apply row, the identity/state getters, and the metapool
+//! base-pool delegation port ([`BotCurveBasePoolPort`]) the Curve reads use.
+//! State ownership is NOT family behavior (GLOSSARY "concentrated liquidity orchestration capability" pattern): the registration entries and the
 //! family-neutral apply/get rows stay here (ADR-073 D3 keeps the named seams), while the family
 //! behavior — the swap reads, the resolve projections, and the get/calc math — folds through the
 //! family read modules' intent doors (`degenbot_pools::families::{curve_stableswap,
@@ -18,6 +19,7 @@
 use alloy::primitives::U256;
 
 use degenbot_math::curve::calculate_dy_underlying;
+use degenbot_math::curve::{CurveBasePoolPort, CurveSwapError};
 use degenbot_pools::families::curve_stableswap as curve_read;
 use degenbot_pools::state::balancer_stable_state::{
     BalancerStablePoolState, RegisterBalancerStablePoolParams,
@@ -28,9 +30,7 @@ use degenbot_pools::state::balancer_weighted_state::{
 use degenbot_pools::state::curve_state::{CurvePoolState, RegisterCurvePoolParams};
 use degenbot_pools::CurveInputsError;
 
-use super::{
-    check_metapool_liquidity, resolve_dy_inputs, BotCurveBasePoolPort, BotState, PoolEntry,
-};
+use super::{check_metapool_liquidity, resolve_dy_inputs, BotState, PoolEntry};
 
 impl BotState {
     /// Register a Curve `StableSwap` pool by contract address.
@@ -364,5 +364,75 @@ impl BotState {
         self.registry.pool_addresses.insert(params.address, pool_id);
 
         pool_id
+    }
+}
+
+/// Convert an orchestration [`CurveInputsError`] into a [`CurveSwapError`]
+/// for the `CurveBasePoolPort` contract (which can only carry `CurveSwapError`).
+fn curve_error_into_swap(e: CurveInputsError) -> CurveSwapError {
+    match e {
+        CurveInputsError::Swap(x) => x,
+        CurveInputsError::UnknownPool(_) => CurveSwapError::MissingValue("unknown base pool"),
+        CurveInputsError::NotMetapool => CurveSwapError::NotMetapool,
+        CurveInputsError::LengthMismatch(_) => {
+            CurveSwapError::MissingValue("base-pool length mismatch")
+        }
+        CurveInputsError::NoProvider(_) => {
+            CurveSwapError::MissingValue("base-pool provider missing")
+        }
+        CurveInputsError::Provider(_) => {
+            CurveSwapError::MissingValue("base-pool provider fetch failed")
+        }
+        CurveInputsError::NoLiquidity => CurveSwapError::MissingValue("base-pool has no liquidity"),
+    }
+}
+
+/// The base-pool delegation port for metapool `get_dy_underlying`: delegates
+/// each op to a registered base `CurvePool` in the same `BotState`, so the
+/// metapool math reads its bases through the state owner instead of a second
+/// pool table. Every method is an immutable read on `&BotState`, so the port
+/// borrows the state freely without a re-entrant lock.
+pub struct BotCurveBasePoolPort<'a> {
+    state: &'a BotState,
+    base_id: u64,
+}
+
+impl CurveBasePoolPort for BotCurveBasePoolPort<'_> {
+    fn token_count(&self) -> usize {
+        self.state
+            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.base_id)
+            .map_or(
+                0,
+                degenbot_pools::state::curve_state::CurvePoolIdentity::n_coins,
+            )
+    }
+
+    fn fee(&self) -> U256 {
+        self.state
+            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.base_id)
+            .map_or(U256::ZERO, |id| U256::from(id.fee))
+    }
+
+    fn calc_token_amount(&self, amounts: &[U256], block: u64) -> Result<U256, CurveSwapError> {
+        self.state
+            .calc_token_amount(self.base_id, amounts, true, block)
+            .map_err(curve_error_into_swap)
+    }
+
+    fn get_dy(&self, i: usize, j: usize, dx: U256, block: u64) -> Result<U256, CurveSwapError> {
+        self.state
+            .get_dy(self.base_id, i, j, dx, block, None)
+            .map_err(curve_error_into_swap)
+    }
+
+    fn calc_withdraw_one_coin(
+        &self,
+        token_amount: U256,
+        i: usize,
+        block: u64,
+    ) -> Result<U256, CurveSwapError> {
+        self.state
+            .calc_withdraw_one_coin(self.base_id, token_amount, i, block)
+            .map_err(curve_error_into_swap)
     }
 }

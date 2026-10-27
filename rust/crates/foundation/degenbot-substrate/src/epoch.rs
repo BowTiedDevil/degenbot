@@ -36,7 +36,23 @@
 //! at the pump's decision points; the stage-machine task  makes the
 //! stages consume them.
 
-use crate::BlockMetadata;
+/// The block header facts a drain tick carries alongside its coordinate.
+///
+/// The pump's WS header supplies them once per block; [`BlockContext`] pairs
+/// them with the [`Epoch`] so a consumer of a block reads the coordinate and
+/// the header facts as one value. `base_fee_per_gas` is `None` for pre-EIP-1559
+/// blocks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlockMetadata {
+    /// Block timestamp.
+    pub timestamp: u64,
+    /// Base fee per gas (`None` for pre-EIP-1559 blocks).
+    pub base_fee_per_gas: Option<u64>,
+    /// Gas used in this block.
+    pub gas_used: u64,
+    /// Gas limit of this block.
+    pub gas_limit: u64,
+}
 
 /// The one block coordinate: `block` + rewind generation `seq`.
 ///

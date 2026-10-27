@@ -137,6 +137,10 @@ tokio-util = ["dep:tokio-util"]
 libc = "^0.2"
 
 [dev-dependencies]
+# The substrate's `test-fixtures` feature exposes the state-seeding door the
+# bot_core pump scenarios need: they live outside the substrate crate, so its
+# `cfg(test)` does not reach them.
+degenbot-substrate = { workspace = true, features = ["test-fixtures"] }
 # The load_v3 variant-coverage test seeds pools + variant tables via raw SQL.
 rusqlite = { version = "^0.40", features = ["bundled"] }
 

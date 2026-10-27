@@ -68,27 +68,32 @@ async fn scenario_c_two_adjacent_same_block_mints_both_applied_to_pin() {
     // Swap@N+1 to tombstone N. Pre-seed tick 6 so the tl=6,tu=7 Mint has a
     // lower tick to mutate (mirrors on-chain where tick 6 is initialized).
     {
+        use alloy::primitives::U128;
         let state = bot.state_arc();
         let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         let pool_id = core.pool_id_by_address(&pool_addr).unwrap();
-        if let Some(crate::bot_core::PoolEntry::V3(p)) = core.pool_entry_mut(pool_id) {
-            use alloy::primitives::U128;
-            let pool = &mut p.1;
-            pool.tick_data
-                .entry(6)
-                .or_insert(crate::bot_core::TickInfo {
-                    liquidity_gross: U128::from(21_446_194_157_938_844u128),
-                    liquidity_net: 21_446_194_157_938_844i128,
-                    block: 0,
-                });
-            pool.tick_data
-                .entry(8)
-                .or_insert(crate::bot_core::TickInfo {
-                    liquidity_gross: U128::from(18_506_953_544_795_537u128),
-                    liquidity_net: -18_506_953_544_795_537i128,
-                    block: 0,
-                });
-        }
+        let seeded = core.seed_v3_pool_ticks_for_test(
+            pool_id,
+            [
+                (
+                    6,
+                    crate::bot_core::TickInfo {
+                        liquidity_gross: U128::from(21_446_194_157_938_844u128),
+                        liquidity_net: 21_446_194_157_938_844i128,
+                        block: 0,
+                    },
+                ),
+                (
+                    8,
+                    crate::bot_core::TickInfo {
+                        liquidity_gross: U128::from(18_506_953_544_795_537u128),
+                        liquidity_net: -18_506_953_544_795_537i128,
+                        block: 0,
+                    },
+                ),
+            ],
+        );
+        assert!(seeded, "the seed door accepts a registered V3 pool");
     }
     let mint_lower = make_v3_mint_log_with_block(pool_addr, 6, 7, amt_lower, block_n);
     let mint_upper = make_v3_mint_log_with_block(pool_addr, 7, 8, amt_upper, block_n);

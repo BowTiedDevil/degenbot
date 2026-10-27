@@ -36,6 +36,13 @@ thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
 tokio = { version = "^1.54", features = ["rt-multi-thread", "time", "macros", "sync"] }
 
+[features]
+# The foreign-crate state-seeding door (`BotState::seed_v3_pool_ticks_for_test`).
+# A consumer's dev-dependency enables it so its harnesses can seed pool state
+# the production registration path cannot produce; production builds never
+# compile it. In-crate tests reach the same door through `cfg(test)`.
+test-fixtures = []
+
 [dev-dependencies]
 proptest = "^1.12"
 rusqlite = { version = "^0.40", features = ["bundled"] }

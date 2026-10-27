@@ -926,7 +926,7 @@ impl BotState {
                 // `NotComputable` that reads as an arithmetic failure.
                 (true, _) => SwapRead::UnsupportedFamily {
                     pool_id,
-                    family: super::entry_family(entry),
+                    family: crate::pool_lookup::entry_family(entry),
                 },
             },
             // One concentrated liquidity dispatch row (ADR-073 D2): the swap-read goes through

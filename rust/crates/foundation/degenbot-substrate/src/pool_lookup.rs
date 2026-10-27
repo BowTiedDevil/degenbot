@@ -8,16 +8,22 @@
 //! lookup.
 //!
 //! The verbs here delegate to the state owner's own accessors — this is a join
-//! over the two key shapes, not a second reading of pool state. The id-keyed
-//! accessors remain the interior a hot path uses when it already holds a
-//! `pool_id`.
+//! over the two key shapes, not a second reading of pool state. Those id-keyed
+//! accessors are the interior: a hot path already holding a `pool_id` starts
+//! there, and every key-shaped verb above turns a caller's key into that id
+//! through them. They answer from the registration tables the state owner
+//! writes, so a driver holding an address, a `(pool_manager, pool_id)` pair, or
+//! a typed identity reaches one registry — never a mirror.
 
 use alloy::primitives::Address;
 use hashbrown::HashMap;
 
 use crate::concentrated_liquidity_orchestration::{V3Family, V4Family};
 use crate::state_lock::StateLock;
-use crate::{BotState, ConcentratedLiquidityPoolMut, PoolEntry, PoolTickCoverage, TickInfo};
+use crate::{
+    BotState, ConcentratedLiquidityPoolMut, PoolEntry, PoolIdentity, PoolTickCoverage,
+    RegisteredPoolFamily, TickInfo,
+};
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
 
 /// The pool key the verify lifecycle runs over.
@@ -288,5 +294,123 @@ impl PoolLookup {
                 .concentrated_liquidity
                 .mark_registration_live::<V4Family>(&mut state.registry, (*pool_manager, *pool_id)),
         }
+    }
+}
+
+/// The family tag for a registered entry — the single family-name source so
+/// [`BotState::pool_family`] and the typed dispatchers cannot drift.
+///
+/// The spelling lives in [`RegisteredPoolFamily::tag`]; this projects an entry
+/// onto it rather than repeating the tag table.
+pub(crate) const fn entry_family(entry: &PoolEntry) -> &'static str {
+    entry.registered_family().tag()
+}
+
+/// The id-keyed identity reads: the interior every [`PoolLookup`] verb and
+/// every family dispatch resolves through. Each answers from the registration
+/// tables this type owns, so a caller holding a `pool_id`, an address, or a
+/// typed identity cannot reach a second mirror of the registry.
+impl BotState {
+    /// Return the pool-family tag for `pool_id` as a kebab-case string — the
+    /// spelling [`RegisteredPoolFamily::tag`] owns — or `None` for an
+    /// unregistered `pool_id`.
+    ///
+    /// The string twin of [`Self::registered_family`]. This is the uniform
+    /// family-guard primitive every `from_handle` seam asserts against, so it
+    /// is correct for every registered family (unlike the V2-only `variant`
+    /// getter on `PyLiquidityPool`, which returns `""` for non-V2). `None` is
+    /// explicit so a caller cannot mistake an unregistered pool for a family
+    /// gap via an `""` sentinel.
+    #[must_use]
+    pub fn pool_family(&self, pool_id: u64) -> Option<&'static str> {
+        self.registered_family(pool_id)
+            .map(RegisteredPoolFamily::tag)
+    }
+
+    /// The registered family of `pool_id` as the typed
+    /// [`RegisteredPoolFamily`] — the enum twin of [`Self::pool_family`].
+    ///
+    /// This is what a family dispatch matches on: the match is exhaustive over
+    /// the registered families, so adding a family is a compile error at every
+    /// dispatch instead of a runtime fallthrough. `None` means the id is not
+    /// registered — the same answer [`Self::pool_family`] gives as an absent
+    /// tag.
+    #[must_use]
+    pub fn registered_family(&self, pool_id: u64) -> Option<RegisteredPoolFamily> {
+        self.registry
+            .pools
+            .get(&pool_id)
+            .map(PoolEntry::registered_family)
+    }
+
+    /// Get the pool ID for a given contract address.
+    #[must_use]
+    pub fn pool_id_by_address(&self, address: &Address) -> Option<u64> {
+        self.registry.pool_addresses.get(address).copied()
+    }
+
+    /// The address-keyed registration of record, family-tagged (PRG-1 /
+    /// registry unification). `BotState` is the sole pool registry,
+    /// so the `PyO3` construction door's flight pre-check consults this
+    /// reader INSTEAD of a Python-mirror registry: an address this core
+    /// already registered is answered here — identity straight off the
+    /// registered entry — with no duplicate-handed builder replay and no
+    /// terminal `AlreadyRegistered` refusal.
+    ///
+    /// V4 pools are NOT address-keyed (one `PoolManager` hosts many pool ids,
+    /// keying is `(pool_manager, pool_id)`) and return `None` here; their
+    /// family tag is resolved by [`Self::registered_family_at`] and their fast
+    /// path is the existing `try_registered_v4`.
+    #[must_use]
+    pub fn registered_pool_by_address(
+        &self,
+        address: &Address,
+    ) -> Option<(u64, RegisteredPoolFamily)> {
+        let pool_id = self.pool_id_by_address(address)?;
+        match self.registry.pools.get(&pool_id)?.registered_family() {
+            // An address query cannot name a V4 pool (see the doc above).
+            RegisteredPoolFamily::V4 => None,
+            family => Some((pool_id, family)),
+        }
+    }
+
+    /// The `(pool_manager, pool_id)`-keyed twin of
+    /// [`Self::registered_pool_by_address`] (ADR-059 D1): V4 pools register
+    /// under the pair, so this reader resolves a registered V4 pool's family
+    /// tag. `None` for an unregistered pair.
+    #[must_use]
+    pub fn registered_family_at(
+        &self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
+    ) -> Option<RegisteredPoolFamily> {
+        let id = self.pool_id_by_key(pool_manager, pool_id)?;
+        Some(self.registry.pools.get(&id)?.registered_family())
+    }
+
+    /// The registered pool id for this exact pool identity, DERIVED from the
+    /// registration tables this type already owns, so no second pool-id map
+    /// exists anywhere.
+    ///
+    /// The read direction a driver needs when it holds a pool's *identity*
+    /// (a family tag plus an address, or a V4 `(PoolManager, pool_id)` pair)
+    /// and needs the id the engine hops on. It answers from the same
+    /// `pool_addresses` / `v4_pool_ids` indexes registration writes, so a
+    /// driver cannot hold a mirror that disagrees with the state owner.
+    ///
+    /// Family is part of the answer: an address-keyed identity that names a
+    /// different family than the one registered there is `None` rather than
+    /// the other family's id.
+    #[must_use]
+    pub fn pool_id_for_identity(&self, identity: &PoolIdentity) -> Option<u64> {
+        if let PoolIdentity::V4 {
+            pool_manager,
+            pool_id,
+        } = identity
+        {
+            return self.pool_id_by_key(*pool_manager, pool_id);
+        }
+        let (pool_id, _) = self.registered_pool_by_address(&identity.address())?;
+        (self.pool_family(pool_id) == Some(identity.family_tag())).then_some(pool_id)
     }
 }

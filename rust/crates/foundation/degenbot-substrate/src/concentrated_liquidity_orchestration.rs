@@ -9,12 +9,16 @@
 //! The routing verbs the orchestration shares with the event pump live in
 //! `concentrated_liquidity_route.rs`.
 //!
-//! concentrated liquidity methods never touch `BotState`'s private fields: they reach the
+//! The capability's own methods never touch `BotState`'s private fields: they reach the
 //! family-agnostic pool tables through the [`RegistryCore`] view parameter
 //! each caller passes — a split borrow that lets one call mutate capability
-//! state and registry core together. `BotState`'s public concentrated liquidity surface stays on
-//! `BotState` as one-line delegation wrappers (the delegating
-//! composition-root impl at the bottom of this module).
+//! state and registry core together. `BotState`'s public concentrated-liquidity
+//! surface lives here as two `impl BotState` blocks: the one-line delegation
+//! wrappers over the capability (the composition root at the bottom of this
+//! module), and the id-keyed apply doors — swap, genesis seed, liquidity update,
+//! backfill replay — which resolve a `pool_id` to its family through
+//! [`PoolLookup`] and so are the family dispatch itself rather than a
+//! delegation.
 
 use degenbot_core::diag;
 use degenbot_core::op_warn;
@@ -29,7 +33,8 @@ use crate::concentrated_liquidity_route::{
     pin_provenance_verdict, route_action, ApplyOutcome, BufferKind, EventKind, Phase,
     PinProvenance, PoolPresence, RouteAction,
 };
-use crate::pool_lookup::PoolLookup;
+use crate::log_dispatcher;
+use crate::pool_lookup::{entry_family, PoolLookup};
 use degenbot_pools::families::buffered_event::{BufferedPoolEvent, PoolLiquidityUpdate};
 use degenbot_pools::families::state_update::{PoolRefusal, PoolStateUpdate};
 use degenbot_pools::state::state_history::{ScalarPriors, TickBefore, V3BlockDelta};
@@ -52,6 +57,31 @@ use super::{
 };
 
 use super::RegistryCore;
+
+/// Why a concentrated-liquidity state write refused a pool.
+///
+/// Genesis seeding and liquidity updates only exist for concentrated liquidity families: a
+/// registered non-concentrated-liquidity pool has no concentrated liquidity state to mutate. The typed refusal keeps
+/// the family dispatch from silently routing such a pool into the V3 path.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ConcentratedLiquidityApplyError {
+    /// The pool id is not registered.
+    #[error("pool {pool_id} is not registered")]
+    NotRegistered {
+        /// The requested pool id.
+        pool_id: u64,
+    },
+    /// The pool's family has no concentrated-liquidity state.
+    #[error("pool {pool_id} family {family:?} has no concentrated-liquidity {op}")]
+    UnsupportedFamily {
+        /// The requested pool id.
+        pool_id: u64,
+        /// The registered family tag.
+        family: &'static str,
+        /// The refused operation, named for the operator.
+        op: &'static str,
+    },
+}
 
 /// The concentrated-liquidity (V3 + V4) orchestration capability - the ONE
 /// struct owning every concentrated-liquidity-local state surface the state owner carries: the
@@ -2256,6 +2286,231 @@ impl BotState {
                 state.snapshot_seed.as_ref()
             }
         }
+    }
+}
+
+/// The id-keyed concentrated-liquidity apply doors: every verb a caller
+/// holding a `pool_id` uses, each resolved to its family through [`PoolLookup`]
+/// so a registered pool of another family is a typed refusal rather than a
+/// silent no-op.
+impl BotState {
+    /// Family-dispatching Swap apply. The single entry point
+    /// `PyLiquidityPool.apply_swap` calls — the registered pool's entry
+    /// selects the design (ADR-073 D3: the surface name is family-neutral).
+    /// V2/unregistered → `None` (no-op, matching the liquidity-update
+    /// sibling). This preserves the single Python `apply_swap` API while
+    /// routing V4 updates correctly (the prior unconditional V3 routing
+    /// silently dropped every V4 update).
+    pub fn apply_swap_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    ) -> Option<u64> {
+        let state = self.concentrated_state_mut(pool_id, "swap").ok()?;
+        state.apply_swap(sqrt_price_x96, liquidity, tick, block_number, tick_priors);
+        Some(pool_id)
+    }
+
+    /// Registration/seed genesis anchor for a registered V3/V4 pool
+    /// (two-stamp rule): pushes a `before == after` journal delta at `block`
+    /// so the reorg journal is non-empty from registration, WITHOUT advancing
+    /// either clock. The split-seed replacement for the builder's old
+    /// `apply_swap` genesis, which would backward-panic `update_block` (price
+    /// seeded at HEAD past the DB map block) and falsely advance
+    /// `tick_data_block`. A non-concentrated-liquidity family has no concentrated liquidity journal to seed and is
+    /// refused with [`ConcentratedLiquidityApplyError::UnsupportedFamily`].
+    ///
+    /// # Errors
+    ///
+    /// [`ConcentratedLiquidityApplyError::NotRegistered`] for an unknown pool id, or
+    /// [`ConcentratedLiquidityApplyError::UnsupportedFamily`] for a registered non-concentrated-liquidity family.
+    pub fn seed_genesis_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Result<u64, ConcentratedLiquidityApplyError> {
+        self.concentrated_state_mut(pool_id, "genesis seed")?
+            .seed_genesis(block);
+        Ok(pool_id)
+    }
+
+    /// The ONE family dispatch behind the three `*_by_pool_id` apply doors:
+    /// resolve the id to the [`PoolLookup`] key its family addresses the pool
+    /// by, then hand back the family-neutral state that key names.
+    ///
+    /// [`PoolLookup::from_pool_id`] answers `Some` only for the two
+    /// concentrated-liquidity families, so a miss is the refusal itself: an
+    /// unregistered id is [`ConcentratedLiquidityApplyError::NotRegistered`] and
+    /// a registered family without concentrated-liquidity state is
+    /// [`ConcentratedLiquidityApplyError::UnsupportedFamily`], with `op` naming
+    /// the refused operation for the operator.
+    fn concentrated_state_mut(
+        &mut self,
+        pool_id: u64,
+        op: &'static str,
+    ) -> Result<&mut dyn ConcentratedLiquidityPoolMut, ConcentratedLiquidityApplyError> {
+        let Some(key) = PoolLookup::from_pool_id(self, pool_id) else {
+            return Err(match self.registry.pools.get(&pool_id) {
+                Some(entry) => ConcentratedLiquidityApplyError::UnsupportedFamily {
+                    pool_id,
+                    family: entry_family(entry),
+                    op,
+                },
+                None => ConcentratedLiquidityApplyError::NotRegistered { pool_id },
+            });
+        };
+        key.state_mut(self)
+            .ok_or(ConcentratedLiquidityApplyError::NotRegistered { pool_id })
+    }
+
+    /// Family-dispatching liquidity update: apply a liquidity-position change
+    /// to a registered pool **now** — the single entry point
+    /// `PyLiquidityPool.apply_liquidity_update` calls, with the design
+    /// selected by the registered entry (ADR-073 D3: the surface name is
+    /// family-neutral) and a registered non-concentrated-liquidity family
+    /// refused with [`ConcentratedLiquidityApplyError::UnsupportedFamily`].
+    ///
+    /// This is the caller-owns-the-event entry, not the driver's: the companion
+    /// (a Python tracker applying a decoded Mint/Burn it already gated) and the
+    /// memoization seam assert that a registered pool's state moves immediately,
+    /// so this door skips the phase gate that [`Self::apply_liquidity_update`]
+    /// applies. Routing it through the phase table would stage the delta into
+    /// the pump buffer for a pool that is registered but not yet live, which
+    /// those callers do not drain — `pool_id` names a pool this caller already
+    /// holds, and the driver keeps its own buffered path for the same event.
+    ///
+    /// # Errors
+    ///
+    /// [`ConcentratedLiquidityApplyError::NotRegistered`] for an unknown pool id, or
+    /// [`ConcentratedLiquidityApplyError::UnsupportedFamily`] for a registered non-concentrated-liquidity family.
+    pub fn apply_liquidity_update_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) -> Result<u64, ConcentratedLiquidityApplyError> {
+        self.concentrated_state_mut(pool_id, "liquidity update")?
+            .apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
+        Ok(pool_id)
+    }
+
+    /// Replay a backfill chunk's decoded events into pool state without
+    /// emitting a batch.
+    ///
+    /// Applies each decoded event via the same
+    /// `apply_swap` / `buffer_backfill_*_liquidity_update` / `apply_swap_update`
+    /// path the live loop uses; decode selection lives in the dispatcher
+    /// registry, never here. After the chunk,
+    /// `expire_v3/v4_buffered(chunk_end)` advances the liquidity buffers. No
+    /// `dispatch` / no solve cycle — the `Backfilled` phase invariant is
+    /// "state advanced, no batches emitted".
+    ///
+    /// The engine-level entry is a thin delegator + `last_processed_block`
+    /// stamp. `BotState` owns the state (ADR-003);
+    /// `BlockPump::backfill_from_snapshot` (core) reaches it via `self.bot`.
+    ///
+    /// Decode selection is the dispatcher's registry
+    /// (`log_dispatcher`, the same decoders the forward path routes through);
+    /// `BotState` keeps apply/route only — the decoders are never imported
+    /// here.
+    pub fn process_backfill_logs(
+        &mut self,
+        dispatcher: &log_dispatcher::LogDispatcher,
+        logs: &[alloy::rpc::types::Log],
+        chunk_end: u64,
+    ) {
+        let mut v3_touched = false;
+        let mut v4_touched = false;
+        for log in logs {
+            // The chunk-end fallback stamps a malformed log (no `block_number`)
+            // at `chunk_end`, never block 0. V2 Sync stays out
+            // of backfill scope (concentrated-liquidity-only: scalar state arrives via snapshot).
+            let Some(event) = dispatcher.try_decode_log_with_block(log, chunk_end) else {
+                continue;
+            };
+            v3_touched |= matches!(
+                event,
+                log_dispatcher::DecodedPoolEvent::V3Swap { .. }
+                    | log_dispatcher::DecodedPoolEvent::V3Liquidity { .. }
+            );
+            v4_touched |= matches!(
+                event,
+                log_dispatcher::DecodedPoolEvent::V4Swap { .. }
+                    | log_dispatcher::DecodedPoolEvent::V4Liquidity { .. }
+            );
+            // The strict sparse-word gate can refuse a tick mutation here too
+            // (`pump.strict_sparse_apply`), but this loop holds the chunk's
+            // write guard, so no word fetch is reachable: surface the refusal
+            // loudly rather than letting it pass as an unapplied event.
+            if let Some(crate::concentrated_liquidity_route::ApplyOutcome::MissingTickWord {
+                pool_id,
+                word,
+            }) = event.apply_backfill(self)
+            {
+                tracing::warn!(
+                    pool_id,
+                    word,
+                    chunk_end,
+                    "strict sparse apply gate: backfill-phase boundary word \
+                     unknown and unfetchable under the chunk guard; event NOT applied"
+                );
+            }
+        }
+        if v3_touched {
+            self.concentrated_liquidity.expire_v3_buffered(chunk_end);
+        }
+        if v4_touched {
+            self.concentrated_liquidity.expire_v4_buffered(chunk_end);
+        }
+    }
+
+    /// Remove a pool from the registry, discarding anything buffered for it.
+    ///
+    /// One effect, either key shape: the address names any address-keyed family,
+    /// the `(pool_manager, pool_id)` pair names a V4 pool. Returns whether a
+    /// registration was removed.
+    pub fn unregister_pool(&mut self, key: PoolLookup) -> bool {
+        match key {
+            PoolLookup::Address(address) => self
+                .concentrated_liquidity
+                .unregister_pool::<V3Family>(&mut self.registry, &address)
+                .is_some(),
+            PoolLookup::V4 {
+                pool_manager,
+                pool_id,
+            } => self
+                .concentrated_liquidity
+                .unregister_pool::<V4Family>(&mut self.registry, &(pool_manager, pool_id))
+                .is_some(),
+        }
+    }
+
+    /// Seed tick rows into a registered V3 pool's tick map.
+    ///
+    /// Registration is the only production writer of a V3 pool's tick map, so a
+    /// harness that must start from a hand-chosen tick layout has no other
+    /// entry. Compiled for in-crate tests and behind the `test-fixtures`
+    /// feature a consumer's dev-dependency enables; never in a production
+    /// build.
+    ///
+    /// Returns `false` for an unregistered id and for a non-V3 pool.
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn seed_v3_pool_ticks_for_test(
+        &mut self,
+        pool_id: u64,
+        ticks: impl IntoIterator<Item = (i32, TickInfo)>,
+    ) -> bool {
+        let Some(PoolEntry::V3(pool)) = self.registry.pools.get_mut(&pool_id) else {
+            return false;
+        };
+        pool.1.tick_data.extend(ticks);
+        true
     }
 }
 

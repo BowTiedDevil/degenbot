@@ -4,6 +4,7 @@ use crate::swap_simulation::{Caveats, SwapOutcome, SwapRead, SwapRequest};
 use alloy::primitives::aliases::U112;
 use alloy::primitives::uint;
 use alloy::primitives::I256;
+use alloy::primitives::U256;
 
 mod apply_routes;
 mod pool_identity;
