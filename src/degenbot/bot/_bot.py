@@ -47,12 +47,7 @@ from degenbot.provider import (
 )
 from degenbot.provider.factory import get_provider_from_config
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
-from degenbot.types.pool_type import (
-    PoolFamily,
-    PoolTypeDescriptor,
-    PoolVariant,
-    classify_pool_variant,
-)
+from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.utils.bytes import to_0x_hex, to_bytes
 
@@ -578,36 +573,11 @@ class Bot(AccountQueryMixin):
         )
 
         # One answer carries the handle and the identity: no second registry read,
-        # no re-derivation of what the core registered.
-        _pool_id, py_pool, b_t0, b_t1, b_var = (
-            outcome.pool_id,
-            outcome.pool,
-            outcome.token0,
-            outcome.token1,
-            outcome.variant,
-        )
-
-        # Return-surface parity: the core entry echoes its own token0/token1
-        # identity, which must equal what the registered handle exposes (a
-        # divergence is a genuine core/driver seam bug — assert loudly rather
-        # than silently re-deriving). The multi-token families echo no token
-        # pair, so the guard applies only where a pair is echoed.
-        if (
-            b_t0
-            and b_t1
-            and (
-                py_pool.token0_address.casefold() != b_t0.casefold()
-                or py_pool.token1_address.casefold() != b_t1.casefold()
-            )
-        ):
-            raise DegenbotValueError(
-                message=(
-                    f"build_pool: core identity diverged from handle for "
-                    f"{address}: core token0={b_t0} token1={b_t1}, "
-                    f"handle token0={py_pool.token0_address} "
-                    f"token1={py_pool.token1_address}"
-                )
-            )
+        # no re-derivation of what the core registered. The identity-parity
+        # assertions (echo == registered handle, echo == resolver) are the
+        # seam's (ADR-085 D4): `construct_pool` raises before this outcome
+        # crosses, so a divergence can never reach the driver.
+        py_pool = outcome.pool
 
         # The V3 genesis seed (the reorg anchor) is the construction arm's —
         # the core seeds it atomically with registration (ADR-085 D5), so no
@@ -650,28 +620,9 @@ class Bot(AccountQueryMixin):
             )
 
         # `from_handle` is a concrete-class classmethod (not on the base); cast
-        # to `type[Any]` so the call is type-checkable.
-        # Identity parity: the core echoes the variant it registered. Known
-        # variants contradicting the resolver's are a core/driver seam bug —
-        # never hand back a mislabeled pool. Canonical/unrecognized spellings
-        # on either side are the registry census's business, not this guard's.
-        echoed_variant = classify_pool_variant(b_var)
-        resolved_raw = pool_type.variant if pool_type is not None else None
-        resolved_variant = classify_pool_variant(resolved_raw)
-        if (
-            echoed_variant is not None
-            and resolved_variant is not None
-            and echoed_variant is not PoolVariant.UNRECOGNIZED
-            and resolved_variant is not PoolVariant.UNRECOGNIZED
-            and echoed_variant is not resolved_variant
-        ):
-            raise DegenbotValueError(
-                message=(
-                    f"build_pool: core identity diverged from the resolver for {address}: "
-                    f"resolver variant {resolved_raw!r} vs core echo {b_var!r}"
-                )
-            )
-
+        # to `type[Any]` so the call is type-checkable. The variant-parity
+        # assertion is the seam's (ADR-085 D4) — no driver re-check crosses here.
+        #
         # The wrapper class is resolved AFTER the core answers: a family the
         # engine does not model (PoolFamily.UNMODELED — a positively probed
         # Balancer pool outside the weighted/stable families) has no class at

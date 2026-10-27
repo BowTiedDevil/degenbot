@@ -1188,28 +1188,7 @@ impl PyLiquidityPool {
     /// registered.
     #[getter]
     fn token0_address(&self, py: Python<'_>) -> PyResult<String> {
-        let family = self.family_of(py)?;
-        Ok(self.with_state(py, |core| {
-            let addr = match family {
-                "v2" => core
-                    .pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(self.pool_id)
-                    .map(|i| i.token0),
-                "v3" => core
-                    .pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(self.pool_id)
-                    .map(|i| i.token0),
-                "v4" => core
-                    .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(self.pool_id)
-                    .map(|i| i.pool_key.currency0),
-                "aerodrome-v2" => core
-                    .pool_slice::<degenbot_pools::state::aerodrome_v2_state::AerodromeV2PoolIdentity>(
-                        self.pool_id,
-                    )
-                    .map(|i| i.token0),
-                _ => None,
-            };
-            addr.map(|a| address_utils::address_to_checksum_string(&a))
-                .unwrap_or_default()
-        }))
+        Ok(self.token_addresses(py)?.0)
     }
 
     /// Token1 contract address (EIP-55 checksummed hex). Empty string when the
@@ -1217,27 +1196,53 @@ impl PyLiquidityPool {
     /// registered.
     #[getter]
     fn token1_address(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(self.token_addresses(py)?.1)
+    }
+
+    /// The pair-keyed family's token pair, checksummed hex — the ONE read the
+    /// `token0_address`/`token1_address` getters and the seam's
+    /// identity-parity guard share. The multi-token families answer `("", "")`:
+    /// they carry no token0/token1 field (their set rides the registered
+    /// tokens), so there is no pair to answer.
+    pub(crate) fn token_addresses(&self, py: Python<'_>) -> PyResult<(String, String)> {
         let family = self.family_of(py)?;
         Ok(self.with_state(py, |core| {
-            let addr = match family {
-                "v2" => core
-                    .pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(self.pool_id)
-                    .map(|i| i.token1),
-                "v3" => core
-                    .pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(self.pool_id)
-                    .map(|i| i.token1),
-                "v4" => core
-                    .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(self.pool_id)
-                    .map(|i| i.pool_key.currency1),
-                "aerodrome-v2" => core
-                    .pool_slice::<degenbot_pools::state::aerodrome_v2_state::AerodromeV2PoolIdentity>(
-                        self.pool_id,
-                    )
-                    .map(|i| i.token1),
-                _ => None,
+            let read = |which: u8| {
+                let addr = match (family, which) {
+                    ("v2", 0) => core
+                        .pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(self.pool_id)
+                        .map(|i| i.token0),
+                    ("v2", _) => core
+                        .pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(self.pool_id)
+                        .map(|i| i.token1),
+                    ("v3", 0) => core
+                        .pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(self.pool_id)
+                        .map(|i| i.token0),
+                    ("v3", _) => core
+                        .pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(self.pool_id)
+                        .map(|i| i.token1),
+                    ("v4", 0) => core
+                        .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(self.pool_id)
+                        .map(|i| i.pool_key.currency0),
+                    ("v4", _) => core
+                        .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(self.pool_id)
+                        .map(|i| i.pool_key.currency1),
+                    ("aerodrome-v2", 0) => core
+                        .pool_slice::<degenbot_pools::state::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                            self.pool_id,
+                        )
+                        .map(|i| i.token0),
+                    ("aerodrome-v2", _) => core
+                        .pool_slice::<degenbot_pools::state::aerodrome_v2_state::AerodromeV2PoolIdentity>(
+                            self.pool_id,
+                        )
+                        .map(|i| i.token1),
+                    _ => None,
+                };
+                addr.map(|a| address_utils::address_to_checksum_string(&a))
+                    .unwrap_or_default()
             };
-            addr.map(|a| address_utils::address_to_checksum_string(&a))
-                .unwrap_or_default()
+            (read(0), read(1))
         }))
     }
 

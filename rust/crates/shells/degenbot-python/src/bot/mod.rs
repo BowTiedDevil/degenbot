@@ -1034,10 +1034,37 @@ impl PyBot {
     }
 }
 
+/// The KNOWN pool-variant spellings — the Rust twin of the Python
+/// `PoolVariant` / `classify_pool_variant` conversion point. The variant guard
+/// compares membership, exactly as the driver's classification did. The set is
+/// intentionally open (third-party DEXes register their own spellings), so an
+/// unlisted spelling classifies as unknown and SKIPS the guard: a
+/// canonical/unrecognized spelling is the registry census's business, never a
+/// seam mismatch to raise on.
+const KNOWN_POOL_VARIANTS: [&str; 8] = [
+    "balancer_stable",
+    "balancer_weighted",
+    "balancer_unmodeled",
+    "aerodrome",
+    "camelot",
+    "pancakeswap",
+    "sushiswap",
+    "swapbased",
+];
+
+/// Classify one raw variant string into the known vocabulary (`None` = not a
+/// spelling this seam knows).
+fn classify_known_variant(raw: &str) -> Option<&'static str> {
+    KNOWN_POOL_VARIANTS
+        .iter()
+        .copied()
+        .find(|known| *known == raw)
+}
+
 /// The construction echo — the identity the seam registered, ONE shape
 /// shared by the flight pre-check, the GET-race arm, and the fresh build
 /// (ADR-085 D5). `token0`/`token1` stay the pair-keyed families' pair echo
-/// (the driver's identity guard reads them); `tokens` is the FULL token set
+/// (the seam's identity guard reads them); `tokens` is the FULL token set
 /// every family answers — the companion loop iterates it.
 #[derive(Clone)]
 struct ConstructionEcho {
@@ -1479,7 +1506,9 @@ impl PyBot {
     /// # Errors
     ///
     /// As the dispatched per-family builder; `ValueError` on an unknown family
-    /// or a missing required argument (Balancer's `vault`).
+    /// or a missing required argument (Balancer's `vault`). `RuntimeError` when
+    /// the registered handle contradicts the identity echo the core answered —
+    /// the divergence assertion belongs to the seam, not the driver (ADR-085 D4).
     fn construct_pool(
         &self,
         py: Python<'_>,
@@ -1492,6 +1521,9 @@ impl PyBot {
                 echo.pool_id
             ))
         })?;
+        // The driver no longer re-reads the handle to cross-check the echo
+        // (ADR-085 D4): a divergence is this seam's bug, loud here.
+        Self::assert_identity_parity(py, request, &echo, &pool)?;
         Ok(PyConstructionOutcome {
             pool: Py::new(py, pool)?,
             pool_id: echo.pool_id,
@@ -1505,6 +1537,57 @@ impl PyBot {
 }
 
 impl PyBot {
+    /// The seam's identity-divergence guard: the identity echo the core
+    /// answered and the registered HANDLE must agree, because the driver no
+    /// longer re-reads the handle to check (ADR-085 D4). A divergence is the
+    /// seam's own bug and raises loudly.
+    ///
+    /// The variant half compares only two KNOWN variants — a spelling either
+    /// side does not classify is the registry census's business, not this
+    /// guard's.
+    fn assert_identity_parity(
+        py: Python<'_>,
+        request: &PyPoolConstructionRequest,
+        echo: &ConstructionEcho,
+        pool: &PyLiquidityPool,
+    ) -> PyResult<()> {
+        // Pair half: only the pair-keyed families echo a token pair; the
+        // multi-token ones answer none (their set rides `echo.tokens` and the
+        // handle), so there is no echoed pair to cross-check.
+        if !echo.token0.is_empty() && !echo.token1.is_empty() {
+            let (handle_token0, handle_token1) = pool.token_addresses(py)?;
+            // Address hex is ASCII, so the ASCII fold is the driver's
+            // `.casefold()` comparison — a checksum difference is not a
+            // divergence.
+            if !handle_token0.eq_ignore_ascii_case(&echo.token0)
+                || !handle_token1.eq_ignore_ascii_case(&echo.token1)
+            {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "construct_pool: core identity diverged from handle for {}: \
+                     core token0={} token1={}, handle token0={handle_token0} token1={handle_token1}",
+                    request.address, echo.token0, echo.token1
+                )));
+            }
+        }
+
+        let Some(echoed) = classify_known_variant(&echo.variant) else {
+            return Ok(());
+        };
+        let Some(resolved) = request.variant.as_deref().and_then(classify_known_variant) else {
+            return Ok(());
+        };
+        if echoed == resolved {
+            return Ok(());
+        }
+        Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "construct_pool: core identity diverged from the resolver for {}: \
+             resolver variant {:?} vs core echo {:?}",
+            request.address,
+            request.variant.as_deref().unwrap_or_default(),
+            echo.variant
+        )))
+    }
+
     /// The construction switchboard's payload arm: the flat per-family dispatch
     /// ([`Self::construct_pool`] wraps it into the one answer). Not a pymethod:
     /// the seam presents one construction verb.
@@ -3185,6 +3268,170 @@ mod tests {
                 err.to_string().contains("no ConstructionIo attached"),
                 "legacy io requirement preserved for fresh builds: {err}"
             );
+        });
+    }
+
+    /// The identity-parity fixture: a registered V2 pool plus its handle, the
+    /// pair the echo is cross-checked against.
+    fn registered_v2_handle(py: pyo3::Python<'_>) -> (PyBot, PyLiquidityPool) {
+        let bot = PyBot::new(1);
+        let pool_id = bot
+            .register_v2_pool(
+                py,
+                V2_ADDRESS,
+                V2_TOKEN0,
+                V2_TOKEN1,
+                pyo3::types::PyInt::new(py, 1000i64).as_any(),
+                pyo3::types::PyInt::new(py, 2000i64).as_any(),
+                997,
+                1000,
+                997,
+                1000,
+                "0x3333333333333333333333333333333333333333",
+                5,
+                "uniswap-v2",
+                false,
+                None,
+            )
+            .expect("test setup: V2 registration");
+        let pool = bot.get_pool(py, pool_id).expect("registered handle");
+        (bot, pool)
+    }
+
+    const V2_ADDRESS: &str = "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa";
+    const V2_TOKEN0: &str = "0x1111111111111111111111111111111111111111";
+    const V2_TOKEN1: &str = "0x2222222222222222222222222222222222222222";
+
+    /// An echo shaped by hand, so a case can contradict the handle the seam
+    /// would otherwise answer.
+    fn parity_echo(token0: &str, token1: &str, variant: &str) -> ConstructionEcho {
+        ConstructionEcho {
+            pool_id: 0,
+            token0: String::from(token0),
+            token1: String::from(token1),
+            tokens: Vec::new(),
+            variant: String::from(variant),
+        }
+    }
+
+    /// ADR-085 D4: an echo that agrees with the handle answers nothing. The
+    /// echo's lowercase spelling against the handle's checksummed one is the
+    /// case-fold comparison the driver used — a casing difference is not a
+    /// divergence.
+    #[test]
+    fn identity_parity_accepts_a_matching_handle() {
+        pyo3::Python::attach(|py| {
+            let (_bot, pool) = registered_v2_handle(py);
+            let echo = parity_echo(V2_TOKEN0, V2_TOKEN1, "uniswap-v2");
+            let request = PyPoolConstructionRequest::v2(V2_ADDRESS, None, true);
+            PyBot::assert_identity_parity(py, &request, &echo, &pool)
+                .expect("matching identity is not a divergence");
+        });
+    }
+
+    /// A token pair the handle contradicts is the seam's own bug: loud, naming
+    /// the address and both sides.
+    #[test]
+    fn identity_parity_raises_on_a_token_divergence() {
+        pyo3::Python::attach(|py| {
+            let (_bot, pool) = registered_v2_handle(py);
+            let echo = parity_echo(
+                "0x4444444444444444444444444444444444444444",
+                V2_TOKEN1,
+                "uniswap-v2",
+            );
+            let request = PyPoolConstructionRequest::v2(V2_ADDRESS, None, true);
+            let err = PyBot::assert_identity_parity(py, &request, &echo, &pool)
+                .expect_err("echoed token0 contradicts the handle");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("core identity diverged from handle"),
+                "divergence is named: {msg}"
+            );
+            assert!(msg.contains(V2_ADDRESS), "address named: {msg}");
+            assert!(
+                msg.contains("0x4444444444444444444444444444444444444444"),
+                "echo side named: {msg}"
+            );
+            assert!(msg.contains(V2_TOKEN0), "handle side named: {msg}");
+        });
+    }
+
+    /// Two KNOWN variants contradicting each other mean the resolver's identity
+    /// and the core's registration disagree.
+    #[test]
+    fn identity_parity_raises_on_a_known_variant_divergence() {
+        pyo3::Python::attach(|py| {
+            let (_bot, pool) = registered_v2_handle(py);
+            let echo = parity_echo("", "", "balancer_stable");
+            let request = PyPoolConstructionRequest::make(
+                V2_ADDRESS,
+                "weighted",
+                Some("balancer_weighted"),
+                None,
+                true,
+                None,
+                None,
+                None,
+                None,
+            );
+            let err = PyBot::assert_identity_parity(py, &request, &echo, &pool)
+                .expect_err("two known variants cannot disagree");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("core identity diverged from the resolver"),
+                "divergence is named: {msg}"
+            );
+            assert!(msg.contains("balancer_weighted"), "resolver side: {msg}");
+            assert!(msg.contains("balancer_stable"), "echo side: {msg}");
+        });
+    }
+
+    /// The multi-token families echo no pair, so the handle's own pair — present
+    /// on this fixture — is never cross-checked.
+    #[test]
+    fn identity_parity_skips_the_token_guard_without_a_pair_echo() {
+        pyo3::Python::attach(|py| {
+            let (_bot, pool) = registered_v2_handle(py);
+            let echo = parity_echo("", "", "balancer_weighted");
+            let request = PyPoolConstructionRequest::make(
+                V2_ADDRESS,
+                "weighted",
+                Some("balancer_weighted"),
+                None,
+                true,
+                None,
+                None,
+                None,
+                None,
+            );
+            PyBot::assert_identity_parity(py, &request, &echo, &pool)
+                .expect("no echoed pair means no token cross-check");
+        });
+    }
+
+    /// A spelling outside the known vocabulary is the registry census's
+    /// business: the guard never contradicts it (the echo here is the
+    /// deployment table's `uniswap-v2`, which the Python taxonomy does not
+    /// classify).
+    #[test]
+    fn identity_parity_skips_unclassified_variant_spellings() {
+        pyo3::Python::attach(|py| {
+            let (_bot, pool) = registered_v2_handle(py);
+            let echo = parity_echo("", "", "uniswap-v2");
+            let request = PyPoolConstructionRequest::make(
+                V2_ADDRESS,
+                "weighted",
+                Some("balancer_weighted"),
+                None,
+                true,
+                None,
+                None,
+                None,
+                None,
+            );
+            PyBot::assert_identity_parity(py, &request, &echo, &pool)
+                .expect("an unclassified echo skips the variant guard");
         });
     }
 

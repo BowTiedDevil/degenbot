@@ -221,46 +221,6 @@ class TestMultipleBots:
         assert bot1.database_path != bot2.database_path
 
 
-class TestBuildDelegatedIdentityReturnSurface:
-    """build_pool's Rust-delegated V2/V3 path returns a typed identity
-    ``(pool_id, token0, token1, address, family)`` from the builder and asserts
-    parity against the registered handle (a divergence is a genuine
-    core/driver seam bug and must fail loudly, not silently re-derive)."""
-
-    def test_build_delegated_v2_parity_mismatch_raises(self, tmp_path: pathlib.Path) -> None:
-        """A V2 builder identity that diverges from the registered handle's
-        tokens raises — the return-surface parity guard, reached through the
-        public ``build_pool`` entry: the io double routes type resolution to
-        the V2 delegated path (no DB row, unregistered factory, probe says V2).
-        """
-        session = _test_session(tmp_path)
-        io = _ScriptedIo(
-            fetch_factory_address=lambda address: _UNREGISTERED_FACTORY,
-            # BotIo.probe_pool_type returns the 1-based PoolProbe code; V2 = 1.
-            probe_pool_type=lambda address: int(PoolProbe.V2),
-        )
-
-        # Engine double: the construction answer carries an identity (core echo)
-        # whose tokens DIFFER from the handle's -> the parity guard must raise.
-        handle = _PoolHandle(token0_address="0x" + "a" * 40, token1_address="0x" + "b" * 40)
-        py_bot = _ScriptedEngine(
-            construct_pool=lambda request: _ConstructionOutcome(
-                pool_id=7,
-                pool=handle,
-                family=request.family,
-                variant="uniswap-v2",
-                token0="0x" + "C" * 40,
-                token1="0x" + "D" * 40,
-                tokens=["0x" + "C" * 40, "0x" + "D" * 40],
-            ),
-            get_pool=lambda pid: handle,
-        )
-        bot = Bot(**session, provider=_fake_provider(1), py_bot=py_bot, io=io)
-
-        with pytest.raises(DegenbotValueError):
-            bot.build_pool("0x" + "e" * 40)
-
-
 class TestBuildManagedPoolRequestShape:
     """``build_managed_pool`` issues ONE construction request: the
     ``managed_v4`` family carrying the pool id and the caller-supplied

@@ -984,7 +984,9 @@ class Bot:
         # Errors
 
         As the dispatched per-family builder; `ValueError` on an unknown family
-        or a missing required argument (Balancer's `vault`).
+        or a missing required argument (Balancer's `vault`). `RuntimeError` when
+        the registered handle contradicts the identity echo the core answered —
+        the divergence assertion belongs to the seam, not the driver (ADR-085 D4).
         """
     def curve_get_dy(
         self,
@@ -3692,6 +3694,14 @@ class Pool:
         Token1 contract address (EIP-55 checksummed hex). Empty string when the
         registered family has no token1 field; raises if the id is not
         registered.
+        """
+    def token_addresses(self, /) -> tuple[str, str]:
+        """
+        The pair-keyed family's token pair, checksummed hex — the ONE read the
+        `token0_address`/`token1_address` getters and the seam's
+        identity-parity guard share. The multi-token families answer `("", "")`:
+        they carry no token0/token1 field (their set rides the registered
+        tokens), so there is no pair to answer.
         """
     @property
     def variant(self, /) -> str:
