@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.pathfinding import PathfindingRequest, PoolKind, find_paths_async
@@ -28,6 +27,7 @@ from degenbot.runner.build_paths import resolve_directions
 from degenbot.types.chain import ChainId
 from tests.helpers.database import seed_v2_topology
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 from tests.helpers.v2_pool_factory import make_v2_pool
 
 if TYPE_CHECKING:

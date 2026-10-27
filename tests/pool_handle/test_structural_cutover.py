@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from fractions import Fraction
 
-import degenbot._ffi as ffi
-from degenbot._ffi import Bot, Pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.pool_handle_factory import make_balancer_weighted_handle, make_v2_handle
+from tests.helpers.seam import REGISTRATION_SURFACE as ffi
+from tests.helpers.seam import Bot, Pool
 from tests.helpers.synthetic_logs import v2_sync
 from tests.helpers.v2_pool_factory import make_v2_pool
 
@@ -20,25 +21,7 @@ from tests.helpers.v2_pool_factory import make_v2_pool
 def _reserve_pair_bot() -> tuple[Bot, Pool]:
     """A registered V2 pool plus the Bot that owns it (the dispatch door)."""
     bot = Bot(1)
-    pool_id = bot.register_v2_pool_test_only(
-        address="0x1111111111111111111111111111111111111111",
-        token0="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        token1="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        reserve0=1_000,
-        reserve1=2_000,
-        gamma_numer0=997,
-        fee_denom0=1_000,
-        gamma_numer1=997,
-        fee_denom1=1_000,
-        factory="0x2222222222222222222222222222222222222222",
-        update_block=100,
-        variant="uniswap-v2",
-        stable_swap=False,
-        fee_denominator=None,
-    )
-    handle = bot.get_pool(pool_id)
-    assert handle is not None
-    return bot, handle
+    return bot, make_v2_handle(bot=bot, reserve0=1_000, reserve1=2_000)
 
 
 def _reserve_pair() -> Pool:
@@ -46,25 +29,11 @@ def _reserve_pair() -> Pool:
 
 
 def _balance_vector() -> Pool:
-    bot = Bot(1)
-    pool_id = bot.register_balancer_weighted_pool(
+    return make_balancer_weighted_handle(
         address="0x3333333333333333333333333333333333333333",
         vault="0x4444444444444444444444444444444444444444",
-        pool_id_hex="0x" + "00" * 32,
-        tokens=[
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        ],
-        weights=[10**18, 10**18],
-        scaling_factors=[10**18, 10**18],
-        swap_fee=0,
-        pow_version=2,
-        balances=[1_000, 2_000],
-        update_block=100,
+        balances=(1_000, 2_000),
     )
-    handle = bot.get_pool(pool_id)
-    assert handle is not None
-    return handle
 
 
 def test_get_pool_returns_the_structural_handle_and_retires_prototype_accessor() -> None:

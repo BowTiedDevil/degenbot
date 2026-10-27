@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from degenbot import _ffi
 from degenbot import config as config_module
 from degenbot.bot import Bot
 from degenbot.config import (
@@ -33,6 +32,12 @@ from degenbot.config import (
     resolve_node,
     resolve_rpc_uris,
     resolve_ws_rpc_uri,
+)
+from tests.helpers.seam import (
+    resolve_hypothetical_chain_id,
+    resolve_hypothetical_database_path,
+    resolve_hypothetical_node_uri,
+    resolved_config,
 )
 
 if TYPE_CHECKING:
@@ -81,7 +86,7 @@ def _probe(tmp_path: Path, file_body: str, *ops: list[Any], **env_overrides: str
     env.update(env_overrides)
 
     def _node(chain_id: int, scope: str, node: str | None) -> dict[str, object]:
-        resolved = _ffi.resolve_hypothetical_node_uri(env, None, chain_id, scope, node)
+        resolved = resolve_hypothetical_node_uri(env, None, chain_id, scope, node)
         return {"uri": resolved.uri, "source": resolved.source}
 
     results: list[dict] = []
@@ -102,16 +107,16 @@ def _probe(tmp_path: Path, file_body: str, *ops: list[Any], **env_overrides: str
                     ]
                 })
             elif kind == "chain":
-                resolved = _ffi.resolve_hypothetical_chain_id(env, None, op[1])
+                resolved = resolve_hypothetical_chain_id(env, None, op[1])
                 results.append({"chain_id": resolved.chain_id})
             elif kind == "chain_source":
-                resolved = _ffi.resolve_hypothetical_chain_id(env, None, op[1])
+                resolved = resolve_hypothetical_chain_id(env, None, op[1])
                 results.append({"chain_id": resolved.chain_id, "source": resolved.source})
             elif kind == "database":
-                resolved = _ffi.resolve_hypothetical_database_path(env, None, op[1])
+                resolved = resolve_hypothetical_database_path(env, None, op[1])
                 results.append({"path": resolved.path})
             elif kind == "database_source":
-                resolved = _ffi.resolve_hypothetical_database_path(env, None, op[1])
+                resolved = resolve_hypothetical_database_path(env, None, op[1])
                 results.append({"path": resolved.path, "source": resolved.source})
             else:
                 raise AssertionError("unknown probe op: " + kind)
@@ -450,9 +455,6 @@ class TestDatabaseAndChainCascade:
 
     def test_the_module_no_longer_owns_the_file_location(self) -> None:
         """The duplicated XDG/path logic is gone; the core reports the file."""
-        assert (
-            config_module.config_file_path()
-            == config_module._ffi.resolved_config().config_file_path
-        )
+        assert config_module.config_file_path() == resolved_config().config_file_path
         for retired in ("CONFIG_DIR", "CONFIG_FILE", "DB_PATH", "DegenbotConfig"):
             assert not hasattr(config_module, retired)

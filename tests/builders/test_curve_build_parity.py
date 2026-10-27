@@ -25,10 +25,10 @@ from __future__ import annotations
 
 import pathlib
 
-from degenbot._ffi import Bot
-from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.crypto import function_selector
+from tests.helpers.seam import AlloyProvider as RustAlloyProvider
+from tests.helpers.seam import Bot
 
 # 20-byte (40 hex) addresses matching the Rust plain-pool test.
 POOL = "0x" + "a1" + "00" * 19
@@ -398,9 +398,9 @@ def test_curve_pool_builder_build_matches_rust_path_over_cassette() -> None:
     both sides — the parity gate that lets `build` be retargeted to the Rust
     path without a silent behavior change.
     """
-    from degenbot._ffi import BotIo
     from degenbot.builders.curve_pool_builder import _REGISTRY_ADDRESSES
     from degenbot.builders.request import BuildPoolRequest
+    from tests.helpers.seam import BotIo
 
     # Path A — Rust `build_curve_pool` + handle.
     provider_a = RustAlloyProvider.offline_from_json_string(_plain_full_cassette_json())
@@ -523,9 +523,9 @@ def test_curve_pool_builder_build_metapool_recurses_base_over_cassette() -> None
     resolves. Asserts the metapool companion's base pool + underlying coins are
     recovered, and its identity params equal the direct Rust path.
     """
-    from degenbot._ffi import BotIo
     from degenbot.builders.curve_pool_builder import _REGISTRY_ADDRESSES
     from degenbot.builders.request import BuildPoolRequest
+    from tests.helpers.seam import BotIo
 
     # Path A — direct Rust build_curve_pool (oracle for M's identity params).
     provider_a = RustAlloyProvider.offline_from_json_string(_metapool_build_cassette_json())

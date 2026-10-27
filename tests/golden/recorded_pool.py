@@ -23,8 +23,8 @@ from datetime import UTC, datetime
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any
 
-from degenbot._ffi import Bot
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
 from tests.helpers.v4_pool_factory import make_v4_pool

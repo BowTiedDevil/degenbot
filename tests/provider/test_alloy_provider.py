@@ -192,8 +192,8 @@ class TestAlloyProviderRevertRaisesContractLogicError:
     @pytest.mark.asyncio
     async def test_async_call_revert_raises_contract_logic_error(self, alloy_provider):
         """AsyncAlloyProvider.call raises ContractLogicError on an EVM revert."""
-        from degenbot._ffi.provider import AsyncAlloyProvider
         from degenbot.exceptions import ContractLogicError
+        from tests.helpers.seam import AsyncAlloyProvider
 
         async_alloy = await AsyncAlloyProvider.create(alloy_provider.rpc_url)
         with pytest.raises(ContractLogicError, match="reverted"):

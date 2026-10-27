@@ -16,7 +16,7 @@ from degenbot.registry.pool_type import PoolRegistration, pool_type_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
+    from tests.helpers.seam import ChecksummedAddress
 
 
 def _generate_random_address() -> ChecksummedAddress:

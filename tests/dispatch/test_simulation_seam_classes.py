@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider
-from degenbot._ffi.simulation import (
+from tests.helpers.seam import (
+    AlloyProvider,
+    AsyncAlloyProvider,
     DispatchCandidate,
     DispatchOutcome,
     SimulateContext,

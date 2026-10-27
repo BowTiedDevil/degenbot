@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import AlloyProvider, OfflineProvider
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
@@ -21,6 +20,7 @@ from tests.constants import (
     WETH_ETH,
 )
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 from tests.helpers.v3_pool_factory import make_v3_pool
 
 _PY_BOT = Bot()

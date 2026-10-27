@@ -47,7 +47,7 @@ implementor · **(v)** console operator (`degenbot`).
 | **Uniswap family encoding & DEX identity** | `degenbot_uniswap::dex_identity` | `degenbot._ffi.dex_identity` | `DexIdentity`, `DexVariant`, `preset_for_variant` | production: every V2/V3 path | no pyo3 |
 | **ABI encoding** | `degenbot_abi` | `degenbot._ffi.abi` | crate root | production: submission/decoders | no pyo3 |
 | **Orderbook index** | `degenbot_order_index` | Rust-only | crate root | production: orderbook consumers | one minimal default-features-off dep |
-| **The umbrella capability map** | `degenbot` | `degenbot` (the Python package) | the 49 `pub use degenbot_*` aliases + curated items | (i) `cargo add degenbot`; (iii) Python driver probe: `just check-consumer-probes` (`test_solve_surface_probe.py`) | aliases only; no new logic |
+| **The umbrella capability map** | `degenbot` | `degenbot` (the Python package) | the 54 `pub use degenbot_*` aliases + curated items | (i) `cargo add degenbot`; (iii) Python driver probe: `just check-consumer-probes` (`test_solve_surface_probe.py`) | aliases only; no new logic |
 | **The console** | `degenbot_cli` + `degenbot_cli_core` | `degenbot` console shim (`uv run degenbot`) / native binary | `Command` tree, `config show --resolved` | (v) `degenbot config show --resolved` — asserted in `just check-consumer-probes` | the CLI is a thin caller of `degenbot_cli_core::run_args` |
 
 ## Notes

@@ -25,7 +25,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from degenbot._ffi import Bot as _Engine
 from degenbot.abi import encode as abi_encode
 from degenbot.bot import Bot
 from degenbot.builders.request import BuildManagedPoolRequest
@@ -45,6 +44,7 @@ from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20, make_ether_placeholder
 from tests.helpers.pool_bot import new_pool_bot
+from tests.helpers.seam import Bot as _Engine
 from tests.helpers.synthetic_logs import v2_sync, v3_swap, v4_swap
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool

@@ -1,6 +1,5 @@
 import pytest
 
-from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
@@ -12,6 +11,7 @@ from degenbot.fork import AnvilFork
 from degenbot.utils.bytes import to_bytes
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.erc20_factory import make_erc20, make_ether_placeholder
+from tests.helpers.seam import Bot as _Engine
 from tests.standalone_anvil import seed as seed_catalog
 
 _PY_BOT = _Engine()

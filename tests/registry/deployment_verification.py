@@ -46,14 +46,14 @@ import subprocess  # ruff: ignore[suspicious-subprocess-import]
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
-from degenbot._ffi.deployments import (
+from degenbot.uniswap.v2_functions import generate_v2_pool_address
+from degenbot.uniswap.v3_functions import generate_v3_pool_address
+from tests.golden.oracle import GOLDEN_ROOT
+from tests.helpers.seam import (
     resolve_deployer,
     resolve_v2_init_hash,
     resolve_v3_init_hash,
 )
-from degenbot.uniswap.v2_functions import generate_v2_pool_address
-from degenbot.uniswap.v3_functions import generate_v3_pool_address
-from tests.golden.oracle import GOLDEN_ROOT
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -44,7 +44,7 @@ _INCIDENT_POOL_ID = "0xde17806ed61e8840767d6532bd4fc75660c5edf9a122f994b042e5c49
 
 
 def _fresh_bot():
-    from degenbot._ffi import Bot
+    from tests.helpers.seam import Bot
 
     return Bot()
 

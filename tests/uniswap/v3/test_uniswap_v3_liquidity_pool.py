@@ -5,7 +5,6 @@ from typing import Any
 import pydantic_core
 import pytest
 
-from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
@@ -39,6 +38,7 @@ from tests.golden.recorded_pool import load_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot as _Engine
 from tests.helpers.swap_amount_multipliers import UNISWAP_TOKEN_AMOUNT_MULTIPLIERS
 
 WBTC_WETH_V3_POOL_ADDRESS = get_checksum_address("0xCBCdF9626bC03E24f779434178A73a0B4bad62eD")

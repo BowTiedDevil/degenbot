@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from degenbot._ffi import BotIo
-from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.db import db_upgrade_database
 from tests.helpers.database import sqlite_connection
+from tests.helpers.seam import AlloyProvider as RustAlloyProvider
+from tests.helpers.seam import BotIo
 
 CHAIN = 1
 _POOL_OFFLINE_JSON = '{"chain_id":1,"block_number":1,"timestamp":1,"calls":{},"code":{}}'

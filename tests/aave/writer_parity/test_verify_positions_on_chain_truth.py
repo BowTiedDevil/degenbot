@@ -36,12 +36,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from degenbot._ffi import call_on_ambient_runtime
-from degenbot._ffi.aave import (
-    run_aave_update,
-    verify_touched_positions_on_chain,
-)
-from degenbot._ffi.cancel import CancelHandle
 from tests.aave.writer_parity.harness import (
     FIXTURE_BLOCK,
     make_erc20_transfer_log,
@@ -54,6 +48,12 @@ from tests.aave.writer_parity.harness import (
     seeded_db,
 )
 from tests.helpers.database import sqlite_connection
+from tests.helpers.seam import (
+    CancelHandle,
+    call_on_ambient_runtime,
+    run_aave_update,
+    verify_touched_positions_on_chain,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path

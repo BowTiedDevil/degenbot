@@ -16,10 +16,10 @@ demonstration).
 
 from __future__ import annotations
 
-from degenbot import _ffi
 from degenbot.config import resolve_http_rpc_uri, resolve_ws_rpc_uri
 from degenbot.provider.factory import get_provider_from_config
 from tests.helpers.rpc_env import rpc_env
+from tests.helpers.seam import resolved_node_uri_for_tests
 
 #: Request scope prefers a WS endpoint over HTTP, so the loopback override the
 #: helper installs surfaces as the WS twin on the request path.
@@ -30,14 +30,14 @@ _LOOPBACK_SUBSCRIPTION = "ws://localhost:8546"
 def test_rpc_env_governs_the_holder_request_scope() -> None:
     """Inside the helper, request scope resolves the loopback WS twin."""
     with rpc_env():
-        assert _ffi.resolved_node_uri_for_tests(1, "request") == _LOOPBACK_REQUEST
+        assert resolved_node_uri_for_tests(1, "request") == _LOOPBACK_REQUEST
         assert resolve_http_rpc_uri(1) == _LOOPBACK_REQUEST
 
 
 def test_rpc_env_governs_the_holder_subscription_scope() -> None:
     """Inside the helper, subscription scope resolves the loopback WS twin."""
     with rpc_env():
-        assert _ffi.resolved_node_uri_for_tests(1, "subscription") == _LOOPBACK_SUBSCRIPTION
+        assert resolved_node_uri_for_tests(1, "subscription") == _LOOPBACK_SUBSCRIPTION
         assert resolve_ws_rpc_uri(1) == _LOOPBACK_SUBSCRIPTION
 
 
@@ -60,8 +60,8 @@ def test_rpc_env_governs_the_consumer_construction() -> None:
 
 def test_rpc_env_restores_the_ambient_snapshot_on_exit() -> None:
     """The context manager re-governs the ambient snapshot on exit."""
-    ambient = _ffi.resolved_node_uri_for_tests(1, "request")
+    ambient = resolved_node_uri_for_tests(1, "request")
     with rpc_env():
-        assert _ffi.resolved_node_uri_for_tests(1, "request") == _LOOPBACK_REQUEST
-    assert _ffi.resolved_node_uri_for_tests(1, "request") == ambient
+        assert resolved_node_uri_for_tests(1, "request") == _LOOPBACK_REQUEST
+    assert resolved_node_uri_for_tests(1, "request") == ambient
     assert resolve_http_rpc_uri(1) == ambient

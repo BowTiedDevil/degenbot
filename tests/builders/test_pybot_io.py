@@ -17,13 +17,13 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import BalancerFamily, BotIo
-from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.abi import encode as abi_encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import function_selector
 from degenbot.types.pool_type import PoolProbe
 from degenbot.utils.bytes import to_bytes
+from tests.helpers.seam import AlloyProvider as RustAlloyProvider
+from tests.helpers.seam import BalancerFamily, BotIo
 
 # A minimal real offline provider (recorded JSON, no RPC) for tests that need a
 # valid `BotIo` provider but don't exercise specific RPC responses (DB handle
@@ -534,7 +534,7 @@ def test_pybot_io_native_alloy_fetch_factory_address():
     """Native alloy path: `fetch_factory_address` against a recorded
     `OfflineProvider` (Rust transport) returns the EIP-55 checksum — no Python
     provider round-trip (the offline shell holds the `PyAlloyProvider`)."""
-    from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
+    from tests.helpers.seam import AlloyProvider as RustAlloyProvider
 
     expected = "0x66f9664f97F2b50F62D13eA064982f936dE76657"
     pool_address = "0x" + "ab" * 20
@@ -548,7 +548,7 @@ def test_pybot_io_native_alloy_fetch_factory_address():
 def test_pybot_io_native_alloy_poolio_surface():
     """Native alloy path: the `PoolIO` surface (`get_block_number`, `get_code`)
     runs against the Rust offline transport and returns the expected shapes."""
-    from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
+    from tests.helpers.seam import AlloyProvider as RustAlloyProvider
 
     provider = RustAlloyProvider.offline_from_json_string(_recorded_factory_fixture())
     io = BotIo(provider=provider)
@@ -566,8 +566,8 @@ def test_pybot_io_native_alloy_revert_surfaces_contract_logic_error():
     driven through a live `fetch_token_balance` whose `balanceOf` call reverts."""
     import json
 
-    from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
     from degenbot.exceptions import ContractLogicError
+    from tests.helpers.seam import AlloyProvider as RustAlloyProvider
 
     factory_raw = "66f9664f97f2b50f62d13ea064982f936de76657"
     token_addr = "ab" * 20

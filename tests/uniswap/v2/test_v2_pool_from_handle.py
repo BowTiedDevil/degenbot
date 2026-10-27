@@ -12,12 +12,12 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
 

@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import ArbitrageEngine, Bot, UnconfiguredStrategyError
 from degenbot.runner.bot_runner import BotRunner
 from degenbot.strategy import validate_strategy_readiness
+from tests.helpers.seam import ArbitrageEngine, Bot, UnconfiguredStrategyError
 
 STRATEGY_ENV = "DEGENBOT_STRATEGY_NAME"
 

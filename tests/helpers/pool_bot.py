@@ -14,7 +14,7 @@ dependency-injection seam, not a workaround.
 
 from __future__ import annotations
 
-from degenbot._ffi import Bot
+from tests.helpers.seam import Bot
 
 
 def new_pool_bot() -> Bot:

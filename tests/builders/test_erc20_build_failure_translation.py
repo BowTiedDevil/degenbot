@@ -14,8 +14,6 @@ import json
 
 import pytest
 
-from degenbot._ffi import Bot as _Engine
-from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.builders.erc20_builder import Erc20Builder, _build_failure_message
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import (
@@ -25,6 +23,8 @@ from degenbot.exceptions import (
     PoolRegistrationError,
 )
 from degenbot.registry import TokenRegistry
+from tests.helpers.seam import AlloyProvider as RustAlloyProvider
+from tests.helpers.seam import Bot as _Engine
 
 # A random address no cassette entry deploys code for.
 NO_CODE_ADDRESS = get_checksum_address("0x1234567890123456789012345678901234567890")

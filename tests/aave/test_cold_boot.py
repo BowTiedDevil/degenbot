@@ -20,8 +20,6 @@ from typing import Any
 
 import pytest
 
-from degenbot._ffi.aave import run_aave_update
-from degenbot._ffi.cancel import CancelHandle
 from degenbot.db import db_upgrade_database
 from tests.aave.writer_parity.harness import (
     CONFIGURATOR_REVISION_SELECTOR,
@@ -35,6 +33,7 @@ from tests.aave.writer_parity.harness import (
     mock_rpc_server,
 )
 from tests.helpers.database import sqlite_connection
+from tests.helpers.seam import CancelHandle, run_aave_update
 
 # The ProxyCreated event topic (keccak of the signature) — see
 # `degenbot_decoders::aave_event_decoder::PROXY_CREATED_TOPIC`.

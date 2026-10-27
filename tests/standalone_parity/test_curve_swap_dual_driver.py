@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from degenbot._ffi.curve_dy import DyCalculationInputs, calculate_dy
+from tests.helpers.seam import DyCalculationInputs, calculate_dy
 
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "curve_swap.json"
 _FIXTURE = json.loads(_FIXTURE_PATH.read_text())
@@ -80,7 +80,7 @@ def test_python_consumer_curve_get_dy_matches_recorded_constant() -> None:
     recorded dy as the Rust `BotState::curve_get_dy` dual-driver test. Both
     sides read the `standard_plain` expected constant from the shared fixture.
     """
-    from degenbot._ffi import Bot
+    from tests.helpers.seam import Bot
 
     plain = next(p for p in _FIXTURE["probes"] if p["name"] == "standard_plain")
     inputs = plain["inputs"]

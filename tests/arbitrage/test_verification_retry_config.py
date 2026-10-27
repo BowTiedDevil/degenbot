@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import RegistrationLifecycle
 from degenbot.arbitrage import RetryPolicy
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.runner.identity import UNISWAP_V4_POOL_MANAGER_ADDRESS
 from tests.helpers import verdict_probe as probe
+from tests.helpers.seam import RegistrationLifecycle
 
 #: The four policy fields, as the config names them.
 _POLICY_FIELDS = tuple(

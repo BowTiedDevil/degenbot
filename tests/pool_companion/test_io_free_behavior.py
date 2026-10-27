@@ -16,8 +16,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from degenbot._ffi import Bot as _Engine
-from degenbot._ffi.v2_math import calc_exact_in_v2, calc_exact_out_v2
 from degenbot.abi import encode as abi_encode
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
@@ -33,6 +31,8 @@ from degenbot.uniswap.v2_types import UniswapV2PoolState
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot as _Engine
+from tests.helpers.seam import calc_exact_in_v2, calc_exact_out_v2
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.pool_companion._helpers import (
     PY_BOT,

@@ -2,10 +2,10 @@
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.exceptions import DegenbotValueError
 from degenbot.registry.pool import ManagedPoolRegistry
 from tests.fakes.pools import FakeUniswapV4Pool
+from tests.helpers.seam import Bot
 
 FAKE_POOL_MANAGER = "0x1234567890123456789012345678901234567890"
 FAKE_POOL_ID = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"

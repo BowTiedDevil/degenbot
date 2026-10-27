@@ -25,11 +25,11 @@ import pytest
 from degenbot.abi import encode as abi_encode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.db import (
-    db_upgrade_database,
     db_fetch_exchange,
     db_fetch_exchange_by_name,
     db_set_exchange_active,
     db_set_exchange_last_update_block,
+    db_upgrade_database,
     db_upsert_exchange,
     db_upsert_pool_manager,
 )
@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     import pathlib
     from collections.abc import Callable
 
-    from degenbot._ffi import ChecksummedAddress
+    from tests.helpers.seam import ChecksummedAddress
 
 
 CHAIN = 1

@@ -28,7 +28,7 @@ from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.utils.bytes import to_0x_hex, to_bytes
 
 if TYPE_CHECKING:
-    from degenbot._ffi import RegistrationLifecycle
+    from tests.helpers.seam import RegistrationLifecycle
 
 V3_ADDR = "0x" + "1" * 40
 V4_MANAGER = "0x" + "2" * 40

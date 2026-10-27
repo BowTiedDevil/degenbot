@@ -4,12 +4,11 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot.constants import ZERO_ADDRESS
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 from tests.helpers.v2_pool_factory import make_v2_pool
-
 
 # `DispatchCandidate.__new__` resolves its `composers::PathInfo` from
 # a registered `path_id` via `PyArbitrageEngine::path_info_for_core` (no Python

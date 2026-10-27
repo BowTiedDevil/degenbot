@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import inspect
 
-import degenbot._ffi as ffi
+from tests.helpers.seam import REGISTRATION_SURFACE as ffi
 
 #: The submodules created by ``add_*_module`` in the PyO3 binding crate.
 _SUBMODULES = (

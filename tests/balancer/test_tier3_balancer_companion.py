@@ -23,13 +23,13 @@ from typing import Any
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.exceptions.pool import StaleRateResult
 from tests.helpers.balancer_pool_factory import (
     make_balancer_stable_pool,
     make_balancer_weighted_pool,
 )
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 
 # Max 0.25: beyond 30% of balance_in the pool & engine correctly revert
 # (on-chain MAX_IN_RATIO constraint) — out-of-domain inputs are not parity rows.
@@ -41,7 +41,7 @@ INVARIANT_V2 = 2
 
 
 def _addr(prefix: int) -> str:
-    from degenbot._ffi import to_checksum_address
+    from tests.helpers.seam import to_checksum_address
 
     return to_checksum_address("0x" + f"{prefix:08x}" + "00" * 16)
 

@@ -9,7 +9,6 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
@@ -19,6 +18,7 @@ from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
 from tests.helpers.v4_pool_factory import make_v4_pool

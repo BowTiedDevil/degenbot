@@ -41,7 +41,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from degenbot._ffi.simulation import simulate_in_process_success_probe
+from tests.helpers.seam import simulate_in_process_success_probe
 
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "evm_sim_success_path.json"
 

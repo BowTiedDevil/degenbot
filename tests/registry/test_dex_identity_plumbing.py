@@ -18,13 +18,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from degenbot._ffi import Bot
-from degenbot._ffi.dex_identity import DexIdentity, dex_identity
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.registry.pool_type import PoolRegistration, pool_type_registry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot, DexIdentity, dex_identity
 from tests.helpers.v2_pool_factory import make_v2_pool
 
 if TYPE_CHECKING:

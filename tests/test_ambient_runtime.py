@@ -15,8 +15,7 @@ from typing import Any
 
 import pytest
 
-from degenbot._ffi import call_on_ambient_runtime
-from degenbot._ffi.aave import verify_touched_positions_on_chain
+from tests.helpers.seam import call_on_ambient_runtime, verify_touched_positions_on_chain
 
 _UNROUTABLE_RPC = "http://127.0.0.1:1"
 

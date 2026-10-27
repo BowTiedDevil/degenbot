@@ -30,9 +30,9 @@ from fractions import Fraction
 import pytest
 
 import degenbot.aerodrome.v2_pool_calc as calc_mod
-from degenbot._ffi import Bot
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 
 
 @pytest.fixture

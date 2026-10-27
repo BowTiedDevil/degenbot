@@ -5,10 +5,10 @@ Uses I/O-free token construction without requiring a live RPC.
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.utils.bytes import to_bytes
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 
 _PY_BOT = Bot()
 

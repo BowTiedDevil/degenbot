@@ -29,7 +29,7 @@ parity_v2_swap.rs` exactly. The expected output is the closed-form V2
 
 from __future__ import annotations
 
-from degenbot._ffi import Bot
+from tests.helpers.seam import Bot
 
 # ---- the shared canonical fixture (mirror in the Rust parity test) ----
 _TOKEN0 = "0x" + "0" * 39 + "A"

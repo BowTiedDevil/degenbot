@@ -7,7 +7,6 @@ covering provider operations, contract interactions, and connection management.
 import eth_abi
 import pytest
 
-from degenbot._ffi.abi import decode_single, encode_single
 from degenbot.abi import encode as abi_encode
 from degenbot.contract import (
     Contract,
@@ -18,6 +17,7 @@ from degenbot.contract import (
 from degenbot.crypto import function_selector
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider, LogFilter
+from tests.helpers.seam import decode_single, encode_single
 from tests.standalone_anvil import seed as seed_catalog
 from tests.standalone_anvil.emit import emit_tx
 

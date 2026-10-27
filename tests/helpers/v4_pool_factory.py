@@ -21,8 +21,8 @@ from tests.helpers.pool_bot import new_pool_bot
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from degenbot._ffi import Bot
     from degenbot.erc20 import Erc20Token
+    from tests.helpers.seam import Bot
 
 # V4 registration is get-or-register on the `(pool_manager, pool_id)` pair: a
 # same-key + same-currencies build answers the EXISTING handle, while a genuine

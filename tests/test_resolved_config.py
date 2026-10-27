@@ -21,7 +21,15 @@ from pathlib import Path
 
 import pytest
 
-from degenbot import _ffi
+from tests.helpers.seam import (
+    ResolvedConfig,
+    executor_policy_py,
+    resolve_hypothetical,
+    resolve_hypothetical_chain_id,
+    resolve_hypothetical_database_path,
+    resolve_hypothetical_node_uri,
+    resolved_config,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _KEY_REFERENCE = _REPO_ROOT / "docs/rust-config-keys.md"
@@ -47,8 +55,8 @@ def test_the_verdict_is_one_frozen_object() -> None:
     A verdict that Python can mutate is a second config authority wearing a
     Rust type, so the freeze is the property, not a detail.
     """
-    verdict = _ffi.resolved_config()
-    assert isinstance(verdict, _ffi.ResolvedConfig)
+    verdict = resolved_config()
+    assert isinstance(verdict, ResolvedConfig)
     with pytest.raises((AttributeError, TypeError)):
         verdict.chain_id = 1  # type: ignore[misc]
 
@@ -69,7 +77,7 @@ def test_every_key_the_generated_reference_names_is_in_the_verdict() -> None:
     """
     declared = _declared_toml_paths()
     assert declared, "the generated key reference must name the declared keys"
-    values = _ffi.resolved_config().values
+    values = resolved_config().values
     missing = []
     for path in sorted(declared):
         try:
@@ -82,7 +90,7 @@ def test_every_key_the_generated_reference_names_is_in_the_verdict() -> None:
 def test_a_key_the_reference_does_not_name_is_not_in_the_verdict() -> None:
     """The projection is closed: an undeclared name refuses, it does not default."""
     with pytest.raises(AttributeError):
-        _ffi.resolved_config().values.database.not_a_key
+        resolved_config().values.database.not_a_key
 
 
 def test_a_declared_value_keeps_the_kind_its_key_declared() -> None:
@@ -93,7 +101,7 @@ def test_a_declared_value_keeps_the_kind_its_key_declared() -> None:
     compares these values, so a lossy projection would make it agree on a
     number nobody configured.
     """
-    values = _ffi.resolved_config().values
+    values = resolved_config().values
     assert isinstance(values.pump.pump_debounce_ms, int)
     assert isinstance(values.solve.min_profit_wei, int)
     assert isinstance(values.allocator.mimalloc_purge_delay_mult, float)
@@ -111,7 +119,7 @@ def test_provenance_names_the_layer_that_won_each_key() -> None:
     init, so the layer is a fact about this process rather than something the
     driver re-derives.
     """
-    provenance = _ffi.resolved_config().provenance
+    provenance = resolved_config().provenance
     declared = _declared_toml_paths()
     assert set(provenance) == declared, (
         f"missing={sorted(declared - set(provenance))} "
@@ -129,7 +137,7 @@ def test_the_database_path_getter_agrees_with_the_cascade() -> None:
     """
     from degenbot.config import resolve_database_path
 
-    verdict = _ffi.resolved_config()
+    verdict = resolved_config()
     assert verdict.database_path.path == resolve_database_path()
     assert verdict.resolve_database_path().path == verdict.database_path.path
     assert verdict.declared_database_path == verdict.values.database.path
@@ -143,14 +151,14 @@ def test_the_declared_batch_size_projects_by_name_and_clamps_once() -> None:
     that hands the value to the discovery pipeline.
     """
     assert isinstance(
-        _read_named(_ffi.resolved_config().values, "pathfinding.discovery_batch_size"), int
+        _read_named(resolved_config().values, "pathfinding.discovery_batch_size"), int
     )
 
 
 class TestHypotheticalResolution:
     """The private comparison door: how a cascade WOULD resolve, installs nothing.
 
-    ``_ffi.resolve_hypothetical`` is a pure function of its inputs, so it
+    ``resolve_hypothetical`` is a pure function of its inputs, so it
     answers a claim about HOW the cascade resolves rather than a claim about
     WHAT this process installed. It is deliberately absent from
     ``degenbot.config`` — using the installed verdict where a hypothetical is
@@ -159,26 +167,26 @@ class TestHypotheticalResolution:
 
     def test_it_resolves_the_environment_without_installing(self) -> None:
         """A hypothetical resolves its captured env and leaves the verdict alone."""
-        installed = _ffi.resolved_config()
+        installed = resolved_config()
         before_chain_id = installed.values.session.chain_id
         before_provenance = dict(installed.provenance)
 
-        hypothetical = _ffi.resolve_hypothetical({"DEGENBOT_DEFAULT_CHAIN_ID": "8453"}, None)
+        hypothetical = resolve_hypothetical({"DEGENBOT_DEFAULT_CHAIN_ID": "8453"}, None)
 
         assert hypothetical.values.session.chain_id == 8453
         assert hypothetical.provenance["session.chain_id"] == "env"
         # The install-once contract held: the verdict and its file did not move.
-        assert _ffi.resolved_config().values.session.chain_id == before_chain_id
-        assert dict(_ffi.resolved_config().provenance) == before_provenance
-        assert _ffi.resolved_config().config_file_path == installed.config_file_path
+        assert resolved_config().values.session.chain_id == before_chain_id
+        assert dict(resolved_config().provenance) == before_provenance
+        assert resolved_config().config_file_path == installed.config_file_path
 
     def test_a_var_set_after_install_does_not_move_the_verdict(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A freeze is an in-process NEGATIVE assertion, not a fresh process."""
-        before = _ffi.resolved_config().values.session.chain_id
+        before = resolved_config().values.session.chain_id
         monkeypatch.setenv("DEGENBOT_DEFAULT_CHAIN_ID", "424242")
-        assert _ffi.resolved_config().values.session.chain_id == before
+        assert resolved_config().values.session.chain_id == before
 
     def test_it_is_unreachable_from_the_python_config_home(self) -> None:
         """The hypothetical lives on the raw FFI seam, not the driver home."""
@@ -190,12 +198,12 @@ class TestHypotheticalResolution:
     def test_a_load_refusal_is_a_typed_error_not_a_process_exit(self) -> None:
         """The boot-refusal error survives as a typed refusal."""
         with pytest.raises(ValueError, match="pathfinding.max_registered_paths") as excinfo:
-            _ffi.resolve_hypothetical({"DEGENBOT_MAX_PATHS": "not-a-number"}, None)
+            resolve_hypothetical({"DEGENBOT_MAX_PATHS": "not-a-number"}, None)
         assert "not-a-number" in str(excinfo.value)
 
     def test_the_siblings_cover_the_three_cascade_methods(self) -> None:
         """Every argument-taking cascade method has an installing-free sibling."""
-        node = _ffi.resolve_hypothetical_node_uri(
+        node = resolve_hypothetical_node_uri(
             {"DEGENBOT_RPC_WS_CHAINID_1": "wss://hypothetical.example/ws"},
             None,
             1,
@@ -204,11 +212,11 @@ class TestHypotheticalResolution:
         assert node.uri == "wss://hypothetical.example/ws"
         assert node.source == "env"
 
-        chain = _ffi.resolve_hypothetical_chain_id({"DEGENBOT_DEFAULT_CHAIN_ID": "10"}, None)
+        chain = resolve_hypothetical_chain_id({"DEGENBOT_DEFAULT_CHAIN_ID": "10"}, None)
         assert chain.chain_id == 10
         assert chain.source == "env"
 
-        database = _ffi.resolve_hypothetical_database_path({}, None, "/tmp/override.db")
+        database = resolve_hypothetical_database_path({}, None, "/tmp/override.db")
         assert database.path == "/tmp/override.db"
         assert database.source == "cli"
 
@@ -218,7 +226,7 @@ class TestHypotheticalResolution:
 # The core batch executor converts the verdict's policy knobs through ONE
 # typed boundary (`degenbot-batch-executor`'s `ExecutorPolicy::from`), so the
 # driver and the FFI construction carry no twin clamp. The conversion face
-# (`_ffi.simulation.executor_policy_py`) projects that same conversion, and
+# (`executor_policy_py`) projects that same conversion, and
 # these tests pin the property: every executor knob equals the verdict value
 # the same load recorded — and the one clamp (the sim fan-out floor) lives in
 # the conversion, not in Python.
@@ -234,8 +242,8 @@ _EXECUTOR_KNOBS = (
 
 def test_every_executor_knob_is_the_verdict_value_the_same_load_recorded() -> None:
     """Every executor knob converts from the SAME verdict Python projects."""
-    verdict = _ffi.resolved_config()
-    policy = _ffi.simulation.executor_policy_py(verdict.values)
+    verdict = resolved_config()
+    policy = executor_policy_py(verdict.values)
     mismatched = [
         f"{knob}={getattr(policy, knob)} != {path}={_read_named(verdict.values, path)}"
         for knob, path in _EXECUTOR_KNOBS
@@ -246,15 +254,15 @@ def test_every_executor_knob_is_the_verdict_value_the_same_load_recorded() -> No
 
 def test_the_inject_guards_are_one_declared_key_converted_once() -> None:
     """Both inject guards follow `simulation.inject_executor_code`."""
-    policy = _ffi.simulation.executor_policy_py(_ffi.resolved_config().values)
-    stance = _ffi.resolved_config().values.simulation.inject_executor_code
+    policy = executor_policy_py(resolved_config().values)
+    stance = resolved_config().values.simulation.inject_executor_code
     assert policy.inject_code is stance
     assert policy.inject_code_guard is stance
 
 
 def test_the_sim_fanout_floor_is_the_conversions_not_pythons() -> None:
     """The floor lives in the conversion; the verdict answers 0 unclamped."""
-    hypothetical = _ffi.resolve_hypothetical({"DEGENBOT_SIM_PIPELINE_CONCURRENCY": "0"}, None)
+    hypothetical = resolve_hypothetical({"DEGENBOT_SIM_PIPELINE_CONCURRENCY": "0"}, None)
     assert hypothetical.values.simulation.pipeline_concurrency == 0
-    policy = _ffi.simulation.executor_policy_py(hypothetical.values)
+    policy = executor_policy_py(hypothetical.values)
     assert policy.sim_concurrency == 1

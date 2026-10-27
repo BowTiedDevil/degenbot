@@ -26,12 +26,12 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from degenbot._ffi import Bot
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.utils.bytes import to_0x_hex
 from tests.fakes.bot import FakeBot as _FakeBot
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 from tests.helpers.v4_pool_factory import make_v4_pool
 
 if TYPE_CHECKING:

@@ -19,8 +19,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot._ffi.provider import is_local_rpc_url
 from degenbot.fork import _default_fork_compute_units_per_second
+from tests.helpers.seam import is_local_rpc_url
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import SwapRefusalKind, SwapRefused
 from degenbot.exceptions.pool import IncompleteSwap, MissingLiquidityData
 from degenbot.uniswap import swap_refusal_to_error
+from tests.helpers.seam import SwapRefusalKind, SwapRefused
 
 
 def _refusal(

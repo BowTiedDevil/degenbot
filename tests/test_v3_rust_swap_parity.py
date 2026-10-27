@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import Bot, SwapRefusalKind, SwapRefused
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.math import MIN_SQRT_RATIO
 from degenbot.uniswap.v3_types import UniswapV3PoolState
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot, SwapRefusalKind, SwapRefused
 from tests.helpers.v3_pool_factory import make_v3_pool
 
 # 1:1 price (sqrt_price_x96 = 2**96), tick 0, 0.3% fee, tick_spacing 60.

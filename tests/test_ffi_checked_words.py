@@ -13,7 +13,7 @@ Offline (no anvil, no live RPC): pools register directly in an in-memory
 
 from __future__ import annotations
 
-from degenbot._ffi import Bot
+from tests.helpers.seam import Bot
 
 _ZERO_ADDRESS = "0x" + "00" * 20
 _TOKEN1_ADDRESS = "0x" + "11" * 20
@@ -157,8 +157,7 @@ def test_assemble_v3_tracked_snapshot_without_chain_transport_refused(tmp_path):
 
     import pytest
 
-    from degenbot._ffi import Bot
-    from degenbot._ffi.db import db_upgrade_database
+    from tests.helpers.seam import Bot, db_upgrade_database
 
     pool_addr = "0x2222222222222222222222222222222222222222"
     db_path = str(tmp_path / "inconsistent.sqlite")

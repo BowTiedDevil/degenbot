@@ -8,7 +8,6 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import InvalidSwapInputAmount
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -17,6 +16,7 @@ from degenbot.uniswap.v2_types import (
     UniswapV2PoolState,
 )
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 
 _PY_BOT = Bot()
 

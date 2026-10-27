@@ -28,7 +28,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-import degenbot._ffi
 import degenbot.exceptions
 from degenbot.bot import Bot
 from degenbot.crypto import function_selector
@@ -39,6 +38,7 @@ from degenbot.exceptions import (
     SpecViolationError,
 )
 from degenbot.provider import OfflineProvider
+from tests.helpers.seam import PoolBuildDecodeError, PoolBuildRpcError
 
 if TYPE_CHECKING:
     import pathlib
@@ -126,8 +126,8 @@ def _bot(tmp_path: pathlib.Path, blocks: dict[str, dict]) -> Bot:
 
 def test_build_failure_classes_are_exported_ffi_types_under_one_parent() -> None:
     """Both new classes are the FFI pyclasses and ride the admission parent."""
-    assert degenbot.exceptions.PoolBuildRpcError is degenbot._ffi.PoolBuildRpcError
-    assert degenbot.exceptions.PoolBuildDecodeError is degenbot._ffi.PoolBuildDecodeError
+    assert degenbot.exceptions.PoolBuildRpcError is PoolBuildRpcError
+    assert degenbot.exceptions.PoolBuildDecodeError is PoolBuildDecodeError
     for exc_type in (PoolBuildRpcError, PoolBuildDecodeError):
         assert issubclass(exc_type, PoolRegistrationError), exc_type
         # `PoolRegistrationError` roots at ValueError, so the broad

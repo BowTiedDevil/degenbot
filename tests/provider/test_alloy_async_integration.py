@@ -6,11 +6,11 @@ pyo3-async-runtimes, run against the seeded standalone anvil (no upstream RPC).
 
 import pytest
 
-from degenbot._ffi.provider import AsyncAlloyProvider
 from degenbot.abi import encode as abi_encode
 from degenbot.crypto import function_selector
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
+from tests.helpers.seam import AsyncAlloyProvider
 from tests.standalone_anvil import seed as seed_catalog
 from tests.standalone_anvil.emit import emit_tx
 

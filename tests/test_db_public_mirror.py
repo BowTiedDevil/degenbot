@@ -5,10 +5,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import degenbot._ffi as ffi
 import degenbot.db as public_db
 import degenbot.updater as public_updater
-
+from tests.helpers.seam import REGISTRATION_SURFACE as ffi
+from tests.helpers.seam import Erc20TokenRow
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DB_STUB = REPO_ROOT / "src" / "degenbot" / "_ffi" / "db.pyi"
@@ -62,7 +62,7 @@ def test_public_db_mirror_keeps_ffi_symbol_identity() -> None:
             continue
         assert getattr(public_db, name) is getattr(ffi.db, name)
 
-    assert public_db.Erc20TokenRow is ffi.Erc20TokenRow
+    assert public_db.Erc20TokenRow is Erc20TokenRow
 
 
 def test_retired_private_db_imports_are_absent_from_companions() -> None:

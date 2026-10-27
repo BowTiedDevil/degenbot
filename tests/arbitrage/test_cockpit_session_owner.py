@@ -21,7 +21,6 @@ import signal
 
 import pytest
 
-from degenbot._ffi import session_phase_next
 from degenbot.runner import BotRunner
 from degenbot.runner._consume import consume_result_batches
 from degenbot.runner._relay_posture import RelayPosture
@@ -33,6 +32,7 @@ from tests.fakes.runner_pipelines import StubPipeline
 from tests.helpers.boot_actors import inline_registration_scheduler
 from tests.helpers.identity_env import identity_env
 from tests.helpers.rpc_env import rpc_env
+from tests.helpers.seam import session_phase_next
 
 
 @pytest.fixture(autouse=True)

@@ -12,14 +12,14 @@ from pathlib import Path
 
 import pytest
 
-from degenbot._ffi import (
+from degenbot.strategy import validate_strategy_readiness
+from tests.helpers.seam import (
     ArbitrageEngine,
     Bot,
     StrategyHostError,
     UnconfiguredStrategyError,
     UnknownStrategyError,
 )
-from degenbot.strategy import validate_strategy_readiness
 
 
 @pytest.fixture

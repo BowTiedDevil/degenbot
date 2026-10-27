@@ -16,11 +16,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from degenbot._ffi import resolved_config
 from degenbot.bot import Bot
 from degenbot.config import declared_database_path, resolve_chain_id, resolve_database_path
 from degenbot.provider import get_provider_from_config
 from degenbot.provider.factory import get_provider_from_config as factory_get
+from tests.helpers.seam import resolved_config
 
 if TYPE_CHECKING:
     from pathlib import Path

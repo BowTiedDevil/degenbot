@@ -31,7 +31,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from degenbot._ffi import FleetIntakeFaultedError
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import (
     DynamicFeePoolRejectedError,
@@ -48,12 +47,13 @@ from degenbot.runner.build_paths import (
     RegistrationUnitOutcome,
 )
 from tests.fakes.tokens import FakeToken
+from tests.helpers.seam import FleetIntakeFaultedError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
-    from degenbot._ffi import RegistrationLifecycle
+    from tests.helpers.seam import RegistrationLifecycle
 
 
 @dataclass
@@ -859,8 +859,8 @@ def test_registration_ledger_owns_the_four_memo_concepts(tmp_path: Path) -> None
     FALSIFICATION: any retired instance attribute still answering, or a
     concept the unit uses but the ledger does not own.
     """
-    from degenbot._ffi import registration_pool_memo_key
     from degenbot.runner._registration_ledger import RegistrationLedger
+    from tests.helpers.seam import registration_pool_memo_key
 
     pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", _FleetBot())
     assert isinstance(pipeline._ledger, RegistrationLedger)

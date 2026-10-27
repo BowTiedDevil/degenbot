@@ -24,12 +24,12 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.exceptions import DegenbotValueError
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.registry.session import SessionObjects, pool_family_of
 from tests.fakes.pools import FakeSessionPool
 from tests.fakes.tokens import FakeToken
+from tests.helpers.seam import Bot
 
 CHAIN_ID = 1
 POOL_A = "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"

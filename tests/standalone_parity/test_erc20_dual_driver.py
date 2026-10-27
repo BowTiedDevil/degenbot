@@ -27,9 +27,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from degenbot._ffi import Bot
-from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.crypto import function_selector
+from tests.helpers.seam import AlloyProvider as RustAlloyProvider
+from tests.helpers.seam import Bot
 
 # ---- the shared canonical fixture (loaded, not copied) ----
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "erc20_build.json"

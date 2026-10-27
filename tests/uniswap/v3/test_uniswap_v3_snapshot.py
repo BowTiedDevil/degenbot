@@ -19,7 +19,6 @@ from pathlib import Path
 
 import pytest
 
-from degenbot._ffi.db import LiquidityUpdateEvent, V3PoolRowInput
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.db import (
@@ -29,6 +28,7 @@ from degenbot.db import (
     db_upsert_v3_pools,
 )
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot, UniswapV3LiquiditySnapshot
+from tests.helpers.seam import LiquidityUpdateEvent, V3PoolRowInput
 
 CHAIN_ID = 8453
 POOL_ADDRESS = get_checksum_address("0xe13514aacc27a3dfd2ae0db6ada4ef7658c1e435")

@@ -22,11 +22,11 @@ from dataclasses import dataclass
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.exceptions import DegenbotValueError
 from degenbot.registry.pool import ManagedPoolRegistry, PoolRegistry
 from degenbot.registry.token import TokenRegistry
 from tests.fakes.pools import FakePoolHandle
+from tests.helpers.seam import Bot
 
 CHAIN = 1
 ADDR = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"

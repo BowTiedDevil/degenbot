@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from degenbot._ffi import BotIo
 from degenbot.bot import Bot
 from degenbot.builders.request import BuildPoolRequest
 from degenbot.checksum_cache import get_checksum_address
+from tests.helpers.seam import BotIo
 
 
 class TestBotPassesPyBotIo:

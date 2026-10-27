@@ -19,14 +19,16 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider
-from degenbot._ffi.simulation import (
+from tests.helpers.seam import (
+    AlloyProvider,
+    AsyncAlloyProvider,
     DispatchCandidate,
+    Dispatcher,
     DispatchOutcome,
     SimulateContext,
+    SubmitCandidate,
     dispatch_profitable_py,
 )
-from degenbot._ffi.submission import Dispatcher, SubmitCandidate
 
 # Canonical mainnet addresses (parity corpus constants — match the A2 test
 # scaffolding in tests/dispatch/test_simulation_seam_classes.py).
@@ -310,7 +312,7 @@ class TestPoolDivergenceFfiGetters:
     def test_divergent_pools_returns_pydivergentpool_instances(self) -> None:
         # The getter's return type is `list[DivergentPool]` — an empty list
         # on a fresh dispatcher, but the type is registered (importable).
-        from degenbot._ffi.submission import DivergentPool
+        from tests.helpers.seam import DivergentPool
 
         dispatcher = Dispatcher.for_block(100)
         pools = dispatcher.divergent_pools(100)

@@ -25,8 +25,6 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import Bot
-from degenbot._ffi.dex_identity import dex_identity
 from degenbot.camelot.abi import CAMELOT_POOL_ABI
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork, ForkLaunchConfig
@@ -36,6 +34,7 @@ from tests.golden.oracle import (
 )
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot, dex_identity
 from tests.helpers.v2_pool_factory import make_v2_pool
 
 # Pinned well inside arb1.arbitrum.io/rpc's keyless archive window.

@@ -31,10 +31,9 @@ from typing import Any
 
 import pytest
 
-from degenbot._ffi import ArbitrageEngine, Bot
-from degenbot._ffi.simulation import merge_payload_results_py
 from degenbot.arbitrage.engine_registry import EngineRegistry
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import ArbitrageEngine, Bot, merge_payload_results_py
 from tests.helpers.sim_records import inline_sim_payload
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v4_pool_factory import make_v4_pool
@@ -237,7 +236,7 @@ class TestPathPoolsParityAcrossEntryArms:
     def test_mutual_exclusion_blocking_semantics(self, mixed_engine_and_paths) -> None:
         """The payload arm's path_pools block through the Dispatcher exactly
         like the FFI batch's (is_path_blocked / reserve_pools membership)."""
-        from degenbot._ffi.submission import Dispatcher
+        from tests.helpers.seam import Dispatcher
 
         engine, v2_pid, v4v2_pid, _v2_pools, _v4v2_pools = mixed_engine_and_paths
         out = merge_payload_results_py(

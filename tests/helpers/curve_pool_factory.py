@@ -25,11 +25,11 @@ from degenbot.curve.stableswap_pool_state import PoolStrategies
 from tests.helpers.pool_bot import new_pool_bot
 
 if TYPE_CHECKING:
-    from degenbot._ffi import Bot
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveDataProvider
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types import Pool
     from degenbot.types.aliases import BlockNumber
+    from tests.helpers.seam import Bot
 
 
 def _strategies_to_rust_enums(strategies: PoolStrategies) -> tuple[int, int, int, int, int]:

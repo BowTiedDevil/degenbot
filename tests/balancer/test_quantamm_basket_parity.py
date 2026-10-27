@@ -21,10 +21,11 @@ Fixture: 3-token WETH/USDC/DAI 50/25/25 weighted pool (the QuantAMM doctest).
 
 from __future__ import annotations
 
-import pytest
 from fractions import Fraction
 
-from degenbot._ffi import solve_balancer_weighted_basket
+import pytest
+
+from tests.helpers.seam import solve_balancer_weighted_basket
 
 # ---------------------------------------------------------------------------
 # Doctest fixture — kept byte-equivalent to the retired BalancerMultiTokenHop

@@ -50,7 +50,6 @@ from typing import Any, Self
 import pytest
 
 from degenbot import abi_decode
-from degenbot._ffi import Bot as _Engine
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork, ForkLaunchConfig
@@ -68,6 +67,7 @@ from tests.golden.oracle import (
     replay_makes_no_network_calls,  # ruff: ignore[unused-import]
 )
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot as _Engine
 from tests.helpers.synthetic_logs import v3_burn, v3_mint
 from tests.helpers.v3_pool_factory import make_v3_pool
 

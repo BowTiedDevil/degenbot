@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import fleet
+from tests.helpers.seam import fleet
 
 _ECHO_FIELDS = (
     "cordon_enter_events",

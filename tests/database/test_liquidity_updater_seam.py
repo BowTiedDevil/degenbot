@@ -40,7 +40,7 @@ from degenbot.utils.bytes import to_bytes
 from tests.helpers.database import sqlite_connection
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
+    from tests.helpers.seam import ChecksummedAddress
 
 FIXTURE_DIR = pathlib.Path(__file__).resolve().parents[2] / (
     "rust/crates/foundation/degenbot-db/tests/fixtures"

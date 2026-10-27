@@ -13,7 +13,7 @@ suppress a verdict.
 
 from __future__ import annotations
 
-from degenbot._ffi.submission import Dispatcher
+from tests.helpers.seam import Dispatcher
 
 
 def test_dispatcher_has_no_fot_verified_non_fot_setter() -> None:

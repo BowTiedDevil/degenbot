@@ -42,7 +42,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from degenbot._ffi import Bot, PoolKind, build_path_graph
+from tests.helpers.seam import Bot, PoolKind, build_path_graph
 
 _HERE = Path(__file__).resolve().parent
 _FIXTURE_DIR = _HERE / "fixtures"

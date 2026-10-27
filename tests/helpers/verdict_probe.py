@@ -35,9 +35,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from degenbot import _ffi
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 from tests.helpers.identity_env import identity_env
+from tests.helpers.seam import resolve_hypothetical
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -152,7 +152,7 @@ def hypothetical_values(
         dotted-path string.
 
     """
-    hypothetical = _ffi.resolve_hypothetical(
+    hypothetical = resolve_hypothetical(
         dict(env or {}),
         None if operator_file is None else str(operator_file),
     )
@@ -178,7 +178,7 @@ def resolved_value(
         gap to paper over with the floor.
 
     """
-    hypothetical = _ffi.resolve_hypothetical(
+    hypothetical = resolve_hypothetical(
         dict(env or {}),
         None if operator_file is None else str(operator_file),
     )

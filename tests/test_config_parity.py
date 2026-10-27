@@ -42,7 +42,13 @@ from pathlib import Path
 
 import pytest
 
-from degenbot import _ffi
+from tests.helpers.seam import (
+    executor_policy_py,
+    resolve_hypothetical,
+    resolve_hypothetical_chain_id,
+    resolve_hypothetical_database_path,
+    resolve_hypothetical_node_uri,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _FIXTURE_DIR = _REPO_ROOT / "rust/crates/foundation/degenbot-config/tests/fixtures/config_parity"
@@ -86,7 +92,7 @@ def _walk_values(values: object, paths: list[str]) -> dict:
 # process can compare every environment the oracle recorded.
 def _hypothetical_verdict(environment: dict, operator_file: Path, paths: list[str]) -> dict:
     """The whole hypothetical verdict for one oracle environment."""
-    config = _ffi.resolve_hypothetical(dict(environment["env"]), str(operator_file))
+    config = resolve_hypothetical(dict(environment["env"]), str(operator_file))
     return {
         "values": _walk_values(config.values, paths),
         "provenance": dict(config.provenance),
@@ -113,7 +119,7 @@ def _hypothetical_op(environment: dict, operator_file: Path, op: dict) -> dict:
 def _node_uri_result(env: dict, operator_file: Path, op: dict) -> dict:
     """A node-uri hypothetical, with a refusal captured as the oracle records it."""
     try:
-        resolved = _ffi.resolve_hypothetical_node_uri(
+        resolved = resolve_hypothetical_node_uri(
             env, str(operator_file), op["chain_id"], op["scope"], op.get("node")
         )
     except ValueError as exc:
@@ -124,7 +130,7 @@ def _node_uri_result(env: dict, operator_file: Path, op: dict) -> dict:
 def _chain_id_result(env: dict, operator_file: Path, op: dict) -> dict:
     """A chain-id hypothetical, with a refusal captured as the oracle records it."""
     try:
-        resolved = _ffi.resolve_hypothetical_chain_id(env, str(operator_file), op["value"])
+        resolved = resolve_hypothetical_chain_id(env, str(operator_file), op["value"])
     except ValueError as exc:
         return {"error": str(exc), "error_type": type(exc).__name__}
     return {"value": resolved.chain_id, "source": resolved.source}
@@ -133,7 +139,7 @@ def _chain_id_result(env: dict, operator_file: Path, op: dict) -> dict:
 def _database_path_result(env: dict, operator_file: Path, op: dict) -> dict:
     """A database-path hypothetical, with a refusal captured as the oracle records it."""
     try:
-        resolved = _ffi.resolve_hypothetical_database_path(env, str(operator_file), op["value"])
+        resolved = resolve_hypothetical_database_path(env, str(operator_file), op["value"])
     except ValueError as exc:
         return {"error": str(exc), "error_type": type(exc).__name__}
     return {"value": resolved.path, "source": resolved.source}
@@ -434,7 +440,7 @@ class TestExecutorPolicyParity:
 
     The core batch executor's policy conversion (`ExecutorPolicy::from`) is a
     pure function of the verdict, so the FFI projection
-    (`_ffi.simulation.executor_policy_py`) over each recorded environment must
+    (`executor_policy_py`) over each recorded environment must
     equal the oracle's verdict values — the "every knob -> same ExecutorValue"
     property, pinned against the shared artifact instead of a Python copy of
     the defaults.
@@ -452,8 +458,8 @@ class TestExecutorPolicyParity:
         oracle = _load_oracle()
         failures: list[str] = []
         for environment in oracle["environments"]:
-            hypothetical = _ffi.resolve_hypothetical(dict(environment["env"]), str(_OPERATOR_FILE))
-            policy = _ffi.simulation.executor_policy_py(hypothetical.values)
+            hypothetical = resolve_hypothetical(dict(environment["env"]), str(_OPERATOR_FILE))
+            policy = executor_policy_py(hypothetical.values)
             for knob, path in self._KNOBS:
                 recorded = environment["values"][path]
                 actual = getattr(policy, knob)

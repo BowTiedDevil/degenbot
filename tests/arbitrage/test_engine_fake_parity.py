@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 
-from degenbot._ffi import ArbitrageEngine, Bot
 from degenbot.runner.config import ArbitrageConfig
 from degenbot.strategy import validate_strategy_readiness as readiness
 from tests.fakes.engine import (
@@ -28,6 +27,7 @@ from tests.fakes.engine import (
 )
 from tests.helpers.identity_env import identity_env
 from tests.helpers.rpc_env import rpc_env
+from tests.helpers.seam import ArbitrageEngine, Bot
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _STUB = _REPO_ROOT / "src/degenbot/_ffi/__init__.pyi"

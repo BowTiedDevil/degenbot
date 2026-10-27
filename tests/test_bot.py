@@ -43,8 +43,6 @@ from dataclasses import dataclass
 
 import pytest
 
-from degenbot._ffi import Bot as _Engine
-from degenbot._ffi import PoolConstructionRequest
 from degenbot.bot import Bot
 from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.exceptions.base import DegenbotValueError
@@ -53,6 +51,8 @@ from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.pool_type import PoolProbe
 from tests.fakes.session import session_registry_methods
 from tests.fakes.tokens import FakeToken
+from tests.helpers.seam import Bot as _Engine
+from tests.helpers.seam import PoolConstructionRequest
 
 # Not in the deployments registry, so the type resolver falls back to probing.
 _UNREGISTERED_FACTORY = "0x" + "f" * 40

@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from degenbot.exceptions import VerificationMismatchError
 
 if TYPE_CHECKING:
-    from degenbot._ffi import RegistrationLifecycle
+    from tests.helpers.seam import RegistrationLifecycle
 
 
 #: The engine interface the Python driver shell depends on. The parity test

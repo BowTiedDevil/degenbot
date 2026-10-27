@@ -17,11 +17,11 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot.utils.bytes import to_0x_hex
 from tests.fakes.bot import FakeBot as _FakeBot
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
+from tests.helpers.seam import Bot
 from tests.types.test_concrete_pool_construction import (
     _make_uniswap_v2_pool,
     _make_uniswap_v3_pool,

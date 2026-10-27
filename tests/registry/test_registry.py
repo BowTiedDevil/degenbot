@@ -2,7 +2,6 @@ from pathlib import Path
 
 import pytest
 
-from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20.erc20 import Erc20Token
@@ -13,6 +12,7 @@ from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.fakes.pools import FakeUniswapV4Pool
 from tests.golden.recorded_pool import load_pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot as _Engine
 
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")

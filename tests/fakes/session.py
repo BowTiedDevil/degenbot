@@ -25,8 +25,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from degenbot._ffi import Bot
 from degenbot.runner._dispatch import SubmissionSmoke
+from tests.helpers.seam import Bot
 
 if TYPE_CHECKING:
     from collections.abc import Callable

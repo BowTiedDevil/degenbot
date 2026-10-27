@@ -22,9 +22,9 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 
-from degenbot import _ffi
 from degenbot.config import resolve_http_rpc_uri
 from degenbot.provider.factory import get_provider_from_config
+from tests.helpers.seam import resolved_node_uri_for_tests
 
 #: The operator-namespace names — deliberately the ``DEGENBOT_RPC_*`` family,
 #: NOT the conftest ``_rpc`` vocabulary (``TEST_*_NODE_*``), which is the
@@ -51,7 +51,7 @@ def test_env_override_governs_the_next_construction(
 
     # The holder (what ``boot_host`` reads at construction) AND the shell
     # verdict (what the Python driver helpers read) both resolve the override.
-    assert _ffi.resolved_node_uri_for_tests(1, "request") == _ENV_A
+    assert resolved_node_uri_for_tests(1, "request") == _ENV_A
     assert resolve_http_rpc_uri(1) == _ENV_A
 
     # A fresh construction consumes the cascade: the provider factory is the
@@ -67,7 +67,7 @@ def test_env_override_governs_the_next_construction(
 
     # The re-govern that used to be ignored: B now wins over A.
     governed_holder({_WS_NODE_ENV: _ENV_B})
-    assert _ffi.resolved_node_uri_for_tests(1, "request") == _ENV_B
+    assert resolved_node_uri_for_tests(1, "request") == _ENV_B
     assert resolve_http_rpc_uri(1) == _ENV_B
     assert resolve_http_rpc_uri(1) != _ENV_A
 
@@ -80,7 +80,7 @@ def test_snapshot_without_opt_in_is_not_a_seam_value() -> None:
     that the holder and the verdict AGREE and that neither is one of the seam's
     values.
     """
-    held = _ffi.resolved_node_uri_for_tests(1, "request")
+    held = resolved_node_uri_for_tests(1, "request")
 
     assert held == resolve_http_rpc_uri(1)
     assert held not in {_ENV_A, _ENV_B}

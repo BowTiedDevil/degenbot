@@ -182,8 +182,8 @@ def test_rust_raised_exception_is_caught_by_companion_alias() -> None:
     ``except`` matches; the raise here goes through the FFI symbol and the
     catch through the companion symbol to pin the cross-module contract.
     """
-    from degenbot._ffi import VerificationRpcError as FfiVerificationRpcError
     from degenbot.exceptions import VerificationRpcError
+    from tests.helpers.seam import VerificationRpcError as FfiVerificationRpcError
 
     msg = "transport blip"
     with pytest.raises(VerificationRpcError) as caught:

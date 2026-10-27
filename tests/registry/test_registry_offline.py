@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from degenbot.provider import OfflineProvider
@@ -16,6 +15,7 @@ from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.fakes.pools import FakeUniswapV4Pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 from tests.helpers.v2_pool_factory import make_v2_pool
 
 _PY_BOT = Bot()

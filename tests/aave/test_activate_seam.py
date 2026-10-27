@@ -15,11 +15,11 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from degenbot._ffi.aave import activate_aave_market, deactivate_aave_market
 from degenbot.crypto import function_selector
 from degenbot.db import db_upgrade_database
 from tests.aave.writer_parity.harness import mock_rpc_server
 from tests.helpers.database import sqlite_connection
+from tests.helpers.seam import activate_aave_market, deactivate_aave_market
 
 # The 4-byte selectors the activation path RPCs, derived from the canonical
 # signatures so a transposed digit cannot survive review.

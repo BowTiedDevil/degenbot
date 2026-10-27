@@ -29,11 +29,11 @@ from degenbot.checksum_cache import get_checksum_address
 from tests.helpers.pool_bot import new_pool_bot
 
 if TYPE_CHECKING:
-    from degenbot._ffi import Bot
     from degenbot.balancer.stable_pools import BalancerRateProvider
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types import Pool
     from degenbot.types.aliases import BlockNumber
+    from tests.helpers.seam import Bot
 
 
 def _pool_id_hex(pool_id: bytes) -> str:

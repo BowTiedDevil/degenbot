@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi.simulation import (
+from degenbot.runner._dispatch import RawEngineResult
+from tests.helpers.seam import (
     CandidateAssembly,
     DispatchCandidate,
     assemble_dispatch_candidates_py,
 )
-from degenbot.runner._dispatch import RawEngineResult
 
 
 def _row(path_id: int) -> RawEngineResult:

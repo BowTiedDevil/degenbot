@@ -27,8 +27,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
-from degenbot._ffi import reinstall_config_holder_for_tests
 from tests.conftest import SUITE_ENV
+from tests.helpers.seam import reinstall_config_holder_for_tests
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

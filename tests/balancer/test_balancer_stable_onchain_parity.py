@@ -50,7 +50,6 @@ from typing import TYPE_CHECKING, Any, Self
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.balancer.deployments import (
     BALANCERQUERIES_CONTRACT_ADDRESS,
 )
@@ -69,6 +68,7 @@ from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.balancer_queries_abi import BALANCERQUERIES_ABI
 from tests.helpers.contract_compat import ContractCompat
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 
 if TYPE_CHECKING:
     from degenbot.balancer.stable_pools import BalancerV2StablePool

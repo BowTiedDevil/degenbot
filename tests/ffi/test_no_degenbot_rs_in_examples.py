@@ -16,8 +16,9 @@ which binding held).
 Scope: ``examples/`` only. The ~60 ``src/degenbot/**`` internal
 ``degenbot._ffi`` imports are companion-layer modules using their own FFI seam
 and are not in scope (the companion is allowed to reach its own FFI; the
-driver is not). Test files are also out of scope — tests may reach the FFI
-seam to verify identity / alias invariants.
+driver is not). Test files are also out of scope — the suite reaches the seam
+through ``tests.helpers.seam``, and ``tests/test_ffi_boundary.py`` enforces
+that as its only door.
 """
 
 from __future__ import annotations

@@ -196,7 +196,7 @@ class TestDryRunDefaults:
         # killing the result-consumer task on the very first result batch. The
         # Anvil account-0 key is a well-known valid throwaway that never signs
         # (the Rust submit leaf's `dry_run` guard skips `sign_eip1559`).
-        from degenbot._ffi.submission import TxSigner
+        from tests.helpers.seam import TxSigner
 
         env = _full_env() | {"OPERATOR_ADDRESS": "", "OPERATOR_PRIVATE_KEY": ""}
         cfg = _cfg(env, live=False, permutation=None)
@@ -331,10 +331,10 @@ class TestRunnerKnobResolution:
         error into an exit(2) wrapper. Asked in-process, it names the key and
         the unparsable value without spawning a process.
         """
-        from degenbot import _ffi
+        from tests.helpers.seam import resolve_hypothetical
 
         with pytest.raises(ValueError, match="pathfinding.max_registered_paths") as excinfo:
-            _ffi.resolve_hypothetical({"DEGENBOT_MAX_PATHS": "not-a-number"}, None)
+            resolve_hypothetical({"DEGENBOT_MAX_PATHS": "not-a-number"}, None)
 
         assert "not-a-number" in str(excinfo.value)
 

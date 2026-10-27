@@ -17,8 +17,8 @@ from tests.helpers.pool_bot import new_pool_bot
 if TYPE_CHECKING:
     from fractions import Fraction
 
-    from degenbot._ffi import Bot
     from degenbot.erc20 import Erc20Token
+    from tests.helpers.seam import Bot
 
 
 def make_aerodrome_v2_pool(

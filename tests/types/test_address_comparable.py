@@ -10,7 +10,7 @@ from degenbot.types.address_comparable import AddressComparable
 from degenbot.utils.bytes import to_bytes
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
+    from tests.helpers.seam import ChecksummedAddress
 
 
 class _FakeOnChainEntity(AddressComparable):

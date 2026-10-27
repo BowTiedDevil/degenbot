@@ -40,8 +40,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot._ffi.aave import run_aave_update
-from degenbot._ffi.cancel import CancelHandle
 from tests.aave.writer_parity.harness import (
     ATOKEN_REVISION_SELECTOR,
     DEBT_TOKEN_REVISION_SELECTOR,
@@ -59,6 +57,7 @@ from tests.aave.writer_parity.harness import (
     mock_rpc_server,
     seeded_db,
 )
+from tests.helpers.seam import CancelHandle, run_aave_update
 
 if TYPE_CHECKING:
     from pathlib import Path

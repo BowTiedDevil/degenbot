@@ -38,9 +38,9 @@ branch of `skip_bpt` is covered by a direct unit test in
 
 from __future__ import annotations
 
-from degenbot._ffi import Bot
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 
 # ---- the shared canonical fixture (mirror in the Rust parity test) ----
 # 3-token ComposableStable [token0, token1, BPT] with bpt_idx = 2 (BPT at end).

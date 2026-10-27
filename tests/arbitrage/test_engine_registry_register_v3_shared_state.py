@@ -17,11 +17,11 @@ import asyncio
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot.exceptions import VerificationRpcError
 from tests.fakes.bot import FakeBot as _FakeBot
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 from tests.helpers.v3_pool_factory import make_v3_pool
 
 

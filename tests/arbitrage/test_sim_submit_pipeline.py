@@ -18,9 +18,9 @@ from pathlib import Path
 
 import pytest
 
-from degenbot._ffi.simulation import executor_policy_py
 from degenbot.dispatch import SimSubmitPipeline
 from tests.helpers import verdict_probe as probe
+from tests.helpers.seam import executor_policy_py
 
 
 def _policy(**env: str) -> object:

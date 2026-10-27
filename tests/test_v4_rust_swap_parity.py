@@ -17,13 +17,13 @@ import pathlib
 
 import pytest
 
-from degenbot._ffi import Bot, SwapRefused
 from degenbot.abi import encode as abi_encode
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.crypto import keccak256
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.math import MIN_SQRT_RATIO as MIN_SQRT_PRICE
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot, SwapRefused
 from tests.helpers.v4_pool_factory import make_v4_pool
 
 # 1:1 price (sqrt_price_x96 = 2**96), tick 0, 0.3% fee, tick_spacing 60.

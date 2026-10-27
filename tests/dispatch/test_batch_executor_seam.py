@@ -15,20 +15,19 @@ from typing import Any
 
 import pytest
 
-from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider
-from degenbot._ffi.simulation import build_batch_executor_py
 from degenbot.dispatch import (
     AssemblyVerdict,
     BatchExecutor,
+    Dispatcher,
     SimulateContext,
     SimulateVerdict,
     SubmitSkipReason,
-    Dispatcher,
     TxSigner,
     typed_submit_record,
 )
 from degenbot.runner._dispatch import MergedOutcome
 from degenbot.runner._sim_submit import BatchWork
+from tests.helpers.seam import AlloyProvider, AsyncAlloyProvider, build_batch_executor_py
 from tests.helpers.sim_records import inline_sim_payload
 
 # Canonical mainnet addresses (the seam-suite constants).

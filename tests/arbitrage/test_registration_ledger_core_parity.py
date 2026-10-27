@@ -24,12 +24,6 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import RegistrationLedger as CoreRegistrationLedger
-from degenbot._ffi import (
-    registration_admission_kinds,
-    registration_outcome_tags,
-    registration_unit_kinds,
-)
 from degenbot.exceptions import (
     DynamicFeePoolRejectedError,
     HighFeePoolRejectedError,
@@ -43,8 +37,14 @@ from degenbot.runner._registration_ledger import (
     RegistrationLedger,
     RegistrationOutcome,
     RegistrationUnitKind,
+    fold_registration_unit,
 )
-from degenbot.runner._registration_ledger import fold_registration_unit
+from tests.helpers.seam import RegistrationLedger as CoreRegistrationLedger
+from tests.helpers.seam import (
+    registration_admission_kinds,
+    registration_outcome_tags,
+    registration_unit_kinds,
+)
 
 
 class _Step:

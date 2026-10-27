@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 
-from degenbot._ffi import solve_balancer_weighted_basket
+from tests.helpers.seam import solve_balancer_weighted_basket
 
 # Reserves in wei; weights at 50/25/25 (18-decimal fixed point); 0.3% fee;
 # decimals empty = 18-decimal scaling; prices flag the mispricing

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot._ffi import Bot as _Engine
 from degenbot.abi import encode as abi_encode
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.provider import OfflineProvider
@@ -19,6 +18,7 @@ from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.utils.bytes import to_bytes
 from tests.conftest import TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot as _Engine
 
 if TYPE_CHECKING:
     import pathlib

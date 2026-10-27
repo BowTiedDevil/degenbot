@@ -41,12 +41,12 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from degenbot import _ffi
 from degenbot.abi import encode as abi_encode
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.crypto import function_selector
 from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.provider import AlloyProvider
+from tests.helpers.seam import resolve_hypothetical_node_uri
 from tests.standalone_anvil import seed as seed_catalog
 from tests.standalone_anvil.emit import emit_tx
 
@@ -99,7 +99,7 @@ def _resolve_from_operator_file(tmp_path: Path, body: str, *ops: list[Any]) -> l
     }
 
     def _node(chain_id: int, scope: str) -> dict[str, object]:
-        resolved = _ffi.resolve_hypothetical_node_uri(env, None, chain_id, scope, None)
+        resolved = resolve_hypothetical_node_uri(env, None, chain_id, scope, None)
         return {"uri": resolved.uri, "source": resolved.source}
 
     results: list[dict] = []

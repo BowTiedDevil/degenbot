@@ -175,3 +175,26 @@ out.)
 The blanket leaf-import ban takes one structural exception, made permanent by the ADR-032 fork: the five engine-handle pyclasses (``degenbot._ffi.Bot``, ``BotIo``, ``Erc20Token``,``DatabaseSnapshot``, ``DatabasePositionQuery``). These handles ARE the objects first-party code drives to run the Rust engine, and their clean names collide with same-named Python driver/model classes (``degenbot.bot.Bot``, ``degenbot.erc20.Erc20Token``, the snapshot/query shells). Since ADR-032 makes the module path the disambiguator, the companion-re-export route these five names previously required (the route that forced the ``Rust*`` collision prefixes) is unnecessary: first-party code imports them directly from ``_ffi``.
 
 Mechanically, ``tests/test_ffi_boundary.py`` permits an ``_ffi`` (or ``_ffi.db``) import in a non-``__init__`` file ONLY when every imported name is one of the five ENGINE_HANDLES; every other ``_ffi`` symbol still requires a domain home. The handles are deliberately un-homed: engine plumbing, not a pydantic domain surface — the raw-internal category of the pydantic-core model.
+
+## Amendment (2026-10-27): the test side gets one door
+
+The scan covers ``tests/`` as well as ``src/degenbot/``. The seam is private for
+the suite too — a rename in the Rust core's registration surface should not fan
+out across every test that hand-imported a symbol — but tests cannot be served
+by a ``degenbot.<domain>`` barrier: they exist to check the seam against a
+second implementation, not to consume a companion API.
+
+``tests/helpers/seam.py`` is the one door. It re-exports the ``_ffi`` symbol set
+the suite uses, each name from the module that owns it (the extension root or an
+``add_submodule`` child), so a seam rename edits that file instead of every test
+that named the symbol. ``tests/test_ffi_boundary.py`` allows no other ``_ffi``
+importer under ``tests/``: the engine-handle exception above is a
+shipped-package disambiguator, and does not apply there — the door already
+carries those handles, so there is nothing left to disambiguate.
+
+The door also binds the extension module itself (``REGISTRATION_SURFACE``) for
+tests whose *subject* is the registration surface: the pyclass and stub walkers
+under ``tests/`` and the public-mirror identity checks, which must walk ``dir()``,
+``__module__`` and submodule presence rather than call one symbol. That permit is
+scoped by name to those files; reaching an ordinary symbol through the module is
+the leak the door exists to prevent.

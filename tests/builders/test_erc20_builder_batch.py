@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import json
 
-from degenbot._ffi import Bot
-from degenbot._ffi.provider import AlloyProvider as RustAlloyProvider
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.registry import TokenRegistry
+from tests.helpers.seam import AlloyProvider as RustAlloyProvider
+from tests.helpers.seam import Bot
 
 TOKEN_A = "0x00000000000000000000000000000000000000A1"
 TOKEN_B = "0x00000000000000000000000000000000000000B1"

@@ -16,8 +16,6 @@ from pathlib import Path
 
 import pytest
 
-from degenbot._ffi.aave import run_aave_update
-from degenbot._ffi.cancel import CancelHandle
 from tests.aave.writer_parity.harness import (
     BOOTSTRAP_BLOCK,
     FIXTURE_BLOCK,
@@ -27,6 +25,7 @@ from tests.aave.writer_parity.harness import (
     seed_asset_and_user,
     seeded_db,
 )
+from tests.helpers.seam import CancelHandle, run_aave_update
 
 # `scaledBalanceOf(address)` selector.
 _SCALED_BALANCE_OF_SELECTOR = "0x1da24f3e"

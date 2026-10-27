@@ -3,7 +3,6 @@ from pathlib import Path
 
 import pytest
 
-from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
 from degenbot.camelot.abi import CAMELOT_POOL_ABI
 from degenbot.checksum_cache import get_checksum_address
@@ -25,6 +24,7 @@ from tests.golden.recorded_pool import load_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot as _Engine
 from tests.helpers.v2_pool_factory import make_v2_pool
 
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")

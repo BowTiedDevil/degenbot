@@ -20,8 +20,8 @@ import threading
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
+from tests.helpers.seam import Bot
 from tests.helpers.synthetic_logs import (
     v2_sync,
     v3_mint,

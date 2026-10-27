@@ -52,7 +52,7 @@ def foreign_strategy_example() -> ModuleType:
 
 
 def _ffi_execution() -> Any:
-    from degenbot._ffi import execution
+    from tests.helpers.seam import execution
 
     return execution
 

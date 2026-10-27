@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from degenbot._ffi import Bot
+from tests.helpers.seam import Bot
 
 # ---- the shared canonical fixture (loaded, not copied) ----
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "aerodrome_pool_builder.json"

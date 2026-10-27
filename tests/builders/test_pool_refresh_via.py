@@ -18,10 +18,10 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot._ffi import Bot, BotIo
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.provider import OfflineProvider
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot, BotIo
 from tests.helpers.v2_pool_factory import make_v2_pool
 
 _TOKEN_BOT = Bot()

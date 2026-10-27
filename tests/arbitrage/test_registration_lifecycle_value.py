@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import ArbitrageEngine, Bot, RegistrationLifecycle, RetryPolicy
 from tests.helpers.rpc_env import rpc_env
+from tests.helpers.seam import ArbitrageEngine, Bot, RegistrationLifecycle, RetryPolicy
 
 _V3_ADDRESS = "0x" + "11" * 20
 

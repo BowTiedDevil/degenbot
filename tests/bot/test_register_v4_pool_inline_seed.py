@@ -21,10 +21,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
-from degenbot._ffi import Bot as _Engine
 from degenbot.bot import Bot
 from degenbot.provider import AlloyProvider
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot as _Engine
 from tests.helpers.v4_pool_factory import make_v4_pool
 
 if TYPE_CHECKING:

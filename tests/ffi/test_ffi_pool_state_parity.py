@@ -40,25 +40,27 @@ from typing import TYPE_CHECKING
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
-from degenbot._ffi import Bot, PoolTickCoverage, reinstall_config_holder_for_tests
-from degenbot._ffi.concentrated_liquidity_math import (
+from degenbot.uniswap.concentrated.types import LiquidityAtTick
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from tests.helpers.seam import (
     MAX_SQRT_RATIO,
     MAX_TICK,
     MIN_SQRT_RATIO,
     MIN_TICK,
+    Bot,
+    PoolTickCoverage,
     get_sqrt_ratio_at_tick,
     get_tick_at_sqrt_ratio,
     get_tick_word_and_bit_position,
+    reinstall_config_holder_for_tests,
 )
-from degenbot.uniswap.concentrated.types import LiquidityAtTick
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.helpers.synthetic_logs import v3_burn, v3_mint, v3_swap, v4_modify_liquidity
 from tests.suite_env import SUITE_ENV
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping, Sequence
 
-    from degenbot._ffi import Pool
+    from tests.helpers.seam import Pool
 
 _CHAIN_ID = 1
 _FEE = 3000

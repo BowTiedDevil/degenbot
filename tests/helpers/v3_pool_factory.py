@@ -19,18 +19,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
 from tests.helpers.pool_bot import new_pool_bot
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from degenbot._ffi import Bot
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.types import Pool
     from degenbot.types.aliases import BlockNumber
+    from tests.helpers.seam import Bot
 
 
 def _tick_data_to_rust_rows(

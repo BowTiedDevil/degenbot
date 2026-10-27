@@ -4,54 +4,22 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import Bot
-
-ONE = 10**18
+from tests.helpers.pool_handle_factory import (
+    ONE,
+    make_balancer_stable_handle,
+    make_balancer_weighted_handle,
+    make_curve_handle,
+)
 
 
 @pytest.fixture
 def curve_pool():
-    bot = Bot(1)
-    pool_id = bot.register_curve_pool(
-        address="0x1111111111111111111111111111111111111111",
-        tokens=[
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        ],
-        a_coefficient=100,
-        a_precision=100,
-        fee=0,
-        admin_fee=0,
-        rate_multipliers=[ONE, ONE],
-        balances=[ONE, ONE],
-        update_block=100,
-        swap_style=1,  # STANDARD
-        d_variant=1,  # STANDARD
-        y_variant=1,  # STANDARD
-        yd_variant=1,
-    )
-    return bot.get_pool(pool_id)
+    return make_curve_handle()
 
 
 @pytest.fixture
 def balancer_weighted_pool():
-    bot = Bot(1)
-    pool_id = bot.register_balancer_weighted_pool(
-        address="0x2222222222222222222222222222222222222222",
-        vault="0x3333333333333333333333333333333333333333",
-        pool_id_hex="0x" + "00" * 32,
-        tokens=[
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        ],
-        weights=[500_000_000_000_000_000, 500_000_000_000_000_000],
-        scaling_factors=[ONE, ONE],
-        swap_fee=0,
-        pow_version=2,
-        balances=[1_000_000, 1_000_000],
-        update_block=100,
-    )
-    return bot.get_pool(pool_id)
+    return make_balancer_weighted_handle()
 
 
 def test_curve_structure_and_identity(curve_pool) -> None:
@@ -85,6 +53,7 @@ def test_curve_calculate_tokens_out_matches_recorded_constant(curve_pool) -> Non
     out_rev = curve_pool.calculate_tokens_out(False, ONE)
 
     assert out_rev == out
+
     # Monotonicity
     out_bigger = curve_pool.calculate_tokens_out(True, 2 * ONE)
 
@@ -110,26 +79,7 @@ def test_balancer_weighted_swap_matches_closed_form(balancer_weighted_pool) -> N
 
 @pytest.fixture
 def balancer_stable_pool():
-    bot = Bot(1)
-    bot.register_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "A", "A", 18, 1)
-    bot.register_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "B", "B", 18, 1)
-    pool_id = bot.register_balancer_stable_pool(
-        address="0x4444444444444444444444444444444444444444",
-        vault="0x5555555555555555555555555555555555555555",
-        pool_id_hex="0x44" + "00" * 31,
-        tokens=[
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        ],
-        amp=100 * 1000,
-        scaling_factors=[ONE, ONE],
-        swap_fee=0,
-        bpt_idx=None,
-        invariant_version=2,
-        balances=[1_000_000, 1_000_000],
-        update_block=100,
-    )
-    return bot.get_pool(pool_id)
+    return make_balancer_stable_handle()
 
 
 def test_balancer_stable_structure_and_identity(balancer_stable_pool) -> None:
@@ -153,6 +103,7 @@ def test_balancer_stable_swap_matches_companion_oracle(balancer_stable_pool) -> 
     out_rev = balancer_stable_pool.calculate_tokens_out(False, 1_000)
 
     assert out_rev == out
+
     # Monotonicity
     out_bigger = balancer_stable_pool.calculate_tokens_out(True, 10_000)
 

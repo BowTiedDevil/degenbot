@@ -4,28 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import Bot
+from tests.helpers.pool_handle_factory import make_aerodrome_handle
 
 
 @pytest.fixture
 def aerodrome_pool():
-    bot = Bot(1)
-    pool_id = bot.register_aerodrome_pool(
-        address="0x1111111111111111111111111111111111111111",
-        token0="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        token1="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        factory="0x2222222222222222222222222222222222222222",
-        variant="aerodrome-v2-volatile",
-        stable=False,
-        fee_numer=3,
-        fee_denom=10_000,
-        token0_decimals=18,
-        token1_decimals=18,
-        reserve0=1_000_000_000,
-        reserve1=2_000_000_000,
-        update_block=100,
-    )
-    return bot.get_pool(pool_id)
+    return make_aerodrome_handle()
 
 
 def test_structure_and_identity(aerodrome_pool) -> None:
@@ -61,23 +45,15 @@ def aerodrome_stable_pool():
     Mirrors the Rust `pool_handle_aerodrome.rs` `aerodrome_stable_swap_*`
     fixtures: equal 1e18 reserves, both 18 decimals, fee (3, 10000) = 0.03%.
     """
-    bot = Bot(1)
-    pool_id = bot.register_aerodrome_pool(
+    return make_aerodrome_handle(
         address="0x3333333333333333333333333333333333333333",
         token0="0xcccccccccccccccccccccccccccccccccccccccc",
         token1="0xdddddddddddddddddddddddddddddddddddddddd",
         factory="0x4444444444444444444444444444444444444444",
-        variant="aerodrome-v2-stable",
         stable=True,
-        fee_numer=3,
-        fee_denom=10_000,
-        token0_decimals=18,
-        token1_decimals=18,
-        reserve0=1_000_000_000_000_000_000,
-        reserve1=1_000_000_000_000_000_000,
-        update_block=100,
+        reserve0=10**18,
+        reserve1=10**18,
     )
-    return bot.get_pool(pool_id)
 
 
 def test_aerodrome_stable_swap_matches_recorded_constant(aerodrome_stable_pool) -> None:

@@ -4,32 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import Bot
+from tests.helpers.pool_handle_factory import make_v4_handle
 
 
 @pytest.fixture
 def v4_pool():
-    bot = Bot(1)
-    tick_data = {
-        -60: (1_000_000, 1_000_000, 0),
-        60: (1_000_000, -1_000_000, 0),
-    }
-    pool_id = bot.register_v4_pool(
-        pool_manager="0x1111111111111111111111111111111111111111",
-        pool_id_hex="0x" + "00" * 32,
-        currency0="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        currency1="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        fee=3000,
-        tick_spacing=60,
-        hook_address=None,
-        sqrt_price_x96=1 << 96,
-        liquidity=1_000_000,
-        tick=0,
-        block=100,
-        tick_data=tick_data,
-        coverage="tracked",
-    )
-    return bot.get_pool(pool_id)
+    return make_v4_handle()
 
 
 def test_structure_and_identity(v4_pool) -> None:

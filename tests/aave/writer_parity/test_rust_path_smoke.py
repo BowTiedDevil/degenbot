@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot._ffi.aave import run_aave_update
-from degenbot._ffi.cancel import CancelHandle
 from degenbot.checksum_cache import get_checksum_address
 from tests.aave.writer_parity.harness import (
     BOOTSTRAP_BLOCK,
@@ -21,6 +19,7 @@ from tests.aave.writer_parity.harness import (
     mock_rpc_server,
     seeded_db,
 )
+from tests.helpers.seam import CancelHandle, run_aave_update
 
 if TYPE_CHECKING:
     from pathlib import Path

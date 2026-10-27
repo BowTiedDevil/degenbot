@@ -11,11 +11,11 @@ immutability, and the family refusal at the ``from_handle`` seam.
 
 from __future__ import annotations
 
-import pytest
 from types import SimpleNamespace
 from typing import cast
 
-from degenbot._ffi import Pool
+import pytest
+
 from degenbot.bot import Bot
 from degenbot.exceptions import DegenbotValueError
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
@@ -28,6 +28,7 @@ from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.pool_bot import new_pool_bot
+from tests.helpers.seam import Pool
 from tests.helpers.v3_pool_factory import make_v3_pool
 
 _TOKEN_ZERO = "0x" + "11" * 20

@@ -20,13 +20,13 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import (
-    compute_aerodrome_v2_pool_address,
-    compute_aerodrome_v3_pool_address,
-)
 from degenbot.aerodrome.functions import (
     generate_aerodrome_v2_pool_address,
     generate_aerodrome_v3_pool_address,
+)
+from tests.helpers.seam import (
+    compute_aerodrome_v2_pool_address,
+    compute_aerodrome_v3_pool_address,
 )
 
 AERODROME_V2_DEPLOYER = "0x420DD381b31aEf6683db6B902084cB0FFECe40Da"
@@ -157,7 +157,7 @@ class TestRegisterTimeVerification:
     """
 
     def test_correct_address_accepts(self) -> None:
-        from degenbot._ffi import Bot
+        from tests.helpers.seam import Bot
 
         bot = Bot(chain_id=8453)  # Base — where the Aerodrome factory lives
         # The real on-chain BASE_AERO_WETH_V2 volatile pool — recomputed by the
@@ -182,7 +182,7 @@ class TestRegisterTimeVerification:
     def test_wrong_address_is_rejected(self) -> None:
         import pytest
 
-        from degenbot._ffi import Bot
+        from tests.helpers.seam import Bot
 
         bot = Bot(chain_id=8453)
         with pytest.raises(ValueError, match="CREATE2"):
@@ -205,7 +205,7 @@ class TestRegisterTimeVerification:
     def test_non_json_factory_skips_verification(self) -> None:
         # An ad-hoc factory not in deployments.json must skip verification
         # (manual/ad-hoc registration path preserved).
-        from degenbot._ffi import Bot
+        from tests.helpers.seam import Bot
 
         bot = Bot(chain_id=8453)
         ad_hoc_factory = "0x" + "ab" * 20

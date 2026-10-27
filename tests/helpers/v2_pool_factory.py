@@ -25,11 +25,10 @@ from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.helpers.pool_bot import new_pool_bot
 
 if TYPE_CHECKING:
-    from degenbot._ffi import Bot
-    from degenbot._ffi.dex_identity import DexIdentity
     from degenbot.erc20 import Erc20Token
     from degenbot.types import Pool
     from degenbot.types.aliases import ChainId
+    from tests.helpers.seam import Bot, DexIdentity
 
 
 def _gamma_complement(fee: Fraction) -> tuple[int, int]:

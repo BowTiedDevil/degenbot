@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import PoolKind, pool_family_tags
 from degenbot.pathfinding import (
     ALL_POOL_KINDS,
     FAMILY_TAG_TO_POOL_KIND,
@@ -18,6 +17,7 @@ from degenbot.pathfinding import (
     POOL_KIND_TAG,
 )
 from degenbot.pathfinding._kinds import _pool_kind_for_tag
+from tests.helpers.seam import PoolKind, pool_family_tags
 
 
 def test_family_tags_are_minted_from_the_core_list() -> None:

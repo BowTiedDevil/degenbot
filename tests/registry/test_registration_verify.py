@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import Bot
+from tests.helpers.seam import Bot
 
 # Cross-checked vectors (Python generate_v2/v3_pool_address + on-chain).
 UNISWAP_V2_FACTORY = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"

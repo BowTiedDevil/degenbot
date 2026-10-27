@@ -14,11 +14,11 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-from degenbot._ffi import BotIo
 from degenbot.bot import Bot
 from degenbot.builders.request import BuildPoolRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.utils.bytes import to_bytes
+from tests.helpers.seam import BotIo
 
 
 class _RecordingProvider:

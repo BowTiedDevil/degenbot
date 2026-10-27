@@ -14,8 +14,8 @@ HARD gate.
 
 from __future__ import annotations
 
-from degenbot._ffi.submission import TxParams, TxSigner
-from degenbot._ffi.submission import finalize_fees as rs_finalize_fees
+from tests.helpers.seam import TxParams, TxSigner
+from tests.helpers.seam import finalize_fees as rs_finalize_fees
 
 # Anvil account 0 — canonical well-known test private key + address.
 ANVIL_KEY_HEX = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"

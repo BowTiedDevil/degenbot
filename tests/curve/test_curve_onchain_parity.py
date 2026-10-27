@@ -42,7 +42,6 @@ from typing import TYPE_CHECKING, Any, Self
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.abi import decode as abi_decode
 from degenbot.abi import encode as abi_encode
 from degenbot.crypto import function_selector, keccak256
@@ -65,6 +64,7 @@ from tests.golden.oracle import (
 )
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.seam import Bot
 
 if TYPE_CHECKING:
     from collections.abc import Callable

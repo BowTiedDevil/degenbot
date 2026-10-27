@@ -77,7 +77,7 @@ class TestRustSeamPresent:
 
     @pytest.fixture(autouse=True)
     def _import_rs(self) -> None:
-        from degenbot._ffi import executor as _ffi_executor
+        from tests.helpers.seam import executor as _ffi_executor
 
         self.rs = _ffi_executor
 
@@ -244,7 +244,7 @@ class TestDelegateSpyEncodeCall:
     """
 
     def test_compute_simulation_warmup_slots_is_rust_bound(self) -> None:
-        from degenbot._ffi import executor as _ffi_executor
+        from tests.helpers.seam import executor as _ffi_executor
 
         fn = _ffi_executor.compute_simulation_warmup_slots
         assert fn.__class__.__name__ in (
@@ -254,7 +254,7 @@ class TestDelegateSpyEncodeCall:
         )
 
     def test_pack_config_is_rust_bound(self) -> None:
-        from degenbot._ffi import executor as _ffi_executor
+        from tests.helpers.seam import executor as _ffi_executor
 
         fn = _ffi_executor.pack_config
         assert fn.__class__.__name__ in (
@@ -264,7 +264,7 @@ class TestDelegateSpyEncodeCall:
         )
 
     def test_mapping_slot_is_rust_bound(self) -> None:
-        from degenbot._ffi import executor as _ffi_executor
+        from tests.helpers.seam import executor as _ffi_executor
 
         fn = _ffi_executor.mapping_slot
         assert fn.__class__.__name__ in (

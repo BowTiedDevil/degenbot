@@ -50,6 +50,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tests.helpers.seam import REGISTRATION_SURFACE as ffi
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -62,8 +64,6 @@ GRANDFATHERED: frozenset[str] = frozenset()
 
 def _registered_classes() -> Mapping[str, type]:
     """Class name -> class for every extension type registered on _ffi modules."""
-    import degenbot._ffi as ffi
-
     found: dict[str, type] = {}
 
     def scan(mod: object) -> None:
@@ -149,8 +149,8 @@ _STUB_DIR = pathlib.Path(__file__).resolve().parents[2] / "src" / "degenbot" / "
 
 def test_every_runtime_submodule_has_a_stub() -> None:
     """R0: every runtime `degenbot._ffi.*` submodule has a stub file."""
-    import degenbot._ffi  # ruff: ignore[unused-import]  (registers the submodules)
-
+    # The door's module-level import registers every runtime submodule, so the
+    # ``sys.modules`` walk below sees the full set.
     stub_stems = {p.stem for p in _STUB_DIR.glob("*.pyi") if p.name != "__init__.pyi"}
     runtime_subs = {
         name.removeprefix("degenbot._ffi.")

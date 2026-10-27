@@ -17,13 +17,12 @@ from typing import Any
 
 import pytest
 
-from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider
-from degenbot._ffi.simulation import SimulateContext
 from degenbot.dispatch import Dispatcher, TxSigner
 from degenbot.runner._sim_submit import build_batch_executor
 from degenbot.runner.bot_runner import _SessionState
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 from tests.helpers.identity_env import identity_env
+from tests.helpers.seam import AlloyProvider, AsyncAlloyProvider, SimulateContext
 
 _RPC_URL = "http://127.0.0.1:1"  # a dead port — alloy's transport is lazy
 

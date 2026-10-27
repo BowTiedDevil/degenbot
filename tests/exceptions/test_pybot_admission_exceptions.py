@@ -37,7 +37,6 @@ from __future__ import annotations
 import pytest
 
 import degenbot.exceptions
-from degenbot._ffi import Bot
 from degenbot.exceptions import (
     DynamicFeePoolRejectedError,
     HighFeePoolRejectedError,
@@ -46,6 +45,7 @@ from degenbot.exceptions import (
     PoolRegistrationError,
     SpecViolationError,
 )
+from tests.helpers.seam import Bot
 
 # Cross-checked mainnet V2/V3 vectors (see tests/registry/test_registration_verify).
 UNISWAP_V2_FACTORY = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"

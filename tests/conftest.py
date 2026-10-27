@@ -20,6 +20,13 @@ from _pytest.nodes import Item
 from dotenv import dotenv_values
 from hypothesis import settings
 
+from degenbot.bot import Bot
+from degenbot.fork import AnvilFork, ForkLaunchConfig
+from degenbot.logging import _LOG_LISTENER, _QUEUED_HANDLER, _STDOUT_HANDLER, set_log_level
+from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
+from tests.golden.recorded_pool import RecordedPool
+from tests.helpers.bot_factory import make_bot_with_provider
+
 # THE SUITE ENVIRONMENT, DECLARED AS DATA. The declaration and its os.environ
 # pin live in tests/suite_env.py, which the ROOT conftest imports before the
 # first `degenbot` import: the FFI module init boots the process-wide typed
@@ -30,13 +37,7 @@ from hypothesis import settings
 # tests/suite_env.py for the full contract — including why the pin is
 # force-set rather than setdefault, and why the declared database path is an
 # absent per-session file.
-from degenbot._ffi import reinstall_config_holder_for_tests, shutdown_log_drainer
-from degenbot.bot import Bot
-from degenbot.fork import AnvilFork, ForkLaunchConfig
-from degenbot.logging import _LOG_LISTENER, _QUEUED_HANDLER, _STDOUT_HANDLER, set_log_level
-from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
-from tests.golden.recorded_pool import RecordedPool
-from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.seam import reinstall_config_holder_for_tests, shutdown_log_drainer
 from tests.offline import is_offline
 from tests.standalone_anvil import seed as seed_catalog
 from tests.suite_env import SUITE_ENV

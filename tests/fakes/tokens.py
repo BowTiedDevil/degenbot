@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from degenbot.types.address_comparable import AddressComparable
 
 if TYPE_CHECKING:
-    from degenbot._ffi import ChecksummedAddress
+    from tests.helpers.seam import ChecksummedAddress
 
 
 @dataclass(frozen=True, eq=False)

@@ -32,7 +32,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from degenbot._ffi import Bot, PathGraph, PoolKind, build_path_graph
+from tests.helpers.seam import Bot, PathGraph, PoolKind, build_path_graph
 
 _FIXTURE_DIR = Path(__file__).parent / "fixtures"
 _ORACLE_PATH = _FIXTURE_DIR / "settlement_bot_boot.json"

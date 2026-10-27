@@ -9,10 +9,10 @@ expanded to paren-groups, e.g. ``Deposit(address,(address,uint256))``).
 
 import pytest
 
-from degenbot._ffi import event_topic as ffi_event_topic
-from degenbot._ffi import keccak256 as ffi_keccak256
 from degenbot.crypto import event_topic, keccak256
 from degenbot.utils.bytes import to_0x_hex
+from tests.helpers.seam import event_topic as ffi_event_topic
+from tests.helpers.seam import keccak256 as ffi_keccak256
 
 KECCAK_EMPTY = "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
 KECCAK_ABC = "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45"

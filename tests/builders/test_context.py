@@ -5,10 +5,10 @@ import pathlib
 
 import pytest
 
-from degenbot._ffi import Bot
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.registry import PoolRegistry, TokenRegistry
+from tests.helpers.seam import Bot
 
 
 def _make_ctx(**overrides) -> BuilderContext:
