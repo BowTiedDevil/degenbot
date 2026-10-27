@@ -30,22 +30,23 @@
 //! adapter ([`DegenbotDbConstruction`]); a [`NoDb`] adapter covers the no-DB
 //! path (and doubles as the first in-memory test fake).
 //!
-//! # Scope (slice A)
+//! # Scope
 //!
-//! Only the 19 atomic methods are here: the 12 DB reads/writes + the 7
-//! generic RPC methods. The 27 choreographed encode→call→decode wrappers
-//! (`fetch_v2_reserves`, `fetch_erc20_metadata`, …) stay on `PyBotIo` for
-//! this slice, composing over the trait's `call` / DB primitives. They move
-//! core-side in a follow-up (the builder-choreography port). See the
-//! migration note.
+//! The 19 atomic methods are here: the 12 DB reads/writes + the 7 generic RPC
+//! methods. The choreographed encode→call→decode wrappers
+//! (`fetch_v2_reserves`, `fetch_erc20_metadata`, …) compose over them core-side
+//! in `bot_core::pool_builder::choreography`, so a builder reaches one call
+//! surface and no driver re-implements a read. The call primitive those
+//! wrappers drive is [`ContractRead`](degenbot_rpc::abi::ContractRead), which
+//! this handle implements alongside the tick-paced [`PacedRead`] view.
 //!
 //! # Async shape
 //!
-//! The traits are `async fn` — `degenbot-rpc`'s `RateLimitingProvider` is
-//! already async, so the native [`RpcConstruction`] adapter is a thin
-//! delegation. The `PyO3` boundary does the `block_on` (release GIL → drive
-//! the future → wrap result), matching how `PyBotIo::forward_call_to_provider`
-//! already bridges to the native alloy provider via `get_runtime().block_on`.
+//! The traits are `async fn` — `degenbot-rpc`'s `AlloyProvider` is already
+//! async, so the native [`RpcConstruction`] adapter is a thin delegation. The
+//! `PyO3` boundary does the `block_on` (release GIL → drive the future → wrap
+//! result), matching how `PyBotIo::forward_call_to_provider` already bridges to
+//! the native alloy provider via `get_runtime().block_on`.
 
 use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::{Address, Bytes, U256};
@@ -63,9 +64,11 @@ use degenbot_rpc::provider::EthBlock;
 // `adapters.rs`.
 pub mod adapters;
 pub mod block_selector;
+pub mod contract_read;
 pub mod tick_pace;
 pub use self::adapters::{AlloyRpcConstruction, DegenbotDbConstruction, NoDb};
 pub use self::block_selector::{BlockSelector, BlockSelectorError};
+pub use self::contract_read::PacedRead;
 pub use self::handle::ConstructionIo;
 pub use self::tick_pace::TickFetchPace;
 
@@ -140,13 +143,12 @@ pub trait DbConstruction: Send + Sync {
 /// The 7 generic RPC methods — the atomic surface the choreography composes
 /// over. Alloy-shaped signature types; propagates [`ProviderError`].
 ///
-/// `call` / `call_raw` both return raw `Bytes` here — the distinction between
-/// "decoded return" and "raw return" lives in the choreography (still on
-/// `PyBotIo` this slice), not the trait. The native adapter backs onto
-/// `degenbot-rpc`'s `RateLimitingProvider` (alloy-only — the legacy
-/// non-alloy Python-provider fallback is dropped at the trait; the
-/// choreography's fallback survives temporarily and is deleted with the
-/// builder-choreography port).
+/// `call` returns raw return `Bytes` — the distinction between "decoded
+/// return" and "raw return" lives in the choreography
+/// (`bot_core::pool_builder::choreography`), not the trait, and the
+/// choreography's decoders come from `degenbot_rpc::abi`. The native adapter
+/// backs onto `degenbot-rpc`'s `AlloyProvider` (alloy-only — the legacy
+/// non-alloy Python-provider fallback is dropped at the trait).
 #[async_trait]
 pub trait RpcConstruction: Send + Sync {
     async fn get_block_number(&self) -> Result<u64, ProviderError>;

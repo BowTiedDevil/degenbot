@@ -89,10 +89,11 @@ futures-util = { version = "^0.3", default-features = false, features = ["async-
 tokio-tungstenite = { version = "^0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 
 [dev-dependencies]
-# `test-utils` gates `AlloyProvider::from_provider` (the mock-transport
-# constructor) so the §4.2 wire-shape tests can drive the submit orchestration
-# without a live RPC. Production builds (the umbrella, the cdylib) never
-# enable this feature.
+# `test-utils` gates the pending-tx pump's frame-injection support
+# (`PendingTxPump::push`) so the §4.2 wire-shape tests can feed the submit
+# orchestration without a live node. (`AlloyProvider::from_provider` is
+# ungated — the offline provider builds on it at runtime.) Production builds
+# (the umbrella, the cdylib) never enable this feature.
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
 # The frame-pipeline fixture test hand-builds `ReplayOutcome` journals
 # (revm state) to drive replay→extract→admit→solve end-to-end offline.

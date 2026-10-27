@@ -19,7 +19,7 @@ use degenbot_pools::SpecRefusal;
 use degenbot_rpc::abi;
 
 use super::{builder, choreography, curve_choreography};
-use crate::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
+use crate::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction, TickFetchPace};
 
 const TO: Address = alloy::primitives::address!("0x1111111111111111111111111111111111111111");
 const SV: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
@@ -481,6 +481,45 @@ async fn fetch_tick_bitmap_decodes() {
             .await
             .unwrap(),
         bitmap
+    );
+}
+
+/// The tick-RPC pace is a property of the construction transport, not of a
+/// fetcher's discipline: every tick read crosses `PacedRead`, and a non-tick
+/// read does not inherit the interval.
+#[tokio::test]
+async fn the_tick_pace_bounds_tick_reads_only() {
+    let mut f = FakeRpc::new();
+    let selector: [u8; 4] = abi::encode_tick_bitmap(3)[..4].try_into().unwrap();
+    f.set(selector, enc(DynSolValue::Uint(U256::ZERO, 256)));
+    let io = io_with(f).with_tick_fetch_pace(TickFetchPace::from_millis(40));
+
+    // Generic construction reads claim no tick-fetch slot.
+    let unpaced = std::time::Instant::now();
+    io.call(TO, Bytes::from(selector.to_vec()), None)
+        .await
+        .unwrap();
+    io.call(TO, Bytes::from(selector.to_vec()), None)
+        .await
+        .unwrap();
+    assert!(
+        unpaced.elapsed() < std::time::Duration::from_millis(30),
+        "a non-tick read must not wait for the tick-RPC pace, got {:?}",
+        unpaced.elapsed()
+    );
+
+    // Two tick reads are one interval apart.
+    let paced = std::time::Instant::now();
+    choreography::fetch_tick_bitmap(&io, TO, 3, None)
+        .await
+        .unwrap();
+    choreography::fetch_tick_bitmap(&io, TO, 3, None)
+        .await
+        .unwrap();
+    assert!(
+        paced.elapsed() >= std::time::Duration::from_millis(30),
+        "the second tick read waited for its paced slot, got {:?}",
+        paced.elapsed()
     );
 }
 

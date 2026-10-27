@@ -27,7 +27,7 @@ use degenbot_core::errors::ProviderError;
 use degenbot_rpc::abi;
 use degenbot_rpc::multicall3::{self, MulticallResult, MULTICALL3_ADDRESS};
 
-use crate::bot_core::construction_io::ConstructionIo;
+use crate::bot_core::construction_io::{ConstructionIo, PacedRead};
 
 /// Compute a 4-byte Solidity function selector (`keccak256(signature)[..4]`).
 #[must_use]
@@ -58,27 +58,6 @@ pub async fn eth_call(
         .call(to, data.into(), block)
         .await
         .map(|b| b.to_vec())
-}
-
-/// The ONE construction tick-read seam: wait for the tick-RPC pace gate, then
-/// run one encode→call→decode tick read.
-///
-/// The pace is tick-fetch-specific (it bounds a constrained archive source's
-/// tick-RPC rate — `builders.tick_fetch_min_interval_ms`), so it is not a
-/// general call pacer: only the tick-word ABI reads cross it. Every
-/// construction tick read does cross here — the tick-word loop's bitmap and
-/// tick reads, and the Db-seed reconcile's per-word bitmap reads — so the
-/// declared interval cannot be bypassed by reaching a leaf read directly.
-async fn paced_tick_read<T>(
-    io: &ConstructionIo,
-    to: Address,
-    data: Vec<u8>,
-    block: Option<u64>,
-    decode: fn(&[u8]) -> Result<T, ProviderError>,
-) -> Result<T, ProviderError> {
-    io.tick_fetch_pace().wait().await;
-    let bytes = eth_call(io, to, data, block).await?;
-    decode(&bytes)
 }
 
 /// Immutable-data shapes returned by the choreography (no `Py*` mirror).
@@ -377,6 +356,9 @@ pub async fn fetch_v4_slot0_liquidity(
 
 /// Fetch a V3 pool's tick bitmap word via `tickBitmap(int16)`.
 ///
+/// Paced: the read crosses [`PacedRead`], so
+/// `builders.tick_fetch_min_interval_ms` bounds it.
+///
 /// # Errors
 ///
 /// Returns a [`ProviderError`] on an `eth_call` failure or decode failure.
@@ -386,17 +368,13 @@ pub async fn fetch_tick_bitmap(
     word_position: i16,
     block: Option<u64>,
 ) -> Result<U256, ProviderError> {
-    paced_tick_read(
-        io,
-        address,
-        abi::encode_tick_bitmap(word_position),
-        block,
-        abi::decode_tick_bitmap,
-    )
-    .await
+    abi::fetch_tick_bitmap(&PacedRead::new(io), &address, word_position, block).await
 }
 
 /// Fetch a V3 pool's tick liquidity via `ticks(int24)`.
+///
+/// Paced: the read crosses [`PacedRead`], so
+/// `builders.tick_fetch_min_interval_ms` bounds it.
 ///
 /// # Errors
 ///
@@ -407,17 +385,13 @@ pub async fn fetch_tick_data(
     tick: i32,
     block: Option<u64>,
 ) -> Result<(U128, i128), ProviderError> {
-    paced_tick_read(
-        io,
-        address,
-        abi::encode_tick_data(tick),
-        block,
-        abi::decode_tick_data,
-    )
-    .await
+    abi::fetch_tick_data(&PacedRead::new(io), &address, tick, block).await
 }
 
 /// Fetch a V4 pool's tick bitmap via `getTickBitmap(bytes32,int16)`.
+///
+/// Paced: the read crosses [`PacedRead`], so
+/// `builders.tick_fetch_min_interval_ms` bounds it.
 ///
 /// # Errors
 ///
@@ -429,17 +403,20 @@ pub async fn fetch_v4_tick_bitmap(
     word_position: i16,
     block: Option<u64>,
 ) -> Result<U256, ProviderError> {
-    paced_tick_read(
-        io,
-        state_view,
-        abi::encode_v4_tick_bitmap(&pool_id, word_position),
+    abi::fetch_v4_tick_bitmap(
+        &PacedRead::new(io),
+        &state_view,
+        &pool_id,
+        word_position,
         block,
-        abi::decode_v4_tick_bitmap,
     )
     .await
 }
 
 /// Fetch a V4 pool's tick liquidity via `getTickLiquidity(bytes32,int24)`.
+///
+/// Paced: the read crosses [`PacedRead`], so
+/// `builders.tick_fetch_min_interval_ms` bounds it.
 ///
 /// # Errors
 ///
@@ -451,14 +428,7 @@ pub async fn fetch_v4_tick_data(
     tick: i32,
     block: Option<u64>,
 ) -> Result<(U128, i128), ProviderError> {
-    paced_tick_read(
-        io,
-        state_view,
-        abi::encode_v4_tick_data(&pool_id, tick),
-        block,
-        abi::decode_v4_tick_data,
-    )
-    .await
+    abi::fetch_v4_tick_data(&PacedRead::new(io), &state_view, &pool_id, tick, block).await
 }
 
 /// Fetch ERC-20 `name()` / `symbol()` / `decimals()` via three `eth_call`s.

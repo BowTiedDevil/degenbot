@@ -117,10 +117,11 @@ sha2 = "0.11"
 # — `WrapDatabaseAsync<AlloyDB>` blocks on the ambient tokio runtime, which
 # requires a multi-thread runtime (`CurrentThread` returns `None`).
 tokio = { version = "^1.54", features = ["macros", "rt-multi-thread"] }
-# `test-utils` gates `AlloyProvider::from_provider` (the mock-transport
-# constructor) so the §4.2 wire-shape tests + the parity fixture can drive the
-# typed dispatch without a live RPC. Production builds (the umbrella, the
-# cdylib) never enable this feature.
+# `test-utils` gates the pending-tx pump's frame-injection support
+# (`PendingTxPump::push`) so the §4.2 wire-shape tests + the parity fixture can
+# feed the typed dispatch without a live node. (`AlloyProvider::from_provider`
+# is ungated — the offline provider builds on it at runtime.) Production builds
+# (the umbrella, the cdylib) never enable this feature.
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
 # `compute_simulation_warmup_slots` + the `PathInfo`/`HopInfo`/`V2HopInfo`/
 # `EncodeOptions` types the smoke test's `SimulatePath` fixture constructs.

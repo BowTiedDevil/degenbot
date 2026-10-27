@@ -12,14 +12,26 @@
 //!
 //! ## Dispatch
 //!
-//! Each top-level [`fetch_*`] helper is a thin `encode → eth_call → decode`
-//! pipeline over [`AlloyProvider::eth_call`], matching the established
+//! Each top-level [`fetch_*`] helper is a thin `encode → call → decode`
+//! pipeline over one [`ContractRead::call`], matching the established
 //! `multicall3` precedent (encode/decode in core, a single `eth_call` at the
 //! RPC boundary). The full alloy `CallBuilder` (`IPair::new(addr, provider).
 //! getReserves().call().await`) is an equivalent path; the `eth_call` form is
-//! used here because `AlloyProvider` already owns a hardened `eth_call` with
+//! used here because [`AlloyProvider`] already owns a hardened `eth_call` with
 //! retry/backoff and revert-classification, so the fetchers inherit that
 //! behaviour without re-plumbing provider construction.
+//!
+//! ## Read transport
+//!
+//! The call step is the only step that varies with the transport, so it is the
+//! only one abstracted: every helper is generic over `&impl ContractRead` (the
+//! one call primitive, GLOSSARY) while encode and decode stay written once.
+//! `&AlloyProvider` remains the straightforward standalone consumer's
+//! transport, a shared `&Arc<AlloyProvider>` reads the same, and a
+//! construction-side transport (the bot core's handle, its tick-paced view)
+//! reaches the identical ABI shapes through the identical code. A transport
+//! supplies call policy — pacing, retry, a mock's canned bytes — never a second
+//! read family.
 //!
 //! # Errors
 //!
@@ -28,11 +40,58 @@
 //! classified by the provider); return-data decode failures surface as
 //! [`ProviderError::DecodingError`]. No swallowing — callers decide retry/policy.
 
+use std::future::Future;
+use std::sync::Arc;
+
 use alloy::primitives::{Address, Bytes, I256, U128, U256};
 use alloy::sol_types::SolCall;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 
 use crate::provider::AlloyProvider;
+
+/// The one contract-read primitive: one `eth_call(to, data, block)`, returning
+/// the raw return bytes.
+///
+/// Every `fetch_*` helper in this module is `encode → call → decode`, and
+/// `call` is the only step that touches a transport. Naming that step lets the
+/// read family be generic over the transport while the ABI knowledge (selectors,
+/// calldata, return shapes) stays here, written once: the same helper reads
+/// through an [`AlloyProvider`], through a provider shared behind an `Arc`, and
+/// through a construction-side transport that wraps the call in its own policy.
+///
+/// # Errors
+///
+/// Each implementation returns its transport's own [`ProviderError`]; the
+/// `fetch_*` helpers add [`ProviderError::DecodingError`] for return data that
+/// does not decode.
+pub trait ContractRead: Send + Sync {
+    /// Issue one `eth_call` at `block` (`None` = the transport's own latest) and
+    /// return the raw return bytes.
+    fn call(
+        &self,
+        to: Address,
+        data: Bytes,
+        block: Option<u64>,
+    ) -> impl Future<Output = ProviderResult<Bytes>> + Send;
+}
+
+/// The provider is the primitive's native transport: one hardened `eth_call`
+/// (retry/backoff, revert classification) per read.
+impl ContractRead for AlloyProvider {
+    async fn call(&self, to: Address, data: Bytes, block: Option<u64>) -> ProviderResult<Bytes> {
+        self.eth_call(&to, data, block).await
+    }
+}
+
+/// A shared transport reads exactly like the transport it points at, so a
+/// caller holding `&Arc<AlloyProvider>` — or any other shared handle that itself
+/// implements this trait — reaches the read family without cloning or
+/// unwrapping.
+impl<T: ContractRead + ?Sized> ContractRead for Arc<T> {
+    async fn call(&self, to: Address, data: Bytes, block: Option<u64>) -> ProviderResult<Bytes> {
+        (**self).call(to, data, block).await
+    }
+}
 
 alloy::sol! {
     /// ERC-20 token interface (read methods used by the fetchers).
@@ -346,12 +405,12 @@ pub fn decode_get_rate(bytes: &[u8]) -> ProviderResult<U256> {
 /// the provider) or [`ProviderError::DecodingError`] if the return data does
 /// not decode as the `(uint112, uint112, uint32)` tuple.
 pub async fn fetch_v2_reserves(
-    provider: &AlloyProvider,
+    provider: &impl ContractRead,
     pool: &Address,
     block: Option<u64>,
 ) -> ProviderResult<(U256, U256)> {
     let calldata = Bytes::from(encode_get_reserves());
-    let bytes = provider.eth_call(pool, calldata, block).await?;
+    let bytes = provider.call(*pool, calldata, block).await?;
     decode_get_reserves(&bytes)
 }
 
@@ -416,16 +475,16 @@ pub fn decode_liquidity(bytes: &[u8]) -> ProviderResult<U256> {
 /// Returns [`ProviderError`] from either underlying `eth_call` or
 /// [`ProviderError::DecodingError`] if a return value fails to decode.
 pub async fn fetch_v3_slot0_liquidity(
-    provider: &AlloyProvider,
+    provider: &impl ContractRead,
     pool: &Address,
     block: Option<u64>,
 ) -> ProviderResult<(U256, I256, U256)> {
     let slot0_bytes = provider
-        .eth_call(pool, Bytes::from(encode_slot0()), block)
+        .call(*pool, Bytes::from(encode_slot0()), block)
         .await?;
     let (sqrt_price_x96, tick) = decode_slot0(&slot0_bytes)?;
     let liq_bytes = provider
-        .eth_call(pool, Bytes::from(encode_liquidity()), block)
+        .call(*pool, Bytes::from(encode_liquidity()), block)
         .await?;
     let liquidity = decode_liquidity(&liq_bytes)?;
     Ok((sqrt_price_x96, tick, liquidity))
@@ -482,18 +541,18 @@ pub fn encode_get_liquidity(pool_id: &[u8; 32]) -> Vec<u8> {
 /// Returns [`ProviderError`] from either underlying `eth_call` or
 /// [`ProviderError::DecodingError`] if a return value fails to decode.
 pub async fn fetch_v4_slot0_liquidity(
-    provider: &AlloyProvider,
+    provider: &impl ContractRead,
     state_view: &Address,
     pool_id: &[u8; 32],
     block: Option<u64>,
 ) -> ProviderResult<(U256, I256, U256, U256, U256)> {
     let slot0_bytes = provider
-        .eth_call(state_view, Bytes::from(encode_get_slot0(pool_id)), block)
+        .call(*state_view, Bytes::from(encode_get_slot0(pool_id)), block)
         .await?;
     let (sqrt_price_x96, tick, protocol_fee, lp_fee) = decode_get_slot0(&slot0_bytes)?;
     let liq_bytes = provider
-        .eth_call(
-            state_view,
+        .call(
+            *state_view,
             Bytes::from(encode_get_liquidity(pool_id)),
             block,
         )
@@ -591,13 +650,13 @@ pub fn decode_tick_data(bytes: &[u8]) -> ProviderResult<(U128, i128)> {
 /// as [`ProviderError::ExecutionReverted`]) or
 /// [`ProviderError::DecodingError`] if the return data fails to decode.
 pub async fn fetch_tick_bitmap(
-    provider: &AlloyProvider,
+    provider: &impl ContractRead,
     pool: &Address,
     word_position: i16,
     block: Option<u64>,
 ) -> ProviderResult<U256> {
     let calldata = Bytes::from(encode_tick_bitmap(word_position));
-    let bytes = provider.eth_call(pool, calldata, block).await?;
+    let bytes = provider.call(*pool, calldata, block).await?;
     decode_tick_bitmap(&bytes)
 }
 
@@ -609,13 +668,13 @@ pub async fn fetch_tick_bitmap(
 /// Returns [`ProviderError`] from the underlying `eth_call` or
 /// [`ProviderError::DecodingError`] on decode failure.
 pub async fn fetch_tick_data(
-    provider: &AlloyProvider,
+    provider: &impl ContractRead,
     pool: &Address,
     tick: i32,
     block: Option<u64>,
 ) -> ProviderResult<(U128, i128)> {
     let calldata = Bytes::from(encode_tick_data(tick));
-    let bytes = provider.eth_call(pool, calldata, block).await?;
+    let bytes = provider.call(*pool, calldata, block).await?;
     decode_tick_data(&bytes)
 }
 
@@ -687,14 +746,14 @@ pub fn decode_v4_tick_data(bytes: &[u8]) -> ProviderResult<(U128, i128)> {
 /// Returns [`ProviderError`] from the underlying `eth_call` or
 /// [`ProviderError::DecodingError`] on decode failure.
 pub async fn fetch_v4_tick_bitmap(
-    provider: &AlloyProvider,
+    provider: &impl ContractRead,
     state_view: &Address,
     pool_id: &[u8; 32],
     word_position: i16,
     block: Option<u64>,
 ) -> ProviderResult<U256> {
     let calldata = Bytes::from(encode_v4_tick_bitmap(pool_id, word_position));
-    let bytes = provider.eth_call(state_view, calldata, block).await?;
+    let bytes = provider.call(*state_view, calldata, block).await?;
     decode_v4_tick_bitmap(&bytes)
 }
 
@@ -706,14 +765,14 @@ pub async fn fetch_v4_tick_bitmap(
 /// Returns [`ProviderError`] from the underlying `eth_call` or
 /// [`ProviderError::DecodingError`] on decode failure.
 pub async fn fetch_v4_tick_data(
-    provider: &AlloyProvider,
+    provider: &impl ContractRead,
     state_view: &Address,
     pool_id: &[u8; 32],
     tick: i32,
     block: Option<u64>,
 ) -> ProviderResult<(U128, i128)> {
     let calldata = Bytes::from(encode_v4_tick_data(pool_id, tick));
-    let bytes = provider.eth_call(state_view, calldata, block).await?;
+    let bytes = provider.call(*state_view, calldata, block).await?;
     decode_v4_tick_data(&bytes)
 }
 
@@ -792,13 +851,13 @@ pub fn decode_uint256(bytes: &[u8]) -> ProviderResult<U256> {
 /// [`ProviderError::DecodingError`] if the return data does not decode as a
 /// `uint256`.
 pub async fn fetch_token_balance(
-    provider: &AlloyProvider,
+    provider: &impl ContractRead,
     token: &Address,
     owner: &Address,
     block: Option<u64>,
 ) -> ProviderResult<U256> {
     let calldata = Bytes::from(encode_balance_of(owner));
-    let bytes = provider.eth_call(token, calldata, block).await?;
+    let bytes = provider.call(*token, calldata, block).await?;
     decode_balance_of(&bytes)
 }
 
@@ -834,14 +893,14 @@ pub fn decode_allowance(bytes: &[u8]) -> ProviderResult<U256> {
 /// [`ProviderError::DecodingError`] if the return data does not decode as a
 /// `uint256`.
 pub async fn fetch_token_allowance(
-    provider: &AlloyProvider,
+    provider: &impl ContractRead,
     token: &Address,
     owner: &Address,
     spender: &Address,
     block: Option<u64>,
 ) -> ProviderResult<U256> {
     let calldata = Bytes::from(encode_allowance(owner, spender));
-    let bytes = provider.eth_call(token, calldata, block).await?;
+    let bytes = provider.call(*token, calldata, block).await?;
     decode_allowance(&bytes)
 }
 
@@ -873,12 +932,12 @@ pub fn decode_total_supply(bytes: &[u8]) -> ProviderResult<U256> {
 /// [`ProviderError::DecodingError`] if the return data does not decode as a
 /// `uint256`.
 pub async fn fetch_token_total_supply(
-    provider: &AlloyProvider,
+    provider: &impl ContractRead,
     token: &Address,
     block: Option<u64>,
 ) -> ProviderResult<U256> {
     let calldata = Bytes::from(encode_total_supply());
-    let bytes = provider.eth_call(token, calldata, block).await?;
+    let bytes = provider.call(*token, calldata, block).await?;
     decode_total_supply(&bytes)
 }
 
@@ -1542,5 +1601,67 @@ mod tests {
         assert_eq!(&cd[4..36], &pool_id[..]);
         // word -1 sign-extended: bytes [36..68) all 0xff
         assert!(cd[36..68].iter().all(|&b| b == 0xff));
+    }
+
+    // ── the read family over a transport that is not a provider ──
+    // The call is the only transport-specific half of a fetch, so a
+    // `ContractRead` double (canned return bytes, no node) must drive the same
+    // encode → call → decode pipeline the alloy provider drives.
+
+    /// A transport double: one canned return payload plus the calls it received.
+    struct RecordingTransport {
+        response: Bytes,
+        calls: std::sync::Mutex<Vec<(Address, Bytes, Option<u64>)>>,
+    }
+
+    impl RecordingTransport {
+        fn new(response: Vec<u8>) -> Self {
+            Self {
+                response: Bytes::from(response),
+                calls: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<(Address, Bytes, Option<u64>)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl ContractRead for RecordingTransport {
+        fn call(
+            &self,
+            to: Address,
+            data: Bytes,
+            block: Option<u64>,
+        ) -> impl Future<Output = ProviderResult<Bytes>> + Send {
+            self.calls.lock().unwrap().push((to, data, block));
+            std::future::ready(Ok(self.response.clone()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_contract_read_double_drives_a_fetch() {
+        let reserve0 = U256::from(1_500u64);
+        let reserve1 = U256::from(2_500u64);
+        let transport = RecordingTransport::new(
+            DynSolValue::Tuple(vec![
+                DynSolValue::Uint(reserve0, 112),
+                DynSolValue::Uint(reserve1, 112),
+                DynSolValue::Uint(U256::ZERO, 32),
+            ])
+            .abi_encode(),
+        );
+        let pool = address!("00000000000000000000000000000000000000ff");
+
+        let (r0, r1) = fetch_v2_reserves(&transport, &pool, Some(21_000_000))
+            .await
+            .unwrap();
+
+        assert_eq!((r0, r1), (reserve0, reserve1));
+        assert_eq!(
+            transport.calls(),
+            vec![(pool, Bytes::from(encode_get_reserves()), Some(21_000_000))],
+            "the fetch crosses the transport once, with the encoded calldata"
+        );
     }
 }

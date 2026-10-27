@@ -896,6 +896,15 @@ The two construction sub-traits, one seam per concern: DB-facing construction
 reads/writes (returning core row types, errors propagated loudly) and RPC-facing generic
 calls.
 
+**ContractRead**:
+The one call primitive the ABI read family and the construction transports share: one
+`eth_call(to, data, block)` returning the raw return bytes. Each `abi::fetch_*` helper is
+generic over it, so selectors, calldata and return decoders are written once and read
+through an `AlloyProvider`, a shared `Arc<AlloyProvider>`, or a construction transport;
+a transport supplies call policy (pacing, retry, canned bytes), nothing else.
+_Avoid_: a second fetch family per transport; a transport-specific copy of an
+`encode → call → decode` helper.
+
 **NoDb**:
 The construction adapter whose methods always return nothing, used when no database is
 configured; it doubles as the in-memory test fake.

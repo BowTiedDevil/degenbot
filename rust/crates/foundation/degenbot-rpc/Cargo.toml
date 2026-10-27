@@ -45,7 +45,9 @@ tracing-subscriber = { version = "^0.3", default-features = false, features = ["
 
 [features]
 default = []
-# Test-only constructors (e.g. `AlloyProvider::from_provider`) visible to
-# downstream crates' tests. In a library crate `#[cfg(test)]` is not visible to
-# consumers' tests, so this feature is the seam.
+# Test-only support visible to downstream crates' tests: the pending-tx pump's
+# frame injection (`PendingTxPump::push`) and the ring sender it needs. In a
+# library crate `#[cfg(test)]` is not visible to consumers' tests, so this
+# feature is the seam. `AlloyProvider::from_provider` is not part of it — that
+# constructor is ungated, because the offline provider builds on it at runtime.
 test-utils = []
