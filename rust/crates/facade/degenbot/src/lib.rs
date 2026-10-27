@@ -214,10 +214,12 @@ pub use degenbot_substrate::session_registry::{
 
 /// The registration intake types (`PoolEntry` and the per-family
 /// `Register*PoolParams` payloads + resolved states).
-pub use degenbot_bot::bot_core::{
-    PoolEntry, RegisterAerodromeV2PoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
-    RegisterV3PoolParams, RegisterV4PoolParams, V2PoolState, V4PoolKey,
-};
+pub use degenbot_bot::bot_core::RegisterCurvePoolParams;
+pub use degenbot_pools::sim::registry::PoolEntry;
+pub use degenbot_pools::state::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
+pub use degenbot_pools::state::v2_state::{RegisterV2PoolParams, V2PoolState};
+pub use degenbot_pools::state::v3_state::RegisterV3PoolParams;
+pub use degenbot_pools::state::v4_state::{RegisterV4PoolParams, V4PoolKey};
 
 pub use degenbot_substrate::BotState;
 

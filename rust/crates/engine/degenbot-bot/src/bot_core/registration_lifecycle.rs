@@ -47,7 +47,8 @@ use degenbot_rpc::provider::AlloyProvider;
 
 use super::liquidity_verifier::{verify_v3_liquidity_map, verify_v4_liquidity_map};
 use super::registration_ledger::{LifecyclePrecondition, RefusalKind, RegistrationPhase};
-use super::{PoolTickCoverage, TickInfo};
+use degenbot_pools::state::v3_state::PoolTickCoverage;
+use degenbot_pools::TickInfo;
 use degenbot_substrate::BotState;
 
 /// A **tracked** pool reached a verify step with no provider configured (the
@@ -332,10 +333,12 @@ mod tests {
     use degenbot_decoders::v4_swap_decoder::V4PoolId;
     use degenbot_pools::state::v4_state::V4PoolKey;
 
-    use crate::bot_core::{
-        LifecyclePrecondition, PoolTickCoverage, RefusalKind, RegisterV3PoolParams,
-        RegisterV4PoolParams, RegistrationLifecycle, TickInfo,
+    use crate::bot_core::{LifecyclePrecondition, RefusalKind};
+    use degenbot_pools::state::v3_state::{
+        PoolTickCoverage, RegisterV3PoolParams, RegistrationLifecycle,
     };
+    use degenbot_pools::state::v4_state::RegisterV4PoolParams;
+    use degenbot_pools::TickInfo;
     use degenbot_substrate::{BotState, PoolLookup};
 
     use super::run_verify_lifecycle;

@@ -77,7 +77,7 @@ fn solidly_arb_engine() -> (ArbitrageEngine, u64, u64) {
     // calc_d (which divides intermediate products by 1e18) does not
     // underflow to zero (small-magnitude reserves would panic on
     // divide-by-zero in get_y_solidly).
-    use crate::bot_core::RegisterAerodromeV2PoolParams;
+    use degenbot_pools::state::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
     use degenbot_substrate::BotState;
     use std::sync::Arc;
     fn tokens(n: u64) -> U112 {
@@ -199,7 +199,8 @@ fn solve_solidly_2hop_all_solidly_matches_grid_scan() {
 }
 #[test]
 fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
-    use crate::bot_core::{RegisterAerodromeV2PoolParams, RegisterV2PoolParams};
+    use degenbot_pools::state::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
+    use degenbot_pools::state::v2_state::RegisterV2PoolParams;
     use degenbot_substrate::BotState;
     use std::sync::Arc;
     fn tokens(n: u64) -> U112 {
@@ -330,7 +331,8 @@ fn solve_solidly_unprofitable_path_returns_none() {
 }
 #[test]
 fn solve_solidly_plus_concentrated_liquidity_path_rejected_by_scope() {
-    use crate::bot_core::{RegisterAerodromeV2PoolParams, RegisterV3PoolParams};
+    use degenbot_pools::state::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
+    use degenbot_pools::state::v3_state::RegisterV3PoolParams;
     use degenbot_substrate::BotState;
     use std::sync::Arc;
     let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(

@@ -690,7 +690,8 @@ fn session_registry_get_or_create_standalone_slice() {
 fn registration_lifecycle_standalone_slice() {
     use hashbrown::HashMap;
 
-    use degenbot::bot_core::{PoolTickCoverage, RegistrationLifecycle, TickInfo};
+    use degenbot::pools::state::v3_state::{PoolTickCoverage, RegistrationLifecycle};
+    use degenbot::pools::TickInfo;
     use degenbot::substrate::state_lock::StateLock;
     use degenbot::{run_verify_lifecycle, PoolLookup, RegisterV3PoolParams};
 

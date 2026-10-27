@@ -1,5 +1,5 @@
 use super::*;
-use crate::bot_core::PoolLookup;
+use degenbot_substrate::PoolLookup;
 
 /// Scenario A — the normal path: a Mint@N in the WS feed IS buffered by
 /// the pump, the tombstone@N+1 sets `last_complete_block = N`, and the
@@ -77,7 +77,7 @@ async fn scenario_c_two_adjacent_same_block_mints_both_applied_to_pin() {
             [
                 (
                     6,
-                    crate::bot_core::TickInfo {
+                    degenbot_pools::TickInfo {
                         liquidity_gross: U128::from(21_446_194_157_938_844u128),
                         liquidity_net: 21_446_194_157_938_844i128,
                         block: 0,
@@ -85,7 +85,7 @@ async fn scenario_c_two_adjacent_same_block_mints_both_applied_to_pin() {
                 ),
                 (
                     8,
-                    crate::bot_core::TickInfo {
+                    degenbot_pools::TickInfo {
                         liquidity_gross: U128::from(18_506_953_544_795_537u128),
                         liquidity_net: -18_506_953_544_795_537i128,
                         block: 0,
@@ -223,7 +223,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
             for &t in &FUZZ_TICKS {
                 tick_data.insert(
                     t,
-                    crate::bot_core::TickInfo {
+                    degenbot_pools::TickInfo {
                         liquidity_gross: alloy::primitives::U128::from(FUZZ_SEED_GROSS),
                         liquidity_net: i128::try_from(FUZZ_SEED_GROSS).unwrap(),
                         block: 0,
@@ -232,7 +232,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
             }
             let state = bot.state_arc();
             let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
-            core.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+            core.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
                 address: *addr,
                 token0: Address::from([0xa0u8; 20]),
                 token1: Address::from([0xa1u8; 20]),
@@ -244,7 +244,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
                 tick: 0,
                 tick_data,
                 update_block: block_n - 1,
-                coverage: crate::bot_core::PoolTickCoverage::Tracked,
+                coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
                 fetcher: None,
                 ..Default::default()
             })
@@ -347,14 +347,14 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
             for &t in &FUZZ_TICKS {
                 tick_data.insert(
                     t,
-                    crate::bot_core::TickInfo {
+                    degenbot_pools::TickInfo {
                         liquidity_gross: alloy::primitives::U128::from(FUZZ_SEED_GROSS),
                         liquidity_net: i128::try_from(FUZZ_SEED_GROSS).unwrap(),
                         block: 0,
                     },
                 );
             }
-            core.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+            core.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
                 address: *addr,
                 token0: Address::from([0xa0u8; 20]),
                 token1: Address::from([0xa1u8; 20]),
@@ -366,7 +366,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
                 tick: 0,
                 tick_data,
                 update_block: block_n - 1,
-                coverage: crate::bot_core::PoolTickCoverage::Tracked,
+                coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
                 fetcher: None,
                 ..Default::default()
             })
@@ -424,7 +424,8 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
 /// 193370 liquidityGross `244_132_769_082_101_7` -> `256_007_624_942_870_5`.
 #[tokio::test]
 async fn fuwyur_live_mint_for_unregistered_pool_survives_late_registration() {
-    use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, TickInfo};
+    use degenbot_pools::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
+    use degenbot_pools::TickInfo;
     const SEED_GROSS: u128 = 2_441_327_690_821_017;
     const MINT_DELTA: u128 = 118_748_558_607_688;
     let block_n = 10u64;

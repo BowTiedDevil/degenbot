@@ -240,7 +240,7 @@ mod tests {
     use super::*;
     use crate::sim::evm::BotStateDb;
     use alloy::primitives::{address, Address, B256, U256};
-    use degenbot_bot::bot_core::RegisterV3PoolParams;
+    use degenbot_pools::state::v3_state::RegisterV3PoolParams;
     use degenbot_substrate::divergence_probe::TrackedSlotKind;
     use degenbot_substrate::{divergence_probe::TrackedSlotProbe, BotState, SimAnchorState};
     use hashbrown::HashMap;
@@ -299,7 +299,7 @@ mod tests {
             tick,
             tick_data: HashMap::new(),
             update_block,
-            coverage: degenbot_bot::arb_engine::PoolTickCoverage::Sparse,
+            coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Sparse,
             fetcher: None,
             ..Default::default()
         };

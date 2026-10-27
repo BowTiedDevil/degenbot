@@ -41,7 +41,7 @@ pub(crate) use pyo3::exceptions::PyStopAsyncIteration;
 pub(crate) use pyo3::types::{PyDict, PyList};
 
 pub(crate) use crate::bot::PyBot;
-pub(crate) use degenbot_bot::bot_core::{Bot, V4StateSync};
+pub(crate) use degenbot_bot::bot_core::Bot;
 
 pub(crate) use degenbot_bot::arb_engine::EngineStages;
 

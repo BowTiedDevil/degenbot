@@ -42,8 +42,9 @@ use super::choreography;
 use super::tick_source;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::registration_ledger::BuildFailure;
-use crate::bot_core::{Bot, RegisteredPoolFamily};
+use crate::bot_core::Bot;
 use degenbot_core::op_warn;
+use degenbot_pools::sim::registry::RegisteredPoolFamily;
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::{PoolRegistration, RegistrationVerdict};
 
@@ -777,7 +778,8 @@ mod route_tests {
     use degenbot_uniswap::deployments::AddressMismatch;
 
     use crate::bot_core::pool_builder::parity;
-    use crate::bot_core::{RegisterV3PoolError, RegisterV4PoolError};
+    use degenbot_pools::state::v3_state::RegisterV3PoolError;
+    use degenbot_pools::state::v4_state::RegisterV4PoolError;
 
     #[test]
     fn route_serves_answers_the_policy_order() {

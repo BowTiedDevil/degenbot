@@ -27,17 +27,21 @@ use degenbot_substrate::tick_assembly::TickMapAssemblyError;
 use degenbot_substrate::{PoolLookup, PoolRegistration};
 
 use super::bot::Bot;
-use super::registration_ledger::{
-    BuildFailure, RefusalKind, RegisterRefusal, RegisteredPoolFamily, RegistrationPhase,
-};
+use super::registration_ledger::{BuildFailure, RefusalKind, RegisterRefusal, RegistrationPhase};
 use crate::bot_core::pool_builder::parity;
 use crate::bot_core::{
-    ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterAerodromePoolError,
-    RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
-    RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolError,
-    RegisterV2PoolParams, RegisterV3PoolError, RegisterV3PoolParams, RegisterV4PoolError,
-    RegisterV4PoolParams, TickInfo,
+    RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams,
 };
+use degenbot_pools::sim::registry::RegisteredPoolFamily;
+use degenbot_pools::state::aerodrome_v2_state::{
+    RegisterAerodromePoolError, RegisterAerodromeV2PoolParams,
+};
+use degenbot_pools::state::v2_state::{RegisterV2PoolError, RegisterV2PoolParams};
+use degenbot_pools::state::v3_state::{
+    ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams,
+};
+use degenbot_pools::state::v4_state::{RegisterV4PoolError, RegisterV4PoolParams};
+use degenbot_pools::TickInfo;
 
 /// The PRG-3 stance refusal: the process's fleet stance is not `fleet`, so
 /// the registration intake is not hosted here and the Python driver must
@@ -782,8 +786,8 @@ impl Bot {
 mod tests {
     #![expect(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use crate::bot_core::{V4PoolKey, V4_DYNAMIC_FEE_FLAG};
     use alloy::primitives::aliases::U112;
+    use degenbot_pools::state::v4_state::{V4PoolKey, V4_DYNAMIC_FEE_FLAG};
 
     /// The V2 door request the fixtures register through.
     fn v2_request(address: Address, token0: Address, factory: Address) -> PoolRegistration {

@@ -37,13 +37,13 @@ use std::collections::BTreeSet;
 use alloy::primitives::Address;
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::sim::registration_refusal::SpecRefusal;
+use degenbot_pools::sim::registry::RegisteredPoolFamily;
 use degenbot_pools::state::aerodrome_v2_state::RegisterAerodromePoolError;
 use degenbot_pools::state::v2_state::RegisterV2PoolError;
 use degenbot_pools::state::v3_state::RegisterV3PoolError;
 use degenbot_substrate::RegistrationVerdict;
 
 pub use degenbot_pools::sim::registration_refusal::{BuildFailure, RegisterRefusal};
-pub use degenbot_pools::sim::registry::RegisteredPoolFamily;
 
 use super::pool_builder::builder::PoolBuilderError;
 use super::pool_builder::parity::IdentityDivergence;

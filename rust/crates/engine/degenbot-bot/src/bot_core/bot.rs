@@ -21,7 +21,7 @@
 use std::sync::Arc;
 
 use crate::bot_core::registration_ledger::{RefusalKind, SnapshotLoadReason};
-use crate::bot_core::RegisteredPoolFamily;
+use degenbot_pools::sim::registry::RegisteredPoolFamily;
 use degenbot_substrate::session_registry::SessionObjectRegistry;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::EpochDelta;
@@ -641,8 +641,8 @@ impl Bot {
 #[expect(clippy::expect_used, clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    use crate::bot_core::RegisterV2PoolParams;
     use alloy::primitives::{aliases::U112, Address};
+    use degenbot_pools::state::v2_state::RegisterV2PoolParams;
 
     /// The orchestrator carries `chain_id` (ADR-006 D1) and shares one
     /// `BotState` across `state_arc()` clones — N handles reach one
@@ -800,8 +800,8 @@ mod tests {
     // error mapping; the logic these tests pin lives on `Bot`.
 
     /// A V2 registration fixture scoped to this cluster's tests.
-    fn v2_fixture(address: Address) -> crate::bot_core::RegisterV2PoolParams {
-        crate::bot_core::RegisterV2PoolParams {
+    fn v2_fixture(address: Address) -> degenbot_pools::state::v2_state::RegisterV2PoolParams {
+        degenbot_pools::state::v2_state::RegisterV2PoolParams {
             address,
             token0: Address::from([0x01u8; 20]),
             token1: Address::from([0x02u8; 20]),
@@ -820,8 +820,8 @@ mod tests {
 
     /// A V3 registration fixture scoped to this cluster's tests (no genesis
     /// journal delta — the concentrated liquidity family journals from the first event).
-    fn v3_fixture(address: Address) -> crate::bot_core::RegisterV3PoolParams {
-        crate::bot_core::RegisterV3PoolParams {
+    fn v3_fixture(address: Address) -> degenbot_pools::state::v3_state::RegisterV3PoolParams {
+        degenbot_pools::state::v3_state::RegisterV3PoolParams {
             address,
             token0: Address::from([0x01u8; 20]),
             token1: Address::from([0x02u8; 20]),
@@ -834,7 +834,7 @@ mod tests {
             tick_data: hashbrown::HashMap::new(),
             update_block: 100,
             tick_data_block: None,
-            coverage: crate::bot_core::PoolTickCoverage::Sparse,
+            coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Sparse,
             fetcher: None,
             ..Default::default()
         }

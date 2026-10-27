@@ -298,8 +298,8 @@ pub(crate) fn run_registration_lifecycle(
     lifecycle: &PyRegistrationLifecycle,
 ) -> PyResult<Py<PyAny>> {
     let key = match lifecycle.target()? {
-        Target::V3(address) => degenbot_bot::bot_core::PoolLookup::from_address(address),
-        Target::V4(pool_manager, pool_id) => degenbot_bot::bot_core::PoolLookup::V4 {
+        Target::V3(address) => degenbot_substrate::PoolLookup::from_address(address),
+        Target::V4(pool_manager, pool_id) => degenbot_substrate::PoolLookup::V4 {
             pool_manager,
             pool_id,
         },

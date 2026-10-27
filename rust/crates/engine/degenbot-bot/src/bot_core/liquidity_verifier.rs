@@ -17,7 +17,9 @@ use degenbot_rpc::provider::AlloyProvider;
 use hashbrown::HashMap;
 
 use crate::bot_core::registration_ledger::{RefusalKind, RegistrationPhase, VerifyOrigin};
-use crate::bot_core::{TickMap, V3PoolIdentity, V3PoolState, V4PoolIdentity, V4PoolState};
+use degenbot_pools::state::tick_map::TickMap;
+use degenbot_pools::state::v3_state::{V3PoolIdentity, V3PoolState};
+use degenbot_pools::state::v4_state::{V4PoolIdentity, V4PoolState};
 
 /// The bot-facing classification between map evidence and inability to read
 /// it is the one [`RefusalKind`] vocabulary's verify arm: a typed map
@@ -181,7 +183,7 @@ fn map_live_facts<T: TickMap + ?Sized>(
 }
 
 fn map_from_ticks<S: std::hash::BuildHasher>(
-    tick_data: &HashMap<i32, crate::bot_core::TickInfo, S>,
+    tick_data: &HashMap<i32, degenbot_pools::TickInfo, S>,
     tick_spacing: i32,
     active_tick: Option<i32>,
 ) -> LiquidityMap {
@@ -216,7 +218,7 @@ fn map_from_ticks<S: std::hash::BuildHasher>(
 async fn verify_snapshot<S: std::hash::BuildHasher>(
     provider: &AlloyProvider,
     target: LiquidityMapTarget,
-    ticks: &HashMap<i32, crate::bot_core::TickInfo, S>,
+    ticks: &HashMap<i32, degenbot_pools::TickInfo, S>,
     tick_spacing: i32,
     block: Option<u64>,
     phase: &str,
@@ -244,7 +246,7 @@ async fn verify_snapshot<S: std::hash::BuildHasher>(
 pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
     provider: &AlloyProvider,
     pool_address: Address,
-    tick_data: &HashMap<i32, crate::bot_core::TickInfo, S>,
+    tick_data: &HashMap<i32, degenbot_pools::TickInfo, S>,
     tick_spacing: i32,
     block_number: u64,
     phase: &str,
@@ -271,7 +273,7 @@ pub async fn verify_v4_liquidity_map<S: std::hash::BuildHasher>(
     provider: &AlloyProvider,
     pool_manager: Address,
     pool_id: [u8; 32],
-    tick_data: &HashMap<i32, crate::bot_core::TickInfo, S>,
+    tick_data: &HashMap<i32, degenbot_pools::TickInfo, S>,
     tick_spacing: i32,
     block_number: u64,
     phase: &str,
@@ -401,9 +403,9 @@ pub async fn verify_v4_pool<T: TickMap + ?Sized>(
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::bot_core::TickInfo;
     use alloy::dyn_abi::DynSolValue;
     use alloy::primitives::address;
+    use degenbot_pools::TickInfo;
     use degenbot_rpc::multicall3::{encode_aggregate3, MULTICALL3_ADDRESS};
     use degenbot_rpc::offline::OfflineProvider;
     use std::sync::Arc;

@@ -13,9 +13,9 @@ use super::boot_stamp::BootStamp;
 use super::solve_cycle::{CycleOutcome, CycleTicket};
 use super::ArbitrageEngine;
 use super::BlockMetadata;
-use crate::bot_core::V3SwapUpdate;
 use alloy::primitives::aliases::U112;
 use alloy::primitives::Address;
+use degenbot_pools::state::v3_state::V3SwapUpdate;
 use degenbot_substrate::concentrated_liquidity_route::ApplyOutcome;
 use hashbrown::HashSet;
 

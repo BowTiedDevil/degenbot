@@ -19,7 +19,8 @@ use std::sync::Arc;
 
 use crate::arb_engine::path_objects::EnginePathObjects;
 use crate::arb_engine::{EngineDriver, EngineStages};
-use crate::bot_core::{Bot, RegisterV2PoolParams};
+use crate::bot_core::Bot;
+use degenbot_pools::state::v2_state::RegisterV2PoolParams;
 use degenbot_substrate::session_registry::{
     ObjectRefusal, PathObject, PoolIdentity, SessionObjectRegistry,
 };

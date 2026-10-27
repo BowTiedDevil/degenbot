@@ -32,7 +32,8 @@ use super::route::{
 };
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::pool_builder::parity;
-use crate::bot_core::{Bot, RegisteredPoolFamily};
+use crate::bot_core::Bot;
+use degenbot_pools::sim::registry::RegisteredPoolFamily;
 
 /// The ONE construction-request vocabulary — every structural family's
 /// construction, keyed by family, with that family's inputs riding its

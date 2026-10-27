@@ -9,13 +9,13 @@
 
 use super::*;
 use crate::bot_core::stage_machine::QuiesceParams;
-use crate::bot_core::PoolLookup;
 use degenbot_config::QuiesceMode;
 use degenbot_decoders::v2_sync_decoder::V2_SYNC_TOPIC;
 use degenbot_decoders::v3_mint_burn_decoder::{V3_BURN_TOPIC, V3_MINT_TOPIC};
 use degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
 use degenbot_ingestion::{build_backfill_filter, PoolEvent};
 use degenbot_rpc::provider::AlloyProvider;
+use degenbot_substrate::PoolLookup;
 use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 
@@ -696,10 +696,10 @@ fn run_reorg_stream(capture: ReorgSpanCapture, pump: &mut BlockPump, events: Vec
 // sake).
 // -----------------------------------------------------------------
 
-use crate::bot_core::RegisterV2PoolParams;
 use alloy::primitives::{aliases::U112, Address, Bytes, U256};
 use degenbot_pools::solve::affected::AffectedKey;
 use degenbot_pools::solve::HopType;
+use degenbot_pools::state::v2_state::RegisterV2PoolParams;
 use degenbot_substrate::BlockContext;
 
 /// Build a V2 `Sync` log for `pool_address` carrying
@@ -955,8 +955,9 @@ async fn run_loop_guarded(
 /// buffer — the `build_paths` contract). Returns `(bot, pool_addr)`.
 /// Tick spacing 1 so tick 7 is a valid tick.
 fn bot_with_quarantined_v3_tracked(seed_gross: u128, update_block: u64) -> (Arc<Bot>, Address) {
-    use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, TickInfo};
     use alloy::primitives::U128;
+    use degenbot_pools::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
+    use degenbot_pools::TickInfo;
     let pool_addr = Address::from([0x34u8; 20]);
     let bot = Arc::new(Bot::new(1));
     let mut tick_data = hashbrown::HashMap::new();

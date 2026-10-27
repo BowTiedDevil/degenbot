@@ -329,24 +329,9 @@ impl PumpPhase {
     }
 }
 // ---------------------------------------------------------------------------
-// Coverage & snapshot types
+// Snapshot types
 // ---------------------------------------------------------------------------
-/// Describes the completeness of tick data for a registered pool.
-///
-/// Re-exported from [`crate::bot_core`] where it now lives alongside V3 state
-/// (ADR-003). `Tracked` = complete (may have empty `tick_data` = genuinely
-/// illiquid); `Sparse` = no snapshot data — solver results may be inaccurate.
-pub use crate::bot_core::PoolTickCoverage;
-// ADR-015: the path/snapshot/hop-state value types + INT128_MAX constant
-// now live in `degenbot_pools::solve` (the solver's intake contract). The
-// re-export shim that lived here during the staged relocation has been
-// dropped — callers import the solver types directly from
-// `::degenbot_pools::solve::{...}`. `BlockMetadata`, `PoolTickCoverage`,
-// `V3SnapshotData`/`V4SnapshotData` (if needed) resolve to their original
-// homes (`bot_core`, `degenbot_pools::solve`).
-// `BlockMetadata` lives in `bot_core` (general block data); re-exported here so
-// engine code + external references (`crate::arb_engine::BlockMetadata`)
-// keep working (ADR-006 D4).
+// The path/snapshot/hop-state value types live in `degenbot_pools::solve`.
 pub use degenbot_substrate::BlockMetadata;
 // ADR-027 completion (2026-08-20 review): the block-clock pipe is
 // coordinator-owned; the type moved to bot_core. Re-exported so external
@@ -720,7 +705,7 @@ impl ArbitrageEngine {
         gamma_numer: u64,
         fee_denom: u64,
     ) -> u64 {
-        let params = crate::bot_core::RegisterV2PoolParams {
+        let params = degenbot_pools::state::v2_state::RegisterV2PoolParams {
             address,
             token0: Address::ZERO,
             token1: Address::ZERO,
@@ -752,7 +737,10 @@ impl ArbitrageEngine {
     #[cfg(test)]
     #[expect(clippy::expect_used)] // test convenience: assert registration succeeds
     #[must_use]
-    pub fn register_v3_pool(&self, params: &crate::bot_core::RegisterV3PoolParams) -> u64 {
+    pub fn register_v3_pool(
+        &self,
+        params: &degenbot_pools::state::v3_state::RegisterV3PoolParams,
+    ) -> u64 {
         self.core
             .write_at(degenbot_substrate::state_lock::LockSite::Solver)
             .register_v3_pool(params)
@@ -767,8 +755,8 @@ impl ArbitrageEngine {
     #[cfg(test)]
     pub fn register_v4_pool(
         &self,
-        params: &crate::bot_core::RegisterV4PoolParams,
-    ) -> Result<u64, crate::bot_core::RegisterV4PoolError> {
+        params: &degenbot_pools::state::v4_state::RegisterV4PoolParams,
+    ) -> Result<u64, degenbot_pools::state::v4_state::RegisterV4PoolError> {
         self.core
             .write_at(degenbot_substrate::state_lock::LockSite::Solver)
             .register_v4_pool(params)

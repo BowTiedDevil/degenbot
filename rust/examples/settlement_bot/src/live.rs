@@ -470,7 +470,7 @@ async fn verify_one(
             // lifecycle.
             let result = driver
                 .run_registration_lifecycle_with_retry(
-                    degenbot::bot_core::PoolLookup::from_address(address),
+                    degenbot::substrate::PoolLookup::from_address(address),
                     block,
                     &policy,
                 )
@@ -499,7 +499,7 @@ async fn verify_one(
             // by the `(PoolManager, pool_id)` pair.
             let result = driver
                 .run_registration_lifecycle_with_retry(
-                    degenbot::bot_core::PoolLookup::V4 {
+                    degenbot::substrate::PoolLookup::V4 {
                         pool_manager: manager,
                         pool_id,
                     },
@@ -622,7 +622,7 @@ mod tests {
     use degenbot::bot::bot_core::registration_ledger::{
         OutcomeLabel, PipelineReport, RegistrationOutcome, RegistrationUnitOutcome,
     };
-    use degenbot::bot_core::{RegisterV2PoolError, RegisterV2PoolParams};
+    use degenbot::pools::state::v2_state::{RegisterV2PoolError, RegisterV2PoolParams};
 
     /// A minimal in-spec V2 fixture keyed by `address`.
     fn v2_params(address: Address) -> RegisterV2PoolParams {

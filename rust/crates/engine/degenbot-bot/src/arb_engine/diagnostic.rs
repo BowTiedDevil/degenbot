@@ -530,11 +530,12 @@ fn build_engine_pool_state(
 mod tests {
     use crate::arb_engine::lifecycle::{last_processed_block, register_path};
     use crate::arb_engine::test_harness::run_test_cycle;
-    use crate::arb_engine::{ArbitrageEngine, DiagnosticPathState, PoolTickCoverage};
-    use crate::bot_core::RegisterV3PoolParams as V3Params;
-    use crate::bot_core::{RegisterV4PoolParams as V4Params, V4PoolKey};
+    use crate::arb_engine::{ArbitrageEngine, DiagnosticPathState};
     use ::degenbot_pools::solve::PoolHop;
     use alloy::primitives::{aliases::U112, Address, U256};
+    use degenbot_pools::state::v3_state::PoolTickCoverage;
+    use degenbot_pools::state::v3_state::RegisterV3PoolParams as V3Params;
+    use degenbot_pools::state::v4_state::{RegisterV4PoolParams as V4Params, V4PoolKey};
     use hashbrown::HashMap;
     fn usdc(amount: u64) -> U112 {
         (U256::from(amount) * U256::from(10u64).pow(U256::from(6))).to::<U112>()
@@ -558,7 +559,7 @@ mod tests {
         let mut tick_data = HashMap::new();
         tick_data.insert(
             60,
-            crate::bot_core::TickInfo {
+            degenbot_pools::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(300),
                 liquidity_net: 150i128,
                 block: 0,
@@ -584,7 +585,7 @@ mod tests {
         let mut v4_tick_data = HashMap::new();
         v4_tick_data.insert(
             10,
-            crate::bot_core::TickInfo {
+            degenbot_pools::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(400),
                 liquidity_net: 200i128,
                 block: 0,

@@ -90,12 +90,13 @@ pub(crate) fn describe_hop(
 mod tests {
     use crate::arb_engine::lifecycle::register_path;
     use crate::arb_engine::ArbitrageEngine;
-    use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, RegisterV4PoolParams};
     use ::degenbot_decoders::v4_swap_decoder::V4PoolId;
     use ::degenbot_pools::solve::PoolHop;
     use ::degenbot_pools::state::v4_state::V4PoolKey;
     use alloy::primitives::{aliases::U112, Address, U256};
     use degenbot_executor::composers::HopInfo;
+    use degenbot_pools::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
+    use degenbot_pools::state::v4_state::RegisterV4PoolParams;
     use hashbrown::HashMap;
 
     fn usdc(amount: u64) -> U112 {

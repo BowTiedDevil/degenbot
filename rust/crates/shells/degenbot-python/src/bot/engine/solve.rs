@@ -5,12 +5,13 @@
 //! layout. `PyO3` allows multiple `#[pymethods] impl PyArbEngine { … }`
 //! blocks per type, so each concern file contributes one slice.
 
-use super::{hex_string_to_pool_id, Address, PyArbEngine, PyList, V4StateSync};
+use super::{hex_string_to_pool_id, Address, PyArbEngine, PyList};
 use crate::bot::pool::TickData;
 use crate::prelude::*;
 use degenbot_pools::families::buffered_event::PoolLiquidityUpdate;
 use degenbot_pools::families::state_update::PoolStateUpdate;
 use degenbot_pools::state::v3_state::V3StateSync;
+use degenbot_pools::state::v4_state::V4StateSync;
 use degenbot_substrate::PoolLookup;
 use std::sync::Arc;
 

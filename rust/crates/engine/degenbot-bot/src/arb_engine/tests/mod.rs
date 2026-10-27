@@ -16,12 +16,12 @@ use crate::arb_engine::test_harness::{
     merge_detached_for_test, process_updates, run_test_cycle,
 };
 use crate::arb_engine::{ArbitrageEngine, BlockMetadata, PumpPhase};
-use crate::bot_core::RegisterV3PoolParams;
-use crate::bot_core::RegisterV4PoolParams;
 use ::degenbot_pools::solve::{
     HopType, PoolHop, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult, INT128_MAX,
 };
 use alloy::primitives::{aliases::U112, Address, U256};
+use degenbot_pools::state::v3_state::RegisterV3PoolParams;
+use degenbot_pools::state::v4_state::RegisterV4PoolParams;
 use degenbot_uniswap::dex_identity::DexVariant;
 use hashbrown::{HashMap, HashSet};
 fn usdc(amount: u64) -> U112 {
@@ -114,11 +114,11 @@ fn detached_fixture(delay_ms: u64) -> (ArbitrageEngine, Vec<u64>, Vec<u64>) {
 
 /// Build the minimal V3 tick-data (initialized +60/-60 ticks) used by
 /// `inspect_path_returns_hop_details`.
-fn inspect_test_v3_tick_data() -> HashMap<i32, crate::bot_core::TickInfo> {
+fn inspect_test_v3_tick_data() -> HashMap<i32, degenbot_pools::TickInfo> {
     let mut tick_data = HashMap::new();
     tick_data.insert(
         60,
-        crate::bot_core::TickInfo {
+        degenbot_pools::TickInfo {
             liquidity_gross: alloy::primitives::U128::from(300),
             liquidity_net: 150i128,
             block: 0,
@@ -126,7 +126,7 @@ fn inspect_test_v3_tick_data() -> HashMap<i32, crate::bot_core::TickInfo> {
     );
     tick_data.insert(
         -60,
-        crate::bot_core::TickInfo {
+        degenbot_pools::TickInfo {
             liquidity_gross: alloy::primitives::U128::from(200),
             liquidity_net: -100i128,
             block: 0,

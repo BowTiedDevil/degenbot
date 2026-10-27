@@ -934,7 +934,7 @@ impl EngineDriver {
     /// Run a pool's core-owned registration verify lifecycle, AT MOST ONCE per
     /// live claim window — and never again once it has COMPLETED.
     ///
-    /// The key is a value ([`crate::bot_core::PoolLookup`]): a V3 pool by
+    /// The key is a value ([`degenbot_substrate::PoolLookup`]): a V3 pool by
     /// contract address, a V4 pool by `(PoolManager, pool_id)`. One body serves
     /// both designs, so the claim key, the unregistered no-op guard, the span
     /// fields and the diagnostic wording cannot drift apart per family.
@@ -1051,7 +1051,7 @@ impl EngineDriver {
     /// Panics if called from within a Tokio runtime.
     pub fn run_registration_lifecycle_sync(
         &self,
-        key: crate::bot_core::PoolLookup,
+        key: degenbot_substrate::PoolLookup,
         snapshot_block: Option<u64>,
     ) -> Result<(), DriverError> {
         degenbot_core::runtime::get_runtime()
@@ -1072,7 +1072,7 @@ impl EngineDriver {
     /// or the first fatal one.
     pub async fn run_registration_lifecycle_with_retry(
         &self,
-        key: crate::bot_core::PoolLookup,
+        key: degenbot_substrate::PoolLookup,
         snapshot_block: Option<u64>,
         policy: &RetryPolicy,
     ) -> Result<(), RefusalKind> {
@@ -1095,7 +1095,7 @@ impl EngineDriver {
     /// Panics if called from within a Tokio runtime.
     pub fn run_registration_lifecycle_with_retry_sync(
         &self,
-        key: crate::bot_core::PoolLookup,
+        key: degenbot_substrate::PoolLookup,
         snapshot_block: Option<u64>,
         policy: &RetryPolicy,
     ) -> Result<(), RefusalKind> {
@@ -1212,9 +1212,9 @@ impl Drop for EngineDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bot_core::PoolTickCoverage;
     use degenbot_decoders::v4_swap_decoder::V4PoolId;
     use degenbot_eventhub::OverflowPolicy;
+    use degenbot_pools::state::v3_state::PoolTickCoverage;
     use futures_util::StreamExt;
 
     /// Build an offline driver over a fresh `Bot` + `EngineStages`.
@@ -1794,8 +1794,9 @@ mod tests {
 
     /// Register a V3 pool directly in the driver's shared core.
     fn register_v3(driver: &EngineDriver, address: Address, coverage: PoolTickCoverage) -> u64 {
-        use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, TickInfo};
         use alloy::primitives::{U128, U256};
+        use degenbot_pools::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
+        use degenbot_pools::TickInfo;
         use hashbrown::HashMap;
         let mut tick_data = HashMap::new();
         if coverage == PoolTickCoverage::Tracked {
@@ -1838,8 +1839,9 @@ mod tests {
 
     /// Register a Sparse V4 pool directly in the driver's shared core.
     fn register_sparse_v4(driver: &EngineDriver, pool_manager: Address, pool_id: V4PoolId) -> u64 {
-        use crate::bot_core::{PoolTickCoverage, RegisterV4PoolParams};
         use alloy::primitives::U256;
+        use degenbot_pools::state::v3_state::PoolTickCoverage;
+        use degenbot_pools::state::v4_state::RegisterV4PoolParams;
         use degenbot_pools::state::v4_state::V4PoolKey;
         use hashbrown::HashMap;
         driver
@@ -1914,8 +1916,8 @@ mod tests {
     /// (here: a Tracked pool with no provider fails both times).
     #[tokio::test]
     async fn failed_driver_lifecycle_is_retriable_and_not_verified() {
-        use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams};
         use alloy::primitives::U256;
+        use degenbot_pools::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
         use hashbrown::HashMap;
 
         let driver = driver_for_test();
@@ -1923,7 +1925,7 @@ mod tests {
         let mut tick_data = HashMap::new();
         tick_data.insert(
             60,
-            crate::bot_core::TickInfo {
+            degenbot_pools::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(100),
                 liquidity_net: 100i128,
                 block: 0,

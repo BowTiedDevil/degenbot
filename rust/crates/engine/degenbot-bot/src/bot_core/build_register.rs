@@ -30,7 +30,8 @@ use super::construction_io::ConstructionIo;
 use super::pool_builder::builder;
 use super::pool_builder::construction_door::PoolConstruction;
 use super::pool_builder::route;
-use super::registration_ledger::{RefusalKind, RegisteredPoolFamily, RegistrationPhase};
+use super::registration_ledger::{RefusalKind, RegistrationPhase};
+use degenbot_pools::sim::registry::RegisteredPoolFamily;
 
 /// The `calculate_tokens_out` refusal (the legacy Python surface: a
 /// `ValueError` for the overflow/on-chain-revert and unknown-pool classes,
@@ -242,7 +243,7 @@ impl Bot {
     /// shell's `Debug`-format surface is unchanged).
     ///
     /// # Errors
-    /// [`CurveInputsError`](super::CurveInputsError) as the state method.
+    /// [`CurveInputsError`](degenbot_pools::sim::curve_dy_io::CurveInputsError) as the state method.
     pub fn curve_get_dy(
         &self,
         pool_id: u64,
@@ -251,7 +252,7 @@ impl Bot {
         dx: U256,
         block_number: u64,
         override_balances: Option<&[U256]>,
-    ) -> Result<U256, super::CurveInputsError> {
+    ) -> Result<U256, degenbot_pools::sim::curve_dy_io::CurveInputsError> {
         self.state_arc().read_at(LockSite::Orchestrator).get_dy(
             pool_id,
             i,
@@ -304,9 +305,11 @@ impl Bot {
 #[expect(clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use super::super::{RegisterCurvePoolParams, RegisterV2PoolParams, RegisterV3PoolParams};
+    use super::super::RegisterCurvePoolParams;
     use super::*;
+    use degenbot_pools::state::v2_state::RegisterV2PoolParams;
     use degenbot_pools::state::v3_state::PoolTickCoverage;
+    use degenbot_pools::state::v3_state::RegisterV3PoolParams;
     use degenbot_substrate::PoolRegistration;
 
     /// A non-JSON factory (CREATE2 verify skipped).
@@ -508,7 +511,10 @@ mod tests {
             )
             .expect_err("unknown pool refused");
         assert!(
-            matches!(err, super::super::CurveInputsError::UnknownPool(_)),
+            matches!(
+                err,
+                degenbot_pools::sim::curve_dy_io::CurveInputsError::UnknownPool(_)
+            ),
             "{err:?}"
         );
     }

@@ -22,7 +22,7 @@ use crate::bot::errmap::{
 };
 use degenbot_bot::bot_core::pool_ops::{self, SwapOpError};
 use degenbot_bot::bot_core::refresh::{RefreshError, RefreshOutcome};
-use degenbot_bot::bot_core::TickInfo;
+use degenbot_pools::TickInfo;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::swap_simulation::{
     Caveats, OverrideOutcome, OverrideState, ReservePairSwapOutcome, SwapOutcome, SwapRead,
@@ -2883,9 +2883,9 @@ fn concentrated_liquidity_snapshot_fields(
     token1: String,
     fee: u32,
     tick_spacing: i32,
-    state: &dyn degenbot_bot::bot_core::ConcentratedLiquidityPool,
+    state: &dyn degenbot_pools::sim::registry::ConcentratedLiquidityPool,
 ) -> ConcentratedLiquiditySnapshotFields {
-    use degenbot_bot::bot_core::PoolTickCoverage;
+    use degenbot_pools::state::v3_state::PoolTickCoverage;
     let tick_data = state
         .tick_data()
         .iter()
@@ -3502,19 +3502,19 @@ pub enum PyPoolTickCoverage {
 impl PyPoolTickCoverage {
     /// Convert from the core enum.
     #[must_use]
-    pub const fn from_core(coverage: degenbot_bot::bot_core::PoolTickCoverage) -> Self {
+    pub const fn from_core(coverage: degenbot_pools::state::v3_state::PoolTickCoverage) -> Self {
         match coverage {
-            degenbot_bot::bot_core::PoolTickCoverage::Sparse => Self::Sparse,
-            degenbot_bot::bot_core::PoolTickCoverage::Tracked => Self::Tracked,
+            degenbot_pools::state::v3_state::PoolTickCoverage::Sparse => Self::Sparse,
+            degenbot_pools::state::v3_state::PoolTickCoverage::Tracked => Self::Tracked,
         }
     }
 
     /// The matching core enum.
     #[must_use]
-    pub const fn to_core(self) -> degenbot_bot::bot_core::PoolTickCoverage {
+    pub const fn to_core(self) -> degenbot_pools::state::v3_state::PoolTickCoverage {
         match self {
-            Self::Sparse => degenbot_bot::bot_core::PoolTickCoverage::Sparse,
-            Self::Tracked => degenbot_bot::bot_core::PoolTickCoverage::Tracked,
+            Self::Sparse => degenbot_pools::state::v3_state::PoolTickCoverage::Sparse,
+            Self::Tracked => degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
         }
     }
 }

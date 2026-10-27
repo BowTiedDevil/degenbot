@@ -777,7 +777,7 @@ fn v2_reserve_refusal_names_its_reason() {
 
 #[tokio::test]
 async fn build_v3_assembles_sparse_register_params_from_onchain() {
-    use crate::bot_core::PoolTickCoverage;
+    use degenbot_pools::state::v3_state::PoolTickCoverage;
     // Fake factory NOT in the JSON → CREATE2 verify is skipped (ad-hoc path).
     let factory: Address =
         alloy::primitives::address!("0x1111111111111111111111111111111111111111");
@@ -830,7 +830,7 @@ async fn build_v3_assembles_sparse_register_params_from_onchain() {
 
 #[tokio::test]
 async fn build_v4_assembles_sparse_register_params_from_onchain() {
-    use crate::bot_core::PoolTickCoverage;
+    use degenbot_pools::state::v3_state::PoolTickCoverage;
     let pm: Address = alloy::primitives::address!("0x3333333333333333333333333333333333333333");
     let pid: [u8; 32] = [0xcd; 32];
 
@@ -939,8 +939,8 @@ impl degenbot_db::snapshot::TickMapDb for FakeTickMapDb {
 /// pool's word 0 from chain and finds it agrees with the DB rows.
 #[tokio::test]
 async fn build_v3_db_hit_yields_tracked() {
-    use crate::bot_core::PoolTickCoverage;
     use degenbot_db::snapshot::{LiquidityAtTick, LiquidityMap};
+    use degenbot_pools::state::v3_state::PoolTickCoverage;
     use hashbrown::HashMap;
 
     let factory: Address =
@@ -1007,8 +1007,8 @@ async fn build_v3_db_hit_yields_tracked() {
 /// mismatch (regression 8c50e0cd).
 #[tokio::test]
 async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
-    use crate::bot_core::PoolTickCoverage;
     use degenbot_db::snapshot::{LiquidityAtTick, LiquidityMap};
+    use degenbot_pools::state::v3_state::PoolTickCoverage;
     use hashbrown::HashMap;
 
     let factory: Address =
@@ -2370,7 +2370,8 @@ async fn resolve_v4_identity_empty_overrides_is_missing_identity() {
 // ── Construction route: route order + get-or-register + typed refusals ──
 
 use crate::bot_core::pool_builder::route;
-use crate::bot_core::{Bot, RegisteredPoolFamily};
+use crate::bot_core::Bot;
+use degenbot_pools::sim::registry::RegisteredPoolFamily;
 use degenbot_substrate::state_lock::LockSite;
 
 fn v3_route() -> route::V3RouteInputs<'static> {

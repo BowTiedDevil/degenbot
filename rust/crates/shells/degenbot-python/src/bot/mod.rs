@@ -54,14 +54,17 @@ use crate::bot::token::PyErc20Token;
 use degenbot_bot::bot_core::pool_builder::construction_door::PoolConstruction;
 use degenbot_bot::bot_core::pool_builder::route::{self, BuiltIdentity};
 use degenbot_bot::bot_core::registration_ledger::RefusalKind;
-use degenbot_bot::bot_core::PoolTickCoverage;
-use degenbot_bot::bot_core::RegisteredPoolFamily;
 use degenbot_bot::bot_core::{
-    Bot, RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
-    RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
-    RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey,
+    Bot, RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams,
+    RegisterCurvePoolParams,
 };
 use degenbot_pools::sim::registration_refusal::SpecRefusal;
+use degenbot_pools::sim::registry::RegisteredPoolFamily;
+use degenbot_pools::state::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
+use degenbot_pools::state::v2_state::RegisterV2PoolParams;
+use degenbot_pools::state::v3_state::PoolTickCoverage;
+use degenbot_pools::state::v3_state::RegisterV3PoolParams;
+use degenbot_pools::state::v4_state::{RegisterV4PoolParams, V4PoolKey};
 use degenbot_substrate::{PoolLookup, PoolRegistration};
 use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
@@ -2160,8 +2163,8 @@ impl PyBot {
         };
         let dict = build_tick_rows_py(py, &rows)?;
         let cov_str = match coverage {
-            degenbot_bot::bot_core::PoolTickCoverage::Tracked => "tracked",
-            degenbot_bot::bot_core::PoolTickCoverage::Sparse => "sparse",
+            degenbot_pools::state::v3_state::PoolTickCoverage::Tracked => "tracked",
+            degenbot_pools::state::v3_state::PoolTickCoverage::Sparse => "sparse",
         };
         Ok(Some((dict, cov_str.to_string())))
     }
@@ -2246,8 +2249,8 @@ impl PyBot {
         };
         let dict = build_tick_rows_py(py, &rows)?;
         let cov_str = match coverage {
-            degenbot_bot::bot_core::PoolTickCoverage::Tracked => "tracked",
-            degenbot_bot::bot_core::PoolTickCoverage::Sparse => "sparse",
+            degenbot_pools::state::v3_state::PoolTickCoverage::Tracked => "tracked",
+            degenbot_pools::state::v3_state::PoolTickCoverage::Sparse => "sparse",
         };
         Ok(Some((dict, cov_str.to_string())))
     }

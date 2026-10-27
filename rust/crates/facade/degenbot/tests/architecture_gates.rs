@@ -2289,7 +2289,7 @@ fn assert_umbrella_aliases_catalogged(
         .filter(|line| line.trim().starts_with("pub use degenbot"))
         .count();
     assert_eq!(
-        alias_count, 49,
+        alias_count, 54,
         "the umbrella alias count moved; update the catalog row that states it"
     );
     for line in facade_lib.lines() {

@@ -46,7 +46,8 @@ use super::curve_choreography;
 use super::parity;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::curve_data_provider_impl::RpcCurveDataProvider;
-use crate::bot_core::{PoolTickCoverage, TickInfo};
+use degenbot_pools::state::v3_state::PoolTickCoverage;
+use degenbot_pools::TickInfo;
 use degenbot_substrate::planning::{TickMapPoolIdentity, TickMapSeed};
 use degenbot_substrate::tick_assembly::{
     chain_arm, reconcile_tracked_rows, resolve_tick_map_arm, seed_row_words, TickMapAssemblyError,

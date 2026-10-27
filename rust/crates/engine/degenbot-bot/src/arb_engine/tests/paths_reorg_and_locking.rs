@@ -1,7 +1,7 @@
 use super::*;
-use crate::bot_core::PoolLookup;
 use degenbot_pools::families::buffered_event::PoolLiquidityUpdate;
 use degenbot_substrate::concentrated_liquidity_route::ApplyOutcome;
+use degenbot_substrate::PoolLookup;
 
 #[test]
 fn inspect_path_returns_hop_details() {
@@ -16,7 +16,7 @@ fn inspect_path_returns_hop_details() {
     );
     // Register a V3 pool
     let tick_data = inspect_test_v3_tick_data();
-    let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+    let v3_key = engine.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
         address: Address::from([0x22u8; 20]),
         token0: Address::from([0u8; 20]),
         token1: Address::from([1u8; 20]),
@@ -29,16 +29,16 @@ fn inspect_path_returns_hop_details() {
         tick_data,
         update_block: 0,
         tick_data_block: None,
-        coverage: crate::arb_engine::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
     // Register a V4 pool
     let v4_key = engine
-        .register_v4_pool(&crate::bot_core::RegisterV4PoolParams {
+        .register_v4_pool(&degenbot_pools::state::v4_state::RegisterV4PoolParams {
             pool_manager: Address::from([0x33u8; 20]),
             pool_id: [0xabu8; 32],
-            pool_key: crate::bot_core::V4PoolKey {
+            pool_key: degenbot_pools::state::v4_state::V4PoolKey {
                 currency0: Address::from([0u8; 20]),
                 currency1: Address::from([1u8; 20]),
                 fee: 10000,
@@ -50,7 +50,7 @@ fn inspect_path_returns_hop_details() {
             liquidity: 1_000_000,
             tick: 0,
             tick_data: HashMap::new(),
-            coverage: crate::arb_engine::PoolTickCoverage::Tracked,
+            coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
             ..Default::default()
         })
         .expect("V4 registration should succeed");
@@ -115,11 +115,11 @@ fn solve_3hop_v3_v3_v3_path() {
     let mut engine = ArbitrageEngine::new();
     let sp_0 = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // 1:1 price (tick 0)
                                                                         // Helper to create minimal tick data with initialized ticks at -60 and +60
-    let make_tick_data = || -> HashMap<i32, crate::bot_core::TickInfo> {
+    let make_tick_data = || -> HashMap<i32, degenbot_pools::TickInfo> {
         let mut td = HashMap::new();
         td.insert(
             -60,
-            crate::bot_core::TickInfo {
+            degenbot_pools::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(100),
                 liquidity_net: 100i128,
                 block: 0,
@@ -127,7 +127,7 @@ fn solve_3hop_v3_v3_v3_path() {
         );
         td.insert(
             60,
-            crate::bot_core::TickInfo {
+            degenbot_pools::TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(100),
                 liquidity_net: -100i128,
                 block: 0,
@@ -149,7 +149,7 @@ fn solve_3hop_v3_v3_v3_path() {
         tick_data: make_tick_data(),
         update_block: 0,
         tick_data_block: None,
-        coverage: crate::arb_engine::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
@@ -167,7 +167,7 @@ fn solve_3hop_v3_v3_v3_path() {
         tick_data: make_tick_data(),
         update_block: 0,
         tick_data_block: None,
-        coverage: crate::arb_engine::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
@@ -185,7 +185,7 @@ fn solve_3hop_v3_v3_v3_path() {
         tick_data: make_tick_data(),
         update_block: 0,
         tick_data_block: None,
-        coverage: crate::arb_engine::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
@@ -248,7 +248,7 @@ fn solve_3hop_mixed_v2_v3_v2_path() {
     let mut tick_data = HashMap::new();
     tick_data.insert(
         -60,
-        crate::bot_core::TickInfo {
+        degenbot_pools::TickInfo {
             liquidity_gross: alloy::primitives::U128::from(100),
             liquidity_net: 100i128,
             block: 0,
@@ -256,7 +256,7 @@ fn solve_3hop_mixed_v2_v3_v2_path() {
     );
     tick_data.insert(
         60,
-        crate::bot_core::TickInfo {
+        degenbot_pools::TickInfo {
             liquidity_gross: alloy::primitives::U128::from(100),
             liquidity_net: -100i128,
             block: 0,
@@ -275,7 +275,7 @@ fn solve_3hop_mixed_v2_v3_v2_path() {
         tick_data,
         update_block: 0,
         tick_data_block: None,
-        coverage: crate::arb_engine::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
@@ -518,9 +518,9 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
     // first time (S2b). apply_swap journals scalars; the restore path
     // pops them + reverse-applies tick priors. An in-range Mint journals
     // scalar_priors: Some so the bump rolls back too.
-    use crate::arb_engine::PoolTickCoverage;
-    use crate::bot_core::TickInfo;
     use alloy::primitives::U128;
+    use degenbot_pools::state::v3_state::PoolTickCoverage;
+    use degenbot_pools::TickInfo;
     let engine = ArbitrageEngine::new();
     let pool_addr = Address::from([0x55u8; 20]);
     // Register a V3 pool at tick 0, 1:1 price, one initialized tick at +60
@@ -534,7 +534,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
             block: 0,
         },
     );
-    let pool_id = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+    let pool_id = engine.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
         address: pool_addr,
         token0: Address::ZERO,
         token1: Address::from([1u8; 20]),
@@ -649,7 +649,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
 /// the shared core.
 #[test]
 fn with_core_adopts_shared_bot_state() {
-    use crate::bot_core::RegisterV2PoolParams;
+    use degenbot_pools::state::v2_state::RegisterV2PoolParams;
     use degenbot_substrate::BotState;
     use std::sync::Arc;
     // Build a shared core with one V2 pool registered directly into `BotState`.
@@ -691,7 +691,7 @@ fn with_core_adopts_shared_bot_state() {
 /// than silently producing an unresolved/invalid path).
 #[test]
 fn register_path_rejects_pool_id_not_in_bot() {
-    use crate::bot_core::RegisterV2PoolParams;
+    use degenbot_pools::state::v2_state::RegisterV2PoolParams;
     use degenbot_substrate::BotState;
     use std::sync::Arc;
     let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
@@ -756,10 +756,10 @@ fn register_path_rejects_pool_id_not_in_bot() {
 #[test]
 #[expect(clippy::too_many_lines)]
 fn process_backfill_logs_stamps_per_log_block_number() {
-    use crate::arb_engine::PoolTickCoverage;
     use alloy::primitives::{Address, Bytes, B256};
     use alloy::rpc::types::Log;
     use degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
+    use degenbot_pools::state::v3_state::PoolTickCoverage;
     /// Build a V3 Swap log carrying post-swap scalars, at `block_number`.
     /// data = abi.encode(int256 amount0, int256 amount1, uint160 sqrtPriceX96,
     /// uint128 liquidity, int24 tick) = 5 × 32 bytes.

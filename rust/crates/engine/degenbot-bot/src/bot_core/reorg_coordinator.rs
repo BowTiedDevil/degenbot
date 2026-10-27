@@ -194,12 +194,13 @@ impl ReorgCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bot_core::{Bot, RegisterV2PoolParams};
+    use crate::bot_core::Bot;
     use ::degenbot_pools::state::state_history::{ReorgJournal, V2BlockDelta};
     use alloy::primitives::{aliases::U112, Address, Bytes, I256, U128, U256};
     use alloy::rpc::types::Log;
     use degenbot_pools::solve::affected::AffectedKey;
     use degenbot_pools::solve::HopType;
+    use degenbot_pools::state::v2_state::RegisterV2PoolParams;
     use hashbrown::HashMap;
     use std::sync::Arc;
 
@@ -486,7 +487,7 @@ mod tests {
     /// `Sparse` coverage). Registration scalars:
     /// `sqrt_price` = 1<<96, liquidity = `1_000_000`, tick = 0.
     fn bot_with_v3(pool_addr: Address, update_block: u64) -> (Arc<Bot>, u64) {
-        use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams};
+        use degenbot_pools::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
             .state_arc()
@@ -701,7 +702,8 @@ mod tests {
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
         update_block: u64,
     ) -> (Arc<Bot>, u64) {
-        use crate::bot_core::{PoolTickCoverage, RegisterV4PoolParams, V4PoolKey};
+        use degenbot_pools::state::v3_state::PoolTickCoverage;
+        use degenbot_pools::state::v4_state::{RegisterV4PoolParams, V4PoolKey};
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
             .state_arc()

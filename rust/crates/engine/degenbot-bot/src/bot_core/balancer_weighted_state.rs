@@ -88,7 +88,7 @@ mod tests {
         let mut core = BotState::new();
         // Register a V2 pool at pool_id 1, then try the Balancer apply path.
         let v2 = core
-            .register_v2_pool(&crate::bot_core::RegisterV2PoolParams {
+            .register_v2_pool(&degenbot_pools::state::v2_state::RegisterV2PoolParams {
                 address: Address::repeat_byte(0x22),
                 token0: Address::repeat_byte(0x01),
                 token1: Address::repeat_byte(0x02),

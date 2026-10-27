@@ -552,7 +552,7 @@ mod tests {
             for (tick, net) in [(-20i32, 1_000_000i128), (10, -1_000_000), (20, 1_000_000)] {
                 tick_data.insert(
                     tick,
-                    crate::bot_core::TickInfo {
+                    degenbot_pools::TickInfo {
                         liquidity_gross: alloy::primitives::U128::from(1_000_000u64),
                         liquidity_net: net,
                         block: 0,
@@ -560,7 +560,7 @@ mod tests {
                 );
             }
             guard
-                .register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+                .register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
                     address: Address::from([0xddu8; 20]),
                     token0: Address::from([0xa0u8; 20]),
                     token1: Address::from([0xa1u8; 20]),
@@ -572,7 +572,7 @@ mod tests {
                     tick: 0,
                     tick_data,
                     update_block: 100,
-                    coverage: crate::bot_core::PoolTickCoverage::Tracked,
+                    coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
                     fetcher: None,
                     ..Default::default()
                 })
@@ -805,7 +805,7 @@ mod tests {
         for (tick, net) in [(-20i32, 1_000_000i128), (10, -1_000_000), (20, 1_000_000)] {
             over_ticks.insert(
                 tick,
-                crate::bot_core::TickInfo {
+                degenbot_pools::TickInfo {
                     liquidity_gross: alloy::primitives::U128::from(1_000_000u64),
                     liquidity_net: net,
                     block: 0,
