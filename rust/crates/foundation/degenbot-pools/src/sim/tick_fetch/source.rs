@@ -23,11 +23,12 @@
 
 //! ## Sync, not async
 
-//! The trait method is synchronous. Consumers run in synchronous call sites
-//! already wrapped in `py.detach` (GIL release); the alloy impl bridges the
-//! async `eth_call` internally via `get_runtime().block_on`, and the
-//! construction-I/O impl bridges via `block_in_place`/`block_on` — the
-//! pattern in `bot_core::pool_builder::tick_source`. A future pure-async
+//! The trait method is synchronous, and every implementation owns the bridge to
+//! its `async` reads through [`degenbot_core::runtime::bridged_block_on`] (an
+//! in-runtime `block_in_place` hand-off, the shared runtime otherwise). The
+//! callable-from contract that buys — inside the ambient multi-threaded
+//! runtime, on a construction thread, on a driver's `detach` thread, or in a
+//! bare standalone consumer — is stated on the trait. A future pure-async
 //! standalone `Bot` API can introduce a sibling `async` trait sharing the
 //! same value types.
 
@@ -93,6 +94,18 @@ impl From<&V4PoolIdentity> for TickWordKey {
     }
 }
 
+impl TickWordKey {
+    /// The pool's tick spacing — the bit -> tick resolution the word -> tick
+    /// mapping needs (both key variants carry it; the identity is otherwise
+    /// arm-specific).
+    #[must_use]
+    pub fn tick_spacing(&self) -> i32 {
+        match self {
+            Self::V3 { tick_spacing, .. } | Self::V4 { tick_spacing, .. } => *tick_spacing,
+        }
+    }
+}
+
 /// One fetched tick-bitmap word's data, returned by [`TickWordSource`].
 ///
 /// `ticks` may be empty — a fetched word whose bitmap is all-zero has no
@@ -146,9 +159,15 @@ pub enum TickWordFetchError {
 /// Chain arm AFTER the Store arm's closure has returned and dropped the
 /// `BotState` read guard (two-phase lock protocol — no `BotState` guard held
 /// across the RPC read). A pyo3-adapter impl that re-enters the GIL must do
-/// so via the standard `Python::attach` per-call hop pattern; an alloy-backed
-/// impl releases the GIL across the RPC via `py.detach` +
-/// `get_runtime().block_on`.
+/// so via the standard `Python::attach` per-call hop pattern.
+///
+/// A read is callable from a synchronous call site on EITHER side of the
+/// runtime boundary: an impl bridges its async reads with
+/// [`degenbot_core::runtime::bridged_block_on`], which hands the calling
+/// worker's scheduler duties off when the caller is already inside the ambient
+/// multi-threaded runtime. The calling thread is blocked for the whole word's
+/// RPCs either way, so callers must not hold a lock they cannot afford to hold
+/// for a multi-second RPC.
 ///
 /// `Send + Sync` so it can live behind an `Arc`/`RwLock` on the engine/pool
 /// side.

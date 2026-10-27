@@ -5,9 +5,9 @@
 #
 # The pin is review-required: `architecture_gates.rs::pools_root_surface_is_pinned`
 # fails when a module is added, removed, or re-homed without a review of this
-# file, and the root `pub` item count (680 after i2's second half deleted
-# the miss-path shim trait and its value/error duplicates) is asserted so
-# untracked surface growth fails loudly.
+# file, and the root `pub` item count (681 after the tick-word adapter
+# consolidation added `TickWordKey::tick_spacing` — the one accessor the
+# unified adapter needs) is asserted so untracked surface growth fails loudly.
 #
 # Regenerate: rg -n '^pub mod' rust/crates/foundation/degenbot-pools/src/lib.rs
 # plus rg -c '^\s*pub (fn|struct|enum|trait|mod|const|type|use)' over src/.

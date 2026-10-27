@@ -39,7 +39,7 @@ use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
 
 use super::builder::{self, PoolBuilderError, V4BuildResult, V4PoolBuildOverrides};
 use super::choreography;
-use super::tick_source::ConstructionIoTickWordSource;
+use super::tick_source;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::registration_ledger::BuildFailure;
 use crate::bot_core::{Bot, RegisteredPoolFamily};
@@ -435,9 +435,7 @@ async fn construct_v3(
     // gets sparse-map backfill.
     params.fetcher = match &v3.fetcher {
         Some(source) => Some(Arc::clone(source)),
-        None => Some(super::tick_source::ConstructionIoTickWordSource::attached(
-            io,
-        )),
+        None => Some(tick_source::attached(io)),
     };
     if let Some(slot_layout) = v3.slot_layout {
         params.slot_layout = slot_layout;
@@ -529,7 +527,7 @@ async fn construct_v4(
     // Sparse-map parity (the V4 twin of the V3 door arm): the core attaches
     // its own ConstructionIo-backed tick-word source for the live-miss
     // backfill, so no caller callback is needed.
-    built.params.fetcher = Some(ConstructionIoTickWordSource::attached(io));
+    built.params.fetcher = Some(tick_source::attached(io));
     let verdict = bot
         .state_arc()
         .write_at(LockSite::Core)

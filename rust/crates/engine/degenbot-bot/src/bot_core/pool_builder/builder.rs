@@ -918,10 +918,10 @@ pub async fn build_balancer_stable(
 /// (so the `Tracked`/`Sparse` precedence, the Tracked intake reconciliation,
 /// and the Db-empty semantics are identical to
 /// `tick_assembly::assemble_v3_tick_map`), then runs the async-native Chain
-/// transport only on a Db miss. This module's `bootstrap_v3_tick_map` is the
-/// builder's own Chain adapter: it cannot `block_on` the sync
-/// [`TickWordSource`] trait object from the async registration runtime (the
-/// nested-`block_on` deadlock class). Both arms mint through the shared
+/// transport only on a Db miss. This module's `bootstrap_tick_map` is the
+/// builder's own Chain adapter: it drives the shared transport-generic loop
+/// directly rather than parking a runtime worker on the synchronous
+/// [`TickWordSource`] trait object. Both arms mint through the shared
 /// [`chain_arm`](degenbot_substrate::tick_assembly::chain_arm) /
 /// `resolve_tick_map_arm` seed vocabulary.
 ///
@@ -955,7 +955,11 @@ async fn assemble_db_or_chain_v3(
         return Ok(seed);
     }
     // DB miss -> Chain arm (Sparse).
-    let (ticks, _bitmap) = bootstrap_v3_tick_map(io, address, tick, tick_spacing, block)
+    let key = TickWordKey::V3 {
+        address,
+        tick_spacing,
+    };
+    let (ticks, _bitmap) = bootstrap_tick_map(io, &key, tick, block)
         .await
         .map_err(PoolBuilderError::Rpc)?;
     Ok(chain_arm(Some(ticks)).into_seed(block, TickMapPoolIdentity::V3(address)))
@@ -995,10 +999,14 @@ async fn assemble_db_or_chain_v4(
         return Ok(seed);
     }
     // DB miss -> Chain arm (Sparse).
-    let (ticks, _bitmap) =
-        bootstrap_v4_tick_map(io, state_view, pool_id, tick, tick_spacing, block)
-            .await
-            .map_err(PoolBuilderError::Rpc)?;
+    let key = TickWordKey::V4 {
+        state_view,
+        pool_id,
+        tick_spacing,
+    };
+    let (ticks, _bitmap) = bootstrap_tick_map(io, &key, tick, block)
+        .await
+        .map_err(PoolBuilderError::Rpc)?;
     Ok(chain_arm(Some(ticks)).into_seed(
         block,
         TickMapPoolIdentity::V4 {
@@ -1085,43 +1093,35 @@ fn tick_word_i16(word: i64) -> Result<i16, PoolBuilderError> {
     })
 }
 
-/// Chain-arm single-word tick bootstrap over [`ConstructionIo`] — the V3
-/// portion of `assemble_v3_tick_map`'s Chain arm, inlined over the generic RPC
-/// primitive so a bare `ConstructionIo` (no `TickWordSource`/db) can seed a
-/// Sparse pool. Mirrors `AlloyTickWordSource::fetch_tick_word` and
-/// the Python Branch 3 loop verbatim: compute the word, read `tickBitmap`, on a
-/// non-zero bitmap enumerate the 256 set bits and read each tick's
-/// `ticks(int24)` liquidity.
+/// Chain-arm single-word tick bootstrap over [`ConstructionIo`] — the Chain arm
+/// of `assemble_{v3,v4}_tick_map`, addressed by the pool identity's
+/// [`TickWordKey`] so the V3 (`tickBitmap`/`ticks`) and V4
+/// (`getTickBitmap`/`getTickLiquidity`) arms share one bootstrap.
 ///
 /// Coverage is always [`PoolTickCoverage::Sparse`] (only the single current
 /// word is seeded), so the pool is **live immediately** (decision D4) and the
 /// live-pump miss-detection backfills neighbour words during swap simulation.
-pub(crate) async fn bootstrap_v3_tick_map(
+pub(crate) async fn bootstrap_tick_map(
     io: &ConstructionIo,
-    address: Address,
+    key: &TickWordKey,
     tick: i32,
-    tick_spacing: i32,
     block: u64,
 ) -> Result<(HashMap<i32, TickInfo>, U256), ProviderError> {
     let (word, _) =
         degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
             tick,
-            tick_spacing,
+            key.tick_spacing(),
         );
     #[expect(clippy::expect_used)] // invariant-guarded (documented)
-    let word_i16 = i16::try_from(word).expect("V3 tick word fits in int16");
+    let word_i16 = i16::try_from(word).expect("a concentrated-liquidity tick word fits in int16");
     // The registration arm TOLERATES an unreadable bitmap (a provider that
     // can't serve `tickBitmap` degrades to an empty word → empty ticks →
     // Sparse, preserving the legacy builder's graceful fallback). The policy
     // lives in the shared loop; genuine transport/network and tick-read
     // failures still propagate, with full error fidelity.
-    let key = TickWordKey::V3 {
-        address,
-        tick_spacing,
-    };
     match fetch_tick_word_via(
         io,
-        &key,
+        key,
         word_i16,
         block,
         UnreadableBitmapPolicy::TreatAsEmpty,
@@ -1452,51 +1452,6 @@ pub async fn build_v3(
         slot_layout,
         known_bitmap_words: Vec::new(),
     })
-}
-
-/// Chain-arm single-word tick bootstrap over [`ConstructionIo`] for a V4 pool
-/// identified by (`pool_manager`, `pool_id`) — the V4 twin of
-/// [`bootstrap_v3_tick_map`]. Reads the bitmap via `getTickBitmap(bytes32,
-/// int16)` and each set tick's liquidity via `getTickLiquidity(bytes32,
-/// int24)` on the `pool_manager` (which exposes the same state-view getters);
-/// coverage is always [`PoolTickCoverage::Sparse`] so the pool is live
-/// immediately (D4).
-pub(crate) async fn bootstrap_v4_tick_map(
-    io: &ConstructionIo,
-    state_view: Address,
-    pool_id: [u8; 32],
-    tick: i32,
-    tick_spacing: i32,
-    block: u64,
-) -> Result<(HashMap<i32, TickInfo>, U256), ProviderError> {
-    let (word, _) =
-        degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
-            tick,
-            tick_spacing,
-        );
-    #[expect(clippy::expect_used)] // invariant-guarded (documented)
-    let word_i16 = i16::try_from(word).expect("V4 tick word fits in int16");
-    // Same graceful decode-error degradation as the V3 arm
-    // (`bootstrap_v3_tick_map`): an unreadable word → empty/Sparse. The
-    // policy lives in the shared loop; genuine transport/network and
-    // tick-read failures still propagate, with full error fidelity.
-    let key = TickWordKey::V4 {
-        state_view,
-        pool_id,
-        tick_spacing,
-    };
-    match fetch_tick_word_via(
-        io,
-        &key,
-        word_i16,
-        block,
-        UnreadableBitmapPolicy::TreatAsEmpty,
-    )
-    .await?
-    {
-        Some(fetched) => Ok((fetched.ticks, fetched.bitmap.unwrap_or(U256::ZERO))),
-        None => Ok((HashMap::new(), U256::ZERO)),
-    }
 }
 
 /// Caller-supplied V4 pool identity (mirrors the `register_v4_pool` argument

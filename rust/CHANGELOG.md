@@ -6,6 +6,20 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Changed
 
+- **ADR-084 D2b (`test-harness`):** `degenbot_simulation::harness` — the
+  executor-grammar lab (43 items, no production consumer) — is behind the
+  non-default `test-harness` feature. The shipped crate root is the engine
+  (`sim`), the fixture driver (`oracle`), and the capture generator
+  (`capture`), so `degenbot-arbitrage`, `degenbot-batch-executor`,
+  `degenbot-strategy`, `degenbot-submission`, the umbrella, the cdylib, and the
+  console no longer compile it. Sources are unchanged in place (the tier-3
+  artifact drift guard hashes files, not the API, and still runs in the
+  harness-free default build).
+
+  | Was | Is |
+  | --- | --- |
+  | `degenbot_simulation::harness` (default features) | `degenbot_simulation::harness` (feature `test-harness`) |
+
 - **ADR-084 capability-surface cut (W2 - the solve door):** the
   `degenbot-pools` solve tree is curated behind intent-named doors. The
   published-path removals, with their replacements:

@@ -3198,7 +3198,7 @@ fn an_unbound_word_source_reads_a_checked_empty_word() {
         enc(DynSolValue::Uint(U256::ZERO, 256)),
     );
     let io = io_with(f);
-    let source = super::tick_source::ConstructionIoTickWordSource::attached(&io);
+    let source = super::tick_source::attached(&io);
     let key = degenbot_pools::sim::tick_fetch::TickWordKey::V3 {
         address: TO,
         tick_spacing: 1,
@@ -3217,7 +3217,7 @@ fn an_unbound_word_source_refuses_an_overrunning_word() {
     // The word -> tick mapping (`(word << 8) * spacing`) is checked before any
     // RPC: an overrunning word is a typed refusal, never a wrapped bogus tick.
     let io = io_with(FakeRpc::new());
-    let source = super::tick_source::ConstructionIoTickWordSource::attached(&io);
+    let source = super::tick_source::attached(&io);
     let key = degenbot_pools::sim::tick_fetch::TickWordKey::V3 {
         address: TO,
         tick_spacing: 1,

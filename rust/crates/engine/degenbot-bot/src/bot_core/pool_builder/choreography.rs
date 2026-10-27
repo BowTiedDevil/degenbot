@@ -60,6 +60,27 @@ pub async fn eth_call(
         .map(|b| b.to_vec())
 }
 
+/// The ONE construction tick-read seam: wait for the tick-RPC pace gate, then
+/// run one encode→call→decode tick read.
+///
+/// The pace is tick-fetch-specific (it bounds a constrained archive source's
+/// tick-RPC rate — `builders.tick_fetch_min_interval_ms`), so it is not a
+/// general call pacer: only the tick-word ABI reads cross it. Every
+/// construction tick read does cross here — the tick-word loop's bitmap and
+/// tick reads, and the Db-seed reconcile's per-word bitmap reads — so the
+/// declared interval cannot be bypassed by reaching a leaf read directly.
+async fn paced_tick_read<T>(
+    io: &ConstructionIo,
+    to: Address,
+    data: Vec<u8>,
+    block: Option<u64>,
+    decode: fn(&[u8]) -> Result<T, ProviderError>,
+) -> Result<T, ProviderError> {
+    io.tick_fetch_pace().wait().await;
+    let bytes = eth_call(io, to, data, block).await?;
+    decode(&bytes)
+}
+
 /// Immutable-data shapes returned by the choreography (no `Py*` mirror).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct V2Immutable {
@@ -365,9 +386,14 @@ pub async fn fetch_tick_bitmap(
     word_position: i16,
     block: Option<u64>,
 ) -> Result<U256, ProviderError> {
-    io.tick_fetch_pace().wait().await;
-    let bytes = eth_call(io, address, abi::encode_tick_bitmap(word_position), block).await?;
-    abi::decode_tick_bitmap(&bytes)
+    paced_tick_read(
+        io,
+        address,
+        abi::encode_tick_bitmap(word_position),
+        block,
+        abi::decode_tick_bitmap,
+    )
+    .await
 }
 
 /// Fetch a V3 pool's tick liquidity via `ticks(int24)`.
@@ -381,9 +407,14 @@ pub async fn fetch_tick_data(
     tick: i32,
     block: Option<u64>,
 ) -> Result<(U128, i128), ProviderError> {
-    io.tick_fetch_pace().wait().await;
-    let bytes = eth_call(io, address, abi::encode_tick_data(tick), block).await?;
-    abi::decode_tick_data(&bytes)
+    paced_tick_read(
+        io,
+        address,
+        abi::encode_tick_data(tick),
+        block,
+        abi::decode_tick_data,
+    )
+    .await
 }
 
 /// Fetch a V4 pool's tick bitmap via `getTickBitmap(bytes32,int16)`.
@@ -398,15 +429,14 @@ pub async fn fetch_v4_tick_bitmap(
     word_position: i16,
     block: Option<u64>,
 ) -> Result<U256, ProviderError> {
-    io.tick_fetch_pace().wait().await;
-    let bytes = eth_call(
+    paced_tick_read(
         io,
         state_view,
         abi::encode_v4_tick_bitmap(&pool_id, word_position),
         block,
+        abi::decode_v4_tick_bitmap,
     )
-    .await?;
-    abi::decode_v4_tick_bitmap(&bytes)
+    .await
 }
 
 /// Fetch a V4 pool's tick liquidity via `getTickLiquidity(bytes32,int24)`.
@@ -421,15 +451,14 @@ pub async fn fetch_v4_tick_data(
     tick: i32,
     block: Option<u64>,
 ) -> Result<(U128, i128), ProviderError> {
-    io.tick_fetch_pace().wait().await;
-    let bytes = eth_call(
+    paced_tick_read(
         io,
         state_view,
         abi::encode_v4_tick_data(&pool_id, tick),
         block,
+        abi::decode_v4_tick_data,
     )
-    .await?;
-    abi::decode_v4_tick_data(&bytes)
+    .await
 }
 
 /// Fetch ERC-20 `name()` / `symbol()` / `decimals()` via three `eth_call`s.

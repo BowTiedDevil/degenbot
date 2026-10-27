@@ -7,8 +7,8 @@
 //! `chain: Option<&dyn TickWordSource>` parameter; no Python, no `PyBotIo`,
 //! no GIL. The `degenbot-python` shell constructs the same impl over a
 //! `PyBotIo`'s native provider (`make_tick_bootstrap_rpc`); the bot core's
-//! `ConstructionIoTickWordSource` reads the same loop through its own
-//! [`TickWordTransport`] impl over the construction I/O seam.
+//! live-miss source is the same adapter over its `ConstructionIo`
+//! [`TickWordTransport`] impl (`bot_core::pool_builder::tick_source`).
 //!
 //! ## One choreography, two transports
 //!
@@ -25,7 +25,9 @@
 //! [`fetch_tick_word_via`] is that loop, written once, generic over
 //! [`TickWordTransport`] — the two raw contract reads (bitmap, tick
 //! liquidity). The transports: [`AlloyProvider`] here, and the bot core's
-//! `ConstructionIo` (paced, `PyBotIo`-mirroring) over the same trait. The
+//! `ConstructionIo` (paced, `PyBotIo`-mirroring) over the same trait. One
+//! adapter ([`TransportTickWordSource`]) drives either transport, so the word
+//! range check, the error bucketing and the bridge exist once. The
 //! loop is also where the unreadable-bitmap contract decision lives
 //! ([`UnreadableBitmapPolicy`]): the registration arm degrades a malformed
 //! bitmap return to an empty word (the legacy graceful fallback — the pool
@@ -35,12 +37,13 @@
 //!
 //! ## Sync bridging
 //!
-//! [`TickWordSource`] is synchronous; the transports are `async`. The source
-//! impls bridge via [`degenbot_core::runtime::get_runtime`] + `block_on` (the
-//! bot core adds `block_in_place` under a running runtime) — the same pattern
-//! `PyBotIo::forward_call_to_provider` uses for its native fast path. A
-//! future pure-async standalone `Bot` API can introduce a sibling `async`
-//! trait sharing the same value types — out of scope here.
+//! [`TickWordSource`] is synchronous; the transports are `async`. Every source
+//! bridges through the ONE seam, [`degenbot_core::runtime::bridged_block_on`]
+//! (an `block_in_place` + ambient-handle drive inside a multi-threaded runtime,
+//! the shared runtime outside one) — so a read is callable from the
+//! registration path, the pump's threads, and a plain synchronous consumer
+//! alike. A future pure-async standalone `Bot` API can introduce a sibling
+//! `async` trait sharing the same value types — out of scope here.
 
 use hashbrown::HashMap;
 use std::future::Future;
@@ -48,7 +51,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{U128, U256};
 use degenbot_core::errors::ProviderError;
-use degenbot_core::runtime::get_runtime;
+use degenbot_core::runtime::bridged_block_on;
 use degenbot_pools::sim::tick_fetch::{
     FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource,
 };
@@ -142,11 +145,7 @@ pub async fn fetch_tick_word_via<T: TickWordTransport>(
     if bitmap.is_zero() {
         return Ok(None);
     }
-    let tick_spacing = match key {
-        TickWordKey::V3 { tick_spacing, .. } | TickWordKey::V4 { tick_spacing, .. } => {
-            *tick_spacing
-        }
-    };
+    let tick_spacing = key.tick_spacing();
     let mut ticks: HashMap<i32, TickInfo> = HashMap::new();
     for i in 0..=255u8 {
         if bitmap.bit(i.into()) {
@@ -170,30 +169,77 @@ pub async fn fetch_tick_word_via<T: TickWordTransport>(
     }))
 }
 
-/// [`TickWordSource`] impl backed by an [`AlloyProvider`].
+/// The ONE [`TickWordSource`] adapter: a [`TickWordTransport`] driven by the
+/// shared choreography loop and sync-bridged for the trait's synchronous call
+/// sites.
 ///
-/// Holds the provider by value (cloning is cheap — inner is `Arc`-shared) so
-/// the struct is `Send + Sync` (the trait bounds). Construct via
-/// [`AlloyTickWordSource::new`]. Manual `Debug` impl because `AlloyProvider`
-/// itself doesn't impl `Debug` (its inner `dyn Provider<Ethereum>` doesn't).
-#[derive(Clone)]
-pub struct AlloyTickWordSource {
-    provider: Arc<AlloyProvider>,
+/// The word-range check, the unreadable-bitmap policy (a miss refuses), the
+/// error bucketing, and the bridge are therefore identical for every
+/// transport; a source differs only in the transport it wraps —
+/// [`AlloyTickWordSource`] over an [`AlloyProvider`], the bot core's live-miss
+/// source over its construction I/O seam.
+pub struct TransportTickWordSource<T> {
+    transport: T,
 }
 
-impl std::fmt::Debug for AlloyTickWordSource {
+impl<T: TickWordTransport> std::fmt::Debug for TransportTickWordSource<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AlloyTickWordSource")
-            .field("provider", &"Arc<AlloyProvider>")
+        f.debug_struct("TransportTickWordSource")
+            .field("transport", &std::any::type_name::<T>())
             .finish()
     }
 }
 
-impl AlloyTickWordSource {
-    /// Construct a new tick-word source wrapping the given provider.
+impl<T: TickWordTransport> Clone for TransportTickWordSource<T>
+where
+    T: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            transport: self.transport.clone(),
+        }
+    }
+}
+
+impl<T: TickWordTransport> TransportTickWordSource<T> {
+    /// Wrap a transport in the shared source adapter.
+    #[must_use]
+    pub fn from_transport(transport: T) -> Self {
+        Self { transport }
+    }
+}
+
+impl TransportTickWordSource<Arc<AlloyProvider>> {
+    /// Construct a tick-word source over the given provider (the standalone
+    /// `cargo add degenbot` consumer's source).
     #[must_use]
     pub fn new(provider: Arc<AlloyProvider>) -> Self {
-        Self { provider }
+        Self::from_transport(provider)
+    }
+}
+
+/// The alloy-backed tick-word source — the standalone consumer's entry point.
+pub type AlloyTickWordSource = TransportTickWordSource<Arc<AlloyProvider>>;
+
+/// The shared-ownership alloy transport reads exactly like the provider it
+/// points at, so the source clones per call site without cloning the provider.
+impl TickWordTransport for Arc<AlloyProvider> {
+    async fn read_bitmap(
+        &self,
+        key: &TickWordKey,
+        word: i16,
+        block: u64,
+    ) -> Result<U256, ProviderError> {
+        (**self).read_bitmap(key, word, block).await
+    }
+
+    async fn read_tick(
+        &self,
+        key: &TickWordKey,
+        tick: i32,
+        block: u64,
+    ) -> Result<(U128, i128), ProviderError> {
+        (**self).read_tick(key, tick, block).await
     }
 }
 
@@ -237,7 +283,7 @@ impl TickWordTransport for AlloyProvider {
     }
 }
 
-impl TickWordSource for AlloyTickWordSource {
+impl<T: TickWordTransport> TickWordSource for TransportTickWordSource<T> {
     fn fetch_tick_word(
         &self,
         key: &TickWordKey,
@@ -248,21 +294,18 @@ impl TickWordSource for AlloyTickWordSource {
         // range cannot name a real bitmap slot.
         let word_i16 = i16::try_from(word).map_err(|_| TickWordFetchError::OutOfRange)?;
 
-        let provider = Arc::clone(&self.provider);
-        get_runtime()
-            .block_on(async move {
-                fetch_tick_word_via(
-                    &*provider,
-                    key,
-                    word_i16,
-                    block,
-                    // The miss path refuses: an unfetchable word must surface
-                    // as a fetch error, not degrade to a silently empty region.
-                    UnreadableBitmapPolicy::Refuse,
-                )
-                .await
-            })
-            .map_err(map_provider_err)
+        // The miss path refuses: an unfetchable word must surface as a fetch
+        // error, not degrade to a silently empty region the walker would cache
+        // as authoritative.
+        let read = fetch_tick_word_via(
+            &self.transport,
+            key,
+            word_i16,
+            block,
+            UnreadableBitmapPolicy::Refuse,
+        );
+
+        bridged_block_on(read).map_err(map_provider_err)
     }
 }
 
@@ -547,5 +590,30 @@ mod tests {
         assert_eq!(tick_info.liquidity_gross, U128::from(42u64));
         assert_eq!(tick_info.liquidity_net, -7i128);
         assert_eq!(tick_info.block, 9_999);
+    }
+
+    /// A tick-word read must be callable from a synchronous call site that is
+    /// ALREADY inside the multi-threaded runtime (the live-miss backfill runs
+    /// on the pump's threads). The bridge there is `block_in_place`; a bare
+    /// `block_on` on a runtime from one of its own worker threads panics.
+    #[test]
+    fn fetch_tick_word_works_from_inside_a_runtime_thread() {
+        let provider = v3_offline_provider(0, U256::ZERO, &[], 100);
+        let source = AlloyTickWordSource::new(Arc::new(provider));
+        let key = TickWordKey::V3 {
+            address: V3_POOL,
+            tick_spacing: 1,
+        };
+
+        let fetched = degenbot_core::runtime::get_runtime().block_on(async move {
+            tokio::spawn(async move { source.fetch_tick_word(&key, 0, 100) })
+                .await
+                .expect("the worker task completes")
+        });
+
+        assert!(
+            fetched.expect("ok").is_none(),
+            "the all-zero bitmap is a known-empty word"
+        );
     }
 }

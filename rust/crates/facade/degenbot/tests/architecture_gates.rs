@@ -2547,7 +2547,7 @@ fn collect_rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
 fn pools_root_surface_is_pinned() {
     // The root `pub` item count is part of the pin. ONE const: the count and
     // the failure message derive from it, so a snapshot bump is one edit.
-    const POOLS_ROOT_PUB_ITEMS: usize = 680;
+    const POOLS_ROOT_PUB_ITEMS: usize = 681;
     let census = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pools_root_surface_census.txt"),
     )

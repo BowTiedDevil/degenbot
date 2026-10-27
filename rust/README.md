@@ -308,9 +308,14 @@ oracles have one shared source of truth.
   committed bytecode and does not require solc, forge, or vyper.
 - Runtime hot paths must not read test fixtures. Keep ordinary fixture
   readers, generators, and heavyweight dependencies under tests/examples or an
-  explicit dev-only feature. The published `degenbot-simulation::harness` helper
-  is a deliberate exception: it is an investigation/oracle surface that loads
-  committed `tier3-oracle/artifacts/`, not a production execution path.
+  explicit dev-only feature. `degenbot-simulation`'s harness is an
+  investigation/oracle surface that loads committed
+  `tier3-oracle/artifacts/`, not a production execution path, so it sits behind
+  the non-default `test-harness` feature: the shipped crate root is the engine,
+  the fixture driver, and the capture generator. The crate's harness-driven test
+  targets declare `required-features = ["test-harness"]`, and the test and lint
+  lanes enable `degenbot-simulation/test-harness` explicitly, so the lab stays
+  executed rather than silently skipped.
 
 ## Build, feature, and verification matrix
 

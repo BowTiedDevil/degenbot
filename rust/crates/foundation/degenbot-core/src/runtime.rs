@@ -102,6 +102,40 @@ pub fn get_runtime() -> &'static Runtime {
     })
 }
 
+/// Drive `fut` to completion from a synchronous call site, inside or outside a
+/// Tokio runtime.
+///
+/// Inside a multi-threaded runtime the calling worker must hand its scheduler
+/// duties off before it blocks, so the in-runtime arm is `block_in_place` over
+/// a `block_on` on the ambient handle; outside any runtime the shared runtime
+/// ([`get_runtime`]) drives the future. A bare `Runtime::block_on` on a runtime
+/// from one of its own worker threads panics ("cannot start a runtime from
+/// within a runtime"), so sync-over-async call sites share this seam instead of
+/// each re-deriving the in-runtime check.
+///
+/// # Panics
+///
+/// Panics when called from inside a current-thread runtime: `block_in_place`
+/// needs a multi-threaded runtime (a current-thread worker has no sibling to
+/// hand its scheduler to). Sync-over-async call sites live on the ambient
+/// multi-threaded runtime or outside any runtime.
+pub fn bridged_block_on<F>(fut: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            assert_eq!(
+                handle.runtime_flavor(),
+                tokio::runtime::RuntimeFlavor::MultiThread,
+                "bridging a blocking call site needs the ambient multi-threaded runtime"
+            );
+            tokio::task::block_in_place(|| handle.block_on(fut))
+        }
+        Err(_) => get_runtime().block_on(fut),
+    }
+}
+
 #[cfg(test)]
 #[expect(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
@@ -156,6 +190,25 @@ mod tests {
         assert_eq!(row.count, rt.metrics().num_workers());
         assert_eq!(row.thread_name, "degenbot-io-rt-{n}");
         assert_eq!(row.sizing, row.sizing); // sizing text is documentation; presence is the contract
+    }
+
+    /// The bridge must work from BOTH sides of the runtime boundary: a plain
+    /// thread (the construction/`detach` call sites) and a task already running
+    /// on the ambient multi-threaded runtime (the pump's threads).
+    #[test]
+    fn bridged_block_on_runs_outside_and_inside_the_runtime() {
+        let outside = bridged_block_on(async { 7u8 });
+        assert_eq!(
+            outside, 7,
+            "an off-runtime caller drives the shared runtime"
+        );
+
+        let inside = get_runtime().block_on(async {
+            tokio::spawn(async { bridged_block_on(async { 9u8 }) })
+                .await
+                .expect("the runtime task completes")
+        });
+        assert_eq!(inside, 9, "an in-runtime caller must not panic");
     }
 
     #[test]
