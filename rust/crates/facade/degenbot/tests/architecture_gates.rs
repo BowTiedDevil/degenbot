@@ -2036,59 +2036,8 @@ fn capability_catalog_covers_every_public_crate() {
     }
 
     // Every door item the catalog names resolves to real code (ADR-084 D1's
-    // "every entry resolves to real code (gate-checked)" — the homes are
-    // checked above; the door-items column is checked here). A door item is
-    // either a qualified path (`sim::registry::PoolEntry`) or a bare item name
-    // (`WorkerRole`) that must be declared somewhere in the named crate.
-    for row in &rows {
-        let home_crates: Vec<String> = backtick_spans(&row[1])
-            .iter()
-            .filter(|token| token.starts_with("degenbot"))
-            .map(|token| {
-                token
-                    .split("::")
-                    .next()
-                    .expect("crate token")
-                    .replace('_', "-")
-            })
-            .collect();
-        for token in backtick_spans(&row[3]) {
-            if !token
-                .chars()
-                .next()
-                .is_some_and(|first| first.is_ascii_uppercase())
-            {
-                continue;
-            }
-            // A qualified path (`degenbot_pools::sim::registry::PoolEntry`)
-            // resolves against the crate it names; a bare name resolves
-            // against the row's home crate(s).
-            let target_crates: Vec<String> = if token.contains("::") {
-                vec![token
-                    .split("::")
-                    .next()
-                    .expect("crate token")
-                    .replace('_', "-")]
-            } else {
-                home_crates.clone()
-            };
-            let resolved = target_crates.iter().any(|package_name| {
-                let Some(manifest) = manifest_of.get(package_name) else {
-                    return false;
-                };
-                let src = Path::new(manifest)
-                    .parent()
-                    .expect("manifest parent")
-                    .join("src");
-                resolve_door_item(&src, token.as_str())
-            });
-            assert!(
-                resolved,
-                "catalog door item {token:?} does not resolve to a declared pub item                  in any home crate {home_crates:?} (row {:?})",
-                row[0]
-            );
-        }
-    }
+    // "every entry resolves to real code (gate-checked)").
+    assert_catalog_door_items_resolve(&rows, &manifest_of);
 
     // Every publishable crate appears at least once.
     let uncovered: Vec<&String> = publishable.difference(&catalogged).collect();
@@ -2155,6 +2104,66 @@ fn resolve_module_path(src: &Path, modules: &[&str], token: &str) {
             src.display()
         );
         dir = dir.join(segment);
+    }
+}
+
+/// Every door item the catalog names resolves to real code (ADR-084 D1's
+/// "every entry resolves to real code (gate-checked)" — the homes are checked
+/// by the caller; the door-items column is checked here). A door item is
+/// either a qualified path (`sim::registry::PoolEntry`) or a bare item name
+/// (`WorkerRole`) that must be declared somewhere in the named crate.
+fn assert_catalog_door_items_resolve(
+    rows: &[Vec<String>],
+    manifest_of: &std::collections::BTreeMap<String, String>,
+) {
+    for row in rows {
+        let home_crates: Vec<String> = backtick_spans(&row[1])
+            .iter()
+            .filter(|token| token.starts_with("degenbot"))
+            .map(|token| {
+                token
+                    .split("::")
+                    .next()
+                    .expect("crate token")
+                    .replace('_', "-")
+            })
+            .collect();
+        for token in backtick_spans(&row[3]) {
+            if !token
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_ascii_uppercase())
+            {
+                continue;
+            }
+            // A qualified path (`degenbot_pools::sim::registry::PoolEntry`)
+            // resolves against the crate it names; a bare name resolves
+            // against the row's home crate(s).
+            let target_crates: Vec<String> = if token.contains("::") {
+                vec![token
+                    .split("::")
+                    .next()
+                    .expect("crate token")
+                    .replace('_', "-")]
+            } else {
+                home_crates.clone()
+            };
+            let resolved = target_crates.iter().any(|package_name| {
+                let Some(manifest) = manifest_of.get(package_name) else {
+                    return false;
+                };
+                let src = Path::new(manifest)
+                    .parent()
+                    .expect("manifest parent")
+                    .join("src");
+                resolve_door_item(&src, token.as_str())
+            });
+            assert!(
+                resolved,
+                "catalog door item {token:?} does not resolve to a declared pub item                  in any home crate {home_crates:?} (row {:?})",
+                row[0]
+            );
+        }
     }
 }
 
@@ -2658,13 +2667,16 @@ fn collect_rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
 /// ADR-084 W5 phase 0: the `degenbot-pools` root surface is pinned by
 /// `pools_root_surface_census.txt` (review-required diff). A module added,
 /// removed, or re-homed at the pools root must review the snapshot in the
-/// same change; the root `pub` item count is asserted so untracked surface
+/// same change; the root `pub` name count is asserted so untracked surface
 /// growth fails loudly.
 #[test]
 fn pools_root_surface_is_pinned() {
-    // The root `pub` item count is part of the pin. ONE const: the count and
-    // the failure message derive from it, so a snapshot bump is one edit.
-    const POOLS_ROOT_PUB_ITEMS: usize = 681;
+    // The count is per NAME, not per statement: a declaration counts once, and
+    // a `pub use` counts one per re-exported name, so a name added to an
+    // existing `pub use a::b::{X, Y}` block moves the pin exactly as a new
+    // `pub fn` does. ONE const: the count and the failure message derive from
+    // it, so a snapshot bump is one edit.
+    const POOLS_ROOT_PUB_ITEMS: usize = 843;
     let census = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pools_root_surface_census.txt"),
     )
@@ -2715,12 +2727,22 @@ fn pools_root_surface_is_pinned() {
         count_pub_items(&workspace_root().join("crates/foundation/degenbot-pools/src"));
     assert_eq!(
         item_count, POOLS_ROOT_PUB_ITEMS,
-        "pools root `pub` item count moved from the pinned snapshot ({POOLS_ROOT_PUB_ITEMS});          review tests/pools_root_surface_census.txt before growing the surface"
+        "pools root `pub` name count moved from the pinned snapshot \
+         ({POOLS_ROOT_PUB_ITEMS}); review tests/pools_root_surface_census.txt \
+         before growing the surface"
     );
 }
 
-/// Count `pub` declarations in every `.rs` file under `dir` (the plan's
-/// appendix census regex).
+/// Count `pub` names in every `.rs` file under `dir` (the plan's appendix
+/// census, at NAME granularity).
+///
+/// A declaration (`pub fn`/`struct`/`enum`/`trait`/`mod`/`const`/`type`)
+/// counts one. A `pub use` counts one per re-exported name — the door's whole
+/// job is naming, so the census has to move when a name joins an existing
+/// `pub use a::b::{X, Y}` block, which a per-statement count cannot see. A
+/// tree list is counted from its brace group (recursively, so a nested `{…}`
+/// group contributes its own names); a single-path `pub use a::b::Single;`
+/// and a glob `pub use a::b::*;` count one.
 fn count_pub_items(dir: &Path) -> usize {
     let mut total = 0;
     let mut stack = vec![dir.to_path_buf()];
@@ -2732,24 +2754,202 @@ fn count_pub_items(dir: &Path) -> usize {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
-                if let Ok(text) = std::fs::read_to_string(&path) {
-                    for line in text.lines() {
-                        let line = line.trim_start();
-                        if line.starts_with("pub ")
-                            && [
-                                "fn ", "struct ", "enum ", "trait ", "mod ", "const ", "type ",
-                                "use ",
-                            ]
-                            .iter()
-                            .any(|kw| line[4..].starts_with(kw))
-                        {
-                            total += 1;
-                        }
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let lines: Vec<&str> = text.lines().collect();
+            let mut index = 0;
+            while index < lines.len() {
+                let line = lines[index].trim_start();
+                index += 1;
+                if !line.starts_with("pub ") {
+                    continue;
+                }
+                let rest = &line[4..];
+                if rest.starts_with("use ") {
+                    // A use tree may span lines; read to its terminator so a
+                    // multi-line block is counted once, from its whole text.
+                    let mut statement = line.to_owned();
+                    while !statement.contains(';') && index < lines.len() {
+                        statement.push(' ');
+                        statement.push_str(lines[index].trim());
+                        index += 1;
                     }
+                    total += reexported_name_count(&statement);
+                } else if [
+                    "fn ", "struct ", "enum ", "trait ", "mod ", "const ", "type ",
+                ]
+                .iter()
+                .any(|kw| rest.starts_with(kw))
+                {
+                    total += 1;
                 }
             }
         }
     }
     total
+}
+
+/// Re-exported names in one `pub use` statement (`statement` runs from the
+/// `pub` keyword to the terminator, possibly across lines).
+fn reexported_name_count(statement: &str) -> usize {
+    let body = statement
+        .split_once(';')
+        .map_or(statement, |(head, _)| head)
+        .trim();
+    let Some((_, tree)) = body.split_once('{') else {
+        return 1;
+    };
+    count_use_list_names(tree.trim_end().trim_end_matches('}'))
+}
+
+/// Names in one `pub use` brace list's inner text (the outer braces removed).
+fn count_use_list_names(list: &str) -> usize {
+    let mut entries: Vec<&str> = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (index, ch) in list.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                entries.push(&list[start..index]);
+                start = index + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    entries.push(&list[start..]);
+    entries
+        .into_iter()
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            if entry.contains('{') {
+                reexported_name_count(entry)
+            } else {
+                1
+            }
+        })
+        .sum()
+}
+
+/// ADR-084 D2: a capability home is a door, not a tree. Consumers reach the
+/// four capability modules at the `degenbot-pools` root (`families`, `sim`,
+/// `solve`, `state`); a reference into a module *beneath* one of them
+/// (`degenbot_pools::state::v3_state::…`) names an implementation module and
+/// bypasses the door `pools_root_surface_is_pinned` fixes the surface of.
+///
+/// The deep paths the tree still contains are frozen in
+/// `pools_deep_path_allowlist.txt`, which is shrink-only in both directions: a
+/// path missing from it is a new bypass, and a row with no remaining
+/// reference must leave in the same change that repoints the last use at the
+/// root door. A row is the capability + module pair, so a deeper name under an
+/// allowlisted path inherits the row.
+///
+/// The scan covers every `.rs` file of every member crate except the capability
+/// crate itself — the same reach as `solve_door_census_is_the_external_surface`,
+/// test/example targets included (they are separate crates that cannot see
+/// `pub(crate)`, which is how a lab ends up naming an implementation module).
+#[test]
+fn no_new_pools_deep_paths() {
+    let allowlist_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pools_deep_path_allowlist.txt");
+    let allowlist_text =
+        std::fs::read_to_string(&allowlist_path).expect("read tests/pools_deep_path_allowlist.txt");
+    let allowlist: std::collections::BTreeSet<String> = allowlist_text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        !allowlist.is_empty(),
+        "pools deep-path allowlist is empty; the gate would flag the whole \
+         current tree as new"
+    );
+
+    let pools_crate = workspace_root().join("crates/foundation/degenbot-pools");
+    let mut referenced = std::collections::BTreeSet::<String>::default();
+    for_each_rust_source(&workspace_root().join("crates"), &mut |path, text| {
+        // The capability crate owns these modules, so it names them directly.
+        if path.starts_with(&pools_crate) {
+            return;
+        }
+        referenced.extend(pools_deep_paths(text));
+    });
+
+    let new_paths: Vec<&String> = referenced.difference(&allowlist).collect();
+    assert!(
+        new_paths.is_empty(),
+        "new `degenbot_pools` deep path(s) (ADR-084 D2: name the capability \
+         module at the pools root, never a module beneath it): {new_paths:#?}"
+    );
+
+    let stale: Vec<&String> = allowlist.difference(&referenced).collect();
+    assert!(
+        stale.is_empty(),
+        "stale row(s) in {} (no remaining reference; the allowlist only \
+         shrinks — drop the row in the change that repoints its last use): {stale:#?}",
+        allowlist_path.display()
+    );
+}
+
+/// Every structural `degenbot_pools::<capability>::<module>::` reference in
+/// `text`, as `degenbot_pools::<capability>::<module>` keys.
+///
+/// Two lowercase module segments after the crate root are the signature of a
+/// path into an implementation module: a door item is a single segment
+/// (`degenbot_pools::TickInfo`) or the capability module itself
+/// (`degenbot_pools::state`), neither of which a two-segment-plus-`::` form
+/// describes.
+///
+/// The segment alphabet includes digits: a scan that stops at `[a-z_]` cannot
+/// see `state::v3_state`, `state::v4_state`, or `state::v2_state` — the
+/// crate's most-named implementation modules — and would report a tree that
+/// looks cleaner than it is.
+fn pools_deep_paths(text: &str) -> Vec<String> {
+    const CRATE_ROOT: &str = "degenbot_pools::";
+    let mut found = Vec::new();
+    for (start, _) in text.match_indices(CRATE_ROOT) {
+        let mut cursor = start + CRATE_ROOT.len();
+        let mut segments: Vec<&str> = Vec::new();
+        for _ in 0..2 {
+            let rest = &text[cursor..];
+            let len = module_segment_len(rest);
+            if len == 0 || !rest[len..].starts_with("::") {
+                break;
+            }
+            segments.push(&rest[..len]);
+            cursor += len + 2;
+        }
+        if segments.len() == 2 {
+            found.push(format!("degenbot_pools::{}::{}", segments[0], segments[1]));
+        }
+    }
+    found
+}
+
+/// Length of the leading Rust module segment in `text`: a lowercase or `_`
+/// first byte, then lowercase, digits, or `_`. Returns 0 when `text` does not
+/// start with a module segment.
+fn module_segment_len(text: &str) -> usize {
+    let mut len = 0;
+    for byte in text.bytes() {
+        let readable = if len == 0 {
+            byte.is_ascii_lowercase() || byte == b'_'
+        } else {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
+        };
+        if !readable {
+            break;
+        }
+        len += 1;
+    }
+    len
 }

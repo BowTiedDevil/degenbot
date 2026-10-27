@@ -5,12 +5,16 @@
 #
 # The pin is review-required: `architecture_gates.rs::pools_root_surface_is_pinned`
 # fails when a module is added, removed, or re-homed without a review of this
-# file, and the root `pub` item count (681 after the tick-word adapter
-# consolidation added `TickWordKey::tick_spacing` — the one accessor the
-# unified adapter needs) is asserted so untracked surface growth fails loudly.
+# file, and the root `pub` name count (843) is asserted so untracked surface
+# growth fails loudly. The count is per NAME, not per statement (the previous
+# granularity pinned 681 statements): a `pub fn`/`struct`/`enum`/`trait`/
+# `const`/`type`/`mod` declaration counts once, and a `pub use` counts one per
+# re-exported name — the root's 15 blocks re-export 68 names, so a name added
+# to an existing `pub use a::b::{X, Y}` block moves the pin exactly as a new
+# `pub fn` does.
 #
 # Regenerate: rg -n '^pub mod' rust/crates/foundation/degenbot-pools/src/lib.rs
-# plus rg -c '^\s*pub (fn|struct|enum|trait|mod|const|type|use)' over src/.
+# plus the name count from `count_pub_items` in the gate.
 #
 # Format: <module> <capability-role>
 families families

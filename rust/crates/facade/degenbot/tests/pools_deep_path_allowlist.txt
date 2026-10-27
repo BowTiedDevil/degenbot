@@ -1,0 +1,74 @@
+# ADR-084 D2 — production references that still bypass the `degenbot-pools`
+# root door. The pools root presents four capability modules (`families`,
+# `sim`, `solve`, `state`); a consumer that writes
+# `degenbot_pools::state::v3_state::…` names an implementation module beneath
+# one of them and skips the door `pools_root_surface_census.txt` pins.
+#
+# This file is the shrink-only allowlist of the 42 deep paths the tree still
+# contains. `architecture_gates.rs::no_new_pools_deep_paths` fails when a NEW
+# deep path appears AND when a row here no longer has a reference: a row
+# leaves by repointing every use at the root door (a root `pub use`, or the
+# capability module itself), never by being edited aside.
+#
+# A row is the two module segments after the crate root
+# (`degenbot_pools::<capability>::<module>`), so a deeper name under an
+# allowlisted path inherits the row. The scan reaches every `.rs` file of every
+# member crate except the capability crate itself, test/example targets
+# included (they are separate crates that cannot see `pub(crate)`).
+#
+# Module segments carry digits (`v3_state`, `aerodrome_v2_state`,
+# `int_v3_hop`), so the generating scan — and the gate — must admit `[0-9]`
+# after the first byte; a `[a-z_]`-only scan silently drops the top offenders.
+#
+# Regenerate (from the `rust/` workspace root): rg -oN
+#   'degenbot_pools::[a-z_][a-z_0-9]*::[a-z_][a-z_0-9]*::' crates -g '*.rs'
+#   --glob '!crates/foundation/degenbot-pools/**'
+#   | sed -E 's/.*:(degenbot_pools::.*)::$/\1/' | sort -u
+# The glob is anchored on the search root's own prefix: `!foundation/...`
+# matches nothing when the root is `crates`, which silently includes the
+# capability crate's own references.
+#
+# Format: <crate>::<capability>::<module>
+
+degenbot_pools::families::balancer_stable
+degenbot_pools::families::balancer_weighted
+degenbot_pools::families::buffered_event
+degenbot_pools::families::concentrated_liquidity
+degenbot_pools::families::curve_stableswap
+degenbot_pools::families::door
+degenbot_pools::families::liquidity_event
+degenbot_pools::families::liquidity_event_buffer
+degenbot_pools::families::reserve_pair
+degenbot_pools::families::solidly
+degenbot_pools::families::state_update
+degenbot_pools::sim::curve_data_provider
+degenbot_pools::sim::curve_dy_io
+degenbot_pools::sim::curve_strategies
+degenbot_pools::sim::rate_provider
+degenbot_pools::sim::registration_refusal
+degenbot_pools::sim::registry
+degenbot_pools::sim::simulate_swap
+degenbot_pools::sim::tick_fetch
+degenbot_pools::solve::affected
+degenbot_pools::solve::basket
+degenbot_pools::solve::concentrated_liquidity
+degenbot_pools::solve::fixtures
+degenbot_pools::solve::gate
+degenbot_pools::solve::runtime
+degenbot_pools::state::aerodrome_v2_state
+degenbot_pools::state::balancer_stable_state
+degenbot_pools::state::balancer_weighted_state
+degenbot_pools::state::capability
+degenbot_pools::state::curve_state
+degenbot_pools::state::int_v3_hop
+degenbot_pools::state::slot_layout
+degenbot_pools::state::spec_bounds
+degenbot_pools::state::state_history
+degenbot_pools::state::tick_map
+degenbot_pools::state::tick_map_verify
+degenbot_pools::state::v2_state
+degenbot_pools::state::v3_pancakeswap_storage_slots
+degenbot_pools::state::v3_state
+degenbot_pools::state::v3_storage_slots
+degenbot_pools::state::v4_state
+degenbot_pools::state::v4_storage_slots
