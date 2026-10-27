@@ -8,7 +8,14 @@
 2. **Python-driven MEV bot.** Someone in Python should be able to build a functional MEV bot using the Python interface as a **driver** over the same Rust core, via a thin PyO3 layer that translates Python calls into Rust calls.
 
 ## Concurrent Work Coordination
-Check for other agents working concurrently before you begin work and any time you notice any edits, files, or changes in the working tree that are unrelated to your work. Use `/skill:pi-intercom` for both proactive checks and responding to messages.
+Check for other agents working concurrently before you begin work and any time you notice any edits, files, or changes in the working tree that are unrelated to your work.
+
+pi-fabric announces peer root sessions automatically via `<fabric-peers>` transcript notices when the set of live sessions changes. For explicit coordination inside `fabric_exec`:
+
+- `agents.peers()` / `agents.sessions()` — discover other live root Pi sessions (stable labels like `DEG-8`; a session becomes visible after its first `fabric_exec` call).
+- `agents.steer({id, message})` — deliver a message mid-run (lands before the target's next model call); `agents.followUp({id, message})` — queue it until the target's run settles. Both route to remote sessions over the project mesh with owner acknowledgement.
+- `decisions.raise` (with `holder: "root"` or `"supervisor:<participantId>"`) + `decisions.wait` — blocking questions between sessions, answerable by any participant or a human via `/fabric decisions`.
+- `mesh.put` / `mesh.get` (compare-and-swap) — durable claims when two sessions must not touch the same files.
 
 ## Build and test through `just`
 
