@@ -21,10 +21,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from degenbot.balancer.libraries.constants import PowVersion
 from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import INVARIANT_V2, BalancerV2StablePool
-from degenbot.builders.balancer_builder_base import BalancerBuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from tests.helpers.pool_bot import new_pool_bot
 
@@ -86,7 +86,12 @@ def make_balancer_weighted_pool(
     # int(fee * FEE_DENOMINATOR) (1e18 denominator), mirroring on-chain swap
     # fee representation.
     fee_scaled_int = int(fee * BalancerV2Pool.FEE_DENOMINATOR)
-    pow_version_rust = BalancerBuilderBase.pow_version_to_rust(pow_version)
+    # The Rust core carries PowVersion as an opaque u8 (V1=1 / V2=2).
+    pow_version_rust = (
+        (1 if pow_version is PowVersion.V1 else 2)
+        if isinstance(pow_version, PowVersion)
+        else int(pow_version)
+    )
 
     pool_id_int = bot.register_balancer_weighted_pool(
         address=address_checksum,

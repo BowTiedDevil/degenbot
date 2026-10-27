@@ -389,17 +389,18 @@ def test_build_curve_pool_lending_ctoken_over_offline_cassette() -> None:
 
 
 def test_curve_pool_builder_build_matches_rust_path_over_cassette() -> None:
-    """Dual-driver: real `CurvePoolBuilder.build` equals the Rust path (plain).
+    """Dual-driver: the driver composition equals the Rust path (plain).
 
-    Drives the CURRENT Python `CurvePoolBuilder.build` (detection + ERC20 token
-    building + `register_curve_pool` + `from_handle`) over the full plain
-    cassette, and independently drives the Rust `build_curve_pool` over the
-    SAME cassette. Asserts the resulting pool identity state is identical on
-    both sides — the parity gate that lets `build` be retargeted to the Rust
-    path without a silent behavior change.
+    Drives the driver's composition (ADR-085 D5: the ONE core entry's Curve
+    arm + the companion phase + `from_handle`) over the full plain cassette,
+    and independently drives the Rust `build_curve_pool` over the SAME
+    cassette. Asserts the resulting pool identity state is identical on both
+    sides.
     """
+    from degenbot.builders.construction import request_for
     from degenbot.builders.curve_pool_builder import _REGISTRY_ADDRESSES
-    from degenbot.builders.request import BuildPoolRequest
+    from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+    from degenbot.types.pool_type import PoolFamily
     from tests.helpers.seam import BotIo
 
     # Path A — Rust `build_curve_pool` + handle.
@@ -409,17 +410,25 @@ def test_curve_pool_builder_build_matches_rust_path_over_cassette() -> None:
     handle_a = bot_a.get_pool(bot_a.build_curve_pool(POOL, list(_REGISTRY_ADDRESSES), _BLOCK))
     assert handle_a is not None
 
-    # Path B — current Python `CurvePoolBuilder.build` over the same cassette.
+    # Path B — the driver's composition (ADR-085 D5) over the same cassette:
+    # the ONE core entry's Curve arm, then the companion phase, then
+    # `from_handle` — the shape `Bot.build_pool` drives.
     provider_b = RustAlloyProvider.offline_from_json_string(_plain_full_cassette_json())
     builder, bot_b = _make_curve_builder(provider_b)
     pybot_io = BotIo(provider=provider_b)
     pybot_io.attach_construction_io(bot_b)
-    pool = builder.build(
-        POOL,
-        chain_id=1,
-        io=pybot_io,
-        request=BuildPoolRequest(state_block=_BLOCK, silent=True),
-    )
+    handle_b = bot_b.construct_pool(
+        request_for(
+            POOL,
+            family=PoolFamily.STABLESWAP,
+            variant=None,
+            block=_BLOCK,
+            db=True,
+            registries=list(_REGISTRY_ADDRESSES),
+        )
+    ).pool
+    builder.finalize(handle_b, chain_id=1, state_block=_BLOCK, silent=True)
+    pool = CurveStableswapPool.from_handle(handle_b)
 
     # Identity state must be identical across the two consumers of the Rust
     # core: the Rust handle (Path A) and the Python companion (Path B).
@@ -514,17 +523,19 @@ def _metapool_build_cassette_json() -> str:
 
 
 def test_curve_pool_builder_build_metapool_recurses_base_over_cassette() -> None:
-    """Retargeted `CurvePoolBuilder.build` recurses into the base pool (metapool).
+    """The driver composition recurses into the base pool (metapool).
 
-    Drives the builder on a metapool whose second coin is the 3Crv LP. The
+    Drives the composition on a metapool whose second coin is the 3Crv LP. The
     Rust `build_curve_pool` detects the metapool + underlying coins, then the
     builder's `_resolve_metapool_base` recursively builds the tripool base pool
     in the SAME `Bot`, so the metapool handle's `curve().base_pool()` go-between
     resolves. Asserts the metapool companion's base pool + underlying coins are
     recovered, and its identity params equal the direct Rust path.
     """
+    from degenbot.builders.construction import request_for
     from degenbot.builders.curve_pool_builder import _REGISTRY_ADDRESSES
-    from degenbot.builders.request import BuildPoolRequest
+    from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+    from degenbot.types.pool_type import PoolFamily
     from tests.helpers.seam import BotIo
 
     # Path A — direct Rust build_curve_pool (oracle for M's identity params).
@@ -535,17 +546,25 @@ def test_curve_pool_builder_build_metapool_recurses_base_over_cassette() -> None
     assert handle_a is not None
     assert handle_a.curve().base_pool_address() == TRIPOOL
 
-    # Path B — the retargeted builder, over the same cassette.
+    # Path B — the driver's composition (ADR-085 D5) over the same cassette:
+    # the ONE core entry's Curve arm, then the companion phase (which recurses
+    # into the base pool), then `from_handle`.
     provider_b = RustAlloyProvider.offline_from_json_string(_metapool_build_cassette_json())
     builder, bot_b = _make_curve_builder(provider_b)
     pybot_io = BotIo(provider=provider_b)
     pybot_io.attach_construction_io(bot_b)
-    pool = builder.build(
-        META,
-        chain_id=1,
-        io=pybot_io,
-        request=BuildPoolRequest(state_block=_BLOCK, silent=True),
-    )
+    handle_b = bot_b.construct_pool(
+        request_for(
+            META,
+            family=PoolFamily.STABLESWAP,
+            variant=None,
+            block=_BLOCK,
+            db=True,
+            registries=list(_REGISTRY_ADDRESSES),
+        )
+    ).pool
+    builder.finalize(handle_b, chain_id=1, state_block=_BLOCK, silent=True)
+    pool = CurveStableswapPool.from_handle(handle_b)
 
     # The base pool was recursively built + registered in the same Bot, so
     # the metapool companion's base_pool go-between resolves (a lazy proxy over

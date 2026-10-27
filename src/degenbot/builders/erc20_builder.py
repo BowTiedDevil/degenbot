@@ -56,7 +56,6 @@ class Erc20Builder:
         *,
         chain_id: ChainId | None = None,
         silent: bool = False,
-        io: BotIo | None = None,  # ruff:ignore[unused-method-argument] - ignored compat shim (S5 strips it)
     ) -> Erc20Token:
         """Construct an ERC-20 token, delegating metadata resolution to the Rust core.
 
@@ -66,8 +65,6 @@ class Erc20Builder:
         Python shell keeps only the *companion* concerns: the `TokenRegistry`
         idempotent short-circuit, the `EtherPlaceholder`
         special case, and the `Erc20Token.from_handle` display wrapper.
-        The `io` argument is a retained compat shim (ignored — the Bot owns
-        the `ConstructionIo`); it is stripped when `BotIo` retires.
 
         Returns:
             The computed value.
@@ -257,7 +254,7 @@ class Erc20Builder:
                 if meta is None:
                     # Fall back to the full per-token build (which performs the
                     # contract-deployed check + alternate-prototype fallback).
-                    resolved[idx] = self.build(address, chain_id=chain_id, silent=silent, io=io)
+                    resolved[idx] = self.build(address, chain_id=chain_id, silent=silent)
                 else:
                     name, symbol, decimals = meta
                     # Write back to DB if the record exists but was missing data.

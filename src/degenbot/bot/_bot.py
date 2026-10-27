@@ -25,7 +25,6 @@ from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.builders.request import (
     BuildManagedPoolRequest,
     BuildPoolRequest,
-    BuildRequest,
     ConstructionRoute,
 )
 from degenbot.builders.type_resolution import (
@@ -57,11 +56,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from degenbot._ffi import BlockStream, IntakeReceipt
-    from degenbot.builders.protocol import PoolBuilder
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.pathfinding import PoolKind
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
-    from degenbot.types.chain import ChecksummedAddress
     from degenbot.types.rpc_types import BlockIdentifier
 
 from degenbot.types.aliases import ChainId  # ruff:ignore[typing-only-first-party-import]
@@ -426,8 +423,7 @@ class Bot(AccountQueryMixin):
             The computed value.
 
         """
-        io = self._io
-        return self._erc20_builder.build(address, chain_id=self.chain_id, silent=silent, io=io)
+        return self._erc20_builder.build(address, chain_id=self.chain_id, silent=silent)
 
     def get_token(self, address: str) -> Erc20Token:
         """Get or create a token. Bot handles DB lookup, RPC calls, and registration.
@@ -607,7 +603,6 @@ class Bot(AccountQueryMixin):
                 chain_id=chain_id,
                 state_block=block,
                 silent=request.silent,
-                io=io,
             )
         else:
             # The token companions iterate the outcome's FULL registered
@@ -685,23 +680,6 @@ class Bot(AccountQueryMixin):
             pool_kinds=pool_kinds,
         )
 
-    @staticmethod
-    def _dispatch_build(
-        *,
-        builder: PoolBuilder,
-        address: ChecksummedAddress,
-        chain_id: ChainId,
-        io: BotIo,
-        request: BuildRequest,
-    ) -> AbstractLiquidityPool:
-        """Dispatch to the builder with a typed request.
-
-        Returns:
-            The computed value.
-
-        """
-        return builder.build(address, chain_id=chain_id, io=io, request=request)
-
     def _register_delegated_tokens(
         self,
         token_addresses: list[str],
@@ -720,7 +698,6 @@ class Bot(AccountQueryMixin):
                 token_address,
                 chain_id=chain_id,
                 silent=request.silent,
-                io=self._io,
             )
 
     def build_managed_pool(

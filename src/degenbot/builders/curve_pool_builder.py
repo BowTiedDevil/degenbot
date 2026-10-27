@@ -5,19 +5,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from degenbot.builders.construction import request_for
-from degenbot.builders.request import BuildPoolRequest, BuildRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
 from degenbot.exceptions.pool import BrokenPool
-from degenbot.logging import logger
 from degenbot.types.pool_type import PoolFamily
 
 if TYPE_CHECKING:
-    from degenbot._ffi import BotIo
     from degenbot.builders.context import BuilderContext
     from degenbot.types import Pool
-    from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
 
 
@@ -43,69 +39,6 @@ class CurvePoolBuilder:
         self._erc20_builder = ctx.erc20_builder
         self._py_bot = ctx.py_bot
 
-    def build(
-        self,
-        address: str,
-        *,
-        chain_id: ChainId | None = None,
-        io: BotIo,
-        request: BuildRequest,
-    ) -> AbstractLiquidityPool:
-        """Construct an I/O-free CurveStableswapPool through the ONE core entry.
-
-        Delegates construction to ``Bot.construct_pool``'s Curve arm (the core
-        ``build_curve_pool`` detection choreography + native
-        ``RpcCurveDataProvider``, identity stored in Rust state), registers the
-        ERC20 token/LP companions so the handle's registration-gated getters
-        resolve, then wraps the handle via ``from_handle``.
-
-        Returns:
-            The computed value.
-
-        """
-        pool_address = get_checksum_address(address)
-        chain_id = chain_id or self._default_chain_id
-        assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
-        state_block = (
-            request.state_block if request.state_block is not None else io.get_block_number()
-        )
-
-        # The ONE core construction entry (its Curve arm) — never a second
-        # Python construction path.
-        outcome = self._py_bot.construct_pool(
-            request_for(
-                pool_address,
-                family=PoolFamily.STABLESWAP,
-                variant=None,
-                block=state_block,
-                db=True,
-                registries=_REGISTRY_ADDRESSES,
-            )
-        )
-        handle = outcome.pool
-
-        self.finalize(
-            handle,
-            chain_id=chain_id,
-            state_block=state_block,
-            silent=request.silent,
-            io=io,
-        )
-
-        pool = CurveStableswapPool.from_handle(handle)
-
-        # Register pool
-        self._pools.add(pool, chain_id=chain_id, pool_address=pool.address)
-
-        if not request.silent:
-            logger.info(pool.name)
-            logger.info(f"• Address: {pool.address}")
-            logger.info(f"• Tokens: {[t.symbol for t in pool.tokens]}")
-            logger.info(f"• A: {pool.a_coefficient}")
-            logger.info(f"• Fee: {100 * pool.fee / pool.FEE_DENOMINATOR:.4f}%")
-
-        return pool
-
     def finalize(
         self,
         handle: Pool,
@@ -113,7 +46,6 @@ class CurvePoolBuilder:
         chain_id: ChainId,
         state_block: int,
         silent: bool,
-        io: BotIo,
     ) -> None:
         """Register a Curve pool's companions on the already-constructed handle.
 
@@ -137,11 +69,29 @@ class CurvePoolBuilder:
         # handle's `curve().base_pool()` resolves for `from_handle`.
         base_address = arm.base_pool_address()
         if base_address is not None:
-            self.build(
-                base_address,
+            # The base pool's construction is the driver's composition, not
+            # this pool's arm (ADR-085 D5): the ONE core entry's Curve arm,
+            # then this same companion phase, recursively.
+            base_handle = self._py_bot.construct_pool(
+                request_for(
+                    get_checksum_address(base_address),
+                    family=PoolFamily.STABLESWAP,
+                    variant=None,
+                    block=state_block,
+                    db=True,
+                    registries=_REGISTRY_ADDRESSES,
+                )
+            ).pool
+            self.finalize(
+                base_handle,
                 chain_id=chain_id,
-                io=io,
-                request=BuildPoolRequest(state_block=state_block, silent=silent),
+                state_block=state_block,
+                silent=silent,
+            )
+            self._pools.add(
+                CurveStableswapPool.from_handle(base_handle),
+                chain_id=chain_id,
+                pool_address=get_checksum_address(base_address),
             )
 
         # ERC20 companions for the pool coins, sourced from the curve arm's raw
@@ -152,19 +102,18 @@ class CurvePoolBuilder:
         if len(token_addresses) < min_tokens:
             raise BrokenPool
         for addr in token_addresses:
-            self._erc20_builder.build(addr, chain_id=chain_id, silent=silent, io=io)
+            self._erc20_builder.build(addr, chain_id=chain_id, silent=silent)
 
         # Metapool underlying + dedicated LP token companions — built purely
         # for registration (Rust already knows their addresses), so
         # `curve().get_tokens_underlying()` / `curve().get_lp_token()` resolve
         # in `from_handle`.
         for addr in arm.token_addresses_underlying() or ():
-            self._erc20_builder.build(addr, chain_id=chain_id, silent=silent, io=io)
+            self._erc20_builder.build(addr, chain_id=chain_id, silent=silent)
         lp_address = arm.lp_token_address()
         if lp_address is not None:
             self._erc20_builder.build(
                 lp_address,
                 chain_id=chain_id,
                 silent=silent,
-                io=io,
             )
