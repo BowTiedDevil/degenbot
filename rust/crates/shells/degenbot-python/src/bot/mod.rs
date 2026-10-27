@@ -341,7 +341,7 @@ impl PyBot {
         pool_id: u64,
         built: Option<&BuiltIdentity>,
         pair_echo: bool,
-        family: &str,
+        family: RequestFamily,
         variant: Option<&str>,
         addr: &Address,
         pool_id_hex: Option<&str>,
@@ -378,6 +378,7 @@ impl PyBot {
     /// strings (their list rides the handle).
     fn translate_construction_request<'a>(
         request: &PyPoolConstructionRequest,
+        family: RequestFamily,
         addr: Address,
         db: Option<&'a dyn degenbot_db::snapshot::TickMapDb>,
     ) -> PyResult<(PoolConstruction<'a>, bool)> {
@@ -386,14 +387,14 @@ impl PyBot {
         // An empty hint list is "the caller supplied none": the per-family arms
         // read `Option` (absent = use the family's own default route).
         let registries = (!request.registries.is_empty()).then(|| request.registries.clone());
-        match request.family.as_str() {
-            "constant_product" if variant == Some("aerodrome") => {
+        match family {
+            RequestFamily::ConstantProduct if variant == Some("aerodrome") => {
                 Ok((PoolConstruction::AerodromeV2 { address: addr }, false))
             }
-            "constant_product" => Ok((PoolConstruction::V2 { address: addr }, true)),
+            RequestFamily::ConstantProduct => Ok((PoolConstruction::V2 { address: addr }, true)),
             // The fork storage layout is resolved CORE-side from the deployment
             // table, so the driver never names a fork.
-            "concentrated_liquidity" => Ok((
+            RequestFamily::ConcentratedLiquidity => Ok((
                 PoolConstruction::V3 {
                     address: addr,
                     db,
@@ -402,7 +403,7 @@ impl PyBot {
                 },
                 true,
             )),
-            "weighted" => {
+            RequestFamily::Weighted => {
                 let vault = vault.ok_or_else(|| {
                     pyo3::exceptions::PyValueError::new_err(
                         "construct_pool: the weighted family requires `vault`",
@@ -416,7 +417,7 @@ impl PyBot {
                     false,
                 ))
             }
-            "stableswap" if variant == Some("balancer_stable") => {
+            RequestFamily::Stableswap if variant == Some("balancer_stable") => {
                 let vault = vault.ok_or_else(|| {
                     pyo3::exceptions::PyValueError::new_err(
                         "construct_pool: the stableswap family requires `vault`",
@@ -431,12 +432,12 @@ impl PyBot {
                     false,
                 ))
             }
-            "managed_v4" => Ok((Self::translate_v4_request(request, addr, db)?, true)),
+            RequestFamily::ManagedV4 => Ok((Self::translate_v4_request(request, addr, db)?, true)),
             // Curve — the discovery-only stableswap family with no `factory()`.
             // The driver supplies the registry/factory addresses the LP-token +
             // metapool lookups consult (driver values, like the V3 route's factory
             // rungs).
-            "stableswap" => {
+            RequestFamily::Stableswap => {
                 let registries = registries.ok_or_else(|| {
                     pyo3::exceptions::PyValueError::new_err(
                         "construct_pool: the Curve family requires `registries`",
@@ -454,27 +455,31 @@ impl PyBot {
                     false,
                 ))
             }
-            other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "construct_pool: unsupported family {other:?}"
-            ))),
+            // The payload refuses the unmodeled family before this translate
+            // call, so no arm reaches here with it.
+            RequestFamily::Unmodeled => unreachable!("unmodeled refused at the boundary"),
         }
     }
 
     /// The single-flight key family for a construction request — the concurrency
     /// class a build of this family+address takes part in.
-    fn flight_family_of(family: &str, variant: Option<&str>) -> u8 {
-        match family {
-            "constant_product" if variant == Some("aerodrome") => {
+    fn flight_family_of(family: RequestFamily, variant: Option<&str>) -> u8 {
+        match (family, variant) {
+            (RequestFamily::ConstantProduct, Some("aerodrome")) => {
                 build_flights::flight_family::AERODROME
             }
-            "constant_product" => build_flights::flight_family::V2,
-            "concentrated_liquidity" => build_flights::flight_family::V3,
-            "managed_v4" => build_flights::flight_family::V4,
-            "weighted" => build_flights::flight_family::BALANCER_WEIGHTED,
-            "stableswap" if variant == Some("balancer_stable") => {
+            (RequestFamily::ConstantProduct, _) => build_flights::flight_family::V2,
+            (RequestFamily::ConcentratedLiquidity, _) => build_flights::flight_family::V3,
+            (RequestFamily::ManagedV4, _) => build_flights::flight_family::V4,
+            (RequestFamily::Weighted, _) => build_flights::flight_family::BALANCER_WEIGHTED,
+            (RequestFamily::Stableswap, Some("balancer_stable")) => {
                 build_flights::flight_family::BALANCER_STABLE
             }
-            _ => build_flights::flight_family::CURVE,
+            // Curve + the refused-at-the-boundary unmodeled share the legacy
+            // wildcard's class.
+            (RequestFamily::Stableswap | RequestFamily::Unmodeled, _) => {
+                build_flights::flight_family::CURVE
+            }
         }
     }
 
@@ -493,7 +498,7 @@ impl PyBot {
     fn registered_echo(
         &self,
         py: Python<'_>,
-        family: &str,
+        family: RequestFamily,
         variant: Option<&str>,
         addr: &Address,
         pool_id_hex: Option<&str>,
@@ -509,7 +514,7 @@ impl PyBot {
                 }
             };
         match family {
-            "managed_v4" => {
+            RequestFamily::ManagedV4 => {
                 let Some(pid) = pool_id_hex.map(hex_string_to_pool_id).transpose()? else {
                     return Ok(None);
                 };
@@ -519,7 +524,7 @@ impl PyBot {
                     keyed(echo.0, t0.clone(), t1.clone(), vec![t0, t1], "")
                 }))
             }
-            "constant_product" if variant == Some("aerodrome") => Ok(self
+            RequestFamily::ConstantProduct if variant == Some("aerodrome") => Ok(self
                 .registered_family_identity(py, addr, RegisteredPoolFamily::AerodromeV2)
                 .map(|(pool_id, tokens)| {
                     keyed(
@@ -530,19 +535,19 @@ impl PyBot {
                         "aerodrome",
                     )
                 })),
-            "constant_product" => {
+            RequestFamily::ConstantProduct => {
                 Ok(self
                     .registered_v2_payload(py, addr)
                     .map(|(pool_id, t0, t1, _address, v)| {
                         keyed(pool_id, t0.clone(), t1.clone(), vec![t0, t1], &v)
                     }))
             }
-            "concentrated_liquidity" => Ok(self
+            RequestFamily::ConcentratedLiquidity => Ok(self
                 .registered_v3_payload(py, addr, self.bot.chain_id())
                 .map(|(pool_id, t0, t1, _address, v)| {
                     keyed(pool_id, t0.clone(), t1.clone(), vec![t0, t1], &v)
                 })),
-            "weighted" => Ok(self
+            RequestFamily::Weighted => Ok(self
                 .registered_family_identity(py, addr, RegisteredPoolFamily::BalancerWeighted)
                 .map(|(pool_id, tokens)| {
                     keyed(
@@ -553,7 +558,7 @@ impl PyBot {
                         "balancer_weighted",
                     )
                 })),
-            "stableswap" if variant == Some("balancer_stable") => Ok(self
+            RequestFamily::Stableswap if variant == Some("balancer_stable") => Ok(self
                 .registered_family_identity(py, addr, RegisteredPoolFamily::BalancerStable)
                 .map(|(pool_id, tokens)| {
                     keyed(
@@ -564,7 +569,7 @@ impl PyBot {
                         "balancer_stable",
                     )
                 })),
-            "stableswap" => Ok(self
+            RequestFamily::Stableswap => Ok(self
                 .registered_family_identity(py, addr, RegisteredPoolFamily::Curve)
                 .map(|(pool_id, tokens)| {
                     keyed(
@@ -575,7 +580,9 @@ impl PyBot {
                         "stableswap",
                     )
                 })),
-            _ => Ok(None),
+            // The unmodeled family is refused at the boundary before any
+            // echo is shaped.
+            RequestFamily::Unmodeled => Ok(None),
         }
     }
 
@@ -1062,6 +1069,37 @@ fn classify_known_variant(raw: &str) -> Option<&'static str> {
         .iter()
         .copied()
         .find(|known| *known == raw)
+}
+
+/// The construction request's family vocabulary, parsed ONCE at the seam
+/// boundary (ADR-082's family-in-the-value rule one tier out): every dispatch
+/// below consumes the enum as data — no site re-matches the string. An
+/// unrecognized spelling is a typed refusal at the boundary, never a
+/// fall-through to a default arm.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RequestFamily {
+    ConstantProduct,
+    ConcentratedLiquidity,
+    Weighted,
+    Stableswap,
+    ManagedV4,
+    Unmodeled,
+}
+
+impl RequestFamily {
+    fn parse(raw: &str) -> PyResult<Self> {
+        match raw {
+            "constant_product" => Ok(Self::ConstantProduct),
+            "concentrated_liquidity" => Ok(Self::ConcentratedLiquidity),
+            "weighted" => Ok(Self::Weighted),
+            "stableswap" => Ok(Self::Stableswap),
+            "managed_v4" => Ok(Self::ManagedV4),
+            "unmodeled" => Ok(Self::Unmodeled),
+            other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "construct_pool: unsupported family {other:?}"
+            ))),
+        }
+    }
 }
 
 /// Map a registered family tag to the request vocabulary's family spelling —
@@ -1640,7 +1678,7 @@ impl PyBot {
         request: &PyPoolConstructionRequest,
     ) -> PyResult<ConstructionEcho> {
         let address = request.address.as_str();
-        let family = request.family.as_str();
+        let family = RequestFamily::parse(&request.family)?;
         let variant = request.variant.as_deref();
         let block = request.block;
         let db = request.db;
@@ -1656,7 +1694,7 @@ impl PyBot {
         // reports that builder's failure for a pool the family never owned
         // (the measured mislabel was the Curve arm's "curve required read
         // reverted").
-        if family == "unmodeled" {
+        if matches!(family, RequestFamily::Unmodeled) {
             return Err(map_refusal(RefusalKind::unbuilt_spec_refusal(
                 SpecRefusal::BalancerUnmodeledFamily,
             )));
@@ -1665,7 +1703,7 @@ impl PyBot {
         // The DB tick-map handle (the V3 `Tracked` arm) lives as long as the
         // request that borrows it.
         let db_arc: Option<std::sync::Arc<degenbot_db::snapshot_db::SnapshotDb>> =
-            if family == "concentrated_liquidity" && db {
+            if matches!(family, RequestFamily::ConcentratedLiquidity) && db {
                 self.db_handle()
             } else {
                 None
@@ -1674,11 +1712,11 @@ impl PyBot {
             .as_deref()
             .map(|d| d as &dyn degenbot_db::snapshot::TickMapDb);
         let (construction, pair_echo) =
-            Self::translate_construction_request(request, addr, db_ref)?;
+            Self::translate_construction_request(request, family, addr, db_ref)?;
         let family_tag = construction.family();
         // The V4 family is `(pool_manager, pool_id)`-keyed — two pools on one
         // manager are distinct single flights (the retired verb's key shape).
-        let flight_target = if family == "managed_v4" {
+        let flight_target = if matches!(family, RequestFamily::ManagedV4) {
             format!(
                 "{}:{}",
                 addr.to_checksum(None).to_lowercase(),
