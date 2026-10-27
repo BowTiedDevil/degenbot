@@ -68,6 +68,9 @@ class UniswapV3PoolSimulationResult(UniswapSimulationResult):
 
     initial_state: UniswapV3PoolState
     final_state: UniswapV3PoolState
+    # The seam's own verdict on the requested side (never re-derived from the
+    # deltas by a consumer): whether the swap met what was asked for.
+    specified_met: bool
 
 
 type InitializedTickMap = set[BitmapWord]

@@ -1014,24 +1014,43 @@ impl PyLiquidityPool {
     /// output). Returns a typed read dict — `status` is `computed` (with
     /// signed per-token deltas in the deposited-`+`/sent-`-` convention, the
     /// end state, and `specified_met`); otherwise the typed
-    /// `SwapSimulationStatus` member for the refusal (`NotComputable`,
-    /// `FetchFailed`, or `FetchExhausted`). Pass `override_state` (this
-    /// pool's own pool-state object) to simulate against a hypothetical: the
-    /// shell marshalls the state for the pool's REGISTERED family, so a
-    /// reserve-pair read carries `reserves_token0` / `reserves_token1`
-    /// (POST-swap) where a concentrated-liquidity read carries the end
-    /// `sqrt_price_x96` / `liquidity` / `tick`.
-    #[pyo3(signature = (zero_for_one, amount_specified, block, sqrt_price_limit_x96=None, override_state=None))]
+    /// `SwapRefusalKind` for the refusal (`NotComputable`, `FetchFailed`, or
+    /// `FetchExhausted`) — a refusal RAISES the typed `SwapRefused`, whose
+    /// `kind` / `word` / `amount` attributes are the verdict. `block` is the
+    /// fetch context for sparse-miss recovery: it defaults to this handle's
+    /// own `update_block`, so the plain current-state read names no block, and
+    /// a caller passes one only for a historical read whose context differs
+    /// from the handle's current stamp. Pass `override_state` (this pool's own
+    /// pool-state object) to simulate against a hypothetical: the shell
+    /// marshalls the state for the pool's REGISTERED family, so a reserve-pair
+    /// read carries `reserves_token0` / `reserves_token1` (POST-swap) where a
+    /// concentrated-liquidity read carries the end `sqrt_price_x96` /
+    /// `liquidity` / `tick`.
+    #[pyo3(signature = (zero_for_one, amount_specified, block=None, sqrt_price_limit_x96=None, override_state=None))]
     fn simulate(
         &self,
         py: Python<'_>,
         zero_for_one: bool,
         amount_specified: &Bound<'_, PyAny>,
-        block: u64,
+        block: Option<u64>,
         sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
         override_state: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PySwapRead> {
         let amount_specified = extract_signed_amount(amount_specified)?;
+        // `None` resolves to this handle's own freshness stamp, so the plain
+        // current-state read names no block: the echo a caller would pass is
+        // the value the seam would resolve anyway, one pymethod round-trip
+        // later. An explicit block is the historical read — the fetch context
+        // that genuinely differs from the handle's current stamp.
+        let block = match block {
+            Some(block) => block,
+            // An unregistered id resolves to `0`, which no fetch ever sees:
+            // the read below answers `UnknownPool` first.
+            None => self.with_state(py, |core| {
+                core.pool_entry(self.pool_id)
+                    .map_or(0, PoolEntry::update_block)
+            }),
+        };
         if let Some(state) = override_state.filter(|s| !s.is_none()) {
             let outcome = self.sim_override_inner(
                 py,
@@ -1050,7 +1069,14 @@ impl PyLiquidityPool {
                     (o.sqrt_price_x96, o.liquidity, o.tick),
                 )),
                 Some(OverrideOutcome::ReservePair(o)) => Ok(rp_swap_read(zero_for_one, &o)),
-                None => Err(swap_refused_err(py, PySwapRefusalKind::NotComputable, None)),
+                // The request the hypothetical could not meet, signed: the
+                // negative arm is the exact-input side.
+                None => Err(swap_refused_err(
+                    py,
+                    PySwapRefusalKind::NotComputable,
+                    None,
+                    Some(amount_specified),
+                )),
             };
         }
         let request = SwapRequest {
@@ -1085,18 +1111,25 @@ impl PyLiquidityPool {
             // a reserve-pair payload here would be the route's bug, never a
             // computable read (the retired flat read answered NotComputable).
             // Both the verdict and the refusal cross as NotComputable.
-            SwapRead::Computed(_) | SwapRead::NotComputable => {
-                Err(swap_refused_err(py, PySwapRefusalKind::NotComputable, None))
-            }
+            SwapRead::Computed(_) | SwapRead::NotComputable => Err(swap_refused_err(
+                py,
+                PySwapRefusalKind::NotComputable,
+                None,
+                Some(amount_specified),
+            )),
+            // The fetch arms carry only the stalled word: the walk never
+            // answered for the amount, so the refusal does not pretend to.
             SwapRead::FetchFailed { word } => Err(swap_refused_err(
                 py,
                 PySwapRefusalKind::FetchFailed,
                 Some(word),
+                None,
             )),
             SwapRead::FetchExhausted { word } => Err(swap_refused_err(
                 py,
                 PySwapRefusalKind::FetchExhausted,
                 Some(word),
+                None,
             )),
             SwapRead::UnsupportedFamily { pool_id, family } => {
                 Err(swap_family_gap(pool_id, family))
@@ -3033,10 +3066,15 @@ impl PySwapRead {
 
 /// The swap-simulation refusal vocabulary (ADR-037/t2): the kind the ONE
 /// Python adapter maps to the companions' exception tree.
+// `hash` rides with `eq`: a refusal kind crosses as a VALUE (`==`/`in`), never
+// as a class-attribute singleton — the seam builds a fresh instance per
+// refusal, so identity comparison silently answers "not this kind" and an
+// unhashable kind cannot even be tested for membership in a set literal.
 #[pyclass(
     name = "SwapRefusalKind",
     eq,
     eq_int,
+    hash,
     frozen,
     from_py_object,
     module = "degenbot._ffi"
@@ -3056,30 +3094,47 @@ pyo3::create_exception!(
     degenbot._ffi,
     SwapRefused,
     pyo3::exceptions::PyException,
-    "The swap-simulation seam refused the read (ADR-037). args: (kind, word) —
+    "The swap-simulation seam refused the read (ADR-037). Typed attributes:
      `kind` is a `SwapRefusalKind` member; `word` is the bitmap word the walk
-     stalled on for the fetch arms, `None` elsewhere."
+     stalled on for the fetch arms, `None` elsewhere; `amount` is the signed
+     request the read could not meet (negative = exact input, positive = exact
+     output), `None` on the fetch arms, which never got to answer for an amount."
 );
 
-/// Raise the typed [`SwapRefused`] with `(kind, word)` args.
+/// Raise the typed [`SwapRefused`], attaching the verdict as the
+/// `kind` / `word` / `amount` attributes so a consumer reads the refusal
+/// instead of decoding a positional args tuple. The `(kind, word)` args stay
+/// for the exception's own text; the attributes are the contract, and an
+/// instance that failed to carry them is itself the error to raise.
 pub(crate) fn swap_refused_err(
     py: Python<'_>,
     kind: PySwapRefusalKind,
     word: Option<i32>,
+    amount: Option<I256>,
 ) -> PyErr {
-    let word_arg: Py<PyAny> = match word {
-        // `i32::into_pyobject` is infallible; the arm documents that.
-        Some(w) => match w.into_pyobject(py) {
-            Ok(o) => o.into_any().unbind(),
-            Err(e) => match e {},
-        },
-        None => py.None(),
-    };
-    let kind_arg: Py<PyAny> = match Bound::new(py, kind) {
-        Ok(b) => b.unbind().into_any(),
-        Err(e) => return e,
-    };
-    SwapRefused::new_err((kind_arg, word_arg))
+    let typed = (|| -> PyResult<PyErr> {
+        let kind_arg = Bound::new(py, kind)?;
+        let word_arg: Bound<'_, PyAny> = match word {
+            // `i32::into_pyobject` is infallible; the arm documents that.
+            Some(w) => match w.into_pyobject(py) {
+                Ok(o) => o.into_any(),
+                Err(e) => match e {},
+            },
+            None => py.None().into_bound(py),
+        };
+        let amount_arg: Bound<'_, PyAny> = match amount {
+            Some(a) => crate::conversion::alloy::i256_to_py(py, &a)?,
+            None => py.None().into_bound(py),
+        };
+        let instance = py
+            .get_type::<SwapRefused>()
+            .call1((kind_arg.clone(), word_arg.clone()))?;
+        instance.setattr("kind", kind_arg)?;
+        instance.setattr("word", word_arg)?;
+        instance.setattr("amount", amount_arg)?;
+        Ok(PyErr::from_value(instance))
+    })();
+    typed.unwrap_or_else(|error| error)
 }
 
 /// THE sign-mapping site (ADR-037): an unsigned per-token amount pair becomes
@@ -3309,8 +3364,9 @@ mod tests {
     }
 
     /// The computed read is the typed `SwapRead` pyclass with the CL arm's
-    /// scalars; a refusal RAISES `SwapRefused` carrying `(kind, word)` —
-    /// no status key anywhere.
+    /// scalars; a refusal RAISES `SwapRefused` whose typed attributes
+    /// (`kind` / `word` / `amount`) ARE the verdict — no status key, and no
+    /// consumer decoding an args tuple.
     #[test]
     fn simulate_read_is_the_typed_value_and_refusals_raise() {
         Python::attach(|py| {
@@ -3326,17 +3382,49 @@ mod tests {
             assert_eq!(computed.liquidity, Some(7));
             assert_eq!(computed.tick, Some(3));
 
-            let err = swap_refused_err(py, PySwapRefusalKind::FetchFailed, Some(-7));
-            let args = err.value(py).getattr("args").unwrap();
-            let kind: PySwapRefusalKind = args.get_item(0).unwrap().extract().unwrap();
-            assert_eq!(kind, PySwapRefusalKind::FetchFailed);
-            assert_eq!(args.get_item(1).unwrap().extract::<i32>().unwrap(), -7);
+            // The fetch arms name the stalled word and carry no request
+            // context: the walk never got far enough to answer for an amount.
+            {
+                let err = swap_refused_err(py, PySwapRefusalKind::FetchFailed, Some(-7), None);
+                assert!(err.is_instance_of::<SwapRefused>(py));
+                let value = err.value(py);
+                assert_eq!(
+                    value
+                        .getattr("kind")
+                        .unwrap()
+                        .extract::<PySwapRefusalKind>()
+                        .unwrap(),
+                    PySwapRefusalKind::FetchFailed
+                );
+                assert_eq!(value.getattr("word").unwrap().extract::<i32>().unwrap(), -7);
+                assert!(value.getattr("amount").unwrap().is_none());
+            }
 
-            let err = swap_refused_err(py, PySwapRefusalKind::NotComputable, None);
-            let args = err.value(py).getattr("args").unwrap();
-            let kind: PySwapRefusalKind = args.get_item(0).unwrap().extract().unwrap();
-            assert_eq!(kind, PySwapRefusalKind::NotComputable);
-            assert!(args.get_item(1).unwrap().is_none());
+            // The not-computable arm names the signed request it could not
+            // meet: negative = exact input, i.e. the side the read was asked
+            // to meet.
+            {
+                let err = swap_refused_err(
+                    py,
+                    PySwapRefusalKind::NotComputable,
+                    None,
+                    Some(I256::try_from(-1_000_i64).unwrap()),
+                );
+                let value = err.value(py);
+                assert_eq!(
+                    value
+                        .getattr("kind")
+                        .unwrap()
+                        .extract::<PySwapRefusalKind>()
+                        .unwrap(),
+                    PySwapRefusalKind::NotComputable
+                );
+                assert!(value.getattr("word").unwrap().is_none());
+                assert_eq!(
+                    value.getattr("amount").unwrap().extract::<i64>().unwrap(),
+                    -1_000
+                );
+            }
         });
     }
 

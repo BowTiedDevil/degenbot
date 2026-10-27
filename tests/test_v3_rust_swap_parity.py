@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot._ffi import Bot, SwapRefused
+from degenbot._ffi import Bot, SwapRefusalKind, SwapRefused
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.math import MIN_SQRT_RATIO
+from degenbot.uniswap.v3_types import UniswapV3PoolState
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool
 
@@ -280,6 +281,110 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words():
     assert rust_tick == py_tick, f"final tick: rust={rust_tick} oracle={py_tick}"
     assert rust_liq == py_liq, f"final liq: rust={rust_liq} oracle={py_liq}"
     assert rust_sp == py_sp, f"final sqrt: rust={rust_sp} oracle={py_sp}"
+
+
+def test_simulate_block_defaults_to_the_handle_update_block():
+    """An omitted `block` is the handle's own freshness stamp.
+
+    The plain current-state read names no block: the seam resolves the handle's
+    `update_block` itself, so a caller's echo cannot drift from it. Only a
+    historical read — where the fetch context genuinely differs — passes one,
+    and then that block is what the tick-word fetcher receives.
+    """
+    py_bot = Bot()
+    token0, token1 = _make_tokens(py_bot, tag="c")
+
+    defaulted: list[tuple[int, int]] = []
+
+    def defaulted_fetcher(word: int, block: int):
+        defaulted.append((word, block))
+        return {}
+
+    current = make_v3_pool(
+        address="0x" + "88" * 20,
+        token0=token0,
+        token1=token1,
+        factory=_FACTORY,
+        fee=_FEE,
+        tick_spacing=_TICK_SPACING,
+        sqrt_price_x96=_SQRT_PRICE_1TO1,
+        tick=0,
+        liquidity=_LIQUIDITY,
+        py_bot=py_bot,
+        tick_data_fetcher=defaulted_fetcher,
+        state_block=777,
+    )
+    assert current._py_pool.concentrated_liquidity().update_block == 777
+
+    current._py_pool.simulate(zero_for_one=True, amount_specified=-1_000)
+
+    assert defaulted, "the sparse walk must fetch its missing words"
+    assert {block for _, block in defaulted} == {777}, (
+        "an omitted block must resolve to the handle's own update_block"
+    )
+
+    historical: list[tuple[int, int]] = []
+
+    def historical_fetcher(word: int, block: int):
+        historical.append((word, block))
+        return {}
+
+    pinned = make_v3_pool(
+        address="0x" + "99" * 20,
+        token0=token0,
+        token1=token1,
+        factory=_FACTORY,
+        fee=_FEE,
+        tick_spacing=_TICK_SPACING,
+        sqrt_price_x96=_SQRT_PRICE_1TO1,
+        tick=0,
+        liquidity=_LIQUIDITY,
+        py_bot=py_bot,
+        tick_data_fetcher=historical_fetcher,
+        state_block=888,
+    )
+    pinned._py_pool.simulate(zero_for_one=True, amount_specified=-1_000, block=999)
+
+    assert historical, "the sparse walk must fetch its missing words"
+    assert {block for _, block in historical} == {999}, (
+        "an explicit block is the historical fetch context"
+    )
+
+
+def test_refusal_carries_the_requested_amount_as_a_typed_verdict():
+    """A refusal IS a typed verdict — `kind` / `word` / `amount`, not args.
+
+    The not-computable arm names the signed request the read could not meet
+    (negative = exact input, positive = exact output), so a consumer renders the
+    unmet side from the verdict instead of re-deriving it. A hypothetical whose
+    tick map cannot be backfilled is the reachable instance.
+    """
+    py_bot = Bot()
+    dense = _build_v3_pool(py_bot, dense=True, address="0x" + "33" * 20)
+    handle = dense._py_pool
+    empty_hypothetical = UniswapV3PoolState(
+        address=dense.address,
+        block=None,
+        liquidity=_LIQUIDITY,
+        sqrt_price_x96=_SQRT_PRICE_1TO1,
+        tick=0,
+        tick_bitmap=set(),
+        tick_data={},
+    )
+
+    for requested in (-1_000, 2_500):
+        with pytest.raises(SwapRefused) as exc_info:
+            handle.simulate(
+                zero_for_one=True,
+                amount_specified=requested,
+                override_state=empty_hypothetical,
+            )
+        exc = exc_info.value
+        # The kind crosses as a value (`==`), not as a class-attribute
+        # singleton: the seam builds its own instance per refusal.
+        assert exc.kind == SwapRefusalKind.NotComputable
+        assert exc.word is None
+        assert exc.amount == requested
 
 
 if __name__ == "__main__":

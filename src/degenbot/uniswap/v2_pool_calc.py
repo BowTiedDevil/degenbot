@@ -134,7 +134,6 @@ class UniswapV2PoolCalc:
             read = self._py_pool.simulate(
                 zero_for_one=zero_for_one,
                 amount_specified=token_out_quantity,
-                block=self.update_block,
                 override_state=override_state,
             )
         except SwapRefused as exc:
@@ -216,11 +215,10 @@ class UniswapV2PoolCalc:
             read = self._py_pool.simulate(
                 zero_for_one=zero_for_one,
                 amount_specified=-token_in_quantity,
-                block=self.update_block,
                 override_state=override_state,
             )
         except SwapRefused as exc:
-            if exc.args[0] is not SwapRefusalKind.NotComputable:
+            if exc.kind != SwapRefusalKind.NotComputable:  # ty: ignore[unresolved-attribute]
                 # An infrastructure failure (an unfetchable word), not a
                 # swap-geometry verdict — render it honestly.
                 raise swap_refusal_to_error(exc) from exc

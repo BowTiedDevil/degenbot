@@ -193,7 +193,7 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
         rust_path: "bot::pool",
         name: "SwapRefused",
         base: "Exception",
-        message: "The swap-simulation seam refused the read (ADR-037). args: (kind, word) — `kind` is a `SwapRefusalKind` member; `word` is the bitmap word the walk stalled on for the fetch arms, `None` elsewhere.",
+        message: "The swap-simulation seam refused the read (ADR-037). Typed attributes: `kind` is a `SwapRefusalKind` member; `word` is the bitmap word the walk stalled on for the fetch arms, `None` elsewhere; `amount` is the signed request the read could not meet (negative = exact input, positive = exact output), `None` on the fetch arms, which never got to answer for an amount.",
     },
     ExceptionIsland {
         python_module: "degenbot._ffi.fleet",

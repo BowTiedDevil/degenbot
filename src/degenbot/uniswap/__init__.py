@@ -31,19 +31,31 @@ def swap_refusal_to_error(exc: SwapRefused) -> IncompleteSwap | MissingLiquidity
     """Map a swap-simulation refusal to the companions' exception tree.
 
     The ONE kind-mapping home (ADR-037/t2): the Rust seam raises
-    `SwapRefused` with a typed `kind`; this renders it as the historical
-    exception the companions' callers catch. The fetch arms carry the bitmap
-    word the walk stalled on — distinct from the swap being impossible
-    (`NotComputable`, the real pool's revert-analog).
+    `SwapRefused` carrying its verdict as the typed `kind` / `word` / `amount`
+    attributes; this renders it as the historical exception the companions'
+    callers catch. The fetch arms carry the bitmap word the walk stalled on —
+    distinct from the swap being impossible (`NotComputable`, the real pool's
+    revert-analog), whose signed `amount` is the request the read could not
+    meet.
 
     Returns:
         The typed exception the caller raises (`from exc`).
 
     """
-    kind, word = exc.args[0], exc.args[1]
+    kind = exc.kind  # ty: ignore[unresolved-attribute]
     if kind in {SwapRefusalKind.FetchFailed, SwapRefusalKind.FetchExhausted}:
+        word = exc.word  # ty: ignore[unresolved-attribute]
         return MissingLiquidityData(word=int(word) if word is not None else -1)
-    return IncompleteSwap(amount_in=0, amount_out=0)
+    amount = exc.amount  # ty: ignore[unresolved-attribute]
+    if amount is None:  # pragma: no cover — every not-computable refusal names its request
+        return IncompleteSwap(amount_in=0, amount_out=0)
+    # The sign is the requested side: a negative request is exact input, so the
+    # input side is the one the read could not meet and the output side is
+    # genuinely unconsumed (the mirror of an exact output).
+    requested = abs(amount)
+    if amount < 0:
+        return IncompleteSwap(amount_in=requested, amount_out=0)
+    return IncompleteSwap(amount_in=0, amount_out=requested)
 
 
 # The pool leaves import THIS module's swap-refusal vocabulary, so the

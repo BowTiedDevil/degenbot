@@ -122,10 +122,13 @@ class UniswapV3PoolCalc:
         )
         amount0_delta = result.amount0_delta
         amount1_delta = result.amount1_delta
-        if zero_for_one is True and amount0_delta < token_in_quantity:
-            raise IncompleteSwap(amount_in=amount0_delta, amount_out=-amount1_delta)
-        if zero_for_one is False and amount1_delta < token_in_quantity:
-            raise IncompleteSwap(amount_in=amount1_delta, amount_out=-amount0_delta)
+        # The verdict is the seam's (`specified_met`); the payload amounts are
+        # the read's own end amounts, never a re-derivation from the deltas.
+        if not result.specified_met:
+            raise IncompleteSwap(
+                amount_in=amount0_delta if zero_for_one else amount1_delta,
+                amount_out=-amount1_delta if zero_for_one else -amount0_delta,
+            )
 
         return -amount1_delta if zero_for_one else -amount0_delta
 
@@ -160,10 +163,13 @@ class UniswapV3PoolCalc:
         )
         amount0_delta = result.amount0_delta
         amount1_delta = result.amount1_delta
-        if is_zero_for_one is True and -amount1_delta < token_out_quantity:
-            raise IncompleteSwap(amount_in=amount0_delta, amount_out=-amount1_delta)
-        if is_zero_for_one is False and -amount0_delta < token_out_quantity:
-            raise IncompleteSwap(amount_in=amount1_delta, amount_out=-amount0_delta)
+        # The verdict is the seam's (`specified_met`); the payload amounts are
+        # the read's own end amounts, never a re-derivation from the deltas.
+        if not result.specified_met:
+            raise IncompleteSwap(
+                amount_in=amount0_delta if is_zero_for_one else amount1_delta,
+                amount_out=-amount1_delta if is_zero_for_one else -amount0_delta,
+            )
 
         return amount0_delta if is_zero_for_one else amount1_delta
 

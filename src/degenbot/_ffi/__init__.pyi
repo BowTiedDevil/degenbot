@@ -159,7 +159,7 @@ class StrategyHostError(RuntimeError):
 
 class SwapRefused(Exception):
     """
-    The swap-simulation seam refused the read (ADR-037). args: (kind, word) — `kind` is a `SwapRefusalKind` member; `word` is the bitmap word the walk stalled on for the fetch arms, `None` elsewhere.
+    The swap-simulation seam refused the read (ADR-037). Typed attributes: `kind` is a `SwapRefusalKind` member; `word` is the bitmap word the walk stalled on for the fetch arms, `None` elsewhere; `amount` is the signed request the read could not meet (negative = exact input, positive = exact output), `None` on the fetch arms, which never got to answer for an amount.
     """
 
 class UnconfiguredStrategyError(StrategyHostError):
@@ -3644,7 +3644,7 @@ class Pool:
         /,
         zero_for_one: bool,
         amount_specified: Any,
-        block: SupportsIndex,
+        block: SupportsIndex | None = None,
         sqrt_price_limit_x96: Any | None = None,
         override_state: Any | None = None,
     ) -> SwapRead:
@@ -3655,13 +3655,18 @@ class Pool:
         output). Returns a typed read dict — `status` is `computed` (with
         signed per-token deltas in the deposited-`+`/sent-`-` convention, the
         end state, and `specified_met`); otherwise the typed
-        `SwapSimulationStatus` member for the refusal (`NotComputable`,
-        `FetchFailed`, or `FetchExhausted`). Pass `override_state` (this
-        pool's own pool-state object) to simulate against a hypothetical: the
-        shell marshalls the state for the pool's REGISTERED family, so a
-        reserve-pair read carries `reserves_token0` / `reserves_token1`
-        (POST-swap) where a concentrated-liquidity read carries the end
-        `sqrt_price_x96` / `liquidity` / `tick`.
+        `SwapRefusalKind` for the refusal (`NotComputable`, `FetchFailed`, or
+        `FetchExhausted`) — a refusal RAISES the typed `SwapRefused`, whose
+        `kind` / `word` / `amount` attributes are the verdict. `block` is the
+        fetch context for sparse-miss recovery: it defaults to this handle's
+        own `update_block`, so the plain current-state read names no block, and
+        a caller passes one only for a historical read whose context differs
+        from the handle's current stamp. Pass `override_state` (this pool's own
+        pool-state object) to simulate against a hypothetical: the shell
+        marshalls the state for the pool's REGISTERED family, so a reserve-pair
+        read carries `reserves_token0` / `reserves_token1` (POST-swap) where a
+        concentrated-liquidity read carries the end `sqrt_price_x96` /
+        `liquidity` / `tick`.
         """
     @property
     def stable_swap(self, /) -> bool:
@@ -4544,6 +4549,7 @@ class SwapRefusalKind:
     non-computable family payload.
     """
     def __eq__(self, value: object, /) -> bool: ...
+    def __hash__(self, /) -> int: ...
     def __int__(self, /) -> int: ...
     def __ne__(self, value: object, /) -> bool: ...
 

@@ -2960,6 +2960,7 @@ async fn construction_door_v4_matches_the_route_interior() {
             pool_manager: pm,
             pool_id: pid,
             overrides,
+            db: None,
         },
         &io,
         v3_route(),

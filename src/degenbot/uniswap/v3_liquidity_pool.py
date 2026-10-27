@@ -364,7 +364,6 @@ class UniswapV3Pool(
             read = self._py_pool.simulate(
                 zero_for_one=zero_for_one,
                 amount_specified=amount_specified,
-                block=self.update_block,
                 sqrt_price_limit_x96=sqrt_price_limit_x96,
                 override_state=override_state,
             )
@@ -376,6 +375,7 @@ class UniswapV3Pool(
         return UniswapV3PoolSimulationResult(
             amount0_delta=int(read.amount0_delta),
             amount1_delta=int(read.amount1_delta),
+            specified_met=read.specified_met,
             initial_state=initial_state,
             final_state=dataclasses.replace(
                 initial_state,

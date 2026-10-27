@@ -1024,6 +1024,13 @@ _Avoid_: "quote", "oracle", "gate"; the retired miss-aware/with-fetch twins.
 The simulation request: direction, signed amount (positive = exact output, negative =
 exact input, from the user's perspective), and price limit.
 
+**Swap-read block context**:
+The block a swap read threads into sparse-miss recovery (it never affects pure computation).
+A handle's `simulate` resolves an omitted block to its own `update_block`, so the plain
+current-state read names none; an explicit block is the historical read, where the context
+genuinely differs from the handle's current stamp.
+_Avoid_: passing the handle's `update_block` back to the same handle as an echo.
+
 **Override state**:
 The hypothetical per-family state a swap read runs against — `ReservePair` reserves,
 `BalanceVector` balances, or `ConcentratedLiquidity` scalars plus tick rows — one
@@ -1035,7 +1042,21 @@ _Avoid_: "hypothetical pool"; per-family override methods; an override flag besi
 
 **SwapRead**:
 The typed outcome (`Computed` / `NotComputable` / `FetchFailed` / `FetchExhausted`).
-No silent zero — a former silent-failure mode is always an observable variant.
+No silent zero — a former silent-failure mode is always an observable variant. A computed
+read carries `specified_met`: whether the requested side was fully met, the verdict a
+consumer reads instead of re-deriving it from the deltas.
+
+**SwapRefused**:
+The seam's typed refusal, raised with `kind` (a `SwapRefusalKind` member), `word` (the
+bitmap word the walk stalled on — fetch arms only, `None` elsewhere), and `amount` (the
+signed request the read could not meet: negative = exact input, positive = exact output —
+`None` on the fetch arms, which never answered for an amount). Consumers read the typed
+attributes; the `(kind, word)` args survive only as the exception's own text. Python's
+`swap_refusal_to_error` is the ONE render into the companions' tree — fetch arms become
+`MissingLiquidityData`, `NotComputable` becomes `IncompleteSwap` naming the requested
+side's amount and zero for the side genuinely unconsumed.
+_Avoid_: decoding `exc.args` positionally; comparing a kind by identity (the seam builds a
+fresh instance per refusal, so compare by value); fabricating `IncompleteSwap(0, 0)`.
 
 **Caveats**:
 The additive flag set on an outcome, whose empty value means the number is exact.
