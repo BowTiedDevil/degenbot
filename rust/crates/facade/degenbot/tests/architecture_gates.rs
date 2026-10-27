@@ -2035,6 +2035,61 @@ fn capability_catalog_covers_every_public_crate() {
         }
     }
 
+    // Every door item the catalog names resolves to real code (ADR-084 D1's
+    // "every entry resolves to real code (gate-checked)" — the homes are
+    // checked above; the door-items column is checked here). A door item is
+    // either a qualified path (`sim::registry::PoolEntry`) or a bare item name
+    // (`WorkerRole`) that must be declared somewhere in the named crate.
+    for row in &rows {
+        let home_crates: Vec<String> = backtick_spans(&row[1])
+            .iter()
+            .filter(|token| token.starts_with("degenbot"))
+            .map(|token| {
+                token
+                    .split("::")
+                    .next()
+                    .expect("crate token")
+                    .replace('_', "-")
+            })
+            .collect();
+        for token in backtick_spans(&row[3]) {
+            if !token
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_ascii_uppercase())
+            {
+                continue;
+            }
+            // A qualified path (`degenbot_pools::sim::registry::PoolEntry`)
+            // resolves against the crate it names; a bare name resolves
+            // against the row's home crate(s).
+            let target_crates: Vec<String> = if token.contains("::") {
+                vec![token
+                    .split("::")
+                    .next()
+                    .expect("crate token")
+                    .replace('_', "-")]
+            } else {
+                home_crates.clone()
+            };
+            let resolved = target_crates.iter().any(|package_name| {
+                let Some(manifest) = manifest_of.get(package_name) else {
+                    return false;
+                };
+                let src = Path::new(manifest)
+                    .parent()
+                    .expect("manifest parent")
+                    .join("src");
+                resolve_door_item(&src, token.as_str())
+            });
+            assert!(
+                resolved,
+                "catalog door item {token:?} does not resolve to a declared pub item                  in any home crate {home_crates:?} (row {:?})",
+                row[0]
+            );
+        }
+    }
+
     // Every publishable crate appears at least once.
     let uncovered: Vec<&String> = publishable.difference(&catalogged).collect();
     assert!(
@@ -2101,6 +2156,68 @@ fn resolve_module_path(src: &Path, modules: &[&str], token: &str) {
         );
         dir = dir.join(segment);
     }
+}
+
+/// A door item resolves when the named crate declares it: a qualified path
+/// (`sim::registry::PoolEntry`) resolves each segment as a module path and the
+/// last as a declared item; a bare name (`WorkerRole`) is a declared
+/// `pub fn/struct/enum/trait/type/const` anywhere under the crate's `src/`.
+fn resolve_door_item(src: &Path, token: &str) -> bool {
+    let item = token.rsplit("::").next().expect("item segment");
+    let declared = |text: &str| {
+        text.lines().any(|line| {
+            let line = line.trim_start();
+            // A re-exported door item (`pub use ...::{Config}`) is as declared
+            // as a local one — the catalog names the door, not the definition
+            // site.
+            if line.starts_with("pub use ") && line.contains(item) {
+                return true;
+            }
+            [
+                "pub fn ",
+                "pub struct ",
+                "pub enum ",
+                "pub trait ",
+                "pub type ",
+                "pub const ",
+            ]
+            .iter()
+            .any(|kw| {
+                line.strip_prefix(kw).is_some_and(|rest| {
+                    // A raw identifier keeps its `r#` prefix in source;
+                    // strip it so the item name compares bare. The match is
+                    // on the item name followed by a non-identifier char so
+                    // `Pool` does not match `PoolEntry`.
+                    let name = rest.strip_prefix("r#").unwrap_or(rest);
+                    name.strip_prefix(item).is_some_and(|after| {
+                        after
+                            .chars()
+                            .next()
+                            .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+                    })
+                })
+            })
+        })
+    };
+    let mut stack = vec![src.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    if declared(&text) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 fn mod_declared_in(file: &Path, segment: &str) -> bool {
