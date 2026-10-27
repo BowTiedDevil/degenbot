@@ -37,8 +37,8 @@ impl PyArbEngine {
             let key = core.pool_id_by_address(&pool_addr)?;
             let mut map = hashbrown::HashMap::new();
             if let (Some(identity), Some(pool)) = (
-                core.pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(key),
-                core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(key),
+                core.pool_slice::<degenbot_pools::V3PoolIdentity>(key),
+                core.pool_slice::<degenbot_pools::V3PoolState>(key),
             ) {
                 map.insert(key, (*identity, pool.clone()));
             }
@@ -124,8 +124,8 @@ impl PyArbEngine {
             let fwd_key = v4_key?;
             let mut map = hashbrown::HashMap::new();
             if let (Some(identity), Some(pool)) = (
-                core.pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(fwd_key),
-                core.pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(fwd_key),
+                core.pool_slice::<degenbot_pools::V4PoolIdentity>(fwd_key),
+                core.pool_slice::<degenbot_pools::V4PoolState>(fwd_key),
             ) {
                 map.insert(fwd_key, (identity.clone(), pool.clone()));
             }

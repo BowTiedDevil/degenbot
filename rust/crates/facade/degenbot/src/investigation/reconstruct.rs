@@ -272,7 +272,7 @@ mod hook_wiring_tests {
         let mut core = BotState::new();
         let registered = register_v4(&mut core, &p).expect("register");
         let identity = core
-            .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(registered)
+            .pool_slice::<degenbot_pools::V4PoolIdentity>(registered)
             .expect("identity");
         assert_eq!(
             identity.pool_key.hooks, hook,

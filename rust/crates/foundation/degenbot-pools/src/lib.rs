@@ -139,7 +139,10 @@ pub use sim::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
 
 pub use sim::rate_provider::{BalancerRateProvider, RateProviderError, StaticRateProvider};
 
-pub use state::spec_bounds::{SpecValue, SpecViolation};
+pub use state::spec_bounds::{
+    narrow_v2_reserve, validate_v2_reserve, SpecValue, SpecViolation, MAX_TICK_SPACING,
+    UINT112_MAX, V3_FEE_MAX, V4_FEE_MAX,
+};
 
 pub use state::state_history::ReorgPoolState;
 
@@ -153,6 +156,138 @@ pub use sim::pool::{
     BalanceVectorVariant, BalanceVectorView, BinnedLiquidityVariant, ConcentratedLiquidityVariant,
     ConcentratedLiquidityView, Identity, Pool, ReservePairVariant, ReservePairView, Structure,
 };
+
+// ---------------------------------------------------------------------------
+// Capability door items (ADR-084 D2). The four capability modules stay the
+// tree; the blocks below are the curated names a consumer writes instead of a
+// path into a module beneath `state`, `sim`, `solve`, or `families`. Each block
+// is grouped by the module that owns the names, so the door and the home stay
+// one grep apart.
+// ---------------------------------------------------------------------------
+
+/// The per-family pool state, one block per family: the identity/state pair a
+/// caller reads, the registration DTO it submits, and the refusal enum the
+/// registration raises. A consumer building, seeding, or inspecting a family's
+/// state names these, never `state::<family>_state`.
+pub use state::v2_state::{RegisterV2PoolError, RegisterV2PoolParams, V2PoolIdentity, V2PoolState};
+
+pub use state::aerodrome_v2_state::{
+    AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromePoolError,
+    RegisterAerodromeV2PoolParams,
+};
+
+pub use state::curve_state::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams};
+
+pub use state::balancer_weighted_state::{
+    BalancerWeightedPoolIdentity, BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
+};
+
+pub use state::balancer_stable_state::{
+    BalancerStablePoolIdentity, BalancerStablePoolState, RegisterBalancerStablePoolParams,
+};
+
+pub use state::v3_state::{
+    v3_simulate_swap, BufferedV3LiquidityUpdate, BufferedV3PoolEvent, BufferedV3SwapEvent,
+    PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams, RegistrationLifecycle,
+    SimulateSwapError, TickRangeCache, V3PoolIdentity, V3StateSync, V3SwapOutcome, V3SwapUpdate,
+};
+
+pub use state::v4_state::{
+    has_amount_modifying_hook, v4_simulate_swap, BufferedV4LiquidityUpdate, BufferedV4PoolEvent,
+    BufferedV4SwapEvent, RegisterV4PoolError, RegisterV4PoolParams, V4PoolIdentity, V4PoolKey,
+    V4PoolState, V4StateSync, V4SwapUpdate, AMOUNT_MODIFYING_HOOK_MASK, V4_DYNAMIC_FEE_FLAG,
+};
+
+/// The reorg-journal data and its per-family delta traits: the journal itself,
+/// its block-delta payloads, and the restore-error vocabulary.
+pub use state::state_history::{
+    BalancesBlockDelta, BlockDelta, JournalError, ReorgJournal, ScalarPriors, TickBefore,
+    V2BlockDelta, V3BlockDelta,
+};
+
+/// The on-chain slot layout encoders/decoders: the generic reserve-pair and
+/// concentrated-liquidity word packing, and the base-slot arithmetic a
+/// sparse/tracked reader needs to address a tick.
+pub use state::slot_layout::{
+    concentrated_liquidity_liquidity_tracked_word, concentrated_liquidity_slot0_tracked_word,
+    decode_tick_word, decode_v2_reserves_word, pack_v2_reserves_word, tick_mapping_slot_at_base,
+    tick_word_of, V2ReservesParts,
+};
+
+/// The integer tick-range hop/sequence the concentrated-liquidity solve walks,
+/// and the crossing table it builds from them.
+pub use state::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeHop, IntV3TickRangeSequence};
+
+/// The family-capability table: which families an arm serves, and the bounds
+/// each family's encoder enforces.
+pub use state::capability::{
+    capabilities, Arm, Family, FamilyCapabilities, ENCODER_FAMILIES, V4_FEE_CEILING_EXCLUSIVE,
+    V4_HOOKLESS_ONLY,
+};
+
+/// The tick-map read/mutate traits and the slot0-head verifier a divergence
+/// probe reports through.
+pub use state::tick_map::{TickMap, TickMapMut};
+
+pub use state::tick_map_verify::Slot0HeadScalars;
+
+/// The `PoolEntry` dispatch row, the per-family reader traits over it, the
+/// family tag a registration concerns, and the token-entry metadata beside it.
+pub use sim::registry::{
+    ConcentratedLiquidityPool, ConcentratedLiquidityPoolMut, PoolEntry, PoolEntrySlice,
+    RegisteredPoolFamily, TokenEntry,
+};
+
+/// The `PoolEntry`-dispatched stateless swap simulator and the Curve strategy
+/// resolver a builder needs before it can name a hop.
+pub use sim::simulate_swap::simulate_swap;
+
+pub use sim::curve_strategies::{resolve_curve_strategy_discriminants, CurveStrategyDiscriminants};
+
+/// The affected-key vocabulary the reorg journal and the epoch delta file
+/// under.
+pub use solve::affected::AffectedKey;
+
+/// The N-token basket solve entry and the multi-token state it reads.
+pub use solve::basket::{solve_balancer_weighted, BalancerMultiTokenState};
+
+/// The concentrated-liquidity solve entries and the walk they memoize: the
+/// prepared hop, the crossing/profile tables, the walk tally/telemetry the
+/// solver and its capture read, and the piecewise entries a strategy calls.
+pub use solve::concentrated_liquidity::{
+    build_concentrated_liquidity_crossing_table, build_concentrated_liquidity_word_profiles,
+    derive_and_solve_concentrated_liquidity_piecewise, simulate_v3_range_swap,
+    solve_concentrated_liquidity_piecewise, solve_piecewise, ConcentratedLiquidityWordProfile,
+    MixedHopView, PreparedConcentratedLiquidityHop, WalkMemo, WalkMemoStats, WalkTally,
+    WalkTelemetry, DENSE_OBSERVE_THRESHOLD,
+};
+
+/// The profit-envelope gate boundary: the deps a gate call reads, the envelope
+/// it returns, the skip/refusal vocabulary, the prefix cache, and the
+/// degenerate-path capture event + sink a capture adapter implements.
+pub use solve::gate::{
+    DegeneratePathEvent, DegeneratePathSink, Envelope, GateDeps, GateSkipCause, HopMath,
+    PrefixCache,
+};
+
+/// The solve-runtime knobs: the configured search budget and the anchor sweep
+/// it selects.
+pub use solve::runtime::{AnchorSweep, SolveRuntimeConfig};
+
+/// The family read door's shared contract vocabulary: one swap-read request,
+/// one read outcome, one observe probe pair, one apply contract.
+pub use families::door::{FamilyApply, Observe, Observed, ReadOutcome, SwapReadRequest};
+
+/// The family event plumbing: the event a family read module emits and the
+/// buffer that stages it.
+pub use families::liquidity_event::LiquidityEvent;
+
+pub use families::liquidity_event_buffer::LiquidityEventBuffer;
+
+/// Fixture I/O (`capture-fixtures`): the corpus reader a capture/replay probe
+/// loads a golden row through.
+#[cfg(feature = "capture-fixtures")]
+pub use solve::fixtures::read_fixture;
 
 /// Liquidity data at an initialized tick.
 ///

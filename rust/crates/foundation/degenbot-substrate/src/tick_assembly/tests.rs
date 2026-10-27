@@ -26,9 +26,7 @@ use degenbot_db::ApplyLiquidityAtTick;
 
 use super::{assemble_v3_tick_map, assemble_v4_tick_map, TickMapAssemblyError};
 use crate::{PoolTickCoverage, TickInfo};
-use degenbot_pools::sim::tick_fetch::{
-    FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource,
-};
+use degenbot_pools::{FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource};
 
 // ── fixtures ──────────────────────────────────────────────────────────────
 

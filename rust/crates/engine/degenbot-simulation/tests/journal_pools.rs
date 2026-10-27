@@ -28,17 +28,17 @@
 use std::sync::Arc;
 
 use alloy::primitives::{address, b256, Address, Bytes, B256, U256};
-use degenbot_pools::state::slot_layout::{
+use degenbot_pools::decode_v3_slot0;
+use degenbot_pools::ConcentratedLiquiditySlotLayout;
+use degenbot_pools::{
     concentrated_liquidity_liquidity_tracked_word, concentrated_liquidity_slot0_tracked_word,
     decode_tick_word, decode_v2_reserves_word, pack_v2_reserves_word, tick_mapping_slot_at_base,
     tick_word_of, V2ReservesParts,
 };
-use degenbot_pools::state::v3_storage_slots::decode_v3_slot0;
-use degenbot_pools::state::v4_storage_slots::{
+use degenbot_pools::{
     encode_v4_liquidity_slot, encode_v4_slot0, v4_liquidity_slot, v4_pool_state_base_slot,
     v4_slot0_slot, v4_tick_mapping_slot, V4Slot0Parts,
 };
-use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_simulation::sim::evm::frame_replay::{
     ReplayStatus, ReplayableTx, ScratchBlock, ScratchEvm,
 };

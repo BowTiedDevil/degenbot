@@ -33,9 +33,9 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 use degenbot_db::snapshot::TickMapDb;
-use degenbot_pools::sim::registration_refusal::RegisterRefusal;
-use degenbot_pools::sim::tick_fetch::TickWordSource;
-use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
+use degenbot_pools::ConcentratedLiquiditySlotLayout;
+use degenbot_pools::RegisterRefusal;
+use degenbot_pools::TickWordSource;
 
 use super::builder::{self, PoolBuilderError, V4BuildResult, V4PoolBuildOverrides};
 use super::choreography;
@@ -44,7 +44,7 @@ use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::registration_ledger::BuildFailure;
 use crate::bot_core::Bot;
 use degenbot_core::op_warn;
-use degenbot_pools::sim::registry::RegisteredPoolFamily;
+use degenbot_pools::RegisteredPoolFamily;
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::{PoolRegistration, RegistrationVerdict};
 
@@ -774,12 +774,12 @@ mod route_tests {
     use super::*;
     use alloy::primitives::B256;
     use degenbot_core::errors::ProviderError;
-    use degenbot_pools::sim::registration_refusal::SpecRefusal;
+    use degenbot_pools::SpecRefusal;
     use degenbot_uniswap::deployments::AddressMismatch;
 
     use crate::bot_core::pool_builder::parity;
-    use degenbot_pools::state::v3_state::RegisterV3PoolError;
-    use degenbot_pools::state::v4_state::RegisterV4PoolError;
+    use degenbot_pools::RegisterV3PoolError;
+    use degenbot_pools::RegisterV4PoolError;
 
     #[test]
     fn route_serves_answers_the_policy_order() {
@@ -904,9 +904,9 @@ mod route_tests {
         // build-refusal taxonomy — its message has one home, the use site's
         // registration rendering.
         let spec = RegisterRefusal::from(&RegisterV3PoolError::SpecViolation(
-            degenbot_pools::state::spec_bounds::SpecViolation {
+            degenbot_pools::SpecViolation {
                 field: "fee",
-                value: degenbot_pools::state::spec_bounds::SpecValue::U32(3_000),
+                value: degenbot_pools::SpecValue::U32(3_000),
                 bound: "uint24",
             },
         ));

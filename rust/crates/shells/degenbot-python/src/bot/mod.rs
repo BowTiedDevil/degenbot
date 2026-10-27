@@ -45,7 +45,7 @@ fn narrow_reserve(
     value: alloy::primitives::U256,
     field: &'static str,
 ) -> PyResult<alloy::primitives::aliases::U112> {
-    degenbot_pools::state::spec_bounds::narrow_v2_reserve(value, field)
+    degenbot_pools::narrow_v2_reserve(value, field)
         .map_err(|sv| SpecViolationError::new_err(format!("{sv}")))
 }
 pub use crate::bot::pool::PyLiquidityPool;
@@ -58,13 +58,13 @@ use degenbot_bot::bot_core::{
     Bot, RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams,
     RegisterCurvePoolParams,
 };
-use degenbot_pools::sim::registration_refusal::SpecRefusal;
-use degenbot_pools::sim::registry::RegisteredPoolFamily;
-use degenbot_pools::state::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
-use degenbot_pools::state::v2_state::RegisterV2PoolParams;
-use degenbot_pools::state::v3_state::PoolTickCoverage;
-use degenbot_pools::state::v3_state::RegisterV3PoolParams;
-use degenbot_pools::state::v4_state::{RegisterV4PoolParams, V4PoolKey};
+use degenbot_pools::PoolTickCoverage;
+use degenbot_pools::RegisterAerodromeV2PoolParams;
+use degenbot_pools::RegisterV2PoolParams;
+use degenbot_pools::RegisterV3PoolParams;
+use degenbot_pools::RegisteredPoolFamily;
+use degenbot_pools::SpecRefusal;
+use degenbot_pools::{RegisterV4PoolParams, V4PoolKey};
 use degenbot_substrate::{PoolLookup, PoolRegistration};
 use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
@@ -1064,6 +1064,22 @@ fn classify_known_variant(raw: &str) -> Option<&'static str> {
         .find(|known| *known == raw)
 }
 
+/// Map a registered family tag to the request vocabulary's family spelling —
+/// the inverse of the request constructors' mapping, so the construction
+/// verdict answers what the registry recorded (ADR-085 D2). Closed over the
+/// registry's 7-arm tag vocabulary: `None` for a tag with no entry (the
+/// family-parity guard skips it, known-vs-known like the variant half).
+fn python_family_spelling(tag: &str) -> Option<&'static str> {
+    match tag {
+        "v2" | "aerodrome-v2" => Some("constant_product"),
+        "v3" => Some("concentrated_liquidity"),
+        "v4" => Some("managed_v4"),
+        "balancer-weighted" => Some("weighted"),
+        "balancer-stable" | "curve" => Some("stableswap"),
+        _ => None,
+    }
+}
+
 /// The construction echo — the identity the seam registered, ONE shape
 /// shared by the flight pre-check, the GET-race arm, and the fresh build
 /// (ADR-085 D5). `token0`/`token1` stay the pair-keyed families' pair echo
@@ -1527,10 +1543,16 @@ impl PyBot {
         // The driver no longer re-reads the handle to cross-check the echo
         // (ADR-085 D4): a divergence is this seam's bug, loud here.
         Self::assert_identity_parity(py, request, &echo, &pool)?;
+        // The family the registry recorded, in the request vocabulary
+        // (ADR-085 D2): the verdict answers what was registered — an
+        // unmapped tag keeps the request spelling (the family half above
+        // skips it the same way).
+        let family = python_family_spelling(pool.family_of(py)?)
+            .map_or_else(|| request.family.clone(), str::to_owned);
         Ok(PyConstructionOutcome {
             pool: Py::new(py, pool)?,
             pool_id: echo.pool_id,
-            family: request.family.clone(),
+            family,
             variant: echo.variant,
             token0: echo.token0,
             token1: echo.token1,
@@ -1573,22 +1595,40 @@ impl PyBot {
             }
         }
 
+        // Family half: the request's family against the registered family's
+        // tag, mapped onto the request vocabulary (ADR-085 D2 — the verdict
+        // answers what was registered, never a parrot of the request). The
+        // mapping is closed over the registry's 7-arm tag vocabulary; an
+        // unmapped tag skips (known-vs-known, like the variant half). This
+        // half runs BEFORE the variant half, whose unclassified spellings
+        // early-return.
+        let registered_tag = pool.family_of(py)?;
+        if let Some(registered_family) = python_family_spelling(registered_tag) {
+            if registered_family != request.family {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "construct_pool: registered family diverged from the request for {}: \
+                     request family {:?} vs registered {:?} (tag {:?})",
+                    request.address, request.family, registered_family, registered_tag
+                )));
+            }
+        }
+
         let Some(echoed) = classify_known_variant(&echo.variant) else {
             return Ok(());
         };
         let Some(resolved) = request.variant.as_deref().and_then(classify_known_variant) else {
             return Ok(());
         };
-        if echoed == resolved {
-            return Ok(());
+        if echoed != resolved {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "construct_pool: core identity diverged from the resolver for {}: \
+                 resolver variant {:?} vs core echo {:?}",
+                request.address,
+                request.variant.as_deref().unwrap_or_default(),
+                echo.variant
+            )));
         }
-        Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-            "construct_pool: core identity diverged from the resolver for {}: \
-             resolver variant {:?} vs core echo {:?}",
-            request.address,
-            request.variant.as_deref().unwrap_or_default(),
-            echo.variant
-        )))
+        Ok(())
     }
 
     /// The construction switchboard's payload arm: the flat per-family dispatch
@@ -2140,7 +2180,7 @@ impl PyBot {
         // `AlloyTickWordSource` (Option B — pure-Rust choreography, no GIL
         // re-entry per RPC). `None` when `io=None` or the provider isn't
         // alloy-backed → Chain arm short-circuits (current behavior).
-        let chain: Option<std::sync::Arc<dyn degenbot_pools::sim::tick_fetch::TickWordSource>> =
+        let chain: Option<std::sync::Arc<dyn degenbot_pools::TickWordSource>> =
             io.as_ref().and_then(|io_bound| {
                 io_bound
                     .try_borrow()
@@ -2163,8 +2203,8 @@ impl PyBot {
         };
         let dict = build_tick_rows_py(py, &rows)?;
         let cov_str = match coverage {
-            degenbot_pools::state::v3_state::PoolTickCoverage::Tracked => "tracked",
-            degenbot_pools::state::v3_state::PoolTickCoverage::Sparse => "sparse",
+            degenbot_pools::PoolTickCoverage::Tracked => "tracked",
+            degenbot_pools::PoolTickCoverage::Sparse => "sparse",
         };
         Ok(Some((dict, cov_str.to_string())))
     }
@@ -2224,7 +2264,7 @@ impl PyBot {
         };
         let db = self.db_handle();
         let pool_id_inner: degenbot_decoders::v4_swap_decoder::V4PoolId = pool_id_hash.0; // B256 = FixedBytes<32>; .0 is [u8; 32]
-        let chain: Option<std::sync::Arc<dyn degenbot_pools::sim::tick_fetch::TickWordSource>> =
+        let chain: Option<std::sync::Arc<dyn degenbot_pools::TickWordSource>> =
             io.as_ref().and_then(|io_bound| {
                 io_bound
                     .try_borrow()
@@ -2249,8 +2289,8 @@ impl PyBot {
         };
         let dict = build_tick_rows_py(py, &rows)?;
         let cov_str = match coverage {
-            degenbot_pools::state::v3_state::PoolTickCoverage::Tracked => "tracked",
-            degenbot_pools::state::v3_state::PoolTickCoverage::Sparse => "sparse",
+            degenbot_pools::PoolTickCoverage::Tracked => "tracked",
+            degenbot_pools::PoolTickCoverage::Sparse => "sparse",
         };
         Ok(Some((dict, cov_str.to_string())))
     }
@@ -2331,9 +2371,7 @@ impl PyBot {
         // RPC-adjacent work (cheap string check first — no malformed
         // argument behind a CREATE2 verify).
         let slot_override = match slot_layout {
-            Some("pancakeswap") => {
-                Some(degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout::PancakeV3)
-            }
+            Some("pancakeswap") => Some(degenbot_pools::ConcentratedLiquiditySlotLayout::PancakeV3),
             Some("uniswap") | None => None,
             Some(other) => {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -3369,7 +3407,7 @@ mod tests {
             let echo = parity_echo("", "", "balancer_stable");
             let request = PyPoolConstructionRequest::make(
                 V2_ADDRESS,
-                "weighted",
+                "constant_product",
                 Some("balancer_weighted"),
                 None,
                 true,
@@ -3390,17 +3428,19 @@ mod tests {
         });
     }
 
-    /// The multi-token families echo no pair, so the handle's own pair — present
-    /// on this fixture — is never cross-checked.
+    /// The verdict's family answers what the registry recorded (ADR-085 D2): a
+    /// request naming a different family is the seam's own bug — loud, naming
+    /// both spellings. Here a concentrated-liquidity request lands on a
+    /// V2-registered handle.
     #[test]
-    fn identity_parity_skips_the_token_guard_without_a_pair_echo() {
+    fn identity_parity_raises_on_a_family_divergence() {
         pyo3::Python::attach(|py| {
             let (_bot, pool) = registered_v2_handle(py);
-            let echo = parity_echo("", "", "balancer_weighted");
+            let echo = parity_echo(V2_TOKEN0, V2_TOKEN1, "uniswap-v2");
             let request = PyPoolConstructionRequest::make(
                 V2_ADDRESS,
-                "weighted",
-                Some("balancer_weighted"),
+                "concentrated_liquidity",
+                None,
                 None,
                 true,
                 None,
@@ -3408,6 +3448,29 @@ mod tests {
                 None,
                 None,
             );
+            let err = PyBot::assert_identity_parity(py, &request, &echo, &pool)
+                .expect_err("the request family contradicts the registered family");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("registered family diverged"),
+                "divergence is named: {msg}"
+            );
+            assert!(
+                msg.contains("concentrated_liquidity"),
+                "request side: {msg}"
+            );
+            assert!(msg.contains("constant_product"), "registered side: {msg}");
+        });
+    }
+
+    /// The multi-token families echo no pair, so the handle's own pair — present
+    /// on this fixture — is never cross-checked.
+    #[test]
+    fn identity_parity_skips_the_token_guard_without_a_pair_echo() {
+        pyo3::Python::attach(|py| {
+            let (_bot, pool) = registered_v2_handle(py);
+            let echo = parity_echo("", "", "uniswap-v2");
+            let request = PyPoolConstructionRequest::v2(V2_ADDRESS, None, true);
             PyBot::assert_identity_parity(py, &request, &echo, &pool)
                 .expect("no echoed pair means no token cross-check");
         });
@@ -3422,17 +3485,7 @@ mod tests {
         pyo3::Python::attach(|py| {
             let (_bot, pool) = registered_v2_handle(py);
             let echo = parity_echo("", "", "uniswap-v2");
-            let request = PyPoolConstructionRequest::make(
-                V2_ADDRESS,
-                "weighted",
-                Some("balancer_weighted"),
-                None,
-                true,
-                None,
-                None,
-                None,
-                None,
-            );
+            let request = PyPoolConstructionRequest::v2(V2_ADDRESS, None, true);
             PyBot::assert_identity_parity(py, &request, &echo, &pool)
                 .expect("an unclassified echo skips the variant guard");
         });

@@ -55,14 +55,14 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, I256, U256};
-use degenbot_pools::sim::registry::ConcentratedLiquidityPoolMut;
-use degenbot_pools::sim::tick_fetch::FetchedTickWord;
-use degenbot_pools::solve::concentrated_liquidity::IntV3TickRangeSequence;
-use degenbot_pools::state::v3_state::{
-    v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, SimulateSwapError, V3PoolState,
-};
+use degenbot_pools::ConcentratedLiquidityPoolMut;
+use degenbot_pools::FetchedTickWord;
+use degenbot_pools::IntV3TickRangeSequence;
 use degenbot_pools::TickWordKey;
 use degenbot_pools::TickWordSource;
+use degenbot_pools::{
+    v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, SimulateSwapError, V3PoolState,
+};
 use degenbot_rpc::abi::fetch_v3_slot0_liquidity;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_rpc::AlloyTickWordSource;
@@ -142,7 +142,7 @@ fn fetch_word(
     address: Address,
     word: i32,
     block: u64,
-) -> Result<FetchedTickWord, degenbot_pools::sim::tick_fetch::TickWordFetchError> {
+) -> Result<FetchedTickWord, degenbot_pools::TickWordFetchError> {
     let key = TickWordKey::V3 {
         address,
         tick_spacing: 10,
@@ -224,7 +224,7 @@ fn main() -> ExitCode {
         let (a, ts, fee, t0s, t1s) = pool;
         let (sqrt, tick_i256, liq_u256) = &setup[i];
         let p = addr(a);
-        let fetcher: Arc<dyn degenbot_pools::sim::tick_fetch::TickWordSource> =
+        let fetcher: Arc<dyn degenbot_pools::TickWordSource> =
             Arc::new(AlloyTickWordSource::clone(&bootstrap));
         let params = RegisterV3PoolParams {
             address: p,
@@ -243,8 +243,7 @@ fn main() -> ExitCode {
             fetcher: Some(fetcher.clone()),
             deployer: Address::ZERO,
             init_hash: B256::ZERO,
-            slot_layout:
-                degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
+            slot_layout: degenbot_pools::ConcentratedLiquiditySlotLayout::UniswapV3,
             known_bitmap_words: Vec::new(),
         };
         let (_identity, mut state) = V3PoolState::from_params(params, 8);
@@ -328,9 +327,9 @@ fn main() -> ExitCode {
             let _zfo_a = other_a == a_t0;
             let _zfo_b = s == b_t0;
             let t0 = std::time::Instant::now();
-            let out = degenbot_pools::solve::concentrated_liquidity::derive_and_solve_concentrated_liquidity_piecewise(
+            let out = degenbot_pools::derive_and_solve_concentrated_liquidity_piecewise(
                 &[sa, sb],
-                &degenbot_pools::solve::runtime::SolveRuntimeConfig::default(),
+                &degenbot_pools::SolveRuntimeConfig::default(),
             );
             let res = out.result;
             let micros = t0.elapsed().as_micros();

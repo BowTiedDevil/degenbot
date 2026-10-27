@@ -30,8 +30,8 @@ use degenbot_bot::bot_core::registration_ledger::{
     BuildFailure, IdentityMismatchShape, LifecyclePrecondition, RefusalKind, RegisterRefusal,
     SnapshotLoadReason, UnsupportedSubject, VerifyOrigin,
 };
-use degenbot_pools::sim::registry::RegisteredPoolFamily;
-use degenbot_pools::state::v2_state::RegisterV2PoolError;
+use degenbot_pools::RegisterV2PoolError;
+use degenbot_pools::RegisteredPoolFamily;
 
 use crate::bot::engine::{
     DynamicFeePoolRejectedError, HighFeePoolRejectedError, HookedPoolRejectedError,
@@ -209,7 +209,7 @@ fn map_admission(failure: BuildFailure, hook_flags: Option<u16>, fee: Option<u32
         BuildFailure::HookedPool => HookedPoolRejectedError::new_err(format!(
             "V4 pool has amount-modifying hooks (flags=0x{:04X}, mask=0x{:04X}) — excluded from arbitrage",
             hook_flags.unwrap_or_default(),
-            degenbot_pools::state::v4_state::AMOUNT_MODIFYING_HOOK_MASK
+            degenbot_pools::AMOUNT_MODIFYING_HOOK_MASK
         )),
         BuildFailure::DynamicFee => DynamicFeePoolRejectedError::new_err(format!(
             "V4 pool has dynamic fee (fee=0x{:06X}) — excluded from arbitrage",
@@ -423,12 +423,12 @@ mod tests {
     use degenbot_bot::bot_core::pool_builder::parity::IdentityDivergence;
     use degenbot_bot::bot_core::registration_ledger::RegistrationPhase;
     use degenbot_core::errors::ProviderError;
-    use degenbot_pools::sim::registration_refusal::SpecRefusal;
-    use degenbot_pools::state::aerodrome_v2_state::RegisterAerodromePoolError;
-    use degenbot_pools::state::spec_bounds::{SpecValue, SpecViolation};
-    use degenbot_pools::state::v2_state::RegisterV2PoolError;
-    use degenbot_pools::state::v3_state::RegisterV3PoolError;
-    use degenbot_pools::state::v4_state::RegisterV4PoolError;
+    use degenbot_pools::RegisterAerodromePoolError;
+    use degenbot_pools::RegisterV2PoolError;
+    use degenbot_pools::RegisterV3PoolError;
+    use degenbot_pools::RegisterV4PoolError;
+    use degenbot_pools::SpecRefusal;
+    use degenbot_pools::{SpecValue, SpecViolation};
 
     fn addr(s: &str) -> Address {
         s.parse().unwrap()
@@ -683,7 +683,7 @@ mod tests {
             message(&err),
             format!(
                 "V4 pool has amount-modifying hooks (flags=0x0001, mask=0x{:04X}) — excluded from arbitrage",
-                degenbot_pools::state::v4_state::AMOUNT_MODIFYING_HOOK_MASK
+                degenbot_pools::AMOUNT_MODIFYING_HOOK_MASK
             )
         );
 

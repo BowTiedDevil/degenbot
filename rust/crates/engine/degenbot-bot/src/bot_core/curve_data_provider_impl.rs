@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_core::runtime::bridged_block_on;
-use degenbot_pools::sim::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
+use degenbot_pools::{CurveDataProvider, CurveDataProviderError};
 use degenbot_rpc::abi;
 
 use crate::bot_core::construction_io::RpcConstruction;

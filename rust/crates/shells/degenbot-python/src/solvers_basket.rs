@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 
 /// `QuantAMM` closed-form N-token Balancer weighted basket arbitrage solver.
 ///
-/// Thin `PyO3` wrapper over [`degenbot_pools::solve::basket::solve_balancer_weighted`].
+/// Thin `PyO3` wrapper over [`degenbot_pools::solve_balancer_weighted`].
 /// Port of `BalancerMultiTokenSolver` / `solve_balancer_weighted` (Willetts &
 /// Harrington, `QuantAMM` Equation 9).
 ///
@@ -65,15 +65,14 @@ pub fn solve_balancer_weighted_basket(
             market_prices.len()
         )));
     }
-    let pool = degenbot_pools::solve::basket::BalancerMultiTokenState {
+    let pool = degenbot_pools::BalancerMultiTokenState {
         reserves,
         weights,
         fee_numer,
         fee_denom,
         decimals,
     };
-    let result =
-        degenbot_pools::solve::basket::solve_balancer_weighted(&pool, &market_prices, max_input);
+    let result = degenbot_pools::solve_balancer_weighted(&pool, &market_prices, max_input);
     Ok((
         result.trades,
         result.profit,

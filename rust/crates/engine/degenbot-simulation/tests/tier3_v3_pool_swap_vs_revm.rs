@@ -44,16 +44,16 @@ use revm::database::CacheDB;
 use revm::database_interface::EmptyDB;
 
 use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
-use degenbot_pools::state::state_history::{ReorgJournal, V3BlockDelta};
-use degenbot_pools::state::v3_state::{
-    v3_simulate_swap, PoolTickCoverage, RegistrationLifecycle, SimulateSwapError, TickRangeCache,
-    V3PoolState,
-};
-use degenbot_pools::state::v3_storage_slots::{
+use degenbot_pools::TickInfo;
+use degenbot_pools::{
     compute_v3_tick_bitmap_word_from_raw, encode_v3_liquidity_slot, encode_v3_slot0_fresh,
     encode_v3_tick_info_slot, v3_tick_bitmap_word_slot, v3_tick_mapping_slot,
 };
-use degenbot_pools::TickInfo;
+use degenbot_pools::{
+    v3_simulate_swap, PoolTickCoverage, RegistrationLifecycle, SimulateSwapError, TickRangeCache,
+    V3PoolState,
+};
+use degenbot_pools::{ReorgJournal, V3BlockDelta};
 
 use tier3_v3_common::{
     build_arbitrary_v3_state, decode_error_string, run_onchain_swap, ArbV3Position,
@@ -1123,7 +1123,7 @@ fn v3_pool_start_in_empty_region_crosses_to_liquidity() {
 /// `compute_swap_step_v3` (exactly what `simulate_v3_range_swap` delegates to).
 fn solver_crossing_output_v3(
     amount_in: U256,
-    seq: &degenbot_pools::state::int_v3_hop::IntV3TickRangeSequence,
+    seq: &degenbot_pools::IntV3TickRangeSequence,
 ) -> Option<U256> {
     use degenbot_math::concentrated_liquidity::swap_math::compute_swap_step_v3;
 

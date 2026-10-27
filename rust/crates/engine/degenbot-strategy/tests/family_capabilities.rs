@@ -11,7 +11,7 @@
 use degenbot_db::schema::table::{is_v2_kind, is_v3_kind, is_v4_kind};
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::solve::HopType;
-use degenbot_pools::state::capability::{
+use degenbot_pools::{
     capabilities, Arm, Family, ENCODER_FAMILIES, V4_FEE_CEILING_EXCLUSIVE, V4_HOOKLESS_ONLY,
 };
 use degenbot_pools::{
@@ -149,7 +149,7 @@ fn hop_type_solve_coverage_and_settlement_compose_match_the_declaration() {
     for arm in Arm::ALL {
         assert_eq!(
             capabilities(arm, Family::LfjBinned),
-            Some(degenbot_pools::state::capability::FamilyCapabilities::NONE),
+            Some(degenbot_pools::FamilyCapabilities::NONE),
         );
     }
 }

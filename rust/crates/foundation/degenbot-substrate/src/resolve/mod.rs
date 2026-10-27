@@ -532,10 +532,8 @@ mod tests {
     };
     use alloy::primitives::aliases::U112;
     use alloy::primitives::{Address, U128, U256};
-    use degenbot_pools::solve::concentrated_liquidity::{
-        ConcentratedLiquidityWordProfile, IntTickRangeCrossing,
-    };
     use degenbot_pools::solve::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
+    use degenbot_pools::{ConcentratedLiquidityWordProfile, IntTickRangeCrossing};
 
     fn ref_v3(pool_key: u64) -> MixedPoolRef {
         MixedPoolRef {
@@ -938,11 +936,11 @@ mod tests {
             .filter_map(ResolvedHop::as_prepared_concentrated_liquidity_hop)
             .cloned()
             .collect();
-        degenbot_pools::solve::concentrated_liquidity::solve_concentrated_liquidity_piecewise(
+        degenbot_pools::solve_concentrated_liquidity_piecewise(
             &prepared,
             None,
             None,
-            &degenbot_pools::solve::runtime::SolveRuntimeConfig::default(),
+            &degenbot_pools::SolveRuntimeConfig::default(),
             None,
         )
         .result
@@ -952,26 +950,25 @@ mod tests {
     fn mixed_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
         // One borrowed view per position: V2 borrows the resolved state; concentrated liquidity
         // borrows the projection's prepared value (sequence + `Arc` tables).
-        let mut hops: Vec<degenbot_pools::solve::concentrated_liquidity::MixedHopView<'_>> =
-            Vec::with_capacity(r.hops.len());
+        let mut hops: Vec<degenbot_pools::MixedHopView<'_>> = Vec::with_capacity(r.hops.len());
         for h in &r.hops {
             match h {
                 ResolvedHop::V2 { state } => {
-                    hops.push(
-                        degenbot_pools::solve::concentrated_liquidity::MixedHopView::V2(state),
-                    );
+                    hops.push(degenbot_pools::MixedHopView::V2(state));
                 }
                 ResolvedHop::V3 { prepared } | ResolvedHop::V4 { prepared } => {
-                    hops.push(degenbot_pools::solve::concentrated_liquidity::MixedHopView::ConcentratedLiquidity(prepared));
+                    hops.push(degenbot_pools::MixedHopView::ConcentratedLiquidity(
+                        prepared,
+                    ));
                 }
                 _ => return None,
             }
         }
-        degenbot_pools::solve::concentrated_liquidity::solve_piecewise(
+        degenbot_pools::solve_piecewise(
             &hops,
             None,
             None,
-            &degenbot_pools::solve::runtime::SolveRuntimeConfig::default(),
+            &degenbot_pools::SolveRuntimeConfig::default(),
             None,
         )
         .result

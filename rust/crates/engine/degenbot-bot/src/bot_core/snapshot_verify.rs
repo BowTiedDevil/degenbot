@@ -31,9 +31,9 @@ use alloy::primitives::Address;
 use parking_lot::Mutex;
 
 use crate::bot_core::registration_ledger::{RefusalKind, RegistrationPhase};
-use degenbot_pools::state::v3_state::V3PoolState;
-use degenbot_pools::state::v4_state::V4PoolState;
 use degenbot_pools::TickInfo;
+use degenbot_pools::V3PoolState;
+use degenbot_pools::V4PoolState;
 
 /// Error from `Bot::load_snapshot_from_db` / non-DB snapshot-load paths — the
 /// DB read failure or the per-pool hex/tick decode failure. The refusal is

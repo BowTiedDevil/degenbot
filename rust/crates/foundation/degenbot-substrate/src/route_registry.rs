@@ -120,7 +120,7 @@ mod tests {
             address,
             fee: 500,
             tick_spacing: 10,
-            layout: degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
+            layout: degenbot_pools::ConcentratedLiquiditySlotLayout::UniswapV3,
         }
     }
 

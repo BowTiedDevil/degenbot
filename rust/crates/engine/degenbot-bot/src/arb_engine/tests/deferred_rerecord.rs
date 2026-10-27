@@ -10,23 +10,20 @@ use crate::arb_engine::solve_cycle::{CycleArm, CycleOutcome};
 // with the hook unset (direct engine drives) the deferral keeps today's
 // drop.
 // -------------------------------------------------------------------
-fn kjwik5_key(pool_id: u64) -> degenbot_pools::solve::affected::AffectedKey {
-    degenbot_pools::solve::affected::AffectedKey::new(HopType::V2, pool_id)
+fn kjwik5_key(pool_id: u64) -> degenbot_pools::AffectedKey {
+    degenbot_pools::AffectedKey::new(HopType::V2, pool_id)
 }
-fn kjwik5_affected_keys(pool_ids: &[u64]) -> Vec<degenbot_pools::solve::affected::AffectedKey> {
+fn kjwik5_affected_keys(pool_ids: &[u64]) -> Vec<degenbot_pools::AffectedKey> {
     pool_ids.iter().copied().map(kjwik5_key).collect()
 }
-fn kjwik5_path_keys(
-    engine: &ArbitrageEngine,
-    path_id: u64,
-) -> Vec<degenbot_pools::solve::affected::AffectedKey> {
+fn kjwik5_path_keys(engine: &ArbitrageEngine, path_id: u64) -> Vec<degenbot_pools::AffectedKey> {
     engine
         .path_pools()
         .get(&path_id)
         .expect("registered path")
         .pools
         .iter()
-        .map(|r| degenbot_pools::solve::affected::AffectedKey::new(r.hop_type, r.pool_key))
+        .map(|r| degenbot_pools::AffectedKey::new(r.hop_type, r.pool_key))
         .collect()
 }
 

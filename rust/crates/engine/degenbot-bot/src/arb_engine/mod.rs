@@ -375,7 +375,7 @@ pub struct ResultBatch {
 /// cold-start `solve_all`): the deferral then keeps its pre-fold dropped
 /// behavior.
 pub(crate) type DeferredReRecordHook =
-    std::sync::Arc<dyn Fn(&[degenbot_pools::solve::affected::AffectedKey], u64) + Send + Sync>;
+    std::sync::Arc<dyn Fn(&[degenbot_pools::AffectedKey], u64) + Send + Sync>;
 /// The unified Uniswap engine — owns V2, V3, and V4 pool state and solves
 /// mixed arbitrage paths.
 ///
@@ -398,7 +398,7 @@ pub(crate) struct ArbitrageEngine {
     /// solve tree's removed process-global RUNTIME `OnceLock`.
     /// ADR-045 T4: the cycle owns its own copy.
     #[expect(dead_code)]
-    runtime_cfg: ::degenbot_pools::solve::runtime::SolveRuntimeConfig,
+    runtime_cfg: ::degenbot_pools::SolveRuntimeConfig,
     /// V2 + V3 + V4 pool state owner (ADR-003). The shared
     /// `Arc<RwLock<BotState>>` (ADR-006 D1+D2): read methods take a read guard,
     /// mutations a write guard. Lock ordering when nested is
@@ -540,15 +540,11 @@ impl ArbitrageEngine {
                 // (dormant Unopened, pipe closed, counters at 0).
                 detached_cycle: detached_cycle::DetachedCycle::new(),
                 scope: BlockScope::new(
-                    std::sync::Arc::new(
-                        ::degenbot_pools::solve::concentrated_liquidity::WalkMemo::new(
-                            cfg.solve.solver_walk_memo,
-                            cfg.solve.solver_walk_memo_stats,
-                        ),
-                    ),
-                    std::sync::Arc::new(
-                        ::degenbot_pools::solve::concentrated_liquidity::WalkTelemetry::new(),
-                    ),
+                    std::sync::Arc::new(::degenbot_pools::WalkMemo::new(
+                        cfg.solve.solver_walk_memo,
+                        cfg.solve.solver_walk_memo_stats,
+                    )),
+                    std::sync::Arc::new(::degenbot_pools::WalkTelemetry::new()),
                 ),
                 min_profit_floor: alloy::primitives::U256::from(cfg.solve.min_profit_wei),
                 clamp_margin: retune.clamp_margin,
@@ -705,7 +701,7 @@ impl ArbitrageEngine {
         gamma_numer: u64,
         fee_denom: u64,
     ) -> u64 {
-        let params = degenbot_pools::state::v2_state::RegisterV2PoolParams {
+        let params = degenbot_pools::RegisterV2PoolParams {
             address,
             token0: Address::ZERO,
             token1: Address::ZERO,
@@ -737,10 +733,7 @@ impl ArbitrageEngine {
     #[cfg(test)]
     #[expect(clippy::expect_used)] // test convenience: assert registration succeeds
     #[must_use]
-    pub fn register_v3_pool(
-        &self,
-        params: &degenbot_pools::state::v3_state::RegisterV3PoolParams,
-    ) -> u64 {
+    pub fn register_v3_pool(&self, params: &degenbot_pools::RegisterV3PoolParams) -> u64 {
         self.core
             .write_at(degenbot_substrate::state_lock::LockSite::Solver)
             .register_v3_pool(params)
@@ -755,8 +748,8 @@ impl ArbitrageEngine {
     #[cfg(test)]
     pub fn register_v4_pool(
         &self,
-        params: &degenbot_pools::state::v4_state::RegisterV4PoolParams,
-    ) -> Result<u64, degenbot_pools::state::v4_state::RegisterV4PoolError> {
+        params: &degenbot_pools::RegisterV4PoolParams,
+    ) -> Result<u64, degenbot_pools::RegisterV4PoolError> {
         self.core
             .write_at(degenbot_substrate::state_lock::LockSite::Solver)
             .register_v4_pool(params)

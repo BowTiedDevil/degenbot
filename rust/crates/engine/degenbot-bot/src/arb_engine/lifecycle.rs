@@ -13,20 +13,14 @@ use ::degenbot_pools::solve::{PoolHop, SolvePathResult};
 #[must_use]
 pub(crate) fn solve_runtime_config_from_cfg(
     cfg: &::degenbot_config::BotConfig,
-) -> ::degenbot_pools::solve::runtime::SolveRuntimeConfig {
-    ::degenbot_pools::solve::runtime::SolveRuntimeConfig {
+) -> ::degenbot_pools::SolveRuntimeConfig {
+    ::degenbot_pools::SolveRuntimeConfig {
         event_solver_legacy: cfg.solve.walk_event_solver_legacy,
         walk_event_census: cfg.solve.walk_event_census,
         anchor_sweep: match cfg.solve.walk_anchor_sweep {
-            ::degenbot_config::AnchorSweep::Off => {
-                ::degenbot_pools::solve::runtime::AnchorSweep::Off
-            }
-            ::degenbot_config::AnchorSweep::CenterOnly => {
-                ::degenbot_pools::solve::runtime::AnchorSweep::CenterOnly
-            }
-            ::degenbot_config::AnchorSweep::Full => {
-                ::degenbot_pools::solve::runtime::AnchorSweep::Full
-            }
+            ::degenbot_config::AnchorSweep::Off => ::degenbot_pools::AnchorSweep::Off,
+            ::degenbot_config::AnchorSweep::CenterOnly => ::degenbot_pools::AnchorSweep::CenterOnly,
+            ::degenbot_config::AnchorSweep::Full => ::degenbot_pools::AnchorSweep::Full,
         },
         max_tangent_lines: cfg.solve.envelope_max_tangent_lines,
         sampled_compose_lines: cfg.solve.envelope_sampled_compose_lines,
@@ -242,7 +236,7 @@ pub(crate) fn v3_pool_count(engine: &ArbitrageEngine) -> usize {
     engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .pool_count_of::<degenbot_pools::state::v3_state::V3PoolState>()
+        .pool_count_of::<degenbot_pools::V3PoolState>()
 }
 /// Number of registered V4 pools (state lives in `BotState` under ADR-003).
 #[must_use]

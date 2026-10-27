@@ -424,7 +424,7 @@ mod inline_sim_tests {
     use crate::arb_engine::lifecycle::register_path;
     use alloy::primitives::U256;
     use degenbot_pools::solve::{HopType, PoolHop};
-    use degenbot_pools::state::v4_state::RegisterV4PoolParams;
+    use degenbot_pools::RegisterV4PoolParams;
     use hashbrown::HashMap;
     use parking_lot::Mutex;
     use std::sync::Arc;
@@ -469,7 +469,7 @@ mod inline_sim_tests {
     }
     #[expect(clippy::expect_used)]
     fn two_hop_engine() -> (ArbitrageEngine, u64) {
-        use degenbot_pools::state::v3_state::PoolTickCoverage;
+        use degenbot_pools::PoolTickCoverage;
         use degenbot_pools::TickInfo;
         let mut engine = ArbitrageEngine::new();
         let to_u112 = |v: u64| {
@@ -504,7 +504,7 @@ mod inline_sim_tests {
             .register_v4_pool(&RegisterV4PoolParams {
                 pool_manager: Address::from([0x44u8; 20]),
                 pool_id: [0xabu8; 32],
-                pool_key: degenbot_pools::state::v4_state::V4PoolKey {
+                pool_key: degenbot_pools::V4PoolKey {
                     currency0: Address::from([0x30u8; 20]),
                     currency1: Address::from([0x31u8; 20]),
                     fee: 500,

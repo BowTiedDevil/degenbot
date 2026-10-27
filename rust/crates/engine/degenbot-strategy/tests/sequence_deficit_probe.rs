@@ -35,8 +35,8 @@ use alloy::primitives::{Address, U256};
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::discovery::V3PoolRowInput;
 use degenbot_db::ApplyLiquidityAtTick;
-use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
-use degenbot_pools::state::v3_state::RegisterV3PoolParams;
+use degenbot_pools::ConcentratedLiquiditySlotLayout;
+use degenbot_pools::RegisterV3PoolParams;
 use degenbot_pools::TickInfo;
 use degenbot_rpc::abi::{fetch_tick_bitmap, fetch_tick_data, fetch_v3_slot0_liquidity};
 use degenbot_rpc::provider::AlloyProvider;
@@ -262,14 +262,14 @@ fn build_sequence(
         tick_data: to_tickinfo(map, 0),
         update_block: 0,
         tick_data_block: None,
-        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Sparse,
+        coverage: degenbot_pools::PoolTickCoverage::Sparse,
         fetcher: None,
         deployer: Address::ZERO,
         init_hash: alloy::primitives::B256::ZERO,
         slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
         known_bitmap_words: Vec::new(),
     };
-    let (_identity, state) = degenbot_pools::state::v3_state::V3PoolState::from_params(params, 8);
+    let (_identity, state) = degenbot_pools::V3PoolState::from_params(params, 8);
     (
         state
             .build_int_v3_sequence(spacing, fee, true)

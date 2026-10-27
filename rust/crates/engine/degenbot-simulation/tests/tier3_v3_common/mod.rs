@@ -40,11 +40,9 @@ use revm::database::CacheDB;
 use revm::database_interface::EmptyDB;
 
 use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
-use degenbot_pools::state::state_history::{ReorgJournal, V3BlockDelta};
-use degenbot_pools::state::v3_state::{
-    PoolTickCoverage, RegistrationLifecycle, TickRangeCache, V3PoolState,
-};
 use degenbot_pools::TickInfo;
+use degenbot_pools::{PoolTickCoverage, RegistrationLifecycle, TickRangeCache, V3PoolState};
+use degenbot_pools::{ReorgJournal, V3BlockDelta};
 
 /// Mask selecting the low 128 bits of a U256 (V3 `liquidity`/TickInfo fields).
 pub const MASK_128: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);

@@ -50,17 +50,15 @@ use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U256};
 
-use degenbot_pools::sim::registry::ConcentratedLiquidityPoolMut;
-use degenbot_pools::sim::tick_fetch::FetchedTickWord;
-use degenbot_pools::solve::concentrated_liquidity::{
-    simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally,
-};
-use degenbot_pools::state::v3_state::{
+use degenbot_pools::ConcentratedLiquidityPoolMut;
+use degenbot_pools::FetchedTickWord;
+use degenbot_pools::TickWordKey;
+use degenbot_pools::TickWordSource;
+use degenbot_pools::{simulate_v3_range_swap, IntV3TickRangeSequence, WalkTally};
+use degenbot_pools::{
     v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, SimulateSwapError, V3PoolState,
     V3SwapOutcome,
 };
-use degenbot_pools::TickWordKey;
-use degenbot_pools::TickWordSource;
 use degenbot_rpc::abi::fetch_v3_slot0_liquidity;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_rpc::AlloyTickWordSource;
@@ -84,7 +82,7 @@ fn fetch_word(
     address: Address,
     word: i32,
     block: u64,
-) -> Result<FetchedTickWord, degenbot_pools::sim::tick_fetch::TickWordFetchError> {
+) -> Result<FetchedTickWord, degenbot_pools::TickWordFetchError> {
     let key = TickWordKey::V3 {
         address,
         tick_spacing: TICK_SPACING,
@@ -170,9 +168,7 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
         update_block: block,
         tick_data_block: None,
         coverage: PoolTickCoverage::Sparse,
-        fetcher: Some(
-            Arc::clone(&bootstrap) as Arc<dyn degenbot_pools::sim::tick_fetch::TickWordSource>
-        ),
+        fetcher: Some(Arc::clone(&bootstrap) as Arc<dyn degenbot_pools::TickWordSource>),
         deployer: Address::ZERO,
         init_hash: alloy::primitives::B256::ZERO,
         slot_layout: degenbot_pools::ConcentratedLiquiditySlotLayout::UniswapV3,

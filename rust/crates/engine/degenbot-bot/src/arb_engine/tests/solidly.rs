@@ -77,7 +77,7 @@ fn solidly_arb_engine() -> (ArbitrageEngine, u64, u64) {
     // calc_d (which divides intermediate products by 1e18) does not
     // underflow to zero (small-magnitude reserves would panic on
     // divide-by-zero in get_y_solidly).
-    use degenbot_pools::state::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
+    use degenbot_pools::RegisterAerodromeV2PoolParams;
     use degenbot_substrate::BotState;
     use std::sync::Arc;
     fn tokens(n: u64) -> U112 {
@@ -161,12 +161,10 @@ fn solve_solidly_2hop_all_solidly_matches_grid_scan() {
     )
     .expect("path registers");
     let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
-    let result = ::degenbot_pools::solve::solve_path(
-        resolved,
-        &::degenbot_pools::solve::gate::GateDeps::offline(),
-    )
-    .result
-    .expect("profitable path solves");
+    let result =
+        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
+            .result
+            .expect("profitable path solves");
     assert!(!result.optimal_input.is_zero());
     assert!(!result.profit.is_zero());
     assert_eq!(result.hop_outputs.len(), 2);
@@ -199,8 +197,8 @@ fn solve_solidly_2hop_all_solidly_matches_grid_scan() {
 }
 #[test]
 fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
-    use degenbot_pools::state::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
-    use degenbot_pools::state::v2_state::RegisterV2PoolParams;
+    use degenbot_pools::RegisterAerodromeV2PoolParams;
+    use degenbot_pools::RegisterV2PoolParams;
     use degenbot_substrate::BotState;
     use std::sync::Arc;
     fn tokens(n: u64) -> U112 {
@@ -280,12 +278,10 @@ fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
     )
     .expect("mixed path registers");
     let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
-    let result = ::degenbot_pools::solve::solve_path(
-        resolved,
-        &::degenbot_pools::solve::gate::GateDeps::offline(),
-    )
-    .result
-    .expect("profitable mixed path solves");
+    let result =
+        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
+            .result
+            .expect("profitable mixed path solves");
     assert!(!result.profit.is_zero());
     // Grid scan parity check (Solidly hop uses the integer leaf, V2 hop
     // uses IntHopState::swap).
@@ -320,19 +316,16 @@ fn solve_solidly_unprofitable_path_returns_none() {
     .expect("path registers");
     let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
     assert!(
-        ::degenbot_pools::solve::solve_path(
-            resolved,
-            &::degenbot_pools::solve::gate::GateDeps::offline()
-        )
-        .result
-        .is_none(),
+        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
+            .result
+            .is_none(),
         "round-trip through one pool is unprofitable"
     );
 }
 #[test]
 fn solve_solidly_plus_concentrated_liquidity_path_rejected_by_scope() {
-    use degenbot_pools::state::aerodrome_v2_state::RegisterAerodromeV2PoolParams;
-    use degenbot_pools::state::v3_state::RegisterV3PoolParams;
+    use degenbot_pools::RegisterAerodromeV2PoolParams;
+    use degenbot_pools::RegisterV3PoolParams;
     use degenbot_substrate::BotState;
     use std::sync::Arc;
     let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
@@ -407,10 +400,9 @@ fn solve_solidly_plus_concentrated_liquidity_path_rejected_by_scope() {
     .expect("path registers (resolve is per-arm)");
     let resolved = engine.cycle.path_resolved.get(&path_id).expect("resolved");
     // Solidly + concentrated liquidity is out of scope (p): solve_path returns None.
-    assert!(::degenbot_pools::solve::solve_path(
-        resolved,
-        &::degenbot_pools::solve::gate::GateDeps::offline()
-    )
-    .result
-    .is_none());
+    assert!(
+        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
+            .result
+            .is_none()
+    );
 }

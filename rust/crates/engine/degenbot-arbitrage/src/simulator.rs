@@ -1738,12 +1738,12 @@ struct RevertedSwapMatch {
     pool_id: Option<String>,
     /// Post-swap active-liquidity scalars captured at SIM time (the moment
     /// `actual_out` was produced), as the shared slot0 head-scalar fact type
-    /// (`degenbot_pools::state::tick_map_verify::Slot0HeadScalars` — the same family
+    /// (`degenbot_pools::Slot0HeadScalars` — the same family
     /// the solve-time tripwire's `SolverHopScalarState` pins; ADR-021 D3).
     /// It pins the exact pool state the oracle (`v4_simulate_swap`) must be
     /// driven at to reproduce a recurrence, closing the solve-vs-sim state gap
     /// the log's solve-time values cannot close.
-    sim_scalars: degenbot_pools::state::tick_map_verify::Slot0HeadScalars,
+    sim_scalars: degenbot_pools::Slot0HeadScalars,
     /// The exact-in amount the swap consumed (the negative-side delta
     /// magnitude) — the `amountSpecified` that produced `actual_out`.
     actual_in: Option<U256>,
@@ -1805,7 +1805,7 @@ fn match_reverted_swaps_to_hops(
             family: swap.family,
             emitter: swap.emitter,
             pool_id: hop_index.and_then(|i| hop_pool_id(hops, i)),
-            sim_scalars: degenbot_pools::state::tick_map_verify::Slot0HeadScalars {
+            sim_scalars: degenbot_pools::Slot0HeadScalars {
                 sqrt_price_x96: swap.sqrt_price_x96,
                 tick: swap.tick,
                 liquidity: swap.liquidity,
@@ -2779,12 +2779,12 @@ mod tests {
         assert_eq!(m.actual_in, Some(U256::from(3_135u128)));
         assert_eq!(m.actual_out, Some(U256::from(772_076_574_181_336u128)));
         // The pinned fix-enabler scalars ride the shared slot0 head-scalar
-        // fact type (degenbot_pools::state::tick_map_verify::Slot0HeadScalars) so
+        // fact type (degenbot_pools::Slot0HeadScalars) so
         // the [sim-revert-swap] log and the solve-time tripwire speak one
         // type language.
         assert_eq!(
             m.sim_scalars,
-            degenbot_pools::state::tick_map_verify::Slot0HeadScalars {
+            degenbot_pools::Slot0HeadScalars {
                 sqrt_price_x96: U256::from(159_369_389_255_773_083_394_993u128),
                 tick: -262_346,
                 liquidity: U256::from(1_432_650_976_603_835_442u128),

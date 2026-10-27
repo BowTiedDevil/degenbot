@@ -87,7 +87,7 @@ mod tests {
     use super::SolveAnchor;
     use alloy::primitives::aliases::U112;
     use alloy::primitives::Address;
-    use degenbot_pools::state::v2_state::RegisterV2PoolParams;
+    use degenbot_pools::RegisterV2PoolParams;
     use degenbot_substrate::BotState;
 
     /// A single-pool state whose pool-state head tracks `block`.

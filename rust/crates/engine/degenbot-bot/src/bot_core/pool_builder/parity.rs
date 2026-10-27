@@ -185,7 +185,7 @@ pub fn verify_v4_identity(
 pub fn registered_address_identity(bot: &Bot, pool_id: u64) -> Option<AddressIdentity> {
     let core = bot.state_arc();
     let state = core.read_at(LockSite::Core);
-    if let Some(i) = state.pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(pool_id) {
+    if let Some(i) = state.pool_slice::<degenbot_pools::V2PoolIdentity>(pool_id) {
         return Some(AddressIdentity {
             token0: i.token0,
             token1: i.token1,
@@ -193,7 +193,7 @@ pub fn registered_address_identity(bot: &Bot, pool_id: u64) -> Option<AddressIde
         });
     }
     state
-        .pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(pool_id)
+        .pool_slice::<degenbot_pools::V3PoolIdentity>(pool_id)
         .map(|i| AddressIdentity {
             token0: i.token0,
             token1: i.token1,

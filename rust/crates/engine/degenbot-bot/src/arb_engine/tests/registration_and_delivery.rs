@@ -29,7 +29,7 @@ fn register_v2_and_v3_pools() {
             block: 0,
         },
     );
-    let v3_key = engine.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
+    let v3_key = engine.register_v3_pool(&degenbot_pools::RegisterV3PoolParams {
         address: Address::from([0x22u8; 20]),
         token0: Address::from([0u8; 20]),
         token1: Address::from([1u8; 20]),
@@ -42,7 +42,7 @@ fn register_v2_and_v3_pools() {
         tick_data,
         update_block: 0,
         tick_data_block: None,
-        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
@@ -133,7 +133,7 @@ fn mixed_path_v2_to_v3_resolves() {
             block: 0,
         },
     );
-    let v3_key = engine.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
+    let v3_key = engine.register_v3_pool(&degenbot_pools::RegisterV3PoolParams {
         address: Address::from([0x22u8; 20]),
         token0: Address::from([0u8; 20]),
         token1: Address::from([1u8; 20]),
@@ -146,7 +146,7 @@ fn mixed_path_v2_to_v3_resolves() {
         tick_data,
         update_block: 0,
         tick_data_block: None,
-        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
@@ -173,7 +173,7 @@ fn mixed_path_v2_to_v3_resolves() {
 fn missing_v2_pool_makes_path_invalid() {
     let mut engine = ArbitrageEngine::new();
     // Only register V3 pool
-    let v3_key = engine.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
+    let v3_key = engine.register_v3_pool(&degenbot_pools::RegisterV3PoolParams {
         address: Address::from([0x22u8; 20]),
         token0: Address::from([0u8; 20]),
         token1: Address::from([1u8; 20]),
@@ -186,7 +186,7 @@ fn missing_v2_pool_makes_path_invalid() {
         tick_data: HashMap::new(),
         update_block: 0,
         tick_data_block: None,
-        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
@@ -341,7 +341,7 @@ fn invalid_path_skips_unrelated_dirty_but_rechecks_own_pool() {
         tick_data: HashMap::new(),
         update_block: 0,
         tick_data_block: None,
-        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });

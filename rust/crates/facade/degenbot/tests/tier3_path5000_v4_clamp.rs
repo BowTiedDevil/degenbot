@@ -55,7 +55,7 @@
 use alloy::primitives::{aliases::I256, U160, U256};
 use degenbot::investigation::{build_v4_state, real_oracle, PathFixture};
 use degenbot_math::concentrated_liquidity::tick_math::MAX_SQRT_RATIO;
-use degenbot_pools::state::v4_state::v4_simulate_swap;
+use degenbot_pools::v4_simulate_swap;
 use degenbot_simulation::oracle::Verdict;
 
 const FIXTURE_PATH: &str = concat!(

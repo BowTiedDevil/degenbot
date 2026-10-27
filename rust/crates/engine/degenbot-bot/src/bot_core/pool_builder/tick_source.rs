@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{U128, U256};
 use degenbot_core::errors::ProviderError;
-use degenbot_pools::sim::tick_fetch::{TickWordKey, TickWordSource};
+use degenbot_pools::{TickWordKey, TickWordSource};
 use degenbot_rpc::tick_bootstrap::{TickWordTransport, TransportTickWordSource};
 
 use super::choreography::{self};

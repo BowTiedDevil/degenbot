@@ -78,7 +78,7 @@ fn build_hop_info(core: &BotState, pool_ref: &MixedPoolRef) -> Result<HopInfo, P
     match pool_ref.hop_type {
         HopType::V2 => {
             let id = core
-                .pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(pool_ref.pool_key)
+                .pool_slice::<degenbot_pools::V2PoolIdentity>(pool_ref.pool_key)
                 .ok_or(PathInfoBuildError::PoolNotRegistered {
                     pool_id: pool_ref.pool_key,
                 })?;
@@ -110,7 +110,7 @@ fn build_hop_info(core: &BotState, pool_ref: &MixedPoolRef) -> Result<HopInfo, P
         }
         HopType::V3 => {
             let id = core
-                .pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(pool_ref.pool_key)
+                .pool_slice::<degenbot_pools::V3PoolIdentity>(pool_ref.pool_key)
                 .ok_or(PathInfoBuildError::PoolNotRegistered {
                     pool_id: pool_ref.pool_key,
                 })?;
@@ -124,7 +124,7 @@ fn build_hop_info(core: &BotState, pool_ref: &MixedPoolRef) -> Result<HopInfo, P
         }
         HopType::V4 => {
             let id = core
-                .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(pool_ref.pool_key)
+                .pool_slice::<degenbot_pools::V4PoolIdentity>(pool_ref.pool_key)
                 .ok_or(PathInfoBuildError::PoolNotRegistered {
                     pool_id: pool_ref.pool_key,
                 })?;

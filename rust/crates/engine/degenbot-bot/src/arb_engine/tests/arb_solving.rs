@@ -65,24 +65,23 @@ fn pure_v3_path_finds_profitable_arb() {
             block: 0,
         },
     );
-    let v3_key_a =
-        engine.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
-            address: Address::from([0x21u8; 20]),
-            token0: Address::ZERO,
-            token1: Address::from([1u8; 20]),
-            fee: 3000,
-            tick_spacing: 60,
-            factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
-            liquidity: 10_000_000_000_000_000,
-            tick: 0,
-            tick_data: tick_data_a,
-            update_block: 0,
-            tick_data_block: None,
-            coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
-            fetcher: None,
-            ..Default::default()
-        });
+    let v3_key_a = engine.register_v3_pool(&degenbot_pools::RegisterV3PoolParams {
+        address: Address::from([0x21u8; 20]),
+        token0: Address::ZERO,
+        token1: Address::from([1u8; 20]),
+        fee: 3000,
+        tick_spacing: 60,
+        factory: Address::ZERO,
+        sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+        liquidity: 10_000_000_000_000_000,
+        tick: 0,
+        tick_data: tick_data_a,
+        update_block: 0,
+        tick_data_block: None,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
+        fetcher: None,
+        ..Default::default()
+    });
     // V3 pool B at tick -60 (slightly cheaper token1), high liquidity
     let sqrt_price_lower_u160 =
         degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal(-60)
@@ -105,24 +104,23 @@ fn pure_v3_path_finds_profitable_arb() {
             block: 0,
         },
     );
-    let v3_key_b =
-        engine.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
-            address: Address::from([0x22u8; 20]),
-            token0: Address::ZERO,
-            token1: Address::from([1u8; 20]),
-            fee: 3000,
-            tick_spacing: 60,
-            factory: Address::ZERO,
-            sqrt_price_x96: sqrt_price_lower,
-            liquidity: 10_000_000_000_000_000,
-            tick: -60,
-            tick_data: tick_data_b,
-            update_block: 0,
-            tick_data_block: None,
-            coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
-            fetcher: None,
-            ..Default::default()
-        });
+    let v3_key_b = engine.register_v3_pool(&degenbot_pools::RegisterV3PoolParams {
+        address: Address::from([0x22u8; 20]),
+        token0: Address::ZERO,
+        token1: Address::from([1u8; 20]),
+        fee: 3000,
+        tick_spacing: 60,
+        factory: Address::ZERO,
+        sqrt_price_x96: sqrt_price_lower,
+        liquidity: 10_000_000_000_000_000,
+        tick: -60,
+        tick_data: tick_data_b,
+        update_block: 0,
+        tick_data_block: None,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
+        fetcher: None,
+        ..Default::default()
+    });
     // V3→V3 path: pool A (zfo) → pool B (ofz)
     register_path(
         &mut engine,
@@ -170,7 +168,7 @@ fn mixed_v2_to_v3_path_finds_arb() {
             block: 0,
         },
     );
-    let v3_key = engine.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
+    let v3_key = engine.register_v3_pool(&degenbot_pools::RegisterV3PoolParams {
         address: Address::from([0x22u8; 20]),
         token0: Address::ZERO,
         token1: Address::from([1u8; 20]),
@@ -183,7 +181,7 @@ fn mixed_v2_to_v3_path_finds_arb() {
         tick_data,
         update_block: 0,
         tick_data_block: None,
-        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
@@ -280,7 +278,7 @@ fn future_state_path_is_reanchored_to_pool_state_head() {
         tick_data,
         update_block: 100, // 50 blocks AHEAD of the solve block 50
         tick_data_block: None,
-        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
@@ -355,7 +353,7 @@ fn mixed_v3_to_v2_path_resolves() {
             block: 0,
         },
     );
-    let v3_key = engine.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
+    let v3_key = engine.register_v3_pool(&degenbot_pools::RegisterV3PoolParams {
         address: Address::from([0x22u8; 20]),
         token0: Address::ZERO,
         token1: Address::from([1u8; 20]),
@@ -368,7 +366,7 @@ fn mixed_v3_to_v2_path_resolves() {
         tick_data,
         update_block: 0,
         tick_data_block: None,
-        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
@@ -686,7 +684,7 @@ fn v4_int128_overflow_path_rejected() {
         tick_data: HashMap::new(),
         update_block: 0,
         tick_data_block: None,
-        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
@@ -702,7 +700,7 @@ fn v4_int128_overflow_path_rejected() {
         .register_v4_pool(&RegisterV4PoolParams {
             pool_manager: v4_pool_manager,
             pool_id: [0xffu8; 32],
-            pool_key: degenbot_pools::state::v4_state::V4PoolKey {
+            pool_key: degenbot_pools::V4PoolKey {
                 currency0: Address::from([0x30u8; 20]),
                 currency1: Address::from([0x31u8; 20]),
                 fee: 10_000,
@@ -714,7 +712,7 @@ fn v4_int128_overflow_path_rejected() {
             liquidity: extreme_liquidity,
             tick: -886_983,
             tick_data: HashMap::new(),
-            coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+            coverage: degenbot_pools::PoolTickCoverage::Tracked,
             ..Default::default()
         })
         .expect("V4 registration failed");
@@ -798,7 +796,7 @@ fn v4_int128_overflow_path_rejected() {
 #[test]
 fn clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_clamp() {
     use degenbot_math::v2::IntHopState;
-    use degenbot_pools::state::v3_state::PoolTickCoverage;
+    use degenbot_pools::PoolTickCoverage;
     use degenbot_pools::TickInfo;
     let mut engine = ArbitrageEngine::new();
     // Terminal V2 pool: token0=USDC, token1=WETH; hop zfo=false → WETH
@@ -834,7 +832,7 @@ fn clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_
         .register_v4_pool(&RegisterV4PoolParams {
             pool_manager: Address::from([0x45u8; 20]),
             pool_id: [0xcdu8; 32],
-            pool_key: degenbot_pools::state::v4_state::V4PoolKey {
+            pool_key: degenbot_pools::V4PoolKey {
                 currency0: Address::from([0x32u8; 20]),
                 currency1: Address::from([0x33u8; 20]),
                 fee: 500,
@@ -896,11 +894,9 @@ fn clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_
     let core = engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-    let state = core
-        .pool_slice::<degenbot_pools::state::v2_state::V2PoolState>(v2)
-        .unwrap();
+    let state = core.pool_slice::<degenbot_pools::V2PoolState>(v2).unwrap();
     let identity = core
-        .pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(v2)
+        .pool_slice::<degenbot_pools::V2PoolIdentity>(v2)
         .unwrap();
     let expected = IntHopState::new(
         state.reserve1.to::<U256>(),
@@ -935,10 +931,10 @@ fn clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_
 fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
     use alloy::primitives::Address;
     use alloy::primitives::I256;
-    use degenbot_pools::state::v3_state::PoolTickCoverage;
-    use degenbot_pools::state::v3_state::V3PoolState;
-    use degenbot_pools::state::v4_state::v4_simulate_swap;
+    use degenbot_pools::v4_simulate_swap;
+    use degenbot_pools::PoolTickCoverage;
     use degenbot_pools::TickInfo;
+    use degenbot_pools::V3PoolState;
     let mut engine = ArbitrageEngine::new();
     // V2 pool: reserves sized so its output (fed to V4) is enormous
     // relative to the V4 pool's capacity (token1 ≫ the V4 twin's
@@ -974,7 +970,7 @@ fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
         .register_v4_pool(&RegisterV4PoolParams {
             pool_manager: Address::from([0x44u8; 20]),
             pool_id: [0xabu8; 32],
-            pool_key: degenbot_pools::state::v4_state::V4PoolKey {
+            pool_key: degenbot_pools::V4PoolKey {
                 currency0: Address::from([0x30u8; 20]),
                 currency1: Address::from([0x31u8; 20]),
                 fee: 500,
@@ -1031,10 +1027,10 @@ fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let state = core
-            .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(v4_id)
+            .pool_slice::<degenbot_pools::V4PoolState>(v4_id)
             .unwrap();
         let identity = core
-            .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(v4_id)
+            .pool_slice::<degenbot_pools::V4PoolIdentity>(v4_id)
             .unwrap();
         let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
         let limit = V3PoolState::default_sqrt_price_limit(false);
@@ -1057,10 +1053,10 @@ fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let state = core
-            .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(v4_id)
+            .pool_slice::<degenbot_pools::V4PoolState>(v4_id)
             .unwrap();
         let identity = core
-            .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(v4_id)
+            .pool_slice::<degenbot_pools::V4PoolIdentity>(v4_id)
             .unwrap();
         let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
         let limit = V3PoolState::default_sqrt_price_limit(false);
@@ -1108,10 +1104,10 @@ fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
 )]
 fn clamp_concentrated_liquidity_hop_capacity_aligns_v4_first_hop0_outputs() {
     use alloy::primitives::I256;
-    use degenbot_pools::state::v3_state::PoolTickCoverage;
-    use degenbot_pools::state::v3_state::V3PoolState;
-    use degenbot_pools::state::v4_state::v4_simulate_swap;
+    use degenbot_pools::v4_simulate_swap;
+    use degenbot_pools::PoolTickCoverage;
     use degenbot_pools::TickInfo;
+    use degenbot_pools::V3PoolState;
     let mut engine = ArbitrageEngine::new();
     // V4 pool (hop0), narrow ±60 band, low liquidity — over-fed later.
     let mut tick_data = HashMap::new();
@@ -1135,7 +1131,7 @@ fn clamp_concentrated_liquidity_hop_capacity_aligns_v4_first_hop0_outputs() {
         .register_v4_pool(&RegisterV4PoolParams {
             pool_manager: Address::from([0x44u8; 20]),
             pool_id: [0xabu8; 32],
-            pool_key: degenbot_pools::state::v4_state::V4PoolKey {
+            pool_key: degenbot_pools::V4PoolKey {
                 currency0: Address::from([0x30u8; 20]),
                 currency1: Address::from([0x31u8; 20]),
                 fee: 500,
@@ -1196,10 +1192,10 @@ fn clamp_concentrated_liquidity_hop_capacity_aligns_v4_first_hop0_outputs() {
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let state = core
-            .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(v4_id)
+            .pool_slice::<degenbot_pools::V4PoolState>(v4_id)
             .unwrap();
         let identity = core
-            .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(v4_id)
+            .pool_slice::<degenbot_pools::V4PoolIdentity>(v4_id)
             .unwrap();
         let neg = I256::try_from(huge).unwrap().checked_neg().unwrap();
         let limit = V3PoolState::default_sqrt_price_limit(true);
@@ -1230,7 +1226,7 @@ fn clamp_concentrated_liquidity_hop_capacity_aligns_v4_first_hop0_outputs() {
 /// `consumed_inputs` for the (common) fully-fed-hop case.
 #[test]
 fn clamp_concentrated_liquidity_hop_capacity_noop_within_capacity() {
-    use degenbot_pools::state::v3_state::PoolTickCoverage;
+    use degenbot_pools::PoolTickCoverage;
     use degenbot_pools::TickInfo;
     let mut engine = ArbitrageEngine::new();
     let mut tick_data = HashMap::new();
@@ -1254,7 +1250,7 @@ fn clamp_concentrated_liquidity_hop_capacity_noop_within_capacity() {
         .register_v4_pool(&RegisterV4PoolParams {
             pool_manager: Address::from([0x44u8; 20]),
             pool_id: [0xabu8; 32],
-            pool_key: degenbot_pools::state::v4_state::V4PoolKey {
+            pool_key: degenbot_pools::V4PoolKey {
                 currency0: Address::from([0x30u8; 20]),
                 currency1: Address::from([0x31u8; 20]),
                 fee: 500,

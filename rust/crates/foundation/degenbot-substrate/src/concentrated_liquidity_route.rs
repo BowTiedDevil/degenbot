@@ -14,7 +14,7 @@
 //! table → execute the returned [`RouteAction`]. No caller may pre-judge an
 //! event's fate from its own cheaper copy of the policy.
 
-use degenbot_pools::state::v3_state::RegistrationLifecycle;
+use degenbot_pools::RegistrationLifecycle;
 
 /// Which phase of the bot lifecycle produced the event — selects the buffer
 /// family and whether direct application is even legal.

@@ -11,7 +11,7 @@ use super::EpochContext;
 use crate::bot_core::solve_anchor::SolveAnchor;
 use ::degenbot_pools::solve::ResolvedMixedPath;
 use degenbot_core::{diag, op_error};
-use degenbot_pools::solve::affected::AffectedKey;
+use degenbot_pools::AffectedKey;
 use degenbot_substrate::resolve::resolve_hops;
 use hashbrown::{HashMap, HashSet};
 use std::sync::PoisonError;
@@ -359,14 +359,11 @@ pub(super) fn resolve_epoch(
         if !deferred_paths.is_empty() {
             let mut deferred_sorted: Vec<u64> = deferred_paths.iter().copied().collect();
             deferred_sorted.sort_unstable();
-            let mut keys: Vec<degenbot_pools::solve::affected::AffectedKey> = Vec::new();
+            let mut keys: Vec<degenbot_pools::AffectedKey> = Vec::new();
             for path_id in deferred_sorted {
                 if let Some(path) = ctx.registry.get(path_id) {
                     keys.extend(path.pools.iter().map(|pool_ref| {
-                        degenbot_pools::solve::affected::AffectedKey::new(
-                            pool_ref.hop_type,
-                            pool_ref.pool_key,
-                        )
+                        degenbot_pools::AffectedKey::new(pool_ref.hop_type, pool_ref.pool_key)
                     }));
                 }
             }

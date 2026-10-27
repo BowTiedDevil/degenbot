@@ -218,12 +218,9 @@ fn curve_stable_rejects_mixed_with_concentrated_liquidity() {
     .expect("path registers (resolve succeeds per-arm)");
     let resolved = &engine.cycle.path_resolved[&path_id];
     assert!(
-        ::degenbot_pools::solve::solve_path(
-            resolved,
-            &::degenbot_pools::solve::gate::GateDeps::offline()
-        )
-        .result
-        .is_none(),
+        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
+            .result
+            .is_none(),
         "Curve + concentrated liquidity must not solve"
     );
 }

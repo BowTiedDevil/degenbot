@@ -1,6 +1,6 @@
 //! The per-epoch `WalkMemoStats` tap (observation only).
 //!
-//! [`WalkMemo`](::degenbot_pools::solve::concentrated_liquidity::WalkMemo) has been fully instrumented
+//! [`WalkMemo`](::degenbot_pools::WalkMemo) has been fully instrumented
 //! since the memo landed (probes, hits, distinct, cache plays, negatives,
 //! per-probe/per-hit sims), but nothing in the engine drained it: `take_stats`
 //! existed with no engine-side caller. This module is the drain. It owns:
@@ -86,7 +86,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ::degenbot_pools::solve::concentrated_liquidity::{WalkMemo, WalkMemoStats};
+use ::degenbot_pools::{WalkMemo, WalkMemoStats};
 use degenbot_core::op_warn;
 
 /// The production JSONL path, relative to the process CWD. `run_bot.sh` cds
@@ -297,11 +297,11 @@ fn record_instruments(stats: &WalkMemoStats) {
 mod tests {
     use super::*;
     use ::alloy::primitives::U256;
-    use ::degenbot_pools::solve::concentrated_liquidity::{
+    use ::degenbot_pools::SolveRuntimeConfig;
+    use ::degenbot_pools::{
         solve_concentrated_liquidity_piecewise, PreparedConcentratedLiquidityHop,
     };
-    use ::degenbot_pools::solve::runtime::SolveRuntimeConfig;
-    use ::degenbot_pools::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+    use ::degenbot_pools::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use parking_lot::Mutex;
 
     /// Capturing sink — lines land in a buffer, never the production

@@ -195,12 +195,12 @@ impl ReorgCoordinator {
 mod tests {
     use super::*;
     use crate::bot_core::Bot;
-    use ::degenbot_pools::state::state_history::{ReorgJournal, V2BlockDelta};
+    use ::degenbot_pools::{ReorgJournal, V2BlockDelta};
     use alloy::primitives::{aliases::U112, Address, Bytes, I256, U128, U256};
     use alloy::rpc::types::Log;
-    use degenbot_pools::solve::affected::AffectedKey;
     use degenbot_pools::solve::HopType;
-    use degenbot_pools::state::v2_state::RegisterV2PoolParams;
+    use degenbot_pools::AffectedKey;
+    use degenbot_pools::RegisterV2PoolParams;
     use hashbrown::HashMap;
     use std::sync::Arc;
 
@@ -296,12 +296,12 @@ mod tests {
         let err = j.restore_before_block(5).unwrap_err();
         assert!(matches!(
             err,
-            ::degenbot_pools::state::state_history::JournalError::NoStatePriorToBlock { block: 5 }
+            ::degenbot_pools::JournalError::NoStatePriorToBlock { block: 5 }
         ));
         let err = j.restore_before_block(3).unwrap_err();
         assert!(matches!(
             err,
-            ::degenbot_pools::state::state_history::JournalError::NoStatePriorToBlock { block: 3 }
+            ::degenbot_pools::JournalError::NoStatePriorToBlock { block: 3 }
         ));
     }
 
@@ -487,7 +487,7 @@ mod tests {
     /// `Sparse` coverage). Registration scalars:
     /// `sqrt_price` = 1<<96, liquidity = `1_000_000`, tick = 0.
     fn bot_with_v3(pool_addr: Address, update_block: u64) -> (Arc<Bot>, u64) {
-        use degenbot_pools::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
+        use degenbot_pools::{PoolTickCoverage, RegisterV3PoolParams};
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
             .state_arc()
@@ -589,7 +589,7 @@ mod tests {
             let state = bot.state_arc();
             let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Core);
             let s = guard
-                .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
+                .pool_slice::<degenbot_pools::V3PoolState>(pool_id)
                 .expect("registered");
             assert_eq!(s.sqrt_price_x96, new_sqrt);
             assert_eq!(s.liquidity, 2_000_000);
@@ -619,7 +619,7 @@ mod tests {
             let state = bot.state_arc();
             let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Core);
             let s = guard
-                .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
+                .pool_slice::<degenbot_pools::V3PoolState>(pool_id)
                 .expect("registered");
             assert_eq!(
                 s.sqrt_price_x96, reg_sqrt,
@@ -657,7 +657,7 @@ mod tests {
         assert!(bot
             .state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Core)
-            .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
+            .pool_slice::<degenbot_pools::V3PoolState>(pool_id)
             .unwrap()
             .journal
             .is_empty());
@@ -679,7 +679,7 @@ mod tests {
         let state = bot.state_arc();
         let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Core);
         let s = guard
-            .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
+            .pool_slice::<degenbot_pools::V3PoolState>(pool_id)
             .expect("registered");
         assert_eq!(s.sqrt_price_x96, U256::from(1u128) << 96);
         assert_eq!(s.liquidity, 1_000_000);
@@ -702,8 +702,8 @@ mod tests {
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
         update_block: u64,
     ) -> (Arc<Bot>, u64) {
-        use degenbot_pools::state::v3_state::PoolTickCoverage;
-        use degenbot_pools::state::v4_state::{RegisterV4PoolParams, V4PoolKey};
+        use degenbot_pools::PoolTickCoverage;
+        use degenbot_pools::{RegisterV4PoolParams, V4PoolKey};
         let bot = Arc::new(Bot::new(1));
         let pool_id = bot
             .state_arc()
@@ -819,7 +819,7 @@ mod tests {
             let state = bot.state_arc();
             let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Core);
             let s = guard
-                .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
+                .pool_slice::<degenbot_pools::V4PoolState>(pool_id)
                 .expect("registered");
             assert_eq!(s.sqrt_price_x96, new_sqrt);
             assert_eq!(s.journal.len(), 1, "V4 registration pushes no genesis");
@@ -851,7 +851,7 @@ mod tests {
             let state = bot.state_arc();
             let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Core);
             let s = guard
-                .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
+                .pool_slice::<degenbot_pools::V4PoolState>(pool_id)
                 .expect("registered");
             assert_eq!(
                 s.sqrt_price_x96, reg_sqrt,
@@ -873,7 +873,7 @@ mod tests {
         assert!(bot
             .state_arc()
             .read_at(degenbot_substrate::state_lock::LockSite::Core)
-            .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
+            .pool_slice::<degenbot_pools::V4PoolState>(pool_id)
             .unwrap()
             .journal
             .is_empty());
@@ -902,7 +902,7 @@ mod tests {
         let state = bot.state_arc();
         let guard = state.read_at(degenbot_substrate::state_lock::LockSite::Core);
         let s = guard
-            .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
+            .pool_slice::<degenbot_pools::V4PoolState>(pool_id)
             .expect("registered");
         assert_eq!(s.sqrt_price_x96, U256::from(1u128) << 96);
         assert!(s.journal.is_empty());

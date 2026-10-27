@@ -232,7 +232,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
             }
             let state = bot.state_arc();
             let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
-            core.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
+            core.register_v3_pool(&degenbot_pools::RegisterV3PoolParams {
                 address: *addr,
                 token0: Address::from([0xa0u8; 20]),
                 token1: Address::from([0xa1u8; 20]),
@@ -244,7 +244,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
                 tick: 0,
                 tick_data,
                 update_block: block_n - 1,
-                coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+                coverage: degenbot_pools::PoolTickCoverage::Tracked,
                 fetcher: None,
                 ..Default::default()
             })
@@ -354,7 +354,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
                     },
                 );
             }
-            core.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
+            core.register_v3_pool(&degenbot_pools::RegisterV3PoolParams {
                 address: *addr,
                 token0: Address::from([0xa0u8; 20]),
                 token1: Address::from([0xa1u8; 20]),
@@ -366,7 +366,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
                 tick: 0,
                 tick_data,
                 update_block: block_n - 1,
-                coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+                coverage: degenbot_pools::PoolTickCoverage::Tracked,
                 fetcher: None,
                 ..Default::default()
             })
@@ -387,7 +387,7 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
             let core = state.read_at(degenbot_substrate::state_lock::LockSite::Pump);
             let pool_id = core.pool_id_by_address(addr).unwrap();
             let pool = core
-                .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
+                .pool_slice::<degenbot_pools::V3PoolState>(pool_id)
                 .unwrap();
             for &t in &FUZZ_TICKS {
                 let actual = pool
@@ -424,8 +424,8 @@ async fn bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles() {
 /// 193370 liquidityGross `244_132_769_082_101_7` -> `256_007_624_942_870_5`.
 #[tokio::test]
 async fn fuwyur_live_mint_for_unregistered_pool_survives_late_registration() {
-    use degenbot_pools::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
     use degenbot_pools::TickInfo;
+    use degenbot_pools::{PoolTickCoverage, RegisterV3PoolParams};
     const SEED_GROSS: u128 = 2_441_327_690_821_017;
     const MINT_DELTA: u128 = 118_748_558_607_688;
     let block_n = 10u64;
@@ -488,7 +488,7 @@ async fn fuwyur_live_mint_for_unregistered_pool_survives_late_registration() {
         PoolLookup::from_address(*pool_addr).pump(&mut core);
         PoolLookup::from_address(pool_addr).mark_registration_live(&mut core);
         let pool_id = core.pool_id_by_address(&pool_addr).unwrap();
-        core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
+        core.pool_slice::<degenbot_pools::V3PoolState>(pool_id)
             .expect("registered")
             .tick_data
             .clone()
@@ -618,7 +618,7 @@ async fn scenario_a_race_concurrent_drain_cannot_produce_symptom() {
         let mut core = state.write_at(degenbot_substrate::state_lock::LockSite::Pump);
         PoolLookup::from_address(*pool_addr).pump(&mut core);
         let pool_id = core.pool_id_by_address(&pool_addr).unwrap();
-        core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
+        core.pool_slice::<degenbot_pools::V3PoolState>(pool_id)
             .unwrap()
             .tick_data
             .get(&7)

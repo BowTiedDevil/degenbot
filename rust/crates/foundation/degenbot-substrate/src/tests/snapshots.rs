@@ -1,6 +1,6 @@
 use super::*;
 use crate::concentrated_liquidity_route::{ApplyOutcome, BufferKind};
-use degenbot_pools::families::buffered_event::PoolLiquidityUpdate;
+use degenbot_pools::PoolLiquidityUpdate;
 
 #[test]
 fn pool_update_block_tracks_forward_sync_and_returns_zero_for_unknown() {
@@ -251,9 +251,7 @@ fn v3_snapshot_seed_survives_pump_liquidity_update() {
 
     // Live tick_data CHANGED (journal applied) ...
     let live_gross = core
-        .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(
-            core.pool_id_by_address(&v3_addr).unwrap(),
-        )
+        .pool_slice::<degenbot_pools::V3PoolState>(core.pool_id_by_address(&v3_addr).unwrap())
         .and_then(|s| s.tick_data.get(&-60))
         .map(|t| t.liquidity_gross.to::<u128>());
     assert_ne!(
@@ -344,9 +342,7 @@ fn v3_post_drain_snapshot_survives_pump_liquidity_update() {
 
     // Live tick_data CHANGED (journal applied) ...
     let live_gross = core
-        .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(
-            core.pool_id_by_address(&v3_addr).unwrap(),
-        )
+        .pool_slice::<degenbot_pools::V3PoolState>(core.pool_id_by_address(&v3_addr).unwrap())
         .and_then(|s| s.tick_data.get(&-60))
         .map(|t| t.liquidity_gross.to::<u128>());
     assert_ne!(
@@ -609,7 +605,7 @@ fn v4_snapshot_seed_survives_pump_modify_liquidity() {
         let pid = core
             .pool_id_by_key(pool_manager, &pool_id_bytes)
             .expect("registered");
-        core.pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pid)
+        core.pool_slice::<degenbot_pools::V4PoolState>(pid)
             .and_then(|s| s.tick_data.get(&-60))
             .map(|t| t.liquidity_gross.to::<u128>())
     };
@@ -729,7 +725,7 @@ fn v4_post_drain_snapshot_survives_pump_modify_liquidity() {
         let pid = core
             .pool_id_by_key(pool_manager, &pool_id_bytes)
             .expect("registered");
-        core.pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pid)
+        core.pool_slice::<degenbot_pools::V4PoolState>(pid)
             .and_then(|s| s.tick_data.get(&-60))
             .map(|t| t.liquidity_gross.to::<u128>())
     };

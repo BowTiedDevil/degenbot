@@ -405,7 +405,7 @@ mod direct_seam_tests {
     use super::{path_cost_proxy, solve_bin_count};
     use crate::arb_engine::ArbitrageEngine;
     use ::degenbot_pools::solve::{ResolvedHop, ResolvedMixedPath};
-    use ::degenbot_pools::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+    use ::degenbot_pools::{IntV3TickRangeHop, IntV3TickRangeSequence};
     use alloy::primitives::U256;
     use std::sync::Arc;
     /// `solve_bin_count` is the ONE solve-bin sizing seam: it answers
@@ -436,7 +436,7 @@ mod direct_seam_tests {
         }])
         .expect("valid tick range sequence");
         ResolvedHop::V3 {
-            prepared: ::degenbot_pools::solve::concentrated_liquidity::PreparedConcentratedLiquidityHop::from_parts(
+            prepared: ::degenbot_pools::PreparedConcentratedLiquidityHop::from_parts(
                 Arc::new(seq),
                 Arc::new(Vec::new()),
                 Arc::new(Vec::new()),

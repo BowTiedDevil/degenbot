@@ -9,7 +9,7 @@ use alloy::dyn_abi::{DynSolType, DynSolValue};
 use alloy::primitives::{keccak256, Address, Bytes, B256, U128, U256};
 use degenbot_core::errors::ProviderError;
 use degenbot_math::concentrated_liquidity::tick_math::{MAX_TICK, MIN_TICK};
-use degenbot_pools::state::v3_state::PoolTickCoverage;
+use degenbot_pools::PoolTickCoverage;
 use degenbot_pools::TickInfo;
 use hashbrown::{HashMap, HashSet};
 

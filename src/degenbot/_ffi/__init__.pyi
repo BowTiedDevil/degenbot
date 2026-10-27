@@ -3905,7 +3905,7 @@ class PoolTickCoverage:
     """
     The concentrated liquidity tick-map coverage discriminant crossing the FFI (survey C7):
     Python compares this enum instead of probing a stringified twin.
-    Mirrors `degenbot_pools::state::v3_state::PoolTickCoverage` (the fact's home).
+    Mirrors `degenbot_pools::PoolTickCoverage` (the fact's home).
     """
 
     Sparse: Final[PoolTickCoverage]
@@ -5201,7 +5201,7 @@ def solve_balancer_weighted_basket(
     """
     `QuantAMM` closed-form N-token Balancer weighted basket arbitrage solver.
 
-    Thin `PyO3` wrapper over [`degenbot_pools::solve::basket::solve_balancer_weighted`].
+    Thin `PyO3` wrapper over [`degenbot_pools::solve_balancer_weighted`].
     Port of `BalancerMultiTokenSolver` / `solve_balancer_weighted` (Willetts &
     Harrington, `QuantAMM` Equation 9).
 

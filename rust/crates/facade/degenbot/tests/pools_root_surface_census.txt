@@ -5,13 +5,18 @@
 #
 # The pin is review-required: `architecture_gates.rs::pools_root_surface_is_pinned`
 # fails when a module is added, removed, or re-homed without a review of this
-# file, and the root `pub` name count (843) is asserted so untracked surface
+# file, and the root `pub` name count (966) is asserted so untracked surface
 # growth fails loudly. The count is per NAME, not per statement (the previous
 # granularity pinned 681 statements): a `pub fn`/`struct`/`enum`/`trait`/
 # `const`/`type`/`mod` declaration counts once, and a `pub use` counts one per
-# re-exported name — the root's 15 blocks re-export 68 names, so a name added
-# to an existing `pub use a::b::{X, Y}` block moves the pin exactly as a new
-# `pub fn` does.
+# re-exported name, so a name added to an existing `pub use a::b::{X, Y}` block
+# moves the pin exactly as a new `pub fn` does.
+#
+# The root's `pub use` blocks ARE the door: the four capability modules hold
+# the trees, and every name a consumer may write at the crate root is one of
+# these re-exports. Repointing a consumer off an implementation module and onto
+# the door therefore grows this surface by one name per new door item, and the
+# pin is bumped in the same change.
 #
 # Regenerate: rg -n '^pub mod' rust/crates/foundation/degenbot-pools/src/lib.rs
 # plus the name count from `count_pub_items` in the gate.

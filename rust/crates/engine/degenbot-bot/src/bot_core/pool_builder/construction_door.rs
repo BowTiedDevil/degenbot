@@ -23,8 +23,8 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 use degenbot_db::snapshot::TickMapDb;
-use degenbot_pools::sim::tick_fetch::TickWordSource;
-use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
+use degenbot_pools::ConcentratedLiquiditySlotLayout;
+use degenbot_pools::TickWordSource;
 
 use super::builder::V4PoolBuildOverrides;
 use super::route::{
@@ -33,7 +33,7 @@ use super::route::{
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::pool_builder::parity;
 use crate::bot_core::Bot;
-use degenbot_pools::sim::registry::RegisteredPoolFamily;
+use degenbot_pools::RegisteredPoolFamily;
 
 /// The ONE construction-request vocabulary — every structural family's
 /// construction, keyed by family, with that family's inputs riding its

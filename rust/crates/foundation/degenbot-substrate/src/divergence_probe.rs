@@ -60,7 +60,7 @@
 use alloy::primitives::{Address, B256, U256};
 
 use degenbot_pools::state::slot_layout;
-use degenbot_pools::state::slot_layout::{
+use degenbot_pools::{
     concentrated_liquidity_liquidity_tracked_word as pack_concentrated_liquidity_liquidity_word,
     concentrated_liquidity_slot0_tracked_word as pack_concentrated_liquidity_slot0_word,
     pack_v2_reserves_word,
@@ -437,7 +437,7 @@ impl BotState {
 pub(crate) fn derive_v4_pool_state_base(
     pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
 ) -> U256 {
-    degenbot_pools::state::v4_storage_slots::v4_pool_state_base_slot(B256::new(*pool_id))
+    degenbot_pools::v4_pool_state_base_slot(B256::new(*pool_id))
 }
 
 /// Reverse-map a per-tick `ticks(tick)` storage slot for a concentrated liquidity pool: for
@@ -495,7 +495,7 @@ mod tests {
 
     /// The per-tick mapping slot at `base` — single-sourced in `slot_layout`.
     fn derive_tick_storage_slot(tick: i32, base: U256) -> U256 {
-        degenbot_pools::state::slot_layout::tick_mapping_slot_at_base(tick, base)
+        degenbot_pools::tick_mapping_slot_at_base(tick, base)
     }
 
     const V3_ADDR: Address = address!("777777775ce34e0b60a4a79bb5bc5d34b7e5fab4");

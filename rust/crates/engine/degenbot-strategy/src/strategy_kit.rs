@@ -27,7 +27,7 @@
 
 use std::sync::Arc;
 
-use degenbot_pools::sim::tick_fetch::TickWordSource;
+use degenbot_pools::TickWordSource;
 use degenbot_substrate::pool_ingress::{
     DbArm, IngressWitness, PoolIngress, TickMapPoolIdentity, TickMapSampleVerifier, VerifyLevel,
 };

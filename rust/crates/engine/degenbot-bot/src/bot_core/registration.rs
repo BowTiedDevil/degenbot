@@ -20,7 +20,7 @@
 use std::fmt;
 
 use alloy::primitives::Address;
-use degenbot_pools::sim::tick_fetch::TickWordSource;
+use degenbot_pools::TickWordSource;
 use degenbot_substrate::registration_gate::AdmissionVerdict;
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::tick_assembly::TickMapAssemblyError;
@@ -32,16 +32,14 @@ use crate::bot_core::pool_builder::parity;
 use crate::bot_core::{
     RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams,
 };
-use degenbot_pools::sim::registry::RegisteredPoolFamily;
-use degenbot_pools::state::aerodrome_v2_state::{
-    RegisterAerodromePoolError, RegisterAerodromeV2PoolParams,
-};
-use degenbot_pools::state::v2_state::{RegisterV2PoolError, RegisterV2PoolParams};
-use degenbot_pools::state::v3_state::{
+use degenbot_pools::RegisteredPoolFamily;
+use degenbot_pools::TickInfo;
+use degenbot_pools::{
     ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams,
 };
-use degenbot_pools::state::v4_state::{RegisterV4PoolError, RegisterV4PoolParams};
-use degenbot_pools::TickInfo;
+use degenbot_pools::{RegisterAerodromePoolError, RegisterAerodromeV2PoolParams};
+use degenbot_pools::{RegisterV2PoolError, RegisterV2PoolParams};
+use degenbot_pools::{RegisterV4PoolError, RegisterV4PoolParams};
 
 /// The PRG-3 stance refusal: the process's fleet stance is not `fleet`, so
 /// the registration intake is not hosted here and the Python driver must
@@ -199,7 +197,7 @@ impl Bot {
             if let Some((pool_id, family)) = registry.registered_pool_by_address(&params.address) {
                 let hit = family == RegisteredPoolFamily::V2
                     && registry
-                        .pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(pool_id)
+                        .pool_slice::<degenbot_pools::V2PoolIdentity>(pool_id)
                         .is_some_and(|ident| {
                             ident.token0 == params.token0
                                 && ident.token1 == params.token1
@@ -275,7 +273,7 @@ impl Bot {
             if let Some((pool_id, family)) = registry.registered_pool_by_address(&params.address) {
                 let hit = family == RegisteredPoolFamily::V3
                     && registry
-                        .pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(pool_id)
+                        .pool_slice::<degenbot_pools::V3PoolIdentity>(pool_id)
                         .is_some_and(|ident| {
                             ident.token0 == params.token0
                                 && ident.token1 == params.token1
@@ -371,7 +369,7 @@ impl Bot {
                 registry.registered_pool_by_address(&params.address)
             {
                 if registry
-                    .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(pool_id)
+                    .pool_slice::<degenbot_pools::CurvePoolIdentity>(pool_id)
                     .is_some_and(|ident| ident.tokens.as_ref() == params.tokens.as_slice())
                 {
                     return Ok(pool_id);
@@ -401,7 +399,7 @@ impl Bot {
                 registry.registered_pool_by_address(&params.address)
             {
                 if registry
-                    .pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolIdentity>(pool_id)
+                    .pool_slice::<degenbot_pools::BalancerWeightedPoolIdentity>(pool_id)
                     .is_some_and(|ident| {
                         ident.vault == params.vault
                             && ident.pool_id == params.pool_id
@@ -433,7 +431,7 @@ impl Bot {
                 registry.registered_pool_by_address(&params.address)
             {
                 if registry
-                    .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(pool_id)
+                    .pool_slice::<degenbot_pools::BalancerStablePoolIdentity>(pool_id)
                     .is_some_and(|ident| {
                         ident.vault == params.vault
                             && ident.pool_id == params.pool_id
@@ -467,9 +465,7 @@ impl Bot {
             if let Some((pool_id, family)) = registry.registered_pool_by_address(&params.address) {
                 let hit = family == RegisteredPoolFamily::AerodromeV2
                     && registry
-                        .pool_slice::<degenbot_pools::state::aerodrome_v2_state::AerodromeV2PoolIdentity>(
-                            pool_id,
-                        )
+                        .pool_slice::<degenbot_pools::AerodromeV2PoolIdentity>(pool_id)
                         .is_some_and(|ident| {
                             ident.token0 == params.token0
                                 && ident.token1 == params.token1
@@ -554,7 +550,7 @@ impl Bot {
         let (pool_id, RegisteredPoolFamily::V2) = state.registered_pool_by_address(addr)? else {
             return None;
         };
-        let ident = state.pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(pool_id)?;
+        let ident = state.pool_slice::<degenbot_pools::V2PoolIdentity>(pool_id)?;
         Some((
             pool_id,
             ident.token0.to_checksum(None),
@@ -578,7 +574,7 @@ impl Bot {
         let (pool_id, RegisteredPoolFamily::V3) = state.registered_pool_by_address(addr)? else {
             return None;
         };
-        let ident = state.pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(pool_id)?;
+        let ident = state.pool_slice::<degenbot_pools::V3PoolIdentity>(pool_id)?;
         let family = degenbot_uniswap::deployments::resolve_dex_name(chain_id, ident.factory)
             .map_or_else(|| "uniswap-v3".to_string(), |d| d.as_str().to_string());
         Some((
@@ -598,43 +594,26 @@ impl Bot {
     pub fn registered_pool_tokens(&self, pool_id: u64) -> Option<Vec<Address>> {
         let core = self.state_arc();
         let state = core.read_at(LockSite::Orchestrator);
-        if let Some(i) =
-            state.pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(pool_id)
-        {
+        if let Some(i) = state.pool_slice::<degenbot_pools::V2PoolIdentity>(pool_id) {
             return Some(vec![i.token0, i.token1]);
         }
-        if let Some(i) =
-            state.pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(pool_id)
-        {
+        if let Some(i) = state.pool_slice::<degenbot_pools::V3PoolIdentity>(pool_id) {
             return Some(vec![i.token0, i.token1]);
         }
-        if let Some(i) =
-            state.pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(pool_id)
-        {
+        if let Some(i) = state.pool_slice::<degenbot_pools::V4PoolIdentity>(pool_id) {
             return Some(vec![i.pool_key.currency0, i.pool_key.currency1]);
         }
-        if let Some(i) = state
-            .pool_slice::<degenbot_pools::state::aerodrome_v2_state::AerodromeV2PoolIdentity>(
-                pool_id,
-            )
-        {
+        if let Some(i) = state.pool_slice::<degenbot_pools::AerodromeV2PoolIdentity>(pool_id) {
             return Some(vec![i.token0, i.token1]);
         }
-        if let Some(i) =
-            state.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(pool_id)
-        {
+        if let Some(i) = state.pool_slice::<degenbot_pools::CurvePoolIdentity>(pool_id) {
             return Some(i.tokens.to_vec());
         }
-        if let Some(i) = state.pool_slice::<
-            degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolIdentity,
-        >(pool_id)
-        {
+        if let Some(i) = state.pool_slice::<degenbot_pools::BalancerWeightedPoolIdentity>(pool_id) {
             return Some(i.tokens.to_vec());
         }
         state
-            .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(
-                pool_id,
-            )
+            .pool_slice::<degenbot_pools::BalancerStablePoolIdentity>(pool_id)
             .map(|i| i.tokens.to_vec())
     }
 
@@ -787,7 +766,7 @@ mod tests {
     #![expect(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use alloy::primitives::aliases::U112;
-    use degenbot_pools::state::v4_state::{V4PoolKey, V4_DYNAMIC_FEE_FLAG};
+    use degenbot_pools::{V4PoolKey, V4_DYNAMIC_FEE_FLAG};
 
     /// The V2 door request the fixtures register through.
     fn v2_request(address: Address, token0: Address, factory: Address) -> PoolRegistration {

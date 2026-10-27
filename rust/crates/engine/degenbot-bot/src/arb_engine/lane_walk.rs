@@ -147,12 +147,12 @@ pub(crate) fn solve_one_path(
     // memo + prefix-cache handles AND the epoch, so the deps for this block
     // can never disagree with the memo's epoch. Same semantics as the old
     // single borrowed GateDeps shared by the scope workers.
-    let gate_deps = ::degenbot_pools::solve::gate::GateDeps::per_block(
+    let gate_deps = ::degenbot_pools::GateDeps::per_block(
         ctx.scope.epoch(),
         ctx.scope.prefix_cache(),
         ctx.gate_capture
             .as_ref()
-            .map(|s| s as &dyn ::degenbot_pools::solve::gate::DegeneratePathSink),
+            .map(|s| s as &dyn ::degenbot_pools::DegeneratePathSink),
         Some(&**ctx.scope.walk_memo()),
         ctx.runtime,
     )

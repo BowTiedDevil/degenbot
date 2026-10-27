@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_db::error::DbError;
 use degenbot_pathfinding::PoolKind;
-use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
+use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_rpc::multicall3::{multicall3_batch, MulticallResult};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_uniswap::deployments::{layout_verdict, LayoutVerdict};

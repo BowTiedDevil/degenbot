@@ -20,9 +20,7 @@ use super::*;
 use std::sync::Arc;
 
 use alloy::primitives::{Address, B256, I256, U128, U256};
-use degenbot_pools::sim::tick_fetch::{
-    FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource,
-};
+use degenbot_pools::{FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource};
 
 use crate::concentrated_liquidity_route::{ApplyOutcome, Phase};
 use crate::log_dispatcher::LogDispatcher;
@@ -260,7 +258,7 @@ fn sparse_v4_state(fetcher: Option<Arc<dyn TickWordSource>>, strict: bool) -> St
 fn v3_tick_gross(state: &StateLock<BotState>, tick: i32) -> Option<u128> {
     let core = state.read_at(LockSite::Core);
     let pool_id = core.pool_id_by_address(&pool_addr())?;
-    core.pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)?
+    core.pool_slice::<degenbot_pools::V3PoolState>(pool_id)?
         .tick_data
         .get(&tick)
         .map(|t| t.liquidity_gross.to::<u128>())
@@ -334,14 +332,14 @@ fn v3_sparse_gate_fetch_failure_refuses_and_does_not_apply() {
     let outcome = state.write_at(LockSite::Core).route_event(
         Phase::Live,
         PoolLookup::from_address(pool_addr()),
-        degenbot_pools::families::buffered_event::BufferedPoolEvent::V3(
-            BufferedV3PoolEvent::Liquidity(BufferedV3LiquidityUpdate {
+        degenbot_pools::BufferedPoolEvent::V3(BufferedV3PoolEvent::Liquidity(
+            BufferedV3LiquidityUpdate {
                 tick_lower: 0,
                 tick_upper: 60,
                 liquidity_delta: MINT_DELTA,
                 block_number: EVENT_BLOCK,
-            }),
-        ),
+            },
+        )),
         &[],
     );
     assert_eq!(
@@ -454,7 +452,7 @@ fn v3_tracked_pool_gate_is_inert() {
 fn v4_tick_gross(state: &StateLock<BotState>, tick: i32) -> Option<u128> {
     let core = state.read_at(LockSite::Core);
     let pool_id = core.pool_id_by_key(manager_addr(), &v4_pool_id())?;
-    core.pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)?
+    core.pool_slice::<degenbot_pools::V4PoolState>(pool_id)?
         .tick_data
         .get(&tick)
         .map(|t| t.liquidity_gross.to::<u128>())

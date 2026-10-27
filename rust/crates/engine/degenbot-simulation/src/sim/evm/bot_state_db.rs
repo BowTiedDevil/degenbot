@@ -392,7 +392,7 @@ mod tests {
     use alloy::primitives::aliases::U112;
     use alloy::primitives::{Address, U256};
     use degenbot_bot::connector_index::{V2ConnectorIndex, V2Edge};
-    use degenbot_pools::state::v2_state::RegisterV2PoolParams;
+    use degenbot_pools::RegisterV2PoolParams;
     use degenbot_substrate::{BotState, RouteRegistry, SimAnchorState};
     use degenbot_uniswap::dex_identity::DexVariant;
     use revm::bytecode::Bytecode;

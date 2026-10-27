@@ -17,9 +17,9 @@ use degenbot_rpc::provider::AlloyProvider;
 use hashbrown::HashMap;
 
 use crate::bot_core::registration_ledger::{RefusalKind, RegistrationPhase, VerifyOrigin};
-use degenbot_pools::state::tick_map::TickMap;
-use degenbot_pools::state::v3_state::{V3PoolIdentity, V3PoolState};
-use degenbot_pools::state::v4_state::{V4PoolIdentity, V4PoolState};
+use degenbot_pools::TickMap;
+use degenbot_pools::{V3PoolIdentity, V3PoolState};
+use degenbot_pools::{V4PoolIdentity, V4PoolState};
 
 /// The bot-facing classification between map evidence and inability to read
 /// it is the one [`RefusalKind`] vocabulary's verify arm: a typed map

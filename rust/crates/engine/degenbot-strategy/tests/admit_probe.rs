@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{address, Address, U256};
 use degenbot_db::connection::DegenbotDb;
-use degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout;
+use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };

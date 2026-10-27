@@ -110,7 +110,7 @@ use ::degenbot_pools::solve::{
 use alloy::primitives::U256;
 use dashmap::DashMap;
 use degenbot_core::diag;
-use degenbot_pools::solve::affected::AffectedKey;
+use degenbot_pools::AffectedKey;
 use degenbot_substrate::resolve::resolve_hops;
 use degenbot_substrate::resolve::HopProjectionCache;
 use degenbot_substrate::{BlockMetadata, BotState, EpochDelta};
@@ -144,9 +144,9 @@ pub(crate) use merge::{clamp_skip_kind, recompute_clamped_profit};
 /// in one place.
 #[derive(Clone)]
 pub(crate) struct BlockScope {
-    walk_memo: Arc<::degenbot_pools::solve::concentrated_liquidity::WalkMemo>,
-    walk_telemetry: Arc<::degenbot_pools::solve::concentrated_liquidity::WalkTelemetry>,
-    prefix_cache: Arc<::degenbot_pools::solve::gate::PrefixCache>,
+    walk_memo: Arc<::degenbot_pools::WalkMemo>,
+    walk_telemetry: Arc<::degenbot_pools::WalkTelemetry>,
+    prefix_cache: Arc<::degenbot_pools::PrefixCache>,
     epoch: u64,
 }
 
@@ -154,13 +154,13 @@ impl BlockScope {
     /// A fresh scope at epoch 0 over the given walk-composition memo and
     /// walk-telemetry collector handles.
     pub(crate) fn new(
-        walk_memo: Arc<::degenbot_pools::solve::concentrated_liquidity::WalkMemo>,
-        walk_telemetry: Arc<::degenbot_pools::solve::concentrated_liquidity::WalkTelemetry>,
+        walk_memo: Arc<::degenbot_pools::WalkMemo>,
+        walk_telemetry: Arc<::degenbot_pools::WalkTelemetry>,
     ) -> Self {
         Self {
             walk_memo,
             walk_telemetry,
-            prefix_cache: Arc::new(::degenbot_pools::solve::gate::PrefixCache::new()),
+            prefix_cache: Arc::new(::degenbot_pools::PrefixCache::new()),
             epoch: 0,
         }
     }
@@ -170,10 +170,7 @@ impl BlockScope {
     /// boundary. The scope's epoch — read by every per-path
     /// `GateDeps::per_block` — is the same `block`.
     #[must_use]
-    pub(crate) fn advance(
-        &mut self,
-        block: u64,
-    ) -> ::degenbot_pools::solve::concentrated_liquidity::WalkMemoStats {
+    pub(crate) fn advance(&mut self, block: u64) -> ::degenbot_pools::WalkMemoStats {
         self.epoch = block;
         self.walk_memo.begin_block(block)
     }
@@ -186,23 +183,19 @@ impl BlockScope {
 
     /// The engine-owned walk-composition memo handle.
     #[must_use]
-    pub(crate) fn walk_memo(
-        &self,
-    ) -> &Arc<::degenbot_pools::solve::concentrated_liquidity::WalkMemo> {
+    pub(crate) fn walk_memo(&self) -> &Arc<::degenbot_pools::WalkMemo> {
         &self.walk_memo
     }
 
     /// The engine-owned walk telemetry collector handle.
     #[must_use]
-    pub(crate) fn walk_telemetry(
-        &self,
-    ) -> &Arc<::degenbot_pools::solve::concentrated_liquidity::WalkTelemetry> {
+    pub(crate) fn walk_telemetry(&self) -> &Arc<::degenbot_pools::WalkTelemetry> {
         &self.walk_telemetry
     }
 
     /// The engine-owned prefix-composition cache handle.
     #[must_use]
-    pub(crate) fn prefix_cache(&self) -> &Arc<::degenbot_pools::solve::gate::PrefixCache> {
+    pub(crate) fn prefix_cache(&self) -> &Arc<::degenbot_pools::PrefixCache> {
         &self.prefix_cache
     }
 }
@@ -229,7 +222,7 @@ pub(crate) struct SolveCycleShared {
     pub(crate) clamp_margin: U256,
     /// the instance-scoped solver runtime stance, threaded down —
     /// the solve tree has no process-global config anymore.
-    pub(crate) runtime: ::degenbot_pools::solve::runtime::SolveRuntimeConfig,
+    pub(crate) runtime: ::degenbot_pools::SolveRuntimeConfig,
     /// Every per-path cost sink — the pipeline instruments, the K-slowest
     /// retention, the two capture hooks, and the next-cycle LPT cost history —
     /// behind ONE record call from the lane walk, plus the ONE typed snapshot
@@ -284,16 +277,12 @@ impl SolveCycleShared {
             metadata,
             gate_capture: None,
             scope: BlockScope::new(
-                std::sync::Arc::new(
-                    ::degenbot_pools::solve::concentrated_liquidity::WalkMemo::new(false, false),
-                ),
-                std::sync::Arc::new(
-                    ::degenbot_pools::solve::concentrated_liquidity::WalkTelemetry::new(),
-                ),
+                std::sync::Arc::new(::degenbot_pools::WalkMemo::new(false, false)),
+                std::sync::Arc::new(::degenbot_pools::WalkTelemetry::new()),
             ),
             min_profit: U256::ZERO,
             clamp_margin: U256::from(1u128),
-            runtime: ::degenbot_pools::solve::runtime::SolveRuntimeConfig::default(),
+            runtime: ::degenbot_pools::SolveRuntimeConfig::default(),
             path_cost_ledger: super::path_cost_ledger::PathCostLedger::new(
                 solve_block,
                 None,
@@ -510,7 +499,7 @@ pub(crate) struct SolveCycle {
     /// construction), and the inline-sim hook (kept in sync by
     /// `set_inline_simulator`).
     pub(crate) cfg: Arc<::degenbot_config::BotConfig>,
-    pub(crate) runtime_cfg: ::degenbot_pools::solve::runtime::SolveRuntimeConfig,
+    pub(crate) runtime_cfg: ::degenbot_pools::SolveRuntimeConfig,
     pub(crate) inline_sim: Option<Arc<dyn super::inline_sim::InlineSimulator>>,
     // --- construction-time test knobs (ADR-076 D2: data, not methods) ---
     /// Test-only: hook invoked at the start of each path solve.
@@ -593,7 +582,7 @@ pub(crate) struct EpochContext<'a> {
     /// Config (immutable after construction) and the instance solver runtime
     /// stance threaded down from it.
     pub(crate) cfg: &'a Arc<::degenbot_config::BotConfig>,
-    pub(crate) runtime_cfg: ::degenbot_pools::solve::runtime::SolveRuntimeConfig,
+    pub(crate) runtime_cfg: ::degenbot_pools::SolveRuntimeConfig,
     /// Per-path previous-block MEASURED cost (the LPT cost refinement).
     pub(crate) path_cost_history: &'a Arc<super::path_cost_ledger::PathCostHistory>,
     /// The pre-solve profitability floor (packed instance value).
@@ -1198,7 +1187,7 @@ impl SolveCycle {
             let run_bin = move || {
                 // Cold start: no capture wiring — deps with the
                 // registered-epoch guard + the engine walk-memo handle.
-                let gate_deps = ::degenbot_pools::solve::gate::GateDeps::per_block(
+                let gate_deps = ::degenbot_pools::GateDeps::per_block(
                     results_block,
                     &prefix_store,
                     None,
@@ -1257,11 +1246,7 @@ impl SolveCycle {
         // (matching the Python `arbitrage.solvers.solidly_stable` classification:
         // `AerodromeV2Pool(stable=True)` → `SolidlyStableHop`, else
         // `ConstantProductHop`).
-        if let Some(id) = core
-            .pool_slice::<degenbot_pools::state::aerodrome_v2_state::AerodromeV2PoolIdentity>(
-                pool_id,
-            )
-        {
+        if let Some(id) = core.pool_slice::<degenbot_pools::AerodromeV2PoolIdentity>(pool_id) {
             return Some(if id.stable {
                 HopType::SolidlyStable
             } else {
@@ -1271,9 +1256,7 @@ impl SolveCycle {
         // Camelot stable_swap pools route to the Solidly solve branch;
         // volatile Camelot is constant-product (V2). Same Python-faithful
         // classification as Aerodrome.
-        if let Some(id) =
-            core.pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(pool_id)
-        {
+        if let Some(id) = core.pool_slice::<degenbot_pools::V2PoolIdentity>(pool_id) {
             return Some(if id.stable_swap {
                 HopType::SolidlyStable
             } else {
@@ -1281,29 +1264,27 @@ impl SolveCycle {
             });
         }
         if core
-            .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
+            .pool_slice::<degenbot_pools::V3PoolState>(pool_id)
             .is_some()
         {
             Some(HopType::V3)
         } else if core
-            .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(pool_id)
+            .pool_slice::<degenbot_pools::V4PoolState>(pool_id)
             .is_some()
         {
             Some(HopType::V4)
         } else if core
-            .pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolState>(
-                pool_id,
-            )
+            .pool_slice::<degenbot_pools::BalancerWeightedPoolState>(pool_id)
             .is_some()
         {
             Some(HopType::BalancerWeighted)
         } else if core
-            .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolState>(pool_id)
+            .pool_slice::<degenbot_pools::BalancerStablePoolState>(pool_id)
             .is_some()
         {
             Some(HopType::BalancerStable)
         } else if core
-            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolState>(pool_id)
+            .pool_slice::<degenbot_pools::CurvePoolState>(pool_id)
             .is_some()
         {
             Some(HopType::CurveStableswap)
@@ -1487,7 +1468,7 @@ impl SolveCycle {
             if resolved.valid {
                 if let Some(mut solve_result) = ::degenbot_pools::solve::solve_path(
                     resolved,
-                    &::degenbot_pools::solve::gate::GateDeps::offline(),
+                    &::degenbot_pools::GateDeps::offline(),
                 )
                 .result
                 {

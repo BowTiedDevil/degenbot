@@ -1,5 +1,5 @@
-use ::degenbot_pools::solve::affected::AffectedKey;
 use ::degenbot_pools::solve::HopType;
+use ::degenbot_pools::AffectedKey;
 /// Test-side affected-key plumbing (the trivial remainder of the deleted
 /// (`EpochDelta` is sole authority), so the per-family sets below are
 /// just a sorted `AffectedKey` builder the solve-shaped tests use to

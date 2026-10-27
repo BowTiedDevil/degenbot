@@ -697,9 +697,9 @@ fn run_reorg_stream(capture: ReorgSpanCapture, pump: &mut BlockPump, events: Vec
 // -----------------------------------------------------------------
 
 use alloy::primitives::{aliases::U112, Address, Bytes, U256};
-use degenbot_pools::solve::affected::AffectedKey;
 use degenbot_pools::solve::HopType;
-use degenbot_pools::state::v2_state::RegisterV2PoolParams;
+use degenbot_pools::AffectedKey;
+use degenbot_pools::RegisterV2PoolParams;
 use degenbot_substrate::BlockContext;
 
 /// Build a V2 `Sync` log for `pool_address` carrying
@@ -956,8 +956,8 @@ async fn run_loop_guarded(
 /// Tick spacing 1 so tick 7 is a valid tick.
 fn bot_with_quarantined_v3_tracked(seed_gross: u128, update_block: u64) -> (Arc<Bot>, Address) {
     use alloy::primitives::U128;
-    use degenbot_pools::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
     use degenbot_pools::TickInfo;
+    use degenbot_pools::{PoolTickCoverage, RegisterV3PoolParams};
     let pool_addr = Address::from([0x34u8; 20]);
     let bot = Arc::new(Bot::new(1));
     let mut tick_data = hashbrown::HashMap::new();

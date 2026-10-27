@@ -2676,7 +2676,7 @@ fn pools_root_surface_is_pinned() {
     // existing `pub use a::b::{X, Y}` block moves the pin exactly as a new
     // `pub fn` does. ONE const: the count and the failure message derive from
     // it, so a snapshot bump is one edit.
-    const POOLS_ROOT_PUB_ITEMS: usize = 843;
+    const POOLS_ROOT_PUB_ITEMS: usize = 966;
     let census = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pools_root_surface_census.txt"),
     )
@@ -2879,6 +2879,14 @@ fn no_new_pools_deep_paths() {
     for_each_rust_source(&workspace_root().join("crates"), &mut |path, text| {
         // The capability crate owns these modules, so it names them directly.
         if path.starts_with(&pools_crate) {
+            return;
+        }
+        // This file's own text is the rule, not a consumer reference: the doc
+        // comments below name implementation modules to show what the rule
+        // rejects, and `facade_solvers_reexport_reaches_pools_solve` asserts a
+        // canonical type path. Counting them would make an allowlist row
+        // unremovable — the gate would keep satisfying itself.
+        if path.file_name().and_then(|name| name.to_str()) == Some("architecture_gates.rs") {
             return;
         }
         referenced.extend(pools_deep_paths(text));

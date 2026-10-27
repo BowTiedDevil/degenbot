@@ -31,7 +31,7 @@ use super::pool_builder::builder;
 use super::pool_builder::construction_door::PoolConstruction;
 use super::pool_builder::route;
 use super::registration_ledger::{RefusalKind, RegistrationPhase};
-use degenbot_pools::sim::registry::RegisteredPoolFamily;
+use degenbot_pools::RegisteredPoolFamily;
 
 /// The `calculate_tokens_out` refusal (the legacy Python surface: a
 /// `ValueError` for the overflow/on-chain-revert and unknown-pool classes,
@@ -243,7 +243,7 @@ impl Bot {
     /// shell's `Debug`-format surface is unchanged).
     ///
     /// # Errors
-    /// [`CurveInputsError`](degenbot_pools::sim::curve_dy_io::CurveInputsError) as the state method.
+    /// [`CurveInputsError`](degenbot_pools::CurveInputsError) as the state method.
     pub fn curve_get_dy(
         &self,
         pool_id: u64,
@@ -252,7 +252,7 @@ impl Bot {
         dx: U256,
         block_number: u64,
         override_balances: Option<&[U256]>,
-    ) -> Result<U256, degenbot_pools::sim::curve_dy_io::CurveInputsError> {
+    ) -> Result<U256, degenbot_pools::CurveInputsError> {
         self.state_arc().read_at(LockSite::Orchestrator).get_dy(
             pool_id,
             i,
@@ -307,9 +307,9 @@ impl Bot {
 mod tests {
     use super::super::RegisterCurvePoolParams;
     use super::*;
-    use degenbot_pools::state::v2_state::RegisterV2PoolParams;
-    use degenbot_pools::state::v3_state::PoolTickCoverage;
-    use degenbot_pools::state::v3_state::RegisterV3PoolParams;
+    use degenbot_pools::PoolTickCoverage;
+    use degenbot_pools::RegisterV2PoolParams;
+    use degenbot_pools::RegisterV3PoolParams;
     use degenbot_substrate::PoolRegistration;
 
     /// A non-JSON factory (CREATE2 verify skipped).
@@ -330,8 +330,7 @@ mod tests {
             tick_data: hashbrown::HashMap::new(),
             update_block: 100,
             coverage: PoolTickCoverage::Sparse,
-            slot_layout:
-                degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
+            slot_layout: degenbot_pools::ConcentratedLiquiditySlotLayout::UniswapV3,
             ..Default::default()
         }
     }
@@ -511,10 +510,7 @@ mod tests {
             )
             .expect_err("unknown pool refused");
         assert!(
-            matches!(
-                err,
-                degenbot_pools::sim::curve_dy_io::CurveInputsError::UnknownPool(_)
-            ),
+            matches!(err, degenbot_pools::CurveInputsError::UnknownPool(_)),
             "{err:?}"
         );
     }

@@ -1214,7 +1214,7 @@ mod tests {
     use super::*;
     use degenbot_decoders::v4_swap_decoder::V4PoolId;
     use degenbot_eventhub::OverflowPolicy;
-    use degenbot_pools::state::v3_state::PoolTickCoverage;
+    use degenbot_pools::PoolTickCoverage;
     use futures_util::StreamExt;
 
     /// Build an offline driver over a fresh `Bot` + `EngineStages`.
@@ -1795,8 +1795,8 @@ mod tests {
     /// Register a V3 pool directly in the driver's shared core.
     fn register_v3(driver: &EngineDriver, address: Address, coverage: PoolTickCoverage) -> u64 {
         use alloy::primitives::{U128, U256};
-        use degenbot_pools::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
         use degenbot_pools::TickInfo;
+        use degenbot_pools::{PoolTickCoverage, RegisterV3PoolParams};
         use hashbrown::HashMap;
         let mut tick_data = HashMap::new();
         if coverage == PoolTickCoverage::Tracked {
@@ -1840,9 +1840,9 @@ mod tests {
     /// Register a Sparse V4 pool directly in the driver's shared core.
     fn register_sparse_v4(driver: &EngineDriver, pool_manager: Address, pool_id: V4PoolId) -> u64 {
         use alloy::primitives::U256;
-        use degenbot_pools::state::v3_state::PoolTickCoverage;
-        use degenbot_pools::state::v4_state::RegisterV4PoolParams;
-        use degenbot_pools::state::v4_state::V4PoolKey;
+        use degenbot_pools::PoolTickCoverage;
+        use degenbot_pools::RegisterV4PoolParams;
+        use degenbot_pools::V4PoolKey;
         use hashbrown::HashMap;
         driver
             .stages()
@@ -1917,7 +1917,7 @@ mod tests {
     #[tokio::test]
     async fn failed_driver_lifecycle_is_retriable_and_not_verified() {
         use alloy::primitives::U256;
-        use degenbot_pools::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams};
+        use degenbot_pools::{PoolTickCoverage, RegisterV3PoolParams};
         use hashbrown::HashMap;
 
         let driver = driver_for_test();

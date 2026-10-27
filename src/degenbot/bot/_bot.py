@@ -577,22 +577,10 @@ class Bot(AccountQueryMixin):
 
         # The V3 genesis seed (the reorg anchor) is the construction arm's —
         # the core seeds it atomically with registration (ADR-085 D5), so no
-        # driver call crosses here.
-        #
-        # The companion phase runs on the verdict's echo (ADR-085 D2): the core
-        # registered this family/variant, so it is the one authority. The seam
-        # echoes the request's identity, so this agrees with `is_curve` above —
-        # but the echo is what the core committed, and the assertion keeps a
-        # future echo-normalization from silently diverging the companion.
-        echo_is_curve = (
-            outcome.family == PoolFamily.STABLESWAP.value and outcome.variant != "balancer_stable"
-        )
-        if echo_is_curve != is_curve:
-            msg = (
-                f"build_pool: core identity echo diverged from the request for "
-                f"{address}: request is_curve={is_curve} vs echo is_curve={echo_is_curve}"
-            )
-            raise DegenbotValueError(message=msg)
+        # driver call crosses here. The family/variant parity is the seam's
+        # (`construct_pool` asserts the registered identity against the request
+        # before the outcome crosses, ADR-085 D4) — the companion branch below
+        # runs on the resolver's identity, which is the seam-verified one.
         if is_curve:
             # The Curve companions (metapool base-pool recursion + coin /
             # underlying / LP ERC20 builds) — the post-construction choreography

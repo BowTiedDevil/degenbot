@@ -1,5 +1,5 @@
 use super::*;
-use degenbot_pools::families::buffered_event::PoolLiquidityUpdate;
+use degenbot_pools::PoolLiquidityUpdate;
 use degenbot_substrate::concentrated_liquidity_route::ApplyOutcome;
 use degenbot_substrate::PoolLookup;
 
@@ -16,7 +16,7 @@ fn inspect_path_returns_hop_details() {
     );
     // Register a V3 pool
     let tick_data = inspect_test_v3_tick_data();
-    let v3_key = engine.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
+    let v3_key = engine.register_v3_pool(&degenbot_pools::RegisterV3PoolParams {
         address: Address::from([0x22u8; 20]),
         token0: Address::from([0u8; 20]),
         token1: Address::from([1u8; 20]),
@@ -29,16 +29,16 @@ fn inspect_path_returns_hop_details() {
         tick_data,
         update_block: 0,
         tick_data_block: None,
-        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
     // Register a V4 pool
     let v4_key = engine
-        .register_v4_pool(&degenbot_pools::state::v4_state::RegisterV4PoolParams {
+        .register_v4_pool(&degenbot_pools::RegisterV4PoolParams {
             pool_manager: Address::from([0x33u8; 20]),
             pool_id: [0xabu8; 32],
-            pool_key: degenbot_pools::state::v4_state::V4PoolKey {
+            pool_key: degenbot_pools::V4PoolKey {
                 currency0: Address::from([0u8; 20]),
                 currency1: Address::from([1u8; 20]),
                 fee: 10000,
@@ -50,7 +50,7 @@ fn inspect_path_returns_hop_details() {
             liquidity: 1_000_000,
             tick: 0,
             tick_data: HashMap::new(),
-            coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+            coverage: degenbot_pools::PoolTickCoverage::Tracked,
             ..Default::default()
         })
         .expect("V4 registration should succeed");
@@ -88,18 +88,18 @@ fn inspect_path_returns_hop_details() {
     let v2_addr = engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(v2_fwd)
+        .pool_slice::<degenbot_pools::V2PoolIdentity>(v2_fwd)
         .map(|p| p.address);
     assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
     let core = engine
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-    let v3_pool = core.pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(v3_key);
+    let v3_pool = core.pool_slice::<degenbot_pools::V3PoolIdentity>(v3_key);
     assert_eq!(
         v3_pool.map(|p| p.address),
         Some(Address::from([0x22u8; 20]))
     );
-    let v4_pool = core.pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(v4_key);
+    let v4_pool = core.pool_slice::<degenbot_pools::V4PoolIdentity>(v4_key);
     assert_eq!(
         v4_pool.map(|p| p.pool_manager),
         Some(Address::from([0x33u8; 20]))
@@ -149,7 +149,7 @@ fn solve_3hop_v3_v3_v3_path() {
         tick_data: make_tick_data(),
         update_block: 0,
         tick_data_block: None,
-        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
@@ -167,7 +167,7 @@ fn solve_3hop_v3_v3_v3_path() {
         tick_data: make_tick_data(),
         update_block: 0,
         tick_data_block: None,
-        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
@@ -185,7 +185,7 @@ fn solve_3hop_v3_v3_v3_path() {
         tick_data: make_tick_data(),
         update_block: 0,
         tick_data_block: None,
-        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
@@ -225,11 +225,9 @@ fn solve_3hop_v3_v3_v3_path() {
     // Now the N-hop concentrated liquidity solver runs. With 3 pools at the same price but
     // different liquidity, the path is unlikely to be profitable after fees,
     // but the solver must not reject due to hop count.
-    let result = ::degenbot_pools::solve::solve_path(
-        resolved,
-        &::degenbot_pools::solve::gate::GateDeps::offline(),
-    )
-    .result;
+    let result =
+        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
+            .result;
     let _ = result; // No panic = test passes
 }
 #[test]
@@ -275,7 +273,7 @@ fn solve_3hop_mixed_v2_v3_v2_path() {
         tick_data,
         update_block: 0,
         tick_data_block: None,
-        coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+        coverage: degenbot_pools::PoolTickCoverage::Tracked,
         fetcher: None,
         ..Default::default()
     });
@@ -313,11 +311,9 @@ fn solve_3hop_mixed_v2_v3_v2_path() {
     assert_eq!(resolved.hops[1].hop_type(), HopType::V3);
     assert_eq!(resolved.hops[2].hop_type(), HopType::V2);
     // Key: previously this returned None due to hop_types.len() != 2
-    let result = ::degenbot_pools::solve::solve_path(
-        resolved,
-        &::degenbot_pools::solve::gate::GateDeps::offline(),
-    )
-    .result;
+    let result =
+        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
+            .result;
     let _ = result;
 }
 // Hop-projection cache (shared-pool dedup): a dirty pool shared by N
@@ -477,11 +473,11 @@ fn handle_reorg_rolls_back_v2_sync_and_expires_delivered_result() {
     engine.cycle.path_resolved.clear();
     // the re-restored pools re-enter the epoch delta; the solve
     // consumes the delta's taken keys (all registered hop keys here).
-    let reorg_keys: Vec<degenbot_pools::solve::affected::AffectedKey> = engine
+    let reorg_keys: Vec<degenbot_pools::AffectedKey> = engine
         .registry
         .pool_to_paths
         .keys()
-        .map(|(hop, pool)| degenbot_pools::solve::affected::AffectedKey::new(*hop, *pool))
+        .map(|(hop, pool)| degenbot_pools::AffectedKey::new(*hop, *pool))
         .collect();
     run_test_cycle(&mut engine, 5, &BlockMetadata::default(), &reorg_keys);
     compute_diff_and_send(&mut engine, &BlockMetadata::default());
@@ -519,7 +515,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
     // pops them + reverse-applies tick priors. An in-range Mint journals
     // scalar_priors: Some so the bump rolls back too.
     use alloy::primitives::U128;
-    use degenbot_pools::state::v3_state::PoolTickCoverage;
+    use degenbot_pools::PoolTickCoverage;
     use degenbot_pools::TickInfo;
     let engine = ArbitrageEngine::new();
     let pool_addr = Address::from([0x55u8; 20]);
@@ -534,7 +530,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
             block: 0,
         },
     );
-    let pool_id = engine.register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
+    let pool_id = engine.register_v3_pool(&degenbot_pools::RegisterV3PoolParams {
         address: pool_addr,
         token0: Address::ZERO,
         token1: Address::from([1u8; 20]),
@@ -596,7 +592,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let s = core
-            .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
+            .pool_slice::<degenbot_pools::V3PoolState>(pool_id)
             .expect("v3 pool registered");
         assert_eq!(s.sqrt_price_x96, swapped_sp, "swap applied at block 5");
         assert_eq!(
@@ -625,7 +621,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
             .core
             .read_at(degenbot_substrate::state_lock::LockSite::Solver);
         let s = core
-            .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
+            .pool_slice::<degenbot_pools::V3PoolState>(pool_id)
             .expect("v3 pool still registered");
         assert_eq!(
             s.sqrt_price_x96, reg_sp,
@@ -649,7 +645,7 @@ fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
 /// the shared core.
 #[test]
 fn with_core_adopts_shared_bot_state() {
-    use degenbot_pools::state::v2_state::RegisterV2PoolParams;
+    use degenbot_pools::RegisterV2PoolParams;
     use degenbot_substrate::BotState;
     use std::sync::Arc;
     // Build a shared core with one V2 pool registered directly into `BotState`.
@@ -691,7 +687,7 @@ fn with_core_adopts_shared_bot_state() {
 /// than silently producing an unresolved/invalid path).
 #[test]
 fn register_path_rejects_pool_id_not_in_bot() {
-    use degenbot_pools::state::v2_state::RegisterV2PoolParams;
+    use degenbot_pools::RegisterV2PoolParams;
     use degenbot_substrate::BotState;
     use std::sync::Arc;
     let core = Arc::new(degenbot_substrate::state_lock::StateLock::new(
@@ -759,7 +755,7 @@ fn process_backfill_logs_stamps_per_log_block_number() {
     use alloy::primitives::{Address, Bytes, B256};
     use alloy::rpc::types::Log;
     use degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
-    use degenbot_pools::state::v3_state::PoolTickCoverage;
+    use degenbot_pools::PoolTickCoverage;
     /// Build a V3 Swap log carrying post-swap scalars, at `block_number`.
     /// data = abi.encode(int256 amount0, int256 amount1, uint160 sqrtPriceX96,
     /// uint128 liquidity, int24 tick) = 5 × 32 bytes.
@@ -856,7 +852,7 @@ fn process_backfill_logs_stamps_per_log_block_number() {
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
     let s = core
-        .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::V3PoolState>(pool_id)
         .expect("v3 pool registered");
     // Two distinct-block swaps must produce two journal deltas — NOT one
     // collapsed delta stamped at chunk_end.
@@ -895,7 +891,7 @@ fn process_backfill_logs_stamps_per_log_block_number() {
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
     let s = core
-        .pool_slice::<degenbot_pools::state::v3_state::V3PoolState>(pool_id)
+        .pool_slice::<degenbot_pools::V3PoolState>(pool_id)
         .expect("v3 pool registered");
     assert_eq!(
         s.sqrt_price_x96, sp_b1,
@@ -982,7 +978,7 @@ fn engine_then_core_lock_order_survives_concurrent_readers_and_writer() {
             while !done.load(std::sync::atomic::Ordering::Relaxed) {
                 let r = core.read_at(degenbot_substrate::state_lock::LockSite::Solver);
                 // Read is coherent under one guard — no torn state.
-                let _pool = r.pool_slice::<degenbot_pools::state::v2_state::V2PoolState>(pool_id);
+                let _pool = r.pool_slice::<degenbot_pools::V2PoolState>(pool_id);
             }
         }));
     }

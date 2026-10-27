@@ -15,9 +15,9 @@
 use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U256};
-use degenbot_pools::sim::curve_data_provider::CurveDataProvider;
-use degenbot_pools::sim::registry::RegisteredPoolFamily;
-use degenbot_pools::sim::tick_fetch::FetchedTickWord;
+use degenbot_pools::CurveDataProvider;
+use degenbot_pools::FetchedTickWord;
+use degenbot_pools::RegisteredPoolFamily;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::swap_simulation::{
     simulate_pair_in_given_out, simulate_pair_out, Caveats, OverrideOutcome, OverrideState,
@@ -126,7 +126,7 @@ pub fn curve_data_provider(
 ) -> Option<Arc<dyn CurveDataProvider>> {
     let guard = state.read_at(LockSite::Orchestrator);
     guard
-        .pool_slice::<degenbot_pools::state::curve_state::CurvePoolState>(pool_id)?
+        .pool_slice::<degenbot_pools::CurvePoolState>(pool_id)?
         .data_provider
         .clone()
 }
@@ -560,7 +560,7 @@ mod tests {
                 );
             }
             guard
-                .register_v3_pool(&degenbot_pools::state::v3_state::RegisterV3PoolParams {
+                .register_v3_pool(&degenbot_pools::RegisterV3PoolParams {
                     address: Address::from([0xddu8; 20]),
                     token0: Address::from([0xa0u8; 20]),
                     token1: Address::from([0xa1u8; 20]),
@@ -572,7 +572,7 @@ mod tests {
                     tick: 0,
                     tick_data,
                     update_block: 100,
-                    coverage: degenbot_pools::state::v3_state::PoolTickCoverage::Tracked,
+                    coverage: degenbot_pools::PoolTickCoverage::Tracked,
                     fetcher: None,
                     ..Default::default()
                 })

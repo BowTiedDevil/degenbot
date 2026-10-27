@@ -5,15 +5,15 @@
 //! through the `BotState` registry, which stays in bot). Transient re-export —
 //! repointed at `degenbot_pools::curve_state` natively.
 
-pub use ::degenbot_pools::state::curve_state::*;
+pub use ::degenbot_pools::*;
 
 #[expect(clippy::expect_used, unused_imports)]
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::bot_core::RegisterCurvePoolParams;
-    use ::degenbot_pools::sim::curve_data_provider::CurveDataProvider;
-    use ::degenbot_pools::state::state_history::{BlockDelta, ReorgJournal};
+    use ::degenbot_pools::CurveDataProvider;
+    use ::degenbot_pools::{BlockDelta, ReorgJournal};
     use alloy::primitives::{aliases::U112, Address, U256};
     use degenbot_substrate::BotState;
     use std::sync::Arc;
@@ -64,10 +64,10 @@ mod tests {
         let mut core = BotState::new();
         let pool_id = core.register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]));
         let s = core
-            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolState>(pool_id)
+            .pool_slice::<degenbot_pools::CurvePoolState>(pool_id)
             .expect("curve pool registered");
         let id = core
-            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(pool_id)
+            .pool_slice::<degenbot_pools::CurvePoolIdentity>(pool_id)
             .expect("curve pool identity registered");
         assert_eq!(id.n_coins(), 3);
         assert_eq!(
@@ -90,7 +90,7 @@ mod tests {
         );
         assert_eq!(affected, Some(pool_id));
         let s = core
-            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolState>(pool_id)
+            .pool_slice::<degenbot_pools::CurvePoolState>(pool_id)
             .expect("curve pool registered");
         assert_eq!(
             s.balances.to_vec(),
@@ -106,7 +106,7 @@ mod tests {
         let mut core = BotState::new();
         // Register a V2 pool at pool_id 1, then try the Curve apply path.
         let v2 = core
-            .register_v2_pool(&degenbot_pools::state::v2_state::RegisterV2PoolParams {
+            .register_v2_pool(&degenbot_pools::RegisterV2PoolParams {
                 address: Address::repeat_byte(0x22),
                 token0: Address::repeat_byte(0x01),
                 token1: Address::repeat_byte(0x02),
@@ -148,7 +148,7 @@ mod tests {
             .expect("Ok (target > genesis block)");
         // Current mutable state was written back.
         let s = core
-            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolState>(pool_id)
+            .pool_slice::<degenbot_pools::CurvePoolState>(pool_id)
             .expect("curve pool registered");
         assert_eq!(
             s.balances.to_vec(),
@@ -215,7 +215,7 @@ mod tests {
         };
         let pool_id = core.register_curve_pool(&params);
         let id = core
-            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(pool_id)
+            .pool_slice::<degenbot_pools::CurvePoolIdentity>(pool_id)
             .expect("curve identity present");
 
         // A-ramp.
@@ -247,7 +247,7 @@ mod tests {
         let mut core = BotState::new();
         let pool_id = core.register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]));
         let id = core
-            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(pool_id)
+            .pool_slice::<degenbot_pools::CurvePoolIdentity>(pool_id)
             .expect("curve identity present");
         assert_eq!(id.initial_a_coefficient, None);
         assert_eq!(id.future_a_coefficient, None);

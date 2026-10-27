@@ -21,14 +21,10 @@ use alloy::primitives::U256;
 use degenbot_math::curve::calculate_dy_underlying;
 use degenbot_math::curve::{CurveBasePoolPort, CurveSwapError};
 use degenbot_pools::families::curve_stableswap as curve_read;
-use degenbot_pools::state::balancer_stable_state::{
-    BalancerStablePoolState, RegisterBalancerStablePoolParams,
-};
-use degenbot_pools::state::balancer_weighted_state::{
-    BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
-};
-use degenbot_pools::state::curve_state::{CurvePoolState, RegisterCurvePoolParams};
 use degenbot_pools::CurveInputsError;
+use degenbot_pools::{BalancerStablePoolState, RegisterBalancerStablePoolParams};
+use degenbot_pools::{BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams};
+use degenbot_pools::{CurvePoolState, RegisterCurvePoolParams};
 
 use super::{check_metapool_liquidity, resolve_dy_inputs, BotState, PoolEntry};
 
@@ -400,16 +396,13 @@ pub struct BotCurveBasePoolPort<'a> {
 impl CurveBasePoolPort for BotCurveBasePoolPort<'_> {
     fn token_count(&self) -> usize {
         self.state
-            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.base_id)
-            .map_or(
-                0,
-                degenbot_pools::state::curve_state::CurvePoolIdentity::n_coins,
-            )
+            .pool_slice::<degenbot_pools::CurvePoolIdentity>(self.base_id)
+            .map_or(0, degenbot_pools::CurvePoolIdentity::n_coins)
     }
 
     fn fee(&self) -> U256 {
         self.state
-            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.base_id)
+            .pool_slice::<degenbot_pools::CurvePoolIdentity>(self.base_id)
             .map_or(U256::ZERO, |id| U256::from(id.fee))
     }
 

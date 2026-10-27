@@ -15,7 +15,7 @@ use super::ArbitrageEngine;
 use super::BlockMetadata;
 use alloy::primitives::aliases::U112;
 use alloy::primitives::Address;
-use degenbot_pools::state::v3_state::V3SwapUpdate;
+use degenbot_pools::V3SwapUpdate;
 use degenbot_substrate::concentrated_liquidity_route::ApplyOutcome;
 use hashbrown::HashSet;
 
@@ -35,7 +35,7 @@ pub(crate) fn run_test_cycle(
     engine: &mut ArbitrageEngine,
     block_number: u64,
     metadata: &BlockMetadata,
-    affected: &[degenbot_pools::solve::affected::AffectedKey],
+    affected: &[degenbot_pools::AffectedKey],
 ) -> CycleOutcome {
     let outcome = engine.cycle.run_epoch(
         cycle_ticket(affected),
@@ -147,9 +147,7 @@ pub(crate) fn hop_projection_count(engine: &ArbitrageEngine) -> u64 {
 /// mints the value the draw would have minted (the non-admission stance never
 /// sheds). This is the sanctioned door — a direct drive never reaches for the
 /// cycle's private stash.
-pub(crate) fn cycle_ticket(
-    affected: &[degenbot_pools::solve::affected::AffectedKey],
-) -> CycleTicket {
+pub(crate) fn cycle_ticket(affected: &[degenbot_pools::AffectedKey]) -> CycleTicket {
     CycleTicket::for_test(affected.to_vec())
 }
 

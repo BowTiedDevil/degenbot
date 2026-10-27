@@ -128,22 +128,20 @@ fn a_family_mismatch_is_refused() {
     let refusal = state
         .sync_pool_state(
             PoolLookup::from_address(Address::from([0x11u8; 20])),
-            degenbot_pools::families::state_update::PoolStateUpdate::V4(
-                degenbot_pools::state::v4_state::V4StateSync {
-                    sqrt_price_x96: alloy::primitives::U256::ZERO,
-                    liquidity: 0,
-                    tick: 0,
-                    tick_data: hashbrown::HashMap::new(),
-                    update_block: 0,
-                },
-            ),
+            degenbot_pools::PoolStateUpdate::V4(degenbot_pools::V4StateSync {
+                sqrt_price_x96: alloy::primitives::U256::ZERO,
+                liquidity: 0,
+                tick: 0,
+                tick_data: hashbrown::HashMap::new(),
+                update_block: 0,
+            }),
         )
         .expect_err("a V4 payload on a V3 key must be refused");
     assert_eq!(
         refusal,
-        degenbot_pools::families::state_update::PoolRefusal::FamilyMismatch {
-            key: degenbot_pools::sim::registry::RegisteredPoolFamily::V3,
-            value: degenbot_pools::sim::registry::RegisteredPoolFamily::V4,
+        degenbot_pools::PoolRefusal::FamilyMismatch {
+            key: degenbot_pools::RegisteredPoolFamily::V3,
+            value: degenbot_pools::RegisteredPoolFamily::V4,
         }
     );
 }
@@ -155,19 +153,14 @@ fn an_unregistered_pool_is_refused() {
     let refusal = state
         .sync_pool_state(
             PoolLookup::from_address(Address::from([0x12u8; 20])),
-            degenbot_pools::families::state_update::PoolStateUpdate::V3(
-                degenbot_pools::state::v3_state::V3StateSync {
-                    sqrt_price_x96: alloy::primitives::U256::ZERO,
-                    liquidity: 0,
-                    tick: 0,
-                    tick_data: hashbrown::HashMap::new(),
-                    update_block: 0,
-                },
-            ),
+            degenbot_pools::PoolStateUpdate::V3(degenbot_pools::V3StateSync {
+                sqrt_price_x96: alloy::primitives::U256::ZERO,
+                liquidity: 0,
+                tick: 0,
+                tick_data: hashbrown::HashMap::new(),
+                update_block: 0,
+            }),
         )
         .expect_err("an unregistered pool must be refused");
-    assert_eq!(
-        refusal,
-        degenbot_pools::families::state_update::PoolRefusal::Unregistered
-    );
+    assert_eq!(refusal, degenbot_pools::PoolRefusal::Unregistered);
 }

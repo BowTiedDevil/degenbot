@@ -15,7 +15,7 @@ use alloy::dyn_abi::DynSolValue;
 use alloy::primitives::{aliases::U112, aliases::U128, Address, Bytes, FixedBytes, I256, U256};
 use async_trait::async_trait;
 use degenbot_core::errors::ProviderError;
-use degenbot_pools::sim::registration_refusal::SpecRefusal;
+use degenbot_pools::SpecRefusal;
 use degenbot_rpc::abi;
 
 use super::{builder, choreography, curve_choreography};
@@ -745,8 +745,7 @@ async fn build_v2_assembles_register_params_from_onchain() {
     assert_eq!(params.update_block, 18_000_000);
     assert!(!params.stable_swap);
     // Proxy preserves the resulting identity/state build.
-    let (identity, state) =
-        degenbot_pools::state::v2_state::V2PoolState::from_params(&params, 8, (None, None));
+    let (identity, state) = degenbot_pools::V2PoolState::from_params(&params, 8, (None, None));
     assert_eq!(identity.address, pool);
     assert_eq!(state.reserve0, U112::from(123_456_789u64));
 }
@@ -762,8 +761,8 @@ async fn build_v2_assembles_register_params_from_onchain() {
 #[test]
 fn v2_reserve_refusal_names_its_reason() {
     assert!(
-        degenbot_pools::state::spec_bounds::narrow_v2_reserve(
-            degenbot_pools::state::spec_bounds::UINT112_MAX + U256::from(1u64),
+        degenbot_pools::narrow_v2_reserve(
+            degenbot_pools::UINT112_MAX + U256::from(1u64),
             "reserve0",
         )
         .is_err(),
@@ -777,7 +776,7 @@ fn v2_reserve_refusal_names_its_reason() {
 
 #[tokio::test]
 async fn build_v3_assembles_sparse_register_params_from_onchain() {
-    use degenbot_pools::state::v3_state::PoolTickCoverage;
+    use degenbot_pools::PoolTickCoverage;
     // Fake factory NOT in the JSON → CREATE2 verify is skipped (ad-hoc path).
     let factory: Address =
         alloy::primitives::address!("0x1111111111111111111111111111111111111111");
@@ -830,7 +829,7 @@ async fn build_v3_assembles_sparse_register_params_from_onchain() {
 
 #[tokio::test]
 async fn build_v4_assembles_sparse_register_params_from_onchain() {
-    use degenbot_pools::state::v3_state::PoolTickCoverage;
+    use degenbot_pools::PoolTickCoverage;
     let pm: Address = alloy::primitives::address!("0x3333333333333333333333333333333333333333");
     let pid: [u8; 32] = [0xcd; 32];
 
@@ -940,7 +939,7 @@ impl degenbot_db::snapshot::TickMapDb for FakeTickMapDb {
 #[tokio::test]
 async fn build_v3_db_hit_yields_tracked() {
     use degenbot_db::snapshot::{LiquidityAtTick, LiquidityMap};
-    use degenbot_pools::state::v3_state::PoolTickCoverage;
+    use degenbot_pools::PoolTickCoverage;
     use hashbrown::HashMap;
 
     let factory: Address =
@@ -1008,7 +1007,7 @@ async fn build_v3_db_hit_yields_tracked() {
 #[tokio::test]
 async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
     use degenbot_db::snapshot::{LiquidityAtTick, LiquidityMap};
-    use degenbot_pools::state::v3_state::PoolTickCoverage;
+    use degenbot_pools::PoolTickCoverage;
     use hashbrown::HashMap;
 
     let factory: Address =
@@ -2371,7 +2370,7 @@ async fn resolve_v4_identity_empty_overrides_is_missing_identity() {
 
 use crate::bot_core::pool_builder::route;
 use crate::bot_core::Bot;
-use degenbot_pools::sim::registry::RegisteredPoolFamily;
+use degenbot_pools::RegisteredPoolFamily;
 use degenbot_substrate::state_lock::LockSite;
 
 fn v3_route() -> route::V3RouteInputs<'static> {
@@ -3006,7 +3005,7 @@ async fn construction_door_v4_matches_the_route_interior() {
     let fetcher_attached = door_bot
         .state_arc()
         .read_at(LockSite::Core)
-        .pool_slice::<degenbot_pools::state::v4_state::V4PoolState>(direct.pool_id)
+        .pool_slice::<degenbot_pools::V4PoolState>(direct.pool_id)
         .is_some_and(|state| state.fetcher.is_some());
     assert!(fetcher_attached, "the door attaches the tick-word source");
 
@@ -3201,7 +3200,7 @@ fn an_unbound_word_source_reads_a_checked_empty_word() {
     );
     let io = io_with(f);
     let source = super::tick_source::attached(&io);
-    let key = degenbot_pools::sim::tick_fetch::TickWordKey::V3 {
+    let key = degenbot_pools::TickWordKey::V3 {
         address: TO,
         tick_spacing: 1,
     };
@@ -3220,12 +3219,12 @@ fn an_unbound_word_source_refuses_an_overrunning_word() {
     // RPC: an overrunning word is a typed refusal, never a wrapped bogus tick.
     let io = io_with(FakeRpc::new());
     let source = super::tick_source::attached(&io);
-    let key = degenbot_pools::sim::tick_fetch::TickWordKey::V3 {
+    let key = degenbot_pools::TickWordKey::V3 {
         address: TO,
         tick_spacing: 1,
     };
     assert_eq!(
         source.fetch_tick_word(&key, i32::MAX, 1).unwrap_err(),
-        degenbot_pools::sim::tick_fetch::TickWordFetchError::OutOfRange
+        degenbot_pools::TickWordFetchError::OutOfRange
     );
 }

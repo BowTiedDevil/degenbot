@@ -25,7 +25,7 @@ use alloy::primitives::{Address, U256};
 use degenbot::substrate::BotState;
 use degenbot::PoolEntry;
 use degenbot::RegisterV3PoolParams;
-use degenbot_pools::state::v3_state::PoolTickCoverage;
+use degenbot_pools::PoolTickCoverage;
 use degenbot_pools::TickInfo;
 use hashbrown::HashMap;
 

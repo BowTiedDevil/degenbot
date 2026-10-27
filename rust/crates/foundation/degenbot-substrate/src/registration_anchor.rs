@@ -39,7 +39,7 @@ impl StateLock<BotState> {
         let state = self.read_at(crate::state_lock::LockSite::Registration);
         let id = state.pool_id_by_address(address)?;
         state
-            .pool_slice::<degenbot_pools::state::v3_state::V3PoolIdentity>(id)
+            .pool_slice::<degenbot_pools::V3PoolIdentity>(id)
             .map(|identity| identity.tick_spacing)
     }
 
@@ -53,7 +53,7 @@ impl StateLock<BotState> {
         let state = self.read_at(crate::state_lock::LockSite::Registration);
         let id = state.pool_id_by_key(pool_manager, pool_id)?;
         state
-            .pool_slice::<degenbot_pools::state::v4_state::V4PoolIdentity>(id)
+            .pool_slice::<degenbot_pools::V4PoolIdentity>(id)
             .map(|identity| identity.pool_key.tick_spacing)
     }
 

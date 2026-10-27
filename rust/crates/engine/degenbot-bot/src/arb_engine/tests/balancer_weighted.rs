@@ -237,12 +237,10 @@ fn balancer_weighted_5050_matches_v2_mobius_on_same_reserves() {
     .unwrap();
     // resolve + solve the bw path specifically
     let resolved = &engine.cycle.path_resolved[&bw_path];
-    let bw_result = ::degenbot_pools::solve::solve_path(
-        resolved,
-        &::degenbot_pools::solve::gate::GateDeps::offline(),
-    )
-    .result
-    .expect("bw path should solve");
+    let bw_result =
+        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
+            .result
+            .expect("bw path should solve");
     // The two profits should be in the same ballpark (within 1% of each
     // other — the Balancer weighted solve uses golden-section search, not
     // the exact Möbius closed form, so there's small search imprecision).
@@ -363,12 +361,9 @@ fn balancer_weighted_rejects_mixed_with_concentrated_liquidity() {
     let resolved = &engine.cycle.path_resolved[&path_id];
     // Balancer weighted + concentrated liquidity is out of scope — solve_path returns None.
     assert!(
-        ::degenbot_pools::solve::solve_path(
-            resolved,
-            &::degenbot_pools::solve::gate::GateDeps::offline()
-        )
-        .result
-        .is_none(),
+        ::degenbot_pools::solve::solve_path(resolved, &::degenbot_pools::GateDeps::offline())
+            .result
+            .is_none(),
         "Balancer weighted + concentrated liquidity must not solve"
     );
 }

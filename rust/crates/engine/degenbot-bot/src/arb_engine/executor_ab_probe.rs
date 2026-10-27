@@ -16,11 +16,11 @@ use crate::arb_engine::solve_cycle::SolveCycleShared;
 use crate::arb_engine::workload_partition::{lpt_partition, path_cost_proxy};
 use crate::arb_engine::BlockMetadata;
 use alloy::primitives::U256;
-use degenbot_pools::solve::concentrated_liquidity::{
+use degenbot_pools::{
     build_concentrated_liquidity_crossing_table, build_concentrated_liquidity_word_profiles,
     PreparedConcentratedLiquidityHop,
 };
-use degenbot_pools::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use degenbot_pools::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use serde_json::Value;
 use std::sync::Arc;
 fn fixture_path() -> std::path::PathBuf {
@@ -87,7 +87,7 @@ pub(in crate::arb_engine) fn load_corpus() -> Vec<Arc<::degenbot_pools::solve::R
     let path = fixture_path();
     // Zst-aware (packaged fixtures decode transparently; regenerated
     // plain captures still win the resolution order).
-    let content = ::degenbot_pools::solve::fixtures::read_fixture(&path);
+    let content = ::degenbot_pools::read_fixture(&path);
     let mut items = Vec::new();
     for line in content.lines().filter(|l| !l.trim().is_empty()) {
         let Ok(doc) = serde_json::from_str::<Value>(line) else {

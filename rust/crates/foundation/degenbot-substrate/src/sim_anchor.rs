@@ -492,7 +492,7 @@ mod tests {
             address: V3,
             fee: 3000,
             tick_spacing: 60,
-            layout: degenbot_pools::state::v3_state::ConcentratedLiquiditySlotLayout::UniswapV3,
+            layout: degenbot_pools::ConcentratedLiquiditySlotLayout::UniswapV3,
         });
         let registry = RouteRegistry::new(index);
 

@@ -20,8 +20,8 @@ use ::degenbot_pools::solve::{
     HopType, PoolHop, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult, INT128_MAX,
 };
 use alloy::primitives::{aliases::U112, Address, U256};
-use degenbot_pools::state::v3_state::RegisterV3PoolParams;
-use degenbot_pools::state::v4_state::RegisterV4PoolParams;
+use degenbot_pools::RegisterV3PoolParams;
+use degenbot_pools::RegisterV4PoolParams;
 use degenbot_uniswap::dex_identity::DexVariant;
 use hashbrown::{HashMap, HashSet};
 fn usdc(amount: u64) -> U112 {

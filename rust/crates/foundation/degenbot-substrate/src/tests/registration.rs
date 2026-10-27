@@ -1,6 +1,6 @@
 use super::*;
 use crate::RegisterAerodromePoolError;
-use degenbot_pools::families::buffered_event::PoolLiquidityUpdate;
+use degenbot_pools::PoolLiquidityUpdate;
 
 #[test]
 fn conservative_bot_flag_default_on() {
@@ -39,7 +39,7 @@ fn v2_identity_round_trip() {
         .register_v2_pool(&make_params(U112::from(1000), U112::from(2000)))
         .expect("test setup: V2 registration");
     let id = core
-        .pool_slice::<degenbot_pools::state::v2_state::V2PoolIdentity>(pool_id)
+        .pool_slice::<degenbot_pools::V2PoolIdentity>(pool_id)
         .expect("registered V2 pool has an identity");
     assert_eq!(id.address, make_pool_addr());
     assert_eq!(id.token0, make_token0());
@@ -672,7 +672,7 @@ fn register_v4_pool_rejects_fee_at_v4_max_as_spec_violation() {
     let mut core = BotState::new();
     let mut params = make_v4_params_in_spec();
     params.pool_id = [0xe4u8; 32];
-    params.pool_key.fee = ::degenbot_pools::state::spec_bounds::V4_FEE_MAX;
+    params.pool_key.fee = ::degenbot_pools::V4_FEE_MAX;
     assert!(
         matches! {
             core.register_v4_pool(&params),
@@ -738,7 +738,7 @@ fn register_v4_pool_rejects_tick_spacing_out_of_range_as_spec_violation() {
     let mut core = BotState::new();
     let mut params = make_v4_params_in_spec();
     params.pool_id = [0xe5u8; 32];
-    params.pool_key.tick_spacing = ::degenbot_pools::state::spec_bounds::MAX_TICK_SPACING + 1;
+    params.pool_key.tick_spacing = ::degenbot_pools::MAX_TICK_SPACING + 1;
     assert!(
         matches! {
             core.register_v4_pool(&params),
@@ -1191,7 +1191,7 @@ fn register_aerodrome_pool_rejects_duplicate_address_as_already_registered() {
 // Note: the overlarge-reserve rejection that lived here previously has
 // moved to the `narrow_v2_reserve` ingestion seam (PyO3 `sync_reserves` /
 // `register_*_pool` paths + the V2 Sync decoder) — see
-// `degenbot_pools::state::spec_bounds::narrow_v2_reserve` and its tests. With
+// `degenbot_pools::narrow_v2_reserve` and its tests. With
 // `V2PoolState`/`RegisterV2PoolParams.reserve0/1` typed `U112`, an
 // overlarge value cannot be constructed at the `register_v2_pool` layer
 // (the type system enforces the `uint112` bound), so there is nothing to
@@ -1289,7 +1289,7 @@ fn register_v3_pool_rejects_tick_below_min_as_spec_violation() {
 fn register_v3_pool_rejects_fee_at_max_as_spec_violation() {
     let mut core = BotState::new();
     let mut params = make_v3_params_in_spec();
-    params.fee = ::degenbot_pools::state::spec_bounds::V3_FEE_MAX;
+    params.fee = ::degenbot_pools::V3_FEE_MAX;
     assert!(
         matches! {
             core.register_v3_pool(&params),
@@ -1303,7 +1303,7 @@ fn register_v3_pool_rejects_fee_at_max_as_spec_violation() {
 fn register_v3_pool_rejects_tick_spacing_out_of_range_as_spec_violation() {
     let mut core = BotState::new();
     let mut params = make_v3_params_in_spec();
-    params.tick_spacing = ::degenbot_pools::state::spec_bounds::MAX_TICK_SPACING + 1;
+    params.tick_spacing = ::degenbot_pools::MAX_TICK_SPACING + 1;
     assert!(
         matches! {
             core.register_v3_pool(&params),

@@ -61,50 +61,44 @@ pub mod tick_assembly;
 // Re-export the pool-registry + family-state types the substrate modules
 // share (the same set `degenbot-bot::bot_core` re-exports at its historical
 // paths — ADR-003: family states live in `degenbot-pools`).
-pub use ::degenbot_pools::sim::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
-pub use ::degenbot_pools::sim::curve_dy_io::{
+pub use ::degenbot_pools::simulate_swap;
+pub use ::degenbot_pools::RegisterBalancerStablePoolParams;
+pub use ::degenbot_pools::RegisterBalancerWeightedPoolParams;
+pub use ::degenbot_pools::{
     check_metapool_liquidity, check_pool_liquidity, resolve_dy_inputs, CurveInputsError,
 };
-pub use ::degenbot_pools::sim::rate_provider::{
-    BalancerRateProvider, RateProviderError, StaticRateProvider,
-};
-pub use ::degenbot_pools::sim::registration_refusal::{BuildFailure, RegisterRefusal, SpecRefusal};
-pub use ::degenbot_pools::sim::registry::{
-    ConcentratedLiquidityPool, ConcentratedLiquidityPoolMut, PoolEntry, PoolEntrySlice,
-    RegisteredPoolFamily, TokenEntry,
-};
-pub use ::degenbot_pools::sim::simulate_swap::simulate_swap;
-pub use ::degenbot_pools::state::aerodrome_v2_state::{
-    AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromePoolError,
-    RegisterAerodromeV2PoolParams,
-};
-pub use ::degenbot_pools::state::balancer_stable_state::RegisterBalancerStablePoolParams;
-pub use ::degenbot_pools::state::balancer_weighted_state::RegisterBalancerWeightedPoolParams;
-pub use ::degenbot_pools::state::curve_state::{
-    CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams,
-};
-pub use ::degenbot_pools::state::spec_bounds::{SpecValue, SpecViolation, UINT112_MAX};
-pub use ::degenbot_pools::state::state_history::{
-    BalancesBlockDelta, JournalError, ReorgPoolState,
-};
-pub use ::degenbot_pools::state::tick_map::{TickMap, TickMapMut};
-pub use ::degenbot_pools::state::v2_state::{
-    RegisterV2PoolError, RegisterV2PoolParams, V2PoolIdentity, V2PoolState,
-};
-pub use ::degenbot_pools::state::v3_state::{
+pub use ::degenbot_pools::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, BufferedV3PoolEvent, BufferedV3SwapEvent,
     ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams,
     RegistrationLifecycle, SimulateSwapError, V3PoolIdentity, V3PoolState, V3StateSync,
     V3SwapOutcome, V3SwapUpdate,
 };
+pub use ::degenbot_pools::{
+    AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromePoolError,
+    RegisterAerodromeV2PoolParams,
+};
+pub use ::degenbot_pools::{BalancerRateProvider, RateProviderError, StaticRateProvider};
+pub use ::degenbot_pools::{BalancesBlockDelta, JournalError, ReorgPoolState};
+pub use ::degenbot_pools::{BuildFailure, RegisterRefusal, SpecRefusal};
+pub use ::degenbot_pools::{
+    ConcentratedLiquidityPool, ConcentratedLiquidityPoolMut, PoolEntry, PoolEntrySlice,
+    RegisteredPoolFamily, TokenEntry,
+};
+pub use ::degenbot_pools::{CurveDataProvider, CurveDataProviderError};
+pub use ::degenbot_pools::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams};
+pub use ::degenbot_pools::{
+    RegisterV2PoolError, RegisterV2PoolParams, V2PoolIdentity, V2PoolState,
+};
+pub use ::degenbot_pools::{SpecValue, SpecViolation, UINT112_MAX};
+pub use ::degenbot_pools::{TickMap, TickMapMut};
 
-pub use ::degenbot_pools::families::state_update::{PoolRefusal, PoolStateUpdate};
-pub use ::degenbot_pools::state::v4_state::{
+pub use ::degenbot_pools::TickInfo;
+pub use ::degenbot_pools::{
     v4_simulate_swap, BufferedV4LiquidityUpdate, BufferedV4PoolEvent, BufferedV4SwapEvent,
     RegisterV4PoolError, RegisterV4PoolParams, V4PoolIdentity, V4PoolKey, V4PoolState, V4StateSync,
     V4SwapUpdate, AMOUNT_MODIFYING_HOOK_MASK, V4_DYNAMIC_FEE_FLAG,
 };
-pub use ::degenbot_pools::TickInfo;
+pub use ::degenbot_pools::{PoolRefusal, PoolStateUpdate};
 pub use ::degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 // The subscription topic filter is transport knowledge; the
 // dispatcher's defensive re-check consumes the same list the ingestion crate

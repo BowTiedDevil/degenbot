@@ -735,7 +735,7 @@ async fn fsm_lifecycle_recovers_and_does_not_reassert_stale() {
     let state = bot.state_arc();
     let core = state.read_at(degenbot_substrate::state_lock::LockSite::Pump);
     let pool_id = core.pool_id_by_address(&pool_addr).unwrap();
-    if let Some(degenbot_pools::sim::registry::PoolEntry::V2(p)) = core.pool_entry(pool_id) {
+    if let Some(degenbot_pools::PoolEntry::V2(p)) = core.pool_entry(pool_id) {
         let pool = &p.1;
         assert_eq!(
             pool.reserve0.to::<u128>(),

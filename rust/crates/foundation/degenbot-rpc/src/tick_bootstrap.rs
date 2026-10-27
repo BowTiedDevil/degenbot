@@ -52,10 +52,8 @@ use std::sync::Arc;
 use alloy::primitives::{U128, U256};
 use degenbot_core::errors::ProviderError;
 use degenbot_core::runtime::bridged_block_on;
-use degenbot_pools::sim::tick_fetch::{
-    FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource,
-};
 use degenbot_pools::TickInfo;
+use degenbot_pools::{FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource};
 
 use crate::abi::{fetch_tick_bitmap, fetch_tick_data, fetch_v4_tick_bitmap, fetch_v4_tick_data};
 use crate::provider::AlloyProvider;
