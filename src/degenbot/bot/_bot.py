@@ -781,10 +781,8 @@ class Bot(AccountQueryMixin):
         except ValueError as exc:
             # The core raises the typed `MissingIdentity` (mapped to
             # PyValueError) when neither the DB two-step nor the overrides
-            # are complete.
-            raise DegenbotValueError(
-                message=exc.args[0] if exc.args else "V4 identity resolution failed"
-            ) from exc
+            # are complete; its message is the refusal's reason.
+            raise DegenbotValueError(message=str(exc) or "V4 identity resolution failed") from exc
         py_pool_handle = outcome.pool
 
         # The pool's two tokens build in ONE batched metadata read:

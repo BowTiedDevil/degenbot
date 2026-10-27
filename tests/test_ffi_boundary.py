@@ -312,6 +312,37 @@ def test_door_reexports_the_suite_symbol_set() -> None:
     assert seam.MAX_SQRT_RATIO is liquidity_math.MAX_SQRT_RATIO
 
 
+def test_door_stays_a_thin_reexport() -> None:
+    """The door is a re-export wall, never a second implementation home.
+
+    A door that grows logic recreates the flat root one tier down: every
+    top-level statement is an import, the module docstring, or a simple name
+    binding (``__all__``, the forwarded-module aliases).
+    """
+    seam_path = TESTS_ROOT / "helpers" / "seam.py"
+    tree = ast.parse(seam_path.read_text())
+
+    def is_typing_conditional(node: ast.stmt) -> bool:
+        return (
+            isinstance(node, ast.If)
+            and isinstance(node.test, ast.Name)
+            and node.test.id == "TYPE_CHECKING"
+            and all(isinstance(inner, ast.Import | ast.ImportFrom) for inner in node.body)
+        )
+
+    for node in tree.body:
+        assert isinstance(
+            node, ast.Import | ast.ImportFrom | ast.Assign | ast.Expr
+        ) or is_typing_conditional(node), (
+            f"seam.py grew a {type(node).__name__} at line {node.lineno} — "
+            "logic belongs in degenbot._ffi or the test, not the door"
+        )
+        if isinstance(node, ast.Expr):
+            assert isinstance(node.value, ast.Constant), (
+                f"seam.py grew an expression at line {node.lineno}"
+            )
+
+
 def test_no_ffi_imports_outside_barriers_and_explicit_seams() -> None:
     """Fail on every private FFI import outside its approved seam.
 

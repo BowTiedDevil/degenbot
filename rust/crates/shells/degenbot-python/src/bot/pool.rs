@@ -1577,6 +1577,12 @@ impl PyLiquidityPool {
     /// `before == after` reorg-journal delta at `block_number` WITHOUT
     /// advancing either clock, so a split-seed (price at HEAD, tick map at the
     /// DB block) pool keeps a non-empty journal for mid-window reorg restore.
+    ///
+    /// Test-fixture door (ADR-084 D2(b) disposition): production seeding is
+    /// the construction arm's — the V3 construction arm seeds atomically with
+    /// registration (ADR-085 D5) — so this pymethod's only remaining caller is
+    /// the test suite's pool factory, which builds handles directly through
+    /// the register verbs rather than the construction door.
     /// Returns `True` on a registered V3/V4 pool; raises `ValueError` for a
     /// registered non-concentrated-liquidity family (no concentrated liquidity journal to seed) or an unregistered id.
     #[pyo3(signature = (block_number))]
