@@ -325,14 +325,21 @@ class TestResolvePoolTypeByProbing:
 class TestResolvePoolType:
     """Tests for the full sync resolve_pool_type flow."""
 
-    def test_raises_when_factory_fails_and_no_db_entry(self) -> None:
+    def test_answers_generic_curve_when_factory_fails_and_no_db_entry(self) -> None:
+        # Discovery-only identity (Curve exposes no factory(), no DB row, no
+        # Balancer membership): the resolver answers the generic Curve
+        # descriptor rather than raising — the caller routes it through the ONE
+        # construction entry's Curve arm. The unverified-contract loud-abort is
+        # a different path (the probing arm), tested separately.
         io = FakePyBotIo(factory_address=None, pool_row=None)
-        with pytest.raises(DegenbotValueError, match="Cannot resolve pool type"):
-            resolve_pool_type(
-                "0xPool",  # type: ignore[arg-type]
-                chain_id=CHAIN_ID,
-                io=io,
-            )
+        descriptor = resolve_pool_type(
+            "0xPool",  # type: ignore[arg-type]
+            chain_id=CHAIN_ID,
+            io=io,
+        )
+        assert descriptor.family is PoolFamily.STABLESWAP
+        assert descriptor.variant is None
+        assert descriptor.factory is None
 
     def test_probes_when_no_db_entry(self) -> None:
         factory_address = "0x1234567890AbCdEf1234567890aBcDeF12345678"

@@ -117,6 +117,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [083](ADR-083-pipeline-census-event-vocabulary.md) | The pipeline census — one event vocabulary behind one dispatch door | accepted |
 | [084](ADR-084-capability-homes.md) | Capability homes — doors, charters, one home per capability | accepted |
 | [085](ADR-085-construction-request-one-door.md) | Pool construction is one family-tagged request at both tiers | accepted |
+| [086](ADR-086-provider-one-contract-two-adapters.md) | Provider sync/async — one contract, two call-convention adapters | accepted |
 
 ## Historical — provenance only
 

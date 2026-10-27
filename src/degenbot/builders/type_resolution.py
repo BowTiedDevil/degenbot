@@ -409,13 +409,12 @@ def resolve_pool_type(
        across the registry's Balancer factory rows — when `factory()` does not
        answer at all (every deployed Balancer pool)
 
-    Raises DegenbotValueError if the type cannot be determined.
+    A discovery-only pool (Curve exposes no `factory()`, no DB row, no
+    Balancer membership) resolves to the generic Curve descriptor; the
+    unverified-contract loud-abort lives in the probing arm.
 
     Returns:
         The computed value.
-
-    Raises:
-        DegenbotValueError: If the operation fails.
 
     """
     # Step 1: DB lookup — the `kind` column is the most direct signal.
@@ -456,10 +455,16 @@ def resolve_pool_type(
     if balancer_descriptor is not None:
         return balancer_descriptor
 
-    raise DegenbotValueError(
-        message=(
-            f"Cannot resolve pool type for address {address} on chain {chain_id}. "
-            f"The factory() call failed, no database entry exists, and no Balancer "
-            f"factory claims the pool."
-        ),
+    # Discovery-only identity: Curve pools expose no `factory()`, no DB `kind`,
+    # and no Balancer factory membership, so nothing above can classify them.
+    # Answer the generic Curve descriptor rather than raising — the caller
+    # routes it through the ONE core construction entry's generic Curve arm
+    # like every other family (never a second path). This is NOT the
+    # unverified-contract case: that raise lives in the probing arm, which the
+    # factory read already proved is not in play here.
+    return PoolTypeDescriptor(
+        family=PoolFamily.STABLESWAP,
+        variant=None,
+        kind=derive_kind(PoolFamily.STABLESWAP, None),
+        factory=None,
     )

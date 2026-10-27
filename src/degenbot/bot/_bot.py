@@ -36,7 +36,6 @@ from degenbot.builders.type_resolution import (
 )
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import resolve_chain_id, resolve_database_path
-from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
 from degenbot.discovery import PoolRef
 from degenbot.discovery import pools_for_tokens as _pools_for_tokens
@@ -53,7 +52,6 @@ from degenbot.types.pool_type import (
     PoolTypeDescriptor,
     PoolVariant,
     classify_pool_variant,
-    derive_kind,
 )
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.utils.bytes import to_0x_hex, to_bytes
@@ -517,28 +515,15 @@ class Bot(AccountQueryMixin):
 
         # Resolve the pool type; every family then builds through the ONE core
         # construction entry below. A discovery-only pool (Curve exposes no
-        # factory(), so the resolver cannot classify it) resolves to the
-        # generic Curve descriptor and takes the same ONE entry.
-        try:
-            pool_type = _resolve_pool_type_impl(address, chain_id=chain_id, io=io)
-        except DegenbotValueError:
-            # Discovery-only identity: Curve pools expose no `factory()`, so the
-            # type resolver cannot classify them. Route through the ONE core
-            # construction entry's generic Curve arm (never a second path).
-            pool_type = None
-
-        # The `(family, variant)` identity is what the core dispatches on. A
-        # discovery-only pool (the resolver raised — Curve exposes no
-        # `factory()`) is the generic Curve descriptor, routed through the ONE
-        # core construction entry below like every other family.
-        if pool_type is not None:
-            family = pool_type.family
-            variant = pool_type.variant
-        else:
-            family = PoolFamily.STABLESWAP
-            variant = None
-
-        is_curve = family is PoolFamily.STABLESWAP and variant != "balancer_stable"
+        # `factory()`) resolves to the generic Curve descriptor from the
+        # resolver itself — never a raise the driver swallows into a family
+        # guess, so an unverified-contract loud-abort propagates instead of
+        # being silently routed as Curve.
+        pool_type = _resolve_pool_type_impl(address, chain_id=chain_id, io=io)
+        # The `(family, variant)` identity is what the core dispatches on —
+        # DATA from the resolver, never a subclass test.
+        family = pool_type.family
+        variant = pool_type.variant
 
         # Resolve the snapshot block: when no explicit `state_block` is given,
         # use the current chain head — the core fetches at this block (a `None`
@@ -566,6 +551,10 @@ class Bot(AccountQueryMixin):
         # register) and classifies every failure on the taxonomy.
         route = request.construction_route or ConstructionRoute()
 
+        # The Curve registries hint rides the request for the resolver-known
+        # Curve identity — a construction param, supplied before the door call.
+        is_curve = family is PoolFamily.STABLESWAP and variant != "balancer_stable"
+
         # ONE core entry (ADR-059 D6: dispatch at the tier boundary). The
         # `(family, variant)` identity is DATA from the resolver, never a
         # subclass test. The core owns the per-family I/O choreography
@@ -574,7 +563,6 @@ class Bot(AccountQueryMixin):
         # echoes the construction identity. A new family is a core arm plus a
         # species-manifest entry — never a new branch here. The V3 fork storage
         # layout is resolved core-side from the deployment table.
-        is_concentrated_liquidity = family is PoolFamily.CONCENTRATED_LIQUIDITY
         outcome = self._py_bot.construct_pool(
             request_for(
                 address,
@@ -621,13 +609,24 @@ class Bot(AccountQueryMixin):
                 )
             )
 
-        # V3: split-seed the reorg genesis anchor. Without it the Sparse pool
-        # journals nothing, so a reorg restore targeting the registration seed
-        # finds no prior state — a behavior regression for every consumer that
-        # expects the registration seed to be a known state boundary.
-        if is_concentrated_liquidity and block is not None and block > 0:
-            py_pool.seed_genesis(block_number=block)
-
+        # The V3 genesis seed (the reorg anchor) is the construction arm's —
+        # the core seeds it atomically with registration (ADR-085 D5), so no
+        # driver call crosses here.
+        #
+        # The companion phase runs on the verdict's echo (ADR-085 D2): the core
+        # registered this family/variant, so it is the one authority. The seam
+        # echoes the request's identity, so this agrees with `is_curve` above —
+        # but the echo is what the core committed, and the assertion keeps a
+        # future echo-normalization from silently diverging the companion.
+        echo_is_curve = (
+            outcome.family == PoolFamily.STABLESWAP.value and outcome.variant != "balancer_stable"
+        )
+        if echo_is_curve != is_curve:
+            msg = (
+                f"build_pool: core identity echo diverged from the request for "
+                f"{address}: request is_curve={is_curve} vs echo is_curve={echo_is_curve}"
+            )
+            raise DegenbotValueError(message=msg)
         if is_curve:
             # The Curve companions (metapool base-pool recursion + coin /
             # underlying / LP ERC20 builds) — the post-construction choreography
@@ -678,27 +677,14 @@ class Bot(AccountQueryMixin):
         # Balancer pool outside the weighted/stable families) has no class at
         # all, and its refusal is the construction switchboard's, not a class
         # lookup's.
-        pool_class = (
-            pool_class_for_descriptor(pool_type, chain_id=chain_id)
-            if pool_type is not None
-            else CurveStableswapPool
-        )
+        pool_class = pool_class_for_descriptor(pool_type, chain_id=chain_id)
         pool = cast("type[Any]", pool_class).from_handle(py_pool)
 
         # Bind the resolved identity onto the companion (builder knowledge:
         # the descriptor drove the class choice and the core's family/variant
         # registration). The class label alone is not identity — sushiswap v3
         # shares UniswapV3Pool — so the pool carries the frozen descriptor.
-        pool.bind_pool_type(
-            pool_type
-            if pool_type is not None
-            else PoolTypeDescriptor(
-                family=family,
-                variant=variant,
-                kind=derive_kind(family, variant),
-                factory=None,
-            )
-        )
+        pool.bind_pool_type(pool_type)
         # Idempotent register: a concurrent registration worker may have built
         # this same shared pool first; use the canonical instance so THIS path
         # still registers instead of being lossily skipped.

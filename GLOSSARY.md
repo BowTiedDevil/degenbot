@@ -329,6 +329,17 @@ sits strictly behind the ``run()`` phase gate and re-legislates no legality the 
 _Avoid_: "run loop" (the main loop is the session watch's), "startup sequence"
 (prose, not a module), exposing ritual states as a public lifecycle vocabulary.
 
+## Provider surface
+
+**Provider surface**:
+The one home of the sync/async provider trees' shared contract logic
+(`degenbot.provider.surface`): `get_logs` filter normalization and validation, and
+the typed payload coercions both trees call. The two trees are two call-convention
+adapters over the Rust pyclass pair; their agreement is pinned by an offline parity
+test, never maintained by hand (ADR-086).
+_Avoid_: call-convention unification (the seam pair is real — ADR-086); shared
+logic living in one tree because the other does not need it yet.
+
 ## Pool construction
 
 **Pool construction**:

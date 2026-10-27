@@ -43,6 +43,7 @@ use super::tick_source::ConstructionIoTickWordSource;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::registration_ledger::BuildFailure;
 use crate::bot_core::{Bot, RegisteredPoolFamily};
+use degenbot_core::op_warn;
 use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::{PoolRegistration, RegistrationVerdict};
 
@@ -452,10 +453,35 @@ async fn construct_v3(
         factory: Some(params.factory),
         v4_pool_id: None,
     };
-    let verdict = bot
-        .state_arc()
-        .write_at(LockSite::Core)
-        .register_pool(PoolRegistration::V3(Box::new(params)));
+    // The registration and the reorg genesis anchor share ONE write region: a
+    // reader must never observe a registered pool with no genesis anchor. A
+    // reorg restore that targets the registration seed has to find a known
+    // state boundary, and an untracked (Sparse) pool journals nothing until
+    // that anchor lands.
+    let state = bot.state_arc();
+    let mut core = state.write_at(LockSite::Core);
+    let verdict = core.register_pool(PoolRegistration::V3(Box::new(params)));
+    // Only the fresh registration seeds: a concurrent-reuse winner already
+    // holds the first registrant's anchor, and the get-or-register early
+    // return above never built a pool to anchor.
+    let anchor = block.filter(|constructed_at| *constructed_at > 0);
+    if let (RegistrationVerdict::Registered { pool_id, .. }, Some(anchor)) = (&verdict, anchor) {
+        if let Err(err) = core.seed_genesis_by_pool_id(*pool_id, anchor) {
+            // Best-effort by design: the pool IS registered, so a refused seed
+            // must not fail the construction — but it is reported, never
+            // swallowed, because the pool is left without a reorg anchor.
+            op_warn!(
+                domain = state,
+                pool_id = *pool_id,
+                anchor,
+                error = %err,
+                "V3 genesis seed refused after registration: the pool has no reorg anchor"
+            );
+        }
+    }
+    // The reuse fold re-reads the registry, so the write guard is released
+    // first (a read acquired under a held write guard would deadlock).
+    drop(core);
     let pool_id = fold_registration_verdict(verdict, || {
         registered_address_pool(bot, address, RegisteredPoolFamily::V3)
     })?;

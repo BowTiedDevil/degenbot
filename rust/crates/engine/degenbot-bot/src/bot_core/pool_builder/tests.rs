@@ -2377,6 +2377,37 @@ fn v3_route() -> route::V3RouteInputs<'static> {
     route::V3RouteInputs::default()
 }
 
+/// The V3 construction fixture: the whole immutable batch a served rung reads
+/// (fee 3000 / tick spacing 60 / one-word tick map), so a route test answers
+/// from one set instead of hand-building a fake per case.
+fn v3_route_fake(factory: Address, token0: Address, token1: Address) -> FakeRpc {
+    let mut f = FakeRpc::new();
+    f.set(choreography::selector(b"factory()"), addr_word(factory));
+    f.set(choreography::selector(b"token0()"), addr_word(token0));
+    f.set(choreography::selector(b"token1()"), addr_word(token1));
+    f.set(
+        choreography::selector(b"fee()"),
+        enc(DynSolValue::Uint(U256::from(3000u32), 24)),
+    );
+    f.set(
+        choreography::selector(b"tickSpacing()"),
+        enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
+    );
+    f.set(
+        abi::encode_slot0()[..4].try_into().unwrap(),
+        slot0_ret(U256::from(1u128 << 96), 0),
+    );
+    f.set(
+        abi::encode_liquidity()[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
+    );
+    f.set(
+        abi::encode_tick_bitmap(0)[..4].try_into().unwrap(),
+        enc(DynSolValue::Uint(U256::ZERO, 256)),
+    );
+    f
+}
+
 #[tokio::test]
 async fn route_transient_rpc_failure_is_a_counted_skip() {
     // A transient RPC failure ENDS the route — it is a typed skip, never a
@@ -2456,31 +2487,7 @@ async fn route_matched_rung_builds_and_registers() {
     let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
     let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
 
-    let mut f = FakeRpc::new();
-    f.set(choreography::selector(b"factory()"), addr_word(factory));
-    f.set(choreography::selector(b"token0()"), addr_word(tok0));
-    f.set(choreography::selector(b"token1()"), addr_word(tok1));
-    f.set(
-        choreography::selector(b"fee()"),
-        enc(DynSolValue::Uint(U256::from(3000u32), 24)),
-    );
-    f.set(
-        choreography::selector(b"tickSpacing()"),
-        enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
-    );
-    f.set(
-        abi::encode_slot0()[..4].try_into().unwrap(),
-        slot0_ret(U256::from(1u128 << 96), 0),
-    );
-    f.set(
-        abi::encode_liquidity()[..4].try_into().unwrap(),
-        enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
-    );
-    f.set(
-        abi::encode_tick_bitmap(0)[..4].try_into().unwrap(),
-        enc(DynSolValue::Uint(U256::ZERO, 256)),
-    );
-    let io = io_with(f);
+    let io = io_with(v3_route_fake(factory, tok0, tok1));
     let bot = Bot::new(1);
 
     let built = route::construct_pool(
@@ -2507,6 +2514,24 @@ async fn route_matched_rung_builds_and_registers() {
         Some((built.pool_id, RegisteredPoolFamily::V3)),
         "the entry registers into session state"
     );
+    // The construction seeded the reorg genesis anchor in the SAME write
+    // region as the registration: one `before == after` delta at the
+    // construction block, so a reorg restore targeting the registration seed
+    // finds a known state boundary (an unseeded Sparse pool journals nothing).
+    assert_eq!(
+        bot.state_arc()
+            .read_at(LockSite::Core)
+            .pool_journal_len(built.pool_id),
+        Some(1),
+        "the genesis anchor is the journal's only delta"
+    );
+    assert_eq!(
+        bot.state_arc()
+            .read_at(LockSite::Core)
+            .newest_journal_block(built.pool_id),
+        Some(9_000_000),
+        "the anchor lands at the construction block"
+    );
 
     // Get-or-register: a second request answers from the registry with NO
     // I/O — an all-erroring transport still succeeds with the same pool id.
@@ -2523,6 +2548,58 @@ async fn route_matched_rung_builds_and_registers() {
     .expect("a registered pool answers from the registry");
     assert_eq!(again.pool_id, built.pool_id);
     assert!(again.built.is_none(), "the GET half re-derives no identity");
+    // A reused registration is never re-seeded: the first registrant's anchor
+    // is the pool's state boundary, and a second delta at the same block would
+    // only lengthen the journal.
+    assert_eq!(
+        bot.state_arc()
+            .read_at(LockSite::Core)
+            .pool_journal_len(built.pool_id),
+        Some(1),
+        "the reuse path appends no second anchor"
+    );
+}
+
+#[tokio::test]
+async fn route_construction_seeds_the_anchor_only_from_a_positive_block() {
+    // The seed mirrors the driver's `block is not None and block > 0` gate: a
+    // construction with no block (or at genesis) has nothing to anchor to, so
+    // the journal stays empty instead of carrying a delta at a made-up block.
+    let factory: Address =
+        alloy::primitives::address!("0x1111111111111111111111111111111111111111");
+    let tok0: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    let tok1: Address = alloy::primitives::address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+    let io = io_with(v3_route_fake(factory, tok0, tok1));
+    let bot = Bot::new(1);
+
+    for (pool, block) in [
+        (
+            alloy::primitives::address!("0x3333333333333333333333333333333333333333"),
+            None,
+        ),
+        (
+            alloy::primitives::address!("0x4444444444444444444444444444444444444444"),
+            Some(0),
+        ),
+    ] {
+        let built = route::construct_pool(
+            &bot,
+            &route::ConstructionRoute::generic_only(),
+            &route::RequestedPool::V3 { address: pool },
+            &io,
+            v3_route(),
+            block,
+        )
+        .await
+        .expect("a served factory constructs and registers without an anchor");
+        assert_eq!(
+            bot.state_arc()
+                .read_at(LockSite::Core)
+                .pool_journal_len(built.pool_id),
+            Some(0),
+            "block {block:?} seeds no anchor"
+        );
+    }
 }
 
 #[tokio::test]
