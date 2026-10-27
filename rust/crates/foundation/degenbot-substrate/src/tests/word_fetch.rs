@@ -490,7 +490,6 @@ fn swap_simulation_fetcher_error_surfaces_fetch_failed() {
 }
 
 #[test]
-#[expect(clippy::too_many_lines)]
 fn swap_simulation_empty_word_not_refetched() {
     // A fetcher that returns an empty word (checked-but-empty) marks the
     // word known in `known_bitmap_words`. A second solve must NOT re-invoke

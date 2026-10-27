@@ -325,6 +325,24 @@ class TestResolvePoolTypeByProbing:
 class TestResolvePoolType:
     """Tests for the full sync resolve_pool_type flow."""
 
+    def test_loud_abort_when_factory_is_known_but_unclassifiable(self) -> None:
+        # The loud-abort path, distinct from the discovery-only Curve answer:
+        # the factory read SUCCEEDS (so the pool is not discovery-only), but
+        # the factory is unregistered and no identity probe can classify the
+        # contract. This raise used to be swallowed by build_pool's except-arm
+        # into a generic Curve build; it must propagate instead.
+        io = FakePyBotIo(
+            factory_address="0x1234567890AbCdEf1234567890aBcDeF12345678",
+            pool_row=None,
+            probe_exception=ValueError("no identity selector answered"),
+        )
+        with pytest.raises(DegenbotValueError, match="no identity selector answered"):
+            resolve_pool_type(
+                "0xPool",  # type: ignore[arg-type]
+                chain_id=CHAIN_ID,
+                io=io,
+            )
+
     def test_answers_generic_curve_when_factory_fails_and_no_db_entry(self) -> None:
         # Discovery-only identity (Curve exposes no factory(), no DB row, no
         # Balancer membership): the resolver answers the generic Curve
