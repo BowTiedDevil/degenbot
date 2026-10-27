@@ -6,6 +6,38 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Changed
 
+- **ADR-084 D7 (the umbrella construction surface):** the umbrella's
+  construction re-exports are pruned to the ADR-078 D2 door — `PoolConstruction`,
+  `ConstructionVerdict`, and the types those two publicly name
+  (`ConstructedPool`, `BuiltIdentity`, `ConstructionRefusal`, and the
+  `PoolConstruction::V4` overrides type). The builder verbs and the construction
+  interior stay engine-side, and `route::construct_pool` is now `pub(crate)`
+  behind the door verb, so construction has one consumer entry — the verdict.
+  `RequestedPool::V4` carries its own tick-map handle, so no V4 data rides under
+  the `V3RouteInputs` name. The removed published paths, with their
+  replacements:
+
+  | Was | Is |
+  | --- | --- |
+  | `degenbot::build_v2` | `degenbot_bot::bot_core::pool_builder::builder::build_v2` |
+  | `degenbot::build_v3` | `degenbot_bot::bot_core::pool_builder::builder::build_v3` |
+  | `degenbot::build_v4` | `degenbot_bot::bot_core::pool_builder::builder::build_v4` |
+  | `degenbot::build_aerodrome_v2` | `degenbot_bot::bot_core::pool_builder::builder::build_aerodrome_v2` |
+  | `degenbot::build_balancer_weighted` | `degenbot_bot::bot_core::pool_builder::builder::build_balancer_weighted` |
+  | `degenbot::build_balancer_stable` | `degenbot_bot::bot_core::pool_builder::builder::build_balancer_stable` |
+  | `degenbot::build_curve_pool` | `degenbot_bot::bot_core::pool_builder::builder::build_curve_pool` |
+  | `degenbot::build_erc20_metadata` | `degenbot_bot::bot_core::pool_builder::builder::build_erc20_metadata` |
+  | `degenbot::probe_pool_type` | `degenbot_bot::bot_core::pool_builder::builder::probe_pool_type` |
+  | `degenbot::resolve_v4_identity` | `degenbot_bot::bot_core::pool_builder::builder::resolve_v4_identity` |
+  | `degenbot::PoolBuilderError` | `degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError` |
+  | `degenbot::PoolFamily` | `degenbot_bot::bot_core::pool_builder::builder::PoolFamily` |
+  | `degenbot::V4BuildResult` | `degenbot_bot::bot_core::pool_builder::builder::V4BuildResult` |
+  | `degenbot::V4PoolBuildIdentity` | `degenbot_bot::bot_core::pool_builder::builder::V4PoolBuildIdentity` |
+  | `degenbot::construct_pool` | `degenbot_bot::Bot::construct_pool` over `PoolConstruction` (the free function is `pub(crate)`) |
+  | `degenbot::RequestedPool` | `Bot::construct_pool` over `PoolConstruction` (the interior request is `pub(crate)`) |
+  | `degenbot::ConstructionRoute` | `degenbot_bot::bot_core::pool_builder::route::ConstructionRoute` (the door verb's plan argument) |
+  | `degenbot::V3RouteInputs` | `degenbot_bot::bot_core::pool_builder::route::V3RouteInputs` (the interior is `pub(crate)`) |
+
 - **ADR-084 D2b (`test-harness`):** `degenbot_simulation::harness` — the
   executor-grammar lab (43 items, no production consumer) — is behind the
   non-default `test-harness` feature. The shipped crate root is the engine

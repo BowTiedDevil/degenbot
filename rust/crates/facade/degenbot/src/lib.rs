@@ -174,19 +174,22 @@ pub use degenbot_workers as workers;
 // Registration & construction door items (ADR-078)
 // ---------------------------------------------------------------------------
 
-pub use degenbot_bot::bot_core::pool_builder::builder::{
-    build_aerodrome_v2, build_balancer_stable, build_balancer_weighted, build_curve_pool,
-    build_erc20_metadata, build_v2, build_v3, build_v4, probe_pool_type, resolve_v4_identity,
-    PoolBuilderError, PoolFamily, V4BuildResult, V4PoolBuildIdentity, V4PoolBuildOverrides,
-};
-
+/// The construction door (ADR-078 D2): ONE request ([`PoolConstruction`]), ONE
+/// verdict ([`ConstructionVerdict`]), family as data. The builder verbs and the
+/// construction interior stay engine-side under
+/// `degenbot::bot_core::pool_builder`.
 pub use degenbot_bot::bot_core::pool_builder::construction_door::{
     ConstructionVerdict, PoolConstruction,
 };
 
+/// [`PoolConstruction::V4`]'s caller-supplied identity overrides — the door's
+/// own argument vocabulary.
+pub use degenbot_bot::bot_core::pool_builder::builder::V4PoolBuildOverrides;
+
+/// The verdict's payloads: the constructed, registered pool (with the fresh
+/// build's identity), or the typed refusal.
 pub use degenbot_bot::bot_core::pool_builder::route::{
-    construct_pool, BuiltIdentity, ConstructedPool, ConstructionRefusal, ConstructionRoute,
-    RequestedPool, V3RouteInputs,
+    BuiltIdentity, ConstructedPool, ConstructionRefusal,
 };
 
 pub use degenbot_bot::bot_core::registration_ledger::{PreBuildIdentity, RefusalKind};
@@ -195,9 +198,9 @@ pub use degenbot_bot::bot_core::registration_lifecycle::{
     run_v3_registration_lifecycle, run_v4_registration_lifecycle, run_verify_lifecycle,
 };
 
-/// The reason a build refused a pool as out of spec — [`PoolBuilderError::Spec`]'s
-/// payload, so a consumer can name the refusal without reaching into the pools
-/// crate.
+/// The reason a build refused a pool as out of spec — the builder's
+/// `PoolBuilderError::Spec` payload, so a consumer can name the refusal without
+/// reaching into the pools crate.
 pub use degenbot_pools::sim::registration_refusal::SpecRefusal;
 
 /// The session object registry — the per-session owner of pool/token

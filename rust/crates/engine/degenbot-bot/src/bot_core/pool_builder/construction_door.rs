@@ -15,9 +15,9 @@
 //! This module only dispatches: it names the family as data (each family's
 //! inputs ride its request variant), translates the request into the
 //! interior's `(RequestedPool, V3RouteInputs)` pair, and folds the interior's
-//! typed result into one [`ConstructionVerdict`]. Nothing in `route.rs` moves:
-//! [`route::construct_pool`] keeps its signature and stays callable, so the
-//! door lands additively.
+//! typed result into one [`ConstructionVerdict`]. The interior is
+//! `pub(crate)`: [`route::construct_pool`] is reachable only through this door,
+//! so no consumer bypasses the verdict fold.
 
 use std::sync::Arc;
 
@@ -130,11 +130,10 @@ impl PoolConstruction<'_> {
 
 impl<'a> PoolConstruction<'a> {
     /// Split the door request into the interior's `(RequestedPool,
-    /// V3RouteInputs)` pair — the door's ONLY translation. The interior's
-    /// `V3RouteInputs` is the flat per-family input bag its arms read
-    /// (`construct_v4` takes the tick-map handle from the same field), so the
-    /// per-family variants re-compose into it here.
-    fn into_route_request(self) -> (RequestedPool, V3RouteInputs<'a>) {
+    /// V3RouteInputs)` pair — the door's ONLY translation. Each family's
+    /// handles ride its own request variant; `V3RouteInputs` carries only the
+    /// V3 arm's, so every other arm pairs with its default.
+    fn into_route_request(self) -> (RequestedPool<'a>, V3RouteInputs<'a>) {
         match self {
             Self::V2 { address } => (RequestedPool::V2 { address }, V3RouteInputs::default()),
             Self::V3 {
@@ -160,11 +159,9 @@ impl<'a> PoolConstruction<'a> {
                     pool_manager,
                     pool_id,
                     overrides,
-                },
-                V3RouteInputs {
                     db,
-                    ..V3RouteInputs::default()
                 },
+                V3RouteInputs::default(),
             ),
             Self::AerodromeV2 { address } => (
                 RequestedPool::AerodromeV2 { address },

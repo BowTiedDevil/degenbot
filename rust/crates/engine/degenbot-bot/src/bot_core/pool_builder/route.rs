@@ -83,9 +83,11 @@ impl ConstructionRoute {
     }
 }
 
-/// One requested pool — the family plus the identity that names it.
-#[derive(Debug, Clone)]
-pub enum RequestedPool {
+/// One requested pool — the family, the identity that names it, and the handle
+/// that family's construction arm reads (a family's inputs ride its own variant,
+/// never another family's).
+#[derive(Clone)]
+pub enum RequestedPool<'a> {
     /// A single-address V2 pair.
     V2 { address: Address },
     /// A single-address V3 pool (the construction route's walk arm).
@@ -96,6 +98,9 @@ pub enum RequestedPool {
         pool_manager: Address,
         pool_id: [u8; 32],
         overrides: V4PoolBuildOverrides,
+        /// The DB tick-map handle for the `Tracked` arm; `None` seeds
+        /// `Sparse` via the chain arm.
+        db: Option<&'a dyn TickMapDb>,
     },
     /// An Aerodrome V2 (Solidly) pair.
     AerodromeV2 { address: Address },
@@ -117,9 +122,63 @@ pub enum RequestedPool {
     },
 }
 
-/// The V3-only construction inputs the other arms ignore (the Python driver
-/// threads a lazy tick-word fetcher and a fork slot-layout hint; the pure
-/// Rust consumer passes `None`).
+impl std::fmt::Debug for RequestedPool<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The tick-map handle and the V4 overrides are not `Debug` (the former
+        // is a trait object); the request's identity is what a log line needs.
+        match self {
+            Self::V2 { address } => f
+                .debug_struct("RequestedPool::V2")
+                .field("address", address)
+                .finish(),
+            Self::V3 { address } => f
+                .debug_struct("RequestedPool::V3")
+                .field("address", address)
+                .finish(),
+            Self::V4 {
+                pool_manager,
+                pool_id,
+                ..
+            } => f
+                .debug_struct("RequestedPool::V4")
+                .field("pool_manager", pool_manager)
+                .field("pool_id", pool_id)
+                .finish(),
+            Self::AerodromeV2 { address } => f
+                .debug_struct("RequestedPool::AerodromeV2")
+                .field("address", address)
+                .finish(),
+            Self::Curve {
+                address,
+                registries,
+            } => f
+                .debug_struct("RequestedPool::Curve")
+                .field("address", address)
+                .field("registries", registries)
+                .finish(),
+            Self::BalancerWeighted { vault, address } => f
+                .debug_struct("RequestedPool::BalancerWeighted")
+                .field("vault", vault)
+                .field("address", address)
+                .finish(),
+            Self::BalancerStable {
+                vault,
+                address,
+                invariant_version,
+            } => f
+                .debug_struct("RequestedPool::BalancerStable")
+                .field("vault", vault)
+                .field("address", address)
+                .field("invariant_version", invariant_version)
+                .finish(),
+        }
+    }
+}
+
+/// The V3-only construction inputs — read by the V3 arm alone, so every other
+/// [`RequestedPool`] variant pairs with [`Default`] (the Python driver threads
+/// a lazy tick-word fetcher and a fork slot-layout hint; the pure Rust consumer
+/// passes `None`).
 #[derive(Default)]
 pub struct V3RouteInputs<'a> {
     /// The DB tick-map handle (Tracked arm); `None` seeds Sparse via the
@@ -215,17 +274,18 @@ pub struct ConstructedPool {
     pub built: Option<BuiltIdentity>,
 }
 
-/// Construct and register one requested pool — the core's ONE entry.
+/// Construct and register one requested pool — the interior the construction
+/// door wraps.
 ///
 /// # Errors
 ///
 /// Returns [`ConstructionRefusal::UnsupportedFamily`] for the loud-abort
 /// class and [`ConstructionRefusal::Skipped`] for everything the taxonomy
 /// classifies as a skip.
-pub async fn construct_pool(
+pub(crate) async fn construct_pool(
     bot: &Bot,
     route: &ConstructionRoute,
-    request: &RequestedPool,
+    request: &RequestedPool<'_>,
     io: &ConstructionIo,
     v3: V3RouteInputs<'_>,
     block: Option<u64>,
@@ -237,7 +297,8 @@ pub async fn construct_pool(
             pool_manager,
             pool_id,
             overrides,
-        } => construct_v4(bot, *pool_manager, *pool_id, overrides, v3.db, io, block).await,
+            db,
+        } => construct_v4(bot, *pool_manager, *pool_id, overrides, *db, io, block).await,
         RequestedPool::AerodromeV2 { address } => {
             construct_aerodrome_v2(bot, *address, io, block).await
         }
