@@ -170,7 +170,10 @@ class UniswapV3Pool(
         self = cls.__new__(cls)
         self._py_pool = py_pool
 
-        # Variant-family guard (uniform precondition every seam uses).
+        # Species guard, the uniform precondition every seam uses:
+        # `concentrated_liquidity()` is shape-level (it spans V3 and V4), so the
+        # arm cannot separate this companion from its sibling — the tag is the
+        # class-dispatch decision.
         if py_pool.pool_family != "v3":
             msg = (
                 "Pool handle is not a V3-family pool "

@@ -93,6 +93,9 @@ class AerodromeV2Pool(
         self = cls.__new__(cls)
         self._py_pool = py_pool
 
+        # Species guard: `reserve_pair()` is shape-level (V2 + Aerodrome V2), so
+        # the arm cannot separate this companion from its V2 sibling — the tag is
+        # the class-dispatch decision.
         if py_pool.pool_family != "aerodrome-v2":
             msg = (
                 f"Pool handle is not an Aerodrome V2 pool (got pool_family {py_pool.pool_family!r})"

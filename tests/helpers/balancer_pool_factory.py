@@ -165,7 +165,7 @@ def make_balancer_stable_pool(
 
     # ADR-006: tokens must be in the same Bot as the pool (the sealed seam
     # resolves Erc20Token companions off the handle via
-    # get_balancer_stable_tokens, which requires registered tokens).
+    # balancer_stable().get_tokens, which requires registered tokens).
     for tok in tokens:
         if bot.get_token(tok.address) is None:
             bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)

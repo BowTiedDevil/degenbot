@@ -492,6 +492,24 @@ A family holding a balance vector plus `update_block`, with full-state block del
 **Concentrated liquidity**:
 A family holding slot0 scalars plus per-tick data, with partial-prior block deltas
 (V3, V4).
+
+**Pool arm**:
+The typed view a `Pool` handle exposes for one structural family, narrowing the
+registered entry before any read: `reserve_pair()`, `balance_vector()`,
+`concentrated_liquidity()`, `curve()`, `balancer_weighted()`, `balancer_stable()`.
+The family-specific accessors (`curve()`, `balancer_weighted()`,
+`balancer_stable()`) refuse a handle registered under any other family — including
+the Balancer sibling — so a wrong-family call raises instead of answering a
+sentinel a caller could read as live state; the shape-level accessors serve a set
+of sibling entries (`reserve_pair()`: V2 + Aerodrome V2; `concentrated_liquidity()`:
+V3 + V4; `balance_vector()`: Curve + both Balancer arms). Identity and
+family-specific state reads live on the arm and never on the root handle, so the
+family a read belongs to is the accessor that produced it. A companion narrows
+once in `from_handle` and holds the arm (`CurveStableswapPool._curve`,
+`BalancerV2StablePool._arm`), which is also how its family gate is spelled.
+_Avoid_: a family-prefixed root method (`pool.curve_get_dy()`,
+`pool.balancer_amp`), or a `pool_family` string compare as a family gate.
+
 _Naming_: code identifiers spell the family name out — `concentrated_liquidity` /
 `ConcentratedLiquidity…` — matching the names already in force
 (`degenbot-concentrated-liquidity-math`, `concentrated_liquidity_math`); the

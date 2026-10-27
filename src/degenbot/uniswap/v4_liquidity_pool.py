@@ -240,7 +240,9 @@ class UniswapV4Pool(
         self = cls.__new__(cls)
         self._py_pool = py_pool
 
-        # Variant-family guard.
+        # Species guard: `concentrated_liquidity()` is shape-level (it spans V3
+        # and V4), so the arm cannot separate this companion from its sibling —
+        # the tag is the class-dispatch decision.
         if py_pool.pool_family != "v4":
             msg = (
                 "Pool handle is not a V4-family pool "

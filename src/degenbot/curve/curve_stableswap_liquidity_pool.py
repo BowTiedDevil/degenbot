@@ -33,6 +33,7 @@ from degenbot.types.concrete import BoundedCache
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from degenbot._ffi import CurveView
     from degenbot.types import Pool
     from degenbot.types.aliases import BlockNumber
     from degenbot.types.chain import ChecksummedAddress
@@ -40,116 +41,97 @@ if TYPE_CHECKING:
 
 
 class _HandleCurveDataProviderAdapter:
-    """Adapts a ``Pool`` handle as a stored ``CurveDataProvider``.
+    """Adapts ``Pool.curve()`` as a stored ``CurveDataProvider``.
 
     The companion holds no Python data-provider object — the
     provider is the stored Rust trait object (ADR-005). This shim
     exposes the 13-method ``CurveDataProvider`` read interface by delegating
-    each call to the handle's stored provider, mirroring the Balancer
+    each read to the arm's stored provider, mirroring the Balancer
     ``_HandleRateProviderAdapter``. ``MissingCurveData`` is raised on
     a missing provider / fetch miss so the calc path's existing error
     handling applies unchanged.
     """
 
-    def __init__(self, py_pool: Pool) -> None:
-        self._py_pool = py_pool
+    def __init__(self, arm: CurveView, address: ChecksummedAddress) -> None:
+        self._arm = arm
+        self._address = address
 
     def block_number(self) -> int:
-        v: int | None = self._py_pool.fetch_curve_block_number()
+        v: int | None = self._arm.fetch_block_number()
         if v is None:
-            raise MissingCurveData(self._py_pool.address, "block_number", "no data provider stored")
+            raise MissingCurveData(self._address, "block_number", "no data provider stored")
         return v
 
     def block_timestamp(self, block_number: int) -> int:
-        v: int | None = self._py_pool.fetch_curve_block_timestamp(block_number)
+        v: int | None = self._arm.fetch_block_timestamp(block_number)
         if v is None:
-            raise MissingCurveData(
-                self._py_pool.address, "block_timestamp", "no data provider stored"
-            )
+            raise MissingCurveData(self._address, "block_timestamp", "no data provider stored")
         return v
 
     def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int:
-        v: int | None = self._py_pool.fetch_curve_token_balance(
-            token_address, holder_address, block_number
-        )
+        v: int | None = self._arm.fetch_token_balance(token_address, holder_address, block_number)
         if v is None:
-            raise MissingCurveData(
-                self._py_pool.address, "token_balance", "no data provider stored"
-            )
+            raise MissingCurveData(self._address, "token_balance", "no data provider stored")
         return v
 
     def token_total_supply(self, token_address: str, block_number: int) -> int:
-        v: int | None = self._py_pool.fetch_curve_token_total_supply(token_address, block_number)
+        v: int | None = self._arm.fetch_token_total_supply(token_address, block_number)
         if v is None:
-            raise MissingCurveData(
-                self._py_pool.address, "token_total_supply", "no data provider stored"
-            )
+            raise MissingCurveData(self._address, "token_total_supply", "no data provider stored")
         return v
 
     def lending_rates(self, block_number: int) -> tuple[int, ...]:
-        rates: tuple[int, ...] | None = self._py_pool.fetch_curve_lending_rates(block_number)
+        rates: tuple[int, ...] | None = self._arm.fetch_lending_rates(block_number)
         if not rates:
-            raise MissingCurveData(
-                self._py_pool.address, "lending_rates", "no data provider stored"
-            )
+            raise MissingCurveData(self._address, "lending_rates", "no data provider stored")
         return tuple(rates)
 
     def d(self, block_number: int) -> int:
-        v: int | None = self._py_pool.fetch_curve_d(block_number)
+        v: int | None = self._arm.fetch_d(block_number)
         if v is None:
-            raise MissingCurveData(self._py_pool.address, "d", "no data provider stored")
+            raise MissingCurveData(self._address, "d", "no data provider stored")
         return v
 
     def gamma(self, block_number: int) -> int:
-        v: int | None = self._py_pool.fetch_curve_gamma(block_number)
+        v: int | None = self._arm.fetch_gamma(block_number)
         if v is None:
-            raise MissingCurveData(self._py_pool.address, "gamma", "no data provider stored")
+            raise MissingCurveData(self._address, "gamma", "no data provider stored")
         return v
 
     def price_scale(self, block_number: int) -> tuple[int, ...]:
-        scales: tuple[int, ...] | None = self._py_pool.fetch_curve_price_scale(block_number)
+        scales: tuple[int, ...] | None = self._arm.fetch_price_scale(block_number)
         if not scales:
-            raise MissingCurveData(self._py_pool.address, "price_scale", "no data provider stored")
+            raise MissingCurveData(self._address, "price_scale", "no data provider stored")
         return tuple(scales)
 
     def admin_balances(self, block_number: int) -> tuple[int, ...]:
-        bal: tuple[int, ...] | None = self._py_pool.fetch_curve_admin_balances(block_number)
+        bal: tuple[int, ...] | None = self._arm.fetch_admin_balances(block_number)
         if not bal:
-            raise MissingCurveData(
-                self._py_pool.address, "admin_balances", "no data provider stored"
-            )
+            raise MissingCurveData(self._address, "admin_balances", "no data provider stored")
         return tuple(bal)
 
     def redemption_price(self, block_number: int) -> int:
-        v: int | None = self._py_pool.fetch_curve_redemption_price(block_number)
+        v: int | None = self._arm.fetch_redemption_price(block_number)
         if v is None:
-            raise MissingCurveData(
-                self._py_pool.address, "redemption_price", "no data provider stored"
-            )
+            raise MissingCurveData(self._address, "redemption_price", "no data provider stored")
         return v
 
     def base_cache_updated(self, block_number: int) -> int:
-        v: int | None = self._py_pool.fetch_curve_base_cache_updated(block_number)
+        v: int | None = self._arm.fetch_base_cache_updated(block_number)
         if v is None:
-            raise MissingCurveData(
-                self._py_pool.address, "base_cache_updated", "no data provider stored"
-            )
+            raise MissingCurveData(self._address, "base_cache_updated", "no data provider stored")
         return v
 
     def base_virtual_price(self, block_number: int) -> int:
-        v: int | None = self._py_pool.fetch_curve_base_virtual_price(block_number)
+        v: int | None = self._arm.fetch_base_virtual_price(block_number)
         if v is None:
-            raise MissingCurveData(
-                self._py_pool.address, "base_virtual_price", "no data provider stored"
-            )
+            raise MissingCurveData(self._address, "base_virtual_price", "no data provider stored")
         return v
 
     def virtual_price(self, block_number: int) -> int:
-        v: int | None = self._py_pool.fetch_curve_virtual_price(block_number)
+        v: int | None = self._arm.fetch_virtual_price(block_number)
         if v is None:
-            raise MissingCurveData(
-                self._py_pool.address, "virtual_price", "no data provider stored"
-            )
+            raise MissingCurveData(self._address, "virtual_price", "no data provider stored")
         return v
 
 
@@ -163,19 +145,18 @@ class _CryptoFeeCoefficients(NamedTuple):
     gamma: int
 
 
-def _read_crypto_fee_coefficients(py_pool: Pool) -> _CryptoFeeCoefficients:
-    """Normalize the handle's optional crypto-fee tuple (``None`` ⇔ 0).
+def _read_crypto_fee_coefficients(arm: CurveView) -> _CryptoFeeCoefficients:
+    """Normalize the arm's crypto-fee tuple (``None`` ⇔ 0).
 
     Standard stableswap pools store no crypto fees, so those slots come back
-    ``None`` and mean 0. The caller asserts the curve family, so the tuple
-    itself is never ``None`` off the handle in practice.
+    ``None`` and mean 0. The arm is Curve-typed, so the tuple itself is always
+    present — only its slots are optional.
 
     Returns:
         The normalized coefficients.
 
     """
-    crypto_fees = py_pool.curve_crypto_fees()
-    assert crypto_fees is not None  # pragma: no cover — curve family asserted
+    crypto_fees = arm.crypto_fees()
     fee_gamma, mid_fee, offpeg_fee_multiplier, out_fee, gamma = crypto_fees
     return _CryptoFeeCoefficients(
         fee_gamma=fee_gamma if fee_gamma is not None else 0,
@@ -204,6 +185,7 @@ class CurveStableswapPool(
     # in helper/calc methods resolve (mirrors the Balancer/Aerodrome seams).
     address: ChecksummedAddress
     _py_pool: Pool
+    _curve: CurveView
     _tokens: tuple[Erc20Token, ...]
     _a_coefficient: int
     _fee: int
@@ -266,7 +248,7 @@ class CurveStableswapPool(
         stored data-provider trait object off the handle. The cross-pool
         references (base pool companion + underlying/LP tokens) are recovered
         from the handle too — the base pool via the Rust go-between
-        ``curve_base_pool()`` (same shared ``BotState``, no Python registry),
+        ``curve().base_pool()`` (same shared ``BotState``, no Python registry),
         wrapped in a :class:`_LazyBasePool` that memoises construction.
 
         Returns:
@@ -279,17 +261,22 @@ class CurveStableswapPool(
         """
         self = object.__new__(cls)
 
-        # Family assertion — a V2/V3/V4/Balancer handle must raise, not crash.
-        family = py_pool.pool_family
-        if family != "curve":
-            msg = f"Pool handle is not a Curve stableswap pool (got pool_family {family!r})"
-            raise DegenbotValueError(message=msg)
+        # The arm accessor IS the family gate: `Pool.curve()` refuses a handle
+        # registered under any other family, so a V2/V3/V4/Balancer handle
+        # raises here rather than reading a wrong-family sentinel. Every read
+        # below goes through the arm, which types its answers as Curve state.
+        try:
+            arm = py_pool.curve()
+        except ValueError as exc:
+            msg = f"Pool handle is not a Curve stableswap pool: {exc}"
+            raise DegenbotValueError(message=msg) from exc
 
         self._py_pool = py_pool
+        self._curve = arm
         self.address = get_checksum_address(py_pool.address)
 
         # Tokens — recovered as companion handles (shared BotState).
-        py_tokens = py_pool.get_curve_tokens()
+        py_tokens = arm.get_tokens()
         if py_tokens is None:
             msg = (
                 "Curve pool tokens are not registered in the handle's Bot; "
@@ -298,75 +285,70 @@ class CurveStableswapPool(
             raise DegenbotValueError(message=msg)
         self._tokens = tuple(Erc20Token.from_handle(t) for t in py_tokens)
 
-        self._a_coefficient = py_pool.curve_a_coefficient
-        self._fee = py_pool.curve_fee
-        self._admin_fee = py_pool.curve_admin_fee
+        self._a_coefficient = arm.a_coefficient
+        self._fee = arm.fee
+        self._admin_fee = arm.admin_fee
 
         # Rate/precision multipliers — the Rust core owns the derivation
         # (degenbot_math::curve::derive_rate_and_precision_multipliers); the
         # handle is the single source of truth.
-        self._rate_multipliers = tuple(py_pool.curve_rate_multipliers)
-        self._precision_multipliers = tuple(py_pool.curve_precision_multipliers)
+        self._rate_multipliers = tuple(arm.rate_multipliers)
+        self._precision_multipliers = tuple(arm.precision_multipliers)
 
         # Crypto-pool fees (None ⇔ 0 for standard stableswap pools). The
-        # normalization lives in the cohesive helper; the family is asserted
-        # above, so the tuple itself is never None in practice.
+        # normalization lives in the cohesive helper; the arm types the tuple
+        # as always-present, so only its slots are optional.
         (
             self._fee_gamma,
             self._mid_fee,
             self._offpeg_fee_multiplier,
             self._out_fee,
             self._gamma,
-        ) = _read_crypto_fee_coefficients(py_pool)
+        ) = _read_crypto_fee_coefficients(arm)
 
         # Strategies — reconstruct from the 7 u8 discriminants stored in Rust.
         # auto()-based enums: .value is forwarded verbatim, so Enum(value)
         # round-trips (the factory's _strategies_to_rust_enums is the inverse).
         self._strategies = PoolStrategies(
-            d_variant=DVariant(py_pool.curve_d_variant),
-            y_variant=YVariant(py_pool.curve_y_variant),
-            yd_variant=YDVariant(py_pool.curve_yd_variant),
-            swap_style=SwapStyle(py_pool.curve_swap_style),
-            metapool_rate_style=MetapoolRateStyle(py_pool.curve_metapool_rate_style),
-            metapool_underlying_style=MetapoolUnderlyingStyle(
-                py_pool.curve_metapool_underlying_style
-            ),
-            lending_rate_style=LendingRateStyle(py_pool.curve_lending_rate_style),
+            d_variant=DVariant(arm.d_variant),
+            y_variant=YVariant(arm.y_variant),
+            yd_variant=YDVariant(arm.yd_variant),
+            swap_style=SwapStyle(arm.swap_style),
+            metapool_rate_style=MetapoolRateStyle(arm.metapool_rate_style),
+            metapool_underlying_style=MetapoolUnderlyingStyle(arm.metapool_underlying_style),
+            lending_rate_style=LendingRateStyle(arm.lending_rate_style),
         )
 
         # Cross-pool base reference — the go-between returns a handle over the
         # base pool (same core); wrapped lazily so an unused base path pays zero.
-        base_handle = py_pool.curve_base_pool()
+        base_handle = arm.base_pool()
         self._base_pool = _LazyBasePool(base_handle) if base_handle is not None else None
 
         # Underlying + LP tokens — recovered as companion handles.
-        underlying = py_pool.get_curve_tokens_underlying()
+        underlying = arm.get_tokens_underlying()
         self._tokens_underlying = (
             tuple(Erc20Token.from_handle(t) for t in underlying) if underlying is not None else None
         )
-        lp = py_pool.get_curve_lp_token()
+        lp = arm.get_lp_token()
         self._lp_token = Erc20Token.from_handle(lp) if lp is not None else self._tokens[0]
 
-        ul = tuple(py_pool.curve_use_lending)
+        ul = tuple(arm.use_lending)
         self._use_lending = ul or tuple(False for _ in self._tokens)
 
-        # A-ramping (all None ⇔ a plain non-ramping pool). Guard narrows the
-        # tuple[...] | None handle return (family asserted above, so never
-        # None in practice).
-        curve_a_ramp = py_pool.curve_a_ramp()
-        assert curve_a_ramp is not None  # pragma: no cover — curve family asserted
+        # A-ramping (all None ⇔ a plain non-ramping pool). The arm types the
+        # tuple as always-present, so only its slots are optional.
         (
             self._initial_a_coefficient,
             self._future_a_coefficient,
             self._initial_a_coefficient_time,
             self._future_a_coefficient_time,
             self._create_timestamp,
-        ) = curve_a_ramp
+        ) = arm.a_ramp()
 
         # Data provider — the stored Rust trait object, read through a handle
         # adapter (mirrors the Balancer _HandleRateProviderAdapter).
         self._data_provider = (
-            _HandleCurveDataProviderAdapter(py_pool) if py_pool.curve_has_data_provider else None
+            _HandleCurveDataProviderAdapter(arm, self.address) if arm.has_data_provider else None
         )
 
         # Per-block on-chain caches (companion-owned cache depth; the always-8
@@ -589,7 +571,7 @@ class CurveStableswapPool(
         # current balances.
         return cast(
             "int",
-            self._py_pool.curve_calc_token_amount(list(amounts), deposit, block_number),
+            self._curve.calc_token_amount(list(amounts), deposit, block_number),
         )
 
     def calc_withdraw_one_coin(
@@ -609,7 +591,7 @@ class CurveStableswapPool(
         # run in the Rust core. The companion's extra tuple fields (`dy_0 - dy`,
         # `total_supply`) are not consumed by any caller, so only `dy` is
         # returned.
-        dy = self._py_pool.curve_calc_withdraw_one_coin(_token_amount, i, block_number)
+        dy = self._curve.calc_withdraw_one_coin(_token_amount, i, block_number)
         return (cast("int", dy),)
 
     def get_dy(
@@ -630,7 +612,7 @@ class CurveStableswapPool(
 
         Reference: https://github.com/curveresearch/notes/blob/main/stableswap.pdf
 
-        Delegates to the Rust-owned `Pool.curve_get_dy`: the I/O orchestration
+        Delegates to the Rust-owned `Pool.curve().get_dy`: the I/O orchestration
         (amp/rates/xp + provider fetches) and the pure dy math both run in the
         Rust core, so this is a single handle
         call with no Python provider / cache / calculator on the swap path.
@@ -647,7 +629,7 @@ class CurveStableswapPool(
         try:
             return cast(
                 "int",
-                self._py_pool.curve_get_dy(i, j, dx, block_number, override_balances),
+                self._curve.get_dy(i, j, dx, block_number, override_balances),
             )
         except ValueError as e:
             raise EVMRevertError(error=str(e)) from e
@@ -662,7 +644,7 @@ class CurveStableswapPool(
     ) -> int:
         """Metapool underlying `dy` — Rust-owned base-pool delegation.
 
-        Delegates to `Pool.curve_get_dy_underlying`: the metapool snapshot +
+        Delegates to `Pool.curve().get_dy_underlying`: the metapool snapshot +
         the base-pool `calc_token_amount` / `get_dy` /
         `calc_withdraw_one_coin` ops run through the Rust
         `BotCurveBasePoolPort`, retiring the Python `_LazyBasePool` go-between
@@ -680,7 +662,7 @@ class CurveStableswapPool(
         try:
             return cast(
                 "int",
-                self._py_pool.curve_get_dy_underlying(i, j, dx, block_number, override_balances),
+                self._curve.get_dy_underlying(i, j, dx, block_number, override_balances),
             )
         except ValueError as e:
             raise EVMRevertError(error=str(e)) from e
@@ -696,7 +678,7 @@ class CurveStableswapPool(
         """Calculate the expected token OUTPUT for a target INPUT at current pool reserves.
 
         The zero-balance refusal is core-owned: the direct-pool arm delegates to
-        `get_dy` -> the Rust `curve_get_dy`, which raises the typed `NoLiquidity`
+        `get_dy` -> the Rust `curve().get_dy`, which raises the typed `NoLiquidity`
         where the balances are read (the Python-side raise is gone).
 
         Returns:
@@ -729,7 +711,7 @@ class CurveStableswapPool(
             ]
 
         if all(tokens_used_this_pool):
-            # The zero-balance refusal is core-owned: `curve_get_dy` raises the
+            # The zero-balance refusal is core-owned: `curve().get_dy` raises the
             # typed `NoLiquidity` where the balances are read, so this delegates.
             return self.get_dy(
                 i=self._tokens.index(token_in),
@@ -775,7 +757,7 @@ class CurveStableswapPool(
     ) -> int:
         """Resolve a swap that spans this metapool and its underlying base pool.
 
-        The zero-balance refusal is core-owned (`curve_get_dy_underlying`
+        The zero-balance refusal is core-owned (`curve().get_dy_underlying`
         raises the typed `NoLiquidity` where the balance vectors are read), so
         this only maps the combined underlying indices and delegates.
 
@@ -810,7 +792,7 @@ class _LazyBasePool:
     """Production adapter satisfying ``BasePoolPort`` for a metapool's base pool.
 
     Holds the base pool's ``Pool`` handle (resolved by the Rust
-    go-between ``curve_base_pool()`` — same shared ``BotState`` core, no
+    go-between ``curve().base_pool()`` — same shared ``BotState`` core, no
     Python registry lookup) and memoises the base companion on first use.
     Defers construction so a metapool that never takes the base swap path
     pays zero base-pool cost, and at most one companion across a full calc

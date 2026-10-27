@@ -110,30 +110,33 @@ class BalancerV2Pool(AbstractLiquidityPool):
         self = cls.__new__(cls)
         self._py_pool = py_pool
 
-        if py_pool.pool_family != "balancer-weighted":
-            msg = (
-                "Pool handle is not a Balancer weighted pool "
-                f"(got pool_family {py_pool.pool_family!r})"
-            )
-            raise DegenbotValueError(message=msg)
+        # The arm accessor IS the family gate: `Pool.balancer_weighted()`
+        # refuses a handle registered under any other family (including the
+        # Balancer-stable sibling), so a wrong-family handle never reaches the
+        # identity reads below.
+        try:
+            arm = py_pool.balancer_weighted()
+        except ValueError as exc:
+            msg = f"Pool handle is not a Balancer weighted pool: {exc}"
+            raise DegenbotValueError(message=msg) from exc
 
-        self.address = get_checksum_address(py_pool.balancer_address)
-        self.pool_id = bytes.fromhex(py_pool.balancer_pool_id_hex.removeprefix("0x"))
+        self.address = get_checksum_address(arm.address)
+        self.pool_id = bytes.fromhex(arm.pool_id_hex.removeprefix("0x"))
         self.pool_specialization = int.from_bytes(self.pool_id[20:22], byteorder="big")
-        self.vault = get_checksum_address(py_pool.balancer_vault)
+        self.vault = get_checksum_address(arm.vault)
 
-        py_tokens = py_pool.get_balancer_tokens()
+        py_tokens = arm.get_tokens()
         if py_tokens is None:
             msg = (
                 "pool tokens must be registered in the same Bot as the pool "
-                "(ADR-006): get_balancer_tokens returned None"
+                "(ADR-006): balancer_weighted().get_tokens returned None"
             )
             raise DegenbotValueError(message=msg)
         self._tokens = tuple(Erc20Token.from_handle(t) for t in py_tokens)
         self.scaling_factors = tuple(_compute_scaling_factor(t) for t in self._tokens)
-        self.fee = Fraction(py_pool.balancer_swap_fee, cls.FEE_DENOMINATOR)
-        self.weights = tuple(py_pool.balancer_weights)
-        self.pow_version = PowVersion.V1 if py_pool.balancer_pow_version == 1 else PowVersion.V2
+        self.fee = Fraction(arm.swap_fee, cls.FEE_DENOMINATOR)
+        self.weights = tuple(arm.weights)
+        self.pow_version = PowVersion.V1 if arm.pow_version == 1 else PowVersion.V2
         return self
 
     def __repr__(self) -> str:  # pragma: no cover

@@ -9,8 +9,14 @@
 
 use crate::bot::token::PyErc20Token;
 use crate::prelude::*;
-use alloy::primitives::{I256, U256};
-use degenbot_pools::sim::registry::PoolEntry;
+use alloy::primitives::{Address, I256, U256};
+use degenbot_pools::sim::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
+use degenbot_pools::sim::registry::{PoolEntry, RegisteredPoolFamily};
+use degenbot_pools::state::balancer_stable_state::{
+    BalancerStablePoolIdentity, BalancerStablePoolState,
+};
+use degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolIdentity;
+use degenbot_pools::state::curve_state::{CurvePoolIdentity, CurvePoolState};
 use hashbrown::HashMap;
 use std::sync::Arc;
 
@@ -528,60 +534,44 @@ impl PyLiquidityPool {
         family.ok_or_else(|| pool_unregistered(self.pool_id))
     }
 
-    /// Clone-out the stored `CurveDataProvider` (if any) for this handle's
-    /// Curve state, releasing the read guard before a (potentially
-    /// re-entrant) provider call.
-    fn curve_provider(
-        &self,
-        py: Python<'_>,
-    ) -> Option<std::sync::Arc<dyn degenbot_pools::sim::curve_data_provider::CurveDataProvider>>
+    /// Read one registered state slice and map it through `f`, refusing with the
+    /// unregistered-pool error when the slice is absent.
+    ///
+    /// An arm accessor proves the family before handing out its view, but the
+    /// slice lookup reruns under this guard: an unregistration can land between
+    /// the two, and a vanished registration must not answer a sentinel a caller
+    /// could read as live state.
+    fn require_slice<T, U>(&self, py: Python<'_>, f: impl FnOnce(&T) -> U + Send) -> PyResult<U>
+    where
+        T: degenbot_pools::sim::registry::PoolEntrySlice,
+        U: Send,
     {
-        let core = self.core.clone();
-        py.detach(move || pool_ops::curve_data_provider(&core, self.pool_id))
+        let pool_id = self.pool_id;
+        self.with_state(py, |core| core.pool_slice::<T>(pool_id).map(f))
+            .ok_or_else(|| pool_unregistered(pool_id))
     }
 
-    /// Read a `Vec<U256>` from the stored Curve data provider via `f`,
-    /// converting to a Python list. Empty list ⇔ no provider / error.
-    fn read_provider_vec(
-        &self,
-        py: Python<'_>,
-        f: impl Fn(
-            &std::sync::Arc<dyn degenbot_pools::sim::curve_data_provider::CurveDataProvider>,
-        ) -> Result<
-            Vec<alloy::primitives::U256>,
-            degenbot_pools::sim::curve_data_provider::CurveDataProviderError,
-        >,
-    ) -> PyResult<Py<PyAny>> {
-        let Some(provider) = self.curve_provider(py) else {
-            return Ok(pyo3::types::PyList::empty(py).into_any().unbind());
-        };
-        let values = f(&provider).unwrap_or_default();
-        let py_vals: Vec<Py<PyAny>> = values
-            .iter()
-            .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
-            .collect::<PyResult<_>>()?;
-        Ok(pyo3::types::PyList::new(py, py_vals)?.into_any().unbind())
-    }
-
-    /// Read a single `U256` from the stored Curve data provider via `f`,
-    /// converting to a Python int. `None` ⇔ no provider / error.
-    fn read_provider_opt(
-        &self,
-        py: Python<'_>,
-        f: impl Fn(
-            &std::sync::Arc<dyn degenbot_pools::sim::curve_data_provider::CurveDataProvider>,
-        ) -> Result<
-            alloy::primitives::U256,
-            degenbot_pools::sim::curve_data_provider::CurveDataProviderError,
-        >,
-    ) -> PyResult<Option<Py<PyAny>>> {
-        let Some(provider) = self.curve_provider(py) else {
-            return Ok(None);
-        };
-        match f(&provider) {
-            Ok(v) => Ok(Some(crate::conversion::alloy::u256_to_py(py, &v)?.unbind())),
-            Err(_) => Ok(None),
+    /// This handle narrowed to one family arm, or the arm's refusal.
+    ///
+    /// The family is the registration's typed discriminator, so a family the
+    /// union does not arm cannot reach a view at all: the arm's methods read
+    /// their own slices instead of re-checking the family and answering a
+    /// wrong-family sentinel.
+    fn narrowed(&self, py: Python<'_>, arm: RegisteredPoolFamily) -> PyResult<Self> {
+        let family = self
+            .with_state(py, |core| core.registered_family(self.pool_id))
+            .ok_or_else(|| pool_unregistered(self.pool_id))?;
+        if family != arm {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "pool is not a {} pool",
+                arm.tag()
+            )));
         }
+        Ok(Self::new(
+            Arc::clone(&self.core),
+            self.pool_id,
+            self.chain_id,
+        ))
     }
 
     /// Shared override-sim inner: marshall the hypothetical state for the pool's
@@ -664,7 +654,7 @@ impl PyLiquidityPool {
             }
             // Balance vector: the caller's view of the balances. Those
             // families answer override reads through their own pair doors
-            // (`curve_get_dy` / `calculate_tokens_out_for_pair`), which carry
+            // (`curve().get_dy` / `calculate_tokens_out_for_pair`), which carry
             // the balances as data.
             "curve" | "balancer-weighted" | "balancer-stable" => {
                 let balances = override_state.getattr("balances")?;
@@ -1517,20 +1507,6 @@ impl PyLiquidityPool {
         }))
     }
 
-    fn get_balancer_tokens(&self, py: Python<'_>) -> Option<Vec<PyErc20Token>> {
-        self.with_state(py, |core| {
-            let identity = core.pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolIdentity>(self.pool_id)?;
-            let mut out = Vec::with_capacity(identity.tokens.len());
-            for token_addr in &identity.tokens {
-                if !core.has_token(token_addr) {
-                    return None;
-                }
-                out.push(PyErc20Token::new(Arc::clone(&self.core), *token_addr));
-            }
-            Some(out)
-        })
-    }
-
     // --- V3 state read getters ---
     // Mirror the V2 family but read the V3PoolState entry. All getters take
     // one read guard and return None-defaulted values when the pool_id is not
@@ -1663,108 +1639,6 @@ impl PyLiquidityPool {
         })
     }
 
-    // --- Balancer weighted identity getters (ADR-005 sealed seam) ---
-
-    /// Balancer V2 pool contract address (EIP-55 checksummed hex).
-    /// Empty string if not a Balancer weighted pool.
-    #[getter]
-    fn balancer_address(&self, py: Python<'_>) -> String {
-        self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolIdentity>(self.pool_id)
-                .map(|i| address_utils::address_to_checksum_string(&i.address))
-                .unwrap_or_default()
-        })
-    }
-
-    /// Balancer V2 vault contract address (EIP-55 checksummed hex).
-    /// Empty string if not a Balancer weighted pool.
-    #[getter]
-    fn balancer_vault(&self, py: Python<'_>) -> String {
-        self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolIdentity>(self.pool_id)
-                .map(|i| address_utils::address_to_checksum_string(&i.vault))
-                .unwrap_or_default()
-        })
-    }
-
-    /// Balancer V2 pool ID (32-byte hex, ``0x``-prefixed). Empty string if
-    /// not a Balancer weighted pool.
-    #[getter]
-    fn balancer_pool_id_hex(&self, py: Python<'_>) -> String {
-        self.with_state(py, |core| {
-            match core.pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolIdentity>(self.pool_id) {
-                Some(i) => alloy::hex::encode_prefixed(i.pool_id),
-                None => String::new(),
-            }
-        })
-    }
-
-    // (The `balancer_token_addresses` getter retired with ADR-085 D5: the
-    // construction outcome's `tokens` answer is the companion loop's ONE
-    // iteration source, so no family-specific handle getter is read.)
-
-    /// Balancer weighted denormalized weights (one `U256` per token).
-    /// Empty list if not a Balancer weighted pool.
-    #[getter]
-    fn balancer_weights(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let weights: Vec<alloy::primitives::U256> = self.with_state(py, |s| {
-            s.pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolIdentity>(
-                self.pool_id,
-            )
-            .map(|i| i.weights.to_vec())
-            .unwrap_or_default()
-        });
-        let py_w: Vec<Py<PyAny>> = weights
-            .iter()
-            .map(|w| crate::conversion::alloy::u256_to_py(py, w).map(pyo3::Bound::unbind))
-            .collect::<PyResult<_>>()?;
-        Ok(pyo3::types::PyList::new(py, py_w)?.into_any().unbind())
-    }
-
-    /// Balancer weighted scaling factors (one `U256` per token). Empty list
-    /// if not a Balancer weighted pool.
-    #[getter]
-    fn balancer_scaling_factors(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let sf: Vec<alloy::primitives::U256> = self.with_state(py, |s| {
-            s.pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolIdentity>(
-                self.pool_id,
-            )
-            .map(|i| i.scaling_factors.to_vec())
-            .unwrap_or_default()
-        });
-        let py_sf: Vec<Py<PyAny>> = sf
-            .iter()
-            .map(|s| crate::conversion::alloy::u256_to_py(py, s).map(pyo3::Bound::unbind))
-            .collect::<PyResult<_>>()?;
-        Ok(pyo3::types::PyList::new(py, py_sf)?.into_any().unbind())
-    }
-
-    /// Balancer weighted swap fee (fixed-point, 1e18 scale). 0 if not a
-    /// Balancer weighted pool.
-    #[getter]
-    fn balancer_swap_fee(&self, py: Python<'_>) -> u128 {
-        self.with_state(py, |s| {
-            s.pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolIdentity>(
-                self.pool_id,
-            )
-            .map(|i| i.swap_fee)
-            .unwrap_or_default()
-        })
-    }
-
-    /// Balancer weighted Math pool implementation version (1 or 2). 0 if not
-    /// a Balancer weighted pool.
-    #[getter]
-    fn balancer_pow_version(&self, py: Python<'_>) -> u8 {
-        self.with_state(py, |s| {
-            s.pool_slice::<degenbot_pools::state::balancer_weighted_state::BalancerWeightedPoolIdentity>(
-                self.pool_id,
-            )
-            .map(|i| i.pow_version)
-            .unwrap_or_default()
-        })
-    }
-
     // --- Mutations (per-handle, pool_id-keyed) ---
 
     /// Registration/seed genesis anchor (two-stamp rule): push a
@@ -1785,875 +1659,6 @@ impl PyLiquidityPool {
         }
     }
 
-    // --- Curve state read getters + mutations ---
-
-    // --- Curve identity getters (ADR-005 identity extension) ---
-
-    /// Curve A-ramping: `(initial_a, future_a, initial_a_time,
-    /// future_a_time, create_timestamp)` — all `None` for non-ramping pools.
-    /// Returns `None` for a non-Curve handle.
-    /// Each element is the option value so a non-ramping pool reports `None`
-    /// for every field instead of a sentinel zero.
-    // The nested-`Option` tuple mirrors the Python-facing Curve ramp shape.
-    #[expect(clippy::type_complexity)]
-    fn curve_a_ramp(
-        &self,
-        py: Python<'_>,
-    ) -> Option<(
-        Option<u128>,
-        Option<u128>,
-        Option<u64>,
-        Option<u64>,
-        Option<u64>,
-    )> {
-        self.with_state(py, |core| {
-            let id = core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(
-                self.pool_id,
-            )?;
-            Some((
-                id.initial_a_coefficient,
-                id.future_a_coefficient,
-                id.initial_a_coefficient_time,
-                id.future_a_coefficient_time,
-                id.create_timestamp,
-            ))
-        })
-    }
-
-    /// Curve crypto-pool fees: `(fee_gamma, mid_fee, offpeg_fee_multiplier,
-    /// out_fee, gamma)` — `None` for standard stableswap pools. Returns `None`
-    /// for a non-Curve handle.
-    // The nested-`Option` tuple mirrors the Python-facing Curve fee shape.
-    #[expect(clippy::type_complexity)]
-    fn curve_crypto_fees(
-        &self,
-        py: Python<'_>,
-    ) -> Option<(
-        Option<u64>,
-        Option<u64>,
-        Option<u64>,
-        Option<u64>,
-        Option<u64>,
-    )> {
-        self.with_state(py, |core| {
-            let id = core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(
-                self.pool_id,
-            )?;
-            Some((
-                id.fee_gamma,
-                id.mid_fee,
-                id.offpeg_fee_multiplier,
-                id.out_fee,
-                id.gamma,
-            ))
-        })
-    }
-
-    /// Curve dedicated LP token address (EIP-55 checksummed) — `None` when the
-    /// pool token itself is the LP. Returns `None` for a non-Curve handle.
-    // `Option<Option<_>>` distinguishes no-pool / pool-no-lp-token / has-token.
-    #[expect(clippy::option_option)]
-    fn curve_lp_token(&self, py: Python<'_>) -> Option<Option<String>> {
-        self.with_state(py, |core| {
-            let id = core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(
-                self.pool_id,
-            )?;
-            Some(
-                id.lp_token
-                    .map(|a| address_utils::address_to_checksum_string(&a)),
-            )
-        })
-    }
-
-    /// Curve per-token `use_lending` flags. Empty list for a non-Curve pool
-    /// or when none were registered.
-    #[getter]
-    fn curve_use_lending(&self, py: Python<'_>) -> Vec<bool> {
-        self.with_state(py, |core| match core
-            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.pool_id)
-        {
-            Some(i) => i.use_lending.to_vec(),
-            None => Vec::new(),
-        })
-    }
-
-    /// Curve per-token `precision_multipliers` (one `U256` per token). Empty
-    /// list for a non-Curve pool.
-    #[getter]
-    fn curve_precision_multipliers(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let pms: Vec<alloy::primitives::U256> =
-            self.with_state(py, |core| match core
-                .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(
-                self.pool_id,
-            ) {
-                Some(i) => i.precision_multipliers.to_vec(),
-                None => Vec::new(),
-            });
-        let py_pms: Vec<Py<PyAny>> = pms
-            .iter()
-            .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
-            .collect::<PyResult<_>>()?;
-        Ok(pyo3::types::PyList::new(py, py_pms)?.into_any().unbind())
-    }
-
-    /// Whether a Curve data-provider I/O trait object is stored on this
-    /// pool's state (ADR-005). `False` for non-Curve pools or Curve
-    /// pools registered without a provider (the no-I/O fixture case).
-    #[getter]
-    fn curve_has_data_provider(&self, py: Python<'_>) -> bool {
-        self.with_state(py, |core| match core
-            .pool_slice::<degenbot_pools::state::curve_state::CurvePoolState>(self.pool_id)
-        {
-            Some(s) => s.data_provider.is_some(),
-            None => false,
-        })
-    }
-
-    // --- Curve identity getters (ADR-005 identity-from-handle) ---
-
-    /// Curve amplification coefficient `A` (raw). 0 for a non-Curve handle.
-    #[getter]
-    fn curve_a_coefficient(&self, py: Python<'_>) -> u128 {
-        self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.pool_id)
-                .map_or(0, |i| i.a_coefficient)
-        })
-    }
-
-    /// Curve swap fee (`FEE_DENOMINATOR` units). 0 for a non-Curve handle.
-    #[getter]
-    fn curve_fee(&self, py: Python<'_>) -> u64 {
-        self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.pool_id)
-                .map_or(0, |i| i.fee)
-        })
-    }
-
-    /// Curve admin-fee share (`FEE_DENOMINATOR` units). 0 for a non-Curve handle.
-    #[getter]
-    fn curve_admin_fee(&self, py: Python<'_>) -> u64 {
-        self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.pool_id)
-                .map_or(0, |i| i.admin_fee)
-        })
-    }
-
-    /// Curve rate multipliers (one `U256` per token). Empty for a non-Curve pool.
-    #[getter]
-    fn curve_rate_multipliers(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let rms: Vec<alloy::primitives::U256> =
-            self.with_state(py, |core| match core
-                .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(
-                self.pool_id,
-            ) {
-                Some(i) => i.rate_multipliers.to_vec(),
-                None => Vec::new(),
-            });
-        let py_rms: Vec<Py<PyAny>> = rms
-            .iter()
-            .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
-            .collect::<PyResult<_>>()?;
-        Ok(pyo3::types::PyList::new(py, py_rms)?.into_any().unbind())
-    }
-
-    /// Curve `swap_style` discriminant (`PoolStrategies.swap_style.value`).
-    /// 0 for a non-Curve handle.
-    #[getter]
-    fn curve_swap_style(&self, py: Python<'_>) -> u8 {
-        self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.pool_id)
-                .map_or(0, |i| i.swap_style)
-        })
-    }
-
-    /// Curve `lending_rate_style` discriminant. 0 for a non-Curve handle.
-    #[getter]
-    fn curve_lending_rate_style(&self, py: Python<'_>) -> u8 {
-        self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.pool_id)
-                .map_or(0, |i| i.lending_rate_style)
-        })
-    }
-
-    /// Curve `d_variant` discriminant. 0 for a non-Curve handle.
-    #[getter]
-    fn curve_d_variant(&self, py: Python<'_>) -> u8 {
-        self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.pool_id)
-                .map_or(0, |i| i.d_variant)
-        })
-    }
-
-    /// Curve `y_variant` discriminant. 0 for a non-Curve handle.
-    #[getter]
-    fn curve_y_variant(&self, py: Python<'_>) -> u8 {
-        self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.pool_id)
-                .map_or(0, |i| i.y_variant)
-        })
-    }
-
-    /// Curve `yd_variant` discriminant. 0 for a non-Curve handle.
-    #[getter]
-    fn curve_yd_variant(&self, py: Python<'_>) -> u8 {
-        self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.pool_id)
-                .map_or(0, |i| i.yd_variant)
-        })
-    }
-
-    /// Curve `metapool_rate_style` discriminant. 0 for a non-Curve handle.
-    #[getter]
-    fn curve_metapool_rate_style(&self, py: Python<'_>) -> u8 {
-        self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.pool_id)
-                .map_or(0, |i| i.metapool_rate_style)
-        })
-    }
-
-    /// Curve `metapool_underlying_style` discriminant. 0 for a non-Curve handle.
-    #[getter]
-    fn curve_metapool_underlying_style(&self, py: Python<'_>) -> u8 {
-        self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(self.pool_id)
-                .map_or(0, |i| i.metapool_underlying_style)
-        })
-    }
-
-    /// Curve base-pool address (EIP-55 checksummed). `None` for plain pools.
-    /// `None` for a non-Curve handle.
-    // `Option<Option<_>>` distinguishes no-pool / pool-no-base / has-base.
-    #[expect(clippy::option_option)]
-    fn curve_base_pool_address(&self, py: Python<'_>) -> Option<Option<String>> {
-        self.with_state(py, |core| {
-            let id = core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(
-                self.pool_id,
-            )?;
-            Some(
-                id.base_pool
-                    .map(|a| address_utils::address_to_checksum_string(&a)),
-            )
-        })
-    }
-
-    /// The Curve pool's token companion handles, resolved via the shared
-    /// `BotState` token registry. `None` if this is not a Curve pool or any
-    /// token isn't registered (mirror of `get_balancer_tokens`). The companion
-    /// wraps each via `Erc20Token.from_handle`.
-    fn get_curve_tokens(&self, py: Python<'_>) -> Option<Vec<PyErc20Token>> {
-        self.with_state(py, |core| {
-            let identity = core
-                .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(
-                    self.pool_id,
-                )?;
-            let mut out = Vec::with_capacity(identity.tokens.len());
-            for token_addr in &identity.tokens {
-                if !core.has_token(token_addr) {
-                    return None;
-                }
-                out.push(PyErc20Token::new(Arc::clone(&self.core), *token_addr));
-            }
-            Some(out)
-        })
-    }
-
-    /// The Curve pool's *underlying* token companion handles (metapool coins
-    /// beneath the base-pool intermediaries). `None` for plain pools, or if
-    /// this isn't a Curve pool, or any underlying token isn't registered.
-    fn get_curve_tokens_underlying(&self, py: Python<'_>) -> Option<Vec<PyErc20Token>> {
-        self.with_state(py, |core| {
-            let identity = core
-                .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(
-                    self.pool_id,
-                )?;
-            let underlying = identity.tokens_underlying.clone()?;
-            let mut out = Vec::with_capacity(underlying.len());
-            for token_addr in &underlying {
-                if !core.has_token(token_addr) {
-                    return None;
-                }
-                out.push(PyErc20Token::new(Arc::clone(&self.core), *token_addr));
-            }
-            Some(out)
-        })
-    }
-
-    /// The Curve pool's dedicated LP-token companion handle. `None` ⇔ the
-    /// pool token is itself the LP (the common plain-pool case; the companion
-    /// falls back to `tokens[0]`). Returns `None` (outer) for a non-Curve pool
-    /// or if the LP token isn't registered.
-    fn get_curve_lp_token(&self, py: Python<'_>) -> Option<PyErc20Token> {
-        self.with_state(py, |core| {
-            let identity = core
-                .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(
-                    self.pool_id,
-                )?;
-            let lp = identity.lp_token?;
-            if !core.has_token(&lp) {
-                return None;
-            }
-            Some(PyErc20Token::new(Arc::clone(&self.core), lp))
-        })
-    }
-
-    /// The Curve pool's raw ERC-20 coin addresses in canonical order. Unlike
-    /// `get_curve_tokens`, this does NOT require the tokens to be registered
-    /// first — it is the builder/companion-orchestration seam that lets a
-    /// caller construct ERC20 companions *before* `from_handle`. `None` for
-    /// a non-Curve pool.
-    fn curve_token_addresses(&self, py: Python<'_>) -> Option<Vec<String>> {
-        self.with_state(py, |core| {
-            let identity = core
-                .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(
-                    self.pool_id,
-                )?;
-            let mut out = Vec::with_capacity(identity.tokens.len());
-            for address in &identity.tokens {
-                out.push(address_utils::address_to_checksum_string(address));
-            }
-            Some(out)
-        })
-    }
-
-    /// The Curve pool's raw *underlying* coin addresses (metapool coins beneath
-    /// the base-pool intermediaries). `None` for a plain pool or a non-Curve
-    /// handle. Not registration-gated (twin of `curve_token_addresses`).
-    fn curve_token_addresses_underlying(&self, py: Python<'_>) -> Option<Vec<String>> {
-        self.with_state(py, |core| {
-            let identity = core
-                .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(
-                    self.pool_id,
-                )?;
-            let underlying = identity.tokens_underlying.as_ref()?;
-            let mut out = Vec::with_capacity(underlying.len());
-            for address in underlying {
-                out.push(address_utils::address_to_checksum_string(address));
-            }
-            Some(out)
-        })
-    }
-
-    /// The Curve pool's raw dedicated LP-token address, or `None` if the pool
-    /// token is itself the LP (or the handle is not a Curve pool). Not
-    /// registration-gated (twin of `curve_token_addresses`).
-    fn curve_lp_token_address(&self, py: Python<'_>) -> Option<String> {
-        self.with_state(py, |core| {
-            let identity = core
-                .pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(
-                    self.pool_id,
-                )?;
-            identity
-                .lp_token
-                .map(|address| address_utils::address_to_checksum_string(&address))
-        })
-    }
-
-    /// **The go-between.** A `PyLiquidityPool` handle over this
-    /// metapool's *base pool*, sharing the same `BotState` core. Resolves the
-    /// stored `base_pool` address through the existing `pool_id_by_address`
-    /// index — no Python registry needed. `None` for plain pools, non-Curve
-    /// handles, or when the base pool isn't registered. The companion recurses:
-    /// `CurveStableswapPool.from_handle(handle.curve_base_pool())`.
-    fn curve_base_pool(&self, py: Python<'_>) -> Option<PyLiquidityPool> {
-        self.with_state(py, |core| {
-            let id = core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolIdentity>(
-                self.pool_id,
-            )?;
-            let base_addr = id.base_pool?;
-            let base_id = core.pool_id_by_address(&base_addr)?;
-            // Construct a handle over the base pool's id, sharing this core.
-            // (The read guard releases when the accessor returns; `new` takes
-            // no lock.)
-            Some(PyLiquidityPool::new(
-                Arc::clone(&self.core),
-                base_id,
-                self.chain_id,
-            ))
-        })
-    }
-
-    /// Rust-owned Curve stableswap `curve_get_dy(i, j, dx, block_number,
-    /// override_balances)` on this handle's pool — the single-call shape the
-    /// companion `CurveStableswapPool.get_dy` delegates to.
-    /// Mirrors `PyBot.curve_get_dy` but bound to the handle's `pool_id`, so a
-    /// swap runs start-to-finish with no Python provider / cache / calculator.
-    #[pyo3(signature = (i, j, dx, block_number, override_balances=None))]
-    fn curve_get_dy(
-        &self,
-        py: Python<'_>,
-        i: usize,
-        j: usize,
-        dx: &Bound<'_, PyAny>,
-        block_number: u64,
-        override_balances: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        let amount = crate::conversion::alloy::extract_python_u256(dx)?;
-        let overrides = match override_balances {
-            Some(list) => {
-                let cast = list.cast::<pyo3::types::PyList>().map_err(|_| {
-                    pyo3::exceptions::PyTypeError::new_err("override_balances must be a list[int]")
-                })?;
-                Some(crate::bot::extract_u256_list(cast)?)
-            }
-            None => None,
-        };
-        let result = self.with_state(py, |core| {
-            core.get_dy(
-                self.pool_id,
-                i,
-                j,
-                amount,
-                block_number,
-                overrides.as_deref(),
-            )
-        });
-        let out = match result {
-            Ok(v) => v,
-            Err(CurveInputsError::NoLiquidity) => {
-                return Err(curve_no_liquidity_error(
-                    py,
-                    "One or more of the tokens has a zero balance.",
-                ));
-            }
-            Err(e) => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "Curve get_dy failure: {e:?}"
-                )));
-            }
-        };
-        let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
-        Ok(bound.unbind())
-    }
-
-    /// Rust-owned Curve metapool `curve_get_dy_underlying(i, j, dx,
-    /// block_number, override_balances)` on this handle's pool — the
-    /// single-call shape the companion `CurveStableswapPool
-    /// ._get_dy_underlying` delegates to. Base-pool ops go through the Rust
-    /// port (`BotCurveBasePoolPort`), so the Python `_LazyBasePool` go-between
-    /// is retired for the swap path.
-    #[pyo3(signature = (i, j, dx, block_number, override_balances=None))]
-    fn curve_get_dy_underlying(
-        &self,
-        py: Python<'_>,
-        i: usize,
-        j: usize,
-        dx: &Bound<'_, PyAny>,
-        block_number: u64,
-        override_balances: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        let amount = crate::conversion::alloy::extract_python_u256(dx)?;
-        let overrides = match override_balances {
-            Some(list) => {
-                let cast = list.cast::<pyo3::types::PyList>().map_err(|_| {
-                    pyo3::exceptions::PyTypeError::new_err("override_balances must be a list[int]")
-                })?;
-                Some(crate::bot::extract_u256_list(cast)?)
-            }
-            None => None,
-        };
-        let result = self.with_state(py, |core| {
-            core.get_dy_underlying(
-                self.pool_id,
-                i,
-                j,
-                amount,
-                block_number,
-                overrides.as_deref(),
-            )
-        });
-        let out = match result {
-            Ok(v) => v,
-            Err(CurveInputsError::NoLiquidity) => {
-                return Err(curve_no_liquidity_error(
-                    py,
-                    "One or more of the tokens has a zero balance.",
-                ));
-            }
-            Err(e) => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "Curve get_dy_underlying failure: {e:?}"
-                )));
-            }
-        };
-        let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
-        Ok(bound.unbind())
-    }
-
-    /// Rust-owned Curve `curve_calc_token_amount(amounts, deposit,
-    /// block_number)` on this handle's pool — the single-call shape the
-    /// companion `CurveStableswapPool.calc_token_amount` delegates to. No Python provider / cache / calculator on the path.
-    fn curve_calc_token_amount(
-        &self,
-        py: Python<'_>,
-        amounts: &Bound<'_, PyAny>,
-        deposit: bool,
-        block_number: u64,
-    ) -> PyResult<Py<PyAny>> {
-        let cast = amounts
-            .cast::<pyo3::types::PyList>()
-            .map_err(|_| pyo3::exceptions::PyTypeError::new_err("amounts must be a list[int]"))?;
-        let amounts = crate::bot::extract_u256_list(cast)?;
-        let result = self.with_state(py, |core| {
-            core.calc_token_amount(self.pool_id, &amounts, deposit, block_number)
-        });
-        let out = match result {
-            Ok(v) => v,
-            Err(e) => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "Curve calc_token_amount failure: {e:?}"
-                )));
-            }
-        };
-        let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
-        Ok(bound.unbind())
-    }
-
-    /// Rust-owned Curve `curve_calc_withdraw_one_coin(token_amount, i,
-    /// block_number)` on this handle's pool — the single-call shape the
-    /// companion `CurveStableswapPool.calc_withdraw_one_coin` delegates to
-    /// Returns only the coin-`i` `dy` (the companion's
-    /// extra tuple fields aren't consumed anywhere).
-    fn curve_calc_withdraw_one_coin(
-        &self,
-        py: Python<'_>,
-        token_amount: &Bound<'_, PyAny>,
-        i: usize,
-        block_number: u64,
-    ) -> PyResult<Py<PyAny>> {
-        let token_amount = crate::conversion::alloy::extract_python_u256(token_amount)?;
-        let result = self.with_state(py, |core| {
-            core.calc_withdraw_one_coin(self.pool_id, token_amount, i, block_number)
-        });
-        let out = match result {
-            Ok(v) => v,
-            Err(e) => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "Curve calc_withdraw_one_coin failure: {e:?}"
-                )));
-            }
-        };
-        let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
-        Ok(bound.unbind())
-    }
-
-    // --- Curve data-provider read-throughs (so the companion's PerBlockCache
-    //     reads through the stored trait object via a handle adapter,
-    //     mirroring the Balancer `_HandleRateProviderAdapter`). Each returns
-    //     `None`/empty ⇔ no provider stored or not a Curve pool; provider
-    //     errors also surface as `None`/empty so the Python calc path raises
-    //     the `MissingCurveData` it already expects. ---
-
-    fn fetch_curve_block_number(&self, py: Python<'_>) -> Option<u64> {
-        // Provider clone inside py.detach (GIL/BotState inversion fix,
-        // 2026-08-21 run-9); the re-entrant provider call stays under the GIL.
-        let provider = self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolState>(self.pool_id)
-                .and_then(|st| st.data_provider.clone())
-        });
-        let provider = provider?;
-        provider.block_number().ok()
-    }
-
-    fn fetch_curve_block_timestamp(&self, py: Python<'_>, block_number: u64) -> Option<u64> {
-        let provider = self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolState>(self.pool_id)
-                .and_then(|st| st.data_provider.clone())
-        });
-        let provider = provider?;
-        provider.block_timestamp(block_number).ok()
-    }
-
-    fn fetch_curve_token_balance(
-        &self,
-        py: Python<'_>,
-        token_address: &str,
-        holder_address: &str,
-        block_number: u64,
-    ) -> PyResult<Option<Py<PyAny>>> {
-        let provider = self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolState>(self.pool_id)
-                .and_then(|st| st.data_provider.clone())
-        });
-        let Some(provider) = provider else {
-            return Ok(None);
-        };
-        let Ok(tok) = address_utils::parse_address(token_address) else {
-            return Ok(None);
-        };
-        let Ok(holder) = address_utils::parse_address(holder_address) else {
-            return Ok(None);
-        };
-        match provider.token_balance(tok, holder, block_number) {
-            Ok(v) => Ok(Some(crate::conversion::alloy::u256_to_py(py, &v)?.unbind())),
-            Err(_) => Ok(None),
-        }
-    }
-
-    fn fetch_curve_token_total_supply(
-        &self,
-        py: Python<'_>,
-        token_address: &str,
-        block_number: u64,
-    ) -> PyResult<Option<Py<PyAny>>> {
-        let provider = self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolState>(self.pool_id)
-                .and_then(|st| st.data_provider.clone())
-        });
-        let Some(provider) = provider else {
-            return Ok(None);
-        };
-        let Ok(tok) = address_utils::parse_address(token_address) else {
-            return Ok(None);
-        };
-        match provider.token_total_supply(tok, block_number) {
-            Ok(v) => Ok(Some(crate::conversion::alloy::u256_to_py(py, &v)?.unbind())),
-            Err(_) => Ok(None),
-        }
-    }
-
-    fn fetch_curve_lending_rates(&self, py: Python<'_>, block_number: u64) -> PyResult<Py<PyAny>> {
-        let rates = self.read_provider_vec(py, |p| p.lending_rates(block_number))?;
-        Ok(rates)
-    }
-
-    fn fetch_curve_d(&self, py: Python<'_>, block_number: u64) -> PyResult<Option<Py<PyAny>>> {
-        self.read_provider_opt(py, |p| p.invariant_d(block_number))
-    }
-
-    fn fetch_curve_gamma(&self, py: Python<'_>, block_number: u64) -> PyResult<Option<Py<PyAny>>> {
-        self.read_provider_opt(py, |p| p.gamma(block_number))
-    }
-
-    fn fetch_curve_price_scale(&self, py: Python<'_>, block_number: u64) -> PyResult<Py<PyAny>> {
-        self.read_provider_vec(py, |p| p.price_scale(block_number))
-    }
-
-    fn fetch_curve_admin_balances(&self, py: Python<'_>, block_number: u64) -> PyResult<Py<PyAny>> {
-        self.read_provider_vec(py, |p| p.admin_balances(block_number))
-    }
-
-    fn fetch_curve_redemption_price(
-        &self,
-        py: Python<'_>,
-        block_number: u64,
-    ) -> PyResult<Option<Py<PyAny>>> {
-        self.read_provider_opt(py, |p| p.redemption_price(block_number))
-    }
-
-    fn fetch_curve_base_cache_updated(&self, py: Python<'_>, block_number: u64) -> Option<u64> {
-        let provider = self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::curve_state::CurvePoolState>(self.pool_id)
-                .and_then(|st| st.data_provider.clone())
-        });
-        let provider = provider?;
-        provider.base_cache_updated(block_number).ok()
-    }
-
-    fn fetch_curve_base_virtual_price(
-        &self,
-        py: Python<'_>,
-        block_number: u64,
-    ) -> PyResult<Option<Py<PyAny>>> {
-        self.read_provider_opt(py, |p| p.base_virtual_price(block_number))
-    }
-
-    fn fetch_curve_virtual_price(
-        &self,
-        py: Python<'_>,
-        block_number: u64,
-    ) -> PyResult<Option<Py<PyAny>>> {
-        self.read_provider_opt(py, |p| p.virtual_price(block_number))
-    }
-
-    // --- Balancer weighted state read getters + mutations ---
-
-    // --- Balancer stable state read getters + mutations ---
-
-    /// Token count for a Balancer stable pool (`balances.len()` — includes
-    /// BPT for Composable pools).
-    /// including BPT for Composable pools).
-    /// Returns an empty list if this `pool_id` is not registered as a Balancer
-    /// `Some(i)` for `ComposableStablePools`.
-    /// Returns `None` if this `pool_id` is not registered as a Balancer stable
-    /// pool (also a valid value for a registered `MetaStable` — see the
-    /// `invariant_version` getter to distinguish).
-    #[getter]
-    fn balancer_bpt_index(&self, py: Python<'_>) -> Option<usize> {
-        self.with_state(py, |s| {
-            s.pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(
-                self.pool_id,
-            )
-            .and_then(|i| i.bpt_idx)
-        })
-    }
-
-    /// Amplification coefficient `amp` for a Balancer stable pool (immutable
-    /// after registration in this plan — A ramping is a future, non-epic
-    /// concern resolved by the builder at registration).
-    /// Returns 0 if this `pool_id` is not registered as a Balancer stable pool.
-    #[getter]
-    fn balancer_amp(&self, py: Python<'_>) -> u128 {
-        self.with_state(py, |s| {
-            s.pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(
-                self.pool_id,
-            )
-            .map_or(0, |i| i.amp)
-        })
-    }
-
-    /// `invariant_version` discriminator (1 = V1 always-roundDown `D_P`
-    /// accumulation; 2 = V2 roundUp-param `P_D` accumulation) — the
-    /// systematic-1-wei-error guard.
-    /// Returns 0 if this `pool_id` is not registered as a Balancer stable pool.
-    #[getter]
-    fn balancer_invariant_version(&self, py: Python<'_>) -> u8 {
-        self.with_state(py, |s| {
-            s.pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(
-                self.pool_id,
-            )
-            .map_or(0, |i| i.invariant_version)
-        })
-    }
-
-    // --- Balancer stable identity getters (ADR-005 sealed seam) ---
-
-    /// Balancer V2 stable pool's Vault singleton (EIP-55 checksummed). Empty
-    /// string if not a Balancer stable pool.
-    #[getter]
-    fn balancer_stable_vault(&self, py: Python<'_>) -> String {
-        self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(
-                self.pool_id,
-            )
-            .map(|i| address_utils::address_to_checksum_string(&i.vault))
-            .unwrap_or_default()
-        })
-    }
-
-    /// Balancer V2 stable pool ID (32-byte hex, ``0x``-prefixed). Empty string
-    /// if not a Balancer stable pool.
-    #[getter]
-    fn balancer_stable_pool_id_hex(&self, py: Python<'_>) -> String {
-        self.with_state(py, |core| {
-            match core
-                .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(
-                    self.pool_id,
-                ) {
-                Some(i) => alloy::hex::encode_prefixed(i.pool_id),
-                None => String::new(),
-            }
-        })
-    }
-
-    // (The `balancer_stable_token_addresses` getter retired with ADR-085
-    // D5 — see the weighted twin's note.)
-
-    /// Balancer stable ``PyErc20Token`` companions (one per token, including
-    /// BPT for Composable). Includes only tokens registered in this pool's
-    /// Bot; unregistered tokens are skipped (the caller pre-registers them
-    /// via ``Bot.register_token``). ``None`` if not a Balancer stable pool.
-    fn get_balancer_stable_tokens(&self, py: Python<'_>) -> Option<Vec<PyErc20Token>> {
-        self.with_state(py, |core| {
-            let id = core
-                .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(
-                    self.pool_id,
-                )?;
-            let mut out = Vec::with_capacity(id.tokens.len());
-            for token_addr in &id.tokens {
-                if !core.has_token(token_addr) {
-                    return None;
-                }
-                out.push(PyErc20Token::new(Arc::clone(&self.core), *token_addr));
-            }
-            Some(out)
-        })
-    }
-
-    /// Balancer stable scaling factors (one ``U256`` per token,
-    /// rate-multiplied). Empty list if not a Balancer stable pool.
-    #[getter]
-    fn balancer_stable_scaling_factors(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let sfs: Vec<alloy::primitives::U256> = self.with_state(py, |core| {
-            match core
-                .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(
-                    self.pool_id,
-                ) {
-                Some(i) => i.scaling_factors.to_vec(),
-                None => Vec::new(),
-            }
-        });
-        let py_sfs: Vec<Py<PyAny>> = sfs
-            .iter()
-            .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
-            .collect::<PyResult<_>>()?;
-        Ok(pyo3::types::PyList::new(py, py_sfs)?.into_any().unbind())
-    }
-
-    /// Balancer stable swap fee (fraction of `FEE_DENOMINATOR=1e18`). 0 if
-    /// not a Balancer stable pool.
-    #[getter]
-    fn balancer_stable_swap_fee(&self, py: Python<'_>) -> u128 {
-        self.with_state(py, |core| {
-            core.pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolIdentity>(
-                self.pool_id,
-            )
-            .map_or(0, |i| i.swap_fee)
-        })
-    }
-
-    /// Whether the stored Balancer stable rate provider is static (performs
-    /// no I/O). ``True`` when no provider was registered (the static
-    /// ``1e18`` fallback). Drives the Python companion's
-    /// ``requires_io_at_calculation_time`` / ``_should_warn_stale_rates``
-    /// flags. ``False`` if not a Balancer stable pool — a dynamic provider
-    /// is the more conservative default.
-    #[getter]
-    fn balancer_stable_rate_provider_is_static(&self, py: Python<'_>) -> bool {
-        self.with_state(py, |core| {
-            match core.pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolState>(
-                self.pool_id,
-            ) {
-                Some(s) => s.rate_provider.as_ref().is_none_or(|p| p.is_static()),
-                None => false,
-            }
-        })
-    }
-
-    /// Fetch rates from the stored Balancer stable rate provider at
-    /// ``block_identifier`` (``None`` ⇔ latest). Returns the static
-    /// ``1e18`` fallback (one per token) when no provider was registered.
-    /// Returns ``None`` if not a Balancer stable pool.
-    /// Raises:
-    ///     `ValueError`: If the dynamic provider fetch failed.
-    fn fetch_balancer_stable_rates(
-        &self,
-        py: Python<'_>,
-        block_identifier: Option<u64>,
-    ) -> PyResult<Option<Vec<u128>>> {
-        let provider = self.with_state(py, |core| {
-            let s = core
-                .pool_slice::<degenbot_pools::state::balancer_stable_state::BalancerStablePoolState>(
-                    self.pool_id,
-                )?;
-            s.rate_provider.clone()
-        });
-        let Some(provider) = provider else {
-            // Static 1e18 fallback — one per token.
-            let n = self.balance_vector(py).map_or(0, |view| view.n_tokens());
-            return Ok(Some(vec![1_000_000_000_000_000_000u128; n]));
-        };
-        let rates = provider
-            .get_rates(block_identifier)
-            .map_err(|_e| pyo3::exceptions::PyValueError::new_err("rate provider fetch failed"))?;
-        let out: Vec<u128> = rates.into_iter().map(|r| r.to::<u128>()).collect();
-        Ok(Some(out))
-    }
-
-    /// Apply a Balancer stable `external_update` (new balances from a Vault
-    /// `PoolBalanceChanged` event).
-    /// Journals the prior balances then lands the new balances +
-    /// `update_block`. Silent no-op (`False`) if this `pool_id` is not
-    /// registered as a Balancer stable pool (so a companion built for a
     fn reserve_pair(&self, py: Python<'_>) -> PyResult<PyReservePairView> {
         let values = self.with_state(py, |core| match core.pool_entry(self.pool_id) {
             Some(PoolEntry::V2(pool)) => Some((
@@ -2781,6 +1786,33 @@ impl PyLiquidityPool {
             tokens,
             balances,
             update_block,
+        })
+    }
+
+    /// The Curve balance-vector arm: the pool's Curve identity and state reads,
+    /// its swap and LP calculations, and its data-provider read-throughs.
+    ///
+    /// Refuses a handle registered under any other family, so the arm's methods
+    /// never answer a wrong-family sentinel.
+    fn curve(&self, py: Python<'_>) -> PyResult<PyCurveView> {
+        Ok(PyCurveView {
+            pool: self.narrowed(py, RegisteredPoolFamily::Curve)?,
+        })
+    }
+
+    /// The Balancer-weighted balance-vector arm. Refuses a handle registered
+    /// under any other family, including the Balancer-stable sibling.
+    fn balancer_weighted(&self, py: Python<'_>) -> PyResult<PyBalancerWeightedView> {
+        Ok(PyBalancerWeightedView {
+            pool: self.narrowed(py, RegisteredPoolFamily::BalancerWeighted)?,
+        })
+    }
+
+    /// The Balancer-stable balance-vector arm. Refuses a handle registered under
+    /// any other family, including the Balancer-weighted sibling.
+    fn balancer_stable(&self, py: Python<'_>) -> PyResult<PyBalancerStableView> {
+        Ok(PyBalancerStableView {
+            pool: self.narrowed(py, RegisteredPoolFamily::BalancerStable)?,
         })
     }
 
@@ -3442,6 +2474,222 @@ mod tests {
             );
         });
     }
+
+    /// A `PyLiquidityPool` handle over `pool_id` in a fresh state lock.
+    fn handle_for(state: BotState, pool_id: u64) -> PyLiquidityPool {
+        PyLiquidityPool::new(Arc::new(StateLock::new(state)), pool_id, 1)
+    }
+
+    /// A registered V2 pool — the reserve-pair family, so every balance-vector
+    /// arm refuses it.
+    fn v2_handle() -> PyLiquidityPool {
+        let mut state = BotState::new();
+        let pool_id = state
+            .register_v2_pool(&degenbot_pools::state::v2_state::RegisterV2PoolParams {
+                address: Address::repeat_byte(0x11),
+                token0: Address::repeat_byte(0x01),
+                token1: Address::repeat_byte(0x02),
+                reserve0: alloy::primitives::aliases::U112::from(1_000_000u64),
+                reserve1: alloy::primitives::aliases::U112::from(2_000_000u64),
+                fee_token0: (997, 1000),
+                fee_token1: (997, 1000),
+                factory: Address::repeat_byte(0xfa),
+                update_block: 7,
+                ..Default::default()
+            })
+            .expect("v2 registration");
+        handle_for(state, pool_id)
+    }
+
+    /// A registered Curve stableswap pool.
+    fn curve_handle() -> PyLiquidityPool {
+        let one_e18 = U256::from(10u64).pow(U256::from(18u64));
+        let mut state = BotState::new();
+        let pool_id = state.register_curve_pool(
+            &degenbot_pools::state::curve_state::RegisterCurvePoolParams {
+                address: Address::repeat_byte(0xd1),
+                tokens: vec![Address::repeat_byte(0x01), Address::repeat_byte(0x02)],
+                a_coefficient: 10,
+                a_precision: 100,
+                fee: 4_000_000,
+                admin_fee: 0,
+                rate_multipliers: vec![one_e18, one_e18],
+                balances: vec![
+                    U256::from(1_000u64) * one_e18,
+                    U256::from(2_000u64) * one_e18,
+                ],
+                update_block: 0,
+                swap_style: 0,
+                lending_rate_style: 0,
+                d_variant: 1,
+                y_variant: 1,
+                yd_variant: 1,
+                base_pool: None,
+                initial_a_coefficient: None,
+                future_a_coefficient: None,
+                initial_a_coefficient_time: None,
+                future_a_coefficient_time: None,
+                create_timestamp: None,
+                fee_gamma: None,
+                mid_fee: None,
+                offpeg_fee_multiplier: None,
+                out_fee: None,
+                gamma: None,
+                lp_token: None,
+                use_lending: vec![false, false],
+                precision_multipliers: vec![one_e18, one_e18],
+                tokens_underlying: None,
+                metapool_rate_style: 0,
+                metapool_underlying_style: 0,
+                data_provider: None,
+            },
+        );
+        handle_for(state, pool_id)
+    }
+
+    /// Both Balancer arms over one state, so each can refuse the other's handle.
+    fn balancer_handles() -> (PyLiquidityPool, PyLiquidityPool) {
+        let one_e18 = U256::from(10u64).pow(U256::from(18u64));
+        let mut state = BotState::new();
+        let weighted_id = state.register_balancer_weighted_pool(
+            &degenbot_pools::state::balancer_weighted_state::RegisterBalancerWeightedPoolParams {
+                address: Address::repeat_byte(0xb1),
+                vault: Address::repeat_byte(0xba),
+                pool_id: [0x07u8; 32],
+                tokens: vec![Address::repeat_byte(0x01), Address::repeat_byte(0x02)],
+                weights: vec![
+                    one_e18 / U256::from(4u64),
+                    one_e18 * U256::from(3u64) / U256::from(4u64),
+                ],
+                scaling_factors: vec![U256::from(1u64), U256::from(1u64)],
+                swap_fee: 5_000_000_000_000_000,
+                pow_version: 2,
+                balances: vec![U256::from(500_000u64), U256::from(1_500_000u64)],
+                update_block: 3,
+            },
+        );
+        let stable_id = state.register_balancer_stable_pool(
+            &degenbot_pools::state::balancer_stable_state::RegisterBalancerStablePoolParams {
+                address: Address::repeat_byte(0xb2),
+                vault: Address::repeat_byte(0xba),
+                pool_id: [0x08u8; 32],
+                tokens: vec![Address::repeat_byte(0x01), Address::repeat_byte(0x02)],
+                amp: 200,
+                scaling_factors: vec![U256::from(1u64), U256::from(1u64)],
+                swap_fee: 1_000_000_000_000_000,
+                bpt_idx: None,
+                invariant_version: 2,
+                balances: vec![U256::from(800_000u64), U256::from(800_000u64)],
+                update_block: 4,
+                rate_provider: None,
+            },
+        );
+        // One shared core, two handles — the topology the arms ride.
+        let core = Arc::new(StateLock::new(state));
+        let weighted = PyLiquidityPool::new(Arc::clone(&core), weighted_id, 1);
+        let stable = PyLiquidityPool::new(core, stable_id, 1);
+        (weighted, stable)
+    }
+
+    /// A wrong-family handle is the arm accessor's typed `ValueError` refusal —
+    /// the sibling structural views' convention — never a sentinel.
+    #[test]
+    fn arm_accessors_refuse_a_foreign_family() {
+        Python::attach(|py| {
+            let handle = v2_handle();
+            assert_eq!(
+                handle
+                    .reserve_pair(py)
+                    .expect("the V2 arm answers")
+                    .reserve0,
+                U256::from(1_000_000u64)
+            );
+
+            for (refused, family) in [
+                (handle.curve(py).map(|_| ()).unwrap_err(), "curve"),
+                (
+                    handle.balancer_weighted(py).map(|_| ()).unwrap_err(),
+                    "balancer-weighted",
+                ),
+                (
+                    handle.balancer_stable(py).map(|_| ()).unwrap_err(),
+                    "balancer-stable",
+                ),
+            ] {
+                assert!(refused.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+                assert_eq!(
+                    refused.to_string(),
+                    format!("ValueError: pool is not a {family} pool")
+                );
+            }
+        });
+    }
+
+    /// The Curve arm reads the registered identity through its own slices — no
+    /// family probe, no zero/empty sentinel — and the Balancer arms refuse the
+    /// same handle.
+    #[test]
+    fn curve_arm_reads_its_registered_identity() {
+        Python::attach(|py| {
+            let handle = curve_handle();
+            let arm = handle.curve(py).expect("a Curve handle narrows to its arm");
+            assert_eq!(arm.fee(py).unwrap(), 4_000_000);
+            assert_eq!(arm.a_coefficient(py).unwrap(), 10);
+            assert_eq!(arm.admin_fee(py).unwrap(), 0);
+            assert_eq!(arm.swap_style(py).unwrap(), 0);
+            assert!(!arm.has_data_provider(py).unwrap());
+            assert!(arm.lp_token(py).unwrap().is_none());
+            assert_eq!(arm.a_ramp(py).unwrap(), (None, None, None, None, None));
+            assert_eq!(arm.token_addresses(py).unwrap().len(), 2);
+            assert_eq!(
+                arm.precision_multipliers(py)
+                    .unwrap()
+                    .bind(py)
+                    .len()
+                    .unwrap(),
+                2
+            );
+
+            assert!(handle.balancer_weighted(py).map(|_| ()).is_err());
+            assert!(handle.balancer_stable(py).map(|_| ()).is_err());
+        });
+    }
+
+    /// The two Balancer arms narrow apart: each reads its own identity and
+    /// refuses the sibling's handle.
+    #[test]
+    fn balancer_arms_narrow_each_to_its_own_family() {
+        Python::attach(|py| {
+            let (weighted, stable) = balancer_handles();
+
+            let w = weighted
+                .balancer_weighted(py)
+                .expect("a weighted handle narrows to its arm");
+            assert_eq!(w.swap_fee(py).unwrap(), 5_000_000_000_000_000);
+            assert_eq!(w.pow_version(py).unwrap(), 2);
+            assert_eq!(
+                w.vault(py).unwrap(),
+                address_utils::address_to_checksum_string(&Address::repeat_byte(0xba))
+            );
+            assert_eq!(w.weights(py).unwrap().bind(py).len().unwrap(), 2);
+
+            let s = stable
+                .balancer_stable(py)
+                .expect("a stable handle narrows to its arm");
+            assert_eq!(s.amp(py).unwrap(), 200);
+            assert_eq!(s.invariant_version(py).unwrap(), 2);
+            assert!(s.bpt_index(py).unwrap().is_none());
+            assert!(s.rate_provider_is_static(py).unwrap());
+            // No provider registered: the static 1e18 fallback, one per token.
+            assert_eq!(
+                s.fetch_rates(py, None).unwrap(),
+                vec![1_000_000_000_000_000_000u128; 2]
+            );
+
+            assert!(weighted.balancer_stable(py).map(|_| ()).is_err());
+            assert!(stable.balancer_weighted(py).map(|_| ()).is_err());
+        });
+    }
 }
 
 /// Read-only reserve-pair view exposed to Python.
@@ -3654,5 +2902,857 @@ impl PyBalanceVectorView {
     #[getter]
     fn update_block(&self) -> u64 {
         self.update_block
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Family arm views.
+//
+// The structural views above are per-call snapshots: the caller reads them and
+// owns the values. The family arms are handles instead — the pool handle,
+// narrowed to one registered family — because their methods are live state
+// reads and swap calculations, not snapshots of one.
+// `PyLiquidityPool::curve` / `balancer_weighted` / `balancer_stable` refuse a
+// handle registered under another family, so no arm method re-checks the family
+// or answers a wrong-family sentinel.
+// ---------------------------------------------------------------------------
+
+/// A Python list of `U256` values — the arms' per-token vector wire shape.
+fn u256_list(py: Python<'_>, values: &[U256]) -> PyResult<Py<PyAny>> {
+    let py_vals: Vec<Py<PyAny>> = values
+        .iter()
+        .map(|v| crate::conversion::alloy::u256_to_py(py, v).map(pyo3::Bound::unbind))
+        .collect::<PyResult<_>>()?;
+    Ok(pyo3::types::PyList::new(py, py_vals)?.into_any().unbind())
+}
+
+/// The `PyErc20Token` companion handles for `addresses`, or `None` when one of
+/// them is not registered in `state` (the caller pre-registers via
+/// `Bot.register_token`).
+fn token_handles(
+    state: &BotState,
+    core: &Arc<StateLock<BotState>>,
+    addresses: &[Address],
+) -> Option<Vec<PyErc20Token>> {
+    addresses
+        .iter()
+        .map(|address| {
+            state
+                .has_token(address)
+                .then(|| PyErc20Token::new(Arc::clone(core), *address))
+        })
+        .collect()
+}
+
+/// The Curve balance-vector arm of `Pool`, exposed to Python.
+#[pyclass(name = "CurveView", module = "degenbot._ffi")]
+pub struct PyCurveView {
+    pool: PyLiquidityPool,
+}
+
+impl PyCurveView {
+    /// The Curve identity for this handle, mapped through `f`.
+    ///
+    /// [`PyLiquidityPool::curve`] proved the family before handing out this
+    /// view, but the slice lookup reruns under this read guard: an
+    /// unregistration can land between the two, and a vanished registration is
+    /// a refusal rather than a zero a caller could read as live state.
+    fn identity<U>(
+        &self,
+        py: Python<'_>,
+        f: impl FnOnce(&CurvePoolIdentity) -> U + Send,
+    ) -> PyResult<U>
+    where
+        U: Send,
+    {
+        self.pool.require_slice(py, f)
+    }
+
+    /// The Curve state for this handle — [`Self::identity`]'s mutable-slice
+    /// twin.
+    fn state<U>(&self, py: Python<'_>, f: impl FnOnce(&CurvePoolState) -> U + Send) -> PyResult<U>
+    where
+        U: Send,
+    {
+        self.pool.require_slice(py, f)
+    }
+
+    /// Clone-out the stored `CurveDataProvider` (if any), releasing the read
+    /// guard before a (potentially re-entrant) provider call.
+    fn curve_provider(&self, py: Python<'_>) -> Option<Arc<dyn CurveDataProvider>> {
+        let core = Arc::clone(&self.pool.core);
+        let pool_id = self.pool.pool_id;
+        py.detach(move || pool_ops::curve_data_provider(&core, pool_id))
+    }
+
+    /// Read a `Vec<U256>` from the stored Curve data provider via `f`,
+    /// converting to a Python list. Empty list ⇔ no provider / error.
+    fn read_provider_vec(
+        &self,
+        py: Python<'_>,
+        f: impl Fn(&Arc<dyn CurveDataProvider>) -> Result<Vec<U256>, CurveDataProviderError>,
+    ) -> PyResult<Py<PyAny>> {
+        let Some(provider) = self.curve_provider(py) else {
+            return Ok(pyo3::types::PyList::empty(py).into_any().unbind());
+        };
+        u256_list(py, &f(&provider).unwrap_or_default())
+    }
+
+    /// Read a single `U256` from the stored Curve data provider via `f`,
+    /// converting to a Python int. `None` ⇔ no provider / error.
+    fn read_provider_opt(
+        &self,
+        py: Python<'_>,
+        f: impl Fn(&Arc<dyn CurveDataProvider>) -> Result<U256, CurveDataProviderError>,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let Some(provider) = self.curve_provider(py) else {
+            return Ok(None);
+        };
+        match f(&provider) {
+            Ok(v) => Ok(Some(crate::conversion::alloy::u256_to_py(py, &v)?.unbind())),
+            Err(_) => Ok(None),
+        }
+    }
+}
+
+#[pymethods]
+impl PyCurveView {
+    /// Curve A-ramping: `(initial_a, future_a, initial_a_time,
+    /// future_a_time, create_timestamp)` — `None` for a non-ramping pool.
+    /// Each element is the option value so a non-ramping pool reports `None`
+    /// for every field instead of a sentinel zero.
+    // The nested-`Option` tuple mirrors the Python-facing Curve ramp shape.
+    #[expect(clippy::type_complexity)]
+    fn a_ramp(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<(
+        Option<u128>,
+        Option<u128>,
+        Option<u64>,
+        Option<u64>,
+        Option<u64>,
+    )> {
+        self.identity(py, |id| {
+            (
+                id.initial_a_coefficient,
+                id.future_a_coefficient,
+                id.initial_a_coefficient_time,
+                id.future_a_coefficient_time,
+                id.create_timestamp,
+            )
+        })
+    }
+
+    /// Curve crypto-pool fees: `(fee_gamma, mid_fee, offpeg_fee_multiplier,
+    /// out_fee, gamma)` — `None` for a standard stableswap pool.
+    // The nested-`Option` tuple mirrors the Python-facing Curve fee shape.
+    #[expect(clippy::type_complexity)]
+    fn crypto_fees(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<(
+        Option<u64>,
+        Option<u64>,
+        Option<u64>,
+        Option<u64>,
+        Option<u64>,
+    )> {
+        self.identity(py, |id| {
+            (
+                id.fee_gamma,
+                id.mid_fee,
+                id.offpeg_fee_multiplier,
+                id.out_fee,
+                id.gamma,
+            )
+        })
+    }
+
+    /// Curve dedicated LP token address (EIP-55 checksummed) — `None` when the
+    /// pool token itself is the LP.
+    fn lp_token(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        self.identity(py, |id| {
+            id.lp_token
+                .map(|address| address_utils::address_to_checksum_string(&address))
+        })
+    }
+
+    /// Curve per-token `use_lending` flags.
+    #[getter]
+    fn use_lending(&self, py: Python<'_>) -> PyResult<Vec<bool>> {
+        self.identity(py, |id| id.use_lending.to_vec())
+    }
+
+    /// Curve per-token `precision_multipliers` (one `U256` per token).
+    #[getter]
+    fn precision_multipliers(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let multipliers = self.identity(py, |id| id.precision_multipliers.to_vec())?;
+        u256_list(py, &multipliers)
+    }
+
+    /// Whether a Curve data-provider I/O trait object is stored on this pool's
+    /// state. `False` for a Curve pool registered without a provider (the
+    /// no-I/O fixture case).
+    #[getter]
+    fn has_data_provider(&self, py: Python<'_>) -> PyResult<bool> {
+        self.state(py, |state| state.data_provider.is_some())
+    }
+
+    /// Curve amplification coefficient `A` (raw).
+    #[getter]
+    fn a_coefficient(&self, py: Python<'_>) -> PyResult<u128> {
+        self.identity(py, |id| id.a_coefficient)
+    }
+
+    /// Curve swap fee (`FEE_DENOMINATOR` units).
+    #[getter]
+    fn fee(&self, py: Python<'_>) -> PyResult<u64> {
+        self.identity(py, |id| id.fee)
+    }
+
+    /// Curve admin-fee share (`FEE_DENOMINATOR` units).
+    #[getter]
+    fn admin_fee(&self, py: Python<'_>) -> PyResult<u64> {
+        self.identity(py, |id| id.admin_fee)
+    }
+
+    /// Curve rate multipliers (one `U256` per token).
+    #[getter]
+    fn rate_multipliers(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let multipliers = self.identity(py, |id| id.rate_multipliers.to_vec())?;
+        u256_list(py, &multipliers)
+    }
+
+    /// Curve `swap_style` discriminant (`PoolStrategies.swap_style.value`).
+    #[getter]
+    fn swap_style(&self, py: Python<'_>) -> PyResult<u8> {
+        self.identity(py, |id| id.swap_style)
+    }
+
+    /// Curve `lending_rate_style` discriminant.
+    #[getter]
+    fn lending_rate_style(&self, py: Python<'_>) -> PyResult<u8> {
+        self.identity(py, |id| id.lending_rate_style)
+    }
+
+    /// Curve `d_variant` discriminant.
+    #[getter]
+    fn d_variant(&self, py: Python<'_>) -> PyResult<u8> {
+        self.identity(py, |id| id.d_variant)
+    }
+
+    /// Curve `y_variant` discriminant.
+    #[getter]
+    fn y_variant(&self, py: Python<'_>) -> PyResult<u8> {
+        self.identity(py, |id| id.y_variant)
+    }
+
+    /// Curve `yd_variant` discriminant.
+    #[getter]
+    fn yd_variant(&self, py: Python<'_>) -> PyResult<u8> {
+        self.identity(py, |id| id.yd_variant)
+    }
+
+    /// Curve `metapool_rate_style` discriminant.
+    #[getter]
+    fn metapool_rate_style(&self, py: Python<'_>) -> PyResult<u8> {
+        self.identity(py, |id| id.metapool_rate_style)
+    }
+
+    /// Curve `metapool_underlying_style` discriminant.
+    #[getter]
+    fn metapool_underlying_style(&self, py: Python<'_>) -> PyResult<u8> {
+        self.identity(py, |id| id.metapool_underlying_style)
+    }
+
+    /// Curve base-pool address (EIP-55 checksummed). `None` for plain pools.
+    fn base_pool_address(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        self.identity(py, |id| {
+            id.base_pool
+                .map(|address| address_utils::address_to_checksum_string(&address))
+        })
+    }
+
+    /// The pool's token companion handles, resolved via the shared `BotState`
+    /// token registry. `None` when a token is not registered (the companion
+    /// wraps each via `Erc20Token.from_handle`).
+    fn get_tokens(&self, py: Python<'_>) -> PyResult<Option<Vec<PyErc20Token>>> {
+        let tokens = self.identity(py, |id| id.tokens.clone())?;
+        let core = Arc::clone(&self.pool.core);
+        Ok(self
+            .pool
+            .with_state(py, move |state| token_handles(state, &core, &tokens)))
+    }
+
+    /// The pool's *underlying* token companion handles (metapool coins beneath
+    /// the base-pool intermediaries). `None` for a plain pool, or when an
+    /// underlying token is not registered.
+    fn get_tokens_underlying(&self, py: Python<'_>) -> PyResult<Option<Vec<PyErc20Token>>> {
+        let Some(underlying) = self.identity(py, |id| id.tokens_underlying.clone())? else {
+            return Ok(None);
+        };
+        let core = Arc::clone(&self.pool.core);
+        Ok(self
+            .pool
+            .with_state(py, move |state| token_handles(state, &core, &underlying)))
+    }
+
+    /// The pool's dedicated LP-token companion handle. `None` ⇔ the pool token
+    /// is itself the LP (the common plain-pool case; the companion falls back to
+    /// `tokens[0]`), or the LP token is not registered.
+    fn get_lp_token(&self, py: Python<'_>) -> PyResult<Option<PyErc20Token>> {
+        let Some(lp) = self.identity(py, |id| id.lp_token)? else {
+            return Ok(None);
+        };
+        let core = Arc::clone(&self.pool.core);
+        Ok(self.pool.with_state(py, move |state| {
+            state
+                .has_token(&lp)
+                .then(|| PyErc20Token::new(Arc::clone(&core), lp))
+        }))
+    }
+
+    /// The pool's raw ERC-20 coin addresses in canonical order. Unlike
+    /// `get_tokens`, this does NOT require the tokens to be registered
+    /// first — it is the builder/companion-orchestration seam that lets a caller
+    /// construct ERC20 companions *before* `from_handle`.
+    fn token_addresses(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        self.identity(py, |id| {
+            id.tokens
+                .iter()
+                .map(address_utils::address_to_checksum_string)
+                .collect()
+        })
+    }
+
+    /// The pool's raw *underlying* coin addresses (metapool coins beneath the
+    /// base-pool intermediaries). `None` for a plain pool. Not
+    /// registration-gated (twin of `token_addresses`).
+    fn token_addresses_underlying(&self, py: Python<'_>) -> PyResult<Option<Vec<String>>> {
+        self.identity(py, |id| {
+            id.tokens_underlying.as_ref().map(|underlying| {
+                underlying
+                    .iter()
+                    .map(address_utils::address_to_checksum_string)
+                    .collect()
+            })
+        })
+    }
+
+    /// The pool's raw dedicated LP-token address, or `None` if the pool token is
+    /// itself the LP. Not registration-gated (twin of `token_addresses`).
+    fn lp_token_address(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        self.identity(py, |id| {
+            id.lp_token
+                .map(|address| address_utils::address_to_checksum_string(&address))
+        })
+    }
+
+    /// **The go-between.** A `Pool` handle over this metapool's
+    /// *base pool*, sharing the same `BotState` core. Resolves the stored
+    /// `base_pool` address through the existing `pool_id_by_address` index — no
+    /// Python registry needed. `None` for plain pools or when the base pool
+    /// isn't registered. The companion recurses:
+    /// `CurveStableswapPool.from_handle(handle.curve().base_pool())`.
+    fn base_pool(&self, py: Python<'_>) -> PyResult<Option<PyLiquidityPool>> {
+        let Some(base_address) = self.identity(py, |id| id.base_pool)? else {
+            return Ok(None);
+        };
+        let core = Arc::clone(&self.pool.core);
+        let chain_id = self.pool.chain_id;
+        Ok(self.pool.with_state(py, move |state| {
+            let base_id = state.pool_id_by_address(&base_address)?;
+            // The read guard releases when this returns; `new` takes no lock.
+            Some(PyLiquidityPool::new(Arc::clone(&core), base_id, chain_id))
+        }))
+    }
+
+    /// Rust-owned Curve stableswap `get_dy(i, j, dx, block_number,
+    /// override_balances)` on this arm's pool — the single-call shape the
+    /// companion `CurveStableswapPool.get_dy` delegates to. Mirrors
+    /// `PyBot.curve_get_dy` but bound to the handle's `pool_id`, so a swap runs
+    /// start-to-finish with no Python provider / cache / calculator.
+    #[pyo3(signature = (i, j, dx, block_number, override_balances=None))]
+    fn get_dy(
+        &self,
+        py: Python<'_>,
+        i: usize,
+        j: usize,
+        dx: &Bound<'_, PyAny>,
+        block_number: u64,
+        override_balances: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let amount = crate::conversion::alloy::extract_python_u256(dx)?;
+        let overrides = match override_balances {
+            Some(list) => {
+                let cast = list.cast::<pyo3::types::PyList>().map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err("override_balances must be a list[int]")
+                })?;
+                Some(crate::bot::extract_u256_list(cast)?)
+            }
+            None => None,
+        };
+
+        let result = self.pool.with_state(py, |core| {
+            core.get_dy(
+                self.pool.pool_id,
+                i,
+                j,
+                amount,
+                block_number,
+                overrides.as_deref(),
+            )
+        });
+
+        let out = match result {
+            Ok(v) => v,
+            Err(CurveInputsError::NoLiquidity) => {
+                return Err(curve_no_liquidity_error(
+                    py,
+                    "One or more of the tokens has a zero balance.",
+                ));
+            }
+            Err(e) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Curve get_dy failure: {e:?}"
+                )));
+            }
+        };
+        Ok(crate::conversion::alloy::u256_to_py(py, &out)?.unbind())
+    }
+
+    /// Rust-owned Curve metapool `get_dy_underlying(i, j, dx, block_number,
+    /// override_balances)` on this arm's pool — the single-call shape the
+    /// companion `CurveStableswapPool._get_dy_underlying` delegates to.
+    /// Base-pool ops go through the Rust port (`BotCurveBasePoolPort`), so the
+    /// Python `_LazyBasePool` go-between is retired for the swap path.
+    #[pyo3(signature = (i, j, dx, block_number, override_balances=None))]
+    fn get_dy_underlying(
+        &self,
+        py: Python<'_>,
+        i: usize,
+        j: usize,
+        dx: &Bound<'_, PyAny>,
+        block_number: u64,
+        override_balances: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let amount = crate::conversion::alloy::extract_python_u256(dx)?;
+        let overrides = match override_balances {
+            Some(list) => {
+                let cast = list.cast::<pyo3::types::PyList>().map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err("override_balances must be a list[int]")
+                })?;
+                Some(crate::bot::extract_u256_list(cast)?)
+            }
+            None => None,
+        };
+
+        let result = self.pool.with_state(py, |core| {
+            core.get_dy_underlying(
+                self.pool.pool_id,
+                i,
+                j,
+                amount,
+                block_number,
+                overrides.as_deref(),
+            )
+        });
+
+        let out = match result {
+            Ok(v) => v,
+            Err(CurveInputsError::NoLiquidity) => {
+                return Err(curve_no_liquidity_error(
+                    py,
+                    "One or more of the tokens has a zero balance.",
+                ));
+            }
+            Err(e) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Curve get_dy_underlying failure: {e:?}"
+                )));
+            }
+        };
+        Ok(crate::conversion::alloy::u256_to_py(py, &out)?.unbind())
+    }
+
+    /// Rust-owned Curve `calc_token_amount(amounts, deposit, block_number)` on
+    /// this arm's pool — the single-call shape the companion
+    /// `CurveStableswapPool.calc_token_amount` delegates to. No Python provider
+    /// / cache / calculator on the path.
+    fn calc_token_amount(
+        &self,
+        py: Python<'_>,
+        amounts: &Bound<'_, PyAny>,
+        deposit: bool,
+        block_number: u64,
+    ) -> PyResult<Py<PyAny>> {
+        let cast = amounts
+            .cast::<pyo3::types::PyList>()
+            .map_err(|_| pyo3::exceptions::PyTypeError::new_err("amounts must be a list[int]"))?;
+        let amounts = crate::bot::extract_u256_list(cast)?;
+
+        let result = self.pool.with_state(py, |core| {
+            core.calc_token_amount(self.pool.pool_id, &amounts, deposit, block_number)
+        });
+
+        let out = match result {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Curve calc_token_amount failure: {e:?}"
+                )));
+            }
+        };
+        Ok(crate::conversion::alloy::u256_to_py(py, &out)?.unbind())
+    }
+
+    /// Rust-owned Curve `calc_withdraw_one_coin(token_amount, i,
+    /// block_number)` on this arm's pool — the single-call shape the companion
+    /// `CurveStableswapPool.calc_withdraw_one_coin` delegates to. Returns only
+    /// the coin-`i` `dy` (the companion's extra tuple fields aren't consumed
+    /// anywhere).
+    fn calc_withdraw_one_coin(
+        &self,
+        py: Python<'_>,
+        token_amount: &Bound<'_, PyAny>,
+        i: usize,
+        block_number: u64,
+    ) -> PyResult<Py<PyAny>> {
+        let token_amount = crate::conversion::alloy::extract_python_u256(token_amount)?;
+
+        let result = self.pool.with_state(py, |core| {
+            core.calc_withdraw_one_coin(self.pool.pool_id, token_amount, i, block_number)
+        });
+
+        let out = match result {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Curve calc_withdraw_one_coin failure: {e:?}"
+                )));
+            }
+        };
+        Ok(crate::conversion::alloy::u256_to_py(py, &out)?.unbind())
+    }
+
+    // --- Data-provider read-throughs, so the companion's `PerBlockCache`
+    //     reads through the stored trait object rather than holding a Python
+    //     provider mirror (the Balancer `_HandleRateProviderAdapter` shape).
+    //     No provider stored — or a provider error — answers `None`/empty, so
+    //     the Python calc path raises the `MissingCurveData` it already
+    //     expects. ---
+
+    fn fetch_block_number(&self, py: Python<'_>) -> Option<u64> {
+        self.curve_provider(py)?.block_number().ok()
+    }
+
+    fn fetch_block_timestamp(&self, py: Python<'_>, block_number: u64) -> Option<u64> {
+        self.curve_provider(py)?.block_timestamp(block_number).ok()
+    }
+
+    fn fetch_token_balance(
+        &self,
+        py: Python<'_>,
+        token_address: &str,
+        holder_address: &str,
+        block_number: u64,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let Some(provider) = self.curve_provider(py) else {
+            return Ok(None);
+        };
+        let Ok(token) = address_utils::parse_address(token_address) else {
+            return Ok(None);
+        };
+        let Ok(holder) = address_utils::parse_address(holder_address) else {
+            return Ok(None);
+        };
+        match provider.token_balance(token, holder, block_number) {
+            Ok(v) => Ok(Some(crate::conversion::alloy::u256_to_py(py, &v)?.unbind())),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn fetch_token_total_supply(
+        &self,
+        py: Python<'_>,
+        token_address: &str,
+        block_number: u64,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let Some(provider) = self.curve_provider(py) else {
+            return Ok(None);
+        };
+        let Ok(token) = address_utils::parse_address(token_address) else {
+            return Ok(None);
+        };
+        match provider.token_total_supply(token, block_number) {
+            Ok(v) => Ok(Some(crate::conversion::alloy::u256_to_py(py, &v)?.unbind())),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn fetch_lending_rates(&self, py: Python<'_>, block_number: u64) -> PyResult<Py<PyAny>> {
+        self.read_provider_vec(py, |p| p.lending_rates(block_number))
+    }
+
+    fn fetch_d(&self, py: Python<'_>, block_number: u64) -> PyResult<Option<Py<PyAny>>> {
+        self.read_provider_opt(py, |p| p.invariant_d(block_number))
+    }
+
+    fn fetch_gamma(&self, py: Python<'_>, block_number: u64) -> PyResult<Option<Py<PyAny>>> {
+        self.read_provider_opt(py, |p| p.gamma(block_number))
+    }
+
+    fn fetch_price_scale(&self, py: Python<'_>, block_number: u64) -> PyResult<Py<PyAny>> {
+        self.read_provider_vec(py, |p| p.price_scale(block_number))
+    }
+
+    fn fetch_admin_balances(&self, py: Python<'_>, block_number: u64) -> PyResult<Py<PyAny>> {
+        self.read_provider_vec(py, |p| p.admin_balances(block_number))
+    }
+
+    fn fetch_redemption_price(
+        &self,
+        py: Python<'_>,
+        block_number: u64,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        self.read_provider_opt(py, |p| p.redemption_price(block_number))
+    }
+
+    fn fetch_base_cache_updated(&self, py: Python<'_>, block_number: u64) -> Option<u64> {
+        self.curve_provider(py)?
+            .base_cache_updated(block_number)
+            .ok()
+    }
+
+    fn fetch_base_virtual_price(
+        &self,
+        py: Python<'_>,
+        block_number: u64,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        self.read_provider_opt(py, |p| p.base_virtual_price(block_number))
+    }
+
+    fn fetch_virtual_price(
+        &self,
+        py: Python<'_>,
+        block_number: u64,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        self.read_provider_opt(py, |p| p.virtual_price(block_number))
+    }
+}
+
+/// The Balancer-weighted balance-vector arm of `Pool`, exposed to Python.
+#[pyclass(name = "BalancerWeightedView", module = "degenbot._ffi")]
+pub struct PyBalancerWeightedView {
+    pool: PyLiquidityPool,
+}
+
+impl PyBalancerWeightedView {
+    /// The Balancer-weighted identity for this handle, mapped through `f` —
+    /// [`PyCurveView::identity`]'s contract, over this arm's slice.
+    fn identity<U>(
+        &self,
+        py: Python<'_>,
+        f: impl FnOnce(&BalancerWeightedPoolIdentity) -> U + Send,
+    ) -> PyResult<U>
+    where
+        U: Send,
+    {
+        self.pool.require_slice(py, f)
+    }
+}
+
+#[pymethods]
+impl PyBalancerWeightedView {
+    /// The pool's token companion handles, resolved via the shared `BotState`
+    /// token registry. `None` when a token is not registered (the caller
+    /// pre-registers them via `Bot.register_token`).
+    fn get_tokens(&self, py: Python<'_>) -> PyResult<Option<Vec<PyErc20Token>>> {
+        let tokens = self.identity(py, |id| id.tokens.clone())?;
+        let core = Arc::clone(&self.pool.core);
+        Ok(self
+            .pool
+            .with_state(py, move |state| token_handles(state, &core, &tokens)))
+    }
+
+    /// Balancer V2 pool contract address (EIP-55 checksummed hex).
+    #[getter]
+    fn address(&self, py: Python<'_>) -> PyResult<String> {
+        self.identity(py, |id| {
+            address_utils::address_to_checksum_string(&id.address)
+        })
+    }
+
+    /// Balancer V2 vault contract address (EIP-55 checksummed hex).
+    #[getter]
+    fn vault(&self, py: Python<'_>) -> PyResult<String> {
+        self.identity(py, |id| {
+            address_utils::address_to_checksum_string(&id.vault)
+        })
+    }
+
+    /// Balancer V2 pool ID (32-byte hex, ``0x``-prefixed).
+    #[getter]
+    fn pool_id_hex(&self, py: Python<'_>) -> PyResult<String> {
+        self.identity(py, |id| alloy::hex::encode_prefixed(id.pool_id))
+    }
+
+    /// Balancer weighted denormalized weights (one `U256` per token).
+    #[getter]
+    fn weights(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let weights = self.identity(py, |id| id.weights.to_vec())?;
+        u256_list(py, &weights)
+    }
+
+    /// Balancer weighted scaling factors (one `U256` per token).
+    #[getter]
+    fn scaling_factors(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let factors = self.identity(py, |id| id.scaling_factors.to_vec())?;
+        u256_list(py, &factors)
+    }
+
+    /// Balancer weighted swap fee (fixed-point, 1e18 scale).
+    #[getter]
+    fn swap_fee(&self, py: Python<'_>) -> PyResult<u128> {
+        self.identity(py, |id| id.swap_fee)
+    }
+
+    /// Balancer weighted Math pool implementation version (1 or 2).
+    #[getter]
+    fn pow_version(&self, py: Python<'_>) -> PyResult<u8> {
+        self.identity(py, |id| id.pow_version)
+    }
+}
+
+/// The Balancer-stable balance-vector arm of `Pool`, exposed to Python.
+#[pyclass(name = "BalancerStableView", module = "degenbot._ffi")]
+pub struct PyBalancerStableView {
+    pool: PyLiquidityPool,
+}
+
+impl PyBalancerStableView {
+    /// The Balancer-stable identity for this handle, mapped through `f` —
+    /// [`PyCurveView::identity`]'s contract, over this arm's slice.
+    fn identity<U>(
+        &self,
+        py: Python<'_>,
+        f: impl FnOnce(&BalancerStablePoolIdentity) -> U + Send,
+    ) -> PyResult<U>
+    where
+        U: Send,
+    {
+        self.pool.require_slice(py, f)
+    }
+
+    /// The Balancer-stable state for this handle — [`Self::identity`]'s
+    /// mutable-slice twin.
+    fn state<U>(
+        &self,
+        py: Python<'_>,
+        f: impl FnOnce(&BalancerStablePoolState) -> U + Send,
+    ) -> PyResult<U>
+    where
+        U: Send,
+    {
+        self.pool.require_slice(py, f)
+    }
+}
+
+#[pymethods]
+impl PyBalancerStableView {
+    /// The pool's token companion handles (one per token, including BPT for
+    /// Composable). `None` when a token is not registered (the caller
+    /// pre-registers them via `Bot.register_token`).
+    fn get_tokens(&self, py: Python<'_>) -> PyResult<Option<Vec<PyErc20Token>>> {
+        let tokens = self.identity(py, |id| id.tokens.clone())?;
+        let core = Arc::clone(&self.pool.core);
+        Ok(self
+            .pool
+            .with_state(py, move |state| token_handles(state, &core, &tokens)))
+    }
+
+    /// The BPT index for a `ComposableStable` pool. `None` for a `MetaStable`
+    /// pool, where the absent BPT index is a valid value — `invariant_version`
+    /// distinguishes the two.
+    #[getter]
+    fn bpt_index(&self, py: Python<'_>) -> PyResult<Option<usize>> {
+        self.identity(py, |id| id.bpt_idx)
+    }
+
+    /// Amplification coefficient `amp` (immutable after registration in this
+    /// plan — A ramping is resolved by the builder at registration).
+    #[getter]
+    fn amp(&self, py: Python<'_>) -> PyResult<u128> {
+        self.identity(py, |id| id.amp)
+    }
+
+    /// `invariant_version` discriminator (1 = V1 always-roundDown `D_P`
+    /// accumulation; 2 = V2 roundUp-param `P_D` accumulation) — the
+    /// systematic-1-wei-error guard.
+    #[getter]
+    fn invariant_version(&self, py: Python<'_>) -> PyResult<u8> {
+        self.identity(py, |id| id.invariant_version)
+    }
+
+    /// Balancer V2 stable pool's Vault singleton (EIP-55 checksummed).
+    #[getter]
+    fn vault(&self, py: Python<'_>) -> PyResult<String> {
+        self.identity(py, |id| {
+            address_utils::address_to_checksum_string(&id.vault)
+        })
+    }
+
+    /// Balancer V2 stable pool ID (32-byte hex, ``0x``-prefixed).
+    #[getter]
+    fn pool_id_hex(&self, py: Python<'_>) -> PyResult<String> {
+        self.identity(py, |id| alloy::hex::encode_prefixed(id.pool_id))
+    }
+
+    /// Balancer stable scaling factors (one ``U256`` per token,
+    /// rate-multiplied).
+    #[getter]
+    fn scaling_factors(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let factors = self.identity(py, |id| id.scaling_factors.to_vec())?;
+        u256_list(py, &factors)
+    }
+
+    /// Balancer stable swap fee (fraction of `FEE_DENOMINATOR=1e18`).
+    #[getter]
+    fn swap_fee(&self, py: Python<'_>) -> PyResult<u128> {
+        self.identity(py, |id| id.swap_fee)
+    }
+
+    /// Whether the stored rate provider is static (performs no I/O) — `True`
+    /// when no provider was registered (the static ``1e18`` fallback). Drives
+    /// the Python companion's `requires_io_at_calculation_time` /
+    /// `_should_warn_stale_rates` flags.
+    #[getter]
+    fn rate_provider_is_static(&self, py: Python<'_>) -> PyResult<bool> {
+        self.state(py, |state| {
+            state
+                .rate_provider
+                .as_ref()
+                .is_none_or(|provider| provider.is_static())
+        })
+    }
+
+    /// Fetch rates from the stored rate provider at ``block_identifier``
+    /// (``None`` ⇔ latest), falling back to the static ``1e18`` per token when
+    /// none was registered.
+    ///
+    /// Raises:
+    ///     `ValueError`: If the dynamic provider fetch failed.
+    fn fetch_rates(&self, py: Python<'_>, block_identifier: Option<u64>) -> PyResult<Vec<u128>> {
+        let provider = self.state(py, |state| state.rate_provider.clone())?;
+        let Some(provider) = provider else {
+            // Static 1e18 fallback — one per token.
+            let n_tokens = self.identity(py, |id| id.tokens.len())?;
+            return Ok(vec![1_000_000_000_000_000_000u128; n_tokens]);
+        };
+        let rates = provider
+            .get_rates(block_identifier)
+            .map_err(|_e| pyo3::exceptions::PyValueError::new_err("rate provider fetch failed"))?;
+        Ok(rates.into_iter().map(|r| r.to::<u128>()).collect())
     }
 }

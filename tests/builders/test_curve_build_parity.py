@@ -319,23 +319,23 @@ def test_build_curve_pool_plain_over_offline_cassette() -> None:
     assert handle is not None
     assert handle.pool_family == "curve"
 
-    assert handle.curve_a_coefficient == 2000
-    assert handle.curve_fee == 1_000_000
-    assert handle.curve_admin_fee == 500_000_000
+    assert handle.curve().a_coefficient == 2000
+    assert handle.curve().fee == 1_000_000
+    assert handle.curve().admin_fee == 500_000_000
     assert handle.balance_vector().balances == [1_000_000, 2_000_000]
 
     r30 = 10**30
     r12 = 10**12
-    assert handle.curve_rate_multipliers == [r30, r30]
-    assert handle.curve_precision_multipliers == [r12, r12]
+    assert handle.curve().rate_multipliers == [r30, r30]
+    assert handle.curve().precision_multipliers == [r12, r12]
 
     # Strategy defaults for a plain, unmapped pool.
-    assert handle.curve_swap_style == 1  # STANDARD
-    assert handle.curve_lending_rate_style == 1  # NONE
-    assert handle.curve_d_variant == 1
+    assert handle.curve().swap_style == 1  # STANDARD
+    assert handle.curve().lending_rate_style == 1  # NONE
+    assert handle.curve().d_variant == 1
 
     # The Rust `RpcCurveDataProvider` is attached to the handle.
-    assert handle.curve_has_data_provider is True
+    assert handle.curve().has_data_provider is True
 
 
 def test_build_curve_pool_metapool_over_offline_cassette() -> None:
@@ -355,12 +355,12 @@ def test_build_curve_pool_metapool_over_offline_cassette() -> None:
     handle = py_bot.get_pool(pool_id)
     assert handle is not None
     assert handle.pool_family == "curve"
-    assert handle.get_curve_tokens() is None  # ERC20 companions not registered here
+    assert handle.curve().get_tokens() is None  # ERC20 companions not registered here
 
     # Base pool + underlying coins + LP token recovered by Rust detection.
-    assert handle.curve_base_pool_address() == TRIPOOL
-    assert handle.curve_metapool_rate_style == 1  # default for unmapped address
-    assert handle.curve_metapool_underlying_style == 1
+    assert handle.curve().base_pool_address() == TRIPOOL
+    assert handle.curve().metapool_rate_style == 1  # default for unmapped address
+    assert handle.curve().metapool_underlying_style == 1
 
 
 def test_build_curve_pool_lending_ctoken_over_offline_cassette() -> None:
@@ -383,9 +383,9 @@ def test_build_curve_pool_lending_ctoken_over_offline_cassette() -> None:
 
     # cToken coin0: from underlying 6 decimals → pm 10^12, rate 10^30.
     # plain coin1: 18 decimals → pm 10^0, rate 10^18.
-    assert handle.curve_precision_multipliers == [10**12, 10**0]
-    assert handle.curve_rate_multipliers == [10**30, 10**18]
-    assert handle.curve_use_lending == [True, False]
+    assert handle.curve().precision_multipliers == [10**12, 10**0]
+    assert handle.curve().rate_multipliers == [10**30, 10**18]
+    assert handle.curve().use_lending == [True, False]
 
 
 def test_curve_pool_builder_build_matches_rust_path_over_cassette() -> None:
@@ -423,14 +423,14 @@ def test_curve_pool_builder_build_matches_rust_path_over_cassette() -> None:
 
     # Identity state must be identical across the two consumers of the Rust
     # core: the Rust handle (Path A) and the Python companion (Path B).
-    assert pool.a_coefficient == handle_a.curve_a_coefficient == 2000
-    assert pool.fee == handle_a.curve_fee == 1_000_000
-    assert pool.admin_fee == handle_a.curve_admin_fee == 500_000_000
+    assert pool.a_coefficient == handle_a.curve().a_coefficient == 2000
+    assert pool.fee == handle_a.curve().fee == 1_000_000
+    assert pool.admin_fee == handle_a.curve().admin_fee == 500_000_000
     assert (
         tuple(pool.balances) == tuple(handle_a.balance_vector().balances) == (1_000_000, 2_000_000)
     )
-    assert tuple(pool.rate_multipliers) == tuple(handle_a.curve_rate_multipliers)
-    assert tuple(pool.precision_multipliers) == tuple(handle_a.curve_precision_multipliers)
+    assert tuple(pool.rate_multipliers) == tuple(handle_a.curve().rate_multipliers)
+    assert tuple(pool.precision_multipliers) == tuple(handle_a.curve().precision_multipliers)
     assert pool.rate_multipliers[0] == 10**30
     assert len(pool.tokens) == 2
 
@@ -519,7 +519,7 @@ def test_curve_pool_builder_build_metapool_recurses_base_over_cassette() -> None
     Drives the builder on a metapool whose second coin is the 3Crv LP. The
     Rust `build_curve_pool` detects the metapool + underlying coins, then the
     builder's `_resolve_metapool_base` recursively builds the tripool base pool
-    in the SAME `Bot`, so the metapool handle's `curve_base_pool()` go-between
+    in the SAME `Bot`, so the metapool handle's `curve().base_pool()` go-between
     resolves. Asserts the metapool companion's base pool + underlying coins are
     recovered, and its identity params equal the direct Rust path.
     """
@@ -533,7 +533,7 @@ def test_curve_pool_builder_build_metapool_recurses_base_over_cassette() -> None
     bot_a.attach_construction_io(provider_a, None)
     handle_a = bot_a.get_pool(bot_a.build_curve_pool(META, list(_REGISTRY_ADDRESSES), _BLOCK))
     assert handle_a is not None
-    assert handle_a.curve_base_pool_address() == TRIPOOL
+    assert handle_a.curve().base_pool_address() == TRIPOOL
 
     # Path B — the retargeted builder, over the same cassette.
     provider_b = RustAlloyProvider.offline_from_json_string(_metapool_build_cassette_json())
@@ -565,7 +565,7 @@ def test_curve_pool_builder_build_metapool_recurses_base_over_cassette() -> None
         USDT.lower(),
     ]
     # Identity params equal the direct Rust path.
-    assert pool.a_coefficient == handle_a.curve_a_coefficient == 500
-    assert pool.fee == handle_a.curve_fee == 1_000_000
-    assert pool.admin_fee == handle_a.curve_admin_fee == 500_000_000
+    assert pool.a_coefficient == handle_a.curve().a_coefficient == 500
+    assert pool.fee == handle_a.curve().fee == 1_000_000
+    assert pool.admin_fee == handle_a.curve().admin_fee == 500_000_000
     assert tuple(pool.balances) == tuple(handle_a.balance_vector().balances)

@@ -20,6 +20,7 @@ from .types import (
 )
 
 if TYPE_CHECKING:
+    from degenbot._ffi import BalancerStableView
     from degenbot.types import Pool
     from degenbot.types.chain import ChecksummedAddress
 
@@ -60,24 +61,21 @@ class _HandleRateProviderAdapter:
     provider is dynamic (the sealed seam keeps the provider in Rust, not on
     the companion). Exposes the ``get_rates`` surface so callers that hold a
     reference to ``pool.rate_provider`` keep working; the canonical read path
-    is ``_resolve_scaling_factors`` (which calls the handle directly).
+    is ``_resolve_scaling_factors`` (which calls the arm directly).
     """
 
-    def __init__(self, py_pool: Pool) -> None:
-        self._py_pool = py_pool
+    def __init__(self, arm: BalancerStableView) -> None:
+        self._arm = arm
 
     def get_rates(self, block_identifier: int | str | None = None) -> tuple[int, ...]:
-        """Fetch rates via the handle (delegates to the Rust trait object).
+        """Fetch rates via the arm (delegates to the Rust trait object).
 
         Returns:
             The per-token rates at the requested block.
 
         """
         block_opt = block_identifier if isinstance(block_identifier, int) else None
-        rates = self._py_pool.fetch_balancer_stable_rates(block_opt)
-        if rates is None:  # pragma: no cover — rate_provider is non-None
-            return ()
-        return tuple(rates)
+        return tuple(self._arm.fetch_rates(block_opt))
 
 
 class BalancerV2StablePool(AbstractLiquidityPool):
@@ -124,6 +122,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
     pool_specialization: int
     vault: ChecksummedAddress
     _py_pool: Pool
+    _arm: BalancerStableView
     _tokens: tuple[Erc20Token, ...]
     scaling_factors: tuple[int, ...]
     fee: Fraction
@@ -166,7 +165,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         identity field (vault, pool_id, tokens, amp, scaling_factors,
         swap_fee, bpt_idx, invariant_version) is read off the handle; the rate
         provider is the stored I/O trait object (queried via
-        ``fetch_balancer_stable_rates`` / ``balancer_stable_rate_provider_is_static``);
+        ``balancer_stable().fetch_rates`` / ``balancer_stable().rate_provider_is_static``);
         base scaling factors are derived from token decimals.
 
         Returns:
@@ -180,38 +179,42 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         self = cls.__new__(cls)
         self._py_pool = py_pool
 
-        if py_pool.pool_family != "balancer-stable":
-            msg = (
-                "Pool handle is not a Balancer stable pool "
-                f"(got pool_family {py_pool.pool_family!r})"
-            )
-            raise DegenbotValueError(message=msg)
+        # The arm accessor IS the family gate: `Pool.balancer_stable()` refuses
+        # a handle registered under any other family (including the
+        # Balancer-weighted sibling), so a wrong-family handle never reaches
+        # the identity reads below.
+        try:
+            arm = py_pool.balancer_stable()
+        except ValueError as exc:
+            msg = f"Pool handle is not a Balancer stable pool: {exc}"
+            raise DegenbotValueError(message=msg) from exc
+        self._arm = arm
 
-        self.address = get_checksum_address(py_pool.balancer_stable_vault)
+        self.address = get_checksum_address(arm.vault)
         # The vault IS the address book entry; the pool address is encoded
         # in the pool_id. Resolve the pool address off the pool_id.
-        self.vault = get_checksum_address(py_pool.balancer_stable_vault)
+        self.vault = get_checksum_address(arm.vault)
 
-        pool_id_hex = py_pool.balancer_stable_pool_id_hex.removeprefix("0x")
+        pool_id_hex = arm.pool_id_hex.removeprefix("0x")
         self.pool_id = bytes.fromhex(pool_id_hex)
         self.pool_specialization = int.from_bytes(self.pool_id[20:22], byteorder="big")
         # Pool address = first 20 bytes of the pool_id.
         self.address = get_checksum_address("0x" + self.pool_id[:20].hex())
 
-        py_tokens = py_pool.get_balancer_stable_tokens()
+        py_tokens = arm.get_tokens()
         if py_tokens is None:
             msg = (
                 "pool tokens must be registered in the same Bot as the pool "
-                "(ADR-006): get_balancer_stable_tokens returned None"
+                "(ADR-006): balancer_stable().get_tokens returned None"
             )
             raise DegenbotValueError(message=msg)
         self._tokens = tuple(Erc20Token.from_handle(t) for t in py_tokens)
 
-        self.amp = py_pool.balancer_amp
-        self.bpt_idx = py_pool.balancer_bpt_index
-        self.invariant_version = py_pool.balancer_invariant_version
+        self.amp = arm.amp
+        self.bpt_idx = arm.bpt_index
+        self.invariant_version = arm.invariant_version
 
-        swap_fee_scaled = py_pool.balancer_stable_swap_fee
+        swap_fee_scaled = arm.swap_fee
         self.fee = (
             Fraction(swap_fee_scaled, self.FEE_DENOMINATOR)
             if self.FEE_DENOMINATOR != 0
@@ -220,7 +223,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
 
         # Full scaling factors (rate-multiplied) live on the Rust identity;
         # read under one lock as ints.
-        self.scaling_factors = tuple(int(x) for x in py_pool.balancer_stable_scaling_factors)
+        self.scaling_factors = tuple(int(x) for x in arm.scaling_factors)
 
         # Base scaling factors: decimal-adjustment-only (10^(18-dec)).
         self._base_scaling_factors = tuple(_compute_scaling_factor(token) for token in self._tokens)
@@ -229,7 +232,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         # holds a direct Python reference — it queries the handle (which
         # re-enters the Py adapter for dynamic providers, returns the static
         # 1e18 fallback for the no-provider case).
-        self._rate_provider_is_static = py_pool.balancer_stable_rate_provider_is_static
+        self._rate_provider_is_static = arm.rate_provider_is_static
 
         return self
 
@@ -309,7 +312,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         """
         if self._rate_provider_is_static:
             return None
-        return _HandleRateProviderAdapter(self._py_pool)
+        return _HandleRateProviderAdapter(self._arm)
 
     @property
     def requires_io_at_calculation_time(self) -> bool:
@@ -330,14 +333,11 @@ class BalancerV2StablePool(AbstractLiquidityPool):
 
         If a live rate provider is available, fetches rates for the block
         and computes scaling factors as base_sf * rate // ONE (mulDown).
-        Otherwise, falls back to construction-time scaling factors.
+        Otherwise, falls back to construction-time scaling factors. A failed
+        dynamic-provider fetch surfaces as the arm's `ValueError`.
 
         Returns:
             The computed value.
-
-        Raises:
-            DegenbotValueError: If no rate provider is available on the
-                handle.
 
         """
         if self._rate_provider_is_static:
@@ -346,10 +346,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         # Resolve block_identifier -> Option<u64> for the Rust trait object.
         # A str ("latest") or None maps to None (latest); an int maps to Some.
         block_opt = block_identifier if isinstance(block_identifier, int) else None
-        rates = self._py_pool.fetch_balancer_stable_rates(block_opt)
-        if rates is None:
-            msg = "no Balancer stable rate provider available"
-            raise DegenbotValueError(message=msg)
+        rates = self._arm.fetch_rates(block_opt)
         return cast(
             "tuple[int, ...]",
             tuple(

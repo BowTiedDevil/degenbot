@@ -136,7 +136,9 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
         # check every ``from_handle`` seam uses (``pool_family`` dispatches on
         # the ``PoolEntry`` variant directly, so it is correct for every
         # registered family; the V2-only ``variant`` getter returns ``""`` for
-        # non-V2 and can't serve as a cross-family guard).
+        # non-V2 and can't serve as a cross-family guard). `reserve_pair()` is
+        # shape-level (V2 + Aerodrome V2), so the arm cannot carry this species
+        # split either — the tag is the class-dispatch decision.
         if py_pool.pool_family != "v2":
             msg = (
                 "Pool handle is not a V2-family pool "

@@ -1267,11 +1267,11 @@ class TestSharedStateTopologyBalancerStable:
         assert handle.balance_vector().n_tokens == 3
         assert handle.balance_vector().balances == list(BALANCER_STABLE_BALANCES)
         # BPT-index round-trip — Composable → Some(2).
-        assert handle.balancer_bpt_index == BALANCER_STABLE_BPT_INDEX
+        assert handle.balancer_stable().bpt_index == BALANCER_STABLE_BPT_INDEX
         # invariant_version round-trip — V1 (always-roundDown).
-        assert handle.balancer_invariant_version == BALANCER_STABLE_INVARIANT_VERSION_V1
+        assert handle.balancer_stable().invariant_version == BALANCER_STABLE_INVARIANT_VERSION_V1
         # amp immutable at registration.
-        assert handle.balancer_amp == BALANCER_STABLE_AMP
+        assert handle.balancer_stable().amp == BALANCER_STABLE_AMP
         # update_block falls through every family — a 12c stable slot is now
         # read by the family-falling-through getter too.
         assert _update_block(handle) == 10
@@ -1298,8 +1298,8 @@ class TestSharedStateTopologyBalancerStable:
         )
         handle = core.get_pool(pool_id)
         assert handle is not None
-        assert handle.balancer_bpt_index is None
-        assert handle.balancer_invariant_version == BALANCER_STABLE_INVARIANT_VERSION_V2
+        assert handle.balancer_stable().bpt_index is None
+        assert handle.balancer_stable().invariant_version == BALANCER_STABLE_INVARIANT_VERSION_V2
 
     def test_balancer_stable_apply_balance_update_is_visible_to_handle_reads(self) -> None:
         """A Balancer stable ``apply_balancer_stable_balance_update`` write is
@@ -1389,9 +1389,13 @@ class TestSharedStateTopologyBalancerStable:
         assert v3_handle.concentrated_liquidity().sqrt_price_x96 == V3_SQRT_PRICE
         assert v3_handle.concentrated_liquidity().liquidity == V3_LIQUIDITY
 
-    def test_balancer_stable_snapshot_returns_none_for_curve_pool(self) -> None:
-        """``snapshot_balancer_stable()`` returns ``None`` on non-Balancer-
-        stable pools (family-dispatching reader analogue)."""
+    def test_balancer_stable_arm_refuses_a_curve_pool(self) -> None:
+        """``Pool.balancer_stable()`` refuses a Curve handle.
+
+        The arm is the family gate: a Curve pool cannot answer Balancer-stable
+        state at all, so there is no wrong-family sentinel for a caller to
+        mistake for live state.
+        """
         core = Bot()
         curve_pool_id = core.register_curve_pool(
             address=CURVE_POOL_A,
@@ -1407,6 +1411,5 @@ class TestSharedStateTopologyBalancerStable:
         curve_handle = core.get_pool(curve_pool_id)
         assert curve_handle is not None
         assert curve_handle.structure() == "balance_vector"
-        # balancer_amp / balancer_invariant_version read 0 on a non-stable pool.
-        assert curve_handle.balancer_amp == 0
-        assert curve_handle.balancer_invariant_version == 0
+        with pytest.raises(ValueError, match="balancer-stable"):
+            curve_handle.balancer_stable()

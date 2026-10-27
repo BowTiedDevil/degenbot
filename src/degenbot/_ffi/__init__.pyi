@@ -749,6 +749,123 @@ class BalancerFamily:
     def __ne__(self, value: object, /) -> bool: ...
 
 @final
+class BalancerStableView:
+    """
+    The Balancer-stable balance-vector arm of `Pool`, exposed to Python.
+    """
+    @property
+    def amp(self, /) -> int:
+        """
+        Amplification coefficient `amp` (immutable after registration in this
+        plan — A ramping is resolved by the builder at registration).
+        """
+    @property
+    def bpt_index(self, /) -> int | None:
+        """
+        The BPT index for a `ComposableStable` pool. `None` for a `MetaStable`
+        pool, where the absent BPT index is a valid value — `invariant_version`
+        distinguishes the two.
+        """
+    def fetch_rates(self, /, block_identifier: SupportsIndex | None) -> list[int]:
+        """
+        Fetch rates from the stored rate provider at ``block_identifier``
+        (``None`` ⇔ latest), falling back to the static ``1e18`` per token when
+        none was registered.
+
+        Raises:
+            `ValueError`: If the dynamic provider fetch failed.
+        """
+    def get_tokens(self, /) -> list[Erc20Token] | None:
+        """
+        The pool's token companion handles (one per token, including BPT for
+        Composable). `None` when a token is not registered (the caller
+        pre-registers them via `Bot.register_token`).
+        """
+    @property
+    def invariant_version(self, /) -> int:
+        """
+        `invariant_version` discriminator (1 = V1 always-roundDown `D_P`
+        accumulation; 2 = V2 roundUp-param `P_D` accumulation) — the
+        systematic-1-wei-error guard.
+        """
+    @property
+    def pool_id_hex(self, /) -> str:
+        """
+        Balancer V2 stable pool ID (32-byte hex, ``0x``-prefixed).
+        """
+    @property
+    def rate_provider_is_static(self, /) -> bool:
+        """
+        Whether the stored rate provider is static (performs no I/O) — `True`
+        when no provider was registered (the static ``1e18`` fallback). Drives
+        the Python companion's `requires_io_at_calculation_time` /
+        `_should_warn_stale_rates` flags.
+        """
+    @property
+    def scaling_factors(self, /) -> Any:
+        """
+        Balancer stable scaling factors (one ``U256`` per token,
+        rate-multiplied).
+        """
+    @property
+    def swap_fee(self, /) -> int:
+        """
+        Balancer stable swap fee (fraction of `FEE_DENOMINATOR=1e18`).
+        """
+    @property
+    def vault(self, /) -> str:
+        """
+        Balancer V2 stable pool's Vault singleton (EIP-55 checksummed).
+        """
+
+@final
+class BalancerWeightedView:
+    """
+    The Balancer-weighted balance-vector arm of `Pool`, exposed to Python.
+    """
+    @property
+    def address(self, /) -> str:
+        """
+        Balancer V2 pool contract address (EIP-55 checksummed hex).
+        """
+    def get_tokens(self, /) -> list[Erc20Token] | None:
+        """
+        The pool's token companion handles, resolved via the shared `BotState`
+        token registry. `None` when a token is not registered (the caller
+        pre-registers them via `Bot.register_token`).
+        """
+    @property
+    def pool_id_hex(self, /) -> str:
+        """
+        Balancer V2 pool ID (32-byte hex, ``0x``-prefixed).
+        """
+    @property
+    def pow_version(self, /) -> int:
+        """
+        Balancer weighted Math pool implementation version (1 or 2).
+        """
+    @property
+    def scaling_factors(self, /) -> Any:
+        """
+        Balancer weighted scaling factors (one `U256` per token).
+        """
+    @property
+    def swap_fee(self, /) -> int:
+        """
+        Balancer weighted swap fee (fixed-point, 1e18 scale).
+        """
+    @property
+    def vault(self, /) -> str:
+        """
+        Balancer V2 vault contract address (EIP-55 checksummed hex).
+        """
+    @property
+    def weights(self, /) -> Any:
+        """
+        Balancer weighted denormalized weights (one `U256` per token).
+        """
+
+@final
 class BlockStream:
     """
     pyo3 async iterator over `newHeads` block notifications.
@@ -2714,6 +2831,216 @@ class ConstructionOutcome:
         """
 
 @final
+class CurveView:
+    """
+    The Curve balance-vector arm of `Pool`, exposed to Python.
+    """
+    @property
+    def a_coefficient(self, /) -> int:
+        """
+        Curve amplification coefficient `A` (raw).
+        """
+    def a_ramp(self, /) -> tuple[int | None, int | None, int | None, int | None, int | None]:
+        """
+        Curve A-ramping: `(initial_a, future_a, initial_a_time,
+        future_a_time, create_timestamp)` — `None` for a non-ramping pool.
+        Each element is the option value so a non-ramping pool reports `None`
+        for every field instead of a sentinel zero.
+        """
+    @property
+    def admin_fee(self, /) -> int:
+        """
+        Curve admin-fee share (`FEE_DENOMINATOR` units).
+        """
+    def base_pool(self, /) -> Pool | None:
+        """
+        **The go-between.** A `Pool` handle over this metapool's
+        *base pool*, sharing the same `BotState` core. Resolves the stored
+        `base_pool` address through the existing `pool_id_by_address` index — no
+        Python registry needed. `None` for plain pools or when the base pool
+        isn't registered. The companion recurses:
+        `CurveStableswapPool.from_handle(handle.curve().base_pool())`.
+        """
+    def base_pool_address(self, /) -> str | None:
+        """
+        Curve base-pool address (EIP-55 checksummed). `None` for plain pools.
+        """
+    def calc_token_amount(self, /, amounts: Any, deposit: bool, block_number: SupportsIndex) -> Any:
+        """
+        Rust-owned Curve `calc_token_amount(amounts, deposit, block_number)` on
+        this arm's pool — the single-call shape the companion
+        `CurveStableswapPool.calc_token_amount` delegates to. No Python provider
+        / cache / calculator on the path.
+        """
+    def calc_withdraw_one_coin(
+        self, /, token_amount: Any, i: SupportsIndex, block_number: SupportsIndex
+    ) -> Any:
+        """
+        Rust-owned Curve `calc_withdraw_one_coin(token_amount, i,
+        block_number)` on this arm's pool — the single-call shape the companion
+        `CurveStableswapPool.calc_withdraw_one_coin` delegates to. Returns only
+        the coin-`i` `dy` (the companion's extra tuple fields aren't consumed
+        anywhere).
+        """
+    def crypto_fees(self, /) -> tuple[int | None, int | None, int | None, int | None, int | None]:
+        """
+        Curve crypto-pool fees: `(fee_gamma, mid_fee, offpeg_fee_multiplier,
+        out_fee, gamma)` — `None` for a standard stableswap pool.
+        """
+    @property
+    def d_variant(self, /) -> int:
+        """
+        Curve `d_variant` discriminant.
+        """
+    @property
+    def fee(self, /) -> int:
+        """
+        Curve swap fee (`FEE_DENOMINATOR` units).
+        """
+    def fetch_admin_balances(self, /, block_number: SupportsIndex) -> Any: ...
+    def fetch_base_cache_updated(self, /, block_number: SupportsIndex) -> int | None: ...
+    def fetch_base_virtual_price(self, /, block_number: SupportsIndex) -> Any | None: ...
+    def fetch_block_number(self, /) -> int | None: ...
+    def fetch_block_timestamp(self, /, block_number: SupportsIndex) -> int | None: ...
+    def fetch_d(self, /, block_number: SupportsIndex) -> Any | None: ...
+    def fetch_gamma(self, /, block_number: SupportsIndex) -> Any | None: ...
+    def fetch_lending_rates(self, /, block_number: SupportsIndex) -> Any: ...
+    def fetch_price_scale(self, /, block_number: SupportsIndex) -> Any: ...
+    def fetch_redemption_price(self, /, block_number: SupportsIndex) -> Any | None: ...
+    def fetch_token_balance(
+        self, /, token_address: str, holder_address: str, block_number: SupportsIndex
+    ) -> Any | None: ...
+    def fetch_token_total_supply(
+        self, /, token_address: str, block_number: SupportsIndex
+    ) -> Any | None: ...
+    def fetch_virtual_price(self, /, block_number: SupportsIndex) -> Any | None: ...
+    def get_dy(
+        self,
+        /,
+        i: SupportsIndex,
+        j: SupportsIndex,
+        dx: Any,
+        block_number: SupportsIndex,
+        override_balances: Any | None = None,
+    ) -> Any:
+        """
+        Rust-owned Curve stableswap `get_dy(i, j, dx, block_number,
+        override_balances)` on this arm's pool — the single-call shape the
+        companion `CurveStableswapPool.get_dy` delegates to. Mirrors
+        `PyBot.curve_get_dy` but bound to the handle's `pool_id`, so a swap runs
+        start-to-finish with no Python provider / cache / calculator.
+        """
+    def get_dy_underlying(
+        self,
+        /,
+        i: SupportsIndex,
+        j: SupportsIndex,
+        dx: Any,
+        block_number: SupportsIndex,
+        override_balances: Any | None = None,
+    ) -> Any:
+        """
+        Rust-owned Curve metapool `get_dy_underlying(i, j, dx, block_number,
+        override_balances)` on this arm's pool — the single-call shape the
+        companion `CurveStableswapPool._get_dy_underlying` delegates to.
+        Base-pool ops go through the Rust port (`BotCurveBasePoolPort`), so the
+        Python `_LazyBasePool` go-between is retired for the swap path.
+        """
+    def get_lp_token(self, /) -> Erc20Token | None:
+        """
+        The pool's dedicated LP-token companion handle. `None` ⇔ the pool token
+        is itself the LP (the common plain-pool case; the companion falls back to
+        `tokens[0]`), or the LP token is not registered.
+        """
+    def get_tokens(self, /) -> list[Erc20Token] | None:
+        """
+        The pool's token companion handles, resolved via the shared `BotState`
+        token registry. `None` when a token is not registered (the companion
+        wraps each via `Erc20Token.from_handle`).
+        """
+    def get_tokens_underlying(self, /) -> list[Erc20Token] | None:
+        """
+        The pool's *underlying* token companion handles (metapool coins beneath
+        the base-pool intermediaries). `None` for a plain pool, or when an
+        underlying token is not registered.
+        """
+    @property
+    def has_data_provider(self, /) -> bool:
+        """
+        Whether a Curve data-provider I/O trait object is stored on this pool's
+        state. `False` for a Curve pool registered without a provider (the
+        no-I/O fixture case).
+        """
+    @property
+    def lending_rate_style(self, /) -> int:
+        """
+        Curve `lending_rate_style` discriminant.
+        """
+    def lp_token(self, /) -> str | None:
+        """
+        Curve dedicated LP token address (EIP-55 checksummed) — `None` when the
+        pool token itself is the LP.
+        """
+    def lp_token_address(self, /) -> str | None:
+        """
+        The pool's raw dedicated LP-token address, or `None` if the pool token is
+        itself the LP. Not registration-gated (twin of `token_addresses`).
+        """
+    @property
+    def metapool_rate_style(self, /) -> int:
+        """
+        Curve `metapool_rate_style` discriminant.
+        """
+    @property
+    def metapool_underlying_style(self, /) -> int:
+        """
+        Curve `metapool_underlying_style` discriminant.
+        """
+    @property
+    def precision_multipliers(self, /) -> Any:
+        """
+        Curve per-token `precision_multipliers` (one `U256` per token).
+        """
+    @property
+    def rate_multipliers(self, /) -> Any:
+        """
+        Curve rate multipliers (one `U256` per token).
+        """
+    @property
+    def swap_style(self, /) -> int:
+        """
+        Curve `swap_style` discriminant (`PoolStrategies.swap_style.value`).
+        """
+    def token_addresses(self, /) -> list[str]:
+        """
+        The pool's raw ERC-20 coin addresses in canonical order. Unlike
+        `get_tokens`, this does NOT require the tokens to be registered
+        first — it is the builder/companion-orchestration seam that lets a caller
+        construct ERC20 companions *before* `from_handle`.
+        """
+    def token_addresses_underlying(self, /) -> list[str] | None:
+        """
+        The pool's raw *underlying* coin addresses (metapool coins beneath the
+        base-pool intermediaries). `None` for a plain pool. Not
+        registration-gated (twin of `token_addresses`).
+        """
+    @property
+    def use_lending(self, /) -> list[bool]:
+        """
+        Curve per-token `use_lending` flags.
+        """
+    @property
+    def y_variant(self, /) -> int:
+        """
+        Curve `y_variant` discriminant.
+        """
+    @property
+    def yd_variant(self, /) -> int:
+        """
+        Curve `yd_variant` discriminant.
+        """
+
+@final
 class Erc20Token:
     """
     A thin Python handle to a token registered in `BotState`.
@@ -3055,109 +3382,15 @@ class Pool:
         """
         Structural balance-vector snapshot. Family mismatch is a loud refusal.
         """
-    @property
-    def balancer_address(self, /) -> str:
+    def balancer_stable(self, /) -> BalancerStableView:
         """
-        Balancer V2 pool contract address (EIP-55 checksummed hex).
-        Empty string if not a Balancer weighted pool.
+        The Balancer-stable balance-vector arm. Refuses a handle registered under
+        any other family, including the Balancer-weighted sibling.
         """
-    @property
-    def balancer_amp(self, /) -> int:
+    def balancer_weighted(self, /) -> BalancerWeightedView:
         """
-        Amplification coefficient `amp` for a Balancer stable pool (immutable
-        after registration in this plan — A ramping is a future, non-epic
-        concern resolved by the builder at registration).
-        Returns 0 if this `pool_id` is not registered as a Balancer stable pool.
-        """
-    @property
-    def balancer_bpt_index(self, /) -> int | None:
-        """
-        Token count for a Balancer stable pool (`balances.len()` — includes
-        BPT for Composable pools).
-        including BPT for Composable pools).
-        Returns an empty list if this `pool_id` is not registered as a Balancer
-        `Some(i)` for `ComposableStablePools`.
-        Returns `None` if this `pool_id` is not registered as a Balancer stable
-        pool (also a valid value for a registered `MetaStable` — see the
-        `invariant_version` getter to distinguish).
-        """
-    @property
-    def balancer_invariant_version(self, /) -> int:
-        """
-        `invariant_version` discriminator (1 = V1 always-roundDown `D_P`
-        accumulation; 2 = V2 roundUp-param `P_D` accumulation) — the
-        systematic-1-wei-error guard.
-        Returns 0 if this `pool_id` is not registered as a Balancer stable pool.
-        """
-    @property
-    def balancer_pool_id_hex(self, /) -> str:
-        """
-        Balancer V2 pool ID (32-byte hex, ``0x``-prefixed). Empty string if
-        not a Balancer weighted pool.
-        """
-    @property
-    def balancer_pow_version(self, /) -> int:
-        """
-        Balancer weighted Math pool implementation version (1 or 2). 0 if not
-        a Balancer weighted pool.
-        """
-    @property
-    def balancer_scaling_factors(self, /) -> Any:
-        """
-        Balancer weighted scaling factors (one `U256` per token). Empty list
-        if not a Balancer weighted pool.
-        """
-    @property
-    def balancer_stable_pool_id_hex(self, /) -> str:
-        """
-        Balancer V2 stable pool ID (32-byte hex, ``0x``-prefixed). Empty string
-        if not a Balancer stable pool.
-        """
-    @property
-    def balancer_stable_rate_provider_is_static(self, /) -> bool:
-        """
-        Whether the stored Balancer stable rate provider is static (performs
-        no I/O). ``True`` when no provider was registered (the static
-        ``1e18`` fallback). Drives the Python companion's
-        ``requires_io_at_calculation_time`` / ``_should_warn_stale_rates``
-        flags. ``False`` if not a Balancer stable pool — a dynamic provider
-        is the more conservative default.
-        """
-    @property
-    def balancer_stable_scaling_factors(self, /) -> Any:
-        """
-        Balancer stable scaling factors (one ``U256`` per token,
-        rate-multiplied). Empty list if not a Balancer stable pool.
-        """
-    @property
-    def balancer_stable_swap_fee(self, /) -> int:
-        """
-        Balancer stable swap fee (fraction of `FEE_DENOMINATOR=1e18`). 0 if
-        not a Balancer stable pool.
-        """
-    @property
-    def balancer_stable_vault(self, /) -> str:
-        """
-        Balancer V2 stable pool's Vault singleton (EIP-55 checksummed). Empty
-        string if not a Balancer stable pool.
-        """
-    @property
-    def balancer_swap_fee(self, /) -> int:
-        """
-        Balancer weighted swap fee (fixed-point, 1e18 scale). 0 if not a
-        Balancer weighted pool.
-        """
-    @property
-    def balancer_vault(self, /) -> str:
-        """
-        Balancer V2 vault contract address (EIP-55 checksummed hex).
-        Empty string if not a Balancer weighted pool.
-        """
-    @property
-    def balancer_weights(self, /) -> Any:
-        """
-        Balancer weighted denormalized weights (one `U256` per token).
-        Empty list if not a Balancer weighted pool.
+        The Balancer-weighted balance-vector arm. Refuses a handle registered
+        under any other family, including the Balancer-stable sibling.
         """
     def calculate_tokens_in(self, /, zero_for_one: bool, amount_out: Any) -> Any:
         """
@@ -3238,188 +3471,13 @@ class Pool:
         """
         Structural concentrated-liquidity snapshot. Family mismatch is a loud refusal.
         """
-    @property
-    def curve_a_coefficient(self, /) -> int:
+    def curve(self, /) -> CurveView:
         """
-        Curve amplification coefficient `A` (raw). 0 for a non-Curve handle.
-        """
-    def curve_a_ramp(
-        self, /
-    ) -> tuple[int | None, int | None, int | None, int | None, int | None] | None:
-        """
-        Curve A-ramping: `(initial_a, future_a, initial_a_time,
-        future_a_time, create_timestamp)` — all `None` for non-ramping pools.
-        Returns `None` for a non-Curve handle.
-        Each element is the option value so a non-ramping pool reports `None`
-        for every field instead of a sentinel zero.
-        """
-    @property
-    def curve_admin_fee(self, /) -> int:
-        """
-        Curve admin-fee share (`FEE_DENOMINATOR` units). 0 for a non-Curve handle.
-        """
-    def curve_base_pool(self, /) -> Pool | None:
-        """
-        **The go-between.** A `PyLiquidityPool` handle over this
-        metapool's *base pool*, sharing the same `BotState` core. Resolves the
-        stored `base_pool` address through the existing `pool_id_by_address`
-        index — no Python registry needed. `None` for plain pools, non-Curve
-        handles, or when the base pool isn't registered. The companion recurses:
-        `CurveStableswapPool.from_handle(handle.curve_base_pool())`.
-        """
-    def curve_base_pool_address(self, /) -> str | None:
-        """
-        Curve base-pool address (EIP-55 checksummed). `None` for plain pools.
-        `None` for a non-Curve handle.
-        """
-    def curve_calc_token_amount(
-        self, /, amounts: Any, deposit: bool, block_number: SupportsIndex
-    ) -> Any:
-        """
-        Rust-owned Curve `curve_calc_token_amount(amounts, deposit,
-        block_number)` on this handle's pool — the single-call shape the
-        companion `CurveStableswapPool.calc_token_amount` delegates to. No Python provider / cache / calculator on the path.
-        """
-    def curve_calc_withdraw_one_coin(
-        self, /, token_amount: Any, i: SupportsIndex, block_number: SupportsIndex
-    ) -> Any:
-        """
-        Rust-owned Curve `curve_calc_withdraw_one_coin(token_amount, i,
-        block_number)` on this handle's pool — the single-call shape the
-        companion `CurveStableswapPool.calc_withdraw_one_coin` delegates to
-        Returns only the coin-`i` `dy` (the companion's
-        extra tuple fields aren't consumed anywhere).
-        """
-    def curve_crypto_fees(
-        self, /
-    ) -> tuple[int | None, int | None, int | None, int | None, int | None] | None:
-        """
-        Curve crypto-pool fees: `(fee_gamma, mid_fee, offpeg_fee_multiplier,
-        out_fee, gamma)` — `None` for standard stableswap pools. Returns `None`
-        for a non-Curve handle.
-        """
-    @property
-    def curve_d_variant(self, /) -> int:
-        """
-        Curve `d_variant` discriminant. 0 for a non-Curve handle.
-        """
-    @property
-    def curve_fee(self, /) -> int:
-        """
-        Curve swap fee (`FEE_DENOMINATOR` units). 0 for a non-Curve handle.
-        """
-    def curve_get_dy(
-        self,
-        /,
-        i: SupportsIndex,
-        j: SupportsIndex,
-        dx: Any,
-        block_number: SupportsIndex,
-        override_balances: Any | None = None,
-    ) -> Any:
-        """
-        Rust-owned Curve stableswap `curve_get_dy(i, j, dx, block_number,
-        override_balances)` on this handle's pool — the single-call shape the
-        companion `CurveStableswapPool.get_dy` delegates to.
-        Mirrors `PyBot.curve_get_dy` but bound to the handle's `pool_id`, so a
-        swap runs start-to-finish with no Python provider / cache / calculator.
-        """
-    def curve_get_dy_underlying(
-        self,
-        /,
-        i: SupportsIndex,
-        j: SupportsIndex,
-        dx: Any,
-        block_number: SupportsIndex,
-        override_balances: Any | None = None,
-    ) -> Any:
-        """
-        Rust-owned Curve metapool `curve_get_dy_underlying(i, j, dx,
-        block_number, override_balances)` on this handle's pool — the
-        single-call shape the companion `CurveStableswapPool
-        ._get_dy_underlying` delegates to. Base-pool ops go through the Rust
-        port (`BotCurveBasePoolPort`), so the Python `_LazyBasePool` go-between
-        is retired for the swap path.
-        """
-    @property
-    def curve_has_data_provider(self, /) -> bool:
-        """
-        Whether a Curve data-provider I/O trait object is stored on this
-        pool's state (ADR-005). `False` for non-Curve pools or Curve
-        pools registered without a provider (the no-I/O fixture case).
-        """
-    @property
-    def curve_lending_rate_style(self, /) -> int:
-        """
-        Curve `lending_rate_style` discriminant. 0 for a non-Curve handle.
-        """
-    def curve_lp_token(self, /) -> str | None:
-        """
-        Curve dedicated LP token address (EIP-55 checksummed) — `None` when the
-        pool token itself is the LP. Returns `None` for a non-Curve handle.
-        """
-    def curve_lp_token_address(self, /) -> str | None:
-        """
-        The Curve pool's raw dedicated LP-token address, or `None` if the pool
-        token is itself the LP (or the handle is not a Curve pool). Not
-        registration-gated (twin of `curve_token_addresses`).
-        """
-    @property
-    def curve_metapool_rate_style(self, /) -> int:
-        """
-        Curve `metapool_rate_style` discriminant. 0 for a non-Curve handle.
-        """
-    @property
-    def curve_metapool_underlying_style(self, /) -> int:
-        """
-        Curve `metapool_underlying_style` discriminant. 0 for a non-Curve handle.
-        """
-    @property
-    def curve_precision_multipliers(self, /) -> Any:
-        """
-        Curve per-token `precision_multipliers` (one `U256` per token). Empty
-        list for a non-Curve pool.
-        """
-    @property
-    def curve_rate_multipliers(self, /) -> Any:
-        """
-        Curve rate multipliers (one `U256` per token). Empty for a non-Curve pool.
-        """
-    @property
-    def curve_swap_style(self, /) -> int:
-        """
-        Curve `swap_style` discriminant (`PoolStrategies.swap_style.value`).
-        0 for a non-Curve handle.
-        """
-    def curve_token_addresses(self, /) -> list[str] | None:
-        """
-        The Curve pool's raw ERC-20 coin addresses in canonical order. Unlike
-        `get_curve_tokens`, this does NOT require the tokens to be registered
-        first — it is the builder/companion-orchestration seam that lets a
-        caller construct ERC20 companions *before* `from_handle`. `None` for
-        a non-Curve pool.
-        """
-    def curve_token_addresses_underlying(self, /) -> list[str] | None:
-        """
-        The Curve pool's raw *underlying* coin addresses (metapool coins beneath
-        the base-pool intermediaries). `None` for a plain pool or a non-Curve
-        handle. Not registration-gated (twin of `curve_token_addresses`).
-        """
-    @property
-    def curve_use_lending(self, /) -> list[bool]:
-        """
-        Curve per-token `use_lending` flags. Empty list for a non-Curve pool
-        or when none were registered.
-        """
-    @property
-    def curve_y_variant(self, /) -> int:
-        """
-        Curve `y_variant` discriminant. 0 for a non-Curve handle.
-        """
-    @property
-    def curve_yd_variant(self, /) -> int:
-        """
-        Curve `yd_variant` discriminant. 0 for a non-Curve handle.
+        The Curve balance-vector arm: the pool's Curve identity and state reads,
+        its swap and LP calculations, and its data-provider read-throughs.
+
+        Refuses a handle registered under any other family, so the arm's methods
+        never answer a wrong-family sentinel.
         """
     @property
     def deployer(self, /) -> str:
@@ -3472,62 +3530,6 @@ class Pool:
         """
         `token1→token0` fee parameters: `(gamma_numer, fee_denom)`. `(0, 0)` if
         not a V2 pool.
-        """
-    def fetch_balancer_stable_rates(
-        self, /, block_identifier: SupportsIndex | None
-    ) -> list[int] | None:
-        """
-        Fetch rates from the stored Balancer stable rate provider at
-        ``block_identifier`` (``None`` ⇔ latest). Returns the static
-        ``1e18`` fallback (one per token) when no provider was registered.
-        Returns ``None`` if not a Balancer stable pool.
-        Raises:
-            `ValueError`: If the dynamic provider fetch failed.
-        """
-    def fetch_curve_admin_balances(self, /, block_number: SupportsIndex) -> Any: ...
-    def fetch_curve_base_cache_updated(self, /, block_number: SupportsIndex) -> int | None: ...
-    def fetch_curve_base_virtual_price(self, /, block_number: SupportsIndex) -> Any | None: ...
-    def fetch_curve_block_number(self, /) -> int | None: ...
-    def fetch_curve_block_timestamp(self, /, block_number: SupportsIndex) -> int | None: ...
-    def fetch_curve_d(self, /, block_number: SupportsIndex) -> Any | None: ...
-    def fetch_curve_gamma(self, /, block_number: SupportsIndex) -> Any | None: ...
-    def fetch_curve_lending_rates(self, /, block_number: SupportsIndex) -> Any: ...
-    def fetch_curve_price_scale(self, /, block_number: SupportsIndex) -> Any: ...
-    def fetch_curve_redemption_price(self, /, block_number: SupportsIndex) -> Any | None: ...
-    def fetch_curve_token_balance(
-        self, /, token_address: str, holder_address: str, block_number: SupportsIndex
-    ) -> Any | None: ...
-    def fetch_curve_token_total_supply(
-        self, /, token_address: str, block_number: SupportsIndex
-    ) -> Any | None: ...
-    def fetch_curve_virtual_price(self, /, block_number: SupportsIndex) -> Any | None: ...
-    def get_balancer_stable_tokens(self, /) -> list[Erc20Token] | None:
-        """
-        Balancer stable ``PyErc20Token`` companions (one per token, including
-        BPT for Composable). Includes only tokens registered in this pool's
-        Bot; unregistered tokens are skipped (the caller pre-registers them
-        via ``Bot.register_token``). ``None`` if not a Balancer stable pool.
-        """
-    def get_balancer_tokens(self, /) -> list[Erc20Token] | None: ...
-    def get_curve_lp_token(self, /) -> Erc20Token | None:
-        """
-        The Curve pool's dedicated LP-token companion handle. `None` ⇔ the
-        pool token is itself the LP (the common plain-pool case; the companion
-        falls back to `tokens[0]`). Returns `None` (outer) for a non-Curve pool
-        or if the LP token isn't registered.
-        """
-    def get_curve_tokens(self, /) -> list[Erc20Token] | None:
-        """
-        The Curve pool's token companion handles, resolved via the shared
-        `BotState` token registry. `None` if this is not a Curve pool or any
-        token isn't registered (mirror of `get_balancer_tokens`). The companion
-        wraps each via `Erc20Token.from_handle`.
-        """
-    def get_curve_tokens_underlying(self, /) -> list[Erc20Token] | None:
-        """
-        The Curve pool's *underlying* token companion handles (metapool coins
-        beneath the base-pool intermediaries). `None` for plain pools, or if
-        this isn't a Curve pool, or any underlying token isn't registered.
         """
     def get_token0(self, /) -> Erc20Token | None:
         """
@@ -3622,14 +3624,7 @@ class Pool:
             `ValueError`: The handle's pool id is not registered, or
                 `block_number` is a string that is not a canonical tag.
         """
-    def reserve_pair(self, /) -> ReservePairView:
-        """
-        Apply a Balancer stable `external_update` (new balances from a Vault
-        `PoolBalanceChanged` event).
-        Journals the prior balances then lands the new balances +
-        `update_block`. Silent no-op (`False`) if this `pool_id` is not
-        registered as a Balancer stable pool (so a companion built for a
-        """
+    def reserve_pair(self, /) -> ReservePairView: ...
     def seed_genesis(self, /, block_number: SupportsIndex) -> bool:
         """
         Registration/seed genesis anchor (two-stamp rule): push a
@@ -5274,6 +5269,8 @@ __all__ = [
     "ArbitrageEngine",
     "BalanceVectorView",
     "BalancerFamily",
+    "BalancerStableView",
+    "BalancerWeightedView",
     "BlockStream",
     "BootRefused",
     "Bot",
@@ -5284,6 +5281,7 @@ __all__ = [
     "ConfigSectionValues",
     "ConfigValues",
     "ConstructionOutcome",
+    "CurveView",
     "DynamicFeePoolRejectedError",
     "Erc20Token",
     "Erc20TokenRow",

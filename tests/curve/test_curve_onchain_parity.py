@@ -381,7 +381,7 @@ def _build_metapool_io_free(
     so ``get_dy``/``get_dy_underlying`` run fully offline.
 
     The base pool + metapool share a single local ``Bot`` so the metapool
-    handle's go-between (``curve_base_pool()``) resolves the base pool within
+    handle's go-between (``curve().base_pool()``) resolves the base pool within
     the same ``BotState``. A fresh bot per call keeps each
     build isolated (the multiblock parity test rebuilds per block).
     """

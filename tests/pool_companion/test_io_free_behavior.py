@@ -455,7 +455,7 @@ class TestSingleArgReadsIdentityOffHandle:
 
 
 class TestGoBetweenResolvesBasePool:
-    """``curve_base_pool()`` + ``_LazyBasePool`` recover the base companion."""
+    """``curve().base_pool()`` + ``_LazyBasePool`` recover the base companion."""
 
     def test_metapool_resolves_base_pool_through_handle(self) -> None:
         bot = _Engine()
@@ -473,7 +473,7 @@ class TestGoBetweenResolvesBasePool:
             py_bot=bot,
         )
 
-        assert base_pool._py_pool.curve_base_pool() is None
+        assert base_pool._py_pool.curve().base_pool() is None
 
         mt0 = make_erc20(bot, address="0x" + "55" * 20, name="M0", symbol="M0", decimals=18)
         mlp = make_erc20(bot, address="0x" + "66" * 20, name="MLP", symbol="MLP", decimals=18)

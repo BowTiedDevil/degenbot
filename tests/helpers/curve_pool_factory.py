@@ -118,7 +118,7 @@ def make_curve_pool(
 
     # Pre-register the pool's tokens (and underlying / LP tokens) in the
     # factory's bot so the handle resolves Erc20Token companions off them
-    # via get_curve_tokens / get_curve_tokens_underlying / get_curve_lp_token
+    # via curve().get_tokens / curve().get_tokens_underlying / curve().get_lp_token
     # (mirror of the Balancer stable factory + ADR-006).
     def _ensure_token(tok: Erc20Token) -> None:
         if bot.get_token(tok.address) is None:

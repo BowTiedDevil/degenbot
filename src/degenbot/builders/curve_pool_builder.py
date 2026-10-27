@@ -118,7 +118,7 @@ class CurvePoolBuilder:
         """Register a Curve pool's companions on the already-constructed handle.
 
         Runs the metapool base-pool recursion (so the metapool handle's
-        ``curve_base_pool()`` resolves) and builds the coin / underlying / LP
+        ``curve().base_pool()`` resolves) and builds the coin / underlying / LP
         ERC20 companions (so the handle's registration-gated getters resolve).
         Construction itself is the ONE core entry's now; this is the companion
         choreography only, shared by the facade's build path and this builder's
@@ -128,9 +128,14 @@ class CurvePoolBuilder:
             BrokenPool: If the pool has fewer than 2 coins.
 
         """
+        # The Curve arm, narrowed once: every address read below is typed Curve
+        # state, so a wrong-family handle refuses here instead of answering a
+        # reserved-family sentinel.
+        arm = handle.curve()
+
         # Metapool: build + register the base pool first so the metapool
-        # handle's `curve_base_pool()` resolves for `from_handle`.
-        base_address = handle.curve_base_pool_address()
+        # handle's `curve().base_pool()` resolves for `from_handle`.
+        base_address = arm.base_pool_address()
         if base_address is not None:
             self.build(
                 base_address,
@@ -139,11 +144,10 @@ class CurvePoolBuilder:
                 request=BuildPoolRequest(state_block=state_block, silent=silent),
             )
 
-        # ERC20 companions for the pool coins, sourced from the handle's raw
-        # token addresses (the registration-gated `get_curve_tokens` returns
+        # ERC20 companions for the pool coins, sourced from the curve arm's raw
+        # token addresses (the registration-gated `curve().get_tokens` returns
         # None until these are built). Skip broken pools (< 2 coins).
-        token_addresses = handle.curve_token_addresses()
-        assert token_addresses is not None
+        token_addresses = arm.token_addresses()
         min_tokens = 2
         if len(token_addresses) < min_tokens:
             raise BrokenPool
@@ -152,11 +156,11 @@ class CurvePoolBuilder:
 
         # Metapool underlying + dedicated LP token companions — built purely
         # for registration (Rust already knows their addresses), so
-        # `get_curve_tokens_underlying()` / `get_curve_lp_token()` resolve in
-        # `from_handle`.
-        for addr in handle.curve_token_addresses_underlying() or ():
+        # `curve().get_tokens_underlying()` / `curve().get_lp_token()` resolve
+        # in `from_handle`.
+        for addr in arm.token_addresses_underlying() or ():
             self._erc20_builder.build(addr, chain_id=chain_id, silent=silent, io=io)
-        lp_address = handle.curve_lp_token_address()
+        lp_address = arm.lp_token_address()
         if lp_address is not None:
             self._erc20_builder.build(
                 lp_address,

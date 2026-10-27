@@ -403,8 +403,9 @@ mod _ffi {
     #[cfg(feature = "bot")]
     #[pymodule_export]
     use crate::bot::pool::{
-        PyBalanceVectorView, PyPoolTickCoverage, PyReservePairView, PySwapRead as SwapRead,
-        PySwapReadFamily, PySwapRefusalKind, SwapRefused,
+        PyBalanceVectorView, PyBalancerStableView, PyBalancerWeightedView, PyCurveView,
+        PyPoolTickCoverage, PyReservePairView, PySwapRead as SwapRead, PySwapReadFamily,
+        PySwapRefusalKind, SwapRefused,
     };
     #[cfg(feature = "bot")]
     #[pymodule_export]
