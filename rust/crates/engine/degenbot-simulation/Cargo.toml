@@ -94,6 +94,19 @@ tower = { version = "^0.5", default-features = false }
 # relocation to `degenbot-arbitrage` (ADR-019 D4/D7).
 tokio = { version = "^1.54", features = ["rt"] }
 
+[features]
+default = []
+# The executor-grammar harness (`src/harness/`) is an investigation/oracle lab
+# with no production consumer: the shipped crate root is the engine (`sim`), the
+# fixture driver (`oracle`), and the capture generator (`capture`). Every
+# dependent (`degenbot-arbitrage`, `degenbot-batch-executor`,
+# `degenbot-strategy`, `degenbot-submission`, the umbrella, the cdylib, the
+# console) therefore links none of it. The crate's own harness-driven tests opt
+# in through `required-features`, and the test/lint lanes carry
+# `degenbot-simulation/test-harness` explicitly so the lab stays executed
+# (ADR-084 D2b/D3). The sources stay put; the feature gates compilation only.
+test-harness = []
+
 [dev-dependencies]
 # sha256 for the tier-3 harness bytecode drift guard (`tier3_harness_artifacts.rs`)
 # — the manifest hashes the git-tracked harness sources, so a harness edit
@@ -127,3 +140,26 @@ proptest = "^1.12"
 # `hex` — revert-reason hex formatting in the relocated tier-3 CL parity oracles
 # (inline `hex::encode`).
 hex = "^0.4"
+
+# Integration tests that drive the executor-grammar harness. `required-features`
+# is the only way an integration test can depend on a feature of the crate it
+# tests: these targets compile where a lane enables `test-harness` and are
+# skipped elsewhere instead of dying on a cfg'd-out module. The tier-3 artifact
+# drift guard is deliberately absent — it hashes files, not the harness API, so
+# it runs in the harness-free default build too.
+
+[[test]]
+name = "harness_artifact_probes"
+required-features = ["test-harness"]
+
+[[test]]
+name = "harness_declarative"
+required-features = ["test-harness"]
+
+[[test]]
+name = "harness_poolv3"
+required-features = ["test-harness"]
+
+[[test]]
+name = "spike_derivation"
+required-features = ["test-harness"]

@@ -31,6 +31,11 @@ pub mod sim;
 /// it touched. The missing third correctness tool — byte parity can't prove
 /// runtime behavior, and live sim needs a captured mainnet path. See
 /// [`harness`](crate::harness) for the API.
+///
+/// Behind the non-default `test-harness` feature: the lab has no production
+/// consumer, so a shipped crate root is the engine + fixture driver + capture
+/// surface only.
+#[cfg(feature = "test-harness")]
 pub mod harness;
 
 /// Contract-agnostic in-process revm **fixture driver** — deploy a pinned
