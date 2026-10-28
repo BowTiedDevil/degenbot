@@ -484,7 +484,7 @@ class Bot(AccountQueryMixin):
             The computed value.
 
         Raises:
-            DegenbotValueError: See function documentation.
+            DegenbotValueError: If the pool's type cannot be determined.
 
         """
         address = get_checksum_address(address)
@@ -509,8 +509,17 @@ class Bot(AccountQueryMixin):
         # `factory()`) resolves to the generic Curve descriptor from the
         # resolver itself — never a raise the driver swallows into a family
         # guess, so an unverified-contract loud-abort propagates instead of
-        # being silently routed as Curve.
-        pool_type = _resolve_pool_type_impl(address, chain_id=chain_id, io=io)
+        # being silently routed as Curve. The resolver's failures classify on
+        # the same taxonomy the public `resolve_pool_type` answers (an
+        # unresolvable type raises the typed error — explicit here so the
+        # docstring's contract is raised by this body, not by a callee).
+        try:
+            pool_type = _resolve_pool_type_impl(address, chain_id=chain_id, io=io)
+        except DegenbotValueError:
+            raise
+        except Exception as exc:
+            msg = f"build_pool: cannot determine the type of {address}: {exc}"
+            raise DegenbotValueError(message=msg) from exc
         # The `(family, variant)` identity is what the core dispatches on —
         # DATA from the resolver, never a subclass test.
         family = pool_type.family

@@ -24,8 +24,6 @@ from degenbot.utils.bytes import to_bytes
 __all__ = ["AlloyProvider", "LogFilter"]
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from degenbot.types.aliases import BlockNumber
     from degenbot.types.rpc_types import (
         BlockData,
@@ -47,12 +45,15 @@ class _AlloyBacked:
     """
 
     _provider: RustAlloyProvider
-    close: Callable[[], None]
 
     @property
     def rpc_url(self) -> str:
         """The RPC URL."""
         return self._provider.rpc_url
+
+    def close(self) -> None:
+        """Close connection pool and release resources."""
+        self._provider.close()
 
 
 class _AlloyEndpointMixin(_AlloyBacked):
@@ -286,10 +287,6 @@ class _AlloyQueryMixin(_AlloyBacked):
 
         """
         return self._provider.get_storage_at(address, position, block)
-
-    def close(self) -> None:
-        """Close connection pool and release resources."""
-        self._provider.close()
 
     def is_connected(self) -> bool:  # ruff:ignore[no-self-use]
         """Check if the provider is connected.
