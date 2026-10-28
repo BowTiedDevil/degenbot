@@ -341,23 +341,6 @@ mod tests {
 
     use super::run_verify_lifecycle;
 
-    /// The seam has ONE entry. A per-family adapter (`run_concentrated_liquidity_v3_lifecycle`
-    /// / `_v4_`) is the twin shape the pool-key census bans one level down: same body,
-    /// different argument unpacking. `PoolLookup` is how a caller names its family.
-    #[test]
-    fn the_lifecycle_seam_has_no_per_family_adapter() {
-        const SOURCE: &str = include_str!("registration_lifecycle.rs");
-        for retired in [
-            "run_concentrated_liquidity_v3_lifecycle",
-            "run_concentrated_liquidity_v4_lifecycle",
-        ] {
-            assert!(
-                !SOURCE.contains(&["pub async fn ", retired].concat()),
-                "{retired} is back: run_verify_lifecycle takes the PoolLookup"
-            );
-        }
-    }
-
     fn new_core() -> Arc<StateLock<BotState>> {
         Arc::new(StateLock::new(BotState::new()))
     }

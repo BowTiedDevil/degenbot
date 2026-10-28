@@ -1,4 +1,10 @@
-"""Tests for Bot.build_managed_pool()."""
+"""Tests for Bot.build_managed_pool() and the sibling build_pool() surface.
+
+Both methods are LIVE and their signatures are the contract this module pins: a
+caller builds through ``build_managed_pool(address, request)`` and through
+``build_pool(address, request)``, so the parameter order, the required request
+argument, and the declared request fields are present-code facts.
+"""
 
 from __future__ import annotations
 
@@ -30,13 +36,6 @@ class TestBuildManagedPoolSignature:
         fields = {f.name: f for f in dataclasses.fields(BuildManagedPoolRequest)}
         assert fields["pool_id"].default is dataclasses.MISSING
 
-    def test_build_managed_pool_has_no_deployer_or_init_hash_kwargs(self):
-        """build_managed_pool() does not accept deployer_address or init_hash."""
-        sig = inspect.signature(Bot.build_managed_pool)
-        param_names = set(sig.parameters.keys())
-        assert "deployer_address" not in param_names
-        assert "init_hash" not in param_names
-
     def test_build_managed_pool_request_has_v4_fields(self):
         """The request carries the V4-specific identity overrides."""
         field_names = {f.name for f in dataclasses.fields(BuildManagedPoolRequest)}
@@ -59,19 +58,20 @@ class TestBuildManagedPoolSignature:
         else:
             assert return_annotation is UniswapV4Pool
 
-    def test_build_pool_still_exists(self):
-        """Bot.build_pool() still exists."""
+
+class TestBuildPoolSignature:
+    """The generic build_pool() entry point takes the address plus keyword knobs."""
+
+    def test_build_pool_exists(self):
+        """Bot.build_pool() is the generic construction door."""
         assert hasattr(Bot, "build_pool")
 
-    def test_build_pool_no_longer_accepts_pool_id(self):
-        """build_pool() does not accept a pool_id kwarg."""
+    def test_build_pool_takes_a_positional_address_and_keyword_knobs(self):
+        """build_pool() takes the address positionally and its knobs keyword-only."""
         sig = inspect.signature(Bot.build_pool)
-        param_names = set(sig.parameters.keys())
-        assert "pool_id" not in param_names
-
-    def test_build_pool_no_longer_accepts_deployer_or_init_hash(self):
-        """build_pool() no longer accepts deployer_address or init_hash kwargs."""
-        sig = inspect.signature(Bot.build_pool)
-        param_names = set(sig.parameters.keys())
-        assert "deployer_address" not in param_names
-        assert "init_hash" not in param_names
+        params = list(sig.parameters.values())
+        assert params[1].name == "address"
+        assert params[1].default is inspect.Parameter.empty
+        knobs = {p.name: p for p in params[2:]}
+        assert {"state_block", "silent", "construction_route"} <= set(knobs)
+        assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in knobs.values())

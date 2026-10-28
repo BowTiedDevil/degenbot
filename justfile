@@ -133,8 +133,11 @@ test-standalone:
 # toolchain-gated Tier-3 harness rebuilds (`test-tier3` / `verify-tier3-*`) and
 # net-gated suites (`test-fork`, `record-golden`, `verify-deployments`).
 
-# Default gate: workspace lint (fails fast) + standalone smoke + cargo workspace + full pytest.
-test: lint-rust-check test-rust-nextest test-python check-consumer-probes
+# Default gate: workspace lint (fails fast) + the retirement-tripwire ratchet +
+# standalone smoke + cargo workspace + full pytest. The ratchet is a ~1s source scan
+# (ADR-087 D4), so it rides here as well as at pre-push: a tripwire introduced while
+# iterating fails at `just test`, not only at the push that follows.
+test: lint-rust-check lint-tripwire-ratchet test-rust-nextest test-python check-consumer-probes
 
 # Run the pre-push gates before `git push`. prek.toml's
 # `stages = ["pre-push"]` entries are the single owner of the gate list (the
@@ -1126,6 +1129,26 @@ lint-python:
 # CI's `lint-python`: fails on any issue `--fix` would have auto-applied.
 lint-comment-hygiene:
     scripts/hooks/comment-hygiene.sh
+
+
+# ADR-087 D4 — the retirement-tripwire ratchet. Scans the test/gate surface (rust
+# test files, tests/, justfile, prek.toml, scripts/, docs/) for the signatures of a
+# tripwire: an assertion that a deleted name is still absent, a grep for a retired
+# identifier, a collection named for the revival asserted empty, or a prose "do not
+# revive / re-land / rebuild" ban. Deleting code is the complete retirement (D1), so
+# one hit fails the gate.
+#
+# It flags and does not classify: delete the flagged artifact, or label it with the
+# D2 marker naming the PRESENT code it watches. The marker is the only exemption —
+# there is no waiver file, and adding one would recreate the garrison.
+#
+# The gate body is scripts/hooks/tripwire_ratchet.py; its negative probe (a synthetic
+# tripwire fixture, observed failing) lives in tests/test_tripwire_ratchet.py, which
+# runs in the default pytest selection.
+#
+# live-invariant gate (ADR-087 D2): watches the present test/gate surface for the tripwire signatures ADR-087 D1 bans; not tripwire precedent.
+lint-tripwire-ratchet:
+    {{ py_run }} python scripts/hooks/tripwire_ratchet.py
 
 lint-python-check:
     uvx ruff check src/ examples/

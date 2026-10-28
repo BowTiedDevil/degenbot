@@ -221,6 +221,24 @@ hooks = [
   # architecture gates (and in `lint-rust-check`, hence `just lint` / CI).
   { id = "rust-config-derived-statics", name = "Rust config-derived-static gate", language = "system", entry = "just check-config-derived-statics", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
 
+  # ADR-087 D4 — the tripwire ratchet. A source scan of the test/gate surface
+  # (rust test files, tests/, justfile, prek.toml, scripts/, docs/) for the
+  # signatures of a RETIREMENT TRIPWIRE: an assertion that a deleted name is still
+  # absent (`assert not hasattr`, a grep for a retired identifier), a collection
+  # named for the revival asserted empty, or a prose "do not revive / re-land /
+  # rebuild" ban. Deleting code is the complete retirement (D1), so such an artifact
+  # does not exist here; the scan flags one and the pre-push gate fails.
+  #
+  # It flags and does not classify (D4): the author deletes the artifact or labels
+  # it with the D2 marker, which forces the statement of what PRESENT code the gate
+  # watches. The exemption is exactly that marker — there is no waiver file to grow.
+  #
+  # A whole-tree scan with no per-file slice, so it lives at pre-push with the other
+  # whole-tree gates. Its own label, naming what it watches:
+  #
+  # live-invariant gate (ADR-087 D2): watches the present test/gate surface for the tripwire signatures ADR-087 D1 bans; not tripwire precedent.
+  { id = "tripwire-ratchet", name = "Retirement-tripwire ratchet", language = "system", entry = "just lint-tripwire-ratchet", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
+
   # Rust track (mirrors ci.yml: rust-build, rust-test).
   { id = "rust-build", name = "Rust build", language = "system", entry = "just build-rust-extension", stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },
   { id = "rust-test",  name = "Rust tests", language = "system", entry = "just test-rust",             stages = ["pre-push"], always_run = true, pass_filenames = false, fail_fast = true },

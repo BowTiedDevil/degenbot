@@ -13,7 +13,7 @@ five files. A conductor for an eight-site change is evidence of a wide seam, not
 a deepening of it, so ADR-071 collapsed the seam: the change is now **one family
 module, one dispatch row, one enum arm per enum, one `HopType::ALL` entry, and
 one glossary entry per new concept.** The old census survives only as the
-superseded record in the appendix; do not reintroduce it.
+superseded record in the appendix.
 
 **The read half is landed (ADR-073, accepted/implemented):** the one-module
 census above is solve-only. ADR-073 adds the **family read module** in

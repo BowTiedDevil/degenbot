@@ -118,10 +118,11 @@ Grafana 13 itself and visible in **Alerting > Alert rules** (folder Degenbot):
 is the declarative copy (datasource UID inlined; deploy = POST the rule groups via the
 /api/v1/provisioning/alert-rules API or mount the file into provisioning/alerting/).
 
-degenbot-alerts.yml in this directory has been DELETED - do not re-add a
-rule_files entry for it (running both surfaces concurrently double-fires
-every alert). If a running Prometheus still references it, remove the entry
-and reload Prometheus at the operator convenience.
+Grafana-managed unified alerting is the only alert surface: every rule in this
+directory is a Grafana rule, and a Prometheus `rule_files` entry pointing at a
+second, parallel rules file would double-fire every alert. If a running
+Prometheus still references the retired rules file, remove the entry and reload
+Prometheus at the operator convenience.
 
 Rule inventory (10 rules, 2 groups, 60s evaluation):
 

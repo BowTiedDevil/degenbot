@@ -1,18 +1,24 @@
-"""Public structural Pool cutover contract.
+"""Public structural Pool handle contract.
 
 These tests exercise the registered ``Pool`` handle as the companion boundary:
 reads are atomic structural views and writes are verb-shaped commands. Family
 identity still comes from the handle so companion construction can remain a
 single-argument seam.
+
+The surface asserted here is the PRESENT one. A read is an atomic view
+(``reserve_pair()`` / ``balance_vector()`` / ``concentrated_liquidity()``), the one
+write is the registration anchor ``seed_genesis``, and state changes arrive as
+dispatched logs through ``Bot.dispatch_log`` rather than as setters on the handle.
 """
 
 from __future__ import annotations
 
 from fractions import Fraction
 
+import pytest
+
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.pool_handle_factory import make_balancer_weighted_handle, make_v2_handle
-from tests.helpers.seam import REGISTRATION_SURFACE as ffi
 from tests.helpers.seam import Bot, Pool
 from tests.helpers.synthetic_logs import v2_sync
 from tests.helpers.v2_pool_factory import make_v2_pool
@@ -36,13 +42,11 @@ def _balance_vector() -> Pool:
     )
 
 
-def test_get_pool_returns_the_structural_handle_and_retires_prototype_accessor() -> None:
+def test_get_pool_returns_the_structural_handle() -> None:
     handle = _reserve_pair()
 
     assert type(handle) is Pool
-    assert not hasattr(handle, "reserve0")
-    assert not hasattr(handle, "snapshot")
-    assert not hasattr(Bot(1), "py_pool")
+    assert handle.reserve_pair().reserve0 == 1_000
 
 
 def test_production_companion_uses_the_canonical_structural_handle() -> None:
@@ -58,8 +62,7 @@ def test_production_companion_uses_the_canonical_structural_handle() -> None:
     )
 
     assert type(companion._py_pool) is Pool
-    assert not hasattr(companion._py_pool, "snapshot")
-    assert not hasattr(companion._py_pool, "sync_reserves")
+    assert companion._py_pool.reserve_pair().reserve1 == 2 * 10**18
 
 
 def make_erc20_for_pool(address: str, symbol: str, decimals: int):
@@ -95,28 +98,21 @@ def test_balance_vector_view_is_the_atomic_read_and_apply_balances_is_the_comman
     assert (list(after.balances), after.update_block) == ([3_000, 4_000], 101)
 
 
-def test_pool_class_write_doors_are_gone() -> None:
-    """State moves through the pump only — no pool-class write door survives.
+def test_the_handle_answers_its_family_view_and_refuses_a_foreign_one() -> None:
+    """A read is the family's own atomic view; a foreign family is a loud refusal.
 
-    The handle is a read surface: events land via ``Bot.dispatch_log`` (and
-    reorgs via ``Bot.dispatch_reorg_log``), so a companion-shaped set of write
-    methods on the handle would be a second, diverging write path.
+    The handle is a read surface: events land via ``Bot.dispatch_log`` (and reorgs
+    via ``Bot.dispatch_reorg_log``), so a companion-shaped set of write methods on
+    the handle would be a second, diverging write path. What it answers instead is
+    the view for the family it was registered under.
     """
-    retired = (
-        "apply_swap",
-        "apply_sync",
-        "apply_liquidity_update",
-        "update_tick_data",
-        "ensure_word_known",
-        "discard_before_block",
-        "restore_before_block",
-    )
-    for handle in (_reserve_pair(), _balance_vector()):
-        for door in retired:
-            assert not hasattr(handle, door), door
-    # The one write left is the registration anchor production still calls.
-    assert hasattr(_reserve_pair(), "seed_genesis")
+    v2 = _reserve_pair()
+    assert v2.reserve_pair().reserve0 == 1_000
 
+    weighted = _balance_vector()
+    assert list(weighted.balance_vector().balances) == [1_000, 2_000]
 
-def test_legacy_liquidity_pool_handle_is_not_registered() -> None:
-    assert not hasattr(ffi, "LiquidityPool")
+    # A handle registered under one family refuses the other family's view, naming
+    # the view it cannot answer (the Rust side raises the typed refusal).
+    with pytest.raises(ValueError, match="not a balance-vector pool"):
+        v2.balance_vector()

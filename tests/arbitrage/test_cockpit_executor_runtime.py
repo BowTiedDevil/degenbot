@@ -18,10 +18,11 @@ No live RPC / no anvil: pure file + config behavior.
 
 from __future__ import annotations
 
-import inspect
+import dataclasses
 
 import pytest
 
+from degenbot.runner import _dispatch as dispatch_module
 from degenbot.runner._dispatch import _load_executor_runtime_bytecode
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 from tests.helpers import verdict_probe as probe
@@ -78,9 +79,31 @@ class TestExecutorRuntime:
         with pytest.raises(RuntimeError, match="DEGENBOT_CONTRACTS_DIR"):
             _load_executor_runtime_bytecode(cfg)
 
-    def test_no_upward_walk_in_resolution(self) -> None:
-        """The walk is gone: resolution is explicit paths, no directory search."""
-        from degenbot.runner import _dispatch as d
+    def test_resolution_prefers_explicit_keys_over_the_computed_candidate(self, tmp_path) -> None:
+        """The explicit keys win; the computed candidate is the last resort.
 
-        src = inspect.getsource(d._resolve_executor_runtime_path)
-        assert "for candidate" not in src, "upward walk must be gone"
+        Resolution is explicit-path-first, so an operator-set ``executor_runtime``
+        or ``dispatch.contracts_dir`` decides the path outright — the computed
+        source-layout candidate is only reached when neither is set.
+        """
+        d = dispatch_module
+
+        explicit_file = tmp_path / "explicit.txt"
+        contracts_dir = tmp_path / "contracts"
+        contracts_dir.mkdir()
+
+        base = probe.build_config(env={"DEGENBOT_CONTRACTS_DIR": str(contracts_dir)})
+
+        # 1. The operator's explicit path wins outright.
+        operator_path = dataclasses.replace(base, executor_runtime=explicit_file)
+        assert d._resolve_executor_runtime_path(operator_path) == explicit_file
+
+        # 2. No explicit path: the declared contracts_dir, with the fixed filename.
+        assert d._resolve_executor_runtime_path(base) == (contracts_dir / d._EXECUTOR_RUNTIME_FILE)
+
+        # 3. Neither key set: the fixed-depth source-layout candidate, which lands
+        #    in the checkout's contracts/ directory.
+        bare = dataclasses.replace(base, contracts_dir="")
+        resolved = d._resolve_executor_runtime_path(bare)
+        assert resolved.parent.name == "contracts"
+        assert resolved.name == d._EXECUTOR_RUNTIME_FILE

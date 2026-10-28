@@ -1,12 +1,32 @@
-"""Tests for BuildManagedPoolRequest and build_managed_pool()."""
+"""Tests for the pool-construction request objects.
+
+Both request dataclasses are LIVE: ``BuildPoolRequest`` carries the optional
+construction knobs, ``BuildManagedPoolRequest`` the V4 identity overrides. What is
+asserted here is that each one holds the fields it declares -- the presence half of
+the contract, which a dropped field would break.
+"""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import fields
 
 import pytest
 
-from degenbot.builders.request import BuildManagedPoolRequest, BuildPoolRequest
+from degenbot.builders.request import (
+    BuildManagedPoolRequest,
+    BuildPoolRequest,
+    ConstructionRoute,
+)
+
+# The V4 identity overrides `BuildManagedPoolRequest` declares.
+_V4_IDENTITY_FIELDS = frozenset({
+    "state_view_address",
+    "tokens",
+    "fee",
+    "tick_spacing",
+    "hook_address",
+})
 
 
 class TestBuildManagedPoolRequest:
@@ -50,23 +70,32 @@ class TestBuildManagedPoolRequest:
         with pytest.raises(AttributeError):
             req.pool_id = "0x02"  # type: ignore[misc]
 
-    def test_no_tick_map_fields(self):
-        """BuildManagedPoolRequest no longer carries tick_bitmap/tick_data (dead since builder retirement)."""
-        field_names = {f.name for f in fields(BuildManagedPoolRequest)}
-        assert "tick_bitmap" not in field_names
-        assert "tick_data" not in field_names
+    def test_carries_the_v4_identity_overrides(self):
+        """The request declares the V4 identity overrides the builder reads."""
+        declared = {f.name for f in fields(BuildManagedPoolRequest)}
+        assert declared >= _V4_IDENTITY_FIELDS
 
-    def test_does_not_have_deployer_or_init_hash(self):
-        """BuildPoolRequest no longer carries deployer_address/init_hash."""
-        field_names = {f.name for f in fields(BuildPoolRequest)}
-        assert "deployer_address" not in field_names
-        assert "init_hash" not in field_names
 
-    def test_does_not_have_bpt_idx_or_invariant_version(self):
-        """BuildManagedPoolRequest does not have Balancer-specific fields."""
-        field_names = {f.name for f in fields(BuildManagedPoolRequest)}
-        assert "bpt_idx" not in field_names
-        assert "invariant_version" not in field_names
+class TestBuildPoolRequest:
+    """Tests for the generic construction knobs BuildPoolRequest declares."""
+
+    def test_carries_the_construction_knobs(self):
+        """The generic request declares its optional knobs and route policy."""
+        declared = {f.name: f for f in fields(BuildPoolRequest)}
+        assert {"silent", "state_block", "state_cache_depth", "construction_route"} <= set(declared)
+        assert declared["construction_route"].default is None
+
+    def test_construction_route_defaults_to_the_generic_only_route(self):
+        """A bare route attempts the generic rung and no factory."""
+        route = ConstructionRoute()
+        assert route.factories == ()
+        assert route.generic is True
+
+    def test_construction_route_carries_an_ordered_factory_tuple(self):
+        """The route's factories are an ordered tuple of addresses."""
+        route = ConstructionRoute(factories=("0x" + "1" * 40, "0x" + "2" * 40))
+        assert isinstance(route.factories, Sequence)
+        assert route.factories == ("0x" + "1" * 40, "0x" + "2" * 40)
 
 
 class TestBuildRequestUnion:
@@ -83,12 +112,3 @@ class TestBuildRequestUnion:
         """BuildManagedPoolRequest values satisfy BuildRequest."""
         req = BuildManagedPoolRequest(pool_id="0x01")
         assert isinstance(req, BuildManagedPoolRequest)
-
-
-class TestBuildPoolRequest:
-    """Tests for BuildPoolRequest after V4 fields are removed."""
-
-    def test_no_pool_id_field(self):
-        """BuildPoolRequest no longer has pool_id field."""
-        field_names = {f.name for f in fields(BuildPoolRequest)}
-        assert "pool_id" not in field_names

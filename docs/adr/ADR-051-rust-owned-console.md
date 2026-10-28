@@ -22,7 +22,13 @@ The operator surface (`degenbot pool update`, `degenbot aave update`, `degenbot 
 
 **D7 — SIGINT is Rust-owned on both entry paths.** First Ctrl+C sets the cooperative cancel flag the update loops poll at chunk boundaries (chunk atomicity contract unchanged); a second Ctrl+C restores the default disposition (abort).
 
-**D8 — Driver-domain resolvers land in `degenbot-config`** with the loader's `Source` tagging and provenance: database path (`--database` > `DEGENBOT_DB_PATH` > `~/.config/degenbot/degenbot.db`), chain id (`--chain-id` > `DEGENBOT_DEFAULT_CHAIN_ID`), node URIs (`--node-http`/`--node-ws` > `DEGENBOT_RPC_{HTTP,WS}_CHAINID_<id>`). The retired `[rpc]`/`[ws]`/`[database]`/`default_chain_id` file keys stay refused (the config-migration Option-B cutover stands); these resolvers deliberately do not re-add file vocabulary.
+**D8 — Driver-domain resolvers land in `degenbot-config`** with the loader's `Source` tagging and provenance: database path (`--database` > `DEGENBOT_DB_PATH` > `~/.config/degenbot/degenbot.db`), chain id (`--chain-id` > `DEGENBOT_DEFAULT_CHAIN_ID`), node URIs (`--node-http`/`--node-ws` > `DEGENBOT_RPC_{HTTP,WS}_CHAINID_<id>`). The retired `[rpc]`/`[ws]`/`[database]`/`default_chain_id` file keys stay refused (the config-migration Option-B cutover stands); these resolvers read env and argv only.
+
+> **Header note (ADR-087 D5).** The vocabulary prohibition this paragraph used to
+> carry was deleted under ADR-087 D1/D5 (deletion is the complete retirement; the
+> vocabulary lives in the GLOSSARY's `_Avoid_` lines). The resolver layering the
+> paragraph describes stands on its own terms, and [ADR-062](ADR-062-one-operator-file-four-layers.md)
+> later made the operator file the third resolution layer.
 
 **D9 — Progress renders at the façade.** `indicatif` paints on a TTY; the existing throttled `op_info!` lines (Q5IKHX) remain the non-TTY surface. Cores' `ProgressSink` shape is untouched.
 
