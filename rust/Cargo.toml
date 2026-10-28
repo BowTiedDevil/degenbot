@@ -192,69 +192,28 @@ default-members = [
 
 # Release profile.
 #
-# IMPORTANT framing for the two first-class consumers (see AGENTS.md): Cargo
-# only honors `[profile.*]` from the top-level package being built — profile
-# settings in the manifests of *dependencies* are ignored entirely. So every
-# block below tunes ONLY degenbot's own in-repo builds (the `degenbot_rs`
-# cdylib and in-workspace `cargo test`/`clippy`).
+# Cargo only honors `[profile.*]` from the top-level package being built, so
+# this block tunes ONLY this workspace's own builds (the `degenbot_rs` cdylib
+# and in-workspace `cargo test`/`clippy`). A pure-Rust consumer building the
+# umbrella crate into their own binary reads their workspace's profile, not
+# this one.
 #
-# The pure-Rust consumer (`cargo add degenbot`, building the umbrella crate
-# into their own binary — see `examples/standalone_consumer.rs`) is entirely
-# unaffected: their build reads *their* workspace's `[profile.release]`, which
-# applies uniformly across the whole dependency graph including these crates.
-# Their binary's LTO/codegen is theirs to own, not this file's.
-#
-# Within this workspace, the only shipped runtime artifact is the `degenbot_rs`
-# cdylib (the Python extension, built from `crates/shells/degenbot-python`), and it
-# gets the heavy optimizations — `lto = "thin"` + `strip` + `codegen-units = 1`.
-# `lto`/`strip` are profile-level (Cargo has no per-package `lto`), so they
-# apply workspace-wide, but the final thin-LTO link only spans codegen units
-# that survive into the cdylib.
-#
-# The pure-Rust core crates (`degenbot-core`, `-concentrated-liquidity-math`, `-abi`, `-rpc`,
-# `-bot`) get per-package overrides below: more `codegen-units` for faster
-# compilation during a cdylib release build. They are libraries consumed (and
-# inlined at the final link) by the cdylib, so the looser per-package codegen
-# does not meaningfully hurt runtime — the cdylib's thin LTO re-converges.
-#
-# If a Rust bot is ever shipped as a *binary built inside this workspace* (no
-# `[[bin]]` target exists today — all members are libraries), revisit this:
-# the per-package loosening and the cdylib-singular framing would then apply
-# to that second shipped artifact. Downstream consumers building it from the
-# umbrella are unaffected regardless.
+# Within this workspace the only shipped runtime artifact is the `degenbot_rs`
+# cdylib (the Python extension). It is pinned to `codegen-units = 1` below so
+# the final thin-LTO link gets maximal codegen granularity; `lto`/`strip` have
+# no per-package form and stay profile-level. Everything else — every member
+# library, present and future, and all third-party dependencies — compiles at
+# 16 codegen units and is re-converged by that same final link. New crates
+# inherit this with no manifest edit; the shape is gate-enforced
+# (`just check-profile-policy`) and recorded in ADR-088. A second shipped
+# binary artifact would take its own `codegen-units = 1` pin at that decision.
 [profile.release]
 lto = "thin"
 strip = true
-codegen-units = 1
+codegen-units = 16
 
-[profile.release.package.degenbot-core]
-codegen-units = 16
-[profile.release.package.degenbot-math]
-codegen-units = 16
-[profile.release.package.degenbot-pools]
-codegen-units = 16
-[profile.release.package.degenbot-price]
-codegen-units = 16
-[profile.release.package.degenbot-abi]
-codegen-units = 16
-[profile.release.package.degenbot-rpc]
-codegen-units = 16
-[profile.release.package.degenbot-fork]
-codegen-units = 16
-[profile.release.package.degenbot-bot]
-codegen-units = 16
-[profile.release.package.degenbot-decoders]
-codegen-units = 16
-[profile.release.package.degenbot-uniswap]
-codegen-units = 16
-[profile.release.package.degenbot-pathfinding]
-codegen-units = 16
-[profile.release.package.degenbot-db]
-codegen-units = 16
-[profile.release.package.degenbot-executor]
-codegen-units = 16
-[profile.release.package.degenbot-submission]
-codegen-units = 16
+[profile.release.package.degenbot_rs]
+codegen-units = 1
 
 # Dev profile (default for `cargo test` / `just dev`): favor representative
 # optimization over a fully unoptimized debug build, while keeping iteration

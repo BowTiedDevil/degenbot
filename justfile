@@ -74,8 +74,8 @@ bump-version version:
 # Local Cargo and maturin development builds intentionally use the workspace
 # [profile.dev]: opt-level = 1, no LTO or stripping, and line-tables-only debug
 # info. This favors representative optimization while keeping rebuilds cheaper
-# than release. Release builds keep thin LTO, stripping, and the intentional
-# per-package codegen-unit policy documented in rust/Cargo.toml.
+# than release. Release builds keep thin LTO and stripping, with the ADR-088
+# codegen shape: member default 16 units, the degenbot_rs cdylib pinned to 1.
 
 # Build the native Tauri AppImage for the GUI proof of concept. The app-local
 # npm script supplies the AppImage extraction and linuxdeploy NO_STRIP settings
@@ -384,7 +384,7 @@ crates-io-pending *args:
 # build variant) out of the shipped crate root, so the lab keeps its
 # `--deny warnings` coverage. The feature-OFF production shape — every
 # dependent compiling without the harness — is `check-rust-default`'s claim.
-lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics check-capability-catalog check-dependency-charter
+lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics check-capability-catalog check-dependency-charter check-profile-policy
     #!/usr/bin/env bash
     set -euo pipefail
     tier="$(scripts/toolchain_tier.sh)"
@@ -552,6 +552,18 @@ check-config-derived-statics:
 # Wired into `lint-rust-check` (hence `just lint` / CI).
 check-capability-catalog:
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- capability_catalog_covers_every_public_crate --exact --nocapture
+
+# ADR-088 release-profile shape gate: `[profile.release]` carries
+# lto = "thin" / strip = true / codegen-units = 16 and the explicit
+# [profile.release.package.*] set is {degenbot_rs} at codegen-units = 1.
+# Shape-based, not a member enumeration: a crate split inherits the root
+# default without touching this gate.
+#
+# live-invariant gate (ADR-087 D2): watches the live release-profile wiring in rust/Cargo.toml; not tripwire precedent.
+check-profile-policy:
+    # C7: the gate body lives as a cargo test on the umbrella crate
+    # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
+    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- profile_release_policy_is_respected --exact --nocapture
 
 # ADR-084 D3 dependency-charter gate: every deny rule in
 # rust/crates/facade/degenbot/tests/dependency_charter.txt asserted over

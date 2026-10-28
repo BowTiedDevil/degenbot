@@ -322,11 +322,11 @@ oracles have one shared source of truth.
 The repository root pins Rust 1.98.1 for local development and releases; the
 workspace MSRV is Rust 1.97. `just toolchain` prints the policy. Local builds
 use `[profile.dev]` (`opt-level = 1`, line-tables-only debug information, no
-LTO/stripping). Release builds use thin LTO, stripping, and
-`codegen-units = 1` for the final link; the explicitly listed core-library
-overrides use 16 codegen units and are reconverged by the final link. Do not
-change those values without the build-policy decision recorded in
-[AGENTS.md](../AGENTS.md).
+LTO/stripping). Release builds use thin LTO and stripping, with the ADR-088
+codegen shape: every workspace member compiles at 16 codegen units, and the
+shipped `degenbot_rs` cdylib is pinned to 1 for the final link, which
+reconverges the rest. The shape is gate-enforced by `just check-profile-policy`
+and recorded in [ADR-088](../docs/adr/ADR-088-release-profile-default-16.md).
 
 Unqualified Cargo commands use only `degenbot` and `degenbot-cli`, the two
 pure-Rust defaults. Use an explicit package selector for the PyO3 shell and

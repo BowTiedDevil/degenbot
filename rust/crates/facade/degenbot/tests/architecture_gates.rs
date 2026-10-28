@@ -2826,3 +2826,101 @@ fn module_segment_len(text: &str) -> usize {
     }
     len
 }
+
+/// ADR-088: the release-profile shape — member default 16, one binding pin.
+///
+/// Asserts the manifest shape, not a member enumeration: `[profile.release]`
+/// carries `lto = "thin"`, `strip = true`, `codegen-units = 16`, and the
+/// explicit `[profile.release.package.*]` set is `{degenbot_rs}` at
+/// `codegen-units = 1`. New members and crate splits inherit the root
+/// default without touching this gate; a second shipped artifact joins the
+/// override set deliberately, under review.
+#[test]
+fn profile_release_policy_is_respected() {
+    /// The `key = value` string in a section body, comments stripped.
+    fn section_value<'a>(body: &'a [String], key: &str) -> Option<&'a str> {
+        let prefix = format!("{key} =");
+        body.iter().find_map(|line| {
+            let trimmed = line.trim();
+            trimmed
+                .strip_prefix(prefix.as_str())
+                .map(|value| value.split('#').next().unwrap_or_default().trim())
+        })
+    }
+
+    let manifest = std::fs::read_to_string(manifest_flag()).expect("read workspace Cargo.toml");
+
+    // Collect (header, body) for every `profile.release*` section. Body lines
+    // are raw; the value lookups trim whitespace and trailing comments.
+    let mut release_body: Vec<String> = Vec::new();
+    let mut package_bodies: Vec<(String, Vec<String>)> = Vec::new();
+    let mut current: Option<(String, Vec<String>)> = None;
+    for line in manifest.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            if let Some((header, body)) = current.take() {
+                if header == "profile.release" {
+                    release_body = body;
+                } else if let Some(name) = header.strip_prefix("profile.release.package.") {
+                    package_bodies.push((name.trim_matches('"').to_owned(), body));
+                }
+            }
+            current = Some((trimmed[1..trimmed.len() - 1].to_owned(), Vec::new()));
+        } else if let Some((_, body)) = current.as_mut() {
+            body.push(line.to_owned());
+        }
+    }
+    if let Some((header, body)) = current.take() {
+        if header == "profile.release" {
+            release_body = body;
+        } else if let Some(name) = header.strip_prefix("profile.release.package.") {
+            package_bodies.push((name.trim_matches('"').to_owned(), body));
+        }
+    }
+
+    assert!(
+        !release_body.is_empty(),
+        "rust/Cargo.toml has no [profile.release] section"
+    );
+
+    for key in ["lto", "strip", "codegen-units"] {
+        assert!(
+            section_value(&release_body, key).is_some(),
+            "[profile.release] is missing `{key}` — the ADR-088 shape pins it"
+        );
+    }
+    assert_eq!(
+        section_value(&release_body, "lto"),
+        Some("\"thin\""),
+        "[profile.release] lto must stay \"thin\" (per-package lto does not exist; ADR-088)"
+    );
+    assert_eq!(
+        section_value(&release_body, "strip"),
+        Some("true"),
+        "[profile.release] strip must stay true (ADR-088)"
+    );
+    assert_eq!(
+        section_value(&release_body, "codegen-units"),
+        Some("16"),
+        "[profile.release] codegen-units must be 16 — every member lib inherits it; \
+         strict codegen belongs to the shipped-artifact pin (ADR-088)"
+    );
+
+    let unexpected: Vec<&String> = package_bodies
+        .iter()
+        .map(|(name, _)| name)
+        .filter(|name| name.as_str() != "degenbot_rs")
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "unexpected [profile.release.package.*] overrides {unexpected:?} — the only \
+         per-package pin is the shipped cdylib degenbot_rs (ADR-088)"
+    );
+    for (name, body) in &package_bodies {
+        assert_eq!(
+            section_value(body, "codegen-units"),
+            Some("1"),
+            "[profile.release.package.{name}] must pin codegen-units = 1 (ADR-088)"
+        );
+    }
+}

@@ -118,6 +118,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [085](ADR-085-construction-request-one-door.md) | Pool construction is one family-tagged request at both tiers | accepted |
 | [086](ADR-086-provider-one-contract-two-adapters.md) | Provider sync/async — one contract, two call-convention adapters | accepted |
 | [087](ADR-087-deletion-is-the-retirement.md) | Deletion is the retirement — retirement tripwires rejected | accepted (reaffirms and enforces ADR-047 D4) |
+| [088](ADR-088-release-profile-default-16.md) | Release profile default 16 codegen units — one pin, no per-crate list | accepted |
 
 ## Historical — provenance only
 
