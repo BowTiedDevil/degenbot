@@ -223,6 +223,18 @@ test-golden-replay:
 # --workspace precedence and silently runs every workspace member when both
 # selections are present, so the documented `-p <crate>` narrowing would never
 # narrow.
+#
+# Why the whole-workspace default over `-p <crate>`: resolver v3 unifies
+# features for `--workspace`, so its artifacts are the one warm, canonical set
+# in `rust/target`. A `-p <crate>` selection unifies features differently
+# (core crates lose the `pyo3` feature the binding layer enables; dep features
+# like tokio's shrink), so cargo stores a second rlib set under different
+# metadata hashes — alternating between the two rebuilds shared dependencies on
+# every shared edit (measured: `-p degenbot-simulation` recompiled 6 just-built
+# crates in ~1m; a leaf crate pays nothing). The workspace run also executes
+# every crate's suite, catching cross-crate fallout (signature changes
+# rippling into dependents, e.g. examples/settlement_bot) that a scoped run
+# never sees.
 test-rust-nextest *args: check-toolchain
     #!/usr/bin/env bash
     set -euo pipefail
@@ -718,6 +730,11 @@ test-python-no-anvil-spawn-surface kw="" *args: dev
     exec bash scripts/no_anvil_run.sh {{ args }} "${files[@]}"
 
 
+# Repeat-run gate for the two ordering-sensitive suites
+# (tests/arbitrage/test_arbitrage_session.py, tests/operator/test_operator_channel.py):
+# three consecutive runs under `-p no:cacheprovider`, failing on any failing
+# run. A single green pass can hide cross-run ordering or state coupling;
+# repetition is the detector.
 test-flake-probe:
     #!/usr/bin/env bash
     set -euo pipefail
