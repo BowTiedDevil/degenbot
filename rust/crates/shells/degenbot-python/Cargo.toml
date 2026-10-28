@@ -68,10 +68,7 @@ degenbot-core = { workspace = true, features = ["pyo3"] }
 # sinks). Both are pyo3-free cores; the binding layer reaches UP into the
 # console, never the reverse.
 degenbot-cli.workspace = true
-dashmap = { version = "^6.2" }
-futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 log = { version = "^0.4" }
-lru = { version = "^0.19" }
 mimalloc = { version = "0.1", optional = true }
 # Engine-slice map type mirrors the core hashbrown maps.
 hashbrown.workspace = true
@@ -79,16 +76,10 @@ parking_lot = { version = "^0.13" }
 pyo3 = { version = "^0.30", features = [ "abi3-py312", "serde", "multiple-pymethods"] }
 pyo3-async-runtimes = { version = "^0.30", features = ["tokio-runtime"] }
 crossbeam-queue = { version = "^0.3" }
-# argv parsing at the Python seam: the Parser::try_parse_from trait the
-# console's OWN clap tree exposes (the binary uses <Cli as Parser>::parse).
-clap = { version = "4.6", features = ["derive"] }
 tracing = { version = "^0.1" }
 tracing-log = { version = "^0.2" }
 tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "fmt", "ansi", "env-filter", "registry", "alloc"] }
-rand = { version = "^0.10" }
-serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
-thiserror = { version = "^2.0" }
 tokio = { version = "^1.54", features = ["rt-multi-thread", "time", "macros", "sync"] }
 toml = "1.1.8"
 degenbot-eventhub.workspace = true
@@ -175,7 +166,6 @@ otel = ['bot', 'degenbot-bot/otel']
 # pin the typed `CliError -> ExitCode` mapping directly.
 degenbot-cli-core.workspace = true
 ctor = "^1"
-proptest = "^1.12"
 # Enable test-only constructors (e.g. `AlloyProvider::from_provider`) for
 # the root crate's tests. Production builds pull degenbot-rpc without this
 # feature.

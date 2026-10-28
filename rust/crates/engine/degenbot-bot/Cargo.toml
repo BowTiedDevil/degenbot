@@ -71,7 +71,6 @@ tracing-opentelemetry = { version = "0.34", optional = true, default-features = 
 tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["std", "registry", "fmt", "env-filter", "time"] }
 hotpath = { version = "^0.30.0", default-features = false }
 parking_lot = { version = "^0.13" }
-rand = { version = "^0.10" }
 tracing = { version = "^0.1" }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
@@ -79,7 +78,6 @@ thiserror = { version = "^2.0" }
 tokio = { version = "^1.54", features = ["rt-multi-thread", "time", "macros", "sync"] }
 opentelemetry-prometheus = { version = "0.33.1", optional = true }
 prometheus = { version = "0.14.0", default-features = false, optional = true }
-tokio-util = { version = "0.7.20", optional = true }
 
 # mimalloc C API for the runtime purge-delay control (see src/allocator_ctrl.rs).
 libmimalloc-sys = { version = "^0.1", optional = true }
@@ -105,7 +103,7 @@ allocator-ctrl = ["dep:libmimalloc-sys", "libmimalloc-sys/extended"]
 # T1 metrics pipeline rides the same feature gate: opentelemetry-prometheus
 # (Prometheus text-format reader for Grafana scrapes) + the prometheus crate
 # (registry + TextEncoder). Same zero-footprint rule as the trace deps.
-otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", "dep:tracing-opentelemetry", "dep:tracing-subscriber", "dep:opentelemetry-prometheus", "dep:prometheus", "dep:tokio-util", "dep:opentelemetry-http", "dep:reqwest", "dep:http"]
+otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", "dep:tracing-opentelemetry", "dep:tracing-subscriber", "dep:opentelemetry-prometheus", "dep:prometheus", "dep:opentelemetry-http", "dep:reqwest", "dep:http"]
 # Drain-path profiling tracer bullet (see `src/profiling.rs`). Enable with
 # `--features hotpath` (timing+threads), `hotpath-cpu` (CPU sampling, Linux/macOS
 # only), or `hotpath-alloc` (allocation accounting). Operationally gated by the
@@ -129,7 +127,6 @@ hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 hotpath-prometheus = ["hotpath", "hotpath/hotpath-prometheus"]
 opentelemetry-prometheus = ["dep:opentelemetry-prometheus"]
 prometheus = ["dep:prometheus"]
-tokio-util = ["dep:tokio-util"]
 
 # Solve-executor OS-priority lowering: the dedicated CPU
 # runtime's workers nice() down so latency-critical I/O-runtime tasks win.
@@ -141,8 +138,6 @@ libc = "^0.2"
 # bot_core pump scenarios need: they live outside the substrate crate, so its
 # `cfg(test)` does not reach them.
 degenbot-substrate = { workspace = true, features = ["test-fixtures"] }
-# The load_v3 variant-coverage test seeds pools + variant tables via raw SQL.
-rusqlite = { version = "^0.41", features = ["bundled"] }
 
 
 # `start_paused` runtime for the early-slice gap-stream tests

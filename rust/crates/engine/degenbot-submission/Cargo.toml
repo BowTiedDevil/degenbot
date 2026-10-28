@@ -13,7 +13,6 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
 alloy = { version = "^2.5", features = ["full", "signer-local", "network"] }
 # The relay POSTs (flashbots-compatible eth_sendBundle over HTTPS). Ordered
 # fan-out lives in relay.rs; rustls matches the bot crate's reqwest pinned
@@ -45,8 +44,6 @@ degenbot-runs = { workspace = true, features = ["tracing"] }
 degenbot-simulation.workspace = true
 # The zero-warmup `WarmupSlots` the frame-replay handle's override set rides.
 degenbot-executor.workspace = true
-# The journal extractor's descriptor-map type (`extract_pool_post_states`).
-hashbrown.workspace = true
 # Slot layouts (V2 reserves slot, CL slot0/tick layouts) + `ConcentratedLiquiditySlotLayout`.
 degenbot-pools.workspace = true
 # `WarmCodeCacheInner::shared_default()` returns a parking_lot RwLock.
@@ -98,9 +95,6 @@ degenbot-rpc = { workspace = true, features = ["test-utils"] }
 # The frame-pipeline fixture test hand-builds `ReplayOutcome` journals
 # (revm state) to drive replay→extract→admit→solve end-to-end offline.
 revm = { version = "^43.0", default-features = false, features = ["std"] }
-# The registry-resolver fixture seeds a throwaway connector DB on disk (the
-# resolver opens the path, so an in-memory handle cannot stand in).
-tempfile = { version = "^3.27" }
 serde_json = { version = "^1.0" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 tokio-tungstenite = { version = "^0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }

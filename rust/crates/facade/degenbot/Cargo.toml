@@ -21,7 +21,6 @@ workspace = true
 # built from `crates/shells/degenbot-python/`) is a separate workspace member that
 # DOES pull pyo3; the umbrella never depends on it.
 [dependencies]
-parking_lot = { version = "^0.13" }
 alloy = { version = "^2.5", features = ["full"] }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }

@@ -227,7 +227,6 @@ dev = [
     "hypothesis",
     "maturin",
     "mypy",
-    "numpy",
     "prek",
     "pytest-asyncio",
     "pytest-order",

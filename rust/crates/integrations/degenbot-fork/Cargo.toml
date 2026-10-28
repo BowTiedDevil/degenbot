@@ -37,5 +37,4 @@ test-utils = []
 # `log` logger inside `python_log_layer::init_logging_subscriber` and
 # panics `logging_parity` with `SetLoggerError`.
 tracing = { version = "0.1", default-features = false, features = ["std"] }
-tracing-core = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "registry"] }
