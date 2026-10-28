@@ -22,7 +22,7 @@ degenbot-config.workspace = true
 degenbot-db = { workspace = true, features = ["writer"] }
 degenbot-decoders.workspace = true
 degenbot-rpc.workspace = true
-rusqlite = { version = "^0.40" }
+rusqlite = { version = "^0.41" }
 thiserror = { version = "^2.0" }
 tokio = { version = "^1.54", features = ["rt-multi-thread", "macros", "sync"] }
 tracing = { version = "^0.1" }

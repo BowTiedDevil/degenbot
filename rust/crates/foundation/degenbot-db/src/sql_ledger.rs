@@ -226,12 +226,12 @@ impl LedgerDb {
     pub fn open_for_writes(path: &Path) -> Result<(Self, SchemaState), DbError> {
         let (db, state) = DegenbotDb::open_for_writes(path)?;
         {
-            let guard = db.lock();
+            let mut guard = db.lock();
             let handle = unsafe { guard.handle() };
             guard.trace_v2(
                 TraceEventCodes::SQLITE_TRACE_STMT | TraceEventCodes::SQLITE_TRACE_PROFILE,
                 Some(trace_hook),
-            );
+            )?;
             let mut slot = SESSION
                 .lock()
                 .map_err(|_| DbError::Decode("sql-ledger session slot poisoned".to_string()))?;
@@ -273,7 +273,14 @@ impl Drop for LedgerDb {
         // Disarm BEFORE the connection drops: clear the hooks (so no further
         // statement routes into the session) and release the slot (which owns
         // the raw connection handle).
-        self.db.lock().trace_v2(TraceEventCodes::empty(), None);
+        // rusqlite 0.41: `trace_v2` is generic over the hook, so a bare
+        // `None` leaves `F` ambiguous — spell the fn-pointer shape out. The
+        // clear cannot fail while disarming (no hook left to install); a
+        // destructor cannot propagate, so the `Result` is dropped.
+        let _ = self
+            .db
+            .lock()
+            .trace_v2(TraceEventCodes::empty(), None::<fn(TraceEvent<'_>)>);
         if let Ok(mut slot) = SESSION.lock() {
             *slot = None;
         }
@@ -320,11 +327,9 @@ pub fn dump_tables_golden_json(conn: &Connection, tables: &[&str]) -> Result<Str
     let mut tables_json = Vec::with_capacity(tables.len());
     for table in tables {
         let mut stmt = conn.prepare(&format!("SELECT * FROM {table}"))?;
-        let columns: Vec<String> = stmt
-            .column_names()
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect();
+        // rusqlite 0.41: `column_names` returns the names directly as an
+        // iterator instead of a `Vec<String>`.
+        let columns: Vec<String> = stmt.column_names().map(str::to_string).collect();
         let mut rows: Vec<serde_json::Value> = Vec::new();
         let mut cursor = stmt.query([])?;
         while let Some(row) = cursor.next()? {

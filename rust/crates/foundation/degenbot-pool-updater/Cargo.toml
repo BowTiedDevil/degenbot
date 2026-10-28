@@ -29,7 +29,7 @@ thiserror = { version = "^2.0" }
 tracing = { version = "^0.1" }
 # Plain rusqlite (no `bundled`) — the bundled libsqlite3-sys link is owned
 # solely by degenbot-db; here we only need the Connection/Transaction types.
-rusqlite = { version = "^0.40" }
+rusqlite = { version = "^0.41" }
 
 [features]
 default = []

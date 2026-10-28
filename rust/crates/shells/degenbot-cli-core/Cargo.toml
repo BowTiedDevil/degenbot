@@ -43,7 +43,7 @@ tokio = { version = "^1.54", features = ["rt-multi-thread", "time", "net", "io-u
 # Plain rusqlite (no `bundled`) - the on-conn read/write seams take a
 # `&rusqlite::Connection` (the chunk's Transaction). The bundled libsqlite3-sys
 # link is owned solely by degenbot-db.
-rusqlite = { version = "^0.40" }
+rusqlite = { version = "^0.41" }
 # The operator command-channel JSON codec (ADR-051 D6): one request/response
 # line each way, encoded/decoded at exactly one site (`crate::operator`).
 # The crate already depends on tokio's `net` feature for the UDS transport.
@@ -63,5 +63,5 @@ futures-util = "^0.3"
 # `bundled` is already unified in via degenbot-db; named explicitly so a cold
 # test build never needs a system SQLite.
 degenbot-db.workspace = true
-rusqlite = { version = "^0.40", features = ["bundled"] }
+rusqlite = { version = "^0.41", features = ["bundled"] }
 tempfile = { version = "^3.27" }

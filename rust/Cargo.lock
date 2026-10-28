@@ -501,9 +501,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-rlp"
-version = "0.3.16"
+version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24671b1f62edcf0f9b62994c7bf72cd621a04a4b99f5020ece1a647b40e2f103"
+checksum = "6aafa19ee4ccc64dad34105c83a62c004c893ee0dd6763931b37430bdae197f4"
 dependencies = [
  "alloy-rlp-derive",
  "arrayvec",
@@ -512,9 +512,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-rlp-derive"
-version = "0.3.16"
+version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d4311c03125e8a18296504560b9de3d75ecbd0dcda7f71e6cf2a196d57e6fba"
+checksum = "401f61cc68aca05d91f58ef5ad6084da1d632fcb23710cbd62bda3bdf79293aa"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -866,9 +866,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-trie"
-version = "0.9.8"
+version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b94e3e0a88f8db47250ac8a95fb825d020719f833eb1dc661bd3609c3bbece7d"
+checksum = "70c7c04b6e5a7a2325f53d38c319a47d01c3609b44845ac2801bac9643fe26b9"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -2210,7 +2210,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "async-trait",
@@ -2254,7 +2254,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-aave"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot-config",
@@ -2272,7 +2272,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-abi"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot-core",
@@ -2284,7 +2284,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-arbitrage"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "alloy-json-rpc",
@@ -2312,7 +2312,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-batch-executor"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot-arbitrage",
@@ -2332,7 +2332,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-bot"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "async-trait",
@@ -2384,7 +2384,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-cli"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "clap",
  "degenbot-bot",
@@ -2400,7 +2400,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-cli-core"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot-aave",
@@ -2421,7 +2421,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-config"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "toml",
  "toml_edit",
@@ -2429,7 +2429,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-core"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot-config",
@@ -2445,7 +2445,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-db"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "criterion",
@@ -2466,14 +2466,14 @@ dependencies = [
 
 [[package]]
 name = "degenbot-decoders"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
 ]
 
 [[package]]
 name = "degenbot-eventhub"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "parking_lot 0.13.0",
@@ -2484,7 +2484,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-execution"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot-executor",
@@ -2494,7 +2494,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-execution-sample"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot-execution",
@@ -2505,7 +2505,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-executor"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot-abi",
@@ -2516,7 +2516,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-fork"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot-core",
@@ -2529,7 +2529,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-ingestion"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot-core",
@@ -2542,7 +2542,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-math"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "criterion",
@@ -2556,7 +2556,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-order-index"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy-primitives",
  "proptest",
@@ -2564,14 +2564,14 @@ dependencies = [
 
 [[package]]
 name = "degenbot-pathfinding"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "criterion",
 ]
 
 [[package]]
 name = "degenbot-pool-updater"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot-core",
@@ -2590,7 +2590,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-pools"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "criterion",
@@ -2617,7 +2617,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-price"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot-abi",
@@ -2630,7 +2630,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-rpc"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "dashmap",
@@ -2657,7 +2657,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-runs"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "degenbot-config",
  "tracing-subscriber",
@@ -2665,7 +2665,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-settlement-bot-example"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot",
@@ -2679,7 +2679,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-simulation"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot-bot",
@@ -2708,7 +2708,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-strategy"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "async-trait",
@@ -2741,7 +2741,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-stubgen"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "anyhow",
  "degenbot-config",
@@ -2751,7 +2751,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-submission"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot-bot",
@@ -2787,7 +2787,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-substrate"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "async-trait",
@@ -2818,7 +2818,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-uniswap"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "degenbot-abi",
@@ -2830,7 +2830,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-workers"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "degenbot-config",
  "degenbot-core",
@@ -2842,7 +2842,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot_rs"
-version = "0.6.0-alpha.17"
+version = "0.6.0-alpha.18"
 dependencies = [
  "alloy",
  "clap",
@@ -3561,9 +3561,9 @@ dependencies = [
 
 [[package]]
 name = "hotpath"
-version = "0.29.0"
+version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73f137bde4c97275aef220f3a1566f39721fbd53086a444c8d841b5f345719dc"
+checksum = "618bdbbe0aa401002251afd661e4b46cae48b22a132c656373c1738d250c1946"
 dependencies = [
  "arc-swap",
  "cfg-if",
@@ -3589,15 +3589,15 @@ dependencies = [
 
 [[package]]
 name = "hotpath-drain"
-version = "0.29.0"
+version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87df2604170a3a0b512a837eba4d5d18671e54df8d450cc894af36d41291dba5"
+checksum = "1732059b5a68195c48a0b279f6efda01472e6a7ecaa4d9f12ec2ea72be77e9f6"
 
 [[package]]
 name = "hotpath-macros"
-version = "0.29.0"
+version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25dcd4a80153dd66b34b8ae5d02572d71cc3ff55aff397578cd471d645a8a740"
+checksum = "2e465e7b1e71edfb58f3bf40dbf1441dbef2b2907f302835574a634f85402176"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3908,9 +3908,9 @@ dependencies = [
 
 [[package]]
 name = "interprocess"
-version = "2.4.6"
+version = "2.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7529951166d4dd4d2a6b9f0bb97919b810623f75eeb76e81ee9e6644886cae37"
+checksum = "a4a4fff6c51dece332bdbf3af5fe376c49cfc8dced782725e95be0bb489e35d7"
 dependencies = [
  "doctest-file",
  "futures-core",
@@ -4179,9 +4179,9 @@ dependencies = [
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.38.2"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
+checksum = "14a5f01b87b92705d07b433c06f96cbc764637d81a0bffb5734ce17cf0f9a2b3"
 dependencies = [
  "cc",
  "pkg-config",
@@ -4462,9 +4462,9 @@ dependencies = [
 
 [[package]]
 name = "nybbles"
-version = "0.4.8"
+version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d49ff0c0d00d4a502b39df9af3a525e1efeb14b9dabb5bb83335284c1309210"
+checksum = "90e56dd5826c98a5ab882323e4f4fe062892e0e794e9a5c8254e00c666f3f932"
 dependencies = [
  "alloy-rlp",
  "cfg-if",
@@ -4503,9 +4503,9 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "openssl-probe"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
+checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 
 [[package]]
 name = "opentelemetry"
@@ -4703,14 +4703,23 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pest"
-version = "2.9.4"
+version = "2.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd47a460a9cbc3b3429c7e22bf0d76653e779319bae45a499ca010c9a990bb23"
+checksum = "a8db75153506001cb36ed924f08cadc862eb3f8c4d0d534139f29074769d7660"
 dependencies = [
  "memchr",
+ "pest_stack_guard",
+ "ucd-trie",
+]
+
+[[package]]
+name = "pest_stack_guard"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97e6cd2217057fa86b6eaa512917e58089d875b957a31e35e7ab729977e0a5f2"
+dependencies = [
  "psm",
  "stacker",
- "ucd-trie",
 ]
 
 [[package]]
@@ -5671,11 +5680,10 @@ dependencies = [
 
 [[package]]
 name = "rsqlite-vfs"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c51c9ae4df8a7fba42103df5c621fa3c37eccf3a3c650879e90fc48b11cc192c"
+checksum = "353b74f9810d5b085b6c42c9d86a5f0fdb795553235cdd48753b32e3809d18a7"
 dependencies = [
- "hashbrown 0.16.1",
  "thiserror",
 ]
 
@@ -5717,9 +5725,9 @@ checksum = "48fd7bd8a6377e15ad9d42a8ec25371b94ddc67abe7c8b9127bec79bebaaae18"
 
 [[package]]
 name = "rusqlite"
-version = "0.40.2"
+version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23f2a97da3e3873c73cb2a2e71b35c40ff95e0b1eefa8d72d8499a6928c3b5b3"
+checksum = "9c026b4444579e8d754556c6c75d040d69c4a44283cdb648ab8a8d5965c2cfa8"
 dependencies = [
  "bitflags 2.13.2",
  "fallible-iterator",
@@ -5768,9 +5776,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.5"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags 2.13.2",
  "errno",
@@ -6319,14 +6327,12 @@ dependencies = [
 
 [[package]]
 name = "sqlite-wasm-rs"
-version = "0.5.5"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc3efc0da82635d7e1ced0053bbbfa8c7ab9645d0bf36ceb4f7127bb85315d75"
+checksum = "36bd8e29bf08189a005b2df1df99823aa0861cabe9044e5f31ed54ca292ee618"
 dependencies = [
  "cc",
- "js-sys",
  "rsqlite-vfs",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -6945,9 +6951,9 @@ checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
 
 [[package]]
 name = "unicode-width"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
+checksum = "ca718471876992059f251e33aafc334346ada08042b7661dd1fe313a9bced557"
 
 [[package]]
 name = "unicode-xid"

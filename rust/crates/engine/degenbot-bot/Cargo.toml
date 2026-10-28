@@ -69,7 +69,7 @@ tracing-opentelemetry = { version = "0.34", optional = true, default-features = 
 # composes a tracing-subscriber registry at the call site, so the crate needs
 # it at runtime, not just in tests.
 tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["std", "registry", "fmt", "env-filter", "time"] }
-hotpath = { version = "^0.29.0", default-features = false }
+hotpath = { version = "^0.30.0", default-features = false }
 parking_lot = { version = "^0.13" }
 rand = { version = "^0.10" }
 tracing = { version = "^0.1" }
@@ -142,7 +142,7 @@ libc = "^0.2"
 # `cfg(test)` does not reach them.
 degenbot-substrate = { workspace = true, features = ["test-fixtures"] }
 # The load_v3 variant-coverage test seeds pools + variant tables via raw SQL.
-rusqlite = { version = "^0.40", features = ["bundled"] }
+rusqlite = { version = "^0.41", features = ["bundled"] }
 
 
 # `start_paused` runtime for the early-slice gap-stream tests

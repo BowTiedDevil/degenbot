@@ -39,7 +39,7 @@ zstd = { workspace = true, optional = true }
 # hotpath: solver-phase profiling (ADR-005 core, pyo3-free). Non-optional,
 # default-features = false -> no-op stubs in default builds; the
 # `hotpath` feature enables real instrumentation. Version matched to degenbot-bot.
-hotpath = { version = "^0.29.0", default-features = false }
+hotpath = { version = "^0.30.0", default-features = false }
 
 [features]
 hotpath = ["hotpath/hotpath", "hotpath/threads"]

@@ -43,7 +43,7 @@ parking_lot = { version = "^0.13" }
 # only here so libsqlite3-sys is compiled once for the whole workspace.
 # See ADR-010/ADR-011 before reining this in — the on-disk SQLite version
 # this ships is the one creating/reading the Alembic-era .db files.
-rusqlite = { version = "^0.40", features = ["bundled", "backup"] }
+rusqlite = { version = "^0.41", features = ["bundled", "backup"] }
 # Golden-artifact serialization for the `sql-ledger` feature (the canonical
 # statement-ledger + DB-dump JSON writers). Optional: production builds never
 # enable the feature, so serde_json stays out of the default dependency graph
