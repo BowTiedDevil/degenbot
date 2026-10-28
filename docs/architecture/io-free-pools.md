@@ -106,7 +106,7 @@ class CurveDataProvider(Protocol):
 
 ### Data Provider Factory Pattern
 
-The builder creates a `_CurveDataProviderImpl` via the fetcher factory:
+The pool's `data_provider` is a `_CurveDataProviderImpl` created by the construction path and injected as a single seam:
 
 ```python
 def build(self, pool_address):
@@ -133,13 +133,12 @@ def build(self, pool_address):
 
 - **Curve StableSwap Pools** — fully I/O-free with `CurveDataProvider` seam (ADR-001 Phase 1–2, Plan 040 collapsed 13 fetchers → 1 data provider)
 - **All pool construction** — `Bot.build_*_pool()` methods fetch data from DB/RPC and pass values to pool constructors; no provider references on pool objects after construction
-- **Builder extraction** — pool construction I/O has been extracted from `Bot` into typed builder classes (`V2PoolBuilder`, `V3PoolBuilder`, `V4PoolBuilder`, `CurvePoolBuilder`, `Erc20Builder`); V2 variant builders extracted into `V2BuilderBase` + `AerodromeV2Builder` (Plan 043); ADR-005 slice 7 step 4b folded the deleted `CamelotBuilder`'s on-chain fetches into `V2PoolBuilder.build` (Camelot branch keyed on `dex.variant`); V3/V4 builder base classes with shared pure-logic helpers and frozen dataclasses (Plan 060)
-- **V2/V3/V4/Aerodrome pool classes** — all `ProviderAdapter`-taking methods removed; I/O for construction and updates lives entirely in builders (ADR-001 Phase 3 complete, Plan 017)
+- **One construction authority (ADR-085)** — pool construction I/O crossed the `PyBotConstruction` door; `Bot.build_pool()` delegates to the core `bot_core::pool_builder` choreography over `ConstructionIo` for the registered family lanes (V2/V3/V4, Aerodrome, Balancer). The earlier typed-builder fleet (`V2PoolBuilder`/`V3PoolBuilder`/`V4PoolBuilder`/`CurvePoolBuilder.build`) was deleted — the surviving `builders/` modules (`curve_pool_builder.py`, `erc20_builder.py`) are ADR-085 *door-request translators* (each family's `translation` arm), not an I/O authority: the door performs every registered fetch, and the Python seams are labeled value-fetches only. The construction tier reads chain through one call step, `ContractRead` (`degenbot_rpc::contract_read`), with `abi::fetch_*` single-sourcing the fetch recipes and `PacedRead` carrying the tick-pace policy — `pool_builder::choreography` dissolved onto it.
+- **V2/V3/V4/Aerodrome pool classes** — all `ProviderAdapter`-taking methods removed; construction I/O crosses the door, updates flow through `bot.update(pool)` -> `refresh_via` (ADR-001 Phase 3 complete, Plan 017)
 - **Curve DyCalculator seam** — 14 `match`/`if` dispatch branches in `get_dy()` replaced by injectable calculator objects; pure math functions in `calculations/stableswap.py` (Plan 039)
 - **DyCalculationInputs** — `pool: CurveStableswapPool` parameter in `DyCalculator.calculate()` replaced with `inputs: DyCalculationInputs` frozen dataclass carrying pre-resolved data; 77 SLF001 errors → 0; calculators are pure consumers of pre-resolved data with no private member access (Plan 045). `DyCalculationInputs` is now a pure value object — all fields are ints, tuples, enums, or None (zero callables); calculators call `stableswap_get_y()` / `stableswap_newton_y()` directly with `EVMRevertError` wrapping (Plan 069).
 - **Curve state mixin** — 25 attributes + 22 properties with `_xxx` private pattern; `StableswapPoolState` (Plan 041)
 - **ProviderBackend** — merged `EthereumProvider` + `_SyncProviderBackend` → `ProviderBackend` protocol; `__getattr__` dispatch replaces 15× delegation methods (Plan 042); `EthereumProvider` backward-compatibility alias removed (Plan 061); subscription stubs consolidated into `SyncSubscriptionSupport`/`AsyncSubscriptionSupport` mixins (Plan 058)
-- **Builder Protocol** — `PoolBuilder` protocol replaces the 4-way union type annotation; `_dispatch_build()` isinstance chain eliminated via `**kwargs` forwarding (Plan 035)
 - **Pool → Hop conversion** — each pool's `to_hop_state()` is the single source of truth; `solver_hop_builders.py` deleted (Plan 033)
 - **SwapAmounts consolidation** — `input_amount()`/`output_amount()` on `AbstractSwapAmounts`; `build_swap_amount()` on pool classes via `ArbitragePathPool` protocol; `_extract_amount_in/out` deleted (Plan 036)
 - **Legacy arbitrage cycles** — deleted; `AbstractArbitrage` and `get_arbitrage_helpers()` deleted (Plan 038). Full removal of the `_legacy/` sub-package and `UniswapLpCycle`/`UniswapCurveCycle` redirects completes the migration to `ArbitragePath` + `ArbSolver`.
@@ -194,36 +193,25 @@ class IoFreePool:
         return tuple(rates)
 ```
 
-**Builder-side (Bot delegates to builders, not pools):**
+**Construction side (the door, not pools):**
 ```python
-# Builders own the I/O choreography
-# Bot.create_builder() injects connections and db into builders
-# Builders call providers, construct pools with pure data
+# Bot.build_pool() is the one door: it delegates to the core choreography
+# (bot_core::pool_builder over ConstructionIo), which performs every
+# registered fetch through the ContractRead call step.
+# Curve/erc20 builders are door-request translators (ADR-085), not an I/O authority.
 
-# V2 construction: builder fetches from DB/RPC, pool receives pure values
-class V2PoolBuilder:
-    def build(self, pool_address, *, chain_id, ...):
-        provider = self._connections.get_provider(chain_id)  # Builder handles I/O
-        ...
-        pool = UniswapV2Pool(
-            address=pool_address,
-            token0=token0, token1=token1,
-            reserves_token0=reserves0, reserves_token1=reserves1,
-            # No provider reference passed to pool
-        )
-
-# Curve construction: builder creates CurveDataProviderImpl, injects into pool
-class CurvePoolBuilder:
-    def build(self, address, *, chain_id, ...):
-        data_provider = CurveDataProviderImpl(
-            provider=ProviderAdapter(...),
-            pool_address=address,
-            ...,
-        )
-        pool = CurveStableswapPool(
-            ...,
-            data_provider=data_provider,  # Single parameter replaces 13 fetcher callbacks
-        )
+# V2/V3/V4/Balancer: the core choreography fetches from DB/RPC, the pool
+# receives pure values — no provider reference reaches the pool.
+# Curve: the data provider is created by the construction path and injected:
+data_provider = CurveDataProviderImpl(
+    provider=ProviderAdapter(...),
+    pool_address=address,
+    ...,
+)
+pool = CurveStableswapPool(
+    ...,
+    data_provider=data_provider,  # Single parameter replaces 13 fetcher callbacks
+)
 ```
 
 ## When to Use

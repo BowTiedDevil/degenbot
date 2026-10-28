@@ -335,8 +335,10 @@ _Avoid_: "run loop" (the main loop is the session watch's), "startup sequence"
 The one home of the sync/async provider trees' shared contract logic
 (`degenbot.provider.surface`): `get_logs` filter normalization and validation, and
 the typed payload coercions both trees call. The two trees are two call-convention
-adapters over the Rust pyclass pair; their agreement is pinned by an offline parity
-test, never maintained by hand (ADR-086).
+adapters over the Rust pyclass pair; `OfflineProvider` implements the same surface
+without a backend, and every surface joins the same offline parity walk (the census
+records each surface's adapters/own code — the shared contract lives on the
+surface), so agreement is pinned by the walk, never maintained by hand (ADR-086).
 _Avoid_: call-convention unification (the seam pair is real — ADR-086); shared
 logic living in one tree because the other does not need it yet.
 
