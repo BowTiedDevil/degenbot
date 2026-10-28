@@ -670,6 +670,17 @@ treated as evidence. Cheap insurance against inert pass-throughs, stale comparis
 and accidentally-dead checks.
 _Avoid_: trusting an unprobed pass; running a gate whose failure branch is unknown.
 
+**Retirement tripwire**:
+
+A test, gate, or prose prohibition whose purpose is keeping a deliberately deleted thing
+gone — absent-API assertions, retired-name text greps, "must not reappear" gates,
+"do not revive" prose. Deletion is the complete retirement
+([ADR-087](docs/adr/ADR-087-deletion-is-the-retirement.md)): the ban is absolute, and
+the tripwire-ratchet commit gate enforces it.
+
+_Avoid_: adding one for any surface; citing live-invariant gates (drift gates,
+negative probes) as precedent for one
+
 **Push-gate manifest**:
 prek.toml's `stages = ["pre-push"]` hook entries — the single declaration of the
 push-gate list. `just pre-push` is a one-line adapter over `prek run --stage pre-push`,

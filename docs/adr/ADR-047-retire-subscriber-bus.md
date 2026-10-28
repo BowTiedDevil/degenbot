@@ -2,6 +2,12 @@
 
 **Status: accepted** (2026-09-12; architecture-review candidate #3, grilled + settled; epic `Y4VMWH` — bridge tail `967d1e81b` (T1), Rust seam `5aace566a` (T2)).
 
+**Reaffirmation (2026-10-28):** D4 is reaffirmed and enforced by
+[ADR-087](ADR-087-deletion-is-the-retirement.md), which adopts its principle in full —
+including its absolutism — records why it went unenforced, and supplies the AGENTS.md
+placement and commit-gate enforcement it lacked. D1–D3 (the subscriber-bus retirement
+itself) are untouched.
+
 ## Context
 
 ADR-006 D4 introduced a per-state-subject publisher/subscriber bus (the "subscriber

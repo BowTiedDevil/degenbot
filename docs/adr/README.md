@@ -80,7 +80,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [044](ADR-044-fleet-intake-liveness.md) | Fleet intake liveness — BackstopTick + PostureEdge | accepted |
 | [045](ADR-045-solve-cycle-extraction.md) | The solve cycle as a deep module | accepted |
 | [046](ADR-046-stage-handlers-pump-control-split.md) | StageHandlers / PumpControl split | accepted |
-| [047](ADR-047-retire-subscriber-bus.md) | Retire the ADR-006 D4 subscriber bus | accepted |
+| [047](ADR-047-retire-subscriber-bus.md) | Retire the ADR-006 D4 subscriber bus | accepted (D4 reaffirmed and enforced by ADR-087) |
 | [048](ADR-048-fleet-boot-registry.md) | Fleet boot registry | accepted |
 | [049](ADR-049-engine-stage-driver-seam.md) | The engine's interface is one stage seam | accepted |
 | [050](ADR-050-rust-native-engine-driver.md) | A public `EngineDriver` is the Rust driver seam | accepted |
@@ -118,6 +118,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [084](ADR-084-capability-homes.md) | Capability homes — doors, charters, one home per capability | accepted |
 | [085](ADR-085-construction-request-one-door.md) | Pool construction is one family-tagged request at both tiers | accepted |
 | [086](ADR-086-provider-one-contract-two-adapters.md) | Provider sync/async — one contract, two call-convention adapters | accepted |
+| [087](ADR-087-deletion-is-the-retirement.md) | Deletion is the retirement — retirement tripwires rejected | accepted (reaffirms and enforces ADR-047 D4) |
 
 ## Historical — provenance only
 

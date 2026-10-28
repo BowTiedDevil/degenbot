@@ -33,6 +33,10 @@ New and modified ADRs live in `docs/adr/` and follow `docs/adr/README.md`. Whene
 ## Backwards Compatibility
 Design standalone features without a backwards compatibility layer. Add a feature flag to allow parallel implementations if necessary, followed by a hard cutover and flag removal.
 
+## Retirement hygiene
+
+Deleting code is the complete retirement (ADR-087). Do not add retirement tripwires — tests, gates, or prose whose purpose is keeping a deleted thing gone (`assert not hasattr` on retired names, retired-name text greps, "must not reappear", "do not revive"). No exceptions, for any surface: the compiler, the owning ADR, and review are the guards; git history is the provenance. When an external consumer may still send a retired key or subcommand, the answer is present code that fails loud at the boundary — the error path is testable present code, not a guard. The ban is enforced by the tripwire-ratchet commit gate (ADR-087 D4). Live-invariant gates (no-pyo3-in-cores, FFI seam privacy, stub drift, push-gate manifest) watch present code, carry the live-invariant label, and are not tripwires.
+
 ## Planning
 Use `ergo` for all planning. Discover usage with `ergo --help` and `ergo quickstart`. Include detailed implementation and planning notes in the body of each task. The `result` key is only for tasks with a durable document deliverable — most tasks produce code changes, and the merged diff is the deliverable, so close those with `{"state":"done"}` and no `result`.
 
