@@ -109,10 +109,6 @@ class TestConstructionContext:
             SUSHISWAP_V3_MAINNET_FACTORY,
             PANCAKESWAP_V3_MAINNET_FACTORY,
         }
-        # The context carries NO tracker attributes.
-        assert not hasattr(ctx, "uniswap_v3_tracker")
-        assert not hasattr(ctx, "sushiswap_v3_tracker")
-        assert not hasattr(ctx, "pancakeswap_v3_tracker")
 
 
 class TestRouteFailureClassification:

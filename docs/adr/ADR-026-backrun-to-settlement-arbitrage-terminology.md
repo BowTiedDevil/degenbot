@@ -6,6 +6,8 @@ and the `degenbot-settlement-strategy` crate / `eth_backrun_*` example for all
 they keep "backrun" as it read at the time; this ADR is the canonical reference
 the codebase moves toward (tracked by ergo epic `R2BXPV`).
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (the A5 residual-'backrun' audit gate; the vocabulary survives as the GLOSSARY `_Avoid_` line) — the link breaks in both directions.
+
 ## Context
 
 The repository's strategy has been named "backrun" since ADR-019 (the crate

@@ -12,6 +12,8 @@ into a payload for *their own* contract, and define *their own* simulation
 success/failure gate, without being wedged into the developer's executor or the
 backrun strategy's 7-call balance bundle.
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (`cmd_executor_cutover_symbols_are_absent_from_strategy_callers`) — the link breaks in both directions.
+
 ## Context
 
 Two first-class consumers exist per AGENTS.md — a pure-Rust MEV bot and a
@@ -119,10 +121,8 @@ The landed hard cutover routes canonical strategy composition through
 `CmdExecutorAdapter` and its typed outcome. The retired helper names
 `compose_candidate`, `build_candidate_calldata`, and `ComposeReject` are not
 compatibility aliases and do not exist in canonical strategy callers or tests.
-A mechanical umbrella architecture gate scans the strategy `src/` and
-`tests/` trees for those names, while a compile-time umbrella test pins the
-public paths `degenbot::CmdExecutorAdapter` and
-`degenbot::strategy::CmdExecutorAdapter`.
+A compile-time umbrella test pins the public paths
+`degenbot::CmdExecutorAdapter` and `degenbot::strategy::CmdExecutorAdapter`.
 
 The generic foreign-adapter surface remains available unchanged: Rust users
 implement `ExecutionAdapter` / `PayloadComposer` with their own contract, and

@@ -111,6 +111,8 @@ The Rust core `BotCore::register_v2/v3/v4_pool` was kept (the live
 insert at the `BotState` layer, used by the builders via `PyBot.register_v*`);
 D3 deleted only the unreachable pyo3 engine surface.
 
+> **Header note (ADR-087 D5).** The census gates this ADR named were deleted under ADR-087 D1/D5 (the engine-registry absence asserts in `tests/arbitrage/test_engine_registry_start.py`) — the link breaks in both directions.
+
 ## Context
 
 ADR-005 (Polars-Inspired Three-Layer Architecture) left two things open that turned out

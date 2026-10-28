@@ -16,6 +16,8 @@ at open, so its path is configuration, not migration), ADR-053 (FFI stubs are
 generated from Rust), ADR-006 D5 (one `Bot` per chain), ADR-040 D3
 (`[failure_policy]` is a free-form table read from the same file).
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (`test_the_module_no_longer_owns_the_file_location`, `test_bot_carries_no_config_object`) — the link breaks in both directions.
+
 ## Context
 
 The operator file `$XDG_CONFIG_HOME/degenbot/config.toml` (or its

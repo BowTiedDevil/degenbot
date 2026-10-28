@@ -1309,14 +1309,6 @@ ci-no-python-cli-gate:
     cargo build --locked -p degenbot-cli --manifest-path rust/Cargo.toml
     bash .github/workflows/cli-no-python-gate.sh
 
-# ADR-052 D6: Alembic is retired in-tree. No `alembic` reference may survive in any
-# Python source under src/, and the migration-scripts package must be gone.
-# Mirrors check-no-pyo3-in-cores: a permanent, mechanical sweep gate.
-check-no-alembic:
-    # C7: the gate body lives as a cargo test on the umbrella crate
-    # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
-    cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- no_alembic_references --exact --nocapture
-
 # Cancelling-async-rust: a `timeout(..)` deadline belongs on the OPERATION
 # boundary, never on the future that carries the value. RFD 400's select-loops
 # case study is the canonical trap —
@@ -1335,12 +1327,6 @@ check-cancel-safety:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- no_timeout_wrapped_value_sends_or_write_all --exact --nocapture
-
-# ADR-052 D7: SQLAlchemy and the Python ORM are retired from the runtime and
-# test-owned Python surfaces. The gate also checks the root dependency and lock
-# declarations and proves its AST detector rejects a synthetic import.
-check-no-sqlalchemy:
-    {{ py_run }} pytest -q tests/test_no_sqlalchemy_test_imports.py
 
 # ========== Stub Generation + Verification (ADR-066) ==========
 #

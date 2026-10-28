@@ -4,6 +4,8 @@
 (`BotCore`→`Bot`, `PyBotCore`→`PyBot` rename + `Mutex`→`RwLock` in the PyO3-handle tier).
 The `ArbitrageEngine` unification is deferred — see "Deferred".
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (`test_python_sim_functions_retired` in `tests/dispatch/test_executor_delegate_spy.py`) — the link breaks in both directions.
+
 ## Context
 
 degenbot mixes Python and Rust via PyO3 across two distinct questions:

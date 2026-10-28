@@ -3,6 +3,8 @@
 **Status: accepted / implemented** (drafted at the push-gate-manifest grilling,
 2026-10-16; landed as a hard cutover in one commit).
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (the absence half of `test_the_manifest_is_a_file_the_script_reads`) — the link breaks in both directions.
+
 ## Context
 
 `just pre-push` was a hand-written 21-row `run_gate` transcription of the

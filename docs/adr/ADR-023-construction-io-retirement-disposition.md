@@ -5,6 +5,8 @@ Post-adoption).** Recorded during the `LWKLMP` grilling
 (2026-08-06), settling decisions D0–D5: the disposition of `PyBotIo` and the
 Python `builders/` tree once the construction choreography moved core-side.
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (`test_no_python_class_mirrors_a_retired_db_row`) — the link breaks in both directions.
+
 ## Context
 
 `PyBotIo` (the `#[pyclass]` I/O façade) was framed in the `ConstructionIo`

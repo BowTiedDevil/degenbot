@@ -4,6 +4,8 @@
 
 Accepted.
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (the retired address-keyed verb census and its red-path probe in `tests/test_pool_memo_key_seam.py`) — the link breaks in both directions.
+
 ## Context
 
 A pool is addressed two ways: a V3 concentrated-liquidity pool by contract
@@ -61,6 +63,5 @@ the `PoolLookup` it already holds. Three consequences are deliberate:
   rather than keying by whatever text arrived — an identity that is not 20 or 32
   bytes is a caller bug, and the Python doors raise `ValueError` naming it.
 - **Text stays at the boundary.** `RegistrationLedger.address_memo_key` /
-  `pool_id_memo_key` are the Python-side constructors; a source gate
-  (`tests/test_pool_memo_key_seam.py`) fails on a hand-formatted key anywhere
-  else in `src/`.
+  `pool_id_memo_key` are the Python-side constructors, so a key is built in
+  one place rather than formatted by hand at each caller.

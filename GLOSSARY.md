@@ -631,9 +631,9 @@ after the companion's Curve read path was verified to carry no zero-vs-error
 distinguishing consumer. NOT the zero-input rule: `getAmountOut(0) = 0` is real
 on-chain semantics and stays in every read arm.
 
-_Avoid_: reintroducing a zero answer for "this door does not compute this"; a new
-not-computed case gets a typed refusal (`NotComputable` or a family-specific refusal
-vocabulary), never a placeholder value.
+_Avoid_: a zero answer for "this door does not compute this"; a new not-computed case
+gets a typed refusal (`NotComputable` or a family-specific refusal vocabulary), never a
+placeholder value.
 
 **Solve anchor**:
 The block at-or-above the pool-state head that a block's solve, verification, and
@@ -1139,8 +1139,8 @@ custody WETH, armed per stream with the on-chain floor check.
 One confirmed block from first delivery to publish plus quiesced settlement — the unit of
 per-block work. Rewind reopens an epoch at the reorg block with a fresh sequence,
 invalidating pre-rewind solve contexts.
-_Avoid_: reintroducing the retired per-block machines' vocabulary (`DrainSink`, `Engine`
-as per-block fan-out, `SolveCoordinator`, `DispatchOwner`, `DirtySets`).
+_Avoid_: `DrainSink`, `Engine` as per-block fan-out, `SolveCoordinator`, `DispatchOwner`,
+`DirtySets` (the retired per-block machines' vocabulary).
 
 **StageMachine**:
 The single pure, I/O-free state machine owning every per-block edge condition: header

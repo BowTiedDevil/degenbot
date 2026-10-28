@@ -87,9 +87,7 @@ def test_start_skips_set_verify_state_view_when_none() -> None:
 def test_pybot_exposes_verify_methods_after_engine_attach() -> None:
     """T4 (ADR-006 D4): Bot exposes the verify CONFIG + per-pool two-step
     lifecycle entry points once an ArbitrageEngine is constructed against it.
-    The whole-batch `verify_liquidity_maps` (and V3/V4 twins) was REMOVED as
-    redundant + racy (the per-pool two-step lifecycle is the verify authority),
-    so those must NOT be present."""
+    The per-pool two-step lifecycle is the verify authority."""
     from degenbot.arbitrage.engine_registry import ArbitrageEngine
     from tests.helpers.seam import Bot
 
@@ -100,12 +98,6 @@ def test_pybot_exposes_verify_methods_after_engine_attach() -> None:
         "set_verify_state_view",
     ):
         assert hasattr(bot, method), f"Bot must expose {method} after engine attach"
-    for method in (
-        "verify_liquidity_maps",
-        "verify_v3_liquidity_maps",
-        "verify_v4_liquidity_maps",
-    ):
-        assert not hasattr(bot, method), f"removed batch verify {method} must not exist"
 
 
 def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
@@ -114,10 +106,10 @@ def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
      the shared PumpState). The Bot is the D4 pump owner; these methods drive
      the SAME PumpState the engine reads.
 
-     `backfill_from_snapshot` is retired — the snapshot→WS gap is
-     closed automatically inside the core `BlockPump::resume_from_subscribe`
-    . `S` is recorded on the shared `BotState` by the DB load at construction;
-     the core auto-backfill picks it up from there.
+     The snapshot→WS gap is closed automatically inside the core
+     `BlockPump::resume_from_subscribe`. `S` is recorded on the shared
+     `BotState` by the DB load at construction; the core auto-backfill picks it
+    up from there.
     """
     from degenbot.arbitrage.engine_registry import ArbitrageEngine
     from tests.helpers.seam import Bot
@@ -127,14 +119,9 @@ def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
     engine = ArbitrageEngine(py_bot=bot)
     for method in ("subscribe", "resume"):
         assert hasattr(bot, method), f"Bot must expose {method} after engine attach"
-    # backfill_from_snapshot is retired.
-    assert not hasattr(bot, "backfill_from_snapshot"), "Bot::backfill_from_snapshot retired"
     # The engine still exposes subscribe/resume too (reads the same shared state).
     for method in ("subscribe", "resume"):
         assert hasattr(engine, method)
-    assert not hasattr(engine, "backfill_from_snapshot"), (
-        "ArbitrageEngine::backfill_from_snapshot retired"
-    )
     # The engine still exposes the snapshot seed block (getter+setter): the DB
     # load records `S` and `start()` reads it back.
     assert hasattr(engine, "snapshot_seed_block")  # getter+setter
@@ -151,25 +138,21 @@ def test_start_stashes_snapshot_block_for_two_step_verify() -> None:
 
     registry.start("http://localhost:8545", "ws://localhost:8546")
 
-    # The registry no longer stashes a backfill_block for step-2 — the
-    # post-drain pin carries its OWN block (captured atomically with the drain),
-    # so step-2 takes no `block` argument from the registry (2026-06-29 fix).
+    # The post-drain pin carries its OWN block (captured atomically with the
+    # drain), so step-2 takes no `block` argument from the registry.
     assert registry._verify_snapshot_block == 18_000_050
-    assert not hasattr(registry, "_verify_backfill_block")
 
 
 def test_start_stashes_None_blocks_when_no_snapshots() -> None:
     """With no DB seed (cold start), the shared ``BotState`` carries no snapshot
     block, so the snapshot block stash is None (T6 will guard on None ==
-    verify not applicable for this pool). The registry no longer stashes a
-    backfill_block — step-2 pins its own block."""
+    verify not applicable for this pool). Step-2 pins its own block."""
     fake = FakeEngine(backfill_target=18_000_000)
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
     registry.start("http://localhost:8545", "ws://localhost:8546")
 
     assert registry._verify_snapshot_block is None
-    assert not hasattr(registry, "_verify_backfill_block")
 
 
 def test_start_delegates_the_ritual_to_one_engine_call() -> None:

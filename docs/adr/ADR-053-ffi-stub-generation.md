@@ -9,6 +9,8 @@ rejection (it rewrites the seam's source via proc macros — still rejected) and
 the measured survey of the seam's shape, which remains useful evidence. The
 rest is provenance; do not hand-maintain stubs because this file argues for it.
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (the R5 `test_retired_names_stay_absent` tombstones) — the link breaks in both directions.
+
 ## Context
 
 `degenbot._ffi` is the maturin-built Rust extension seam (ADR-013: private).

@@ -12,6 +12,8 @@ is core-owned), ADR-045 (`PathRegistry` is the identity-only precedent this
 generalizes), ADR-057 (`StrategyHost` stays process-level governance), and
 ADR-059 (the pool family kernel).
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (`retired_python_dedup_maps_do_not_reappear`) — the link breaks in both directions.
+
 ## Context
 
 Four separate owners each carried a private notion of "the same pool":
@@ -205,13 +207,8 @@ carries a limitation of its own, and is why all five are written down together.
   policed by REVIEW plus the removal of the maps that were authority. A
   general Python text gate cannot decide the real rule — the five maps listed
   above are all address-keyed and all legitimate, because the test is minting,
-  which a text scan cannot see. What is decidable and false-positive-free is
-  narrower: `retired_python_dedup_maps_do_not_reappear` forbids the five
-  RETIRED names (`_v2_keys`, `_v3_keys`, `_v4_keys`, `_v3_inflight`,
-  `_v4_inflight`) from reappearing anywhere under `src/degenbot/`. Those names
-  must never return, so there is no judgment in that check to tune — and it
-  does not pretend to cover new maps under fresh names, which remain review's
-  job. State the limit rather than let the gate name imply more than it holds.
+  which a text scan cannot see. State the limit rather than let the gate name
+  imply more than it holds.
 - **No PyO3 in the registry or the core.** The pyo3-free charter, already
   policed by import.
 - **A core public item may not define its contract through a Python-side

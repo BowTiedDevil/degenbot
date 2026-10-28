@@ -13,6 +13,8 @@ lives at `rust/crates/engine/degenbot-bot/src/bot_core/stage_machine.rs` (ergo
 `7NFYQW`); the retired `DrainSink`/`Engine`/`SolveCoordinator`/
 `DispatchOwner`/`DirtySets`/`EngineSubscriber` seams are gone (SZJUKL).
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (the retired per-block-machine vocabulary ban now lives only as the GLOSSARY `_Avoid_` line) — the link breaks in both directions.
+
 ## Context
 
 The per-block loop of the arb engine is currently choreographed by **six

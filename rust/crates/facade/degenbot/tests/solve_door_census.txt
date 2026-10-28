@@ -12,8 +12,7 @@
 #
 # Format: one allowed external path per line; `#` comments; blank lines
 # ignored. A path is the module prefix an external crate may name — the
-# gate fails on any `degenbot_pools::solve::<other>` or
-# `degenbot_pools::affected_keys` reference.
+# gate fails on any `degenbot_pools::solve::<other>` reference.
 degenbot_pools::solve
 degenbot_pools::solve::basket
 degenbot_pools::solve::concentrated_liquidity

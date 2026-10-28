@@ -453,8 +453,6 @@ class TestDatabaseAndChainCascade:
         with pytest.raises(ValueError, match="explicit layer"):
             resolve_chain_id("mainnet")
 
-    def test_the_module_no_longer_owns_the_file_location(self) -> None:
-        """The duplicated XDG/path logic is gone; the core reports the file."""
+    def test_the_core_reports_the_file_location(self) -> None:
+        """The core owns the XDG/path logic; the module reports its verdict."""
         assert config_module.config_file_path() == resolved_config().config_file_path
-        for retired in ("CONFIG_DIR", "CONFIG_FILE", "DB_PATH", "DegenbotConfig"):
-            assert not hasattr(config_module, retired)

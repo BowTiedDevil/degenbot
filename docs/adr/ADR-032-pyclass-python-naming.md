@@ -6,6 +6,8 @@
 > policy + mechanical enforcement + direct renames for the existing
 > population (no backward-compat alias shims), each rename in its own
 > task.
+>
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (the grandfather-equality asserts and the dead-name/census-completeness halves in `tests/ffi/test_ffi_registration_surface.py`) — the link breaks in both directions.
 
 ## Context
 

@@ -82,10 +82,6 @@ def test_the_manifest_is_a_file_the_script_reads() -> None:
     script = SCRIPT.read_text(encoding="utf-8")
 
     assert "ci-parity-manifest.txt" in script, "the script must read the promoted manifest"
-    assert "cat <<'EOF'" not in script, "the heredoc manifest is gone"
-    assert "run_gate" not in script, "the wiring check must read prek.toml, not run_gate lines"
-    assert "note_recipes" not in script, "the note-marker masking must be gone"
-    assert "in just pre-push" not in script, "wiring lives in the push_gates column"
     assert MANIFEST.is_file()
     assert MANIFEST.read_text(encoding="utf-8").strip()
 

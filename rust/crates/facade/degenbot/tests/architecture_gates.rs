@@ -240,10 +240,6 @@ fn workspace_membership_is_exact_and_role_grouped() {
         names, EXPECTED_NAMES,
         "workspace package identities changed"
     );
-    assert!(
-        !names.contains(&"degenbot-solvers"),
-        "`degenbot-solvers` was dissolved (ADR-073 amendment A5) and must not reappear"
-    );
 
     let crates_root = workspace_root().join("crates");
     for (_, manifest) in &packages {
@@ -462,72 +458,6 @@ fn no_inner_allow_attributes() {
     );
 }
 
-#[test]
-fn cmd_executor_cutover_symbols_are_absent_from_strategy_callers() {
-    let strategy_root = workspace_root().join("crates/engine/degenbot-strategy");
-    let retired_symbols = [
-        "compose_candidate",
-        "build_candidate_calldata",
-        "ComposeReject",
-    ];
-    let mut violations = Vec::new();
-
-    for directory in ["src", "tests"] {
-        for_each_rust_source(&strategy_root.join(directory), &mut |path, text| {
-            for (line_number, line) in text.lines().enumerate() {
-                for symbol in retired_symbols {
-                    if line.contains(symbol) {
-                        violations.push(format!(
-                            "{}:{}: {symbol}",
-                            path.display(),
-                            line_number + 1
-                        ));
-                    }
-                }
-            }
-        });
-    }
-
-    assert!(
-        violations.is_empty(),
-        "retired cmd_executor cutover symbols remain in canonical strategy callers/tests: {violations:?}"
-    );
-}
-
-#[test]
-fn no_alembic_references() {
-    // ADR-052 D6: the in-tree Alembic chain is retired; no Python file may
-    // reference it.
-    let src = repo_root().join("src/degenbot");
-    assert!(
-        !src.join("migrations").exists(),
-        "src/degenbot/migrations still exists (retired per ADR-052 D6)"
-    );
-    let mut violations = Vec::new();
-    let mut walk = Vec::new();
-    walk.push(src);
-    while let Some(dir) = walk.pop() {
-        for entry in std::fs::read_dir(&dir).expect("read_dir src") {
-            let entry = entry.expect("dir entry");
-            let path = entry.path();
-            let ft = entry.file_type().expect("file type");
-            if ft.is_dir() {
-                walk.push(path);
-            } else if ft.is_file() && path.extension().is_some_and(|e| e == "py") {
-                let text = std::fs::read_to_string(&path).expect("read python source");
-                for (i, line) in text.lines().enumerate() {
-                    if line.to_ascii_lowercase().contains("alembic") {
-                        violations.push(format!("{}:{}", path.display(), i + 1));
-                    }
-                }
-            }
-        }
-    }
-    assert!(
-        violations.is_empty(),
-        "Alembic references remain in src/**/*.py (retired per ADR-052 D6): {violations:?}"
-    );
-}
 /// The body of the first `header` block in `text` — the lines up to the brace
 /// that closes it, matched by DEPTH so a nested block cannot end it early —
 /// or `None` when the header is absent.
@@ -989,9 +919,7 @@ fn the_position_seam_sits_in_the_layer_both_sides_depend_on() {
 /// the Python side, where address-keyed dedup state actually still lives in
 /// this repo. The Python surface is policed by review plus the removal of the
 /// maps that were authority; the maps that remain there are memos and caches
-/// that cannot mint identity (ADR-064 accounts for all five, and
-/// `retired_python_dedup_maps_do_not_reappear` holds the narrow decidable
-/// part).
+/// that cannot mint identity (ADR-064 accounts for all five).
 ///
 /// Identity types are the one key the registry owns outright: a second map
 /// keyed by `PoolIdentity`, `TokenIdentity`, `PathIdentity`, or
@@ -1086,78 +1014,6 @@ fn no_second_map_in_the_rust_core_is_keyed_by_a_session_identity_type() {
     assert!(
         violations.is_empty(),
         "only the session registry may key a map by a session identity type: {violations:?}"
-    );
-}
-
-/// The five Python dedup maps this cutover deleted must not come back.
-///
-/// The Rust sibling gate above is Rust-only — it walks `*.rs` — and the Python
-/// side is where address-keyed dedup state actually still lives in this repo,
-/// so the task's "no new private dedup map outside the session registry"
-/// criterion has no automated half on that side. A general Python text gate
-/// cannot decide the real rule (a map that CANNOT mint identity is legitimate,
-/// and there are five), but THIS subset is decidable and false-positive-free:
-/// these five names were the maps that WERE authority, they were removed
-/// because get-or-create replaced them, and no future change may legitimately
-/// reintroduce any of them. Rejecting a name that must never return is not a
-/// judgment call, so there is nothing here to tune.
-///
-/// KNOWN LIMIT, not papered over: this forbids the five RETIRED names, not
-/// dedup maps in general. A new Python map under a fresh name, or an
-/// address-keyed memo of registry-issued handles, is still not caught here —
-/// see ADR-064 for the five maps that legitimately remain and why none of them
-/// can mint identity. The Python surface beyond these names is policed by
-/// review, which is a weaker instrument than a gate and is recorded as such.
-///
-/// Deliberately scoped to `src/degenbot/`, not `tests/`: the regression tests
-/// that PROVE the removal still name these identifiers in prose (they have to,
-/// to document what is gone), and a test witness is not a second owner.
-#[test]
-fn retired_python_dedup_maps_do_not_reappear() {
-    let retired = [
-        "_v2_keys",
-        "_v3_keys",
-        "_v4_keys",
-        "_v3_inflight",
-        "_v4_inflight",
-    ];
-
-    let src = repo_root().join("src/degenbot");
-
-    assert!(
-        src.exists(),
-        "the Python source root moved; this gate's walk would vacuously pass"
-    );
-
-    let mut violations = Vec::new();
-    let mut walk = vec![src];
-    while let Some(dir) = walk.pop() {
-        for entry in std::fs::read_dir(&dir).expect("read_dir src/degenbot") {
-            let entry = entry.expect("dir entry");
-            let path = entry.path();
-            let ft = entry.file_type().expect("file type");
-            if ft.is_dir() {
-                walk.push(path);
-            } else if ft.is_file() && path.extension().is_some_and(|e| e == "py") {
-                let text = std::fs::read_to_string(&path).expect("read python source");
-                for (line_number, line) in text.lines().enumerate() {
-                    for name in retired {
-                        if line.contains(name) {
-                            violations.push(format!(
-                                "{}:{}: {name}",
-                                path.display(),
-                                line_number + 1
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    assert!(
-        violations.is_empty(),
-        "retired Python dedup maps must not reappear under src/degenbot (ADR-064): {violations:?}"
     );
 }
 
@@ -2622,25 +2478,11 @@ fn solve_door_census_is_the_external_surface() {
             let Some(first) = segments.first() else {
                 continue;
             };
-            // Retired module names must never reappear in external naming.
-            let retired = [
-                "mixed",
-                "profit_envelope",
-                "affected_keys",
-                "capture_fixture",
-            ];
-            if retired.contains(first) {
-                offenders.push(format!(
-                    "{}: retired solve path segment `{first}`",
-                    file.display()
-                ));
-                continue;
-            }
             if qualified_form {
                 // The physical `pub mod` tree beneath the solve door. A named
-                // segment must be a census row's module (or a retired name,
-                // caught above); anything else is a door item at the root
-                // door, which the census closes over by construction.
+                // segment must be a census row's module; anything else is a
+                // door item at the root door, which the census closes over by
+                // construction.
                 const SOLVE_SUBMODULES: [&str; 10] = [
                     "basket",
                     "concentrated_liquidity",

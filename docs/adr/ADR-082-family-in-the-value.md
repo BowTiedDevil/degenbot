@@ -4,6 +4,8 @@
 
 Accepted.
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (the retired `_by_key` twin census) — the link breaks in both directions.
+
 ## Context
 
 A concentrated-liquidity pool is two designs behind one word. The state owner

@@ -2,6 +2,8 @@
 
 **Status: accepted; D7 completed** (2026-09-14 decision; **partially supersedes ADR-010** — its 0.6.x retention posture; ADR-011 stands as the heal design. The SQLAlchemy retirement in D7 was completed by CPBCNS. Settled in the same grilling session as ADR-051.)
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (`check-no-alembic`, `check-no-sqlalchemy`, `no_alembic_references`, `tests/test_no_sqlalchemy_test_imports.py`), together with the D6 sweep's prohibition framing — the link breaks in both directions. D6's deletions themselves are complete and recorded in `git log`.
+
 ## Context
 
 ADR-010 kept the schema Alembic-owned through 0.6.x so `pip` users could run a stale DB forward through the migration-script chain and then opt into Rust ownership via `degenbot database cutover`. Two events retire that posture:
@@ -20,8 +22,6 @@ ADR-010 kept the schema Alembic-owned through 0.6.x so `pip` users could run a s
 **D4 — Verbs.** `database heal` and `database cutover` stay (heal = explicit repair entry point; cutover = the cheap in-place flip for a head-stamped DB). `database upgrade` becomes a dead subcommand in the Rust console: renders a pointed error ("retired — the database upgrades itself at open; for an explicit repair, run `degenbot database heal`"), non-zero exit. The Python-side `get_alembic_config` / `upgrade_existing_sqlite_database` fallback dies with the click tree (ADR-051).
 
 **D5 — Fixture matrix, 0.5 → current.** One fixture DB per released Alembic revision — the initial revision (`9347bbfcd47a`), every intermediate migration head, and the published 0.6.0aX head (`e0aaad8ad486`). Where no recorded snapshot exists, synthesize the DB (apply DDL through that revision, seed synthetic rows per that revision's shape, stamp it). The test chain proves open → auto-heal → current on every fixture, with killswitch-off refusal asserted separately. This is the checkable form of the load-bearing promise: no user of any released schema ever applies a migration.
-
-**D6 — Retirement sweep, order-enforced.** After Epic-A cutover (ADR-051) and D1/D2/D5 land: delete `src/degenbot/migrations/`, the `alembic` pyproject entry (and uv.lock entries), `ALEMBIC_HEAD`, the `alembic_version` compare logic in `ensure_schema` (presence-of-table = legacy; the version parse disappears), the `PRAGMA query_only=on` Alembic-carve-out, and every "run the Python Alembic upgrade" string (the `DbError::AlembicStale` render moves to the CLI layer per ADR-051 D1's renderer policy — the enum arm goes stale-focused: the DB opens healed before any caller ever sees it).
 
 **D7 — Historical non-goal, now completed (superseded by CPBCNS).** At the time of this decision, the SQLAlchemy inventory — `DatabaseSessionManager`, the `src/degenbot/database/models/` package, and the `sqlalchemy` pyproject entry — was explicitly **not** deleted by the Alembic-retirement epics. The stated temporary role was Python-driver plumbing: session helpers, nominal pool-table classification, and a few query sites while load-bearing reads delegated to Rust. That retention period has ended: the Python runtime and test surfaces now use the stable `degenbot.db` mirror over the Rust `degenbot-db` owner, with no session manager, ORM imports, or SQLAlchemy dependency. Historical ADRs describing the former retention posture remain historical records; this decision is the current completion note.
 

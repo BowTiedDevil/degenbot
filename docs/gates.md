@@ -277,8 +277,6 @@ current gates:
 - `cli_core_is_clap_and_indicatif_free`
 - `one_engine_impl_block`
 - `no_inner_allow_attributes`
-- `cmd_executor_cutover_symbols_are_absent_from_strategy_callers`
-- `no_alembic_references`
 - `one_path_identity_owner_is_declared_once`
 - `the_session_registers_no_path_store_of_its_own`
 - `the_canonical_path_object_carries_no_strategy_policy`
@@ -287,7 +285,6 @@ current gates:
 - `the_position_seam_adds_no_lending_edge_to_the_engine_or_the_core`
 - `the_position_seam_sits_in_the_layer_both_sides_depend_on`
 - `no_second_map_in_the_rust_core_is_keyed_by_a_session_identity_type`
-- `retired_python_dedup_maps_do_not_reappear`
 - `core_public_docs_do_not_define_contracts_through_python_symbols`
 - `no_timeout_wrapped_value_sends_or_write_all`
 - `config_derived_statics_are_classified`

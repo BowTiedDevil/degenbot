@@ -7,6 +7,8 @@ doctrine. The engine-family generalization of ADR-018 is pulled here **by
 decision**: a strategy suite over one core is the stated end-state, which
 Phases B/C below schedule.
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (the `*_v3_tracker` absence asserts in `tests/arbitrage/test_pool_construction_route.py`) — the link breaks in both directions.
+
 ## Context
 
 Two strategies (settlement arbitrage over sealed blocks; backrun over

@@ -134,12 +134,11 @@ class _ScriptedErc20Builder:
 class TestBotInit:
     """Bot constructor tests (single-chain)."""
 
-    def test_bot_exposes_database_path_without_legacy_session(self, tmp_path: pathlib.Path) -> None:
+    def test_bot_exposes_database_path(self, tmp_path: pathlib.Path) -> None:
         session = _test_session(tmp_path)
         bot = Bot(**session, provider=_fake_provider(1))
 
         assert bot.database_path == tmp_path / "test.db"
-        assert not hasattr(bot, "db")
 
     def test_bot_creates_pool_registry(self, tmp_path: pathlib.Path) -> None:
         session = _test_session(tmp_path)
@@ -155,16 +154,6 @@ class TestBotInit:
         session = _test_session(tmp_path)
         bot = Bot(**session, provider=_fake_provider(1))
         assert isinstance(bot.managed_pools, ManagedPoolRegistry)
-
-    def test_bot_carries_no_config_object(self, tmp_path: pathlib.Path) -> None:
-        """The resolved values are the session's own; nothing holds a config.
-
-        Python is a driver over the installed typed config, so no config value
-        object is left on the session to drift from the core's.
-        """
-        session = _test_session(tmp_path)
-        bot = Bot(**session, provider=_fake_provider(1))
-        assert not hasattr(bot, "config")
 
     def test_bot_exposes_chain_id_and_provider(self, tmp_path: pathlib.Path) -> None:
         session = _test_session(tmp_path, chain_id=1)

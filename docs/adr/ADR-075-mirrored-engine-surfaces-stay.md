@@ -3,6 +3,8 @@
 **Status: accepted (2026-10-16).** Recorded at the architecture-review grilling
 so future reviews do not re-suggest collapsing the mirror.
 
+> **Header note (ADR-087 D5).** The census gates this ADR named were deleted under ADR-087 D1/D5 (`candidate2_enginestages_has_no_inherent_poke_twins`, `candidate2_driver_surface_stays_off_the_engine`) — the link breaks in both directions.
+
 ## Context
 
 Architecture review (2026-10) candidate 7 found two parallel ~35-50-method

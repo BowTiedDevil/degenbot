@@ -8,6 +8,8 @@ including its absolutism — records why it went unenforced, and supplies the AG
 placement and commit-gate enforcement it lacked. D1–D3 (the subscriber-bus retirement
 itself) are untouched.
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (the subscriber-bus vocabulary ban now lives only as the GLOSSARY `_Avoid_` line) — the link breaks in both directions.
+
 ## Context
 
 ADR-006 D4 introduced a per-state-subject publisher/subscriber bus (the "subscriber

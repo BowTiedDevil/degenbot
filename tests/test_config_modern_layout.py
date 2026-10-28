@@ -2,10 +2,9 @@
 
 The operator file's ``database.path`` resolves through the Rust cascade, and
 the Rust core owns creating the database at open. These tests pin the driver's
-side of that boundary: resolving a path writes nothing, the driver exposes no
-creation helper, and the core's ensure-at-open is what materializes the file
-and its Rust schema. They run against pinned tmp paths, so the suite never
-touches an operator's state home.
+side of that boundary: resolving a path writes nothing, and the core's
+ensure-at-open is what materializes the file and its Rust schema. They run
+against pinned tmp paths, so the suite never touches an operator's state home.
 """
 
 from __future__ import annotations
@@ -22,11 +21,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 RUST_STAMP_TABLE = "_degenbot_db_schema_version"
-
-
-def test_the_python_config_surface_exposes_no_database_bootstrap() -> None:
-    """Database creation moved to the core; the driver imports no starter."""
-    assert not hasattr(config_module, "db_create_new_database")
 
 
 def test_resolving_a_database_path_writes_nothing(tmp_path: Path) -> None:

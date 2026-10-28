@@ -23,6 +23,8 @@ decided here.
 > Streaming stage makes in-process desync unrepresentable. The remaining kernel of this
 > ADR is the upstream RPC-disagreement verification at the Published edge
 > (`CompletenessDecision::Verify` → `assert_ws_block_complete`), which stays and stays loud.
+>
+> **Header note (ADR-087 D5).** The census gate this ADR and its GLOSSARY entry named was deleted under ADR-087 D1/D5 (the 'do not rebuild the in-process tripwire' bans; the vocabulary survives as the GLOSSARY `_Avoid_` line) — the link breaks in both directions.
 
 ## Context
 

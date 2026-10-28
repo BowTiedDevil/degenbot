@@ -101,42 +101,6 @@ class TestExampleRoutesThroughRust:
             f"example must not import encoder symbols from eth_backrun_helpers: {ebh_import_lines}"
         )
 
-    @pytest.mark.parametrize(
-        "function",
-        [
-            "dispatch_profitable_results",
-            "simulate_one",
-            "build_simulation_state_overrides",
-            "_compute_priority_fee",
-        ],
-    )
-    def test_python_sim_functions_retired(self, function: str) -> None:
-        """The parallel Python sim implementation is deleted (A5).
-
-        The example must NOT define the retired Python sim functions — their
-        logic moved to the ``degenbot_simulation`` Rust crate
-        (``dispatch_profitable_py`` owns simulate + the warmup/payload
-        helpers ``compute_simulation_warmup_slots`` / ``mapping_slot``, now
-        called INTERNALLY by the seam, not from the example).
-        the standalone
-        ``encode_cmd_stream`` / ``v4_input_is_native`` /
-        ``v4_output_is_native`` PyO3 pyfunctions are retired too (the encode
-        path is core-internal; the candidate resolves ``composers::PathInfo``
-        from ``path_id`` via ``path_info_for_core``.
-        ``format_failure_breakdown`` is kept (a pure renderer
-        ``_render_sim_summary`` plugs into).
-        """
-        src = self._example_source()
-        tree = ast.parse(src)
-        defined = {
-            node.name
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        }
-        assert function not in defined, (
-            f"example must not define the retired Python sim function {function} (A5)"
-        )
-
     def test_sim_dispatch_routes_through_rust_seam(self) -> None:
         """The driver routes the sim+submit flow through the Rust seam (A5).
 
@@ -169,12 +133,8 @@ class TestExampleRoutesThroughRust:
 
 
 class TestDelegateSpyEncodeCall:
-    """Confirm the kept seam symbols are Rust-bound builtins (not Python
+    """Confirm the seam symbols are Rust-bound builtins (not Python
     re-implementations) — proving delegation to the Rust core.
-
-    The ``encode_cmd_stream`` spy case is retired (the standalone
-    pyfunction is gone — the encode path moved to the Rust core per A5).
-    The remaining warmup/config/slot helpers stay Rust-bound.
     """
 
     def test_compute_simulation_warmup_slots_is_rust_bound(self) -> None:

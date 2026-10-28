@@ -6,6 +6,8 @@ chunks C1–C6 — CL pilot, balance-vector, reserve-pair, Solidly, final sweep)
 Supersedes the solve-only scope of the ADR-071 family census; ADR-059 D3/D6 and
 ADR-071 stand unchanged in substance.
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 — the workspace-membership absent-name assert on the dissolved `degenbot-solvers`, the retired-wrapper absence half of `central_matcher_census.rs`, and the retired solve-path-segment list in `architecture_gates.rs` — the link breaks in both directions.
+
 **Implementation dispositions (recorded at the C6 close):**
 
 - **Zero-sentinel retirement (C6 item 1).** The `Ok(U256::ZERO)`

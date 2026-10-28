@@ -291,8 +291,7 @@ fn no_family_design_math_at_the_central_sites() {
 /// A positive control for the scan itself: the banned tokens are the ones the
 /// families actually own, so a renamed leaf that stops matching is a failing
 /// table rather than a quiet gap. Each token must still exist at its family
-/// home (or have been retired with the wrapper that carried it — the
-/// retired-wrapper tokens are exempt from this control).
+/// home.
 #[test]
 fn the_banned_tokens_are_still_the_families_leaves() {
     let root = workspace_root();
@@ -323,29 +322,6 @@ fn the_banned_tokens_are_still_the_families_leaves() {
         assert!(
             families_text.contains(token),
             "the banned token {token} no longer names a family leaf — update              BANNED_DESIGN_MATH knowingly (the gate must not go dark)"
-        );
-    }
-    // The retired substrate wrapper names must not exist anywhere in the two
-    // central crates (exact names — the solve tree's family-module entries
-    // legitimately carry `simulate_balancer_weighted_*` names and are NOT
-    // these).
-    let mut central_text = String::new();
-    let mut central = Vec::new();
-    collect_rs_files(&root.join("crates/foundation"), &mut central);
-    for path in &central {
-        if let Ok(text) = std::fs::read_to_string(path) {
-            central_text.push_str(&text);
-        }
-    }
-    for token in [
-        "simulate_aerodrome_stable_swap",
-        "simulate_balancer_pair_out",
-        "simulate_balancer_pair_in_given_out",
-        "simulate_balancer_weighted_pair_out",
-    ] {
-        assert!(
-            !central_text.contains(token),
-            "the retired wrapper name {token} reappeared in the central crates"
         );
     }
 }

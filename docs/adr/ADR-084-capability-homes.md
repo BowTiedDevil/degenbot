@@ -7,6 +7,8 @@ v5. Deepens ADR-005's layering and ADR-025's seam discipline without touching
 ADR-041's stage table, ADR-073's family read modules, or ADR-080's CL state
 extraction (sequenced behind it, see D5/W5).
 
+> **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (the retired solve-path-segment list in `solve_door_census_is_the_external_surface`) — the link breaks in both directions.
+
 ## Context
 
 The T4 merge dissolved `degenbot-solvers` into `degenbot-pools` (ADR-073 A5)
