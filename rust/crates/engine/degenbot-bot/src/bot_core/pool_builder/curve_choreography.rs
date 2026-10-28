@@ -139,34 +139,20 @@ async fn call_opt<T>(
 async fn fetch_no_arg_uint_opt(
     io: &impl ContractRead,
     to: Address,
-    signature: &[u8],
+    calldata: Vec<u8>,
     block: Option<u64>,
 ) -> Option<U256> {
-    call_opt(
-        io,
-        to,
-        abi::selector(signature).to_vec(),
-        block,
-        abi::decode_uint256,
-    )
-    .await
+    call_opt(io, to, calldata, block, abi::decode_uint256).await
 }
 
 /// Tolerance-aware no-argument `address` read (revert/decode → `None`).
 async fn fetch_no_arg_address_opt(
     io: &impl ContractRead,
     to: Address,
-    signature: &[u8],
+    calldata: Vec<u8>,
     block: Option<u64>,
 ) -> Option<Address> {
-    call_opt(
-        io,
-        to,
-        abi::selector(signature).to_vec(),
-        block,
-        abi::decode_curve_coins,
-    )
-    .await
+    call_opt(io, to, calldata, block, abi::decode_curve_coins).await
 }
 
 /// Enumerate a Curve pool's coins + balances (uint256 prototype first, int128
@@ -290,9 +276,9 @@ pub async fn fetch_curve_pool_params(
     pool: Address,
     block: Option<u64>,
 ) -> Result<CurvePoolParams, ProviderError> {
-    let a = req_no_arg_uint(io, pool, b"A()", block).await?;
-    let fee = req_no_arg_uint(io, pool, b"fee()", block).await?;
-    let admin_fee = req_no_arg_uint(io, pool, b"admin_fee()", block).await?;
+    let a = req_no_arg_uint(io, pool, abi::encode_curve_a(), block).await?;
+    let fee = req_no_arg_uint(io, pool, abi::encode_curve_fee(), block).await?;
+    let admin_fee = req_no_arg_uint(io, pool, abi::encode_curve_admin_fee(), block).await?;
     Ok(CurvePoolParams {
         a_coefficient: a.to::<u128>(),
         fee: fee.to::<u64>(),
@@ -304,12 +290,10 @@ pub async fn fetch_curve_pool_params(
 async fn req_no_arg_uint(
     io: &impl ContractRead,
     to: Address,
-    signature: &[u8],
+    calldata: Vec<u8>,
     block: Option<u64>,
 ) -> Result<U256, ProviderError> {
-    let bytes = io
-        .call(to, abi::selector(signature).to_vec().into(), block)
-        .await?;
+    let bytes = io.call(to, calldata.into(), block).await?;
     abi::decode_uint256(&bytes)
 }
 
@@ -348,10 +332,12 @@ pub async fn detect_curve_a_ramping(
     pool: Address,
     block: Option<u64>,
 ) -> CurveARamping {
-    let initial_a = fetch_no_arg_uint_opt(io, pool, b"initial_A()", block).await;
-    let initial_a_time = fetch_no_arg_uint_opt(io, pool, b"initial_A_time()", block).await;
-    let future_a = fetch_no_arg_uint_opt(io, pool, b"future_A()", block).await;
-    let future_a_time = fetch_no_arg_uint_opt(io, pool, b"future_A_time()", block).await;
+    let initial_a = fetch_no_arg_uint_opt(io, pool, abi::encode_curve_initial_a(), block).await;
+    let initial_a_time =
+        fetch_no_arg_uint_opt(io, pool, abi::encode_curve_initial_a_time(), block).await;
+    let future_a = fetch_no_arg_uint_opt(io, pool, abi::encode_curve_future_a(), block).await;
+    let future_a_time =
+        fetch_no_arg_uint_opt(io, pool, abi::encode_curve_future_a_time(), block).await;
     match (initial_a, initial_a_time, future_a, future_a_time) {
         (Some(ia), Some(iat), Some(fa), Some(fat)) => CurveARamping {
             initial_a: Some(ia.to::<u128>()),
@@ -378,25 +364,26 @@ pub async fn detect_curve_crypto_params(
     pool: Address,
     block: Option<u64>,
 ) -> CurveCryptoParams {
-    let fee_gamma = fetch_no_arg_uint_opt(io, pool, b"fee_gamma()", block).await;
+    let fee_gamma = fetch_no_arg_uint_opt(io, pool, abi::encode_curve_fee_gamma(), block).await;
     let (fee_gamma, mid_fee, out_fee, gamma) = match fee_gamma {
         Some(fg) if !fg.is_zero() => (
             Some(fg.to::<u64>()),
-            fetch_no_arg_uint_opt(io, pool, b"mid_fee()", block)
+            fetch_no_arg_uint_opt(io, pool, abi::encode_curve_mid_fee(), block)
                 .await
                 .map(|v| v.to::<u64>()),
-            fetch_no_arg_uint_opt(io, pool, b"out_fee()", block)
+            fetch_no_arg_uint_opt(io, pool, abi::encode_curve_out_fee(), block)
                 .await
                 .map(|v| v.to::<u64>()),
-            fetch_no_arg_uint_opt(io, pool, b"gamma()", block)
+            fetch_no_arg_uint_opt(io, pool, abi::encode_curve_gamma(), block)
                 .await
                 .map(|v| v.to::<u64>()),
         ),
         _ => (None, None, None, None),
     };
-    let offpeg_fee_multiplier = fetch_no_arg_uint_opt(io, pool, b"offpeg_fee_multiplier()", block)
-        .await
-        .map(|v| v.to::<u64>());
+    let offpeg_fee_multiplier =
+        fetch_no_arg_uint_opt(io, pool, abi::encode_curve_offpeg_fee_multiplier(), block)
+            .await
+            .map(|v| v.to::<u64>());
     CurveCryptoParams {
         is_crypto: fee_gamma.is_some(),
         fee_gamma,
@@ -447,8 +434,16 @@ pub async fn detect_curve_lending_tokens(
                 )
                 .await
                 {
-                    if let Some(underlying_dec) =
-                        fetch_no_arg_uint_opt(io, underlying, b"decimals()", block).await
+                    // `decimals()` is the generic metadata read (a word of a
+                    // width the caller does not pin), so its selector comes
+                    // from the signature text.
+                    if let Some(underlying_dec) = fetch_no_arg_uint_opt(
+                        io,
+                        underlying,
+                        abi::selector(b"decimals()").to_vec(),
+                        block,
+                    )
+                    .await
                     {
                         // Override to use the UNDERLYING decimals, not the
                         // wrapped token's.
@@ -599,7 +594,9 @@ async fn resolve_curve_base_pool(
     registry: Address,
     block: Option<u64>,
 ) -> Option<Address> {
-    if let Some(base_pool) = fetch_no_arg_address_opt(io, pool, b"base_pool()", block).await {
+    if let Some(base_pool) =
+        fetch_no_arg_address_opt(io, pool, abi::encode_curve_base_pool(), block).await
+    {
         return Some(base_pool);
     }
     if let Some(base_pool) = call_opt(

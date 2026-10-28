@@ -439,9 +439,9 @@ pub async fn fetch_v2_immutable_data(
     block: Option<u64>,
 ) -> Result<V2Immutable, ProviderError> {
     Ok(V2Immutable {
-        factory: abi::fetch_address_returning(read, b"factory()", address, block).await?,
-        token0: abi::fetch_address_returning(read, b"token0()", address, block).await?,
-        token1: abi::fetch_address_returning(read, b"token1()", address, block).await?,
+        factory: abi::fetch_pool_factory(read, address, block).await?,
+        token0: abi::fetch_pool_token0(read, address, block).await?,
+        token1: abi::fetch_pool_token1(read, address, block).await?,
     })
 }
 
@@ -456,9 +456,9 @@ pub async fn fetch_v3_immutable_data(
     address: &Address,
     block: Option<u64>,
 ) -> Result<V3Immutable, ProviderError> {
-    let factory = abi::fetch_address_returning(read, b"factory()", address, block).await?;
-    let token0 = abi::fetch_address_returning(read, b"token0()", address, block).await?;
-    let token1 = abi::fetch_address_returning(read, b"token1()", address, block).await?;
+    let factory = abi::fetch_pool_factory(read, address, block).await?;
+    let token0 = abi::fetch_pool_token0(read, address, block).await?;
+    let token1 = abi::fetch_pool_token1(read, address, block).await?;
     let fee = abi::fetch_no_arg_uint(read, b"fee()", address, block, &DynSolType::Uint(24)).await?;
     let tick_spacing =
         abi::fetch_no_arg_int(read, b"tickSpacing()", address, block, &DynSolType::Int(24)).await?;
@@ -576,13 +576,13 @@ pub async fn probe_pool_type(
     address: Address,
     block: Option<u64>,
 ) -> Result<PoolFamily, PoolBuilderError> {
-    if probe_present(io, address, b"slot0()", block).await? {
+    if probe_present(io, address, abi::encode_slot0(), block).await? {
         Ok(PoolFamily::V3)
-    } else if probe_present(io, address, b"getReserves()", block).await? {
+    } else if probe_present(io, address, abi::encode_get_reserves(), block).await? {
         Ok(PoolFamily::V2)
-    } else if probe_present(io, address, b"getPoolId()", block).await? {
+    } else if probe_present(io, address, abi::encode_get_pool_id(), block).await? {
         Ok(
-            if probe_present(io, address, b"getNormalizedWeights()", block).await? {
+            if probe_present(io, address, abi::encode_get_weights(), block).await? {
                 PoolFamily::BalancerWeighted
             } else {
                 PoolFamily::BalancerStable
@@ -601,13 +601,10 @@ pub async fn probe_pool_type(
 async fn probe_present(
     read: &impl ContractRead,
     address: Address,
-    signature: &[u8],
+    calldata: Vec<u8>,
     block: Option<u64>,
 ) -> Result<bool, ProviderError> {
-    match read
-        .call(address, abi::selector(signature).to_vec().into(), block)
-        .await
-    {
+    match read.call(address, calldata.into(), block).await {
         Ok(_) => Ok(true),
         Err(ProviderError::ExecutionReverted { .. }) => Ok(false),
         Err(e) => Err(e),

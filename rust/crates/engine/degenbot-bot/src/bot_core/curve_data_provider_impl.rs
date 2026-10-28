@@ -107,7 +107,9 @@ impl RpcCurveDataProvider {
         }
     }
 
-    /// One read through the call primitive, decoded as a single `uint256`.
+    /// One read of already-typed `calldata` through the call primitive,
+    /// decoded as a single `uint256`. Callers take the calldata from `abi`'s
+    /// `sol!`-generated encoders, so no selector is spelled at a read site.
     fn call_uint(
         &self,
         to: Address,
@@ -130,22 +132,6 @@ impl RpcCurveDataProvider {
             .map_err(|_| CurveDataProviderError::FetchFailed)?;
         abi::decode_curve_redemption_price_snap(&bytes)
             .map_err(|_| CurveDataProviderError::FetchFailed)
-    }
-
-    /// Read a no-argument `uint256` getter on `to` at `block`.
-    fn fetch_uint(
-        &self,
-        to: Address,
-        signature: &[u8],
-        block: u64,
-    ) -> Result<U256, CurveDataProviderError> {
-        bridged_block_on(abi::fetch_uint256_field(
-            &self.rpc,
-            signature,
-            &to,
-            Some(block),
-        ))
-        .map_err(|_| CurveDataProviderError::FetchFailed)
     }
 }
 
@@ -226,11 +212,19 @@ impl CurveDataProvider for RpcCurveDataProvider {
     }
 
     fn invariant_d(&self, block_number: u64) -> Result<U256, CurveDataProviderError> {
-        self.fetch_uint(self.pool_address, b"D()", block_number)
+        self.call_uint(
+            self.pool_address,
+            abi::encode_curve_invariant_d().into(),
+            block_number,
+        )
     }
 
     fn gamma(&self, block_number: u64) -> Result<U256, CurveDataProviderError> {
-        self.fetch_uint(self.pool_address, b"gamma()", block_number)
+        self.call_uint(
+            self.pool_address,
+            abi::encode_curve_gamma().into(),
+            block_number,
+        )
     }
 
     fn price_scale(&self, block_number: u64) -> Result<Vec<U256>, CurveDataProviderError> {
@@ -269,25 +263,41 @@ impl CurveDataProvider for RpcCurveDataProvider {
     fn redemption_price(&self, block_number: u64) -> Result<U256, CurveDataProviderError> {
         let snap_contract = self.call_address(
             self.pool_address,
-            abi::selector(b"redemption_price_snap()").into(),
+            abi::encode_curve_redemption_price_snap().into(),
             block_number,
         )?;
-        let rate = self.fetch_uint(snap_contract, b"snappedRedemptionPrice()", block_number)?;
+        let rate = self.call_uint(
+            snap_contract,
+            abi::encode_curve_snapped_redemption_price().into(),
+            block_number,
+        )?;
         Ok(rate / U256::from(10u64).pow(U256::from(9u64)))
     }
 
     fn base_cache_updated(&self, block_number: u64) -> Result<u64, CurveDataProviderError> {
-        let v = self.fetch_uint(self.pool_address, b"base_cache_updated()", block_number)?;
+        let v = self.call_uint(
+            self.pool_address,
+            abi::encode_curve_base_cache_updated().into(),
+            block_number,
+        )?;
         Ok(v.to::<u64>())
     }
 
     fn base_virtual_price(&self, block_number: u64) -> Result<U256, CurveDataProviderError> {
-        self.fetch_uint(self.pool_address, b"base_virtual_price()", block_number)
+        self.call_uint(
+            self.pool_address,
+            abi::encode_curve_base_virtual_price().into(),
+            block_number,
+        )
     }
 
     fn virtual_price(&self, block_number: u64) -> Result<U256, CurveDataProviderError> {
         let target = self.base_pool_address.unwrap_or(self.pool_address);
-        self.fetch_uint(target, b"get_virtual_price()", block_number)
+        self.call_uint(
+            target,
+            abi::encode_curve_get_virtual_price().into(),
+            block_number,
+        )
     }
 }
 
@@ -303,9 +313,21 @@ impl RpcCurveDataProvider {
             .zip(self.precision_multipliers.iter())
         {
             let rate = if *is_lending {
-                let exchange = self.fetch_uint(*token, b"exchangeRateStored()", block_number)?;
-                let supply_rate = self.fetch_uint(*token, b"supplyRatePerBlock()", block_number)?;
-                let old_block = self.fetch_uint(*token, b"accrualBlockNumber()", block_number)?;
+                let exchange = self.call_uint(
+                    *token,
+                    abi::encode_lending_exchange_rate_stored().into(),
+                    block_number,
+                )?;
+                let supply_rate = self.call_uint(
+                    *token,
+                    abi::encode_lending_supply_rate_per_block().into(),
+                    block_number,
+                )?;
+                let old_block = self.call_uint(
+                    *token,
+                    abi::encode_lending_accrual_block_number().into(),
+                    block_number,
+                )?;
                 let precision = U256::from(10u64).pow(U256::from(18u64));
                 exchange
                     + exchange * supply_rate * (U256::from(block_number) - old_block) / precision
@@ -328,7 +350,11 @@ impl RpcCurveDataProvider {
             .zip(self.use_lending.iter())
         {
             let rate = if *is_lending {
-                self.fetch_uint(*token, b"getPricePerFullShare()", block_number)?
+                self.call_uint(
+                    *token,
+                    abi::encode_lending_get_price_per_full_share().into(),
+                    block_number,
+                )?
             } else {
                 U256::from(10u64).pow(U256::from(18u64))
             };
@@ -347,9 +373,21 @@ impl RpcCurveDataProvider {
             .iter()
             .zip(self.precision_multipliers.iter())
         {
-            let exchange = self.fetch_uint(*token, b"exchangeRateStored()", block_number)?;
-            let supply_rate = self.fetch_uint(*token, b"supplyRatePerBlock()", block_number)?;
-            let old_block = self.fetch_uint(*token, b"accrualBlockNumber()", block_number)?;
+            let exchange = self.call_uint(
+                *token,
+                abi::encode_lending_exchange_rate_stored().into(),
+                block_number,
+            )?;
+            let supply_rate = self.call_uint(
+                *token,
+                abi::encode_lending_supply_rate_per_block().into(),
+                block_number,
+            )?;
+            let old_block = self.call_uint(
+                *token,
+                abi::encode_lending_accrual_block_number().into(),
+                block_number,
+            )?;
             let rate = exchange
                 + exchange * supply_rate * (U256::from(block_number) - old_block) / precision;
             result.push(*multiplier * rate);
@@ -360,7 +398,11 @@ impl RpcCurveDataProvider {
     /// aETH style: `ratio()` on the second token, inverted. Mirrors
     /// `_fetch_aeth_rates`.
     fn fetch_aeth_rates(&self, block_number: u64) -> Result<Vec<U256>, CurveDataProviderError> {
-        let ratio = self.fetch_uint(self.token_addresses[1], b"ratio()", block_number)?;
+        let ratio = self.call_uint(
+            self.token_addresses[1],
+            abi::encode_lending_ratio().into(),
+            block_number,
+        )?;
         let precision = U256::from(10u64).pow(U256::from(18u64));
         Ok(vec![precision, precision * precision / ratio])
     }
@@ -368,7 +410,11 @@ impl RpcCurveDataProvider {
     /// rETH style: `getExchangeRate()` on the second token. Mirrors
     /// `_fetch_reth_rates`.
     fn fetch_reth_rates(&self, block_number: u64) -> Result<Vec<U256>, CurveDataProviderError> {
-        let ratio = self.fetch_uint(self.token_addresses[1], b"getExchangeRate()", block_number)?;
+        let ratio = self.call_uint(
+            self.token_addresses[1],
+            abi::encode_lending_get_exchange_rate().into(),
+            block_number,
+        )?;
         let precision = U256::from(10u64).pow(U256::from(18u64));
         Ok(vec![precision, ratio])
     }
@@ -376,7 +422,11 @@ impl RpcCurveDataProvider {
     /// ORACLE style: `oracle_method()` bitmask dispatch. Mirrors
     /// `_fetch_oracle_rates`.
     fn fetch_oracle_rates(&self, block_number: u64) -> Result<Vec<U256>, CurveDataProviderError> {
-        let oracle_method = self.fetch_uint(self.pool_address, b"oracle_method()", block_number)?;
+        let oracle_method = self.call_uint(
+            self.pool_address,
+            abi::encode_curve_oracle_method().into(),
+            block_number,
+        )?;
         let precision = U256::from(10u64).pow(U256::from(18u64));
 
         if oracle_method.is_zero() {
@@ -505,7 +555,7 @@ mod tests {
         let mut s = StubRpc::new();
         s.set(
             POOL,
-            abi::selector(b"get_virtual_price()").to_vec(),
+            abi::encode_curve_get_virtual_price(),
             uint(1_020_000_000_000_000_000),
         );
         let p = provider(Arc::new(s));
@@ -521,7 +571,7 @@ mod tests {
         let mut s = StubRpc::new();
         s.set(
             base,
-            abi::selector(b"get_virtual_price()").to_vec(),
+            abi::encode_curve_get_virtual_price(),
             uint(1_030_000_000_000_000_000),
         );
         let rpc: Arc<dyn RpcConstruction + Send + Sync> = Arc::new(s);
@@ -576,32 +626,28 @@ mod tests {
         let mut s = StubRpc::new();
         s.set(
             COIN0,
-            abi::selector(b"exchangeRateStored()").to_vec(),
+            abi::encode_lending_exchange_rate_stored(),
             uint(1_010_000_000_000_000_000),
         );
         s.set(
             COIN0,
-            abi::selector(b"supplyRatePerBlock()").to_vec(),
+            abi::encode_lending_supply_rate_per_block(),
             uint(1_000_000_000_000_000),
         );
         s.set(
             COIN0,
-            abi::selector(b"accrualBlockNumber()").to_vec(),
+            abi::encode_lending_accrual_block_number(),
             uint(17_999_000),
         );
         s.set(
             COIN1,
-            abi::selector(b"exchangeRateStored()").to_vec(),
+            abi::encode_lending_exchange_rate_stored(),
             uint(1_000_000_000_000_000_000),
         );
+        s.set(COIN1, abi::encode_lending_supply_rate_per_block(), uint(0));
         s.set(
             COIN1,
-            abi::selector(b"supplyRatePerBlock()").to_vec(),
-            uint(0),
-        );
-        s.set(
-            COIN1,
-            abi::selector(b"accrualBlockNumber()").to_vec(),
+            abi::encode_lending_accrual_block_number(),
             uint(17_999_000),
         );
         let rpc: Arc<dyn RpcConstruction + Send + Sync> = Arc::new(s);
@@ -631,7 +677,7 @@ mod tests {
         let mut s = StubRpc::new();
         s.set(
             COIN1,
-            abi::selector(b"getExchangeRate()").to_vec(),
+            abi::encode_lending_get_exchange_rate(),
             uint(1_100_000_000_000_000_000),
         );
         let rpc: Arc<dyn RpcConstruction + Send + Sync> = Arc::new(s);
@@ -678,14 +724,10 @@ mod tests {
     fn redemption_price_two_step_divides_by_1e9() {
         let snap: Address = address!("0x0990000000000000000000000000000000000001");
         let mut s = StubRpc::new();
-        s.set(
-            POOL,
-            abi::selector(b"redemption_price_snap()").to_vec(),
-            addr(snap),
-        );
+        s.set(POOL, abi::encode_curve_redemption_price_snap(), addr(snap));
         s.set(
             snap,
-            abi::selector(b"snappedRedemptionPrice()").to_vec(),
+            abi::encode_curve_snapped_redemption_price(),
             uint_u256(U256::from(10u64).pow(U256::from(27u64))),
         );
         let p = provider(Arc::new(s));
@@ -699,12 +741,8 @@ mod tests {
     #[test]
     fn invariant_d_and_gamma_decode() {
         let mut s = StubRpc::new();
-        s.set(POOL, abi::selector(b"D()").to_vec(), uint(42_000));
-        s.set(
-            POOL,
-            abi::selector(b"gamma()").to_vec(),
-            uint(7_000_000_000),
-        );
+        s.set(POOL, abi::encode_curve_invariant_d(), uint(42_000));
+        s.set(POOL, abi::encode_curve_gamma(), uint(7_000_000_000));
         let p = provider(Arc::new(s));
         assert_eq!(p.invariant_d(18_000_000).unwrap(), U256::from(42_000u64));
         assert_eq!(p.gamma(18_000_000).unwrap(), U256::from(7_000_000_000u64));
@@ -715,12 +753,12 @@ mod tests {
         let mut s = StubRpc::new();
         s.set(
             POOL,
-            abi::selector(b"base_virtual_price()").to_vec(),
+            abi::encode_curve_base_virtual_price(),
             uint(1_010_000_000_000_000_000),
         );
         s.set(
             POOL,
-            abi::selector(b"base_cache_updated()").to_vec(),
+            abi::encode_curve_base_cache_updated(),
             uint(17_999_000),
         );
         let p = provider(Arc::new(s));

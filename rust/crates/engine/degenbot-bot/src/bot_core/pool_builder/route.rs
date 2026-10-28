@@ -473,7 +473,7 @@ async fn construct_v3(
     // never the full immutable batch (and the decision is a TYPED policy
     // answer, not an exception to swallow). A served rung proceeds to the
     // full build, which reads the immutable batch itself.
-    let factory = abi::fetch_address_returning(io, b"factory()", &address, block)
+    let factory = abi::fetch_pool_factory(io, &address, block)
         .await
         .map_err(|err| {
             ConstructionRefusal::Skipped(BuildFailure::Transient(format!("v3 factory read: {err}")))

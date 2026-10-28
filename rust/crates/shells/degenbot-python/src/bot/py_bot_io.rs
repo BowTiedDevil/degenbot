@@ -511,7 +511,7 @@ impl PyBotIo {
         let addr = alloy::primitives::Address::from(addr);
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_address_returning(&io, b"factory()", &addr, None).await
+                degenbot_rpc::abi::fetch_pool_factory(&io, &addr, None).await
             })
         });
         match r {

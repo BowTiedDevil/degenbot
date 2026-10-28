@@ -220,6 +220,27 @@ alloy::sol! {
         function underlying() external view returns (address);
         function token() external view returns (address);
     }
+
+    /// Curve lending-style rate reads: the per-coin rate getters behind the
+    /// `CTOKEN` / `CYTOKEN` accrual, `YTOKEN` share price, and `AETH` / `RETH`
+    /// exchange-rate styles.
+    interface ILendingRateReads {
+        function exchangeRateStored() external view returns (uint256);
+        function supplyRatePerBlock() external view returns (uint256);
+        function accrualBlockNumber() external view returns (uint256);
+        function getPricePerFullShare() external view returns (uint256);
+        function ratio() external view returns (uint256);
+        function getExchangeRate() external view returns (uint256);
+    }
+
+    /// Pool identity getters. Declared apart from `IUniswapV2Pair` /
+    /// `IUniswapV3Pool` because these reads run before a pool's family is
+    /// known: the caller holds an address and nothing else.
+    interface IPoolIdentity {
+        function factory() external view returns (address);
+        function token0() external view returns (address);
+        function token1() external view returns (address);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1147,6 +1168,142 @@ pub fn encode_curve_price_scale(k: u8) -> Vec<u8> {
     ICurvePool::price_scaleCall { k: U256::from(k) }.abi_encode()
 }
 
+// ---------------------------------------------------------------------------
+// Curve pool state getters
+//
+// The no-argument getters whose answers feed the calc: the crypto invariant and
+// its params, the virtual-price trio, the oracle/redemption pair, the A-ramping
+// schedule, and the immutable `A()` / `fee()` / `admin_fee()` triple. Every
+// selector comes from the `ICurvePool` declaration above, so the wire spelling
+// is compile-time-verified instead of a byte literal at the read site.
+// ---------------------------------------------------------------------------
+
+/// Encode `A()` calldata (4-byte selector only) — the amplification
+/// coefficient.
+#[must_use]
+pub fn encode_curve_a() -> Vec<u8> {
+    ICurvePool::ACall {}.abi_encode()
+}
+
+/// Encode `admin_fee()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_curve_admin_fee() -> Vec<u8> {
+    ICurvePool::admin_feeCall {}.abi_encode()
+}
+
+/// Encode `base_cache_updated()` calldata (4-byte selector only) — the block
+/// the base pool's cached virtual price was last written.
+#[must_use]
+pub fn encode_curve_base_cache_updated() -> Vec<u8> {
+    ICurvePool::base_cache_updatedCall {}.abi_encode()
+}
+
+/// Encode `base_pool()` calldata (4-byte selector only) — a metapool's base
+/// pool.
+#[must_use]
+pub fn encode_curve_base_pool() -> Vec<u8> {
+    ICurvePool::base_poolCall {}.abi_encode()
+}
+
+/// Encode `base_virtual_price()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_curve_base_virtual_price() -> Vec<u8> {
+    ICurvePool::base_virtual_priceCall {}.abi_encode()
+}
+
+/// Encode `fee()` calldata (4-byte selector only) — the pool's trading fee.
+#[must_use]
+pub fn encode_curve_fee() -> Vec<u8> {
+    ICurvePool::feeCall {}.abi_encode()
+}
+
+/// Encode `fee_gamma()` calldata (4-byte selector only) — the crypto-pool fee
+/// gamma that gates the crypto param reads.
+#[must_use]
+pub fn encode_curve_fee_gamma() -> Vec<u8> {
+    ICurvePool::fee_gammaCall {}.abi_encode()
+}
+
+/// Encode `future_A()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_curve_future_a() -> Vec<u8> {
+    ICurvePool::future_ACall {}.abi_encode()
+}
+
+/// Encode `future_A_time()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_curve_future_a_time() -> Vec<u8> {
+    ICurvePool::future_A_timeCall {}.abi_encode()
+}
+
+/// Encode `gamma()` calldata (4-byte selector only) — the crypto-pool gamma.
+#[must_use]
+pub fn encode_curve_gamma() -> Vec<u8> {
+    ICurvePool::gammaCall {}.abi_encode()
+}
+
+/// Encode `get_virtual_price()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_curve_get_virtual_price() -> Vec<u8> {
+    ICurvePool::get_virtual_priceCall {}.abi_encode()
+}
+
+/// Encode `initial_A()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_curve_initial_a() -> Vec<u8> {
+    ICurvePool::initial_ACall {}.abi_encode()
+}
+
+/// Encode `initial_A_time()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_curve_initial_a_time() -> Vec<u8> {
+    ICurvePool::initial_A_timeCall {}.abi_encode()
+}
+
+/// Encode `D()` calldata (4-byte selector only) — the crypto-pool invariant.
+#[must_use]
+pub fn encode_curve_invariant_d() -> Vec<u8> {
+    ICurvePool::DCall {}.abi_encode()
+}
+
+/// Encode `mid_fee()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_curve_mid_fee() -> Vec<u8> {
+    ICurvePool::mid_feeCall {}.abi_encode()
+}
+
+/// Encode `offpeg_fee_multiplier()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_curve_offpeg_fee_multiplier() -> Vec<u8> {
+    ICurvePool::offpeg_fee_multiplierCall {}.abi_encode()
+}
+
+/// Encode `oracle_method()` calldata (4-byte selector only) — the packed
+/// oracle selector + oracle address bitmask, answered as one `uint256`.
+#[must_use]
+pub fn encode_curve_oracle_method() -> Vec<u8> {
+    ICurvePool::oracle_methodCall {}.abi_encode()
+}
+
+/// Encode `out_fee()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_curve_out_fee() -> Vec<u8> {
+    ICurvePool::out_feeCall {}.abi_encode()
+}
+
+/// Encode `snappedRedemptionPrice()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_curve_snapped_redemption_price() -> Vec<u8> {
+    ICurvePool::snappedRedemptionPriceCall {}.abi_encode()
+}
+
+/// Encode `redemption_price_snap()` calldata (4-byte selector only) — the
+/// contract that answers [`encode_curve_snapped_redemption_price`].
+#[must_use]
+pub fn encode_curve_redemption_price_snap() -> Vec<u8> {
+    ICurvePool::redemption_price_snapCall {}.abi_encode()
+}
+
 /// Decode `redemption_price_snap()` return data (single `address`).
 ///
 /// # Errors
@@ -1342,18 +1499,201 @@ pub fn decode_lending_token(bytes: &[u8]) -> ProviderResult<Address> {
 }
 
 // ---------------------------------------------------------------------------
+// Curve lending-style rate reads
+//
+// The per-coin rate getters behind the lending styles: cToken/cyToken accrual
+// (`exchangeRateStored` + `supplyRatePerBlock` + `accrualBlockNumber`), yToken
+// share price (`getPricePerFullShare`), and the aETH/rETH exchange rate
+// (`ratio` / `getExchangeRate`). All six answer one `uint256`, so the callers
+// share [`decode_uint256`]; the selectors come from the `ILendingRateReads`
+// declaration above.
+// ---------------------------------------------------------------------------
+
+/// Encode `exchangeRateStored()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_lending_exchange_rate_stored() -> Vec<u8> {
+    ILendingRateReads::exchangeRateStoredCall {}.abi_encode()
+}
+
+/// Encode `supplyRatePerBlock()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_lending_supply_rate_per_block() -> Vec<u8> {
+    ILendingRateReads::supplyRatePerBlockCall {}.abi_encode()
+}
+
+/// Encode `accrualBlockNumber()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_lending_accrual_block_number() -> Vec<u8> {
+    ILendingRateReads::accrualBlockNumberCall {}.abi_encode()
+}
+
+/// Encode `getPricePerFullShare()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_lending_get_price_per_full_share() -> Vec<u8> {
+    ILendingRateReads::getPricePerFullShareCall {}.abi_encode()
+}
+
+/// Encode `ratio()` calldata (4-byte selector only) — the aETH exchange rate.
+#[must_use]
+pub fn encode_lending_ratio() -> Vec<u8> {
+    ILendingRateReads::ratioCall {}.abi_encode()
+}
+
+/// Encode `getExchangeRate()` calldata (4-byte selector only) — the rETH
+/// exchange rate.
+#[must_use]
+pub fn encode_lending_get_exchange_rate() -> Vec<u8> {
+    ILendingRateReads::getExchangeRateCall {}.abi_encode()
+}
+
+// ---------------------------------------------------------------------------
+// Pool identity reads
+//
+// `factory()` / `token0()` / `token1()`, the three getters a builder issues
+// before it knows what family it is looking at.
+// ---------------------------------------------------------------------------
+
+/// Encode `factory()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_pool_factory() -> Vec<u8> {
+    IPoolIdentity::factoryCall {}.abi_encode()
+}
+
+/// Encode `token0()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_pool_token0() -> Vec<u8> {
+    IPoolIdentity::token0Call {}.abi_encode()
+}
+
+/// Encode `token1()` calldata (4-byte selector only).
+#[must_use]
+pub fn encode_pool_token1() -> Vec<u8> {
+    IPoolIdentity::token1Call {}.abi_encode()
+}
+
+/// Decode `factory()` return data (single `address`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_pool_factory(bytes: &[u8]) -> ProviderResult<Address> {
+    let r = IPoolIdentity::factoryCall::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("factory decode: {e}"),
+        }
+    })?;
+    Ok(r)
+}
+
+/// Decode `token0()` return data (single `address`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_pool_token0(bytes: &[u8]) -> ProviderResult<Address> {
+    let r = IPoolIdentity::token0Call::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("token0 decode: {e}"),
+        }
+    })?;
+    Ok(r)
+}
+
+/// Decode `token1()` return data (single `address`).
+///
+/// # Errors
+///
+/// Returns [`ProviderError::DecodingError`] on decode failure.
+pub fn decode_pool_token1(bytes: &[u8]) -> ProviderResult<Address> {
+    let r = IPoolIdentity::token1Call::abi_decode_returns(bytes).map_err(|e| {
+        ProviderError::DecodingError {
+            message: format!("token1 decode: {e}"),
+        }
+    })?;
+    Ok(r)
+}
+
+/// Call `factory()` on `to` and decode the `address` it returns — the deploying
+/// factory of a pool whose family the caller has not classified yet.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or
+/// [`ProviderError::DecodingError`] when the return is not one `address`.
+pub async fn fetch_pool_factory(
+    provider: &impl ContractRead,
+    to: &Address,
+    block: Option<u64>,
+) -> ProviderResult<Address> {
+    let bytes = provider
+        .call(*to, Bytes::from(encode_pool_factory()), block)
+        .await?;
+    decode_pool_factory(&bytes)
+}
+
+/// Call `token0()` on `to` and decode the `address` it returns.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or
+/// [`ProviderError::DecodingError`] when the return is not one `address`.
+pub async fn fetch_pool_token0(
+    provider: &impl ContractRead,
+    to: &Address,
+    block: Option<u64>,
+) -> ProviderResult<Address> {
+    let bytes = provider
+        .call(*to, Bytes::from(encode_pool_token0()), block)
+        .await?;
+    decode_pool_token0(&bytes)
+}
+
+/// Call `token1()` on `to` and decode the `address` it returns.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or
+/// [`ProviderError::DecodingError`] when the return is not one `address`.
+pub async fn fetch_pool_token1(
+    provider: &impl ContractRead,
+    to: &Address,
+    block: Option<u64>,
+) -> ProviderResult<Address> {
+    let bytes = provider
+        .call(*to, Bytes::from(encode_pool_token1()), block)
+        .await?;
+    decode_pool_token1(&bytes)
+}
+
+// ---------------------------------------------------------------------------
 // Signature-driven reads
 //
-// Reads whose selector has no typed `sol!` home yet: the caller passes the
-// Solidity signature (`b"factory()"`, `b"decimals()"`, …), which is hashed to
-// the 4-byte selector here, called once through the read primitive, and
-// decoded to the named shape. The signature literal stays at the call site; the
-// encode/call/decode pipeline is written once.
+// Reads whose shape the caller declares rather than the ABI. Every
+// contract-fixed, single-shape getter has a typed `sol!` home above; what is
+// left here is the reads where the *decode* is the caller's decision:
+//
+// - ERC-20 metadata read through prototype lists (`name()`/`NAME()`,
+//   `symbol()`/`SYMBOL()`, `decimals()`/`DECIMALS()`), where a token may answer
+//   with `string`, `bytes32`, or a word of a width the caller does not want
+//   validated.
+// - The concentrated-liquidity fee tier and tick spacing, decoded at a declared
+//   width (`uint24` / `int24`) so an out-of-width answer is a decode failure
+//   rather than a truncated value.
+// - The solidly-family stable-vs-volatile flags (`stable()`, `stableSwap()`) and
+//   Camelot's fee probes (`FEE_DENOMINATOR()`, `token0FeePercent()`,
+//   `token1FeePercent()`), read only by the resolver that classifies the pool.
+//
+// The caller passes the Solidity signature (`b"decimals()"`, …), which is hashed
+// to the 4-byte selector here, called once through the read primitive, and
+// decoded to the named shape; the encode/call/decode pipeline is written once.
+// Test transports key their canned answers on [`selector`] for the same reason:
+// the stub asserts the calldata the chain would receive, whether the caller
+// encoded it from a typed home or from signature text.
 // ---------------------------------------------------------------------------
 
 /// Compute the 4-byte Solidity function selector, `keccak256(signature)[..4]`.
 ///
-/// The signature is the canonical Solidity text (`b"factory()"`,
+/// The signature is the canonical Solidity text (`b"decimals()"`,
 /// `b"allowance(address,address)"`), never a pre-computed hex selector.
 #[must_use]
 pub fn selector(signature: &[u8]) -> [u8; 4] {
@@ -1364,7 +1704,9 @@ pub fn selector(signature: &[u8]) -> [u8; 4] {
 }
 
 /// Call the no-argument `signature` on `to` and decode the right-aligned
-/// 20-byte `address` it returns (`factory()`, `token0()`, `base_pool()`, …).
+/// 20-byte `address` it returns — the pipeline for an address getter whose
+/// shape the caller declares (the [`encode_pool_factory`] family is the typed
+/// alternative).
 ///
 /// # Errors
 ///
@@ -2409,6 +2751,111 @@ mod tests {
         assert!(matches!(
             fetch_address_returning(&short, b"factory()", &TO, BLOCK).await,
             Err(ProviderError::DecodingError { .. })
+        ));
+    }
+
+    /// The typed getter homes, checked against selectors computed outside alloy
+    /// (Foundry `cast sig`): a `sol!` declaration verifies the spelling it was
+    /// given, so the spelling itself is pinned here. Every no-argument getter
+    /// also encodes to its selector alone.
+    #[test]
+    fn getter_selector_homes_match_reference_vectors() {
+        let cases: &[(Vec<u8>, [u8; 4])] = &[
+            (encode_curve_a(), [0xf4, 0x46, 0xc1, 0xd0]),
+            (encode_curve_admin_fee(), [0xfe, 0xe3, 0xf7, 0xf9]),
+            (encode_curve_base_cache_updated(), [0x82, 0x96, 0xf8, 0x4f]),
+            (encode_curve_base_pool(), [0x5d, 0x63, 0x62, 0xbb]),
+            (encode_curve_base_virtual_price(), [0x95, 0xcc, 0xc0, 0x2f]),
+            (encode_curve_fee(), [0xdd, 0xca, 0x3f, 0x43]),
+            (encode_curve_fee_gamma(), [0x72, 0xd4, 0xf0, 0xe2]),
+            (encode_curve_future_a(), [0xb4, 0xb5, 0x77, 0xad]),
+            (encode_curve_future_a_time(), [0x14, 0x05, 0x22, 0x88]),
+            (encode_curve_gamma(), [0xb1, 0x37, 0x39, 0x29]),
+            (encode_curve_get_virtual_price(), [0xbb, 0x7b, 0x8b, 0x80]),
+            (encode_curve_initial_a(), [0x54, 0x09, 0x49, 0x1a]),
+            (encode_curve_initial_a_time(), [0x20, 0x81, 0x06, 0x6c]),
+            (encode_curve_invariant_d(), [0x0f, 0x52, 0x9b, 0xa2]),
+            (encode_curve_mid_fee(), [0x92, 0x52, 0x6c, 0x0c]),
+            (
+                encode_curve_offpeg_fee_multiplier(),
+                [0x8e, 0xdf, 0xdd, 0x5f],
+            ),
+            (encode_curve_oracle_method(), [0x34, 0x95, 0x01, 0x8d]),
+            (encode_curve_out_fee(), [0xee, 0x8d, 0xe6, 0x75]),
+            (
+                encode_curve_redemption_price_snap(),
+                [0x85, 0xca, 0xb7, 0x55],
+            ),
+            (
+                encode_curve_snapped_redemption_price(),
+                [0x69, 0x98, 0xc4, 0x8d],
+            ),
+            (
+                encode_lending_exchange_rate_stored(),
+                [0x18, 0x2d, 0xf0, 0xf5],
+            ),
+            (
+                encode_lending_supply_rate_per_block(),
+                [0xae, 0x9d, 0x70, 0xb0],
+            ),
+            (
+                encode_lending_accrual_block_number(),
+                [0x6c, 0x54, 0x0b, 0xaf],
+            ),
+            (
+                encode_lending_get_price_per_full_share(),
+                [0x77, 0xc7, 0xb8, 0xfc],
+            ),
+            (encode_lending_ratio(), [0x71, 0xca, 0x33, 0x7d]),
+            (encode_lending_get_exchange_rate(), [0xe6, 0xaa, 0x21, 0x6c]),
+            (encode_pool_factory(), [0xc4, 0x5a, 0x01, 0x55]),
+            (encode_pool_token0(), [0x0d, 0xfe, 0x16, 0x81]),
+            (encode_pool_token1(), [0xd2, 0x12, 0x20, 0xa7]),
+        ];
+
+        for (calldata, expected) in cases {
+            assert_eq!(
+                &calldata[..4],
+                expected,
+                "selector mismatch for calldata {calldata:02x?}"
+            );
+            assert_eq!(
+                calldata.len(),
+                4,
+                "a no-argument getter encodes to its selector alone"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_pool_identity_reads_the_selector_its_home_declares() {
+        let factory = address!("c45a01555fb0f9f9e5a3d3a5f6f4d0b6e4d6c4a1");
+        let transport = TableTransport::new()
+            .answer(
+                encode_pool_factory(),
+                DynSolValue::Address(factory).abi_encode(),
+            )
+            .answer(
+                encode_pool_token0(),
+                DynSolValue::Address(OTHER).abi_encode(),
+            );
+
+        assert_eq!(
+            fetch_pool_factory(&transport, &TO, BLOCK).await.unwrap(),
+            factory
+        );
+        assert_eq!(
+            fetch_pool_token0(&transport, &TO, BLOCK).await.unwrap(),
+            OTHER
+        );
+        assert_eq!(
+            transport.calls()[0],
+            (TO, Bytes::from(encode_pool_factory()), BLOCK),
+            "the factory read carries the sol!-generated selector"
+        );
+        assert!(matches!(
+            fetch_pool_token1(&transport, &TO, BLOCK).await,
+            Err(ProviderError::ExecutionReverted { .. })
         ));
     }
 
