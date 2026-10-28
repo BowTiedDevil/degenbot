@@ -244,7 +244,7 @@ for root in "${target_roots[@]}"; do
     select_stale_children stubgen-inspect "$root/stubgen-inspect"
 done
 
-# CRAP and ad-hoc LLVM runs also leave coverage files directly in a Cargo
+# Ad-hoc LLVM coverage runs also leave coverage files directly in a Cargo
 # target root rather than under that root's coverage/.
 for root in "${target_roots[@]}"; do
     while IFS= read -r -d '' artifact; do

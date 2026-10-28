@@ -8,16 +8,16 @@
 #
 # Outputs land under rust/target/coverage/; every arm writes `html/` (human
 # reading) and `coverage.json` (llvm-cov export format, agent consumption).
-# The combined arm also writes `coverage.lcov` + `combined.profdata` so the
-# CRAP tooling can score pytest-driven coverage:
-#   cd rust && cargo crap --workspace --lcov target/coverage/coverage.lcov
+# The combined arm also writes `coverage.lcov` + `combined.profdata` for the
+# merged Rust ∪ pytest report.
 #
 # Env overrides:
 #   COV_PACKAGES   cargo-style package selectors; empty = whole workspace.
 #                  Setting this drops COV_FEATURES (scoped members can't
 #                  resolve workspace-member features) unless set explicitly.
 #   COV_FEATURES   features for the instrumented build (default
-#                  degenbot-bot/otel — same rationale as CRAP_FEATURES)
+#                  degenbot-bot/otel: compiles the telemetry modules so the
+#                  walker doesn't score their #[cfg(otel)] twins as 0%-covered)
 #   COV_ROOT       output root (default <cargo target dir>/coverage)
 #   COV_PYTEST_ARGS extra pytest args for the pyo3 arm (always runs the
 #                  pyproject-default deselection; pass e.g. 'tests/abi -q')
@@ -40,7 +40,7 @@ if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
     echo "ERROR: cargo-llvm-cov not found. Install: cargo install --locked cargo-llvm-cov" >&2
     exit 1
 fi
-# LLVM tool discovery mirrors crap-coverage in the justfile: cargo-llvm-cov
+# LLVM tool discovery mirrors the coverage recipes in the justfile: cargo-llvm-cov
 # locates rustup's llvm-tools itself when present; on a system-rustc host point
 # LLVM_COV/LLVM_PROFDATA at the distro LLVM explicitly.
 if [[ -z "${LLVM_COV:-}" && -z "${LLVM_PROFDATA:-}" ]] \
@@ -91,7 +91,7 @@ emit_report() { # $1 name, $2.. objects
     llvm-cov export --instr-profile="$profdata" \
         --ignore-filename-regex="$COV_IGNORE" "$@" \
         --summary-only >"$COV_ROOT/$name/coverage.json"
-    # lcov is cargo-crap's artifact; it walks members via cargo metadata, so
+    # The LCOV export walks workspace members via cargo metadata, so
     # rewrite the repo's absolute SF: paths relative to the rust/ workspace
     # root (registry crates stay absolute and score no data).
     llvm-cov export --instr-profile="$profdata" \
