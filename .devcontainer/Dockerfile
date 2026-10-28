@@ -5,6 +5,7 @@ FROM fedora:latest
 RUN dnf install -y \
         gcc gcc-c++ make pkgconf-pkg-config \
         uv python3 python3-devel python3-pip \
+        jq \
         gh \
         golang \
         nodejs24 \
