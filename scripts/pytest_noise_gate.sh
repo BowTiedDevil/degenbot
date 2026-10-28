@@ -24,6 +24,7 @@
 # failure mode keeps its own reason.
 set -euo pipefail
 
+# live-invariant gate (ADR-087 D2): watches the captured pytest session output for the spray signatures below, both emitted by live code; not tripwire precedent.
 signatures=('--- Logging error ---' 'Reconnection attempt')
 
 usage() {

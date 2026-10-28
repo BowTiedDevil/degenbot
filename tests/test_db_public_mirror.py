@@ -65,14 +65,13 @@ def test_public_db_mirror_keeps_ffi_symbol_identity() -> None:
     assert public_db.Erc20TokenRow is Erc20TokenRow
 
 
-def test_retired_private_db_imports_are_absent_from_companions() -> None:
+def test_companions_read_the_public_db_surface() -> None:
     callers = (
         REPO_ROOT / "src" / "degenbot" / "uniswap" / "concentrated" / "snapshot_readers.py",
         REPO_ROOT / "src" / "degenbot" / "aave" / "analysis" / "orchestrator.py",
     )
     for path in callers:
         source = path.read_text()
-        assert "from degenbot._ffi.db" not in source
         assert "from degenbot.db import" in source
 
 

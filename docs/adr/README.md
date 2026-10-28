@@ -69,7 +69,6 @@ The load-bearing decisions behind the two-consumer architecture:
 | [033](ADR-033-encode-funnel-intake-contract.md) | The encode funnel's intake contract | accepted |
 | [034](ADR-034-erc6909-vault-capture-wiring.md) | ERC6909-vault profit capture wiring | accepted |
 | [035](ADR-035-math-consolidation-and-umbrella-aliases.md) | Consolidate the AMM math family into `degenbot-math` | accepted |
-| [036](ADR-036-window-guards-not-relanded.md) | Do not re-land the V3/V4 window guards | accepted |
 | [037](ADR-037-swap-simulation-gate.md) | The swap-simulation gate | accepted |
 | [038](ADR-038-cl-event-routing-fsm.md) | The CL event-routing FSM | accepted |
 | [039](ADR-039-state-lock-sim-anchor-projection.md) | State-lock — enumerated sim-anchor projection | accepted |
@@ -134,6 +133,7 @@ what they describe, or re-litigate them.
 | [021](ADR-021-solver-state-accuracy-is-a-fail-fast-tripwire.md) | Solver-state accuracy is a fail-fast tripwire | [ADR-040](ADR-040-per-bucket-failure-reactions.md) (reaction) + [ADR-041](ADR-041-block-epoch-pipeline.md) §4 (in-process tripwire deleted; only the Published-edge RPC check survives) |
 | [027](ADR-027-block-pump-dispatch-seam.md) | The block-pump dispatch seam | [ADR-041](ADR-041-block-epoch-pipeline.md) (dispatch layer retired) |
 | [028](ADR-028-block-pump-pumpdecision-seam.md) | The block-pump `PumpDecision` seam | [ADR-041](ADR-041-block-epoch-pipeline.md) (`PumpFSM` folded into the `StageMachine`) |
+| [036](ADR-036-window-guards-not-relanded.md) | The V3/V4 window guards were not re-landed — the refined terminal subsumes them | [ADR-087](ADR-087-deletion-is-the-retirement.md) (deletion is the complete retirement; the "do not re-land" prose prohibition deleted) |
 | [037](ADR-037-engine-mutex-sharding.md) | Engine Mutex sharding (RAYPAR) | [ADR-041](ADR-041-block-epoch-pipeline.md) (no `drain_lock`; engine `Mutex` off the solve path) |
 | [053](ADR-053-ffi-stub-generation.md) | FFI Stub Generation — hand-maintained `.pyi` set | [ADR-066](ADR-066-deterministic-stub-generation.md) (stubs are generated; only the `pyo3-stub-gen` rejection stands) |
 

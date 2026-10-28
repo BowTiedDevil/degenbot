@@ -359,6 +359,8 @@ mod walk_probe {
     /// Honesty invariant: no literal `PlanStep::` sites in the walked arms —
     /// the v4v2/v4v3/v4v4 families emit through `mechanics` + the shared
     /// capture/bridge helpers, so per-family Plan bodies cannot reappear.
+    ///
+    /// live-invariant gate (ADR-087 D2): watches the live walked arms of `two_hop_v4_led.rs`, which must emit through `mechanics::`; not tripwire precedent.
     #[test]
     fn two_hop_v4_led_arms_use_mechanics_not_planstep_literals() {
         let src = walk_source();

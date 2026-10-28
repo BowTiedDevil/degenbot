@@ -1,6 +1,9 @@
-# ADR-036: Do not re-land the V3/V4 window guards — the refined terminal subsumes them
+# ADR-036: The V3/V4 window guards were not re-landed — the refined terminal subsumes them
 
-**Status:** Accepted
+**Status: historical — provenance only.** The prose prohibition this ADR carried was
+**deleted** under [ADR-087](ADR-087-deletion-is-the-retirement.md) D1/D5 (deletion is the
+complete retirement); what it recorded stands as the reason the guards are absent.
+
 **Date:** 2026-08-25
 **Task:** — (F1 solver adversarial-review follow-up)
 
@@ -26,7 +29,7 @@
 
 ## Decision
 
-Do not re-land the V3/V4 window guards. The corner safety they provided now
+The V3/V4 window guards were not re-landed. The corner safety they provided now
 lives in the core refine path, in both cases the guards covered:
 
 1. **Single-piece paths** — the F1 terminal refine (`305141729`,
@@ -60,7 +63,7 @@ for the hop1 case; a hop0-corner sibling is
 
 ## Consequences
 
-- V3/V4 guard branches stay un-merged; no re-land.
+- The V3/V4 guard branches were not merged.
 - Corner safety is enforced by the core refine and pinned by two regression
   tests (single-piece saturation corner + hop1-binding kink).
 - Recurrence of the original refine runaway (multi-million sims) is

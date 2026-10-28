@@ -2,9 +2,9 @@
 
 The Python driver shell depends on a narrow slice of the engine surface. This
 module binds that slice in one place: the fake implements every seam member,
-the real engine exposes every seam member, the stub declares every seam member,
-and the fake defines none of the retired methods. A surface change that breaks
-any of those identities fails here instead of drifting silently.
+the real engine exposes every seam member, and the stub declares every seam
+member. A surface change that breaks any of those identities fails here instead
+of drifting silently.
 
 Where a real path exists the fake is also driven against the real engine's
 behaviour (default registration order and the enable/disable vocabulary), so
@@ -22,7 +22,6 @@ from degenbot.runner.config import ArbitrageConfig
 from degenbot.strategy import validate_strategy_readiness as readiness
 from tests.fakes.engine import (
     ENGINE_SEAM_MEMBERS,
-    RETIRED_ENGINE_MEMBERS,
     FakeEngine,
 )
 from tests.helpers.identity_env import identity_env
@@ -68,15 +67,6 @@ def test_stub_declares_every_seam_member() -> None:
     declared = _stub_arbitrage_engine_members()
     missing = [name for name in ENGINE_SEAM_MEMBERS if name not in declared]
     assert missing == [], f"the ArbitrageEngine stub is missing seam members: {missing}"
-
-
-def test_fake_defines_no_retired_engine_surface() -> None:
-    regrown = [name for name in RETIRED_ENGINE_MEMBERS if hasattr(FakeEngine, name)]
-    assert regrown == [], f"FakeEngine regrew retired engine surface: {regrown}"
-    for name in RETIRED_ENGINE_MEMBERS:
-        assert not hasattr(ArbitrageEngine, name), (
-            f"retired member {name} is back on the real engine"
-        )
 
 
 def test_fake_and_real_agree_on_default_registration_order() -> None:

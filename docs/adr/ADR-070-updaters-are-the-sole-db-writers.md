@@ -63,6 +63,8 @@ names a write-capable constructor in its **production** `src` (test modules and
 cannot be, because workspace feature unification re-enables `writer` through a
 shared updater dependency.
 
+_live-invariant gate (ADR-087 D2): watches the production `src` of every live crate for write-capable constructors outside the D2 allowlist; not tripwire precedent._
+
 **D7 — The construction DB half is opened by the shell.** The engine's
 `Bot::open_construction_db` is retired; the shell (a writer-enabled crate) opens
 the write-capable handle for `attach_construction_io`. The engine never touches

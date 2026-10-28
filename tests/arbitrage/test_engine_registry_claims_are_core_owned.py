@@ -101,6 +101,9 @@ def _fake_v4_pool(pool_id: int) -> _FakeV4Pool:
     )
 
 
+# live-invariant gate (ADR-087 D2): watches the live `EngineRegistry` namespace for a
+# Python-side mirror of core-owned identity or claim state; not tripwire
+# precedent.
 def test_registry_keeps_no_pool_id_mirror_and_no_claim_table() -> None:
     """The Python registry holds no identity map, claim, or verified-pool set.
 

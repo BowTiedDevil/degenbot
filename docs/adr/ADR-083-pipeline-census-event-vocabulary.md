@@ -37,6 +37,8 @@ stub gains a no-op `record` so both builds share one call surface.
 build if `pipeline()` is named outside the census module: an emit site can no
 longer silently reintroduce a metric name or a per-site guard.
 
+_live-invariant gate (ADR-087 D2): watches the live `pipeline()` accessor in `degenbot-bot/src/instruments.rs`; not tripwire precedent._
+
 **D4 — Metric names are frozen and parity-pinned.** Dashboards and alerts
 query metric strings verbatim (the PROMETHEUS NAME COUPLING notes).
 `tests/metric_name_parity.rs` pins the constructed-name set bidirectionally:

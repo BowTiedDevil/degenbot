@@ -271,6 +271,7 @@ fn workspace_membership_is_exact_and_role_grouped() {
     }
 }
 
+/// live-invariant gate (ADR-087 D2): watches the external dependency allowlist of the live `degenbot-cli` facade; not tripwire precedent.
 #[test]
 fn cli_shell_names_only_allowlisted_externals() {
     // ADR-051 D2: the argv facade may name workspace members + the small
@@ -319,6 +320,7 @@ fn cli_shell_names_only_allowlisted_externals() {
     );
 }
 
+/// live-invariant gate (ADR-087 D2): watches the live `degenbot::solvers` re-export wiring to `degenbot_pools::solve`; not tripwire precedent.
 #[test]
 fn facade_solvers_reexport_reaches_pools_solve() {
     // ADR-073 amendment A5 dissolved the `degenbot-solvers` crate; the facade
@@ -333,6 +335,7 @@ fn facade_solvers_reexport_reaches_pools_solve() {
     );
 }
 
+/// live-invariant gate (ADR-087 D2): watches the default-feature dependency set of every live core crate; not tripwire precedent.
 #[test]
 fn core_crates_are_pyo3_free_under_default_features() {
     // The pyo3-free charter (AGENTS.md). The binding crate `degenbot_rs` is the
@@ -370,6 +373,7 @@ fn core_crates_are_pyo3_free_under_default_features() {
     );
 }
 
+/// live-invariant gate (ADR-087 D2): watches the live `degenbot-cli-core` dependency set, which must stay clap- and indicatif-free; not tripwire precedent.
 #[test]
 fn cli_core_is_clap_and_indicatif_free() {
     // ADR-051 D2: the argv facade owns clap + indicatif; the semantics crate
@@ -391,6 +395,7 @@ fn cli_core_is_clap_and_indicatif_free() {
     }
 }
 
+/// live-invariant gate (ADR-087 D2): watches the one live `impl ArbitrageEngine` block in `arb_engine/mod.rs` and the single `ArbitrageEngine` pyclass compat string; not tripwire precedent.
 #[test]
 fn one_engine_impl_block() {
     // exactly one `impl ArbitrageEngine` block, in arb_engine/mod.rs.
@@ -438,6 +443,7 @@ fn one_engine_impl_block() {
     );
 }
 
+/// live-invariant gate (ADR-087 D2): watches the live `rust/crates` sources for inner `#![allow]` attributes; not tripwire precedent.
 #[test]
 fn no_inner_allow_attributes() {
     // `#![allow]` inner attributes are forbidden; reasoned outer #[allow]/#[expect]
@@ -600,6 +606,7 @@ fn impl_blocks(text: &str) -> Vec<(String, String)> {
     blocks
 }
 
+/// live-invariant gate (ADR-087 D2): watches the single live `PathObject` owner, its adapter impl, and the one path-signature index; not tripwire precedent.
 #[test]
 fn one_path_identity_owner_is_declared_once() {
     // A DECLARATION census, not a wiring check: a session can reach canonical
@@ -662,6 +669,7 @@ fn one_path_identity_owner_is_declared_once() {
     );
 }
 
+/// live-invariant gate (ADR-087 D2): watches the live canonical path module, which must hold no collection; not tripwire precedent.
 #[test]
 fn the_session_registers_no_path_store_of_its_own() {
     // The session registry reaches path identity through the adapter, so the
@@ -715,6 +723,7 @@ fn the_session_registers_no_path_store_of_its_own() {
     );
 }
 
+/// live-invariant gate (ADR-087 D2): watches the public surface of the live canonical path object, which must expose no strategy policy; not tripwire precedent.
 #[test]
 fn the_canonical_path_object_carries_no_strategy_policy() {
     // Identity only: chain, the hop signature, and the owner's id. Solver
@@ -794,6 +803,7 @@ fn the_canonical_path_object_carries_no_strategy_policy() {
 /// DECLARATION check over the shipped sources; a test double under a `tests`
 /// path is not a second reader, and a session actually reaching this observer is
 /// behavioral and is proved where a consumer installs it.
+/// live-invariant gate (ADR-087 D2): watches the one live `impl PositionObserver` in the Aave integration; not tripwire precedent.
 #[test]
 fn one_position_observer_implementation_is_declared_once() {
     let crates_root = workspace_root().join("crates");
@@ -830,6 +840,7 @@ fn one_position_observer_implementation_is_declared_once() {
 /// the two failures the seam exists to prevent. (The pool/token kinds
 /// legitimately keep maps in `session_registry.rs` itself; only the position
 /// modules must be collection-free.)
+/// live-invariant gate (ADR-087 D2): watches the live position seam, which must stay collection-free; not tripwire precedent.
 #[test]
 fn the_session_registers_no_position_store_of_its_own() {
     let modules = [
@@ -867,6 +878,7 @@ fn the_session_registers_no_position_store_of_its_own() {
 /// makes the core own a domain it does not have. The seam therefore sits in the
 /// layer both already share, and this gate is what keeps a future "just add the
 /// dep" from quietly restoring either edge.
+/// live-invariant gate (ADR-087 D2): watches the live `Cargo.toml` edges between the position seam, the engine, and the lending integration; not tripwire precedent.
 #[test]
 fn the_position_seam_adds_no_lending_edge_to_the_engine_or_the_core() {
     let mut offenders = Vec::new();
@@ -1000,6 +1012,7 @@ fn the_position_seam_sits_in_the_layer_both_sides_depend_on() {
 /// codebase rather than this rule. A map keyed by the registry's identity
 /// types, by contrast, is unambiguously a claim about session object identity,
 /// and there are none outside the registry today.
+/// live-invariant gate (ADR-087 D2): watches the live rust core for maps keyed by a session identity type outside the session registry; not tripwire precedent.
 #[test]
 fn no_second_map_in_the_rust_core_is_keyed_by_a_session_identity_type() {
     let identity_keys = [
@@ -1148,6 +1161,7 @@ fn retired_python_dedup_maps_do_not_reappear() {
     );
 }
 
+/// live-invariant gate (ADR-087 D2): watches the doc comments on live core `pub` items, which must not define a contract through a Python symbol; not tripwire precedent.
 #[test]
 fn core_public_docs_do_not_define_contracts_through_python_symbols() {
     const DEFINITIONAL_VERBS: [&str; 14] = [
@@ -1536,8 +1550,10 @@ fn split_top_level(inner: &str) -> Vec<String> {
 /// A send hidden behind a helper (`timeout(d, deliver(value))` where `deliver`
 /// owns the channel) is not caught, and a `.send(` in the FIRST argument is
 /// missed by construction; neither shape exists in the tree today. It is a
-/// tripwire for the reintroduction of the direct form, not a proof of absence
-/// for the whole class.
+/// live-invariant gate over the direct form, not a proof of absence for the whole
+/// class.
+///
+/// live-invariant gate (ADR-087 D2): watches live production `timeout(..)` calls whose second argument carries a data-carrying send or a non-resumable write; not tripwire precedent.
 #[test]
 fn no_timeout_wrapped_value_sends_or_write_all() {
     // The one production site that legitimately matches, named file+line with
@@ -1770,8 +1786,10 @@ fn process_once_static_candidates(masked: &str) -> Vec<StaticCandidate> {
 /// but it does NOT follow a helper fn (e.g. `runtime::RUNTIME` ->
 /// `build_runtime()` -> `ambient_io_worker_count()`) nor the leak-on-publish
 /// `RwLock` slots. The census records those blind spots by name. It is a
-/// tripwire for the reintroduction of the direct form, not a proof of absence
-/// for the whole class.
+/// live-invariant gate over the direct form, not a proof of absence for the whole
+/// class.
+///
+/// live-invariant gate (ADR-087 D2): watches every live config-derived process-once static against `tests/config_derived_statics_census.txt`; not tripwire precedent.
 #[test]
 fn config_derived_statics_are_classified() {
     use std::collections::BTreeMap;
@@ -1876,6 +1894,7 @@ fn config_derived_statics_are_classified() {
 /// write-capable constructor is a fence breach — the source-level gate the
 /// cargo feature alone cannot enforce, because workspace feature unification
 /// re-enables `writer` through a shared updater dependency.
+/// live-invariant gate (ADR-087 D2): watches the production `src` of every live crate for write-capable DB constructors outside the updater shells; not tripwire precedent.
 #[test]
 fn only_the_updater_shells_open_the_db_for_writes() {
     const WRITER_OWNERS: [&str; 5] = [
@@ -1934,6 +1953,7 @@ fn only_the_updater_shells_open_the_db_for_writes() {
 /// two entry points that build/repair the schema; the DDL is the embedded
 /// constant and the heal reads the file it is handed, so neither may grow a
 /// bytes/rows/schema-content argument. A TEXT gate on the parameter types.
+/// live-invariant gate (ADR-087 D2): watches the signatures of the live `ensure_schema_at_open` and `heal_database`; not tripwire precedent.
 #[test]
 fn schema_init_functions_accept_only_path_and_flags() {
     let db_src = workspace_root().join("crates/foundation/degenbot-db/src");
@@ -2339,6 +2359,8 @@ fn expand_charter_rules(
 /// ADR-084 D3: the dependency charter is the published contract. Every rule
 /// in `dependency_charter.txt` is asserted over `cargo tree -p X -e normal`
 /// at single-package, default-feature resolution.
+///
+/// live-invariant gate (ADR-087 D2): watches the resolved dependency tree of every live crate against `tests/dependency_charter.txt`; not tripwire precedent.
 #[test]
 fn dependency_charter_is_respected() {
     let charter_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dependency_charter.txt");
@@ -2856,6 +2878,7 @@ fn count_use_list_names(list: &str) -> usize {
 /// crate itself — the same reach as `solve_door_census_is_the_external_surface`,
 /// test/example targets included (they are separate crates that cannot see
 /// `pub(crate)`, which is how a lab ends up naming an implementation module).
+/// live-invariant gate (ADR-087 D2): watches every live `.rs` reference to a `degenbot_pools` module beneath a capability door; not tripwire precedent.
 #[test]
 fn no_new_pools_deep_paths() {
     let allowlist_path =

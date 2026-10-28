@@ -38,6 +38,7 @@ fn count_definitions(src: &str, verb: &str) -> usize {
         .count()
 }
 
+/// live-invariant gate (ADR-087 D2): watches the live `concentrated_liquidity` state module, which must own each shared state verb while the design files only forward; not tripwire precedent.
 #[test]
 fn the_cl_state_module_owns_each_shared_state_verb_and_the_design_files_only_forward() {
     let scanned: [(&str, &str); 6] = [

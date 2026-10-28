@@ -25,10 +25,8 @@ kept as a shim.
 crate: it is the substrate's own vocabulary, and the PyO3 shell, the driver and
 the standalone consumer all reach it through the same re-export.
 
-A source-level census pins the invariant: no retired address-keyed verb may
-reappear, and every retired verb must name its `PoolLookup` door. The census is
-a pure function over `include_str!` sources so it carries a negative probe — a
-fixture with the old shape fails the gate.
+One verb per effect is the naming rule, recorded in GLOSSARY.md under **Pool
+lookup** and **Effect vs view**.
 
 ## Consequences
 

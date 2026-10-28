@@ -26,14 +26,12 @@ from degenbot.uniswap.deployments import (
     BaseSwapbasedV2,
     BaseUniswapV2,
     BaseUniswapV3,
-    BaseUniswapV4,
     EthereumMainnetPancakeswapV2,
     EthereumMainnetPancakeswapV3,
     EthereumMainnetSushiswapV2,
     EthereumMainnetSushiswapV3,
     EthereumMainnetUniswapV2,
     EthereumMainnetUniswapV3,
-    EthereumMainnetUniswapV4,
 )
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -359,15 +357,6 @@ class TestAerodromeV2Registration:
     def test_aerodrome_v2_has_variant(self) -> None:
         """AerodromeV2Pool has a variant attribute used for kind derivation."""
         assert AerodromeV2Pool.variant == "aerodrome"
-
-
-class TestV4DeploymentsExcluded:
-    """V4 deployments use PoolManager, not factory — not covered by this registry."""
-
-    def test_v4_not_in_registrations(self) -> None:
-        """V4 deployments are not keyed by factory address."""
-        for deployment in [EthereumMainnetUniswapV4, BaseUniswapV4]:
-            assert not hasattr(deployment, "factory")
 
 
 class TestDefaultFallback:

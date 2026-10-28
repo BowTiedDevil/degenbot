@@ -67,6 +67,8 @@ the dependency prefixes it may carry; a gate asserts
 (`execution`, `rpc`, `core`, `pools`, `math`, `uniswap`, `pathfinding`) add
 "no C-build dep" and "no pyo3".
 
+_live-invariant gate (ADR-087 D2): watches the resolved dependency tree of every live crate against the D3 deny rules; not tripwire precedent._
+
 **D4 — Capability layers, honestly named.** `foundation` ⊂ `engine` ⊂
 `integrations`; `shells`/`facade` compose. Edge direction is enforced over a
 census allowlist that can only shrink. Transport/IO leaves the stack depends

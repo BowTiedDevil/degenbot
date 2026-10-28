@@ -1,11 +1,9 @@
 """Behavioral tests for the core-owned pool refresh entry (`Pool.refresh_via`).
 
-The update path collapsed onto ONE core entry. The per-family
-fetch/compare/apply choreography that used to live on the retired V2/V3/V4
-builders' ``update()`` — and, after this chunk, on the Python Curve/Balancer
-builders' ``update()`` statics — now lives in
-``degenbot_bot::bot_core::refresh``. The driver reaches it through
-``AbstractLiquidityPool.refresh_via`` -> ``Pool.refresh_via``.
+The update path collapsed onto ONE core entry: the per-family
+fetch/compare/apply choreography lives in ``degenbot_bot::bot_core::refresh``,
+and the driver reaches it through ``AbstractLiquidityPool.refresh_via`` ->
+``Pool.refresh_via``.
 
 A real ``BotIo`` over a recorded ``OfflineProvider`` stands in for the chain:
 the Rust choreography is alloy-only, so the recorded call is keyed by the
@@ -18,7 +16,6 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.provider import OfflineProvider
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.seam import Bot, BotIo
@@ -69,13 +66,6 @@ def _reserves_provider(reserve0: int, reserve1: int, *, block: int = _BLOCK) -> 
             }
         },
     )
-
-
-class TestBuilderUpdateRetired:
-    """The per-family builder `update()` statics are gone — the choreography is core-side."""
-
-    def test_curve_builder_has_no_update(self) -> None:
-        assert not hasattr(CurvePoolBuilder, "update")
 
 
 class TestPoolRefreshV2:

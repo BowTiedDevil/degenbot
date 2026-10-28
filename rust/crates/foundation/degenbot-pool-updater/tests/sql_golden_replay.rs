@@ -151,6 +151,7 @@ fn check_or_regen(name: &str, produced: &str, golden_path: &str) {
     }
 }
 
+/// live-invariant gate (ADR-087 D2): watches the live chunk loop's statement ledger and DB dump against the committed goldens; not tripwire precedent.
 #[test]
 fn pool_chunk_ledger_and_db_dump_match_the_committed_goldens() {
     let bytes = std::fs::read(CASSETTE_PATH).expect("the committed cassette must exist");

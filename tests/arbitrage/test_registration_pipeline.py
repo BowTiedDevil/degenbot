@@ -854,23 +854,15 @@ async def test_intake_fault_propagates_through_run_registration(tmp_path: Path) 
 
 
 def test_registration_ledger_owns_the_four_memo_concepts(tmp_path: Path) -> None:
-    """The four memo collections live on ONE ledger, not on the pipeline.
+    """The four memo concepts live on ONE ledger, not on the pipeline.
 
-    FALSIFICATION: any retired instance attribute still answering, or a
-    concept the unit uses but the ledger does not own.
+    FALSIFICATION: a concept the unit uses but the ledger does not own.
     """
     from degenbot.runner._registration_ledger import RegistrationLedger
     from tests.helpers.seam import registration_pool_memo_key
 
     pipeline, _bot = _pipeline_with_bot(tmp_path / "unused.db", _FleetBot())
     assert isinstance(pipeline._ledger, RegistrationLedger)
-    for retired in (
-        "_registered_paths_seen",
-        "_verified_once",
-        "_unregistrable_pools",
-        "_rejected_paths_seen",
-    ):
-        assert not hasattr(pipeline, retired), f"{retired} must be owned by the ledger"
 
     # Registered-path + verify-once concepts, after one real unit.
     registry = _RecordingRegistry()

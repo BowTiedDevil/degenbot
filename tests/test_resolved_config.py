@@ -188,6 +188,9 @@ class TestHypotheticalResolution:
         monkeypatch.setenv("DEGENBOT_DEFAULT_CHAIN_ID", "424242")
         assert resolved_config().values.session.chain_id == before
 
+    # live-invariant gate (ADR-087 D2): watches the live `resolve_hypothetical`
+    # seam entry against the `degenbot.config` home it must not appear on; not
+    # tripwire precedent.
     def test_it_is_unreachable_from_the_python_config_home(self) -> None:
         """The hypothetical lives on the raw FFI seam, not the driver home."""
         from degenbot import config as config_home

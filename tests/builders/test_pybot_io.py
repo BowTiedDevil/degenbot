@@ -38,9 +38,6 @@ def _min_offline_provider() -> RustAlloyProvider:
 
 
 def test_bot_io_uses_path_only_db_contract() -> None:
-    io = BotIo(provider=_min_offline_provider())
-
-    assert not hasattr(io, "db")
     with pytest.raises(TypeError, match="db"):
         BotIo(provider=_min_offline_provider(), db=object())
 

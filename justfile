@@ -142,6 +142,8 @@ test: lint-rust-check test-rust-nextest test-python check-consumer-probes
 # never drift into a shorter list that reports green while the push is blocked
 # by a gate the recipe never ran. prek is a global uv tool (see
 # `just setup-git-hooks`), installed on demand here.
+#
+# live-invariant gate (ADR-087 D2): watches the live `stages = ["pre-push"]` entries in prek.toml; not tripwire precedent.
 pre-push:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -450,6 +452,7 @@ check-msrv:
     cargo +1.97.0 check --manifest-path rust/Cargo.toml --workspace --all-targets --locked
 
 
+# live-invariant gate (ADR-087 D2): watches the live `rust/crates` sources for inner `#![allow]` attributes; not tripwire precedent.
 check-no-inner-allow:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
@@ -468,11 +471,14 @@ fmt-check: check-toolchain
 
 # Enforce the no-pyo3-in-core invariant. Pure Rust core crates must
 # not depend on pyo3 under their default features. Add new core crates here.
+#
+# live-invariant gate (ADR-087 D2): watches the default-feature dependency set of every live core crate; not tripwire precedent.
 check-no-pyo3-in-cores:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- core_crates_are_pyo3_free_under_default_features --exact --nocapture
 
+# live-invariant gate (ADR-087 D2): watches the live `degenbot-cli-core` crate's dependency set, which must stay clap- and indicatif-free; not tripwire precedent.
 check-cli-core-purity:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
@@ -485,6 +491,8 @@ check-cli-core-purity:
 # / tracing-subscriber). Anything else is a layering regression: the facade
 # maps argv into `degenbot-cli-core` and must never reach a domain-engine crate
 # on its own. Mirrors check-cli-core-purity / check-no-pyo3-in-cores.
+#
+# live-invariant gate (ADR-087 D2): watches the external dependency allowlist of the live `degenbot-cli` facade; not tripwire precedent.
 check-cli-shell-purity:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
@@ -504,6 +512,8 @@ check-cli-shell-purity:
 #   2. `ArbitrageEngine` appears in degenbot-python/src exactly ONCE - the
 #      pyclass `name = "ArbitrageEngine",` compat string (the deliberate
 #      Python-API name exemption). Any other hit is a seam regression.
+#
+# live-invariant gate (ADR-087 D2): watches the one live `impl ArbitrageEngine` block in `arb_engine/mod.rs` and the pyclass compat string; not tripwire precedent.
 check-engine-impl-blocks:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
@@ -520,6 +530,8 @@ check-engine-impl-blocks:
 # holder-derived once-static cannot land silently stale-able. Wired into
 # `lint-rust-check` (hence `just lint` / CI / the pre-push `rust-clippy` hook)
 # plus the pre-push `rust-config-derived-statics` hook.
+#
+# live-invariant gate (ADR-087 D2): watches every live config-derived process-once static against `tests/config_derived_statics_census.txt`; not tripwire precedent.
 check-config-derived-statics:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
@@ -538,6 +550,8 @@ check-capability-catalog:
 # `cargo tree -p X -e normal` at single-package, default-feature resolution.
 # A new C-build or pyo3 leak into a seam crate's published dependency set
 # fails here. Wired into `lint-rust-check`.
+#
+# live-invariant gate (ADR-087 D2): watches the resolved dependency tree of every live crate against the ADR-084 D3 deny rules; not tripwire precedent.
 check-dependency-charter:
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- dependency_charter_is_respected --exact --nocapture
 
@@ -1315,6 +1329,8 @@ check-no-alembic:
 # mentions `.send(` or `.write_all(`. Mirrors check-no-pyo3-in-cores: a
 # permanent, mechanical sweep gate (the one legitimate production site is named
 # in the gate's allowlist with its reason, not excused by a looser pattern).
+#
+# live-invariant gate (ADR-087 D2): watches live production `timeout(..)` calls that wrap a data-carrying send or a non-resumable write; not tripwire precedent.
 check-cancel-safety:
     # C7: the gate body lives as a cargo test on the umbrella crate
     # (rust/crates/facade/degenbot/tests/architecture_gates.rs).
@@ -1348,6 +1364,8 @@ check-no-sqlalchemy:
 # `REGEN_CONFIG_DOCS=1 cargo test -p degenbot-config` (the REGEN pattern of
 # docs/rust-config-keys.md). No hand edits over generated output, ever:
 # generator gaps live only in tests/ffi/stubtest_allowlist.txt (ADR-066 D3).
+#
+# live-invariant gate (ADR-087 D2): watches the committed `src/degenbot/_ffi/` stub tree against this generator's output; not tripwire precedent.
 gen-stubs check="":
     #!/usr/bin/env bash
     set -euo pipefail

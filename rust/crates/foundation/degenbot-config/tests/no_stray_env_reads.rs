@@ -274,6 +274,7 @@ fn env_var_name(line: &str) -> Option<String> {
     (!ident.is_empty()).then_some(ident)
 }
 
+/// live-invariant gate (ADR-087 D2): watches every live Rust source outside `degenbot-config` for env reads not in the enumerated allowlist; not tripwire precedent.
 #[test]
 fn no_stray_env_reads_outside_the_config_loader() {
     let root = workspace_root();
@@ -364,6 +365,8 @@ fn no_stray_env_reads_outside_the_config_loader() {
 }
 
 /// The loader is the ONLY env-reading surface inside degenbot-config.
+///
+/// live-invariant gate (ADR-087 D2): watches the live `degenbot-config` production sources, where `loader.rs` is the one env-reading surface; not tripwire precedent.
 #[test]
 fn config_crate_env_reads_confined_to_the_loader() {
     let crate_dir = workspace_root().join("crates/foundation/degenbot-config");
@@ -771,6 +774,7 @@ fn repo_root() -> &'static Path {
     })
 }
 
+/// live-invariant gate (ADR-087 D2): watches the live `src/degenbot` companion walk for env reads not in the enumerated allowlist; not tripwire precedent.
 #[test]
 fn no_stray_python_env_reads() {
     let repo = repo_root();
@@ -999,6 +1003,7 @@ fn a_read_around_a_multiline_string_is_still_caught() {
 /// name must fail the same walk the gate runs. A scanner that quietly stopped
 /// matching would leave this test green, so the walk, the parse, and the
 /// report are all driven from a real source tree.
+/// live-invariant gate (ADR-087 D2): watches the same companion scan, driven over a canary tree so a silent scanner cannot pass; not tripwire precedent.
 #[test]
 #[expect(
     clippy::expect_used,

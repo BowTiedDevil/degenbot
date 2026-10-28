@@ -60,6 +60,8 @@ hooks = [
   # File-scoped pygrep over the staged python list.
   # Forbid `# noqa: ...PLC0415`. This lint is suppressed project-wide by a
   # shared ruff config; the suppression must never be re-enabled per-line.
+  #
+  # live-invariant gate (ADR-087 D2): watches the live `PL` (pylint) rules ruff selects, whose teeth a per-line `noqa` would silence; not tripwire precedent.
   { id = "forbid-noqa-PLC0415", name = "forbid noqa for PLC0415", language = "pygrep", entry = "noqa:.*PLC0415", types = ["python"], stages = ["pre-commit"] },
 
   # Comment hygiene (AGENTS.md / docs/comments.md): work-tracker (ergo) IDs
@@ -80,6 +82,8 @@ hooks = [
   # exactly the citations this gate exists to catch — do not "fix" the
   # cross-lane visibility by narrowing it back to the index. Latency budget
   # stays near-instant (one rg pass + one awk pass).
+  #
+  # live-invariant gate (ADR-087 D2): watches the live comment surface under AGENTS.md "Comment Hygiene"; not tripwire precedent.
   { id = "comment-hygiene", name = "Comment hygiene gate", language = "system", entry = "just lint-comment-hygiene", types_or = ["python", "rust", "shell"], stages = ["pre-commit"], pass_filenames = false },
 
   # Staged-files format gates: the same detectors as the whole-tree sweeps
@@ -102,6 +106,8 @@ hooks = [
   # other pre-commit checks; it does build the cdylib with the temporary
   # experimental-inspect feature, which is why the trigger is scoped to the rare
   # FFI-surface change rather than run on every commit.
+  #
+  # live-invariant gate (ADR-087 D2): watches the committed stub tree against the live `just gen-stubs` output; not tripwire precedent.
   { id = "stub-drift-staged", name = "Stub drift (staged FFI)", language = "system", entry = "just gen-stubs --check", files = "^rust/crates/shells/degenbot-python/(src/|Cargo\\.toml)|^rust/tools/stubgen/(src/|Cargo\\.toml)", stages = ["pre-commit"], pass_filenames = false },
 
   # --- commit-msg -----------------------------------------------------------

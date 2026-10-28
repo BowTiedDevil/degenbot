@@ -38,7 +38,6 @@ class TestV3DatabaseSnapshotExplicitPath:
 
         assert snapshot.database_path == db_path
         assert snapshot.chain_id == 1
-        assert not hasattr(snapshot, "session")
 
     def test_context_manager_releases_rust_handle(self, tmp_path: pathlib.Path) -> None:
         db_path = tmp_path / "test.db"
@@ -69,4 +68,3 @@ class TestV4DatabaseSnapshotExplicitPath:
 
         assert snapshot.database_path == db_path
         assert snapshot.chain_id == 1
-        assert not hasattr(snapshot, "session")

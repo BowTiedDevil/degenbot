@@ -3,10 +3,7 @@
 Post-C4 the Python driver shell touches a narrow slice of the Rust
 ``ArbitrageEngine`` surface. Every test that drives the runner or the registry
 builds its double here rather than re-declaring a private copy, so a surface
-change lands in one place. :data:`RETIRED_ENGINE_MEMBERS` names the methods the
-real engine removed; the parity test in
-``tests/arbitrage/test_engine_fake_parity.py`` fails if a double ever regrows
-one.
+change lands in one place.
 
 ``EngineSeam`` is the declared contract: the union of the engine methods the
 Python driver shell calls. The parity test binds the real engine, the stub, and
@@ -51,20 +48,6 @@ ENGINE_SEAM_MEMBERS: tuple[str, ...] = (
     "reserve_pair_pool_count",
     "v3_pool_count",
     "v4_pool_count",
-)
-
-
-#: Engine methods the real surface retired (the Phase-A snapshot-ingest ritual).
-#: A double must never define one again.
-RETIRED_ENGINE_MEMBERS: tuple[str, ...] = (
-    "backfill_from_snapshot",
-    "pump_finished_future",
-    "load_v3_snapshot_from_py",
-    "load_v4_snapshot_from_py",
-    # The hosted reconciliation trigger moved to the core-owned source head
-    # edge (degenbot-bot hosted_sources); the engine surface no longer
-    # carries it.
-    "reconcile_hosted_head",
 )
 
 

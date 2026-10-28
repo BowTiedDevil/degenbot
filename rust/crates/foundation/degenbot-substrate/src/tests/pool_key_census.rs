@@ -1,58 +1,47 @@
 //! The pool-key census: one door per orchestration verb.
 //!
-//! A verb that mutates or reads a pool used to exist twice on the state owner —
-//! once keyed by contract address, once by `(pool_manager, pool_id)` — and the
-//! two bodies could drift. [`PoolLookup`] owns the key shape instead, so this
-//! census pins the invariant at the source level: the address-keyed twin must
-//! not reappear, and the door must exist for every verb that ever had one.
+//! A verb that mutates or reads a pool exists once on the state owner, behind a
+
+//! single `PoolLookup` door, so the two bodies cannot drift. This census pins
+
+//! the present invariant at the source level: every verb has its door.
+
 //!
+
 //! The gate is a pure function over source text so its failure mode is
-//! testable: a synthetic fixture with the old shape must go red (the
-//! negative-probe idiom every census gate in this tree carries).
+//! testable: sources that hold no door must report the gap.
 
 const ORCHESTRATION: &str = include_str!("../concentrated_liquidity_orchestration.rs");
 const POOL_LOOKUP: &str = include_str!("../pool_lookup.rs");
 
-/// Each retired `_by_key` twin and the `PoolLookup` doorway that replaced it.
+/// The `PoolLookup` doorway that owns each verb.
 ///
 /// The table encodes the target: no effect may exist twice on the state owner,
-/// and every retired twin must leave a single door behind.
-const DOORS: &[(&str, &str)] = &[
-    ("pool_coverage_by_key", "coverage"),
-    ("snapshot_seed_by_key", "snapshot_seed"),
-    ("set_pool_live_by_key", "mark_registration_live"),
-    (
-        "set_pool_quarantined_by_key",
-        "begin_registration_quarantine",
-    ),
-    ("apply_backfill_buffer_by_key", "backfill"),
-    ("apply_pump_buffer_by_key", "pump"),
-    ("take_snapshot_seed_by_key", "take_seed"),
-    ("pin_post_drain_snapshot_by_key", "pin_post_drain"),
-    ("take_post_drain_snapshot_by_key", "take_post_drain"),
-    ("apply_liquidity_update_by_key", "apply_liquidity_update"),
-    (
-        "buffer_backfill_liquidity_update_by_key",
-        "buffer_backfill_liquidity_update",
-    ),
+/// and every verb must leave a single door behind.
+const DOORS: &[&str] = &[
+    "coverage",
+    "snapshot_seed",
+    "mark_registration_live",
+    "begin_registration_quarantine",
+    "backfill",
+    "pump",
+    "take_seed",
+    "pin_post_drain",
+    "take_post_drain",
+    "apply_liquidity_update",
+    "buffer_backfill_liquidity_update",
 ];
 
 fn signature(verb: &str) -> String {
     ["pub fn ", verb, "("].concat()
 }
 
-/// Violations across the two sources: a surviving address-keyed twin, or a
-/// door that names no verb.
+/// Gaps across the two sources: a door that names no verb.
 fn census(state_owner: &str, lookup: &str) -> Vec<String> {
     let mut violations = Vec::new();
-    for (retired, door) in DOORS {
-        if state_owner.contains(&signature(retired)) {
-            violations.push(format!(
-                "{retired}(address) is back: the PoolLookup door owns this verb"
-            ));
-        }
+    for door in DOORS {
         if !lookup.contains(&signature(door)) && !state_owner.contains(&signature(door)) {
-            violations.push(format!("{retired} has no PoolLookup::{door} door"));
+            violations.push(format!("{door} has no door on the state owner"));
         }
     }
     violations
@@ -64,52 +53,21 @@ fn the_pool_key_census_is_clean() {
 }
 
 #[test]
-fn the_census_goes_red_on_the_old_shape() {
-    let fixture = [
-        "    pub fn set_pool_live_by_key(&mut self, address: Address) {}\n",
-        "    pub fn apply_liquidity_update_by_key(&mut self, pool_manager: Address) {}\n",
-        "    pub fn buffer_backfill_liquidity_update_by_key(&mut self, pool_manager: Address) {}\n",
-    ]
-    .concat();
-    let red = census(&fixture, "");
+fn the_census_reports_a_missing_door() {
+    let gap = census("", "");
     assert!(
-        red.iter().any(|v| v.contains("set_pool_live_by_key")),
-        "the census must catch a restored address-keyed twin: {red:?}"
-    );
-    for twin in [
-        "apply_liquidity_update_by_key",
-        "buffer_backfill_liquidity_update_by_key",
-    ] {
-        assert!(
-            red.iter().any(|v| v.contains(twin)),
-            "the census must catch a restored {twin} twin: {red:?}"
-        );
-    }
-    // The door-exists half, on one of the new entries: with no door anywhere
-    // the census must name the doorway the retired twin left behind, and a
-    // source that holds only the door must clear that entry.
-    let door_gap = census("", "");
-    assert!(
-        door_gap
-            .iter()
-            .any(|v| v
-                == "apply_liquidity_update_by_key has no PoolLookup::apply_liquidity_update door"),
-        "the census must report the missing door for the new entry: {door_gap:?}"
+        gap.iter()
+            .any(|v| v == "apply_liquidity_update has no door on the state owner"),
+        "the census must report a missing door: {gap:?}"
     );
     let door_only = "    pub fn apply_liquidity_update(&mut self) {}\n";
-    let door_met = census(door_only, "");
+    let met = census(door_only, "");
     assert!(
-        !door_met
-            .iter()
-            .any(|v| v.contains("apply_liquidity_update_by_key")),
-        "a present door satisfies the new entry: {door_met:?}"
+        !met.iter().any(|v| v.contains("apply_liquidity_update")),
+        "a present door satisfies its entry: {met:?}"
     );
-    let empty = census("", "");
     assert_eq!(
-        empty
-            .iter()
-            .filter(|v| v.contains("has no PoolLookup"))
-            .count(),
+        gap.len(),
         DOORS.len(),
         "empty sources must report every door missing"
     );

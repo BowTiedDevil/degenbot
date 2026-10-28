@@ -1,4 +1,4 @@
-"""Every ``ArbitrageConfig`` field must have a reader; the retired ones must be gone.
+"""Every ``ArbitrageConfig`` field must have a reader.
 
 A frozen-dataclass field assigned in ``ArbitrageConfig.build`` and never read is *not*
 statically unreachable — the assignment is itself a use — so vulture
@@ -9,15 +9,10 @@ so setting it earns silence.
 
 The gate is an AST reader census over the Python tree rather than a
 reachability check: every field declared on ``ArbitrageConfig`` must be
-attribute-loaded somewhere, and the retired internal-policy names must be
-absent from both the dataclass and the module's private default table (a
-constant kept beside a deleted field is the same lie with a different
-spelling).
-
-Only the retired half of that is exact. The census counts an attribute load
-wherever one appears and silently skips any file that does not parse, so what
-it can honestly report is "read somewhere in the scanned roots", never "read by
-an operator": it is a heuristic, and only as sound as those two limits.
+attribute-loaded somewhere. The census counts an attribute load wherever one
+appears and silently skips any file that does not parse, so what it can
+honestly report is "read somewhere in the scanned roots", never "read by an
+operator": it is a heuristic, and only as sound as those two limits.
 """
 
 from __future__ import annotations
@@ -25,8 +20,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 from typing import TYPE_CHECKING
-
-import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -41,29 +34,8 @@ _CONFIG_PATH = Path(config_module.__file__)
 #: excluding them would flag live fields as dead. The cost is that any file in
 #: these roots can satisfy the census by naming the attribute: a test asserting
 #: on ``cfg.<field>`` manufactures the very reader it is checked for. The
-#: general check is therefore a heuristic, not a proof. ``RETIRED_FIELDS`` is
-#: the backstop for names already known — those are asserted against the
-#: declaration and the private default table directly, so no file can name its
-#: way past them the way it can past the census.
+#: check is therefore a heuristic, not a proof.
 _READER_ROOTS = ("src", "tests", "examples", "scripts")
-
-#: Internal-policy fields removed from the config surface. Each duplicated a
-#: value the core or a hot-path module constant already owns, and each had no
-#: reader outside ``ArbitrageConfig.build``'s own construction keyword.
-RETIRED_FIELDS = (
-    "min_profit_net",
-    "fee_history_window",
-    "fee_percentiles",
-    "target_profit_ratio",
-    "blocks_before_nonce_expires",
-    "max_simulate_concurrent",
-    "age_decay_constant",
-    "min_priority_fee_percentile",
-    "max_priority_fee_percentile",
-    "path_suppress_threshold",
-    "path_suppress_retry_interval",
-    "allowed_intermediate_tokens",
-)
 
 
 def _repo_root() -> Path:
@@ -139,19 +111,4 @@ def test_every_config_field_has_a_reader() -> None:
         f"nowhere: {unread}. The build assignment keeps such a field statically "
         f"reachable, so dead-code analysis passes it; only this census sees it. Delete "
         f"the field, or read it at the call site that should honour it."
-    )
-
-
-@pytest.mark.parametrize("field", RETIRED_FIELDS)
-def test_retired_internal_policy_field_is_gone(field: str) -> None:
-    """The field is absent from the dataclass *and* from the private default table."""
-    declared = _declared_fields()
-    assert field not in declared, (
-        f"{field} is still a declared ArbitrageConfig field with no reader; it would "
-        f"otherwise reach the config surface as a typed value that changes nothing"
-    )
-    private_default = f"_{field.upper()}"
-    assert not hasattr(config_module, private_default), (
-        f"config.{private_default} is the constant that only existed to feed the "
-        f"deleted {field} field; nothing else reads it"
     )

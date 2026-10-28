@@ -53,10 +53,9 @@ names; the dispatch aliases now map clean FFI names.)
    removes the name from this list and from the gate test's grandfather set
    in the same commit.
 5. **Enforcement**: `tests/ffi/test_ffi_registration_surface.py` walks the
-   runtime `degenbot._ffi` module tree and asserts, in both directions, that
-   the set of registered `Py`-prefixed class names equals the grandfather
-   list. A new `Py`-prefixed registration — or a dead list entry — fails the
-   test.
+   runtime `degenbot._ffi` module tree and asserts no registered Python-visible
+   class name carries an origin prefix — the live naming rule, over whatever the
+   tree registers today.
 
 ## Consequences
 

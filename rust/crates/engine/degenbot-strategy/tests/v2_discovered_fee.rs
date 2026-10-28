@@ -51,35 +51,6 @@ fn post(address: Address, reserve0: u64, reserve1: u64) -> PoolPostState {
 }
 
 #[test]
-fn production_v2_lane_has_no_hard_coded_fee_default() {
-    let engine = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/src/backrun_engine.rs"
-    ));
-    let engine = engine
-        .split_once("#[cfg(test)]")
-        .expect("engine test boundary")
-        .0;
-    let strategy = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/src/backrun_strategy.rs"
-    ));
-    for source in [engine, strategy] {
-        for forbidden in [
-            "LaneFamily::V2,",
-            "v2_fee_bips(997",
-            "fee_token0: (997, 1000)",
-            "fee_token0: (997, 1_000)",
-        ] {
-            assert!(
-                !source.contains(forbidden),
-                "production retains hard-coded V2 fee default {forbidden:?}"
-            );
-        }
-    }
-}
-
-#[test]
 #[expect(
     clippy::too_many_lines,
     reason = "the interface test keeps discovery, admission, both encoders, and golden bytes visible"

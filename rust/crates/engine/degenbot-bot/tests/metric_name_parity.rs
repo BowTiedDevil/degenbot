@@ -108,6 +108,7 @@ fn instruments_source() -> String {
 }
 
 /// Every instrument constructed in `instruments.rs` is in the frozen set.
+/// live-invariant gate (ADR-087 D2): watches every instrument name the live `instruments.rs` constructs against the frozen census; not tripwire precedent.
 #[test]
 fn every_constructed_name_is_frozen() {
     let source = instruments_source();
@@ -145,6 +146,7 @@ fn every_constructed_name_is_frozen() {
 
 /// Every frozen name is actually constructed — a stale frozen row is a lie
 /// about the census (and a dashboard querying a retired metric).
+/// live-invariant gate (ADR-087 D2): watches every frozen metric name against the constructors live in `instruments.rs`; not tripwire precedent.
 #[test]
 fn every_frozen_name_is_constructed() {
     let source = instruments_source();

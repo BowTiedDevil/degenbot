@@ -706,10 +706,12 @@ mod tests {
     /// ambient host state — `available_parallelism` must not appear in the
     /// sizing paths (the DETECTION ceilings live in degenbot-core / quota.rs;
     /// the seat authority floors purely from the injected quota). This is a
-    /// DELIBERATE regular-expression tripwire mirroring the pyo3-free
+    /// DELIBERATE regular-expression live-invariant scan mirroring the pyo3-free
     /// dependency assertion — replace it with a behavioral assertion if
     /// budget.rs ever sizes off a parameterizable source instead of the
     /// injected quota.
+    ///
+    /// live-invariant gate (ADR-087 D2): watches the live `budget.rs` lib segment, where lane sizing must floor from the injected quota; not tripwire precedent.
     #[test]
     fn seat_sizing_never_reads_ambient_parallelism() {
         let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/budget.rs"))

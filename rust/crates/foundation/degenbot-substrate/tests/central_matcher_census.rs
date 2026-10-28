@@ -254,6 +254,7 @@ fn design_math_at_central_sites(root: &Path) -> Vec<String> {
     violations
 }
 
+/// live-invariant gate (ADR-087 D2): watches the live central-matcher `match entry` dispatch rows against the pinned census; not tripwire precedent.
 #[test]
 fn the_central_match_entry_census_is_pinned() {
     let root = workspace_root();
@@ -273,6 +274,7 @@ fn the_central_match_entry_census_is_pinned() {
     );
 }
 
+/// live-invariant gate (ADR-087 D2): watches the live central matcher sites for family design-math leaves that belong behind the family doors; not tripwire precedent.
 #[test]
 fn no_family_design_math_at_the_central_sites() {
     let root = workspace_root();
@@ -354,6 +356,7 @@ fn the_banned_tokens_are_still_the_families_leaves() {
 /// by `BANNED_DESIGN_MATH` (the banned token derived from the export name)
 /// before it can appear there unflagged — this meta-test is that
 /// derivation's ratchet.
+/// live-invariant gate (ADR-087 D2): watches every top-level `pub fn` the live families tree exports against `DOOR_FNS`; not tripwire precedent.
 #[test]
 fn the_families_export_only_the_door_fns() {
     let root = workspace_root();
@@ -417,6 +420,7 @@ fn the_families_export_only_the_door_fns() {
 /// banned token in CODE goes red, the same token in a comment or inside a
 /// `#[cfg(test)]` region stays green — and the census predicate moves on a
 /// reintroduced row.
+/// live-invariant gate (ADR-087 D2): watches the live design-math scan's own red path, demonstrated on a synthetic fixture; not tripwire precedent.
 #[test]
 fn the_gate_goes_red_on_a_synthetic_fixture() {
     // Red: a banned design-math leaf called in code at a "central site".

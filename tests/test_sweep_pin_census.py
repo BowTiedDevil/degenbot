@@ -31,6 +31,9 @@ def _pin_literal_hits() -> list[str]:
     ]
 
 
+# live-invariant gate (ADR-087 D2): watches the live `SWEEP_FORK_BLOCK` home in
+# `tests/sweep_pin.py` against copies elsewhere under `tests/`; not tripwire
+# precedent.
 def test_the_sweep_pin_is_spelled_only_in_its_home() -> None:
     hits = _pin_literal_hits()
     assert not hits, (

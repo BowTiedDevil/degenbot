@@ -82,6 +82,11 @@ model: "core crates stay pyo3-free" can be violated by adding a dependency in an
 crate, which compiles fine, so the scan is the only guard. A deleted module cannot
 violate anything and needs no guard.
 
+ADR-087 D3 reaffirms this clause in full, and every surviving source-scan gate carries
+the ADR-087 D2 live-invariant label so the species is stated where the gate lives:
+
+> live-invariant gate (ADR-087 D2): watches the live core crates' default-feature dependency sets, which a `cargo add pyo3` would silently violate; not tripwire precedent.
+
 Concretely: do **not** add tests asserting `PoolStateSubscriber` / `subscribe` /
 `PySubscription` / `register_subscriber` / `notify_pool_state_changed` do not exist.
 Compile covers it. Future architecture reviews must not re-suggest resurrection guards

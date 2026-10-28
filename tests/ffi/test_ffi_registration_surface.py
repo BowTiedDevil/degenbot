@@ -85,6 +85,8 @@ def _registered_classes() -> Mapping[str, type]:
     return found
 
 
+# live-invariant gate (ADR-087 D2): watches the live registered pyclass walk, which must
+# carry no `Py` origin prefix; not tripwire precedent.
 def test_no_new_prefixed_class_names() -> None:
     """ADR-032 D1/D2: every registered Py-prefixed class is grandfathered."""
     classes = _registered_classes()
@@ -122,6 +124,8 @@ def test_prefixed_census_is_complete() -> None:
 GRANDFATHERED_RUST: frozenset[str] = frozenset()
 
 
+# live-invariant gate (ADR-087 D2): watches the live registered pyclass walk, which must
+# carry no `Rust` origin prefix; not tripwire precedent.
 def test_no_rust_prefixed_class_names() -> None:
     """ADR-032 fork: no Rust-prefixed Python-visible pyclass may exist."""
     classes = _registered_classes()

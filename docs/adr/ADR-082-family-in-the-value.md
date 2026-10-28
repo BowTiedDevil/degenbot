@@ -69,9 +69,9 @@ Concretely:
 
 ## Consequences
 
-- The naming rule is enforced, not documented: the pool-key census fails on any
-  surviving `_by_key` twin and on any retired twin whose door vanished, over
-  both the capability source and the state owner.
+- The naming rule is the GLOSSARY's, not a gate's: **Pool lookup** and **Effect
+  vs view** own the vocabulary, so an effect is named family-free over a
+  `PoolLookup`.
 - `pool_id_by_key` survives as the one public V4 resolver beside
   `PoolLookup::resolve`: the Python shell and the standalone example hold
   `(manager, id)` without a lookup at hand, and wrapping one there would add a

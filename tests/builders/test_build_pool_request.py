@@ -92,18 +92,3 @@ class TestBuildPoolRequest:
         """BuildPoolRequest no longer has pool_id field."""
         field_names = {f.name for f in fields(BuildPoolRequest)}
         assert "pool_id" not in field_names
-
-    def test_no_v4_fields(self):
-        """BuildPoolRequest no longer has V4-specific fields."""
-        field_names = {f.name for f in fields(BuildPoolRequest)}
-        assert "state_view_address" not in field_names
-        assert "tokens" not in field_names
-        assert "fee" not in field_names
-        assert "tick_spacing" not in field_names
-        assert "hook_address" not in field_names
-
-    def test_no_tick_map_fields(self):
-        """BuildPoolRequest no longer carries tick_bitmap/tick_data (retired with the V3 builder)."""
-        field_names = {f.name for f in fields(BuildPoolRequest)}
-        assert "tick_bitmap" not in field_names
-        assert "tick_data" not in field_names

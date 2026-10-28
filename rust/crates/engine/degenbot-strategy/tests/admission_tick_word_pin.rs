@@ -44,6 +44,7 @@ fn strategy_sources() -> Vec<PathBuf> {
     files
 }
 
+/// live-invariant gate (ADR-087 D2): watches the live `degenbot-strategy` sources for raw tick-word fetch primitives; not tripwire precedent.
 #[test]
 fn no_tick_word_fetch_lives_in_the_strategy_crate() {
     for file in strategy_sources() {
@@ -58,6 +59,7 @@ fn no_tick_word_fetch_lives_in_the_strategy_crate() {
     }
 }
 
+/// live-invariant gate (ADR-087 D2): watches the live `degenbot-strategy` sources for `TickMapSeed` provenance minting outside the ingress door; not tripwire precedent.
 #[test]
 fn strategy_crate_cannot_mint_db_or_chain_seed_provenance() {
     for file in strategy_sources() {

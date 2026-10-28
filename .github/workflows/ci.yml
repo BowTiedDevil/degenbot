@@ -311,6 +311,8 @@ jobs:
       # No Python toolchain is provisioned. Assert it statically against this
       # job's own YAML: a future edit that adds actions/setup-python,
       # astral-sh/setup-uv, or a `uv run` step is caught here.
+      #
+      # live-invariant gate (ADR-087 D2): watches this job's own live YAML steps for Python provisioning; not tripwire precedent.
       - name: Assert this job provisions no Python
         run: |
           job=$(awk '

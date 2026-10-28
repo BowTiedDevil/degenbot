@@ -610,6 +610,8 @@ mod loop_home_tests {
     /// shared loop behind its own seat model (`SolveSink`); a second
     /// `fn host_loop` definition anywhere in `arb_engine` is a fold
     /// violation — the loop vocabulary must not fork again.
+    ///
+    /// live-invariant gate (ADR-087 D2): watches the live `pub(crate) fn host_loop` in `seat_host/host.rs` against the composing executors; not tripwire precedent.
     #[test]
     fn the_host_loop_is_defined_once_in_seat_host() {
         let sources: [(&str, &str); 5] = [
@@ -654,6 +656,8 @@ mod loop_home_tests {
     /// job (an absent context IS the pooled case). A second `struct
     /// SeatJob` definition anywhere in `arb_engine` is a fold violation —
     /// the job shape must not fork again.
+    ///
+    /// live-invariant gate (ADR-087 D2): watches the live `pub(crate) struct SeatJob` in `seat_host/host.rs`; not tripwire precedent.
     #[test]
     fn the_seat_job_is_defined_once_in_seat_host() {
         let sources: [(&str, &str); 5] = [

@@ -513,6 +513,7 @@ fn mutate_one_eth_call(cassette: &mut Cassette, key_marker: &str, new_word: u64)
     mutated
 }
 
+/// live-invariant gate (ADR-087 D2): watches the committed wave-4 cassette surfaces against live updater output; not tripwire precedent.
 #[test]
 #[expect(clippy::too_many_lines)]
 fn wave4_upgrade_span_replays_to_the_committed_goldens() {

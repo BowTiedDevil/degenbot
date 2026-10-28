@@ -99,6 +99,7 @@ fn census(source: &str) -> Vec<String> {
     violations
 }
 
+/// live-invariant gate (ADR-087 D2): watches the live `route_event` capability callers in `concentrated_liquidity_orchestration.rs` against the one-door census; not tripwire precedent.
 #[test]
 fn the_route_event_census_is_clean() {
     assert_eq!(census(ORCHESTRATION), Vec::<String>::new());

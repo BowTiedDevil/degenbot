@@ -797,6 +797,8 @@ mod tests {
     /// re-derives every ledger key through `entry_key` and requires
     /// identity: a future edit that re-introduces an un-normalized key
     /// (or a filter whose OR-set order drifts) goes red here.
+    ///
+    /// live-invariant gate (ADR-087 D2): watches the committed seed cassettes against the live `entry_key` writer; not tripwire precedent.
     #[test]
     fn regenerated_seed_cassettes_ledger_keys_are_deterministically_normalized() {
         for file in [

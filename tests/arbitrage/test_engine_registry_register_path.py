@@ -82,8 +82,6 @@ def test_register_path_dispatches_keys_and_directions() -> None:
 
     assert fake.calls == [[(100, True), (200, False)]]
     assert isinstance(path_id, int)
-    # The Python PathInfo relay is retired — no `paths` attribute.
-    assert not hasattr(registry, "paths")
 
 
 def test_register_path_v4_keyed_by_the_manager_and_pool_id_pair() -> None:
@@ -116,6 +114,8 @@ def test_register_path_refuses_an_unregistered_identity() -> None:
         registry.register_path([(v2, True)])
 
 
+# live-invariant gate (ADR-087 D2): watches the live `EngineRegistry` namespace against a
+# Python-side per-family identity map or claim table; not tripwire precedent.
 def test_pool_identity_is_derived_from_the_real_shared_bot_state() -> None:
     """Against the REAL pyclass: the id comes from the shared BotState.
 

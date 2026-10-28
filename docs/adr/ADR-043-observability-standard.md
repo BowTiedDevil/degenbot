@@ -241,6 +241,8 @@ areas needs no message edit. Landed in `4QYTPH`; a production message that
 re-introduces an `[area] ` tag fails `observability_naming.rs
 ::messages_carry_no_area_tags`.
 
+_live-invariant gate (ADR-087 D2): watches the live production message literals, which must not carry a leading `[area] ` tag; not tripwire precedent._
+
 ### 8. Enforcement
 
 Primary enforcement is compile-time:
@@ -261,7 +263,8 @@ Primary enforcement is compile-time:
 
 Secondary gates:
 
-- a grep gate for direct `std::io` writes and Python logging misuse;
+- a grep gate for direct `std::io` writes and Python logging misuse.
+  _live-invariant gate (ADR-087 D2): watches the live call sites that write to `std::io` directly or log through non-facade Python; not tripwire precedent._
 - a behavioral volume gate: a capture subscriber over a fixture block asserts
   steady-state INFO ≤ N per block and that every INFO+ record matches the
   allowlist;

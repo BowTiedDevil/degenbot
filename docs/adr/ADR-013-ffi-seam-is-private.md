@@ -73,6 +73,8 @@ pattern grep, no allowlist, no submodule-vs-symbol distinction. The
 existing boundary test **shrinks** to this; the AST-aware ban logic, the
 8-entry allowlist, and the stale-allowlist guard are all deleted.
 
+_live-invariant gate (ADR-087 D2): watches the live `src/degenbot` and `tests` sources, which must reach the `_ffi` seam only through their domain barrier or the one test door; not tripwire precedent._
+
 ### Home placement: 1:1 mirror
 
 Every **consumed** `_ffi.<sub>` submodule maps to a `degenbot.<domain>`

@@ -16,7 +16,6 @@ declared.
 
 from __future__ import annotations
 
-import importlib
 import os
 import subprocess
 import sys
@@ -35,12 +34,6 @@ from tests.fakes.runner_pipelines import FakeFleetHostedBot, FakePipelineContext
 from tests.helpers import verdict_probe as probe
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-
-#: The MODULE, reached by import name: ``degenbot.runner`` re-exports the
-#: ``build_paths`` FUNCTION under the module's own name, so ``from
-#: degenbot.runner import build_paths`` binds the function and every attribute
-#: probe against it answers about the wrong object.
-_BUILD_PATHS_MODULE = importlib.import_module("degenbot.runner.build_paths")
 
 #: The explicit-override layer, so a config load in this suite never depends on
 #: whichever operator file the machine running it happens to carry.
@@ -108,19 +101,6 @@ def test_the_debug_knob_is_read_when_the_base_level_is_applied() -> None:
 
 
 # ── DEGENBOT_MAX_PATHS: the registered-path cap ──────────────────────────
-
-
-def test_the_path_cap_is_not_an_import_time_constant() -> None:
-    """The cap is a resolved config value, not a module constant.
-
-    The constant also supplied ``PathRegistrationPipeline``'s ``max_paths``
-    default, so a caller that omitted the argument inherited the import's
-    value through a path that never touched the config — the same split the
-    config object already resolves.
-    """
-    assert not hasattr(_BUILD_PATHS_MODULE, "MAX_REGISTERED_PATHS"), (
-        "the import-time constant is retired: the cap arrives from the caller"
-    )
 
 
 def test_the_pipeline_refuses_to_invent_its_own_path_cap(tmp_path: Path) -> None:
@@ -225,6 +205,9 @@ def test_a_config_load_succeeds_with_no_retired_knob_present(
     assert cfg.max_registered_paths >= 0
 
 
+# live-invariant gate (ADR-087 D2): watches the live `config._RETIRED_SHELL_KNOBS`
+# home, which the cross-language env gate must point at rather than re-list; not
+# tripwire precedent.
 def test_the_env_gate_points_at_the_retired_knob_home() -> None:
     """The names' one functional home is ``config._RETIRED_SHELL_KNOBS``.
 

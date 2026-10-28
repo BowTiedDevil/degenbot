@@ -62,21 +62,3 @@ def test_format_sim_diag_line_never_raises_on_missing_keys() -> None:
     assert payload["optimal_input"] is None
     assert payload["hop_outputs"] == []
     assert payload["captured_swaps"] == []
-
-
-def test_format_sim_diag_line_omits_retired_recompute_fields() -> None:
-    """The new payload does NOT carry the retired engine_state/onchain_state/
-    recompute/drift/engine_processed_block/onchain_block fields (deleted with
-    the diagnostic.rs onchain-recompute half). Only captured_swaps +
-    hop_outputs + optimal_input + revert_info remain."""
-    line = format_sim_diag_line(
-        failure_record(),
-        path_id=1,
-        path_type="V2-V3",
-        window=SimDiagWindow(solve_block=1, block=1, age=0),
-    )
-    payload = json.loads(line[len("[sim-diag] ") :])
-    assert "hops" not in payload, "retired per-hop snapshot shape is gone"
-    assert "recompute" not in payload
-    assert "engine_processed_block" not in payload
-    assert "onchain_block" not in payload

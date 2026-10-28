@@ -425,6 +425,8 @@ fn the_stranded_pipe_tripwire_fires_on_host_death_mid_drain() {
 /// pyo3 (the crate-level dependency assertion) and role units are 'static
 /// Send Rust closures executed host-side — simulation never round-trips
 /// Python (design doc §8).
+///
+/// live-invariant gate (ADR-087 D2): watches the live `degenbot-workers` manifest and its host-side `Unit` dispatch; not tripwire precedent.
 #[test]
 fn role_work_never_crosses_python_the_fleet_graph_is_pyo3_free() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");

@@ -864,171 +864,12 @@ mod fleet_stance_tests {
     }
 }
 // ======================================================================
-// Stage-seam contract pin for the candidate-2 cutover.
-// Written against the TARGET contract; production code is NOT changed.
+// The pump-ended loud close must survive every seam refactor: a silent
+// close would hide a dead delivery channel.
 // ======================================================================
 #[cfg(test)]
 mod candidate2_seam_pins {
     use std::sync::Arc;
-    /// Pin 2 (extended so it cannot quietly rot).
-    ///
-    /// The eight `EngineStages` inherent twins are killed HARD:
-    /// `solve_dirty`, `last_processed_block`, `send_result_batch`,
-    /// `finalize_block`, `set_last_solved_block(u64)`, `set_solve_anchor(u64)`,
-    /// `record_logs_this_block`, `on_pump_ended`. The seven pokes survive
-    /// only as the `PumpControl` impl (Epoch-typed cursors) and
-    /// `solve_dirty` is gone (the cycle surface is `run_solve_cycle`).
-    ///
-    /// Two halves:
-    /// 1. binding `EngineStages` to `PumpControl` proves the trait impl.
-    /// 2. `NoInherentTwinProbe` names all eight twin methods with a token
-    ///    argument. Rust prefers an inherent method over any trait method
-    ///    during method resolution, so if ANY twin reappears as an inherent
-    ///    `EngineStages` method the probe call below resolves to it and
-    ///    fails to compile (arity/type mismatch) — the pin is a
-    ///    compile-time inherent-absence check, not a textual one.
-    #[test]
-    fn candidate2_enginestages_has_no_inherent_poke_twins() {
-        // Absence probe: each probe method shadows nothing while the twin is
-        // gone; an inherent re-introduction would shadow the probe. Defined
-        // ahead of the statements to keep the module clippy-clean.
-        struct TwinProbeToken;
-        trait NoInherentTwinProbe {
-            fn solve_dirty(&self, _t: TwinProbeToken);
-            fn last_processed_block(&self, _t: TwinProbeToken);
-            fn send_result_batch(&self, _t: TwinProbeToken);
-            fn finalize_block(&self, _t: TwinProbeToken);
-            fn set_last_solved_block(&self, _t: TwinProbeToken);
-            fn set_solve_anchor(&self, _t: TwinProbeToken);
-            fn record_logs_this_block(&self, _t: TwinProbeToken);
-            fn on_pump_ended(&self, _t: TwinProbeToken);
-            // Full driver surface : the eight `StageHandlers`
-            // hooks + the remaining `PumpControl` methods are TRAIT methods
-            // on the stage surface — an inherent `EngineStages` twin would
-            // shadow them in the method calls below and fail to compile.
-            fn on_streaming_complete(&self, _t: TwinProbeToken);
-            fn on_resolve(&self, _t: TwinProbeToken);
-            fn on_solve(&self, _t: TwinProbeToken);
-            fn on_simulate(&self, _t: TwinProbeToken);
-            fn on_gate(&self, _t: TwinProbeToken);
-            fn on_publish(&self, _t: TwinProbeToken);
-            fn on_finalize(&self, _t: TwinProbeToken);
-            fn on_rewind(&self, _t: TwinProbeToken);
-            fn has_dirty_paths(&self, _t: TwinProbeToken);
-            fn notify_block(&self, _t: TwinProbeToken);
-        }
-        impl NoInherentTwinProbe for super::EngineStages {
-            fn solve_dirty(&self, _t: TwinProbeToken) {}
-            fn last_processed_block(&self, _t: TwinProbeToken) {}
-            fn send_result_batch(&self, _t: TwinProbeToken) {}
-            fn finalize_block(&self, _t: TwinProbeToken) {}
-            fn set_last_solved_block(&self, _t: TwinProbeToken) {}
-            fn set_solve_anchor(&self, _t: TwinProbeToken) {}
-            fn record_logs_this_block(&self, _t: TwinProbeToken) {}
-            fn on_pump_ended(&self, _t: TwinProbeToken) {}
-            fn on_streaming_complete(&self, _t: TwinProbeToken) {}
-            fn on_resolve(&self, _t: TwinProbeToken) {}
-            fn on_solve(&self, _t: TwinProbeToken) {}
-            fn on_simulate(&self, _t: TwinProbeToken) {}
-            fn on_gate(&self, _t: TwinProbeToken) {}
-            fn on_publish(&self, _t: TwinProbeToken) {}
-            fn on_finalize(&self, _t: TwinProbeToken) {}
-            fn on_rewind(&self, _t: TwinProbeToken) {}
-            fn has_dirty_paths(&self, _t: TwinProbeToken) {}
-            fn notify_block(&self, _t: TwinProbeToken) {}
-        }
-        fn is_pump_control<T: crate::bot_core::PumpControl>() {}
-        is_pump_control::<super::EngineStages>();
-        let stages = super::EngineStages::new(
-            Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
-            Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
-        );
-        stages.solve_dirty(TwinProbeToken);
-        stages.last_processed_block(TwinProbeToken);
-        stages.send_result_batch(TwinProbeToken);
-        stages.finalize_block(TwinProbeToken);
-        stages.set_last_solved_block(TwinProbeToken);
-        stages.set_solve_anchor(TwinProbeToken);
-        stages.record_logs_this_block(TwinProbeToken);
-        stages.on_pump_ended(TwinProbeToken);
-        stages.on_streaming_complete(TwinProbeToken);
-        stages.on_resolve(TwinProbeToken);
-        stages.on_solve(TwinProbeToken);
-        stages.on_simulate(TwinProbeToken);
-        stages.on_gate(TwinProbeToken);
-        stages.on_publish(TwinProbeToken);
-        stages.on_finalize(TwinProbeToken);
-        stages.on_rewind(TwinProbeToken);
-        stages.has_dirty_paths(TwinProbeToken);
-        stages.notify_block(TwinProbeToken);
-    }
-    /// Driver-surface twin probe .
-    ///
-    /// The candidate-2 end state makes the `EngineStages` stage surface the
-    /// ONE driver interface: the pump drives `run_solve_cycle`,
-    /// `set_block_channel`, and the `StageHandlers` hooks, and
-    /// `ArbitrageEngine` recedes to `pub(crate)` machinery behind it. This
-    /// compile probe pins the surfaces themselves: none of the driver-surface
-    /// method names may exist as INHERENT `ArbitrageEngine` twins. If one
-    /// reappears, method resolution prefers the inherent method over this
-    /// probe's token-taking method at the call sites below and the
-    /// arity/type mismatch fails the build.
-    ///
-    /// The probed names are the members of the driver surface that are
-    /// poke-free on the engine TODAY (the engine's remaining surface is the
-    /// lifecycle/delivery setters and the machine pokes), so the pin is
-    /// green now and turns red exactly when a driver name leaks onto the
-    /// engine. `solve_dirty` was added to the probe: the engine-level
-    /// cycle method is GONE (the expiry now runs inside
-    /// `EngineStages::run_solve_cycle`).
-    #[test]
-    fn candidate2_driver_surface_stays_off_the_engine() {
-        struct DriverTwinProbeToken;
-        trait NoInherentDriverTwinProbe {
-            fn solve_dirty(&self, _t: DriverTwinProbeToken);
-            fn run_solve_cycle(&self, _t: DriverTwinProbeToken);
-            fn set_block_channel(&self, _t: DriverTwinProbeToken);
-            fn on_streaming_complete(&self, _t: DriverTwinProbeToken);
-            fn on_resolve(&self, _t: DriverTwinProbeToken);
-            fn on_solve(&self, _t: DriverTwinProbeToken);
-            fn on_simulate(&self, _t: DriverTwinProbeToken);
-            fn on_gate(&self, _t: DriverTwinProbeToken);
-            fn on_publish(&self, _t: DriverTwinProbeToken);
-            fn on_finalize(&self, _t: DriverTwinProbeToken);
-            fn on_rewind(&self, _t: DriverTwinProbeToken);
-            fn has_dirty_paths(&self, _t: DriverTwinProbeToken);
-            fn notify_block(&self, _t: DriverTwinProbeToken);
-        }
-        impl NoInherentDriverTwinProbe for super::ArbitrageEngine {
-            fn solve_dirty(&self, _t: DriverTwinProbeToken) {}
-            fn run_solve_cycle(&self, _t: DriverTwinProbeToken) {}
-            fn set_block_channel(&self, _t: DriverTwinProbeToken) {}
-            fn on_streaming_complete(&self, _t: DriverTwinProbeToken) {}
-            fn on_resolve(&self, _t: DriverTwinProbeToken) {}
-            fn on_solve(&self, _t: DriverTwinProbeToken) {}
-            fn on_simulate(&self, _t: DriverTwinProbeToken) {}
-            fn on_gate(&self, _t: DriverTwinProbeToken) {}
-            fn on_publish(&self, _t: DriverTwinProbeToken) {}
-            fn on_finalize(&self, _t: DriverTwinProbeToken) {}
-            fn on_rewind(&self, _t: DriverTwinProbeToken) {}
-            fn has_dirty_paths(&self, _t: DriverTwinProbeToken) {}
-            fn notify_block(&self, _t: DriverTwinProbeToken) {}
-        }
-        let engine = super::ArbitrageEngine::new();
-        engine.solve_dirty(DriverTwinProbeToken);
-        engine.run_solve_cycle(DriverTwinProbeToken);
-        engine.set_block_channel(DriverTwinProbeToken);
-        engine.on_streaming_complete(DriverTwinProbeToken);
-        engine.on_resolve(DriverTwinProbeToken);
-        engine.on_solve(DriverTwinProbeToken);
-        engine.on_simulate(DriverTwinProbeToken);
-        engine.on_gate(DriverTwinProbeToken);
-        engine.on_publish(DriverTwinProbeToken);
-        engine.on_finalize(DriverTwinProbeToken);
-        engine.on_rewind(DriverTwinProbeToken);
-        engine.has_dirty_paths(DriverTwinProbeToken);
-        engine.notify_block(DriverTwinProbeToken);
-    }
     /// Minimal `tracing_subscriber::Layer` that records ERROR events
     /// (target + message). Same pattern as the `ReorgSpanCapture` layer in
     /// `block_pump.rs` tests: a real subscriber through
@@ -1098,10 +939,10 @@ mod candidate2_seam_pins {
 #[cfg(test)]
 mod construction_ledger_pins {
     use std::sync::Arc;
-    /// Pin A (behavioral): `EngineStages` takes the ONE Bot-owned ledger at
-    /// construction. The injected Arc IS the handle the stage surface reads
+    /// `EngineStages` takes the ONE Bot-owned ledger at construction. The
+    /// injected Arc IS the handle the stage surface reads
     /// (`PumpControl::has_dirty_paths`) — recording into it is visible
-    /// through the stage surface with no `set_delta` swap.
+    /// through the stage surface.
     #[test]
     fn construction_injects_the_one_ledger() {
         let delta = Arc::new(degenbot_substrate::EpochDelta::new(0u64));
@@ -1119,37 +960,11 @@ mod construction_ledger_pins {
             "the injected ledger must be the one the stage surface reads"
         );
     }
-    /// Pin B (compile-time absence, candidate2's `NoInherentTwinProbe`
-    /// pattern): `set_delta` / `delta_for_test` are the swap surface this
-    /// task retires. An inherent re-introduction would shadow the probe and
-    /// fail to compile (arity/type mismatch).
-    #[test]
-    fn construction_has_no_swap_surface() {
-        struct SwapProbeToken;
-        trait NoSwapSurfaceProbe {
-            fn set_delta(&self, _t: SwapProbeToken);
-            fn delta_for_test(&self, _t: SwapProbeToken);
-        }
-        impl NoSwapSurfaceProbe for super::EngineStages {
-            fn set_delta(&self, _t: SwapProbeToken) {}
-            fn delta_for_test(&self, _t: SwapProbeToken) {}
-        }
-        let stages = super::EngineStages::new(
-            Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
-            Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
-        );
-        stages.set_delta(SwapProbeToken);
-        stages.delta_for_test(SwapProbeToken);
-    }
 }
 // ======================================================================
-// THE structural gate for the solver_dispatch dissolution.
-//
-// Replaces the four per-slice `include_str!("solver_dispatch.rs")`
-// honesty probes: a single `include_str!("mod.rs")` absence check (the
-// module tree owns no such module) plus spot checks that the surviving
-// homes define the reallocated items. Textual include_str! keeps the pin
-// compile-error-free (the prior hard-cutover probe form).
+// Home pins for the reallocated dispatch items: each surviving home must
+// still own what the dissolution gave it. Textual include_str! keeps the
+// pin compile-error-free.
 // ======================================================================
 #[cfg(test)]
 mod dissolution_complete {
@@ -1165,19 +980,9 @@ mod dissolution_complete {
         include_str!("solve_cycle/merge.rs"),
         include_str!("solve_cycle/deliver.rs"),
     ];
-    /// The module tree no longer declares (or even names) `solver_dispatch`.
-    #[test]
-    fn solver_dispatch_is_gone_from_the_module_tree() {
-        assert!(
-            !MOD_RS.contains("mod solver_dispatch;"),
-            "the arb_engine module tree still declares solver_dispatch"
-        );
-        assert!(
-            !MOD_RS.contains("solver_dispatch"),
-            "arb_engine/mod.rs still names solver_dispatch — T7 owns the final cleanup"
-        );
-    }
     /// Every reallocated item is owned by its surviving home.
+    ///
+    /// live-invariant gate (ADR-087 D2): watches the live `lane_walk`/`solve_cycle`/`engine_stages` declarations that own the reallocated items; not tripwire precedent.
     #[test]
     fn survivors_own_their_reallocated_items() {
         // The walk-adjacent helpers moved to lane_walk.
@@ -1214,33 +1019,5 @@ mod dissolution_complete {
             MOD_RS.contains("impl Default for ArbitrageEngine"),
             "arb_engine/mod.rs must own the ArbitrageEngine Default impl"
         );
-    }
-    /// Compile-time inherent-absence probe (the candidate2 `NoInherentTwinProbe`
-    /// pattern): the collapsed engine twins must not reappear as inherent
-    /// `ArbitrageEngine` methods. An inherent re-introduction would shadow
-    /// the probe and fail to compile (arity/type mismatch).
-    #[test]
-    fn arbitrage_engine_has_no_inherent_twin_surface() {
-        struct ModelTwinProbeToken;
-        trait NoInherentTwinProbe {
-            fn rebuild_and_solve_affected(&self, _t: ModelTwinProbeToken);
-            fn solve_all(&self, _t: ModelTwinProbeToken);
-            fn admission_budget_keys(&self, _t: ModelTwinProbeToken);
-            fn clamp_concentrated_liquidity_hop_capacity(&self, _t: ModelTwinProbeToken);
-            fn clamp_result_with_state(&self, _t: ModelTwinProbeToken);
-        }
-        impl NoInherentTwinProbe for super::ArbitrageEngine {
-            fn rebuild_and_solve_affected(&self, _t: ModelTwinProbeToken) {}
-            fn solve_all(&self, _t: ModelTwinProbeToken) {}
-            fn admission_budget_keys(&self, _t: ModelTwinProbeToken) {}
-            fn clamp_concentrated_liquidity_hop_capacity(&self, _t: ModelTwinProbeToken) {}
-            fn clamp_result_with_state(&self, _t: ModelTwinProbeToken) {}
-        }
-        let engine = super::ArbitrageEngine::new();
-        engine.rebuild_and_solve_affected(ModelTwinProbeToken);
-        engine.solve_all(ModelTwinProbeToken);
-        engine.admission_budget_keys(ModelTwinProbeToken);
-        engine.clamp_concentrated_liquidity_hop_capacity(ModelTwinProbeToken);
-        engine.clamp_result_with_state(ModelTwinProbeToken);
     }
 }

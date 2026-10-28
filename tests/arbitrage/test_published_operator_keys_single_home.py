@@ -40,6 +40,8 @@ def test_python_refusal_list_is_the_manifest() -> None:
     assert identity_module._PLACEHOLDER_OPERATOR_PRIVATE_KEYS == _manifest_keys()
 
 
+# live-invariant gate (ADR-087 D2): watches the live `published_operator_private_keys.txt`
+# manifest and the Rust example that `include_str!`s it; not tripwire precedent.
 def test_rust_example_embeds_the_manifest_instead_of_a_second_list() -> None:
     source = _RUST_EXAMPLE.read_text(encoding="utf-8")
     assert re.search(
@@ -53,12 +55,8 @@ def test_rust_example_embeds_the_manifest_instead_of_a_second_list() -> None:
 
 
 def test_rust_example_cites_the_identity_home() -> None:
-    """The example's stale ``_driver_constants`` citations name a deleted module."""
+    """The example cites the identity home whose literals it mirrors."""
     source = _RUST_EXAMPLE.read_text(encoding="utf-8")
-    assert "driver_constants" not in source, (
-        "the retired _driver_constants module must not be cited; the identity "
-        "home is src/degenbot/runner/identity.py"
-    )
     assert "runner/identity.py" in source, "the example must cite the identity home it mirrors"
 
 

@@ -194,13 +194,6 @@ def test_pool_ref_kind_params_are_filled_from_the_discovery_read(
     assert v4.update_block == SEED_BLOCK
 
 
-def test_pool_ref_carries_no_state_or_engine_handle(seeded_db: pathlib.Path) -> None:
-    """A ref is an inert view — no state accessors, no engine handle."""
-    ref = pools_for_tokens(seeded_db, CHAIN_ID, TOKEN_A, TOKEN_B)[0]
-    for forbidden in ("reserves", "state", "calculate_output_amount", "_py_pool"):
-        assert not hasattr(ref, forbidden)
-
-
 def test_pools_for_tokens_unknown_token_is_empty(seeded_db: pathlib.Path) -> None:
     """A token the database does not know yields no refs (never an error)."""
     assert pools_for_tokens(seeded_db, CHAIN_ID, TOKEN_A, UNKNOWN_TOKEN) == []

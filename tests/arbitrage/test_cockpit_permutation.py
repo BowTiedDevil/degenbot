@@ -1,10 +1,7 @@
-"""Permutation flows from config, not a module global.
+"""Permutation flows from config into ``build_paths``.
 
-The example used to mutate ``driver_constants.PATH_PERMUTATION_FILTER``
-before construction while ALSO passing ``permutation=`` into
-``ArbitrageConfig.build`` — two paths for one value. The decision:
-the config is the single path; the global is deleted and ``build_paths``
-takes the filter from its (config-derived) parameter.
+The config is the single path: ``build_paths`` takes the filter from its
+(config-derived) parameter.
 """
 
 from __future__ import annotations
@@ -18,9 +15,8 @@ from degenbot.runner.build_paths import (
     _pool_types_from_filter,
     build_paths,
 )
-from tests.fakes.engine import FakeEngine as _FakeEngine, FakeEngineRegistry as _FakeEngineRegistry
-
-EXAMPLE = "examples/eth_settlement_arbitrage_v2_v3_v4_rust.py"
+from tests.fakes.engine import FakeEngine as _FakeEngine
+from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 
 
 class _FakePipeline:
@@ -90,16 +86,3 @@ class TestPermutation:
         )
         assert pipe.pool_type_per_depth is None
         assert set(pipe.pool_types) == {PoolKind.V2, PoolKind.V3, PoolKind.V4}
-
-    def test_identity_has_no_path_permutation_global(self) -> None:
-        import degenbot.runner.identity as dc
-
-        assert not hasattr(dc, "PATH_PERMUTATION_FILTER"), (
-            "the module global must be deleted; the config is the single path"
-        )
-
-    def test_example_has_no_driver_constants_import(self) -> None:
-        from pathlib import Path
-
-        src = Path(EXAMPLE).read_text(encoding="utf-8")
-        assert "driver_constants" not in src

@@ -50,6 +50,8 @@ a heredoc inside `scripts/hooks/ci-parity.sh` to the first-class data file
 format), and the gate gains the negative-probe suite it never had
 (`tests/test_ci_parity.py`).
 
+_live-invariant gate (ADR-087 D2): watches the live `push_gates` entry strings in `scripts/hooks/ci-parity-manifest.txt` and the prek.toml `stages = ["pre-push"]` entries they must name; not tripwire precedent._
+
 **D6 — Hard cutover.** No flag, no transition period, one commit. The recipe is
 a leaf nothing else calls, and CI invokes individual recipes rather than
 `just pre-push`.

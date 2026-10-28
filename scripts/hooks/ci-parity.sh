@@ -28,6 +28,8 @@
 #
 # Override the sources for the negative probes (tests/test_ci_parity.py):
 #   MANIFEST=... CI=... JF=... PREK=...
+#
+# live-invariant gate (ADR-087 D2): watches the live ci-parity manifest and the prek.toml `stages = ["pre-push"]` entries it is cross-checked against; not tripwire precedent.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

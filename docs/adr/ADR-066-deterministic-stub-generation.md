@@ -39,6 +39,8 @@ generator's output. Generator gaps live in `tests/ffi/stubtest_allowlist.txt` an
 there — nobody hand-edits a generated stub on top, because that re-enters the drift
 blind spot this ADR closes.
 
+_live-invariant gate (ADR-087 D2): watches the committed `src/degenbot/_ffi/` stub tree against the live generator's output; not tripwire precedent._
+
 **D4 — The principle spans the seam.** The typed configuration surface owed to
 ADR-065 (a named-property projection over the verdict, replacing dotted-path string
 lookups) is emitted from the `config_schema!` declaration site rather than hand-written,

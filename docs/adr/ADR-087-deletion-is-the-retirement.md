@@ -83,6 +83,24 @@ label does double duty: it tells the next agent these are not precedent for trip
 and it is the exemption marker the enforcement gate (D4) recognizes. Unlabeled
 tripwire-shaped artifacts fail the gate.
 
+**D2 amendment — the canonical marker string.** The label's exact form, so the
+enforcement gate (D4) greps one stable target and every labeled artifact is
+byte-identical in its marker:
+
+```
+live-invariant gate (ADR-087 D2): watches <present code>; not tripwire precedent.
+```
+
+`<present code>` is filled in per artifact with the live code the gate watches — a
+named declaration, manifest, or call site present in the tree today. Rust and
+justfile/prek/YAML/shell gates carry the line as a `#` or `//` comment (Rust doc
+comments use `///`); Python gates use `#`.
+
+The fixed part the D4 ratchet matches on ends at the colon after `watches`; the clause
+after it is prose the author writes, stating which present code the gate watches. Use
+the marker identically everywhere — a second spelling is an unlabeled artifact to the
+gate.
+
 ### D3 — ADR-047 D4 is reaffirmed in full
 
 D4's principle was right — including its absolutism. What failed was its mechanism:

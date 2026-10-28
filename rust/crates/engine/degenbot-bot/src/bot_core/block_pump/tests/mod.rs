@@ -1090,34 +1090,14 @@ fn pump_for_test_with_asserter(
 }
 
 // ==================================================================
-// Pins for the candidate-2 stage-seam contract.
-// These tests target the post-cutover contract; production code is
-// NOT changed here. They are intentionally red until the cutover.
+// Pins for the pump's stage-seam contract: the loud close travels
+// through PumpControl, and the fake engine satisfies both traits.
 // ==================================================================
 mod candidate2_seam_pins {
     use super::*;
 
-    /// The pump module's source files. The pump was split from one
-    /// `block_pump.rs` into a module directory, so the source-latch pins
-    /// below read every part.
-    fn pump_module_sources() -> [&'static str; 5] {
-        [
-            include_str!("../mod.rs"),
-            include_str!("../lifecycle.rs"),
-            include_str!("../run_loop.rs"),
-            include_str!("../stages.rs"),
-            include_str!("../backfill.rs"),
-        ]
-    }
-
-    /// Pin 3 (RED: compile-fails until T2). The BEHAVIORAL half: drive
-    /// the WS-streams-ended branch (`block_pump.rs:1772`) and prove the
-    /// loud close actually fires. At the target the pump drives the close
-    /// through `PumpControl::on_pump_ended`; at HEAD it still called the
-    /// old direct stage-seam close, so the
-    /// `pump_control_ends` count is 0 and the `stage_seam_ends` count is
-    /// 1 — the assertion below fails rather than passing vacuously. The
-    /// `PumpControl` reference is the compile-red (trait lands in T2).
+    /// Drive the WS-streams-ended branch and prove the loud close fires
+    /// through `PumpControl::on_pump_ended` rather than the stage seam.
     #[tokio::test]
     async fn candidate2_pump_ended_is_loud_through_the_one_interface() {
         let (mut pump, sink) = pump_for_test(Some(100));
@@ -1137,25 +1117,8 @@ mod candidate2_seam_pins {
         );
     }
 
-    /// Pin 3 documentation latch (NOT the substance). The behavioral
-    /// assertions above are the pin; this only records the intended target
-    /// shape so a regression that reintroduces the old direct stage call
-    /// is named explicitly. It must never be cited as the proof.
-    #[test]
-    fn candidate2_pump_ended_old_stage_call_absent_documentation() {
-        let sources = pump_module_sources();
-        assert!(
-            !sources
-                .iter()
-                .any(|src| src.contains(concat!("self.engine.", "on_pump_ended()"))),
-            "documentation latch: the pump is intended to reach the loud close through PumpControl"
-        );
-    }
-
-    /// Pin 4 (RED: runs and fails until T2). The Solved outcome carries
-    /// the epoch it solved (`solved: Epoch`); `drive_solve` derives the
-    /// engine cursor from that outcome instead of poking the seam at the
-    /// solve edge (`block_pump.rs:1987` today).
+    /// The Solved outcome carries the epoch it solved (`solved: Epoch`), so
+    /// `drive_solve` derives the engine cursor from that outcome.
     #[test]
     fn candidate2_drive_solve_derives_cursor_from_solve_outcome() {
         let dbg = format!("{:?}", crate::bot_core::SolveOutcome::default());
@@ -1165,29 +1128,8 @@ mod candidate2_seam_pins {
         );
     }
 
-    /// Pin 5 (RED: runs and fails until T2). Finalize takes no
-    /// `PublishOutcome` and the pump never fabricates a default
-    /// `PublishOutcome` as a carrier at the tombstones (`block_pump.rs:1633`
-    /// / 2122 today).
-    #[test]
-    fn candidate2_finalize_and_pump_carry_no_publish_outcome() {
-        let pump_sources = pump_module_sources();
-        assert!(
-            !pump_sources
-                .iter()
-                .any(|src| src.contains(concat!("PublishOutcome::", "default()"))),
-            "the pump must not fabricate a default PublishOutcome carrier"
-        );
-        let seam_src = include_str!("../../stage_handlers.rs");
-        assert!(
-            !seam_src.contains("pub published: PublishOutcome"),
-            "Finalize must not carry a PublishOutcome field"
-        );
-    }
-
-    /// Pin 6 (RED: compile-fails until T2; the `FakeStageEngine` half
-    /// of the ADR-041 completeness proof). At the target the fake
-    /// implements BOTH `StageHandlers` (eight hooks) AND `PumpControl`
+    /// The `FakeStageEngine` half of the ADR-041 completeness proof: the
+    /// fake implements BOTH `StageHandlers` (eight hooks) AND `PumpControl`
     /// (seven pokes). The `NoopStubEngine` sibling pin lives in
     /// `stage_handlers.rs`.
     #[test]

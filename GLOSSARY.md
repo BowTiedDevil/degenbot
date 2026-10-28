@@ -34,7 +34,8 @@ Arbitrage of the cross-pool price discrepancies a settled block's trades leave b
 executed as a single transaction at the head of the next block. The opportunity is the
 settled pool-state discrepancy itself; there is no identified victim transaction
 ([ADR-026](docs/adr/ADR-026-backrun-to-settlement-arbitrage-terminology.md)).
-_Avoid_: describing this bot's mechanism as "backrun"; "victim transaction" framing.
+_Avoid_: describing this bot's mechanism as "backrun"; "victim transaction"
+framing; an audit gate counting residual "backrun" hits.
 
 **Backrun (classic MEV)**:
 A transaction positioned immediately after a specific, identified victim transaction in
@@ -471,7 +472,9 @@ productivity dependency.
 RETIRED (ADR-021 era): in-process chain-vs-solver-state verification is retired with the
 stage-separated data plane — the desync it gated on is unrepresentable. The surviving
 solve-time gate is the solve-anchor future-hop rule. Distinct from the registration
-**State tripwire**, which remains live. Do not revive this term for new gates.
+**State tripwire**, which remains live.
+_Avoid_: "solver-state tripwire" for any new gate; the term naming the solve-anchor
+future-hop rule or the registration **State tripwire**.
 
 **Tripwire class**:
 The defect class a tripwire verdict names (`MissedLog`, `StorageMutated`,
@@ -680,6 +683,28 @@ the tripwire-ratchet commit gate enforces it.
 
 _Avoid_: adding one for any surface; citing live-invariant gates (drift gates,
 negative probes) as precedent for one
+
+**Live-invariant gate**:
+The other species: a test, gate, or source scan that guards a rule **present, living
+code** could silently violate — a dependency edge a `cargo add` breaks, a private seam
+leaf code could reach around, a generated artifact that drifts from its generator, a
+manifest whose wiring a shortened copy would silently drop
+([ADR-087](docs/adr/ADR-087-deletion-is-the-retirement.md) D2). What it watches is alive
+today, so the gate's red path is a live change, never a resurrection.
+
+Every live-invariant gate carries this label where it lives (its doc comment, or its
+owning ADR when the gate has no doc home), stating what present code it watches. The
+marker string is fixed and machine-readable — the tripwire ratchet (ADR-087 D4)
+recognizes it as the exemption marker:
+
+`live-invariant gate (ADR-087 D2): watches <present code>; not tripwire precedent.`
+
+Rust and justfile/prek/YAML/shell artifacts carry it as a `//` or `#` comment (Rust doc
+comments use `///`); Python artifacts use `#`.
+
+_Avoid_: conflating it with a retirement tripwire (they differ in what they watch — the
+living versus the dead); labeling an artifact without naming the present code it
+watches; any second spelling of the marker.
 
 **Push-gate manifest**:
 prek.toml's `stages = ["pre-push"]` hook entries — the single declaration of the

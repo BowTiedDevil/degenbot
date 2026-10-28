@@ -79,6 +79,9 @@ def _owners() -> dict[str, str]:
     return {path: classify(path, field) for path, field in keys}
 
 
+# live-invariant gate (ADR-087 D2): watches the live `SHELL_OWNED_KEYS` /
+# `TEST_ONLY_KEYS` censuses in `degenbot-config/src/schema.rs` against the declared
+# keys' read sites; not tripwire precedent.
 def test_every_declared_key_has_a_provable_owner() -> None:
     keys = _declared_keys()
     owners = _owners()

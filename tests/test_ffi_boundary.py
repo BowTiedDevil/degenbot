@@ -248,6 +248,9 @@ def test_console_passthrough_is_an_explicit_exception() -> None:
     assert _find_ffi_import_violations(source, SRC_ROOT / "other_leaf.py")
 
 
+# live-invariant gate (ADR-087 D2): watches the live `tests/` modules, which must
+# reach the private seam only through `tests/helpers/seam.py`; not tripwire
+# precedent.
 def test_the_suite_has_one_door_and_no_handle_exception() -> None:
     """In ``tests/`` only the door may import the seam — ``Bot`` included.
 
@@ -312,6 +315,9 @@ def test_door_reexports_the_suite_symbol_set() -> None:
     assert seam.MAX_SQRT_RATIO is liquidity_math.MAX_SQRT_RATIO
 
 
+# live-invariant gate (ADR-087 D2): watches the live `tests/helpers/seam.py`
+# re-export wall, whose top-level statements must stay imports and bindings; not
+# tripwire precedent.
 def test_door_stays_a_thin_reexport() -> None:
     """The door is a re-export wall, never a second implementation home.
 
@@ -343,6 +349,9 @@ def test_door_stays_a_thin_reexport() -> None:
             )
 
 
+# live-invariant gate (ADR-087 D2): watches the live `src/degenbot` and `tests`
+# sources against the `ALLOWED_LEAF_FFI_IMPORTS` barrier list; not tripwire
+# precedent.
 def test_no_ffi_imports_outside_barriers_and_explicit_seams() -> None:
     """Fail on every private FFI import outside its approved seam.
 

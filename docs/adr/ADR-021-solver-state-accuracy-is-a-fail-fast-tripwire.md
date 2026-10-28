@@ -4,8 +4,8 @@
 [ADR-040](ADR-040-per-bucket-failure-reactions.md) (per-bucket reactions), and the
 in-process tripwire machinery this ADR's D3 built was **deleted** under
 [ADR-041](ADR-041-block-epoch-pipeline.md) §4 — stage-confined writers make in-process
-desync unrepresentable, and `solver_state_tripwire.rs` no longer exists. Do not
-rebuild the in-process tripwire. What survives: the never-heal posture (D4),
+desync unrepresentable, and `solver_state_tripwire.rs` no longer exists. What
+survives: the never-heal posture (D4),
 the divergence-class vocabulary (D2), and the upstream RPC-disagreement
 verification at the Published edge (`CompletenessDecision::Verify` →
 `assert_ws_block_complete`). Everything else below is provenance.

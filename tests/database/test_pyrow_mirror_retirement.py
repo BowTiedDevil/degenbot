@@ -77,6 +77,9 @@ def test_no_python_class_mirrors_a_retired_db_row() -> None:
     assert not reintroduced, f"Python row mirrors reintroduced under src/: {reintroduced}"
 
 
+# live-invariant gate (ADR-087 D2): watches the live `public_db` record classes, which
+# must stay Rust-owned `#[pyclass]` types on the `degenbot._ffi` seam; not
+# tripwire precedent.
 def test_surviving_records_are_rust_owned_pyclasses() -> None:
     for name in sorted(CORE_OWNED_RECORD_NAMES):
         record = getattr(public_db, name)

@@ -113,6 +113,9 @@ def test_tests_env_example_states_the_harness_boundary() -> None:
         assert statement in text, f"tests.env.example does not state the boundary via {statement!r}"
 
 
+# live-invariant gate (ADR-087 D2): watches the live `tests/conftest.py` `_rpc`
+# resolver, which must keep the harness and `DEGENBOT_*` namespaces separate; not
+# tripwire precedent.
 def test_rpc_resolver_has_no_degenbot_namespace_fallback() -> None:
     code = harness._rpc.__code__
     # co_consts[0] is the function docstring, which names the operator namespace

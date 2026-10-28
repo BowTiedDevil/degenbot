@@ -1,28 +1,10 @@
-"""DelegateSpy test: prove the example routes encoding through
-the Rust seam, not the retired Python encoder.
+"""DelegateSpy test: the executor seam is Rust-bound, not a Python re-implementation.
 
-After the oracle retirement, the Python `encode_cmd_stream` /
-`compute_simulation_warmup_slots` / `pack_config` / `mapping_slot` /
-`v4_input_is_native` functions are deleted
-from `examples/eth_backrun_helpers.py` and `examples/cmd_stream.py`. The
-example (`examples/eth_settlement_arbitrage_v2_v3_v4_rust.py`) must source these from the
-Rust extension `degenbot_rs`.
-
-The standalone `encode_cmd_stream` / `v4_input_is_native` /
-`v4_output_is_native` PyO3 pyfunctions are retired too — the encode path
-moved to the Rust core (`dispatch_profitable_py` calls
-`composers::encode_cmd_stream` internally per A5), and the candidate
-resolves its `composers::PathInfo` from `path_id` via `path_info_for_core`
-The seam now exposes only the warmup/config/slot helpers; the
-DelegateSpy pins those as Rust-bound. The Python `hop_info` dataclasses are
-deleted (no consumer remains — `path_infos` returns plain dicts).
-
-This test does NOT exercise the encode values (that's the Rust-side golden-
-file parity in `cargo test -p degenbot-executor`). It proves the **seam**:
-(1) the Python encoder symbols are absent, (2) the Rust seam symbols ARE
-present, (3) the example's import graph reaches `degenbot_rs` for each
-retired symbol — monkey-patching the Rust symbol and calling the example's
-encode path confirms the call traverses Rust.
+The final arbiter for the encode values is the Rust-side golden-file parity in
+``cargo test -p degenbot-executor``. What this module pins is the **seam**: the
+Rust extension exposes the warmup/config/slot helpers, the helpers are Rust
+builtins (so no Python re-implementation stands in for them), and the driver
+sources its dispatch from the companion package rather than ``degenbot._ffi``.
 """
 
 from __future__ import annotations
@@ -35,45 +17,11 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 EXAMPLES_DIR = REPO / "examples"
 
-
-# ── prove the Python encoder is gone ──────────────────────────────────
-
-
-class TestPythonEncoderRetired:
-    """The retired Python encoder module is gone entirely."""
-
-    def test_helpers_module_deleted(self) -> None:
-        """`examples/eth_backrun_helpers.py` is deleted.
-
-        The config/display helpers it held moved into ``degenbot.runner.config``;
-        the command-stream encoders were retired in the oracle-retirement cutover (their
-        byte-exact parity lives in the Rust golden-file tests).
-        """
-        assert not (EXAMPLES_DIR / "eth_backrun_helpers.py").exists(), (
-            "examples/eth_backrun_helpers.py must be deleted"
-        )
-
-    def test_cmd_stream_module_deleted(self) -> None:
-        """`examples/cmd_stream.py` is deleted entirely."""
-        assert not (EXAMPLES_DIR / "cmd_stream.py").exists(), (
-            "examples/cmd_stream.py must be deleted (retired with its oracle)"
-        )
-
-
 # ── prove the Rust seam symbols exist ─────────────────────────────────
 
 
 class TestRustSeamPresent:
-    """The Rust extension must expose every kept seam symbol.
-
-    The standalone ``encode_cmd_stream`` / ``v4_input_is_native`` /
-    ``v4_output_is_native`` pyfunctions are retired (the encode path moved
-    to the Rust core — ``dispatch_profitable_py`` calls
-    ``composers::encode_cmd_stream`` internally per A5; the candidate
-    resolves ``composers::PathInfo`` from ``path_id`` via
-    ``path_info_for_core``. Only the warmup/config/slot helpers
-    remain on the seam.
-    """
+    """The Rust extension must expose every kept seam symbol."""
 
     @pytest.fixture(autouse=True)
     def _import_rs(self) -> None:
@@ -93,24 +41,16 @@ class TestRustSeamPresent:
     def test_nested_mapping_slot(self) -> None:
         assert hasattr(self.rs, "nested_mapping_slot")
 
-    def test_retired_encode_symbols_absent(self) -> None:
-        """The standalone encode/v4 pyfunctions are gone."""
-        for retired in ("encode_cmd_stream", "v4_input_is_native", "v4_output_is_native"):
-            assert not hasattr(self.rs, retired), (
-                f"degenbot_rs.{retired} must be retired (encode moved "
-                f"to the Rust core; the candidate resolves PathInfo from path_id)"
-            )
-
 
 # ── prove the example import graph reaches degenbot_rs ─────────────────
 
 
 class TestExampleRoutesThroughRust:
-    """The example's source references `_ffi` for every retired symbol.
+    """The example's source routes its dispatch through the companion seam.
 
     Rather than a fragile full-import (the example needs dotenv/web3/etc.),
-    this parses the example's AST import graph and confirms the symbols are
-    bound to `_ffi`, not `eth_backrun_helpers` or `cmd_stream`.
+    this parses the example's AST import graph and the driver modules it
+    reaches.
     """
 
     @staticmethod
@@ -159,12 +99,6 @@ class TestExampleRoutesThroughRust:
         ]
         assert ebh_import_lines == [], (
             f"example must not import encoder symbols from eth_backrun_helpers: {ebh_import_lines}"
-        )
-
-    def test_does_not_import_cmd_stream(self) -> None:
-        src = self._example_source()
-        assert "from cmd_stream import" not in src, (
-            "example must not import from cmd_stream (deleted with its oracle)"
         )
 
     @pytest.mark.parametrize(

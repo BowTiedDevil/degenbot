@@ -21,6 +21,8 @@ The vocabulary test that resolves the mess: **the engine is not the interface**.
 
 The standing invariant is the census gate `just check-engine-impl-blocks`, wired into `lint-rust-check`, the prek pre-commit tier, and CI. It asserts exactly ONE `impl ArbitrageEngine {` block, in `arb_engine/mod.rs`; a failure prints the per-file census. The same gate runs the **symmetric degenbot-python symbolic isolation census**: `ArbitrageEngine` appears in `degenbot-python/src` exactly once — the pyclass compat string `name = "ArbitrageEngine",`. That string is a deliberate Python-API compatibility exemption (the wrapper type's real name is `PyArbEngine`); the rejected escaped-name hack is recorded below.
 
+_live-invariant gate (ADR-087 D2): watches the one live `impl ArbitrageEngine` block in `arb_engine/mod.rs` and the pyclass compat string; not tripwire precedent._
+
 ### D2 — `EngineStages` is the ONE external seam
 
 Every external consumer crosses the stage surface:

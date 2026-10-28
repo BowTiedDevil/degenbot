@@ -42,6 +42,7 @@ fn walker_shape_modules_exist() {
     }
 }
 
+/// live-invariant gate (ADR-087 D2): watches the live `pub(crate) fn derive_plan` in `grammar_walker.rs`, whose span must stay a thin dispatcher; not tripwire precedent.
 #[test]
 fn derive_plan_is_a_thin_dispatcher() {
     let src = include_str!("../src/grammar_walker.rs");

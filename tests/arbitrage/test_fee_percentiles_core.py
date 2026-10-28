@@ -4,7 +4,7 @@
 ``eth_feeHistory`` reward percentiles. The pair is a core constant
 (``degenbot-arbitrage::MIN_PRIORITY_FEE_PERCENTILE`` /
 ``MAX_PRIORITY_FEE_PERCENTILE``); the driver reads it back over the FFI so the
-two cannot drift, and the retired ``FEE_PERCENTILES`` module literal is gone.
+two cannot drift.
 
 The routing test injects a distinguishable pair at the leaf's
 ``reward_percentiles`` seam: a call site that hardcodes, caches, or mirrors the
@@ -18,7 +18,6 @@ import re
 from pathlib import Path
 
 from degenbot.dispatch import Dispatcher
-from degenbot.runner import identity
 from degenbot.runner._consume import _apply_block_if_ready
 from degenbot.runner.bot_runner import _SessionState
 from tests.fakes.engine import FakeEngine, FakeEngineRegistry
@@ -87,13 +86,6 @@ async def test_head_tick_requests_core_percentiles() -> None:
     )
 
 
-def test_retired_python_literal_is_gone() -> None:
-    assert not hasattr(identity, "FEE_PERCENTILES"), (
-        "identity.FEE_PERCENTILES is the Python mirror of the core "
-        "percentile pair; the driver reads the core value over the FFI instead"
-    )
-
-
 def _core_percentiles() -> tuple[int, int]:
     source = _CORE_FEE_PERCENTILES_RS.read_text(encoding="utf-8")
     pair = re.search(
@@ -106,6 +98,9 @@ def _core_percentiles() -> tuple[int, int]:
     return (int(pair.group(1)), int(pair.group(2)))
 
 
+# live-invariant gate (ADR-087 D2): watches the live `MIN`/`MAX_PRIORITY_FEE_PERCENTILE`
+# declarations in `degenbot-arbitrage/src/simulator.rs`, which must derive from the
+# foundation pair; not tripwire precedent.
 def test_engine_carries_no_second_percentile_literal() -> None:
     """The pair has one home; the engine derives from it instead of copying it."""
     source = _SIMULATOR_RS.read_text(encoding="utf-8")

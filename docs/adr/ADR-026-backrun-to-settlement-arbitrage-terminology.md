@@ -78,5 +78,6 @@ unabbreviated form.
 - **Historical records** intentionally retain the old label and become the
   proof of what was named at the time; a stale identifier reference in a frozen
   record to a renamed crate/symbol is expected and not corrected.
-- Search tooling/`rg` are the source of truth for any residual hit; the final
-  audit gate (task A5) asserts the only remaining "backrun" hits are frozen.
+- Search tooling/`rg` are the source of truth for any residual hit; the vocabulary
+  rule itself lives in GLOSSARY.md under **Settlement arbitrage** and **Backrun
+  (classic MEV)**, whose `_Avoid_` lines own it.

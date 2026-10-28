@@ -232,6 +232,7 @@ fn every_binding_core_crate_is_reachable_from_standalone() {
     );
 }
 
+/// live-invariant gate (ADR-087 D2): watches the live `INTENTIONALLY_NOT_STANDALONE` allowlist against what the binding crate actually consumes; not tripwire precedent.
 #[test]
 fn allowlist_entries_are_still_actually_consumed() {
     // Guard against stale allowlist entries: if a crate lands its standalone

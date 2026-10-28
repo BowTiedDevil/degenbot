@@ -51,6 +51,9 @@ def _example_py_files() -> list[pathlib.Path]:
     _example_py_files(),
     ids=lambda p: str(p.relative_to(_REPO_ROOT)),
 )
+# live-invariant gate (ADR-087 D2): watches the live `examples/*.py` drivers, which
+# must import from the `degenbot.*` barrier rather than the `_ffi` seam; not
+# tripwire precedent.
 def test_no_ffi_import_in_examples(example_file: pathlib.Path) -> None:
     """No ``examples/*.py`` imports the FFI seam directly.
 

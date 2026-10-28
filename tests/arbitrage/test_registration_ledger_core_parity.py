@@ -163,6 +163,8 @@ def test_the_eligibility_gate_verdicts_are_the_cores() -> None:
     )
 
 
+# live-invariant gate (ADR-087 D2): watches the live `RegistrationLedger` adapter, which
+# holds `_core` and no collection of its own; not tripwire precedent.
 def test_the_ledger_holds_no_python_side_memo_state() -> None:
     """The adapter owns exactly one thing: the core ledger it forwards to."""
     ledger = RegistrationLedger()

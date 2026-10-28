@@ -38,6 +38,8 @@
 #   the entry in the same commit that strips the file's citations.
 #   Override the waiver file for testing: WAF=/dev/null <this script>.
 #
+# live-invariant gate (ADR-087 D2): watches the live comment surface, ratcheted against the lexicon census; not tripwire precedent.
+#
 # Detector 2 — the bare-ID census ratchet (the formerly accepted blind
 # spot): bare six-char [A-Z0-9]{6} tracker tokens with no anchor word.
 # Any such token NOT accounted for in
