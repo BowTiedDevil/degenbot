@@ -149,6 +149,11 @@
   // exported it resolves to empty and falls back to /etc/localtime.
   "mounts": [
     "source=/etc/localtime,target=/etc/localtime,type=bind,readonly=true",
+    // Sweep both cargo target roots from either side: gc-target.sh inside the
+    // container also reclaims the host's out-of-tree cache when it exists
+    // (missing on a fresh host until the first host build; the bind then
+    // auto-creates it). See .envrc's CARGO_TARGET_DIR note.
+    "source=${localEnv:HOME}/.cache/degenbot-target,target=/home/dev/.cache/degenbot-target,type=bind",
     "source=${localEnv:HOME}/.agents,target=/home/dev/.agents,type=bind",
     "source=${localEnv:HOME}/.config/degenbot,target=/home/dev/.config/degenbot,type=bind",
     "source=${localEnv:HOME}/.local/state/degenbot,target=/home/dev/.local/state/degenbot,type=bind",

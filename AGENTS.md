@@ -189,15 +189,19 @@ It fails CLOSED when the RPC env is absent OR the endpoint is unreachable (probe
 Cargo, maturin, coverage, LLVM coverage, Criterion, wheels, rustdoc, and the
 `gen-stubs` introspected build under `stubgen-inspect`). The family policy lives
 in `scripts/gc-target.sh`; `just gc-target` reports and sweeps them per-family.
-Preview before cleanup:
+The sweep covers BOTH environment roots — the devcontainer's in-tree
+`rust/target` and the host's out-of-tree `~/.cache/degenbot-target`
+(bind-mounted into the container) — whenever they exist, so one invocation
+reclaims both sides from either side. Preview before cleanup:
 
 ```bash
 DRY_RUN=1 just gc-target        # report candidates; delete nothing
-AGE=7 just gc-target            # destructive seven-day sweep
+AGE=3 just gc-target            # destructive three-day sweep (the default)
 ```
 
 `AGE=N` uses `find -mtime +N`, so `AGE=0` means older than one day rather than
-literally every file. `target/maturin` is always outside the deletion boundary.
+literally every file. Every root's `maturin/` cache is always outside the
+deletion boundary.
 
 The dev profile already uses `opt-level = 1` + `debug = "line-tables-only"` (the
 minimal-debuginfo setting), so a large `rust/target` is not a debuginfo problem:

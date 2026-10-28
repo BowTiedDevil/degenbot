@@ -561,17 +561,22 @@ build-rust-extension:
 
 # ========== Build-Artifact Housekeeping ==========
 
-# Reclaim disk space under the Cargo target root. Preview first; both modes
-# report every cache family and exact target/reclaimable byte counts:
+# Reclaim disk space under the Cargo target roots. The sweep covers BOTH
+# environment roots when they exist — the devcontainer's in-tree rust/target
+# and the host's out-of-tree ~/.cache/degenbot-target (bind-mounted into the
+# container; see devcontainer.json) — so one invocation reclaims both sides
+# from either side. Set GC_TARGET_DIR to narrow the sweep to exactly one root.
+# Preview first; both modes report every cache family and exact target/reclaimable
+# byte counts:
 #   DRY_RUN=1 just gc-target     # report candidates; delete nothing
-#   AGE=7 just gc-target         # remove artifacts older than seven days
+#   AGE=3 just gc-target         # remove artifacts older than three days
 #   AGE=0 DRY_RUN=1 just gc-target
 #
 # Normal Cargo caches age-sweep deps/examples/build/.fingerprint, always drop
 # incremental state, and dedupe old large test binaries. Separate rebuildable
 # families are age-swept too: coverage reports/builds, LLVM coverage, Criterion,
-# wheels, and rustdoc output. `target/maturin` is always protected. The family
-# policy is this script.
+# wheels, and rustdoc output. Every root's maturin/ cache is always protected.
+# The family policy is this script.
 gc-target:
     scripts/gc-target.sh
 
