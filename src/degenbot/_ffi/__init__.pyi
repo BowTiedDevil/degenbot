@@ -727,7 +727,7 @@ class BalancerFamily:
     [`BalancerFamily`] that the `getNormalizedWeights()` /
     `getAmplificationParameter()` probe resolves.
 
-    [`BalancerFamily`] (`degenbot_bot::bot_core::pool_builder::choreography`)
+    [`BalancerFamily`] (`degenbot_bot::bot_core::pool_builder::builder`)
     stays the semantic owner; this mirrors exactly its two discriminants, so a
     builder call site compares an enum member instead of string-matching the
     wire. [`balancer_family_to_py`]`s `match` is exhaustive over the core enum,

@@ -1,7 +1,8 @@
 //! Choreography decode unit tests.
 //!
-//! The V2/V3/V4 + ERC-20 + tick encode→call→decode choreography moved core-side
-//! into this module. These tests drive each `choreography` fn through a
+//! The V2/V3/V4 + ERC-20 + tick reads (plus the construction-policy wrappers
+//! that compose them) moved core-side into this module. These tests drive each
+//! read through a
 //! `FakeRpc` (a [`crate::bot_core::construction_io::RpcConstruction`] double)
 //! that returns pre-encoded response bytes per calldata selector, asserting the
 //! decode — the coverage that previously lived in
@@ -18,8 +19,10 @@ use degenbot_core::errors::ProviderError;
 use degenbot_pools::SpecRefusal;
 use degenbot_rpc::abi;
 
-use super::{builder, choreography, curve_choreography};
-use crate::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction, TickFetchPace};
+use super::{builder, curve_choreography};
+use crate::bot_core::construction_io::{
+    ConstructionIo, NoDb, PacedRead, RpcConstruction, TickFetchPace,
+};
 
 const TO: Address = alloy::primitives::address!("0x1111111111111111111111111111111111111111");
 const SV: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
@@ -157,9 +160,9 @@ async fn fetch_factory_address_decodes() {
     let mut f = FakeRpc::new();
     let factory: Address =
         alloy::primitives::address!("0x66f9664f97f2b50f62d13ea064982f936de76657");
-    f.set(choreography::selector(b"factory()"), addr_word(factory));
+    f.set(abi::selector(b"factory()"), addr_word(factory));
     let io = io_with(f);
-    let got = choreography::fetch_factory_address(&io, TO, None)
+    let got = abi::fetch_address_returning(&io, b"factory()", &TO, None)
         .await
         .unwrap();
     assert_eq!(got, factory);
@@ -168,14 +171,14 @@ async fn fetch_factory_address_decodes() {
 #[tokio::test]
 async fn fetch_erc20_metadata_decodes_string_string_uint() {
     let mut f = FakeRpc::new();
-    f.set(choreography::selector(b"name()"), str_ret("Dai Stablecoin"));
-    f.set(choreography::selector(b"symbol()"), str_ret("DAI"));
+    f.set(abi::selector(b"name()"), str_ret("Dai Stablecoin"));
+    f.set(abi::selector(b"symbol()"), str_ret("DAI"));
     f.set(
-        choreography::selector(b"decimals()"),
+        abi::selector(b"decimals()"),
         enc(DynSolValue::Uint(U256::from(18), 256)),
     );
     let io = io_with(f);
-    let got = choreography::fetch_erc20_metadata(&io, TO).await.unwrap();
+    let got = builder::fetch_erc20_metadata(&io, &TO).await;
     assert_eq!(
         got,
         Some(("Dai Stablecoin".to_string(), "DAI".to_string(), 18))
@@ -186,10 +189,7 @@ async fn fetch_erc20_metadata_decodes_string_string_uint() {
 async fn fetch_erc20_metadata_returns_none_on_missing_selector() {
     // No responses configured → every call reverts → Ok(None).
     let io = io_with(FakeRpc::new());
-    assert_eq!(
-        choreography::fetch_erc20_metadata(&io, TO).await.unwrap(),
-        None
-    );
+    assert_eq!(builder::fetch_erc20_metadata(&io, &TO).await, None);
 }
 
 #[tokio::test]
@@ -199,10 +199,10 @@ async fn build_erc20_metadata_resolves_on_chain_with_no_db() {
     // via the batched read; no write-back (no DB row).
     let mut f = FakeRpc::new();
     f.set_code(Bytes::from_static(&[0x60, 0x80]));
-    f.set(choreography::selector(b"name()"), str_ret("Wrapped Ether"));
-    f.set(choreography::selector(b"symbol()"), str_ret("WETH"));
+    f.set(abi::selector(b"name()"), str_ret("Wrapped Ether"));
+    f.set(abi::selector(b"symbol()"), str_ret("WETH"));
     f.set(
-        choreography::selector(b"decimals()"),
+        abi::selector(b"decimals()"),
         enc(DynSolValue::Uint(U256::from(18), 256)),
     );
     let io = io_with(f);
@@ -360,11 +360,11 @@ async fn fetch_v2_immutable_data_decodes() {
     let mut f = FakeRpc::new();
     let tok0: Address = alloy::primitives::address!("0xaaa0000000000000000000000000000000000001");
     let tok1: Address = alloy::primitives::address!("0xaaa0000000000000000000000000000000000002");
-    f.set(choreography::selector(b"factory()"), addr_word(tok0));
-    f.set(choreography::selector(b"token0()"), addr_word(tok0));
-    f.set(choreography::selector(b"token1()"), addr_word(tok1));
+    f.set(abi::selector(b"factory()"), addr_word(tok0));
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
     let io = io_with(f);
-    let d = choreography::fetch_v2_immutable_data(&io, TO, None)
+    let d = builder::fetch_v2_immutable_data(&io, &TO, None)
         .await
         .unwrap();
     assert_eq!(d.token0, tok0);
@@ -385,9 +385,7 @@ async fn fetch_v2_reserves_decodes_two_uint256() {
         ])),
     );
     let io = io_with(f);
-    let (r0, r1) = choreography::fetch_v2_reserves(&io, TO, None)
-        .await
-        .unwrap();
+    let (r0, r1) = abi::fetch_v2_reserves(&io, &TO, None).await.unwrap();
     assert_eq!(r0, U256::from(1_000_000u64));
     assert_eq!(r1, U256::from(2_000_000u64));
 }
@@ -397,19 +395,19 @@ async fn fetch_v3_immutable_data_decodes_incl_negative_tick_spacing() {
     let mut f = FakeRpc::new();
     let tok0: Address = alloy::primitives::address!("0xaaa0000000000000000000000000000000000001");
     let tok1: Address = alloy::primitives::address!("0xaaa0000000000000000000000000000000000002");
-    f.set(choreography::selector(b"factory()"), addr_word(tok0));
-    f.set(choreography::selector(b"token0()"), addr_word(tok0));
-    f.set(choreography::selector(b"token1()"), addr_word(tok1));
+    f.set(abi::selector(b"factory()"), addr_word(tok0));
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
     f.set(
-        choreography::selector(b"fee()"),
+        abi::selector(b"fee()"),
         enc(DynSolValue::Uint(U256::from(30), 24)),
     );
     f.set(
-        choreography::selector(b"tickSpacing()"),
+        abi::selector(b"tickSpacing()"),
         enc(DynSolValue::Int(I256::try_from(-10i128).unwrap(), 24)),
     );
     let io = io_with(f);
-    let d = choreography::fetch_v3_immutable_data(&io, TO, None)
+    let d = builder::fetch_v3_immutable_data(&io, &TO, None)
         .await
         .unwrap();
     assert_eq!(d.token0, tok0);
@@ -431,9 +429,7 @@ async fn fetch_v3_slot0_liquidity_decodes() {
         enc(DynSolValue::Uint(U256::from(42), 128)),
     );
     let io = io_with(f);
-    let (s, t, liq) = choreography::fetch_v3_slot0_liquidity(&io, TO, None)
-        .await
-        .unwrap();
+    let (s, t, liq) = abi::fetch_v3_slot0_liquidity(&io, &TO, None).await.unwrap();
     assert_eq!(s, sqrt);
     assert_eq!(t, I256::try_from(-123i128).unwrap());
     assert_eq!(liq, U256::from(42));
@@ -457,7 +453,7 @@ async fn fetch_v4_slot0_liquidity_decodes() {
         enc(DynSolValue::Uint(U256::from(99), 128)),
     );
     let io = io_with(f);
-    let (s, t, pf, lf, liq) = choreography::fetch_v4_slot0_liquidity(&io, SV, POOL_ID, None)
+    let (s, t, pf, lf, liq) = abi::fetch_v4_slot0_liquidity(&io, &SV, &POOL_ID, None)
         .await
         .unwrap();
     assert_eq!(s, sqrt);
@@ -477,7 +473,7 @@ async fn fetch_tick_bitmap_decodes() {
     );
     let io = io_with(f);
     assert_eq!(
-        choreography::fetch_tick_bitmap(&io, TO, 3, None)
+        abi::fetch_tick_bitmap(&PacedRead::new(&io), &TO, 3, None)
             .await
             .unwrap(),
         bitmap
@@ -496,10 +492,10 @@ async fn the_tick_pace_bounds_tick_reads_only() {
 
     // Generic construction reads claim no tick-fetch slot.
     let unpaced = std::time::Instant::now();
-    io.call(TO, Bytes::from(selector.to_vec()), None)
+    abi::ContractRead::call(&io, TO, Bytes::from(selector.to_vec()), None)
         .await
         .unwrap();
-    io.call(TO, Bytes::from(selector.to_vec()), None)
+    abi::ContractRead::call(&io, TO, Bytes::from(selector.to_vec()), None)
         .await
         .unwrap();
     assert!(
@@ -510,10 +506,10 @@ async fn the_tick_pace_bounds_tick_reads_only() {
 
     // Two tick reads are one interval apart.
     let paced = std::time::Instant::now();
-    choreography::fetch_tick_bitmap(&io, TO, 3, None)
+    abi::fetch_tick_bitmap(&PacedRead::new(&io), &TO, 3, None)
         .await
         .unwrap();
-    choreography::fetch_tick_bitmap(&io, TO, 3, None)
+    abi::fetch_tick_bitmap(&PacedRead::new(&io), &TO, 3, None)
         .await
         .unwrap();
     assert!(
@@ -534,7 +530,7 @@ async fn fetch_tick_data_decodes() {
         ])),
     );
     let io = io_with(f);
-    let (gross, net) = choreography::fetch_tick_data(&io, TO, 120, None)
+    let (gross, net) = abi::fetch_tick_data(&PacedRead::new(&io), &TO, 120, None)
         .await
         .unwrap();
     assert_eq!(gross.to_string(), "111");
@@ -553,7 +549,7 @@ async fn fetch_v4_tick_bitmap_decodes() {
     );
     let io = io_with(f);
     assert_eq!(
-        choreography::fetch_v4_tick_bitmap(&io, SV, POOL_ID, -4, None)
+        abi::fetch_v4_tick_bitmap(&PacedRead::new(&io), &SV, &POOL_ID, -4, None)
             .await
             .unwrap(),
         bitmap
@@ -573,7 +569,7 @@ async fn fetch_v4_tick_data_decodes() {
         ])),
     );
     let io = io_with(f);
-    let (gross, net) = choreography::fetch_v4_tick_data(&io, SV, POOL_ID, 5, None)
+    let (gross, net) = abi::fetch_v4_tick_data(&PacedRead::new(&io), &SV, &POOL_ID, 5, None)
         .await
         .unwrap();
     assert_eq!(gross.to_string(), "7");
@@ -640,7 +636,7 @@ async fn probe_pool_type_dispatches() {
 
     // getPoolId() present, no getNormalizedWeights → BalancerStable.
     let mut f = FakeRpc::new();
-    f.set(choreography::selector(b"getPoolId()"), addr_word(TO));
+    f.set(abi::selector(b"getPoolId()"), addr_word(TO));
     assert_eq!(
         builder::probe_pool_type(&io_with(f), TO, None)
             .await
@@ -650,9 +646,9 @@ async fn probe_pool_type_dispatches() {
 
     // getPoolId() + getNormalizedWeights() → BalancerWeighted.
     let mut f = FakeRpc::new();
-    f.set(choreography::selector(b"getPoolId()"), addr_word(TO));
+    f.set(abi::selector(b"getPoolId()"), addr_word(TO));
     f.set(
-        choreography::selector(b"getNormalizedWeights()"),
+        abi::selector(b"getNormalizedWeights()"),
         enc(DynSolValue::FixedArray(vec![DynSolValue::Uint(
             U256::from(50),
             18,
@@ -672,7 +668,7 @@ async fn probe_pool_type_propagates_transport_failure() {
     // it must surface, never degrade the pool to Curve.
     let mut f = FakeRpc::new();
     f.set_error(
-        choreography::selector(b"slot0()"),
+        abi::selector(b"slot0()"),
         ProviderError::ConnectionFailed {
             message: "rpc down".into(),
         },
@@ -705,10 +701,7 @@ async fn resolve_v2_dex_reads_stable_flag_for_camelot_factory() {
     // disambiguates. Give the read `true` → CamelotV2Stable.
     let factory = dex_identity::CAMELOT_V2_STABLE.factory;
     let mut f = FakeRpc::new();
-    f.set(
-        choreography::selector(b"stableSwap()"),
-        enc(DynSolValue::Bool(true)),
-    );
+    f.set(abi::selector(b"stableSwap()"), enc(DynSolValue::Bool(true)));
     let io = io_with(f);
     let id = builder::resolve_v2_dex(&io, TO, factory, None)
         .await
@@ -720,26 +713,21 @@ async fn resolve_v2_dex_reads_stable_flag_for_camelot_factory() {
 #[tokio::test]
 async fn fetch_camelot_state_decodes_all_four_probes() {
     let mut f = FakeRpc::new();
+    f.set(abi::selector(b"stableSwap()"), enc(DynSolValue::Bool(true)));
     f.set(
-        choreography::selector(b"stableSwap()"),
-        enc(DynSolValue::Bool(true)),
-    );
-    f.set(
-        choreography::selector(b"FEE_DENOMINATOR()"),
+        abi::selector(b"FEE_DENOMINATOR()"),
         enc(DynSolValue::Uint(U256::from(10_000u64), 256)),
     );
     f.set(
-        choreography::selector(b"token0FeePercent()"),
+        abi::selector(b"token0FeePercent()"),
         enc(DynSolValue::Uint(U256::from(20u64), 16)),
     );
     f.set(
-        choreography::selector(b"token1FeePercent()"),
+        abi::selector(b"token1FeePercent()"),
         enc(DynSolValue::Uint(U256::from(200u64), 16)),
     );
     let io = io_with(f);
-    let s = choreography::fetch_camelot_state(&io, TO, None)
-        .await
-        .unwrap();
+    let s = builder::fetch_camelot_state(&io, &TO, None).await.unwrap();
     assert!(s.stable);
     assert_eq!(s.fee_denominator, U256::from(10_000u64));
     assert_eq!(s.token0_fee_percent, 20);
@@ -756,12 +744,9 @@ async fn build_v2_assembles_register_params_from_onchain() {
     let pool = compute_v2_address(UNISWAP_V2.factory, tok0, tok1, UNISWAP_V2.init_hash);
 
     let mut f = FakeRpc::new();
-    f.set(
-        choreography::selector(b"factory()"),
-        addr_word(UNISWAP_V2.factory),
-    );
-    f.set(choreography::selector(b"token0()"), addr_word(tok0));
-    f.set(choreography::selector(b"token1()"), addr_word(tok1));
+    f.set(abi::selector(b"factory()"), addr_word(UNISWAP_V2.factory));
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
     f.set(
         abi::encode_get_reserves()[..4].try_into().unwrap(),
         enc(DynSolValue::Tuple(vec![
@@ -824,15 +809,15 @@ async fn build_v3_assembles_sparse_register_params_from_onchain() {
     let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
 
     let mut f = FakeRpc::new();
-    f.set(choreography::selector(b"factory()"), addr_word(factory));
-    f.set(choreography::selector(b"token0()"), addr_word(tok0));
-    f.set(choreography::selector(b"token1()"), addr_word(tok1));
+    f.set(abi::selector(b"factory()"), addr_word(factory));
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
     f.set(
-        choreography::selector(b"fee()"),
+        abi::selector(b"fee()"),
         enc(DynSolValue::Uint(U256::from(3000u32), 24)),
     );
     f.set(
-        choreography::selector(b"tickSpacing()"),
+        abi::selector(b"tickSpacing()"),
         enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
     );
     f.set(
@@ -988,15 +973,15 @@ async fn build_v3_db_hit_yields_tracked() {
     let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
 
     let mut f = FakeRpc::new();
-    f.set(choreography::selector(b"factory()"), addr_word(factory));
-    f.set(choreography::selector(b"token0()"), addr_word(tok0));
-    f.set(choreography::selector(b"token1()"), addr_word(tok1));
+    f.set(abi::selector(b"factory()"), addr_word(factory));
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
     f.set(
-        choreography::selector(b"fee()"),
+        abi::selector(b"fee()"),
         enc(DynSolValue::Uint(U256::from(3000u32), 24)),
     );
     f.set(
-        choreography::selector(b"tickSpacing()"),
+        abi::selector(b"tickSpacing()"),
         enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
     );
     f.set(
@@ -1056,15 +1041,15 @@ async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
     let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
 
     let mut f = FakeRpc::new();
-    f.set(choreography::selector(b"factory()"), addr_word(factory));
-    f.set(choreography::selector(b"token0()"), addr_word(tok0));
-    f.set(choreography::selector(b"token1()"), addr_word(tok1));
+    f.set(abi::selector(b"factory()"), addr_word(factory));
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
     f.set(
-        choreography::selector(b"fee()"),
+        abi::selector(b"fee()"),
         enc(DynSolValue::Uint(U256::from(3000u32), 24)),
     );
     f.set(
-        choreography::selector(b"tickSpacing()"),
+        abi::selector(b"tickSpacing()"),
         enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
     );
     f.set(
@@ -1164,9 +1149,7 @@ async fn fetch_balancer_weights_decodes_uint256_array() {
         u256_array_ret(&[500_000_000_000_000_000u64, 500_000_000_000_000_000u64]),
     );
     let io = io_with(f);
-    let w = choreography::fetch_balancer_weights(&io, TO, None)
-        .await
-        .unwrap();
+    let w = abi::fetch_balancer_weights(&io, &TO, None).await.unwrap();
     assert_eq!(w.len(), 2);
     assert_eq!(w[0], U256::from(500_000_000_000_000_000u64));
     assert_eq!(w[1], U256::from(500_000_000_000_000_000u64));
@@ -1176,9 +1159,7 @@ async fn fetch_balancer_weights_decodes_uint256_array() {
 async fn probe_balancer_type_weights_first_then_stable() {
     // No responses → both probes revert → error.
     let io = io_with(FakeRpc::new());
-    assert!(choreography::probe_balancer_type(&io, TO, None)
-        .await
-        .is_err());
+    assert!(builder::probe_balancer_type(&io, &TO, None).await.is_err());
 
     // getNormalizedWeights responds → Weighted.
     let mut f = FakeRpc::new();
@@ -1188,10 +1169,8 @@ async fn probe_balancer_type_weights_first_then_stable() {
     );
     let io = io_with(f);
     assert_eq!(
-        choreography::probe_balancer_type(&io, TO, None)
-            .await
-            .unwrap(),
-        choreography::BalancerFamily::Weighted
+        builder::probe_balancer_type(&io, &TO, None).await.unwrap(),
+        builder::BalancerFamily::Weighted
     );
 
     // Only getAmplificationParameter → Stable.
@@ -1206,10 +1185,8 @@ async fn probe_balancer_type_weights_first_then_stable() {
     );
     let io = io_with(f);
     assert_eq!(
-        choreography::probe_balancer_type(&io, TO, None)
-            .await
-            .unwrap(),
-        choreography::BalancerFamily::Stable
+        builder::probe_balancer_type(&io, &TO, None).await.unwrap(),
+        builder::BalancerFamily::Stable
     );
 }
 
@@ -1226,7 +1203,7 @@ async fn fetch_balancer_factory_reports_the_owning_candidate() {
     // Every candidate reverts (no response configured) → no owner.
     let io = io_with(FakeRpc::new());
     assert_eq!(
-        choreography::fetch_balancer_factory(&io, TO, &[VAULT], None).await,
+        builder::fetch_balancer_factory(&io, &TO, &[VAULT], None).await,
         None
     );
 
@@ -1235,7 +1212,7 @@ async fn fetch_balancer_factory_reports_the_owning_candidate() {
     f.set(sel, enc(DynSolValue::Bool(true)));
     let io = io_with(f);
     assert_eq!(
-        choreography::fetch_balancer_factory(&io, TO, &[VAULT], None).await,
+        builder::fetch_balancer_factory(&io, &TO, &[VAULT], None).await,
         Some(VAULT)
     );
 
@@ -1244,7 +1221,7 @@ async fn fetch_balancer_factory_reports_the_owning_candidate() {
     f.set(sel, enc(DynSolValue::Bool(false)));
     let io = io_with(f);
     assert_eq!(
-        choreography::fetch_balancer_factory(&io, TO, &[VAULT], None).await,
+        builder::fetch_balancer_factory(&io, &TO, &[VAULT], None).await,
         None
     );
 }
@@ -1275,7 +1252,7 @@ async fn build_balancer_weighted_assembles_params() {
     // keys responses by 4-byte selector only, so per-address decimals can't be
     // distinguished here — variance is covered by a dedicated scaling test.)
     f.set(
-        choreography::selector(b"decimals()"),
+        abi::selector(b"decimals()"),
         enc(DynSolValue::Uint(U256::from(18), 256)),
     );
     // get_code returns empty → PowVersion V1 (1).
@@ -1322,11 +1299,11 @@ async fn build_balancer_stable_assembles_params_with_rate_providers() {
     );
     // Both tokens 18 decimals; one rate provider returning 1.02e18.
     f.set(
-        choreography::selector(b"decimals()"),
+        abi::selector(b"decimals()"),
         enc(DynSolValue::Uint(U256::from(18), 256)),
     );
     f.set(
-        choreography::selector(b"getRateProviders()"),
+        abi::selector(b"getRateProviders()"),
         enc(DynSolValue::Array(vec![
             DynSolValue::Address(alloy::primitives::address!(
                 "0x1111111111111111111111111111111111111111"
@@ -1387,14 +1364,14 @@ fn balancer_stable_fakes(tokens: &[Address]) -> FakeRpc {
         ])),
     );
     f.set(
-        choreography::selector(b"decimals()"),
+        abi::selector(b"decimals()"),
         enc(DynSolValue::Uint(U256::from(18), 256)),
     );
     // Every token carries the zero-address sentinel rate provider. Both stable
     // families answer `getRateProviders()` (measured on the mainnet
     // MetaStablePools), so its presence says nothing about the family.
     f.set(
-        choreography::selector(b"getRateProviders()"),
+        abi::selector(b"getRateProviders()"),
         enc(DynSolValue::Array(
             tokens
                 .iter()
@@ -1510,7 +1487,7 @@ async fn build_balancer_weighted_refuses_a_pool_with_an_unreadable_coin() {
         u256_array_ret(&[500_000_000_000_000_000u64, 500_000_000_000_000_000u64]),
     );
     // `decimals()` returns no data at all → the ABI word cannot decode.
-    f.set(choreography::selector(b"decimals()"), Vec::new());
+    f.set(abi::selector(b"decimals()"), Vec::new());
     let io = io_with(f);
     assert!(matches!(
         builder::build_balancer_weighted(VAULT, TO, &io, None).await,
@@ -1564,7 +1541,7 @@ async fn build_balancer_stable_refuses_a_pool_whose_rate_provider_reverts() {
     // A live (non-sentinel) provider and no `getRate()` response → the read
     // reverts.
     f.set(
-        choreography::selector(b"getRateProviders()"),
+        abi::selector(b"getRateProviders()"),
         enc(DynSolValue::Array(vec![
             DynSolValue::Address(alloy::primitives::address!(
                 "0x2222222222222222222222222222222222222222"
@@ -1655,15 +1632,15 @@ async fn discover_curve_coins_empty_when_no_prototype_works() {
 async fn fetch_curve_pool_params_decodes_a_fee_admin_fee() {
     let mut f = FakeRpc::new();
     f.set(
-        choreography::selector(b"A()"),
+        abi::selector(b"A()"),
         enc(DynSolValue::Uint(U256::from(1000u64), 256)),
     );
     f.set(
-        choreography::selector(b"fee()"),
+        abi::selector(b"fee()"),
         enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
     );
     f.set(
-        choreography::selector(b"admin_fee()"),
+        abi::selector(b"admin_fee()"),
         enc(DynSolValue::Uint(U256::from(500_000_000u64), 256)),
     );
     let io = io_with(f);
@@ -1699,7 +1676,7 @@ async fn fetch_curve_pool_params_propagates_missing_read() {
     // fee() not configured → whole fetch errors (required, not optional).
     let mut f = FakeRpc::new();
     f.set(
-        choreography::selector(b"A()"),
+        abi::selector(b"A()"),
         enc(DynSolValue::Uint(U256::from(1000u64), 256)),
     );
     let io = io_with(f);
@@ -1712,19 +1689,19 @@ async fn fetch_curve_pool_params_propagates_missing_read() {
 async fn detect_curve_a_ramping_all_four_values() {
     let mut f = FakeRpc::new();
     f.set(
-        choreography::selector(b"initial_A()"),
+        abi::selector(b"initial_A()"),
         enc(DynSolValue::Uint(U256::from(1_000u64), 256)),
     );
     f.set(
-        choreography::selector(b"initial_A_time()"),
+        abi::selector(b"initial_A_time()"),
         enc(DynSolValue::Uint(U256::from(100u64), 256)),
     );
     f.set(
-        choreography::selector(b"future_A()"),
+        abi::selector(b"future_A()"),
         enc(DynSolValue::Uint(U256::from(5_000u64), 256)),
     );
     f.set(
-        choreography::selector(b"future_A_time()"),
+        abi::selector(b"future_A_time()"),
         enc(DynSolValue::Uint(U256::from(200u64), 256)),
     );
     let io = io_with(f);
@@ -1741,7 +1718,7 @@ async fn detect_curve_a_ramping_none_when_any_reverts() {
     // initial_A missing → whole detection treated as non-ramping.
     let mut f = FakeRpc::new();
     f.set(
-        choreography::selector(b"future_A()"),
+        abi::selector(b"future_A()"),
         enc(DynSolValue::Uint(U256::from(5_000u64), 256)),
     );
     let io = io_with(f);
@@ -1754,26 +1731,26 @@ async fn detect_curve_a_ramping_none_when_any_reverts() {
 async fn detect_curve_crypto_params_populated_when_fee_gamma_positive() {
     let mut f = FakeRpc::new();
     f.set(
-        choreography::selector(b"fee_gamma()"),
+        abi::selector(b"fee_gamma()"),
         enc(DynSolValue::Uint(
             U256::from(500_000_000_000_000_000u64),
             256,
         )),
     );
     f.set(
-        choreography::selector(b"mid_fee()"),
+        abi::selector(b"mid_fee()"),
         enc(DynSolValue::Uint(U256::from(3_000_000u64), 256)),
     );
     f.set(
-        choreography::selector(b"out_fee()"),
+        abi::selector(b"out_fee()"),
         enc(DynSolValue::Uint(U256::from(30_000_000u64), 256)),
     );
     f.set(
-        choreography::selector(b"gamma()"),
+        abi::selector(b"gamma()"),
         enc(DynSolValue::Uint(U256::from(145_000_000_000_000u64), 256)),
     );
     f.set(
-        choreography::selector(b"offpeg_fee_multiplier()"),
+        abi::selector(b"offpeg_fee_multiplier()"),
         enc(DynSolValue::Uint(U256::from(200_000_000u64), 256)),
     );
     let io = io_with(f);
@@ -1791,7 +1768,7 @@ async fn detect_curve_crypto_params_not_crypto_when_fee_gamma_reverts() {
     // fee_gamma reverts → not crypto; offpeg still fetched.
     let mut f = FakeRpc::new();
     f.set(
-        choreography::selector(b"offpeg_fee_multiplier()"),
+        abi::selector(b"offpeg_fee_multiplier()"),
         enc(DynSolValue::Uint(U256::from(500_000_000u64), 256)),
     );
     let io = io_with(f);
@@ -1817,7 +1794,7 @@ async fn detect_curve_lending_ctoken_override_precision() {
         addr_word(underlying),
     );
     f.set(
-        choreography::selector(b"decimals()"),
+        abi::selector(b"decimals()"),
         enc(DynSolValue::Uint(U256::from(8u64), 256)),
     );
     let io = io_with(f);
@@ -1908,7 +1885,7 @@ async fn detect_curve_metapool_resolves_base_and_underlying() {
         ]),
     );
     // base_pool() on the pool contract.
-    f.set(choreography::selector(b"base_pool()"), addr_word(base));
+    f.set(abi::selector(b"base_pool()"), addr_word(base));
     let io = io_with(f);
     let r = curve_choreography::detect_curve_metapool(&io, TO, &[u1, u2], &[REGISTRY], None).await;
     assert!(r.is_meta);
@@ -1991,21 +1968,21 @@ async fn build_curve_pool_assembles_plain_pool_params() {
 
     // Pool params.
     f.set(
-        choreography::selector(b"A()"),
+        abi::selector(b"A()"),
         enc(DynSolValue::Uint(U256::from(2000u64), 256)),
     );
     f.set(
-        choreography::selector(b"fee()"),
+        abi::selector(b"fee()"),
         enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
     );
     f.set(
-        choreography::selector(b"admin_fee()"),
+        abi::selector(b"admin_fee()"),
         enc(DynSolValue::Uint(U256::from(500_000_000u64), 256)),
     );
 
     // Both coins have 6 decimals → rate_multiplier 10^(36-6)=10^30.
     f.set(
-        choreography::selector(b"decimals()"),
+        abi::selector(b"decimals()"),
         enc(DynSolValue::Uint(U256::from(6u64), 256)),
     );
 
@@ -2077,15 +2054,15 @@ async fn build_curve_pool_rejects_fewer_than_two_coins() {
     f.set_full(abi::encode_curve_coins_uint(1), addr_word(Address::ZERO));
     // Params must succeed (they're fetched before the min-tokens guard).
     f.set(
-        choreography::selector(b"A()"),
+        abi::selector(b"A()"),
         enc(DynSolValue::Uint(U256::from(100u64), 256)),
     );
     f.set(
-        choreography::selector(b"fee()"),
+        abi::selector(b"fee()"),
         enc(DynSolValue::Uint(U256::from(100u64), 256)),
     );
     f.set(
-        choreography::selector(b"admin_fee()"),
+        abi::selector(b"admin_fee()"),
         enc(DynSolValue::Uint(U256::from(0u64), 256)),
     );
     let io = io_with(f);
@@ -2116,12 +2093,12 @@ async fn build_curve_pool_rejects_a_pool_whose_required_getter_reverts() {
         enc(DynSolValue::Uint(U256::from(2_000_000u64), 256)),
     );
     f.set(
-        choreography::selector(b"A()"),
+        abi::selector(b"A()"),
         enc(DynSolValue::Uint(U256::from(100u64), 256)),
     );
     // `fee()` reverts — a decommissioned pool.
     f.set_error(
-        choreography::selector(b"fee()"),
+        abi::selector(b"fee()"),
         ProviderError::ExecutionReverted {
             code: 3,
             message: "execution reverted".to_string(),
@@ -2158,19 +2135,19 @@ async fn build_curve_pool_rejects_a_coin_with_no_code() {
         enc(DynSolValue::Uint(U256::from(2_000_000u64), 256)),
     );
     f.set(
-        choreography::selector(b"A()"),
+        abi::selector(b"A()"),
         enc(DynSolValue::Uint(U256::from(100u64), 256)),
     );
     f.set(
-        choreography::selector(b"fee()"),
+        abi::selector(b"fee()"),
         enc(DynSolValue::Uint(U256::from(100u64), 256)),
     );
     f.set(
-        choreography::selector(b"admin_fee()"),
+        abi::selector(b"admin_fee()"),
         enc(DynSolValue::Uint(U256::from(0u64), 256)),
     );
     // The sentinel's `decimals()` returns nothing (a no-code address).
-    f.set(choreography::selector(b"decimals()"), Vec::new());
+    f.set(abi::selector(b"decimals()"), Vec::new());
 
     let io = io_with(f);
     assert!(matches!(
@@ -2199,19 +2176,19 @@ async fn build_curve_pool_rejects_a_coin_whose_decimals_read_reverts() {
         enc(DynSolValue::Uint(U256::from(2_000_000u64), 256)),
     );
     f.set(
-        choreography::selector(b"A()"),
+        abi::selector(b"A()"),
         enc(DynSolValue::Uint(U256::from(100u64), 256)),
     );
     f.set(
-        choreography::selector(b"fee()"),
+        abi::selector(b"fee()"),
         enc(DynSolValue::Uint(U256::from(100u64), 256)),
     );
     f.set(
-        choreography::selector(b"admin_fee()"),
+        abi::selector(b"admin_fee()"),
         enc(DynSolValue::Uint(U256::from(0u64), 256)),
     );
     f.set_error(
-        choreography::selector(b"decimals()"),
+        abi::selector(b"decimals()"),
         ProviderError::ExecutionReverted {
             code: 3,
             message: "execution reverted".to_string(),
@@ -2249,15 +2226,15 @@ async fn build_curve_pool_rejects_a_coin_whose_balance_read_fails() {
 
     // Params must succeed (they're fetched before the guards).
     f.set(
-        choreography::selector(b"A()"),
+        abi::selector(b"A()"),
         enc(DynSolValue::Uint(U256::from(100u64), 256)),
     );
     f.set(
-        choreography::selector(b"fee()"),
+        abi::selector(b"fee()"),
         enc(DynSolValue::Uint(U256::from(100u64), 256)),
     );
     f.set(
-        choreography::selector(b"admin_fee()"),
+        abi::selector(b"admin_fee()"),
         enc(DynSolValue::Uint(U256::from(0u64), 256)),
     );
     let io = io_with(f);
@@ -2277,11 +2254,11 @@ async fn fetch_token_balance_supply_allowance_decode_uint256() {
     // balanceOf(address) returns 1234... (a 64-bit value).
     let mut f = FakeRpc::new();
     f.set(
-        choreography::selector(b"balanceOf(address)"),
+        abi::selector(b"balanceOf(address)"),
         U256::from(1_000_000_000u64).to_be_bytes::<32>().to_vec(),
     );
     let io = io_with(f);
-    let bal = choreography::fetch_token_balance(&io, TO, SV, None)
+    let bal = abi::fetch_token_balance(&io, &TO, &SV, None)
         .await
         .expect("balanceOf decodes");
     assert_eq!(bal, U256::from(1_000_000_000u64));
@@ -2291,11 +2268,11 @@ async fn fetch_token_balance_supply_allowance_decode_uint256() {
     let total: U256 = (U256::from(1u64) << 100) | U256::from(0xDEAD_BEEFu64);
     let mut f2 = FakeRpc::new();
     f2.set(
-        choreography::selector(b"totalSupply()"),
+        abi::selector(b"totalSupply()"),
         total.to_be_bytes::<32>().to_vec(),
     );
     let io2 = io_with(f2);
-    let sup = choreography::fetch_token_total_supply(&io2, TO, None)
+    let sup = abi::fetch_token_total_supply(&io2, &TO, None)
         .await
         .expect("totalSupply decodes");
     assert_eq!(sup, total);
@@ -2303,11 +2280,11 @@ async fn fetch_token_balance_supply_allowance_decode_uint256() {
     // allowance(owner,spender) returns 4321.
     let mut f3 = FakeRpc::new();
     f3.set(
-        choreography::selector(b"allowance(address,address)"),
+        abi::selector(b"allowance(address,address)"),
         U256::from(4_321u64).to_be_bytes::<32>().to_vec(),
     );
     let io3 = io_with(f3);
-    let allowance = choreography::fetch_token_allowance(&io3, TO, SV, TO, None)
+    let allowance = abi::fetch_token_allowance(&io3, &TO, &SV, &TO, None)
         .await
         .expect("allowance decodes");
     assert_eq!(allowance, U256::from(4_321u64));
@@ -2318,11 +2295,11 @@ async fn fetch_erc20_uint_and_string_field() {
     // decimals() dynamic-signature uint read.
     let mut f = FakeRpc::new();
     f.set(
-        choreography::selector(b"decimals()"),
+        abi::selector(b"decimals()"),
         enc(DynSolValue::Uint(U256::from(18u64), 256)),
     );
     let io = io_with(f);
-    let d = choreography::fetch_erc20_uint_field(&io, TO, b"decimals()", None)
+    let d = abi::fetch_uint256_field(&io, b"decimals()", &TO, None)
         .await
         .unwrap();
     assert_eq!(d, U256::from(18u64));
@@ -2330,11 +2307,11 @@ async fn fetch_erc20_uint_and_string_field() {
     // name() as a dynamic string.
     let mut f2 = FakeRpc::new();
     f2.set(
-        choreography::selector(b"name()"),
+        abi::selector(b"name()"),
         enc(DynSolValue::String("Wrapped Ether".to_owned())),
     );
     let io2 = io_with(f2);
-    let n = choreography::fetch_erc20_string_field(&io2, TO, b"name()", None)
+    let n = abi::fetch_string_field(&io2, b"name()", &TO, None)
         .await
         .unwrap();
     assert_eq!(n, "Wrapped Ether");
@@ -2344,11 +2321,11 @@ async fn fetch_erc20_uint_and_string_field() {
     weth[..4].copy_from_slice(b"WETH");
     let mut f3 = FakeRpc::new();
     f3.set(
-        choreography::selector(b"symbol()"),
+        abi::selector(b"symbol()"),
         enc(DynSolValue::FixedBytes(FixedBytes::from(weth), 32)),
     );
     let io3 = io_with(f3);
-    let s = choreography::fetch_erc20_string_field(&io3, TO, b"symbol()", None)
+    let s = abi::fetch_string_field(&io3, b"symbol()", &TO, None)
         .await
         .unwrap();
     assert_eq!(s, "WETH");
@@ -2421,15 +2398,15 @@ fn v3_route() -> route::V3RouteInputs<'static> {
 /// from one set instead of hand-building a fake per case.
 fn v3_route_fake(factory: Address, token0: Address, token1: Address) -> FakeRpc {
     let mut f = FakeRpc::new();
-    f.set(choreography::selector(b"factory()"), addr_word(factory));
-    f.set(choreography::selector(b"token0()"), addr_word(token0));
-    f.set(choreography::selector(b"token1()"), addr_word(token1));
+    f.set(abi::selector(b"factory()"), addr_word(factory));
+    f.set(abi::selector(b"token0()"), addr_word(token0));
+    f.set(abi::selector(b"token1()"), addr_word(token1));
     f.set(
-        choreography::selector(b"fee()"),
+        abi::selector(b"fee()"),
         enc(DynSolValue::Uint(U256::from(3000u32), 24)),
     );
     f.set(
-        choreography::selector(b"tickSpacing()"),
+        abi::selector(b"tickSpacing()"),
         enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
     );
     f.set(
@@ -2455,7 +2432,7 @@ async fn route_transient_rpc_failure_is_a_counted_skip() {
     let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
     let mut f = FakeRpc::new();
     f.set_error(
-        choreography::selector(b"factory()"),
+        abi::selector(b"factory()"),
         ProviderError::ConnectionFailed {
             message: "blip".to_owned(),
         },
@@ -2492,7 +2469,7 @@ async fn route_unserved_factory_refuses_loud() {
         alloy::primitives::address!("0x1111111111111111111111111111111111111111");
     let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
     let mut f = FakeRpc::new();
-    f.set(choreography::selector(b"factory()"), addr_word(factory));
+    f.set(abi::selector(b"factory()"), addr_word(factory));
     let io = io_with(f);
     let bot = Bot::new(1);
 
@@ -2656,15 +2633,15 @@ async fn construction_identity_parity_guard_reads_registered_identity_and_refuse
     let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
 
     let mut f = FakeRpc::new();
-    f.set(choreography::selector(b"factory()"), addr_word(factory));
-    f.set(choreography::selector(b"token0()"), addr_word(tok0));
-    f.set(choreography::selector(b"token1()"), addr_word(tok1));
+    f.set(abi::selector(b"factory()"), addr_word(factory));
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
     f.set(
-        choreography::selector(b"fee()"),
+        abi::selector(b"fee()"),
         enc(DynSolValue::Uint(U256::from(3000u32), 24)),
     );
     f.set(
-        choreography::selector(b"tickSpacing()"),
+        abi::selector(b"tickSpacing()"),
         enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
     );
     f.set(
@@ -2771,12 +2748,9 @@ async fn construction_door_v2_matches_the_route_interior() {
     let pool = compute_v2_address(UNISWAP_V2.factory, tok0, tok1, UNISWAP_V2.init_hash);
 
     let mut f = FakeRpc::new();
-    f.set(
-        choreography::selector(b"factory()"),
-        addr_word(UNISWAP_V2.factory),
-    );
-    f.set(choreography::selector(b"token0()"), addr_word(tok0));
-    f.set(choreography::selector(b"token1()"), addr_word(tok1));
+    f.set(abi::selector(b"factory()"), addr_word(UNISWAP_V2.factory));
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
     f.set(
         abi::encode_get_reserves()[..4].try_into().unwrap(),
         enc(DynSolValue::Tuple(vec![
@@ -2853,15 +2827,15 @@ async fn construction_door_v3_matches_the_route_interior() {
     let pool: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
 
     let mut f = FakeRpc::new();
-    f.set(choreography::selector(b"factory()"), addr_word(factory));
-    f.set(choreography::selector(b"token0()"), addr_word(tok0));
-    f.set(choreography::selector(b"token1()"), addr_word(tok1));
+    f.set(abi::selector(b"factory()"), addr_word(factory));
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
     f.set(
-        choreography::selector(b"fee()"),
+        abi::selector(b"fee()"),
         enc(DynSolValue::Uint(U256::from(3000u32), 24)),
     );
     f.set(
-        choreography::selector(b"tickSpacing()"),
+        abi::selector(b"tickSpacing()"),
         enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
     );
     f.set(
@@ -3079,7 +3053,7 @@ async fn construction_door_refusals_match_the_route_interior() {
     // An unserved factory: the interior's loud-abort class, folded into the
     // door's typed refusal.
     let mut f = FakeRpc::new();
-    f.set(choreography::selector(b"factory()"), addr_word(factory));
+    f.set(abi::selector(b"factory()"), addr_word(factory));
     let io = io_with(f);
     let plan = route::ConstructionRoute {
         factories: vec![served],
@@ -3125,7 +3099,7 @@ async fn construction_door_refusals_match_the_route_interior() {
     // A transient transport failure: the interior's counted skip.
     let mut down = FakeRpc::new();
     down.set_error(
-        choreography::selector(b"factory()"),
+        abi::selector(b"factory()"),
         ProviderError::ConnectionFailed {
             message: "blip".to_owned(),
         },
@@ -3185,19 +3159,19 @@ async fn the_curve_door_arm_constructs_registers_and_reuses() {
         enc(DynSolValue::Uint(U256::from(2_000_000u64), 256)),
     );
     f.set(
-        choreography::selector(b"A()"),
+        abi::selector(b"A()"),
         enc(DynSolValue::Uint(U256::from(2000u64), 256)),
     );
     f.set(
-        choreography::selector(b"fee()"),
+        abi::selector(b"fee()"),
         enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
     );
     f.set(
-        choreography::selector(b"admin_fee()"),
+        abi::selector(b"admin_fee()"),
         enc(DynSolValue::Uint(U256::from(500_000_000u64), 256)),
     );
     f.set(
-        choreography::selector(b"decimals()"),
+        abi::selector(b"decimals()"),
         enc(DynSolValue::Uint(U256::from(6u64), 256)),
     );
     let io = io_with(f);
@@ -3234,7 +3208,7 @@ fn an_unbound_word_source_reads_a_checked_empty_word() {
     // as a failure.
     let mut f = FakeRpc::new();
     f.set(
-        choreography::selector(b"tickBitmap(int16)"),
+        abi::selector(b"tickBitmap(int16)"),
         enc(DynSolValue::Uint(U256::ZERO, 256)),
     );
     let io = io_with(f);

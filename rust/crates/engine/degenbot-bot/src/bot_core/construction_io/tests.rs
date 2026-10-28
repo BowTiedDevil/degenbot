@@ -178,9 +178,12 @@ async fn composite_routes_rpc_call_to_rpc_half() {
     assert_eq!(io.get_block_number().await.unwrap(), 42);
 }
 
-/// The composite routes `call` to the `rpc` half and returns the canned bytes.
+/// The handle's read primitive routes `call` to the `rpc` half and returns the
+/// canned bytes — the one call step every construction read crosses.
 #[tokio::test]
 async fn composite_routes_call_to_rpc_half() {
+    use degenbot_rpc::abi::ContractRead;
+
     let io = ConstructionIo::new(Arc::new(FakeDb), Arc::new(FakeRpc { block_number: 0 }));
     let bytes = io.call(Address::ZERO, Bytes::new(), None).await.unwrap();
     assert_eq!(bytes.as_ref(), &[0xca, 0xfe]);

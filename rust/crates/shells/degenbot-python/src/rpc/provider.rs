@@ -215,7 +215,7 @@ impl PyAlloyProvider {
     }
 
     /// Execute an `eth_call` to a contract.
-    #[pyo3(signature = (to, data, block_number=None))]
+    #[pyo3(signature = (to, data, block_number=None) -> "bytes")]
     fn call(
         &self,
         py: Python<'_>,
@@ -255,7 +255,7 @@ impl PyAlloyProvider {
     }
 
     /// Get contract code at an address.
-    #[pyo3(signature = (address, block_number=None))]
+    #[pyo3(signature = (address, block_number=None) -> "bytes")]
     fn get_code(
         &self,
         py: Python<'_>,
@@ -505,7 +505,7 @@ impl PyAlloyProvider {
     }
 
     /// Get storage at a given address and position.
-    #[pyo3(signature = (address, position, block_number=None))]
+    #[pyo3(signature = (address, position, block_number=None) -> "bytes")]
     fn get_storage_at(
         &self,
         py: Python<'_>,

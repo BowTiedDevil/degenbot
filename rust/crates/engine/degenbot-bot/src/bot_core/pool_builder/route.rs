@@ -36,9 +36,9 @@ use degenbot_db::snapshot::TickMapDb;
 use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_pools::RegisterRefusal;
 use degenbot_pools::TickWordSource;
+use degenbot_rpc::abi;
 
 use super::builder::{self, PoolBuilderError, V4BuildResult, V4PoolBuildOverrides};
-use super::choreography;
 use super::tick_source;
 use crate::bot_core::construction_io::ConstructionIo;
 use crate::bot_core::registration_ledger::BuildFailure;
@@ -473,7 +473,7 @@ async fn construct_v3(
     // never the full immutable batch (and the decision is a TYPED policy
     // answer, not an exception to swallow). A served rung proceeds to the
     // full build, which reads the immutable batch itself.
-    let factory = choreography::fetch_address_returning(io, b"factory()", address, block)
+    let factory = abi::fetch_address_returning(io, b"factory()", &address, block)
         .await
         .map_err(|err| {
             ConstructionRefusal::Skipped(BuildFailure::Transient(format!("v3 factory read: {err}")))

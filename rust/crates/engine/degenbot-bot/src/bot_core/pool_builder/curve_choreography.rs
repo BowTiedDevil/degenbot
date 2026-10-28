@@ -23,10 +23,7 @@ use std::collections::HashMap;
 
 use alloy::primitives::{address, Address, U256};
 use degenbot_core::errors::ProviderError;
-use degenbot_rpc::abi;
-
-use super::choreography::{eth_call, selector};
-use crate::bot_core::construction_io::ConstructionIo;
+use degenbot_rpc::abi::{self, ContractRead};
 
 /// Which coin/balance getter prototype a pool exposes. `coins(uint256)` is
 /// tried first; older pools fall back to `coins(int128)`.
@@ -126,13 +123,13 @@ const THREE_CRV_POOL: Address = address!("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032F
 /// Tolerance-aware encode→call→decode: returns `None` on revert OR decode
 /// failure (mirrors Python `try/except (RpcError, AbiDecodeError, ValueError)`).
 async fn call_opt<T>(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     to: Address,
     data: Vec<u8>,
     block: Option<u64>,
     decode: fn(&[u8]) -> degenbot_core::errors::ProviderResult<T>,
 ) -> Option<T> {
-    match eth_call(io, to, data, block).await {
+    match io.call(to, data.into(), block).await {
         Ok(bytes) => decode(&bytes).ok(),
         Err(_) => None,
     }
@@ -140,7 +137,7 @@ async fn call_opt<T>(
 
 /// Tolerance-aware no-argument `uint256` read (revert/decode → `None`).
 async fn fetch_no_arg_uint_opt(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     to: Address,
     signature: &[u8],
     block: Option<u64>,
@@ -148,7 +145,7 @@ async fn fetch_no_arg_uint_opt(
     call_opt(
         io,
         to,
-        selector(signature).to_vec(),
+        abi::selector(signature).to_vec(),
         block,
         abi::decode_uint256,
     )
@@ -157,7 +154,7 @@ async fn fetch_no_arg_uint_opt(
 
 /// Tolerance-aware no-argument `address` read (revert/decode → `None`).
 async fn fetch_no_arg_address_opt(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     to: Address,
     signature: &[u8],
     block: Option<u64>,
@@ -165,7 +162,7 @@ async fn fetch_no_arg_address_opt(
     call_opt(
         io,
         to,
-        selector(signature).to_vec(),
+        abi::selector(signature).to_vec(),
         block,
         abi::decode_curve_coins,
     )
@@ -177,7 +174,7 @@ async fn fetch_no_arg_address_opt(
 /// `curve/detection/coin_discovery.discover_coins`. Never errors — returns
 /// whatever it found.
 pub async fn discover_curve_coins(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     pool: Address,
     block: Option<u64>,
 ) -> CurveCoinDiscovery {
@@ -222,19 +219,25 @@ pub async fn discover_curve_coins(
 /// `i` under both the uint256 and int128 prototypes. Returns the first working
 /// prototype, or `None` if neither returns a non-zero address.
 async fn discover_curve_prototype(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     pool: Address,
     i: u8,
     block: Option<u64>,
 ) -> Option<CurvePrototype> {
-    if let Ok(bytes) = eth_call(io, pool, abi::encode_curve_coins_uint(i), block).await {
+    if let Ok(bytes) = io
+        .call(pool, abi::encode_curve_coins_uint(i).into(), block)
+        .await
+    {
         if let Ok(addr) = abi::decode_curve_coins(&bytes) {
             if !addr.is_zero() {
                 return Some(CurvePrototype::Uint256);
             }
         }
     }
-    if let Ok(bytes) = eth_call(io, pool, abi::encode_curve_coins_int128(i), block).await {
+    if let Ok(bytes) = io
+        .call(pool, abi::encode_curve_coins_int128(i).into(), block)
+        .await
+    {
         if let Ok(addr) = abi::decode_curve_coins(&bytes) {
             if !addr.is_zero() {
                 return Some(CurvePrototype::Int128);
@@ -246,7 +249,7 @@ async fn discover_curve_prototype(
 
 /// Read `coins(i)` under the given prototype; `None` on revert/decode failure.
 async fn read_curve_coin(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     pool: Address,
     prototype: CurvePrototype,
     i: u8,
@@ -261,7 +264,7 @@ async fn read_curve_coin(
 
 /// Read `balances(i)` under the given prototype; `None` on revert/decode failure.
 async fn read_curve_balance(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     pool: Address,
     prototype: CurvePrototype,
     i: u8,
@@ -283,7 +286,7 @@ async fn read_curve_balance(
 /// Returns [`ProviderError`] from the underlying `eth_call` or a decode
 /// failure.
 pub async fn fetch_curve_pool_params(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     pool: Address,
     block: Option<u64>,
 ) -> Result<CurvePoolParams, ProviderError> {
@@ -299,12 +302,14 @@ pub async fn fetch_curve_pool_params(
 
 /// Required (propagating) no-argument `uint256` read.
 async fn req_no_arg_uint(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     to: Address,
     signature: &[u8],
     block: Option<u64>,
 ) -> Result<U256, ProviderError> {
-    let bytes = eth_call(io, to, selector(signature).to_vec(), block).await?;
+    let bytes = io
+        .call(to, abi::selector(signature).to_vec().into(), block)
+        .await?;
     abi::decode_uint256(&bytes)
 }
 
@@ -318,7 +323,7 @@ async fn req_no_arg_uint(
 ///
 /// Returns a [`ProviderError`] on an `eth_call` or decode failure.
 pub async fn fetch_curve_balances(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     pool: Address,
     count: usize,
     block: Option<u64>,
@@ -328,7 +333,9 @@ pub async fn fetch_curve_balances(
         let index = u8::try_from(i).map_err(|_| ProviderError::EncodingError {
             message: format!("balances index {i} exceeds u8"),
         })?;
-        let bytes = eth_call(io, pool, abi::encode_curve_balances_uint(index), block).await?;
+        let bytes = io
+            .call(pool, abi::encode_curve_balances_uint(index).into(), block)
+            .await?;
         out.push(abi::decode_curve_balances(&bytes)?);
     }
     Ok(out)
@@ -337,7 +344,7 @@ pub async fn fetch_curve_balances(
 /// Detect A-coefficient ramping params. If ANY of the four optional reads
 /// reverts, the pool is treated as non-ramping (mirrors `detect_a_ramping`).
 pub async fn detect_curve_a_ramping(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     pool: Address,
     block: Option<u64>,
 ) -> CurveARamping {
@@ -367,7 +374,7 @@ pub async fn detect_curve_a_ramping(
 /// sub-param is individually revert-tolerant; `offpeg_fee_multiplier()` is
 /// fetched unconditionally). Mirrors `detect_crypto_params`.
 pub async fn detect_curve_crypto_params(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     pool: Address,
     block: Option<u64>,
 ) -> CurveCryptoParams {
@@ -408,7 +415,7 @@ pub async fn detect_curve_crypto_params(
 /// the driver, which builds the token companions); used for the default
 /// precision multiplier `10**(18 - decimals)` for non-overridden coins.
 pub async fn detect_curve_lending_tokens(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     token_addresses: &[Address],
     token_decimals: &[u8],
     block: Option<u64>,
@@ -499,7 +506,7 @@ pub async fn detect_curve_lending_tokens(
 /// order. Returns `None` if no registry returns a non-zero address. Mirrors
 /// `find_lp_token`.
 pub async fn find_curve_lp_token(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     pool: Address,
     registry_addresses: &[Address],
     block: Option<u64>,
@@ -527,7 +534,7 @@ pub async fn find_curve_lp_token(
 /// resolution with 3Crv fallback, `address[8]` underlying-coins decode with
 /// zero stop).
 pub async fn detect_curve_metapool(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     pool: Address,
     token_addresses: &[Address],
     registry_addresses: &[Address],
@@ -586,7 +593,7 @@ pub async fn detect_curve_metapool(
 /// `get_base_pool()` on the registry, then the 3Crv LP-token fallback. Each
 /// probe is individually revert-tolerant. Mirrors `_resolve_base_pool_address`.
 async fn resolve_curve_base_pool(
-    io: &ConstructionIo,
+    io: &impl ContractRead,
     pool: Address,
     token_addresses: &[Address],
     registry: Address,

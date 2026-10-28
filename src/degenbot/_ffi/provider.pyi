@@ -68,7 +68,7 @@ class AlloyProvider:
         once at construction and raises `ValueError` when the endpoint serves
         another chain. `None` constructs the provider with no binding.
         """
-    def call(self, /, to: str, data: bytes, block_number: SupportsIndex | None = None) -> Any:
+    def call(self, /, to: str, data: bytes, block_number: SupportsIndex | None = None) -> bytes:
         """
         Execute an `eth_call` to a contract.
         """
@@ -107,7 +107,7 @@ class AlloyProvider:
         """
         Get chain ID.
         """
-    def get_code(self, /, address: str, block_number: SupportsIndex | None = None) -> Any:
+    def get_code(self, /, address: str, block_number: SupportsIndex | None = None) -> bytes:
         """
         Get contract code at an address.
         """
@@ -128,7 +128,7 @@ class AlloyProvider:
         """
     def get_storage_at(
         self, /, address: str, position: Any, block_number: SupportsIndex | None = None
-    ) -> Any:
+    ) -> bytes:
         """
         Get storage at a given address and position.
         """
@@ -321,7 +321,7 @@ class AsyncAlloyProvider:
         """
     def call(
         self, /, to: str, data: bytes, block_number: SupportsIndex | None = None
-    ) -> Awaitable[Any]:
+    ) -> Awaitable[bytes]:
         """
         Execute an `eth_call` to a contract asynchronously.
         """
@@ -384,7 +384,7 @@ class AsyncAlloyProvider:
         """
     def get_code(
         self, /, address: str, block_number: SupportsIndex | None = None
-    ) -> Awaitable[Any]:
+    ) -> Awaitable[bytes]:
         """
         Get contract code at an address asynchronously.
         """
@@ -405,7 +405,7 @@ class AsyncAlloyProvider:
         """
     def get_storage_at(
         self, /, address: str, position: Any, block_number: SupportsIndex | None = None
-    ) -> Awaitable[Any]:
+    ) -> Awaitable[bytes]:
         """
         Get storage at a given address and position asynchronously.
         """

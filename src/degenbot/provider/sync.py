@@ -119,7 +119,7 @@ class _AlloyQueryMixin(_AlloyBacked):
             Contract bytecode as bytes
 
         """
-        return cast("bytes", self._provider.get_code(address, block))
+        return self._provider.get_code(address, block)
 
     def call(
         self,
@@ -146,7 +146,7 @@ class _AlloyQueryMixin(_AlloyBacked):
             >>> balance = int.from_bytes(result, "big")
 
         """
-        return cast("bytes", self._provider.call(to, data, block))
+        return self._provider.call(to, data, block)
 
     def get_logs(
         self,
@@ -285,7 +285,7 @@ class _AlloyQueryMixin(_AlloyBacked):
             Storage value at the position as bytes (32)
 
         """
-        return cast("bytes", self._provider.get_storage_at(address, position, block))
+        return self._provider.get_storage_at(address, position, block)
 
     def close(self) -> None:
         """Close connection pool and release resources."""
@@ -378,7 +378,7 @@ class _AlloyQueryMixin(_AlloyBacked):
             The raw return data from the contract call.
 
         """
-        return cast("bytes", self._provider.call(tx["to"], to_bytes(tx["data"]), block))
+        return self._provider.call(tx["to"], to_bytes(tx["data"]), block)
 
     def batch_call(self, calls: list[TxParams], block: int | None = None) -> list[bytes]:
         """Execute multiple eth_calls sequentially and return results in order.

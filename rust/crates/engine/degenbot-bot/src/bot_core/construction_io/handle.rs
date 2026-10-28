@@ -179,15 +179,6 @@ impl ConstructionIo {
         self.rpc.get_balance(address, block_number).await
     }
 
-    pub async fn call(
-        &self,
-        to: Address,
-        data: Bytes,
-        block_number: Option<u64>,
-    ) -> Result<Bytes, ProviderError> {
-        self.rpc.call(to, data, block_number).await
-    }
-
     /// Resolve a typed [`BlockSelector`] to a concrete block number against
     /// the RPC clock the `rpc` half owns.
     pub async fn resolve_block_selector(

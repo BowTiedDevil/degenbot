@@ -214,7 +214,7 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Execute an `eth_call` to a contract asynchronously.
-    #[pyo3(signature = (to, data, block_number=None) -> "Awaitable[Any]")]
+    #[pyo3(signature = (to, data, block_number=None) -> "Awaitable[bytes]")]
     fn call<'py>(
         &self,
         py: Python<'py>,
@@ -245,7 +245,7 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Get contract code at an address asynchronously.
-    #[pyo3(signature = (address, block_number=None) -> "Awaitable[Any]")]
+    #[pyo3(signature = (address, block_number=None) -> "Awaitable[bytes]")]
     fn get_code<'py>(
         &self,
         py: Python<'py>,
@@ -377,7 +377,7 @@ impl PyAsyncAlloyProvider {
     }
 
     /// Get storage at a given address and position asynchronously.
-    #[pyo3(signature = (address, position, block_number=None) -> "Awaitable[Any]")]
+    #[pyo3(signature = (address, position, block_number=None) -> "Awaitable[bytes]")]
     fn get_storage_at<'py>(
         &self,
         py: Python<'py>,

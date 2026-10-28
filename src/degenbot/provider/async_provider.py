@@ -67,7 +67,7 @@ class _AsyncAlloyEndpointMixin(_AsyncAlloyBacked):
             The current block number.
 
         """
-        return cast("int", await self._provider.get_block_number())
+        return await self._provider.get_block_number()
 
     async def get_chain_id(self) -> int:
         """Return the chain ID.
@@ -76,7 +76,7 @@ class _AsyncAlloyEndpointMixin(_AsyncAlloyBacked):
             The chain ID.
 
         """
-        return cast("int", await self._provider.get_chain_id())
+        return await self._provider.get_chain_id()
 
     async def get_gas_price(self) -> int:
         """Return the current gas price in wei.
@@ -85,7 +85,7 @@ class _AsyncAlloyEndpointMixin(_AsyncAlloyBacked):
             The current gas price in wei.
 
         """
-        return cast("int", await self._provider.get_gas_price())
+        return await self._provider.get_gas_price()
 
 
 class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
@@ -179,7 +179,7 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             The raw return data from the contract call.
 
         """
-        return cast("bytes", await self._provider.call(to, data, block))
+        return await self._provider.call(to, data, block)
 
     async def call_raw(
         self,
@@ -192,7 +192,7 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             The raw return data from the contract call.
 
         """
-        return cast("bytes", await self._provider.call(tx["to"], to_bytes(tx["data"]), block))
+        return await self._provider.call(tx["to"], to_bytes(tx["data"]), block)
 
     async def batch_call(
         self,
@@ -227,7 +227,7 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             The contract bytecode, or empty bytes if not a contract.
 
         """
-        return cast("bytes", await self._provider.get_code(address, block))
+        return await self._provider.get_code(address, block)
 
     async def estimate_gas(
         self,
@@ -243,7 +243,7 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             The estimated gas units.
 
         """
-        return cast("int", await self._provider.estimate_gas(to, data, from_, value, block))
+        return await self._provider.estimate_gas(to, data, from_, value, block)
 
     async def get_storage_at(
         self,
@@ -257,7 +257,7 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             The storage value as bytes.
 
         """
-        return cast("bytes", await self._provider.get_storage_at(address, position, block))
+        return await self._provider.get_storage_at(address, position, block)
 
     async def get_balance(self, address: str, block: int | None = None) -> int:
         """Get the balance of an address in wei.
@@ -279,7 +279,7 @@ class _AsyncAlloyQueryMixin(_AsyncAlloyBacked):
             The transaction count (nonce).
 
         """
-        return cast("int", await self._provider.get_transaction_count(address, block))
+        return await self._provider.get_transaction_count(address, block)
 
     async def make_request(self, method: str, params: list[Any]) -> Any:  # ruff:ignore[any-type]
         """Make a raw JSON-RPC request.

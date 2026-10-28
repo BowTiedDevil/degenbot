@@ -2,8 +2,9 @@
 //!
 //! Part 2 of the builder port: the probe-dispatch-assemble turn a bare
 //! on-chain `(chain_id, address)` into a core structural pool
-//! identity+state, using the T1 choreography (`choreography`) over a
-//! [`ConstructionIo`]. This module is the single source for constructing V2
+//! identity+state, reading every construction-tier contract value through the
+//! one call step ([`ContractRead`]) over a [`ConstructionIo`]. This module is
+//! the single source for constructing V2
 //! pools end-to-end with zero Python; the DEX-variant/fees/deployer/init_hash
 //! come from the built-in [`degenbot_uniswap::dex_identity`] presets (keyed by
 //! factory, with a per-pool `stableSwap()`/`stable()` read call to disambiguate
@@ -16,6 +17,7 @@
 use hashbrown::HashMap;
 use std::sync::Arc;
 
+use alloy::dyn_abi::{DynSolType, DynSolValue};
 use alloy::primitives::{Address, B256, U256};
 use degenbot_core::address_utils::address_to_checksum_string;
 use degenbot_core::errors::ProviderError;
@@ -36,15 +38,15 @@ use degenbot_pools::{
 };
 use degenbot_pools::{ConcentratedLiquiditySlotLayout, RegisterV3PoolParams};
 use degenbot_pools::{RegisterV4PoolParams, V4PoolKey};
-use degenbot_rpc::abi;
+use degenbot_rpc::abi::{self, ContractRead};
+use degenbot_rpc::multicall3::{self, MulticallResult, MULTICALL3_ADDRESS};
 use degenbot_rpc::tick_bootstrap::{fetch_tick_word_via, UnreadableBitmapPolicy};
 use degenbot_uniswap::deployments;
 use degenbot_uniswap::dex_identity::{self, DexIdentity, DexVariant};
 
-use super::choreography::{self};
 use super::curve_choreography;
 use super::parity;
-use crate::bot_core::construction_io::ConstructionIo;
+use crate::bot_core::construction_io::{ConstructionIo, PacedRead};
 use crate::bot_core::curve_data_provider_impl::RpcCurveDataProvider;
 use degenbot_pools::PoolTickCoverage;
 use degenbot_pools::TickInfo;
@@ -132,6 +134,133 @@ const UNKNOWN_NAME: &str = "Unknown Token";
 const UNKNOWN_SYMBOL: &str = "UNKNOWN";
 const UNKNOWN_DECIMALS: u8 = 18;
 
+/// Fetch ERC-20 `name()` / `symbol()` / `decimals()` in three reads.
+///
+/// `None` when any of the three reads fails to answer or fails to decode. That
+/// silence is this read's whole policy: what a field it could not read becomes
+/// is [`build_erc20_metadata`]'s decision (its alternate-prototype fallback),
+/// not this read's.
+pub async fn fetch_erc20_metadata(
+    read: &impl ContractRead,
+    address: &Address,
+) -> Option<(String, String, u64)> {
+    let name = fetch_metadata_string(read, b"name()", address).await?;
+    let symbol = fetch_metadata_string(read, b"symbol()", address).await?;
+    let decimals_bytes = read
+        .call(*address, abi::selector(b"decimals()").to_vec().into(), None)
+        .await
+        .ok()?;
+    let decimals = match DynSolType::Uint(256).abi_decode(&decimals_bytes) {
+        Ok(DynSolValue::Uint(n, _)) => n.to::<u64>(),
+        _ => return None,
+    };
+    Some((name, symbol, decimals))
+}
+
+/// One token-metadata field decoded as a Solidity `string`; a transport or
+/// decode failure is `None` so the caller can try the alternate prototype
+/// (`NAME()` / `SYMBOL()`) or fall back to the UNKNOWN sentinel.
+async fn fetch_metadata_string(
+    read: &impl ContractRead,
+    signature: &[u8],
+    address: &Address,
+) -> Option<String> {
+    let bytes = read
+        .call(*address, abi::selector(signature).to_vec().into(), None)
+        .await
+        .ok()?;
+    match DynSolType::String.abi_decode(&bytes) {
+        Ok(DynSolValue::String(value)) => Some(value),
+        _ => None,
+    }
+}
+
+/// Decode a Multicall3 sub-call's return data as a Solidity `string`
+/// (`name()` / `symbol()`). A reverted sub-call or non-string return is `None`
+/// (the caller's per-field alternate-prototype fallback contract).
+fn decode_metadata_string(res: &MulticallResult) -> Option<String> {
+    if !res.success {
+        return None;
+    }
+    match DynSolType::String.abi_decode(&res.return_data) {
+        Ok(DynSolValue::String(s)) => Some(s),
+        _ => None,
+    }
+}
+
+/// Decode a Multicall3 sub-call's return data as a `uint256` (`decimals()`);
+/// `None` on revert or decode failure.
+fn decode_metadata_decimals(res: &MulticallResult) -> Option<u64> {
+    if !res.success {
+        return None;
+    }
+    match DynSolType::Uint(256).abi_decode(&res.return_data) {
+        Ok(DynSolValue::Uint(n, _)) => Some(n.to::<u64>()),
+        _ => None,
+    }
+}
+
+/// Fetch ERC-20 `name()` / `symbol()` / `decimals()` for MANY tokens in ONE
+/// Multicall3 `aggregate3` call, degrading to per-token [`fetch_erc20_metadata`]
+/// when the multicall itself fails.
+///
+/// Returns one `Option<(name, symbol, decimals)>` per input address, in order. A
+/// token whose sub-call reverted or failed to decode is `None`, matching the
+/// single-token path's fallback contract. The chunking and the degradation are
+/// this read's policy; the call step and the `aggregate3` encode/decode are
+/// shared (`degenbot_rpc::multicall3`).
+pub async fn fetch_erc20_metadata_batch(
+    read: &impl ContractRead,
+    addresses: &[Address],
+) -> Vec<Option<(String, String, u64)>> {
+    if addresses.is_empty() {
+        return Vec::new();
+    }
+
+    // 3 sub-calls per token: name(), symbol(), decimals().
+    let mut calls: Vec<(Address, alloy::primitives::Bytes)> =
+        Vec::with_capacity(addresses.len() * 3);
+    for addr in addresses {
+        calls.push((*addr, abi::selector(b"name()").to_vec().into()));
+        calls.push((*addr, abi::selector(b"symbol()").to_vec().into()));
+        calls.push((*addr, abi::selector(b"decimals()").to_vec().into()));
+    }
+
+    let batch = async {
+        let calldata = multicall3::encode_aggregate3(&calls)?;
+        let data = read.call(MULTICALL3_ADDRESS, calldata, None).await?;
+        multicall3::decode_aggregate3_results(&data, calls.len())
+    }
+    .await;
+
+    let Ok(results) = batch else {
+        // Multicall3 not deployed / unreachable / malformed return: degrade to
+        // the per-token path, preserving the pre-batch behaviour exactly.
+        let mut out = Vec::with_capacity(addresses.len());
+        for addr in addresses {
+            out.push(fetch_erc20_metadata(read, addr).await);
+        }
+        return out;
+    };
+
+    let mut out = Vec::with_capacity(addresses.len());
+    for chunk in results.chunks(3) {
+        if chunk.len() < 3 {
+            out.push(None);
+            continue;
+        }
+        let name = decode_metadata_string(&chunk[0]);
+        let symbol = decode_metadata_string(&chunk[1]);
+        let decimals = decode_metadata_decimals(&chunk[2]);
+        if let (Some(n), Some(s), Some(d)) = (name, symbol, decimals) {
+            out.push(Some((n, s, d)));
+        } else {
+            out.push(None);
+        }
+    }
+    out
+}
+
 /// Resolve ERC-20 token metadata DB-first, then on-chain, with the
 /// alternate-prototype + UNKNOWN fallbacks — the core twin of
 /// `Erc20Builder.build` steps 3–5.
@@ -148,7 +277,7 @@ const UNKNOWN_DECIMALS: u8 = 18;
 /// 4. When the DB row existed but was fully blank, write the resolved values
 ///    back best-effort.
 ///
-/// Returns `(name, symbol, decimals)`. This is a pure choreography fn over
+/// Returns `(name, symbol, decimals)`. This is a pure read fn over
 /// [`ConstructionIo`] (no `BotState`) so a standalone `cargo add degenbot`
 /// consumer can reach it via the umbrella; it does NOT itself register the
 /// token — the `PyBot.build_erc20_token` seam calls this then
@@ -190,7 +319,7 @@ pub async fn build_erc20_metadata(
             message: "No contract deployed at this address".to_owned(),
         });
     }
-    if let Ok(Some((n, s, d))) = choreography::fetch_erc20_metadata(io, address).await {
+    if let Some((n, s, d)) = fetch_erc20_metadata(io, &address).await {
         if name.is_none() {
             name = Some(n);
         }
@@ -244,7 +373,7 @@ async fn fetch_field_string(
     fallback: &str,
 ) -> String {
     for p in prototypes {
-        if let Ok(s) = choreography::fetch_erc20_string_field(io, address, p, None).await {
+        if let Ok(s) = abi::fetch_string_field(io, p, &address, None).await {
             return s;
         }
     }
@@ -255,13 +384,172 @@ async fn fetch_field_string(
 /// `u8`; else `UNKNOWN_DECIMALS`.
 async fn fetch_field_decimals(io: &ConstructionIo, address: Address, prototypes: &[&[u8]]) -> u8 {
     for p in prototypes {
-        if let Ok(v) = choreography::fetch_erc20_uint_field(io, address, p, None).await {
+        if let Ok(v) = abi::fetch_uint256_field(io, p, &address, None).await {
             if let Ok(dec) = u8::try_from(v.to::<u64>()) {
                 return dec;
             }
         }
     }
     UNKNOWN_DECIMALS
+}
+
+// ---------------------------------------------------------------------------
+// Pool-identity and fee reads
+//
+// The multi-read assemblies a builder runs before it can name a pool. Each is a
+// fixed sequence of single reads over the one call step — no fallback, no
+// swallow: a pool that cannot answer fails its build instead of degrading into
+// a shape the state machine would have to defend against.
+// ---------------------------------------------------------------------------
+
+/// A V2-style pool's immutable identity, read from the pool itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct V2Immutable {
+    /// The factory that deployed the pool.
+    pub factory: Address,
+    /// The pool's first token.
+    pub token0: Address,
+    /// The pool's second token.
+    pub token1: Address,
+}
+
+/// A V3-style pool's immutable identity plus its fee tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct V3Immutable {
+    /// The factory that deployed the pool.
+    pub factory: Address,
+    /// The pool's first token.
+    pub token0: Address,
+    /// The pool's second token.
+    pub token1: Address,
+    /// The pool's fee in hundredths of a bip.
+    pub fee: u32,
+    /// The pool's tick spacing.
+    pub tick_spacing: i32,
+}
+
+/// Fetch a V2-style pool's `factory()` / `token0()` / `token1()`.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] when any of the three reads fails.
+pub async fn fetch_v2_immutable_data(
+    read: &impl ContractRead,
+    address: &Address,
+    block: Option<u64>,
+) -> Result<V2Immutable, ProviderError> {
+    Ok(V2Immutable {
+        factory: abi::fetch_address_returning(read, b"factory()", address, block).await?,
+        token0: abi::fetch_address_returning(read, b"token0()", address, block).await?,
+        token1: abi::fetch_address_returning(read, b"token1()", address, block).await?,
+    })
+}
+
+/// Fetch a V3-style pool's `factory()` / `token0()` / `token1()` / `fee()` /
+/// `tickSpacing()`.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] when any of the five reads fails.
+pub async fn fetch_v3_immutable_data(
+    read: &impl ContractRead,
+    address: &Address,
+    block: Option<u64>,
+) -> Result<V3Immutable, ProviderError> {
+    let factory = abi::fetch_address_returning(read, b"factory()", address, block).await?;
+    let token0 = abi::fetch_address_returning(read, b"token0()", address, block).await?;
+    let token1 = abi::fetch_address_returning(read, b"token1()", address, block).await?;
+    let fee = abi::fetch_no_arg_uint(read, b"fee()", address, block, &DynSolType::Uint(24)).await?;
+    let tick_spacing =
+        abi::fetch_no_arg_int(read, b"tickSpacing()", address, block, &DynSolType::Int(24)).await?;
+    Ok(V3Immutable {
+        factory,
+        token0,
+        token1,
+        fee: fee.to::<u32>(),
+        tick_spacing: tick_spacing.try_into().unwrap_or(0),
+    })
+}
+
+/// Camelot V2 pool fee configuration read from the pool (ADR-005).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CamelotState {
+    /// The pool's `stableSwap()` flag.
+    pub stable: bool,
+    /// `FEE_DENOMINATOR()` return (a `uint256`).
+    pub fee_denominator: U256,
+    /// `token0FeePercent()` return.
+    pub token0_fee_percent: u64,
+    /// `token1FeePercent()` return.
+    pub token1_fee_percent: u64,
+}
+
+/// Fetch a Camelot V2 pool's `stableSwap()` flag and fee configuration
+/// (ADR-005). The four probes are independent reads over the one call step.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] when any of the four reads fails.
+pub async fn fetch_camelot_state(
+    read: &impl ContractRead,
+    address: &Address,
+    block: Option<u64>,
+) -> Result<CamelotState, ProviderError> {
+    let uint = &DynSolType::Uint(256);
+    Ok(CamelotState {
+        stable: abi::fetch_no_arg_bool(read, b"stableSwap()", address, block).await?,
+        fee_denominator: abi::fetch_no_arg_uint(read, b"FEE_DENOMINATOR()", address, block, uint)
+            .await?,
+        token0_fee_percent: abi::fetch_no_arg_uint(
+            read,
+            b"token0FeePercent()",
+            address,
+            block,
+            uint,
+        )
+        .await?
+        .to::<u64>(),
+        token1_fee_percent: abi::fetch_no_arg_uint(
+            read,
+            b"token1FeePercent()",
+            address,
+            block,
+            uint,
+        )
+        .await?
+        .to::<u64>(),
+    })
+}
+
+/// Aerodrome V2 common data: the `stable()` flag (read on the pool, which
+/// disambiguates the shared volatile/stable factory) and the
+/// `getFee(address,bool)` unidirectional fee (read on the factory).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AerodromeV2Common {
+    /// The pool's `stable()` flag.
+    pub stable: bool,
+    /// Unidirectional fee in basis points (Aerodrome fee denominator `10_000`).
+    pub fee_bps: u64,
+}
+
+/// Fetch an Aerodrome V2 pool's `stable()` flag + `getFee()` fee.
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] when either read fails.
+pub async fn fetch_aerodrome_stable_and_fee(
+    read: &impl ContractRead,
+    address: &Address,
+    factory: &Address,
+    block: Option<u64>,
+) -> Result<AerodromeV2Common, ProviderError> {
+    let stable = abi::fetch_no_arg_bool(read, b"stable()", address, block).await?;
+    // The fee read takes the pool's own `stable()` answer, so the stable flag
+    // must be known before it — the one data dependency in this assembly.
+    let fee_bps = abi::fetch_aerodrome_fee(read, factory, address, stable, block)
+        .await?
+        .to::<u64>();
+    Ok(AerodromeV2Common { stable, fee_bps })
 }
 
 /// Probe a pool contract to identify its family via the canonical read-call
@@ -311,18 +599,14 @@ pub async fn probe_pool_type(
 /// absent), `Err` on any other provider failure (mirrors the benign-revert
 /// rule in [`build_balancer_stable`]).
 async fn probe_present(
-    io: &ConstructionIo,
+    read: &impl ContractRead,
     address: Address,
     signature: &[u8],
     block: Option<u64>,
 ) -> Result<bool, ProviderError> {
-    match choreography::eth_call(
-        io,
-        address,
-        choreography::selector(signature).to_vec(),
-        block,
-    )
-    .await
+    match read
+        .call(address, abi::selector(signature).to_vec().into(), block)
+        .await
     {
         Ok(_) => Ok(true),
         Err(ProviderError::ExecutionReverted { .. }) => Ok(false),
@@ -341,11 +625,14 @@ async fn probe_present(
 /// `coins(0)` needs the index word in the calldata (the ABI decoder rejects a
 /// bare selector), so this cannot reuse [`probe_present`].
 async fn probe_curve(
-    io: &ConstructionIo,
+    read: &impl ContractRead,
     address: Address,
     block: Option<u64>,
 ) -> Result<bool, ProviderError> {
-    match choreography::eth_call(io, address, abi::encode_curve_coins_uint(0), block).await {
+    match read
+        .call(address, abi::encode_curve_coins_uint(0).into(), block)
+        .await
+    {
         Ok(bytes) => Ok(abi::decode_curve_coins(&bytes).is_ok()),
         Err(ProviderError::ExecutionReverted { .. }) => Ok(false),
         Err(e) => Err(e),
@@ -374,14 +661,14 @@ pub async fn resolve_v2_dex(
     block: Option<u64>,
 ) -> Result<Option<DexIdentity>, ProviderError> {
     if factory == dex_identity::CAMELOT_V2_STABLE.factory {
-        let stable = fetch_no_arg_bool(io, address, b"stableSwap()", block).await?;
+        let stable = abi::fetch_no_arg_bool(io, b"stableSwap()", &address, block).await?;
         Ok(Some(if stable {
             dex_identity::CAMELOT_V2_STABLE
         } else {
             dex_identity::CAMELOT_V2_VOLATILE
         }))
     } else if factory == dex_identity::AERODROME_V2_STABLE.factory {
-        let stable = fetch_no_arg_bool(io, address, b"stable()", block).await?;
+        let stable = abi::fetch_no_arg_bool(io, b"stable()", &address, block).await?;
         Ok(Some(if stable {
             dex_identity::AERODROME_V2_STABLE
         } else {
@@ -400,47 +687,23 @@ pub async fn resolve_v2_dex(
     }
 }
 
-/// Read a no-argument `bool` from the pool (the stable/volatile disambiguator).
-async fn fetch_no_arg_bool(
-    io: &ConstructionIo,
-    address: Address,
-    signature: &[u8],
-    block: Option<u64>,
-) -> Result<bool, ProviderError> {
-    use alloy::dyn_abi::{DynSolType, DynSolValue};
-    let bytes = choreography::eth_call(
-        io,
-        address,
-        choreography::selector(signature).to_vec(),
-        block,
-    )
-    .await?;
-    match DynSolType::Bool.abi_decode(&bytes) {
-        Ok(DynSolValue::Bool(b)) => Ok(b),
-        _ => Err(ProviderError::DecodingError {
-            message: "invalid bool decode for no-arg read".into(),
-        }),
-    }
-}
-
-/// Read Camelot's `FEE_DENOMINATOR()` (uint), used to scale the solidly-stable
-/// math. `None` when the read reverts (non-Camelot-stable callers never call).
+/// Read Camelot's `FEE_DENOMINATOR()`, used to scale the solidly-stable math.
+/// `None` when the read fails (non-Camelot-stable callers never ask).
 async fn fetch_fee_denominator(
-    io: &ConstructionIo,
+    read: &impl ContractRead,
     address: Address,
     block: Option<u64>,
 ) -> Result<Option<u64>, ProviderError> {
-    let calldata = choreography::selector(b"FEE_DENOMINATOR()").to_vec();
-    match choreography::eth_call(io, address, calldata, block).await {
-        Ok(bytes) => {
-            use alloy::dyn_abi::{DynSolType, DynSolValue};
-            match DynSolType::Uint(256).abi_decode(&bytes) {
-                Ok(DynSolValue::Uint(n, _)) => Ok(Some(n.to::<u64>())),
-                _ => Ok(None),
-            }
-        }
-        Err(_) => Ok(None),
-    }
+    Ok(abi::fetch_no_arg_uint(
+        read,
+        b"FEE_DENOMINATOR()",
+        &address,
+        block,
+        &DynSolType::Uint(256),
+    )
+    .await
+    .ok()
+    .map(|denominator| denominator.to::<u64>()))
 }
 
 /// Assemble `build_v2` params for a V2-style constant-product pool.
@@ -462,8 +725,8 @@ pub async fn build_v2(
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<RegisterV2PoolParams, PoolBuilderError> {
-    let imm = choreography::fetch_v2_immutable_data(io, address, block).await?;
-    let (r0, r1) = choreography::fetch_v2_reserves(io, address, block).await?;
+    let imm = fetch_v2_immutable_data(io, &address, block).await?;
+    let (r0, r1) = abi::fetch_v2_reserves(io, &address, block).await?;
     let id = resolve_v2_dex(io, address, imm.factory, block)
         .await?
         .ok_or(PoolBuilderError::UnknownVariant {
@@ -528,10 +791,9 @@ pub async fn build_aerodrome_v2(
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<RegisterAerodromeV2PoolParams, PoolBuilderError> {
-    let imm = choreography::fetch_v2_immutable_data(io, address, block).await?;
-    let (r0, r1) = choreography::fetch_v2_reserves(io, address, block).await?;
-    let common =
-        choreography::fetch_aerodrome_stable_and_fee(io, address, imm.factory, block).await?;
+    let imm = fetch_v2_immutable_data(io, &address, block).await?;
+    let (r0, r1) = abi::fetch_v2_reserves(io, &address, block).await?;
+    let common = fetch_aerodrome_stable_and_fee(io, &address, &imm.factory, block).await?;
 
     let id = if common.stable {
         dex_identity::AERODROME_V2_STABLE
@@ -684,27 +946,20 @@ async fn compute_scaling_factor(
 }
 
 /// Read an ERC-20 token's `decimals()` (`uint8`, right-aligned in its ABI
-/// word) via the choreography primitive.
+/// word) over the one call step.
 ///
 /// # Errors
 ///
 /// Returns [`PoolBuilderError::Rpc`] on an `eth_call`/decode failure.
 async fn decimals_of(
-    io: &ConstructionIo,
+    read: &impl ContractRead,
     token: Address,
     block: Option<u64>,
 ) -> Result<u64, PoolBuilderError> {
-    use degenbot_rpc::abi;
-    let bytes = choreography::eth_call(
-        io,
-        token,
-        choreography::selector(b"decimals()").to_vec(),
-        block,
-    )
-    .await
-    .map_err(PoolBuilderError::Rpc)?;
-    let dec = abi::decode_uint256(&bytes).map_err(PoolBuilderError::Rpc)?;
-    Ok(dec.to::<u64>())
+    abi::fetch_uint256_field(read, b"decimals()", &token, block)
+        .await
+        .map(|decimals| decimals.to::<u64>())
+        .map_err(PoolBuilderError::Rpc)
 }
 
 /// A Balancer token's scaling factor, with an unreadable `decimals()` classified
@@ -733,6 +988,76 @@ async fn balancer_scaling_factor(
             }) => PoolBuilderError::Spec(SpecRefusal::NoCodeCoin),
             other => other,
         })
+}
+
+/// The Balancer pool sub-type resolved by [`probe_balancer_type`] — the
+/// semantic owner of the family vocabulary; the binding mirrors its two
+/// discriminants as the Python `BalancerFamily` enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BalancerFamily {
+    /// Has `getNormalizedWeights()` — a weighted pool.
+    Weighted,
+    /// Has `getAmplificationParameter()` (no weights) — a stable pool.
+    Stable,
+}
+
+/// Find the Balancer V2 factory that owns `pool`, by asking each candidate
+/// factory's `isPoolFromFactory(pool)`.
+///
+/// Balancer V2 exposes no enumerable pool registry (`getPoolCount` / `getPools`
+/// / `getPoolAt` revert on every factory revision), and a deployed pool carries
+/// no `factory()` getter — so membership is the only on-chain ownership answer.
+/// A candidate that reverts or fails to decode is not the owner; a candidate
+/// that does not own the pool reports `false`. That skip is this read's policy:
+/// it is what "ask every candidate" means.
+///
+/// Returns `None` when no candidate owns the pool (a factory revision the
+/// registry does not carry — e.g. the `MetaStablePool` factory).
+pub async fn fetch_balancer_factory(
+    read: &impl ContractRead,
+    pool: &Address,
+    candidates: &[Address],
+    block: Option<u64>,
+) -> Option<Address> {
+    for factory in candidates {
+        let Ok(owns) = abi::fetch_balancer_is_pool_from_factory(read, factory, pool, block).await
+        else {
+            continue;
+        };
+        if owns {
+            return Some(*factory);
+        }
+    }
+    None
+}
+
+/// Probe a Balancer pool's sub-type: `getNormalizedWeights()` answers →
+/// [`BalancerFamily::Weighted`]; else `getAmplificationParameter()` answers →
+/// [`BalancerFamily::Stable`]; else an error (linear pools unsupported).
+///
+/// # Errors
+///
+/// Returns a [`ProviderError`] when neither probe responds.
+pub async fn probe_balancer_type(
+    read: &impl ContractRead,
+    address: &Address,
+    block: Option<u64>,
+) -> Result<BalancerFamily, ProviderError> {
+    if abi::fetch_balancer_weights(read, address, block)
+        .await
+        .is_ok()
+    {
+        return Ok(BalancerFamily::Weighted);
+    }
+    if abi::fetch_balancer_amp(read, address, block).await.is_ok() {
+        return Ok(BalancerFamily::Stable);
+    }
+    Err(ProviderError::DecodingError {
+        message: format!(
+            "Cannot determine Balancer pool type for {address}: neither \
+             getNormalizedWeights() nor getAmplificationParameter() responded"
+        ),
+    })
 }
 
 /// Assemble `build_balancer_weighted` params for a Balancer V2 weighted pool
@@ -765,9 +1090,8 @@ pub async fn build_balancer_weighted(
         return Err(PoolBuilderError::Spec(SpecRefusal::BalancerBrokenPool));
     }
 
-    let pool_id = choreography::fetch_balancer_pool_id(io, address, block).await?;
-    let (tokens, balances) =
-        choreography::fetch_balancer_vault_tokens(io, vault, &pool_id, block).await?;
+    let pool_id = abi::fetch_balancer_pool_id(io, &address, block).await?;
+    let (tokens, balances) = abi::fetch_balancer_vault_tokens(io, &vault, &pool_id, block).await?;
 
     // A composable weighted pool (`ManagedPool`) registers its own BPT as a
     // Vault token and reports weights only for the underlying tokens, so the
@@ -780,8 +1104,8 @@ pub async fn build_balancer_weighted(
         ));
     }
 
-    let fee = choreography::fetch_balancer_swap_fee(io, address, block).await?;
-    let weights = choreography::fetch_balancer_weights(io, address, block).await?;
+    let fee = abi::fetch_balancer_swap_fee(io, &address, block).await?;
+    let weights = abi::fetch_balancer_weights(io, &address, block).await?;
 
     let bytecode = io.get_code(address, block).await?;
     let pow_version = detect_pow_version(&bytecode);
@@ -838,11 +1162,10 @@ pub async fn build_balancer_stable(
         return Err(PoolBuilderError::Spec(SpecRefusal::BalancerBrokenPool));
     }
 
-    let pool_id = choreography::fetch_balancer_pool_id(io, address, block).await?;
-    let (tokens, balances) =
-        choreography::fetch_balancer_vault_tokens(io, vault, &pool_id, block).await?;
-    let fee = choreography::fetch_balancer_swap_fee(io, address, block).await?;
-    let amp = choreography::fetch_balancer_amp(io, address, block).await?;
+    let pool_id = abi::fetch_balancer_pool_id(io, &address, block).await?;
+    let (tokens, balances) = abi::fetch_balancer_vault_tokens(io, &vault, &pool_id, block).await?;
+    let fee = abi::fetch_balancer_swap_fee(io, &address, block).await?;
+    let amp = abi::fetch_balancer_amp(io, &address, block).await?;
 
     let bpt_idx = tokens.iter().position(|t| *t == address);
     let invariant_version =
@@ -854,7 +1177,7 @@ pub async fn build_balancer_stable(
 
     // getRateProviders reverts for WeightedPool2Tokens / MetaStablePools —
     // degrade to an empty list (mirrors the Python `except -> []`).
-    let providers = match choreography::fetch_balancer_rate_providers(io, address, block).await {
+    let providers = match abi::fetch_balancer_rate_providers(io, &address, block).await {
         Ok(p) => p,
         Err(
             degenbot_core::errors::ProviderError::DecodingError { .. }
@@ -878,7 +1201,7 @@ pub async fn build_balancer_stable(
                 // unable to price its own tokens: a pool fact, not a transport
                 // fault, so it refuses by name instead of surfacing as an RPC
                 // error.
-                match choreography::fetch_balancer_rate(io, *provider, block).await {
+                match abi::fetch_balancer_rate(io, provider, block).await {
                     Ok(rate) => rate,
                     Err(
                         degenbot_core::errors::ProviderError::ExecutionReverted { .. }
@@ -1039,8 +1362,13 @@ async fn reconcile_db_seed_v3(
     }
     let mut chain_words = HashMap::new();
     for word in seed_row_words(seed, tick_spacing) {
-        let bitmap =
-            choreography::fetch_tick_bitmap(io, address, tick_word_i16(word)?, Some(block)).await?;
+        let bitmap = abi::fetch_tick_bitmap(
+            &PacedRead::new(io),
+            &address,
+            tick_word_i16(word)?,
+            Some(block),
+        )
+        .await?;
         chain_words.insert(word, bitmap);
     }
     reconcile_tracked_rows(&chain_words, &seed.ticks, tick_spacing)?;
@@ -1066,10 +1394,10 @@ async fn reconcile_db_seed_v4(
     }
     let mut chain_words = HashMap::new();
     for word in seed_row_words(seed, tick_spacing) {
-        let bitmap = choreography::fetch_v4_tick_bitmap(
-            io,
-            state_view,
-            pool_id,
+        let bitmap = abi::fetch_v4_tick_bitmap(
+            &PacedRead::new(io),
+            &state_view,
+            &pool_id,
             tick_word_i16(word)?,
             Some(block),
         )
@@ -1349,12 +1677,12 @@ pub async fn build_curve_pool(
 ///
 /// Returns [`PoolBuilderError::Rpc`] on an RPC/decode failure.
 async fn fetch_erc20_decimals(
-    io: &ConstructionIo,
+    read: &impl ContractRead,
     token: Address,
     block: Option<u64>,
 ) -> Result<u8, PoolBuilderError> {
-    let calldata = choreography::selector(b"decimals()");
-    let bytes = io.call(token, calldata.into(), block).await?;
+    let calldata = abi::selector(b"decimals()");
+    let bytes = read.call(token, calldata.to_vec().into(), block).await?;
     // An empty return is a coin that cannot serve an ERC20 read at all (an
     // old vyper pool's ETH sentinel has no code; a junk `coins()` return is
     // the same shape): the pool is refused, not decoded.
@@ -1384,9 +1712,9 @@ pub async fn build_v3(
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<RegisterV3PoolParams, PoolBuilderError> {
-    let imm = choreography::fetch_v3_immutable_data(io, address, block).await?;
+    let imm = fetch_v3_immutable_data(io, &address, block).await?;
     let (sqrt_price_x96, tick_i, liquidity) =
-        choreography::fetch_v3_slot0_liquidity(io, address, block).await?;
+        abi::fetch_v3_slot0_liquidity(io, &address, block).await?;
     let tick = i32::try_from(tick_i).unwrap_or(0);
     let update_block = block.unwrap_or(0);
 
@@ -1528,7 +1856,7 @@ pub async fn build_v4(
     block: Option<u64>,
 ) -> Result<V4BuildResult, PoolBuilderError> {
     let (sqrt_price_x96, tick_i, protocol_fee_u, lp_fee_u, liquidity_u) =
-        choreography::fetch_v4_slot0_liquidity(io, id.state_view, id.pool_id, block).await?;
+        abi::fetch_v4_slot0_liquidity(io, &id.state_view, &id.pool_id, block).await?;
     let protocol_fee = protocol_fee_u.to::<u32>();
     let lp_fee = lp_fee_u.to::<u32>();
     let tick = i32::try_from(tick_i).unwrap_or(0);

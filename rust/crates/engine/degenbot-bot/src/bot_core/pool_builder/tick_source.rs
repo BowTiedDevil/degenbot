@@ -17,18 +17,18 @@
 //! (`bootstrap_{v3,v4}_tick_map`) drives the same transport-generic loop, and
 //! differs only in policy — it degrades an unreadable bitmap to an empty word
 //! (the legacy graceful fallback). This module therefore owns exactly the
-//! io-side contract reads: the paced choreography fns.
+//! io-side contract reads: the ABI tick fetchers over the tick-paced
+//! [`PacedRead`] view.
 
 use std::sync::Arc;
 
 use alloy::primitives::{U128, U256};
 use degenbot_core::errors::ProviderError;
 use degenbot_pools::{TickWordKey, TickWordSource};
+use degenbot_rpc::abi;
 use degenbot_rpc::tick_bootstrap::{TickWordTransport, TransportTickWordSource};
 
-use super::choreography::{self};
-
-use crate::bot_core::construction_io::{ConstructionIo, NoDb};
+use crate::bot_core::construction_io::{ConstructionIo, NoDb, PacedRead};
 
 /// The core's own live-miss tick-word source over the session's construction
 /// I/O — unbound, so ONE instance serves every pool the session constructs.
@@ -46,7 +46,7 @@ pub fn attached(io: &ConstructionIo) -> Arc<dyn TickWordSource> {
 
 /// The construction-I/O transport: the paced contract reads the builder's
 /// bootstrap used to drive inline, now the [`TickWordTransport`] impl the
-/// shared loop drives (the V3/V4 ABI shapes live in the choreography fns).
+/// shared loop drives (the V3/V4 ABI shapes live in `degenbot_rpc::abi`).
 impl TickWordTransport for ConstructionIo {
     async fn read_bitmap(
         &self,
@@ -56,15 +56,21 @@ impl TickWordTransport for ConstructionIo {
     ) -> Result<U256, ProviderError> {
         match key {
             TickWordKey::V3 { address, .. } => {
-                choreography::fetch_tick_bitmap(self, *address, word, Some(block)).await
+                abi::fetch_tick_bitmap(&PacedRead::new(self), address, word, Some(block)).await
             }
             TickWordKey::V4 {
                 state_view,
                 pool_id,
                 ..
             } => {
-                choreography::fetch_v4_tick_bitmap(self, *state_view, *pool_id, word, Some(block))
-                    .await
+                abi::fetch_v4_tick_bitmap(
+                    &PacedRead::new(self),
+                    state_view,
+                    pool_id,
+                    word,
+                    Some(block),
+                )
+                .await
             }
         }
     }
@@ -77,15 +83,21 @@ impl TickWordTransport for ConstructionIo {
     ) -> Result<(U128, i128), ProviderError> {
         match key {
             TickWordKey::V3 { address, .. } => {
-                choreography::fetch_tick_data(self, *address, tick, Some(block)).await
+                abi::fetch_tick_data(&PacedRead::new(self), address, tick, Some(block)).await
             }
             TickWordKey::V4 {
                 state_view,
                 pool_id,
                 ..
             } => {
-                choreography::fetch_v4_tick_data(self, *state_view, *pool_id, tick, Some(block))
-                    .await
+                abi::fetch_v4_tick_data(
+                    &PacedRead::new(self),
+                    state_view,
+                    pool_id,
+                    tick,
+                    Some(block),
+                )
+                .await
             }
         }
     }

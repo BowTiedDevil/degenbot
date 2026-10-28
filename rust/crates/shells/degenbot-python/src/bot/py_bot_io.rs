@@ -43,8 +43,8 @@ use std::sync::Arc;
 use crate::provider::AlloyProvider;
 use crate::rpc::provider::PyAlloyProvider;
 use crate::rpc::revert_to_pyerr;
-use degenbot_bot::bot_core::construction_io::BlockSelector;
-use degenbot_bot::bot_core::pool_builder::choreography::BalancerFamily;
+use degenbot_bot::bot_core::construction_io::{BlockSelector, PacedRead};
+use degenbot_bot::bot_core::pool_builder::builder::BalancerFamily;
 use degenbot_core::errors::ProviderError;
 use degenbot_core::runtime::get_runtime;
 
@@ -66,7 +66,7 @@ fn address_lower_hex(a: alloy::primitives::Address) -> String {
 /// [`BalancerFamily`] that the `getNormalizedWeights()` /
 /// `getAmplificationParameter()` probe resolves.
 ///
-/// [`BalancerFamily`] (`degenbot_bot::bot_core::pool_builder::choreography`)
+/// [`BalancerFamily`] (`degenbot_bot::bot_core::pool_builder::builder`)
 /// stays the semantic owner; this mirrors exactly its two discriminants, so a
 /// builder call site compares an enum member instead of string-matching the
 /// wire. [`balancer_family_to_py`]`s `match` is exhaustive over the core enum,
@@ -511,10 +511,7 @@ impl PyBotIo {
         let addr = alloy::primitives::Address::from(addr);
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_factory_address(
-                    &io, addr, None,
-                )
-                .await
+                degenbot_rpc::abi::fetch_address_returning(&io, b"factory()", &addr, None).await
             })
         });
         match r {
@@ -551,7 +548,7 @@ impl PyBotIo {
         }
         py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_erc20_metadata_batch(
+                degenbot_bot::bot_core::pool_builder::builder::fetch_erc20_metadata_batch(
                     &io, &addrs,
                 )
                 .await
@@ -580,10 +577,7 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_v2_reserves(
-                    &io, addr, block_num,
-                )
-                .await
+                degenbot_rpc::abi::fetch_v2_reserves(&io, &addr, block_num).await
             })
         });
         let (r0, r1) = match r {
@@ -625,10 +619,7 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_v3_slot0_liquidity(
-                    &io, addr, block_num,
-                )
-                .await
+                degenbot_rpc::abi::fetch_v3_slot0_liquidity(&io, &addr, block_num).await
             })
         });
         let (sqrt, tick, liq) = match r {
@@ -677,10 +668,10 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_v4_slot0_liquidity(
+                degenbot_rpc::abi::fetch_v4_slot0_liquidity(
                     &io,
-                    state_view,
-                    pool_id_arr,
+                    &state_view,
+                    &pool_id_arr,
                     block_num,
                 )
                 .await
@@ -769,10 +760,8 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_token_balance(
-                    &io, token_addr, owner_addr, block_num,
-                )
-                .await
+                degenbot_rpc::abi::fetch_token_balance(&io, &token_addr, &owner_addr, block_num)
+                    .await
             })
         });
         let n = match r {
@@ -807,11 +796,11 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_token_allowance(
+                degenbot_rpc::abi::fetch_token_allowance(
                     &io,
-                    token_addr,
-                    owner_addr,
-                    spender_addr,
+                    &token_addr,
+                    &owner_addr,
+                    &spender_addr,
                     block_num,
                 )
                 .await
@@ -844,10 +833,7 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_token_total_supply(
-                    &io, token_addr, block_num,
-                )
-                .await
+                degenbot_rpc::abi::fetch_token_total_supply(&io, &token_addr, block_num).await
             })
         });
         let n = match r {
@@ -974,8 +960,11 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_tick_bitmap(
-                    &io, addr, word_i16, block_num,
+                degenbot_rpc::abi::fetch_tick_bitmap(
+                    &PacedRead::new(&io),
+                    &addr,
+                    word_i16,
+                    block_num,
                 )
                 .await
             })
@@ -1014,10 +1003,8 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_tick_data(
-                    &io, addr, tick_i32, block_num,
-                )
-                .await
+                degenbot_rpc::abi::fetch_tick_data(&PacedRead::new(&io), &addr, tick_i32, block_num)
+                    .await
             })
         });
         let (gross, net) = match r {
@@ -1062,10 +1049,10 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_v4_tick_bitmap(
-                    &io,
-                    state_view,
-                    pool_id_arr,
+                degenbot_rpc::abi::fetch_v4_tick_bitmap(
+                    &PacedRead::new(&io),
+                    &state_view,
+                    &pool_id_arr,
                     word_i16,
                     block_num,
                 )
@@ -1110,10 +1097,10 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_v4_tick_data(
-                    &io,
-                    state_view,
-                    pool_id_arr,
+                degenbot_rpc::abi::fetch_v4_tick_data(
+                    &PacedRead::new(&io),
+                    &state_view,
+                    &pool_id_arr,
                     tick_i32,
                     block_num,
                 )
@@ -1152,10 +1139,7 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_pool_id(
-                    &io, addr, block_num,
-                )
-                .await
+                degenbot_rpc::abi::fetch_balancer_pool_id(&io, &addr, block_num).await
             })
         });
         let id = match r {
@@ -1185,10 +1169,7 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_swap_fee(
-                    &io, addr, block_num,
-                )
-                .await
+                degenbot_rpc::abi::fetch_balancer_swap_fee(&io, &addr, block_num).await
             })
         });
         let val = match r {
@@ -1220,10 +1201,7 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_amp(
-                    &io, addr, block_num,
-                )
-                .await
+                degenbot_rpc::abi::fetch_balancer_amp(&io, &addr, block_num).await
             })
         });
         let val = match r {
@@ -1256,10 +1234,7 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_weights(
-                    &io, addr, block_num,
-                )
-                .await
+                degenbot_rpc::abi::fetch_balancer_weights(&io, &addr, block_num).await
             })
         });
         let weights = match r {
@@ -1296,10 +1271,7 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_rate_providers(
-                    &io, addr, block_num,
-                )
-                .await
+                degenbot_rpc::abi::fetch_balancer_rate_providers(&io, &addr, block_num).await
             })
         });
         let providers = match r {
@@ -1348,10 +1320,8 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_vault_tokens(
-                    &io, vault, &pool_id, block_num,
-                )
-                .await
+                degenbot_rpc::abi::fetch_balancer_vault_tokens(&io, &vault, &pool_id, block_num)
+                    .await
             })
         });
         let (tokens, balances) = match r {
@@ -1395,10 +1365,7 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_rate(
-                    &io, provider, block_num,
-                )
-                .await
+                degenbot_rpc::abi::fetch_balancer_rate(&io, &provider, block_num).await
             })
         });
         let val = match r {
@@ -1440,9 +1407,9 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let owning = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::fetch_balancer_factory(
+                degenbot_bot::bot_core::pool_builder::builder::fetch_balancer_factory(
                     &io,
-                    pool,
+                    &pool,
                     &candidates,
                     block_num,
                 )
@@ -1478,8 +1445,8 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::choreography::probe_balancer_type(
-                    &io, addr, block_num,
+                degenbot_bot::bot_core::pool_builder::builder::probe_balancer_type(
+                    &io, &addr, block_num,
                 )
                 .await
             })

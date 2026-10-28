@@ -43,6 +43,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
+use alloy::dyn_abi::{DynSolType, DynSolValue};
 use alloy::primitives::{Address, Bytes, I256, U128, U256};
 use alloy::sol_types::SolCall;
 use degenbot_core::errors::{ProviderError, ProviderResult};
@@ -394,6 +395,128 @@ pub fn encode_get_rate() -> Vec<u8> {
 /// `uint256`.
 pub fn decode_get_rate(bytes: &[u8]) -> ProviderResult<U256> {
     decode_uint256(bytes)
+}
+
+/// Fetch a Balancer pool's 32-byte `getPoolId()` identifier.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or a
+/// [`ProviderError::DecodingError`] when the return is shorter than one word.
+pub async fn fetch_balancer_pool_id(
+    provider: &impl ContractRead,
+    pool: &Address,
+    block: Option<u64>,
+) -> ProviderResult<[u8; 32]> {
+    let calldata = Bytes::from(encode_get_pool_id());
+    let bytes = provider.call(*pool, calldata, block).await?;
+    decode_get_pool_id(&bytes)
+}
+
+/// Fetch a Balancer pool's tokens + balances from the singleton Vault via
+/// `getPoolTokens(bytes32)`.
+///
+/// Returns `(tokens, balances)` — the third Vault field (`lastChangeBlock`) is
+/// dropped by the decoder.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or a
+/// [`ProviderError::DecodingError`] when the tuple does not decode.
+pub async fn fetch_balancer_vault_tokens(
+    provider: &impl ContractRead,
+    vault: &Address,
+    pool_id: &[u8; 32],
+    block: Option<u64>,
+) -> ProviderResult<(Vec<Address>, Vec<U256>)> {
+    let calldata = Bytes::from(encode_get_pool_tokens(pool_id));
+    let bytes = provider.call(*vault, calldata, block).await?;
+    decode_get_pool_tokens(&bytes)
+}
+
+/// Fetch a Balancer pool's `getSwapFeePercentage()` as a `uint256`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or a
+/// [`ProviderError::DecodingError`] when the return is not a `uint256`.
+pub async fn fetch_balancer_swap_fee(
+    provider: &impl ContractRead,
+    pool: &Address,
+    block: Option<u64>,
+) -> ProviderResult<U256> {
+    let calldata = Bytes::from(encode_get_swap_fee());
+    let bytes = provider.call(*pool, calldata, block).await?;
+    decode_get_swap_fee(&bytes)
+}
+
+/// Fetch a Balancer pool's amplification parameter — the first `uint256 value`
+/// word of the `getAmplificationParameter()` tuple.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or a
+/// [`ProviderError::DecodingError`] when the tuple does not decode.
+pub async fn fetch_balancer_amp(
+    provider: &impl ContractRead,
+    pool: &Address,
+    block: Option<u64>,
+) -> ProviderResult<U256> {
+    let calldata = Bytes::from(encode_get_amp());
+    let bytes = provider.call(*pool, calldata, block).await?;
+    decode_get_amp(&bytes)
+}
+
+/// Fetch a Balancer weighted pool's `getNormalizedWeights()` array.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or a
+/// [`ProviderError::DecodingError`] when the array does not decode.
+pub async fn fetch_balancer_weights(
+    provider: &impl ContractRead,
+    pool: &Address,
+    block: Option<u64>,
+) -> ProviderResult<Vec<U256>> {
+    let calldata = Bytes::from(encode_get_weights());
+    let bytes = provider.call(*pool, calldata, block).await?;
+    decode_get_weights(&bytes)
+}
+
+/// Fetch a Balancer pool's `getRateProviders()` address array.
+///
+/// A pool that does not expose the getter reverts; the caller decides what a
+/// revert means (empty list, or a refusal), so it propagates here.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` (a revert surfaces
+/// as [`ProviderError::ExecutionReverted`]) or a
+/// [`ProviderError::DecodingError`] when the array does not decode.
+pub async fn fetch_balancer_rate_providers(
+    provider: &impl ContractRead,
+    pool: &Address,
+    block: Option<u64>,
+) -> ProviderResult<Vec<Address>> {
+    let calldata = Bytes::from(encode_get_rate_providers());
+    let bytes = provider.call(*pool, calldata, block).await?;
+    decode_get_rate_providers(&bytes)
+}
+
+/// Fetch a single Balancer rate provider's `getRate()` as a `uint256`.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or a
+/// [`ProviderError::DecodingError`] when the return is not a `uint256`.
+pub async fn fetch_balancer_rate(
+    provider: &impl ContractRead,
+    rate_provider: &Address,
+    block: Option<u64>,
+) -> ProviderResult<U256> {
+    let calldata = Bytes::from(encode_get_rate());
+    let bytes = provider.call(*rate_provider, calldata, block).await?;
+    decode_get_rate(&bytes)
 }
 
 /// Fetch a V2-style pair's `getReserves()` and return `(reserve0, reserve1)`.
@@ -804,6 +927,25 @@ pub fn encode_get_fee(pool: &Address, stable: bool) -> Vec<u8> {
     calldata
 }
 
+/// Fetch the Aerodrome V2 `getFee(address,bool)` unidirectional fee, called on
+/// the pair's factory with the pool's address and its `stable()` flag.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or a
+/// [`ProviderError::DecodingError`] when the return is not a `uint256`.
+pub async fn fetch_aerodrome_fee(
+    provider: &impl ContractRead,
+    factory: &Address,
+    pool: &Address,
+    stable: bool,
+    block: Option<u64>,
+) -> ProviderResult<U256> {
+    let calldata = Bytes::from(encode_get_fee(pool, stable));
+    let bytes = provider.call(*factory, calldata, block).await?;
+    decode_uint256(&bytes)
+}
+
 /// Decode `balanceOf(address)` return data (`uint256`).
 ///
 /// # Errors
@@ -1081,6 +1223,24 @@ pub fn decode_balancer_is_pool_from_factory(bytes: &[u8]) -> ProviderResult<bool
     Ok(r)
 }
 
+/// Fetch a Balancer V2 factory's `isPoolFromFactory(address)` membership answer.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` (a factory that
+/// does not implement the getter reverts) or a
+/// [`ProviderError::DecodingError`] when the return is not a `bool`.
+pub async fn fetch_balancer_is_pool_from_factory(
+    provider: &impl ContractRead,
+    factory: &Address,
+    pool: &Address,
+    block: Option<u64>,
+) -> ProviderResult<bool> {
+    let calldata = Bytes::from(encode_balancer_is_pool_from_factory(pool));
+    let bytes = provider.call(*factory, calldata, block).await?;
+    decode_balancer_is_pool_from_factory(&bytes)
+}
+
 /// Encode registry `get_underlying_coins(address)` calldata for `pool`.
 #[must_use]
 pub fn encode_curve_get_underlying_coins(pool: &Address) -> Vec<u8> {
@@ -1179,6 +1339,177 @@ pub fn decode_lending_token(bytes: &[u8]) -> ProviderResult<Address> {
         }
     })?;
     Ok(r)
+}
+
+// ---------------------------------------------------------------------------
+// Signature-driven reads
+//
+// Reads whose selector has no typed `sol!` home yet: the caller passes the
+// Solidity signature (`b"factory()"`, `b"decimals()"`, …), which is hashed to
+// the 4-byte selector here, called once through the read primitive, and
+// decoded to the named shape. The signature literal stays at the call site; the
+// encode/call/decode pipeline is written once.
+// ---------------------------------------------------------------------------
+
+/// Compute the 4-byte Solidity function selector, `keccak256(signature)[..4]`.
+///
+/// The signature is the canonical Solidity text (`b"factory()"`,
+/// `b"allowance(address,address)"`), never a pre-computed hex selector.
+#[must_use]
+pub fn selector(signature: &[u8]) -> [u8; 4] {
+    let hash = alloy::primitives::keccak256(signature);
+    let mut s = [0u8; 4];
+    s.copy_from_slice(&hash[..4]);
+    s
+}
+
+/// Call the no-argument `signature` on `to` and decode the right-aligned
+/// 20-byte `address` it returns (`factory()`, `token0()`, `base_pool()`, …).
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or
+/// [`ProviderError::DecodingError`] when the return is shorter than one word.
+pub async fn fetch_address_returning(
+    provider: &impl ContractRead,
+    signature: &[u8],
+    to: &Address,
+    block: Option<u64>,
+) -> ProviderResult<Address> {
+    let calldata = Bytes::copy_from_slice(&selector(signature));
+    let bytes = provider.call(*to, calldata, block).await?;
+    if bytes.len() < 32 {
+        return Err(ProviderError::DecodingError {
+            message: "address-returning call returned <32 bytes".into(),
+        });
+    }
+    Ok(Address::from_slice(&bytes[12..32]))
+}
+
+/// Call the no-argument `signature` on `to` and decode its return as the
+/// unsigned integer type `ty` (`fee()` as `uint24`, `decimals()` as
+/// `uint256`, …), widened into a `U256`.
+///
+/// Decoding against the declared ABI type (rather than reading the word
+/// blindly) keeps an out-of-width return a decode failure instead of a
+/// silently truncated value.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or
+/// [`ProviderError::DecodingError`] when the return does not decode as `ty`.
+pub async fn fetch_no_arg_uint(
+    provider: &impl ContractRead,
+    signature: &[u8],
+    to: &Address,
+    block: Option<u64>,
+    ty: &DynSolType,
+) -> ProviderResult<U256> {
+    let calldata = Bytes::copy_from_slice(&selector(signature));
+    let bytes = provider.call(*to, calldata, block).await?;
+    match ty.abi_decode(&bytes) {
+        Ok(DynSolValue::Uint(n, _)) => Ok(n),
+        _ => Err(ProviderError::DecodingError {
+            message: "invalid uint decode for no-arg read".into(),
+        }),
+    }
+}
+
+/// Call the no-argument `signature` on `to` and decode its return as the
+/// signed integer type `ty`, widened into an `I256` (`tickSpacing()` as
+/// `int24`, …).
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or
+/// [`ProviderError::DecodingError`] when the return does not decode as `ty`.
+pub async fn fetch_no_arg_int(
+    provider: &impl ContractRead,
+    signature: &[u8],
+    to: &Address,
+    block: Option<u64>,
+    ty: &DynSolType,
+) -> ProviderResult<I256> {
+    let calldata = Bytes::copy_from_slice(&selector(signature));
+    let bytes = provider.call(*to, calldata, block).await?;
+    match ty.abi_decode(&bytes) {
+        Ok(DynSolValue::Int(n, _)) => Ok(n),
+        _ => Err(ProviderError::DecodingError {
+            message: "invalid int decode for no-arg read".into(),
+        }),
+    }
+}
+
+/// Call the no-argument `signature` on `to` and decode its return as a
+/// Solidity `bool` (`stable()` / `stableSwap()`, …).
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or
+/// [`ProviderError::DecodingError`] when the return is not a `bool`.
+pub async fn fetch_no_arg_bool(
+    provider: &impl ContractRead,
+    signature: &[u8],
+    to: &Address,
+    block: Option<u64>,
+) -> ProviderResult<bool> {
+    let calldata = Bytes::copy_from_slice(&selector(signature));
+    let bytes = provider.call(*to, calldata, block).await?;
+    match DynSolType::Bool.abi_decode(&bytes) {
+        Ok(DynSolValue::Bool(b)) => Ok(b),
+        _ => Err(ProviderError::DecodingError {
+            message: "invalid bool decode for no-arg read".into(),
+        }),
+    }
+}
+
+/// Call the no-argument `signature` on `to` and decode the first return word
+/// as a `uint256` (`decimals()` / `DECIMALS()`, and any other single-word
+/// getter whose width the caller does not want validated).
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or
+/// [`ProviderError::DecodingError`] when the return is shorter than one word.
+pub async fn fetch_uint256_field(
+    provider: &impl ContractRead,
+    signature: &[u8],
+    to: &Address,
+    block: Option<u64>,
+) -> ProviderResult<U256> {
+    let calldata = Bytes::copy_from_slice(&selector(signature));
+    let bytes = provider.call(*to, calldata, block).await?;
+    decode_uint256(&bytes)
+}
+
+/// Call the no-argument `signature` on `to` and decode its return as a
+/// Solidity `string`, falling back to a UTF-8 `bytes32` decode for tokens that
+/// store `name()`/`symbol()` in a fixed bytes slot (trailing NULs trimmed).
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] from the underlying `eth_call` or
+/// [`ProviderError::DecodingError`] when the return decodes as neither
+/// `string` nor `bytes32`.
+pub async fn fetch_string_field(
+    provider: &impl ContractRead,
+    signature: &[u8],
+    to: &Address,
+    block: Option<u64>,
+) -> ProviderResult<String> {
+    let calldata = Bytes::copy_from_slice(&selector(signature));
+    let bytes = provider.call(*to, calldata, block).await?;
+    if let Ok(DynSolValue::String(s)) = DynSolType::String.abi_decode(&bytes) {
+        return Ok(s);
+    }
+    if let Ok(DynSolValue::FixedBytes(fb, _)) = DynSolType::FixedBytes(32).abi_decode(&bytes) {
+        return Ok(String::from_utf8_lossy(fb.as_slice())
+            .trim_matches('\0')
+            .to_string());
+    }
+    Err(ProviderError::DecodingError {
+        message: "could not decode string field as string or bytes32".to_owned(),
+    })
 }
 
 /// Widen a signed 24-bit `tick` value (already extracted as `i32`) into
@@ -1663,5 +1994,536 @@ mod tests {
             vec![(pool, Bytes::from(encode_get_reserves()), Some(21_000_000))],
             "the fetch crosses the transport once, with the encoded calldata"
         );
+    }
+
+    // ── the fetch bodies, each over a calldata-keyed read double ──
+    //
+    // The call step is the only transport-specific half of a fetch, so the
+    // bodies are covered by driving them over a `ContractRead` double with one
+    // canned return per calldata. `ContractRead` has ONE method: this is the
+    // whole double, which is what retired the hand-encoded 7-method RPC doubles
+    // the fetch coverage used to need.
+
+    /// A calldata-keyed read double: one canned answer (or canned error) per
+    /// encoded calldata, plus the calls it received.
+    #[derive(Default)]
+    struct TableTransport {
+        answers: std::collections::HashMap<Vec<u8>, Result<Bytes, ProviderError>>,
+        calls: std::sync::Mutex<Vec<(Address, Bytes, Option<u64>)>>,
+    }
+
+    impl TableTransport {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        /// Answer `calldata` with `response` return bytes.
+        fn answer(mut self, calldata: Vec<u8>, response: Vec<u8>) -> Self {
+            self.answers.insert(calldata, Ok(Bytes::from(response)));
+            self
+        }
+
+        /// Make `calldata` fail with `error` (a revert, a transport fault).
+        fn fail(mut self, calldata: Vec<u8>, error: ProviderError) -> Self {
+            self.answers.insert(calldata, Err(error));
+            self
+        }
+
+        fn calls(&self) -> Vec<(Address, Bytes, Option<u64>)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl ContractRead for TableTransport {
+        fn call(
+            &self,
+            to: Address,
+            data: Bytes,
+            block: Option<u64>,
+        ) -> impl Future<Output = ProviderResult<Bytes>> + Send {
+            self.calls.lock().unwrap().push((to, data.clone(), block));
+            let answer = self.answers.get(data.as_ref()).cloned().unwrap_or_else(|| {
+                Err(ProviderError::ExecutionReverted {
+                    code: -32000,
+                    message: "no canned answer".into(),
+                })
+            });
+            std::future::ready(answer)
+        }
+    }
+
+    const TO: Address = address!("00000000000000000000000000000000000000a1");
+    const OTHER: Address = address!("00000000000000000000000000000000000000b2");
+    const BLOCK: Option<u64> = Some(21_000_000);
+
+    /// A `uint256` return word.
+    fn uint_return(v: U256, bits: usize) -> Vec<u8> {
+        DynSolValue::Uint(v, bits).abi_encode()
+    }
+
+    /// The `slot0()` prefix the builder reads: `(uint160 sqrtPriceX96, int24
+    /// tick)`.
+    fn slot0_return(sqrt: U256, tick: i32) -> Vec<u8> {
+        DynSolValue::Tuple(vec![
+            DynSolValue::Uint(sqrt, 160),
+            DynSolValue::Int(I256::try_from(i128::from(tick)).unwrap(), 24),
+        ])
+        .abi_encode()
+    }
+
+    #[tokio::test]
+    async fn fetch_v3_slot0_liquidity_reads_slot0_then_liquidity() {
+        let sqrt = U256::from(0xabcdu64);
+        let liquidity = U256::from(1_000_000u64);
+        let transport = TableTransport::new()
+            .answer(encode_slot0(), slot0_return(sqrt, -12))
+            .answer(encode_liquidity(), uint_return(liquidity, 128));
+
+        let (got_sqrt, tick, got_liquidity) = fetch_v3_slot0_liquidity(&transport, &TO, BLOCK)
+            .await
+            .unwrap();
+
+        assert_eq!((got_sqrt, got_liquidity), (sqrt, liquidity));
+        assert_eq!(tick, I256::try_from(-12i64).unwrap());
+        let calls = transport.calls();
+        assert_eq!(
+            calls,
+            vec![
+                (TO, Bytes::from(encode_slot0()), BLOCK),
+                (TO, Bytes::from(encode_liquidity()), BLOCK),
+            ],
+            "both reads cross the transport at the caller's block"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_v4_slot0_liquidity_reads_the_state_view_by_pool_id() {
+        let pool_id: [u8; 32] = [0x5a; 32];
+        let liquidity = U256::from(42u64);
+        let transport = TableTransport::new()
+            .answer(
+                encode_get_slot0(&pool_id),
+                DynSolValue::Tuple(vec![
+                    DynSolValue::Uint(U256::from(7u64), 160),
+                    DynSolValue::Int(I256::try_from(-3i64).unwrap(), 24),
+                    DynSolValue::Uint(U256::from(0x11u64), 24),
+                    DynSolValue::Uint(U256::from(0x22u64), 24),
+                ])
+                .abi_encode(),
+            )
+            .answer(encode_get_liquidity(&pool_id), uint_return(liquidity, 128));
+
+        let (sqrt, tick, protocol_fee, lp_fee, got_liquidity) =
+            fetch_v4_slot0_liquidity(&transport, &OTHER, &pool_id, BLOCK)
+                .await
+                .unwrap();
+
+        assert_eq!(sqrt, U256::from(7u64));
+        assert_eq!(tick, I256::try_from(-3i64).unwrap());
+        assert_eq!(
+            (protocol_fee, lp_fee),
+            (U256::from(0x11u64), U256::from(0x22u64))
+        );
+        assert_eq!(got_liquidity, liquidity);
+        assert!(
+            transport.calls().iter().all(|(to, _, _)| *to == OTHER),
+            "V4 state reads address the state-view contract, not the pool"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_tick_bitmap_and_tick_data_carry_their_arguments() {
+        let bitmap = U256::from(1u64) << 200;
+        let transport = TableTransport::new()
+            .answer(encode_tick_bitmap(-4), uint_return(bitmap, 256))
+            .answer(encode_tick_data(120), encode_ticks_return_ref(500, -100));
+
+        assert_eq!(
+            fetch_tick_bitmap(&transport, &TO, -4, BLOCK).await.unwrap(),
+            bitmap
+        );
+        assert_eq!(
+            fetch_tick_data(&transport, &TO, 120, BLOCK).await.unwrap(),
+            (U128::from(500u64), -100i128)
+        );
+        assert_eq!(
+            transport.calls(),
+            vec![
+                (TO, Bytes::from(encode_tick_bitmap(-4)), BLOCK),
+                (TO, Bytes::from(encode_tick_data(120)), BLOCK),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_v4_tick_reads_carry_pool_id_and_argument() {
+        let pool_id: [u8; 32] = [0x77; 32];
+        let bitmap = U256::from(1u64) << 8;
+        let transport = TableTransport::new()
+            .answer(encode_v4_tick_bitmap(&pool_id, 3), uint_return(bitmap, 256))
+            .answer(
+                encode_v4_tick_data(&pool_id, -9),
+                encode_ticks_return_ref(11, -22),
+            );
+
+        assert_eq!(
+            fetch_v4_tick_bitmap(&transport, &OTHER, &pool_id, 3, BLOCK)
+                .await
+                .unwrap(),
+            bitmap
+        );
+        assert_eq!(
+            fetch_v4_tick_data(&transport, &OTHER, &pool_id, -9, BLOCK)
+                .await
+                .unwrap(),
+            (U128::from(11u64), -22i128)
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_token_reads_decode_their_uint256_returns() {
+        let owner = address!("1111111111111111111111111111111111111111");
+        let spender = address!("2222222222222222222222222222222222222222");
+        let transport = TableTransport::new()
+            .answer(
+                encode_balance_of(&owner),
+                uint_return(U256::from(5u64), 256),
+            )
+            .answer(
+                encode_allowance(&owner, &spender),
+                uint_return(U256::from(6u64), 256),
+            )
+            .answer(encode_total_supply(), uint_return(U256::from(7u64), 256));
+
+        assert_eq!(
+            fetch_token_balance(&transport, &TO, &owner, BLOCK)
+                .await
+                .unwrap(),
+            U256::from(5u64)
+        );
+        assert_eq!(
+            fetch_token_allowance(&transport, &TO, &owner, &spender, BLOCK)
+                .await
+                .unwrap(),
+            U256::from(6u64)
+        );
+        assert_eq!(
+            fetch_token_total_supply(&transport, &TO, BLOCK)
+                .await
+                .unwrap(),
+            U256::from(7u64)
+        );
+        assert_eq!(transport.calls().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn fetch_aerodrome_fee_reads_the_factory_with_pool_and_flag() {
+        let calldata = encode_get_fee(&TO, true);
+        let transport =
+            TableTransport::new().answer(calldata.clone(), uint_return(U256::from(30u64), 256));
+
+        assert_eq!(
+            fetch_aerodrome_fee(&transport, &OTHER, &TO, true, BLOCK)
+                .await
+                .unwrap(),
+            U256::from(30u64)
+        );
+        assert_eq!(
+            transport.calls(),
+            vec![(OTHER, Bytes::from(calldata), BLOCK)],
+            "the fee read addresses the factory and carries the pool + stable flag"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_balancer_pool_scalars_decode() {
+        let pool_id: [u8; 32] = [0x31; 32];
+        let transport = TableTransport::new()
+            .answer(encode_get_pool_id(), pool_id.to_vec())
+            .answer(encode_get_swap_fee(), uint_return(U256::from(99u64), 256))
+            .answer(
+                encode_get_amp(),
+                DynSolValue::Tuple(vec![
+                    DynSolValue::Uint(U256::from(1_000u64), 256),
+                    DynSolValue::Bool(false),
+                    DynSolValue::Uint(U256::from(1_000u64), 256),
+                ])
+                .abi_encode(),
+            )
+            .answer(
+                encode_get_weights(),
+                DynSolValue::Array(vec![
+                    DynSolValue::Uint(U256::from(1u64), 256),
+                    DynSolValue::Uint(U256::from(3u64), 256),
+                ])
+                .abi_encode(),
+            );
+
+        assert_eq!(
+            fetch_balancer_pool_id(&transport, &TO, BLOCK)
+                .await
+                .unwrap(),
+            pool_id
+        );
+        assert_eq!(
+            fetch_balancer_swap_fee(&transport, &TO, BLOCK)
+                .await
+                .unwrap(),
+            U256::from(99u64)
+        );
+        assert_eq!(
+            fetch_balancer_amp(&transport, &TO, BLOCK).await.unwrap(),
+            U256::from(1_000u64)
+        );
+        assert_eq!(
+            fetch_balancer_weights(&transport, &TO, BLOCK)
+                .await
+                .unwrap(),
+            vec![U256::from(1u64), U256::from(3u64)]
+        );
+    }
+
+    /// A hand-built `(address[] tokens, uint256[] balances, uint256
+    /// lastChangeBlock)` return — the Vault `getPoolTokens` layout, laid out by
+    /// hand rather than by the tuple encoder so the decode faces a fixed
+    /// layout.
+    fn vault_tokens_return(tokens: &[Address], balances: &[U256], last_change: U256) -> Vec<u8> {
+        let n = u64::try_from(tokens.len()).unwrap();
+        let mut out = Vec::new();
+        out.extend_from_slice(&U256::from(96u64).to_be_bytes::<32>()); // head: tokens[]
+        out.extend_from_slice(&U256::from(96 + 32 + n * 32).to_be_bytes::<32>()); // balances[]
+        out.extend_from_slice(&last_change.to_be_bytes::<32>());
+        out.extend_from_slice(&U256::from(n).to_be_bytes::<32>());
+        for token in tokens {
+            out.extend_from_slice(&DynSolValue::Address(*token).abi_encode());
+        }
+        out.extend_from_slice(&U256::from(n).to_be_bytes::<32>());
+        for balance in balances {
+            out.extend_from_slice(&balance.to_be_bytes::<32>());
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn fetch_balancer_vault_tokens_drops_last_change_block() {
+        let pool_id: [u8; 32] = [0x42; 32];
+        let tokens = vec![
+            address!("1111111111111111111111111111111111111111"),
+            address!("2222222222222222222222222222222222222222"),
+        ];
+        let transport = TableTransport::new().answer(
+            encode_get_pool_tokens(&pool_id),
+            vault_tokens_return(
+                &tokens,
+                &[U256::from(10u64), U256::from(20u64)],
+                U256::from(21_000_000u64),
+            ),
+        );
+
+        let (got_tokens, got_balances) =
+            fetch_balancer_vault_tokens(&transport, &OTHER, &pool_id, BLOCK)
+                .await
+                .unwrap();
+
+        assert_eq!(got_tokens, tokens);
+        assert_eq!(got_balances, vec![U256::from(10u64), U256::from(20u64)]);
+        assert_eq!(
+            transport.calls(),
+            vec![(OTHER, Bytes::from(encode_get_pool_tokens(&pool_id)), BLOCK)],
+            "the Vault read addresses the Vault, not the pool"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_balancer_rate_providers_and_rate_decode() {
+        let provider = address!("3333333333333333333333333333333333333333");
+        let transport = TableTransport::new()
+            .answer(
+                encode_get_rate_providers(),
+                DynSolValue::Array(vec![DynSolValue::Address(provider)]).abi_encode(),
+            )
+            .answer(
+                encode_get_rate(),
+                uint_return(U256::from(1_000_000u64), 256),
+            );
+
+        assert_eq!(
+            fetch_balancer_rate_providers(&transport, &TO, BLOCK)
+                .await
+                .unwrap(),
+            vec![provider]
+        );
+        assert_eq!(
+            fetch_balancer_rate(&transport, &provider, BLOCK)
+                .await
+                .unwrap(),
+            U256::from(1_000_000u64)
+        );
+        assert_eq!(
+            transport.calls()[1].0,
+            provider,
+            "the rate read addresses the rate provider"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_balancer_is_pool_from_factory_decodes_both_answers() {
+        let call = encode_balancer_is_pool_from_factory(&TO);
+        let owner =
+            TableTransport::new().answer(call.clone(), DynSolValue::Bool(true).abi_encode());
+        let other = TableTransport::new().answer(call, DynSolValue::Bool(false).abi_encode());
+
+        assert!(
+            fetch_balancer_is_pool_from_factory(&owner, &OTHER, &TO, BLOCK)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !fetch_balancer_is_pool_from_factory(&other, &OTHER, &TO, BLOCK)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_address_returning_decodes_the_low_twenty_bytes() {
+        let returning = address!("66f9664f97f2b50f62d13ea064982f936de76657");
+        let calldata = selector(b"factory()");
+        let transport = TableTransport::new().answer(
+            calldata.to_vec(),
+            DynSolValue::Address(returning).abi_encode(),
+        );
+        let short = TableTransport::new().answer(calldata.to_vec(), vec![0u8; 31]);
+
+        assert_eq!(
+            fetch_address_returning(&transport, b"factory()", &TO, BLOCK)
+                .await
+                .unwrap(),
+            returning
+        );
+        assert_eq!(
+            transport.calls(),
+            vec![(TO, Bytes::copy_from_slice(&calldata), BLOCK)],
+            "the signature is hashed to the 4-byte selector the chain receives"
+        );
+        assert!(matches!(
+            fetch_address_returning(&short, b"factory()", &TO, BLOCK).await,
+            Err(ProviderError::DecodingError { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn fetch_no_arg_scalars_decode_against_their_declared_widths() {
+        let transport = TableTransport::new()
+            .answer(
+                selector(b"fee()").to_vec(),
+                uint_return(U256::from(3_000u64), 24),
+            )
+            .answer(
+                selector(b"tickSpacing()").to_vec(),
+                DynSolValue::Int(I256::try_from(-60i64).unwrap(), 24).abi_encode(),
+            )
+            .answer(
+                selector(b"stable()").to_vec(),
+                DynSolValue::Bool(true).abi_encode(),
+            );
+
+        assert_eq!(
+            fetch_no_arg_uint(&transport, b"fee()", &TO, BLOCK, &DynSolType::Uint(24))
+                .await
+                .unwrap(),
+            U256::from(3_000u64)
+        );
+        assert_eq!(
+            fetch_no_arg_int(
+                &transport,
+                b"tickSpacing()",
+                &TO,
+                BLOCK,
+                &DynSolType::Int(24)
+            )
+            .await
+            .unwrap(),
+            I256::try_from(-60i64).unwrap()
+        );
+        assert!(fetch_no_arg_bool(&transport, b"stable()", &TO, BLOCK)
+            .await
+            .unwrap());
+        assert_eq!(
+            transport.calls().len(),
+            3,
+            "each scalar read is exactly one call"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_uint256_and_string_fields_decode() {
+        let transport = TableTransport::new()
+            .answer(
+                selector(b"decimals()").to_vec(),
+                uint_return(U256::from(18u64), 8),
+            )
+            .answer(
+                selector(b"name()").to_vec(),
+                DynSolValue::String("Dai Stablecoin".into()).abi_encode(),
+            )
+            .answer(
+                selector(b"symbol()").to_vec(),
+                DynSolValue::FixedBytes(
+                    alloy::primitives::B256::from({
+                        let mut word = [0u8; 32];
+                        word[..4].copy_from_slice(b"WETH");
+                        word
+                    }),
+                    32,
+                )
+                .abi_encode(),
+            );
+
+        assert_eq!(
+            fetch_uint256_field(&transport, b"decimals()", &TO, BLOCK)
+                .await
+                .unwrap(),
+            U256::from(18u64)
+        );
+        assert_eq!(
+            fetch_string_field(&transport, b"name()", &TO, BLOCK)
+                .await
+                .unwrap(),
+            "Dai Stablecoin"
+        );
+        assert_eq!(
+            fetch_string_field(&transport, b"symbol()", &TO, BLOCK)
+                .await
+                .unwrap(),
+            "WETH",
+            "a bytes32 symbol decodes with its NUL padding trimmed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_transport_error_surfaces_verbatim() {
+        let revert = ProviderError::ExecutionReverted {
+            code: -32000,
+            message: "execution reverted".into(),
+        };
+        let transport = TableTransport::new()
+            .fail(encode_total_supply(), revert)
+            .fail(
+                selector(b"decimals()").to_vec(),
+                ProviderError::ExecutionReverted {
+                    code: -32000,
+                    message: "execution reverted".into(),
+                },
+            );
+
+        assert!(matches!(
+            fetch_token_total_supply(&transport, &TO, BLOCK).await,
+            Err(ProviderError::ExecutionReverted { code: -32000, .. })
+        ));
+        assert!(matches!(
+            fetch_uint256_field(&transport, b"decimals()", &TO, BLOCK).await,
+            Err(ProviderError::ExecutionReverted { code: -32000, .. })
+        ));
     }
 }

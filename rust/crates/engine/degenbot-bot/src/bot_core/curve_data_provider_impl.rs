@@ -10,7 +10,7 @@
 //! degenbot` consumer constructs it (no Python) and both the Python companion
 //! and any Rust calc read through it.
 //!
-//! ## Sync-over-async (the trait is sync; `RpcConstruction::call` is async)
+//! ## Sync-over-async (the trait is sync; `ContractRead::call` is async)
 //!
 //! `CurveDataProvider` methods are synchronous, so each call bridges through
 //! [`degenbot_core::runtime::bridged_block_on`] — the one in-runtime
@@ -23,21 +23,20 @@ use std::sync::{Arc, Mutex};
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_core::runtime::bridged_block_on;
 use degenbot_pools::{CurveDataProvider, CurveDataProviderError};
-use degenbot_rpc::abi;
+use degenbot_rpc::abi::{self, ContractRead};
 
 use crate::bot_core::construction_io::RpcConstruction;
-use crate::bot_core::pool_builder::choreography::selector;
 
 /// The `lending_rates` cache key is the block number; the value the per-coin
 /// lending rates for that block. `Metrics`-free; mirrors the Python
 /// `_lending_rate_cache` (a `dict[int, tuple[int, ...]]`).
 type LendingCache = Mutex<HashMap<u64, Vec<U256>>>;
 
-#[expect(clippy::missing_fields_in_debug)] // `Arc<dyn RpcConstruction>` is not Debug
+#[expect(clippy::missing_fields_in_debug)] // the RPC trait object is not `Debug`
 impl std::fmt::Debug for RpcCurveDataProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // `Arc<dyn RpcConstruction>` is not `Debug`; print the identifiable
-        // fields only.
+        // The RPC trait object is not `Debug`; print the identifiable fields
+        // only.
         f.debug_struct("RpcCurveDataProvider")
             .field("pool_address", &self.pool_address)
             .field("base_pool_address", &self.base_pool_address)
@@ -56,7 +55,7 @@ impl std::fmt::Debug for RpcCurveDataProvider {
 /// [`CurvePoolState`].
 pub struct RpcCurveDataProvider {
     /// The RPC double driving all reads.
-    rpc: Arc<dyn RpcConstruction>,
+    rpc: Arc<dyn RpcConstruction + Send + Sync>,
     /// Pool contract address.
     pool_address: Address,
     /// Base pool address for metapools (`get_virtual_price` targets it).
@@ -84,7 +83,7 @@ impl RpcCurveDataProvider {
     #[must_use]
     #[expect(clippy::too_many_arguments)] // data-dense constructor
     pub fn new(
-        rpc: Arc<dyn RpcConstruction>,
+        rpc: Arc<dyn RpcConstruction + Send + Sync>,
         pool_address: Address,
         base_pool_address: Option<Address>,
         n_coins: usize,
@@ -108,40 +107,45 @@ impl RpcCurveDataProvider {
         }
     }
 
-    /// `eth_call` + decode a single `uint256` at `block`; maps to
-    /// `CurveDataProviderError`.
+    /// One read through the call primitive, decoded as a single `uint256`.
     fn call_uint(
         &self,
         to: Address,
         calldata: Bytes,
         block: u64,
     ) -> Result<U256, CurveDataProviderError> {
-        let bytes = bridged_block_on(self.rpc.call(to, calldata, Some(block)))
+        let bytes = bridged_block_on(ContractRead::call(&self.rpc, to, calldata, Some(block)))
             .map_err(|_| CurveDataProviderError::FetchFailed)?;
         abi::decode_uint256(&bytes).map_err(|_| CurveDataProviderError::FetchFailed)
     }
 
-    /// `eth_call` + decode a single `address` at `block`.
+    /// One read through the call primitive, decoded as a single `address`.
     fn call_address(
         &self,
         to: Address,
         calldata: Bytes,
         block: u64,
     ) -> Result<Address, CurveDataProviderError> {
-        let bytes = bridged_block_on(self.rpc.call(to, calldata, Some(block)))
+        let bytes = bridged_block_on(ContractRead::call(&self.rpc, to, calldata, Some(block)))
             .map_err(|_| CurveDataProviderError::FetchFailed)?;
         abi::decode_curve_redemption_price_snap(&bytes)
             .map_err(|_| CurveDataProviderError::FetchFailed)
     }
 
-    /// `eth_call` a no-argument `uint256` getter on `to` at `block`.
+    /// Read a no-argument `uint256` getter on `to` at `block`.
     fn fetch_uint(
         &self,
         to: Address,
         signature: &[u8],
         block: u64,
     ) -> Result<U256, CurveDataProviderError> {
-        self.call_uint(to, selector(signature).into(), block)
+        bridged_block_on(abi::fetch_uint256_field(
+            &self.rpc,
+            signature,
+            &to,
+            Some(block),
+        ))
+        .map_err(|_| CurveDataProviderError::FetchFailed)
     }
 }
 
@@ -164,10 +168,13 @@ impl CurveDataProvider for RpcCurveDataProvider {
         holder_address: Address,
         block_number: u64,
     ) -> Result<U256, CurveDataProviderError> {
-        let calldata = Bytes::from(abi::encode_balance_of(&holder_address));
-        let bytes = bridged_block_on(self.rpc.call(token_address, calldata, Some(block_number)))
-            .map_err(|_| CurveDataProviderError::FetchFailed)?;
-        abi::decode_balance_of(&bytes).map_err(|_| CurveDataProviderError::FetchFailed)
+        bridged_block_on(abi::fetch_token_balance(
+            &self.rpc,
+            &token_address,
+            &holder_address,
+            Some(block_number),
+        ))
+        .map_err(|_| CurveDataProviderError::FetchFailed)
     }
 
     fn token_total_supply(
@@ -175,10 +182,12 @@ impl CurveDataProvider for RpcCurveDataProvider {
         token_address: Address,
         block_number: u64,
     ) -> Result<U256, CurveDataProviderError> {
-        let calldata = Bytes::from(abi::encode_total_supply());
-        let bytes = bridged_block_on(self.rpc.call(token_address, calldata, Some(block_number)))
-            .map_err(|_| CurveDataProviderError::FetchFailed)?;
-        abi::decode_total_supply(&bytes).map_err(|_| CurveDataProviderError::FetchFailed)
+        bridged_block_on(abi::fetch_token_total_supply(
+            &self.rpc,
+            &token_address,
+            Some(block_number),
+        ))
+        .map_err(|_| CurveDataProviderError::FetchFailed)
     }
 
     fn lending_rates(&self, block_number: u64) -> Result<Vec<U256>, CurveDataProviderError> {
@@ -260,7 +269,7 @@ impl CurveDataProvider for RpcCurveDataProvider {
     fn redemption_price(&self, block_number: u64) -> Result<U256, CurveDataProviderError> {
         let snap_contract = self.call_address(
             self.pool_address,
-            selector(b"redemption_price_snap()").into(),
+            abi::selector(b"redemption_price_snap()").into(),
             block_number,
         )?;
         let rate = self.fetch_uint(snap_contract, b"snappedRedemptionPrice()", block_number)?;
@@ -469,7 +478,7 @@ mod tests {
         v
     }
 
-    fn provider(rpc: Arc<dyn RpcConstruction>) -> RpcCurveDataProvider {
+    fn provider(rpc: Arc<dyn RpcConstruction + Send + Sync>) -> RpcCurveDataProvider {
         RpcCurveDataProvider::new(
             rpc,
             POOL,
@@ -485,7 +494,7 @@ mod tests {
 
     #[test]
     fn block_number_and_timestamp() {
-        let rpc: Arc<dyn RpcConstruction> = Arc::new(StubRpc::new());
+        let rpc: Arc<dyn RpcConstruction + Send + Sync> = Arc::new(StubRpc::new());
         let p = provider(rpc);
         assert_eq!(p.block_number().unwrap(), 18_000_000);
         assert_eq!(p.block_timestamp(18_000_000).unwrap(), 1_700_000_000);
@@ -496,7 +505,7 @@ mod tests {
         let mut s = StubRpc::new();
         s.set(
             POOL,
-            selector(b"get_virtual_price()").to_vec(),
+            abi::selector(b"get_virtual_price()").to_vec(),
             uint(1_020_000_000_000_000_000),
         );
         let p = provider(Arc::new(s));
@@ -512,10 +521,10 @@ mod tests {
         let mut s = StubRpc::new();
         s.set(
             base,
-            selector(b"get_virtual_price()").to_vec(),
+            abi::selector(b"get_virtual_price()").to_vec(),
             uint(1_030_000_000_000_000_000),
         );
-        let rpc: Arc<dyn RpcConstruction> = Arc::new(s);
+        let rpc: Arc<dyn RpcConstruction + Send + Sync> = Arc::new(s);
         let p = RpcCurveDataProvider::new(
             rpc,
             POOL,
@@ -567,31 +576,35 @@ mod tests {
         let mut s = StubRpc::new();
         s.set(
             COIN0,
-            selector(b"exchangeRateStored()").to_vec(),
+            abi::selector(b"exchangeRateStored()").to_vec(),
             uint(1_010_000_000_000_000_000),
         );
         s.set(
             COIN0,
-            selector(b"supplyRatePerBlock()").to_vec(),
+            abi::selector(b"supplyRatePerBlock()").to_vec(),
             uint(1_000_000_000_000_000),
         );
         s.set(
             COIN0,
-            selector(b"accrualBlockNumber()").to_vec(),
+            abi::selector(b"accrualBlockNumber()").to_vec(),
             uint(17_999_000),
         );
         s.set(
             COIN1,
-            selector(b"exchangeRateStored()").to_vec(),
+            abi::selector(b"exchangeRateStored()").to_vec(),
             uint(1_000_000_000_000_000_000),
         );
-        s.set(COIN1, selector(b"supplyRatePerBlock()").to_vec(), uint(0));
         s.set(
             COIN1,
-            selector(b"accrualBlockNumber()").to_vec(),
+            abi::selector(b"supplyRatePerBlock()").to_vec(),
+            uint(0),
+        );
+        s.set(
+            COIN1,
+            abi::selector(b"accrualBlockNumber()").to_vec(),
             uint(17_999_000),
         );
-        let rpc: Arc<dyn RpcConstruction> = Arc::new(s);
+        let rpc: Arc<dyn RpcConstruction + Send + Sync> = Arc::new(s);
         let p = RpcCurveDataProvider::new(
             rpc,
             POOL,
@@ -618,10 +631,10 @@ mod tests {
         let mut s = StubRpc::new();
         s.set(
             COIN1,
-            selector(b"getExchangeRate()").to_vec(),
+            abi::selector(b"getExchangeRate()").to_vec(),
             uint(1_100_000_000_000_000_000),
         );
-        let rpc: Arc<dyn RpcConstruction> = Arc::new(s);
+        let rpc: Arc<dyn RpcConstruction + Send + Sync> = Arc::new(s);
         let p = RpcCurveDataProvider::new(
             rpc,
             POOL,
@@ -667,12 +680,12 @@ mod tests {
         let mut s = StubRpc::new();
         s.set(
             POOL,
-            selector(b"redemption_price_snap()").to_vec(),
+            abi::selector(b"redemption_price_snap()").to_vec(),
             addr(snap),
         );
         s.set(
             snap,
-            selector(b"snappedRedemptionPrice()").to_vec(),
+            abi::selector(b"snappedRedemptionPrice()").to_vec(),
             uint_u256(U256::from(10u64).pow(U256::from(27u64))),
         );
         let p = provider(Arc::new(s));
@@ -686,8 +699,12 @@ mod tests {
     #[test]
     fn invariant_d_and_gamma_decode() {
         let mut s = StubRpc::new();
-        s.set(POOL, selector(b"D()").to_vec(), uint(42_000));
-        s.set(POOL, selector(b"gamma()").to_vec(), uint(7_000_000_000));
+        s.set(POOL, abi::selector(b"D()").to_vec(), uint(42_000));
+        s.set(
+            POOL,
+            abi::selector(b"gamma()").to_vec(),
+            uint(7_000_000_000),
+        );
         let p = provider(Arc::new(s));
         assert_eq!(p.invariant_d(18_000_000).unwrap(), U256::from(42_000u64));
         assert_eq!(p.gamma(18_000_000).unwrap(), U256::from(7_000_000_000u64));
@@ -698,12 +715,12 @@ mod tests {
         let mut s = StubRpc::new();
         s.set(
             POOL,
-            selector(b"base_virtual_price()").to_vec(),
+            abi::selector(b"base_virtual_price()").to_vec(),
             uint(1_010_000_000_000_000_000),
         );
         s.set(
             POOL,
-            selector(b"base_cache_updated()").to_vec(),
+            abi::selector(b"base_cache_updated()").to_vec(),
             uint(17_999_000),
         );
         let p = provider(Arc::new(s));

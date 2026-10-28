@@ -33,12 +33,13 @@
 //! # Scope
 //!
 //! The 19 atomic methods are here: the 12 DB reads/writes + the 7 generic RPC
-//! methods. The choreographed encode→call→decode wrappers
-//! (`fetch_v2_reserves`, `fetch_erc20_metadata`, …) compose over them core-side
-//! in `bot_core::pool_builder::choreography`, so a builder reaches one call
-//! surface and no driver re-implements a read. The call primitive those
-//! wrappers drive is [`ContractRead`](degenbot_rpc::abi::ContractRead), which
-//! this handle implements alongside the tick-paced [`PacedRead`] view.
+//! methods. Every contract read over this handle crosses ONE call step: the
+//! [`ContractRead`](degenbot_rpc::abi::ContractRead) primitive, which this
+//! handle implements (and whose tick-paced [`PacedRead`] view bounds the
+//! tick-word reads). The encode/decode halves of a read come from
+//! `degenbot_rpc::abi`, and the construction *policy* around them (fallbacks,
+//! degrade-to-empty, classification) lives with the builder that owns it — so
+//! a builder reaches one call surface and no driver re-implements a read.
 //!
 //! # Async shape
 //!
@@ -144,9 +145,9 @@ pub trait DbConstruction: Send + Sync {
 /// over. Alloy-shaped signature types; propagates [`ProviderError`].
 ///
 /// `call` returns raw return `Bytes` — the distinction between "decoded
-/// return" and "raw return" lives in the choreography
-/// (`bot_core::pool_builder::choreography`), not the trait, and the
-/// choreography's decoders come from `degenbot_rpc::abi`. The native adapter
+/// return" and "raw return" lives above the trait, in the read family
+/// ([`ContractRead`](degenbot_rpc::abi::ContractRead) and its `fetch_*`
+/// helpers), not the trait. The native adapter
 /// backs onto `degenbot-rpc`'s `AlloyProvider` (alloy-only — the legacy
 /// non-alloy Python-provider fallback is dropped at the trait).
 #[async_trait]

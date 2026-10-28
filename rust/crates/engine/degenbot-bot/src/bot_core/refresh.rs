@@ -10,8 +10,8 @@
 //! Family dispatch keys on [`RegisteredPoolFamily`], read typed from the state
 //! owner (`BotState::registered_family`) and matched exhaustively, so adding a
 //! family is a compile error here rather than a runtime gap; the
-//! fetch half composes the core construction-I/O choreography
-//! (`pool_builder::choreography`) over the shared [`ConstructionIo`], and the
+//! fetch half is the one call step's read family (`degenbot_rpc::abi`)
+//! over the shared [`ConstructionIo`], and the
 //! apply half drives the state owner's typed dispatchers
 //! (`apply_sync_by_pool_id` / `apply_swap_by_pool_id` /
 //! `apply_balance_update_by_pool_id`).
@@ -30,11 +30,11 @@ use alloy::primitives::U256;
 use degenbot_core::errors::ProviderError;
 use degenbot_pools::narrow_v2_reserve;
 use degenbot_pools::RegisteredPoolFamily;
+use degenbot_rpc::abi;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::BotState;
 
 use crate::bot_core::construction_io::ConstructionIo;
-use crate::bot_core::pool_builder::choreography;
 use crate::bot_core::pool_builder::curve_choreography;
 use crate::bot_core::pool_ops;
 
@@ -135,7 +135,7 @@ async fn refresh_reserve_pair(
             })
             .ok_or(RefreshError::MissingIdentity { pool_id })?
     };
-    let (reserve0, reserve1) = choreography::fetch_v2_reserves(io, address, Some(block)).await?;
+    let (reserve0, reserve1) = abi::fetch_v2_reserves(io, &address, Some(block)).await?;
     let narrow = |value: U256, field: &'static str| {
         narrow_v2_reserve(value, field).map_err(|violation| RefreshError::Spec {
             pool_id,
@@ -178,7 +178,7 @@ async fn refresh_v3(
             .ok_or(RefreshError::MissingIdentity { pool_id })?
     };
     let (sqrt_price_x96, tick_raw, liquidity_raw) =
-        choreography::fetch_v3_slot0_liquidity(io, address, Some(block)).await?;
+        abi::fetch_v3_slot0_liquidity(io, &address, Some(block)).await?;
     let tick = i32::try_from(tick_raw).unwrap_or(0);
     let liquidity = liquidity_raw.to::<u128>();
 
@@ -218,7 +218,7 @@ async fn refresh_v4(
         (state_view, identity.pool_id)
     };
     let (sqrt_price_x96, tick_raw, _protocol_fee, _lp_fee, liquidity_raw) =
-        choreography::fetch_v4_slot0_liquidity(io, state_view, v4_pool_id, Some(block)).await?;
+        abi::fetch_v4_slot0_liquidity(io, &state_view, &v4_pool_id, Some(block)).await?;
     let tick = i32::try_from(tick_raw).unwrap_or(0);
     let liquidity = liquidity_raw.to::<u128>();
 
@@ -284,7 +284,7 @@ async fn refresh_balancer(
         .ok_or(RefreshError::MissingIdentity { pool_id })?
     };
     let (_tokens, balances) =
-        choreography::fetch_balancer_vault_tokens(io, vault, &v4_style_id, block).await?;
+        abi::fetch_balancer_vault_tokens(io, &vault, &v4_style_id, block).await?;
     // The historical Balancer update stamped `block_number or 0` (the driver's
     // resolved block is `None` when the caller gave none), so the refresh
     // preserves that stamp rather than inventing a head default.
