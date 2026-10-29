@@ -1,373 +1,66 @@
 """Settlement-arbitrage runtime driver facade (``BotRunner``).
 
-``BotRunner`` is the
-Python-companion cockpit over the Rust-owned engine: it owns the config and
-the lifecycle, while the coordination state itself (the three actors
-``bot``/``engine_registry``/``async_w3`` + the ``Dispatcher`` + the block
-clock) is owned by the ONE ``_SessionState`` built in ``start()``.
-It is the one place that enforces the phase ordering the engine's state
-machine requires.
+``BotRunner`` is the operator shell over one
+:class:`~degenbot.runner.session.Session`: the session owns the config, the
+resolved actors, the dispatcher, the block clock, the pipelines, and the
+lifecycle/state machines, while this class exposes the verbs an operator (or
+the CLI) drives.
 
-    start():  subscribe -> backfill -> verify config
-              (``EngineRegistry.start``, stops at Backfilled, pre-resume)
-    run():    the run ritual (``_run_ritual``) drives consumer-attach ->
-              watch-attach -> ``resume()`` -> registration -> main loop
+    start():              build the actors, subscribe -> backfill -> verify
+                          config (``EngineRegistry.start``, stops at Backfilled,
+                          pre-resume)
+    run():                the run ritual (:mod:`~degenbot.runner._run_ritual`)
+                          drives consumer-attach -> watch-attach -> ``resume()``
+                          -> registration -> main loop
+    enqueue_path():       add ONE specific path to a running session
+    trigger_discovery():  bounded one-shot discovery over a running session
+    shutdown():           stop the Rust pump (any phase, idempotent)
 
 The driver is ``stays-python`` (asyncio loop, SIGINT, deployment policy): it
 controls the Rust engine but owns no pool state (ADR-003: ``Bot`` is the
 single state owner; ADR-006: ``Bot`` is the per-chain orchestrator). The
 start/run sequencing above is Rust-owned in ``EngineDriver``; this facade
 delegates path registration to :mod:`~degenbot.runner.build_paths` and the
-main loop to :mod:`~degenbot.runner.consume`. The Python/Rust split is
+main loop to :mod:`~degenbot.runner._consume`. The Python/Rust split is
 documented in ``docs/architecture/rust-settlement-bot-parity.md``.
 
-Testability seams (mirrors ``EngineRegistry``'s ``engine=`` seam): ``bot``,
-``engine_registry``, ``async_w3``, ``path_builder``, and ``consumer`` are
-injectable.
+Every earlier per-seam accessor (the actor trio, the pipelines, the readiness
+view, the scheduler, the watchdog) is gone: those are the session's fields, and
+a caller that needs one reads it there.
 """
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
-import gc
-import signal
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, Self
 
-from degenbot import Bot
-from degenbot.arbitrage import session_phase_next
-from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot.dispatch import (
-    BatchExecutor,
-    Dispatcher,
-    SimulateContext,
-    fetch_fee_history,
-)
-from degenbot.logging import logger as bot_logger
-from degenbot.provider import AlloyProvider, AsyncAlloyProvider
-from degenbot.runner._dispatch import SubmissionSmoke, _load_executor_runtime_bytecode
-from degenbot.runner._relay_posture import RelayPosture
-from degenbot.runner._run_ritual import RunRitual
-from degenbot.runner._session_watch import SessionWatch
-from degenbot.runner._sim_submit import build_batch_executor
-from degenbot.runner.diag import arm_diagnostics
-from degenbot.runner.identity import (
-    MULTICALL3_ADDRESS,
-    UNISWAP_V4_POOL_MANAGER_ADDRESS,
-    WETH_ADDRESS,
-)
+from degenbot.runner.session import InjectedActors, Session
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Coroutine
-
     from degenbot.runner._session_watch import SessionEndVerdict
-    from degenbot.runner.build_paths import ConstructionContext
     from degenbot.runner.config import ArbitrageConfig
-    from degenbot.strategy import StrategyReadinessView
-from degenbot.strategy import settlement_broadcast_endpoints, validate_strategy_readiness
-from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
-
-# ──────────────────────────────────────────────────────────────────
-# Direction resolver
-# ──────────────────────────────────────────────────────────────────
 
 
-# ============ class BotRunner ============
-
-
-class ActivationGateRefused(RuntimeError):
-    """Strategy readiness (the activation gate) refused a live session.
-
-    The gate refuses an activated facet that fails readiness, so a live boot
-    either aborts here or degrades a broadcast to the public mempool; the
-    gate's ValueError text becomes the message so the operator keeps the
-    gate's own diagnostic unchanged.
-    """
-
-    def __init__(self, refusal: ValueError) -> None:
-        """Bind the gate's ``ValueError`` text as the refusal message."""
-        super().__init__(f"activation gate refused: {refusal}")
-
-
-class PhaseError(RuntimeError):
-    """Cockpit phase violation: a lifecycle method ran in the wrong phase.
-
-    The session phase machine is ``New -> Started -> Running -> Closed``:
-    ``start()`` builds once from ``New`` and is an idempotent no-op on
-    ``Started`` re-entry (Running/Closed re-entry raises); ``run()`` requires
-    ``Started``; ``enqueue_path`` / ``trigger_discovery`` require ``Running``;
-    ``shutdown()`` stays deliberately any-phase and idempotent (the SIGINT
-    teardown ordering depends on it).
-
-    The transition table itself is the Rust host's ``SessionPhase``
-    (``strategy_host.rs``), read through ``degenbot._ffi.session_phase_next``;
-    this exception is the Python surface of its refusals.
-    """
-
-
-class _Phase(Enum):
-    """Cockpit session phase (private; the public signal is :class:`PhaseError`).
-
-    Legality is the Rust host's ``SessionPhase`` table (``strategy_host.rs``),
-    read through ``degenbot._ffi.session_phase_next``; the enum translates that
-    verdict into :class:`PhaseError` and never authors the transition matrix.
-    """
-
-    NEW = "new"
-    STARTED = "started"
-    RUNNING = "running"
-    CLOSED = "closed"
-
-    def _next(self, operation: str) -> _Phase | None:
-        """Return the host's verdict for ``operation`` (``None`` = refused).
-
-        Returns:
-            The admitted next phase, or ``None`` when the host refuses the
-            operation in this phase.
-
-        """
-        next_name = session_phase_next(self.value, operation)
-        return None if next_name is None else _Phase(next_name)
-
-    def on_start(self) -> _Phase:
-        """Apply the operator startup move; the host admits it from New/Started.
-
-        Returns:
-            The admitted next phase.
-
-        Raises:
-            PhaseError: When the current phase refuses the start move.
-
-        """
-        next_phase = self._next("start")
-        if next_phase is None:
-            msg = f"start() in phase {self.value!r} - session can only start from New"
-            raise PhaseError(msg)
-        return next_phase
-
-    def on_run(self) -> _Phase:
-        """Apply the main-loop entry move; the host admits it from Started.
-
-        Returns:
-            The admitted next phase.
-
-        Raises:
-            PhaseError: When the current phase refuses the run move.
-
-        """
-        next_phase = self._next("run")
-        if next_phase is None:
-            msg = f"run() requires phase 'started' (session phase is {self.value!r})"
-            raise PhaseError(msg)
-        return next_phase
-
-    def on_query(self, method: str) -> _Phase:
-        """Apply the add-a-path/discovery gate; the host admits it while Running.
-
-        Returns:
-            The admitted next phase.
-
-        Raises:
-            PhaseError: When the current phase refuses the query.
-
-        """
-        next_phase = self._next("query")
-        if next_phase is None:
-            msg = f"{method}() needs 'running' (phase is {self.value!r})"
-            raise PhaseError(msg)
-        return next_phase
-
-    def on_shutdown(self) -> _Phase:
-        """Apply the teardown move; the host admits it from every phase.
-
-        Returns:
-            The admitted next phase.
-
-        Raises:
-            PhaseError: When the host table refuses the shutdown move.
-
-        """
-        next_phase = self._next("shutdown")
-        if next_phase is None:  # pragma: no cover - the host table is total
-            msg = f"shutdown() refused in phase {self.value!r}"
-            raise PhaseError(msg)
-        return next_phase
-
-
-@dataclass
-class _SessionState:
-    """Cockpit session state (GLOSSARY.md term: *session state*).
-
-    The single owner of one pump session's coordination state, built REAL in
-    ``start()`` — no pre-session option cluster survives on the runner (its
-    same-named attributes are a facade over this object once it exists). The
-    block loop (``consume``) and the dispatch leaf
-    (``dispatch``) both read the same owner instead of the session travelling
-    as a parameter bag.
-
-    Write discipline: downstream modules (the block loop, the dispatch leaf,
-    the sim/submit pipeline) read fields directly but mutate ONLY through the
-    owner's mutator methods (``advance_block`` / ``attach_pipeline`` /
-    ``attach_registration_pipeline``) — remote attribute pokes are forbidden.
-    The one writer outside that set is the run ritual: it CREATES the three
-    run-phase handles (``result_consumer_task`` / ``registration_task`` /
-    ``registration_context``) during startup, so it writes them directly at
-    that boundary. The ``None`` fields are domain options, not phase
-    options: ``sim_ctx`` is ``None`` only for non-Alloy (test) providers,
-    ``bot`` becomes ``None`` when the post-registration trim drops it, and
-    the two pipelines attach lazily through their mutators (their producers
-    legitimately land after ``start()``).
-
-    Mutable pieces (``current_block``) advance on the owner.
-    """
-
-    engine_registry: EngineRegistry
-    async_w3: AsyncAlloyProvider
-    sim_ctx: SimulateContext | None
-    dispatcher: Dispatcher
-    cfg: ArbitrageConfig
-    current_block: int
-    #: The Python-companion bot actor — dropped (``None``) by the
-    #: post-registration trim; the engine keeps its own Bot ref.
-    bot: Bot | None = None
-    #: The concurrent sim fan-out + single ordered submitter (attached at
-    #: consumer start via :meth:`attach_pipeline`); ``None`` means the consumer
-    #: lazily builds it through the session's ``pipeline_factory``.
-    sim_submit_pipeline: BatchExecutor | None = None
-    #: Factory for the lazily-built sim/submit pipeline. The default builds
-    #: the production pipeline; a test double supplied here observes the
-    #: consumer's attach without touching the Rust sim seam.
-    #: The factory may be async (the production BatchExecutor construction
-    #: dials the relay providers + seeds the nonce lane); the consumer
-    #: tolerates either shape.
-    pipeline_factory: Callable[[_SessionState], Any] = build_batch_executor
-    #: The head-tick ``eth_feeHistory`` leaf (Rust owns the decode +
-    #: ``record_priority_fees``). Injected so a provider double can drive the
-    #: reconcile path; the default is the production FFI leaf.
-    fee_history_fetcher: Callable[..., Awaitable[bool]] = fetch_fee_history
-    #: The operator add-a-path surface (attached in run() via
-    #: :meth:`attach_registration_pipeline` when the real build_paths runs),
-    #: kept reachable for the session's lifetime; ``None`` for injected/fake
-    #: runs.
-    registration_pipeline: Any = None
-    #: The session's relay posture (where signed bytes broadcast — see
-    #: ``_relay_posture``). Resolved once here from the typed config; ``None``
-    #: for injected sessions constructed directly, which the submit seam then
-    #: treats as no-relay posture. Nonce issuance is the Rust authority's.
-    relay_posture: RelayPosture | None = None
-    #: The per-session silent-veto smoke FSM (streak + throttle clock). Built
-    #: with the session, so a streak can never leak into the next session.
-    submission_smoke: SubmissionSmoke = field(default_factory=SubmissionSmoke)
-    #: The result-consumer drain task (written by the run ritual at
-    #: consumer-attach; read by the pump-finished watchdog and handed to the
-    #: session watch). ``None`` before ``run()``.
-    result_consumer_task: asyncio.Task[Any] | None = None
-    #: The scheduled registration hand-off (the run ritual's scheduler
-    #: output; the trim guard reads it to refuse a mid-climb outside
-    #: trim). ``None`` for a backrun-only boot, which schedules nothing.
-    registration_task: asyncio.Task[Any] | None = None
-    #: The registration-owned construction context (written by the run
-    #: ritual for the real builder; ``None`` for injected builders).
-    registration_context: ConstructionContext | None = None
-
-    def advance_block(self, block_number: int) -> None:
-        """Advance the session's block clock (the consumer's one mutation)."""
-        self.current_block = block_number
-
-    def attach_pipeline(self, pipeline: BatchExecutor) -> None:
-        """Attach the lazily-built sim/submit pipeline."""
-        self.sim_submit_pipeline = pipeline
-
-    def attach_registration_pipeline(self, pipeline: Any) -> None:
-        """Attach the operator add-a-path surface (built in run())."""
-        self.registration_pipeline = pipeline
-
-
-@dataclass(frozen=True)
-class InjectedActors:
-    """Test/DI actor overrides for :class:`BotRunner` (``None`` = build from cfg)."""
-
-    bot: Bot | None = None
-    engine_registry: EngineRegistry | None = None
-    async_w3: AsyncAlloyProvider | None = None
-    path_builder: Any = None
-    consumer: Any = None
-    #: Factory for the session's lazily-built sim/submit pipeline (``None`` =
-    #: production :class:`BatchExecutor`); tests inject a stub to observe
-    #: the consumer's attach without the Rust sim seam.
-    pipeline_factory: Callable[[_SessionState], Any] | None = None
-    #: Offline seam for the live activation gate: when set, the session's
-    #: relay posture is this injected value (lifecycle tests pin a stub;
-    #: production leaves it unset so the Rust readiness resolution owns the
-    #: posture and the gate refuses an unsettled live boot).
-    relay_posture: RelayPosture | None = None
-    #: Forces the session's settlement-arm posture (None = derive from the
-    #: readiness resolution). The runner's engine loop reads this once at
-    #: start(): settlement off -> no path registration, no python-state trim,
-    #: the active hosted arms (backrun drivers) enable around resume().
-    settlement_arm: bool | None = None
-    #: Factory for the activation-gate readiness resolution (None = the real
-    #: ``validate_strategy_readiness``). A factory rather than a value so a
-    #: test can express both the resolving gate and a raising refusal.
-    readiness: Callable[[], StrategyReadinessView] | None = None
-    #: Factory for the settlement broadcast endpoints (None = the real
-    #: ``settlement_broadcast_endpoints``). The refusal rides the same
-    #: ``ActivationGateRefused`` routing as the readiness gate.
-    settlement_endpoints: Callable[[], list[str]] | None = None
-    #: Offline seam for the engine-stop funnel (``shutdown()`` + the SIGINT
-    #: handler both route through ``BotRunner._stop_engine``): when set, the
-    #: funnel's stop is this injected callback; ``None`` (production) stops
-    #: the real engine through the registry.
-    stop_engine: Callable[[], None] | None = None
-    #: The registration hand-off scheduler — the coroutine→task seam the run
-    #: ritual consumes as DATA (the production default is
-    #: ``asyncio.create_task``). There is no second registration mode to
-    #: select: a deterministic test double drives the same hand-off inline.
-    scheduler: Callable[[Coroutine[Any, Any, None]], asyncio.Task[Any]] = asyncio.create_task
-
-
-class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ritual host surface is deliberately wide (still 21 > 20 after the run-phase handles moved to _SessionState)
-    """Orchestrator that collapses the settlement-arbitrage startup ritual behind one facade.
-
-    Owns the config and the lifecycle; the coordination state itself (the
-    three actors ``bot``/``engine_registry``/``async_w3``, the ``Dispatcher``,
-    the block clock, the sim context, the pipelines) lives on ONE
-    :class:`_SessionState` built in ``start()`` — the runner's
-    same-named attributes are a facade over that owner, not mirrors. The
-    runner is the ONE place that enforces the phase ordering the engine's
-    state machine requires:
-
-        start():  subscribe → backfill → verify config
-                  (``EngineRegistry.start``, stops at Backfilled, pre-resume)
-        run():    the run ritual (``_run_ritual.RunRitual``) owns the startup
-                  ordering — attach consumer → watch → ``resume()`` →
-                  registration → main loop — as a state machine; the
-                  cross-task fail-fast channel surfaces a fatal registration
-                  error.
+class BotRunner:
+    """The operator verbs of one settlement-arbitrage pump session.
 
     Usage (production)::
 
         cfg = ArbitrageConfig.build(live=not dry_run, permutation=args.permutation)
-        async with BotRunner(cfg) as session:
-            await session.run()
+        async with BotRunner(cfg) as runner:
+            await runner.run()
 
-    In production ``run()`` schedules discovery+registration as a background
-    task (through the injected scheduler) and enters the main loop
-    immediately; the state-trim runs on registration completion (inside the
-    scheduled hand-off), not on the main-loop entry path. A fatal
-    verification error still crashes loudly through the cross-task channel.
-    The hot loop keeps only ``engine_registry`` + ``async_w3`` + dispatcher
-    once trimmed — the Python pool/token caches are scaffolding once the Rust
-    engine owns canonical state.
+    The session is built by ``start()``; ``run()`` schedules
+    discovery+registration as a background task (through the session's
+    scheduler) and enters the main loop immediately, so the state-trim runs on
+    registration completion (inside the scheduled hand-off), not on the
+    main-loop entry path. A fatal verification error still crashes loudly
+    through the cross-task channel.
 
-    Testability seams (mirrors ``EngineRegistry``'s ``engine=`` seam): ``bot``,
-    ``engine_registry``, ``async_w3``, ``path_builder``, ``consumer``, and the
-    registration ``scheduler`` are injectable. When
-    injected, ``start()``/``run()`` orchestrate the fakes and the phase
-    ordering is verifiable offline; when ``None`` (production), the actors
-    are built from ``cfg`` and the real module functions are called.
+    Testability seams (mirrors ``EngineRegistry``'s ``engine=`` seam): the
+    ``actors`` record (:class:`~degenbot.runner.session.InjectedActors`)
+    injects the actor trio, the module functions, and the scheduler; a cockpit
+    test that wants a ready session without the boot I/O builds one with
+    :meth:`~degenbot.runner.session.Session.for_test` instead.
     """
 
     def __init__(
@@ -377,10 +70,15 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         actors: InjectedActors | None = None,
         install_sigint: bool = True,
     ) -> None:
-        """Store config + injectable test actors; the real actors are built in ``start()``.
+        """Build the session shell over the config + the injectable actor seams.
 
-        ``actors`` bundles the test/DI actor seams (``bot``/``engine_registry``/
-        ``async_w3``/``path_builder``/``consumer``/``scheduler``).
+        Args:
+            cfg: The typed config the session resolves its actors from.
+            actors: The DI record naming the seams to adopt verbatim
+                (``None`` = every seam from ``cfg``).
+            install_sigint: Whether the session binds the SIGINT handler
+                (tests pass ``False`` to avoid a process-global handler).
+
         """
         # Strategy admission is host-owned (ADR-057): the runner carries no
         # Python-side arm gate. The host boot registers each configured facet
@@ -388,625 +86,64 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         # (`UnknownStrategyError` / `UnconfiguredStrategyError`), so there is
         # one admission authority and no env check that can disagree with the
         # host's configured-ness.
-        self.cfg = cfg
-        injected = actors if actors is not None else InjectedActors()
-        self._injected_bot = injected.bot
-        self._injected_engine_registry = injected.engine_registry
-        self._injected_async_w3 = injected.async_w3
-        self._path_builder = injected.path_builder
-        self._consumer = injected.consumer
-        self._injected_pipeline_factory = injected.pipeline_factory
-        self._injected_relay_posture = injected.relay_posture
-        self._injected_settlement_arm = injected.settlement_arm
-        self._injected_readiness = injected.readiness
-        self._injected_settlement_endpoints = injected.settlement_endpoints
-        self._injected_stop_engine = injected.stop_engine
-        self._scheduler = injected.scheduler
-        # The phase machine is the ONLY lifecycle state (no ``_started`` bool
-        # — Started re-entry is the no-op; Running/Closed re-entry is the
-        # phase error).
-        self._phase: _Phase = _Phase.NEW
-        # The resolved strategy-readiness value, resolved ONCE at the
-        # start() boundary and threaded to the arms — never re-read from the
-        # process verdict per call. ``None`` before start().
-        self._readiness: StrategyReadinessView | None = None
-        # THE session (built in start()): the one owner of the coordination
-        # state — actors, dispatcher, block clock, sim context, pipelines.
-        # ``None`` only before start() (there is no session yet; shutdown()'s
-        # any-phase contract and the pre-start injection seams rely on that).
-        self._session: _SessionState | None = None
-        # The one owner of the pump session's end-state — the
-        # watch-set ({consumer} + optional {registration, watchdog}), the
-        # SessionEndVerdict ranking, and the cancel/teardown duties for the
-        # run()-finally and __aexit__ sites. Attached in run(); awaited
-        # there; torn down from __aexit__.
-        self._session_watch = SessionWatch()
-        # SIGINT handler installed by `start()`, restored by `__aexit__`.
-        # Stores the previous handler so teardown restores it (the default
-        # SIGINT → KeyboardInterrupt machinery) rather than leaving a
-        # process-wide handler bound after the session ends.
-        self._previous_sigint_handler: object = signal.SIG_DFL
-        self._sigint_installed = False
-        # Production (main()) installs the SIGINT→engine.stop() handler so a
-        # Ctrl-C during the synchronous find_paths section stops the pump
-        # immediately. Tests pass install_sigint=False to avoid binding a
-        # process-global handler (signal.signal pollutes across tests).
-        self._install_sigint = install_sigint
-
-    # ── Session facade ───────────────────────────────────────────────
-    # The _SessionState built in start() is the one STORAGE for the actors,
-    # the dispatcher, the block clock, and the sim context. These properties
-    # are the runner's facade over it — after start() they read/write the
-    # session (no runner-side mirrors); before start() there is no session,
-    # so they read/write the injection seams (a pre-start write IS an
-    # injection: start() adopts it when building the session).
-
-    @property
-    def bot(self) -> Bot | None:
-        """The session's Python-companion bot (``None`` once the trim dropped it).
-
-        Before ``start()``: the injected seam (a write is an injection).
-        """
-        return self._session.bot if self._session is not None else self._injected_bot
-
-    @bot.setter
-    def bot(self, bot: Bot | None) -> None:
-        if self._session is not None:
-            self._session.bot = bot
-        else:
-            self._injected_bot = bot
-
-    @property
-    def engine_registry(self) -> EngineRegistry | None:
-        """The session's engine registry. Before ``start()``: the injected seam."""
-        return (
-            self._session.engine_registry
-            if self._session is not None
-            else self._injected_engine_registry
+        self.session = Session(
+            cfg=cfg,
+            injected=actors if actors is not None else InjectedActors(),
+            install_sigint=install_sigint,
         )
 
-    @engine_registry.setter
-    def engine_registry(self, registry: EngineRegistry) -> None:
-        if self._session is not None:
-            self._session.engine_registry = registry
-        else:
-            self._injected_engine_registry = registry
-
-    @property
-    def async_w3(self) -> AsyncAlloyProvider | None:
-        """The session's dispatch-path provider. Before ``start()``: the injected seam."""
-        return self._session.async_w3 if self._session is not None else self._injected_async_w3
-
-    @property
-    def dispatcher(self) -> Dispatcher | None:
-        """The session's dispatcher. Before ``start()``: ``None`` (no session yet)."""
-        return self._session.dispatcher if self._session is not None else None
-
-    # ── Run-ritual host surface ──────────────────────────────────────
-    # The run ritual (``_run_ritual``) is the one consumer of these: it reads
-    # the session's collaborators and writes the three run-phase handles (the
-    # consumer/registration tasks and the registration construction context)
-    # onto the session owner (``_SessionState``), where the runner's other
-    # duties (watchdog, trim guard, operator surface) read them.
-
-    @property
-    def session(self) -> _SessionState | None:
-        """The session owner (``None`` only before ``start()``)."""
-        return self._session
-
-    @property
-    def session_watch(self) -> SessionWatch:
-        """The session watch the ritual attaches the run's members to."""
-        return self._session_watch
-
-    @property
-    def consumer(self) -> Any:
-        """The injected consumer (``None`` = the production block loop)."""
-        return self._consumer
-
-    @property
-    def readiness(self) -> StrategyReadinessView | None:
-        """The readiness view resolved once at the ``start()`` boundary."""
-        return self._readiness
-
-    @property
-    def settlement_active(self) -> bool:
-        """The resolved settlement-arm disposition (read by the ritual)."""
-        return self._settlement_active
-
-    @property
-    def path_builder(self) -> Any:
-        """The injected path builder (``None`` = the real ``build_paths``)."""
-        return self._path_builder
-
-    @property
-    def scheduler(self) -> Callable[[Coroutine[Any, Any, None]], asyncio.Task[Any]]:
-        """The registration hand-off scheduler (data; production ``create_task``)."""
-        return self._scheduler
-
-    @property
-    def trim(self) -> Callable[..., None]:
-        """The python-state trim (the registration hand-off's completion duty)."""
-        return self._trim_python_state
-
-    @property
-    def pump_finished_watchdog(self) -> Callable[..., Coroutine[Any, Any, None]]:
-        """The pump-finished watchdog factory (the watch's always-on member)."""
-        return self._pump_finished_watchdog
-
-    # ── Phase A: pre-resume startup ─────────────────────────────────
-    async def start(self) -> BotRunner:
-        """Build the actors, fetch block state, run ``engine_registry.start()``.
-
-        Stops at ``Backfilled`` — BEFORE ``resume()``. Zero result batches
-        emit during this window (the pump isn't running), so ``run()`` can
-        attach the consumer in the gap before ``resume()`` without a stale-backlog
-        window. Idempotent via the phase alone: re-entry once Started
-        is a no-op; Running/Closed re-entry raises :class:`PhaseError`.
+    async def start(self) -> Self:
+        """Build the session's actors and run the engine's pre-resume ritual.
 
         Returns:
-            The started runner, stopped at ``Backfilled``.
-
-        Raises:
-            RuntimeError: If the latest-block fetch fails at session start.
+            The started runner.
 
         """
-        if self._phase is _Phase.STARTED:
-            return self
-        next_phase = self._phase.on_start()
-
-        cfg = self.cfg
-
-        # Arm the incident-diagnostic harnesses (tracemalloc diff thread,
-        # /proc RSS CSV sampler, faulthandler repeat dump) from the typed
-        # config — every cockpit-driven entrypoint gets them uniformly, and
-        # env reads stay the loader's. Zero-config arms nothing.
-        arm_diagnostics(cfg.diag)
-
-        # ── Build the three actors (injected or from cfg) ──
-        bot, async_w3, engine_registry = await self._build_actors(cfg)
-
-        # ── Fetch current block (for the dispatcher + backfill comparison) ──
-        # Note: main()'s start-phase base_fee_next/operator_nonce fetches are
-        # dead state — they are recomputed per-batch inside consume_result_batches.
-        latest_block = await async_w3.get_block("latest")
-        if latest_block is None:
-            msg = "Failed to fetch the latest block at session start"
-            raise RuntimeError(msg)
-        current_block = latest_block["number"]
-
-        # ── Coordination state ──
-        dispatcher = Dispatcher.for_block(current_block)
-
-        sim_ctx = self._build_sim_ctx(async_w3, cfg, engine_registry)
-
-        # ── Engine pre-resume ritual (subscribe → verify) ──
-        # The snapshot→WS gap is closed automatically inside
-        # `BlockPump::resume_from_subscribe` at resume. `start()` only
-        # subscribes + sets up verify config; resume drives both the backfill
-        # and the live loop. The DB snapshot is loaded eagerly at Bot
-        # construction via `Bot::load_snapshot_from_db`; `start()` reads the
-        # seed `S` from the core `BotState` (there are no snapshot kwargs).
-        backfill_target = engine_registry.start(
-            cfg.node_http,
-            cfg.node_ws,
-            verify_state_view=EthereumMainnetUniswapV4.state_view.address,
-        )
-        if backfill_target > current_block:
-            current_block = backfill_target
-            dispatcher.advance_block(backfill_target)
-
-        # The activation gate resolves ONCE here and caches the value; the
-        # arms and run() consume that data rather than re-reading the verdict,
-        # while the refusal rule stays with the Rust config validation.
-        self._readiness = self._gate_readiness()
-        # The settlement arm resolves before the session exists: the posture
-        # minter and run()'s dispositions read this ONE resolved fact, so the
-        # session can never carry a posture the arm disagrees with.
-        self._resolve_settlement_arm()
-
-        # ── THE session: real from here on — the one owner of the
-        # coordination state. The runner keeps no stored copies (its
-        # same-named attributes are the facade over this owner); the two
-        # pipelines attach later through the owner's mutators.
-        self._session = _SessionState(
-            engine_registry=engine_registry,
-            async_w3=async_w3,
-            sim_ctx=sim_ctx,
-            dispatcher=dispatcher,
-            cfg=cfg,
-            current_block=current_block,
-            bot=bot,
-            pipeline_factory=(
-                self._injected_pipeline_factory
-                if self._injected_pipeline_factory is not None
-                else build_batch_executor
-            ),
-            relay_posture=(
-                self._injected_relay_posture
-                if self._injected_relay_posture is not None
-                else self._boot_relay_posture(live=not cfg.dry_run)
-            ),
-        )
-        self._install_sigint_handler()
-        self._phase = next_phase
+        await self.session.start()
         return self
 
-    def _resolve_settlement_arm(self) -> None:
-        """Resolve the settlement arm once, before the session and run() read it.
-
-        The injected flag (test/probe DI) wins; otherwise the readiness view
-        the posture gate already walked owns the answer — the same facet
-        activation the gate used, so the arm never disagrees with the fleet.
-        This is the one resolved fact the posture minter and run()'s
-        dispositions consume.
-        """
-        if self._injected_settlement_arm is not None:
-            self._settlement_active = self._injected_settlement_arm
-            return
-        readiness = self._readiness
-        assert readiness is not None, "start() resolved the readiness before the arm"
-        self._settlement_active = bool(readiness.settlement_active)
-
-    async def _build_actors(
-        self, cfg: ArbitrageConfig
-    ) -> tuple[Bot, AsyncAlloyProvider, EngineRegistry]:
-        """Build (or adopt the injected) actor trio for a fresh session.
-
-        Returns:
-            The ``(bot, async provider, engine registry)`` session actors.
-
-        """
-        bot = self._injected_bot or self._build_bot(cfg)
-        async_w3 = self._injected_async_w3 or await self._build_async_w3(cfg)
-        engine_registry = self._injected_engine_registry or EngineRegistry(bot=bot)
-        return bot, async_w3, engine_registry
-
-    def _gate_readiness(self) -> StrategyReadinessView:
-        """Resolve the activation gate; a typed readiness refusal is a boot refusal.
-
-        The refusal rule itself (empty fleet, unsettled endpoints) is owned by
-        the Rust config validation this call reaches through
-        ``validate_strategy_readiness`` (or the injected readiness factory);
-        note there is no second rule here. The one thing this method adds is
-        the single read: the resolved view is data the arms and the main loop
-        consume, never a per-call re-decide. A caller that needs HOW a cascade
-        would resolve an input uses the hypothetical seam instead.
-
-        Returns:
-            The resolved strategy-readiness view.
-
-        Raises:
-            ActivationGateRefused: When the Rust validation refuses the boot.
-
-        """
-        resolver = (
-            self._injected_readiness
-            if self._injected_readiness is not None
-            else validate_strategy_readiness
-        )
-        try:
-            return resolver()
-        except ValueError as refusal:
-            raise ActivationGateRefused(refusal) from refusal
-
-    def _boot_relay_posture(self, *, live: bool) -> RelayPosture | None:
-        """Resolve the session's settlement broadcast posture for this boot.
-
-        The gate already refused an empty fleet and an unsettled arm, so this
-        reads the resolved settlement arm as DATA: an active arm mints the
-        endpoints the Rust settlement composition resolved; an inactive arm
-        (the gate guarantees a backrun arm is active) is a backrun-only boot
-        that runs no settlement seam and mints no posture. Only a live,
-        settlement-active boot mints the posture — a dry-run boot signs
-        nothing.
-
-        Returns:
-            The settlement broadcast posture, or ``None`` for an inactive
-            arm or a dry-run boot.
-
-        Raises:
-            ActivationGateRefused: When the endpoint resolution refuses.
-
-        """
-        if not self._settlement_active:
-            return None
-        resolver = (
-            self._injected_settlement_endpoints
-            if self._injected_settlement_endpoints is not None
-            else settlement_broadcast_endpoints
-        )
-        try:
-            endpoints = resolver()
-        except ValueError as refusal:
-            raise ActivationGateRefused(refusal) from refusal
-        return RelayPosture(relay_urls=endpoints) if live else None
-
-    @staticmethod
-    def _build_sim_ctx(
-        async_w3: AsyncAlloyProvider,
-        cfg: ArbitrageConfig,
-        engine_registry: EngineRegistry,
-    ) -> SimulateContext | None:
-        """Build the session's sim context (``None`` for non-Alloy providers).
-
-        One SimulateContext per session, held alongside the dispatcher. The
-        runtime-bytecode file-load stays Python (``stays-python``); the bytes
-        cross here. The AsyncAlloyProvider handle is taken from the session's
-        provider so ``dispatch_profitable`` shares one provider with the rest
-        of the pipeline. Inline-sim wiring rides the same call.
-
-        Returns:
-            The built sim context, or ``None`` for a non-Alloy provider.
-
-        """
-        async_alloy = async_w3.as_async_alloy()
-        if async_alloy is None:
-            # Non-Alloy provider (test fakes). Defer the sim context:
-            # production sessions are Alloy-backed + build it eagerly here;
-            # dispatch raises a clear error if reached without one.
-            return None
-        runtime_code = _load_executor_runtime_bytecode(cfg)
-        sim_ctx = SimulateContext(
-            provider=async_alloy,
-            executor_owner=cfg.executor_owner,
-            executor_address=cfg.executor_address,
-            weth_address=WETH_ADDRESS,
-            pool_manager_address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
-            multicall3_address=MULTICALL3_ADDRESS,
-            inject_code=cfg.inject_executor_code,
-            executor_runtime_bytecode=bytes.fromhex(runtime_code[2:]),
-            injected_address=cfg.injected_address if cfg.inject_executor_code else None,
-        )
-        # The inline-sim stance (`DEGENBOT_SOLVE_INLINE_SIM`) needs the
-        # ENGINE hook installed from this session's sim config —
-        # without it stance=1 carries no payloads (harmless but inert).
-        # Cheap Arc-clone wiring; the engine only calls the hook under the
-        # stance, so installing it unconditionally is a no-op when off.
-        # The object installed is the PyO3 adapter, not engine policy: it
-        # wraps this session's `PySimulateContext` and the Python escalation
-        # port, so only this binding layer can build it. That is the permanent
-        # reason the install stays here — the core owns the simulator contract
-        # and the stance-gated call, and this adapter is its thin bridge. The
-        # before-resume placement is structural rather than a separate rule:
-        # it is the point where the session's sim context and the engine both
-        # exist.
-        engine_registry.engine.install_inline_simulator(
-            sim_ctx,
-            erc6909_profit=cfg.erc6909_profit,
-        )
-        return sim_ctx
-
-    # ── Phase B: the rolling-start main loop ──────────────────────────
     async def run(self) -> SessionEndVerdict:
         """Run the cockpit main loop until the consumer task ends.
 
-        Requires the ``Started`` phase — the session phase machine
-        (:class:`PhaseError`, delegating to the Rust host's ``SessionPhase``
-        table) owns the lifecycle gate. The startup ordering itself is the
-        run ritual's (:mod:`~degenbot.runner._run_ritual`): this method is
-        the thin phase-gated drive over that machine.
-
         Returns:
             The session's end verdict (the session watch's ranking over how
-            the run ended). Consuming it is optional — callers that ignore
-            it behave exactly as before this return existed.
+            the run ended).
 
         """
-        self._phase = self._phase.on_run()
-        # The session's construction answers the actor asserts: the actors
-        # are real on the owner the moment start() built it.
-        session = self._session
-        assert session is not None
-        assert session.bot is not None
-        return await RunRitual(self).run()
+        return await self.session.run()
 
-    # ── Operator add-a-path surface ─────────────────────────────────
     async def enqueue_path(
         self,
         path_steps: Any,
         directions: list[bool] | None = None,
     ) -> None:
-        """Add ONE specific path at any time (the operator surface).
+        """Add ONE specific path to a running session.
 
-        Delegates to the session's live :class:`PathRegistrationPipeline`
-        (created by the run ritual); ``path_steps`` + optional ``directions`` are
-        the same shapes as :meth:`PathRegistrationPipeline.enqueue_path`. The
-        path is built via the retained ``ConstructionContext`` (Rust
-        ``PoolBuilder``), registered + verified, released to ``Live``, and
-        registered — without disturbing the pump's update/solve/dispatch.
-
-        Raises:
-            RuntimeError: if no live pipeline exists (injected fake builders
-                have no construction surface, or ``run()`` has not run).
+        Args:
+            path_steps: The path's steps (the pipeline's enqueue shape).
+            directions: Per-step swap directions (``None`` = resolve them).
 
         """
-        self._phase = self._phase.on_query("enqueue_path")
-        session = self._session
-        assert session is not None
-        if session.registration_pipeline is None:
-            msg = "no live registration pipeline; add-path unavailable (injected/fake run)"
-            raise RuntimeError(msg)
-        await session.registration_pipeline.enqueue_path(path_steps, directions=directions)
+        await self.session.enqueue_path(path_steps, directions)
 
     async def trigger_discovery(self, *, bound: int | None = None) -> int:
-        """Trigger a bounded one-shot discovery sweep (on-demand trigger).
+        """Trigger a bounded one-shot discovery sweep over a running session.
 
-        Delegates to the session's live pipeline.
+        Args:
+            bound: The maximum number of paths the sweep processes.
 
         Returns:
             The number of paths processed by the sweep.
 
-        Raises:
-            RuntimeError: if no live pipeline exists (injected fake builders,
-                or ``run()`` has not run).
-
         """
-        self._phase = self._phase.on_query("trigger_discovery")
-        session = self._session
-        assert session is not None
-        if session.registration_pipeline is None:
-            msg = "no live registration pipeline; on-demand discovery unavailable"
-            raise RuntimeError(msg)
-        return cast(
-            "int",
-            await session.registration_pipeline.trigger_discovery(bound=bound),
-        )
+        return await self.session.trigger_discovery(bound=bound)
 
-    def _trim_python_state(self, *, close_read_tx: bool = True) -> None:
-        """Trim redundant Python state once registration is done.
+    async def shutdown(self) -> None:
+        """Signal the Rust core to stop the pump (best-effort, any phase)."""
+        await self.session.shutdown()
 
-        Refuses while a background registration is live and still climbing:
-        only the registration task may trim its own state (its completion
-        hand-off, or the cancel branch). Releases the held snapshot read tx,
-        then drops the Python-side caches and nulls run()'s bot ref so the hot
-        loop isn't pinning Python pool objects.
-
-        ``close_read_tx``: on the healthy path (``build_paths`` completed) the
-        ``Arc<SnapshotDb>`` canary fires and the read tx is committed to
-        reclaim WAL space. On the mid-registration cancel/teardown branch it
-        is ``False`` — build-worker ``Arc<SnapshotDb>`` clones may still be
-        live, so the canary would false-positive; the tx is instead dropped
-        with ``Bot``
-        at process teardown. Callers must keep the canary active whenever
-        registration actually finished.
-
-        Raises:
-            RuntimeError: If a background registration is still climbing
-                (only the registration task may trim its own state).
-
-        """
-        # The shared tracker/pool/token registries this trim clears are also
-        # held, mutably, by a still-climbing registration's
-        # ConstructionContext. Only the registration task may trim while it is
-        # live (its own completion hand-off, or its cancel branch); an outside
-        # caller is mid-climb and would clobber them.
-        session = self._session
-        registration_task = session.registration_task if session is not None else None
-        if registration_task is not None and not registration_task.done():
-            try:
-                current = asyncio.current_task()
-            except RuntimeError:  # no running loop: not the registration task
-                current = None
-            if current is not registration_task:
-                msg = (
-                    "refusing to trim Python state while background "
-                    "registration is still climbing: the registration's "
-                    "ConstructionContext holds the same tracker/pool/token "
-                    "registries this trim clears; only the registration task "
-                    "may trim its own state"
-                )
-                raise RuntimeError(msg)
-        registry = self.engine_registry
-        assert registry is not None
-        # Release the held snapshot read transaction:
-        # `load_snapshot_from_db` opened a deferred read tx so every
-        # `assemble_*_tick_map` Db-arm read during `build_paths` shared one
-        # frozen DB snapshot. Pool registration is done — commit the tx to
-        # release the WAL snapshot so the updater's checkpoint can reclaim
-        # `-wal` space for the hot loop. No-op for the cold-start path (no DB).
-        # `getattr` so test fakes (`_FakeBot`) without a real `_py_bot` skip.
-        # Skipped entirely on the cancel/teardown branch: in-flight
-        # executor `assemble_*` clones would trip the canary, and the WAL is
-        # moot once the process is exiting.
-        bot = self.bot
-        if bot is not None:
-            py_bot = getattr(bot, "_py_bot", None)
-            if py_bot is not None and close_read_tx:
-                py_bot.close_snapshot_tx()
-
-        if bot is None:
-            return
-
-        # Trim redundant Python state — Rust engine owns canonical pool state.
-        bot.release_python_state()
-        self.bot = None  # drop the only Python ref; engine keeps its own Bot ref
-        gc.collect()
-        self._injected_bot = None  # release the injected ref too
-
-        bot_logger.info(
-            f"[startup] State trimmed — "
-            f"{registry.engine.reserve_pair_pool_count()} reserve-pair, "
-            f"{registry.engine.v3_pool_count()} V3, "
-            f"{registry.engine.v4_pool_count()} V4 pools retained in "
-            f"Rust engine; {registry.engine.path_count()} paths registered. "
-            f"Entering main loop.",
-        )
-
-    async def _pump_finished_watchdog(self) -> None:
-        """Await the core session-end detection fact, then cancel the consumer.
-
-        The hotpath timed exit (``HOTPATH_SHUTDOWN_MS``) makes the pump return
-        normally after writing its report. Without this watcher the runner's
-        idle consumer task keeps the process alive forever on a dead engine —
-        ``run_bot.sh`` then reports "running" while nothing progresses (the
-        post-unwind wedge: gil-probe idle for minutes after the pump exited).
-        The completion surface also fires on a pump panic (the pump task owns
-        the channel's only sender; unwinding drops it), so this doubles as a
-        panic fail-safe.
-
-        The await is the real Rust-backed detection fact for every engine —
-        there is no injected-engine/no-surface bypass: test doubles satisfy the
-        same awaitable contract (a fake pump that never finishes parks here
-        forever, which is exactly the pre-finish consumer shape). The driver
-        only reads the core fact and cancels the consumer; the verdict ranking
-        stays with the session watch.
-
-        Returns once the pump finished; the consumer was cancelled here, so the
-        session watch observes the pump end as ``WatchdogTripped``.
-        """
-        registry = self.engine_registry
-        assert registry is not None
-        cause = await registry.engine.session_end_future()
-        bot_logger.warning(
-            f"[shutdown] core session-end fact {cause} outside stop() — "
-            "cancelling the consumer for a graceful teardown"
-        )
-        session = self._session
-        main_task = session.result_consumer_task if session is not None else None
-        if main_task is not None and not main_task.done():
-            main_task.cancel()
-
-    # ── Actor builders (production path — only used when not injected) ──
-    @staticmethod
-    def _build_bot(cfg: ArbitrageConfig) -> Bot:
-        # ADR-005: the Bot's build path (ERC20 + V2/V3/V4 pool construction)
-        # issues many `eth_call`s via `BotIo` → `provider.call`. A web3.py
-        # sync backend (`from_web3`) holds the GIL through every
-        # `requests.post` on the event-loop thread, starving the asyncio loop
-        # during `build_paths`. Use the Rust `AlloyProvider` instead —
-        # `PyAlloyProvider.call` releases the GIL (`py.detach`) and does HTTP
-        # in Rust, so the pump/consumer can proceed and RPC is faster.
-        #
-        # The session chain and the database path resolve through the installed
-        # typed config's cascade; `cfg.node_http` is the endpoint the runner's
-        # own cascade already resolved, handed over rather than re-resolved.
-        alloy = AlloyProvider(cfg.node_http, chain_id=cfg.chain_id)
-        return Bot(chain_id=cfg.chain_id, provider=alloy)
-
-    @staticmethod
-    async def _build_async_w3(cfg: ArbitrageConfig) -> AsyncAlloyProvider:
-        """Build the dispatch-path RPC provider.
-
-        Returns an ``AsyncAlloyProvider`` wrapping a Rust
-        ``AsyncAlloyProvider`` — every dispatch-side ``eth_*`` call the hot
-        loop makes goes through Rust (releasing the GIL), not raw
-        ``AsyncWeb3(AsyncHTTPProvider(...))``. The two typed calls
-        (``eth_feeHistory`` / ``eth_sendRawTransaction``) route via
-        ``make_request`` on the alloy backend; the generic ones
-        (``get_block`` / ``get_transaction_count`` /
-        ``eth_call`` / ``get_code`` / ``get_transaction_receipt``) route via
-        the adapter's typed methods.
-
-        Returns:
-            An ``AsyncAlloyProvider`` (alloy backend) for the dispatch path.
-
-        """
-        return await AsyncAlloyProvider.create(cfg.node_http)
-
-    # ── Async context manager ────────────────────────────────────────
     async def __aenter__(self) -> Self:
-        """Start the pump, then hand the started session back to the ``async with`` block.
+        """Start the pump, then hand the started runner to the ``async with`` block.
 
         Returns:
             The started runner.
@@ -1015,154 +152,11 @@ class BotRunner:  # ruff: ignore[too-many-public-methods] -- the facade + run-ri
         await self.start()
         return self
 
-    def _install_sigint_handler(self) -> None:
-        """Bind a SIGINT handler that stops the Rust pump *immediately*.
-
-        The ``__aexit__`` → ``shutdown()`` → ``engine.stop()`` path only fires
-        once the awaited coroutine unwinds — and during ``build_paths`` the
-        main thread is blocked inside the synchronous ``find_paths`` graph
-        prep / the Rust ``find_paths_rust`` DFS. Python's default SIGINT →
-        raise ``KeyboardInterrupt`` mechanism is *deferred* until that section
-        yields control to the eval loop, so the first Ctrl-C appeared to be
-        swallowed: the pump (on the shared tokio runtime, a separate thread)
-        kept running, the operator pressed Ctrl-C again, and only when
-        ``find_paths`` finally returned did the deferred exception unwind to
-        ``__aexit__`` and stop the pump.
-
-        Installing this handler closes the gap: the moment SIGINT arrives,
-        ``engine.stop()`` runs (it just sets the shutdown flag + aborts the
-        pump task — cheap, GIL-only, idempotent) regardless of what the main
-        thread is doing. The Rust ``find_paths_rust`` DFS releases the GIL via
-        ``py.detach()``, so the handler *can* run even mid-DFS. We then
-        re-raise so the normal ``KeyboardInterrupt`` unwind proceeds to
-        ``__aexit__`` (which runs ``shutdown()`` again — a no-op — for the
-        consumer cancellation).
-
-        Idempotent: if already installed (or if ``signal`` can't bind — e.g. a
-        non-main thread), it's a no-op so the call site in ``start()`` is safe
-        to re-enter.
-        """
-        if self._sigint_installed or not self._install_sigint:
-            return
-        engine = self.engine_registry.engine if self.engine_registry is not None else None
-        if engine is None:
-            return
-        try:
-            self._previous_sigint_handler = signal.getsignal(signal.SIGINT)
-        except ValueError:
-            # `signal.signal` only works on the main thread; if start() is
-            # ever driven off-thread there is nothing to bind — rely on
-            # __aexit__'s shutdown() alone.
-            return
-
-        signal.signal(signal.SIGINT, self._handle_sigint)
-        self._sigint_installed = True
-
-    def _stop_engine(self) -> None:
-        """Stop the engine — the ONE entrypoint (``shutdown()`` + SIGINT funnel here).
-
-        Mirrors the Rust ``stop()`` contract: idempotent, sets the shutdown
-        flag, and aborts the pump task. Best-effort — a torn-down engine during
-        a partial startup must not mask the in-flight exception. An injected
-        ``stop_engine`` actor (tests) replaces the registry stop; ``None``
-        (production) stops the real engine.
-        """
-        if self._injected_stop_engine is not None:
-            self._injected_stop_engine()
-            return
-        registry = self.engine_registry
-        engine = registry.engine if registry is not None else None
-        if engine is None:
-            return
-        try:
-            engine.stop()
-        except Exception as exc:
-            bot_logger.warning(f"[shutdown] engine.stop() failed: {exc!r}")
-
-    def _handle_sigint(self, _signum: int, _frame: object) -> None:
-        """Stop the pump through the one funnel the instant SIGINT arrives.
-
-        Bound (not a closure) so the funnel is a named, testable seam. Fires
-        even while the main thread is blocked in ``find_paths`` (the Rust DFS
-        releases the GIL), then re-raises ``KeyboardInterrupt`` so the awaiting
-        coroutine unwinds through ``__aexit__`` → ``shutdown()`` (idempotent).
-
-        Raises:
-            KeyboardInterrupt: Always — after the engine stop, so the awaiting
-                coroutine unwinds through the async-exit teardown.
-
-        """
-        self._stop_engine()
-        raise KeyboardInterrupt
-
-    def _restore_sigint_handler(self) -> None:
-        if not self._sigint_installed:
-            return
-        with contextlib.suppress(ValueError, TypeError):
-            signal.signal(signal.SIGINT, cast("Any", self._previous_sigint_handler))
-        self._sigint_installed = False
-
     async def __aexit__(self, *exc: object) -> None:
-        """Best-effort cleanup; never suppresses.
+        """Best-effort teardown; never suppresses.
 
-        Signals the Rust pump to stop, then cancels the consumer task so no
-        hanging background task outlives the session. ``shutdown()`` is
-        best-effort: it swallows any error from the Rust ``stop()`` so a
-        torn-down engine during a partial startup can't mask the original
-        exception (the one this ``__aexit__`` is unwinding).
+        Args:
+            *exc: The in-flight exception triple (unused; never suppressed).
 
-        Ordering rationale: the pump must be stopped BEFORE the consumer task
-        is cancelled. The consumer awaits ``engine.__anext__()`` which blocks
-        on the pump's result channel; cancelling the consumer first leaves the
-        pump's WS task running on the shared tokio runtime, blocking process
-        exit until the WS subscription closes itself (up to 60s on a silent
-        stream). Stopping the pump first closes the channels → the consumer's
-        next ``__anext__`` raises ``StopAsyncIteration`` → the consumer task
-        ends cleanly, and the awaited consumer task returns without needing the
-        ``CancelledError`` path in the common case.
-
-        The seam between the two halves is permanent. Stopping the pump is
-        engine-owned — one latch/abort/join contract shared by every driver —
-        while cancelling an asyncio task is host-side by nature, so neither
-        half can absorb the other and their ordering lives at this call site.
         """
-        await self.shutdown()
-        self._restore_sigint_handler()
-        # The consumer-cancel duty lives on the session watch — its
-        # teardown() re-checks the registration + watchdog drains (idempotent
-        # no-ops once run() unwound) and cancels the consumer AFTER the pump
-        # was stopped above (the ordering rationale in this docstring).
-        await self._session_watch.teardown()
-
-    async def shutdown(self) -> None:
-        """Signal the Rust core to stop the pump (best-effort).
-
-        Safe to call at any point in the lifecycle — before ``start()`` finished
-        (``engine_registry`` may be ``None``), after ``run()`` exited, or from a
-        ``SIGINT``/``KeyboardInterrupt`` handler. Mirrors the Rust ``stop()``
-        contract: idempotent, sets the shutdown flag + aborts the pump task so
-        the WS stream's ``combined.next().await`` unblocks immediately (60s
-        cold-shutdown otherwise). Any exception is swallowed and logged so a
-        partial-startup teardown can't mask the original in-flight exception.
-
-        This is the one place that closes the Rust core's pump — the
-        ``KeyboardInterrupt``-exits-slowly bug was the pump task (spawned on the
-        shared tokio runtime, decoupled from the asyncio loop) blocking on a
-        silent WS subscription, which ``asyncio.run``'s teardown did not reach
-        until the OS closed the socket.
-        """
-        # Closed from ANY phase: teardown (SIGINT, partial startup, post-run)
-        # may reach here at any point; idempotent by design, and the Rust
-        # host's SessionPhase table owns the verdict.
-        self._phase = self._phase.on_shutdown()
-        self._stop_engine()
-        # ADR-043 §6: flush the telemetry providers BEFORE this runner — and
-        # the Rust core's tokio runtime behind it — is torn down. An OTLP batch
-        # flushed after runtime teardown exports nothing, so the tail of a run
-        # would be silently lost. None-safe when telemetry is off.
-        try:
-            from degenbot.telemetry import flush_telemetry as _flush_telemetry
-
-            _flush_telemetry()
-        except Exception as exc:
-            bot_logger.debug(f"[shutdown] telemetry flush failed: {exc!r}")
+        await self.session.close()

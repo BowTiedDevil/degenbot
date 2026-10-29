@@ -1,14 +1,15 @@
 """Cockpit session state — the one owner of pump-session coordination state.
 
-The block loop (``consume``) and the dispatch
-leaf (``dispatch``) must read the SAME ``_SessionState`` owned by the
-runner, instead of the session travelling as a 10-parameter signature
-+ 9 kwargs.
+The block loop and the dispatch path must read the SAME session the cockpit
+owns, instead of the session travelling as a 10-parameter signature + 9
+kwargs. The loop receives its collaborators as one
+:class:`~degenbot.runner._consume.BlockLoop` record assembled from that
+session, and the sim/submit pipeline (which the loop hands every batch to) is
+built over the same owner.
 
-Seams (confirmed with operator): the public BotRunner lifecycle
-(injected consumer fake observes the owner) and the private loop seam
-(``consume_result_batches`` driven with an explicit owner + injected
-streams, dispatch leaf monkeypatched). No anvil, no live RPC.
+Seams: the public session lifecycle (an injected consumer fake observes the
+owner) and the loop seam (``consume_result_batches`` driven with the record +
+injected streams). No anvil, no live RPC.
 """
 
 from __future__ import annotations
@@ -17,81 +18,16 @@ import signal
 
 import pytest
 
-from degenbot.runner import BotRunner
 from degenbot.runner._consume import consume_result_batches
-from degenbot.runner._relay_posture import RelayPosture
-from degenbot.runner.bot_runner import InjectedActors, _SessionState
-from degenbot.runner.config import ArbitrageConfig
-from tests.fakes.bot import FakeBot as _FakeBot
-from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
+from tests.fakes.engine import FakeEngineRegistry
 from tests.fakes.runner_pipelines import StubPipeline
-from tests.helpers.boot_actors import inline_registration_scheduler
-from tests.helpers.identity_env import identity_env
-from tests.helpers.rpc_env import rpc_env
-
-
-@pytest.fixture(autouse=True)
-def _rpc_env():
-    with rpc_env():
-        yield
+from tests.helpers.session import FakeDispatcher, session_for_test
 
 
 @pytest.fixture(autouse=True)
 def _restore_sigint() -> None:
     yield
     signal.signal(signal.SIGINT, signal.SIG_DFL)
-
-
-def _cfg() -> ArbitrageConfig:
-    with identity_env({
-        "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
-        "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
-        "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-    }):
-        return ArbitrageConfig.build(live=True, permutation=None)
-
-
-class _FakeAsyncW3:
-    async def get_block(self, block_identifier: str):
-        return {"number": 12_345, "baseFeePerGas": 10**9, "gasUsed": 0, "gasLimit": 30_000_000}
-
-    async def get_transaction_count(self, address: str) -> int:
-        return 7
-
-    def as_async_alloy(self) -> None:
-        return None
-
-
-class _FakeDispatcher:
-    """The dispatcher-clock surface the loop + dispatch leaf touch."""
-
-    def __init__(self, current_block: int = 12_346) -> None:
-        self.current_block = current_block
-
-    def record_block_time(self, block_number: int, block_timestamp: int) -> None:
-        pass
-
-    def block_time_count(self) -> int:
-        return 0
-
-    def block_times_oldest(self) -> tuple[int, int]:  # pragma: no cover - gate off
-        return (0, 0)
-
-    def advance_block(self, block_number: int) -> None:
-        self.current_block = block_number
-
-    def discard_path(self, path_id: int) -> None:
-        pass
-
-    def block_timestamp_for(self, block_number: int) -> int | None:
-        return 1_700_000_000
-
-
-def _noop():
-    async def _n() -> None:
-        pass
-
-    return _n()
 
 
 class AsyncOnce:
@@ -135,88 +71,81 @@ def _batch() -> dict[str, object]:
     }
 
 
+async def _drive_one_shot(
+    session: object,
+    *,
+    tick: int,
+    batch: dict[str, object] | None = None,
+) -> None:
+    """Run the real consumer loop over one block tick + one result batch."""
+    await consume_result_batches(
+        session.block_loop(),  # type: ignore[attr-defined]
+        block_stream=AsyncOnce(_block_tick(tick)),
+        result_iter=AsyncOnce(batch if batch is not None else _batch()),
+        allow_quiet_end=True,  # injected one-shot streams end by design
+    )
+
+
 class TestSessionOwner:
     async def test_runner_consumer_receives_the_owner(self) -> None:
-        """The consumer task is handed the SAME owner the runner holds."""
+        """The consumer task and its pipeline are built over the SAME owner."""
         captured: dict[str, object] = {}
 
-        def capturing_consumer(*args: object, **kwargs: object) -> object:
+        def capturing_consumer(loop: object, **kwargs: object) -> object:
+            captured["loop"] = loop
             captured.update(kwargs)
-            return _noop()
 
-        session_runner = BotRunner(
-            _cfg(),
-            actors=InjectedActors(
-                settlement_arm=True,
-                bot=_FakeBot(),
-                engine_registry=_FakeEngineRegistry(),
-                async_w3=_FakeAsyncW3(),
-                path_builder=lambda **kw: _noop(),
-                consumer=capturing_consumer,
-                relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
-                scheduler=inline_registration_scheduler,
-            ),
-            install_sigint=False,
-        )
-        async with session_runner:
-            await session_runner.run()
-        owner = captured.get("session")
-        assert owner is not None, "consumer must be handed the session owner"
-        assert owner is session_runner._session  # whitebox: the owner is private API
-        assert owner.dispatcher is session_runner.dispatcher
+            async def _n() -> None:
+                pass
 
-    async def test_dispatch_leaf_receives_the_same_owner(self) -> None:
-        """The loop and the dispatch leaf read one and the same owner."""
+            return _n()
 
-        # SIMPIPE option A: the consumer path routes batches through the
-        # pipeline — the owner flows into the pipeline at construction, which
-        # is the same "one owner" contract the serial leaf asserted. The
-        # session's pipeline factory supplies the stub so the consumer attaches
-        # a recording double instead of the real Rust sim seam.
         StubPipeline.instances.clear()
+        session = session_for_test(consumer=capturing_consumer)
+        async with session:
+            await session.run()
 
-        dispatcher = _FakeDispatcher(current_block=12_346)
-        owner = _SessionState(
-            engine_registry=_FakeEngineRegistry(),
-            async_w3=_FakeAsyncW3(),
-            sim_ctx=None,
-            dispatcher=dispatcher,
-            cfg=_cfg(),
-            current_block=12_345,
-            pipeline_factory=StubPipeline,
-        )
-        await consume_result_batches(
-            owner,
-            block_stream=AsyncOnce(_block_tick(12_347)),
-            result_iter=AsyncOnce(_batch()),
-            allow_quiet_end=True,  # injected one-shot streams end by design
-        )
-        assert owner.current_block == 12_347
-        # SIMPIPE: the "same owner" contract now rides the pipeline seam -
-        # the consumer must hand THE session owner into the pipeline (which
-        # the sim+submit leaves read exclusively).
-        assert [stub.session for stub in StubPipeline.instances] == [owner], (
-            "dispatch pipeline did not receive the session owner"
+        loop = captured["loop"]
+        assert loop is not None, "the consumer must be handed the loop's collaborators"
+        assert loop.pipeline is session.sim_submit_pipeline  # type: ignore[attr-defined]
+        # SIMPIPE: the "same owner" contract rides the pipeline seam — the
+        # session built the pipeline over itself, and the loop enqueues on it.
+        assert [stub.session for stub in StubPipeline.instances] == [session]
+
+    async def test_the_loop_receives_the_session_pipeline(self) -> None:
+        StubPipeline.instances.clear()
+        dispatcher = FakeDispatcher(current_block=12_346)
+        session = session_for_test(dispatcher=dispatcher, current_block=12_345)
+        await session.build_pipeline()
+
+        await _drive_one_shot(session, tick=12_347)
+
+        assert session.current_block == 12_347
+        assert [stub.session for stub in StubPipeline.instances] == [session], (
+            "the dispatch pipeline did not receive the session owner"
         )
 
     async def test_owner_advances_with_the_block_clock(self) -> None:
-        """The owner mirrors the newHeads clock as the loop applies it."""
-
-        # SIMPIPE option A: the session's pipeline factory constructs the
-        # stub — keep the fake-engine session out of the real Rust seam.
-        owner = _SessionState(
-            engine_registry=_FakeEngineRegistry(),
-            async_w3=_FakeAsyncW3(),
-            sim_ctx=None,
-            dispatcher=_FakeDispatcher(current_block=12_346),
-            cfg=_cfg(),
+        """The session mirrors the newHeads clock as the loop applies it."""
+        session = session_for_test(
+            dispatcher=FakeDispatcher(current_block=12_346),
             current_block=12_345,
-            pipeline_factory=StubPipeline,
         )
-        await consume_result_batches(
-            owner,
-            block_stream=AsyncOnce(_block_tick(12_347)),
-            result_iter=AsyncOnce(_batch()),
-            allow_quiet_end=True,  # injected one-shot streams end by design
+        await session.build_pipeline()
+
+        await _drive_one_shot(session, tick=12_347)
+
+        assert session.current_block == 12_347
+
+    async def test_engine_registry_is_read_off_the_actors(self) -> None:
+        """The loop's result stream comes from the session's own registry."""
+        registry = FakeEngineRegistry()
+        session = session_for_test(engine_registry=registry)
+        await session.build_pipeline()
+
+        loop = session.block_loop()
+
+        assert loop.engine is registry.engine
+        assert len(registry.start_calls) == 0, (
+            "a for_test session resolves without driving the engine's start ritual"
         )
-        assert owner.current_block == 12_347

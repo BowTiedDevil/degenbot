@@ -10,15 +10,18 @@ python state. An all-inactive fleet refuses at the posture gate.
 from __future__ import annotations
 
 import signal
+from typing import TYPE_CHECKING
 
 import pytest
 
-from degenbot.runner import BotRunner
 from degenbot.runner.config import ArbitrageConfig
 from degenbot.strategy import validate_strategy_readiness
 from tests.helpers.boot_actors import FakeBootReadiness, boot_runner, noop_coro
 from tests.helpers.identity_env import identity_env
 from tests.helpers.rpc_env import rpc_env
+
+if TYPE_CHECKING:
+    from degenbot.runner import BotRunner
 
 
 @pytest.fixture(autouse=True)
@@ -74,9 +77,10 @@ async def test_a_backrun_only_boot_does_not_trim_python_state() -> None:
     session = _runner(lambda **kw: None)
     await session.start()
     await session.run()
-    assert not session._injected_bot.released, (
-        "with no settlement registration there is no hot-loop trim"
-    )
+    assert session.session.actors is not None
+    bot = session.session.actors.bot
+    assert bot is not None
+    assert not bot.released, "with no settlement registration there is no hot-loop trim"
 
 
 async def test_a_backrun_only_boot_enables_the_active_hosted_arms() -> None:
@@ -90,12 +94,10 @@ async def test_a_backrun_only_boot_enables_the_active_hosted_arms() -> None:
 
     readiness = validate_strategy_readiness()
     expected_facets = list(readiness.active_backrun_facets)
-    assert session.engine_registry.engine.resume_facets == expected_facets, (
-        "resume() must receive the active hosted arms"
-    )
-    records = dict(
-        (name, state) for name, state, _halt in session.engine_registry.engine.strategies()
-    )
+    assert session.session.actors is not None
+    engine = session.session.actors.engine_registry.engine
+    assert engine.resume_facets == expected_facets, "resume() must receive the active hosted arms"
+    records = {name: state for name, state, _halt in engine.strategies()}
     active_facets = set(expected_facets)
     for facet in ("mevblocker_backrun", "txpool_backrun"):
         assert records[facet] == ("enabled" if facet in active_facets else "registered"), (
@@ -119,11 +121,9 @@ async def test_a_settlement_active_boot_hosts_no_backrun_arms() -> None:
     await session.start()
     await session.run()
 
-    assert session.engine_registry.engine.resume_facets == [], (
-        "a settlement-active boot must not host backrun lanes"
-    )
-    records = dict(
-        (name, state) for name, state, _halt in session.engine_registry.engine.strategies()
-    )
+    assert session.session.actors is not None
+    engine = session.session.actors.engine_registry.engine
+    assert engine.resume_facets == [], "a settlement-active boot must not host backrun lanes"
+    records = {name: state for name, state, _halt in engine.strategies()}
     assert records["mevblocker_backrun"] == "registered"
     assert records["txpool_backrun"] == "registered"

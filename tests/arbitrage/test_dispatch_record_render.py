@@ -1,22 +1,19 @@
-"""Log-level contract for the submit-leaf record renderer.
+"""Log-level contract for the submit-leaf record renderer + the smoke FSM.
 
 A default-INFO live run must surface WHY a submission did not happen. The
 BROADCAST_FAILED skip reason was historically logged at DEBUG, so a relay
 outage or an underpriced replacement could silence a live bot for hours.
+
+The silent-veto smoke FSM's input is the resolved display policy
+(``DisplayPolicy.vetoed``), so the veto predicate and the throttle live on
+typed values rather than on a session the renderer would have to reach into.
 """
 
 from __future__ import annotations
 
-import pytest
-
 from degenbot.runner import _dispatch as dispatch_module
-from degenbot.runner._relay_posture import RelayPosture
-from tests.fakes.session import (
-    FakeCandidate,
-    FakeSession,
-    FakeSubmitOutcome,
-    fake_session,
-)
+from degenbot.runner._render import DisplayPolicy
+from tests.fakes.session import FakeBatchOutcome
 
 
 class _CapturingLogger:
@@ -43,8 +40,7 @@ class _CapturingLogger:
         self._cap("error", msg, *args)
 
 
-@pytest.mark.asyncio
-async def test_broadcast_failure_renders_at_warning() -> None:
+def test_broadcast_failure_renders_at_warning() -> None:
     rec = dispatch_module.SkippedRecord(
         path_id=7,
         reason=dispatch_module.SubmitSkipReason.BROADCAST_FAILED,
@@ -52,13 +48,6 @@ async def test_broadcast_failure_renders_at_warning() -> None:
     )
 
     captured = _CapturingLogger()
-
-    async def fake_dispatch_and_submit(**kwargs):  # noqa: ANN003, ANN202
-        return [rec]
-
-    session = fake_session(relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]))
-    candidate = FakeCandidate()
-    outcome = FakeSubmitOutcome(gas_profitable=[candidate])
 
     # The drain's submit-record render (the executor publishes the raw lane
     # records; `render_submit_records` is its display leaf).
@@ -69,19 +58,15 @@ async def test_broadcast_failure_renders_at_warning() -> None:
     ), f"expected a warning naming the failure detail, got {captured.calls}"
 
 
-def _live_session(cfg_overrides: dict) -> FakeSession:
-    return fake_session(
-        relay_posture=RelayPosture(relay_urls=["http://offline-test.relay"]),
-        cfg_overrides=cfg_overrides,
-    )
+def _live_policy() -> DisplayPolicy:
+    return DisplayPolicy(live=True, sim_exit_on_fail=False, exit_ignore_buckets="")
 
 
-def _candidate() -> FakeCandidate:
-    return FakeCandidate()
+def _outcome_with_candidate() -> FakeBatchOutcome:
+    return FakeBatchOutcome(gas_profitable=[object()])
 
 
-@pytest.mark.asyncio
-async def test_silent_veto_streak_warns_once() -> None:
+def test_silent_veto_streak_warns_once() -> None:
     """Live-armed + gate-clearing candidates + zero submissions, repeatedly,
     must produce exactly one throttled WARN naming the skip reasons."""
     captured = _CapturingLogger()
@@ -89,28 +74,40 @@ async def test_silent_veto_streak_warns_once() -> None:
     skip = dispatch_module.SkippedRecord(
         path_id=7, reason=dispatch_module.SubmitSkipReason.POOLS_CLAIMED
     )
-
-    async def all_skipped(**kwargs):  # noqa: ANN003, ANN202
-        return [skip]
-
-    session = _live_session({})
-    outcome = FakeSubmitOutcome(gas_profitable=[_candidate()])
+    smoke = dispatch_module.SubmissionSmoke()
+    outcome = _outcome_with_candidate()
+    policy = _live_policy()
 
     for _ in range(4):
         dispatch_module.track_submission_smoke(
-            session, outcome, 0, {"POOLS_CLAIMED": 1}, logger=captured
+            smoke, outcome, [skip], policy=policy, logger=captured
         )
 
     stall_warnings = [m for lvl, m in captured.calls if lvl == "warning" and "no submissions" in m]
     assert len(stall_warnings) == 1, f"expected one throttled stall warn, got {captured.calls}"
 
     real_submitted = dispatch_module.SubmittedRecord(path_id=7, tx_hash="0xabc", nonce=3)
+    dispatch_module.track_submission_smoke(
+        smoke, outcome, [real_submitted], policy=policy, logger=captured
+    )
+    assert smoke.streak == 0
 
-    async def one_submitted(**kwargs):  # noqa: ANN003, ANN202
-        return [real_submitted]
 
-    dispatch_module.track_submission_smoke(session, outcome, 1, {}, logger=captured)
-    assert session.submission_smoke.streak == 0
+class TestDisplayPolicyVeto:
+    """The veto predicate: the live-armed disposition gate on the FSM input."""
+
+    def test_a_live_batch_with_candidates_and_no_submission_is_vetoed(self) -> None:
+        assert _live_policy().vetoed(_outcome_with_candidate(), 0) is True
+
+    def test_a_submission_clears_the_veto(self) -> None:
+        assert _live_policy().vetoed(_outcome_with_candidate(), 1) is False
+
+    def test_a_candidate_free_batch_is_not_a_veto(self) -> None:
+        assert _live_policy().vetoed(FakeBatchOutcome(), 0) is False
+
+    def test_a_dry_run_batch_is_not_a_veto(self) -> None:
+        dry_run = DisplayPolicy(live=False, sim_exit_on_fail=False, exit_ignore_buckets="")
+        assert dry_run.vetoed(_outcome_with_candidate(), 0) is False
 
 
 class TestSubmissionSmokeFsm:

@@ -18,10 +18,10 @@ import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from degenbot.runner import BotRunner
-from degenbot.runner.bot_runner import InjectedActors
+from degenbot.runner import BotRunner, InjectedActors
 from tests.fakes.bot import FakeBot
 from tests.fakes.engine import FakeEngineRegistry
+from tests.fakes.runner_pipelines import StubPipeline
 
 if TYPE_CHECKING:
     from degenbot.runner.config import ArbitrageConfig
@@ -130,7 +130,9 @@ def boot_runner(
     injects a resolving factory or a raising refusal. ``scheduler`` defaults
     to the deterministic registration double so a settlement-active boot's
     hand-off (and its trim) completes inline; pass the production
-    ``asyncio.create_task`` to observe the real decoupling instead.
+    ``asyncio.create_task`` to observe the real decoupling instead. The
+    sim/submit pipeline is the void stub: the fake provider has no Alloy
+    backend to build the real executor over.
     """
 
     return BotRunner(
@@ -139,8 +141,12 @@ def boot_runner(
             bot=FakeBot(),
             engine_registry=FakeEngineRegistry(backfill_target=12_000),
             async_w3=FakeAsyncW3(),
+            # The run builds the sim/submit pipeline before it creates the
+            # consumer, so a boot test over the non-Alloy fake provider supplies
+            # the void stub (the production pipeline needs an Alloy handle).
+            pipeline_factory=StubPipeline,
             path_builder=path_builder if path_builder is not None else (lambda **kw: None),
-            consumer=lambda **kw: noop_coro(),
+            consumer=lambda *args, **kw: noop_coro(),
             settlement_arm=settlement_arm,
             readiness=readiness,
             settlement_endpoints=settlement_endpoints,

@@ -1,17 +1,17 @@
 """Session state as the cockpit's one owner (candidate 5).
 
-The ``_SessionState`` built in ``start()`` is the ONE owner of the cockpit's
-coordination values — the actors, the dispatcher, the block clock, the sim
-context, and the two pipelines. The runner keeps no frozen mirrors
-(``current_block`` / ``_sim_ctx`` used to freeze at ``start()`` while the
-session advanced — a silent-staleness hazard), ``_Phase`` alone owns
-lifecycle legality (no ``_started`` bool), and the consumer's remote
-mutations ride the owner's mutators (``attach_pipeline`` /
+The session a boot builds is the ONE owner of the cockpit's coordination values
+— the actors, the dispatcher, the block clock, the sim context, and the two
+pipelines. The runner keeps no mirrors (``current_block`` / ``_sim_ctx`` used
+to freeze at ``start()`` while the session advanced — a silent-staleness
+hazard), ``SessionPhase`` alone owns lifecycle legality (no ``_started`` bool),
+and the consumer's mutations ride the owner's mutators (``build_pipeline`` /
 ``advance_block``), never attribute pokes.
 
-Seams: the public BotRunner lifecycle (per-phase guard matrix, re-entry
-idempotence) and the private loop seam (``consume_result_batches`` driven
-with the runner-built owner + injected streams). No anvil, no live RPC.
+Seams: the public ``BotRunner`` lifecycle (production start over the DI record;
+per-phase guard matrix, re-entry idempotence) and the loop seam
+(``consume_result_batches`` driven with the session's own collaborator record +
+injected streams). No anvil, no live RPC.
 """
 
 from __future__ import annotations
@@ -23,22 +23,15 @@ import pytest
 
 from degenbot.runner import BotRunner
 from degenbot.runner._consume import consume_result_batches
-from degenbot.runner._relay_posture import RelayPosture
-from degenbot.runner.bot_runner import InjectedActors, PhaseError, _Phase, _SessionState
-from degenbot.runner.config import ArbitrageConfig
-from tests.fakes.bot import FakeBot as _FakeBot
-from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
-from tests.fakes.runner_pipelines import StubPipeline
-from tests.helpers.boot_actors import inline_registration_scheduler
-from tests.helpers.identity_env import identity_env
-from tests.helpers.rpc_env import rpc_env
+from degenbot.runner.session import PhaseError, SessionPhase
+from tests.fakes.engine import FakeEngineRegistry
 from tests.helpers.seam import session_phase_next
-
-
-@pytest.fixture(autouse=True)
-def _rpc_env():
-    with rpc_env():
-        yield
+from tests.helpers.session import (
+    FakeDispatcher,
+    injected_test_actors,
+    offline_cfg,
+    session_for_test,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -47,72 +40,12 @@ def _restore_sigint() -> None:
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 
-def _cfg() -> ArbitrageConfig:
-    with identity_env({
-        "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
-        "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
-        "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-    }):
-        return ArbitrageConfig.build(live=True, permutation=None)
-
-
-class _FakeAsyncW3:
-    async def get_block(self, block_identifier: str):
-        return {"number": 12_345, "baseFeePerGas": 10**9, "gasUsed": 0, "gasLimit": 30_000_000}
-
-    async def get_transaction_count(self, address: str) -> int:
-        return 7
-
-    def as_async_alloy(self) -> None:
-        return None
-
-
-class _FakeDispatcher:
-    """The dispatcher-clock surface the loop touches."""
-
-    def __init__(self) -> None:
-        self.current_block = 100
-
-    def record_block_time(self, block_number: int, block_timestamp: int) -> None:
-        pass
-
-    def block_time_count(self) -> int:
-        return 0
-
-    def block_times_oldest(self) -> tuple[int, int]:  # pragma: no cover - gate off
-        return (0, 0)
-
-    def advance_block(self, block_number: int) -> None:
-        self.current_block = block_number
-
-    def discard_path(self, path_id: int) -> None:
-        pass
-
-    def block_timestamp_for(self, block_number: int) -> int | None:
-        return 1_700_000_000
-
-
-def _noop():
-    async def _n() -> None:
-        pass
-
-    return _n()
-
-
 def _runner(**overrides: object) -> BotRunner:
-    actors: dict[str, object] = {
-        "bot": _FakeBot(),
-        "engine_registry": _FakeEngineRegistry(),
-        "async_w3": _FakeAsyncW3(),
-        "path_builder": lambda **kw: _noop(),
-        "consumer": lambda **kw: _noop(),
-        "relay_posture": RelayPosture(relay_urls=["http://offline-test.relay"]),
-        "scheduler": inline_registration_scheduler,
-    }
     install_sigint = overrides.pop("install_sigint", False)
-    actors.update(overrides)
-    return BotRunner(  # type: ignore[arg-type]
-        _cfg(), actors=InjectedActors(settlement_arm=True, **actors), install_sigint=install_sigint
+    return BotRunner(
+        offline_cfg(),
+        actors=injected_test_actors(settlement_arm=True, **overrides),  # type: ignore[arg-type]
+        install_sigint=install_sigint,  # type: ignore[arg-type]
     )
 
 
@@ -155,15 +88,10 @@ def _empty_batch() -> dict[str, object]:
     }
 
 
-@pytest.fixture(name="stub_pipeline")
-def _stub_pipeline() -> type[StubPipeline]:
-    return StubPipeline
-
-
-async def _drive_one_block(session: _SessionState, *, tick: int) -> None:
+async def _drive_one_block(session: object, *, tick: int) -> None:
     """Run the real consumer loop over one block tick + one empty batch."""
     await consume_result_batches(
-        session,
+        session.block_loop(),  # type: ignore[attr-defined]
         block_stream=AsyncOnce(_block_tick(tick)),
         result_iter=AsyncOnce(_empty_batch()),
         allow_quiet_end=True,  # injected one-shot streams end by design
@@ -171,49 +99,49 @@ async def _drive_one_block(session: _SessionState, *, tick: int) -> None:
 
 
 class TestSessionBuiltRealInStart:
-    """The session is REAL at construction — no residual Option cluster."""
+    """The boot fills the session in exactly once — no residual option cluster."""
 
     async def test_start_builds_the_session_with_real_values(self) -> None:
-        registry = _FakeEngineRegistry()
+        registry = FakeEngineRegistry()
         runner = _runner(engine_registry=registry)
-        assert runner._session is None  # no session before start()
+        # Before start() the session exists (it owns the lifecycle) but holds
+        # no built state: the phase is New and no actors were resolved.
+        assert runner.session.phase is SessionPhase.NEW
+        assert runner.session.actors is None
 
         await runner.start()
 
-        session = runner._session
-        assert session is not None
-        assert session.engine_registry is registry
-        assert session.bot is not None
-        assert session.async_w3 is not None
+        session = runner.session
+        assert session.phase is SessionPhase.STARTED
+        assert session.actors is not None
+        assert session.actors.engine_registry is registry
+        assert session.actors.bot is not None
+        assert session.actors.async_w3 is not None
         assert session.dispatcher is not None
-        assert session.cfg is runner.cfg
+        assert session.cfg is runner.session.cfg
         assert session.current_block == 12_345
-        # The runner facade reads the SAME objects (no copies).
-        assert runner.bot is session.bot
-        assert runner.engine_registry is registry
-        assert runner.dispatcher is session.dispatcher
 
 
 class TestStartReentryIdempotence:
-    """Re-entry idempotence is owned by _Phase ALONE (no _started bool)."""
+    """Re-entry idempotence is owned by SessionPhase ALONE (no _started bool)."""
 
     async def test_reentry_in_started_is_a_noop(self) -> None:
-        registry = _FakeEngineRegistry()
+        registry = FakeEngineRegistry()
         runner = _runner(engine_registry=registry)
         first = await runner.start()
-        session_after_first = runner._session
+        actors_after_first = runner.session.actors
 
         second = await runner.start()
 
         assert second is first is runner
         assert len(registry.start_calls) == 1, "re-entry must not rebuild the actors"
-        assert runner._session is session_after_first
+        assert runner.session.actors is actors_after_first
 
     async def test_reentry_in_running_raises_phase_error(self) -> None:
         runner = _runner()
         await runner.start()
         await runner.run()
-        assert runner._phase is _Phase.RUNNING
+        assert runner.session.phase is SessionPhase.RUNNING
 
         with pytest.raises(PhaseError, match="start\\(\\) in phase 'running'"):
             await runner.start()
@@ -222,7 +150,7 @@ class TestStartReentryIdempotence:
         runner = _runner()
         async with runner:
             await runner.run()
-        assert runner._phase is _Phase.CLOSED
+        assert runner.session.phase is SessionPhase.CLOSED
 
         with pytest.raises(PhaseError, match="start\\(\\) in phase 'closed'"):
             await runner.start()
@@ -243,13 +171,9 @@ class TestNoFrozenMirrors:
     ``_sim_ctx``) that silently diverged from the owner the consumer advances.
     """
 
-    async def test_consumer_advanced_block_visible_through_every_reader(
-        self, stub_pipeline: type[StubPipeline]
-    ) -> None:
-        runner = _runner(pipeline_factory=stub_pipeline)
-        await runner.start()
-        session = runner._session
-        assert session is not None
+    async def test_consumer_advanced_block_visible_through_the_session(self) -> None:
+        session = session_for_test(dispatcher=FakeDispatcher(current_block=12_345))
+        await session.build_pipeline()
         start_block = session.current_block
 
         await _drive_one_block(session, tick=start_block + 2)
@@ -257,38 +181,22 @@ class TestNoFrozenMirrors:
         # The owner advanced (the loop's advance_block mutator).
         assert session.current_block == start_block + 2
         # The dispatcher clock agrees (driven by the same tick).
+        assert session.dispatcher is not None
         assert session.dispatcher.current_block == start_block + 2
-        # NO frozen runner-side mirror may shadow the owner: if a mirror
-        # attribute reappears on the runner, it must track the owner, not
-        # freeze at the start() value (pre-change: runner.current_block froze
-        # at start_block while the session advanced).
-        assert getattr(runner, "current_block", session.current_block) == start_block + 2
-        assert getattr(runner, "_sim_ctx", session.sim_ctx) is session.sim_ctx
 
-    async def test_pipeline_attach_visible_through_the_owner(
-        self, stub_pipeline: type[StubPipeline]
-    ) -> None:
-        runner = _runner(pipeline_factory=stub_pipeline)
-        await runner.start()
-        session = runner._session
-        assert session is not None
+    async def test_pipeline_attach_rides_the_owner(self) -> None:
+        session = session_for_test()
+        await session.build_pipeline()
 
         await _drive_one_block(session, tick=session.current_block + 1)
 
-        # The consumer's attach rode the owner's mutator — the pipeline is
-        # visible on the owner (not stashed on the runner).
+        # The session's pipeline is visible on the owner (not stashed on a
+        # facade), and it was built over that same owner.
         assert session.sim_submit_pipeline is not None
-        assert session.sim_submit_pipeline.session is session
+        assert session.sim_submit_pipeline.session is session  # type: ignore[attr-defined]
 
     async def test_advance_block_is_the_one_block_mutation(self) -> None:
-        session = _SessionState(
-            engine_registry=_FakeEngineRegistry(),  # type: ignore[arg-type]
-            async_w3=_FakeAsyncW3(),  # type: ignore[arg-type]
-            sim_ctx=None,
-            dispatcher=_FakeDispatcher(),
-            cfg=_cfg(),
-            current_block=100,
-        )
+        session = session_for_test(current_block=100)
         session.advance_block(105)
         assert session.current_block == 105
 
@@ -313,15 +221,15 @@ class TestPhaseGuardMatrix:
     """
 
     @staticmethod
-    async def _drive_to(phase: _Phase) -> BotRunner:
+    async def _drive_to(phase: SessionPhase) -> BotRunner:
         runner = _runner()
-        if phase is _Phase.NEW:
+        if phase is SessionPhase.NEW:
             return runner
         await runner.start()
-        if phase is _Phase.STARTED:
+        if phase is SessionPhase.STARTED:
             return runner
         await runner.run()
-        if phase is _Phase.RUNNING:
+        if phase is SessionPhase.RUNNING:
             return runner
         await runner.shutdown()
         return runner
@@ -330,8 +238,10 @@ class TestPhaseGuardMatrix:
         "method",
         ["start", "run", "enqueue_path", "trigger_discovery", "shutdown"],
     )
-    @pytest.mark.parametrize("phase", list(_Phase))
-    async def test_runner_honors_the_rust_session_table(self, phase: _Phase, method: str) -> None:
+    @pytest.mark.parametrize("phase", list(SessionPhase))
+    async def test_runner_honors_the_rust_session_table(
+        self, phase: SessionPhase, method: str
+    ) -> None:
         expected = session_phase_next(phase.value, _RUST_OPERATION[method])
         runner = await self._drive_to(phase)
         call = {
@@ -344,13 +254,13 @@ class TestPhaseGuardMatrix:
         if expected is None:
             with pytest.raises(PhaseError):
                 await call()
-            assert runner._phase is phase, "a refused move leaves the phase untouched"
+            assert runner.session.phase is phase, "a refused move leaves the phase untouched"
         else:
             # A legal query still raises when no live pipeline exists
             # (injected/fake runs) — that is past the phase gate.
             with contextlib.suppress(RuntimeError):
                 await call()
-            assert runner._phase.value == expected
+            assert runner.session.phase.value == expected
 
 
 class TestStopFunnel:
@@ -366,8 +276,8 @@ class TestStopFunnel:
 
         await runner.shutdown()
         with pytest.raises(KeyboardInterrupt):
-            runner._handle_sigint(signal.SIGINT, None)
+            runner.session._handle_sigint(signal.SIGINT, None)
 
         assert calls == ["stop", "stop"], (
-            "shutdown() and the SIGINT handler must both funnel through BotRunner._stop_engine"
+            "shutdown() and the SIGINT handler must both funnel through Session._stop_engine"
         )

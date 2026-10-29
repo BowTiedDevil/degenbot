@@ -2,27 +2,30 @@
 
 The driver's ``dispatch.erc6909_profit`` operator knob names the encode axis
 the core batch executor stamps onto every assembled candidate's
-``EncodeOptions`` — the same ``resolve_axes``/``config_for_options`` axis
-chain the pre-cut-over ``assemble_dispatch_candidates(erc6909_profit=...)``
-seam carried. The knob itself converts inside the FFI from the installed
-verdict (the conversion owns every default and clamp), so the construction
-boundary carries no driver-side copy of it; the conversion's projection is
-pinned by the resolution-oracle suites, and this file pins that the driver
-passes none of the verdict-named knobs.
+``EncodeOptions`` — the same ``resolve_axes``/``config_for_options`` axis chain
+the pre-cut-over ``assemble_dispatch_candidates(erc6909_profit=...)`` seam
+carried. The knob itself converts inside the FFI from the installed verdict
+(the conversion owns every default and clamp), so the construction boundary
+carries no driver-side copy of it; the conversion's projection is pinned by the
+resolution-oracle suites, and this file pins that the driver passes none of the
+verdict-named knobs.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from degenbot.dispatch import Dispatcher, TxSigner
-from degenbot.runner._sim_submit import build_batch_executor
-from degenbot.runner.bot_runner import _SessionState
+from degenbot.runner._sim_submit import ExecutorInputs, build_batch_executor, build_executor_for
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 from tests.helpers.identity_env import identity_env
 from tests.helpers.seam import AlloyProvider, AsyncAlloyProvider, SimulateContext
+from tests.helpers.session import session_for_test
+
+if TYPE_CHECKING:
+    from degenbot.runner.session import Session
 
 _RPC_URL = "http://127.0.0.1:1"  # a dead port — alloy's transport is lazy
 
@@ -67,13 +70,13 @@ def _cfg() -> ArbitrageConfig:
         )
 
 
-def _session(engine: Any, cfg: ArbitrageConfig) -> _SessionState:
-    return _SessionState(
-        engine_registry=engine,  # type: ignore[arg-type]
-        async_w3=_FakeW3(),  # type: ignore[arg-type]
+def _session(engine: Any, cfg: ArbitrageConfig) -> Session:
+    return session_for_test(
+        cfg=cfg,
+        engine_registry=engine,
+        async_w3=_FakeW3(),
         sim_ctx=_ctx(),
         dispatcher=Dispatcher.for_block(0),
-        cfg=cfg,
         current_block=10,
     )
 
@@ -99,7 +102,8 @@ async def test_construction_injects_only_runtime_values() -> None:
 
     engine_registry = type("R", (), {"engine": "engine"})()
     cfg = _cfg()
-    await build_batch_executor(_session(engine_registry, cfg), engine_builder=recorder)
+    inputs = ExecutorInputs.from_session(_session(engine_registry, cfg))
+    await build_batch_executor(inputs, engine_builder=recorder)
 
     assert recorded["dry_run"] is cfg.dry_run
     for verdict_named in (
@@ -121,7 +125,7 @@ async def test_a_session_without_a_sim_context_refuses_construction() -> None:
     session = _session(engine_registry, _cfg())
     session.sim_ctx = None  # type: ignore[assignment]
     with pytest.raises(RuntimeError, match="SimulateContext is required"):
-        await build_batch_executor(session)
+        await build_executor_for(session)
 
 
 def _unused_tx_signer_guard() -> None:

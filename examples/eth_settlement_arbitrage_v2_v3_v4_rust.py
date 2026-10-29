@@ -31,8 +31,7 @@ from typing import Any, cast
 from degenbot._ffi.diagnostics import mark_progress, start_gil_probe
 from degenbot.exceptions import BootRefused
 from degenbot.logging import logger as bot_logger
-from degenbot.runner import BotRunner
-from degenbot.runner.bot_runner import ActivationGateRefused
+from degenbot.runner import ActivationGateRefused, BotRunner
 from degenbot.runner.cli import build_arbitrage_arg_parser
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 

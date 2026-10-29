@@ -321,8 +321,11 @@ _Avoid_: per-family registration error enums; a second identity-mismatch vocabul
 
 **Session state**:
 The cockpit's one owner of a session's coordination state (dispatcher, sim context,
-current block, provider, credentials).
-_Avoid_: "session dict", "cockpit config".
+current block, provider, credentials) — the public ``Session`` in
+``runner/session.py``, which also owns the actors and both run-phase FSMs
+(``SessionPhase`` and the submission-smoke streak). The run ritual takes the
+session as its host; ``BotRunner`` is only the operator shell over it.
+_Avoid_: "session dict", "cockpit config", facade-side mirrors of session fields.
 
 **Session watch**:
 The cockpit's one owner of a session's end-state RANKING: the typed watch-set

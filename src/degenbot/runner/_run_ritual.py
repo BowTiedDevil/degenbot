@@ -7,12 +7,11 @@ data it consumes, never branches tests select. It sits strictly behind the
 ``run()`` phase gate and re-legislates no legality the Rust ``SessionPhase``
 table already owns.
 
-The host is the :class:`~degenbot.runner.BotRunner` that owns the session:
-the ritual reads its collaborators and writes the three run-phase handles
-(the consumer/registration task refs and the registration-owned
-construction context) onto the session owner, where the runner's other
-duties read them. Ritual states are private; diagnostics read facts,
-never states.
+The host is the :class:`~degenbot.runner.session.Session` that owns the run's
+state: the ritual reads its collaborators and writes the run-phase handles
+(the consumer/registration task refs, the registration-owned construction
+context, and the pipeline attachments) through the session's mutators. Ritual
+states are private; diagnostics read facts, never states.
 """
 
 from __future__ import annotations
@@ -35,13 +34,13 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from degenbot.arbitrage import RetryPolicy
-    from degenbot.runner.bot_runner import BotRunner
+    from degenbot.runner.session import Session
 
 
 class RunRitualError(RuntimeError):
     """A run-ritual sequencing invariant was violated.
 
-    Distinct from the operator-facing :class:`~degenbot.runner.PhaseError`:
+    Distinct from the operator-facing :class:`~degenbot.runner.session.PhaseError`:
     the phase gate (the Rust host's ``SessionPhase`` table) owns lifecycle
     legality, while this error fires only when the ritual's own transitions
     are driven out of order — an internal invariant, unreachable through any
@@ -61,10 +60,10 @@ class _RitualState(Enum):
 
 
 class RunRitual:
-    """The startup-ordering state machine behind ``BotRunner.run()``.
+    """The startup-ordering state machine behind ``Session.run()``.
 
-    One legal drive: ``attach_consumer → attach_watch → resume →
-    registration → main_loop``. Each named transition admits only its own
+    One legal drive: ``attach_consumer -> attach_watch -> resume ->
+    registration -> main_loop``. Each named transition admits only its own
     state and refuses every other (:class:`RunRitualError`), so the ordering
     the engine requires lives in the machine rather than in call-site prose:
 
@@ -83,14 +82,24 @@ class RunRitual:
       boot schedules nothing and never trims.
     """
 
-    def __init__(self, host: BotRunner) -> None:
-        self._host = host
+    def __init__(self, session: Session) -> None:
+        """Bind the session the ritual drives.
+
+        Args:
+            session: The started session whose run-phase handles the ritual
+                writes.
+
+        """
+        self._session = session
         self._state = _RitualState.ATTACH_CONSUMER
 
     # ── The transition table ──────────────────────────────────────────
 
     def _expect(self, expected: _RitualState) -> None:
         """Admit only the transition whose state is current.
+
+        Args:
+            expected: The state the caller's transition requires.
 
         Raises:
             RunRitualError: If the ritual is in any other state.
@@ -100,39 +109,47 @@ class RunRitual:
             msg = f"run ritual move {expected.value} refused: the ritual is in {self._state.value}"
             raise RunRitualError(msg)
 
-    def attach_consumer(self) -> None:
-        """Acquire the once-only block stream and start the drain task.
+    async def attach_consumer(self) -> None:
+        """Acquire the once-only block stream, build the pipeline, start the drain.
 
-        The block-clock pipe is coordinator-owned: ``bot.block_stream()``
-        moves the mpsc receiver out of the PumpState on each call — a second
-        call raises, so the stream is acquired exactly once and fed DIRECTLY
-        to the single result consumer (the Rust two-step gate + solve-time
-        verifier own verification; no Python whole-batch re-verify).
+        The block-clock pipe is coordinator-owned: ``bot.block_stream()`` moves
+        the mpsc receiver out of the PumpState on each call — a second call
+        raises, so the stream is acquired exactly once and fed DIRECTLY to the
+        single result consumer (the Rust two-step gate + solve-time verifier own
+        verification; no Python whole-batch re-verify). The sim/submit pipeline
+        is built here, before the task exists, so a pipeline refusal (no sim
+        context, non-Alloy provider) aborts the run before the pump resumes.
+
         """
         self._expect(_RitualState.ATTACH_CONSUMER)
-        host = self._host
-        session = host.session
-        assert session is not None
-        assert session.bot is not None
-        consumer = host.consumer or consume_result_batches
-        block_stream = session.bot.block_stream()
-        session.result_consumer_task = asyncio.create_task(
-            consumer(session=session, block_stream=block_stream),
-            name="result-consumer",
+        session = self._session
+        actors = session.actors
+        assert actors is not None, "the run ritual drives a started session"
+        bot = actors.bot
+        assert bot is not None, "registration has not trimmed the bot yet"
+        block_stream = bot.block_stream()
+        # The pipeline is built BEFORE the consumer task exists: the loop
+        # receives it as a collaborator (its record), never as a lazy build of
+        # its own.
+        await session.build_pipeline()
+        consumer = actors.consumer or consume_result_batches
+        session.attach_consumer_task(
+            asyncio.create_task(
+                consumer(session.block_loop(), block_stream=block_stream),
+                name="result-consumer",
+            )
         )
         self._state = _RitualState.ATTACH_WATCH
 
     def attach_watch(self) -> None:
         """Attach the consumer to the session watch the moment it exists."""
         self._expect(_RitualState.ATTACH_WATCH)
-        host = self._host
-        session = host.session
-        assert session is not None
+        session = self._session
         consumer_task = session.result_consumer_task
-        assert consumer_task is not None
-        host.session_watch.attach(
+        assert consumer_task is not None, "attach_consumer ran before attach_watch"
+        session.session_watch.attach(
             consumer_task=consumer_task,
-            watchdog_factory=host.pump_finished_watchdog,
+            watchdog_factory=session.pump_finished_watchdog,
         )
         self._state = _RitualState.RESUME
 
@@ -142,23 +159,23 @@ class RunRitual:
         The enabled-facet set is a data read over the same readiness view the
         boot gate consumed. ``resume()`` owns enabling each facet before it
         drives a hosted loop, so the enable-then-resume ordering lives in the
-        engine, not here. A settlement-active boot is this runner's settlement
+        engine, not here. A settlement-active boot is this session's settlement
         arm, so it hosts no backrun lane.
         """
         self._expect(_RitualState.RESUME)
-        host = self._host
+        session = self._session
         facets: list[str] = []
-        if not host.settlement_active:
-            view = host.readiness
+        if not session.settlement_active:
+            view = session.readiness
             assert view is not None, "start() resolved the readiness before run()"
             facets = list(view.active_backrun_facets)
             bot_logger.info(
                 f"[host-arms] settlement facet inactive — hosted arms: "
                 f"{', '.join(facets) if facets else 'NONE'}"
             )
-        session = host.session
-        assert session is not None
-        session.engine_registry.engine.resume(facets=facets)
+        actors = session.actors
+        assert actors is not None, "the run ritual drives a started session"
+        actors.engine_registry.engine.resume(facets=facets)
         self._state = _RitualState.REGISTRATION
 
     def registration(self) -> None:
@@ -172,28 +189,28 @@ class RunRitual:
         not registered paths.
         """
         self._expect(_RitualState.REGISTRATION)
-        host = self._host
-        if not host.settlement_active:
+        session = self._session
+        actors = session.actors
+        assert actors is not None, "the run ritual drives a started session"
+        if not session.settlement_active:
             self._state = _RitualState.MAIN_LOOP
             return
         registration_context, pipeline = self._build_registration_surface()
-        task = host.scheduler(
+        task = actors.scheduler(
             self._run_registration_background(
-                path_builder=host.path_builder or build_paths,
+                path_builder=actors.path_builder or build_paths,
                 registration_context=registration_context,
-                retry_policy=host.cfg.verification_retry_policy,
+                retry_policy=session.cfg.verification_retry_policy,
                 pipeline=pipeline,
             )
         )
-        # The scheduler seam carries no name, but the registration background
-        # task has carried this observable name since HEAD (the deterministic
-        # test double names its replay task the same way).
+        # The scheduler seam carries no name, so the ritual restores the
+        # registration task's observable name here (the deterministic double's
+        # replay task uses the same one).
         task.set_name("registration-background")
-        session = host.session
-        assert session is not None
-        session.registration_task = task
+        session.attach_registration(task, registration_context)
         # The optional registration member joins the watch-set.
-        host.session_watch.attach_registration(task)
+        session.session_watch.attach_registration(task)
         self._state = _RitualState.MAIN_LOOP
 
     async def main_loop(self) -> SessionEndVerdict:
@@ -208,20 +225,22 @@ class RunRitual:
         the per-pool ``[verify-seed]``/``[verify-drain]`` lines.
 
         Returns:
-            The session-end verdict.
+            The session-end verdict. A fatal registration error comes back as
+            the ``RegistrationFailed`` verdict and is re-raised in this
+            caller's frame.
 
         """
         self._expect(_RitualState.MAIN_LOOP)
-        host = self._host
+        session = self._session
         try:
-            verdict = await host.session_watch.wait()
+            verdict = await session.session_watch.wait()
         finally:
             # Main loop ended while registration still climbs (shutdown):
             # the watch stops the dangling background task.
-            await host.session_watch.teardown_registration()
+            await session.session_watch.teardown_registration()
         self._state = _RitualState.ENDED
         if verdict is SessionEndVerdict.RegistrationFailed:
-            error = host.session_watch.registration_error
+            error = session.session_watch.registration_error
             assert error is not None
             raise error
         return verdict
@@ -233,7 +252,7 @@ class RunRitual:
             The session-end verdict from the main loop.
 
         """
-        self.attach_consumer()
+        await self.attach_consumer()
         self.attach_watch()
         self.resume()
         self.registration()
@@ -248,7 +267,7 @@ class RunRitual:
         here so the registration task owns it — a separate identity from the
         main-loop state that the trim (``release_python_state()`` + a dropped
         bot ref) never severs. The long-lived :class:`PathRegistrationPipeline`
-        attaches to the session owner so the operator add-a-path surface
+        attaches to the session so the operator add-a-path surface
         (``enqueue_path`` / ``trigger_discovery``) stays reachable for the
         session's lifetime — including after the trim (the pipeline's retained
         context keeps constructing through the Rust ``PoolBuilder``).
@@ -260,21 +279,21 @@ class RunRitual:
             ``(None, None)`` for an injected builder.
 
         """
-        host = self._host
-        if host.path_builder is not None:
+        session = self._session
+        actors = session.actors
+        assert actors is not None, "the run ritual drives a started session"
+        if actors.path_builder is not build_paths:
             return None, None
-        session = host.session
-        assert session is not None
-        assert session.bot is not None
-        registration_context = ConstructionContext.for_bot(session.bot)
-        session.registration_context = registration_context
+        bot = actors.bot
+        assert bot is not None, "registration has not trimmed the bot yet"
+        registration_context = ConstructionContext.for_bot(bot)
         pipeline = PathRegistrationPipeline(
             context=registration_context,
-            engine_registry=session.engine_registry,
-            retry_policy=host.cfg.verification_retry_policy,
-            max_paths=host.cfg.max_registered_paths,
-            discovery_batch_size=host.cfg.discovery_batch_size,
-            progress_interval_secs=host.cfg.reg_progress_secs,
+            engine_registry=actors.engine_registry,
+            retry_policy=session.cfg.verification_retry_policy,
+            max_paths=session.cfg.max_registered_paths,
+            discovery_batch_size=session.cfg.discovery_batch_size,
+            progress_interval_secs=session.cfg.reg_progress_secs,
         )
         session.attach_registration_pipeline(pipeline)
         return registration_context, pipeline
@@ -290,13 +309,20 @@ class RunRitual:
         """Run ``build_paths`` + the post-completion trim as the scheduled hand-off.
 
         Production decoupling: the hand-off coroutine is scheduled through the
-        host's scheduler (the production default ``asyncio.create_task``) so
+        session's scheduler (the production default ``asyncio.create_task``) so
         the main loop starts before discovery completes. After the builder
         returns, the state-trim runs HERE as the coroutine's own completion
         duty, which the trim guard admits from this coroutine's task while
         refusing an outside mid-climb caller. A fatal verification error
         propagates out of ``build_paths`` and is surfaced by the fail-fast
         channel (the watch's ``RegistrationFailed`` verdict).
+
+        Args:
+            path_builder: The registration builder to drive.
+            registration_context: The registration-owned construction context.
+            retry_policy: The verification retry policy.
+            pipeline: The registration pipeline (the builder's operator
+                surface).
 
         Raises:
             asyncio.CancelledError: Re-raised after the partial trim when
@@ -309,21 +335,23 @@ class RunRitual:
         thread). The pump itself solves on its own tokio thread regardless.
 
         """
-        host = self._host
+        session = self._session
+        actors = session.actors
+        assert actors is not None, "the run ritual drives a started session"
         try:
             await path_builder(
-                bot=host.bot,
-                engine_registry=host.engine_registry,
+                bot=actors.bot,
+                engine_registry=actors.engine_registry,
                 options=BuildPathsOptions(
-                    max_registered_paths=host.cfg.max_registered_paths,
-                    discovery_batch_size=host.cfg.discovery_batch_size,
+                    max_registered_paths=session.cfg.max_registered_paths,
+                    discovery_batch_size=session.cfg.discovery_batch_size,
                     retry_policy=retry_policy,
                     context=registration_context,
                     pipeline=pipeline,
-                    permutation_filter=host.cfg.permutation_filter,
+                    permutation_filter=session.cfg.permutation_filter,
                 ),
             )
-            host.trim()
+            session.trim_python_state()
         except asyncio.CancelledError:
             # Registration is being torn down mid-flight (cancelled by the
             # main loop's finally / a Ctrl-C / a fatal sim trap) BEFORE
@@ -337,7 +365,7 @@ class RunRitual:
             # The WAL snapshot is a process-lifetime concern that becomes moot
             # at exit, so skip the read-tx commit/canary and let the
             # `Arc<SnapshotDb>` drop naturally with `Bot` — while the REST of
-            # the state trim still runs. The healthy path below keeps the
+            # the state trim still runs. The healthy path above keeps the
             # canary fully active.
-            host.trim(close_read_tx=False)
+            session.trim_python_state(close_read_tx=False)
             raise

@@ -6,8 +6,8 @@
 advances when a batch is actually sent, so the old single-stream consumer froze
 `[block: N]` behind the pump's `current_block`.
 
-These tests inject fake block/result streams + a fake `async_w3` (no live RPC)
-and assert:
+These tests inject fake block/result streams + a fake dispatch state (no live
+RPC) and assert:
   - the block clock (`dispatcher.current_block`) tracks the BLOCK stream;
   - a result batch whose `solve_block` is stale does NOT move the clock;
   - dispatch is keyed off the block-stream current block.
@@ -15,79 +15,15 @@ and assert:
 
 from __future__ import annotations
 
-from typing import Any
-
 import asyncio
+from typing import Any
 
 import pytest
 
 from degenbot.dispatch import Dispatcher
 from degenbot.runner._consume import consume_result_batches
 from tests.fakes.runner_pipelines import StubPipeline
-from tests.helpers.identity_env import identity_env
-
-
-class _Eth:
-    """Fake eth namespace — records fee_history blocks + nonce."""
-
-    def __init__(self, nonce: int = 5) -> None:
-        self._nonce = nonce
-        self.fee_history_blocks: list[int] = []
-
-    # The dispatch hot loop now routes ``eth_feeHistory`` via
-    # ``make_request`` (raw JSON shape with hex-string rewards) instead of
-    # ``async_w3.eth.fee_history(block_count=, newest_block=, ...)``. The
-    # fake records the requested ``newest_block`` from the make_request params
-    # (``[block_count, hex(newest_block), percentiles]``) + returns the empty-
-    # reward shape the example expects (no priority-fee recording).
-    async def fee_history(self, *, block_count: int, newest_block: int, reward_percentiles):
-        self.fee_history_blocks.append(int(newest_block))
-        return {"reward": [[]]}  # empty reward → no priority-fee recording
-
-    async def get_transaction_count(self, address: str) -> int:
-        return self._nonce
-
-
-class _FakeW3:
-    """Fake ``AsyncAlloyProvider`` for the dispatch-path tests.
-
-    The dispatch hot loop was routed off raw ``AsyncWeb3`` onto
-    ``AsyncAlloyProvider`` — this fake exposes the SAME flat surface
-    (``get_transaction_count`` / ``make_request`` / ``rpc_url``) the example
-    now drives, instead of the old ``async_w3.eth.<method>`` nesting. The
-    ``make_request`` dispatcher mirrors the raw-RPC shapes the alloy backend
-    returns (hex strings; ``eth_feeHistory`` returns the empty-reward dict).
-    """
-
-    def __init__(self) -> None:
-        self.eth = _Eth()  # drives fee_history/get_transaction_count tracking
-
-    async def get_transaction_count(self, address: str) -> int:
-        return await self.eth.get_transaction_count(address)
-
-    async def make_request(self, method: str, params: list):
-        if method == "eth_feeHistory":
-            # The params list is [block_count, hex(newest_block), percentiles].
-            return await self.eth.fee_history(
-                block_count=int(params[0]),
-                newest_block=int(params[1], 16),
-                reward_percentiles=params[2],
-            )
-        msg = f"_FakeW3.make_request: unhandled method {method!r}"
-        raise NotImplementedError(msg)
-
-    @property
-    def rpc_url(self) -> str:
-        return "http://fake:8545"
-
-    def as_async_alloy(self):
-        # The PyO3 submission seam extracts a real `AsyncAlloyProvider` from
-        # the adapter to drive the Rust `fetch_fee_history_py` leaf. The test
-        # fake has no alloy backend — returning ``None`` makes `_apply_block_
-        # if_ready` skip the fee-history leaf (the RPC parity is now exercised
-        # by the Rust `fetch_fee_history` tests (the fee oracle), not this Python
-        # mock).
-        return None
+from tests.helpers.session import FakeAsyncW3, offline_cfg, session_for_test
 
 
 class _Blocks:
@@ -157,44 +93,29 @@ async def _run(
     *,
     dispatcher: Dispatcher | None = None,
     allow_quiet_end: bool = True,
-) -> tuple[Dispatcher, _FakeW3, list[int]]:
+) -> tuple[Dispatcher, FakeAsyncW3, list[int]]:
     dispatcher = dispatcher or Dispatcher.for_block(0)
-    w3 = _FakeW3()
-    dispatched: list[int] = []
-
-    from degenbot.runner.bot_runner import _SessionState
-    from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
+    w3 = FakeAsyncW3()
 
     # SIMPIPE option A: the consumer routes batches through the pipeline; the
     # session's pipeline factory supplies the shared void stub, which records
     # the dispatch clock at enqueue. That clock is what `dispatched` proves —
     # the stub stands in for the serial leaf's own dispatch clock capture.
     StubPipeline.instances.clear()
-    with identity_env({
-        "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
-        "OPERATOR_PRIVATE_KEY": "0x" + "11" * 32,
-        "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-    }):
-        cfg = ArbitrageConfig.build(
-            live=False,
-            permutation=None,
-            rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
-        )
-    owner = _SessionState(
-        engine_registry=object(),  # type: ignore[arg-type] — not read (streams injected)
-        async_w3=w3,  # type: ignore[arg-type]
-        sim_ctx=None,
+    session = session_for_test(
+        cfg=offline_cfg(live=False),
         dispatcher=dispatcher,
-        cfg=cfg,
         current_block=dispatcher.current_block,
-        pipeline_factory=StubPipeline,
+        async_w3=w3,
     )
+    await session.build_pipeline()
     await consume_result_batches(
-        owner,
+        session.block_loop(),
         block_stream=_Blocks(blocks),
         result_iter=_Results(batches),
         allow_quiet_end=allow_quiet_end,
     )
+    dispatched: list[int] = []
     for stub in StubPipeline.instances:
         dispatched.extend(stub.enqueue_clock)
     return dispatcher, w3, dispatched
@@ -206,41 +127,27 @@ async def _run_with_pipeline_factory(
     blocks: list[dict[str, int]],
     batches: list[dict[str, Any]],
     allow_quiet_end: bool = True,
-) -> tuple[Dispatcher, _FakeW3, list[int]]:
+) -> tuple[Dispatcher, FakeAsyncW3, list[int]]:
     """Drive the consumer with an injected pipeline factory (drain tests)."""
     dispatcher = Dispatcher.for_block(0)
-    w3 = _FakeW3()
-    dispatched: list[int] = []
-
-    from degenbot.runner.bot_runner import _SessionState
-    from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
+    w3 = FakeAsyncW3()
 
     StubPipeline.instances.clear()
-    with identity_env({
-        "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
-        "OPERATOR_PRIVATE_KEY": "0x" + "11" * 32,
-        "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-    }):
-        cfg = ArbitrageConfig.build(
-            live=False,
-            permutation=None,
-            rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
-        )
-    owner = _SessionState(
-        engine_registry=object(),  # type: ignore[arg-type] — not read (streams injected)
-        async_w3=w3,  # type: ignore[arg-type]
-        sim_ctx=None,
+    session = session_for_test(
+        cfg=offline_cfg(live=False),
         dispatcher=dispatcher,
-        cfg=cfg,
         current_block=dispatcher.current_block,
+        async_w3=w3,
         pipeline_factory=factory,
     )
+    await session.build_pipeline()
     await consume_result_batches(
-        owner,
+        session.block_loop(),
         block_stream=_Blocks(blocks),
         result_iter=_Results(batches),
         allow_quiet_end=allow_quiet_end,
     )
+    dispatched: list[int] = []
     for stub in StubPipeline.instances:
         dispatched.extend(getattr(stub, "enqueue_clock", []))
     return dispatcher, w3, dispatched
@@ -248,7 +155,7 @@ async def _run_with_pipeline_factory(
 
 class TestBlockClockFromStream:
     async def test_block_clock_tracks_block_stream_not_solve_block(self) -> None:
-        # Block stream advances 101 → 102 → 103. Result batches carry a stale
+        # Block stream advances 101 -> 102 -> 103. Result batches carry a stale
         # solve_block=999 to prove the clock ignores it.
         dispatcher, _w3, _dispatched = await _run(
             blocks=[_block(101), _block(102), _block(103)],
@@ -258,20 +165,16 @@ class TestBlockClockFromStream:
             "block clock must track the block stream, not solve_block"
         )
 
-    async def test_fee_history_keys_off_block_stream_numbers(self) -> None:
-        # The fee-history RPC + record-priority-fees now run in the
-        # Rust submit leaf (`fetch_fee_history_py`), keyed off the block-stream
-        # number passed by `_apply_block_if_ready`. The RPC-parity (that the
-        # leaf queries the block-stream number's reward percentiles) is
-        # exercised by the Rust `fetch_fee_history` tests — this Python
-        # test now verifies only that the per-block advance drives the clock
-        # + records block-time pairs (the latency-baseline ring the leaf feeds).
+    async def test_block_ticks_drive_the_time_ring(self) -> None:
+        # The per-block advance drives the clock + records block-time pairs (the
+        # latency-baseline ring the fee-history leaf feeds). The fee-history RPC
+        # itself runs in the Rust submit leaf, covered by its own tests.
         dispatcher, _w3, _dispatched = await _run(
             blocks=[_block(201), _block(202)],
             batches=[],
         )
         assert dispatcher.current_block == 202, (
-            "block clock must track the block stream through fee_history"
+            "block clock must track the block stream through the fee-history leaf"
         )
         assert dispatcher.block_time_count() >= 2, (
             "block-time ring must record one pair per block-stream tick "
@@ -295,8 +198,8 @@ class TestBlockClockFromStream:
         )
         assert len(dispatched) == 1
         # The load-bearing contract: dispatch must NEVER use the batch's
-        # solve_block (999) as the current block — only the block-stream
-        # clock (the seed 0 or a ticked 301/302, depending on race order).
+        # solve_block (999) as the current block — only the block-stream clock
+        # (the seed 0 or a ticked 301/302, depending on race order).
         assert dispatched[0] != 999, (
             "dispatch must key off the block-stream clock, never the batch's stale solve_block"
         )
@@ -346,7 +249,7 @@ class _AbsorbingDrainPipeline:
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
-            return None  # the swallow the drain reap must catch
+            return  # the swallow the drain reap must catch
 
     async def shutdown(self) -> None:
         return None

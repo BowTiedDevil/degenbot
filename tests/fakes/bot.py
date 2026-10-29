@@ -13,7 +13,8 @@ The double carries the driver-shell slice the Python side reads:
   exactly once (a second call raises, as the real receiver's mpsc half is moved
   out on the first call and would crash the pump);
 * ``_py_bot`` — the Rust bot handle the engine registry builds its engine over,
-  and the handle the trim closes the snapshot read-tx on.
+  and the handle the trim closes the snapshot read-tx on
+  (:class:`RecordingPyBot` is that handle's double).
 
 Per-test differences are constructor knobs, not subclasses:
 
@@ -93,3 +94,28 @@ class FakeBot:
             msg = "block_stream() can only be called once"
             raise RuntimeError(msg)
         return FakeBlockStream(self._blocks)
+
+
+class RecordingPyBot:
+    """The Rust ``Bot._py_bot`` handle double.
+
+    Records ``close_snapshot_tx`` on the shared event list (the trim's healthy
+    path commits the snapshot read tx there) and can trip the ``Arc`` canary the
+    real handle raises when in-flight build workers still hold a clone —
+    ``raise_on_close`` is the mid-registration-cancel scenario a caller must not
+    reach.
+    """
+
+    def __init__(self, events: list[str], *, raise_on_close: bool = False) -> None:
+        self._events = events
+        self._raise_on_close = raise_on_close
+
+    def close_snapshot_tx(self) -> None:
+        """Record the read-tx commit (and optionally trip the replica canary)."""
+        self._events.append("close_snapshot_tx")
+        if self._raise_on_close:
+            msg = (
+                "close_snapshot_tx: SnapshotDb Arc still held "
+                "(clone leak \u2014 a caller didn't drop its handle)"
+            )
+            raise RuntimeError(msg)

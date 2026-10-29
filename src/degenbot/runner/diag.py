@@ -4,7 +4,7 @@ The three operator-runtime probes — the tracemalloc diff thread, the
 ``/proc/self`` RSS/purge CSV sampler, and the faulthandler repeat dumper —
 live here, configured through the typed loader (``ArbitrageConfig.diag``,
 populated by :meth:`ArbitrageConfig.build`). The cockpit
-(:meth:`~degenbot.runner.bot_runner.BotRunner.start`) arms them at startup;
+(:meth:`~degenbot.runner.session.Session.start`) arms them at startup;
 any entrypoint that runs the cockpit (the settlement-arbitrage example, the
 ``degenbot`` console) gets the probes uniformly.
 """

@@ -10,8 +10,15 @@ package is its deployment cockpit).
 The package presents one face: the driver cockpit. Public surface (what this
 module re-exports):
 
-- :class:`BotRunner` — the runtime driver facade (the ``start / build_paths /
-  consume / dispatch`` seams).
+- :class:`BotRunner` — the operator verbs over one session
+  (``start / run / enqueue_path / trigger_discovery / shutdown``).
+- :class:`Session` — the one owner of a pump session's coordination state, with
+  its lifecycle FSM (:class:`SessionPhase`, and :class:`PhaseError` as the
+  operator-facing refusal) and the test construction seam
+  (:meth:`Session.for_test`).
+- :class:`InjectedActors` / :class:`Actors` — the frozen DI value and the
+  resolved collaborator record a session carries.
+- :class:`ActivationGateRefused` — the activation gate's boot refusal.
 - :class:`ArbitrageConfig` — the unified frozen config (``build``).
 - The build family (``build_paths`` / ``PathRegistrationPipeline`` /
   ``ConstructionContext`` / ``resolve_directions``) and the CLI arg parser
@@ -23,6 +30,7 @@ Everything else is private by name (``_consume`` / ``_dispatch`` / ``_render``
 module — nothing is smuggled in via the package root.
 """
 
+from degenbot.runner._actors import ActivationGateRefused
 from degenbot.runner.bot_runner import BotRunner
 from degenbot.runner.build_paths import (
     ConstructionContext,
@@ -31,12 +39,19 @@ from degenbot.runner.build_paths import (
     resolve_directions,
 )
 from degenbot.runner.config import ArbitrageConfig
+from degenbot.runner.session import Actors, InjectedActors, PhaseError, Session, SessionPhase
 
 __all__ = [
+    "ActivationGateRefused",
+    "Actors",
     "ArbitrageConfig",
     "BotRunner",
     "ConstructionContext",
+    "InjectedActors",
     "PathRegistrationPipeline",
+    "PhaseError",
+    "Session",
+    "SessionPhase",
     "build_paths",
     "resolve_directions",
 ]

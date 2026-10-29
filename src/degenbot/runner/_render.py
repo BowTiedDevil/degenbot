@@ -1,16 +1,17 @@
 """Display rendering for the driver's revert and diagnostic output.
 
-Private leaf module (underscore name): pure renderers over dispatch
-outcomes and engine failure records. The dispatch path
-(:mod:`~degenbot.runner._dispatch`) imports :func:`_dump_failure_fixture`,
-:func:`_render_profit_logs`, and :func:`_render_sim_failures`; outside
-that, only tests import this module. Nothing here calls the Rust core — the
-single FFI-typed import is ``PoolKind`` (type identity only, for the hop
-family taxonomy).
+Private leaf module (underscore name): the render view records and the pure
+renderers over them. :func:`render_outcome` is the one entry a drained batch
+reaches and :class:`MergedOutcome` is the record it renders — the exact fold
+over one batch's outcome records, so a renderer reads a typed view instead of
+the dispatch leaf's internals. Nothing here calls the Rust core — the
+FFI-typed imports are type/enum identity only (``PoolKind``, ``AssemblyVerdict``,
+``SimulateVerdict``).
 
-The sim-failure tripwire reads its armed state and ignore set as values the
-caller resolved, never the process verdict: the arm/disarm decision is the
-driver's, made once at the construction boundary and handed down.
+The renderers read policy as VALUES: :class:`DisplayPolicy` carries the
+config-derived display terms (the live-armed disposition, the sim-failure
+tripwire's arm state and ignore set), resolved once at the consumption
+boundary, so no renderer reads the process verdict.
 """
 
 from __future__ import annotations
@@ -20,13 +21,17 @@ import json
 import sys
 from typing import TYPE_CHECKING, Any
 
+from degenbot.dispatch import (
+    AssemblyVerdict,
+    SimulateVerdict,
+)
 from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import FAMILY_TAG_TO_POOL_KIND, POOL_KIND_TAG, PoolKind
 
 if TYPE_CHECKING:
     from degenbot.diagnostics import FailureAction
     from degenbot.dispatch import Dispatcher, DispatchOutcome
-    from degenbot.runner._dispatch import MergedOutcome
+    from degenbot.runner.config import ArbitrageConfig
 
 # Cap on per-batch `[sim-fail]` lines emitted by the renderer. A thin-margin
 # revert storm can otherwise flood the log during a stalled head.
@@ -63,6 +68,206 @@ def _family_label(family: Any) -> str:
 # A sim-dispatch outcome handed to the renderers: the FFI batch outcome or
 # MergedOutcome (the payload-stitched adapter — structurally identical view).
 type _SimOutcome = DispatchOutcome | MergedOutcome
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _RenderCandidate:
+    """The display-fold view of one gas-profitable Batch outcome record.
+
+    The renderers read ``path_id``/``gross_profit``/``net_profit``/
+    ``gas_used``/``priority_fee`` off a submit candidate; the record's typed
+    ``SimReceipt`` projects onto exactly that surface (the calldata/encoding
+    lives in the core now — a rendered candidate is no longer an encodable
+    payload).
+    """
+
+    path_id: int
+    gross_profit: int
+    net_profit: int
+    gas_used: int
+    priority_fee: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class MergedOutcome:
+    """The named sim/submit render view over one drained batch.
+
+    The view is an exact FOLD over the batch's Batch outcome records
+    (:meth:`from_records`) — the renderers keep ``DispatchOutcome`` attribute
+    parity (the ``[sim]``/``[profit]``/``[sim-fail]`` contract) without
+    re-tallying on every property access. Falsy when empty: the drain skips
+    render+submit bookkeeping on falsy outcomes.
+    """
+
+    gas_profitable: list[_RenderCandidate]
+    gas_unprofitable_count: int
+    exception_count: int
+    fail_count: int
+    candidate_count: int
+    suppressed_count: int
+    thin_dropped: int
+    divergent_dropped: int
+    fot_dropped: int
+    fail_buckets: dict[str, int]
+    failures: list[dict[str, Any]]
+    path_infos: dict[int, dict[str, Any]]
+
+    def __bool__(self) -> bool:
+        """Report whether the batch carried anything the renderers print.
+
+        Returns:
+            Whether the outcome is worth a render pass.
+
+        """
+        return bool(
+            self.gas_profitable
+            or self.failures
+            or self.gas_unprofitable_count
+            or self.candidate_count
+        )
+
+    @classmethod
+    def from_records(cls, records: Any) -> MergedOutcome:
+        """Fold one drained batch's Batch outcome records into the render view.
+
+        Every counter is a FOLD over the records (never a stored field); the
+        failure rows and ``path_infos`` decode through the seam's one
+        serializers (``FailureDetail.record()`` / ``path_info_dict()``), so the
+        pool-key derivation and threshold categorization the renderers display
+        are Rust-owned end to end. The pre-assembly skip verdicts carry their
+        display-only ``[sim-none]`` log here.
+
+        Args:
+            records: The batch's Batch outcome records.
+
+        Returns:
+            The merged render view for the batch.
+
+        """
+        gas_profitable: list[_RenderCandidate] = []
+        gas_unprofitable_count = 0
+        exception_count = 0
+        fail_count = 0
+        fail_buckets: dict[str, int] = {}
+        failures: list[dict[str, Any]] = []
+        path_infos: dict[int, dict[str, Any]] = {}
+        suppressed = thin = divergent = fot = 0
+        for rec in records:
+            match rec.assembly:
+                case AssemblyVerdict.SkipEmptyHops:
+                    bot_logger.debug(f"[sim-none] path={rec.path_id}: empty hop_outputs")
+                    continue
+                case (
+                    AssemblyVerdict.SkipResolveMiss
+                    | AssemblyVerdict.SkipPayloadServed
+                    | AssemblyVerdict.SkipThinMargin
+                    | AssemblyVerdict.SkipDivergentPool
+                    | AssemblyVerdict.SkipFeeOnTransfer
+                ):
+                    continue
+                case AssemblyVerdict.SkipSuppressed:
+                    suppressed += 1
+                    continue
+                case _:
+                    pass
+            # Assembled: the display context + the sim verdict fold.
+            path_infos[rec.path_id] = rec.path_info_dict()
+            match rec.simulate:
+                case SimulateVerdict.Profitable(receipt=receipt):
+                    gas_profitable.append(
+                        _RenderCandidate(
+                            path_id=rec.path_id,
+                            gross_profit=int(receipt.gross_profit),
+                            net_profit=int(receipt.net_profit),
+                            gas_used=receipt.gas_used,
+                            priority_fee=receipt.priority_fee,
+                        )
+                    )
+                case SimulateVerdict.GasUnprofitable():
+                    gas_unprofitable_count += 1
+                case SimulateVerdict.Failed(detail=detail):
+                    fail_count += 1
+                    record = detail.record()
+                    failures.append(record)
+                    bucket = record["bucket"]
+                    fail_buckets[bucket] = fail_buckets.get(bucket, 0) + 1
+                case SimulateVerdict.Exception():
+                    exception_count += 1
+                case _:
+                    # Post-assembly drop (the solve-snapshot staleness gate /
+                    # the per-batch cap) — the same drain-invisible drop the
+                    # pre-cut-over outcome applied.
+                    path_infos.pop(rec.path_id, None)
+        return cls(
+            gas_profitable=gas_profitable,
+            gas_unprofitable_count=gas_unprofitable_count,
+            exception_count=exception_count,
+            fail_count=fail_count,
+            candidate_count=(
+                len(gas_profitable) + gas_unprofitable_count + fail_count + exception_count
+            ),
+            suppressed_count=suppressed,
+            thin_dropped=thin,
+            divergent_dropped=divergent,
+            fot_dropped=fot,
+            fail_buckets=fail_buckets,
+            failures=failures,
+            path_infos=path_infos,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class DisplayPolicy:
+    """The config-derived display policy one batch drain renders from.
+
+    Resolved ONCE at the consumption boundary (:meth:`from_cfg`), so the
+    renderers and the silent-veto FSM read values rather than the process
+    verdict.
+    """
+
+    #: Whether this session carries a live signing surface (a dry-run or
+    #: executor-code-injection session submits nothing by construction).
+    live: bool
+    #: The sim-failure tripwire's arm state (``simulation.sim_exit_on_fail``).
+    sim_exit_on_fail: bool
+    #: The tripwire's per-bucket ignore set (``simulation.exit_ignore_buckets``).
+    exit_ignore_buckets: str
+
+    @classmethod
+    def from_cfg(cls, cfg: ArbitrageConfig) -> DisplayPolicy:
+        """Resolve the render policy from the typed config.
+
+        Args:
+            cfg: The session's typed config.
+
+        Returns:
+            The resolved display policy.
+
+        """
+        return cls(
+            live=not cfg.dry_run and not cfg.inject_executor_code,
+            sim_exit_on_fail=cfg.sim_exit_on_fail,
+            exit_ignore_buckets=cfg.sim_exit_ignore_buckets,
+        )
+
+    def vetoed(self, outcome: _SimOutcome, submitted_count: int) -> bool:
+        """Whether this batch is a fully-vetoed live batch (the smoke FSM input).
+
+        A live-armed session whose candidates clear the sim gates but whose
+        every dispatch batch ends in skips is running a configuration veto (the
+        class the retired injection-flag divergence was the sharpest instance
+        of).
+
+        Args:
+            outcome: The batch's render view.
+            submitted_count: How many of the batch's candidates were submitted.
+
+        Returns:
+            ``True`` when the batch carries gate-clearing candidates and no
+            submission.
+
+        """
+        return self.live and bool(outcome.gas_profitable) and submitted_count == 0
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -141,6 +346,33 @@ def hop_fields(hop: dict[str, Any], *, default: Any = _UNSET) -> HopFields:
         pool_manager=get("pool_manager_address"),
         tick_spacing=get("tick_spacing"),
     )
+
+
+def render_outcome(
+    outcome: _SimOutcome,
+    *,
+    dispatcher: Dispatcher,
+    current_block: int,
+    policy: DisplayPolicy,
+) -> None:
+    """Render the display-only view over one drained batch (``stays-python``).
+
+    Args:
+        outcome: The batch's render view.
+        dispatcher: The dispatch state (the fee-on-transfer token surface).
+        current_block: The block the render is stamped with.
+        policy: The resolved display policy.
+
+    """
+    _render_sim_summary(outcome)
+    _render_sim_failures(
+        outcome,
+        current_block=current_block,
+        sim_exit_on_fail=policy.sim_exit_on_fail,
+        exit_ignore_buckets=policy.exit_ignore_buckets,
+    )
+    _render_fot_tokens(dispatcher, current_block)
+    _render_profit_logs(outcome)
 
 
 def _hop_token_summary(hops: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> str:

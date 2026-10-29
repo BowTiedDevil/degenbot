@@ -1,12 +1,16 @@
-"""Render-fold + record-render helpers for the settlement-arbitrage cockpit.
+"""Submit-lane records, the smoke FSM, and the executor boundary's leaves.
 
 The production path is the Rust core's batch executor
 (:mod:`degenbot.runner._sim_submit` builds it; the consumer enqueues batches
-and a drain task renders). This module owns the DISPLAY fold: one drained
-batch's Batch outcome records fold into the :class:`MergedOutcome` render
-view (the counters are exact folds over the records — never stored fields),
-and the submit-lane records render the ``[dispatch]`` lines + the
-silent-veto smoke FSM.
+and a drain task renders). This module owns the submit side of one drained
+batch: the raw engine-result record the assembly seam extracts, the
+``[dispatch]`` line render over the typed submit records, the silent-veto smoke
+FSM, the relay broadcast fan-out, and the executor-runtime bytecode resolution.
+
+The render view (:class:`~degenbot.runner._render.MergedOutcome`) and the
+display policy (:class:`~degenbot.runner._render.DisplayPolicy`) live in
+:mod:`degenbot.runner._render`; this module imports them one way, so the two
+leaves carry no import cycle.
 
 The renderers are display-only (``stays-python``); all sim/submit arithmetic
 runs in the Rust core.
@@ -20,26 +24,12 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
-from degenbot.runner._render import (
-    _render_fot_tokens,
-    _render_profit_logs,
-    _render_sim_failures,
-    _render_sim_summary,
-    _SimOutcome,
-)
+from degenbot.dispatch import SkippedRecord, SubmitSkipReason, SubmittedRecord
+from degenbot.logging import logger as bot_logger
 
 if TYPE_CHECKING:
-    from degenbot.runner.bot_runner import _SessionState
+    from degenbot.runner._render import DisplayPolicy, _SimOutcome
     from degenbot.runner.config import ArbitrageConfig
-
-from degenbot.dispatch import (
-    AssemblyVerdict,
-    SimulateVerdict,
-    SkippedRecord,
-    SubmitSkipReason,
-    SubmittedRecord,
-)
-from degenbot.logging import logger as bot_logger
 
 # Cached relay submit providers (broadcast fan-out). Built lazily on the
 # first gate-clearing candidate; reused so streaming batches never re-dial
@@ -83,6 +73,9 @@ def _resolve_executor_runtime_path(cfg: ArbitrageConfig) -> pathlib.Path:
        ``contracts/<file>``. A wheel install has no such candidate — the
        operator must pass ``executor_runtime`` explicitly.
 
+    Args:
+        cfg: The session's typed config.
+
     Returns:
         The resolved bytecode-file path (existence is not checked here).
 
@@ -102,6 +95,9 @@ def _load_executor_runtime_bytecode(cfg: ArbitrageConfig) -> str:
     The bytecode has all 5 immutable slots baked in: OWNER_ADDR, WETH_ADDR,
     POOL_MANAGER_ADDR, and 2 precomputed delta slots (WETH, NATIVE).
     See contracts/recompile.py for the full layout.
+
+    Args:
+        cfg: The session's typed config.
 
     Returns:
         The 0x-prefixed hex runtime bytecode text.
@@ -131,160 +127,6 @@ def _load_executor_runtime_bytecode(cfg: ArbitrageConfig) -> str:
     return code
 
 
-@dataclass(frozen=True, slots=True)
-class _RenderCandidate:
-    """The display-fold view of one gas-profitable Batch outcome record.
-
-    The renderers read ``path_id``/``gross_profit``/``net_profit``/
-    ``gas_used``/``priority_fee`` off a submit candidate; the record's typed
-    ``SimReceipt`` projects onto exactly that surface (the calldata/encoding
-    lives in the core now — a rendered candidate is no longer an encodable
-    payload).
-    """
-
-    path_id: int
-    gross_profit: int
-    net_profit: int
-    gas_used: int
-    priority_fee: int
-
-
-@dataclass(frozen=True, slots=True)
-class MergedOutcome:
-    """The named sim/submit render view over one drained batch.
-
-    The view is an exact FOLD over the batch's Batch outcome records
-    (:meth:`from_records`) — the renderers keep ``DispatchOutcome`` attribute
-    parity (the ``[sim]``/``[profit]``/``[sim-fail]`` contract) without
-    re-tallying on every property access. Falsy when empty: the drain skips
-    render+submit bookkeeping on falsy outcomes.
-    """
-
-    gas_profitable: list[_RenderCandidate]
-    gas_unprofitable_count: int
-    exception_count: int
-    fail_count: int
-    candidate_count: int
-    suppressed_count: int
-    thin_dropped: int
-    divergent_dropped: int
-    fot_dropped: int
-    fail_buckets: dict[str, int]
-    failures: list[dict[str, Any]]
-    path_infos: dict[int, dict[str, Any]]
-
-    def __bool__(self) -> bool:
-        return bool(
-            self.gas_profitable
-            or self.failures
-            or self.gas_unprofitable_count
-            or self.candidate_count
-        )
-
-    @classmethod
-    def from_records(cls, records: Any) -> MergedOutcome:
-        """Fold one drained batch's Batch outcome records into the render view.
-
-        Every counter is a FOLD over the records (never a stored field); the
-        failure rows and ``path_infos`` decode through the seam's one
-        serializers (``FailureDetail.record()`` / ``path_info_dict()``), so
-        the pool-key derivation and threshold categorization the renderers
-        display are Rust-owned end to end. The pre-assembly skip verdicts
-        carry their display-only ``[sim-none]`` log here.
-
-        Returns:
-            The merged render view for the batch.
-
-        """
-        gas_profitable: list[_RenderCandidate] = []
-        gas_unprofitable_count = 0
-        exception_count = 0
-        fail_count = 0
-        fail_buckets: dict[str, int] = {}
-        failures: list[dict[str, Any]] = []
-        path_infos: dict[int, dict[str, Any]] = {}
-        suppressed = thin = divergent = fot = 0
-        for rec in records:
-            match rec.assembly:
-                case AssemblyVerdict.SkipEmptyHops:
-                    bot_logger.debug(f"[sim-none] path={rec.path_id}: empty hop_outputs")
-                    continue
-                case (
-                    AssemblyVerdict.SkipResolveMiss
-                    | AssemblyVerdict.SkipPayloadServed
-                    | AssemblyVerdict.SkipThinMargin
-                    | AssemblyVerdict.SkipDivergentPool
-                    | AssemblyVerdict.SkipFeeOnTransfer
-                ):
-                    continue
-                case AssemblyVerdict.SkipSuppressed:
-                    suppressed += 1
-                    continue
-                case _:
-                    pass
-            # Assembled: the display context + the sim verdict fold.
-            path_infos[rec.path_id] = rec.path_info_dict()
-            match rec.simulate:
-                case SimulateVerdict.Profitable(receipt=receipt):
-                    gas_profitable.append(
-                        _RenderCandidate(
-                            path_id=rec.path_id,
-                            gross_profit=int(receipt.gross_profit),
-                            net_profit=int(receipt.net_profit),
-                            gas_used=receipt.gas_used,
-                            priority_fee=receipt.priority_fee,
-                        )
-                    )
-                case SimulateVerdict.GasUnprofitable():
-                    gas_unprofitable_count += 1
-                case SimulateVerdict.Failed(detail=detail):
-                    fail_count += 1
-                    record = detail.record()
-                    failures.append(record)
-                    bucket = record["bucket"]
-                    fail_buckets[bucket] = fail_buckets.get(bucket, 0) + 1
-                case SimulateVerdict.Exception():
-                    exception_count += 1
-                case _:
-                    # Post-assembly drop (the solve-snapshot staleness gate /
-                    # the per-batch cap) — the same drain-invisible drop the
-                    # pre-cut-over outcome applied.
-                    path_infos.pop(rec.path_id, None)
-        return cls(
-            gas_profitable=gas_profitable,
-            gas_unprofitable_count=gas_unprofitable_count,
-            exception_count=exception_count,
-            fail_count=fail_count,
-            candidate_count=(
-                len(gas_profitable) + gas_unprofitable_count + fail_count + exception_count
-            ),
-            suppressed_count=suppressed,
-            thin_dropped=thin,
-            divergent_dropped=divergent,
-            fot_dropped=fot,
-            fail_buckets=fail_buckets,
-            failures=failures,
-            path_infos=path_infos,
-        )
-
-
-def _render_outcome(
-    session: _SessionState,
-    outcome: _SimOutcome,
-    current_block: int,
-) -> None:
-    """Render the display-only view over a sim outcome (``stays-python``)."""
-    _render_sim_summary(outcome)
-    _render_sim_failures(
-        outcome,
-        current_block=current_block,
-        sim_exit_on_fail=session.cfg.sim_exit_on_fail,
-        exit_ignore_buckets=session.cfg.sim_exit_ignore_buckets,
-    )
-    _render_fot_tokens(session.dispatcher, current_block)
-    _render_profit_logs(outcome)
-
-
 #: Silent-veto smoke detector: a live-armed session whose candidates clear
 #: the sim gates but whose every dispatch batch ends in skips is running a
 #: configuration veto (the class the retired injection-flag divergence was
@@ -307,9 +149,9 @@ class SubmissionSmokeVerdict(Enum):
 class SubmissionSmoke:
     """Per-session silent-veto smoke FSM (``Quiet | Streak | Warn``).
 
-    Owned by the session state, so a streak never leaks across sessions and
-    the throttle clock resets with the session. :meth:`observe` returns the
-    typed verdict; the dispatch leaf owns the display-only WARN render, so the
+    Owned by the session, so a streak never leaks across sessions and the
+    throttle clock resets with the session. :meth:`observe` returns the typed
+    verdict; the dispatch leaf owns the display-only WARN render, so the
     decision and its rendering stay separable.
     """
 
@@ -322,6 +164,11 @@ class SubmissionSmoke:
 
     def observe(self, *, vetoed: bool, now: float) -> SubmissionSmokeVerdict:
         """Advance the smoke FSM by one batch and return the typed verdict.
+
+        Args:
+            vetoed: Whether the batch was fully vetoed (gate-clearing
+                candidates, no submission) in a live-armed session.
+            now: The monotonic timestamp of the batch.
 
         Returns:
             The smoke verdict for this batch (``QUIET``, ``WARN``, or
@@ -347,9 +194,13 @@ async def _resolve_relay_providers(
 ) -> list[Any]:
     """Resolve this batch's relay broadcast providers.
 
+    Args:
+        relay_urls: The posture's relay endpoints.
+        relay_providers: Pre-built relay providers (``None`` = dial the URLs).
+
     Returns:
-        One Alloy-backed broadcast provider per relay URL (the cached
-        fan-out rebuilt when the URL list changes).
+        One Alloy-backed broadcast provider per relay URL (the cached fan-out
+        rebuilt when the URL list changes).
 
     """
     if relay_providers is not None:
@@ -383,6 +234,10 @@ def render_submit_records(
 ) -> dict[str, int]:
     """Render one log line per submit record.
 
+    Args:
+        records: The batch's typed submit records.
+        logger: The logger to render through.
+
     Returns:
         The skip-reason histogram over the batch's submit records.
 
@@ -410,26 +265,34 @@ def render_submit_records(
 
 
 def track_submission_smoke(
-    session: _SessionState,
+    smoke: SubmissionSmoke,
     outcome: _SimOutcome,
-    submitted_count: int,
-    skip_histogram: dict[str, int],
+    records: list[Any],
     *,
+    policy: DisplayPolicy,
     logger: Any = bot_logger,
 ) -> None:
-    """Throttle the silent-veto WARN over a fully-vetoed live-batch streak.
+    """Render one drained batch's submit records and advance the smoke FSM.
 
-    The streak/clock decision is the session's :class:`SubmissionSmoke` FSM; this
-    leaf only composes the veto predicate and renders the typed ``WARN``.
+    The wait/no-wait decision is :meth:`DisplayPolicy.vetoed` (composed from the
+    resolved policy + the batch's render fold); the streak/clock decision is the
+    session's :class:`SubmissionSmoke` FSM; this leaf renders the ``[dispatch]``
+    lines and the typed ``WARN``.
+
+    Args:
+        smoke: The session's silent-veto FSM.
+        outcome: The batch's render view.
+        records: The batch's typed submit records.
+        policy: The resolved display policy.
+        logger: The logger to render through.
+
     """
-    vetoed = (
-        not session.cfg.dry_run
-        and not session.cfg.inject_executor_code
-        and bool(outcome.gas_profitable)
-        and submitted_count == 0
+    skip_histogram = render_submit_records(records, logger=logger)
+    submitted_count = sum(isinstance(record, SubmittedRecord) for record in records)
+    verdict = smoke.observe(
+        vetoed=policy.vetoed(outcome, submitted_count),
+        now=time.monotonic(),
     )
-    smoke = session.submission_smoke
-    verdict = smoke.observe(vetoed=vetoed, now=time.monotonic())
     if verdict is SubmissionSmokeVerdict.WARN:
         logger.warning(
             "[dispatch] live-armed with gate-clearing candidates but no submissions in "

@@ -25,7 +25,7 @@ from degenbot.dispatch import (
     TxSigner,
     typed_submit_record,
 )
-from degenbot.runner._dispatch import MergedOutcome
+from degenbot.runner._render import MergedOutcome
 from degenbot.runner._sim_submit import BatchWork
 from tests.helpers.seam import AlloyProvider, AsyncAlloyProvider, build_batch_executor_py
 from tests.helpers.sim_records import inline_sim_payload

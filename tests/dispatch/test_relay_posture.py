@@ -16,11 +16,8 @@ from typing import Any
 
 import pytest
 
+from degenbot.runner import ActivationGateRefused, BotRunner
 from degenbot.runner._relay_posture import RelayPosture
-from degenbot.runner.bot_runner import (
-    ActivationGateRefused,
-    BotRunner,
-)
 from degenbot.runner.config import ArbitrageConfig
 from tests.helpers.boot_actors import boot_runner
 from tests.helpers.identity_env import identity_env
@@ -116,8 +113,7 @@ class TestBootGate:
                 settlement_endpoints=settlement_endpoints,
             )
             await runner.start()
-            assert runner._session is not None
-            assert runner._session.relay_posture is None, (
+            assert runner.session.relay_posture is None, (
                 "a settlement-deactivated boot carries no settlement posture"
             )
 
@@ -152,8 +148,7 @@ class TestBootGate:
             settlement_endpoints=lambda: ["http://relay-a"],
         )
         await runner.start()
-        assert runner._session is not None
-        posture = runner._session.relay_posture
+        posture = runner.session.relay_posture
         assert posture is not None
         assert posture.relay_urls == ["http://relay-a"]
 
@@ -167,19 +162,40 @@ class TestBootGate:
             settlement_endpoints=lambda: ["http://relay-a"],
         )
         await runner.start()
-        assert runner._session is not None
-        assert runner._session.relay_posture is None
+        assert runner.session.relay_posture is None
 
-    def test_a_readiness_refusal_is_an_activation_refusal(self) -> None:
+    async def test_a_readiness_refusal_is_an_activation_refusal(self) -> None:
         """A Rust readiness refusal aborts the boot the same way: the runner
         never enters run() on an unreadiness activation."""
 
         def readiness() -> Any:
-            raise ValueError("facet unreadiness: degenbot strategy activate")
+            msg = "facet unreadiness: degenbot strategy activate"
+            raise ValueError(msg)
 
         runner = _runner(dry_run=False, readiness=readiness)
         with pytest.raises(ActivationGateRefused, match="degenbot strategy activate"):
-            runner._gate_readiness()
+            await runner.start()
+
+    async def test_a_refused_boot_still_reaches_the_engine_for_shutdown(self) -> None:
+        """A boot refused AFTER the engine subscribed keeps its actors on the
+        session, so shutdown() can stop the pump instead of leaking a
+        subscription into an unstarted session."""
+
+        def readiness() -> Any:
+            msg = "facet unreadiness: degenbot strategy activate"
+            raise ValueError(msg)
+
+        runner = _runner(dry_run=False, readiness=readiness)
+        with pytest.raises(ActivationGateRefused):
+            await runner.start()
+
+        assert runner.session.actors is not None
+        registry = runner.session.actors.engine_registry
+        assert len(registry.start_calls) == 1
+        await runner.shutdown()
+        assert registry.engine.stop_calls == 1, (
+            "a half-started session must still reach its engine to stop the pump"
+        )
 
     async def test_an_injected_arm_off_beats_a_settlement_active_view(self) -> None:
         """The injected settlement arm is the session's ONE fact. A DI seam
@@ -196,8 +212,7 @@ class TestBootGate:
             settlement_endpoints=settlement_endpoints,
         )
         await runner.start()
-        assert runner._session is not None
-        assert runner._session.relay_posture is None, (
+        assert runner.session.relay_posture is None, (
             "a settlement-deactivated arm carries no settlement posture"
         )
 

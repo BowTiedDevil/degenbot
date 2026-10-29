@@ -17,12 +17,11 @@ import asyncio
 import re
 from pathlib import Path
 
+from degenbot.config import resolved_config
 from degenbot.dispatch import Dispatcher
-from degenbot.runner._consume import _apply_block_if_ready
-from degenbot.runner.bot_runner import _SessionState
-from tests.fakes.engine import FakeEngine, FakeEngineRegistry
+from degenbot.runner._consume import BlockLoop, _apply_block_if_ready
 from tests.fakes.runner_pipelines import StubPipeline
-from tests.fakes.session import FakeRunnerConfig
+from tests.helpers.session import session_for_test
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SIMULATOR_RS = _REPO_ROOT / "rust/crates/engine/degenbot-arbitrage/src/simulator.rs"
@@ -38,17 +37,15 @@ class _AlloyW3:
         return object()
 
 
-def _session(recorder) -> _SessionState:
-    return _SessionState(
-        engine_registry=FakeEngineRegistry(FakeEngine()),
+async def _loop(recorder) -> BlockLoop:
+    session = session_for_test(
         async_w3=_AlloyW3(),
-        sim_ctx=None,
         dispatcher=Dispatcher.for_block(0),
-        cfg=FakeRunnerConfig(operator_address="0x9C56a29c7231974c269E24F9FB3c29203039089E"),
-        current_block=0,
         pipeline_factory=StubPipeline,
         fee_history_fetcher=recorder,
     )
+    await session.build_pipeline()
+    return session.block_loop()
 
 
 def _tick() -> dict[str, int]:
@@ -62,23 +59,24 @@ def _tick() -> dict[str, int]:
 
 
 async def _drive(
-    session: _SessionState,
+    loop: BlockLoop,
     *,
     reward_percentiles: tuple[int, int] | None = None,
 ) -> None:
     fut: asyncio.Future[dict[str, int]] = asyncio.get_running_loop().create_future()
     fut.set_result(_tick())
-    await _apply_block_if_ready(fut, session, reward_percentiles=reward_percentiles)
+    await _apply_block_if_ready(fut, loop, reward_percentiles=reward_percentiles)
 
 
 async def test_head_tick_requests_core_percentiles() -> None:
     seen: list[list[float]] = []
 
     async def _record(**kwargs) -> bool:
+        await asyncio.sleep(0)  # yield: the fetcher is an awaitable seam
         seen.append(list(kwargs["reward_percentiles"]))
         return True
 
-    await _drive(_session(_record), reward_percentiles=(7, 77))
+    await _drive(await _loop(_record), reward_percentiles=(7, 77))
 
     assert seen == [[7.0, 77.0]], (
         "the head tick must poll the percentiles the core reader returns; a "
@@ -116,6 +114,4 @@ def test_engine_carries_no_second_percentile_literal() -> None:
 
 def test_the_verdict_carries_the_core_pair() -> None:
     """The verdict is the one FFI door for the pair, not a module function."""
-    from degenbot.config import resolved_config
-
     assert resolved_config().fee_percentiles == _core_percentiles()
