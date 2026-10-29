@@ -26,8 +26,10 @@ use std::time::Duration;
 use alloy::primitives::{address, Address, Bytes, U256};
 use degenbot_simulation::sim::evm::frame_replay::{
     read_view_word, BaseFeeSource, CountingFrameDb, FrameRpcCounter, PredStatus, ReplayFrameError,
-    ReplayStatus, ReplayableTx, ScratchBlock, ScratchEvm, SequenceReplayError,
+    ReplayableTx, ScratchBlock, ScratchEvm, SequenceReplayError,
 };
+use degenbot_simulation::sim::evm::session::SimSession;
+use degenbot_simulation::RunVerdict;
 use revm::bytecode::Bytecode;
 use revm::database::CacheDB;
 use revm::database_interface::EmptyDB;
@@ -211,7 +213,7 @@ fn frame_loopback_surfaces_touched_slots_and_telemetry() {
         .expect("frame executes");
 
     assert!(
-        matches!(out.status, ReplayStatus::Success),
+        matches!(out.status, RunVerdict::Success),
         "status: {:?}",
         out.status
     );
@@ -277,7 +279,7 @@ fn reverted_frame_returns_no_partial_state_and_contained_writes() {
         .replay(&tx(REVERTER, &[], 7))
         .expect("reverting frame executes");
     assert!(
-        matches!(out.status, ReplayStatus::Reverted),
+        matches!(out.status, RunVerdict::Reverted),
         "status: {:?}",
         out.status
     );
@@ -298,7 +300,7 @@ fn reverted_frame_returns_no_partial_state_and_contained_writes() {
         .replay(&tx(READER, &slot_word(0), 7))
         .expect("follow-up executes");
     assert!(
-        matches!(after.status, ReplayStatus::Success),
+        matches!(after.status, RunVerdict::Success),
         "follow-up clean"
     );
     assert_eq!(
@@ -312,13 +314,13 @@ fn reverted_frame_returns_no_partial_state_and_contained_writes() {
     );
 }
 
-/// The two directions of the seam are isolated: a settlement-style
-/// `transact_one` fan-out over the layered ext sees NO frame state, AND its
-/// own journaled (never-committed) writes are invisible to later frames —
-/// while its journaled accumulation across `transact_one` (the strategy's
-/// 7-call invariant) still works.
+/// The seam's two directions are isolated, and the isolation is the VERB's:
+/// one run through the session (`transact_one` + `finalize` live inside it) is
+/// invisible to the next run and to every frame, while the session's escape
+/// hatch still accumulates across `transact_one` (the settlement bundle's
+/// 7-call shape) and still commits nothing.
 #[test]
-fn frame_state_and_settlement_journal_are_mutually_isolated() {
+fn a_run_is_invisible_to_the_next_run_and_to_frames() {
     use revm::context::Context as RevmContext;
     use revm::primitives::TxKind;
     use revm::{ExecuteEvm, MainBuilder, MainContext};
@@ -327,7 +329,7 @@ fn frame_state_and_settlement_journal_are_mutually_isolated() {
 
     // 1. The frame writes the DUAL contract's slot 5 on the frame layer.
     let frame = scratch.replay(&tx(DUAL, &[], 7)).expect("frame executes");
-    assert!(matches!(frame.status, ReplayStatus::Success));
+    assert!(matches!(frame.status, RunVerdict::Success));
 
     let dual_write = |nonce: u64| {
         revm::context::TxEnv::builder()
@@ -351,51 +353,82 @@ fn frame_state_and_settlement_journal_are_mutually_isolated() {
             .build()
             .unwrap()
     };
+    let returned_word =
+        |output: &Bytes| U256::from_be_slice(&output[output.len().saturating_sub(32)..]);
 
-    // 2. A settlement-style EVM over the SAME layered ext: a read must see
-    //    the DUAL slot at 0 — no frame state.
+    // 2. A session over the SAME layered ext: its first run reads the DUAL
+    //    slot at 0 — no frame state reached the settled view.
+    let mut evm = RevmContext::mainnet()
+        .with_db(scratch.ext_mut())
+        .build_mainnet();
+    let mut session = SimSession::new(&mut evm);
+    let observed = session
+        .run(dual_read(7))
+        .expect("settlement read run settles");
+    assert!(matches!(observed.verdict, RunVerdict::Success));
+    assert_eq!(
+        returned_word(&observed.output),
+        U256::ZERO,
+        "a run sees no frame state"
+    );
+
+    // 3. A write run settles its SSTORE into ITS OWN outcome...
+    let written = session.run(dual_write(7)).expect("write run settles");
+    assert!(matches!(written.verdict, RunVerdict::Success));
+    assert_eq!(
+        written
+            .state
+            .get(&DUAL)
+            .and_then(|acc| acc.storage.get(&U256::from(5u64)))
+            .map(|s| s.present_value),
+        Some(U256::from(0x2A)),
+        "the write settled inside the run"
+    );
+    assert!(
+        written
+            .touched()
+            .iter()
+            .any(|(address, slots)| *address == DUAL && slots.contains(&U256::from(5u64))),
+        "the run reports the slot it wrote"
+    );
+
+    // 4. ...and is INVISIBLE to the next run: every run starts from the same
+    //    settled view because `run` finalized (never committed) the journal.
+    let after = session
+        .run(dual_read(7))
+        .expect("follow-up read run settles");
+    assert_eq!(
+        returned_word(&after.output),
+        U256::ZERO,
+        "a run is invisible to the next run"
+    );
+
+    // 5. The escape hatch keeps the 7-call bundle's shape: the journal
+    //    accumulates ACROSS transact_one calls (nonce bump included), and
+    //    `finalize` discards it without committing.
     {
-        let mut evm = RevmContext::mainnet()
-            .with_db(scratch.ext_mut())
-            .build_mainnet();
-        let observed = evm
-            .transact_one(dual_read(7))
-            .expect("settlement read executes");
-        assert_eq!(
-            observed
-                .output()
-                .map(|b| U256::from_be_slice(&b[b.len().saturating_sub(32)..])),
-            Some(U256::ZERO),
-            "settlement transact_one sees NO frame state"
-        );
-
-        // 3. The settlement 7-call accumulator shape still works: write via
-        //    transact_one (journal only), read it back through a second
-        //    transact_one BEFORE finalize.
-        evm.transact_one(dual_write(8))
-            .expect("settlement write executes");
+        let evm = session.evm_mut();
+        evm.transact_one(dual_write(7))
+            .expect("escape-hatch write settles");
         let accumulated = evm
-            .transact_one(dual_read(9))
-            .expect("accumulation read executes");
+            .transact_one(dual_read(8))
+            .expect("accumulation read settles");
         assert_eq!(
             accumulated
                 .output()
-                .map(|b| U256::from_be_slice(&b[b.len().saturating_sub(32)..])),
+                .map(|bytes| { U256::from_be_slice(&bytes[bytes.len().saturating_sub(32)..]) }),
             Some(U256::from(0x2A)),
-            "settlement journal accumulates across transact_one as before"
+            "the escape hatch still accumulates across transact_one"
         );
-
-        // 4. finalize discards the journal without committing — the ext is
-        //    untouched (same discard semantics as the 7-call path).
         let _ = evm.finalize();
     }
 
-    // 5. The next frame reads the slot the settlement journal wrote: 0. The
-    //    settlement journal's writes (never committed) are invisible to
-    //    frames, as is the frame's own earlier write (per-frame journal).
+    // 6. Neither side reaches the frame layer: the next frame reads the slot
+    //    at 0 — the runs' writes and the discarded journal are gone.
     let frame2 = scratch
         .replay(&tx(DUAL, &[0x00], 7))
-        .expect("follow-up executes");
+        .expect("follow-up frame executes");
+    assert!(matches!(frame2.status, RunVerdict::Success));
     assert!(
         frame2
             .state
@@ -403,7 +436,7 @@ fn frame_state_and_settlement_journal_are_mutually_isolated() {
             .and_then(|acc| acc.storage.get(&U256::from(5u64)))
             .map(|s| s.present_value)
             .is_none_or(|v| v == U256::ZERO),
-        "frame sees no journal writes from the settlement side"
+        "frame sees no writes from the session side"
     );
 }
 
@@ -418,7 +451,7 @@ fn underpriced_frame_falls_back_to_disabled_basefee() {
         .replay(&underpriced)
         .expect("fallback frame executes");
     assert!(
-        matches!(out.status, ReplayStatus::Success),
+        matches!(out.status, RunVerdict::Success),
         "status: {:?}",
         out.status
     );
@@ -469,7 +502,7 @@ fn sequence_prefix_state_reaches_the_frame() {
         .expect("sequence executes");
     assert_eq!(sequence.predecessors, vec![PredStatus::Success]);
     assert!(
-        matches!(sequence.frame.status, ReplayStatus::Success),
+        matches!(sequence.frame.status, RunVerdict::Success),
         "the frame reads the accumulated slot: {:?}",
         sequence.frame.status
     );
@@ -487,7 +520,7 @@ fn sequence_state_never_leaks_into_the_ext() {
     let sequence = scratch
         .replay_sequence(&[predecessor], &frame)
         .expect("sequence executes");
-    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+    assert!(matches!(sequence.frame.status, RunVerdict::Success));
 
     assert_eq!(
         read_view_word(scratch.ext(), GATE, U256::ZERO),
@@ -515,7 +548,7 @@ fn reverted_predecessor_still_occupies_its_nonce() {
         .replay_sequence(&[predecessor], &frame)
         .expect("sequence executes");
     assert_eq!(sequence.predecessors, vec![PredStatus::Reverted]);
-    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+    assert!(matches!(sequence.frame.status, RunVerdict::Success));
 }
 
 /// A predecessor whose nonce the parent state already consumed is skipped as
@@ -531,7 +564,7 @@ fn already_mined_predecessor_is_skipped_and_the_sequence_completes() {
         .replay_sequence(&[stale], &frame)
         .expect("sequence executes");
     assert_eq!(sequence.predecessors, vec![PredStatus::AlreadyMined]);
-    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+    assert!(matches!(sequence.frame.status, RunVerdict::Success));
 }
 
 /// A multi-step sequence records each predecessor's status in ascending
@@ -549,7 +582,7 @@ fn multi_step_sequence_accumulates_statuses_and_counter() {
         sequence.predecessors,
         vec![PredStatus::Success, PredStatus::Reverted]
     );
-    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+    assert!(matches!(sequence.frame.status, RunVerdict::Success));
     assert!(
         sequence.frame.rpc_reads > 0,
         "the sequence's cold reads are counted on the frame outcome"
@@ -606,7 +639,7 @@ fn underpriced_predecessor_falls_back_and_commits() {
         .replay_sequence(&[underpriced], &frame)
         .expect("sequence executes");
     assert_eq!(sequence.predecessors, vec![PredStatus::Success]);
-    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+    assert!(matches!(sequence.frame.status, RunVerdict::Success));
     assert_eq!(
         sequence.frame.state.get(&SENDER).map(|acc| acc.info.nonce),
         Some(9),
@@ -670,7 +703,7 @@ fn same_account_two_predecessors_merge_nonce_balance_and_storage() {
         sequence.predecessors,
         vec![PredStatus::Success, PredStatus::Success]
     );
-    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+    assert!(matches!(sequence.frame.status, RunVerdict::Success));
     assert_eq!(
         sequence
             .frame
@@ -726,7 +759,7 @@ fn halted_predecessor_commits_and_the_sequence_proceeds() {
         .replay_sequence(&[halt], &frame)
         .expect("sequence executes");
     assert_eq!(sequence.predecessors, vec![PredStatus::Halted]);
-    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+    assert!(matches!(sequence.frame.status, RunVerdict::Success));
     assert_eq!(
         sequence.frame.state.get(&SENDER).map(|acc| acc.info.nonce),
         Some(9),
@@ -798,7 +831,7 @@ async fn live_scratch_evm_replays_a_plain_transfer_and_warms() {
     };
     let cold = scratch.replay(&plain).expect("plain transfer executes");
     assert!(
-        matches!(cold.status, ReplayStatus::Success),
+        matches!(cold.status, RunVerdict::Success),
         "status: {:?}",
         cold.status
     );
@@ -806,7 +839,7 @@ async fn live_scratch_evm_replays_a_plain_transfer_and_warms() {
     // The scratch persists across frames on the handle — the warmed set is
     // served from its ext cache with zero forwarded cold reads.
     let warm = scratch.replay(&plain).expect("second frame executes");
-    assert!(matches!(warm.status, ReplayStatus::Success));
+    assert!(matches!(warm.status, RunVerdict::Success));
     assert_eq!(warm.rpc_reads, 0, "the pre-touched transfer set is warm");
 }
 
@@ -937,7 +970,7 @@ async fn live_v2_router_swap_replay_matches_chain_post_state() {
 
     let out = scratch.replay(&replayable).expect("fixture swap executes");
     assert!(
-        matches!(out.status, ReplayStatus::Success),
+        matches!(out.status, RunVerdict::Success),
         "status: {:?}",
         out.status
     );
@@ -1025,6 +1058,6 @@ async fn live_v2_router_swap_replay_matches_chain_post_state() {
     // Warm: re-running the same frame on the same scratch is fully served by
     // the warmed ext — zero forwarded reads over the pre-touched pair set.
     let warm = scratch.replay(&replayable).expect("warm replay executes");
-    assert!(matches!(warm.status, ReplayStatus::Success));
+    assert!(matches!(warm.status, RunVerdict::Success));
     assert_eq!(warm.rpc_reads, 0, "warm replay forwards nothing");
 }

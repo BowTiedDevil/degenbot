@@ -627,7 +627,7 @@ impl InlineSimulator for InlineSimHook {
                             // runtime hop below) — the seam must not open a
                             // same-named duplicate nested under this span.
                             let result = simulate_path_on_evm_in_span(
-                                handle.evm_mut(),
+                                handle.session().evm_mut(),
                                 &ctx,
                                 &sim_path,
                                 &mut buckets,

@@ -1,13 +1,14 @@
 //! The simulation engine — the in-process revm EVM handle + its DB stack.
 //!
 //! ADR-019 D4/D7 (decision R — strategy/engine separation): this crate owns
-//! the **engine** (`BlockSimHandle`, the layered DB, `apply_simulation_overrides`,
-//! `AccessListCollector`, `WarmCodeCache`). The **strategy** — the 7-call
-//! pre/post-balance bundle, `compute_priority_fee`, `decode_balance`,
-//! `SimResult`, `dispatch_profitable_results`, `SimulateContext`,
-//! `SimulatePath`, `FailBuckets`, the calldata builders — relocated to the
-//! `degenbot-arbitrage` crate, which drives the borrowed `&mut evm`
-//! the engine exposes via [`BlockSimHandle::evm_mut`].
+//! the **engine** (`BlockSimHandle`, the settle verb [`SimSession::run`], the
+//! layered DB, `apply_simulation_overrides`, `AccessListCollector`,
+//! `WarmCodeCache`). The **strategy** — the 7-call pre/post-balance bundle,
+//! `compute_priority_fee`, `decode_balance`, `SimResult`,
+//! `dispatch_profitable_results`, `SimulateContext`, `SimulatePath`,
+//! `FailBuckets`, the calldata builders — relocated to the
+//! `degenbot-arbitrage` crate, which drives the engine through
+//! [`BlockSimHandle::session`].
 //!
 //! # Standalone-Rust consumer
 //!
@@ -66,8 +67,8 @@ pub use sim::evm::{
     apply_simulation_overrides, divergence_probe, emit_access_list_from_state, AccessListCollector,
     BaseFeeSource, BlockEvm, BlockSimHandle, BotStateDb, CallFrame, CallTrace, CallTraceHandle,
     CallTraceInspector, CapturedSwap, CountingFrameDb, FrameOutcome, FrameRpcCounter,
-    ProductionBlockDb, ReplayFrameError, ReplayOutcome, ReplayStatus, ReplayableTx, ScratchBlock,
-    ScratchDb, ScratchEvm, SimInspector, SimulationOverrideParams, StorageMemo,
-    SwapEventCaptureHandle, SwapEventCaptureInspector, SwapFamily, WarmCodeCache,
+    ProductionBlockDb, ReplayFrameError, ReplayOutcome, ReplayableTx, RunVerdict, ScratchBlock,
+    ScratchDb, ScratchEvm, SimError, SimInspector, SimRun, SimSession, SimulationOverrideParams,
+    StorageMemo, SwapEventCaptureHandle, SwapEventCaptureInspector, SwapFamily, WarmCodeCache,
     WarmCodeCacheInner, WARM_CODE_CACHE_TTL_BLOCKS,
 };

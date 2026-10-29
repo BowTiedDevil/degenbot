@@ -9,8 +9,9 @@
 use alloy::primitives::{address, Address, Bytes, B256, U256};
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_simulation::sim::evm::frame_replay::{
-    PredStatus, ReplayStatus, ReplayableTx, ScratchBlock, ScratchEvm,
+    PredStatus, ReplayableTx, ScratchBlock, ScratchEvm,
 };
+use degenbot_simulation::RunVerdict;
 use degenbot_strategy::gap_quarantine::{
     FrameState, NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision,
 };
@@ -589,7 +590,7 @@ fn two_predecessor_rescue_executes_ascending_before_the_frame() {
         vec![PredStatus::Success, PredStatus::Success],
         "both predecessors settle, ascending"
     );
-    assert!(matches!(sequence.frame.status, ReplayStatus::Success));
+    assert!(matches!(sequence.frame.status, RunVerdict::Success));
     assert_eq!(
         sequence
             .frame

@@ -39,13 +39,12 @@ use degenbot_pools::{
     encode_v4_liquidity_slot, encode_v4_slot0, v4_liquidity_slot, v4_pool_state_base_slot,
     v4_slot0_slot, v4_tick_mapping_slot, V4Slot0Parts,
 };
-use degenbot_simulation::sim::evm::frame_replay::{
-    ReplayStatus, ReplayableTx, ScratchBlock, ScratchEvm,
-};
+use degenbot_simulation::sim::evm::frame_replay::{ReplayableTx, ScratchBlock, ScratchEvm};
 use degenbot_simulation::sim::evm::journal_pools::{
     extract_pool_post_states, PoolFamily, PoolPostKind, PoolPostState, TouchedTickWord,
     TypedPoolPost, V4PoolDescriptor, V4PoolSet,
 };
+use degenbot_simulation::RunVerdict;
 use revm::bytecode::Bytecode;
 use revm::database::CacheDB;
 use revm::database_interface::EmptyDB;
@@ -252,7 +251,7 @@ fn v2_pack_is_the_journal_word_and_decode_is_the_engine_state() {
     let out = scratch
         .replay(&tx(7, &one_word(SLOT8, word)))
         .expect("frame executes");
-    assert!(matches!(out.status, ReplayStatus::Success));
+    assert!(matches!(out.status, RunVerdict::Success));
 
     // pack == journal word: the settled storage word at slot 8 IS the pack.
     assert_eq!(
@@ -333,7 +332,7 @@ fn v3_pack_decode_round_trip_recovers_tick_indices_from_preimages() {
     pairs.push((U256::from(LIQ_SLOT), word4));
     pairs.push((tick_slot, word_tick));
     let out = scratch.replay(&tx(7, &pairs)).expect("frame executes");
-    assert!(matches!(out.status, ReplayStatus::Success));
+    assert!(matches!(out.status, RunVerdict::Success));
 
     let hint = 1200i32; // the pre-tx current tick (spacing-aligned anchor)
     let states = extract_pool_post_states(
@@ -481,7 +480,7 @@ fn v4_poolmanager_with_no_known_poolids_returns_unsupported() {
     pairs.push((state_base + U256::from(3u64), U256::from(1_000u64)));
     pairs.push((U256::from(LIQ_SLOT), U256::from(9u64)));
     let out = scratch.replay(&tx(7, &pairs)).expect("frame executes");
-    assert!(matches!(out.status, ReplayStatus::Success));
+    assert!(matches!(out.status, RunVerdict::Success));
 
     let family = PoolFamily::V4PoolManager {
         pools: V4PoolSet::default(),
@@ -528,7 +527,7 @@ fn v4_known_poolid_slots_decode_to_the_typed_post_state() {
     ));
     pairs.push((tick_slot, word_tick));
     let out = scratch.replay(&tx(7, &pairs)).expect("frame executes");
-    assert!(matches!(out.status, ReplayStatus::Success));
+    assert!(matches!(out.status, RunVerdict::Success));
 
     let set = v4_set(vec![V4PoolDescriptor {
         pool_id,
@@ -588,7 +587,7 @@ fn v4_unknown_poolid_slots_stay_unsupported_never_guessed() {
         U256::from_be_bytes(tick_word_of(1, 2).0),
     ));
     let out = scratch.replay(&tx(7, &pairs)).expect("frame executes");
-    assert!(matches!(out.status, ReplayStatus::Success));
+    assert!(matches!(out.status, RunVerdict::Success));
 
     let set = v4_set(vec![V4PoolDescriptor {
         pool_id: known,
@@ -643,7 +642,7 @@ fn mixed_v2_and_v4_frame_extracts_both_families() {
     let out = scratch
         .replay(&tx_to(relay, 7, &pairs))
         .expect("frame executes");
-    assert!(matches!(out.status, ReplayStatus::Success));
+    assert!(matches!(out.status, RunVerdict::Success));
 
     let set = v4_set(vec![V4PoolDescriptor {
         pool_id,
@@ -1214,7 +1213,7 @@ async fn v2_frame_verdict(
         return FrameVerdict::Unsettleable; // not a settleable frame
     };
     assert!(
-        matches!(out.status, ReplayStatus::Success),
+        matches!(out.status, RunVerdict::Success),
         "status {:?}",
         out.status
     );
@@ -1500,7 +1499,7 @@ async fn v3_frame_verdict(
         return FrameVerdict::Unsettleable; // not a settleable frame
     };
     assert!(
-        matches!(out.status, ReplayStatus::Success),
+        matches!(out.status, RunVerdict::Success),
         "status {:?}",
         out.status
     );

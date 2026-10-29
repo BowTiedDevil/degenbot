@@ -27,7 +27,7 @@ doesn't re-derive guarantees the merge already proves.
 `degenbot_simulation::sim::evm::frame_replay::ReplayOutcome`. One type for
 every possible result of having replayed a pending-tx frame: typed
 post-states of touched pools, wall/rpc_reads evidence, and explicit failure
-modes (`ReplayStatus`). A lane that observes an `Err`/`Incomplete`-variant
+modes (`RunVerdict`). A lane that observes an `Err`/`Incomplete`-variant
 `ReplayOutcome` knows whether the frame died honestly (RPC failure,
 nonce-gap) or simply was never actionable — the infamous "we closed our
 eyes" pseudo-success doesn't exist on this surface.

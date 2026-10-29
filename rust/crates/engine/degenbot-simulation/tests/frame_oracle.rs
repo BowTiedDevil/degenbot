@@ -57,11 +57,12 @@ use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use degenbot_executor::WarmupSlots;
 use degenbot_pools::state::slot_layout;
 use degenbot_pools::ConcentratedLiquiditySlotLayout;
-use degenbot_simulation::sim::evm::frame_replay::{ReplayStatus, ReplayableTx};
+use degenbot_simulation::sim::evm::frame_replay::ReplayableTx;
 use degenbot_simulation::sim::evm::journal_pools::{
     extract_pool_post_states, PoolFamily, PoolPostKind, PoolPostState, TouchedTickWord,
     TypedPoolPost,
 };
+use degenbot_simulation::RunVerdict;
 use degenbot_simulation::{BlockSimHandle, SimulationOverrideParams, WarmCodeCacheInner};
 use hashbrown::HashMap;
 use serde_json::Value;
@@ -1699,7 +1700,7 @@ async fn oracle_parity_for(arch: Archetype) {
     );
     let out = scratch.replay(&fixture.tx).expect("fixture frame executes");
     assert!(
-        matches!(out.status, ReplayStatus::Success),
+        matches!(out.status, RunVerdict::Success),
         "status {:?}",
         out.status
     );

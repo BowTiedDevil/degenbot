@@ -5,14 +5,15 @@
 //! `SimulateContext`, `SimulatePath`, `BlockPriorityFees` (re-exported from
 //! `degenbot_rpc::fees` — the fee struct is market data, owned by the RPC
 //! crate per ADR-019 D5) + the priority-fee constants, + the in-process revm
-//! 7-call vector `simulate_path_on_evm` driven per-block over the engine's
-//! `BlockSimHandle::evm_mut`.
+//! 7-call vector `simulate_path_on_evm` driven per-block over the escape hatch
+//! a `SimSession` opens (`SimSession::evm_mut`).
 //!
 //! ADR-019 D4/D7 (decision R — Rust-canonical): this is the settlement-arbitrage bundle +
 //! gross/net + priority-fee sizing — one strategy over the
 //! `degenbot-simulation` engine. The engine owns the revm EVM handle
-//! (`BlockSimHandle`), the DB stack, overrides, + the AL inspector; this crate
-//! drives the borrowed `&mut evm` the engine exposes. The Python driver is a
+//! (`BlockSimHandle`), the settle verb, the DB stack, overrides, + the AL
+//! inspector; this crate drives the borrowed `&mut evm` the session's escape
+//! hatch exposes. The Python driver is a
 //! thin cockpit over a PyO3 wrapper around `dispatch_profitable_results` —
 //! it does NOT re-derive the 7-call bundle (AGENTS.md: "driver shell, not a
 //! co-implementation").
@@ -878,7 +879,9 @@ pub const BALANCE_CALL_GAS_LIMIT: u64 = 100_000;
 // `BlockEvm`/`ProductionBlockDb` type aliases + the `ArcDynProviderEthereum`
 // provider newtype live in `degenbot-simulation` (the engine). This strategy
 // builds the handle via `BlockSimHandle::build` + drives the borrowed `&mut evm`
-// the engine exposes via `BlockSimHandle::evm_mut`.
+// `handle.session().evm_mut()` hands out: the 7-call bundle is the one
+// consumer whose journal must accumulate ACROSS calls, which the settled-run
+// verb deliberately does not offer.
 
 /// The testable in-process orchestration core: runs the 7-call vector over a
 /// PRE-BUILT `CacheDB` (overrides already applied by the caller) via revm
@@ -1214,10 +1217,11 @@ where
         .expect("valid address + weth encode");
 
     // The 7 calls: 3 pre-balance reads, execute(), 3 post-balance reads. The
-    // journaled state ACCUMULATES across transact_one calls (revm 41 API:
-    // transact_one stores changes in the journal; finalize clears it), so the
-    // post reads see the execute() changes. A reverted execute rolls back ONLY
-    // its own changes (revm invariants) — the pre reads persist.
+    // journaled state ACCUMULATES across transact_one calls (transact_one
+    // stores changes in the journal; finalize clears it), so the post reads see
+    // the execute() changes. A reverted execute rolls back ONLY its own
+    // changes (revm invariants) — the pre reads persist. This accumulation is
+    // why the bundle takes the session's escape hatch instead of `run`.
     let txs = [
         build_balance_tx(ctx, ctx.weth_address, &weth_call),
         build_balance_tx(ctx, ctx.multicall3_address, &eth_call),
@@ -1262,8 +1266,9 @@ where
             // SHARED per-block `&mut evm` (Tier 1), an un-finalized journal
             // would leak those partial read-caches into the next path's first
             // `transact_one`. `finalize` returns + discards the per-path
-            // `State` (NOT committed — `simulate_path_on_evm` never calls
-            // `commit`), so execute() SSTOREs stay out of the shared `CacheDB`.
+            // `State` (NOT committed — the escape hatch's contract is the one
+            // `SimSession::run` performs internally), so execute() SSTOREs stay
+            // out of the shared `CacheDB`.
             let _ = evm.finalize();
             fail_buckets.record(
                 path.path_id,

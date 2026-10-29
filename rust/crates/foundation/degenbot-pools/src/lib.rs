@@ -216,7 +216,7 @@ pub use state::state_history::{
 pub use state::slot_layout::{
     concentrated_liquidity_liquidity_tracked_word, concentrated_liquidity_slot0_tracked_word,
     decode_tick_word, decode_v2_reserves_word, pack_v2_reserves_word, tick_mapping_slot_at_base,
-    tick_word_of, V2ReservesParts,
+    tick_word_of, V2ReservesParts, V2_RESERVES_SLOT,
 };
 
 /// The integer tick-range hop/sequence the concentrated-liquidity solve walks,

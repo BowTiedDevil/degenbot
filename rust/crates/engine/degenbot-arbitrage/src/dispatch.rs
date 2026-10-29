@@ -45,7 +45,6 @@ use degenbot_submission::PathSuppression;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
 use parking_lot::RwLock;
-use revm::database_interface::DatabaseRef;
 
 use crate::{
     diverging_pool_keys, fot_suspected_token, hop_input_token, hop_output_token, hop_pool_key,
@@ -58,13 +57,13 @@ use crate::{
 // ─────────────────────────────────────────────────────────────────────────
 
 /// `the V2-calc probe` env-gated diagnostic: immediately before each
-/// candidate path's sim, read every V2 hop's reserves slot (slot 8) from the
-/// SHARED per-block `CacheDB` and log the decoded `reserve0`/`reserve1` plus
-/// the hop's token orientation. `_v2_get_amount_out` (`V2_SWAP_CALC`, cmd
-/// 0x21) reads exactly this word via `getReserves()`, so the logged values are
-/// the ground truth for what the sim's V2 output is computed from. This closes
-/// the observability gap for the path-11354 V3-V2-V3 1-wei under-delivery: a
-/// slot8 that no on-chain block holds (synthetic / cached-intra-block /
+/// candidate path's sim, read every V2 hop's reserves word from the session's
+/// settled view and log the decoded `reserve0`/`reserve1` plus the hop's token
+/// orientation. `_v2_get_amount_out` (`V2_SWAP_CALC`, cmd 0x21) reads exactly
+/// this word via `getReserves()`, so the logged values are the ground truth
+/// for what the sim's V2 output is computed from. This closes the
+/// observability gap for the path-11354 V3-V2-V3 1-wei under-delivery: a
+/// reserves word that no on-chain block holds (synthetic / cached-intra-block /
 /// polluted) surfaces here even though every DB layer below the `CacheDB`
 /// forwards on-chain state.
 ///
@@ -72,32 +71,29 @@ use crate::{
 /// filter (`RUST_LOG=...=debug` / `=trace`) rather than appearing on stderr by
 /// default — the `debug` level is the gate.
 fn v2_calc_trace(handle: &mut BlockSimHandle<'_>, sim_path: &SimulatePath) {
+    let mut session = handle.session();
     for hop in &sim_path.path_info.hops {
         if let HopInfo::V2(v2) = hop {
-            let cache_db = &mut handle.evm_mut().ctx.journaled_state.database;
-            let word = match cache_db.storage_ref(v2.pool_address, U256::from(8u64)) {
-                Ok(w) => w,
+            let reserves = match session.read_v2_reserves(v2.pool_address) {
+                Ok(reserves) => reserves,
                 Err(e) => {
                     diag!(domain = sim, path_id = sim_path.path_id,
                         pair = ?v2.pool_address,
                         %e,
-                        "slot8 read failed"
+                        "pair reserves read failed"
                     );
                     break;
                 }
             };
-            let mask112 = (U256::from(1_u128) << U256::from(112)) - U256::from(1_u128);
-            let reserve0 = (word & mask112).to::<u128>(); // low 112 = token0 reserve
-            let reserve1 = ((word >> U256::from(112)) & mask112).to::<u128>(); // next 112
             diag!(domain = sim, path_id = sim_path.path_id,
                 pair = ?v2.pool_address,
                 token0 = ?v2.token0_address,
                 token1 = ?v2.token1_address,
                 zfo = v2.zfo,
                 fee = v2.fee,
-                reserve0 = reserve0,
-                reserve1 = reserve1,
-                "pair reserves slot8 before path execute"
+                reserve0 = reserves.reserve0.to::<u128>(),
+                reserve1 = reserves.reserve1.to::<u128>(),
+                "pair reserves before path execute"
             );
             break;
         }
@@ -719,9 +715,13 @@ pub fn dispatch_profitable_results(
                         // reproduce (path-11354 V3-V2-V3 1-wei under-delivery).
                         v2_calc_trace(&mut handle, &sim_path);
                         let mut buckets = FailBuckets::new();
-                        let result =
-                            simulate_path_on_evm(handle.evm_mut(), ctx, &sim_path, &mut buckets)
-                                .map_err(|e| format!("{e}"));
+                        let result = simulate_path_on_evm(
+                            handle.session().evm_mut(),
+                            ctx,
+                            &sim_path,
+                            &mut buckets,
+                        )
+                        .map_err(|e| format!("{e}"));
                         (pid, buckets, result)
                     })
                     .collect(),

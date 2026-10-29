@@ -55,7 +55,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [016](ADR-016-reorg-pool-state-trait.md) | ReorgPoolState — Pool-Owned Reorg Rollback | accepted |
 | [017](ADR-017-forward-apply-pool-state-traits.md) | Forward-Apply Pool-State Traits | accepted |
 | [018](ADR-018-tracked-debt-bot-core-solvers-fusion.md) | Tracked Debt — `bot_core`↔`solvers` Fusion | accepted (debt tracking) |
-| [019](ADR-019-in-process-revm-sole-simulation-executor-strategy-engine-separation.md) | In-Process revm as the Sole Simulation Executor | accepted |
+| [019](ADR-019-in-process-revm-sole-simulation-executor-strategy-engine-separation.md) | In-Process revm as the Sole Simulation Executor | accepted (the seam is a verb: the engine owns mechanics, the strategy owns policy) |
 | [020](ADR-020-tier3-onchain-accuracy-oracle.md) | Tier-3 On-Chain Accuracy Oracle | accepted |
 | [022](ADR-022-registration-verify-lifecycle-core-ownership.md) | Registration verify-lifecycle is core-owned | accepted |
 | [023](ADR-023-construction-io-retirement-disposition.md) | `PyBotIo` end-state disposition | accepted (disposition upgraded by its Post-adoption: finish the collapse) |

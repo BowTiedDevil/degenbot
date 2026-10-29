@@ -9,6 +9,29 @@ ships with the acceptance; the bulk is sequenced as a multi-step refactor
 (see Sequencing). The vocabulary is recorded in `GLOSSARY.md` under
 "Simulation engine vs. searcher strategy."
 
+> **Amendment (2026-10-29): the seam is a verb — the engine owns the mechanics,
+> the strategy owns the policy.** D4 names "the handle's generic per-call
+> execution (execute a tx / a sequence of txs → per-call outcomes)" and D7 names
+> "a `PyBlockSimHandle` exposing `build` + the generic per-call execution" as the
+> engine surface. That surface is now one interface: `BlockSimHandle::session()`
+> opens a `SimSession`, and `SimSession::run(tx)` settles one envelope —
+> `transact_one` + `finalize` live inside the verb — returning a typed verdict,
+> the settled state, the gas it burned and its return data. The rule the shared
+> per-block `CacheDB` depends on (a run must never `commit`, or execute()'s
+> SSTOREs leak into the read cache every later candidate reads) stops being a
+> prose contract three files recite: it is the only execution path the session
+> offers, and the frame-replay lane's frames run through it too.
+> The session also answers typed view reads (`read_word`, `read_v2_reserves`,
+> `read_slot0`) off the shared slot table
+> (`degenbot_pools::state::slot_layout`), so a diagnostic observes the settled
+> view instead of reaching the `CacheDB` three layers down and re-owning a
+> packed word. D7's separation survives intact: transact + finalize + typed read
+> is mechanism, the engine still names no strategy type, and what a strategy does
+> with a verdict stays the strategy's. The one consumer that genuinely needs raw
+> revm — the settlement bundle's 7-call accumulation (three balance reads, an
+> inspector-attached `execute()`, three balance reads, in ONE journal) — keeps a
+> documented escape hatch, `SimSession::evm_mut`, and owns that contract itself.
+
 ## Context
 
 degenbot is a library consumed by many searchers with different on-chain

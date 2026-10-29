@@ -8,8 +8,8 @@
 //! bundle, `compute_priority_fee`, `decode_balance`, `SimResult`,
 //! `dispatch_profitable_results`, `SimulateContext`, `SimulatePath`,
 //! `FailBuckets`, the calldata builders) relocated to the
-//! `degenbot-arbitrage` crate, which drives the borrowed `&mut evm`
-//! the engine exposes via [`BlockSimHandle::evm_mut`].
+//! `degenbot-arbitrage` crate, which drives the engine through
+//! [`BlockSimHandle::session`].
 //!
 //! The engine stays generic + thin: it never names `SimulateContext` (a
 //! strategy type) — [`BlockSimHandle::build`] takes the block-env primitives
@@ -28,22 +28,20 @@
 //! than the per-path fresh-`CacheDB` config A — benchmark
 //! `examples/rpc_cache_fanout.rs`).
 //!
-//! # Correctness — shared `CacheDB` does NOT leak execute() SSTOREs
+//! # Correctness — the settle verb lives in one place
 //!
-//! revm 41 splits journalling into `transact_one` (accumulate to the journal) →
-//! `finalize` (return the `State` + CLEAR the journal; does NOT commit to the
-//! DB) → `commit` (write a `State` to the DB). The strategy's
-//! `simulate_path_on_evm` calls `transact_one` + `finalize` only — it NEVER
-//! calls `commit`. So execute()'s SSTOREs live in the per-path `State`
-//! returned by `finalize` (then discarded), NOT in the shared `CacheDB`. The
-//! `CacheDB` accumulates only READ caches (account info, bytecode, storage
-//! slots read during balanceOf/execute), which is exactly the latency win +
-//! never a stale-write hazard. (revm-handler-41/src/api.rs:44-110 is the
-//! source of truth on this split.)
+//! A run over the shared `CacheDB` must `transact_one` + `finalize` and never
+//! `commit`: execute()'s SSTOREs live in the journal `finalize` clears, so
+//! they stay in the run's returned state instead of the read cache every later
+//! candidate reads. [`SimSession::run`](super::session::SimSession::run) IS
+//! that pipeline. [`BlockSimHandle::session`] is the one door to the shared EVM
+//! and it exposes no `commit`, so the shared `CacheDB` accumulates only READ
+//! caches (account info, bytecode, storage slots read during
+//! balanceOf/execute) — the latency win, never a stale-write hazard.
+//! [`SimSession::evm_mut`](super::session::SimSession::evm_mut) is the
+//! documented escape hatch (the settlement bundle's 7-call accumulation), and
+//! its caller owns the same finalize-never-commit contract.
 
-// Solidity/EVM identifiers (WETH9, PoolManager, ERC6909, cacheMD, databaseRef)
-// are ubiquitous here — match the degenbot-simulation convention.
-#![expect(clippy::doc_markdown)]
 use degenbot_core::op_warn;
 
 use alloy::eips::BlockId;
@@ -138,13 +136,12 @@ pub type BlockEvm<'a> = revm::MainnetEvm<
 ///
 /// Built ONCE per block by [`BlockSimHandle::build`] (the strategy's
 /// `dispatch_profitable_results` calls it), then each candidate path is
-/// simulated SERIALLY by the strategy's `simulate_path_on_evm` over the shared
-/// `&mut evm` exposed by [`BlockSimHandle::evm_mut`]. Per-path isolation is
-/// revm's `finalize()` (clears the journal between paths — execute()'s
-/// SSTOREs live in the per-path `State` returned by `finalize`, never
-/// committed to the shared `CacheDB`; see the module-level note above). The
-/// `CacheDB` + EVM drop naturally at end of block — no cross-block caching in
-/// Tier 1, so memory is bounded by one block's working set.
+/// simulated SERIALLY by the strategy over the shared EVM the
+/// [`session`](Self::session) opens. Isolation between paths is the settle
+/// verb's (`transact_one` + `finalize` inside
+/// [`SimSession::run`](super::session::SimSession::run) — see the module note
+/// above). The `CacheDB` + EVM drop naturally at end of block — no cross-block
+/// caching in Tier 1, so memory is bounded by one block's working set.
 ///
 /// Serial (not `buffer_unordered`) because a shared `&mut evm` can't be held
 /// across `'static`+`Send` futures. The benchmark's config B (serial-warm,
@@ -157,8 +154,9 @@ pub type BlockEvm<'a> = revm::MainnetEvm<
 /// [`BlockSimHandle::build`] is semantically identical to applying them
 /// per-path.
 pub struct BlockSimHandle<'a> {
-    /// The shared revm EVM. `&mut`-borrowed per path via [`evm_mut`](Self::evm_mut)
-    /// by the strategy; never aliased — the fan-out is serial.
+    /// The shared revm EVM. Borrowed for the scope of one
+    /// [`SimSession`](super::session::SimSession) at a time; never aliased —
+    /// the fan-out is serial.
     evm: BlockEvm<'a>,
     /// Build inputs retained ONLY to stack frame-replay scratch EVMs
     /// ([`Self::scratch_evm`]) — the same shape `build` took, so a scratch is
@@ -326,16 +324,19 @@ impl<'a> BlockSimHandle<'a> {
         })
     }
 
-    /// Borrow the shared per-block EVM mutably — the strategy's
-    /// `simulate_path_on_evm` drives this `&mut evm` per candidate path. The
-    /// fan-out is serial, so the borrow is never aliased. Per-path isolation
-    /// is revm's `finalize()` (the strategy clears the journal between paths
-    /// via the `finalize()` calls inside `simulate_path_on_evm` —
-    /// execute()'s SSTOREs stay in the per-path `State`, never committed to
-    /// the shared `CacheDB`).
+    /// Open a [`SimSession`](super::session::SimSession) over this block's
+    /// shared EVM — the engine's one door to it.
+    ///
+    /// One run settles inside
+    /// [`SimSession::run`](super::session::SimSession::run) (`transact_one` +
+    /// `finalize`, so the run's SSTOREs land in the returned run and never in
+    /// the shared read cache); the typed view reads answer from that same
+    /// settled view. The session's
+    /// [`evm_mut`](super::session::SimSession::evm_mut) is the documented
+    /// escape hatch for a strategy bundle that needs raw revm.
     #[must_use]
-    pub fn evm_mut(&mut self) -> &mut BlockEvm<'a> {
-        &mut self.evm
+    pub fn session(&mut self) -> super::session::SimSession<'_, ProductionBlockDb<'a>> {
+        super::session::SimSession::new(&mut self.evm)
     }
 
     /// The frame-replay seam ([`super::frame_replay`]): a scratch engine over

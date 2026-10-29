@@ -21,10 +21,11 @@ use degenbot_pools::{
     encode_v4_liquidity_slot, encode_v4_slot0, v4_liquidity_slot, v4_pool_state_base_slot,
     v4_slot0_slot, V4Slot0Parts,
 };
-use degenbot_simulation::sim::evm::frame_replay::{BaseFeeSource, ReplayOutcome, ReplayStatus};
+use degenbot_simulation::sim::evm::frame_replay::{BaseFeeSource, ReplayOutcome};
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, TypedPoolPost, V4PoolDescriptor,
 };
+use degenbot_simulation::RunVerdict;
 use std::sync::Arc;
 
 use degenbot_pathfinding::PoolKind;
@@ -152,7 +153,7 @@ fn golden_replay_outcome() -> ReplayOutcome {
     );
     state.insert(P, account);
     ReplayOutcome {
-        status: ReplayStatus::Success,
+        status: RunVerdict::Success,
         state,
         touched: vec![(P, vec![U256::from(slot_layout::V2_RESERVES_SLOT)])],
         rpc_reads: 0,
@@ -701,7 +702,7 @@ fn usdc_frame_replay_outcome() -> ReplayOutcome {
     );
     state.insert(P2, account);
     ReplayOutcome {
-        status: ReplayStatus::Success,
+        status: RunVerdict::Success,
         state,
         touched: vec![(P2, vec![U256::from(slot_layout::V2_RESERVES_SLOT)])],
         rpc_reads: 0,
@@ -1028,7 +1029,7 @@ fn manager_journal_outcome(manager: Address, writes: &[(U256, U256)]) -> ReplayO
     }
     state.insert(manager, account);
     ReplayOutcome {
-        status: ReplayStatus::Success,
+        status: RunVerdict::Success,
         state,
         touched: vec![(manager, writes.iter().map(|(slot, _)| *slot).collect())],
         rpc_reads: 0,

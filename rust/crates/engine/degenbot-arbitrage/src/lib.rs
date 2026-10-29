@@ -17,9 +17,9 @@
 //! The engine (revm executor, `BlockSimHandle`, `apply_simulation_overrides`,
 //! AL Inspector, `WarmCodeCache`) stays thin + generic in
 //! `degenbot-simulation`; this strategy builds the handle via
-//! `BlockSimHandle::build` + drives the borrowed `&mut evm` the engine exposes
-//! via `BlockSimHandle::evm_mut`. Other searcher strategies (sandwich, JIT-L,
-//! liquidation) would be sibling crates over the same engine.
+//! `BlockSimHandle::build` + drives the borrowed `&mut evm` a session's escape
+//! hatch exposes. Other searcher strategies (sandwich, JIT-L, liquidation)
+//! would be sibling crates over the same engine.
 //!
 //! # Standalone-Rust consumer
 //!

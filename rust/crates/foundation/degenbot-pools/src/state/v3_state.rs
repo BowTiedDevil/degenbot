@@ -175,6 +175,20 @@ pub enum ConcentratedLiquiditySlotLayout {
 }
 
 impl ConcentratedLiquiditySlotLayout {
+    /// The `slot0` word-0 storage slot number: the packed
+    /// `sqrtPriceX96 | tick | observation…` word both forks keep at slot 0.
+    /// The Pancake fork's `feeProtocol`/`unlocked` live in a second word
+    /// (`PANCAKE_V3_SLOT0_WORD1_SLOT`), not in this one.
+    #[must_use]
+    pub const fn slot0_slot(self) -> u64 {
+        match self {
+            Self::UniswapV3 => crate::state::v3_storage_slots::V3_SLOT0_SLOT,
+            Self::PancakeV3 => {
+                crate::state::v3_pancakeswap_storage_slots::PANCAKE_V3_SLOT0_WORD0_SLOT
+            }
+        }
+    }
+
     /// The `liquidity` (uint128) storage slot number.
     #[must_use]
     pub const fn liquidity_slot(self) -> u64 {

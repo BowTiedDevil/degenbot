@@ -16,7 +16,8 @@
 //! bytecode/account caches carry over), the per-block layers are NOT aliased
 //! (nothing a frame does can reach the shared engine's journal or read
 //! caches). The strategy's shared view is the **strategy-private** view; this
-//! is the first seam of that family — a second consumer beside `evm_mut`.
+//! is the first seam of that family — a second consumer beside the shared
+//! EVM's [`session`](super::BlockSimHandle::session).
 //!
 //! State overrides are deliberately NOT applied on the scratch stack: a
 //! foreign frame must execute against chain state, not the strategy's
@@ -29,10 +30,10 @@
 //! it orphans every read-cache the frame populates (the layer is dropped),
 //! so a warm replay re-forwards cold reads and the 0-RPC warm path can never
 //! be met. The isolation the seam needs is structural, not a discarded
-//! layer: revm's `transact` pipeline NEVER commits to the `Database` (the
-//! journal covers the frame's writes and is CLEARED inside the pipeline —
-//! `transact_one` → `finalize`), so a frame over `&mut ext` mutates only the
-//! ext's read-caches and never its account/storage state. `ScratchEvm`
+//! layer: a frame is one [`SimSession::run`](super::session::SimSession::run)
+//! over `&mut ext` — the settle verb clears the journal inside and its surface
+//! has no `commit` — so a frame mutates only the ext's read-caches and never
+//! its account/storage state. `ScratchEvm`
 //! holds the ext exclusively (`replay(&mut self)`), no frame can interleave,
 //! and a reverted frame surfaces zero partial state in
 //! `ReplayOutcome::state` (revm rolled the journal back) — pinned by tests.
@@ -80,10 +81,6 @@
 //!   value the settlement sims run under, keeping V2 pool `_update`
 //!   cumulative-sequence behavior identical).
 
-// Solidity/EVM/rpc identifiers (SSTORE, CacheDB, TxEnv, AlloyDB, eth_call)
-// are ubiquitous — match the degenbot-simulation convention.
-#![expect(clippy::doc_markdown)]
-
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -92,14 +89,14 @@ use std::time::{Duration, Instant};
 use alloy::primitives::{Address, Bytes, B256, U256};
 use revm::bytecode::Bytecode;
 use revm::context::TxEnv;
-use revm::context_interface::result::{
-    EVMError, ExecutionResult, InvalidTransaction, ResultAndState,
-};
+use revm::context_interface::result::InvalidTransaction;
 use revm::database::CacheDB;
 use revm::database_interface::{Database, DatabaseCommit, DatabaseRef};
 use revm::primitives::TxKind;
 use revm::state::{AccountInfo, EvmState};
-use revm::{ExecuteEvm, MainBuilder, MainContext};
+use revm::{MainBuilder, MainContext};
+
+use super::session::{RunVerdict, SimError, SimRun, SimSession};
 
 /// One externally-received signed transaction, recovered-signer-as-data.
 /// Field set mirrors the backrun feed frame (`degenbot-rpc::backrun_feed`
@@ -117,14 +114,6 @@ pub struct ReplayableTx {
     pub max_fee_per_gas: u128,
     pub max_priority_fee_per_gas: u128,
     pub nonce: u64,
-}
-
-/// How the frame settled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReplayStatus {
-    Success,
-    Reverted,
-    Halted,
 }
 
 /// How one predecessor in a sequence settled. A predecessor occupies its
@@ -153,12 +142,12 @@ impl PredStatus {
     }
 }
 
-impl From<ReplayStatus> for PredStatus {
-    fn from(status: ReplayStatus) -> Self {
-        match status {
-            ReplayStatus::Success => Self::Success,
-            ReplayStatus::Reverted => Self::Reverted,
-            ReplayStatus::Halted => Self::Halted,
+impl From<RunVerdict> for PredStatus {
+    fn from(verdict: RunVerdict) -> Self {
+        match verdict {
+            RunVerdict::Success => Self::Success,
+            RunVerdict::Reverted => Self::Reverted,
+            RunVerdict::Halted => Self::Halted,
         }
     }
 }
@@ -177,7 +166,7 @@ pub enum BaseFeeSource {
 /// The settled outcome of one frame replay.
 #[derive(Debug)]
 pub struct ReplayOutcome {
-    pub status: ReplayStatus,
+    pub status: RunVerdict,
     /// The journal-settled post-state, filtered to touched accounts. Empty
     /// for a reverted frame (revm rolls the whole journal back) — the
     /// zero-partial-state-leak invariant, observably.
@@ -387,8 +376,8 @@ impl<Db: Database> ScratchEvm<Db> {
         for predecessor in prefix {
             match run_frame_with_fallback(&mut overlay, &self.block, &predecessor.tx_env()) {
                 Ok((settled, _source)) => {
-                    predecessors.push(execution_status(&settled.result).into());
-                    predecessor_gas.push(settled.result.tx_gas_used());
+                    predecessors.push(settled.verdict.into());
+                    predecessor_gas.push(settled.gas_used);
                     overlay.commit(settled.state);
                 }
                 Err(ReplayFrameError::AlreadySettled { .. }) => {
@@ -592,16 +581,16 @@ impl<Db: Database> DatabaseRef for WarmingExt<'_, Db> {
 
 type FrameEvm<'a, Db> = revm::MainnetEvm<revm::handler::MainnetContext<&'a mut Db>>;
 
-/// One attempt: build a frame EVM over the ext and transact the frame
-/// through the full pipeline (transact_one → finalize — the journal is
-/// cleared inside the pipeline and nothing is committed, so the frame
-/// touches only the ext's read-caches).
+/// One attempt: build a frame EVM over the ext and settle the frame through
+/// the engine's run verb ([`SimSession::run`] — the journal is cleared inside
+/// it and nothing is committed, so the frame touches only the ext's
+/// read-caches).
 fn run_frame<Db: Database>(
     ext: &mut Db,
     block: &ScratchBlock,
     tx_env: &TxEnv,
     disable_base_fee: bool,
-) -> Result<ResultAndState, FrameAbort> {
+) -> Result<SimRun, FrameAbort> {
     let mut ctx = revm::context::Context::mainnet();
     ctx.cfg.disable_balance_check = true;
     ctx.cfg.disable_base_fee = disable_base_fee;
@@ -611,32 +600,34 @@ fn run_frame<Db: Database>(
         b.number = U256::from(block.number);
         b.timestamp = U256::from(block.timestamp);
     });
-    evm.transact(tx_env.clone()).map_err(|err| match err {
-        EVMError::Transaction(InvalidTransaction::GasPriceLessThanBasefee) => {
-            FrameAbort::BaseFeeRejected
-        }
-        EVMError::Transaction(InvalidTransaction::NonceTooHigh { tx, state }) => {
-            FrameAbort::OtherError(ReplayFrameError::GapPending {
-                claimed: tx,
-                expected: state,
-            })
-        }
-        EVMError::Transaction(InvalidTransaction::NonceTooLow { tx, state }) => {
-            FrameAbort::OtherError(ReplayFrameError::AlreadySettled {
-                frame: tx,
-                parent: state,
-            })
-        }
-        EVMError::Transaction(InvalidTransaction::CallGasCostMoreThanGasLimit {
-            initial_gas,
-            gas_limit,
-        }) => FrameAbort::OtherError(ReplayFrameError::MalformedTransaction {
-            raw: format!("call gas cost ({initial_gas}) exceeds the gas limit ({gas_limit})"),
-        }),
-        other => FrameAbort::OtherError(ReplayFrameError::Other {
-            raw: other.to_string(),
-        }),
-    })
+    SimSession::new(&mut evm)
+        .run(tx_env.clone())
+        .map_err(|err| match err {
+            SimError::InvalidTransaction(InvalidTransaction::GasPriceLessThanBasefee) => {
+                FrameAbort::BaseFeeRejected
+            }
+            SimError::InvalidTransaction(InvalidTransaction::NonceTooHigh { tx, state }) => {
+                FrameAbort::OtherError(ReplayFrameError::GapPending {
+                    claimed: tx,
+                    expected: state,
+                })
+            }
+            SimError::InvalidTransaction(InvalidTransaction::NonceTooLow { tx, state }) => {
+                FrameAbort::OtherError(ReplayFrameError::AlreadySettled {
+                    frame: tx,
+                    parent: state,
+                })
+            }
+            SimError::InvalidTransaction(InvalidTransaction::CallGasCostMoreThanGasLimit {
+                initial_gas,
+                gas_limit,
+            }) => FrameAbort::OtherError(ReplayFrameError::MalformedTransaction {
+                raw: format!("call gas cost ({initial_gas}) exceeds the gas limit ({gas_limit})"),
+            }),
+            other => FrameAbort::OtherError(ReplayFrameError::Other {
+                raw: other.to_string(),
+            }),
+        })
 }
 
 enum FrameAbort {
@@ -662,7 +653,7 @@ fn run_frame_with_fallback<Db: Database>(
     db: &mut Db,
     block: &ScratchBlock,
     tx_env: &TxEnv,
-) -> Result<(ResultAndState, BaseFeeSource), ReplayFrameError> {
+) -> Result<(SimRun, BaseFeeSource), ReplayFrameError> {
     match run_frame(db, block, tx_env, false) {
         Ok(settled) => Ok((settled, BaseFeeSource::Projected)),
         Err(FrameAbort::BaseFeeRejected) => run_frame(db, block, tx_env, true)
@@ -677,38 +668,21 @@ fn run_frame_with_fallback<Db: Database>(
     }
 }
 
-/// The seam's execution-status taxonomy for a settled result.
-fn execution_status(result: &ExecutionResult) -> ReplayStatus {
-    match result {
-        ExecutionResult::Success { .. } => ReplayStatus::Success,
-        ExecutionResult::Revert { .. } => ReplayStatus::Reverted,
-        ExecutionResult::Halt { .. } => ReplayStatus::Halted,
-    }
-}
-
-/// Settle a `ResultAndState` into the typed [`ReplayOutcome`] (status,
-/// touched-filtered state, deterministic touched-slot set).
+/// Settle a run into the typed [`ReplayOutcome`] (verdict, touched-filtered
+/// state, deterministic touched-slot set).
 fn outcome(
-    settled: ResultAndState,
+    run: SimRun,
     rpc_reads: u64,
     wall: Duration,
     base_fee_source: BaseFeeSource,
 ) -> ReplayOutcome {
-    let status = execution_status(&settled.result);
-    let state: EvmState = settled
+    let touched = run.touched();
+    let status = run.verdict;
+    let state: EvmState = run
         .state
         .into_iter()
         .filter(|(_, account)| account.is_touched())
         .collect();
-    let mut touched: Vec<(Address, Vec<U256>)> = state
-        .iter()
-        .map(|(address, account)| {
-            let mut slots: Vec<U256> = account.storage.keys().copied().collect();
-            slots.sort_unstable();
-            (*address, slots)
-        })
-        .collect();
-    touched.sort_unstable_by_key(|(address, _)| *address);
     ReplayOutcome {
         status,
         state,

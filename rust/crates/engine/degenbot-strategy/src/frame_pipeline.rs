@@ -80,14 +80,14 @@ use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
 use degenbot_simulation::sim::evm::frame_replay::{
-    ReplayFrameError, ReplayStatus, ReplayableTx, SequenceReplayError,
+    ReplayFrameError, ReplayableTx, SequenceReplayError,
 };
 use degenbot_simulation::sim::evm::journal_pools::{
     extract_pool_post_states, PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
     V4PoolDescriptor, V4PoolSet,
 };
 use degenbot_simulation::sim::evm::BlockSimHandle;
-use degenbot_simulation::{SimulationOverrideParams, WarmCodeCacheInner};
+use degenbot_simulation::{RunVerdict, SimulationOverrideParams, WarmCodeCacheInner};
 use degenbot_submission::dispatcher::Dispatcher;
 use degenbot_submission::monitor::ReceiptProbe;
 use degenbot_submission::signer::TxSigner;
@@ -1384,13 +1384,13 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
                 degenbot_simulation::sim::evm::frame_replay::BaseFeeSource::DisabledFallback => "disabled_fallback",
             },
             "status": match outcome.status {
-                ReplayStatus::Success => "success",
-                ReplayStatus::Reverted => "reverted",
-                ReplayStatus::Halted => "halted",
+                RunVerdict::Success => "success",
+                RunVerdict::Reverted => "reverted",
+                RunVerdict::Halted => "halted",
             },
         }),
     );
-    if !matches!(outcome.status, ReplayStatus::Success) {
+    if !matches!(outcome.status, RunVerdict::Success) {
         return FrameArtifacts::observe("reverted", stages);
     }
 
