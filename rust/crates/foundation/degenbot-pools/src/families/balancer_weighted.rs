@@ -373,7 +373,7 @@ pub(crate) mod solve {
     //!   and its dispatch-row adapter ([`solve_balancer_weighted_entry`]), built on
     //!   the shared golden-section template that stays family-blind in `mixed::solve`;
     //! - the V2-equivalent projection ([`balancer_weighted_hop_v2_equiv`]) that
-    //!   template's Mobius precheck consumes;
+    //!   template's Mobius bracket hint consumes;
     //! - the simulate triple ([`simulate_balancer_weighted_path`] / `_outputs` /
     //!   [`simulate_balancer_weighted_hop`]) over the `degenbot-balancer-math`
     //!   weighted leaf;
@@ -398,7 +398,7 @@ pub(crate) mod solve {
     /// The `PowVersion` selects `FixedPoint::pow` fast paths (V1 general / V2
     /// fast paths for y ∈ {1, 2, 4}).
     ///
-    /// For the V2-equivalent Möbius precheck, `gamma_numer` / `fee_denom` give
+    /// For the V2-equivalent Möbius bracket hint, `gamma_numer` / `fee_denom` give
     /// the retained fraction `gamma_numer / fee_denom` = `(ONE - swap_fee) / ONE`
     /// scaled to a `u64` pair (the `IntHopState` fee convention).
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -461,9 +461,9 @@ pub(crate) mod solve {
     ///
     /// Per-hop simulation calls
     /// `degenbot_math::balancer::weighted_math::calc_out_given_in`. The
-    /// V2-equivalent precheck treats each weighted hop as a constant-product
-    /// hop — exact for 50/50 pools, approximate for other weights (good enough
-    /// for bracket narrowing).
+    /// V2-equivalent bracket hint treats each weighted hop as a constant-product
+    /// hop — exact for 50/50 pools, approximate for other weights (a narrowing
+    /// hint only, never a rejection).
     fn solve_balancer_weighted_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
         use degenbot_math::v2::IntHopState;
 

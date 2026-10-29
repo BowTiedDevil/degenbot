@@ -4,8 +4,9 @@
 //!
 //! The four stable-family solve arms (Solidly, Balancer weighted, Balancer
 //! stable, Curve stableswap) each run the same search: a V2-equivalent
-//! Möbius precheck, a ±5x bracket around the model optimum, a 25-iteration
-//! phi-approximated golden loop, and a ±3 integer verification. When that
+//! Möbius bracket hint, a ±5x bracket around the model optimum, a
+//! phi-approximated golden loop (25 iterations when anchored, width-sized
+//! when unanchored), and a ±3 integer verification. When that
 //! search is extracted into one shared helper it must reproduce the probe
 //! sequence bit-for-bit, so every arm is pinned here against a synthetic
 //! corpus: the exact `(optimal_input, profit)` the arm returns per path,
@@ -35,8 +36,12 @@ use alloy::primitives::U256;
 use common::{
     curve_hop, faithful_base, path, solidly_hop, stable_hop, v2_hop, weighted_hop, ONE_E18,
 };
+use degenbot_math::curve::stableswap::{DVariant, YVariant};
 use degenbot_pools::solve::gate::GateDeps;
-use degenbot_pools::solve::{solve_path, ResolvedMixedPath};
+use degenbot_pools::solve::{
+    solve_path, BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState,
+    ResolvedHop, ResolvedMixedPath,
+};
 
 /// One corpus entry: the path plus a human-readable tag quoted in failure
 /// messages so a regression names the shape that broke.
@@ -326,4 +331,153 @@ fn stable_arm_matches_golden_snapshot() {
 #[test]
 fn curve_arm_matches_golden_snapshot() {
     assert_arm("curve", &curve_corpus(), CURVE_EXPECTED);
+}
+
+// ---------------------------------------------------------------------------
+// CP-proxy precheck regression (Solvers H-2)
+// ---------------------------------------------------------------------------
+
+/// An 80/20 Balancer weighted hop (the shared `weighted_hop` builder is 50/50
+/// only). With the input token at weight 0.8 the true entry marginal rate is
+/// 4x the constant-product proxy rate (`w_in/w_out` = 4), which is exactly the
+/// divergence the H-2 false rejection rides.
+fn weighted_8020_hop(base: u128, swap_fee: u128) -> ResolvedHop {
+    let eight = U256::from(ONE_E18) * U256::from(8u64) / U256::from(10u64);
+    let two = U256::from(ONE_E18) * U256::from(2u64) / U256::from(10u64);
+    ResolvedHop::BalancerWeighted {
+        state: BalancerWeightedHopState {
+            balance_in: U256::from(base),
+            balance_out: U256::from(base),
+            weight_in: eight,
+            weight_out: two,
+            swap_fee: U256::from(swap_fee),
+            pow_version: degenbot_math::balancer::constants::PowVersion::V2,
+            scaling_factor_in: U256::from(1u64),
+            scaling_factor_out: U256::from(1u64),
+        },
+    }
+}
+
+/// Regression for the H-2 false rejection: the shared golden-section
+/// template's V2-equivalent Möbius profitability precheck treats every hop as
+/// constant-product. On this path the CP-proxy product is
+/// `0.997 * 0.997 * 1.005 = 0.99898 < 1`, so the precheck declares the path
+/// unprofitable — while the true weighted entry-rate product is
+/// `(0.997 * 4) * (0.997 * 1.005) = 4.0`, so the path is profitable at real
+/// weighted math. The precheck is a bracket hint; it must not reject. (The
+/// adversarial review's original counterexample numbers were lost with its
+/// `.scratch` doc; this is a re-derived instance of the same class.)
+#[test]
+fn weighted_arm_does_not_reject_cp_proxy_unprofitable_but_profitable_path() {
+    let base = ONE_E18;
+    let fee = 3_000_000_000_000_000u128; // 0.3%
+    for shape in ["weighted-first", "weighted-last"] {
+        let path = if shape == "weighted-first" {
+            path(vec![
+                weighted_8020_hop(base, fee),
+                v2_hop(base, base + base / 200, 997, 1_000),
+            ])
+        } else {
+            path(vec![
+                v2_hop(base, base + base / 200, 997, 1_000),
+                weighted_8020_hop(base, fee),
+            ])
+        };
+        let got = solve_path(&path, &GateDeps::offline()).result;
+        assert!(
+            got.is_some(),
+            "{shape}: CP-proxy precheck hard-rejected a profitable weighted path"
+        );
+        let result = got.expect("presence asserted above");
+        assert!(
+            !result.profit.is_zero() && !result.optimal_input.is_zero(),
+            "{shape}: expected a profitable solve, got {result:?}"
+        );
+    }
+}
+
+/// A 2:1-imbalanced Balancer stable hop (the shared `stable_hop` builder is
+/// balanced only). The invariant is pre-computed at the resolved-state
+/// convention, as in `stable_hop`.
+///
+/// # Panics
+///
+/// Panics if `calculate_invariant_deployed` fails to converge; the positive
+/// balances here always converge.
+fn stable_imbalanced_hop(balance_in: u128, balance_out: u128, swap_fee: u128) -> ResolvedHop {
+    let balances = vec![U256::from(balance_in), U256::from(balance_out)];
+    let amp = U256::from(200_000u64);
+    let invariant =
+        degenbot_math::balancer::stable_math::calculate_invariant_deployed(amp, &balances, true)
+            .expect("positive balances converge");
+    ResolvedHop::BalancerStable {
+        state: BalancerStableHopState {
+            amp,
+            balances,
+            token_index_in: 0,
+            token_index_out: 1,
+            invariant,
+            swap_fee: U256::from(swap_fee),
+            scaling_factor_in: U256::from(1u64),
+            scaling_factor_out: U256::from(1u64),
+        },
+    }
+}
+
+/// A 2:1-imbalanced two-coin Curve stableswap hop (the shared `curve_hop`
+/// builder is balanced only), identity rates, standard variants.
+fn curve_imbalanced_hop(balance_in: u128, balance_out: u128, fee: u128) -> ResolvedHop {
+    let precision = U256::from(ONE_E18);
+    ResolvedHop::CurveStableswap {
+        state: CurveStableswapHopState {
+            amp: U256::from(1_000u64),
+            a_precision: U256::from(100u64),
+            xp: vec![U256::from(balance_in), U256::from(balance_out)],
+            token_index_in: 0,
+            token_index_out: 1,
+            n_coins: U256::from(2u64),
+            fee: U256::from(fee),
+            fee_denom: U256::from(10_000_000_000u64),
+            precision,
+            rate_multiplier_in: precision,
+            rate_multiplier_out: precision,
+            y_variant: YVariant::Standard,
+            d_variant: DVariant::Standard,
+        },
+    }
+}
+
+/// The stable-family instances of the H-2 false rejection: on a 2:1-imbalanced
+/// stable pool the CP proxy's entry rate is `γ · (b_out/b_in) ≈ γ/2`, while
+/// the true stableswap entry rate stays near the peg. The V2 hop's reserve
+/// imbalance must clear each family's true entry discount: Balancer stable at
+/// amp `200_000` sits within 2% of peg (2% imbalance suffices); Curve at A=10
+/// and a 2:1 imbalance has a deeper true entry discount — measured: an 8% V2
+/// imbalance is still unprofitable, 10% solves (needs 15% for a robust pin).
+/// The proxy products are ≈ 0.5-0.7 (< 1, rejected by the old precheck)
+/// while the true entry-rate products are > 1 (profitable).
+#[test]
+fn stable_arms_do_not_reject_cp_proxy_unprofitable_but_profitable_path() {
+    let b_in = 2 * ONE_E18;
+    let b_out = ONE_E18;
+    let stable = path(vec![
+        stable_imbalanced_hop(b_in, b_out, 1_000_000_000_000_000),
+        v2_hop(ONE_E18, ONE_E18 + ONE_E18 / 50, 997, 1_000),
+    ]);
+    let curve = path(vec![
+        curve_imbalanced_hop(b_in, b_out, 4_000_000),
+        v2_hop(ONE_E18, ONE_E18 + ONE_E18 * 15 / 100, 997, 1_000),
+    ]);
+    for (label, path) in [("balancer-stable", stable), ("curve", curve)] {
+        let got = solve_path(&path, &GateDeps::offline()).result;
+        assert!(
+            got.is_some(),
+            "{label}: CP-proxy precheck hard-rejected a profitable path"
+        );
+        let result = got.expect("presence asserted above");
+        assert!(
+            !result.profit.is_zero() && !result.optimal_input.is_zero(),
+            "{label}: expected a profitable solve, got {result:?}"
+        );
+    }
 }

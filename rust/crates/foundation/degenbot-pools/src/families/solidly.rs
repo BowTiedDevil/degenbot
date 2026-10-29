@@ -783,7 +783,7 @@ pub(crate) mod solve {
     //!   dispatch-row adapter ([`solve_solidly_entry`]), built on the shared
     //!   golden-section template that stays family-blind in `mixed::solve`;
     //! - the V2-equivalent projection ([`solidly_hop_v2_equiv`]) that template's
-    //!   Mobius precheck consumes;
+    //!   Mobius bracket hint consumes;
     //! - the simulate triple ([`simulate_solidly_path`] / `_outputs` /
     //!   [`simulate_solidly_hop`]) over the `degenbot-solidly-math` leaf;
     //! - the family's envelope lines ([`solidly_hop_lines`]).
@@ -907,7 +907,8 @@ pub(crate) mod solve {
     ///
     /// Faithful port of `arbitrage.solvers.solidly_stable.SolidlyStableSolver`
     /// (the `_solve_golden_section` branch with `swap_fn` set). The Möbius
-    /// precheck early-outs unprofitable paths before the expensive search.
+    /// proxy only narrows the search bracket; it never rejects (sound
+    /// profitability screening lives in the profit-envelope gate).
     fn solve_solidly_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
         use degenbot_math::v2::IntHopState;
 

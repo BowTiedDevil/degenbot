@@ -528,20 +528,21 @@ pub fn solve_path_inner(
     }
 }
 
-/// Number of golden-section refinement iterations (mirrors Python's
-/// `SolidlyStableSolver.GOLDEN_SECTION_ITERATIONS`).
+/// Golden-section iteration count for ANCHORED brackets (mirrors Python's
+/// `SolidlyStableSolver.GOLDEN_SECTION_ITERATIONS`). Unanchored full-width
+/// brackets size the count to the width instead (see
+/// [`solve_golden_section_path_int`]).
 const GOLDEN_SECTION_ITERATIONS: usize = 25;
 
 /// Shared golden-section solve template for the stable-family arms (Solidly,
 /// Balancer weighted, Balancer stable, Curve stableswap).
 ///
-/// Owns the whole search: the V2-equivalent Möbius profitability precheck, the
-/// ±5x bracket around the Möbius optimum, the 25-iteration phi-approximated
-/// golden loop, and the ±3 integer verification. The family-specific parts
-/// enter as closures: `simulate` evaluates one candidate input against the real
-/// math leaf, and `simulate_outputs` returns the per-hop outputs for the
-/// winning input. All four arms share one integer-verification order (see
-/// [`ascending_sweep`]).
+/// Owns the whole search: the V2-equivalent Möbius bracket hint, the ±5x
+/// bracket around the Möbius optimum, the phi-approximated golden loop, and
+/// the ±3 integer verification. The family-specific parts enter as closures:
+/// `simulate` evaluates one candidate input against the real math leaf, and
+/// `simulate_outputs` returns the per-hop outputs for the winning input. All
+/// four arms share one integer-verification order (see [`ascending_sweep`]).
 pub(crate) fn solve_golden_section_path_int(
     v2_equiv: &[degenbot_math::v2::IntHopState],
     simulate: &impl Fn(U256) -> U256,
@@ -550,11 +551,20 @@ pub(crate) fn solve_golden_section_path_int(
     use crate::solve::mobius_int::compute_int_mobius_coefficients;
     use crate::solve::mobius_int_exact::compute_mobius_model_optimal_input;
 
-    // --- Profitability precheck (V2-equivalent Möbius) ---
+    // --- Bracket hint (V2-equivalent Möbius) ---
+    // The constant-product proxy coefficients serve ONLY to narrow the
+    // bracket: the proxy is exact for 50/50-weighted-like paths and
+    // approximate otherwise, so it must NOT reject — a non-50/50 weighted
+    // path can be profitable while its CP proxy is not (the proxy entry rate
+    // misses the w_in/w_out amplification), and a proxy-based rejection is a
+    // hard false negative on genuinely profitable paths. Sound profitability
+    // screening lives upstream in the profit-envelope gate
+    // (`solve_path_with_min_profit`), whose per-family tangent bounds are
+    // rigorous; here a wrong hint costs search quality, never correctness.
+    // When the proxy finds no anchor (`x_mobius` zero) the search falls back
+    // to the full `[1, max_reserve]` bracket with a width-sized iteration
+    // count.
     let coeffs = compute_int_mobius_coefficients(v2_equiv).ok()?;
-    if !coeffs.is_profitable {
-        return None;
-    }
     let x_mobius = compute_mobius_model_optimal_input(&coeffs);
 
     // --- Bracket: [1, max_reserve], narrowed around the Möbius optimum ---
@@ -580,7 +590,19 @@ pub(crate) fn solve_golden_section_path_int(
         return verify_best(simulate, simulate_outputs, x_low);
     }
 
-    // --- Golden-section search (25 iterations) ---
+    // --- Golden-section search ---
+    // Anchored brackets keep the historical fixed iteration count (the pinned
+    // corpora were captured under it). An UNANCHORED full-width bracket (no
+    // usable Möbius hint) sizes the count to the bracket width: each
+    // iteration keeps phi ≈ 0.618 of the span (~2^-0.694), so resolving a
+    // width-W bracket to the ±3 verification radius takes ~1.5*log2(W/4)
+    // iterations (~87 at W = 1e18, ≤ 381 at any U256 width).
+    let iterations = if x_mobius.is_zero() {
+        let width_bits = 256usize - (x_high - x_low).leading_zeros();
+        (width_bits.saturating_sub(2) * 3 / 2).max(GOLDEN_SECTION_ITERATIONS)
+    } else {
+        GOLDEN_SECTION_ITERATIONS
+    };
     // `phi = (sqrt(5) - 1) / 2` ≈ 0.6180339887498949, approximated as the
     // U256 fraction `phi_num / phi_den` and applied to the bracket span in
     // U512 (the span may approach U256 magnitude; the product does not fit
@@ -597,7 +619,7 @@ pub(crate) fn solve_golden_section_path_int(
     let mut p1 = simulate(x1).saturating_sub(x1);
     let mut p2 = simulate(x2).saturating_sub(x2);
 
-    for _ in 0..GOLDEN_SECTION_ITERATIONS {
+    for _ in 0..iterations {
         if p1 < p2 {
             x_low = x1;
             x1 = x2;

@@ -536,7 +536,7 @@ pub(crate) mod solve {
     //!   and its dispatch-row adapter ([`solve_balancer_stable_entry`]), built on
     //!   the shared golden-section template that stays family-blind in `mixed::solve`;
     //! - the V2-equivalent projection ([`balancer_stable_hop_v2_equiv`]) that
-    //!   template's Mobius precheck consumes;
+    //!   template's Mobius bracket hint consumes;
     //! - the simulate triple ([`simulate_balancer_stable_path`] / `_outputs` /
     //!   [`simulate_balancer_stable_hop`]) over the `degenbot-balancer-math`
     //!   stable leaf;
@@ -638,7 +638,7 @@ pub(crate) mod solve {
     }
 
     /// V2-equivalent [`IntHopState`] for a Balancer stable hop. Used by the
-    /// Möbius precheck to narrow the golden-section bracket. `StableSwap` ≠
+    /// Möbius bracket hint to narrow the golden-section bracket. `StableSwap` ≠
     /// constant product, but at high amplification it's locally V2-like.
     fn balancer_stable_hop_v2_equiv(hop: &ResolvedHop) -> Option<degenbot_math::v2::IntHopState> {
         use degenbot_math::v2::IntHopState;

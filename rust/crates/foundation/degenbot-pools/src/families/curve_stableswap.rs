@@ -733,7 +733,7 @@ pub(crate) mod solve {
     //!   dispatch-row adapter ([`solve_curve_entry`]), built on the shared
     //!   golden-section template that stays family-blind in `mixed::solve`;
     //! - the V2-equivalent projection ([`curve_hop_v2_equiv`]) that template's
-    //!   Mobius precheck consumes;
+    //!   Mobius bracket hint consumes;
     //! - the simulate triple ([`simulate_curve_path`] / `_outputs` /
     //!   [`simulate_curve_hop`]) over the `degenbot-math` Curve stableswap leaf;
     //! - the family's envelope lines ([`curve_hop_lines`]): the NATIVE reserve cap
