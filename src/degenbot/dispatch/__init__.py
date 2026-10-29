@@ -27,12 +27,9 @@ unchanged — pyclass identity for candidates/dispatcher/signer is preserved.
 
 Symbol map (FFI name → stable companion name):
 
-- CandidateAssembly → CandidateAssembly
-- DispatchCandidate → DispatchCandidate
 - Dispatcher → Dispatcher
 - SimulateContext → SimulateContext
 - TxSigner → TxSigner
-- assemble_dispatch_candidates_py → assemble_dispatch_candidates
 - build_batch_executor_py → build_batch_executor
 - merge_payload_results_py → merge_payload_results
 - dispatch_and_submit_py → dispatch_and_submit (wrapper: dict → typed records)
@@ -49,8 +46,6 @@ from degenbot._ffi.simulation import (
     BatchExecutor,
     BatchOutcome,
     BatchOutcomeSet,
-    CandidateAssembly,
-    DispatchCandidate,
     FailureDetail,
     FailureKind,
     PayloadOutcome,
@@ -60,7 +55,6 @@ from degenbot._ffi.simulation import (
     SimulateVerdict,
     SubmitVerdict,
 )
-from degenbot._ffi.simulation import assemble_dispatch_candidates_py as assemble_dispatch_candidates
 from degenbot._ffi.simulation import build_batch_executor_py as build_batch_executor
 from degenbot._ffi.simulation import merge_payload_results_py as merge_payload_results
 from degenbot._ffi.submission import Dispatcher, SimSubmitPipeline, SubmitCandidate, TxSigner
@@ -145,8 +139,6 @@ __all__ = [
     "BatchExecutor",
     "BatchOutcome",
     "BatchOutcomeSet",
-    "CandidateAssembly",
-    "DispatchCandidate",
     "Dispatcher",
     "FailureDetail",
     "FailureKind",
@@ -164,7 +156,6 @@ __all__ = [
     "SubmitVerdict",
     "SubmittedRecord",
     "TxSigner",
-    "assemble_dispatch_candidates",
     "build_batch_executor",
     "dispatch_and_submit",
     "fetch_fee_history",

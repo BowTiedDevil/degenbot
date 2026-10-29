@@ -7,9 +7,7 @@
 //! Field set = the union of what the two drains read: the Python renderers
 //! read every stage + `path_info`; the
 //! Rust bot's `HeartbeatSink` reads only `block`. Batch-level counters are
-//! NOT record fields — they are exact folds ([`fold_counters`]).
-
-use std::collections::BTreeMap;
+//! NOT record fields: a drain folds them from the records it reads.
 
 use alloy::primitives::U256;
 use degenbot_arbitrage::SimFailure;
@@ -260,76 +258,6 @@ impl From<&PathInfo> for PathInfoView {
     }
 }
 
-/// The batch-level tallies the drains render — exact folds over a batch's
-/// records, never record fields.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct BatchCounters {
-    /// Candidates that reached the sim stage (post pre-filters + cap).
-    pub candidate_count: usize,
-    /// Simulated paths that committed and reached the profit floor.
-    pub profitable_count: usize,
-    /// Onchain-valid sims below the net threshold.
-    pub gas_unprofitable_count: usize,
-    /// Candidates that produced a failure record.
-    pub fail_count: usize,
-    /// Per-path exceptions (counted, unattributed by the fan-out).
-    pub exception_count: usize,
-    /// Suppression-skip count.
-    pub suppressed_count: usize,
-    /// Empty-hop-skip count (the `[sim-none]` log's input).
-    pub empty_hop_count: usize,
-    /// Resolve-miss-skip count.
-    pub resolve_miss_count: usize,
-    /// Payload-served-skip count (raw rows superseded by the payload arm).
-    pub payload_served_count: usize,
-    /// Failure bucket → count (the `[sim] ... by reason` fold).
-    pub fail_buckets: BTreeMap<String, usize>,
-}
-
-/// Fold a batch's records into the render counters.
-#[must_use]
-pub fn fold_counters(batch: &[BatchOutcome]) -> BatchCounters {
-    let mut c = BatchCounters::default();
-    for o in batch {
-        match o.assembly {
-            // Verdicts that carry no counter of their own: an assembled record
-            // is counted by its sim verdict below, and the thin-margin /
-            // divergence / FoT skips tally only on the core fan-out's
-            // `DispatchOutcome` (where the pre-filters run), never as a batch
-            // fold.
-            AssemblyVerdict::Assembled
-            | AssemblyVerdict::SkipThinMargin
-            | AssemblyVerdict::SkipDivergentPool
-            | AssemblyVerdict::SkipFeeOnTransfer => {}
-            AssemblyVerdict::SkipEmptyHops => c.empty_hop_count += 1,
-            AssemblyVerdict::SkipResolveMiss => c.resolve_miss_count += 1,
-            AssemblyVerdict::SkipPayloadServed => c.payload_served_count += 1,
-            AssemblyVerdict::SkipSuppressed => c.suppressed_count += 1,
-        }
-        match &o.simulate {
-            Some(SimulateVerdict::Profitable(_)) => {
-                c.candidate_count += 1;
-                c.profitable_count += 1;
-            }
-            Some(SimulateVerdict::GasUnprofitable(_)) => {
-                c.candidate_count += 1;
-                c.gas_unprofitable_count += 1;
-            }
-            Some(SimulateVerdict::Failed(f)) => {
-                c.candidate_count += 1;
-                c.fail_count += 1;
-                *c.fail_buckets.entry(f.bucket.clone()).or_insert(0) += 1;
-            }
-            Some(SimulateVerdict::Exception) => {
-                c.candidate_count += 1;
-                c.exception_count += 1;
-            }
-            None => {}
-        }
-    }
-    c
-}
-
 #[cfg(test)]
 #[expect(
     clippy::unwrap_used,
@@ -408,67 +336,5 @@ mod tests {
         let view = PathInfoView::from(&v2_path());
         assert_eq!(view.path_type, "V2");
         assert_eq!(view.hops.len(), 1);
-    }
-
-    #[test]
-    fn counters_are_exact_folds_over_records() {
-        let path = PathInfoView::from(&v2_path());
-        let receipt = SimReceipt {
-            gross_profit: U256::from(100_u64),
-            net_profit: U256::from(90_u64),
-            gas_used: 300_000,
-            priority_fee: 2,
-        };
-        let failure = FailureDetail {
-            path_id: 3,
-            bucket: "no-profit".to_string(),
-            fail_index: None,
-            revert_data: alloy::primitives::Bytes::new(),
-            reverting_frame: None,
-            captured_swaps: Vec::new(),
-            log_full_count: 0,
-            reverted_swaps: Vec::new(),
-            optimal_input: 0,
-            hop_outputs: Vec::new(),
-            call_trace: Vec::new(),
-            weth_before: 0,
-            weth_after: 0,
-            eth_before: 0,
-            eth_after: 0,
-            erc6909_before: 0,
-            erc6909_after: 0,
-        };
-        let batch = vec![
-            BatchOutcome {
-                path_id: 1,
-                block: 100,
-                assembly: AssemblyVerdict::Assembled,
-                simulate: Some(SimulateVerdict::Profitable(receipt)),
-                submit: Some(SubmitVerdict::Submitted),
-                path_info: path.clone(),
-            },
-            BatchOutcome {
-                path_id: 2,
-                block: 100,
-                assembly: AssemblyVerdict::SkipSuppressed,
-                simulate: None,
-                submit: None,
-                path_info: path.clone(),
-            },
-            BatchOutcome {
-                path_id: 3,
-                block: 100,
-                assembly: AssemblyVerdict::Assembled,
-                simulate: Some(SimulateVerdict::Failed(Box::new(failure))),
-                submit: None,
-                path_info: path,
-            },
-        ];
-        let c = fold_counters(&batch);
-        assert_eq!(c.candidate_count, 2);
-        assert_eq!(c.profitable_count, 1);
-        assert_eq!(c.fail_count, 1);
-        assert_eq!(c.suppressed_count, 1);
-        assert_eq!(c.fail_buckets.get("no-profit"), Some(&1));
     }
 }

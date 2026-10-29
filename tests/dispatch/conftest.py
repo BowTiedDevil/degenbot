@@ -10,9 +10,9 @@ from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.seam import Bot
 from tests.helpers.v2_pool_factory import make_v2_pool
 
-# `DispatchCandidate.__new__` resolves its `composers::PathInfo` from
-# a registered `path_id` via `PyArbitrageEngine::path_info_for_core` (no Python
-# `PathInfo` dataclass round-trip). Seam tests must hand the candidate a real
+# The batch executor's enqueue path resolves its `composers::PathInfo` from a
+# registered `path_id` via `PyArbitrageEngine::path_info_for_core` (no Python
+# `PathInfo` dataclass round-trip). Seam tests must hand the executor a real
 # engine + a registered path_id. The engine's `register_and_solve_path`
 # requires a ≥2-hop cycle, so this fixture builds a 2-hop V2 WETH→USDC→WETH
 # cycle offline (Bot + make_erc20 + make_v2_pool, no RPC / no DB).

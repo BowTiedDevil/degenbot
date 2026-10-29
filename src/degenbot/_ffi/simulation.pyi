@@ -3,8 +3,8 @@
 
 """
 The `degenbot._ffi.simulation` Python submodule (declarative
-`#[pymodule]`), carrying the simulation pyclasses + the
-dispatch/assembly/probe pyfunctions. The parent module registers the
+`#[pymodule]`), carrying the simulation pyclass + the
+dispatch/probe pyfunctions. The parent module registers the
 submodule itself and its `sys.modules` entry.
 """
 
@@ -22,8 +22,6 @@ __all__ = [
     "BatchExecutor",
     "BatchOutcome",
     "BatchOutcomeSet",
-    "CandidateAssembly",
-    "DispatchCandidate",
     "ExecutorPolicyValues",
     "FailureDetail",
     "FailureKind",
@@ -33,7 +31,6 @@ __all__ = [
     "SimulateContext",
     "SimulateVerdict",
     "SubmitVerdict",
-    "assemble_dispatch_candidates_py",
     "build_batch_executor_py",
     "executor_policy_py",
     "merge_payload_results_py",
@@ -178,94 +175,6 @@ class BatchOutcomeSet:
         """
         The submit-lane records as the FFI wire dicts (the
         `dispatch_and_submit` shape — `typed_submit_record` decodes them).
-        """
-
-@final
-class CandidateAssembly:
-    """
-    The batched assembly result: ready candidates + the skipped empty-hop path
-    ids (the display-only `[sim-none]` log's input).
-    """
-    @property
-    def candidates(self, /) -> list:
-        """
-        The assembled candidates as `list[DispatchCandidate]` (the sim seam's
-        input shape), in input-row order.
-        """
-    @property
-    def empty_hop_path_ids(self, /) -> list[int]:
-        """
-        Path ids skipped for empty hop outputs — the driver logs each.
-        """
-
-@final
-class DispatchCandidate:
-    """
-    The pre-simulation candidate builder — the engine result + the resolved
-    `PathInfo` + the encode options.
-
-    Ports the Python `EngineResult` tuple `(path_id, opt_input, profit,
-    hop_outputs, solve_block)` + the `engine_registry.paths.get(path_id)`
-    `PathInfo` resolve. Construct one per solved path, per block.
-    """
-    def __new__(
-        cls,
-        /,
-        engine: ArbitrageEngine,
-        path_id: SupportsIndex,
-        optimal_input: SupportsIndex,
-        engine_profit: SupportsIndex,
-        hop_outputs: SupportsGetItem[int, SupportsIndex],
-        consumed_inputs: SupportsGetItem[int, SupportsIndex],
-        solve_block: SupportsIndex,
-        state_nonces: SupportsGetItem[int, SupportsIndex],
-        *,
-        erc6909_profit: bool = False,
-        use_v4_batch: bool = False,
-    ) -> DispatchCandidate:
-        """
-        Build a candidate from the engine result + a registered `path_id`.
-
-        The candidate resolves its `composers::PathInfo` from `path_id` via
-        the engine's `path_info_for_core` projection over the shared
-        `BotState` — no Python `PathInfo` dataclass is threaded.
-
-        Args:
-            `engine`: the engine wrapper that owns `path_id` (the same
-                engine that produced `engine_profit`/`hop_outputs`).
-            `path_id`: the unique arb path identifier.
-            `optimal_input`: the solver's optimal swap input (u128).
-            `engine_profit`: the solver's expected gross profit (u128) — used
-                for sorting + the thin-margin filter; NOT the on-chain gross
-                (that's `SimResult::gross_profit`).
-            `hop_outputs`: the per-hop solver outputs (`list[int]`).
-            `consumed_inputs`: the per-hop executable inputs fed into each pool
-                (`list[int]`) — the solver's concentrated-liquidity-hop clamp; the encoder feeds
-                these (not `hop_outputs`) as each concentrated liquidity pool's swap-in. May be
-                shorter than `hop_outputs` only in a degenerate/solver-defect
-                case, surfaced as `ValueError`.
-            `solve_block`: the block the solver produced the result on.
-            `state_nonces`: per-hop state nonces captured at solve time
-                (the staleness gate — the dispatch seam skips candidates
-                whose pool state has advanced since the solve).
-            `erc6909_profit`: encode the V4 profit as an ERC6909 transfer
-                (default `False`).
-            `use_v4_batch`: encode V4 hops as a batched `unlock`-callback
-                (default `False`).
-
-        # Errors
-        `ValueError`: if `path_id` is not registered in `engine`, or a hop
-                has no command-stream encoder arm (Solidly / Balancer / Curve),
-                or `hop_outputs`/`consumed_inputs` length ≠ path hops.
-        """
-    @property
-    def path_id(self, /) -> int:
-        """
-        The arb path id this candidate was built for.
-
-        The candidate's identity: it is the key the sim fan-out joins on and
-        the id the submit records carry, so a driver that holds a batch of
-        candidates can name the path it is about to simulate or submit.
         """
 
 @final
@@ -575,28 +484,6 @@ class SubmitVerdict:
         def __len__(self, /) -> int: ...
         def __new__(cls, /) -> SubmitVerdict.Submitted: ...
 
-def assemble_dispatch_candidates_py(
-    engine: ArbitrageEngine,
-    results: SupportsGetItem[int, Incomplete],
-    *,
-    erc6909_profit: bool = False,
-    use_v4_batch: bool = False,
-    skip_path_ids: SupportsGetItem[int, SupportsIndex] | None = None,
-) -> CandidateAssembly:
-    """
-    Assemble a batch of raw engine-result rows into `DispatchCandidate`s.
-
-    The skip predicates and the shape guard + candidate construction are
-    crate-owned (see the module docs); this delegate resolves each surviving
-    row's path through the engine and wraps the result.
-
-    # Errors
-    `ValueError`: a `path_id` is not registered in `engine`, a resolved path
-    failed its `PathInfoBuildError` projection, or a row's
-    `hop_outputs`/`consumed_inputs`/`state_nonces` length does not match the
-    path's hop count (the crate's loud-abort shape guard).
-    """
-
 def build_batch_executor_py(
     context: SimulateContext,
     dispatcher: Dispatcher,
@@ -771,8 +658,6 @@ __all__ = [
     "BatchExecutor",
     "BatchOutcome",
     "BatchOutcomeSet",
-    "CandidateAssembly",
-    "DispatchCandidate",
     "ExecutorPolicyValues",
     "FailureDetail",
     "FailureKind",
@@ -782,7 +667,6 @@ __all__ = [
     "SimulateContext",
     "SimulateVerdict",
     "SubmitVerdict",
-    "assemble_dispatch_candidates_py",
     "build_batch_executor_py",
     "executor_policy_py",
     "merge_payload_results_py",

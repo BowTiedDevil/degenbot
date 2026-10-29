@@ -37,7 +37,7 @@ use crate::assembly::{
     assemble_batch, join_sim_result, AssemblyError, AssemblyInputs, PathResolver,
 };
 use crate::policy::{ExecutorPolicy, ExecutorRuntime};
-use crate::record::{fold_counters, AssemblyVerdict, BatchOutcome, SimulateVerdict, SubmitVerdict};
+use crate::record::{AssemblyVerdict, BatchOutcome, SimulateVerdict, SubmitVerdict};
 use crate::row::{PayloadRow, RawResult};
 
 /// The session-static executor configuration — the resolved verdict's policy
@@ -693,13 +693,6 @@ impl BatchExecutor {
     }
 }
 
-/// Fold a batch's records into the render counters (re-exported here for the
-/// driver seams that count per drained batch).
-#[must_use]
-pub fn batch_counters(batch: &[BatchOutcome]) -> crate::record::BatchCounters {
-    fold_counters(batch)
-}
-
 #[cfg(test)]
 #[expect(
     clippy::unwrap_used,
@@ -926,16 +919,14 @@ mod tests {
     }
 
     /// The renderer-shaped drain (the Python renderers' shape): every stage
-    /// and `path_info` are read, and the render counters fold EXACTLY over
-    /// the drained records.
+    /// and `path_info` are read off the drained records.
     #[expect(
         clippy::too_many_lines,
         reason = "the fixture spells every stage's record verbatim"
     )]
     #[tokio::test]
-    async fn renderer_drain_reads_every_stage_and_folds_counters() {
+    async fn renderer_drain_reads_every_stage() {
         use degenbot_executor::composers::V2HopInfo;
-        use std::collections::HashSet;
 
         struct MixedSim;
         impl SimLeaf<BatchWork, SimStageOutput> for MixedSim {
@@ -1089,23 +1080,10 @@ mod tests {
             by_id[&4].submit,
             Some(SubmitVerdict::Failed(crate::record::FailureKind::RpcFailed))
         );
-
-        // ── The counters are exact FOLDS over the drained records ──
-        let counters = batch_counters(&by_id.into_values().collect::<Vec<_>>());
-        assert_eq!(counters.candidate_count, 3);
-        assert_eq!(counters.profitable_count, 1);
-        assert_eq!(counters.gas_unprofitable_count, 1);
-        assert_eq!(counters.fail_count, 1);
-        assert_eq!(counters.suppressed_count, 1);
-        assert_eq!(counters.fail_buckets.get("no-profit"), Some(&1));
-        assert_eq!(
-            counters
-                .fail_buckets
-                .keys()
-                .cloned()
-                .collect::<HashSet<_>>(),
-            std::iter::once("no-profit".to_string()).collect::<HashSet<_>>()
-        );
+        assert!(matches!(
+            by_id[&4].simulate,
+            Some(SimulateVerdict::GasUnprofitable(_))
+        ));
     }
 
     /// A gate-clearing candidate fixture for the forensic emission: the

@@ -147,10 +147,7 @@ from degenbot._ffi.provider import AlloyProvider, AsyncAlloyProvider, is_local_r
 
 # simulation: the batch executor and dispatch surface.
 from degenbot._ffi.simulation import (
-    CandidateAssembly,
-    DispatchCandidate,
     SimulateContext,
-    assemble_dispatch_candidates_py,
     build_batch_executor_py,
     executor_policy_py,
     merge_payload_results_py,
@@ -187,9 +184,7 @@ __all__ = [
     "Bot",
     "BotIo",
     "CancelHandle",
-    "CandidateAssembly",
     "DexIdentity",
-    "DispatchCandidate",
     "Dispatcher",
     "DivergentPool",
     "DyCalculationInputs",
@@ -219,7 +214,6 @@ __all__ = [
     "V3PoolRowInput",
     "VerificationRpcError",
     "activate_aave_market",
-    "assemble_dispatch_candidates_py",
     "build_batch_executor_py",
     "build_path_graph",
     "calc_exact_in_v2",

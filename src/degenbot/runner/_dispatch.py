@@ -43,8 +43,8 @@ class RawEngineResult:
 
     The named record is constructed at the batch-stream conversion point
     (``_consume._engine_result``) and extracted by field name by the Rust
-    ``assemble_dispatch_candidates`` seam — the field order never crosses
-    the boundary positionally.
+    batch executor's ``enqueue`` seam — the field order never crosses the
+    boundary positionally.
     """
 
     path_id: int

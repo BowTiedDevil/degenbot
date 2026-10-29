@@ -17,7 +17,6 @@ import pytest
 from tests.helpers.seam import (
     AlloyProvider,
     AsyncAlloyProvider,
-    DispatchCandidate,
     SimulateContext,
 )
 
@@ -39,104 +38,6 @@ def _make_async_provider() -> AsyncAlloyProvider:
     # `AsyncAlloyProvider(sync_provider)` wrapper — both offline.
     sync = AlloyProvider(_RPC_URL)
     return AsyncAlloyProvider(sync)
-
-
-class TestPyDispatchCandidate:
-    """The per-path builder — `path_id` resolution + the encode-options flags.
-
-    The candidate resolves its `composers::PathInfo` from a registered
-    `path_id` via `PyArbitrageEngine::path_info_for_core` — no Python `PathInfo`
-    dataclass is threaded. The fixture builds a 2-hop V2 cycle (the engine's
-    `register_and_solve_path` requires a ≥2-hop cycle); `hop_outputs` must match
-    the path's hop count (2) or `__new__` raises `ValueError`.
-    """
-
-    def test_constructs_from_engine_and_path_id(
-        self, nxm2bf_v2_engine_and_path: tuple[PyArbitrageEngine, int]
-    ) -> None:
-        engine, path_id = nxm2bf_v2_engine_and_path
-        candidate = DispatchCandidate(
-            engine=engine,
-            path_id=path_id,
-            optimal_input=1_000_000_000_000_000_000,
-            engine_profit=2_000_000_000_000_000_000,
-            hop_outputs=[1_500_000_000_000_000_000, 1_400_000_000_000_000_000],
-            consumed_inputs=[1_000_000_000_000_000_000, 1_500_000_000_000_000_000],
-            solve_block=19_000_000,
-            state_nonces=[0, 0],
-        )
-        # No public fields yet (A4 reads `inner`); construction-not-erroring
-        # is the contract. The instance confirms the projection resolved the
-        # 2-hop V2 path's `PathInfo` without raising.
-        assert isinstance(candidate, DispatchCandidate)
-
-    def test_encode_options_default_to_false(
-        self, nxm2bf_v2_engine_and_path: tuple[PyArbitrageEngine, int]
-    ) -> None:
-        engine, path_id = nxm2bf_v2_engine_and_path
-        # Both flags default False; construction must accept no kwargs.
-        candidate = DispatchCandidate(
-            engine=engine,
-            path_id=path_id,
-            optimal_input=1,
-            engine_profit=1,
-            hop_outputs=[1, 1],
-            consumed_inputs=[1, 1],
-            solve_block=0,
-            state_nonces=[0, 0],
-        )
-        assert isinstance(candidate, DispatchCandidate)
-
-    def test_encode_options_kw_flags_accepted(
-        self, nxm2bf_v2_engine_and_path: tuple[PyArbitrageEngine, int]
-    ) -> None:
-        engine, path_id = nxm2bf_v2_engine_and_path
-        candidate = DispatchCandidate(
-            engine=engine,
-            path_id=path_id,
-            optimal_input=1,
-            engine_profit=1,
-            hop_outputs=[1, 1],
-            consumed_inputs=[1, 1],
-            solve_block=0,
-            state_nonces=[0, 0],
-            erc6909_profit=True,
-            use_v4_batch=True,
-        )
-        assert isinstance(candidate, DispatchCandidate)
-
-    def test_unregistered_path_id_raises_value_error(
-        self, nxm2bf_v2_engine_and_path: tuple[PyArbitrageEngine, int]
-    ) -> None:
-        engine, _path_id = nxm2bf_v2_engine_and_path
-        with pytest.raises(ValueError, match="not registered"):
-            DispatchCandidate(
-                engine=engine,
-                path_id=999_999,  # never registered
-                optimal_input=1,
-                engine_profit=1,
-                hop_outputs=[1, 1],
-                consumed_inputs=[1, 1],
-                solve_block=0,
-                state_nonces=[0, 0],
-            )
-
-    def test_hop_outputs_length_mismatch_raises_value_error(
-        self, nxm2bf_v2_engine_and_path: tuple[PyArbitrageEngine, int]
-    ) -> None:
-        engine, path_id = nxm2bf_v2_engine_and_path
-        # The path is 2-hop; passing 1 hop_output is a solver/stale-path_id defect.
-        with pytest.raises(ValueError, match="hop_outputs length"):
-            DispatchCandidate(
-                engine=engine,
-                path_id=path_id,
-                optimal_input=1,
-                engine_profit=1,
-                hop_outputs=[1],
-                consumed_inputs=[1],
-                solve_block=0,
-                state_nonces=[0],
-            )
 
 
 class TestPySimulateContext:

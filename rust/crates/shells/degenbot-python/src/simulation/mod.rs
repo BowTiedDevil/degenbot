@@ -34,36 +34,29 @@
 //!
 //! ## Surface
 //!
-//! Two pyclasses: [`PySimulateContext`] (the session-static config bag) and
-//! [`PyDispatchCandidate`] (the per-path builder); the batch executor's own
-//! classes live in [`batch`].
+//! One pyclass, [`PySimulateContext`] (the session-static config bag); the
+//! batch executor's own classes live in [`batch`].
 
 use pyo3::prelude::*;
 
-pub mod assembly;
 pub mod batch;
-pub mod candidate;
 pub mod context;
 pub mod dispatch;
 pub mod in_process_probe;
 mod inline_hook;
 pub mod render;
 
-pub use candidate::PyDispatchCandidate;
 pub use context::PySimulateContext;
 
 /// The `degenbot._ffi.simulation` Python submodule (declarative
-/// `#[pymodule]`), carrying the simulation pyclasses + the
-/// dispatch/assembly/probe pyfunctions. The parent module registers the
+/// `#[pymodule]`), carrying the simulation pyclass + the
+/// dispatch/probe pyfunctions. The parent module registers the
 /// submodule itself and its `sys.modules` entry.
 #[pymodule(submodule)]
 #[pyo3(module = "degenbot._ffi")]
 pub mod simulation {
     #[pymodule_export]
-    use super::{PyDispatchCandidate, PySimulateContext};
-
-    #[pymodule_export]
-    use super::assembly::{assemble_dispatch_candidates_py, PyCandidateAssembly};
+    use super::PySimulateContext;
 
     #[pymodule_export]
     use super::batch::{

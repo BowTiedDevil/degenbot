@@ -1165,6 +1165,12 @@ provider refreshed). An exact answer carries no fact, so trust reads off the val
 instead of off an exception wrapped around the amounts. The companions'
 `calculate_tokens_*` verbs are the boundary that renders an inexact verdict — as
 `StaleRateResult` — and keep returning `int`.
+Two shapes, one rule: an amount-carrying ANSWER rides a value, and smuggling one out through a
+`raise` is off-idiom — the `StaleRateResult` shape, whose one remaining job is that legacy
+`int` render. An amount-carrying REFUSAL is the accepted shape (the V4 quoter's
+`HookedPoolResult` on a hypothetical arm): it states outright that we cannot correctly predict
+a result the runtime may rewrite — swap-modifying hooks can change the math — so the caller
+must deal with that rather than be handed a number that may not hold.
 
 **SwapQuoter**:
 The Python companion's per-family owner of the *whole* swap round trip — one object per

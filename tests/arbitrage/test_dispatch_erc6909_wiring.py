@@ -2,9 +2,8 @@
 
 The driver's ``dispatch.erc6909_profit`` operator knob names the encode axis
 the core batch executor stamps onto every assembled candidate's
-``EncodeOptions`` — the same ``resolve_axes``/``config_for_options`` axis chain
-the pre-cut-over ``assemble_dispatch_candidates(erc6909_profit=...)`` seam
-carried. The knob itself converts inside the FFI from the installed verdict
+``EncodeOptions``, through the ``resolve_axes``/``config_for_options`` axis
+chain. The knob itself converts inside the FFI from the installed verdict
 (the conversion owns every default and clamp), so the construction boundary
 carries no driver-side copy of it; the conversion's projection is pinned by the
 resolution-oracle suites, and this file pins that the driver passes none of the

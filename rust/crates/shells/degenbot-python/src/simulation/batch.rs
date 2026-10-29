@@ -33,9 +33,8 @@
 //! future body never touches Python); `next_outcome` releases it across the
 //! drain await.
 //!
-//! The `use_v4_batch` encode axis defaults `false` — the pre-cut-over driver
-//! never set it (the `assemble_dispatch_candidates_py` default); a declared
-//! config key arrives later as its own value.
+//! The `use_v4_batch` encode axis defaults `false` — no driver config key
+//! declares it yet; a declared key arrives later as its own value.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -43,7 +42,6 @@ use std::sync::Arc;
 use crate::bot::engine::PyArbEngine;
 use crate::prelude::*;
 use crate::rpc::async_provider::PyAsyncAlloyProvider;
-use crate::simulation::assembly::RawEngineResult;
 use crate::simulation::dispatch::payload_row_from_dict;
 use crate::simulation::render::{path_info_to_py_dict, sim_failure_to_dict};
 use crate::submission::dispatcher::PyDispatcher;
@@ -420,6 +418,21 @@ impl PyBatchOutcomeSet {
         }
         Ok(list)
     }
+}
+
+/// One raw engine-result row — the named record the runner constructs at the
+/// batch-stream conversion point (`_consume._engine_result`) and this seam
+/// extracts by field name (`FromPyObject` getattr extraction over the frozen
+/// dataclass); no positional 7-tuple crosses the boundary.
+#[derive(FromPyObject, Clone)]
+struct RawEngineResult {
+    path_id: u64,
+    optimal_input: u128,
+    engine_profit: u128,
+    hop_outputs: Vec<u128>,
+    consumed_inputs: Vec<u128>,
+    solve_block: u64,
+    state_nonces: Vec<u64>,
 }
 
 /// The enqueue payload: one streamed solver batch (the runner's `BatchWork`

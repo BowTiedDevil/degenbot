@@ -43,7 +43,7 @@ pub use assembly::{
 pub use executor::{BatchDrain, BatchExecutor, BatchOutcomeSet, BatchWork, ExecutorConfig};
 pub use policy::{ExecutorPolicy, ExecutorRuntime};
 pub use record::{
-    fold_counters, AssemblyVerdict, BatchCounters, BatchOutcome, FailureDetail, FailureKind,
-    PathInfoView, SimReceipt, SimulateVerdict, SubmitVerdict,
+    AssemblyVerdict, BatchOutcome, FailureDetail, FailureKind, PathInfoView, SimReceipt,
+    SimulateVerdict, SubmitVerdict,
 };
 pub use row::{PayloadFailure, PayloadRow, RawResult};
