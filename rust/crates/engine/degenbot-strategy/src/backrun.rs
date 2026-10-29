@@ -455,15 +455,140 @@ impl BackrunConfig {
     }
 }
 
-/// Why a candidate was (or was not) bid.
+/// Why a frame did not bid: the closed reason vocabulary of
+/// [`Decision::Observe`] and [`Decision::Drop`].
+///
+/// The variant set IS the value set of the
+/// `degenbot_backrun_frame_observed{reason}` metric, and [`Self::as_str`] is
+/// the only conversion to the wire label (JSONL, tracing, counter). Evidence
+/// that varies per frame (nonces, raw payloads) rides the JSONL trace in
+/// [`crate::frame_pipeline`], never a variant payload, so a label can never be
+/// built out of chain data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ObserveReason {
+    /// The operator's stop file is present: drop before any bid is sized.
+    KillSwitch,
+    /// The wallet's spent budget cannot cover the next bid.
+    BudgetExhausted,
+    /// Default mode: journal/publish only, never bid.
+    ObserveOnly,
+    /// Gross profit cannot cover the wallet's gas plus the keep margin.
+    NetAfterGasUnprofitable,
+    /// Fixture mode skips the live bundle sim by design.
+    SimSkippedFixtureMode,
+    /// The bundle sim rejected a composed candidate.
+    SimGateFailed,
+    /// The frame surfaced no candidate at all.
+    NoCandidate,
+    /// A non-base-quote fan dropped a real quote-land candidate.
+    NonBaseQuote,
+    /// The frame's nonce is already consumed on chain.
+    AlreadySettled,
+    /// The frame's nonce sits ahead of the parent: parked until the gap fills.
+    GapPending,
+    /// The frame cannot run as fetched (zero gas, call gas over the limit).
+    MalformedTransaction,
+    /// The frame's fee fields cannot clear the base fee, even after the
+    /// disabled retry.
+    MispricedTransaction,
+    /// The frame's replay failed for a retryable class.
+    ReplayFailed,
+    /// A hydrated predecessor cannot run as fetched.
+    PredecessorMalformed,
+    /// A hydrated predecessor failed for a retryable class.
+    PredecessorReplayFailed,
+    /// No replay handle served this head.
+    ReplayUnavailable,
+    /// The frame reverted on replay.
+    Reverted,
+    /// The frame touched a pool family the workspace does not support.
+    FamilyUnsupported,
+    /// The frame touched the V4 manager with no tracked roster.
+    V4Unsupported,
+}
+
+impl ObserveReason {
+    /// Every variant, in declaration order: the closed metric value set.
+    pub const ALL: &'static [Self] = &[
+        Self::KillSwitch,
+        Self::BudgetExhausted,
+        Self::ObserveOnly,
+        Self::NetAfterGasUnprofitable,
+        Self::SimSkippedFixtureMode,
+        Self::SimGateFailed,
+        Self::NoCandidate,
+        Self::NonBaseQuote,
+        Self::AlreadySettled,
+        Self::GapPending,
+        Self::MalformedTransaction,
+        Self::MispricedTransaction,
+        Self::ReplayFailed,
+        Self::PredecessorMalformed,
+        Self::PredecessorReplayFailed,
+        Self::ReplayUnavailable,
+        Self::Reverted,
+        Self::FamilyUnsupported,
+        Self::V4Unsupported,
+    ];
+
+    /// The label the JSONL trace, the spans, and the metric carry.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::KillSwitch => "kill_switch",
+            Self::BudgetExhausted => "budget_exhausted",
+            Self::ObserveOnly => "observe_only",
+            Self::NetAfterGasUnprofitable => "net_after_gas_unprofitable",
+            Self::SimSkippedFixtureMode => "sim_skipped_fixture_mode",
+            Self::SimGateFailed => "sim_gate_failed",
+            Self::NoCandidate => "no_candidate",
+            Self::NonBaseQuote => "non_base_quote",
+            Self::AlreadySettled => "already_settled",
+            Self::GapPending => "gap_pending",
+            Self::MalformedTransaction => "malformed_transaction",
+            Self::MispricedTransaction => "mispriced_transaction",
+            Self::ReplayFailed => "replay_failed",
+            Self::PredecessorMalformed => "predecessor_malformed",
+            Self::PredecessorReplayFailed => "predecessor_replay_failed",
+            Self::ReplayUnavailable => "replay_unavailable",
+            Self::Reverted => "reverted",
+            // The one hyphenated label: this bucket names a pool family, not a
+            // snake_case death class.
+            Self::FamilyUnsupported => "family-unsupported",
+            Self::V4Unsupported => "v4_unsupported",
+        }
+    }
+
+    /// The truthful observe label for an un-composed frame: a non-base-quote
+    /// fan whose normalization hop could not be priced dropped a real
+    /// quote-land candidate — distinct from "no work on this frame" — unless a
+    /// WETH-closing candidate actually solved (then `self`, which already
+    /// explains the composed/sim verdict, stays).
+    #[must_use]
+    pub const fn honest(self, non_base_quote_dropped: bool, solved_any: bool) -> Self {
+        match (self, non_base_quote_dropped, solved_any) {
+            (Self::NoCandidate, true, false) => Self::NonBaseQuote,
+            _ => self,
+        }
+    }
+}
+
+impl std::fmt::Display for ObserveReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Why a candidate was (or was not) bid. The arm itself carries the kind;
+/// [`ObserveReason`] names the reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
     /// All gates passed; bid the given wei.
     Bid { bid_wei: U256 },
     /// Default mode: journal/publish only, never bid.
-    Observe { reason: &'static str },
+    Observe { reason: ObserveReason },
     /// Not a bid candidate at all (inert/too old).
-    Drop { reason: &'static str },
+    Drop { reason: ObserveReason },
 }
 
 /// The bid-path liveness gate: a target whose tx already mined cannot be
@@ -476,7 +601,7 @@ pub enum Decision {
 pub fn gate_mined_target(decision: Decision, target_receipt_found: bool) -> Decision {
     match decision {
         Decision::Bid { .. } if target_receipt_found => Decision::Observe {
-            reason: "already_settled",
+            reason: ObserveReason::AlreadySettled,
         },
         other => other,
     }
@@ -536,7 +661,7 @@ mod tests {
         assert_eq!(
             gate_mined_target(bid, true),
             Decision::Observe {
-                reason: "already_settled"
+                reason: ObserveReason::AlreadySettled
             }
         );
     }
@@ -549,9 +674,48 @@ mod tests {
         assert_eq!(gate_mined_target(bid, false), bid);
         // An observe decision is untouched either way.
         let observe = Decision::Observe {
-            reason: "observe_only",
+            reason: ObserveReason::ObserveOnly,
         };
         assert_eq!(gate_mined_target(observe, true), observe);
+    }
+
+    /// The reason vocabulary is a closed, reviewed value set: every variant
+    /// reaches the metric through exactly one unique label, so no two death
+    /// classes can collapse into one `reason` bucket and no new class can ship
+    /// without a review moment here.
+    #[test]
+    fn observe_reasons_are_the_closed_metric_value_set() {
+        let labels: Vec<&str> = ObserveReason::ALL
+            .iter()
+            .copied()
+            .map(ObserveReason::as_str)
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "kill_switch",
+                "budget_exhausted",
+                "observe_only",
+                "net_after_gas_unprofitable",
+                "sim_skipped_fixture_mode",
+                "sim_gate_failed",
+                "no_candidate",
+                "non_base_quote",
+                "already_settled",
+                "gap_pending",
+                "malformed_transaction",
+                "mispriced_transaction",
+                "replay_failed",
+                "predecessor_malformed",
+                "predecessor_replay_failed",
+                "replay_unavailable",
+                "reverted",
+                "family-unsupported",
+                "v4_unsupported",
+            ]
+        );
+        let unique: std::collections::BTreeSet<&str> = labels.iter().copied().collect();
+        assert_eq!(unique.len(), labels.len(), "duplicate label: {labels:?}");
     }
 
     #[test]

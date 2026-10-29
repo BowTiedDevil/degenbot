@@ -715,13 +715,10 @@ pub fn dispatch_profitable_results(
                         // reproduce (path-11354 V3-V2-V3 1-wei under-delivery).
                         v2_calc_trace(&mut handle, &sim_path);
                         let mut buckets = FailBuckets::new();
-                        let result = simulate_path_on_evm(
-                            handle.session().evm_mut(),
-                            ctx,
-                            &sim_path,
-                            &mut buckets,
-                        )
-                        .map_err(|e| format!("{e}"));
+                        let mut session = handle.session();
+                        let result =
+                            simulate_path_on_evm(&mut session, ctx, &sim_path, &mut buckets)
+                                .map_err(|e| format!("{e}"));
                         (pid, buckets, result)
                     })
                     .collect(),

@@ -49,7 +49,7 @@ use crate::monitor::{monitor_pending_transaction_default, ReceiptProbe, Submitte
 use crate::params::TxParams;
 use crate::signer::TxSigner;
 use crate::submission_ledger::SubmissionLedger;
-use degenbot_substrate::nonce::NonceLane;
+use degenbot_substrate::nonce::{NonceLane, NonceLease};
 
 // ─────────────────────────────────────────────────────────────────────────
 // The submit candidate (decoupled from the Simulation `SimResult`)
@@ -230,43 +230,690 @@ fn candidate_net_wei(candidate: &SubmitCandidate) -> f64 {
     u128::try_from(candidate.net_profit).unwrap_or(u128::MAX) as f64
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// The submit pipeline stages
+// ─────────────────────────────────────────────────────────────────────────
+
+/// What one submit stage decided for the candidate in hand.
+///
+/// The payload is generic because the stages carry different things forward:
+/// the pre-nonce guards carry nothing, [`SubmitBatch::stamp_nonce`] carries the
+/// nonce lease, [`SubmitBatch::build_tx_params`] and
+/// [`SubmitBatch::recompute_access_list`] carry the [`TxParams`] carrier, and
+/// [`SubmitBatch::deliver`] carries the broadcast hash.
+///
+/// The third arm is why these stages are not a `Result<_, SkipReason>`: a
+/// refused nonce stamp stops the WHOLE batch, while a skip is a per-candidate
+/// outcome. A single error type would have to spell the batch abort as a skip
+/// reason no consumer acts on.
+enum StepVerdict<T> {
+    /// Hand the payload to the next stage.
+    Continue(T),
+    /// Do not submit this candidate — the typed reason, recorded as a skip.
+    Skip(SkipReason),
+    /// Stop the batch where it stands.
+    AbortBatch,
+}
+
+/// The batch-scoped state the pipeline stages mutate.
+///
+/// `committed_pools` is this batch's claim set: the pools of every candidate
+/// submitted so far, plus the ones a `dry_run` / `inject_code` skip claimed —
+/// a dry run still respects mutual exclusivity. It is distinct from the
+/// dispatcher's `pending_pools`, which tracks the cross-batch claims of
+/// in-flight transactions.
+#[derive(Default)]
+struct BatchState {
+    committed_pools: HashSet<PoolKey>,
+}
+
+impl BatchState {
+    /// Claim `pools` for the rest of the batch.
+    fn commit(&mut self, pools: &HashSet<PoolKey>) {
+        self.committed_pools.extend(pools.iter().cloned());
+    }
+}
+
+/// One dispatch batch: the invariant per-batch inputs every stage reads, and
+/// the ordered pipeline those stages form.
+///
+/// The order is the Python oracle's `dispatch_profitable_results` submit tail:
+///
+/// 1. [`Self::sort`] — best-first by net profit.
+/// 2. [`Self::record_candidate_economics`] — the per-candidate census prologue.
+/// 3. [`Self::guard_mutual_exclusion`] — a claimed pool skips the candidate.
+/// 4. [`Self::guard_dry_run`] — a dry run claims the pools and skips.
+/// 5. [`Self::guard_inject_code`] — injected code claims the pools and skips.
+/// 6. [`Self::stamp_nonce`] — lease the nonce; a refusal stops the batch.
+/// 7. [`Self::build_tx_params`] then [`Self::recompute_access_list`] — one
+///    [`TxParams`] carrier, mutated across both stages.
+/// 8. [`Self::sign_and_record`] — sign, then record the signed stamp.
+/// 9. [`Self::deliver`] — the three delivery arms.
+/// 10. [`Self::reserve_and_record`] then [`Self::spawn_monitor`] — the
+///     commitment.
+///
+/// The per-batch claim set is NOT a field: [`BatchState`] is threaded through
+/// the stages as an explicit argument, so a stage that reaches across candidates
+/// says so in its signature. The stages after [`Self::sign_and_record`] cannot
+/// skip a candidate — they always continue, and their verdict exists so the
+/// loop reads as one pipeline.
+struct SubmitBatch<'a> {
+    dispatcher: &'a Arc<Mutex<Dispatcher>>,
+    provider: &'a AlloyProvider,
+    signer: &'a TxSigner,
+    probe: Arc<dyn ReceiptProbe + Send + Sync>,
+    nonce_lane: &'a Arc<NonceLane<SubmissionLedger>>,
+    current_block: u64,
+    dry_run: bool,
+    inject_code: bool,
+    extra_broadcast: &'a [Arc<AlloyProvider>],
+    target: &'a SubmissionTarget,
+}
+
+impl SubmitBatch<'_> {
+    /// Stage 1 — sort by net profit descending, best-first.
+    ///
+    /// The dispatch fan-out already sorts (`gas_profitable.sort(key=net,
+    /// reverse=True)`); re-asserted here so a caller handing un-sorted
+    /// candidates still submits best-first. `sort_by_key` is stable, so equally
+    /// profitable candidates keep their input order.
+    fn sort(candidates: &mut [SubmitCandidate]) {
+        candidates.sort_by_key(|c| std::cmp::Reverse(c.net_profit));
+    }
+
+    /// Stage 2 — the per-candidate economics + gas census sample.
+    ///
+    /// `f64` wei: dashboards chart magnitudes, not exact wei (clamped at
+    /// `u128::MAX`).
+    fn record_candidate_economics(candidate: &SubmitCandidate) {
+        #[expect(clippy::cast_precision_loss)]
+        let gross = u128::try_from(candidate.gross_profit).unwrap_or(u128::MAX) as f64;
+        #[expect(clippy::cast_precision_loss)]
+        let net = u128::try_from(candidate.net_profit).unwrap_or(u128::MAX) as f64;
+        degenbot_bot::instruments::record(
+            degenbot_bot::instruments::CensusEvent::CandidateEconomics {
+                gross_wei: gross,
+                net_wei: net,
+            },
+        );
+        degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::CandidateGas {
+            gas: candidate.gas_used,
+        });
+    }
+
+    /// Stage 3 — mutual-exclusivity guard.
+    ///
+    /// A resolved pool already claimed by an in-flight transaction
+    /// ([`Dispatcher::is_path_blocked`]) or by an earlier candidate of this
+    /// batch skips the candidate. The lock is held only for that synchronous
+    /// call — never across an `.await`.
+    fn guard_mutual_exclusion(
+        &self,
+        candidate: &SubmitCandidate,
+        path_pools: &HashSet<PoolKey>,
+        state: &BatchState,
+    ) -> StepVerdict<()> {
+        #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
+        let blocked = self
+            .dispatcher
+            .lock()
+            .expect("dispatcher mutex poisoned")
+            .is_path_blocked(path_pools, &state.committed_pools);
+        if !blocked {
+            return StepVerdict::Continue(());
+        }
+        degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+            outcome: "skipped_pools_claimed",
+        });
+        degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::ProfitMissed {
+            wei: candidate_net_wei(candidate),
+        });
+        StepVerdict::Skip(SkipReason::PoolsClaimed)
+    }
+
+    /// Stage 4 — the `dry_run` guard: skip the live submission.
+    ///
+    /// The pools are still claimed, so a dry run respects mutual exclusivity
+    /// exactly as a live batch does. No profit-missed sample: a dry run is a
+    /// mode, not missed money.
+    fn guard_dry_run(
+        &self,
+        path_pools: &HashSet<PoolKey>,
+        state: &mut BatchState,
+    ) -> StepVerdict<()> {
+        if !self.dry_run {
+            return StepVerdict::Continue(());
+        }
+        degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+            outcome: "skipped_dry_run",
+        });
+        state.commit(path_pools);
+        StepVerdict::Skip(SkipReason::DryRun)
+    }
+
+    /// Stage 5 — the `inject_code` guard: the injected contract does not exist
+    /// on-chain, so a live submission would target an absent executor.
+    ///
+    /// The pools are claimed as a live batch would claim them.
+    fn guard_inject_code(
+        &self,
+        candidate: &SubmitCandidate,
+        path_pools: &HashSet<PoolKey>,
+        state: &mut BatchState,
+    ) -> StepVerdict<()> {
+        if !self.inject_code {
+            return StepVerdict::Continue(());
+        }
+        degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+            outcome: "skipped_inject_code",
+        });
+        degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::ProfitMissed {
+            wei: candidate_net_wei(candidate),
+        });
+        state.commit(path_pools);
+        StepVerdict::Skip(SkipReason::InjectCode)
+    }
+
+    /// Stage 6 — stamp the sign-time nonce from the process-wide authority.
+    ///
+    /// The lane's default policy repackages past the strategy's own stale
+    /// reservation. A non-stale decline aborts the batch: the alternative is
+    /// signing against a nonce the authority refused.
+    fn stamp_nonce(&self) -> StepVerdict<NonceLease> {
+        match self.nonce_lane.stamp() {
+            Ok(lease) => StepVerdict::Continue(lease),
+            Err(_decline) => StepVerdict::AbortBatch,
+        }
+    }
+
+    /// Stage 7a — build the [`TxParams`] carrier and finalize its fees.
+    ///
+    /// `gas_limit = int(gas_used * 1.5)` (the 1.5× safety margin); the
+    /// truncating cast matches the Python `int()` for any realistic gas value.
+    /// The candidate's pre-sim access list rides along until
+    /// [`Self::recompute_access_list`] replaces it.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::SubmissionError::FeeOverflow`] when the fee finalization
+    /// exceeds the EIP-1559 field widths.
+    fn build_tx_params(
+        candidate: &SubmitCandidate,
+        nonce: u64,
+    ) -> Result<StepVerdict<TxParams>, crate::SubmissionError> {
+        #[expect(
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss
+        )]
+        let gas_limit = (candidate.gas_used as f64 * GAS_SAFETY_MARGIN) as u64;
+        let mut tx_params = TxParams::new(
+            candidate.executor_address,
+            candidate.execute_calldata.clone(),
+            gas_limit,
+            nonce,
+        );
+        if let Some(access_list) = &candidate.access_list {
+            tx_params.access_list = access_list.clone();
+        }
+        finalize_fees(
+            &mut tx_params,
+            candidate.base_fee_next,
+            candidate.priority_fee,
+        )?;
+        Ok(StepVerdict::Continue(tx_params))
+    }
+
+    /// Stage 7b — re-compute the access list against the finalized nonce and
+    /// fees, handing back the same carrier it was given.
+    ///
+    /// A failed `eth_createAccessList` is tolerated: the carrier keeps the
+    /// candidate's pre-sim list. Lock-free — the RPC is a pure provider call.
+    async fn recompute_access_list(&self, mut tx_params: TxParams) -> StepVerdict<TxParams> {
+        let request = build_transaction_request(&tx_params);
+        match self
+            .provider
+            .eth_create_access_list(&request, BlockId::Number(BlockNumberOrTag::Latest))
+            .await
+        {
+            Ok(access_list_result) => {
+                tx_params.access_list = access_list_result.access_list;
+            }
+            Err(_e) => {
+                // Tolerated — keep the pre-sim access list.
+            }
+        }
+        StepVerdict::Continue(tx_params)
+    }
+
+    /// Stage 8 — sign the transaction, record the signed stamp in the lane's
+    /// ledger, and hand the raw bytes to delivery.
+    ///
+    /// The signed hash is the identity head reconciliation and the monitor read
+    /// back. The bundle arm keys its ledger entry by the TARGET's hash instead:
+    /// that bid is identified by the transaction it backruns.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::SubmissionError::Sign`] for a corrupt signing key, and
+    /// [`crate::SubmissionError::Nonce`] when the lane's ledger refuses the
+    /// signed-stamp record.
+    fn sign_and_record(
+        &self,
+        tx_params: &TxParams,
+        lease: &NonceLease,
+    ) -> Result<StepVerdict<Bytes>, crate::SubmissionError> {
+        // Synchronous ECDSA — no `.await`, no lock.
+        let raw_signed = self.signer.sign_eip1559(tx_params)?;
+        // Record the freshly signed submission in the per-head ledger against
+        // the authority-granted nonce, so the head feed can reconcile exactly
+        // what was built.
+        let signed_hash = alloy::primitives::keccak256(&raw_signed);
+        let target_hash = match self.target {
+            SubmissionTarget::Bundle(bundle_target) => bundle_target.target_tx_hash,
+            // Both non-auction arms identify the submission by the freshly
+            // signed backrun's hash.
+            SubmissionTarget::BuilderRelay { .. } | SubmissionTarget::Public => signed_hash,
+        };
+        self.nonce_lane
+            .record_signed(lease, target_hash, signed_hash, self.current_block)
+            .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
+        Ok(StepVerdict::Continue(raw_signed))
+    }
+
+    /// Stage 9 — send the signed bytes down the submission target's channel.
+    ///
+    /// The three arms are deliberately NOT one code path behind a delivery
+    /// strategy: they differ in what an acceptance commits to, in which
+    /// destination sees the bytes, and above all in their failure policy — which
+    /// is why each arm keeps its own body, and its own nonce-release decision.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::SubmissionError::Nonce`] when the accepted transmission cannot
+    /// be promoted to a broadcast on both nonce books.
+    async fn deliver(
+        &self,
+        candidate: &SubmitCandidate,
+        raw_signed: &Bytes,
+        lease: &NonceLease,
+    ) -> Result<StepVerdict<B256>, crate::SubmissionError> {
+        match self.target {
+            SubmissionTarget::Bundle(bundle_target) => {
+                self.deliver_bundle(candidate, bundle_target, raw_signed, lease)
+                    .await
+            }
+            SubmissionTarget::BuilderRelay {
+                relays,
+                target_raw,
+                block_number,
+            } => {
+                self.deliver_builder_relay(
+                    candidate,
+                    relays,
+                    target_raw,
+                    *block_number,
+                    raw_signed,
+                    lease,
+                )
+                .await
+            }
+            SubmissionTarget::Public => self.deliver_public(candidate, raw_signed, lease).await,
+        }
+    }
+
+    /// Stage 9, arm 1 — the `MEVBlocker` bid channel.
+    ///
+    /// `eth_sendBundle` over the searcher WS with `txs = [target hash, signed
+    /// backrun]`, pinned to the target's block with a deterministic
+    /// `replacementUuid`. The signed bytes never touch the public mempool or
+    /// another relay on this path: the auction entry is single-destination (the
+    /// searcher docs' how-to/searchers/bid). The executor's coinbase bribe
+    /// (packed config, recipient 0) is the `fee_recipient` payment those docs
+    /// require.
+    ///
+    /// Failure policy: the bundle never reached the auction, so the lease goes
+    /// back and the next candidate may stamp the nonce.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::SubmissionError::Nonce`] when an accepted bid cannot be
+    /// promoted to a broadcast.
+    async fn deliver_bundle(
+        &self,
+        candidate: &SubmitCandidate,
+        bundle_target: &BundleTarget,
+        raw_signed: &Bytes,
+        lease: &NonceLease,
+    ) -> Result<StepVerdict<B256>, crate::SubmissionError> {
+        let bid = crate::bundle::BundleBid {
+            target_tx_hash: bundle_target.target_tx_hash,
+            backrun_raw: raw_signed.clone(),
+            block_number: bundle_target.block_number,
+            replacement_uuid: crate::bundle::replacement_uuid_for(
+                bundle_target.target_tx_hash,
+                bundle_target.block_number,
+            ),
+        };
+        match crate::bundle::send_request(
+            &bundle_target.stream_url,
+            crate::bundle::eth_send_bundle_request(&bid),
+            BUNDLE_RELAY_TIMEOUT,
+        )
+        .await
+        {
+            Ok(resp) => {
+                let raw = resp
+                    .get("result")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                let hash = alloy::hex::FromHex::from_hex(raw)
+                    .unwrap_or_else(|_| alloy::primitives::keccak256(raw_signed));
+                degenbot_bot::instruments::record(
+                    degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+                        outcome: "bundle_accepted",
+                    },
+                );
+                self.promote_broadcast(lease)?;
+                Ok(StepVerdict::Continue(hash))
+            }
+            Err(e) => {
+                degenbot_bot::telemetry::record_exception(
+                    degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
+                    format_args!("path {} mevblocker bundle rejected: {e}", candidate.path_id),
+                );
+                Self::record_broadcast_failure(candidate);
+                crate::bundle::trace_wire_jsonl(
+                    "bundle_wire_error",
+                    &json!({
+                        "path_id": candidate.path_id,
+                        "target": format!("0x{}", bundle_target.target_tx_hash),
+                        "block": bundle_target.block_number,
+                        "error": format!("{e}"),
+                    }),
+                );
+                // The bundle never reached the auction: free the lease so the
+                // next candidate can stamp.
+                let _ = self.nonce_lane.release(lease);
+                Ok(StepVerdict::Skip(SkipReason::BroadcastFailed(format!(
+                    "mevblocker bundle rejected: {e}"
+                ))))
+            }
+        }
+    }
+
+    /// Stage 9, arm 2 — the Flashbots-compatible builder-relay bundle.
+    ///
+    /// The TARGET's verbatim signed bytes plus the signed backrun as one
+    /// `eth_sendBundle` HTTPS POST to every relay; any single relay acceptance
+    /// submits the bundle, so an all-rejected round is a skip. The
+    /// `X-Flashbots-Signature` header is derived per request from the exact JSON
+    /// body, which is why a signing failure fails this arm before any relay sees
+    /// a bundle.
+    ///
+    /// Failure policy: no relay holds the bundle, so the lease goes back and the
+    /// next candidate may stamp the nonce.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::SubmissionError::Nonce`] when an accepted bundle cannot be
+    /// promoted to a broadcast.
+    async fn deliver_builder_relay(
+        &self,
+        candidate: &SubmitCandidate,
+        relays: &[String],
+        target_raw: &Bytes,
+        block_number: u64,
+        raw_signed: &Bytes,
+        lease: &NonceLease,
+    ) -> Result<StepVerdict<B256>, crate::SubmissionError> {
+        let bundle = crate::relay::BuilderRelayBundle {
+            target_raw: target_raw.clone(),
+            backrun_raw: raw_signed.clone(),
+            block_number,
+        };
+        let body = crate::relay::builder_bundle_request(&bundle);
+        let header = match crate::relay::flashbots_signature_header(self.signer, &body.to_string())
+        {
+            Ok(header) => header,
+            Err(e) => {
+                degenbot_bot::telemetry::record_exception(
+                    degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
+                    format_args!("path {} relay signature failed: {e}", candidate.path_id),
+                );
+                Self::record_broadcast_failure(candidate);
+                // No relay ever saw a bundle: free the lease so the next
+                // candidate can stamp.
+                let _ = self.nonce_lane.release(lease);
+                return Ok(StepVerdict::Skip(SkipReason::BroadcastFailed(format!(
+                    "relay sign failed: {e}"
+                ))));
+            }
+        };
+        let outcomes = crate::relay::send_bundle_to_relays(relays, &body, &header).await;
+        if crate::relay::accepted_count(&outcomes) > 0 {
+            degenbot_bot::instruments::record(
+                degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+                    outcome: "builder_relay_accepted",
+                },
+            );
+            self.promote_broadcast(lease)?;
+            return Ok(StepVerdict::Continue(alloy::primitives::keccak256(
+                raw_signed,
+            )));
+        }
+        degenbot_bot::telemetry::record_exception(
+            degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
+            format_args!(
+                "path {} every builder relay rejected the bundle",
+                candidate.path_id
+            ),
+        );
+        Self::record_broadcast_failure(candidate);
+        // Every relay rejected the bundle: free the lease so the next candidate
+        // can stamp.
+        let _ = self.nonce_lane.release(lease);
+        Ok(StepVerdict::Skip(SkipReason::BroadcastFailed(
+            "every builder relay rejected the bundle".to_string(),
+        )))
+    }
+
+    /// Stage 9, arm 3 — the raw fan-out.
+    ///
+    /// The SAME signed bytes go to every relay in `extra_broadcast`; an empty
+    /// list means the read provider alone (the legacy single-endpoint
+    /// behavior). First acceptance defines the tracked hash.
+    ///
+    /// Failure policy: every relay rejected the raw transaction, so the lease
+    /// goes back and the next candidate may stamp the nonce. No monitor is
+    /// spawned (there is no transaction to track) and the pools were never
+    /// reserved.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::SubmissionError::Nonce`] when an accepted broadcast cannot be
+    /// promoted on both nonce books.
+    async fn deliver_public(
+        &self,
+        candidate: &SubmitCandidate,
+        raw_signed: &Bytes,
+        lease: &NonceLease,
+    ) -> Result<StepVerdict<B256>, crate::SubmissionError> {
+        let broadcast_targets: Vec<&AlloyProvider> = if self.extra_broadcast.is_empty() {
+            vec![self.provider]
+        } else {
+            self.extra_broadcast
+                .iter()
+                .map(std::sync::Arc::as_ref)
+                .collect()
+        };
+        let mut accepted_hash: Option<B256> = None;
+        for relay_provider in &broadcast_targets {
+            match relay_provider.eth_send_raw_transaction(raw_signed).await {
+                Ok(hash) => {
+                    accepted_hash.get_or_insert(hash);
+                }
+                Err(e) => {
+                    degenbot_bot::telemetry::record_exception(
+                        degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
+                        format_args!("path {} relay broadcast failed: {e}", candidate.path_id),
+                    );
+                }
+            }
+        }
+        let Some(tx_hash) = accepted_hash else {
+            Self::record_broadcast_failure(candidate);
+            // The claimed nonce and pools are deliberately NOT released: an
+            // errored relay response proves nothing about whether the bytes
+            // reached a mempool, so a possibly-live transaction keeps its
+            // nonce reserved until head reconciliation or a manual cleanup
+            // settles it. No monitor is spawned — there is no hash to track.
+            return Ok(StepVerdict::Skip(SkipReason::BroadcastFailed(
+                "all relays rejected the raw transaction".to_string(),
+            )));
+        };
+        degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+            outcome: "relay_accepted",
+        });
+        self.promote_broadcast(lease)?;
+        Ok(StepVerdict::Continue(tx_hash))
+    }
+
+    /// Promote the lease on both books once a channel accepted the signed bytes.
+    ///
+    /// Two books, two calls — neither subsumes the other: the authority promotes
+    /// the account lease to a broadcast (the nonce stays outstanding until the
+    /// chain confirms it), while the lane's ledger promotes its own signed stamp
+    /// for this strategy. Head reconciliation and the monitor read both, so
+    /// collapsing this pair into one call leaves one book stale.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::SubmissionError::Nonce`] when either book declines the
+    /// promotion.
+    fn promote_broadcast(&self, lease: &NonceLease) -> Result<(), crate::SubmissionError> {
+        self.nonce_lane
+            .authority()
+            .record_broadcast(lease)
+            .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
+        self.nonce_lane
+            .record_broadcast(lease)
+            .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
+        Ok(())
+    }
+
+    /// The census pair every delivery failure shares: the skipped-broadcast
+    /// outcome plus the profit the batch left on the table.
+    ///
+    /// The lease release is deliberately NOT here — it belongs to each arm's own
+    /// failure policy.
+    fn record_broadcast_failure(candidate: &SubmitCandidate) {
+        degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::SubmitOutcome {
+            outcome: "skipped_broadcast_failed",
+        });
+        degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::ProfitMissed {
+            wei: candidate_net_wei(candidate),
+        });
+    }
+
+    /// Stage 10a — reserve the path pools on the dispatcher and claim them for
+    /// the rest of the batch.
+    fn reserve_and_record(
+        &self,
+        path_pools: &HashSet<PoolKey>,
+        state: &mut BatchState,
+    ) -> StepVerdict<()> {
+        #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
+        self.dispatcher
+            .lock()
+            .expect("dispatcher mutex poisoned")
+            .reserve_pools(path_pools.clone());
+        state.commit(path_pools);
+        StepVerdict::Continue(())
+    }
+
+    /// Stage 10b — spawn the receipt monitor for the broadcast transaction.
+    ///
+    /// The dispatcher handle, the probe, and the lane are cloned into the
+    /// spawned task (the `Arc<Mutex<Dispatcher>>` sharing pattern). The monitor
+    /// releases the pools on confirm/expire; the authority owns the nonce
+    /// lifecycle. An EXPIRED broadcast is declared dead and its authority slot
+    /// released, so a dropped transaction cannot wedge the account's nonce
+    /// prefix — a CONFIRMED broadcast is landed by the per-head reconcile
+    /// instead, because its transaction is on the chain.
+    fn spawn_monitor(
+        &self,
+        tx_hash: B256,
+        nonce: u64,
+        path_pools: HashSet<PoolKey>,
+        candidate_net: f64,
+    ) -> StepVerdict<()> {
+        let dispatcher_clone = Arc::clone(self.dispatcher);
+        let probe_clone = Arc::clone(&self.probe);
+        let lane_clone = Arc::clone(self.nonce_lane);
+        let submitted_tx = SubmittedTx::new(tx_hash, nonce, path_pools, self.current_block);
+        #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
+        {
+            self.dispatcher
+                .lock()
+                .expect("dispatcher mutex poisoned")
+                .track_task(async move {
+                    let outcome = monitor_pending_transaction_default(
+                        submitted_tx,
+                        &*probe_clone,
+                        &dispatcher_clone,
+                    )
+                    .await;
+                    if matches!(outcome, Ok(ref o) if o.is_expired()) {
+                        let _ = lane_clone.release_broadcast(nonce);
+                    }
+                    match &outcome {
+                        Ok(o) if o.is_confirmed() => {
+                            degenbot_bot::instruments::record(
+                                degenbot_bot::instruments::CensusEvent::MonitorOutcome {
+                                    outcome: "confirmed",
+                                },
+                            );
+                            degenbot_bot::instruments::record(
+                                degenbot_bot::instruments::CensusEvent::ProfitRealized {
+                                    wei: candidate_net,
+                                },
+                            );
+                        }
+                        Ok(_) => {
+                            degenbot_bot::instruments::record(
+                                degenbot_bot::instruments::CensusEvent::MonitorOutcome {
+                                    outcome: "expired",
+                                },
+                            );
+                        }
+                        Err(ref e) => {
+                            degenbot_bot::instruments::record(
+                                degenbot_bot::instruments::CensusEvent::MonitorOutcome {
+                                    outcome: "error",
+                                },
+                            );
+                            degenbot_bot::telemetry::record_exception(
+                                degenbot_bot::telemetry::error_kind::MONITOR_FAILURE,
+                                format_args!("tx monitor error: {e}"),
+                            );
+                        }
+                    }
+                });
+        }
+        StepVerdict::Continue(())
+    }
+}
+
 /// Sort + submit the gas-profitable candidates with mutual exclusivity.
 ///
-/// Pipeline (ports L2608–L2672):
-/// 1. **Sort** by net profit descending (the dispatch fan-out's
-///    `gas_profitable.sort(key=net, reverse=True)` output ordering — L2561;
-///    re-asserted here so a caller handing un-sorted candidates still
-///    submits best-first).
-/// 2. For each candidate:
-///    a. **Mutual-exclusivity guard** — [`Dispatcher::is_path_blocked`] against
-///       `pending_pools` + the loop-local `committed_pools`. Skip with
-///       [`SkipReason::PoolsClaimed`] if blocked (L2626).
-///    b. **`dry_run` guard** — if `dry_run`, commit the pools to the local set
-///       (so the dry-run respects mutual exclusivity) + skip with
-///       [`SkipReason::DryRun`] (L2608/L2664).
-///    c. **`inject_code` guard** — if `inject_code`, commit the pools + skip
-///       with [`SkipReason::InjectCode`] (L2666/L2671 — the injected contract
-///       doesn't exist on-chain, so live submission is unsafe).
-///    d. **Stamp the nonce** — [`NonceLane::stamp`] leases the lowest-free
-///       nonce from the process-wide authority, repackaging past the strategy's
-///       own stale reservation (L2636).
-///    e. **Finalize fees** — [`finalize_fees`] sets `maxPriorityFeePerGas` +
-///       `maxFeePerGas` (= `int(1.5*base_fee_next) + priority_fee`, L2637–
-///       L2639).
-///    f. **Re-compute access list** — [`AlloyProvider::eth_create_access_list`]
-///       with the updated nonce/fees for accuracy (L2641–L2645; failure is
-///       tolerated — the pre-sim access list from the candidate is kept).
-///    g. **Sign** — [`TxSigner::sign_eip1559`] produces the raw `Typed2718`
-///       bytes (L2647 — RFC 6979 deterministic ECDSA, `eth_account`-parity).
-///    h. **Broadcast** — [`AlloyProvider::eth_send_raw_transaction`] returns
-///       the `tx_hash` (L2648–L2654; failure → [`SkipReason::BroadcastFailed`],
-///       the nonce + pools are NOT released — they'll be released by the
-///       monitor's expiry path or a manual cleanup).
-///    i. **Reserve pools** — [`Dispatcher::reserve_pools`] + commit to the
-///       local `committed_pools` (L2662/L2671).
-///    j. **Spawn monitor** — [`monitor_pending_transaction_default`] tracked
-///       by [`Dispatcher::track_task`] (L2664–L2672; the monitor releases the
-///       nonce + pools on confirm/expire).
+/// The batch is one ordered pass over the candidates: every step is a named
+/// stage on [`SubmitBatch`], and the loop acts on all their [`StepVerdict`]s the
+/// same way (a skip becomes a [`SubmitRecord::Skipped`], an abort ends the
+/// batch). The stages share no signature beyond that verdict on purpose — they
+/// carry different payloads, one of them mutates the batch claim set, and the
+/// three delivery arms have different failure policies (see
+/// [`SubmitBatch::deliver`]).
 ///
 /// `dispatcher` is shared via `Arc<Mutex<Dispatcher>>` (the standard sharing
 /// pattern — the monitor reads `current_block` + releases the tx across the
@@ -291,19 +938,18 @@ fn candidate_net_wei(candidate: &SubmitCandidate) -> f64 {
 /// # Errors
 ///
 /// Returns `Err` only on an unrecoverable signer failure (the ECDSA
-/// `sign_eip1559` `?` — a corrupt key; never for a validly-constructed
-/// signer). Per-candidate RPC failures are tolerated as
-/// [`SkipReason::BroadcastFailed`] records (ports the `continue` on
-/// `Web3Exception`).
+/// `sign_eip1559` error — a corrupt key; never for a validly-constructed
+/// signer) or a refused nonce-bookkeeping promotion. Per-candidate RPC failures
+/// are tolerated as [`SkipReason::BroadcastFailed`] records (the `continue` on
+/// `Web3Exception`), and a refused nonce stamp ends the batch with the records
+/// gathered so far instead of erroring.
 ///
 /// # Panics
 ///
 /// Panics if the `dispatcher` mutex is poisoned (a coordinated task
 /// panicked while holding it — unrecoverable; matches the Python assumption
 /// that the dispatcher state is always readable).
-#[expect(clippy::doc_overindented_list_items)] // the a.-g. sub-steps use a deeper indent
-#[expect(clippy::too_many_arguments)] // the pipeline stages each need a param
-#[expect(clippy::too_many_lines)] // the 10-step pipeline is inherent
+#[expect(clippy::too_many_arguments)] // the pipeline's inputs are the batch's inputs
 pub async fn dispatch_and_submit(
     mut candidates: Vec<SubmitCandidate>,
     dispatcher: &Arc<Mutex<Dispatcher>>,
@@ -346,440 +992,60 @@ pub async fn dispatch_and_submit(
         span
     });
     let _guard = span.as_ref().map(tracing::Span::enter);
-    // 1. Sort by net profit descending (the dispatch fan-out's output ordering
-    //    — re-asserted so a caller handing un-sorted candidates submits
-    //    best-first). Ports L2561's `gas_profitable.sort(key=net, reverse=...)`.
-    candidates.sort_by_key(|c| std::cmp::Reverse(c.net_profit));
+
+    SubmitBatch::sort(&mut candidates);
+    let batch = SubmitBatch {
+        dispatcher,
+        provider,
+        signer,
+        probe,
+        nonce_lane,
+        current_block,
+        dry_run,
+        inject_code,
+        extra_broadcast,
+        target: &target,
+    };
 
     let mut outcome = SubmitOutcome::default();
-    // The loop-local committed-pools set (ports `committed_pools` — the pools
-    // claimed by submitted + dry-run/inject-skipped candidates this batch).
-    let mut committed_pools: HashSet<PoolKey> = HashSet::new();
+    let mut state = BatchState::default();
 
     // T4: per-batch latency anchor — candidate loop start → each broadcast.
     let batch_start = std::time::Instant::now();
     for candidate in candidates {
-        // T4: per-candidate economics (histograms; f64 wei for dashboards —
-        // they chart magnitudes, not exact wei; clamped at u128::MAX).
-        {
-            #[expect(clippy::cast_precision_loss)]
-            let gross = u128::try_from(candidate.gross_profit).unwrap_or(u128::MAX) as f64;
-            #[expect(clippy::cast_precision_loss)]
-            let net = u128::try_from(candidate.net_profit).unwrap_or(u128::MAX) as f64;
-            degenbot_bot::instruments::record(
-                degenbot_bot::instruments::CensusEvent::CandidateEconomics {
-                    gross_wei: gross,
-                    net_wei: net,
-                },
-            );
-            degenbot_bot::instruments::record(
-                degenbot_bot::instruments::CensusEvent::CandidateGas {
-                    gas: candidate.gas_used,
-                },
-            );
-        }
+        SubmitBatch::record_candidate_economics(&candidate);
         let path_pools = candidate.path_pools.clone();
 
-        // 2a. Mutual-exclusivity guard (L2626). Lock briefly — no .await.
-        let blocked = {
-            #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
-            let d = dispatcher.lock().expect("dispatcher mutex poisoned");
-            d.is_path_blocked(&path_pools, &committed_pools)
-        };
-        if blocked {
-            degenbot_bot::instruments::record(
-                degenbot_bot::instruments::CensusEvent::SubmitOutcome {
-                    outcome: "skipped_pools_claimed",
-                },
-            );
-            degenbot_bot::instruments::record(
-                degenbot_bot::instruments::CensusEvent::ProfitMissed {
-                    wei: candidate_net_wei(&candidate),
-                },
-            );
-            outcome.records.push(SubmitRecord::Skipped {
-                path_id: candidate.path_id,
-                reason: SkipReason::PoolsClaimed,
-            });
-            continue;
-        }
-
-        // 2b. dry_run guard (L2608). Commit pools (dry-run respects mutual
-        //     exclusivity) + skip.
-        if dry_run {
-            // Dry-run is a MODE, not missed money — counted, not profit-summed.
-            degenbot_bot::instruments::record(
-                degenbot_bot::instruments::CensusEvent::SubmitOutcome {
-                    outcome: "skipped_dry_run",
-                },
-            );
-            committed_pools.extend(path_pools.clone());
-            outcome.records.push(SubmitRecord::Skipped {
-                path_id: candidate.path_id,
-                reason: SkipReason::DryRun,
-            });
-            continue;
-        }
-
-        // 2c. inject_code guard (L2666). The injected contract doesn't exist
-        //     on-chain, so live submission is unsafe. Commit pools + skip.
-        if inject_code {
-            degenbot_bot::instruments::record(
-                degenbot_bot::instruments::CensusEvent::SubmitOutcome {
-                    outcome: "skipped_inject_code",
-                },
-            );
-            degenbot_bot::instruments::record(
-                degenbot_bot::instruments::CensusEvent::ProfitMissed {
-                    wei: candidate_net_wei(&candidate),
-                },
-            );
-            committed_pools.extend(path_pools.clone());
-            outcome.records.push(SubmitRecord::Skipped {
-                path_id: candidate.path_id,
-                reason: SkipReason::InjectCode,
-            });
-            continue;
-        }
-
-        // 2d. Obtain the sign-time nonce from the process-wide authority.
-        //     The lane's default policy repackages past the strategy's own
-        //     stale reservation; a non-stale decline stops the batch rather
-        //     than sign against a nonce the authority refused.
-        let Ok(lease) = nonce_lane.stamp() else {
-            break;
-        };
-        let nonce = lease.nonce();
-
-        // 2e. Build the TxParams + finalize fees (L2637–L2639).
-        //     `gas_limit = int(gas_used * 1.5)` — the 1.5× safety margin
-        //     (L2419). The truncate semantics: `gas_used as f64 * 1.5 as u64`
-        //     matches Python `int(gas_used * 1.5)` (toward-zero) for any
-        //     realistic gas value.
-        #[expect(
-            clippy::cast_precision_loss,
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss
-        )]
-        let gas_limit = (candidate.gas_used as f64 * GAS_SAFETY_MARGIN) as u64;
-        let mut tx_params = TxParams::new(
-            candidate.executor_address,
-            candidate.execute_calldata.clone(),
-            gas_limit,
-            nonce,
-        );
-        // Carry the pre-sim access list (re-computed below for accuracy).
-        if let Some(al) = &candidate.access_list {
-            tx_params.access_list = al.clone();
-        }
-        finalize_fees(
-            &mut tx_params,
-            candidate.base_fee_next,
-            candidate.priority_fee,
-        )?;
-
-        // 2f. Re-compute access list with updated nonce/fees (L2641–L2645).
-        //     Failure is tolerated — the pre-sim access list is kept. Builds a
-        //     TransactionRequest from the finalized TxParams. Lock-free — the
-        //     RPC is a pure provider call.
-        let request = build_transaction_request(&tx_params);
-        match provider
-            .eth_create_access_list(&request, BlockId::Number(BlockNumberOrTag::Latest))
-            .await
-        {
-            Ok(al_result) => {
-                tx_params.access_list = al_result.access_list;
-            }
-            Err(_e) => {
-                // Tolerated — keep the pre-sim access list (ports the
-                // `except Exception as al_exc: ... pass` guard, L2644).
-            }
-        }
-
-        // 2g. Sign (L2647). Synchronous ECDSA — no .await, no lock.
-        let raw_signed = signer.sign_eip1559(&tx_params)?;
-
-        // 2g-bis. Record the freshly signed submission in the per-head ledger
-        //     against the authority-granted nonce, so the head feed can
-        //     reconcile exactly what was built.
-        {
-            let signed_hash = alloy::primitives::keccak256(&raw_signed);
-            let target_hash = match &target {
-                SubmissionTarget::Bundle(bt) => bt.target_tx_hash,
-                // Both non-auction arms identify the submission by the freshly
-                // signed backrun's hash.
-                SubmissionTarget::BuilderRelay { .. } | SubmissionTarget::Public => signed_hash,
-            };
-            nonce_lane
-                .record_signed(&lease, target_hash, signed_hash, current_block)
-                .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
-        }
-
-        // 2h. Broadcast (L2648–L2654).
-        //
-        // MEVBlocker bid channel (the sidecar's bid mode): `eth_sendBundle`
-        // over the searcher WS, `txs = [targetHash, signed backrun]`, pinned
-        // to the target's block with a deterministic replacementUuid. The
-        // signed bytes NEVER touch the public mempool or another relay on
-        // this path — the auction entry is single-destination (doc
-        // how-to/searchers/bid). The executor's coinbase bribe (packed
-        // config, recipient 0) is the fee_recipient payment the docs require.
-        if let SubmissionTarget::Bundle(bt) = &target {
-            let bid = crate::bundle::BundleBid {
-                target_tx_hash: bt.target_tx_hash,
-                backrun_raw: raw_signed.clone(),
-                block_number: bt.block_number,
-                replacement_uuid: crate::bundle::replacement_uuid_for(
-                    bt.target_tx_hash,
-                    bt.block_number,
-                ),
-            };
-            match crate::bundle::send_request(
-                &bt.stream_url,
-                crate::bundle::eth_send_bundle_request(&bid),
-                BUNDLE_RELAY_TIMEOUT,
-            )
-            .await
-            {
-                Ok(resp) => {
-                    let raw = resp
-                        .get("result")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default();
-                    let hash = alloy::hex::FromHex::from_hex(raw)
-                        .unwrap_or_else(|_| alloy::primitives::keccak256(&raw_signed));
-                    degenbot_bot::instruments::record(
-                        degenbot_bot::instruments::CensusEvent::SubmitOutcome {
-                            outcome: "bundle_accepted",
-                        },
-                    );
-                    // Two books, two calls — neither subsumes the other: the
-                    // authority promotes the account lease to a broadcast (the
-                    // nonce stays outstanding until the chain confirms it),
-                    // while the lane's ledger promotes its own signed stamp for
-                    // this strategy. Head reconciliation and the monitor read
-                    // both, so collapsing this pair into one call leaves one
-                    // book stale.
-                    nonce_lane
-                        .authority()
-                        .record_broadcast(&lease)
-                        .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
-                    nonce_lane
-                        .record_broadcast(&lease)
-                        .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
-                    outcome.records.push(SubmitRecord::Submitted {
-                        path_id: candidate.path_id,
-                        tx_hash: hash,
-                        nonce,
-                    });
-                    continue;
-                }
-                Err(e) => {
-                    degenbot_bot::telemetry::record_exception(
-                        degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
-                        format_args!("path {} mevblocker bundle rejected: {e}", candidate.path_id),
-                    );
-                    degenbot_bot::instruments::record(
-                        degenbot_bot::instruments::CensusEvent::SubmitOutcome {
-                            outcome: "skipped_broadcast_failed",
-                        },
-                    );
-                    degenbot_bot::instruments::record(
-                        degenbot_bot::instruments::CensusEvent::ProfitMissed {
-                            wei: candidate_net_wei(&candidate),
-                        },
-                    );
-                    crate::bundle::trace_wire_jsonl(
-                        "bundle_wire_error",
-                        &json!({
-                            "path_id": candidate.path_id,
-                            "target": format!("0x{}", bt.target_tx_hash),
-                            "block": bt.block_number,
-                            "error": format!("{e}"),
-                        }),
-                    );
-                    // The bundle never reached the auction: free the lease so
-                    // the next candidate can stamp.
-                    let _ = nonce_lane.release(&lease);
-                    outcome.records.push(SubmitRecord::Skipped {
-                        path_id: candidate.path_id,
-                        reason: SkipReason::BroadcastFailed(format!(
-                            "mevblocker bundle rejected: {e}"
-                        )),
-                    });
-                    continue;
-                }
-            }
-        }
-        // Flashbots-compatible builder-relay bundle (the txpool backrun's
-        // slot): the TARGET's verbatim signed bytes + the signed backrun as
-        // one `eth_sendBundle` POSTed to every relay over HTTPS. Relief from
-        // auction-host paths entirely; any single relay acceptance submits
-        // the bundle. Signature is derived per relay batch from the exact
-        // JSON body (`X-Flashbots-Signature`).
-        if let SubmissionTarget::BuilderRelay {
-            relays,
-            target_raw,
-            block_number,
-        } = &target
-        {
-            let bundle = crate::relay::BuilderRelayBundle {
-                target_raw: target_raw.clone(),
-                backrun_raw: raw_signed.clone(),
-                block_number: *block_number,
-            };
-            let body = crate::relay::builder_bundle_request(&bundle);
-            let header = match crate::relay::flashbots_signature_header(signer, &body.to_string()) {
-                Ok(header) => header,
-                Err(e) => {
-                    degenbot_bot::telemetry::record_exception(
-                        degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
-                        format_args!("path {} relay signature failed: {e}", candidate.path_id),
-                    );
-                    degenbot_bot::instruments::record(
-                        degenbot_bot::instruments::CensusEvent::SubmitOutcome {
-                            outcome: "skipped_broadcast_failed",
-                        },
-                    );
-                    degenbot_bot::instruments::record(
-                        degenbot_bot::instruments::CensusEvent::ProfitMissed {
-                            wei: candidate_net_wei(&candidate),
-                        },
-                    );
-                    let _ = nonce_lane.release(&lease);
-                    outcome.records.push(SubmitRecord::Skipped {
-                        path_id: candidate.path_id,
-                        reason: SkipReason::BroadcastFailed(format!("relay sign failed: {e}")),
-                    });
-                    continue;
-                }
-            };
-            let outcomes = crate::relay::send_bundle_to_relays(relays, &body, &header).await;
-            let accepted = crate::relay::accepted_count(&outcomes);
-            if accepted > 0 {
-                let hash = alloy::primitives::keccak256(&raw_signed);
-                degenbot_bot::instruments::record(
-                    degenbot_bot::instruments::CensusEvent::SubmitOutcome {
-                        outcome: "builder_relay_accepted",
-                    },
-                );
-                nonce_lane
-                    .authority()
-                    .record_broadcast(&lease)
-                    .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
-                nonce_lane
-                    .record_broadcast(&lease)
-                    .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
-                outcome.records.push(SubmitRecord::Submitted {
-                    path_id: candidate.path_id,
-                    tx_hash: hash,
-                    nonce,
-                });
-                continue;
-            }
-            // Every relay rejected the bundle: the typed skip + lease
-            // release, mirroring the raw fan-out's all-fail arm.
-            degenbot_bot::telemetry::record_exception(
-                degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
-                format_args!(
-                    "path {} every builder relay rejected the bundle",
-                    candidate.path_id
-                ),
-            );
-            degenbot_bot::instruments::record(
-                degenbot_bot::instruments::CensusEvent::SubmitOutcome {
-                    outcome: "skipped_broadcast_failed",
-                },
-            );
-            degenbot_bot::instruments::record(
-                degenbot_bot::instruments::CensusEvent::ProfitMissed {
-                    wei: candidate_net_wei(&candidate),
-                },
-            );
-            let _ = nonce_lane.release(&lease);
-            outcome.records.push(SubmitRecord::Skipped {
-                path_id: candidate.path_id,
-                reason: SkipReason::BroadcastFailed(
-                    "every builder relay rejected the bundle".to_string(),
-                ),
-            });
-            continue;
-        }
-        // Legacy raw fan-out (all other callers): the SAME signed bytes go
-        // to every relay in `extra_broadcast` (the read provider is NOT
-        // broadcast to unless the list is empty — the legacy single-endpoint
-        // behavior). First acceptance defines the tracked hash; total
-        // failure = the typed skip.
-        let mut accepted_hash: Option<B256> = None;
-        let broadcast_targets: Vec<&AlloyProvider> = if extra_broadcast.is_empty() {
-            vec![provider]
-        } else {
-            extra_broadcast.iter().map(std::sync::Arc::as_ref).collect()
-        };
-        for relay_provider in &broadcast_targets {
-            match relay_provider.eth_send_raw_transaction(&raw_signed).await {
-                Ok(hash) => {
-                    if accepted_hash.is_none() {
-                        accepted_hash = Some(hash);
+        // The bookkeeping around the stages is uniform even though the stages
+        // are not: a `Skip` records the typed reason and moves to the next
+        // candidate, an `AbortBatch` ends the batch where it stands. What each
+        // stage decides stays inside its own method.
+        macro_rules! stage {
+            ($verdict:expr) => {
+                match $verdict {
+                    StepVerdict::Continue(payload) => payload,
+                    StepVerdict::Skip(reason) => {
+                        outcome.records.push(SubmitRecord::Skipped {
+                            path_id: candidate.path_id,
+                            reason,
+                        });
+                        continue;
                     }
+                    StepVerdict::AbortBatch => break,
                 }
-                Err(e) => {
-                    degenbot_bot::telemetry::record_exception(
-                        degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
-                        format_args!("path {} relay broadcast failed: {e}", candidate.path_id),
-                    );
-                }
-            }
+            };
         }
-        let tx_hash = if let Some(hash) = accepted_hash {
-            degenbot_bot::instruments::record(
-                degenbot_bot::instruments::CensusEvent::SubmitOutcome {
-                    outcome: "relay_accepted",
-                },
-            );
-            nonce_lane
-                .authority()
-                .record_broadcast(&lease)
-                .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
-            nonce_lane
-                .record_broadcast(&lease)
-                .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
-            hash
-        } else {
-            // The broadcast failed on EVERY relay — skip with the typed
-            // reason. The claimed nonce + pools are NOT released here
-            // (ports the `continue` on Web3Exception — the nonce is
-            // leaked until a manual cleanup or the dispatcher's reap).
-            // The monitor is NOT spawned (no tx to track).
-            degenbot_bot::instruments::record(
-                degenbot_bot::instruments::CensusEvent::SubmitOutcome {
-                    outcome: "skipped_broadcast_failed",
-                },
-            );
-            degenbot_bot::instruments::record(
-                degenbot_bot::instruments::CensusEvent::ProfitMissed {
-                    wei: candidate_net_wei(&candidate),
-                },
-            );
-            // Every relay rejected the raw transaction: free the lease so the
-            // next candidate can stamp.
-            let _ = nonce_lane.release(&lease);
-            outcome.records.push(SubmitRecord::Skipped {
-                path_id: candidate.path_id,
-                reason: SkipReason::BroadcastFailed(
-                    "all relays rejected the raw transaction".to_string(),
-                ),
-            });
-            continue;
-        };
 
-        // 2i. Reserve pools (L2662) + commit to the local set.
-        {
-            #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
-            let mut d = dispatcher.lock().expect("dispatcher mutex poisoned");
-            d.reserve_pools(path_pools.clone());
-        }
-        committed_pools.extend(path_pools.clone());
+        let () = stage!(batch.guard_mutual_exclusion(&candidate, &path_pools, &state));
+        let () = stage!(batch.guard_dry_run(&path_pools, &mut state));
+        let () = stage!(batch.guard_inject_code(&candidate, &path_pools, &mut state));
+        let lease = stage!(batch.stamp_nonce());
+        let nonce = lease.nonce();
+        let tx_params = stage!(SubmitBatch::build_tx_params(&candidate, nonce)?);
+        let tx_params = stage!(batch.recompute_access_list(tx_params).await);
+        let raw_signed = stage!(batch.sign_and_record(&tx_params, &lease)?);
+        let tx_hash = stage!(batch.deliver(&candidate, &raw_signed, &lease).await?);
+        let () = stage!(batch.reserve_and_record(&path_pools, &mut state));
 
         degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::SubmitOutcome {
             outcome: "submitted",
@@ -793,74 +1059,10 @@ pub async fn dispatch_and_submit(
             nonce,
         });
 
-        // 2j. Spawn the monitor (L2664–L2672). The dispatcher handle is cloned
-        //     into the spawned task (the `Arc<Mutex<Dispatcher>>` sharing
-        //     pattern). The monitor releases the pools on confirm/expire; the
-        //     authority owns the nonce lifecycle.
-        let dispatcher_clone = Arc::clone(dispatcher);
-        let probe_clone = Arc::clone(&probe);
-        let lane_clone = Arc::clone(nonce_lane);
-        let submitted_tx = SubmittedTx::new(tx_hash, nonce, path_pools, current_block);
         // T4: realized profit — this candidate's net profit lands on the
-        // realized counter iff its tx confirms. Cloned into the task (the
-        // loop moves `candidate` on).
-        let candidate_net = candidate_net_wei(&candidate);
-        #[expect(clippy::expect_used)] // poisoned sync-guard = process bug; panic loudly
-        {
-            dispatcher
-                .lock()
-                .expect("dispatcher mutex poisoned")
-                .track_task(async move {
-                    let outcome = monitor_pending_transaction_default(
-                        submitted_tx,
-                        &*probe_clone,
-                        &dispatcher_clone,
-                    )
-                    .await;
-                    // An expired broadcast is declared dead: release the
-                    // authority slot so a dropped transaction cannot wedge the
-                    // account's nonce prefix. A confirmed broadcast is landed
-                    // by the per-head reconcile instead (its transaction is on
-                    // the chain).
-                    if matches!(outcome, Ok(ref o) if o.is_expired()) {
-                        let _ = lane_clone.release_broadcast(nonce);
-                    }
-                    {
-                        match &outcome {
-                            Ok(o) if o.is_confirmed() => {
-                                degenbot_bot::instruments::record(
-                                    degenbot_bot::instruments::CensusEvent::MonitorOutcome {
-                                        outcome: "confirmed",
-                                    },
-                                );
-                                degenbot_bot::instruments::record(
-                                    degenbot_bot::instruments::CensusEvent::ProfitRealized {
-                                        wei: candidate_net,
-                                    },
-                                );
-                            }
-                            Ok(_) => {
-                                degenbot_bot::instruments::record(
-                                    degenbot_bot::instruments::CensusEvent::MonitorOutcome {
-                                        outcome: "expired",
-                                    },
-                                );
-                            }
-                            Err(ref e) => {
-                                degenbot_bot::instruments::record(
-                                    degenbot_bot::instruments::CensusEvent::MonitorOutcome {
-                                        outcome: "error",
-                                    },
-                                );
-                                degenbot_bot::telemetry::record_exception(
-                                    degenbot_bot::telemetry::error_kind::MONITOR_FAILURE,
-                                    format_args!("tx monitor error: {e}"),
-                                );
-                            }
-                        }
-                    }
-                });
-        }
+        // realized counter iff its tx confirms.
+        let () =
+            stage!(batch.spawn_monitor(tx_hash, nonce, path_pools, candidate_net_wei(&candidate)));
     }
 
     // with the empty-batch gate the span is optional - the outcome

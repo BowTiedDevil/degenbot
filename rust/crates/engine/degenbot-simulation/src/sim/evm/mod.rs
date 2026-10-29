@@ -63,13 +63,15 @@
 /// relocated to `degenbot-arbitrage` (ADR-019 D4/D7, decision R).
 pub mod simulator;
 
-/// The engine's settled-run verb + typed view reads over the per-block EVM.
+/// The engine's settled-run verbs + typed view reads over the per-block EVM.
 ///
-/// [`SimSession::run`](session::SimSession::run) IS the isolation rule the
-/// shared handle lives by (`transact_one` + `finalize`, no `commit` on the
-/// surface), and the typed reads answer from that settled view. The session's
-/// `evm_mut` is the documented escape hatch for a strategy bundle that needs
-/// raw revm.
+/// [`SimSession::run`](session::SimSession::run) and
+/// [`SimSession::run_sequence`](session::SimSession::run_sequence) ARE the
+/// isolation rule the shared handle lives by (`transact_one` + `finalize`, no
+/// `commit` on the surface), and the typed reads answer from that settled view.
+/// The sequence verb is what a bundle whose journal must accumulate across
+/// calls uses: it takes the steps (each with its own inspector) and returns the
+/// per-step results.
 pub mod session;
 
 /// Sim-scoped override application on a `CacheDB`.
@@ -151,8 +153,8 @@ pub use inspectors::{
 /// surface it for the strategy crate (`degenbot-arbitrage`) + the
 /// PyO3 wrapper. The strategy types (`SimResult`, `SimulateContext`, …) now
 /// live in `degenbot-arbitrage`.
-pub use session::{RunVerdict, SimError, SimRun, SimSession};
-pub use simulator::{BlockEvm, BlockSimHandle, ProductionBlockDb, ScratchDb};
+pub use session::{RunVerdict, SimError, SimRun, SimSequence, SimSession, SimStep};
+pub use simulator::{build_block_evm, BlockEvm, BlockSimHandle, ProductionBlockDb, ScratchDb};
 pub use state_override::{apply_simulation_overrides, SimulationOverrideParams};
 pub use storage_memo::StorageMemo;
 pub use warm_code_cache::{WarmCodeCache, WarmCodeCacheInner, WARM_CODE_CACHE_TTL_BLOCKS};

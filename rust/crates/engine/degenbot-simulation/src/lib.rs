@@ -64,11 +64,12 @@ pub use oracle::{
 // strategy value types (`SimResult`, `SimulateContext`, `FailBuckets`, …)
 // now live in `degenbot-arbitrage`.
 pub use sim::evm::{
-    apply_simulation_overrides, divergence_probe, emit_access_list_from_state, AccessListCollector,
-    BaseFeeSource, BlockEvm, BlockSimHandle, BotStateDb, CallFrame, CallTrace, CallTraceHandle,
-    CallTraceInspector, CapturedSwap, CountingFrameDb, FrameOutcome, FrameRpcCounter,
-    ProductionBlockDb, ReplayFrameError, ReplayOutcome, ReplayableTx, RunVerdict, ScratchBlock,
-    ScratchDb, ScratchEvm, SimError, SimInspector, SimRun, SimSession, SimulationOverrideParams,
-    StorageMemo, SwapEventCaptureHandle, SwapEventCaptureInspector, SwapFamily, WarmCodeCache,
-    WarmCodeCacheInner, WARM_CODE_CACHE_TTL_BLOCKS,
+    apply_simulation_overrides, build_block_evm, divergence_probe, emit_access_list_from_state,
+    AccessListCollector, BaseFeeSource, BlockEvm, BlockSimHandle, BotStateDb, CallFrame, CallTrace,
+    CallTraceHandle, CallTraceInspector, CapturedSwap, CountingFrameDb, FrameOutcome,
+    FrameRpcCounter, ProductionBlockDb, ReplayFrameError, ReplayOutcome, ReplayableTx, RunVerdict,
+    ScratchBlock, ScratchDb, ScratchEvm, SimError, SimInspector, SimRun, SimSequence, SimSession,
+    SimStep, SimulationOverrideParams, StorageMemo, SwapEventCaptureHandle,
+    SwapEventCaptureInspector, SwapFamily, WarmCodeCache, WarmCodeCacheInner,
+    WARM_CODE_CACHE_TTL_BLOCKS,
 };

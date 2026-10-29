@@ -19,7 +19,7 @@ from typing import SupportsIndex
 
 from .cancel import CancelHandle
 
-__all__ = ["run_pool_update", "verify_v3_liquidity_map", "verify_v4_liquidity_map"]
+__all__ = ["run_pool_update", "verify_liquidity_map"]
 
 def run_pool_update(
     database_path: str,
@@ -92,29 +92,31 @@ def run_pool_update(
     thread with no ambient runtime. See the module docs.
     """
 
-def verify_v3_liquidity_map(
+def verify_liquidity_map(
     database_path: str,
     rpc_url: str,
     chain_id: SupportsIndex,
-    pool_address: str,
+    family: str,
+    address_or_manager: str,
+    pool_id: str | None,
     block_number: SupportsIndex,
 ) -> list[dict]:
     """
-    `degenbot._ffi.pool.verify_v3_liquidity_map(database_path, rpc_url, chain_id,
-    pool_address, block_number) -> list[dict]`
+    `degenbot._ffi.pool.verify_liquidity_map(database_path, rpc_url, chain_id,
+    family, address_or_manager, pool_id, block_number) -> list[dict]`
 
-    Standalone on-chain-truth verification of a V3 pool's COMMITTED liquidity
+    Standalone on-chain-truth verification of one pool's COMMITTED liquidity
     map (read-only — no SQL writes, no event apply). Opens the DB, fetches the
     pool's `liquidity_positions` rows, builds the in-memory map, + compares
-    EVERY tick + (derived) bitmap word against on-chain
-    `IUniswapV3Pool.ticks(int24)` / `tickBitmap(int16)` at `block_number`, all
-    batched through Multicall3. Returns the divergence list (empty = GREEN —
-    the DB matches the chain at `block_number`).
+    EVERY tick + (derived) bitmap word against chain state at `block_number`:
+    `IUniswapV3Pool.ticks(int24)` / `tickBitmap(int16)` batched through
+    Multicall3 for `family="v3"`, the singleton
+    `PoolManager.extsload(bytes32[])` for `family="v4"`. Returns the divergence
+    list (empty = GREEN — the DB matches the chain at `block_number`).
 
     This is the ad-hoc / spot-check sibling of the pre-commit gate
-    (`run_pool_update(verify=True)`); the gate runs the SAME core verify
+    (`run_pool_update(verify_chunk=True)`); the gate runs the SAME core verify
     BEFORE the write commits, while this reads the already-committed state.
-    Per-position `eth_call`s are batched via Multicall3.
 
     The GIL is released across the whole call (`py.detach`); the live
     `AlloyProvider` is built through [`crate::provider_seam`] and the call
@@ -122,35 +124,27 @@ def verify_v3_liquidity_map(
     never a per-call runtime build
     ([`crate::provider_seam::require_ambient_runtime`]; mirrors the aave
     verify seam).
-    """
 
-def verify_v4_liquidity_map(
-    database_path: str,
-    rpc_url: str,
-    chain_id: SupportsIndex,
-    pool_hash: str,
-    pool_manager_address: str,
-    block_number: SupportsIndex,
-) -> list[dict]:
-    """
-    `degenbot._ffi.pool.verify_v4_liquidity_map(database_path, rpc_url, chain_id,
-    pool_hash, pool_manager_address, block_number) -> list[dict]`
+    # Args
 
-    Standalone on-chain-truth verification of a V4 pool's COMMITTED liquidity
-    map via the singleton `PoolManager.extsload(bytes32[])` at `block_number`
-    (read-only — mirrors [`verify_v3_liquidity_map`]). `pool_hash` is the V4
-    `PoolId` (bytes32 hex, `0x…`); `pool_manager_address` is the deployed V4
-    `PoolManager` singleton (the chain has one — it's the V4 exchange's
-    `factory`). Returns the divergence list (empty = GREEN).
+    - `database_path` — the readable `DegenbotDb` path holding the committed map.
+    - `rpc_url` — the HTTP RPC endpoint.
+    - `chain_id` — the chain the pool's committed rows belong to.
+    - `family` — `"v3"` (a pool contract) or `"v4"` (the `PoolManager`
+      singleton).
+    - `address_or_manager` — the V3 pool address, or the V4 `PoolManager`
+      address.
+    - `pool_id` — the V4 `PoolId` (bytes32 hex, `0x…`); `None` for `"v3"`.
+    - `block_number` — the block the on-chain reads pin.
 
-    The GIL is released across the whole call; the live provider is built
-    through [`crate::provider_seam`] and the call runs on the ambient tokio
-    runtime (a missing runtime is a typed error, never a per-call runtime
-    build — [`crate::provider_seam::require_ambient_runtime`]).
+    # Raises
+
+    `ValueError` for a key that names no pool (unknown family, malformed
+    address or `pool_id`, a `pool_id` on a V3 call, none on a V4 call), for a
+    DB or RPC failure, and when no ambient tokio runtime exists.
     """
 
 __all__ = [
     "run_pool_update",
-    "verify_v3_liquidity_map",
-    "verify_v4_liquidity_map",
+    "verify_liquidity_map",
 ]

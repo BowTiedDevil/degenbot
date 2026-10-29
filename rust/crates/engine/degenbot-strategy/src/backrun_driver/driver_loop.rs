@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::backrun::{BackrunConfig, Decision};
+use crate::backrun::{BackrunConfig, Decision, ObserveReason};
 use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_eventhub::{HeadSubscription, Hub};
 use degenbot_rpc::pending_tx_stream::PendingTxStream;
@@ -73,8 +73,8 @@ pub(super) enum FrameOutcome {
     /// the structural pool-pred lane owns it — record the guard WITH content,
     /// keep the frame parked, never resolve it.
     PredecessorMalformed,
-    /// Any other terminal observe/drop, carrying its trace reason.
-    Terminal(&'static str),
+    /// Any other terminal observe/drop, carrying its reason.
+    Terminal(ObserveReason),
 }
 
 /// Collapse a detailed pass outcome to the rescue router's three classes.
@@ -92,18 +92,36 @@ pub(super) fn reentry_outcome(outcome: FrameOutcome) -> ReentryOutcome {
 
 /// Map an `Observe` reason to its outcome class; the replay-seam and
 /// gap-pending reasons are named by [`crate::frame_pipeline`].
-pub(super) fn outcome_for(reason: &'static str) -> FrameOutcome {
+///
+/// The match is exhaustive on purpose: a new reason cannot reach the rescue
+/// router without a reviewed class, so no frame's quarantine life is ever
+/// ended by a label nobody classified.
+pub(super) fn outcome_for(reason: ObserveReason) -> FrameOutcome {
     match reason {
-        "gap_pending" => FrameOutcome::GapPending,
-        "replay_unavailable" => FrameOutcome::ReplayUnavailable,
-        // `mispriced_transaction` (base fee rejected even after the disabled
+        ObserveReason::GapPending => FrameOutcome::GapPending,
+        ObserveReason::ReplayUnavailable => FrameOutcome::ReplayUnavailable,
+        // `MispricedTransaction` (base fee rejected even after the disabled
         // retry) and a predecessor's retryable failure are transient: never
         // terminal and never guarded.
-        "replay_failed" | "mispriced_transaction" | "predecessor_replay_failed" => {
-            FrameOutcome::ReplayFailed
-        }
-        "predecessor_malformed" => FrameOutcome::PredecessorMalformed,
-        other => FrameOutcome::Terminal(other),
+        ObserveReason::ReplayFailed
+        | ObserveReason::MispricedTransaction
+        | ObserveReason::PredecessorReplayFailed => FrameOutcome::ReplayFailed,
+        ObserveReason::PredecessorMalformed => FrameOutcome::PredecessorMalformed,
+        // Every remaining class is terminal: the frame's pass is over, whether
+        // it observed or dropped.
+        ObserveReason::KillSwitch
+        | ObserveReason::BudgetExhausted
+        | ObserveReason::ObserveOnly
+        | ObserveReason::NetAfterGasUnprofitable
+        | ObserveReason::SimSkippedFixtureMode
+        | ObserveReason::SimGateFailed
+        | ObserveReason::NoCandidate
+        | ObserveReason::NonBaseQuote
+        | ObserveReason::AlreadySettled
+        | ObserveReason::MalformedTransaction
+        | ObserveReason::Reverted
+        | ObserveReason::FamilyUnsupported
+        | ObserveReason::V4Unsupported => FrameOutcome::Terminal(reason),
     }
 }
 
@@ -233,10 +251,10 @@ pub(super) async fn run_frame(
             ev.hash
         );
         trace_jsonl(
-            "malformed_transaction",
+            ObserveReason::MalformedTransaction.as_str(),
             serde_json::json!({"tx": format!("0x{:x}", ev.hash), "zero_gas": true}),
         );
-        return FrameOutcome::Terminal("malformed_transaction");
+        return FrameOutcome::Terminal(ObserveReason::MalformedTransaction);
     }
 
     // Offline-review capture: the feed wire shape, verbatim in all its
@@ -284,15 +302,15 @@ pub(super) async fn run_frame(
     // alone leaves the funnel's last stage out of the JSONL.
     let (decision_kind, decision_reason, decision_bid) = match &artifacts.decision {
         Decision::Bid { bid_wei } => ("bid", None, Some(bid_wei.to_string())),
-        Decision::Observe { reason } => ("observe", Some((*reason).to_string()), None),
-        Decision::Drop { reason } => ("drop", Some((*reason).to_string()), None),
+        Decision::Observe { reason } => ("observe", Some(*reason), None),
+        Decision::Drop { reason } => ("drop", Some(*reason), None),
     };
     trace_jsonl(
         "decide",
         serde_json::json!({
             "tx": ev.hash.to_string(),
             "decision": decision_kind,
-            "reason": decision_reason,
+            "reason": decision_reason.map(ObserveReason::as_str),
             "bid_wei": decision_bid,
             "composed_any": artifacts.submit_calldata.is_some(),
             "requested_bid": artifacts.requested_bid.to_string(),
@@ -304,12 +322,15 @@ pub(super) async fn run_frame(
     // a silent drop (the frame that killed one path registration!) is no
     // longer observable (Regression for tx 0x3dcfe).
     if let Some(pipeline) = degenbot_substrate::telemetry_port::pipeline() {
-        pipeline.count_backrun_frame(decision_kind, decision_reason.as_deref().unwrap_or(""));
+        pipeline.count_backrun_frame(
+            decision_kind,
+            decision_reason.map_or("", ObserveReason::as_str),
+        );
     }
     tracing::info!(
         tx = %ev.hash,
         decision = decision_kind,
-        reason = decision_reason.as_deref().unwrap_or(""),
+        reason = decision_reason.map_or("", ObserveReason::as_str),
         "backrun frame decided"
     );
     if let Some(degenbot_simulation::sim::evm::frame_replay::ReplayFrameError::GapPending {
@@ -360,7 +381,7 @@ pub(super) async fn run_frame(
     }
 
     if let Decision::Observe {
-        reason: "gap_pending",
+        reason: ObserveReason::GapPending,
     } = &artifacts.decision
     {
         let probe_out = gap_probe.probe_gap(ev.from, ev.nonce).await;

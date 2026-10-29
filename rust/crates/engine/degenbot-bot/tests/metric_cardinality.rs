@@ -37,16 +37,14 @@ const ALLOWED_LABELS: &[&str] = &[
     "outcome",
     "site",
     // `degenbot_backrun_frame_observed{reason}`: the frame-terminal observe
-    // reason — a closed set of `&'static` `Decision` reasons produced by
-    // `backrun_strategy.rs::decide` (`honest_observe`) and the
-    // `frame_pipeline.rs` reason functions: `no_candidate`,
-    // `non_base_quote`, `v4_unsupported`, `family-unsupported`, `reverted`,
-    // `replay_unavailable`, `gap_pending`, `already_settled`,
-    // `malformed_transaction`, `mispriced_transaction`, `replay_failed`,
-    // `predecessor_malformed`, `predecessor_replay_failed`,
-    // `sim_gate_failed`, `sim_skipped_fixture_mode`,
-    // `net_after_gas_unprofitable`, `observe_only`, `budget_exhausted`,
-    // `kill_switch`. The same `reason`
+    // reason — compile-pinned by `degenbot_strategy::backrun::ObserveReason`,
+    // whose variant set IS the closed value set. `ObserveReason::as_str` is
+    // the one label conversion, the producers are
+    // `backrun_strategy.rs::decide` (the enum's `honest` rewrite) and the
+    // `frame_pipeline.rs` reason functions, and
+    // `ObserveReason::ALL` is pinned to the 19 unique labels by
+    // `backrun::tests::observe_reasons_are_the_closed_metric_value_set`.
+    // The same `reason`
     // label name also carries the registration-skip and sim-error closed
     // sets. Compose-reject labels (`amount_exceeds_uint96`,
     // `encoding_failed:cmd_stream`, `encoding_failed:execute_call`,

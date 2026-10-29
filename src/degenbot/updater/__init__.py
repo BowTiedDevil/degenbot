@@ -3,8 +3,8 @@
 Everything a driver needs from the Rust pool-updater machinery:
 
 - :func:`run_pool_update` — drives the per-pool chunk loop (Rust core)
-- :func:`verify_v3_liquidity_map` / :func:`verify_v4_liquidity_map` — verify
-  decoded liquidity against on-chain truth
+- :func:`verify_liquidity_map` — verify a pool's committed decoded liquidity
+  against on-chain truth (keyed by ``family`` + the pool's address / hub id)
 - :class:`V2PoolRowInput` / :class:`V3PoolRowInput` / :class:`V4PoolRowInput`
   — pool registration inputs
 - :class:`LiquidityUpdateEvent` — a decoded V3/V4 liquidity update (Mint/Burn delta)
@@ -25,11 +25,7 @@ from degenbot._ffi.db import (
     V3PoolRowInput,
     V4PoolRowInput,
 )
-from degenbot._ffi.pool import (
-    run_pool_update,
-    verify_v3_liquidity_map,
-    verify_v4_liquidity_map,
-)
+from degenbot._ffi.pool import run_pool_update, verify_liquidity_map
 
 __all__ = [
     "CancelHandle",
@@ -38,6 +34,5 @@ __all__ = [
     "V3PoolRowInput",
     "V4PoolRowInput",
     "run_pool_update",
-    "verify_v3_liquidity_map",
-    "verify_v4_liquidity_map",
+    "verify_liquidity_map",
 ]

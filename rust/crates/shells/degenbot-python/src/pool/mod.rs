@@ -30,8 +30,10 @@
 //! call in `tokio::task::spawn_blocking`.
 
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
 
+use alloy::primitives::{Address, B256};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -208,21 +210,91 @@ fn run_pool_update_injected(
     )
 }
 
-/// `degenbot._ffi.pool.verify_v3_liquidity_map(database_path, rpc_url, chain_id,
-/// pool_address, block_number) -> list[dict]`
+/// The pool identity a verify call is keyed by, resolved from the `family`
+/// argument plus the raw argument strings.
+enum VerifyIdentity {
+    /// A V3 pool contract, plus the checksummed key its committed row is
+    /// stored under.
+    V3 {
+        /// The pool contract.
+        pool_address: Address,
+        /// The committed `pools` row key.
+        db_key: String,
+    },
+    /// A V4 pool: its `PoolManager` singleton, its `PoolId`, plus the caller's
+    /// `pool_id` text. The committed `pool_hash` column stores that text
+    /// verbatim, so re-formatting the parsed value would miss row spellings
+    /// the lookup accepts.
+    V4 {
+        /// The V4 `PoolManager` singleton.
+        pool_manager: Address,
+        /// The V4 pool identity.
+        pool_id: B256,
+        /// The committed `pool_hash` row key.
+        db_key: String,
+    },
+}
+
+/// Resolve a verify call's identity, refusing a key that names no pool before
+/// any DB open or provider build.
+fn parse_verify_identity(
+    family: &str,
+    address_or_manager: &str,
+    pool_id: Option<&str>,
+) -> PyResult<VerifyIdentity> {
+    use pyo3::exceptions::PyValueError;
+
+    match family {
+        "v3" => {
+            if pool_id.is_some() {
+                return Err(PyValueError::new_err(
+                    "pool_id names a V4 pool; pass None with family \"v3\"",
+                ));
+            }
+            let pool_address: Address = address_or_manager
+                .parse()
+                .map_err(|e| PyValueError::new_err(format!("bad pool_address: {e}")))?;
+            Ok(VerifyIdentity::V3 {
+                pool_address,
+                db_key: pool_address.to_checksum(None),
+            })
+        }
+        "v4" => {
+            let pool_id_hex = pool_id.ok_or_else(|| {
+                PyValueError::new_err("pool_id is required with family \"v4\" (bytes32 hex)")
+            })?;
+            let pool_manager: Address = address_or_manager
+                .parse()
+                .map_err(|e| PyValueError::new_err(format!("bad pool_manager_address: {e}")))?;
+            let pool_id = B256::from_str(pool_id_hex.strip_prefix("0x").unwrap_or(pool_id_hex))
+                .map_err(|e| PyValueError::new_err(format!("bad pool_id: {e}")))?;
+            Ok(VerifyIdentity::V4 {
+                pool_manager,
+                pool_id,
+                db_key: pool_id_hex.to_string(),
+            })
+        }
+        other => Err(PyValueError::new_err(format!(
+            "unknown family {other:?}; expected \"v3\" or \"v4\""
+        ))),
+    }
+}
+
+/// `degenbot._ffi.pool.verify_liquidity_map(database_path, rpc_url, chain_id,
+/// family, address_or_manager, pool_id, block_number) -> list[dict]`
 ///
-/// Standalone on-chain-truth verification of a V3 pool's COMMITTED liquidity
+/// Standalone on-chain-truth verification of one pool's COMMITTED liquidity
 /// map (read-only — no SQL writes, no event apply). Opens the DB, fetches the
 /// pool's `liquidity_positions` rows, builds the in-memory map, + compares
-/// EVERY tick + (derived) bitmap word against on-chain
-/// `IUniswapV3Pool.ticks(int24)` / `tickBitmap(int16)` at `block_number`, all
-/// batched through Multicall3. Returns the divergence list (empty = GREEN —
-/// the DB matches the chain at `block_number`).
+/// EVERY tick + (derived) bitmap word against chain state at `block_number`:
+/// `IUniswapV3Pool.ticks(int24)` / `tickBitmap(int16)` batched through
+/// Multicall3 for `family="v3"`, the singleton
+/// `PoolManager.extsload(bytes32[])` for `family="v4"`. Returns the divergence
+/// list (empty = GREEN — the DB matches the chain at `block_number`).
 ///
 /// This is the ad-hoc / spot-check sibling of the pre-commit gate
-/// (`run_pool_update(verify=True)`); the gate runs the SAME core verify
+/// (`run_pool_update(verify_chunk=True)`); the gate runs the SAME core verify
 /// BEFORE the write commits, while this reads the already-committed state.
-/// Per-position `eth_call`s are batched via Multicall3.
 ///
 /// The GIL is released across the whole call (`py.detach`); the live
 /// `AlloyProvider` is built through [`crate::provider_seam`] and the call
@@ -230,24 +302,43 @@ fn run_pool_update_injected(
 /// never a per-call runtime build
 /// ([`crate::provider_seam::require_ambient_runtime`]; mirrors the aave
 /// verify seam).
+///
+/// # Args
+///
+/// - `database_path` — the readable `DegenbotDb` path holding the committed map.
+/// - `rpc_url` — the HTTP RPC endpoint.
+/// - `chain_id` — the chain the pool's committed rows belong to.
+/// - `family` — `"v3"` (a pool contract) or `"v4"` (the `PoolManager`
+///   singleton).
+/// - `address_or_manager` — the V3 pool address, or the V4 `PoolManager`
+///   address.
+/// - `pool_id` — the V4 `PoolId` (bytes32 hex, `0x…`); `None` for `"v3"`.
+/// - `block_number` — the block the on-chain reads pin.
+///
+/// # Raises
+///
+/// `ValueError` for a key that names no pool (unknown family, malformed
+/// address or `pool_id`, a `pool_id` on a V3 call, none on a V4 call), for a
+/// DB or RPC failure, and when no ambient tokio runtime exists.
 #[pyfunction]
-#[pyo3(signature = (database_path, rpc_url, chain_id, pool_address, block_number))]
-fn verify_v3_liquidity_map(
+#[pyo3(signature = (database_path, rpc_url, chain_id, family, address_or_manager, pool_id, block_number))]
+#[expect(clippy::too_many_arguments)]
+fn verify_liquidity_map(
     py: Python<'_>,
     database_path: &str,
     rpc_url: &str,
     chain_id: i64,
-    pool_address: &str,
+    family: &str,
+    address_or_manager: &str,
+    pool_id: Option<&str>,
     block_number: u64,
 ) -> PyResult<Vec<Py<PyDict>>> {
     use degenbot_db::{ComputedLiquidityUpdate, DegenbotDb};
-    use degenbot_pool_updater::verify_v3_liquidity_map_on_chain;
+    use degenbot_pool_updater::verify_liquidity_map_on_chain;
+    use degenbot_rpc::liquidity_verifier::LiquidityMapTarget;
 
     let path = PathBuf::from(database_path);
-    let addr: alloy::primitives::Address = pool_address
-        .parse()
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("bad pool_address: {e}")))?;
-    let addr_str = addr.to_checksum(None);
+    let identity = parse_verify_identity(family, address_or_manager, pool_id)?;
 
     let divergences = py
         .detach(move || {
@@ -260,115 +351,79 @@ fn verify_v3_liquidity_map(
             crate::provider_seam::require_ambient_runtime()?;
             let db = DegenbotDb::open(&path).map_err(RunError::Db)?.0;
             let conn = db.lock();
-            let state = DegenbotDb::fetch_v3_pool_update_state_on_conn(&conn, chain_id, &addr_str)
-                .map_err(RunError::Db)?
-                .ok_or_else(|| {
-                    RunError::Db(degenbot_db::DbError::Decode(format!(
-                        "v3 pool {addr_str} not found on chain {chain_id}"
-                    )))
-                })?;
-            let tick_data = DegenbotDb::fetch_v3_liquidity_map_on_conn(
-                &conn,
-                state.pool_id,
-                state.snapshot_block(),
-            )
-            .map_err(RunError::Db)?;
-            let computed = ComputedLiquidityUpdate {
-                pool_id: state.pool_id,
-                tick_spacing: state.tick_spacing,
-                tick_data,
-                last_event: None,
+            let (computed, target) = match &identity {
+                VerifyIdentity::V3 {
+                    pool_address,
+                    db_key,
+                } => {
+                    let state =
+                        DegenbotDb::fetch_v3_pool_update_state_on_conn(&conn, chain_id, db_key)
+                            .map_err(RunError::Db)?
+                            .ok_or_else(|| {
+                                RunError::Db(degenbot_db::DbError::Decode(format!(
+                                    "v3 pool {db_key} not found on chain {chain_id}"
+                                )))
+                            })?;
+                    let tick_data = DegenbotDb::fetch_v3_liquidity_map_on_conn(
+                        &conn,
+                        state.pool_id,
+                        state.snapshot_block(),
+                    )
+                    .map_err(RunError::Db)?;
+                    (
+                        ComputedLiquidityUpdate {
+                            pool_id: state.pool_id,
+                            tick_spacing: state.tick_spacing,
+                            tick_data,
+                            last_event: None,
+                        },
+                        LiquidityMapTarget::V3(*pool_address),
+                    )
+                }
+                VerifyIdentity::V4 {
+                    pool_manager,
+                    pool_id,
+                    db_key,
+                } => {
+                    let state =
+                        DegenbotDb::fetch_v4_pool_update_state_on_conn(&conn, db_key, chain_id)
+                            .map_err(RunError::Db)?
+                            .ok_or_else(|| {
+                                RunError::Db(degenbot_db::DbError::Decode(format!(
+                                    "v4 pool {db_key} not found on chain {chain_id}"
+                                )))
+                            })?;
+                    let tick_data = DegenbotDb::fetch_v4_liquidity_map_on_conn(
+                        &conn,
+                        state.pool_id,
+                        state.snapshot_block(),
+                    )
+                    .map_err(RunError::Db)?;
+                    (
+                        ComputedLiquidityUpdate {
+                            pool_id: state.pool_id,
+                            tick_spacing: state.tick_spacing,
+                            tick_data,
+                            last_event: None,
+                        },
+                        LiquidityMapTarget::V4 {
+                            pool_manager: *pool_manager,
+                            pool_id: *pool_id,
+                        },
+                    )
+                }
             };
             let provider = crate::provider_seam::drive(crate::provider_seam::live_provider(
                 rpc_url,
                 crate::provider_seam::UPDATER_MAX_RETRIES,
             ))
             .map_err(RunError::from)?;
-            let fut = verify_v3_liquidity_map_on_chain(&provider, addr, &computed, block_number);
-            crate::provider_seam::drive(fut)
-        })
-        .map_err(run_err_to_py)?;
-
-    Ok(divergences_to_dicts(py, &divergences))
-}
-
-/// `degenbot._ffi.pool.verify_v4_liquidity_map(database_path, rpc_url, chain_id,
-/// pool_hash, pool_manager_address, block_number) -> list[dict]`
-///
-/// Standalone on-chain-truth verification of a V4 pool's COMMITTED liquidity
-/// map via the singleton `PoolManager.extsload(bytes32[])` at `block_number`
-/// (read-only — mirrors [`verify_v3_liquidity_map`]). `pool_hash` is the V4
-/// `PoolId` (bytes32 hex, `0x…`); `pool_manager_address` is the deployed V4
-/// `PoolManager` singleton (the chain has one — it's the V4 exchange's
-/// `factory`). Returns the divergence list (empty = GREEN).
-///
-/// The GIL is released across the whole call; the live provider is built
-/// through [`crate::provider_seam`] and the call runs on the ambient tokio
-/// runtime (a missing runtime is a typed error, never a per-call runtime
-/// build — [`crate::provider_seam::require_ambient_runtime`]).
-#[pyfunction]
-#[pyo3(signature = (database_path, rpc_url, chain_id, pool_hash, pool_manager_address, block_number))]
-fn verify_v4_liquidity_map(
-    py: Python<'_>,
-    database_path: &str,
-    rpc_url: &str,
-    chain_id: i64,
-    pool_hash: &str,
-    pool_manager_address: &str,
-    block_number: u64,
-) -> PyResult<Vec<Py<PyDict>>> {
-    use degenbot_db::{ComputedLiquidityUpdate, DegenbotDb};
-    use degenbot_pool_updater::verify_v4_liquidity_map_on_chain;
-    use std::str::FromStr;
-
-    let path = PathBuf::from(database_path);
-    let pool_manager: alloy::primitives::Address = pool_manager_address.parse().map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("bad pool_manager_address: {e}"))
-    })?;
-    let pool_id =
-        alloy::primitives::B256::from_str(pool_hash.strip_prefix("0x").unwrap_or(pool_hash))
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("bad pool_hash: {e}")))?;
-
-    let divergences = py
-        .detach(move || {
-            // same ambient-runtime policy as the v3 sibling — typed
-            // error when no ambient runtime exists; never a per-call
-            // multi-thread build.
-            crate::provider_seam::require_ambient_runtime()?;
-            let db = DegenbotDb::open(&path).map_err(RunError::Db)?.0;
-            let conn = db.lock();
-            let state = DegenbotDb::fetch_v4_pool_update_state_on_conn(&conn, pool_hash, chain_id)
-                .map_err(RunError::Db)?
-                .ok_or_else(|| {
-                    RunError::Db(degenbot_db::DbError::Decode(format!(
-                        "v4 pool {pool_hash} not found on chain {chain_id}"
-                    )))
-                })?;
-            let tick_data = DegenbotDb::fetch_v4_liquidity_map_on_conn(
-                &conn,
-                state.pool_id,
-                state.snapshot_block(),
-            )
-            .map_err(RunError::Db)?;
-            let computed = ComputedLiquidityUpdate {
-                pool_id: state.pool_id,
-                tick_spacing: state.tick_spacing,
-                tick_data,
-                last_event: None,
-            };
-            let provider = crate::provider_seam::drive(crate::provider_seam::live_provider(
-                rpc_url,
-                crate::provider_seam::UPDATER_MAX_RETRIES,
-            ))
-            .map_err(RunError::from)?;
-            let fut = verify_v4_liquidity_map_on_chain(
+            crate::provider_seam::drive(verify_liquidity_map_on_chain(
                 &provider,
-                pool_manager,
-                pool_id,
+                target,
                 &computed,
                 block_number,
-            );
-            crate::provider_seam::drive(fut)
+            ))
         })
         .map_err(run_err_to_py)?;
 
@@ -469,7 +524,7 @@ fn run_err_to_py(err: RunError) -> PyErr {
 #[pyo3(module = "degenbot._ffi")]
 pub mod pool {
     #[pymodule_export]
-    use super::{run_pool_update, verify_v3_liquidity_map, verify_v4_liquidity_map};
+    use super::{run_pool_update, verify_liquidity_map};
 }
 
 #[cfg(all(test, feature = "auto-initialize"))]
@@ -477,67 +532,85 @@ pub mod pool {
 mod tests {
     use super::*;
 
-    /// with NO ambient tokio runtime, the verify seams must fail with
-    /// the typed no-ambient-runtime error INSTEAD of building + dropping a
-    /// per-call multi-thread runtime (its default worker count is the
-    /// raw core count — the dead tokio-rt-worker churn seen in the live
-    /// process). An empty in-memory DB + an unroutable RPC keep the tests
-    /// offline; the runtime-policy check fires before any DB work.
+    /// The `PoolId` the V4 verify cases carry.
+    const POOL_ID_HEX: &str = "0x0101010101010101010101010101010101010101010101010101010101010101";
+
+    /// The V3 pool address fake the offline cases carry.
+    const V3_POOL: &str = "0x0000000000000000000000000000000000000001";
+
+    /// The V4 `PoolManager` address fake the offline cases carry.
+    const V4_MANAGER: &str = "0x0000000000000000000000000000000000000002";
+
+    /// With NO ambient tokio runtime, the verify seam must fail with the typed
+    /// no-ambient-runtime error INSTEAD of building + dropping a per-call
+    /// multi-thread runtime (its default worker count is the raw core count —
+    /// the dead tokio-rt-worker churn seen in the live process). An empty
+    /// in-memory DB + an unroutable RPC keep the test offline; the
+    /// runtime-policy check fires before any DB work, for BOTH key shapes.
     #[test]
-    fn verify_v3_no_ambient_runtime_errors_instead_of_spawning() {
+    fn verify_no_ambient_runtime_errors_instead_of_spawning() {
         assert!(
             tokio::runtime::Handle::try_current().is_err(),
             "test thread must have no ambient tokio runtime"
         );
         Python::attach(|py| {
-            let err = verify_v3_liquidity_map(
-                py,
-                ":memory:",
-                "http://127.0.0.1:1",
-                1,
-                "0x0000000000000000000000000000000000000001",
-                1,
-            )
-            .unwrap_err();
-            let msg = err.to_string();
-            assert!(
-                msg.contains("no ambient tokio runtime"),
-                "expected the typed no-ambient-runtime error, got: {msg}"
-            );
-            assert!(
-                !msg.contains("database error"),
-                "must fail on runtime policy before DB work, got: {msg}"
-            );
+            for (family, address_or_manager, pool_id) in
+                [("v3", V3_POOL, None), ("v4", V4_MANAGER, Some(POOL_ID_HEX))]
+            {
+                let err = verify_liquidity_map(
+                    py,
+                    ":memory:",
+                    "http://127.0.0.1:1",
+                    1,
+                    family,
+                    address_or_manager,
+                    pool_id,
+                    1,
+                )
+                .unwrap_err();
+                let msg = err.to_string();
+                assert!(
+                    msg.contains("no ambient tokio runtime"),
+                    "expected the typed no-ambient-runtime error, got: {msg}"
+                );
+                assert!(
+                    !msg.contains("database error"),
+                    "must fail on runtime policy before DB work, got: {msg}"
+                );
+            }
         });
     }
 
-    /// v4 sibling of the v3 no-ambient-runtime pin.
+    /// A key that names no pool is a `ValueError` raised before the DB open,
+    /// the provider build, and the runtime-policy check.
     #[test]
-    fn verify_v4_no_ambient_runtime_errors_instead_of_spawning() {
-        assert!(
-            tokio::runtime::Handle::try_current().is_err(),
-            "test thread must have no ambient tokio runtime"
-        );
+    fn verify_refuses_a_key_that_names_no_pool() {
+        use pyo3::exceptions::PyValueError;
+
         Python::attach(|py| {
-            let err = verify_v4_liquidity_map(
-                py,
-                ":memory:",
-                "http://127.0.0.1:1",
-                1,
-                "0x0101010101010101010101010101010101010101010101010101010101010101",
-                "0x0000000000000000000000000000000000000002",
-                1,
-            )
-            .unwrap_err();
-            let msg = err.to_string();
-            assert!(
-                msg.contains("no ambient tokio runtime"),
-                "expected the typed no-ambient-runtime error, got: {msg}"
-            );
-            assert!(
-                !msg.contains("database error"),
-                "must fail on runtime policy before DB work, got: {msg}"
-            );
+            for (family, address_or_manager, pool_id) in [
+                ("v2", V3_POOL, None),
+                ("v3", V3_POOL, Some(POOL_ID_HEX)),
+                ("v4", V4_MANAGER, None),
+                ("v4", "not-an-address", Some(POOL_ID_HEX)),
+                ("v4", V4_MANAGER, Some("0xnothex")),
+            ] {
+                let err = verify_liquidity_map(
+                    py,
+                    ":memory:",
+                    "http://127.0.0.1:1",
+                    1,
+                    family,
+                    address_or_manager,
+                    pool_id,
+                    1,
+                )
+                .unwrap_err();
+                assert!(
+                    err.is_instance_of::<PyValueError>(py),
+                    "family {family:?} with pool_id {pool_id:?} must be refused as                      ValueError, got: {err}"
+                );
+            }
         });
     }
 

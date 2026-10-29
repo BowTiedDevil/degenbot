@@ -4,7 +4,7 @@
 
 #![expect(clippy::expect_used, reason = "test assertions fail loudly")]
 
-use crate::backrun::{MevblockerBackrun, SubmissionSlot, TxpoolBackrun};
+use crate::backrun::{MevblockerBackrun, ObserveReason, SubmissionSlot, TxpoolBackrun};
 use crate::frame_pipeline::predecessor_observe_reason;
 use crate::gap_quarantine::{ParkedFrame, Quarantine, QuarantineDecision};
 use crate::gap_quarantine_journal::{ParkRecord, QuarantineJournal};
@@ -303,18 +303,24 @@ fn rescue_outcome_mapping_routes_transient_gap_and_terminal() {
     );
     assert_eq!(reentry_outcome(FrameOutcome::Bid), ReentryOutcome::Terminal);
     assert_eq!(
-        reentry_outcome(FrameOutcome::Terminal("already_settled")),
+        reentry_outcome(FrameOutcome::Terminal(ObserveReason::AlreadySettled)),
         ReentryOutcome::Terminal
     );
     assert_eq!(
-        outcome_for("replay_unavailable"),
+        outcome_for(ObserveReason::ReplayUnavailable),
         FrameOutcome::ReplayUnavailable
     );
-    assert_eq!(outcome_for("replay_failed"), FrameOutcome::ReplayFailed);
-    assert_eq!(outcome_for("gap_pending"), FrameOutcome::GapPending);
     assert_eq!(
-        outcome_for("already_settled"),
-        FrameOutcome::Terminal("already_settled")
+        outcome_for(ObserveReason::ReplayFailed),
+        FrameOutcome::ReplayFailed
+    );
+    assert_eq!(
+        outcome_for(ObserveReason::GapPending),
+        FrameOutcome::GapPending
+    );
+    assert_eq!(
+        outcome_for(ObserveReason::AlreadySettled),
+        FrameOutcome::Terminal(ObserveReason::AlreadySettled)
     );
 }
 
@@ -331,10 +337,10 @@ fn predecessor_failure_classes_route_by_evidence_not_by_death() {
         predecessor_observe_reason(&ReplayFrameError::MalformedTransaction {
             raw: "bad shape".into(),
         }),
-        "predecessor_malformed"
+        ObserveReason::PredecessorMalformed
     );
     assert_eq!(
-        outcome_for("predecessor_malformed"),
+        outcome_for(ObserveReason::PredecessorMalformed),
         FrameOutcome::PredecessorMalformed
     );
 
@@ -343,14 +349,14 @@ fn predecessor_failure_classes_route_by_evidence_not_by_death() {
         predecessor_observe_reason(&ReplayFrameError::Other {
             raw: "rpc timeout".into(),
         }),
-        "predecessor_replay_failed"
+        ObserveReason::PredecessorReplayFailed
     );
     assert_eq!(
-        outcome_for("predecessor_replay_failed"),
+        outcome_for(ObserveReason::PredecessorReplayFailed),
         FrameOutcome::ReplayFailed
     );
     assert_eq!(
-        reentry_outcome(outcome_for("predecessor_replay_failed")),
+        reentry_outcome(outcome_for(ObserveReason::PredecessorReplayFailed)),
         ReentryOutcome::Transient
     );
 
@@ -361,7 +367,7 @@ fn predecessor_failure_classes_route_by_evidence_not_by_death() {
             claimed: 12,
             expected: 10,
         }),
-        "predecessor_replay_failed"
+        ObserveReason::PredecessorReplayFailed
     );
 
     // Mispriced-for-now (base fee rejected even after the disabled retry)
@@ -370,10 +376,10 @@ fn predecessor_failure_classes_route_by_evidence_not_by_death() {
         predecessor_observe_reason(&ReplayFrameError::Mispriced {
             raw: "base fee rejected after retry".into(),
         }),
-        "predecessor_replay_failed"
+        ObserveReason::PredecessorReplayFailed
     );
     assert_eq!(
-        reentry_outcome(outcome_for("mispriced_transaction")),
+        reentry_outcome(outcome_for(ObserveReason::MispricedTransaction)),
         ReentryOutcome::Transient
     );
 
@@ -382,10 +388,10 @@ fn predecessor_failure_classes_route_by_evidence_not_by_death() {
         crate::frame_pipeline::replay_observe_reason(&ReplayFrameError::MalformedTransaction {
             raw: "call gas cost exceeds the gas limit".into(),
         });
-    assert_eq!(reason, "malformed_transaction");
+    assert_eq!(reason, ObserveReason::MalformedTransaction);
     assert_eq!(
         outcome_for(reason),
-        FrameOutcome::Terminal("malformed_transaction")
+        FrameOutcome::Terminal(ObserveReason::MalformedTransaction)
     );
     assert_eq!(
         reentry_outcome(outcome_for(reason)),

@@ -50,9 +50,9 @@ degenbot-abi.workspace = true
 # `ProviderError` / `ProviderResult` / `AbiDecodeError` — the shared error
 # types `simulate_path_on_evm` + the calldata builders return.
 degenbot-core.workspace = true
-# revm — the EVM trait bounds `simulate_path_on_evm<E: ExecuteEvm +
-# InspectEvm<...>>` carries (the strategy drives the borrowed `&mut E`
-# a `SimSession`'s escape hatch hands out).
+# revm — the transaction envelopes the 7-call bundle builds (`TxEnv`), the
+# `CacheDB` entry point's DB parameter, and the per-call results the session's
+# sequence verb returns (`ExecutionResult`).
 revm = { version = "^43.0", default-features = true, features = ["alloydb", "asyncdb"] }
 alloy = { version = "^2.5" }
 parking_lot = "^0.13"

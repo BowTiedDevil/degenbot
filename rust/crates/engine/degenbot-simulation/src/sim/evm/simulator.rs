@@ -38,9 +38,11 @@
 //! and it exposes no `commit`, so the shared `CacheDB` accumulates only READ
 //! caches (account info, bytecode, storage slots read during
 //! balanceOf/execute) — the latency win, never a stale-write hazard.
-//! [`SimSession::evm_mut`](super::session::SimSession::evm_mut) is the
-//! documented escape hatch (the settlement bundle's 7-call accumulation), and
-//! its caller owns the same finalize-never-commit contract.
+//! [`SimSession::run_sequence`](super::session::SimSession::run_sequence) is the
+//! same pipeline for a bundle whose journal must accumulate across calls (the
+//! settlement bundle's 7-call vector): it returns the per-step results instead
+//! of summarizing them, and it owns the same finalize-never-commit contract on
+//! every exit path, the mid-sequence error one included.
 
 use degenbot_core::op_warn;
 
@@ -51,7 +53,7 @@ use alloy::providers::{Provider, RootProvider};
 use degenbot_substrate::SimAnchorOracle;
 use parking_lot::RwLock;
 use revm::database::CacheDB;
-use revm::database_interface::WrapDatabaseAsync;
+use revm::database_interface::{Database, WrapDatabaseAsync};
 use std::sync::Arc;
 
 use super::state_override::SimulationOverrideParams;
@@ -130,6 +132,47 @@ pub type BlockEvm<'a> = revm::MainnetEvm<
     revm::handler::MainnetContext<ProductionBlockDb<'a>>,
     super::inspectors::SimInspector,
 >;
+
+/// Build a revm mainnet EVM over `db`, pinned to the per-block environment and
+/// the engine's lenient-simulate policy.
+///
+/// The whole configuration is a BUILD-TIME property, so it lives in this one
+/// constructor and no run verb takes a cfg or a block-env parameter: every EVM
+/// the engine hands to a [`SimSession`](super::session::SimSession) — the
+/// per-block shared handle below and the strategy crate's `CacheDB`-only
+/// in-process entry point alike — carries the same nonce and block policy.
+///
+/// `disable_nonce_check`: a sequence's calls share ONE owner, and the node's
+/// lenient simulate does NOT bump the caller's nonce per call (each entry is an
+/// `eth_call`-shaped read, not a real tx), so revm's per-tx nonce floor would
+/// reject calls [1..]. Disabling the check is parity with the node.
+///
+/// The block timestamp is threaded from the pump's block header: the default
+/// `timestamp = 1` causes V2 pair `_update` to overflow `price0CumulativeLast`
+/// in Solidity 0.8+ forks (Camelot/Aerodrome), reverting every swap — the root
+/// cause of the in-process-evm parity gap.
+#[must_use]
+pub fn build_block_evm<Db>(
+    db: Db,
+    base_fee_next: u128,
+    current_block: u64,
+    block_timestamp: u64,
+) -> revm::MainnetEvm<revm::handler::MainnetContext<Db>, super::inspectors::SimInspector>
+where
+    Db: Database,
+{
+    let mut revm_ctx = revm::context::Context::mainnet();
+    revm_ctx.cfg.disable_nonce_check = true;
+    let mut evm = revm_ctx
+        .with_db(db)
+        .build_mainnet_with_inspector(super::inspectors::SimInspector::default());
+    evm.ctx.modify_block(|block| {
+        block.basefee = u64::try_from(base_fee_next).unwrap_or(u64::MAX);
+        block.number = U256::from(current_block);
+        block.timestamp = U256::from(block_timestamp);
+    });
+    evm
+}
 
 /// Owns a per-block shared EVM (one `CacheDB` + revm `Context`, state overrides
 /// applied once) for the in-process sim fan-out (Tier 1).
@@ -290,25 +333,7 @@ impl<'a> BlockSimHandle<'a> {
             op_warn!(domain = sim, %err, "BlockSimHandle: state-override application failed");
             return None;
         }
-        let mut revm_ctx = revm::context::Context::mainnet();
-        // `disable_nonce_check`: the 7 calls share ONE owner; `eth_simulateV1`
-        // does NOT bump the caller's nonce per call (each entry is an
-        // `eth_call`-shaped read), so revm's per-tx nonce floor would reject
-        // calls [1..6]. Disable it — parity with the node's lenient simulate.
-        revm_ctx.cfg.disable_nonce_check = true;
-        let mut evm = revm_ctx
-            .with_db(cache_db)
-            .build_mainnet_with_inspector(super::inspectors::SimInspector::default());
-        evm.ctx.modify_block(|block| {
-            block.basefee = u64::try_from(base_fee_next).unwrap_or(u64::MAX);
-            block.number = U256::from(current_block);
-            // The block timestamp, threaded from the pump's block header. The
-            // default `timestamp = 1` causes V2 pair `_update` to overflow
-            // `price0CumulativeLast` in Solidity 0.8+ forks (Camelot/Aerodrome),
-            // reverting every swap — the root cause of the in-process-evm
-            // parity gap.
-            block.timestamp = U256::from(block_timestamp);
-        });
+        let evm = build_block_evm(cache_db, base_fee_next, current_block, block_timestamp);
         Some(Self {
             evm,
             provider_arc: provider.provider_arc(),
@@ -331,9 +356,10 @@ impl<'a> BlockSimHandle<'a> {
     /// [`SimSession::run`](super::session::SimSession::run) (`transact_one` +
     /// `finalize`, so the run's SSTOREs land in the returned run and never in
     /// the shared read cache); the typed view reads answer from that same
-    /// settled view. The session's
-    /// [`evm_mut`](super::session::SimSession::evm_mut) is the documented
-    /// escape hatch for a strategy bundle that needs raw revm.
+    /// settled view.
+    /// [`SimSession::run_sequence`](super::session::SimSession::run_sequence) is
+    /// the same settle verb for a bundle whose journal accumulates across
+    /// calls, with its inspector attached per step.
     #[must_use]
     pub fn session(&mut self) -> super::session::SimSession<'_, ProductionBlockDb<'a>> {
         super::session::SimSession::new(&mut self.evm)

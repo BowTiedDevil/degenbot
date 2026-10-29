@@ -46,6 +46,12 @@ hotpath = ["hotpath/hotpath", "hotpath/threads"]
 # capture writer, and the fixture-reading test modules). Test lanes enable it
 # explicitly so the golden corpora stay executed, not silently skipped.
 capture-fixtures = ["dep:zstd"]
+# Cache-lab seam (src/solve/concentrated_liquidity/cache.rs, gated at
+# concentrated_liquidity/mod.rs): the instrumented cache strategies the
+# cache-lab example and its golden/regression binaries drive. Off by default so
+# the production solve, the standalone consumer, and the extension compile none
+# of it; the workspace test/lint lanes enable it explicitly.
+cache-lab = []
 # Ambient walk telemetry: the per-thread walk-combinator counters, event
 # census, and process-wide timing statics. Off by default so a release build
 # that never reads the counters pays nothing for them; enabling it turns
@@ -87,7 +93,11 @@ required-features = ["capture-fixtures"]
 
 [[test]]
 name = "concentrated_liquidity_cache_lab_goldens"
-required-features = ["capture-fixtures"]
+required-features = ["capture-fixtures", "cache-lab"]
+
+[[test]]
+name = "concentrated_liquidity_cache_patch_regressions"
+required-features = ["capture-fixtures", "cache-lab"]
 
 # Fixture-reading examples ([[example]] sections exist only to carry
 # required-features; unlisted examples auto-discover and compile everywhere).
@@ -95,7 +105,7 @@ required-features = ["capture-fixtures"]
 
 [[example]]
 name = "concentrated_liquidity_cache_lab"
-required-features = ["capture-fixtures"]
+required-features = ["capture-fixtures", "cache-lab"]
 
 [[example]]
 name = "concentrated_liquidity_solve_replay"

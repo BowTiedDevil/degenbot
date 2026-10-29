@@ -177,10 +177,11 @@ test-rust: check-toolchain test-standalone
     # in-tarball files, so the embed uses the in-crate mirror
     cmp -s src/degenbot/registry/deployments.json rust/crates/foundation/degenbot-uniswap/src/deployments.json || { echo 'ERROR: deployments.json vendor drift (canonical vs degenbot-uniswap mirror)' >&2; exit 1; }
     # The fixture-corpus and lab features ride every workspace lane (ADR-084
-    # D3): the corpora and the simulation harness stay EXECUTED here, never
-    # silently skipped behind required-features, and the assertion-free green
-    # exit of a zero-match filter can not hide a lost corpus.
-    cargo test --locked --manifest-path rust/Cargo.toml --workspace --features degenbot-pools/capture-fixtures,degenbot-bot/executor-ab-probe,degenbot-simulation/test-harness
+    # D3): the corpora, the simulation harness, and the cache-lab strategies
+    # stay EXECUTED here, never silently skipped behind required-features, and
+    # the assertion-free green exit of a zero-match filter can not hide a lost
+    # corpus.
+    cargo test --locked --manifest-path rust/Cargo.toml --workspace --features degenbot-pools/capture-fixtures,degenbot-pools/cache-lab,degenbot-bot/executor-ab-probe,degenbot-simulation/test-harness
 
 # Reproduce CI's test-binary build exactly (ci.yml sets these two globally):
 # a crate-private fn's LAYOUT can depend on profile flags -- the ADR-071 D3
@@ -251,9 +252,10 @@ test-rust-nextest *args: check-toolchain
         esac
     done
     # Fixture-corpus and lab features ride every lane (ADR-084 D3): the golden
-    # corpora and the simulation harness are executed here, never silently
-    # skipped behind required-features.
-    cargo nextest run --locked --manifest-path rust/Cargo.toml $selection --profile ci --no-fail-fast --features degenbot-pools/capture-fixtures,degenbot-bot/executor-ab-probe,degenbot-simulation/test-harness "$@"
+    # corpora, the simulation harness, and the cache-lab strategies behind
+    # their gated module are executed here, never silently skipped behind
+    # required-features.
+    cargo nextest run --locked --manifest-path rust/Cargo.toml $selection --profile ci --no-fail-fast --features degenbot-pools/capture-fixtures,degenbot-pools/cache-lab,degenbot-bot/executor-ab-probe,degenbot-simulation/test-harness "$@"
 
 # Run the fork/RPC-gated suites — the legs every offline gate (test, pre-push,
 # CI) deliberately deselects:
@@ -379,19 +381,20 @@ crates-io-pending *args:
 # reference toolchain this is CI-identical (`--deny warnings`); on any other
 # supported toolchain it runs clippy's deny-by-default floor only, because the
 # lint surface drifts with the toolchain and CI is the strict authority.
-# `--all-features` stays off; the one named feature carried here is
-# `degenbot-simulation/test-harness`, which gates a lab `src` module (not a
-# build variant) out of the shipped crate root, so the lab keeps its
-# `--deny warnings` coverage. The feature-OFF production shape — every
-# dependent compiling without the harness — is `check-rust-default`'s claim.
+# `--all-features` stays off; the two named features carried here are the lab
+# gates, `degenbot-simulation/test-harness` and `degenbot-pools/cache-lab`,
+# each of which keeps a lab `src` module (not a build variant) out of the
+# shipped crate root, so the lab keeps its `--deny warnings` coverage. The
+# feature-OFF production shape — every dependent compiling without either — is
+# `check-rust-default`'s claim.
 lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics check-capability-catalog check-dependency-charter check-profile-policy
     #!/usr/bin/env bash
     set -euo pipefail
     tier="$(scripts/toolchain_tier.sh)"
     if [ "$tier" = "strict" ]; then
-        cargo clippy --locked --workspace --all-targets --manifest-path rust/Cargo.toml --features degenbot-simulation/test-harness -- --deny warnings
+        cargo clippy --locked --workspace --all-targets --manifest-path rust/Cargo.toml --features degenbot-simulation/test-harness,degenbot-pools/cache-lab -- --deny warnings
     else
-        cargo clippy --locked --workspace --all-targets --manifest-path rust/Cargo.toml --features degenbot-simulation/test-harness
+        cargo clippy --locked --workspace --all-targets --manifest-path rust/Cargo.toml --features degenbot-simulation/test-harness,degenbot-pools/cache-lab
     fi
 
 # Default Rust lint lane: a CI-identical, non-mutating alias of

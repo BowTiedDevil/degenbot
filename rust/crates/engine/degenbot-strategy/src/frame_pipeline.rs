@@ -71,7 +71,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::anchored_dfs::NON_WETH_CYCLE;
-use crate::backrun::{gate_mined_target, BackrunConfig, Decision};
+use crate::backrun::{gate_mined_target, BackrunConfig, Decision, ObserveReason};
 use crate::backrun_engine::BackrunSolver;
 use crate::backrun_engine::PathReject;
 use crate::backrun_strategy::SolveStats;
@@ -333,7 +333,7 @@ impl StageTrace {
                     serde_json::json!({
                         "tx": trace_tx,
                         "composed": false,
-                        "reason": "net_after_gas_unprofitable",
+                        "reason": ObserveReason::NetAfterGasUnprofitable.as_str(),
                         "gross_profit_wei": gross_profit_wei,
                         "wallet_gas_cost_wei": wallet_gas_cost_wei,
                     }),
@@ -517,12 +517,12 @@ pub struct FrameArtifacts {
 }
 
 impl FrameArtifacts {
-    fn observe(reason: &'static str, stages: StageTimings) -> Self {
+    fn observe(reason: ObserveReason, stages: StageTimings) -> Self {
         Self::observe_with_replay_error(reason, stages, None)
     }
 
     fn observe_with_replay_error(
-        reason: &'static str,
+        reason: ObserveReason,
         stages: StageTimings,
         replay_frame_error: Option<ReplayFrameError>,
     ) -> Self {
@@ -830,32 +830,15 @@ pub fn family_label(family: &PoolFamily) -> &'static str {
 /// state. An unsupported DB family outranks the V4 manager (naming the
 /// untracked family is the more specific cause), which outranks a genuine
 /// no-candidate. The kind string rides the extract JSONL detail, never the
-/// closed Prometheus reason label.
+/// closed metric reason label.
 #[must_use]
-pub fn empty_frame_observe_reason(descriptors: &FrameDescriptors) -> &'static str {
+pub fn empty_frame_observe_reason(descriptors: &FrameDescriptors) -> ObserveReason {
     if !descriptors.unsupported.is_empty() {
-        "family-unsupported"
+        ObserveReason::FamilyUnsupported
     } else if descriptors.hit_v4 {
-        "v4_unsupported"
+        ObserveReason::V4Unsupported
     } else {
-        "no_candidate"
-    }
-}
-
-/// The truthful observe label for an un-composed frame: a non-base-quote
-/// fan whose normalization hop could not be priced dropped a real
-/// quote-land candidate — distinct from "no work on this frame" — unless a
-/// WETH-closing candidate actually solved (then the existing label, which
-/// already explains the composed/sim verdict, stays).
-#[must_use]
-pub fn honest_observe(
-    reason: &'static str,
-    non_base_quote_dropped: bool,
-    solved_any: bool,
-) -> &'static str {
-    match (reason, non_base_quote_dropped, solved_any) {
-        ("no_candidate", true, false) => "non_base_quote",
-        _ => reason,
+        ObserveReason::NoCandidate
     }
 }
 
@@ -994,7 +977,7 @@ pub async fn dispatch_frame(
             serde_json::json!({
                 "tx": ev.hash.to_string(),
                 "target_mined": true,
-                "reason": "already_settled",
+                "reason": ObserveReason::AlreadySettled.as_str(),
             }),
         );
     }
@@ -1109,11 +1092,11 @@ pub async fn dispatch_frame(
             Decision::Bid { bid_wei }
         }
         Decision::Observe { reason } => {
-            tracing::info!(tx = %ev.hash, reason, "observe");
+            tracing::info!(tx = %ev.hash, reason = reason.as_str(), "observe");
             Decision::Observe { reason }
         }
         Decision::Drop { reason } => {
-            tracing::debug!(tx = %ev.hash, reason, "drop");
+            tracing::debug!(tx = %ev.hash, reason = reason.as_str(), "drop");
             Decision::Drop { reason }
         }
     }
@@ -1200,23 +1183,25 @@ pub fn bid_submission_target(
 /// Map a typed replay failure to the truthful observe reason + the JSONL
 /// evidence the trace carries. Single source for the histogram split.
 #[must_use]
-pub fn replay_observe_reason(e: &ReplayFrameError) -> (&'static str, serde_json::Value) {
+pub fn replay_observe_reason(e: &ReplayFrameError) -> (ObserveReason, serde_json::Value) {
     match e {
         ReplayFrameError::GapPending { claimed, expected } => (
-            "gap_pending",
+            ObserveReason::GapPending,
             serde_json::json!({"claimed_nonce": claimed, "expected_nonce": expected}),
         ),
         ReplayFrameError::AlreadySettled { frame, parent } => (
-            "already_settled",
+            ObserveReason::AlreadySettled,
             serde_json::json!({"frame_nonce": frame, "parent_nonce": parent}),
         ),
-        ReplayFrameError::MalformedTransaction { raw } => {
-            ("malformed_transaction", serde_json::json!({"detail": raw}))
-        }
-        ReplayFrameError::Mispriced { raw } => {
-            ("mispriced_transaction", serde_json::json!({"detail": raw}))
-        }
-        ReplayFrameError::Other { .. } => ("replay_failed", serde_json::json!({})),
+        ReplayFrameError::MalformedTransaction { raw } => (
+            ObserveReason::MalformedTransaction,
+            serde_json::json!({"detail": raw}),
+        ),
+        ReplayFrameError::Mispriced { raw } => (
+            ObserveReason::MispricedTransaction,
+            serde_json::json!({"detail": raw}),
+        ),
+        ReplayFrameError::Other { .. } => (ObserveReason::ReplayFailed, serde_json::json!({})),
     }
 }
 
@@ -1226,13 +1211,13 @@ pub fn replay_observe_reason(e: &ReplayFrameError) -> (&'static str, serde_json:
 /// retryable class — RPC/validation (`Other`), mispricing, gap, stale nonce —
 /// is transient (retried next head, never a permanent guard).
 #[must_use]
-pub fn predecessor_observe_reason(e: &ReplayFrameError) -> &'static str {
+pub fn predecessor_observe_reason(e: &ReplayFrameError) -> ObserveReason {
     match e {
-        ReplayFrameError::MalformedTransaction { .. } => "predecessor_malformed",
+        ReplayFrameError::MalformedTransaction { .. } => ObserveReason::PredecessorMalformed,
         ReplayFrameError::GapPending { .. }
         | ReplayFrameError::AlreadySettled { .. }
         | ReplayFrameError::Mispriced { .. }
-        | ReplayFrameError::Other { .. } => "predecessor_replay_failed",
+        | ReplayFrameError::Other { .. } => ObserveReason::PredecessorReplayFailed,
     }
 }
 
@@ -1308,10 +1293,10 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
 
     // ── stage: replay (the classifier never participates) ────────────────
     let Some(handle_ref) = handle.as_mut() else {
-        return FrameArtifacts::observe("replay_unavailable", stages);
+        return FrameArtifacts::observe(ObserveReason::ReplayUnavailable, stages);
     };
     let Some(scratch) = handle_ref.scratch_evm() else {
-        return FrameArtifacts::observe("replay_unavailable", stages);
+        return FrameArtifacts::observe(ObserveReason::ReplayUnavailable, stages);
     };
     let t = Instant::now();
     let replayable = ReplayableTx {
@@ -1361,7 +1346,7 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
             if let (Some(dst), Some(src)) = (payload.as_object_mut(), evidence.as_object_mut()) {
                 dst.append(src);
             }
-            payload["observe_reason"] = serde_json::Value::String(reason.to_string());
+            payload["observe_reason"] = serde_json::Value::String(reason.as_str().to_string());
             trace_jsonl("replay", payload);
             return FrameArtifacts::observe_with_replay_error(reason, stages, frame_error);
         }
@@ -1391,7 +1376,7 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
         }),
     );
     if !matches!(outcome.status, RunVerdict::Success) {
-        return FrameArtifacts::observe("reverted", stages);
+        return FrameArtifacts::observe(ObserveReason::Reverted, stages);
     }
 
     // ── stage: extract (journal post-states; descriptors from the index) ──
@@ -1476,7 +1461,7 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
     stages.admit_us = u64::try_from(t.elapsed().as_micros()).unwrap_or(u64::MAX);
     cx.trace.render(&tx_hex);
     if S::affected_is_empty(&affected) {
-        return FrameArtifacts::observe("no_candidate", stages);
+        return FrameArtifacts::observe(ObserveReason::NoCandidate, stages);
     }
 
     // ── stage: discovery (per-frame; strategy-owned) ─────────────────────
@@ -1509,7 +1494,7 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
                 serde_json::json!({
                     "tx": tx_hex,
                     "status": "skipped",
-                    "reason": "sim_skipped_fixture_mode",
+                    "reason": ObserveReason::SimSkippedFixtureMode.as_str(),
                 }),
             );
         } else {

@@ -5,15 +5,15 @@
 //! `SimulateContext`, `SimulatePath`, `BlockPriorityFees` (re-exported from
 //! `degenbot_rpc::fees` — the fee struct is market data, owned by the RPC
 //! crate per ADR-019 D5) + the priority-fee constants, + the in-process revm
-//! 7-call vector `simulate_path_on_evm` driven per-block over the escape hatch
-//! a `SimSession` opens (`SimSession::evm_mut`).
+//! 7-call vector `simulate_path_on_evm`, driven per-block through the settle
+//! verb a `SimSession` opens (`SimSession::run_sequence`).
 //!
 //! ADR-019 D4/D7 (decision R — Rust-canonical): this is the settlement-arbitrage bundle +
 //! gross/net + priority-fee sizing — one strategy over the
 //! `degenbot-simulation` engine. The engine owns the revm EVM handle
 //! (`BlockSimHandle`), the settle verb, the DB stack, overrides, + the AL
-//! inspector; this crate drives the borrowed `&mut evm` the session's escape
-//! hatch exposes. The Python driver is a
+//! inspector; this crate hands the session its 7 calls and reads the per-step
+//! results back. The Python driver is a
 //! thin cockpit over a PyO3 wrapper around `dispatch_profitable_results` —
 //! it does NOT re-derive the 7-call bundle (AGENTS.md: "driver shell, not a
 //! co-implementation").
@@ -21,8 +21,9 @@
 //! # In-process revm sim
 //!
 //! Executes the 7-call vector (pre-balances → `execute()` → post-balances) via
-//! revm `transact_one`, returning the `SimResult` shape the dispatch leaf
-//! consumes. Measured latency profile (cold 8374 µs / 9 RPCs; warm 442 µs /
+//! one `SimSession::run_sequence` of `transact_one` steps (the journaled state
+//! accumulates across the 7 calls), returning the `SimResult` shape the
+//! dispatch leaf consumes. Measured latency profile (cold 8374 µs / 9 RPCs; warm 442 µs /
 //! 0 RPC; 18.9× speedup vs cold; standing record: ADR-019) + the
 //! `ResultAndState.state` access-list emission API. (The detailing spike doc
 //! was removed in the stale-docs cleanup `71ec78b2`.)
@@ -52,14 +53,13 @@ use revm::context::TxEnv;
 use revm::context_interface::result::ExecutionResult;
 use revm::database::CacheDB;
 use revm::primitives::TxKind;
-// `MainBuilder` (`.build_mainnet()`) + `MainContext` (`.mainnet()`) — the revm
-// EVM builder traits re-exported from the handler crate. The `AccessListCollector`
-// inspector + `SimulationOverrideParams` are engine types the strategy drives.
+// The engine types the strategy drives: the session (whose sequence verb owns
+// the settle pipeline), the `AccessListCollector` inspector + its composed
+// tuple, and the override params.
 use degenbot_simulation::{
-    AccessListCollector, CallTraceInspector, CapturedSwap, SimInspector, SimulationOverrideParams,
-    SwapEventCaptureInspector,
+    AccessListCollector, CallTraceInspector, CapturedSwap, SimInspector, SimSession, SimStep,
+    SimulationOverrideParams, SwapEventCaptureInspector,
 };
-use revm::{ExecuteEvm, InspectEvm, MainBuilder, MainContext};
 
 use crate::calldata::{
     encode_balance_of_calldata, encode_erc6909_balance_of_calldata,
@@ -878,15 +878,14 @@ pub const BALANCE_CALL_GAS_LIMIT: u64 = 100_000;
 // The engine `BlockSimHandle` (the per-block shared EVM handle) + the
 // `BlockEvm`/`ProductionBlockDb` type aliases + the `ArcDynProviderEthereum`
 // provider newtype live in `degenbot-simulation` (the engine). This strategy
-// builds the handle via `BlockSimHandle::build` + drives the borrowed `&mut evm`
-// `handle.session().evm_mut()` hands out: the 7-call bundle is the one
-// consumer whose journal must accumulate ACROSS calls, which the settled-run
-// verb deliberately does not offer.
+// builds the handle via `BlockSimHandle::build` and hands the session the 7
+// calls as one sequence: the bundle is the consumer whose journal must
+// accumulate ACROSS calls, which is what `SimSession::run_sequence` is for.
 
 /// The testable in-process orchestration core: runs the 7-call vector over a
-/// PRE-BUILT `CacheDB` (overrides already applied by the caller) via revm
-/// `transact_one` (the journaled state accumulates across the 7 calls), then
-/// parses the balance diffs + computes the [`SimResult`].
+/// PRE-BUILT `CacheDB` (overrides already applied by the caller) as one
+/// [`SimSession::run_sequence`] (the journaled state accumulates across the 7
+/// calls), then parses the balance diffs + computes the [`SimResult`].
 ///
 /// Sync — no RPC, no tokio runtime needed (the `CacheDB`'s backing `Database`
 /// is whatever the caller supplied; `EmptyDB` for the smoke test,
@@ -918,32 +917,21 @@ where
     Db: revm::database_interface::DatabaseRef,
     <Db as revm::database_interface::DatabaseRef>::Error: std::fmt::Display,
 {
-    // Build the EVM (`CacheDB` → revm `Context`) + pin the block env to the
-    // per-block `ctx` values (shared by every path in the fan-out). The 7-call
-    // orchestration + profit/access-list logic lives in
-    // [`simulate_path_on_evm`] so a shared per-block EVM (Tier 1)
-    // can call it with `&mut evm` without rebuilding the DB stack per path.
-    //
-    // `disable_nonce_check`: the 7 calls share ONE owner; `eth_simulateV1` does
-    // NOT bump the caller's nonce per call (each entry is an `eth_call`-shaped
-    // read, not a real tx), so revm's per-tx nonce floor would reject calls
-    // [1..6]. Disable the check — parity with the node's lenient simulate.
-    let mut revm_ctx = revm::context::Context::mainnet();
-    revm_ctx.cfg.disable_nonce_check = true;
-    let mut evm = revm_ctx
-        .with_db(cache_db)
-        .build_mainnet_with_inspector(SimInspector::default());
-    evm.ctx.modify_block(|block| {
-        block.basefee = u64::try_from(ctx.base_fee_next).unwrap_or(u64::MAX);
-        block.number = U256::from(ctx.current_block);
-        // The block timestamp, threaded from the pump's block header via
-        // `SimulateContext::block_timestamp`. The default `timestamp = 1`
-        // causes V2 pair `_update` to overflow `price0CumulativeLast` in
-        // Solidity 0.8+ forks (Camelot/Aerodrome), reverting every swap — the
-        // root cause of the in-process-evm parity gap.
-        block.timestamp = U256::from(ctx.block_timestamp);
-    });
-    simulate_path_on_evm(&mut evm, ctx, path, fail_buckets)
+    // The engine constructs the EVM (`CacheDB` + revm `Context`) with its
+    // per-block policy — the nonce-check and block-env pinning are build-time
+    // properties of every engine-built EVM, so this entry point carries the
+    // same configuration as the per-block handle. The 7-call orchestration +
+    // profit/access-list logic lives in [`simulate_path_on_evm`] so the shared
+    // per-block session (Tier 1) reaches it without rebuilding the DB stack
+    // per path.
+    let mut evm = degenbot_simulation::build_block_evm(
+        cache_db,
+        ctx.base_fee_next,
+        ctx.current_block,
+        ctx.block_timestamp,
+    );
+    let mut session = SimSession::new(&mut evm);
+    simulate_path_on_evm(&mut session, ctx, path, fail_buckets)
 }
 
 /// On close, records the `simulate.*` span fields when the
@@ -1015,16 +1003,18 @@ impl Drop for SimSpanVerdict {
     }
 }
 
-/// Run one path's 7-call vector on a PRE-BUILT `&mut EVM` (block env already
-/// set by the caller; `CacheDB` + overrides applied upstream). The journaled
-/// state accumulates across the 7 `transact_one` calls (pre reads → execute →
-/// post reads see execute's changes), then `finalize()` clears the journal so
-/// the next path on the same shared EVM starts from clean committed state —
-/// the per-path isolation Tier 1 needs for a shared per-block EVM.
+/// Run one path's 7-call vector on a PRE-BUILT session (block env already set
+/// when the EVM was built; `CacheDB` + overrides applied upstream). The
+/// session's sequence verb accumulates the journaled state across the 7 calls
+/// (pre reads → execute → post reads see execute's changes) and finalizes it on
+/// every exit path, so the next path on the same shared EVM starts from the
+/// clean settled view — the per-path isolation Tier 1 needs for a shared
+/// per-block EVM.
 ///
-/// Generic over `E` so the smoke test (an `EmptyDB`-backed EVM built by the
-/// caller) and production (a shared `BotStateDb<WrapDatabaseAsync<AlloyDB>>`
-/// -backed EVM) both reach the same 7-call orchestration.
+/// Generic over the session's DB so the smoke test (an `EmptyDB`-backed EVM
+/// built by the caller) and production (a shared
+/// `BotStateDb<WrapDatabaseAsync<AlloyDB>>`-backed EVM) reach the same 7-call
+/// orchestration.
 ///
 /// # Errors
 ///
@@ -1035,19 +1025,15 @@ impl Drop for SimSpanVerdict {
 ///
 /// Panics if a `TxEnv::builder().build()` fails (cannot happen with the
 /// well-formed balance/execute calldata + addresses this fn constructs).
-pub fn simulate_path_on_evm<E>(
-    evm: &mut E,
+pub fn simulate_path_on_evm<Db>(
+    session: &mut SimSession<'_, Db>,
     ctx: &SimulateContext<'_>,
     path: &SimulatePath,
     fail_buckets: &mut FailBuckets,
 ) -> ProviderResult<Option<SimResult>>
 where
-    E: ExecuteEvm<
-            Tx = TxEnv,
-            ExecutionResult = revm::context_interface::result::ExecutionResult,
-            State = revm::state::EvmState,
-        > + InspectEvm<Inspector = SimInspector>,
-    <E as ExecuteEvm>::Error: std::fmt::Display,
+    Db: revm::database_interface::Database,
+    <Db as revm::database_interface::Database>::Error: std::fmt::Display,
 {
     // the shared sim seam opens its own `degenbot.bundle.simulate`
     // span for callers that don't already hold one (the dispatch fan-out, the
@@ -1060,7 +1046,7 @@ where
         simulate.expected_profit = tracing::field::Empty,
         simulate.error_reason = tracing::field::Empty,
     );
-    simulate_path_on_evm_in_span(evm, ctx, path, fail_buckets, &span)
+    simulate_path_on_evm_in_span(session, ctx, path, fail_buckets, &span)
 }
 
 /// SIMSPANDUP (trace 73604143 cleanup): run the sim under the CALLER-HELD
@@ -1080,45 +1066,37 @@ where
 /// Returns `Ok(None)` for non-profitable / reverted outcomes (bucket tallied).
 /// Returns `Err` only on an unrecoverable revm `transact` error (a DB
 /// cold-miss RPC failure — `rpc-failed`).
-pub fn simulate_path_on_evm_in_span<E>(
-    evm: &mut E,
+pub fn simulate_path_on_evm_in_span<Db>(
+    session: &mut SimSession<'_, Db>,
     ctx: &SimulateContext<'_>,
     path: &SimulatePath,
     fail_buckets: &mut FailBuckets,
     span: &tracing::Span,
 ) -> ProviderResult<Option<SimResult>>
 where
-    E: ExecuteEvm<
-            Tx = TxEnv,
-            ExecutionResult = revm::context_interface::result::ExecutionResult,
-            State = revm::state::EvmState,
-        > + InspectEvm<Inspector = SimInspector>,
-    <E as ExecuteEvm>::Error: std::fmt::Display,
+    Db: revm::database_interface::Database,
+    <Db as revm::database_interface::Database>::Error: std::fmt::Display,
 {
     // SIMPIPE T1 lab: per-candidate wall clock (the per-sim share of the
     // serial tail that M1 parallelizes across solve workers).
     let (result, sim_dur) = degenbot_simulation::sim::evm::sim_metrics::timed(|| {
-        simulate_path_on_evm_seam(evm, ctx, path, fail_buckets, span)
+        simulate_path_on_evm_seam(session, ctx, path, fail_buckets, span)
     });
     degenbot_simulation::sim::evm::sim_metrics::record_sim(sim_dur);
     result
 }
 
 #[expect(clippy::too_many_lines)] // moved off the timed wrapper — SIMPIPE T1 extraction left this as the 350-line body
-fn simulate_path_on_evm_seam<E>(
-    evm: &mut E,
+fn simulate_path_on_evm_seam<Db>(
+    session: &mut SimSession<'_, Db>,
     ctx: &SimulateContext<'_>,
     path: &SimulatePath,
     fail_buckets: &mut FailBuckets,
     span: &tracing::Span,
 ) -> ProviderResult<Option<SimResult>>
 where
-    E: ExecuteEvm<
-            Tx = TxEnv,
-            ExecutionResult = revm::context_interface::result::ExecutionResult,
-            State = revm::state::EvmState,
-        > + InspectEvm<Inspector = SimInspector>,
-    <E as ExecuteEvm>::Error: std::fmt::Display,
+    Db: revm::database_interface::Database,
+    <Db as revm::database_interface::Database>::Error: std::fmt::Display,
 {
     let _enter = span.enter();
     let mut guard = SimSpanVerdict {
@@ -1216,91 +1194,73 @@ where
     let erc6909_call = encode_erc6909_balance_of_calldata(ctx.executor_address, ctx.weth_address)
         .expect("valid address + weth encode");
 
-    // The 7 calls: 3 pre-balance reads, execute(), 3 post-balance reads. The
-    // journaled state ACCUMULATES across transact_one calls (transact_one
-    // stores changes in the journal; finalize clears it), so the post reads see
-    // the execute() changes. A reverted execute rolls back ONLY its own
-    // changes (revm invariants) — the pre reads persist. This accumulation is
-    // why the bundle takes the session's escape hatch instead of `run`.
-    let txs = [
-        build_balance_tx(ctx, ctx.weth_address, &weth_call),
-        build_balance_tx(ctx, ctx.multicall3_address, &eth_call),
-        build_balance_tx(ctx, ctx.pool_manager_address, &erc6909_call),
-        build_execute_tx(ctx, &execute_calldata),
-        build_balance_tx(ctx, ctx.weth_address, &weth_call),
-        build_balance_tx(ctx, ctx.multicall3_address, &eth_call),
-        build_balance_tx(ctx, ctx.pool_manager_address, &erc6909_call),
-    ];
-
-    let mut results: Vec<ExecutionResult> = Vec::with_capacity(7);
-    let mut first_failure: Option<usize> = None;
     // `execute()` (call [3]) runs with the composed [`SimInspector`] tuple
     // `(AccessListCollector, (CallTraceInspector, SwapEventCaptureInspector))`
-    // attached via `inspect_one` (ADR-019 D3) so the EIP-2930
+    // attached via the sequence's `Inspect` step (ADR-019 D3) so the EIP-2930
     // warmed-slot access list + the call trace + the swap events are byproducts
     // of the FIRST execute() run — no post-re-`transact`. The balance reads
-    // [0..3] + [4..7] use `transact_one`, which does NOT invoke the inspector,
+    // [0..3] + [4..7] use `Transact` steps, which do NOT invoke the inspector,
     // so the inspectors see execute()-only opcodes. The tuple is moved into the
-    // EVM by `inspect_one`; each member's paired handle retains a shared
+    // EVM by the `Inspect` step; each member's paired handle retains a shared
     // `Rc<RefCell<…>>` to drain after the run.
     let (al, access_list_handle) = AccessListCollector::new();
     let (ct, call_trace_handle) = CallTraceInspector::new();
     let (se, swap_events_handle) = SwapEventCaptureInspector::new();
-    let mut inspector_opt = Some((al, (ct, se)));
-    for (idx, tx) in txs.into_iter().enumerate() {
-        let result = if idx == 3 {
-            #[expect(clippy::expect_used)] // taken only at idx 3 (documented)
-            let inspector = inspector_opt.take().expect("inspector taken only at idx 3");
-            evm.inspect_one(tx, inspector)
-        } else {
-            evm.transact_one(tx)
-        };
-        let Ok(res) = result else {
-            // A revm transact error (DB cold-miss RPC failure, or an
-            // invalid tx). Treat as rpc-failed (the Python oracle swallows
-            // these into rpc-failed).
-            //
-            // Finalize the partial journal before returning: calls [0..idx-1]
-            // may have succeeded (accumulating read-caches in the journal —
-            // `transact_one` stores to the journal, NOT the `CacheDB`). On the
-            // SHARED per-block `&mut evm` (Tier 1), an un-finalized journal
-            // would leak those partial read-caches into the next path's first
-            // `transact_one`. `finalize` returns + discards the per-path
-            // `State` (NOT committed — the escape hatch's contract is the one
-            // `SimSession::run` performs internally), so execute() SSTOREs stay
-            // out of the shared `CacheDB`.
-            let _ = evm.finalize();
+
+    // The 7 calls: 3 pre-balance reads, execute(), 3 post-balance reads, as ONE
+    // sequence. The sequence verb accumulates the journal ACROSS the calls
+    // (`transact_one` stores changes in the journal; the verb's closing
+    // `finalize` clears it), so the post reads see the execute() changes. A
+    // reverted execute rolls back ONLY its own changes (revm invariants) — the
+    // pre reads persist.
+    let steps: Vec<SimStep<SimInspector>> = vec![
+        SimStep::Transact(build_balance_tx(ctx, ctx.weth_address, &weth_call)),
+        SimStep::Transact(build_balance_tx(ctx, ctx.multicall3_address, &eth_call)),
+        SimStep::Transact(build_balance_tx(
+            ctx,
+            ctx.pool_manager_address,
+            &erc6909_call,
+        )),
+        SimStep::Inspect(build_execute_tx(ctx, &execute_calldata), (al, (ct, se))),
+        SimStep::Transact(build_balance_tx(ctx, ctx.weth_address, &weth_call)),
+        SimStep::Transact(build_balance_tx(ctx, ctx.multicall3_address, &eth_call)),
+        SimStep::Transact(build_balance_tx(
+            ctx,
+            ctx.pool_manager_address,
+            &erc6909_call,
+        )),
+    ];
+    let results: Vec<ExecutionResult> = match session.run_sequence(steps) {
+        Ok(sequence) => sequence.calls,
+        Err(err) => {
+            // A revm transact error (DB cold-miss RPC failure, or an invalid
+            // tx). Treat as rpc-failed (the Python oracle swallows these into
+            // rpc-failed). The sequence verb finalized the partial journal on
+            // this exit, so the calls before the failure left nothing for the
+            // next path on the shared per-block EVM.
             fail_buckets.record(
                 path.path_id,
                 "rpc-failed",
-                Some(idx),
+                err.step_index(),
                 alloy::primitives::Bytes::new(),
                 path.optimal_input,
                 path.expected_outputs_vec(),
             );
             return Ok(None);
-        };
-        if !res.is_success() && first_failure.is_none() {
-            first_failure = Some(idx);
         }
-        results.push(res);
-    }
-
-    // Finalize the journaled state (clears the journal). The state is available
-    // for access-list emission.
-    let _state = evm.finalize();
+    };
 
     // Drain the inspector buffers (call trace + captured swaps) ONCE here so
     // both the revert branch (below) + the success branch (profit path) have
     // the captured data, AND the buffers are reset for the next path on the
-    // shared per-block `&mut evm`. The `AccessListCollector` is drained only
-    // on the success path (its AL is meaningful for profitable paths only).
+    // shared per-block EVM. The `AccessListCollector` is drained only on the
+    // success path (its AL is meaningful for profitable paths only).
     let captured_call_trace = call_trace_handle.take_trace();
     let captured_swaps = swap_events_handle.take_swaps();
     let reverted_swaps = swap_events_handle.take_reverted_swaps();
 
     // Classify + tally the first revert if any call failed.
-    if let Some(fail_idx) = first_failure {
+    if let Some(fail_idx) = results.iter().position(|call| !call.is_success()) {
         // Revert-tolerant swap diagnostic: the committed
         // `captured_swaps` is empty for a reverting `unlock` (revm's journal
         // pops the inner swaps), but `reverted_swaps` preserves them. For a
@@ -1552,8 +1512,8 @@ where
     // (emitting from a `State` journal); it is just no longer the production
     // AL path.
     let access_list = access_list_handle.take_access_list();
-    // The call trace + captured swaps were drained right after `finalize`
-    // (before the revert branch) so both branches have them.
+    // The call trace + captured swaps were drained as soon as the sequence
+    // settled (before the revert branch) so both branches have them.
 
     guard.verdict = SimVerdict::Profitable;
     let profit_i128 = i128::try_from(net_profit).unwrap_or(i128::from(i64::MAX));
@@ -2974,18 +2934,15 @@ mod tests {
 
         // Build the EVM exactly as `simulate_in_process_with_db` does so the
         // seam is reached directly under the caller-held span.
-        let mut revm_ctx = revm::context::Context::mainnet();
-        revm_ctx.cfg.disable_nonce_check = true;
-        let mut evm = revm_ctx
-            .with_db(cache_db)
-            .build_mainnet_with_inspector(SimInspector::default());
-        evm.ctx.modify_block(|block| {
-            block.basefee = u64::try_from(ctx.base_fee_next).unwrap_or(u64::MAX);
-            block.number = U256::from(ctx.current_block);
-            block.timestamp = U256::from(ctx.block_timestamp);
-        });
+        let mut evm = degenbot_simulation::build_block_evm(
+            cache_db,
+            ctx.base_fee_next,
+            ctx.current_block,
+            ctx.block_timestamp,
+        );
+        let mut session = SimSession::new(&mut evm);
         let result =
-            simulate_path_on_evm_in_span(&mut evm, &ctx, &path, &mut buckets, &caller).unwrap();
+            simulate_path_on_evm_in_span(&mut session, &ctx, &path, &mut buckets, &caller).unwrap();
         assert!(result.is_none(), "reverting execute returns None");
 
         let mine: Vec<_> = cap

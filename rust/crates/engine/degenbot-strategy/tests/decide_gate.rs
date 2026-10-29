@@ -11,7 +11,7 @@ use std::sync::{atomic::AtomicU64, Arc};
 
 use alloy::primitives::{address, Address, U256};
 
-use degenbot_strategy::backrun::{Decision, MevblockerBackrun};
+use degenbot_strategy::backrun::{Decision, MevblockerBackrun, ObserveReason};
 use degenbot_strategy::backrun_engine::{BackrunHopRef, LaneCandidate, LaneFamily};
 use degenbot_strategy::backrun_strategy::{BackrunEvaluated, BackrunStrategy};
 use degenbot_strategy::execution_context::{ExecutionContext, ETHEREUM_WETH as WETH};
@@ -139,7 +139,7 @@ fn failed_sim_on_a_composed_candidate_observes_sim_gate_failed() {
     assert_eq!(
         decided.decision,
         Decision::Observe {
-            reason: "sim_gate_failed"
+            reason: ObserveReason::SimGateFailed
         }
     );
     assert_eq!(decided.requested_bid, U256::ZERO);
@@ -155,7 +155,7 @@ fn observe_only_when_bid_mode_is_off() {
     assert_eq!(
         decided.decision,
         Decision::Observe {
-            reason: "observe_only"
+            reason: ObserveReason::ObserveOnly
         }
     );
 }
@@ -170,7 +170,7 @@ fn observe_only_when_budget_is_zero() {
     assert_eq!(
         decided.decision,
         Decision::Observe {
-            reason: "observe_only"
+            reason: ObserveReason::ObserveOnly
         }
     );
 }
@@ -185,7 +185,7 @@ fn exhausted_budget_observes_budget_exhausted() {
     assert_eq!(
         decided.decision,
         Decision::Observe {
-            reason: "budget_exhausted"
+            reason: ObserveReason::BudgetExhausted
         }
     );
 }
@@ -219,7 +219,7 @@ fn kill_switch_drops_the_frame_before_any_bid() {
     assert_eq!(
         decided.decision,
         Decision::Drop {
-            reason: "kill_switch"
+            reason: ObserveReason::KillSwitch
         }
     );
     std::fs::remove_file(&stop).unwrap();
@@ -235,7 +235,7 @@ fn unprofitable_net_observes_net_after_gas() {
     assert_eq!(
         decided.decision,
         Decision::Observe {
-            reason: "net_after_gas_unprofitable"
+            reason: ObserveReason::NetAfterGasUnprofitable
         }
     );
 }
@@ -250,7 +250,7 @@ fn fixture_mode_observes_sim_skipped() {
     assert_eq!(
         decided.decision,
         Decision::Observe {
-            reason: "sim_skipped_fixture_mode"
+            reason: ObserveReason::SimSkippedFixtureMode
         }
     );
 }
@@ -267,7 +267,7 @@ fn no_solved_candidate_observes_no_candidate() {
     assert_eq!(
         decided.decision,
         Decision::Observe {
-            reason: "no_candidate"
+            reason: ObserveReason::NoCandidate
         }
     );
 }

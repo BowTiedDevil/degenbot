@@ -140,7 +140,7 @@ struct CollectedSlots {
 /// `inspect_one(tx, collector)` MOVES the collector into the EVM (it becomes
 /// `InspectEvm::Inspector`), so the caller can't read it back without the
 /// low-level `InspectorEvmTr::inspector()` getter (whose associated-type
-/// bounds would cascade onto the generic `simulate_path_on_evm`). Instead,
+/// bounds would cascade onto every sequence-verb caller). Instead,
 /// [`AccessListCollector::new`] returns the collector + an [`AccessListHandle`]
 /// sharing an `Rc<RefCell<CollectedSlots>>`; the collector writes during
 /// `execute()`, the handle drains after — no `InspectorEvmTr` bound needed.

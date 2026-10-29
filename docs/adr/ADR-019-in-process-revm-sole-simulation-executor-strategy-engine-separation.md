@@ -27,10 +27,17 @@ ships with the acceptance; the bulk is sequenced as a multi-step refactor
 > view instead of reaching the `CacheDB` three layers down and re-owning a
 > packed word. D7's separation survives intact: transact + finalize + typed read
 > is mechanism, the engine still names no strategy type, and what a strategy does
-> with a verdict stays the strategy's. The one consumer that genuinely needs raw
-> revm — the settlement bundle's 7-call accumulation (three balance reads, an
-> inspector-attached `execute()`, three balance reads, in ONE journal) — keeps a
-> documented escape hatch, `SimSession::evm_mut`, and owns that contract itself.
+> with a verdict stays the strategy's. The one consumer whose journal must
+> accumulate ACROSS calls — the settlement bundle's 7-call vector (three balance
+> reads, an inspector-attached `execute()`, three balance reads, in ONE journal)
+> — is a second verb on the same session rather than an escape hatch:
+> `SimSession::run_sequence` takes `Transact`/`Inspect` steps, accumulates them
+> over one journal, finalizes on every exit path (a mid-sequence failure
+> included, reported as `SimError::Call { index, .. }`), and returns each step's
+> result instead of a summary. The per-block policy — the lenient nonce check
+> and the block-env pinning — is a property of the one EVM constructor
+> (`sim::evm::simulator::build_block_evm`), so no verb takes a cfg or a
+> block-env parameter. The session exposes no raw EVM.
 
 ## Context
 

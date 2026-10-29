@@ -21,10 +21,8 @@ use std::sync::Arc;
 use alloy::primitives::{Address, B256};
 use degenbot_core::runtime::get_runtime;
 use degenbot_db::{ComputedLiquidityUpdate, DegenbotDb};
-use degenbot_pool_updater::{
-    run_pool_update, verify_v3_liquidity_map_on_chain, verify_v4_liquidity_map_on_chain,
-    NoProgress, RunError,
-};
+use degenbot_pool_updater::{run_pool_update, verify_liquidity_map_on_chain, NoProgress, RunError};
+use degenbot_rpc::liquidity_verifier::LiquidityMapTarget;
 
 use crate::block::{parse_to_block, resolve_to_block};
 use crate::cancel::CancelHandle;
@@ -98,14 +96,6 @@ impl PoolCommand {
     pub const fn prompt_plan(&self, _ctx: &CliContext<'_>) -> PromptPlan {
         PromptPlan::None
     }
-}
-
-/// The resolved verify target for a family.
-enum VerifyTarget {
-    /// A V3 pool contract address.
-    V3(Address),
-    /// A V4 `PoolManager` + `PoolId`.
-    V4 { manager: Address, pool_id: B256 },
 }
 
 /// Execute a `pool` command.
@@ -324,28 +314,7 @@ fn verify(
             degenbot_rpc::provider::AlloyProvider::for_chain(rpc_url, chain, RPC_MAX_RETRIES)
                 .await
                 .map_err(|err| CliError::BlockResolution(err.to_string()))?;
-        match target {
-            VerifyTarget::V3(address) => {
-                verify_v3_liquidity_map_on_chain(&provider, address, &computed, block_number)
-                    .await
-                    .map_err(|err| {
-                        CliError::PoolUpdate(Box::new(PoolUpdateFailure {
-                            error: err,
-                            rpc_url: rpc_url.to_string(),
-                            chain_id,
-                            from_block: block_number,
-                            to_block: Some(block_number),
-                            resume: None,
-                        }))
-                    })
-            }
-            VerifyTarget::V4 { manager, pool_id } => verify_v4_liquidity_map_on_chain(
-                &provider,
-                manager,
-                pool_id,
-                &computed,
-                block_number,
-            )
+        verify_liquidity_map_on_chain(&provider, target, &computed, block_number)
             .await
             .map_err(|err| {
                 CliError::PoolUpdate(Box::new(PoolUpdateFailure {
@@ -356,8 +325,7 @@ fn verify(
                     to_block: Some(block_number),
                     resume: None,
                 }))
-            }),
-        }
+            })
     })??;
     Ok(PoolReport::Verified {
         pool: pool.to_string(),
@@ -418,7 +386,7 @@ fn fetch_verify_state(
     pool: &str,
     family: PoolFamily,
     pool_manager: Option<&str>,
-) -> Result<(ComputedLiquidityUpdate, VerifyTarget), CliError> {
+) -> Result<(ComputedLiquidityUpdate, LiquidityMapTarget), CliError> {
     match family {
         PoolFamily::V3 => {
             let address: Address = pool
@@ -443,7 +411,7 @@ fn fetch_verify_state(
                     tick_data,
                     last_event: None,
                 },
-                VerifyTarget::V3(address),
+                LiquidityMapTarget::V3(address),
             ))
         }
         PoolFamily::V4 => {
@@ -476,7 +444,10 @@ fn fetch_verify_state(
                     tick_data,
                     last_event: None,
                 },
-                VerifyTarget::V4 { manager, pool_id },
+                LiquidityMapTarget::V4 {
+                    pool_manager: manager,
+                    pool_id,
+                },
             ))
         }
     }

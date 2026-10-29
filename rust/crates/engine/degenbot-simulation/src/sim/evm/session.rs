@@ -1,4 +1,4 @@
-//! The engine's settled-run verb + typed view reads over the per-block EVM.
+//! The engine's settled-run verbs + typed view reads over the per-block EVM.
 //!
 //! ADR-019 D4/D7 puts the *mechanics* here and the *policy* in the strategy
 //! crate: a [`SimSession`] runs one transaction envelope through the shared
@@ -14,20 +14,18 @@
 //! is the hazard: committing one candidate's `execute()` SSTOREs would leave
 //! its post-swap reserves in the read cache every later candidate reads.
 //!
-//! [`SimSession::run`] is `transact_one` + `finalize` — the pipeline lives
-//! inside the verb and the session has no `commit`, so a settled run leaves its
-//! results in the returned [`SimRun`] and nowhere else. The view a session
-//! answers reads from is therefore always the settled chain view (the shared
-//! `CacheDB`'s read cache), never an in-flight journal, and a run is invisible
-//! to the next run. `tests/frame_replay.rs`'s
+//! [`SimSession::run`] is `transact_one` + `finalize` for ONE envelope;
+//! [`SimSession::run_sequence`] is the same pipeline for a LIST of steps whose
+//! journal must accumulate across them (three balance reads, an
+//! inspector-attached `execute()`, three balance reads that must observe its
+//! changes). Both verbs own the `finalize` — including the mid-sequence error
+//! exit — and the session has no `commit`, so a settled run leaves its results
+//! in the returned [`SimRun`] / [`SimSequence`] and nowhere else. The view a
+//! session answers reads from is therefore always the settled chain view (the
+//! shared `CacheDB`'s read cache), never an in-flight journal, and a run is
+//! invisible to the next run. `tests/frame_replay.rs`'s
 //! `a_run_is_invisible_to_the_next_run_and_to_frames` drives exactly that
 //! property through this interface.
-//!
-//! The escape hatch — [`SimSession::evm_mut`] — is for the settlement bundle
-//! whose 7-call accumulation genuinely needs raw revm: three balance reads, an
-//! inspector-attached `execute()`, three balance reads, all accumulating in ONE
-//! journal. Its safety is the caller's, and its contract is the one `run`
-//! performs internally: `finalize` (never `commit`) before returning the EVM.
 
 use alloy::primitives::{Address, Bytes, U256};
 use degenbot_pools::{
@@ -39,8 +37,9 @@ use revm::context_interface::result::{
     EVMError, ExecutionResult, InvalidHeader, InvalidTransaction, ResultAndState,
 };
 use revm::database_interface::{Database, DatabaseRef};
+use revm::interpreter::interpreter::EthInterpreter;
 use revm::state::EvmState;
-use revm::ExecuteEvm;
+use revm::{ExecuteEvm, InspectEvm, Inspector};
 
 use super::inspectors::SimInspector;
 
@@ -68,7 +67,8 @@ impl<'h, Db: Database, Insp> SimSession<'h, Db, Insp> {
     ///
     /// The EVM's attached inspector is not driven (a run is not an
     /// `inspect_one`): inspector-captured detail — the access list, the call
-    /// trace, the swap events — is what the escape hatch exists for.
+    /// trace, the swap events — is what a [`SimStep::Inspect`] step of
+    /// [`Self::run_sequence`] exists for.
     ///
     /// # Errors
     ///
@@ -80,16 +80,84 @@ impl<'h, Db: Database, Insp> SimSession<'h, Db, Insp> {
         let settled = self.evm.transact(tx).map_err(SimError::from)?;
         Ok(SimRun::settle(settled))
     }
+}
 
-    /// The raw revm EVM — the documented escape hatch.
+/// One step of a [`SimSession::run_sequence`]: a plain transaction envelope, or
+/// one whose execution drives the session's inspector.
+///
+/// `Inspect` is where a strategy attaches its diagnostics (access list, call
+/// trace, swap events): revm's `inspect_one` consumes the inspector, so the step
+/// carries it and the caller keeps the paired handles it drains afterwards.
+#[derive(Debug, Clone)]
+pub enum SimStep<Insp> {
+    /// Run the envelope through `transact_one`; the attached inspector is not
+    /// driven.
+    Transact(TxEnv),
+    /// Run the envelope through `inspect_one` with `Insp` attached.
+    Inspect(TxEnv, Insp),
+}
+
+/// One settled sequence: every step's result in order, plus the state the
+/// closing `finalize` returned.
+///
+/// The caller reads the per-step results (`calls[i].output()`,
+/// `calls[i].gas()`) after the run — the verb summarizes nothing.
+#[derive(Debug)]
+pub struct SimSequence {
+    /// The steps' results, in step order.
+    pub calls: Vec<ExecutionResult>,
+    /// revm's settled account/storage map for the whole sequence (the journal
+    /// the steps accumulated, returned by the closing `finalize`). Discarded
+    /// with the value unless the caller keeps it.
+    pub state: EvmState,
+}
+
+impl<Db, Insp> SimSession<'_, Db, Insp>
+where
+    Db: Database,
+    Db::Error: core::fmt::Display,
+    Insp: Inspector<revm::handler::MainnetContext<Db>, EthInterpreter>,
+{
+    /// Run `steps` in order over ONE accumulating journal and settle —
+    /// `finalize`, with no `commit` reachable from this surface (see the module
+    /// doc).
     ///
-    /// Take it only for a bundle that needs what [`Self::run`] deliberately
-    /// does not expose (journaled accumulation ACROSS calls, an
-    /// inspector-attached `execute()`, access-list emission from the settled
-    /// state). The caller owns the isolation contract: `finalize` before
-    /// returning, never `commit`.
-    pub fn evm_mut(&mut self) -> &mut revm::MainnetEvm<revm::handler::MainnetContext<Db>, Insp> {
-        self.evm
+    /// The accumulation is what [`Self::run`] deliberately does not offer: each
+    /// step's journal entry survives into the next, so a read after a write
+    /// observes it. A step whose envelope settles as a revert or a halt keeps
+    /// the sequence running (revm rolls back only that step's changes), and the
+    /// caller classifies the first failing step from the returned results.
+    ///
+    /// The settle contract holds on EVERY exit path: a step revm refuses
+    /// finalizes the partial journal before the [`SimError::Call`] escapes, so
+    /// even a failed sequence leaves the shared `CacheDB` with reads only.
+    ///
+    /// # Errors
+    ///
+    /// [`SimError::Call`] carrying the failing step's index, wrapping the class
+    /// [`SimError`] names.
+    pub fn run_sequence(&mut self, steps: Vec<SimStep<Insp>>) -> Result<SimSequence, SimError> {
+        let mut calls = Vec::with_capacity(steps.len());
+        for (index, step) in steps.into_iter().enumerate() {
+            let settled = match step {
+                SimStep::Transact(tx) => self.evm.transact_one(tx),
+                SimStep::Inspect(tx, inspector) => self.evm.inspect_one(tx, inspector),
+            };
+            match settled {
+                Ok(call) => calls.push(call),
+                Err(err) => {
+                    let _ = self.evm.finalize();
+                    return Err(SimError::Call {
+                        index,
+                        source: Box::new(SimError::from(err)),
+                    });
+                }
+            }
+        }
+        Ok(SimSequence {
+            calls,
+            state: self.evm.finalize(),
+        })
     }
 }
 
@@ -221,6 +289,29 @@ pub enum SimError {
     /// register).
     #[error("{0}")]
     Custom(String),
+    /// A step of a [`SimSession::run_sequence`] could not execute; `index` is
+    /// the step's position in the sequence.
+    #[error("sequence step {index} failed: {source}")]
+    Call {
+        index: usize,
+        #[source]
+        source: Box<SimError>,
+    },
+}
+
+impl SimError {
+    /// The sequence step that failed, when the error came from
+    /// [`SimSession::run_sequence`].
+    #[must_use]
+    pub fn step_index(&self) -> Option<usize> {
+        match self {
+            Self::Call { index, .. } => Some(*index),
+            Self::InvalidTransaction(_)
+            | Self::InvalidHeader(_)
+            | Self::Database(_)
+            | Self::Custom(_) => None,
+        }
+    }
 }
 
 impl<DbError: core::fmt::Display> From<EVMError<DbError>> for SimError {

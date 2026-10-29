@@ -28,8 +28,8 @@ use degenbot_simulation::sim::evm::frame_replay::{
     read_view_word, BaseFeeSource, CountingFrameDb, FrameRpcCounter, PredStatus, ReplayFrameError,
     ReplayableTx, ScratchBlock, ScratchEvm, SequenceReplayError,
 };
-use degenbot_simulation::sim::evm::session::SimSession;
-use degenbot_simulation::RunVerdict;
+use degenbot_simulation::sim::evm::session::{SimSession, SimStep};
+use degenbot_simulation::{RunVerdict, SimInspector};
 use revm::bytecode::Bytecode;
 use revm::database::CacheDB;
 use revm::database_interface::EmptyDB;
@@ -316,14 +316,18 @@ fn reverted_frame_returns_no_partial_state_and_contained_writes() {
 
 /// The seam's two directions are isolated, and the isolation is the VERB's:
 /// one run through the session (`transact_one` + `finalize` live inside it) is
-/// invisible to the next run and to every frame, while the session's escape
-/// hatch still accumulates across `transact_one` (the settlement bundle's
-/// 7-call shape) and still commits nothing.
+/// invisible to the next run and to every frame, while a sequence run
+/// accumulates its journal across steps (the settlement bundle's 7-call shape)
+/// and still commits nothing.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scenario script: frame-vs-run isolation and sequence accumulation share the fixture"
+)]
 #[test]
 fn a_run_is_invisible_to_the_next_run_and_to_frames() {
     use revm::context::Context as RevmContext;
     use revm::primitives::TxKind;
-    use revm::{ExecuteEvm, MainBuilder, MainContext};
+    use revm::{MainBuilder, MainContext};
 
     let mut scratch = scratch();
 
@@ -360,7 +364,7 @@ fn a_run_is_invisible_to_the_next_run_and_to_frames() {
     //    slot at 0 — no frame state reached the settled view.
     let mut evm = RevmContext::mainnet()
         .with_db(scratch.ext_mut())
-        .build_mainnet();
+        .build_mainnet_with_inspector(SimInspector::default());
     let mut session = SimSession::new(&mut evm);
     let observed = session
         .run(dual_read(7))
@@ -403,24 +407,38 @@ fn a_run_is_invisible_to_the_next_run_and_to_frames() {
         "a run is invisible to the next run"
     );
 
-    // 5. The escape hatch keeps the 7-call bundle's shape: the journal
-    //    accumulates ACROSS transact_one calls (nonce bump included), and
-    //    `finalize` discards it without committing.
+    // 5. A sequence keeps the 7-call bundle's shape through the settle verb:
+    //    the journal accumulates ACROSS its steps (nonce bump included), every
+    //    step's result comes back, and the closing `finalize` discards the
+    //    journal without committing.
     {
-        let evm = session.evm_mut();
-        evm.transact_one(dual_write(7))
-            .expect("escape-hatch write settles");
-        let accumulated = evm
-            .transact_one(dual_read(8))
-            .expect("accumulation read settles");
+        let sequence = session
+            .run_sequence(vec![
+                SimStep::Transact(dual_write(7)),
+                SimStep::Transact(dual_read(8)),
+            ])
+            .expect("the sequence settles");
         assert_eq!(
-            accumulated
+            sequence.calls.len(),
+            2,
+            "every step's result is returned, none summarized away"
+        );
+        assert_eq!(
+            sequence.calls[1]
                 .output()
                 .map(|bytes| { U256::from_be_slice(&bytes[bytes.len().saturating_sub(32)..]) }),
             Some(U256::from(0x2A)),
-            "the escape hatch still accumulates across transact_one"
+            "a sequence accumulates across its steps"
         );
-        let _ = evm.finalize();
+        assert_eq!(
+            sequence
+                .state
+                .get(&DUAL)
+                .and_then(|acc| acc.storage.get(&U256::from(5u64)))
+                .map(|s| s.present_value),
+            Some(U256::from(0x2A)),
+            "the settled sequence state carries the accumulated write"
+        );
     }
 
     // 6. Neither side reaches the frame layer: the next frame reads the slot

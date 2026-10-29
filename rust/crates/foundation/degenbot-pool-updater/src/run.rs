@@ -95,12 +95,11 @@ use degenbot_db::{
     derive_liquidity_delta_from_computed, ComputedLiquidityUpdate, DegenbotDb, LiquidityDelta,
     LiquidityUpdateEvent, V2PoolRowInput, V3PoolRowInput, V4PoolRowInput,
 };
+use degenbot_rpc::liquidity_verifier::LiquidityMapTarget;
 use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 use rusqlite::Connection;
 
-use crate::verify::{
-    verify_v3_liquidity_map_on_chain, verify_v4_liquidity_map_on_chain, LiquidityDivergence,
-};
+use crate::verify::{gate_liquidity_map_on_chain, LiquidityDivergence};
 
 use crate::fetch::{
     fetch_pool_created_logs_for_spec, fetch_v3_liquidity_logs_grouped,
@@ -1033,19 +1032,14 @@ fn verify_precomputed_maps(
     v3_addrs.sort();
     for addr in v3_addrs {
         let plan = &preverified.v3[addr];
-        let divergences = rt.block_on(verify_v3_liquidity_map_on_chain(
+        gate_liquidity_map_on_chain(
+            rt,
             provider,
-            *addr,
+            &addr.to_checksum(None),
+            LiquidityMapTarget::V3(*addr),
             &plan.computed,
             block_number,
-        ))?;
-        if !divergences.is_empty() {
-            return Err(RunError::Verification {
-                pool: addr.to_checksum(None),
-                block_number,
-                divergences,
-            });
-        }
+        )?;
     }
     let mut v4_hashes: Vec<&String> = preverified.v4.keys().collect();
     v4_hashes.sort();
@@ -1068,20 +1062,17 @@ fn verify_precomputed_maps(
                     message: format!("v4 verify: bad pool_hash {pool_hash:?}: {e}"),
                 }
             })?;
-        let divergences = rt.block_on(verify_v4_liquidity_map_on_chain(
+        gate_liquidity_map_on_chain(
+            rt,
             provider,
-            pool_manager_address,
-            pool_id,
+            pool_hash,
+            LiquidityMapTarget::V4 {
+                pool_manager: pool_manager_address,
+                pool_id,
+            },
             &plan.computed,
             block_number,
-        ))?;
-        if !divergences.is_empty() {
-            return Err(RunError::Verification {
-                pool: pool_hash.clone(),
-                block_number,
-                divergences,
-            });
-        }
+        )?;
     }
     Ok(())
 }

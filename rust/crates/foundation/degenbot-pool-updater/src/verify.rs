@@ -175,56 +175,57 @@ fn project(
         .map_err(|error| map_error(&error))
 }
 
-/// Verify a V3 computed map through the shared verifier.
+/// Verify a computed map against on-chain truth through the shared verifier.
 ///
-/// # Errors
-///
-/// Returns [`RunError::Provider`] for shared read/decode failures and
-/// [`RunError::Verification`] is raised by the caller-specific gate when facts
-/// are non-empty.
-pub async fn verify_v3_liquidity_map_on_chain(
-    provider: &AlloyProvider,
-    pool_address: Address,
-    computed: &ComputedLiquidityUpdate,
-    block_number: u64,
-) -> Result<Vec<LiquidityDivergence>, RunError> {
-    project(
-        verify_liquidity_map(
-            provider,
-            LiquidityMapTarget::V3(pool_address),
-            &shared_map(computed)?,
-            Some(block_number),
-        )
-        .await,
-    )
-}
-
-/// Verify a V4 computed map through the shared verifier. The target is the
-/// `PoolManager` and `PoolId`; `StateView` is intentionally not an input.
+/// `target` names the contract identity: a V3 pool's address, or a V4
+/// `PoolManager` and `PoolId` (`StateView` is intentionally not an input).
 ///
 /// # Errors
 ///
 /// Returns [`RunError::Provider`] for shared read/decode failures. A non-empty
 /// fact list is returned to the caller for its rollback policy.
-pub async fn verify_v4_liquidity_map_on_chain(
+pub async fn verify_liquidity_map_on_chain(
     provider: &AlloyProvider,
-    pool_manager_address: Address,
-    pool_id: B256,
+    target: LiquidityMapTarget,
     computed: &ComputedLiquidityUpdate,
     block_number: u64,
 ) -> Result<Vec<LiquidityDivergence>, RunError> {
     project(
-        verify_liquidity_map(
-            provider,
-            LiquidityMapTarget::V4 {
-                pool_manager: pool_manager_address,
-                pool_id,
-            },
-            &shared_map(computed)?,
-            Some(block_number),
-        )
-        .await,
+        verify_liquidity_map(provider, target, &shared_map(computed)?, Some(block_number)).await,
     )
+}
+
+/// Verify one map and turn a non-empty fact list into the caller's rollback
+/// signal, naming the pool by `identifier` (its V3 checksummed address or its
+/// V4 `pool_hash`). An empty fact list is the only GREEN outcome.
+///
+/// # Errors
+///
+/// Propagates [`verify_liquidity_map_on_chain`]'s failures, and returns
+/// [`RunError::Verification`] carrying the divergences when facts are
+/// non-empty.
+pub(crate) fn gate_liquidity_map_on_chain(
+    rt: &'static tokio::runtime::Runtime,
+    provider: &AlloyProvider,
+    identifier: &str,
+    target: LiquidityMapTarget,
+    computed: &ComputedLiquidityUpdate,
+    block_number: u64,
+) -> Result<(), RunError> {
+    let divergences = rt.block_on(verify_liquidity_map_on_chain(
+        provider,
+        target,
+        computed,
+        block_number,
+    ))?;
+    if divergences.is_empty() {
+        return Ok(());
+    }
+    Err(RunError::Verification {
+        pool: identifier.to_string(),
+        block_number,
+        divergences,
+    })
 }
 
 /// Context for market-wide committed-map verification.
@@ -273,19 +274,14 @@ pub fn verify_all_pools_committed_on_conn(
             tick_data,
             last_event: None,
         };
-        let divergences = ctx.rt.block_on(verify_v3_liquidity_map_on_chain(
+        gate_liquidity_map_on_chain(
+            ctx.rt,
             ctx.provider,
-            *addr,
+            &addr_str,
+            LiquidityMapTarget::V3(*addr),
             &computed,
             ctx.block_number,
-        ))?;
-        if !divergences.is_empty() {
-            return Err(RunError::Verification {
-                pool: addr_str,
-                block_number: ctx.block_number,
-                divergences,
-            });
-        }
+        )?;
     }
 
     let v4_hashes = DegenbotDb::fetch_v4_pool_hashes_on_conn(conn, ctx.chain_id)?;
@@ -315,20 +311,17 @@ pub fn verify_all_pools_committed_on_conn(
                     message: format!("v4 full-verify: bad pool_hash {pool_hash:?}: {e}"),
                 })
             })?;
-        let divergences = ctx.rt.block_on(verify_v4_liquidity_map_on_chain(
+        gate_liquidity_map_on_chain(
+            ctx.rt,
             ctx.provider,
-            *manager,
-            pool_id,
+            pool_hash,
+            LiquidityMapTarget::V4 {
+                pool_manager: *manager,
+                pool_id,
+            },
             &computed,
             ctx.block_number,
-        ))?;
-        if !divergences.is_empty() {
-            return Err(RunError::Verification {
-                pool: pool_hash.clone(),
-                block_number: ctx.block_number,
-                divergences,
-            });
-        }
+        )?;
     }
     Ok(())
 }
@@ -476,19 +469,14 @@ fn collect_pre_commit_checks(
 pub fn verify_all_pools_pre_commit(ctx: &PreCommitFullVerifyCtx<'_>) -> Result<(), RunError> {
     let (v3_checks, v4_checks) = collect_pre_commit_checks(ctx)?;
     for (addr_str, addr, computed) in &v3_checks {
-        let divergences = ctx.rt.block_on(verify_v3_liquidity_map_on_chain(
+        gate_liquidity_map_on_chain(
+            ctx.rt,
             ctx.provider,
-            *addr,
+            addr_str,
+            LiquidityMapTarget::V3(*addr),
             computed,
             ctx.block_number,
-        ))?;
-        if !divergences.is_empty() {
-            return Err(RunError::Verification {
-                pool: addr_str.clone(),
-                block_number: ctx.block_number,
-                divergences,
-            });
-        }
+        )?;
     }
     for (pool_hash, manager, computed) in &v4_checks {
         let pool_id =
@@ -497,20 +485,17 @@ pub fn verify_all_pools_pre_commit(ctx: &PreCommitFullVerifyCtx<'_>) -> Result<(
                     message: format!("v4 full-verify: bad pool_hash {pool_hash:?}: {e}"),
                 })
             })?;
-        let divergences = ctx.rt.block_on(verify_v4_liquidity_map_on_chain(
+        gate_liquidity_map_on_chain(
+            ctx.rt,
             ctx.provider,
-            *manager,
-            pool_id,
+            pool_hash,
+            LiquidityMapTarget::V4 {
+                pool_manager: *manager,
+                pool_id,
+            },
             computed,
             ctx.block_number,
-        ))?;
-        if !divergences.is_empty() {
-            return Err(RunError::Verification {
-                pool: pool_hash.clone(),
-                block_number: ctx.block_number,
-                divergences,
-            });
-        }
+        )?;
     }
     Ok(())
 }

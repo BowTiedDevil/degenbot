@@ -30,6 +30,7 @@ use std::sync::Arc;
 
 use degenbot_pathfinding::PoolKind;
 use degenbot_strategy::anchored_dfs::{AnchorPool, AnchoredGraph};
+use degenbot_strategy::backrun::ObserveReason;
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
 use degenbot_strategy::backrun_strategy::{
     admit_extracted, backrun_encode_options, cycle_refs, cycle_touched_legs, net_bid,
@@ -885,14 +886,14 @@ fn unsupported_family_observes_loudly_not_silently() {
     );
     assert_eq!(
         empty_frame_observe_reason(&descriptors),
-        "family-unsupported"
+        ObserveReason::FamilyUnsupported
     );
 
     let only_unsupported = build_descriptors(Some(&index), &[(LFJ, Vec::new())], &test_execution());
     assert!(only_unsupported.by_address.is_empty());
     assert_eq!(
         empty_frame_observe_reason(&only_unsupported),
-        "family-unsupported",
+        ObserveReason::FamilyUnsupported,
         "an unsupported-only frame observes the reason, not no_candidate"
     );
 }
@@ -1007,7 +1008,10 @@ fn manager_without_roster_edges_stays_unsupported() {
         "an empty roster never fabricates a decode, got {:?}",
         v4.kind
     );
-    assert_eq!(empty_frame_observe_reason(&descriptors), "v4_unsupported");
+    assert_eq!(
+        empty_frame_observe_reason(&descriptors),
+        ObserveReason::V4Unsupported
+    );
 }
 
 /// One hand-built frame whose only touched account is `manager`, holding the
@@ -1095,18 +1099,18 @@ fn admitted_pair(
 #[test]
 fn non_base_quote_drop_is_truthful() {
     assert_eq!(
-        degenbot_strategy::frame_pipeline::honest_observe("no_candidate", true, false),
-        "non_base_quote"
+        ObserveReason::NoCandidate.honest(true, false),
+        ObserveReason::NonBaseQuote
     );
     // A WETH-closing candidate that did solve keeps the existing truthful
     // verdict; an unrelated observe reason is never rewritten.
     assert_eq!(
-        degenbot_strategy::frame_pipeline::honest_observe("no_candidate", true, true),
-        "no_candidate"
+        ObserveReason::NoCandidate.honest(true, true),
+        ObserveReason::NoCandidate
     );
     assert_eq!(
-        degenbot_strategy::frame_pipeline::honest_observe("budget_exhausted", true, false),
-        "budget_exhausted"
+        ObserveReason::BudgetExhausted.honest(true, false),
+        ObserveReason::BudgetExhausted
     );
 }
 
@@ -1222,12 +1226,12 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
                 assert!(
                     matches!(
                         *reason,
-                        "no_candidate"
-                            | "family-unsupported"
-                            | "v4_unsupported"
-                            | "reverted"
-                            | "replay_failed"
-                            | "replay_unavailable"
+                        ObserveReason::NoCandidate
+                            | ObserveReason::FamilyUnsupported
+                            | ObserveReason::V4Unsupported
+                            | ObserveReason::Reverted
+                            | ObserveReason::ReplayFailed
+                            | ObserveReason::ReplayUnavailable
                     ),
                     "truthful observe reason, got {reason}"
                 );
@@ -1405,7 +1409,7 @@ fn replay_reasons_split() {
             claimed: 12,
             expected: 10,
         });
-    assert_eq!(r, "gap_pending");
+    assert_eq!(r, ObserveReason::GapPending);
     assert_eq!(v["claimed_nonce"], 12);
     assert_eq!(v["expected_nonce"], 10);
 
@@ -1415,7 +1419,7 @@ fn replay_reasons_split() {
             parent: 30674,
         },
     );
-    assert_eq!(r, "already_settled");
+    assert_eq!(r, ObserveReason::AlreadySettled);
     assert_eq!(v["frame_nonce"], 30673);
     assert_eq!(v["parent_nonce"], 30674);
 
@@ -1424,7 +1428,7 @@ fn replay_reasons_split() {
             raw: "call gas cost (49784) exceeds the gas limit (0)".into(),
         },
     );
-    assert_eq!(r, "malformed_transaction");
+    assert_eq!(r, ObserveReason::MalformedTransaction);
     assert_eq!(
         v["detail"],
         "call gas cost (49784) exceeds the gas limit (0)"
@@ -1434,7 +1438,7 @@ fn replay_reasons_split() {
         degenbot_strategy::frame_pipeline::replay_observe_reason(&ReplayFrameError::Other {
             raw: "rpc timeout".into(),
         });
-    assert_eq!(r, "replay_failed");
+    assert_eq!(r, ObserveReason::ReplayFailed);
 }
 
 // ─────────── the dispatch submit ordering: spent accounting (offline) ──────

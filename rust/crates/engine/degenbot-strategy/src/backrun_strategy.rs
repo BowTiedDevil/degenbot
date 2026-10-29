@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 
-use crate::backrun::Decision;
+use crate::backrun::{Decision, ObserveReason};
 use crate::backrun_engine::{
     BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate, LaneFamily, PathReject,
 };
@@ -31,9 +31,7 @@ use degenbot_substrate::connector_index::V2ConnectorIndex;
 use hashbrown::HashMap as HbMap;
 
 use crate::anchored_dfs::{resolve_hop, AnchorPool, DfsCycle, ResolvedHop};
-use crate::frame_pipeline::{
-    honest_observe, BidEconomics, DiscoverTrace, SolveTrace, StageEvent, StageTrace,
-};
+use crate::frame_pipeline::{BidEconomics, DiscoverTrace, SolveTrace, StageEvent, StageTrace};
 use crate::market_context::MarketContext;
 use crate::pending_tx::{ComposedIntent, Decided, FrameContext, GateInput, PendingTxReaction};
 
@@ -1244,7 +1242,7 @@ impl PendingTxReaction for BackrunStrategy {
         if knobs.stop_file.exists() {
             return Decided {
                 decision: Decision::Drop {
-                    reason: "kill_switch",
+                    reason: ObserveReason::KillSwitch,
                 },
                 requested_bid: net.requested_bid,
                 submit_calldata: net.submit_calldata,
@@ -1260,36 +1258,35 @@ impl PendingTxReaction for BackrunStrategy {
                 let bind = net.requested_bid.min(knobs.max_bundle_wei);
                 if spent + bind > knobs.budget_wei {
                     Decision::Observe {
-                        reason: "budget_exhausted",
+                        reason: ObserveReason::BudgetExhausted,
                     }
                 } else {
                     Decision::Bid { bid_wei: bind }
                 }
             } else {
                 Decision::Observe {
-                    reason: "observe_only",
+                    reason: ObserveReason::ObserveOnly,
                 }
             }
         } else if net.net_gated {
             Decision::Observe {
-                reason: "net_after_gas_unprofitable",
+                reason: ObserveReason::NetAfterGasUnprofitable,
             }
         } else if net.fixture_composed {
             Decision::Observe {
-                reason: "sim_skipped_fixture_mode",
+                reason: ObserveReason::SimSkippedFixtureMode,
             }
         } else if composed.is_some() {
             // A composed candidate the bundle sim rejected: forward the real
             // verdict instead of masking it as "no candidate".
             Decision::Observe {
-                reason: "sim_gate_failed",
+                reason: ObserveReason::SimGateFailed,
             }
         } else {
             // The observe label tells the truth: a frame that never composed
             // a candidate must not read as "the sim rejected our work".
             Decision::Observe {
-                reason: honest_observe(
-                    "no_candidate",
+                reason: ObserveReason::NoCandidate.honest(
                     evaluated.stats.non_base_quote_dropped,
                     evaluated.stats.best.is_some(),
                 ),

@@ -30,7 +30,7 @@ use alloy::sol_types::SolCall as _;
 use degenbot_executor::composers::ICommandExecutor::executeCall;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_strategy::backrun::{BackrunConfig, Decision, MevblockerBackrun};
+use degenbot_strategy::backrun::{BackrunConfig, Decision, MevblockerBackrun, ObserveReason};
 use degenbot_strategy::backrun_strategy::BackrunStrategy;
 use degenbot_strategy::execution_context::ExecutionContext;
 use degenbot_strategy::frame_pipeline::{
@@ -389,7 +389,9 @@ async fn frame_pipeline_reverted_target_observes_truthfully() {
 
     assert_eq!(
         artifacts.decision,
-        Decision::Observe { reason: "reverted" },
+        Decision::Observe {
+            reason: ObserveReason::Reverted
+        },
         "a reverted target observes with the truthful reason"
     );
     assert!(artifacts.submit_calldata.is_none());

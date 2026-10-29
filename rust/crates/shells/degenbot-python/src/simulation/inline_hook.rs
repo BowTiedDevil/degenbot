@@ -626,8 +626,9 @@ impl InlineSimulator for InlineSimHook {
                             // `degenbot.bundle.simulate` span (captured before the
                             // runtime hop below) — the seam must not open a
                             // same-named duplicate nested under this span.
+                            let mut session = handle.session();
                             let result = simulate_path_on_evm_in_span(
-                                handle.session().evm_mut(),
+                                &mut session,
                                 &ctx,
                                 &sim_path,
                                 &mut buckets,

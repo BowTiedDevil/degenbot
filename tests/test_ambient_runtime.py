@@ -1,6 +1,6 @@
 """Pin for the ambient-runtime driver seam (`call_on_ambient_runtime`).
 
-The verify seams (`verify_touched_positions_on_chain`, `verify_v3/v4_liquidity_map`)
+The verify seams (`verify_touched_positions_on_chain`, `verify_liquidity_map`)
 refuse to build a per-call tokio runtime (the dead-worker churn source) and
 fail with a typed ValueError when the calling thread has no ambient runtime.
 Rust consumers run on the shared runtime natively; a Python driver shell

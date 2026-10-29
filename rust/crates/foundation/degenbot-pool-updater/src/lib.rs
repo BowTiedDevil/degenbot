@@ -45,6 +45,4 @@ pub use run::{
     PoolCreationToWrite, PreVerifiedLiquidity, ProgressSink, RunError, UpdateReport,
 };
 pub use spec::{load_active_exchange_specs, ExchangeSpec, RpcFeeCall};
-pub use verify::{
-    verify_v3_liquidity_map_on_chain, verify_v4_liquidity_map_on_chain, LiquidityDivergence,
-};
+pub use verify::{verify_liquidity_map_on_chain, LiquidityDivergence};
