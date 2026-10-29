@@ -1,63 +1,99 @@
+//! The tick-word backfill's STATE-OWNER surfaces: the pool-id dispatch, the
+//! retried fetch context, and the family drive loop that reach the ONE merge
+//! policy. The policy's own branches (merged / checked-empty / raced /
+//! fetch-failed / no-source) are pinned beside the owner, behind the pools
+//! root door (`degenbot_pools::{WordFetchOutcome, fetch_and_merge,
+//! stage_word_fetch, install_staged_word}`); what these tests pin is what a
+//! registered pool adds on top — the stored read handle, the fingerprint-gated
+//! install under a released lock, and the bool contract the Python gate raises
+//! on.
+
 use super::*;
 
-// --- write-path sparse backfill — ensure_word_known ---
-#[test]
-#[expect(clippy::expect_used, clippy::too_many_lines)]
-fn staged_word_fetch_install_races_on_interleaved_pool_write() {
-    use crate::InstallWordOutcome;
-    use ::degenbot_pools::{FetchedTickWord, TickWordKey, TickWordSource};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::sync::Mutex;
 
-    // Scripted fetcher (red shape): attempt 1 -> empty
-    // word (checked-empty, RACED); attempt 2 -> the stale tick-60 value
-    // (block 99) the retried context returns.
-    #[derive(Debug)]
-    struct ScriptedTickWordSource {
-        script: std::sync::Mutex<std::collections::VecDeque<FetchedTickWord>>,
+use alloy::primitives::U128;
+use degenbot_pools::{
+    FetchedTickWord, TickInfo, TickWordFetchError, TickWordKey, TickWordSource, WordFetchOutcome,
+};
+
+/// One scripted source reply.
+#[derive(Debug)]
+enum Reply {
+    /// The source answers the word with these `(tick, stamp)` rows.
+    Word(Vec<(i32, u64)>),
+    /// The source's bitmap is all-zero (`Ok(None)`) — a checked-empty word.
+    Miss,
+    /// The read itself failed.
+    Fail,
+}
+
+/// The scripted tick-word source the whole battery shares: one queued reply per
+/// call, every call counted. A scripted source is the only way to drive the
+/// multi-second read path without a node.
+#[derive(Debug)]
+struct ScriptedSource {
+    replies: Mutex<VecDeque<Reply>>,
+    calls: AtomicUsize,
+}
+
+impl ScriptedSource {
+    fn script(replies: Vec<Reply>) -> Arc<Self> {
+        Arc::new(Self {
+            replies: Mutex::new(VecDeque::from(replies)),
+            calls: AtomicUsize::new(0),
+        })
     }
-    impl ScriptedTickWordSource {
-        fn new_scripted() -> Self {
-            Self {
-                script: std::sync::Mutex::new(std::collections::VecDeque::from([
-                    FetchedTickWord {
-                        word: 0,
-                        ticks: HashMap::new(),
-                        bitmap: None,
-                    },
-                    FetchedTickWord {
-                        word: 0,
-                        ticks: HashMap::from_iter([(
-                            60,
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl TickWordSource for ScriptedSource {
+    fn fetch_tick_word(
+        &self,
+        _key: &TickWordKey,
+        word: i32,
+        _block: u64,
+    ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let reply = self
+            .replies
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop_front();
+        match reply {
+            Some(Reply::Word(ticks)) => Ok(Some(FetchedTickWord {
+                word,
+                ticks: ticks
+                    .into_iter()
+                    .map(|(tick, stamp)| {
+                        (
+                            tick,
                             TickInfo {
-                                liquidity_gross: alloy::primitives::U128::from(100u128),
+                                liquidity_gross: U128::from(100u128),
                                 liquidity_net: 100i128,
-                                block: 99,
+                                block: stamp,
                             },
-                        )]),
-                        bitmap: None,
-                    },
-                ])),
-            }
+                        )
+                    })
+                    .collect(),
+                bitmap: None,
+            })),
+            Some(Reply::Miss) => Ok(None),
+            Some(Reply::Fail) | None => Err(TickWordFetchError::FetchFailed),
         }
     }
-    impl TickWordSource for ScriptedTickWordSource {
-        fn fetch_tick_word(
-            &self,
-            _key: &TickWordKey,
-            word: i32,
-            _block: u64,
-        ) -> Result<Option<FetchedTickWord>, ::degenbot_pools::TickWordFetchError> {
-            self.script
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .pop_front()
-                .map(|mut w| {
-                    w.word = word;
-                    Some(w)
-                })
-                .ok_or(::degenbot_pools::TickWordFetchError::FetchFailed)
-        }
-    }
+}
 
+/// Register the sparse V3 pool this battery drives: no tick data, so the walking
+/// word 0 is unknown, with the scripted source as the stored fetcher when one is
+/// given.
+fn sparse_v3_pool(fetcher: Option<Arc<dyn TickWordSource>>) -> (BotState, u64) {
     let mut core = BotState::new();
     let pool_id = core
         .register_v3_pool(&RegisterV3PoolParams {
@@ -74,322 +110,167 @@ fn staged_word_fetch_install_races_on_interleaved_pool_write() {
             update_block: 0,
             tick_data_block: None,
             coverage: PoolTickCoverage::Sparse,
-            fetcher: Some(std::sync::Arc::new(ScriptedTickWordSource::new_scripted())),
+            fetcher,
             ..Default::default()
         })
         .expect("test setup: V3 registration");
+    (core, pool_id)
+}
 
-    // Stage under the (simulated) short write, then a pump event for the
-    // SAME pool lands during the fetch window (the race shape).
+/// The stamp of one registered tick row.
+fn tick_block(core: &BotState, pool_id: u64, tick: i32) -> Option<u64> {
+    match core.pools.get(pool_id) {
+        Some(PoolEntry::V3(p)) => p.1.tick_data().get(&tick).map(|info| info.block),
+        _ => None,
+    }
+}
+
+/// The pool's checked bitmap words, in a comparable order.
+fn known_words(core: &BotState, pool_id: u64) -> Vec<i32> {
+    let mut words: Vec<i32> = match core.pools.get(pool_id) {
+        Some(PoolEntry::V3(p)) => p.1.known_bitmap_words().iter().copied().collect(),
+        _ => Vec::new(),
+    };
+    words.sort_unstable();
+    words
+}
+
+/// The number of initialized tick rows in the pool's map.
+fn tick_count(core: &BotState, pool_id: u64) -> usize {
+    match core.pools.get(pool_id) {
+        Some(PoolEntry::V3(p)) => p.1.tick_data().len(),
+        _ => 0,
+    }
+}
+
+// --- the staged fetch: lock-free read, fingerprint-gated install ---
+
+#[test]
+fn staged_word_fetch_install_races_on_interleaved_pool_write() {
+    // Scripted: attempt 1 answers a checked-empty word (the install races), the
+    // retry answers the stale tick-60 value (block 99) the retried context
+    // returns.
+    let source = ScriptedSource::script(vec![Reply::Miss, Reply::Word(vec![(60, 99)])]);
+    let (mut core, pool_id) = sparse_v3_pool(Some(source));
+
+    // Stage under the (simulated) short write, then a pump event for the SAME
+    // pool lands during the fetch window — the race shape.
     let staged = core
         .stage_word_fetch_by_pool_id(pool_id, 0, 99, false)
-        .expect("sparse pool stores a fetcher");
+        .expect("a sparse pool stores a fetcher");
     let _ = core.apply_liquidity_update_by_pool_id(pool_id, -60, 60, 1_000, 100);
     let fetched = staged.fetch().expect("empty-word fetch");
     assert_eq!(
         core.install_word_fetch(&staged, &fetched),
-        InstallWordOutcome::Raced,
+        WordFetchOutcome::Raced,
         "an interleaved pool write must force a retry, never a clobbering overlay"
     );
 
-    // Retry shape: the stage re-derives the fetch
-    // context from the pool clock - the companion block passed above is
-    // deliberately bogus (9_999) so a failed re-derivation is loud - and
-    // the scripted second fetch returns the stale tick-60 value (block
-    // 99). The stamp guard (Finding-1(a)) must keep the event values
-    // (gross 1_000 @ block 100).
+    // Retry shape: the stage re-derives the fetch context from the pool clock
+    // (the companion block passed here is deliberately bogus so a failed
+    // re-derivation is loud), and the stale tick-60 row the retry returns (block
+    // 99) must not regress the event-applied row (gross 1_000 @ block 100).
     let staged = core
         .stage_word_fetch_by_pool_id(pool_id, 0, 9_999, true)
-        .expect("sparse pool stores a fetcher");
+        .expect("a sparse pool stores a fetcher");
     assert_eq!(
-        staged.block, 99,
-        "retry fetch context re-derives from the pool clock (update_block - 1)"
+        staged.block(),
+        99,
+        "the retry fetch context re-derives from the pool clock (update_block - 1)"
     );
     let fetched = staged.fetch().expect("scripted stale fetch");
-    let outcome = core.install_word_fetch(&staged, &fetched);
     assert_eq!(
-        outcome,
-        InstallWordOutcome::Merged,
-        "quiet retry merges (fingerprint unchanged since restage)"
+        core.install_word_fetch(&staged, &fetched),
+        WordFetchOutcome::Merged,
+        "a quiet retry merges (the fingerprint is unchanged since the restage)"
     );
-    match core.pools.get(pool_id) {
-        Some(PoolEntry::V3(p)) => {
-            let state = &p.1;
-            let tick = state
-                .tick_data
-                .get(&60)
-                .expect("merged word carries tick 60 after the retry");
-            assert_eq!(
-                (tick.liquidity_gross.to::<u128>(), tick.block),
-                (u128::from(1_000u64), 100),
-                "the event-applied tick must NOT be regressed by the stale overlay"
-            );
-        }
-        _ => panic!("test setup: V3 pool missing"),
-    }
-    let known: Vec<i32> = match core.pools.get(pool_id) {
-        Some(PoolEntry::V3(p)) => p.1.known_bitmap_words().iter().copied().collect(),
-        _ => panic!("test setup: V3 pool missing"),
-    };
+    assert_eq!(
+        tick_block(&core, pool_id, 60),
+        Some(100),
+        "the event-applied tick must NOT be regressed by the stale overlay"
+    );
     assert!(
-        known.contains(&0),
+        known_words(&core, pool_id).contains(&0),
         "the retry's install marks the word known"
     );
 }
 
+// --- write-path sparse backfill: the pool-id bool contract ---
+
 #[test]
-fn ensure_word_known_no_fetcher_returns_false() {
-    let mut core = BotState::new();
-    let pool_id = core
-        .register_v3_pool(&RegisterV3PoolParams {
-            address: Address::ZERO,
-            token0: Address::ZERO,
-            token1: Address::from([1u8; 20]),
-            fee: 3000,
-            tick_spacing: 60,
-            factory: Address::ZERO,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 10_000_000_000_000u128,
-            tick: 0,
-            tick_data: HashMap::new(),
-            update_block: 0,
-            tick_data_block: None,
-            coverage: PoolTickCoverage::Sparse,
-            fetcher: None,
-            ..Default::default()
-        })
-        .expect("test setup: V3 registration");
+fn ensure_word_known_without_a_fetcher_reports_false() {
+    let (mut core, pool_id) = sparse_v3_pool(None);
 
     assert!(
         !core.ensure_word_known_by_pool_id(pool_id, 0, 99),
-        "no stored fetcher → False (the Python gate raises)"
+        "no stored fetcher → false (the Python gate raises)"
     );
 }
 
 #[test]
-fn ensure_word_known_merges_ticks_and_marks_word_known() {
-    use ::degenbot_pools::TickInfo;
-    use ::degenbot_pools::{FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource};
-    use alloy::primitives::U128;
+fn ensure_word_known_merges_the_word_and_marks_it_known() {
+    let (mut core, pool_id) = sparse_v3_pool(Some(ScriptedSource::script(vec![Reply::Word(
+        vec![(60, 99)],
+    )])));
 
-    #[derive(Debug)]
-    struct ScriptedTickWordSource;
-    impl TickWordSource for ScriptedTickWordSource {
-        fn fetch_tick_word(
-            &self,
-            _key: &TickWordKey,
-            word: i32,
-            _block: u64,
-        ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
-            Ok(Some(FetchedTickWord {
-                word,
-                ticks: HashMap::from_iter([(
-                    60,
-                    TickInfo {
-                        liquidity_gross: U128::from(100u128),
-                        liquidity_net: 100i128,
-                        block: 99,
-                    },
-                )]),
-                bitmap: None,
-            }))
-        }
-    }
-
-    let mut core = BotState::new();
-    let pool_id = core
-        .register_v3_pool(&RegisterV3PoolParams {
-            address: Address::ZERO,
-            token0: Address::ZERO,
-            token1: Address::from([1u8; 20]),
-            fee: 3000,
-            tick_spacing: 60,
-            factory: Address::ZERO,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 10_000_000_000_000u128,
-            tick: 0,
-            tick_data: HashMap::new(),
-            update_block: 0,
-            tick_data_block: None,
-            coverage: PoolTickCoverage::Sparse,
-            fetcher: Some(std::sync::Arc::new(ScriptedTickWordSource)),
-            ..Default::default()
-        })
-        .expect("test setup: V3 registration");
-
-    let ok = core.ensure_word_known_by_pool_id(pool_id, 0, 99);
-    assert!(ok, "a successful fetch must return True");
-
-    let tick_data: HashMap<i32, TickInfo> = match core.pools.get(pool_id) {
-        Some(PoolEntry::V3(p)) => p.1.tick_data().clone(),
-        _ => panic!("test setup: V3 pool missing"),
-    };
     assert!(
-        tick_data.contains_key(&60),
-        "the fetched word's ticks must land in tick_data (core merge reused)"
+        core.ensure_word_known_by_pool_id(pool_id, 0, 99),
+        "a successful fetch reports true"
     );
-    let known: Vec<i32> = match core.pools.get(pool_id) {
-        Some(PoolEntry::V3(p)) => p.1.known_bitmap_words().iter().copied().collect(),
-        _ => panic!("test setup: V3 pool missing"),
-    };
-    assert!(known.contains(&0), "the fetched word must be marked known");
+    assert!(
+        tick_block(&core, pool_id, 60).is_some(),
+        "the fetched word's ticks land in tick_data (the ONE merge)"
+    );
+    assert!(
+        known_words(&core, pool_id).contains(&0),
+        "the fetched word is marked known"
+    );
 }
 
 #[test]
-fn ensure_word_known_fetch_error_returns_false() {
-    use ::degenbot_pools::{FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource};
-
-    #[derive(Debug)]
-    struct FailingTickWordSource;
-    impl TickWordSource for FailingTickWordSource {
-        fn fetch_tick_word(
-            &self,
-            _key: &TickWordKey,
-            _word: i32,
-            _block: u64,
-        ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
-            Err(TickWordFetchError::FetchFailed)
-        }
-    }
-
-    let mut core = BotState::new();
-    let pool_id = core
-        .register_v3_pool(&RegisterV3PoolParams {
-            address: Address::ZERO,
-            token0: Address::ZERO,
-            token1: Address::from([1u8; 20]),
-            fee: 3000,
-            tick_spacing: 60,
-            factory: Address::ZERO,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 10_000_000_000_000u128,
-            tick: 0,
-            tick_data: HashMap::new(),
-            update_block: 0,
-            tick_data_block: None,
-            coverage: PoolTickCoverage::Sparse,
-            fetcher: Some(std::sync::Arc::new(FailingTickWordSource)),
-            ..Default::default()
-        })
-        .expect("test setup: V3 registration");
+fn ensure_word_known_reports_a_failed_fetch_as_false() {
+    let (mut core, pool_id) = sparse_v3_pool(Some(ScriptedSource::script(vec![Reply::Fail])));
 
     assert!(
         !core.ensure_word_known_by_pool_id(pool_id, 0, 99),
-        "a fetch failure must return False (the Python gate RAISES, never applies)"
+        "a fetch failure reports false (the Python gate raises, never applies)"
     );
-    let (len, known) = match core.pools.get(pool_id) {
-        Some(PoolEntry::V3(p)) => {
-            let state = &p.1;
-            (state.tick_data().len(), state.known_bitmap_words().len())
-        }
-        _ => panic!("test setup: V3 pool missing"),
-    };
-    assert_eq!((len, known), (0, 0), "no state mutation on a failed fetch");
+    assert_eq!(
+        (
+            tick_count(&core, pool_id),
+            known_words(&core, pool_id).len()
+        ),
+        (0, 0),
+        "no state mutation on a failed fetch"
+    );
 }
 
 #[test]
-fn ensure_word_known_checked_empty_marks_word_known() {
-    use ::degenbot_pools::{FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource};
-
-    #[derive(Debug)]
-    struct EmptyTickWordSource;
-    impl TickWordSource for EmptyTickWordSource {
-        fn fetch_tick_word(
-            &self,
-            _key: &TickWordKey,
-            word: i32,
-            _block: u64,
-        ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
-            Ok(Some(FetchedTickWord {
-                word,
-                ticks: HashMap::new(),
-                bitmap: None,
-            }))
-        }
-    }
-
-    let mut core = BotState::new();
-    let pool_id = core
-        .register_v3_pool(&RegisterV3PoolParams {
-            address: Address::ZERO,
-            token0: Address::ZERO,
-            token1: Address::from([1u8; 20]),
-            fee: 3000,
-            tick_spacing: 60,
-            factory: Address::ZERO,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 10_000_000_000_000u128,
-            tick: 0,
-            tick_data: HashMap::new(),
-            update_block: 0,
-            tick_data_block: None,
-            coverage: PoolTickCoverage::Sparse,
-            fetcher: Some(std::sync::Arc::new(EmptyTickWordSource)),
-            ..Default::default()
-        })
-        .expect("test setup: V3 registration");
+fn ensure_word_known_treats_a_checked_empty_word_as_known() {
+    let (mut core, pool_id) = sparse_v3_pool(Some(ScriptedSource::script(vec![Reply::Miss])));
 
     assert!(
         core.ensure_word_known_by_pool_id(pool_id, 3, 99),
-        "a checked-empty fetch is a success: the word is known (T1 semantics)"
+        "a checked-empty fetch is a success: the word is known"
     );
-    let known: Vec<i32> = match core.pools.get(pool_id) {
-        Some(PoolEntry::V3(p)) => p.1.known_bitmap_words().iter().copied().collect(),
-        _ => panic!("test setup: V3 pool missing"),
-    };
-    assert!(known.contains(&3), "checked-empty word 3 must be known");
+    assert_eq!(
+        known_words(&core, pool_id),
+        vec![3],
+        "checked-empty word 3 must be known"
+    );
+    assert_eq!(tick_count(&core, pool_id), 0, "no ticks ride along");
 }
 
-// --- sparse-map parity: fetch-callback seam ---
+// --- the family drive loop over the same policy ---
+
 #[test]
 fn swap_simulation_fills_missing_word_and_retries() {
-    // A sparse V3 pool (empty tick_data, start tick 0, word 0 unknown)
-    // misses on the starting word. The gate's fetch seam fills the missing
-    // word (via a fake fetcher), merges, and retries; the result must be
-    // non-zero, record the fetch, and carry the sparse caveat.
-    use ::degenbot_pools::{FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource};
+    // A sparse pool misses on its starting word; the drive loop fetches the
+    // word, merges it, and retries — computed, non-zero, the fetched word
+    // recorded, sparse coverage caveated.
+    let (mut core, pool_id) =
+        sparse_v3_pool(Some(ScriptedSource::script(vec![Reply::Miss, Reply::Miss])));
 
-    #[derive(Debug)]
-    struct FakeTickWordSource;
-    impl TickWordSource for FakeTickWordSource {
-        fn fetch_tick_word(
-            &self,
-            _key: &TickWordKey,
-            word: i32,
-            _block: u64,
-        ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
-            // Mark the word known with no initialized ticks (empty word).
-            Ok(Some(FetchedTickWord {
-                word,
-                ticks: HashMap::new(),
-                bitmap: None,
-            }))
-        }
-    }
-
-    let mut core = BotState::new();
-    let pool_id = core
-        .register_v3_pool(&RegisterV3PoolParams {
-            address: Address::ZERO,
-            token0: Address::ZERO,
-            token1: Address::from([1u8; 20]),
-            fee: 3000,
-            tick_spacing: 60,
-            factory: Address::ZERO,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 10_000_000_000_000u128,
-            tick: 0,
-            tick_data: HashMap::new(), // fully sparse — word 0 unknown
-            update_block: 0,
-            tick_data_block: None,
-            coverage: PoolTickCoverage::Sparse,
-            fetcher: Some(std::sync::Arc::new(FakeTickWordSource)),
-            ..Default::default()
-        })
-        .expect("test setup: V3 registration");
-
-    // Through the gate: the miss is recovered automatically — computed,
-    // non-zero, the fetched word recorded, sparse coverage caveated.
     let read = core.swap_simulation(
         0,
         pool_id,
@@ -406,11 +287,11 @@ fn swap_simulation_fills_missing_word_and_retries() {
                 I256::ZERO,
                 "the fetched sparse swap must produce a non-zero amount"
             );
-            // The walk may legitimately miss both word 0 and the adjacent
-            // word (-1) before finding liquidity; both fetches are recorded.
+            // The walk may legitimately miss two adjacent words before finding
+            // liquidity; both fetches are recorded.
             assert!(
                 payload.fetched_words.contains(&0),
-                "fetch of word 0 recorded, got {:?}",
+                "the fetch of word 0 is recorded, got {:?}",
                 payload.fetched_words
             );
             assert!(
@@ -418,61 +299,18 @@ fn swap_simulation_fills_missing_word_and_retries() {
                 "sparse coverage must be caveated"
             );
         }
-        other => panic!("gate must recover via fetch+retry, got {other:?}"),
+        other => panic!("the drive must recover via fetch+retry, got {other:?}"),
     }
-    // The fetch merged word 0 into known_bitmap_words (no further miss).
-    let state = core
-        .pool_slice::<degenbot_pools::V3PoolState>(pool_id)
-        .expect("pool registered");
     assert!(
-        state.known_bitmap_words.contains(&0),
-        "fetched word 0 must be marked known"
+        known_words(&core, pool_id).contains(&0),
+        "the fetched word 0 is marked known"
     );
 }
 
 #[test]
 fn swap_simulation_fetcher_error_surfaces_fetch_failed() {
-    // If the fetcher cannot satisfy the missing word (RPC error / out of
-    // range), the calc must give up with `U256::ZERO` rather than panic or
-    // spin. Covers the `Err(_)` arm of the fetch+retry loop.
-    use ::degenbot_pools::{FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource};
+    let (mut core, pool_id) = sparse_v3_pool(Some(ScriptedSource::script(vec![Reply::Fail])));
 
-    #[derive(Debug)]
-    struct FailingTickWordSource;
-    impl TickWordSource for FailingTickWordSource {
-        fn fetch_tick_word(
-            &self,
-            _key: &TickWordKey,
-            _word: i32,
-            _block: u64,
-        ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
-            Err(TickWordFetchError::FetchFailed)
-        }
-    }
-
-    let mut core = BotState::new();
-    let pool_id = core
-        .register_v3_pool(&RegisterV3PoolParams {
-            address: Address::ZERO,
-            token0: Address::ZERO,
-            token1: Address::from([1u8; 20]),
-            fee: 3000,
-            tick_spacing: 60,
-            factory: Address::ZERO,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 10_000_000_000_000u128,
-            tick: 0,
-            tick_data: HashMap::new(),
-            update_block: 0,
-            tick_data_block: None,
-            coverage: PoolTickCoverage::Sparse,
-            fetcher: Some(std::sync::Arc::new(FailingTickWordSource)),
-            ..Default::default()
-        })
-        .expect("test setup: V3 registration");
-
-    // Through the gate: a failing fetcher is OBSERVABLE as FetchFailed
-    // (word 0) — the legacy seam collapsed this into silent ZERO.
     let read = core.swap_simulation(
         0,
         pool_id,
@@ -490,63 +328,12 @@ fn swap_simulation_fetcher_error_surfaces_fetch_failed() {
 }
 
 #[test]
-fn swap_simulation_empty_word_not_refetched() {
-    // A fetcher that returns an empty word (checked-but-empty) marks the
-    // word known in `known_bitmap_words`. A second solve must NOT re-invoke
-    // the fetcher — the empty word survived in the bitmap (ADR-006/005
-    // stored-tick-fetcher ). This is the bitmap empty-word fix
-    // that lets the companion delete `_bitmap_override`.
-    use ::degenbot_pools::{FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource};
-    use std::sync::atomic::{AtomicU32, Ordering};
-    use std::sync::Arc;
+fn swap_simulation_empty_word_is_not_refetched() {
+    // A checked-empty word stays in `known_bitmap_words`, so a second solve must
+    // NOT re-invoke the source.
+    let source = ScriptedSource::script(vec![Reply::Miss, Reply::Miss]);
+    let (mut core, pool_id) = sparse_v3_pool(Some(source.clone()));
 
-    #[derive(Debug)]
-    struct CountingTickWordSource {
-        calls: AtomicU32,
-    }
-    impl TickWordSource for CountingTickWordSource {
-        fn fetch_tick_word(
-            &self,
-            _key: &TickWordKey,
-            word: i32,
-            _block: u64,
-        ) -> Result<Option<FetchedTickWord>, TickWordFetchError> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            Ok(Some(FetchedTickWord {
-                word,
-                ticks: HashMap::new(),
-                bitmap: None,
-            }))
-        }
-    }
-
-    let counter = Arc::new(CountingTickWordSource {
-        calls: AtomicU32::new(0),
-    });
-    let mut core = BotState::new();
-    let pool_id = core
-        .register_v3_pool(&RegisterV3PoolParams {
-            address: Address::ZERO,
-            token0: Address::ZERO,
-            token1: Address::from([1u8; 20]),
-            fee: 3000,
-            tick_spacing: 60,
-            factory: Address::ZERO,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 10_000_000_000_000u128,
-            tick: 0,
-            tick_data: HashMap::new(),
-            update_block: 0,
-            tick_data_block: None,
-            coverage: PoolTickCoverage::Sparse,
-            fetcher: Some(counter.clone() as Arc<dyn TickWordSource>),
-            ..Default::default()
-        })
-        .expect("test setup: V3 registration");
-
-    // First solve: misses word 0, fetches (empty), retries → computes.
-    // The fetched word rides on the outcome; the empty (checked) word
-    // survives in known_bitmap_words.
     let read = core.swap_simulation(
         0,
         pool_id,
@@ -557,24 +344,12 @@ fn swap_simulation_empty_word_not_refetched() {
         },
     );
     let first = match &read {
-        SwapRead::Computed(SwapOutcome::V3(p)) => p.delivered.into_raw(),
-        other => panic!("first solve must compute via fetch+retry, got {other:?}"),
+        SwapRead::Computed(SwapOutcome::V3(payload)) => payload.delivered.into_raw(),
+        other => panic!("the first solve must compute via fetch+retry, got {other:?}"),
     };
-    let calls_after_first = counter.calls.load(Ordering::SeqCst);
-    assert!(calls_after_first >= 1, "first solve must fetch word 0");
-    match read {
-        SwapRead::Computed(SwapOutcome::V3(p)) => {
-            assert!(
-                p.fetched_words.contains(&0),
-                "word 0 fetched once, got {:?}",
-                p.fetched_words
-            );
-        }
-        _ => unreachable!(),
-    }
+    let calls_after_first = source.calls();
+    assert!(calls_after_first >= 1, "the first solve must fetch word 0");
 
-    // Second solve: word 0 is now known → NO fetch should happen and the
-    // outcome records no fetched words.
     let second = core.swap_simulation(
         0,
         pool_id,
@@ -585,24 +360,19 @@ fn swap_simulation_empty_word_not_refetched() {
         },
     );
     assert_eq!(
-        counter.calls.load(Ordering::SeqCst),
+        source.calls(),
         calls_after_first,
-        "second solve must NOT re-invoke the fetcher — the empty word survived in known_bitmap_words"
+        "the second solve must NOT re-invoke the fetcher — the checked-empty word survived"
     );
     match second {
-        SwapRead::Computed(SwapOutcome::V3(p)) => {
+        SwapRead::Computed(SwapOutcome::V3(payload)) => {
             assert_eq!(
-                p.delivered.into_raw(),
+                payload.delivered.into_raw(),
                 first,
-                "second solve must match the first"
+                "the second solve must match the first"
             );
-            assert!(p.fetched_words.is_empty());
+            assert!(payload.fetched_words.is_empty());
         }
-        other => panic!("second solve must compute without fetching, got {other:?}"),
+        other => panic!("the second solve must compute without fetching, got {other:?}"),
     }
-    assert_eq!(
-        counter.calls.load(Ordering::SeqCst),
-        calls_after_first,
-        "second solve must NOT re-invoke the fetcher — the empty word survived in known_bitmap_words"
-    );
 }

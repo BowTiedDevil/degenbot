@@ -34,7 +34,10 @@ use super::state_journal::JournalHost;
 use super::state_seeding::{self, SeedingHost};
 use super::state_walk::{self, WalkHost};
 use crate::sim::registry::ConcentratedLiquidityPool;
-use crate::sim::tick_fetch::FetchedTickWord;
+use crate::sim::tick_fetch::{
+    overlay_fetched_ticks, tick_map_fingerprint, FetchedTickWord, TickWordFingerprint,
+    TickWordMergeTarget,
+};
 use crate::state::state_history::{ScalarPriors, TickBefore, V3BlockDelta};
 use crate::state::v3_state::{PoolTickCoverage, V3PoolState};
 use crate::state::v4_state::V4PoolState;
@@ -105,9 +108,9 @@ pub(crate) fn replace_tick_data<H: StateMutationHost>(
 /// `ConcentratedLiquidityPoolMut::merge_tick_word` — merge a fetched
 /// tick-bitmap word's ticks into this state's `tick_data`, mark the word as
 /// known in `known_bitmap_words`, invalidate the cached tick ranges, and bump
-/// the nonce. Scalars (`sqrt_price_x96`/`liquidity`/`tick`) are untouched. Used
-/// by the fetch+retry miss path ([`crate::sim::tick_fetch::TickWordSource`]) and
-/// the `simulate_swap_with_override` transient-state merge loop.
+/// the nonce. Scalars (`sqrt_price_x96`/`liquidity`/`tick`) are untouched. The
+/// landing half of [`crate::sim::tick_fetch::fetch_and_merge`] — the one merge
+/// policy — reached through [`TickWordMergeTarget::apply_fetched_word`].
 ///
 /// The insert is two-stamp-disciplined: a fetched word can predate an event the
 /// pump applied while its staged fetch was in flight (the word re-fetches at its
@@ -118,14 +121,7 @@ pub(crate) fn replace_tick_data<H: StateMutationHost>(
 /// rollback covers it via the surrounding event's delta, not a merge delta
 /// (mirrors the no-journal contract of [`replace_tick_data`]).
 pub(crate) fn merge_tick_word<H: StateMutationHost>(host: &mut H, fetched: &FetchedTickWord) {
-    for (tick, info) in &fetched.ticks {
-        let resident_is_fresher = WalkHost::tick_data(host)
-            .get(tick)
-            .is_some_and(|resident| resident.block > info.block);
-        if !resident_is_fresher {
-            host.tick_data_mut().insert(*tick, info.clone());
-        }
-    }
+    overlay_fetched_ticks(host.tick_data_mut(), fetched);
     host.known_bitmap_words_mut().insert(fetched.word);
     host.bump_state_nonce();
     state_walk::invalidate_tick_range_cache(host);
@@ -379,7 +375,7 @@ fn in_range_active_liquidity(
 /// reads it off `V3PoolIdentity.tick_spacing` /
 /// `V4PoolIdentity.pool_key.tick_spacing` before dispatching, so the trait
 /// stays identity-agnostic and the two state-struct impls are byte-identical).
-pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
+pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool + TickWordMergeTarget {
     /// Wholesale-replace the `tick_data` map — see
     /// [`replace_tick_data`] for the full contract.
     ///
@@ -439,6 +435,32 @@ pub trait ConcentratedLiquidityPoolMut: ConcentratedLiquidityPool {
     /// reaches head. Because `before == after` it is safe; call once at
     /// registration, mirroring the V2/Curve genesis-anchor pattern.
     fn seed_genesis(&mut self, block: u64);
+}
+
+/// The registered-pool merge target's fingerprint — one body for both designs;
+/// the rule itself lives in [`crate::sim::tick_fetch::tick_map_fingerprint`].
+fn registered_fingerprint<H: StateMutationHost>(host: &H) -> TickWordFingerprint {
+    tick_map_fingerprint(WalkHost::update_block(host), WalkHost::tick_data(host))
+}
+
+impl TickWordMergeTarget for V3PoolState {
+    fn tick_word_fingerprint(&self) -> Option<TickWordFingerprint> {
+        Some(registered_fingerprint(self))
+    }
+
+    fn apply_fetched_word(&mut self, fetched: &FetchedTickWord) {
+        merge_tick_word(self, fetched);
+    }
+}
+
+impl TickWordMergeTarget for V4PoolState {
+    fn tick_word_fingerprint(&self) -> Option<TickWordFingerprint> {
+        Some(registered_fingerprint(self))
+    }
+
+    fn apply_fetched_word(&mut self, fetched: &FetchedTickWord) {
+        merge_tick_word(self, fetched);
+    }
 }
 
 impl ConcentratedLiquidityPoolMut for V3PoolState {

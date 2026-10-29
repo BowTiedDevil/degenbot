@@ -1,5 +1,7 @@
 //! Structural gate for the concentrated-liquidity state module's ownership:
-//! each shared state verb is DEFINED once, in its `state_*` module, and the
+//! each shared state verb is DEFINED once — in its `state_*` module, or, for the
+//! word-position derivation, in the tick-word capability that owns every sparse
+//! read and merge — and the
 //! per-family adapters carry only forwarders — in a design file
 //! (`v3_state.rs` / `v4_state.rs`), or, for a write verb both designs share
 //! through the `ConcentratedLiquidityPoolMut` trait, once per family in that
@@ -42,7 +44,11 @@ fn count_definitions(src: &str, verb: &str) -> usize {
 /// live-invariant gate (ADR-087 D2): watches the live `concentrated_liquidity` state module, which must own each shared state verb while the design files only forward; not tripwire precedent.
 #[test]
 fn the_cl_state_module_owns_each_shared_state_verb_and_the_design_files_only_forward() {
-    let scanned: [(&str, &str); 7] = [
+    let scanned: [(&str, &str); 8] = [
+        (
+            "tick_fetch/policy.rs",
+            include_str!("../../sim/tick_fetch/policy.rs"),
+        ),
         ("state_journal.rs", include_str!("state_journal.rs")),
         ("state_mutation.rs", include_str!("state_mutation.rs")),
         ("state_seeding.rs", include_str!("state_seeding.rs")),
@@ -64,7 +70,7 @@ fn the_cl_state_module_owns_each_shared_state_verb_and_the_design_files_only_for
         ("state_journal.rs", concat!("discard_", "before_block"), 1, 1, 0),
         ("state_journal.rs", concat!("journal_", "len"), 1, 1, 0),
         ("state_journal.rs", concat!("newest_", "block"), 1, 1, 0),
-        ("state_seeding.rs", concat!("word_", "of"), 1, 1, 0),
+        ("tick_fetch/policy.rs", concat!("word_", "of"), 1, 1, 0),
         ("state_seeding.rs", concat!("seed_known_bitmap_", "words"), 1, 1, 0),
         ("state_seeding.rs", concat!("registration_lifecycle_", "for"), 0, 0, 0),
         ("state_seeding.rs", concat!("snapshot_seed_", "for"), 0, 0, 0),

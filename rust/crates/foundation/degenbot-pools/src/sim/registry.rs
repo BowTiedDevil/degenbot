@@ -4,6 +4,9 @@
 //! `degenbot-bot/src/bot_core/mod.rs`.
 
 use crate::families::concentrated_liquidity::state_mutation::ConcentratedLiquidityPoolMut;
+use crate::sim::tick_fetch::{
+    FetchedTickWord, TickWordFingerprint, TickWordKey, TickWordMergeTarget, TickWordReader,
+};
 use crate::state::aerodrome_v2_state::{AerodromeV2PoolIdentity, AerodromeV2PoolState};
 use crate::state::balancer_stable_state::{BalancerStablePoolIdentity, BalancerStablePoolState};
 use crate::state::balancer_weighted_state::{
@@ -354,6 +357,31 @@ impl PoolEntry {
         some_concentrated_liquidity_mut(self)
     }
 
+    /// The pool's tick-word read handle — its read descriptor (minted from its
+    /// own identity) paired with the stored source — or `None` when the entry
+    /// is not a concentrated-liquidity pool, or stores no source.
+    ///
+    /// The ONE key minting for a miss path: a caller holding an entry never
+    /// hand-builds a [`TickWordKey`] beside the source it pairs it with.
+    #[must_use]
+    pub fn tick_word_reader(&self) -> Option<TickWordReader> {
+        match self {
+            Self::V3(p) => Some(TickWordReader::new(
+                TickWordKey::from(&p.0),
+                p.1.fetcher.clone()?,
+            )),
+            Self::V4(p) => Some(TickWordReader::new(
+                TickWordKey::from(&p.0),
+                p.1.fetcher.clone()?,
+            )),
+            Self::V2(..)
+            | Self::Curve(..)
+            | Self::BalancerWeighted(..)
+            | Self::BalancerStable(..)
+            | Self::AerodromeV2(..) => None,
+        }
+    }
+
     /// Bump the state nonce WITHOUT a semantic state change — the external
     /// invalidation seam (ADR-040): quarantine/release transitions bump the
     /// nonce so cached hop projections invalidate and in-flight solver
@@ -575,6 +603,29 @@ impl PoolEntry {
     #[must_use]
     pub fn slice<T: PoolEntrySlice + ?Sized>(&self) -> Option<&T> {
         T::from_entry(self)
+    }
+}
+
+/// `PoolEntry` as a tick-word merge target — the registered-pool arm of the
+/// tick-word merge policy (GLOSSARY **Tick-word merge**): its fingerprint is the
+/// concentrated-liquidity state's own, and a fetched word lands through the same
+/// state verb a direct merge reaches. A non-concentrated-liquidity entry is not a
+/// merge target at all, so it answers `None` and takes no word.
+impl TickWordMergeTarget for PoolEntry {
+    fn tick_word_fingerprint(&self) -> Option<TickWordFingerprint> {
+        match self {
+            Self::V3(p) => p.1.tick_word_fingerprint(),
+            Self::V4(p) => p.1.tick_word_fingerprint(),
+            _ => None,
+        }
+    }
+
+    fn apply_fetched_word(&mut self, fetched: &FetchedTickWord) {
+        match self {
+            Self::V3(p) => p.1.apply_fetched_word(fetched),
+            Self::V4(p) => p.1.apply_fetched_word(fetched),
+            _ => {}
+        }
     }
 }
 

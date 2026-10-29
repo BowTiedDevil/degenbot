@@ -5,8 +5,12 @@
 #
 # The pin is review-required: `architecture_gates.rs::pools_root_surface_is_pinned`
 # fails when a module is added, removed, or re-homed without a review of this
-# file, and the root `pub` name count (966) is asserted so untracked surface
-# growth fails loudly. The count is per NAME, not per statement (the previous
+# file, and the root `pub` name count (1012) is asserted so untracked surface
+# growth fails loudly. The tick-word merge policy (the `sim::tick_fetch`
+# capability's `policy` half) is the review that moved 966 -> 1012: every new
+# door name has a named consumer outside the capability crate (substrate, bot,
+# or the rpc fixtures), and the helper fns only the crate itself calls stayed
+# `pub(crate)`. The count is per NAME, not per statement (the previous
 # granularity pinned 681 statements): a `pub fn`/`struct`/`enum`/`trait`/
 # `const`/`type`/`mod` declaration counts once, and a `pub use` counts one per
 # re-exported name, so a name added to an existing `pub use a::b::{X, Y}` block

@@ -148,7 +148,12 @@ pub use state::state_history::ReorgPoolState;
 
 pub use state::tick_bitmap::V3TickRangeForSolver;
 
-pub use sim::tick_fetch::{FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource};
+pub use sim::tick_fetch::{
+    checked_word, fetch_and_merge, install_staged_word, stage_word_fetch, word_of, CheckedWord,
+    FetchedTickWord, StagedWordFetch, TickWordFetchError, TickWordFingerprint, TickWordKey,
+    TickWordMergeTarget, TickWordReader, TickWordSource, TransientTickMap, WordFetchOutcome,
+    WordFetchPolicy,
+};
 
 pub use sim::registration_refusal::{BuildFailure, RegisterRefusal, SpecRefusal};
 

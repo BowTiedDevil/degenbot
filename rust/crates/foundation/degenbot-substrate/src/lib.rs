@@ -110,8 +110,8 @@ pub use ::degenbot_math::curve::{CurveBasePoolPort, CurveSwapError};
 
 pub use balance_vector_orchestration::BotCurveBasePoolPort;
 pub use concentrated_liquidity_orchestration::{
-    ConcentratedLiquidityApplyError, ConcentratedLiquidityOrchestration, InstallWordOutcome,
-    RegisteredV4, StagedWordFetch,
+    ConcentratedLiquidityApplyError, ConcentratedLiquidityOrchestration, RegisteredV4,
+    StagedWordFetch,
 };
 pub use divergence_probe::{TrackedSlotKind, TrackedSlotProbe};
 pub use epoch::{BlockContext, BlockMetadata, Epoch, StaleEpoch};

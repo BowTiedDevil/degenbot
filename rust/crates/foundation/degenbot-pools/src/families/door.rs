@@ -191,9 +191,6 @@ pub enum Observe {
     /// Whether the design's hook surface can modify swap amounts (V3: always
     /// `false` — no hook concept; V4: the amount-modifying permission bits).
     Hooked,
-    /// The tick-data fingerprint `(update_block, tick_count, sum_of_blocks)`
-    /// the engine verifier summarizes state with.
-    TickFingerprint,
 }
 
 /// One observed fact, keyed by the probe.
@@ -209,9 +206,6 @@ pub enum Observed {
     Coverage(PoolTickCoverage),
     /// Whether the design's hook surface can modify swap amounts.
     Hooked(bool),
-    /// The tick-data fingerprint; `Some` for every concentrated liquidity slice (every concentrated liquidity probe
-    /// is answerable over the family's slices).
-    TickFingerprint(Option<(u64, usize, u64)>),
 }
 
 /// One buffered `Sync(uint112, uint112)` event — the reserve-pair slices'

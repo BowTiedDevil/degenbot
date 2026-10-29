@@ -16,10 +16,10 @@ use hashbrown::{HashMap, HashSet};
 
 use alloy::primitives::U256;
 
+use crate::sim::tick_fetch::word_of;
 use crate::state::state_history::{ReorgJournal, ScalarPriors, V3BlockDelta};
 use crate::state::v3_state::{PoolTickCoverage, RegistrationLifecycle};
 use crate::TickInfo;
-use degenbot_math::concentrated_liquidity::functions::tick_position;
 
 /// The field seam the shared seeding/coverage verbs read and write through —
 /// implemented by each design's state struct (`V3PoolState`, `V4PoolState`),
@@ -56,14 +56,6 @@ pub(crate) trait SeedingHost {
 
     /// The pool's reorg journal, mutable.
     fn journal_mut(&mut self) -> &mut ReorgJournal<V3BlockDelta>;
-}
-
-/// `V3PoolState::word_of` / `V4PoolState::word_of` — the word position
-/// (`tick_position(tick.div_euclid(tick_spacing))`) holding the given tick,
-/// shared by the V3/V4 sparse miss-detection.
-#[must_use]
-pub(crate) fn word_of(tick: i32, tick_spacing: i32) -> i32 {
-    i32::from(tick_position(tick.div_euclid(tick_spacing)).0)
 }
 
 /// `V3PoolState::unknown_boundary_word` / `V4PoolState::unknown_boundary_word`

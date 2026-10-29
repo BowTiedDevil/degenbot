@@ -149,7 +149,7 @@ fn fetch_word(
     };
     source
         .fetch_tick_word(&key, word, block)
-        .map(|hit| hit.unwrap_or_else(|| FetchedTickWord::new(word, HashMap::new())))
+        .map(|hit| degenbot_pools::checked_word(word, hit).word)
 }
 
 fn addr(s: &str) -> Address {

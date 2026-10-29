@@ -27,9 +27,8 @@
 //! `degenbot_pools::families::concentrated_liquidity::{v3,v4}::engine_amount_specified`.
 
 use hashbrown::HashMap;
-use std::sync::Arc;
 
-use ::degenbot_pools::{TickWordKey, TickWordSource};
+use ::degenbot_pools::TickWordReader;
 
 use alloy::primitives::aliases::U112;
 use alloy::primitives::{I256, U256};
@@ -538,15 +537,8 @@ impl BotState {
     /// lock-free). `None` when the pool is not concentrated-liquidity or
     /// stores no source.
     #[must_use]
-    pub fn tick_word_reader_for_pool(
-        &self,
-        pool_id: u64,
-    ) -> Option<(TickWordKey, Arc<dyn TickWordSource>)> {
-        match self.pools.get(pool_id) {
-            Some(PoolEntry::V3(p)) => Some((TickWordKey::from(&p.0), p.1.fetcher.clone()?)),
-            Some(PoolEntry::V4(p)) => Some((TickWordKey::from(&p.0), p.1.fetcher.clone()?)),
-            _ => None,
-        }
+    pub fn tick_word_reader_for_pool(&self, pool_id: u64) -> Option<TickWordReader> {
+        self.pools.get(pool_id)?.tick_word_reader()
     }
 
     /// The override read with miss recovery DISARMED (the staged-pre-pass
@@ -767,42 +759,33 @@ impl BotState {
         // One concentrated liquidity dispatch row (ADR-073 D2): the override sim is the family
         // read module's read_swap door over a Sparse transient the door
         // builds from the override state.
-        let (key, fetcher, source) = match entry {
-            PoolEntry::V3(p) => (
-                TickWordKey::from(&p.0),
-                p.1.fetcher.clone(),
-                concentrated_liquidity::SwapReadSource::Override(
-                    concentrated_liquidity::ConcentratedLiquidityTransientSource::V3 {
-                        identity: &p.0,
-                        state: &p.1,
-                    },
-                    over_scalars,
-                    p.1.update_block,
-                    self.pools.journal_depth(),
-                ),
+        let source = match entry {
+            PoolEntry::V3(p) => concentrated_liquidity::SwapReadSource::Override(
+                concentrated_liquidity::ConcentratedLiquidityTransientSource::V3 {
+                    identity: &p.0,
+                    state: &p.1,
+                },
+                over_scalars,
+                p.1.update_block,
+                self.pools.journal_depth(),
             ),
-            PoolEntry::V4(p) => (
-                TickWordKey::from(&p.0),
-                p.1.fetcher.clone(),
-                concentrated_liquidity::SwapReadSource::Override(
-                    concentrated_liquidity::ConcentratedLiquidityTransientSource::V4 {
-                        identity: &p.0,
-                        state: &p.1,
-                    },
-                    over_scalars,
-                    p.1.update_block,
-                    self.pools.journal_depth(),
-                ),
+            PoolEntry::V4(p) => concentrated_liquidity::SwapReadSource::Override(
+                concentrated_liquidity::ConcentratedLiquidityTransientSource::V4 {
+                    identity: &p.0,
+                    state: &p.1,
+                },
+                over_scalars,
+                p.1.update_block,
+                self.pools.journal_depth(),
             ),
             // Concentrated-liquidity scalars presented for another family.
             _ => return None,
         };
-        let mode = match &fetcher {
-            Some(f) if !disarm_fetch => concentrated_liquidity::FetchMode::Armed {
-                source: f,
-                key,
-                block,
-            },
+        let reader = entry.tick_word_reader();
+        let mode = match &reader {
+            Some(reader) if !disarm_fetch => {
+                concentrated_liquidity::FetchMode::Armed { reader, block }
+            }
             _ => concentrated_liquidity::FetchMode::Disarmed,
         };
         match concentrated_liquidity::read_swap(
@@ -960,13 +943,12 @@ impl BotState {
         block: u64,
         disarm_fetch: bool,
     ) -> SwapRead {
-        let (coverage, extra_caveats, outcome_family, fetcher, scalars, hooks, key) = {
+        let (coverage, extra_caveats, outcome_family, reader, scalars, hooks) = {
             let Some(entry) = self.pools.get(pool_id) else {
                 return SwapRead::NotComputable;
             };
             match entry {
                 PoolEntry::V3(p) => {
-                    let key = TickWordKey::from(&p.0);
                     let design = concentrated_liquidity::ConcentratedLiquidityState::V3 {
                         state: &p.1,
                         scalars: concentrated_liquidity::DesignScalars::new(
@@ -983,14 +965,12 @@ impl BotState {
                         coverage,
                         Caveats::default(),
                         SwapOutcomeFamily::V3,
-                        p.1.fetcher.clone(),
+                        entry.tick_word_reader(),
                         concentrated_liquidity::DesignScalars::new(p.0.fee, p.0.tick_spacing),
                         None,
-                        key,
                     )
                 }
                 PoolEntry::V4(p) => {
-                    let key = TickWordKey::from(&p.0);
                     let hooks = p.0.pool_key.hooks;
                     let design = concentrated_liquidity::ConcentratedLiquidityState::V4 {
                         state: &p.1,
@@ -1019,24 +999,21 @@ impl BotState {
                         coverage,
                         extra_caveats,
                         SwapOutcomeFamily::V4,
-                        p.1.fetcher.clone(),
+                        entry.tick_word_reader(),
                         concentrated_liquidity::DesignScalars::new(
                             p.0.pool_key.fee,
                             p.0.pool_key.tick_spacing,
                         ),
                         Some(hooks),
-                        key,
                     )
                 }
                 _ => return SwapRead::NotComputable,
             }
         };
-        let mode = match &fetcher {
-            Some(f) if !disarm_fetch => concentrated_liquidity::FetchMode::Armed {
-                source: f,
-                key,
-                block,
-            },
+        let mode = match &reader {
+            Some(reader) if !disarm_fetch => {
+                concentrated_liquidity::FetchMode::Armed { reader, block }
+            }
             _ => concentrated_liquidity::FetchMode::Disarmed,
         };
         let Some(state_mut) = self.pools.get_mut(pool_id) else {

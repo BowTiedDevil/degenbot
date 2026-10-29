@@ -37,10 +37,10 @@
 //!
 //! What the two designs DO share inside this tree is only the door plumbing:
 //! the family-blind request/outcome/probe vocabulary in [`super::door`] and
-//! the ONE fetch→merge→retry policy in [`drive`] (ADR-037's drive loop —
-//! formerly copy-pasted per call shape, collapsed once; re-duplicating it per
-//! design would resurrect the seam ADR-037 closed). The policy encodes none
-//! of the design differences.
+//! the ONE fetch→merge→retry policy in [`drive`] (ADR-037's drive loop; the
+//! fetch, merge and raced guard inside it are the tick-word capability's, and
+//! re-duplicating either per design would resurrect the seam ADR-037 closed).
+//! The policy encodes none of the design differences.
 
 /// The family's solve entry (ADR-073 endgame): the solve half re-homed from
 /// the dissolved solver crate — the family story is ONE tree again.
@@ -86,7 +86,10 @@ use hashbrown::{HashMap, HashSet};
 use super::door::{Observe, Observed, ReadOutcome, SwapReadRequest};
 
 use self::state_mutation::ConcentratedLiquidityPoolMut;
-use crate::sim::tick_fetch::{FetchedTickWord, TickWordKey, TickWordSource};
+use crate::sim::tick_fetch::{
+    fetch_and_merge, FetchedTickWord, TickWordMergeTarget, TickWordReader, WordFetchOutcome,
+    WordFetchPolicy,
+};
 use crate::state::int_v3_hop::IntV3TickRangeSequence;
 use crate::state::v3_state::{SimulateSwapError, V3SwapOutcome};
 pub use crate::TickInfo;
@@ -194,15 +197,13 @@ pub enum FetchMode<'a> {
     /// as DATA ([`ReadOutcome::Stateless`] carrying
     /// [`SimulateSwapError::MissingTickWord`]); the caller owns fetch + retry.
     Stateless,
-    /// Miss recovery ARMED: a miss fetches `word` through the stored source
-    /// at `block`, merges, and retries (single-strike per word).
+    /// Miss recovery ARMED: a miss fetches `word` through the pool's stored
+    /// read handle at `block`, merges it, and retries (single-strike per word).
     Armed {
-        /// The pool's stored source, cloned off the registered state before
-        /// the read began.
-        source: &'a Arc<dyn TickWordSource>,
-        /// The pool's tick-word read descriptor (its own identity — V3
-        /// address + spacing, or V4 `StateView` + pool id + spacing).
-        key: TickWordKey,
+        /// The pool's tick-word read handle — its read descriptor paired with
+        /// the stored source — cloned off the registered state before the read
+        /// began.
+        reader: &'a TickWordReader,
         /// The fetch context block.
         block: u64,
     },
@@ -257,15 +258,6 @@ pub struct OverrideScalars<'a> {
     pub tick: i32,
     /// Replacement tick data for the hypothetical walk.
     pub tick_data: &'a HashMap<i32, TickInfo>,
-}
-
-/// Why a missing-word recovery could not run — the drive policy's fetch
-/// verdict.
-enum FetchVerdict {
-    /// No fetcher is registered (⇒ [`ReadOutcome::FetchExhausted`]).
-    NoFetcher,
-    /// The fetcher ran and failed (⇒ [`ReadOutcome::FetchFailed`]).
-    Errored,
 }
 
 /// The capture door — the resolve projection: one fresh observation of one
@@ -442,9 +434,8 @@ fn downgrade_discovery<'a>(mode: &'a FetchMode<'a>) -> FetchMode<'a> {
     match mode {
         FetchMode::Discovery | FetchMode::Stateless => FetchMode::Stateless,
         FetchMode::Disarmed => FetchMode::Disarmed,
-        FetchMode::Armed { source, key, block } => FetchMode::Armed {
-            source,
-            key: key.clone(),
+        FetchMode::Armed { reader, block } => FetchMode::Armed {
+            reader,
             block: *block,
         },
     }
@@ -473,12 +464,16 @@ fn drive_shared<S: ConcentratedLiquidityPoolMut>(
     ReadOutcome::Stateless(compute(state))
 }
 
-/// THE fetch → merge → retry loop — formerly copy-pasted per call shape in
-/// the swap-simulation gate, collapsed once at the family door. Dedup rule:
-/// a second miss on the SAME word means the previous merge did not satisfy
-/// the walker — give up rather than loop forever. No-fetcher and
+/// THE fetch → merge → retry loop — the family door's ONE miss-recovery loop.
+/// Dedup rule: a second miss on the SAME word means the previous merge did
+/// not satisfy the walker — give up rather than loop forever. No-source and
 /// exhausted-miss collapse to [`ReadOutcome::FetchExhausted`]; a fetcher
 /// error is [`ReadOutcome::FetchFailed`].
+///
+/// The fetch, the checked-empty mapping, the merge onto the target and the
+/// raced guard are the tick-word capability's — [`recover_word`] is this
+/// loop's only fetch call. What stays here is the single-strike rule and the
+/// verdict mapping.
 ///
 /// Fetch errors are deliberately single-strike: the abort surfaces honestly
 /// and the CALLER owns its retry budget. Discovery mode never fetches: a
@@ -535,17 +530,19 @@ fn drive<S: ConcentratedLiquidityPoolMut>(
                     if !attempted.insert(word) {
                         return ReadOutcome::FetchExhausted { word };
                     }
-                    match fetch_word(mode, word) {
-                        Ok(data) => {
-                            let _ = state.merge_tick_word(&data);
+                    match recover_word(state, mode, word) {
+                        // The word is known now — checked-empty included.
+                        WordFetchOutcome::Merged | WordFetchOutcome::KnownEmpty => {
                             fetched_words.push(word);
                         }
-                        Err(FetchVerdict::NoFetcher) => {
+                        // No recovery source, or (unreachable here — the read
+                        // owns its merge target for the whole call) a target
+                        // written mid-fetch: the miss stands rather than
+                        // replaying the same word forever.
+                        WordFetchOutcome::NoSource | WordFetchOutcome::Raced => {
                             return ReadOutcome::FetchExhausted { word };
                         }
-                        Err(FetchVerdict::Errored) => {
-                            return ReadOutcome::FetchFailed { word };
-                        }
+                        WordFetchOutcome::FetchFailed => return ReadOutcome::FetchFailed { word },
                     }
                 }
             },
@@ -553,21 +550,23 @@ fn drive<S: ConcentratedLiquidityPoolMut>(
     }
 }
 
-/// One recovery attempt for `word`. `NoFetcher` means no fetcher is
-/// registered (⇒ `FetchExhausted`); `Errored` means the recovery itself
-/// failed (⇒ `FetchFailed`). A disarmed read never fetches — its caller
-/// staged the missing words beforehand and the typed contract answers
-/// `FetchExhausted` for any residual miss.
-fn fetch_word(mode: &FetchMode<'_>, word: i32) -> Result<FetchedTickWord, FetchVerdict> {
-    let FetchMode::Armed { source, key, block } = mode else {
-        return Err(FetchVerdict::NoFetcher);
-    };
-    // A miss-path caller maps `Ok(None)` (all-zero bitmap) to a known-empty
-    // word — the word is now "known" even though it holds no ticks.
-    source
-        .fetch_tick_word(key, word, *block)
-        .map(|hit| hit.unwrap_or_else(|| FetchedTickWord::new(word, hashbrown::HashMap::new())))
-        .map_err(|_| FetchVerdict::Errored)
+/// One recovery attempt for `word`, through the tick-word capability's
+/// fetch-and-merge — the checked-empty mapping, the merge onto the target and
+/// the raced guard all live there, so the drive loop above owns only its
+/// single-strike rule. A disarmed read never fetches (its caller staged the
+/// missing words beforehand), so the capability answers `NoSource` and the
+/// typed contract surfaces `FetchExhausted` for the residual miss.
+fn recover_word<T: TickWordMergeTarget>(
+    target: &mut T,
+    mode: &FetchMode<'_>,
+    word: i32,
+) -> WordFetchOutcome {
+    match mode {
+        FetchMode::Armed { reader, block } => {
+            fetch_and_merge(target, word, *block, WordFetchPolicy::Armed(reader))
+        }
+        _ => fetch_and_merge(target, word, 0, WordFetchPolicy::Disarmed),
+    }
 }
 
 #[cfg(test)]
@@ -575,14 +574,12 @@ mod tests {
     #![expect(clippy::panic)]
 
     use super::*;
-    use crate::sim::tick_fetch::{TickWordFetchError, TickWordKey};
+    use crate::sim::tick_fetch::{TickWordFetchError, TickWordKey, TickWordReader, TickWordSource};
     use crate::state::v3_state::PoolTickCoverage;
 
     // -------------------------------------------------------------------
-    // THE drive-policy pin (moved with the family from the substrate
-    // swap-simulation gate): a scripted merge target exercises every branch
-    // of the ONE fetch→merge→retry loop without constructing real pools.
-    // Outcomes are byte-identical to the policy this loop replaced.
+    // THE drive-policy pin: a scripted merge target exercises every branch of
+    // the ONE fetch→merge→retry loop without constructing real pools.
     struct ScriptedMergeTarget {
         fetched: std::cell::RefCell<Vec<i32>>,
     }
@@ -611,6 +608,17 @@ mod tests {
         }
         fn known_bitmap_words(&self) -> &HashSet<i32> {
             unreachable!("the drive policy never reads the checked-word set")
+        }
+    }
+
+    impl TickWordMergeTarget for ScriptedMergeTarget {
+        fn tick_word_fingerprint(&self) -> Option<crate::sim::tick_fetch::TickWordFingerprint> {
+            // A scripted target is never written during a drive call.
+            Some((0, 0, 0))
+        }
+
+        fn apply_fetched_word(&mut self, fetched: &FetchedTickWord) {
+            self.fetched.borrow_mut().push(fetched.word);
         }
     }
 
@@ -676,6 +684,15 @@ mod tests {
         }
     }
 
+    /// The one read descriptor the drive tests address their scripted source
+    /// with.
+    fn v3_key() -> TickWordKey {
+        TickWordKey::V3 {
+            address: Address::new([0x11; 20]),
+            tick_spacing: 10,
+        }
+    }
+
     fn outcome_stub() -> V3SwapOutcome {
         V3SwapOutcome::default()
     }
@@ -725,11 +742,7 @@ mod tests {
                 Ok(outcome_stub()),
             ]),
             &FetchMode::Armed {
-                source: &source,
-                key: TickWordKey::V3 {
-                    address: Address::new([0x11; 20]),
-                    tick_spacing: 10,
-                },
+                reader: &TickWordReader::new(v3_key(), source),
                 block: 17,
             },
         );
@@ -754,11 +767,7 @@ mod tests {
             &mut target,
             scripted_compute(vec![miss.clone(), miss, Ok(outcome_stub())]),
             &FetchMode::Armed {
-                source: &source,
-                key: TickWordKey::V3 {
-                    address: Address::new([0x11; 20]),
-                    tick_spacing: 10,
-                },
+                reader: &TickWordReader::new(v3_key(), source),
                 block: 17,
             },
         );
@@ -792,11 +801,7 @@ mod tests {
             &mut errored_target,
             scripted_compute(vec![Err(SimulateSwapError::MissingTickWord(2))]),
             &FetchMode::Armed {
-                source: &source,
-                key: TickWordKey::V3 {
-                    address: Address::new([0x11; 20]),
-                    tick_spacing: 10,
-                },
+                reader: &TickWordReader::new(v3_key(), source),
                 block: 17,
             },
         );

@@ -452,10 +452,7 @@ impl PoolIngress {
             return Ok(seed);
         }
         // Chain arm: the Db missed (or no Db handle is wired).
-        let (word, _) = degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
-            tick,
-            tick_spacing,
-        );
+        let word = degenbot_pools::word_of(tick, tick_spacing);
         let key = TickWordKey::V3 {
             address,
             tick_spacing,
@@ -507,10 +504,7 @@ impl PoolIngress {
             seed.source_block = source_block;
             return Ok(seed);
         }
-        let (word, _) = degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
-            tick,
-            tick_spacing,
-        );
+        let word = degenbot_pools::word_of(tick, tick_spacing);
         let key = state_view.map(|state_view| TickWordKey::V4 {
             state_view,
             pool_id: pool_id.0,

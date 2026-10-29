@@ -309,11 +309,7 @@ pub fn assemble_v3_tick_map(
     }
     // 2. Chain arm — RPC trait object, no BotState guard. `chain=None`
     // short-circuits (no RPC bootstrap wired).
-    let (word, _) =
-        degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
-            tick,
-            tick_spacing,
-        );
+    let word = degenbot_pools::word_of(tick, tick_spacing);
     let key = TickWordKey::V3 {
         address,
         tick_spacing,
@@ -383,11 +379,7 @@ pub fn assemble_v4_tick_map(
         return Ok(Some((seed.ticks, seed.coverage)));
     }
     // 2. Chain arm.
-    let (word, _) =
-        degenbot_math::concentrated_liquidity::liquidity_mapping::get_tick_word_and_bit_position(
-            tick,
-            tick_spacing,
-        );
+    let word = degenbot_pools::word_of(tick, tick_spacing);
     let key = TickWordKey::V4 {
         state_view,
         pool_id,

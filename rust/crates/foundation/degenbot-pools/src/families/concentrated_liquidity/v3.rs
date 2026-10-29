@@ -134,11 +134,6 @@ pub(super) fn observe(state: &V3PoolState, probe: Observe) -> Observed {
     match probe {
         Observe::Coverage => Observed::Coverage(state.coverage),
         Observe::Hooked => Observed::Hooked(false),
-        Observe::TickFingerprint => Observed::TickFingerprint(Some((
-            state.update_block,
-            state.tick_data.len(),
-            state.tick_data.values().map(|t| t.block).sum(),
-        ))),
         _ => unreachable!(
             "a concentrated liquidity slice answers only the concentrated liquidity probes"
         ),

@@ -40,7 +40,10 @@ use degenbot_pools::{BufferedV3LiquidityUpdate, BufferedV3SwapEvent, V3StateSync
 use degenbot_pools::{
     BufferedV4LiquidityUpdate, BufferedV4SwapEvent, V4PoolKey, V4StateSync, V4_DYNAMIC_FEE_FLAG,
 };
-use degenbot_pools::{PoolRefusal, PoolStateUpdate};
+use degenbot_pools::{
+    PoolRefusal, PoolStateUpdate, TickWordMergeTarget, TickWordReader, WordFetchOutcome,
+    WordFetchPolicy,
+};
 use degenbot_pools::{ScalarPriors, TickBefore, V3BlockDelta};
 
 use super::apply_telemetry::{
@@ -672,57 +675,61 @@ impl ConcentratedLiquidityOrchestration {
     }
 }
 
-/// the staged fetch plan captured under a SHORT write — pool, word,
-/// fetch context, the stored fetcher Arc, and the pool's tick-mutation
-/// fingerprint the install re-validates.
+/// The staged fetch plan a caller holds across the lock-free window: the pool it
+/// backfills, plus the tick-word capability's staged plan (the read handle, the
+/// word, the fetch block, and the pool's tick fingerprint the install
+/// re-validates). The pool id stays substrate vocabulary — the capability owns
+/// no pool identity — while the choreography itself is
+/// [`degenbot_pools::stage_word_fetch`].
 #[derive(Debug)]
 pub struct StagedWordFetch {
-    pub pool_id: u64,
-    pub word: i32,
-    pub block: u64,
-    /// The pool's tick-word read descriptor (its own identity).
-    pub key: degenbot_pools::TickWordKey,
-    source: std::sync::Arc<dyn degenbot_pools::TickWordSource>,
-    fingerprint: (u64, usize, u64),
+    pool_id: u64,
+    staged: ::degenbot_pools::StagedWordFetch,
 }
 
 impl StagedWordFetch {
-    /// Run the fetch WITHOUT any state lock held. The stored fetcher
-    /// re-enters Python (`Python::attach` + the companion's web3 RPC), so
-    /// this call is the multi-second window the fetch-under-write defect
-    /// parked the whole pump inside.
+    /// The pool this fetch backfills.
+    #[must_use]
+    pub fn pool_id(&self) -> u64 {
+        self.pool_id
+    }
+
+    /// The word being fetched.
+    #[must_use]
+    pub fn word(&self) -> i32 {
+        self.staged.word()
+    }
+
+    /// The block this fetch reads at.
+    #[must_use]
+    pub fn block(&self) -> u64 {
+        self.staged.block()
+    }
+
+    /// Run the fetch WITHOUT any state lock held. The stored fetcher re-enters
+    /// Python (`Python::attach` + the companion's web3 RPC), so this call is the
+    /// multi-second window the fetch-under-write defect parked the whole pump
+    /// inside.
     ///
     /// # Errors
-    /// Propagates the stored source's [`TickWordFetchError`] (RPC/transport
-    /// or tick-word decode); the caller owns retry semantics, nothing panics.
+    /// Propagates the stored source's [`degenbot_pools::TickWordFetchError`]
+    /// (RPC/transport or tick-word decode); the caller owns retry semantics,
+    /// nothing panics.
     pub fn fetch(
         &self,
-    ) -> Result<::degenbot_pools::FetchedTickWord, ::degenbot_pools::TickWordFetchError> {
-        // A miss-path fetch maps `Ok(None)` (all-zero bitmap) to a
-        // known-empty word — the word is now "known" (recorded) even though
-        // it holds no ticks.
-        self.source
-            .fetch_tick_word(&self.key, self.word, self.block)
-            .map(|hit| {
-                hit.unwrap_or_else(|| {
-                    ::degenbot_pools::FetchedTickWord::new(self.word, hashbrown::HashMap::new())
-                })
-            })
+    ) -> Result<::degenbot_pools::CheckedWord, ::degenbot_pools::TickWordFetchError> {
+        self.staged.fetch()
     }
 }
 
-/// Install outcome: see [`BotState::install_word_fetch`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InstallWordOutcome {
-    /// The word merged (checked-empty included) — the fetch window saw no
-    /// concurrent pool write.
-    Merged,
-    /// The pool was mutated during the fetch — the caller retries
-    /// stage+fetch (bounded) rather than applying the overlay clobber.
-    Raced,
-    /// Pool gone or merge refused — the failure contract (the
-    /// companion gate raises).
-    Failed,
+/// The pool's price clock (`update_block`), or `None` when the id names no
+/// concentrated-liquidity pool — the retried fetch context re-derives from it.
+fn pool_clock(reg: &PoolTable, pool_id: u64) -> Option<u64> {
+    let entry = reg.get(pool_id)?;
+    entry
+        .v3()
+        .map(|(_, state)| state.update_block)
+        .or_else(|| entry.v4().map(|(_, state)| state.update_block))
 }
 
 #[expect(
@@ -1416,62 +1423,23 @@ impl ConcentratedLiquidityOrchestration {
         true
     }
 
-    /// per-pool tick-mutation fingerprint for the staged word-fetch
-    /// install check. Any `tick_data` mutation moves `update_block` and/or
-    /// the tick population; the stamp-sum term kills same-block net-zero
-    /// churn that len alone would miss. `None` = pool gone.
-    pub(crate) fn tick_fingerprint(
-        &self,
-        reg: &PoolTable,
-        pool_id: u64,
-    ) -> Option<(u64, usize, u64)> {
-        // One concentrated liquidity row (ADR-073 D2): the slice observation is the family read
-        // module's observe door (TickFingerprint probe); this method keeps
-        // the registry lookup.
-        let design = match reg.get(pool_id) {
-            Some(PoolEntry::V3(p)) => concentrated_liquidity::ConcentratedLiquidityState::V3 {
-                state: &p.1,
-                scalars: concentrated_liquidity::DesignScalars::new(p.0.fee, p.0.tick_spacing),
-            },
-            Some(PoolEntry::V4(p)) => concentrated_liquidity::ConcentratedLiquidityState::V4 {
-                state: &p.1,
-                scalars: concentrated_liquidity::DesignScalars::new(
-                    p.0.pool_key.fee,
-                    p.0.pool_key.tick_spacing,
-                ),
-                hooks: p.0.pool_key.hooks,
-            },
-            _ => return None,
-        };
-        match concentrated_liquidity::observe(design, Observe::TickFingerprint) {
-            Observed::TickFingerprint(fingerprint) => fingerprint,
-            _ => unreachable!("the fingerprint probe answers"),
-        }
-    }
-    /// Stage half of the word backfill: clone the stored fetcher +
-    /// capture the pool's tick fingerprint UNDER a short write, and release
-    /// the caller's guard before the (multi-second, `Python::attach` + web3
-    /// RPC) fetch runs. The old single-hold path fetched while the write
-    /// guard was alive, parking the pump’s apply/solve pipeline behind the
-    /// RPC. Pair with [`Self::install_word_fetch`].
+    /// Stage half of the word backfill: clone the pool's stored read handle and
+    /// capture its tick fingerprint UNDER a short write, then release the
+    /// caller's guard before the (multi-second, `Python::attach` + web3 RPC)
+    /// fetch runs. The choreography is the tick-word capability's
+    /// ([`degenbot_pools::stage_word_fetch`]); the pool id and the retried fetch
+    /// context are the substrate's half. Pair with
+    /// [`Self::install_word_fetch`].
     pub(crate) fn stage_word_fetch_by_pool_id(
-        &mut self,
+        &self,
         reg: &PoolTable,
         pool_id: u64,
         word: i32,
         block: u64,
         retried: bool,
     ) -> Option<StagedWordFetch> {
-        let (key, fetcher) = match reg.get(pool_id) {
-            Some(PoolEntry::V3(p)) => {
-                (degenbot_pools::TickWordKey::from(&p.0), p.1.fetcher.clone())
-            }
-            Some(PoolEntry::V4(p)) => {
-                (degenbot_pools::TickWordKey::from(&p.0), p.1.fetcher.clone())
-            }
-            _ => return None,
-        };
-        let fetcher = fetcher?;
+        let entry = reg.get(pool_id)?;
+        let reader: TickWordReader = entry.tick_word_reader()?;
         // The fetch context must reflect the CURRENT
         // pool clock on a retry, not the (stale) companion block — a fetch
         // at the original context after an interleaved event snapshots the
@@ -1480,56 +1448,38 @@ impl ConcentratedLiquidityOrchestration {
         // otherwise go known-minus-missing-ticks alongside the event's own
         // later application). First attempt honors the companion context.
         let fetch_context = if retried {
-            match reg.get(pool_id).map(|entry| match entry {
-                PoolEntry::V3(p) => p.1.update_block,
-                PoolEntry::V4(p) => p.1.update_block,
-                PoolEntry::AerodromeV2(..)
-                | PoolEntry::Curve(..)
-                | PoolEntry::BalancerWeighted(..)
-                | PoolEntry::BalancerStable(..)
-                | PoolEntry::V2(..) => 0,
-            }) {
-                Some(clock) => clock.saturating_sub(1),
-                None => 0,
-            }
+            pool_clock(reg, pool_id).map_or(0, |clock| clock.saturating_sub(1))
         } else {
             block
         };
-        let fingerprint = self.tick_fingerprint(reg, pool_id)?;
         Some(StagedWordFetch {
             pool_id,
-            word,
-            block: fetch_context,
-            key,
-            source: fetcher,
-            fingerprint,
+            staged: degenbot_pools::stage_word_fetch(
+                entry,
+                word,
+                fetch_context,
+                WordFetchPolicy::Armed(&reader),
+            )?,
         })
     }
-    /// Install half: merges the fetched word only if the pool was NOT
-    /// mutated while the fetch ran (fingerprint re-check). A mutation means
-    /// the pump applied an event for this pool during the fetch window —
-    /// the staged overlay would then clobber fresher tick writes, so the
-    /// caller RETRIES the stage+fetch (bounded) instead of applying a lost
-    /// update. [`InstallWordOutcome::Failed`] keeps the failure contract
-    /// (fetch failed / pool gone → the companion gate raises).
+    /// Install half: merge the fetched word only if the pool was NOT mutated
+    /// while the fetch ran — the capability's fingerprint re-check. A mutation
+    /// means the pump applied an event for this pool during the fetch window,
+    /// so the staged overlay would clobber fresher tick writes and the caller
+    /// RETRIES the stage+fetch (bounded) instead of applying a lost update.
+    /// [`WordFetchOutcome::NoSource`] covers the pool gone / no longer a merge
+    /// target case, which keeps the failure contract (the companion gate
+    /// raises).
     pub(crate) fn install_word_fetch(
-        &mut self,
+        &self,
         reg: &mut PoolTable,
         staged: &StagedWordFetch,
-        fetched: &::degenbot_pools::FetchedTickWord,
-    ) -> InstallWordOutcome {
-        use InstallWordOutcome::{Failed, Merged, Raced};
-        match self.tick_fingerprint(reg, staged.pool_id) {
-            None => Failed,
-            Some(fp) if fp == staged.fingerprint => {
-                if self.merge_tick_word(reg, staged.pool_id, fetched) {
-                    Merged
-                } else {
-                    Failed
-                }
-            }
-            Some(_) => Raced,
-        }
+        fetched: &::degenbot_pools::CheckedWord,
+    ) -> WordFetchOutcome {
+        let Some(entry) = reg.get_mut(staged.pool_id) else {
+            return WordFetchOutcome::NoSource;
+        };
+        degenbot_pools::install_staged_word(entry, &staged.staged, fetched)
     }
     /// Backfill an unknown tick-bitmap word for a registered V3/V4 pool
     /// (the write-path twin of the fetch+retry calc seam).
@@ -1552,34 +1502,13 @@ impl ConcentratedLiquidityOrchestration {
         word: i32,
         block: u64,
     ) -> bool {
-        // Clone the stored source off the state first: the fetch call must
-        // not hold the pool borrow, and `merge_tick_word` re-borrows `self`.
-        let attempt = match reg.get(pool_id) {
-            Some(PoolEntry::V3(p)) => {
-                p.1.fetcher
-                    .clone()
-                    .map(|source| (source, degenbot_pools::TickWordKey::from(&p.0)))
-            }
-            Some(PoolEntry::V4(p)) => {
-                p.1.fetcher
-                    .clone()
-                    .map(|source| (source, degenbot_pools::TickWordKey::from(&p.0)))
-            }
-            _ => None,
-        };
-        let Some((source, key)) = attempt else {
+        let Some(entry) = reg.get_mut(pool_id) else {
             return false;
         };
-        // A miss-path fetch maps `Ok(None)` (all-zero bitmap) to a known-empty
-        // word.
-        let Ok(fetched_word) = source.fetch_tick_word(&key, word, block).map(|hit| {
-            hit.unwrap_or_else(|| {
-                degenbot_pools::FetchedTickWord::new(word, hashbrown::HashMap::new())
-            })
-        }) else {
+        let Some(reader) = entry.tick_word_reader() else {
             return false;
         };
-        self.merge_tick_word(reg, pool_id, &fetched_word)
+        degenbot_pools::fetch_and_merge(entry, word, block, WordFetchPolicy::Armed(&reader)).known()
     }
     /// Merge a fetched tick-bitmap word into a V3/V4 pool's state.
     ///
@@ -1599,17 +1528,17 @@ impl ConcentratedLiquidityOrchestration {
         pool_id: u64,
         fetched: &::degenbot_pools::FetchedTickWord,
     ) -> bool {
-        // Dispatch through `ConcentratedLiquidityPoolMut` (one body shared by
-        // V3 and V4, not inlined per arm). The `bool` wraps the trait's
-        // always-`true` return: `false`
-        // for non-concentrated-liquidity / unregistered pools (the non-concentrated-liquidity no-op).
+        // One dispatch through the merge-target seam: V3 and V4 share the state
+        // verb behind it, and an entry that is not a target answers `None` (a
+        // non-concentrated-liquidity / unregistered pool is a silent no-op).
         let Some(entry) = reg.get_mut(pool_id) else {
             return false;
         };
-        match entry.as_concentrated_liquidity_mut() {
-            Some(concentrated_liquidity) => concentrated_liquidity.merge_tick_word(fetched),
-            None => false,
+        if entry.tick_word_fingerprint().is_none() {
+            return false;
         }
+        entry.apply_fetched_word(fetched);
+        true
     }
     // -----------------------------------------------------------------------
     // V4 state (ADR-003: single entry per `(pool_manager, pool_id)`;
@@ -2578,16 +2507,10 @@ impl BotState {
         }
     }
 
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::tick_fingerprint`].
-    #[must_use]
-    pub fn tick_fingerprint(&self, pool_id: u64) -> Option<(u64, usize, u64)> {
-        self.concentrated_liquidity
-            .tick_fingerprint(&self.pools, pool_id)
-    }
-
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::stage_word_fetch_by_pool_id`].
+    #[must_use]
     pub fn stage_word_fetch_by_pool_id(
-        &mut self,
+        &self,
         pool_id: u64,
         word: i32,
         block: u64,
@@ -2606,8 +2529,8 @@ impl BotState {
     pub fn install_word_fetch(
         &mut self,
         staged: &StagedWordFetch,
-        fetched: &::degenbot_pools::FetchedTickWord,
-    ) -> InstallWordOutcome {
+        fetched: &::degenbot_pools::CheckedWord,
+    ) -> ::degenbot_pools::WordFetchOutcome {
         self.concentrated_liquidity
             .install_word_fetch(&mut self.pools, staged, fetched)
     }

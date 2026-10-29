@@ -8,11 +8,12 @@
 //!
 //! The router cannot fetch the word itself: it is called under the state write
 //! guard, and the fetch is a multi-second RPC. This module owns the half the
-//! router cannot — the same shape as the solve-time miss recovery in
-//! `degenbot_bot::bot_core::pool_ops`:
+//! router cannot — the stage → fetch → install split of the tick-word merge
+//! policy (GLOSSARY **Tick-word merge**), whose two short locks the router's
+//! caller owns:
 //!
-//! 1. short write — clone the stored fetcher + the pool's tick-mutation
-//!    fingerprint (`stage_word_fetch_by_pool_id`),
+//! 1. short write — clone the pool's read handle and capture its
+//!    tick-mutation fingerprint (`stage_word_fetch_by_pool_id`),
 //! 2. fetch — NO state lock held,
 //! 3. short write — install, merging only if the pool was not mutated during
 //!    the fetch (`install_word_fetch`),
@@ -24,10 +25,12 @@
 //! standing. The event is then NOT applied — never applied over an unknown
 //! region, and never silently dropped: the caller sees the refusal.
 
+use degenbot_pools::WordFetchOutcome;
+
 use crate::concentrated_liquidity_route::ApplyOutcome;
 use crate::state_lock::LockSite;
 use crate::state_lock::StateLock;
-use crate::{BotState, InstallWordOutcome};
+use crate::BotState;
 
 /// Bounded attempts per word: a race requires a same-pool event to land inside
 /// the (multi-second) fetch window, so three attempts exhaust only pathological
@@ -86,9 +89,9 @@ fn backfill_word(state: &StateLock<BotState>, pool_id: u64, word: i32, fetch_blo
             .write_at(LockSite::Core)
             .install_word_fetch(&staged, &fetched)
         {
-            InstallWordOutcome::Merged => return true,
-            InstallWordOutcome::Failed => return false,
-            InstallWordOutcome::Raced => {}
+            WordFetchOutcome::Merged | WordFetchOutcome::KnownEmpty => return true,
+            WordFetchOutcome::FetchFailed | WordFetchOutcome::NoSource => return false,
+            WordFetchOutcome::Raced => {}
         }
     }
     false

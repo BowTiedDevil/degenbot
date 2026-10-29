@@ -20,19 +20,18 @@ use std::path::{Path, PathBuf};
 
 use std::sync::OnceLock;
 
-/// The pinned post-C5 census value (manager pattern:
+/// The pinned census value (manager pattern:
 /// `rg 'match entry' rust/crates -g '!*tests*'`; the one excluded hit is the
 /// cli-core exchange-arm test fixture, not a pool matcher).
 ///
-/// The count is 22 because the entry-side tag table is not a central matcher:
+/// ADR-073 D2 permits at most one dispatch row per family at each central site,
+/// and FEWER is the direction the extraction wants: the concentrated-liquidity
+/// rows left this census once the family door took over their reader and merge
+/// plumbing. The entry-side tag table is not a central matcher either —
 /// `BotState::pool_family` reads the typed family and renders
 /// `RegisteredPoolFamily::tag`, so the only family-name spelling lives on the
-/// enum. The 22nd row is the override door's SECOND dispatch row
-/// (`reserve_pair_override_read`, the peer of the concentrated-liquidity row):
-/// ADR-073 D2 permits exactly one dispatch row per family at each central
-/// site, and the override door now carries one per family with an override
-/// read.
-const PINNED_MATCH_ENTRY_CENSUS: usize = 22;
+/// enum.
+const PINNED_MATCH_ENTRY_CENSUS: usize = 20;
 
 /// The reintroduction marker the census counts (shared by the workspace scan
 /// and the synthetic-fixture negative probe, so the probe witnesses the same
@@ -267,7 +266,7 @@ fn the_central_match_entry_census_is_pinned() {
     assert_eq!(
         hits.len(),
         PINNED_MATCH_ENTRY_CENSUS,
-        "the literal `match entry` census drifted from the pinned post-C5 value          (a central match row moved or reappeared — ADR-073 D2 permits exactly          one dispatch row per family at each central site):
+        "the literal `match entry` census drifted from the pinned value (a central         match row moved or reappeared — ADR-073 D2 permits at most one dispatch         row per family at each central site):
 {}",
         hits.join("
 ")

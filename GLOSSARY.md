@@ -451,6 +451,23 @@ _Avoid_: one trait per call site for one choreography; a second hand-rolled copy
 the enumerate loop per transport; a driver-supplied fetch callback; a fetcher that
 reads the state owner it is fetching for.
 
+**Tick-word merge** (`WordFetchOutcome`):
+
+The one policy between a tick-word read and the pool state that read lands on: fetch the
+missing word, apply the checked-empty rule, merge its ticks, and refuse the merge when the
+pool was written while the read was in flight. Owned once by the tick-word capability
+(`degenbot_pools`), addressed by a **reader** (a pool's `TickWordKey` paired with its stored
+source), and merged through one **merge target** seam with exactly two implementations — a
+registered pool's tick map (nonce, known-word set, tick-range cache) and a caller-owned
+transient (a hypothetical read's overlay). A read is *staged* before the fetch and
+*installed* after it, so a caller can release its state lock across the RPC; the install
+re-checks the target's tick fingerprint and answers `Raced` instead of clobbering fresher
+ticks, and a source's `Ok(None)` is a **checked-empty word** — known, holding no ticks.
+
+_Avoid_: a per-call fetch loop; a caller re-deriving the known-empty mapping; merging a
+fetched word without the fingerprint re-check; a second verdict vocabulary beside
+`WordFetchOutcome`.
+
 **Snapshot seed**:
 The registration-time (pinned) tick data captured for a Tracked pool, verified exactly
 once against on-chain state at the snapshot block.

@@ -579,12 +579,12 @@ impl V3PoolState {
     }
 
     /// Word position (`tick_position(tick.div_euclid(tick_spacing))`) holding
-    /// the given tick. Shared by V3/V4 sparse miss-detection; the verb lives
-    /// once in the concentrated liquidity family state module
-    /// (`families/concentrated_liquidity/state_seeding.rs`).
+    /// the given tick. Shared by V3/V4 sparse miss-detection; the derivation
+    /// lives once in the tick-word capability
+    /// (`sim/tick_fetch/policy.rs`, GLOSSARY **Tick-word merge**).
     #[must_use]
     pub fn word_of(tick: i32, tick_spacing: i32) -> i32 {
-        state_seeding::word_of(tick, tick_spacing)
+        crate::sim::tick_fetch::word_of(tick, tick_spacing)
     }
 
     /// The first boundary bitmap word of a liquidity event whose sparse region

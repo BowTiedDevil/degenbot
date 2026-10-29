@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U256};
 use degenbot_pools::CurveDataProvider;
-use degenbot_pools::FetchedTickWord;
 use degenbot_pools::RegisteredPoolFamily;
+use degenbot_pools::{fetch_and_merge, TransientTickMap, WordFetchPolicy};
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::swap_simulation::{
     simulate_pair_in_given_out, simulate_pair_out, Caveats, OverrideOutcome, OverrideState,
@@ -161,7 +161,7 @@ pub fn stage_missing_words(
         // Stage the whole batch under ONE short write (the per-word
         // fingerprints gate the installs individually).
         let staged = {
-            let mut guard = state.write_at(LockSite::Orchestrator);
+            let guard = state.write_at(LockSite::Orchestrator);
             let Some(staged) = missing
                 .iter()
                 .map(|word| guard.stage_word_fetch_by_pool_id(pool_id, *word, block, pass > 0))
@@ -189,7 +189,7 @@ pub fn stage_missing_words(
                 .any(|(staged_word, fetched_word)| {
                     matches!(
                         guard.install_word_fetch(staged_word, fetched_word),
-                        degenbot_substrate::InstallWordOutcome::Raced
+                        degenbot_pools::WordFetchOutcome::Raced
                     )
                 })
         };
@@ -426,9 +426,10 @@ pub fn simulate_mainline(
 }
 
 /// Staged fetch+retry override (hypothetical state) sim — the bounded
-/// 3-pass loop over [`BotState::override_missing_words`] + the stored fetcher
-/// (fetched ticks merge into the caller-owned TRANSIENT map, never
-/// registered state), then the disarmed override sim.
+/// 3-pass loop over [`BotState::override_missing_words`] + the pool's stored
+/// read handle, merging through the ONE tick-word merge policy into the
+/// caller-owned TRANSIENT map (never registered state), then the disarmed
+/// override sim.
 ///
 /// Only the concentrated-liquidity family carries a sparse tick map, so only
 /// its override state lists words to stage; every other family's override read
@@ -450,30 +451,21 @@ pub fn simulate_override_with_fetch(
         if missing.is_empty() {
             break;
         }
-        // Misses exist but no fetcher is stored: the hypothetical cannot be
+        // Misses exist but no read handle is stored: the hypothetical cannot be
         // backfilled — fail as `None` exactly like the disarmed sim's
         // FetchExhausted arm.
-        let (key, fetcher) = reader?;
-        // Fetches: NO state lock held.
-        let mut staged_words = Vec::new();
-        for word in &missing {
-            match fetcher.fetch_tick_word(&key, *word, block) {
-                // A miss-path fetch maps `Ok(None)` (all-zero bitmap) to a
-                // known-empty word.
-                Ok(Some(f)) => staged_words.push(f),
-                Ok(None) => {
-                    staged_words.push(FetchedTickWord::new(*word, hashbrown::HashMap::new()));
-                }
-                Err(_) => return None,
-            }
-        }
-        // Merge fetched ticks into the caller-owned transient map.
+        let reader = reader?;
+        // Fetches: NO state lock held. The transient map is the caller's own, so
+        // nothing can write it between the fetch and the merge — the capability's
+        // fetch-and-merge is the whole policy, checked-empty included.
         let OverrideState::ConcentratedLiquidity { tick_data, .. } = &mut over.state else {
             return None;
         };
-        for f in &staged_words {
-            for (tick, info) in &f.ticks {
-                tick_data.insert(*tick, info.clone());
+        let mut target = TransientTickMap::new(tick_data);
+        for word in &missing {
+            if !fetch_and_merge(&mut target, *word, block, WordFetchPolicy::Armed(&reader)).known()
+            {
+                return None;
             }
         }
     }

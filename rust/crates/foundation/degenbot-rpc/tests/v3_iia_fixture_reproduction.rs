@@ -76,7 +76,7 @@ const CAPTURED_ACTUAL: u128 = 150_836_781_502; // revm sim measured hop[1] outpu
 const CAPTURED_PREDICTED: u128 = 150_836_781_515; // solver hop_outputs[1] (+13)
 
 /// The miss-path fetch over the one unified source: build the pool's read
-/// descriptor key and map `Ok(None)` (all-zero bitmap) to a known-empty word.
+/// descriptor key and let the tick-word capability apply the checked-empty rule.
 fn fetch_word(
     source: &AlloyTickWordSource,
     address: Address,
@@ -89,7 +89,7 @@ fn fetch_word(
     };
     source
         .fetch_tick_word(&key, word, block)
-        .map(|hit| hit.unwrap_or_else(|| FetchedTickWord::new(word, HashMap::new())))
+        .map(|hit| degenbot_pools::checked_word(word, hit).word)
 }
 
 /// The solver's concentrated-liquidity-hop output for `amount_in` (mirrors
