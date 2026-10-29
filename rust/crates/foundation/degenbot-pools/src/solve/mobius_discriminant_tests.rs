@@ -11,9 +11,9 @@
 //!
 //! This file pins the domain boundary on the all-V2 synthetic grid from
 //! `examples/all_v2_fastpath_ab.rs`, verifies that the widened (U2048)
-//! closed form reproduces the unified walk on the diverging 3-hop paths, and
-//! checks bit-identity with the pre-fix formula everywhere the U512
-//! discriminant does not wrap.
+//! closed form lands within the floor jog of the unified walk on the
+//! diverging 3-hop paths, and checks bit-identity with the pre-fix formula
+//! everywhere the U512 discriminant does not wrap.
 
 #![expect(clippy::unwrap_used, clippy::many_single_char_names)]
 
@@ -129,11 +129,15 @@ fn three_hop_1e24_discriminant_wraps_and_fixed_anchor_is_nonzero() {
                 "widened discriminant must yield a usable anchor"
             );
             // The fail-confident artifact (1-wei optimum or None) is gone:
-            // the fixed closed form + ±2 sweep reproduces the walk exactly.
-            assert_eq!(
-                baseline(&hops),
-                walk(&hops),
-                "fixed solution must match walk (a{a} b{b} c{c} g{g})"
+            // the anchor-only solution lands within the floor jog of the
+            // walk (±4096-window reference: max miss 1 wei on 3-hop paths).
+            let base_sol = baseline(&hops).unwrap();
+            let walk_sol = walk(&hops).unwrap();
+            let miss = walk_sol.1.saturating_sub(base_sol.1);
+            assert!(
+                miss <= U256::from(1u64),
+                "anchor-only solution must land within the floor jog of the walk \
+                 (miss={miss} a{a} b{b} c{c} g{g})"
             );
         }
     }

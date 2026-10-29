@@ -30,11 +30,14 @@
 //!   thousands of wei wide on thin-margin paths, so the discrete argmax is
 //!   ILL-CONDITIONED: it can sit arbitrarily far from the model anchor, and
 //!   no fixed-radius sweep finds it. [`exact_mobius_solve`] therefore does
-//!   NOT return the discrete argmax. It anchors at the model optimum and
-//!   sweeps `x* ± 2`, which lands on the plateau: the returned profit is
-//!   within the floor-jog residual of the discrete max (measured ≤ 1 wei
-//!   against a ±4096-wei brute-scan reference over the thin-margin grid —
-//!   see the `displacement` test module).
+//!   NOT search for it: it returns the floor-exact evaluation AT the model
+//!   anchor. The residual against the discrete max is bounded by the
+//!   propagated floor jog (measured ≤ 1 wei on 2-hop paths against a
+//!   ±4096-wei brute-scan reference — see the `displacement` test module),
+//!   because the envelope dominates the floored chain pointwise while the
+//!   anchor evaluation reaches it to within the jog. Tightening sweeps
+//!   capture at most that jog — a 1-wei lottery on a minority of paths —
+//!   so the solve evaluates the anchor once and stops.
 //!
 //! Module-level qualifier: the "exact" in *this module's name*
 //! (`mobius_int_exact`) is a discipline label distinguishing the integer
@@ -59,19 +62,18 @@ use crate::solve::mobius_int::{
 };
 use degenbot_math::v2::{int_simulate_path, IntHopState};
 
-/// Result of [`exact_mobius_solve`] — a plateau point of the discrete
-/// EVM-sim staircase of the on-chain swap chain (NOT the closed-form
-/// Möbius-model optimum, and NOT the discrete argmax).
+/// Result of [`exact_mobius_solve`] — the floor-exact EVM-sim evaluation
+/// of the on-chain swap chain AT the Möbius-model anchor (NOT the discrete
+/// argmax).
 ///
-/// The point is found by anchoring at the model-optimum `x* =
-/// (√(K·M) - M) / N` (see [`compute_mobius_model_optimal_input`]) and
-/// sweeping the floor-exact swap chain `int_simulate_path` at `x*` and `x* ±
-/// 2`. The discrete argmax is ill-conditioned (the staircase is
-/// floor-jog-flat over a wide plateau near the optimum), so no fixed-radius
-/// sweep attains it; the ±2 sweep lands on the plateau and the returned
-/// profit is within the floor-jog residual of the discrete max (measured ≤ 1
-/// wei on 2-hop thin-margin paths). See the module-level doc for the
-/// two-layer discipline ("model layer" vs "discrete-EVM-sim layer").
+/// The anchor is the model-optimum `x* = (√(K·M) - M) / N` (see
+/// [`compute_mobius_model_optimal_input`]). The discrete argmax is
+/// ill-conditioned (the staircase is floor-jog-flat over a wide plateau
+/// near the optimum), so no fixed-radius search attains it, and any
+/// search's capture is bounded by the floor jog; the returned profit is
+/// within the floor-jog residual of the discrete max (measured ≤ 1 wei on
+/// 2-hop thin-margin paths). See the module-level doc for the two-layer
+/// discipline ("model layer" vs "discrete-EVM-sim layer").
 ///
 /// `optimal_input` is the discrete argmax of `int_simulate_path(x) - x`;
 /// `profit` is the corresponding on-chain profit. Both are `U256` (zero when
@@ -112,18 +114,18 @@ pub struct ExactMobiusResult {
 ///    the analytic argmax of the rational envelope, via
 ///    [`compute_mobius_model_optimal_input`]. This is the Möbius-model
 ///    optimum (exact over the reals), NOT the discrete EVM-sim optimum.
-/// 4. EVM-simulate at `x*` and nearby points (±2) via `int_simulate_path`
-///    and keep the best of `int_simulate_path(x) - x`. This is NOT the
-///    discrete argmax: the staircase is floor-jog-flat over a wide plateau
-///    near the optimum, so the argmax can sit arbitrarily far from the
-///    anchor. The ±2 neighborhood lands on the plateau; the returned profit
-///    is within the floor-jog residual of the discrete max (measured ≤ 1
-///    wei on 2-hop thin-margin paths against a ±4096-wei brute scan).
-/// 5. Return best result.
+/// 4. EVM-simulate at `x*` via `int_simulate_path` and return
+///    `int_simulate_path(x*) - x*`. This is NOT the discrete argmax: the
+///    staircase is floor-jog-flat over a wide plateau near the optimum, so
+///    the argmax can sit arbitrarily far from the anchor. No neighborhood
+///    tightening runs: the envelope dominates the floored chain pointwise
+///    and the anchor evaluation reaches the envelope to within the
+///    propagated floor jog, so the residual against the discrete max is
+///    jog-bounded (measured ≤ 1 wei on 2-hop thin-margin paths against a
+///    ±4096-wei brute scan) and a sweep's capture is at most that jog.
+/// 5. Return the result.
 ///
-/// This produces results with zero float conversions: the closed form
-/// narrows the search to a tight neighborhood of the model-optimum anchor;
-/// the ±2 sweep picks a plateau point of the staircase. Exactness holds at
+/// This produces results with zero float conversions. Exactness holds at
 /// the Möbius-model layer; the discrete layer carries the bounded residual
 /// documented above.
 ///
@@ -170,58 +172,44 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
         });
     }
 
-    // Final tightening on the discrete staircase. The anchor evaluation
-    // alone bounds the residual by the propagated floor jog: the rational
-    // envelope dominates the floored chain pointwise, so any unprobed point
-    // can improve on the anchor's profit by at most that jog (~1 wei/hop).
-    // At the envelope optimum the composed marginal rate is 1 by
-    // construction, so the last hop's fractional part advances ~1 wei per
-    // wei of input — each probe is a near-independent draw at the jog, no
-    // deterministic targeting helps within a capital-sane radius, and the
-    // residual trade is purely probe count vs expected jog capture
-    // (measured on the thin-margin grid: mean residual 0.48 wei at the
-    // anchor alone, 0.32 with ±2, 0.21 with ±8; max 1 wei at every radius;
-    // no window-position asymmetry). ±2 — five probes — is the chosen point
-    // on that tradeoff; the strictly-greater comparison over the -2..=+2
-    // order keeps the SMALLEST input among equal profits (capital
-    // efficiency).
-    let mut best_x = U256::ZERO;
-    let mut best_profit = U256::ZERO;
-    let mut best_hop_outputs: Vec<U256> = Vec::new();
-
-    for delta in -2i32..=2 {
-        let candidate = if delta >= 0 {
-            x_approx.saturating_add(U256::from(delta.cast_unsigned()))
-        } else {
-            x_approx.saturating_sub(U256::from((-delta).cast_unsigned()))
-        };
-
-        if candidate.is_zero() {
-            continue;
-        }
-
-        let Ok(sim) = int_simulate_path(candidate, hops) else {
-            // Candidate's swap reverts on-chain (uint256 overflow) →
-            // not a viable arb input; skip.
-            continue;
-        };
-
-        if sim.final_output > candidate {
-            let profit = sim.final_output - candidate;
-            if profit > best_profit {
-                best_profit = profit;
-                best_x = candidate;
-                best_hop_outputs = sim.steps.iter().map(|s| s.output).collect::<Vec<_>>();
-            }
-        }
-    }
+    // No neighborhood tightening around the anchor: the envelope dominates
+    // the floored chain pointwise, so the residual against the discrete max
+    // is bounded by the propagated floor jog (~1 wei/hop), and at the
+    // envelope optimum the composed marginal rate is 1 — every nearby
+    // candidate is a near-independent draw at that jog (measured: a ±2
+    // sweep's capture is exactly 1 wei on ~16% of thin-margin paths, never
+    // more; wider windows show no asymmetry and smooth diminishing
+    // returns). One wei is below any executable profit signal, so the solve
+    // evaluates the anchor once. The anchor is also the SMALLEST input on
+    // the plateau among equal-profit points: it floors the model optimum,
+    // and profit past it is flat within the jog.
+    let Ok(sim) = int_simulate_path(x_approx, hops) else {
+        // Anchor's swap reverts on-chain (uint256 overflow) → no viable
+        // arb input.
+        return Ok(ExactMobiusResult {
+            optimal_input: U256::ZERO,
+            profit: U256::ZERO,
+            is_profitable: false,
+            used_closed_form: true,
+            hop_outputs: Vec::new(),
+        });
+    };
+    let profit = sim.final_output.saturating_sub(x_approx);
 
     Ok(ExactMobiusResult {
-        optimal_input: best_x,
-        profit: best_profit,
-        is_profitable: !best_profit.is_zero(),
+        optimal_input: if profit.is_zero() {
+            U256::ZERO
+        } else {
+            x_approx
+        },
+        profit,
+        is_profitable: !profit.is_zero(),
         used_closed_form: true,
-        hop_outputs: best_hop_outputs,
+        hop_outputs: if profit.is_zero() {
+            Vec::new()
+        } else {
+            sim.steps.iter().map(|s| s.output).collect::<Vec<_>>()
+        },
     })
 }
 
@@ -582,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn test_exact_solve_best_in_neighborhood() {
+    fn test_exact_solve_neighborhood_within_floor_jog() {
         let hops = vec![
             IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
             IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
@@ -590,9 +578,9 @@ mod tests {
         let result = exact_mobius_solve(&hops).unwrap();
         assert!(result.is_profitable);
 
-        let best_pft = result.profit;
-
-        // Check that no ±3 neighbor has better profit
+        // The anchor carries no argmax guarantee, but the floor-jog bound
+        // does: no ±3 neighbor may beat the returned profit by more than
+        // the propagated jog (~1 wei per hop on this 2-hop path).
         let x_opt = result.optimal_input;
         for delta in -3i64..=3 {
             let candidate = if delta >= 0 {
@@ -607,8 +595,9 @@ mod tests {
             if output > candidate {
                 let profit = output - candidate;
                 assert!(
-                    profit <= result.profit,
-                    "Neighbor {candidate} has profit {profit} > best {best_pft}"
+                    profit <= result.profit + U256::from(2u64),
+                    "Neighbor {candidate} profit {profit} exceeds {} by more than the floor jog",
+                    result.profit
                 );
             }
         }
