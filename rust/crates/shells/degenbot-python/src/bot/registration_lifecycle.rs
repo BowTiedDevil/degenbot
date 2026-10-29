@@ -382,7 +382,7 @@ impl PyArbEngine {
         py: Python<'_>,
         lifecycle: &PyRegistrationLifecycle,
     ) -> PyResult<Py<PyAny>> {
-        run_registration_lifecycle(py, &self.driver, lifecycle)
+        run_registration_lifecycle(py, self.session.driver(), lifecycle)
     }
 }
 

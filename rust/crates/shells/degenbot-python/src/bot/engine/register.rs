@@ -17,7 +17,7 @@ impl PyArbEngine {
     #[new]
     #[pyo3(signature = (py_bot=None))]
     #[expect(clippy::needless_pass_by_value)]
-    pub(crate) fn new(py: Python<'_>, py_bot: Option<Py<PyBot>>) -> Self {
+    pub(crate) fn new(py: Python<'_>, py_bot: Option<Py<PyBot>>) -> PyResult<Self> {
         let py_bot_ref = py_bot.as_ref();
         // ADR-006 D1+D4: if a `PyBot` is supplied, adopt its shared
         // `Arc<RwLock<BotState>>` so the engine reads/writes the SAME core that
@@ -60,44 +60,35 @@ impl PyArbEngine {
         // it, exactly like a pure-Rust consumer. The block-clock receiver is
         // taken by `PyBot::block_stream` through the shared `PumpState`.
         //
-        // C4: the driver attaches to a host-minted hub (the C2 attach
-        // signature) rather than minting a private one, so ONE process-wide
-        // `StrategyHost` owns the hub, the frozen route registry, and the
-        // nonce authority. For a settlement-only boot the host is otherwise
-        // inert: no driver is enabled and no lane namespace is named.
-        let booted = super::strategy::boot_host();
-        let host = booted.host;
-        let attached = booted.attached;
-        // The engine holds the hosted sources for its life: their drop (and the
-        // head-edge/sampler shutdown) is the engine's drop, not this boot's end.
-        let hosted = booted.hosted;
-        let driver = Arc::new(
-            degenbot_bot::arb_engine::EngineDriver::from_stages_with_hub(
-                Arc::clone(&bot),
-                Arc::clone(&stages),
-                attached,
-            ),
-        );
-        let result_rx = driver.take_result_receiver();
+        // The driver attaches to a host-minted hub (the C2 attach signature)
+        // rather than minting a private one, so one `StrategyHost` owns the
+        // hub, the frozen route registry, and the nonce authority per engine.
+        // For a settlement-only boot the host is otherwise inert: no driver is
+        // enabled and no lane namespace is named. The core session boot owns
+        // that mint → register → attach → install order; this shell resolved
+        // the plane's values above it.
+        // A boot the host refuses (or a hosted source the hub cannot mint)
+        // fails the constructor before the engine is handed to Python.
+        let session = super::strategy::boot_session(Arc::clone(&bot), Arc::clone(&stages))
+            .map_err(super::strategy::map_session_boot_error)?;
+        let result_rx = session.driver().take_result_receiver();
         // Both wrappers share the driver itself.
         if let Some(parent) = py_bot_ref {
-            parent.borrow(py).attach_pump_state(Arc::clone(&driver));
+            parent
+                .borrow(py)
+                .attach_pump_state(Arc::clone(session.driver()));
         }
         // The cross-block warm bytecode cache (Option A) — one
         // shared `Arc<RwLock<WarmCodeCacheInner>>` for the engine's life,
         // cloned into each per-block `BlockSimHandle::build`. Empty at
         // construction; warmed lazily by the first block's cold RPCs.
         let warm_code_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
-        let supervisor = degenbot_bot::strategy_host::HostSupervisor::new(Arc::clone(&host));
-        Self {
+        Ok(Self {
             stages,
-            driver,
-            host,
-            hosted,
-            supervisor,
+            session,
             result_rx: Arc::new(parking_lot::Mutex::new(result_rx)),
             warm_code_cache,
-        }
+        })
     }
 
     /// Register a mixed arbitrage path.
@@ -240,7 +231,7 @@ impl PyArbEngine {
     fn subscribe(&self, py: Python<'_>, rpc_url: String) -> PyResult<u64> {
         // ADR-050 D7: the engine-only test-seam twin of
         // `PyBot::subscribe` — drives the shared `EngineDriver` directly.
-        py.detach(|| degenbot_bot::bot_core::Bot::subscribe(&self.driver, &rpc_url))
+        py.detach(|| degenbot_bot::bot_core::Bot::subscribe(self.session.driver(), &rpc_url))
             .map_err(map_driver_err)
     }
 
@@ -266,7 +257,7 @@ impl PyArbEngine {
     ) -> PyResult<u64> {
         crate::bot::pump::start(
             py,
-            &self.driver,
+            self.session.driver(),
             &node_http,
             &node_ws,
             verify_state_view.as_deref(),
@@ -294,15 +285,13 @@ impl PyArbEngine {
     #[expect(clippy::needless_pass_by_value)]
     fn resume(&self, py: Python<'_>, facets: Vec<String>) -> PyResult<()> {
         self.enable_facets(py, &facets)?;
-        py.detach(|| degenbot_bot::bot_core::Bot::resume(&self.driver))
+        py.detach(|| degenbot_bot::bot_core::Bot::resume(self.session.driver()))
             .map_err(map_driver_err)?;
         // The start boundary for the deferred hosted I/O: the head-watch WS
         // connect and each active arm's feed pump launch here, BEFORE the
         // drivers, because each driver's loop subscribes the hub head source
         // the head edge registers as it starts. Construction dials nothing.
-        self.start_hosted_sources(py)?;
-        self.start_hosted_strategies()
-            .map_err(super::strategy::map_host_error)?;
+        self.start_hosted_session(py)?;
         Ok(())
     }
 
@@ -318,7 +307,7 @@ impl PyArbEngine {
     /// session teardown path and a signal handler. Delegates to the shared
     /// `PumpState`.
     fn stop(&self, _py: Python<'_>) -> PyResult<()> {
-        degenbot_bot::bot_core::Bot::stop(&self.driver).map_err(map_driver_err)
+        degenbot_bot::bot_core::Bot::stop(self.session.driver()).map_err(map_driver_err)
     }
 
     /// Awaitable session-end DETECTION FACT: resolves the core
@@ -330,6 +319,6 @@ impl PyArbEngine {
     /// completion is a retained broadcast, not a one-shot signal consumed at
     /// creation).
     fn session_end_future<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        crate::bot::pump::session_end_future(py, &self.driver)
+        crate::bot::pump::session_end_future(py, self.session.driver())
     }
 }

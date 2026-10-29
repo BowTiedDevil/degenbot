@@ -91,7 +91,7 @@ impl PyArbEngine {
     #[pyo3(signature = (rpc_url))]
     fn set_verify_rpc_url(&self, rpc_url: &str) {
         // ADR-006 D4 (T4): delegates to the shared `PumpState`.
-        self.driver.set_verify_rpc_url(rpc_url);
+        self.session.driver().set_verify_rpc_url(rpc_url);
     }
 
     /// Set the `StateView` contract address for V4 verification during registration.
@@ -100,6 +100,8 @@ impl PyArbEngine {
     #[pyo3(signature = (state_view_address))]
     fn set_verify_state_view(&self, state_view_address: &str) {
         // ADR-006 D4 (T4): delegates to the shared `PumpState`.
-        self.driver.set_verify_state_view(state_view_address);
+        self.session
+            .driver()
+            .set_verify_state_view(state_view_address);
     }
 }

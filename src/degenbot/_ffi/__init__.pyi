@@ -5150,7 +5150,7 @@ def resolved_node_uri_for_tests(chain_id: SupportsIndex, scope: str) -> str:
     resolves for `chain_id` and `scope` (`"request"` or `"subscription"`).
 
     Reads `degenbot_config::holder::config()` — the SAME snapshot
-    `boot_host` reads at construction — so an assertion tracks what a fresh
+    `boot_session` reads at construction — so an assertion tracks what a fresh
     engine would observe, not the module-init verdict. The endpoint is resolved
     through the core resolver (`resolve_node_uri`) over that snapshot's node
     tables, with no explicit override and no provenance (the holder carries the

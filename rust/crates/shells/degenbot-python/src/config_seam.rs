@@ -20,7 +20,7 @@
 //! engines keep their minted snapshots; [`reinstall_config_holder_for_tests`]
 //! re-governs only future resolutions. Resetting while engines exist is
 //! safe-by-design — every engine reads the holder at CONSTRUCTION
-//! (`boot_host`, the engine construction pack step), and the process-lifetime
+//! (`boot_session`, the engine construction pack step), and the process-lifetime
 //! resources sized from the first snapshot (the shared io runtime, the
 //! solve/io worker pools) are intentionally not re-sized.
 
@@ -59,7 +59,7 @@ pub fn reinstall_config_holder_for_tests(
 /// resolves for `chain_id` and `scope` (`"request"` or `"subscription"`).
 ///
 /// Reads `degenbot_config::holder::config()` — the SAME snapshot
-/// `boot_host` reads at construction — so an assertion tracks what a fresh
+/// `boot_session` reads at construction — so an assertion tracks what a fresh
 /// engine would observe, not the module-init verdict. The endpoint is resolved
 /// through the core resolver (`resolve_node_uri`) over that snapshot's node
 /// tables, with no explicit override and no provenance (the holder carries the

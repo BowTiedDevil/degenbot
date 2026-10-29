@@ -51,6 +51,11 @@ pub mod reorg_coordinator;
 /// The WS-log-shape → `alloy::rpc::types::Log` reconstruction the offline
 /// pump→dispatch drive path uses (moved from the PyO3 shell).
 pub mod rpc_log;
+/// The engine session's strategy-plane boot: the one home of the
+/// mint → register → attach → install → start ordering the composition root
+/// drives, with the plane's own values injected. Returns handles; never runs a
+/// consume loop (ADR-050 D9).
+pub mod session_boot;
 /// The at-most-once verification claim — the one owner of the claim policy
 /// (claim-if-absent / wait-if-present / release-on-settlement).
 pub mod verify_claims;
@@ -91,6 +96,7 @@ pub use registration_ledger::{
     REGISTRATION_OUTCOMES,
 };
 pub use registration_lifecycle::{run_registration_lifecycle, run_verify_lifecycle};
+pub use session_boot::EngineSession;
 
 pub use stage_handlers::{
     AffectedPaths, CandidateId, Finalize, FinalizeOutcome, Gate, GateOutcome, Publish,

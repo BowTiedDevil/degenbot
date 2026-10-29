@@ -26,6 +26,7 @@ implementor · **(v)** console operator (`degenbot`).
 | **Arbitrage orchestration** | `degenbot_arbitrage` | Rust-only | crate root | production: engine stage consumers | no pyo3 |
 | **The engine** | `degenbot_bot` | `degenbot.bot` (driver shell) | crate root; `arb_engine` is internal | (i) pure-Rust consumer: `examples/settlement_bot` | engine owns orchestration, not family math (ADR-073); no solver math duplication |
 | **Shared substrate (state owner)** | `degenbot_substrate` | Rust-only | `BotState`, `PoolLookup`, `planning` | (i) `examples/settlement_bot` drives through it | the state owner carries no strategy policy (ADR-003) |
+| **Strategy plane boot & hosting** | `degenbot_bot::bot_core::session_boot` + `degenbot_bot::strategy_host` | Rust-only | `EngineSession`, `SessionConstruction`, `FacetBoot`, `HostedBoot`, `HostedArmBoot`, `HeadTriggerComposer`, `StrategyHost`, `HostedSources` | (i) `cargo add degenbot` boots and starts the hosted plane: `tests/strategy_plane_hosting.rs::the_umbrella_boots_the_hosted_strategy_plane` | the boot takes the head trigger, reconciler, and arm feeds as values — no `submission`/`strategy` dependency under it; no pyo3 |
 | **Strategy layer & adapter seam inputs** | `degenbot_strategy` | Rust-only | `CmdExecutorAdapter`, `ExecutionContext` | (iv) `ExecutionAdapter` implementor in `examples/degenbot-execution-sample` | no pyo3 |
 | **Execution adapter seam** | `degenbot_execution` | `degenbot._ffi.execution` | crate root (`ExecutionAdapter` contract side) | (iv) `examples/degenbot-execution-sample` implements the seam | no C-build dep, no pyo3, no tokio of its own |
 | **Batch execution** | `degenbot_batch_executor` | Rust-only | crate root | production: submission path | no pyo3 |
@@ -47,7 +48,7 @@ implementor · **(v)** console operator (`degenbot`).
 | **Uniswap family encoding & DEX identity** | `degenbot_uniswap::dex_identity` | `degenbot._ffi.dex_identity` | `DexIdentity`, `DexVariant`, `preset_for_variant` | production: every V2/V3 path | no pyo3 |
 | **ABI encoding** | `degenbot_abi` | `degenbot._ffi.abi` | crate root | production: submission/decoders | no pyo3 |
 | **Orderbook index** | `degenbot_order_index` | Rust-only | crate root | production: orderbook consumers | one minimal default-features-off dep |
-| **The umbrella capability map** | `degenbot` | `degenbot` (the Python package) | the 54 `pub use degenbot_*` aliases + curated items | (i) `cargo add degenbot`; (iii) Python driver probe: `just check-consumer-probes` (`test_solve_surface_probe.py`) | aliases only; no new logic |
+| **The umbrella capability map** | `degenbot` | `degenbot` (the Python package) | the 55 `pub use degenbot_*` aliases + curated items | (i) `cargo add degenbot`; (iii) Python driver probe: `just check-consumer-probes` (`test_solve_surface_probe.py`) | aliases only; no new logic |
 | **The console** | `degenbot_cli` + `degenbot_cli_core` | `degenbot` console shim (`uv run degenbot`) / native binary | `Command` tree, `config show --resolved` | (v) `degenbot config show --resolved` — asserted in `just check-consumer-probes` | the CLI is a thin caller of `degenbot_cli_core::run_args` |
 
 ## Notes

@@ -49,7 +49,7 @@ def test_env_override_governs_the_next_construction(
     """
     governed_holder({_WS_NODE_ENV: _ENV_A})
 
-    # The holder (what ``boot_host`` reads at construction) AND the shell
+    # The holder (what ``boot_session`` reads at construction) AND the shell
     # verdict (what the Python driver helpers read) both resolve the override.
     assert resolved_node_uri_for_tests(1, "request") == _ENV_A
     assert resolve_http_rpc_uri(1) == _ENV_A

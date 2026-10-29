@@ -182,6 +182,16 @@ pub use degenbot_bot::bot_core::pool_builder::construction_door::{
     ConstructionVerdict, PoolConstruction,
 };
 
+/// The engine session's strategy-plane boot: the one home of the
+/// mint → register → attach → install → start order the composition root drives.
+/// A `cargo add degenbot` consumer boots the hosted strategy plane here — the
+/// facet table, the arm feeds, the head trigger, and the reconciler arrive as
+/// values, so the boot carries no strategy or submission dependency of its own.
+pub use degenbot_bot::bot_core::session_boot::{
+    EngineSession, FacetBoot, HeadTriggerComposer, HostedArmBoot, HostedBoot, SessionBootError,
+    SessionConstruction,
+};
+
 /// [`PoolConstruction::V4`]'s caller-supplied identity overrides — the door's
 /// own argument vocabulary.
 pub use degenbot_bot::bot_core::pool_builder::builder::V4PoolBuildOverrides;

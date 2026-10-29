@@ -43,7 +43,7 @@ impl PyArbEngine {
                  balancer-weighted, balancer-stable, aerodrome-v2"
             ))
         })?;
-        Ok(py.detach(|| self.driver.pool_id_for_identity(&identity)))
+        Ok(py.detach(|| self.session.driver().pool_id_for_identity(&identity)))
     }
 
     /// The registered engine `pool_id` for a V4 `(PoolManager, pool_id)` pair,
@@ -62,6 +62,6 @@ impl PyArbEngine {
         })?;
         let pool_id = hex_string_to_pool_id(pool_id_hex)?;
         let identity = PoolIdentity::v4(manager, pool_id);
-        Ok(py.detach(|| self.driver.pool_id_for_identity(&identity)))
+        Ok(py.detach(|| self.session.driver().pool_id_for_identity(&identity)))
     }
 }

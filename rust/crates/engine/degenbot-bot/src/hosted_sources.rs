@@ -291,6 +291,32 @@ impl HostedSources {
         Ok(())
     }
 
+    /// The source kinds this owner minted a pump for, in mint order.
+    ///
+    /// A boot probe reads the roster to prove one pump per hosted arm; the
+    /// pumps themselves stay the owner's so telemetry and teardown cannot be
+    /// duplicated by a reader.
+    #[must_use]
+    pub fn pump_sources(&self) -> Vec<PendingTxSource> {
+        self.pumps
+            .lock()
+            .iter()
+            .map(PendingTxPump::source)
+            .collect()
+    }
+
+    /// One pump's feed status by source kind, or `None` when no pump was minted
+    /// for that kind. A never-started owner reports every counter at zero —
+    /// which is what proves the mint dialed nothing.
+    #[must_use]
+    pub fn pump_status(&self, source: PendingTxSource) -> Option<BackrunFeedStatus> {
+        self.pumps
+            .lock()
+            .iter()
+            .find(|pump| pump.source() == source)
+            .map(PendingTxPump::status)
+    }
+
     /// Hand out one arm's typed stream — once. `None` when no pump was
     /// minted for the kind (the arm was not active at boot).
     pub fn take_stream(&mut self, source: PendingTxSource) -> Option<PendingTxStream> {

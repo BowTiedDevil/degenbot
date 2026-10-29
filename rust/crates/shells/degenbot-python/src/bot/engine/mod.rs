@@ -62,29 +62,13 @@ pub struct PyArbEngine {
     /// The ONE external engine seam .
     stages: Arc<EngineStages>,
 
-    /// ADR-006 D4 (T3) / ADR-050 D7: the pump session (coordinator,
-    /// shutdown, pump handle, subscribe state, phase, verify provider,
-    /// result/block channel ends) lives in ONE shared `Arc<EngineDriver>`
-    /// co-owned with `PyBot`; the `PyO3` layer crosses the driver seam
-    /// directly.
-    pub(crate) driver: Arc<degenbot_bot::arb_engine::EngineDriver>,
-
-    /// The process-wide strategy host this engine booted (hub, route registry,
-    /// nonce authority, and the driver FSM records). The shared hub is the one
-    /// `driver` attached to; the operator strategy verbs cross this host.
-    pub(crate) host: Arc<parking_lot::Mutex<degenbot_bot::strategy_host::StrategyHost>>,
-
-    /// The engine's process-lifetime hosted sources (the pending-tx pumps and
-    /// the head clock minted at boot). The engine owns them so
-    /// `Drop for HostedSources` runs when the ENGINE drops — not at boot-host
-    /// end; `None` on a build with no submission feature (no hosted arms).
-    pub(crate) hosted: Option<degenbot_bot::hosted_sources::HostedSources>,
-
-    /// The host-owned supervisor for the drivers this engine started at its
-    /// start flow. It owns each driver's `DriverTask` lane boundary and folds
-    /// the terminal exit through the host FSM (a self-halt becomes a tombstone)
-    /// without exposing the fold to a second caller.
-    pub(crate) supervisor: degenbot_bot::strategy_host::HostSupervisor,
+    /// The booted engine session: the shared driver the pump session runs on
+    /// (ADR-050 D7), the strategy host this engine booted (hub, route registry,
+    /// nonce authority, and the driver FSM records), the process-lifetime hosted
+    /// sources, and the host-owned supervisor for the drivers the start flow
+    /// boots. The core session boot composes all four, so the engine holds one
+    /// handle instead of four it must wire in order.
+    pub(crate) session: degenbot_bot::bot_core::session_boot::EngineSession,
 
     /// Receiver for the result batch channel.
     /// Created in `new()`, consumed by `__anext__`.
@@ -109,9 +93,9 @@ impl Drop for PyArbEngine {
     fn drop(&mut self) {
         // Explicit teardown order: take the hosted sources FIRST so their drop
         // (pump stop, head-edge + sampler shutdown, the head edge's WS
-        // transport drop) runs before the host and driver fields drop, rather
-        // than being left to field-declaration order.
-        drop(self.hosted.take());
+        // transport drop) runs before the host and driver drop with the
+        // session.
+        drop(self.session.take_hosted());
     }
 }
 

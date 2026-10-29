@@ -30,7 +30,7 @@ impl PyArbEngine {
         // route through the PumpControl trait (the inherent
         // `EngineStages` twin was hard-cut); the trait cursor is Epoch-typed.
         use degenbot_bot::bot_core::PumpControl;
-        PumpControl::last_processed_block(self.driver.stages().as_ref())
+        PumpControl::last_processed_block(self.session.driver().stages().as_ref())
             .map(degenbot_substrate::Epoch::block)
     }
 

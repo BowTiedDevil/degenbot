@@ -130,6 +130,18 @@ lifecycle FSM. A strategy driver attaches to the host; the host never names a st
 family.
 _Avoid_: "sidecar" (the standalone two-process deployment), "orchestrator", "manager".
 
+**Session boot**:
+The one owner of the engine session's composition order
+(`degenbot-bot/src/bot_core/session_boot.rs`, `EngineSession::boot` / `start`):
+mint the host's hub → register the facet table → attach the reconciler, the state
+root, the hosted sources (one pump per active arm), and each arm's spawn factory →
+start the hosted I/O before the drivers. It takes the plane's values (facet
+statuses, arm feeds, the head-trigger composer, the reconciler) because the crates
+that resolve them depend on this one; it returns handles, authors no admission
+policy, and runs no consume loop (ADR-050 D9, ADR-057).
+_Avoid_: a shell-side boot order, a boot that names a strategy family or a
+submission type, a boot that starts a consume loop.
+
 **Strategy driver**:
 The host's unit of strategy admission: a named runnable loop registered as a `DriverPose`
 instance and attached to the host's shared services. `BackrunDriver` is the reference; the

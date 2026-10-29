@@ -119,7 +119,10 @@ Registered/Enabled/Running/Stopped ──disable()──► Disabled
 
 ## 2. The runtime edge — spawn factory and driving
 
-A family that owns a loop attaches a once-only factory and lets the host boot it:
+A family that owns a loop attaches a once-only factory and lets the host boot it.
+The attach lives in the session boot (`degenbot-bot/src/bot_core/session_boot.rs`),
+which owns the whole mint → register → attach → install → start order for both
+consumers (the `PyO3` shell and a pure-Rust `cargo add degenbot` consumer):
 
 ```rust
 pub fn attach_spawn(&mut self, id: &StrategyId, spawn: DriverSpawnFactory)
@@ -188,9 +191,10 @@ confirmed broadcasts, a rewind restores reorged broadcasts and returns
 
 ## 4. The ledger attach and typed head notices
 
-The per-strategy ledger is the head feed's submission-truth arm. The boot
+The per-strategy ledger is the head feed's submission-truth arm. The session boot
 attaches it to the host with a trait object, because `degenbot-bot` cannot name
-the submission crate:
+the submission crate — the composition root builds the reconciler and hands it
+over as a value:
 
 ```rust
 pub fn attach_reconciler(&mut self, reconciler: Arc<dyn HeadReconciler>); // strategy_host.rs:623

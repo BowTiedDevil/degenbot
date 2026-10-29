@@ -12,9 +12,21 @@
 use super::{Arc, PyArbEngine, StrategyHostError, UnconfiguredStrategyError, UnknownStrategyError};
 use crate::prelude::*;
 
-use degenbot_bot::arb_engine::EngineChannelHandles;
-use degenbot_bot::strategy_host::{FacetStatus, HostError, HostHub, StrategyHost};
+use degenbot_bot::bot_core::session_boot::{
+    EngineSession, FacetBoot, HeadTriggerComposer, HostedArmBoot, HostedBoot, SessionBootError,
+    SessionConstruction,
+};
+use degenbot_bot::strategy_host::{FacetStatus, HeadReconciler, HostError, StrategyHost};
 use degenbot_substrate::nonce::{NonceAuthority, StrategyId};
+
+#[cfg(feature = "submission")]
+use degenbot_bot::hosted_sources::{HeadTrigger, HostedHeadClock};
+#[cfg(feature = "submission")]
+use degenbot_rpc::pending_tx_stream::PendingTxFeedConfig;
+#[cfg(feature = "submission")]
+use degenbot_submission::head_reconciliation::{
+    AlloyChainNonceRead, HeadLanes, HeadReconciliation,
+};
 
 /// The Python-facing name of a driver's FSM state.
 fn state_name(state: degenbot_bot::strategy_host::DriverPose) -> &'static str {
@@ -39,6 +51,18 @@ pub(crate) fn map_host_error(error: HostError) -> pyo3::PyErr {
             "strategy \"{id}\" is unconfigured: no facet with its required keys was booted"
         )),
         other => StrategyHostError::new_err(other.to_string()),
+    }
+}
+
+/// Map a session-boot refusal onto the typed Python exception family: a hosted
+/// source that cannot start is a runtime failure the caller settles by dropping
+/// the engine, while a host refusal keeps its own mapping.
+pub(crate) fn map_session_boot_error(error: SessionBootError) -> pyo3::PyErr {
+    match error {
+        SessionBootError::Hosted(cause) => pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "hosted sources failed to start: {cause}"
+        )),
+        SessionBootError::Host(cause) => map_host_error(cause),
     }
 }
 
@@ -83,46 +107,9 @@ pub(crate) fn session_phase_next(current: &str, operation: &str) -> PyResult<Opt
     Ok(next.ok().map(SessionPhase::as_str))
 }
 
-/// Boot the process-wide strategy host: mint the hub with the engine's two
-/// named source channels, the frozen route registry, and the nonce authority,
-/// register the two strategy facets this process configures, install the state
-/// root a hosted lane scopes its artifacts under, and attach the two
-/// per-ecosystem backrun
-/// lane's spawn factory.
-///
-/// The settlement facet is always configured because this boot IS the
-/// settlement engine, and it registers no spawn factory (the engine's pump arm
-/// drives it). The backrun facet is configured when the operator named it as
-/// the active arm or set one of its required keys (bid mode or the operator
-/// key file); a boot that never names it registers the facet as unconfigured,
-/// so enabling it fails loudly instead of starting a lane with no operator
-/// intent behind it. The factory resolves the lane's node join only when the
-/// lane actually starts.
-/// The per-strategy sign-time lanes the hosted head feed folds notices
-/// through, keyed by the owning strategy. The type lives on the head
-/// reconciliation module (its fold's owner map); this is the shell's view.
-#[cfg(feature = "submission")]
-pub(crate) use degenbot_submission::head_reconciliation::HeadLanes;
-
-/// The host boot's product: the shared host handle and the hub/attachment
-/// pair.
-///
-/// The host is already shared: the boot builds the backrun lanes' head
-/// reconciliation over the same `Arc`, so the drivers' hosted head edge and
-/// the shell fold through one host.
-pub(crate) struct BootedHost {
-    pub(crate) host: Arc<parking_lot::Mutex<StrategyHost>>,
-    pub(crate) attached: HostHub<EngineChannelHandles>,
-    /// The engine's process-lifetime hosted sources: the pending-tx pumps and
-    /// the head clock `boot_hosted_arms` mints. The engine stores this so
-    /// `Drop for HostedSources` runs when the ENGINE drops — not at boot-host
-    /// end. `None` on a build without the submission feature (no hosted arms).
-    pub(crate) hosted: Option<degenbot_bot::hosted_sources::HostedSources>,
-}
-
 /// Resolve the strategy-owned boot product for one engine construction.
 ///
-/// `boot_host` calls this once per engine, so each engine's hosted fleet gets
+/// `boot_session` calls this once per engine, so each engine's hosted fleet gets
 /// its own DB-backed registry and node join rather than sharing one resolution
 /// across the process. This binding only resolves and routes the product — it
 /// does not choose a registry, reopen a DB, or author a boot policy.
@@ -199,17 +186,32 @@ fn facet_status(
     }
 }
 
-/// Mint a fresh `BootedHost` for one engine construction.
+/// Boot this engine's session: resolve the strategy plane's values, then hand
+/// them to the core session boot, which owns the mint → register → attach →
+/// install → start order.
 ///
-/// The host is not a process-once singleton: every engine mints its own host,
-/// hub attachment, and (under the submission feature) hosted sources, so
-/// per-engine fleets stay isolated. The process-once parts are the
-/// async-runtime bind below and the config holder.
-#[expect(
-    clippy::expect_used,
-    reason = "a freshly minted host has no registered strategies, so both registers are infallible"
-)]
-pub(crate) fn boot_host() -> BootedHost {
+/// This shell resolves what only it can name — the typed configuration's facet
+/// table, the resolved backrun boot's route registry and node join, the
+/// per-strategy submission lanes with their reconciler, the head trigger, and
+/// the state root — and passes them as values. The settlement facet registers
+/// configured with no spawn factory (the engine's own pump arm drives it), and
+/// a backrun facet registers configured only when the operator activated it, so
+/// enabling an inactive arm fails loudly instead of starting a lane with no
+/// operator intent behind it. The boot authors none of that asymmetry: it
+/// registers the statuses it is handed, in the order it is handed them.
+///
+/// The host is not a process-once singleton: every engine boots its own host,
+/// hub attachment, and hosted sources, so per-engine fleets stay isolated. The
+/// process-once parts are the async-runtime bind and the config holder.
+///
+/// # Errors
+///
+/// [`SessionBootError`] when the host refuses a registration or a hosted source
+/// cannot be minted over the booted hub — a miswired boot fails closed.
+pub(crate) fn boot_session(
+    bot: Arc<degenbot_bot::bot_core::Bot>,
+    stages: Arc<degenbot_bot::arb_engine::EngineStages>,
+) -> Result<EngineSession, SessionBootError> {
     // An engine construction IS the ambient runtime's first use (FF-T5):
     // the fleet boot stamps the process with a fleet, so the shared io
     // runtime must exist - the worker census reports at least the
@@ -228,53 +230,92 @@ pub(crate) fn boot_host() -> BootedHost {
     #[cfg(not(feature = "submission"))]
     let registry = hosted_route_registry();
 
-    let (host, attached) = StrategyHost::mint(
-        registry,
-        Arc::new(NonceAuthority::new(0)),
-        EngineChannelHandles::register_on,
-    );
-    // The host is shared from birth: the backrun lanes' head reconciliation
-    // and the shell's hosted head feed hold the same `Arc`, so a driver loop
-    // and the engine's head tick reconcile one shared host.
-    let host = Arc::new(parking_lot::Mutex::new(host));
+    // The authority every hosted lane stamps through: the lanes resolved below
+    // and the host the boot mints share one `Arc`.
+    let nonce = Arc::new(NonceAuthority::new(0));
 
     // Register every strategy under its plane name, in plane order, derived
     // from its `strategy.<facet>.active` key — including settlement, whose
     // retired boot-time waiver ("a dry-run boot must still enable the arm")
     // is gone: activation isn't a live-only concern.
-    for name in degenbot_strategy::StrategyName::ALL {
-        host.lock()
-            .register(StrategyId::new(name.as_str()), facet_status(name, cfg))
-            .expect("a freshly minted host registers every strategy");
-    }
+    let facets = degenbot_strategy::StrategyName::ALL
+        .into_iter()
+        .map(|name| FacetBoot {
+            id: StrategyId::new(name.as_str()),
+            facet: facet_status(name, cfg),
+        })
+        .collect();
 
-    // The hosted sources' owner is handed to the engine so their teardown is
-    // the engine's drop, not this boot's return.
     #[cfg(feature = "submission")]
-    let hosted = Some(boot_hosted_head_feed(&host, cfg, &backrun_resources));
+    let (reconciler, state_root, hosted) = {
+        let HostedPlane {
+            reconciler,
+            state_root,
+            hosted,
+        } = hosted_plane(&nonce, cfg, &backrun_resources);
+        (reconciler, state_root, Some(hosted))
+    };
     #[cfg(not(feature = "submission"))]
-    let hosted: Option<degenbot_bot::hosted_sources::HostedSources> = None;
+    let (reconciler, state_root, hosted): (
+        Option<Arc<dyn HeadReconciler>>,
+        Option<std::path::PathBuf>,
+        Option<HostedBoot>,
+    ) = (None, None, None);
 
-    BootedHost {
-        host,
-        attached,
+    EngineSession::boot(
+        SessionConstruction {
+            bot,
+            stages,
+            registry,
+            nonce,
+            reconciler,
+            state_root,
+        },
+        facets,
         hosted,
-    }
+    )
 }
 
-/// The hosted head feed's boot: the per-strategy submission lanes, the
-/// once-per-head reconciliation, and the per-active-arm pending-tx pumps.
-/// Split from `boot_host` for function size only — every piece here is
-/// boot-once process state, wired in boot order.
+/// The hosted plane's resolved values: what the session boot installs on the
+/// host and what it hosts as sources.
 #[cfg(feature = "submission")]
-fn boot_hosted_head_feed(
-    host: &Arc<parking_lot::Mutex<StrategyHost>>,
+struct HostedPlane {
+    reconciler: Option<Arc<dyn HeadReconciler>>,
+    state_root: Option<std::path::PathBuf>,
+    hosted: HostedBoot,
+}
+
+/// Resolve the hosted plane from the resolved backrun boot.
+#[cfg(feature = "submission")]
+fn hosted_plane(
+    nonce: &Arc<NonceAuthority>,
     cfg: &degenbot_config::schema::BotConfig,
     backrun_resources: &degenbot_strategy::backrun_driver::BackrunBootResources,
-) -> degenbot_bot::hosted_sources::HostedSources {
-    let (lanes, backruns) = boot_head_lanes(host);
-    let head_trigger = boot_head_reconciliation(host, lanes, cfg, backrun_resources);
-    boot_hosted_arms(host, backruns, cfg, backrun_resources, head_trigger)
+) -> HostedPlane {
+    // The per-strategy submission ledger is the head feed's submission-truth
+    // arm: the host refreshes the authority per head and asks this ledger to
+    // close outstanding records out, delivering the typed notices to the owning
+    // strategy. Every lane stamps through the same authority and records into
+    // the same ledger.
+    let ledger = Arc::new(degenbot_submission::SubmissionLedger::new());
+    let (lanes, backruns) = hosted_lanes(nonce, &ledger);
+    let (arms, clock) = hosted_arms(cfg, backrun_resources, backruns);
+    HostedPlane {
+        reconciler: Some(Arc::clone(&ledger) as Arc<dyn HeadReconciler>),
+        // A hosted driver scopes its run-artifacts under the host state root; a
+        // boot with no resolvable root leaves the namespace unset, so the driver
+        // keeps its process-global path.
+        state_root: if degenbot_config::holder::installed() {
+            degenbot_submission::resolve_state_root()
+        } else {
+            None
+        },
+        hosted: HostedBoot {
+            arms,
+            clock,
+            trigger: head_trigger(cfg, lanes, backrun_resources),
+        },
+    }
 }
 
 /// The per-strategy submission lanes the head reconciliation folds notices
@@ -283,8 +324,9 @@ fn boot_hosted_head_feed(
 /// per backrun ecosystem, all stamping one submission ledger, built before
 /// any driver starts.
 #[cfg(feature = "submission")]
-fn boot_head_lanes(
-    host: &Arc<parking_lot::Mutex<StrategyHost>>,
+fn hosted_lanes(
+    nonce: &Arc<NonceAuthority>,
+    ledger: &Arc<degenbot_submission::SubmissionLedger>,
 ) -> (
     HeadLanes,
     Vec<(
@@ -293,28 +335,10 @@ fn boot_head_lanes(
         Arc<degenbot_submission::NonceLane>,
     )>,
 ) {
-    // A hosted driver scopes its run-artifacts under the host state root; a
-    // boot with no resolvable root leaves `namespace_root` unset, so the
-    // driver keeps its process-global path.
-    if degenbot_config::holder::installed() {
-        if let Some(root) = degenbot_submission::resolve_state_root() {
-            host.lock().set_state_root(root);
-        }
-    }
-    // The per-strategy submission ledger is the head feed's
-    // submission-truth arm: the host refreshes the authority per head and
-    // asks this ledger to close outstanding records out, delivering the
-    // typed notices to the owning strategy. Every lane stamps through the
-    // same authority and records into the same ledger.
-    let ledger = Arc::new(degenbot_submission::SubmissionLedger::new());
-    host.lock().attach_reconciler(
-        Arc::clone(&ledger) as Arc<dyn degenbot_bot::strategy_host::HeadReconciler>
-    );
-
-    let settlement_id = StrategyId::new("settlement");
+    let settlement_id = StrategyId::new(degenbot_strategy::StrategyName::Settlement.as_str());
     let settlement_lane = Arc::new(degenbot_submission::NonceLane::new(
-        Arc::clone(host.lock().nonce()),
-        Arc::clone(&ledger),
+        Arc::clone(nonce),
+        Arc::clone(ledger),
         settlement_id.clone(),
     ));
     // The settlement seam is the Python-driven arm of this one hosted
@@ -331,18 +355,18 @@ fn boot_head_lanes(
     let mut backruns = Vec::new();
     for (name, ecosystem) in [
         (
-            "mevblocker_backrun",
+            degenbot_strategy::StrategyName::MevblockerBackrun,
             degenbot_strategy::backrun_driver::BackrunEcosystem::Mevblocker,
         ),
         (
-            "txpool_backrun",
+            degenbot_strategy::StrategyName::TxpoolBackrun,
             degenbot_strategy::backrun_driver::BackrunEcosystem::Txpool,
         ),
     ] {
-        let id = StrategyId::new(name);
+        let id = StrategyId::new(name.as_str());
         let lane = Arc::new(degenbot_submission::NonceLane::new(
-            Arc::clone(host.lock().nonce()),
-            Arc::clone(&ledger),
+            Arc::clone(nonce),
+            Arc::clone(ledger),
             id.clone(),
         ));
         backruns.push((id.clone(), ecosystem, Arc::clone(&lane)));
@@ -355,16 +379,19 @@ fn boot_head_lanes(
 /// built over the resolved node join's provider (a joinless boot drives no
 /// head-feed reconciliation) and the operator address the signing key
 /// names. No configured key is the old loop's `signer` gate: a boot with no
-/// signer reconciles nothing. The hosted sources' head edge fires it once
-/// per observed head through the returned trigger — the trigger is the only
-/// thing this shell wires; the drivers never see the reconciliation.
+/// signer reconciles nothing.
+///
+/// The reconciliation is built over the host itself, which exists only once
+/// the session boot mints it — so this returns the composer that receives the
+/// minted host, and the boot hands it over. The hosted sources' head edge then
+/// fires the composed trigger once per observed head; the drivers never see the
+/// reconciliation.
 #[cfg(feature = "submission")]
-fn boot_head_reconciliation(
-    host: &Arc<parking_lot::Mutex<StrategyHost>>,
-    lanes: HeadLanes,
+fn head_trigger(
     cfg: &degenbot_config::schema::BotConfig,
+    lanes: HeadLanes,
     backrun_resources: &degenbot_strategy::backrun_driver::BackrunBootResources,
-) -> Option<degenbot_bot::hosted_sources::HeadTrigger> {
+) -> Option<HeadTriggerComposer> {
     let operator = cfg
         .strategy
         .mevblocker_backrun
@@ -374,55 +401,45 @@ fn boot_head_reconciliation(
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|hex| degenbot_submission::TxSigner::from_key_hex(hex.trim(), 1).ok())
         .map(|signer| signer.address());
-    let head_reconciliation = match (backrun_resources.node_provider().cloned(), operator) {
-        (Some(provider), Some(operator)) => Some(Arc::new(
-            degenbot_submission::head_reconciliation::HeadReconciliation::new(
+    let provider = backrun_resources.node_provider().cloned();
+    let (Some(provider), Some(operator)) = (provider, operator) else {
+        return None;
+    };
+    Some(Box::new(
+        move |host: &Arc<parking_lot::Mutex<StrategyHost>>| {
+            let reconciliation = Arc::new(HeadReconciliation::new(
                 Arc::clone(host),
                 lanes,
-                Arc::new(degenbot_submission::head_reconciliation::AlloyChainNonceRead(provider)),
+                Arc::new(AlloyChainNonceRead(provider)),
                 operator,
-            ),
-        )),
-        _ => None,
-    };
-    let head_trigger: Option<degenbot_bot::hosted_sources::HeadTrigger> =
-        head_reconciliation.as_ref().map(|reconciliation| {
-            let reconciliation = Arc::clone(reconciliation);
+            ));
             Arc::new(move |head: u64| {
                 let reconciliation = Arc::clone(&reconciliation);
                 Box::pin(async move {
                     reconciliation.reconcile_head(head).await;
                 })
                     as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
-            }) as _
-        });
-    head_trigger
+            }) as HeadTrigger
+        },
+    ))
 }
 
-/// Host the sources once per process: one pending-tx pump per ACTIVE arm's
-/// source kind (both arms can run simultaneously — each kind registers its
-/// own hub class), the one head watch + fallback poller, and the one feed
-/// sampler. Each arm's spawn factory receives its own kind's typed stream.
-#[expect(
-    clippy::expect_used,
-    reason = "a fresh hub and a fresh host accept these one-time boot registrations"
-)]
+/// Resolve one hosted arm per ACTIVE backrun facet (both arms can run
+/// simultaneously — each kind registers its own hub class), plus the one head
+/// clock the join resolves. Each arm's spawn-factory composer receives its own
+/// kind's typed stream from the boot.
 #[cfg(feature = "submission")]
-fn boot_hosted_arms(
-    host: &Arc<parking_lot::Mutex<StrategyHost>>,
+fn hosted_arms(
+    cfg: &degenbot_config::schema::BotConfig,
+    backrun_resources: &degenbot_strategy::backrun_driver::BackrunBootResources,
     backruns: Vec<(
         StrategyId,
         degenbot_strategy::backrun_driver::BackrunEcosystem,
         Arc<degenbot_submission::NonceLane>,
     )>,
-    cfg: &degenbot_config::schema::BotConfig,
-    backrun_resources: &degenbot_strategy::backrun_driver::BackrunBootResources,
-    head_trigger: Option<degenbot_bot::hosted_sources::HeadTrigger>,
-) -> degenbot_bot::hosted_sources::HostedSources {
-    use degenbot_bot::hosted_sources::HostedHeadClock;
+) -> (Vec<HostedArmBoot>, Option<HostedHeadClock>) {
     use degenbot_eventhub::PendingTxSource;
     use degenbot_rpc::backrun_feed::BackrunFeedConfig;
-    use degenbot_rpc::pending_tx_stream::PendingTxFeedConfig;
     use degenbot_rpc::txpool_feed::TxpoolFeedConfig;
     use degenbot_strategy::backrun_driver::BackrunEcosystem;
 
@@ -441,77 +458,48 @@ fn boot_hosted_arms(
         _ => None,
     };
     let mut arms = Vec::new();
-    for (id, ecosystem, _lane, boot) in &arm_boots {
+    for (id, ecosystem, lane, boot) in arm_boots {
         let name = match ecosystem {
             BackrunEcosystem::Mevblocker => degenbot_strategy::StrategyName::MevblockerBackrun,
             BackrunEcosystem::Txpool => degenbot_strategy::StrategyName::TxpoolBackrun,
         };
-        let _ = id;
         if !name.is_active(cfg) {
             continue;
         }
-        let arm = match ecosystem {
-            BackrunEcosystem::Mevblocker => (
-                PendingTxSource::Mevblocker,
-                PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
-                    url: boot.feed_url().to_string(),
-                    ..BackrunFeedConfig::for_mainnet()
-                }),
-            ),
-            BackrunEcosystem::Txpool => {
-                let Some(ws_url) = boot.head_ws_url().map(str::to_string) else {
-                    // No subscription endpoint: the arm cannot host a
-                    // pump; its live gate reports the same refusal a
-                    // feed-less boot always did.
-                    continue;
-                };
-                (
-                    PendingTxSource::Txpool,
-                    PendingTxFeedConfig::Txpool(TxpoolFeedConfig {
-                        ws_url,
-                        ..TxpoolFeedConfig::defaults()
-                    }),
-                )
-            }
-        };
-        arms.push(arm);
-    }
-    // The hub is cloned OUTSIDE the guarded statement: the receiver's
-    // lock guard is alive while the factory argument evaluates, so a
-    // nested `host.lock()` there would deadlock the non-reentrant mutex.
-    let hub = Arc::clone(host.lock().hub());
-    // Provisioning is dial-free: `mint` registers the rings, builds the
-    // dedicated runtime, and stores the clock, but starts nothing. The
-    // deferred I/O launches at the engine's start boundary (`resume`), so an
-    // engine constructed and never resumed performs zero network dials.
-    let mut hosted = degenbot_bot::hosted_sources::HostedSources::mint(
-        Arc::clone(&hub),
-        arms,
-        clock,
-        head_trigger,
-    )
-    .expect("a fresh hub hosts the process sources");
-    for (id, ecosystem, lane, _boot) in arm_boots {
-        let kind = match ecosystem {
+        let source = match ecosystem {
             BackrunEcosystem::Mevblocker => PendingTxSource::Mevblocker,
             BackrunEcosystem::Txpool => PendingTxSource::Txpool,
         };
-        let stream = hosted.take_stream(kind);
-        host.lock()
-            .attach_spawn(
-                &id,
+        let feed = match ecosystem {
+            BackrunEcosystem::Mevblocker => {
+                Some(PendingTxFeedConfig::Mevblocker(BackrunFeedConfig {
+                    url: boot.feed_url().to_string(),
+                    ..BackrunFeedConfig::for_mainnet()
+                }))
+            }
+            BackrunEcosystem::Txpool => boot.head_ws_url().map(|ws_url| {
+                PendingTxFeedConfig::Txpool(TxpoolFeedConfig {
+                    ws_url: ws_url.to_string(),
+                    ..TxpoolFeedConfig::defaults()
+                })
+            }),
+        };
+        let strategy_boot = backrun_resources.strategy_boot(ecosystem);
+        arms.push(HostedArmBoot {
+            id,
+            source,
+            feed,
+            spawn: Box::new(move |hub, stream| {
                 degenbot_strategy::backrun_driver::backrun_spawn_factory(
-                    backrun_resources.strategy_boot(ecosystem),
-                    Arc::clone(&hub),
+                    strategy_boot,
+                    Arc::clone(hub),
                     lane,
                     stream,
-                ),
-            )
-            .expect("fresh host registers the backrun spawn");
+                )
+            }),
+        });
     }
-    // Hand the owner back: the engine holds it for its lifetime. Streams were
-    // taken above, so ownership needs no `&mut`.
-    hosted
+    (arms, clock)
 }
 
 impl PyArbEngine {
@@ -521,60 +509,27 @@ impl PyArbEngine {
     where
         T: Send,
     {
-        py.detach(|| f(&mut self.host.lock()))
+        py.detach(|| f(&mut self.session.host().lock()))
     }
 
-    /// Boot every enabled strategy that registered a spawn factory. The
-    /// host-owned supervisor owns one supervision task per driver; each awaits
-    /// its driver's lane boundary and folds the terminal exit through the host
-    /// FSM, so a self-halt becomes a tombstone `strategies()` reports.
+    /// Launch the engine's deferred hosted I/O and then its hosted drivers —
+    /// the START boundary, ordered by the core session boot.
     ///
-    /// A facet with no factory is skipped by the host: the settlement engine's
-    /// pump arm already drives it, so it is not a hosted loop.
-    ///
-    /// # Errors
-    ///
-    /// [`HostError::Transition`] when the lifecycle refuses a driver's start.
-    pub(crate) fn start_hosted_strategies(&self) -> Result<usize, HostError> {
-        let tasks = self.host.lock().start_driving()?;
-        let count = tasks.len();
-        self.supervisor.supervise(tasks);
-        Ok(count)
-    }
-
-    /// Launch the engine's deferred hosted I/O — the START boundary.
-    ///
-    /// [`degenbot_bot::hosted_sources::HostedSources::mint`] provisions the
-    /// pumps, the dedicated head-watch runtime, and the head clock but dials
-    /// nothing; this is the only place their live I/O starts. The head-watch
-    /// WS connect and each active arm's feed pump are launched here, so an
-    /// engine that is constructed and never resumed performs zero network
-    /// dials. The GIL is released across the start so a slow WS connect never
-    /// parks the interpreter.
+    /// The GIL is released across the whole start so a slow WS connect never
+    /// parks the interpreter, and the ordering (feed pumps and head edge
+    /// before any driver loop) lives in the boot.
     ///
     /// # Errors
     ///
     /// `RuntimeError` when the hosted head source cannot be registered — a
-    /// miswired boot fails closed rather than driving a clockless fleet.
-    ///
-    /// # Half-failure contract
-    ///
-    /// `HostedSources::start` consumes its deferred-I/O latch BEFORE launching
-    /// anything, so a failure here is terminal: the engine is left
-    /// HALF-STARTED (fail-closed) and a retry would be a no-op. The caller
-    /// MUST drop the engine on this error — dropping it stops the pumps and
-    /// tears the dedicated head-watch runtime down. There is no retry path by
-    /// design.
-    pub(crate) fn start_hosted_sources(&self, py: Python<'_>) -> PyResult<()> {
-        let Some(hosted) = self.hosted.as_ref() else {
-            return Ok(());
-        };
-        py.detach(|| degenbot_core::runtime::get_runtime().block_on(hosted.start()))
-            .map_err(|error| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "hosted sources failed to start: {error}"
-                ))
-            })
+    /// miswired boot fails closed rather than driving a clockless fleet — and
+    /// the host's typed refusal when a driver's start is refused. The hosted
+    /// start consumes its deferred-I/O latch before launching anything, so a
+    /// failure there is terminal: the caller must drop the engine, whose drop
+    /// stops the pumps and tears the head-watch runtime down.
+    pub(crate) fn start_hosted_session(&self, py: Python<'_>) -> PyResult<usize> {
+        py.detach(|| degenbot_core::runtime::get_runtime().block_on(self.session.start()))
+            .map_err(map_session_boot_error)
     }
 
     /// Enable each named facet through the host's admission gate.
@@ -681,27 +636,26 @@ mod tests {
             "this test owns the binary's holder install"
         );
         Python::attach(|py| {
-            let engine = PyArbEngine::new(py, None);
+            let engine = PyArbEngine::new(py, None).expect("boot the engine");
+            // A spawn factory is attached for a facet the boot HOSTS an arm
+            // for: this settlement-only boot hosts no backrun arm, so neither
+            // lane carries one. The attach below supplies the factory this
+            // test's start flow boots.
             assert!(
-                engine
-                    .host
+                !engine
+                    .session
+                    .host()
                     .lock()
                     .has_spawn(&StrategyId::new("mevblocker_backrun")),
-                "the engine boot registers the mevblocker backrun lane's spawn factory"
-            );
-            assert!(
-                engine
-                    .host
-                    .lock()
-                    .has_spawn(&StrategyId::new("txpool_backrun")),
-                "the engine boot registers the peer backrun lane's spawn factory"
+                "an unhosted backrun arm attaches no spawn factory"
             );
             let id = StrategyId::new("settlement");
             engine.enable_strategy(py, "settlement").expect("enable");
 
             let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<DriverExit>();
             engine
-                .host
+                .session
+                .host()
                 .lock()
                 .attach_spawn(
                     &id,
@@ -711,7 +665,7 @@ mod tests {
                 )
                 .expect("attach spawn");
 
-            let started = engine.start_hosted_strategies().expect("start driving");
+            let started = engine.session.start_drivers().expect("start driving");
             assert_eq!(started, 1, "the enabled driver with a factory starts");
             assert_eq!(engine.strategies(py)[0].1, "running");
 
@@ -722,7 +676,7 @@ mod tests {
             let record = degenbot_core::runtime::get_runtime().block_on(async {
                 for _ in 0..1_000 {
                     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-                    let record = engine.host.lock().record(&id).cloned();
+                    let record = engine.session.host().lock().record(&id).cloned();
                     if record
                         .as_ref()
                         .is_some_and(|record| record.state() == DriverPose::Halted)
@@ -751,9 +705,9 @@ mod tests {
     fn the_boot_installs_head_lanes_and_starts_with_the_guard_closed() {
         hermetic_db_layer();
         Python::attach(|py| {
-            let engine = PyArbEngine::new(py, None);
+            let engine = PyArbEngine::new(py, None).expect("boot the engine");
             assert!(
-                !engine.host.lock().has_hosted_activity(),
+                !engine.session.host().lock().has_hosted_activity(),
                 "a fresh boot has no lease and no record, so the head feed short-circuits"
             );
             // The boot installs the process-global settlement seam lane, the
@@ -763,7 +717,7 @@ mod tests {
 
             settlement_lane.stamp().expect("settlement lane stamps");
             assert!(
-                engine.host.lock().has_hosted_activity(),
+                engine.session.host().lock().has_hosted_activity(),
                 "a live lease opens the reconcile guard"
             );
         });
@@ -776,7 +730,7 @@ mod tests {
     fn the_boot_hosts_both_backrun_facets_independently() {
         hermetic_db_layer();
         Python::attach(|py| {
-            let engine = PyArbEngine::new(py, None);
+            let engine = PyArbEngine::new(py, None).expect("boot the engine");
             let names: Vec<String> = engine
                 .strategies(py)
                 .into_iter()
