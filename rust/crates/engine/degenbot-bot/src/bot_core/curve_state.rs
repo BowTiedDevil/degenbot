@@ -62,7 +62,9 @@ mod tests {
     #[test]
     fn register_and_read_back_balances() {
         let mut core = BotState::new();
-        let pool_id = core.register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]));
+        let pool_id = core
+            .register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]))
+            .expect("curve registration");
         let s = core
             .pool_slice::<degenbot_pools::CurvePoolState>(pool_id)
             .expect("curve pool registered");
@@ -82,7 +84,9 @@ mod tests {
     #[test]
     fn apply_balance_update_journals_and_lands_new_balances() {
         let mut core = BotState::new();
-        let pool_id = core.register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]));
+        let pool_id = core
+            .register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]))
+            .expect("curve registration");
         let affected = core.apply_balance_update_by_pool_id(
             pool_id,
             vec![U256::from(1_500), U256::from(2_500), U256::from(3_500)],
@@ -132,7 +136,9 @@ mod tests {
     #[test]
     fn restore_before_block_lands_at_prior_balances() {
         let mut core = BotState::new();
-        let pool_id = core.register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]));
+        let pool_id = core
+            .register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]))
+            .expect("curve registration");
         // Block 12: balances change.
         let _ = core.apply_balance_update_by_pool_id(
             pool_id,
@@ -160,7 +166,9 @@ mod tests {
     #[test]
     fn restore_to_before_registration_is_an_error() {
         let mut core = BotState::new();
-        let pool_id = core.register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]));
+        let pool_id = core
+            .register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]))
+            .expect("curve registration");
         // Target at the registration block → rolling back past registration.
         let res = core
             .restore_pool_before_block(pool_id, 10)
@@ -213,7 +221,9 @@ mod tests {
             metapool_underlying_style: 1,
             data_provider: None,
         };
-        let pool_id = core.register_curve_pool(&params);
+        let pool_id = core
+            .register_curve_pool(&params)
+            .expect("curve registration");
         let id = core
             .pool_slice::<degenbot_pools::CurvePoolIdentity>(pool_id)
             .expect("curve identity present");
@@ -245,7 +255,9 @@ mod tests {
         // fields; the identity round-trips them as `None` (the default
         // fallback shape other slices rely on).
         let mut core = BotState::new();
-        let pool_id = core.register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]));
+        let pool_id = core
+            .register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]))
+            .expect("curve registration");
         let id = core
             .pool_slice::<degenbot_pools::CurvePoolIdentity>(pool_id)
             .expect("curve identity present");

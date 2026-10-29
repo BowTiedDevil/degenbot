@@ -22,7 +22,8 @@ use degenbot_pools::{
 };
 use degenbot_pools::{RegisterV2PoolError, RegisterV2PoolParams, V2PoolState};
 
-use super::{BotState, PoolEntry};
+use super::pool_table::PoolClaim;
+use super::{BotState, PoolEntry, PoolLookup, RegisteredPoolFamily};
 
 impl BotState {
     /// Register a V2 pool by contract address.
@@ -49,14 +50,6 @@ impl BotState {
         // `# Panics` section committed in `19218a2c`).
         ::degenbot_pools::validate_v2_reserve(params.reserve0, "reserve0")?;
         ::degenbot_pools::validate_v2_reserve(params.reserve1, "reserve1")?;
-        if self.registry.pool_addresses.contains_key(&params.address) {
-            return Err(RegisterV2PoolError::AlreadyRegistered {
-                address: params.address,
-            });
-        }
-
-        let pool_id = self.registry.next_pool_id;
-        self.registry.next_pool_id += 1;
 
         // Construction I/O (ADR-003 single source): capture the pair's token
         // decimal scales off the token registry at registration — the same
@@ -74,14 +67,20 @@ impl BotState {
         // + genesis-delta push moved out of `register_v2_pool` into
         // `V2PoolState::from_params`).
         let (identity, state) =
-            V2PoolState::from_params(params, self.registry.journal_depth, token_decimals);
+            V2PoolState::from_params(params, self.pools.journal_depth(), token_decimals);
 
-        self.registry
-            .pools
-            .insert(pool_id, PoolEntry::V2(Box::new((identity, state))));
-        self.registry.pool_addresses.insert(params.address, pool_id);
-
-        Ok(pool_id)
+        self.pools
+            .register(
+                PoolClaim::new(
+                    PoolLookup::Address(params.address),
+                    RegisteredPoolFamily::V2,
+                ),
+                PoolEntry::V2(Box::new((identity, state))),
+            )
+            .pool_id()
+            .ok_or(RegisterV2PoolError::AlreadyRegistered {
+                address: params.address,
+            })
     }
 
     /// Apply a reserve-pair `Sync` event keyed by the pool's contract
@@ -94,11 +93,6 @@ impl BotState {
     /// place. Returns the affected `pool_id` so the engine can mark the right
     /// path set dirty; returns `None` if the address is not registered (a
     /// no-op).
-    ///
-    /// # Panics
-    ///
-    /// Panics if a `pool_id` is found in `pool_addresses` but not in `pools`
-    /// (should never happen — they are inserted together).
     #[must_use]
     pub fn apply_sync_by_address(
         &mut self,
@@ -113,7 +107,7 @@ impl BotState {
         // twin reaches via `as_reserve_pair_mut()?.apply_sync(...)` — the
         // duplication (the bug-hiding class D1 was written to kill) is removed;
         // the address→pool_id resolution is what this row owns.
-        let &pool_id = self.registry.pool_addresses.get(&pool_address)?;
+        let pool_id = self.pools.pool_id_by_address(&pool_address)?;
         self.apply_sync_by_pool_id(pool_id, reserve0, reserve1, block_number)
     }
 
@@ -138,7 +132,7 @@ impl BotState {
         reserve1: U112,
         block_number: u64,
     ) -> Option<u64> {
-        let entry = self.registry.pools.get_mut(&pool_id)?;
+        let entry = self.pools.get_mut(pool_id)?;
         entry
             .as_reserve_pair_mut()?
             .apply_sync(reserve0, reserve1, block_number);
@@ -172,22 +166,20 @@ impl BotState {
         // layer — kept so the admission contract matches its V2 sibling.
         ::degenbot_pools::validate_v2_reserve(params.reserve0, "reserve0")?;
         ::degenbot_pools::validate_v2_reserve(params.reserve1, "reserve1")?;
-        if self.registry.pool_addresses.contains_key(&params.address) {
-            return Err(RegisterAerodromePoolError::AlreadyRegistered {
-                address: params.address,
-            });
-        }
-
-        let pool_id = self.registry.next_pool_id;
-        self.registry.next_pool_id += 1;
         let (identity, state) =
-            AerodromeV2PoolState::from_params(params, self.registry.journal_depth);
-        self.registry
-            .pools
-            .insert(pool_id, PoolEntry::AerodromeV2(Box::new((identity, state))));
-        self.registry.pool_addresses.insert(params.address, pool_id);
-
-        Ok(pool_id)
+            AerodromeV2PoolState::from_params(params, self.pools.journal_depth());
+        self.pools
+            .register(
+                PoolClaim::new(
+                    PoolLookup::Address(params.address),
+                    RegisteredPoolFamily::AerodromeV2,
+                ),
+                PoolEntry::AerodromeV2(Box::new((identity, state))),
+            )
+            .pool_id()
+            .ok_or(RegisterAerodromePoolError::AlreadyRegistered {
+                address: params.address,
+            })
     }
 
     /// The number of registered pools the V2 solve lane ADMITS: the
@@ -202,8 +194,7 @@ impl BotState {
         // typed-projection pattern — no central dispatch match here): a
         // volatile design is what the V2 solve lane admits; the stable flags
         // ride the identities the typed slices project.
-        self.registry
-            .pools
+        self.pools
             .values()
             .filter(|entry| {
                 entry

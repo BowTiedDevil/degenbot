@@ -1,13 +1,13 @@
 //! The family-agnostic registry surface: the pool table, the token metadata
 //! table, and the clocks the pool entries carry.
 //!
-//! `BotState` owns exactly one pool registry, and this module is its id-keyed
-//! front: the entry borrows, the typed slice projections (the family rides the
-//! caller's type parameter, never a method name), the update clocks, and the
-//! token table. The family orchestration modules reach the same tables through
-//! the [`RegistryCore`](crate::RegistryCore) view their callers pass, so both
-//! read paths answer from one table set and no family can hold a mirror that
-//! disagrees with the state owner.
+//! `BotState` owns exactly one pool table (`PoolTable`), and this module is its
+//! id-keyed front: the entry borrows, the typed slice projections (the family
+//! rides the caller's type parameter, never a method name), the update clocks,
+//! and the token table beside it. The family orchestration modules reach the
+//! same table through the `&PoolTable` their callers pass, so both read paths
+//! answer from one table and no family can hold a mirror that disagrees with
+//! the state owner.
 //!
 //! Turning a caller's key (an address, a `(pool_manager, pool_id)` pair, a
 //! typed identity) into a `pool_id` is [`crate::pool_lookup`]'s job, not this
@@ -22,7 +22,7 @@ impl BotState {
     /// structural `Pool` handle reads its family slice through.
     #[must_use]
     pub fn pool_entry(&self, pool_id: u64) -> Option<&PoolEntry> {
-        self.registry.pools.get(&pool_id)
+        self.pools.get(pool_id)
     }
 
     /// The family-neutral typed registry read (ADR-073 D3): the slice or
@@ -31,10 +31,7 @@ impl BotState {
     /// unregistered or its family does not carry a `T`.
     #[must_use]
     pub fn pool_slice<T: PoolEntrySlice + ?Sized>(&self, pool_id: u64) -> Option<&T> {
-        self.registry
-            .pools
-            .get(&pool_id)
-            .and_then(PoolEntry::slice::<T>)
+        self.pools.get(pool_id).and_then(PoolEntry::slice::<T>)
     }
 
     /// The family-neutral typed registration count: how many registered
@@ -42,8 +39,7 @@ impl BotState {
     /// shared body — the count is per typed slice, not per named family).
     #[must_use]
     pub fn pool_count_of<T: PoolEntrySlice>(&self) -> usize {
-        self.registry
-            .pools
+        self.pools
             .values()
             .filter(|entry| entry.slice::<T>().is_some())
             .count()
@@ -53,7 +49,7 @@ impl BotState {
     /// id→address join so a per-hop reject names the responsible pool.
     #[must_use]
     pub fn pool_address_of(&self, pool_id: u64) -> Option<Address> {
-        match self.registry.pools.get(&pool_id)? {
+        match self.pools.get(pool_id)? {
             PoolEntry::V2(p) => Some(p.0.address),
             PoolEntry::V3(p) => Some(p.0.address),
             PoolEntry::V4(p) => Some(p.0.pool_manager),
@@ -72,10 +68,7 @@ impl BotState {
     /// re-reads it and skips candidates whose pool state advanced since.
     #[must_use]
     pub fn pool_state_nonce(&self, pool_id: u64) -> u64 {
-        self.registry
-            .pools
-            .get(&pool_id)
-            .map_or(0, PoolEntry::state_nonce)
+        self.pools.get(pool_id).map_or(0, PoolEntry::state_nonce)
     }
 
     /// The `update_block` of the pool at `pool_id` — the block its reserves /
@@ -95,10 +88,7 @@ impl BotState {
     /// → `assert_ws_block_complete`).
     #[must_use]
     pub fn pool_update_block(&self, pool_id: u64) -> u64 {
-        self.registry
-            .pools
-            .get(&pool_id)
-            .map_or(0, PoolEntry::update_block)
+        self.pools.get(pool_id).map_or(0, PoolEntry::update_block)
     }
 
     /// The pool-state **price clock head**: the maximum `update_block` across
@@ -114,8 +104,7 @@ impl BotState {
     /// head), so one shared sim cache serves every path.
     #[must_use]
     pub fn pool_state_head(&self) -> u64 {
-        self.registry
-            .pools
+        self.pools
             .values()
             .map(PoolEntry::update_block)
             .max()
@@ -130,28 +119,27 @@ impl BotState {
     /// stale, mirroring [`Self::pool_update_block`]).
     #[must_use]
     pub fn pool_tick_data_block(&self, pool_id: u64) -> u64 {
-        self.registry
-            .pools
-            .get(&pool_id)
+        self.pools
+            .get(pool_id)
             .map_or(0, PoolEntry::tick_data_block)
     }
 
     /// Number of registered pools.
     #[must_use]
     pub fn pool_count(&self) -> usize {
-        self.registry.pools.len()
+        self.pools.len()
     }
 
     /// Check if a pool ID is registered.
     #[must_use]
     pub fn has_pool(&self, pool_id: u64) -> bool {
-        self.registry.pools.contains_key(&pool_id)
+        self.pools.contains(pool_id)
     }
 
     /// Check if a token address is registered.
     #[must_use]
     pub fn has_token(&self, address: &Address) -> bool {
-        self.registry.tokens.contains_key(address)
+        self.tokens.contains_key(address)
     }
 
     /// Look up a registered token's metadata entry (address, name, symbol,
@@ -159,7 +147,7 @@ impl BotState {
     /// (ADR-003 T3: Rust owns token identity metadata).
     #[must_use]
     pub fn token_entry(&self, address: &Address) -> Option<&TokenEntry> {
-        self.registry.tokens.get(address)
+        self.tokens.get(address)
     }
 
     /// Register a token.
@@ -176,15 +164,12 @@ impl BotState {
         decimals: u8,
         chain_id: u64,
     ) {
-        self.registry
-            .tokens
-            .entry(address)
-            .or_insert_with(|| TokenEntry {
-                address,
-                name,
-                symbol,
-                decimals,
-                chain_id,
-            });
+        self.tokens.entry(address).or_insert_with(|| TokenEntry {
+            address,
+            name,
+            symbol,
+            decimals,
+            chain_id,
+        });
     }
 }

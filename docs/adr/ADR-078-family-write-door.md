@@ -2,6 +2,32 @@
 
 **Status: accepted (2026-10-16).** Drafted at the architecture-review grilling (candidate C3; rounds 1–4, Q5/Q13/Q14/Q21/Q27). Extends the ADR-073 family read door to the write side; builds on ADR-077 (the door's refusal arm is the refusal vocabulary).
 
+> **Amendment (2026-10-29): the write door's additive hedge is consumed — pool identity has one owner.** D3 sequenced the door additively ("the substrate door lands
+> additively; no existing entry is rewired onto it"), which left three duplicate
+> policies standing: a typed `AlreadyRegistered` error on the families whose entry
+> returns `Result`, an `assert!` panic on Curve and both Balancer arms, and — written
+> only to keep that panic from firing through the door — the door's own
+> `duplicate_address` pre-check. All three are gone.
+> `degenbot_substrate::pool_table::PoolTable` now owns the entry table, the address
+> index, the `(PoolManager, pool_id)` index, the id counter, the reorg journal depth,
+> and the ADR-040 quarantine set (the shared `RegistryCore` view dissolves into
+> `BotState.pools`, with the token table beside it), and it owns the operations that
+> change identity:
+> `allocate` (one monotonic id allocation and key binding in one step), `register`
+> (the one duplicate refusal, answered in the shared `RegisterRefusal` vocabulary),
+> and the one quarantine transition that bumps the pool's `state_nonce` in either
+> direction. Every family arm constructs its entry through `from_params` and hands it
+> to the table; the door dispatches and folds verdicts, and no longer pre-checks.
+> Curve and both Balancer arms answer `RegisterRefusal` instead of panicking (their
+> arity checks ride the same vocabulary as `SpecViolation`), so a duplicate can
+> neither panic nor be decided twice. Two consequences follow: a duplicate is now
+> detected after the winning family's construction rather than before it, and a typed
+> arm's refusal `detail` stays that family's rendering (the field is log-only). The
+> per-family tests that pinned each arm's own duplicate behaviour now pin the table's
+> invariants once, over every family (`degenbot_substrate::tests::pool_table`). Read
+> D1/D3 below against this note: the per-family *mechanics* stay behind the door, the
+> *identity* does not.
+
 ## Context
 
 GLOSSARY's "Pool construction" already names the intent: *the core's one entry from a requested pool to a constructed, registered pool*. The reality is a family×verb matrix hand-fanned in **three** places:

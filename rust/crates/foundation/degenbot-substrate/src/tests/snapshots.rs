@@ -101,7 +101,7 @@ fn pool_tick_data_block_exposes_staged_liquidity_clock() {
     // without touching the tick map (direct poke — the two-stamp mutators
     // keep them in lockstep, which is exactly why this class only arises
     // from a bug / non-concentrated-liquidity-advancing path).
-    if let Some(crate::PoolEntry::V3(p)) = core.registry.pools.get_mut(&pool_id) {
+    if let Some(crate::PoolEntry::V3(p)) = core.pools.get_mut(pool_id) {
         let state = &mut p.1;
         state.update_block = 200;
     }

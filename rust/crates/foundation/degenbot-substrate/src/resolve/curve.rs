@@ -130,6 +130,7 @@ mod tests {
             metapool_underlying_style: 0,
             data_provider: None,
         })
+        .expect("curve registration")
     }
 
     #[test]

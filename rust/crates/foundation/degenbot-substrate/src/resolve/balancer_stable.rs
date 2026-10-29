@@ -100,6 +100,7 @@ mod tests {
             update_block: 0,
             rate_provider: None,
         })
+        .expect("balancer stable registration")
     }
 
     #[test]

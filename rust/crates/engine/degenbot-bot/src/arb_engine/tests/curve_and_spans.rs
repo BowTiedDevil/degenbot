@@ -60,7 +60,8 @@ fn curve_stable_finds_profitable_arb() {
             Address::from([0xe1u8; 20]),
             1000,
             2000,
-        ));
+        ))
+        .expect("curve registration");
     let pool_b = engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
@@ -68,7 +69,8 @@ fn curve_stable_finds_profitable_arb() {
             Address::from([0xe2u8; 20]),
             1000,
             1950,
-        ));
+        ))
+        .expect("curve registration");
     register_path(
         &mut engine,
         vec![
@@ -106,7 +108,8 @@ fn curve_stable_unprofitable_path_returns_none() {
             Address::from([0xf1u8; 20]),
             1000,
             2000,
-        ));
+        ))
+        .expect("curve registration");
     let pool_b = engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
@@ -114,7 +117,8 @@ fn curve_stable_unprofitable_path_returns_none() {
             Address::from([0xf2u8; 20]),
             1000,
             2000,
-        ));
+        ))
+        .expect("curve registration");
     register_path(
         &mut engine,
         vec![
@@ -153,7 +157,8 @@ fn curve_stable_mixed_with_v2_finds_arb() {
             Address::from([0xa6u8; 20]),
             1000,
             1500,
-        ));
+        ))
+        .expect("curve registration");
     register_path(
         &mut engine,
         vec![
@@ -183,7 +188,8 @@ fn curve_stable_rejects_mixed_with_concentrated_liquidity() {
             Address::from([0xb4u8; 20]),
             1000,
             2000,
-        ));
+        ))
+        .expect("curve registration");
     let v3 = core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_v3_pool(&RegisterV3PoolParams {

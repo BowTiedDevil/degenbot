@@ -47,7 +47,7 @@
 //! `BotStateDb.storage_ref` calls [`BotState::probe_tracked_storage_slot`]
 //! ONLY when the env gate `arm the sim-divergence probe` is set (checked at
 //! the call site, before this method runs). Default runs pay zero. When on:
-//! - V2/V3: O(1) `pool_addresses.get(address)`.
+//! - V2/V3: O(1) `pool_id_by_address(address)`.
 //! - V4: O(v4-pools-under-this-PoolManager) `keccak256` on PM cold reads;
 //!   revm's `CacheDB` caches `storage_ref`, so each cold slot pays once per
 //!   sim. Bounded by the sim's working set of Pool.State slots.
@@ -249,12 +249,12 @@ impl BotState {
     /// an enum entry with a test, never serviced through probe.
     ///
     /// Cost: O(pools) scalars. No tick-map iteration (V3 anchors are slots
-    /// 0/4 - O(1) packs); no V4 reverse-map (one direct pass over
-    /// `v4_pool_ids`, one keccak per pool for the `S_state` base).
+    /// 0/4 - O(1) packs); no V4 reverse-map (one direct pass over the V4 key
+    /// index, one keccak per pool for the `S_state` base).
     pub(crate) fn project_sim_anchor_scalars(&self) -> Vec<((Address, U256), TrackedSlotProbe)> {
         let mut out = Vec::new();
-        for (&address, &pool_id) in &self.registry.pool_addresses {
-            match self.registry.pools.get(&pool_id) {
+        for (&address, &pool_id) in self.pools.address_index() {
+            match self.pools.get(pool_id) {
                 Some(PoolEntry::V2(p)) => out.push((
                     (address, U256::from(8u64)),
                     TrackedSlotProbe {
@@ -287,10 +287,8 @@ impl BotState {
                 | None => {}
             }
         }
-        for ((pm, pool_id_bytes), internal_pool_id) in
-            self.concentrated_liquidity.registered_v4_pools()
-        {
-            if let Some(PoolEntry::V4(p)) = self.registry.pools.get(internal_pool_id) {
+        for ((pm, pool_id_bytes), internal_pool_id) in self.pools.v4_entries() {
+            if let Some(PoolEntry::V4(p)) = self.pools.get(*internal_pool_id) {
                 let state = &p.1;
                 let s_state = derive_v4_pool_state_base(pool_id_bytes);
                 out.push((
@@ -321,7 +319,7 @@ impl BotState {
     }
 
     /// Env-gated at the call site; this method is cheap (None fast-paths the
-    /// non-pool addresses via the O(1) `pool_addresses` map; V4 pays
+    /// non-pool addresses via the O(1) address index; V4 pays
     /// O(v4-pools-under-PM) `keccak256` only on a `PoolManager` SLOAD).
     #[must_use]
     pub fn probe_tracked_storage_slot(
@@ -331,7 +329,7 @@ impl BotState {
     ) -> Option<TrackedSlotProbe> {
         // V2/V3 path: address is the pool contract; O(1) address→pool_id.
         if let Some(pool_id) = self.pool_id_by_address(&address) {
-            return match self.registry.pools.get(&pool_id)? {
+            return match self.pools.get(pool_id)? {
                 PoolEntry::V2(p) => {
                     let state = &p.1;
                     // V2 reserves slot = 8.
@@ -376,13 +374,11 @@ impl BotState {
         // (PM, pool_id), and the per-tick `S_state` base is pool-id-derived).
         // Reverse-map: iterate this PM's V4 pools, derive each `S_state`, check
         // `index == S_state` (slot0) / `S_state + 3` (liquidity).
-        for ((pm, pool_id_bytes), internal_pool_id) in
-            self.concentrated_liquidity.registered_v4_pools()
-        {
+        for ((pm, pool_id_bytes), internal_pool_id) in self.pools.v4_entries() {
             if *pm != address {
                 continue;
             }
-            let PoolEntry::V4(p) = self.registry.pools.get(internal_pool_id)? else {
+            let PoolEntry::V4(p) = self.pools.get(*internal_pool_id)? else {
                 continue;
             };
             let state = &p.1;

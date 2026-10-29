@@ -7,8 +7,12 @@
 //! in-flight solver snapshot taken before the transition cannot be used after
 //! it, and the nonce is what invalidates those.
 //!
-//! Maintains the `degenbot.engine.quarantined_pools` scrape gauge so the
-//! excluded set is observable without reading state.
+//! The transition itself is `PoolTable`'s: the
+//! set and the nonce bump are identity-table state, and the split-borrow arms
+//! reach them through the same body the state owner does. What lives here is the
+//! pool-id front and its telemetry — the
+//! `degenbot.engine.quarantined_pools` scrape gauge, so the excluded set is
+//! observable without reading state.
 
 use super::BotState;
 
@@ -20,46 +24,40 @@ impl BotState {
     /// (a `false` return is a no-op or an unknown pool id — callers log).
     /// Maintains the `degenbot.engine.quarantined_pools` scrape gauge.
     pub fn quarantine_pool(&mut self, pool_id: u64) -> bool {
-        if !self.registry.pools.contains_key(&pool_id) {
-            return false;
+        let changed = self.pools.quarantine(pool_id);
+        if changed {
+            self.publish_quarantine_depth();
         }
-        if !self.registry.quarantined_pools.insert(pool_id) {
-            return false;
-        }
-        if let Some(entry) = self.registry.pools.get_mut(&pool_id) {
-            entry.bump_state_nonce();
-        }
-        if let Some(p) = crate::telemetry_port::pipeline() {
-            p.set_quarantined_pools(self.registry.quarantined_pools.len());
-        }
-        true
+        changed
     }
 
     /// ADR-040 quarantine release: re-admit the pool to solve resolution and
     /// dirty its nonce so stale `Invalid(Quarantined)` cache entries cannot
     /// stick. Returns `true` when this call CHANGED the state.
     pub fn release_pool(&mut self, pool_id: u64) -> bool {
-        if !self.registry.quarantined_pools.remove(&pool_id) {
-            return false;
+        let changed = self.pools.release(pool_id);
+        if changed {
+            self.publish_quarantine_depth();
         }
-        if let Some(entry) = self.registry.pools.get_mut(&pool_id) {
-            entry.bump_state_nonce();
-        }
-        if let Some(p) = crate::telemetry_port::pipeline() {
-            p.set_quarantined_pools(self.registry.quarantined_pools.len());
-        }
-        true
+        changed
     }
 
     /// ADR-040: is the pool currently quarantined (excluded from solve)?
     #[must_use]
     pub fn is_pool_quarantined(&self, pool_id: u64) -> bool {
-        self.registry.quarantined_pools.contains(&pool_id)
+        self.pools.is_quarantined(pool_id)
     }
 
     /// ADR-040: current quarantine depth (the scrape gauge's backing count).
     #[must_use]
     pub fn quarantined_pool_count(&self) -> usize {
-        self.registry.quarantined_pools.len()
+        self.pools.quarantined_count()
+    }
+
+    /// Re-publish the quarantine gauge after a transition.
+    fn publish_quarantine_depth(&self) {
+        if let Some(p) = crate::telemetry_port::pipeline() {
+            p.set_quarantined_pools(self.pools.quarantined_count());
+        }
     }
 }

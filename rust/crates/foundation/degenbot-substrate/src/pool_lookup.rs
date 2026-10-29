@@ -66,7 +66,7 @@ impl PoolLookup {
     /// Round-trips with [`Self::resolve`], which maps the key back to `pool_id`.
     #[must_use]
     pub fn from_pool_id(state: &BotState, pool_id: u64) -> Option<Self> {
-        match state.registry.pools.get(&pool_id)? {
+        match state.pools.get(pool_id)? {
             PoolEntry::V3(p) => Some(Self::Address(p.0.address)),
             PoolEntry::V4(p) => Some(Self::V4 {
                 pool_manager: p.0.pool_manager,
@@ -124,9 +124,8 @@ impl PoolLookup {
     ) -> Option<&'a mut dyn ConcentratedLiquidityPoolMut> {
         let pool_id = self.resolve(state)?;
         state
-            .registry
             .pools
-            .get_mut(&pool_id)
+            .get_mut(pool_id)
             .and_then(PoolEntry::as_concentrated_liquidity_mut)
     }
 
@@ -177,7 +176,7 @@ impl PoolLookup {
     #[must_use]
     pub fn tick_map_snapshot(&self, state: &BotState) -> Option<Box<dyn TickMap + Send + Sync>> {
         let pool_id = self.resolve(state)?;
-        match state.registry.pools.get(&pool_id)? {
+        match state.pools.get(pool_id)? {
             PoolEntry::V3(pool) => Some(pool.clone()),
             PoolEntry::V4(pool) => Some(pool.clone()),
             PoolEntry::V2(..)
@@ -200,14 +199,14 @@ impl PoolLookup {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity
-                .begin_registration_quarantine::<V3Family>(&mut state.registry, *address),
+                .begin_registration_quarantine::<V3Family>(&mut state.pools, *address),
             Self::V4 {
                 pool_manager,
                 pool_id,
             } => state
                 .concentrated_liquidity
                 .begin_registration_quarantine::<V4Family>(
-                    &mut state.registry,
+                    &mut state.pools,
                     (*pool_manager, *pool_id),
                 ),
         }
@@ -218,13 +217,13 @@ impl PoolLookup {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity
-                .take_snapshot_seed::<V3Family>(&mut state.registry, address),
+                .take_snapshot_seed::<V3Family>(&mut state.pools, address),
             Self::V4 {
                 pool_manager,
                 pool_id,
             } => state
                 .concentrated_liquidity
-                .take_snapshot_seed::<V4Family>(&mut state.registry, &(*pool_manager, *pool_id)),
+                .take_snapshot_seed::<V4Family>(&mut state.pools, &(*pool_manager, *pool_id)),
         }
     }
 
@@ -253,10 +252,10 @@ impl PoolLookup {
             Self::Address(address) => {
                 state
                     .concentrated_liquidity
-                    .apply_backfill_buffer::<V3Family>(&mut state.registry, address);
+                    .apply_backfill_buffer::<V3Family>(&mut state.pools, address);
                 state
                     .concentrated_liquidity
-                    .apply_pump_buffer::<V3Family>(&mut state.registry, address);
+                    .apply_pump_buffer::<V3Family>(&mut state.pools, address);
             }
             Self::V4 {
                 pool_manager,
@@ -265,12 +264,12 @@ impl PoolLookup {
                 state
                     .concentrated_liquidity
                     .apply_backfill_buffer::<V4Family>(
-                        &mut state.registry,
+                        &mut state.pools,
                         &(*pool_manager, *pool_id),
                     );
                 state
                     .concentrated_liquidity
-                    .apply_pump_buffer::<V4Family>(&mut state.registry, &(*pool_manager, *pool_id));
+                    .apply_pump_buffer::<V4Family>(&mut state.pools, &(*pool_manager, *pool_id));
             }
         }
     }
@@ -281,13 +280,13 @@ impl PoolLookup {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity
-                .apply_backfill_buffer::<V3Family>(&mut state.registry, address),
+                .apply_backfill_buffer::<V3Family>(&mut state.pools, address),
             Self::V4 {
                 pool_manager,
                 pool_id,
             } => state
                 .concentrated_liquidity
-                .apply_backfill_buffer::<V4Family>(&mut state.registry, &(*pool_manager, *pool_id)),
+                .apply_backfill_buffer::<V4Family>(&mut state.pools, &(*pool_manager, *pool_id)),
         }
     }
 
@@ -296,13 +295,13 @@ impl PoolLookup {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity
-                .apply_pump_buffer::<V3Family>(&mut state.registry, address),
+                .apply_pump_buffer::<V3Family>(&mut state.pools, address),
             Self::V4 {
                 pool_manager,
                 pool_id,
             } => state
                 .concentrated_liquidity
-                .apply_pump_buffer::<V4Family>(&mut state.registry, &(*pool_manager, *pool_id)),
+                .apply_pump_buffer::<V4Family>(&mut state.pools, &(*pool_manager, *pool_id)),
         }
     }
 
@@ -312,16 +311,13 @@ impl PoolLookup {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity
-                .pin_post_drain_snapshot::<V3Family>(&mut state.registry, address),
+                .pin_post_drain_snapshot::<V3Family>(&mut state.pools, address),
             Self::V4 {
                 pool_manager,
                 pool_id,
             } => state
                 .concentrated_liquidity
-                .pin_post_drain_snapshot::<V4Family>(
-                    &mut state.registry,
-                    &(*pool_manager, *pool_id),
-                ),
+                .pin_post_drain_snapshot::<V4Family>(&mut state.pools, &(*pool_manager, *pool_id)),
         }
     }
 
@@ -330,16 +326,13 @@ impl PoolLookup {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity
-                .take_post_drain_snapshot::<V3Family>(&mut state.registry, address),
+                .take_post_drain_snapshot::<V3Family>(&mut state.pools, address),
             Self::V4 {
                 pool_manager,
                 pool_id,
             } => state
                 .concentrated_liquidity
-                .take_post_drain_snapshot::<V4Family>(
-                    &mut state.registry,
-                    &(*pool_manager, *pool_id),
-                ),
+                .take_post_drain_snapshot::<V4Family>(&mut state.pools, &(*pool_manager, *pool_id)),
         }
     }
 
@@ -348,13 +341,13 @@ impl PoolLookup {
         match self {
             Self::Address(address) => state
                 .concentrated_liquidity
-                .mark_registration_live::<V3Family>(&mut state.registry, *address),
+                .mark_registration_live::<V3Family>(&mut state.pools, *address),
             Self::V4 {
                 pool_manager,
                 pool_id,
             } => state
                 .concentrated_liquidity
-                .mark_registration_live::<V4Family>(&mut state.registry, (*pool_manager, *pool_id)),
+                .mark_registration_live::<V4Family>(&mut state.pools, (*pool_manager, *pool_id)),
         }
     }
 }
@@ -417,16 +410,13 @@ impl BotState {
     /// tag.
     #[must_use]
     pub fn registered_family(&self, pool_id: u64) -> Option<RegisteredPoolFamily> {
-        self.registry
-            .pools
-            .get(&pool_id)
-            .map(PoolEntry::registered_family)
+        self.pools.get(pool_id).map(PoolEntry::registered_family)
     }
 
     /// Get the pool ID for a given contract address.
     #[must_use]
     pub fn pool_id_by_address(&self, address: &Address) -> Option<u64> {
-        self.registry.pool_addresses.get(address).copied()
+        self.pools.pool_id_by_address(address)
     }
 
     /// The address-keyed registration of record, family-tagged (PRG-1 /
@@ -447,7 +437,7 @@ impl BotState {
         address: &Address,
     ) -> Option<(u64, RegisteredPoolFamily)> {
         let pool_id = self.pool_id_by_address(address)?;
-        match self.registry.pools.get(&pool_id)?.registered_family() {
+        match self.pools.get(pool_id)?.registered_family() {
             // An address query cannot name a V4 pool (see the doc above).
             RegisteredPoolFamily::V4 => None,
             family => Some((pool_id, family)),
@@ -465,7 +455,7 @@ impl BotState {
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<RegisteredPoolFamily> {
         let id = self.pool_id_by_key(pool_manager, pool_id)?;
-        Some(self.registry.pools.get(&id)?.registered_family())
+        Some(self.pools.get(id)?.registered_family())
     }
 
     /// The registered pool id for this exact pool identity, DERIVED from the
@@ -475,7 +465,7 @@ impl BotState {
     /// The read direction a driver needs when it holds a pool's *identity*
     /// (a family tag plus an address, or a V4 `(PoolManager, pool_id)` pair)
     /// and needs the id the engine hops on. It answers from the same
-    /// `pool_addresses` / `v4_pool_ids` indexes registration writes, so a
+    /// address and V4 key indexes registration writes, so a
     /// driver cannot hold a mirror that disagrees with the state owner.
     ///
     /// Family is part of the answer: an address-keyed identity that names a

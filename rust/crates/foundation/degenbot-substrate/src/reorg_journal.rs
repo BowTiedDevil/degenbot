@@ -21,7 +21,7 @@ impl BotState {
     /// a reorg touches only a subset of pools). Returns the count of pools
     /// that were rolled back.
     pub fn restore_all_pools_before_block(&mut self, target: u64) -> usize {
-        let pool_ids: Vec<u64> = self.registry.pools.keys().copied().collect();
+        let pool_ids: Vec<u64> = self.pools.keys().collect();
         let mut restored = 0usize;
         for pool_id in pool_ids {
             // Peek the per-pool newest delta block without a mutable borrow
@@ -30,9 +30,8 @@ impl BotState {
             // (idempotent restore). The peek also guards the concentrated liquidity family's
             // panic-on-empty journal: an empty journal reports `None` → skip.
             let needs_restore = self
-                .registry
                 .pools
-                .get(&pool_id)
+                .get(pool_id)
                 .and_then(PoolEntry::as_reorg_state)
                 .and_then(ReorgPoolState::newest_block)
                 .is_some_and(|b| b >= target);
@@ -75,9 +74,8 @@ impl BotState {
         block: u64,
     ) -> Option<Result<(), JournalError>> {
         Some(
-            self.registry
-                .pools
-                .get_mut(&pool_id)?
+            self.pools
+                .get_mut(pool_id)?
                 .as_reorg_state_mut()?
                 .restore_before_block(block),
         )
@@ -97,9 +95,8 @@ impl BotState {
         block: u64,
     ) -> Option<Result<(), JournalError>> {
         Some(
-            self.registry
-                .pools
-                .get_mut(&pool_id)?
+            self.pools
+                .get_mut(pool_id)?
                 .as_reorg_state_mut()?
                 .discard_before_block(block),
         )
@@ -110,13 +107,7 @@ impl BotState {
     /// registered.
     #[must_use]
     pub fn pool_journal_len(&self, pool_id: u64) -> Option<usize> {
-        Some(
-            self.registry
-                .pools
-                .get(&pool_id)?
-                .as_reorg_state()?
-                .journal_len(),
-        )
+        Some(self.pools.get(pool_id)?.as_reorg_state()?.journal_len())
     }
 
     /// Peek the newest reorg-journal delta block for `pool_id` without
@@ -126,9 +117,8 @@ impl BotState {
     /// `degenbot.reorg.restore` spans.
     #[must_use]
     pub fn newest_journal_block(&self, pool_id: u64) -> Option<u64> {
-        self.registry
-            .pools
-            .get(&pool_id)
+        self.pools
+            .get(pool_id)
             .and_then(PoolEntry::as_reorg_state)
             .and_then(ReorgPoolState::newest_block)
     }
@@ -155,7 +145,7 @@ impl BotState {
     /// returns `true` under both predicates.
     #[must_use]
     pub fn has_state_prior_to(&self, pool_id: u64, block: u64) -> bool {
-        let Some(entry) = self.registry.pools.get(&pool_id) else {
+        let Some(entry) = self.pools.get(pool_id) else {
             // Pool not registered → no journal → the reorg can't restore it.
             // Treat as "has state" (no-op) so the caller proceeds to the normal
             // pool-not-found no-op path rather than a fail-stop.

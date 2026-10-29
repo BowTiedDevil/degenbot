@@ -1,4 +1,4 @@
-#![expect(clippy::unwrap_used, clippy::panic)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Tier-2 behavioral dual-driver parity — Balancer V2 stable swap calc,
 //! ComposableStable `bpt_idx = Some(..)` path (ADR-005 standalone claim,
 //! RPSW4Z).
@@ -113,7 +113,9 @@ fn register_composable_stable_fixture() -> (BotState, u64) {
         update_block: 0,
         rate_provider: None,
     };
-    let pool_id = bot.register_balancer_stable_pool(&params);
+    let pool_id = bot
+        .register_balancer_stable_pool(&params)
+        .expect("balancer stable registration");
     (bot, pool_id)
 }
 
@@ -218,7 +220,9 @@ fn bpt_balance_does_not_affect_output_proving_drop() {
         update_block: 0,
         rate_provider: None,
     };
-    let pid = bot.register_balancer_stable_pool(&params);
+    let pid = bot
+        .register_balancer_stable_pool(&params)
+        .expect("balancer stable registration");
     let out = tokens_out(&mut bot, pid, ZERO_FOR_ONE, U256::from(AMOUNT_IN));
     assert_eq!(
         out,

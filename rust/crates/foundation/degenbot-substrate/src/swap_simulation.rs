@@ -321,7 +321,7 @@ pub fn simulate_pair_in_given_out(
     override_balances: Option<&[U256]>,
     override_scaling_factors: Option<&[U256]>,
 ) -> Option<U256> {
-    match bot.registry.pools.get(&pool_id)? {
+    match bot.pools.get(pool_id)? {
         PoolEntry::BalancerWeighted(p) => balancer_weighted::read_swap(
             &p.1,
             &p.0,
@@ -368,7 +368,7 @@ pub fn simulate_pair_out(
     override_balances: Option<&[U256]>,
     override_scaling_factors: Option<&[U256]>,
 ) -> Option<U256> {
-    match bot.registry.pools.get(&pool_id)? {
+    match bot.pools.get(pool_id)? {
         PoolEntry::BalancerWeighted(p) => balancer_weighted::read_swap(
             &p.1,
             &p.0,
@@ -478,7 +478,7 @@ impl BotState {
         // transient the door builds; the door never fetches and never
         // touches registered state.
         let _ = block;
-        let entry = self.registry.pools.get(&pool_id)?;
+        let entry = self.pools.get(pool_id)?;
         let source = match entry {
             // Non-concentrated-liquidity families never fetch: nothing to stage.
             PoolEntry::V2(..)
@@ -491,14 +491,14 @@ impl BotState {
                     identity: &p.0,
                     state: &p.1,
                 },
-                self.registry.journal_depth,
+                self.pools.journal_depth(),
             ),
             PoolEntry::V4(p) => concentrated_liquidity::SwapReadSource::Discovery(
                 concentrated_liquidity::ConcentratedLiquidityTransientSource::V4 {
                     identity: &p.0,
                     state: &p.1,
                 },
-                self.registry.journal_depth,
+                self.pools.journal_depth(),
             ),
         };
         Some(
@@ -542,7 +542,7 @@ impl BotState {
         &self,
         pool_id: u64,
     ) -> Option<(TickWordKey, Arc<dyn TickWordSource>)> {
-        match self.registry.pools.get(&pool_id) {
+        match self.pools.get(pool_id) {
             Some(PoolEntry::V3(p)) => Some((TickWordKey::from(&p.0), p.1.fetcher.clone()?)),
             Some(PoolEntry::V4(p)) => Some((TickWordKey::from(&p.0), p.1.fetcher.clone()?)),
             _ => None,
@@ -571,7 +571,7 @@ impl BotState {
         if over.request.amount_specified.is_zero() {
             return Some(Vec::new());
         }
-        let entry = self.registry.pools.get(&over.pool_id)?;
+        let entry = self.pools.get(over.pool_id)?;
         // Only the concentrated-liquidity family carries a sparse tick map, so
         // only its override read has words to miss — every other family's
         // override read is a pure transient (I/O-free).
@@ -602,7 +602,7 @@ impl BotState {
                     tick_data,
                 },
                 p.1.update_block,
-                self.registry.journal_depth,
+                self.pools.journal_depth(),
             ),
             PoolEntry::V4(p) => concentrated_liquidity::SwapReadSource::Override(
                 concentrated_liquidity::ConcentratedLiquidityTransientSource::V4 {
@@ -616,7 +616,7 @@ impl BotState {
                     tick_data,
                 },
                 p.1.update_block,
-                self.registry.journal_depth,
+                self.pools.journal_depth(),
             ),
             _ => return Some(Vec::new()),
         };
@@ -656,7 +656,7 @@ impl BotState {
         if over.request.amount_specified.is_zero() {
             return None;
         }
-        let entry = self.registry.pools.get(&over.pool_id)?;
+        let entry = self.pools.get(over.pool_id)?;
         match &over.state {
             OverrideState::ReservePair {
                 reserves_token0,
@@ -733,7 +733,7 @@ impl BotState {
         match reserve_pair::read_swap_override(
             design,
             reserves,
-            self.registry.journal_depth,
+            self.pools.journal_depth(),
             request,
         ) {
             reserve_pair::OverrideReadOutcome::Computed(amounts) => {
@@ -778,7 +778,7 @@ impl BotState {
                     },
                     over_scalars,
                     p.1.update_block,
-                    self.registry.journal_depth,
+                    self.pools.journal_depth(),
                 ),
             ),
             PoolEntry::V4(p) => (
@@ -791,7 +791,7 @@ impl BotState {
                     },
                     over_scalars,
                     p.1.update_block,
-                    self.registry.journal_depth,
+                    self.pools.journal_depth(),
                 ),
             ),
             // Concentrated-liquidity scalars presented for another family.
@@ -859,7 +859,7 @@ impl BotState {
         request: &SwapRequest,
         disarm_fetch: bool,
     ) -> SwapRead {
-        if !self.registry.pools.contains_key(&pool_id) {
+        if !self.pools.contains(pool_id) {
             // Unknown pool: typed refusal — a fabricated zero would be
             // indistinguishable from a real zero-output swap.
             return SwapRead::UnknownPool { pool_id };
@@ -875,7 +875,7 @@ impl BotState {
         let magnitude = request.amount_specified.into_sign_and_abs().1;
         let exact_output = request.amount_specified.is_positive();
 
-        let Some(entry) = self.registry.pools.get(&pool_id) else {
+        let Some(entry) = self.pools.get(pool_id) else {
             return SwapRead::NotComputable;
         };
         match entry {
@@ -961,7 +961,7 @@ impl BotState {
         disarm_fetch: bool,
     ) -> SwapRead {
         let (coverage, extra_caveats, outcome_family, fetcher, scalars, hooks, key) = {
-            let Some(entry) = self.registry.pools.get(&pool_id) else {
+            let Some(entry) = self.pools.get(pool_id) else {
                 return SwapRead::NotComputable;
             };
             match entry {
@@ -1039,7 +1039,7 @@ impl BotState {
             },
             _ => concentrated_liquidity::FetchMode::Disarmed,
         };
-        let Some(state_mut) = self.registry.pools.get_mut(&pool_id) else {
+        let Some(state_mut) = self.pools.get_mut(pool_id) else {
             return SwapRead::NotComputable;
         };
         let target = match state_mut {
@@ -1655,5 +1655,6 @@ mod tests {
             metapool_underlying_style: 1,
             data_provider: None,
         })
+        .expect("curve registration")
     }
 }

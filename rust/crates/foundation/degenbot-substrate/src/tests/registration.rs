@@ -82,40 +82,42 @@ fn curve_get_dy_runs_the_rust_owned_swap_path() {
     const TWO_E21: U256 = U256::from_limbs([4_808_176_044_395_724_800, 325, 0, 0]); // 6e21
 
     let mut core = BotState::new();
-    let pool_id = core.register_curve_pool(&RegisterCurvePoolParams {
-        address: Address::from([0xccu8; 20]),
-        tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
-        a_coefficient: 100,
-        a_precision: 100,
-        fee: 500_000,
-        admin_fee: 0,
-        rate_multipliers: vec![E18, E18],
-        balances: vec![E21, TWO_E21],
-        update_block: 0,
-        swap_style: 1,         // STANDARD
-        lending_rate_style: 1, // NONE
-        d_variant: 1,
-        y_variant: 1,
-        yd_variant: 1,
-        base_pool: None,
-        initial_a_coefficient: None,
-        future_a_coefficient: None,
-        initial_a_coefficient_time: None,
-        future_a_coefficient_time: None,
-        create_timestamp: None,
-        fee_gamma: None,
-        mid_fee: None,
-        offpeg_fee_multiplier: None,
-        out_fee: None,
-        gamma: None,
-        lp_token: None,
-        use_lending: Vec::new(),
-        precision_multipliers: vec![E18, E18],
-        tokens_underlying: None,
-        metapool_rate_style: 1,
-        metapool_underlying_style: 1,
-        data_provider: None,
-    });
+    let pool_id = core
+        .register_curve_pool(&RegisterCurvePoolParams {
+            address: Address::from([0xccu8; 20]),
+            tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
+            a_coefficient: 100,
+            a_precision: 100,
+            fee: 500_000,
+            admin_fee: 0,
+            rate_multipliers: vec![E18, E18],
+            balances: vec![E21, TWO_E21],
+            update_block: 0,
+            swap_style: 1,         // STANDARD
+            lending_rate_style: 1, // NONE
+            d_variant: 1,
+            y_variant: 1,
+            yd_variant: 1,
+            base_pool: None,
+            initial_a_coefficient: None,
+            future_a_coefficient: None,
+            initial_a_coefficient_time: None,
+            future_a_coefficient_time: None,
+            create_timestamp: None,
+            fee_gamma: None,
+            mid_fee: None,
+            offpeg_fee_multiplier: None,
+            out_fee: None,
+            gamma: None,
+            lp_token: None,
+            use_lending: Vec::new(),
+            precision_multipliers: vec![E18, E18],
+            tokens_underlying: None,
+            metapool_rate_style: 1,
+            metapool_underlying_style: 1,
+            data_provider: None,
+        })
+        .expect("curve registration");
 
     let dy = core
         .get_dy(pool_id, 0, 1, E18, 0, None)
@@ -179,10 +181,11 @@ fn curve_get_dy_underlying_refuses_a_zero_balance_metapool() {
 
     // A zero METAPOOL coin balance refuses.
     let base_addr = Address::from([0xbbu8; 20]);
-    core.register_curve_pool(&params(base_addr, None));
+    core.register_curve_pool(&params(base_addr, None))
+        .expect("curve registration");
     let mut meta = params(Address::from([0xccu8; 20]), Some(base_addr));
     meta.balances = vec![U256::ZERO, E21];
-    let meta_id = core.register_curve_pool(&meta);
+    let meta_id = core.register_curve_pool(&meta).expect("curve registration");
     let err = core
         .get_dy_underlying(meta_id, 0, 1, E18, 1, None)
         .expect_err("a zero metapool balance must refuse");
@@ -192,9 +195,11 @@ fn curve_get_dy_underlying_refuses_a_zero_balance_metapool() {
     let base_zero_addr = Address::from([0xbdu8; 20]);
     let mut base_zero = params(base_zero_addr, None);
     base_zero.balances = vec![U256::ZERO, E21];
-    core.register_curve_pool(&base_zero);
-    let meta_pool_b_id =
-        core.register_curve_pool(&params(Address::from([0xcdu8; 20]), Some(base_zero_addr)));
+    core.register_curve_pool(&base_zero)
+        .expect("curve registration");
+    let meta_pool_b_id = core
+        .register_curve_pool(&params(Address::from([0xcdu8; 20]), Some(base_zero_addr)))
+        .expect("curve registration");
     let err = core
         .get_dy_underlying(meta_pool_b_id, 0, 1, E18, 1, None)
         .expect_err("a zero base-pool balance must refuse");
@@ -250,15 +255,18 @@ fn curve_get_dy_refuses_a_zero_balance_direct_pool() {
     let mut core = BotState::new();
 
     // A zero coin balance refuses on the direct path.
-    let zero_id =
-        core.register_curve_pool(&params(Address::from([0x11u8; 20]), vec![U256::ZERO, E21]));
+    let zero_id = core
+        .register_curve_pool(&params(Address::from([0x11u8; 20]), vec![U256::ZERO, E21]))
+        .expect("curve registration");
     let err = core
         .get_dy(zero_id, 0, 1, E18, 1, None)
         .expect_err("a zero balance must refuse");
     assert!(matches!(err, CurveInputsError::NoLiquidity));
 
     // A fully funded pool still computes dy (the check is not a blanket refusal).
-    let funded_id = core.register_curve_pool(&params(Address::from([0x12u8; 20]), vec![E21, E21]));
+    let funded_id = core
+        .register_curve_pool(&params(Address::from([0x12u8; 20]), vec![E21, E21]))
+        .expect("curve registration");
     assert!(core.get_dy(funded_id, 0, 1, E18, 1, None).is_ok());
 }
 
@@ -313,45 +321,47 @@ fn pool_family_dispatches_every_registered_family() {
     assert_eq!(core.pool_family(v4_id), Some("v4"));
 
     // Curve (2-token plain pool)
-    let curve_id = core.register_curve_pool(&RegisterCurvePoolParams {
-        address: Address::from([0xc0u8; 20]),
-        tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
-        a_coefficient: 100,
-        a_precision: 100,
-        fee: 4_000_000,
-        admin_fee: 5_000_000_000,
-        rate_multipliers: vec![U256::from(1u64), U256::from(1u64)],
-        balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
-        update_block: 0,
-        swap_style: 0,
-        lending_rate_style: 0,
-        d_variant: 1,
-        y_variant: 1,
-        yd_variant: 0,
-        base_pool: None,
-        initial_a_coefficient: None,
-        future_a_coefficient: None,
-        initial_a_coefficient_time: None,
-        future_a_coefficient_time: None,
-        create_timestamp: None,
-        fee_gamma: None,
-        mid_fee: None,
-        offpeg_fee_multiplier: None,
-        out_fee: None,
-        gamma: None,
-        lp_token: None,
-        use_lending: vec![false, false],
-        precision_multipliers: vec![U256::from(1u64), U256::from(1u64)],
-        tokens_underlying: None,
-        metapool_rate_style: 1,
-        metapool_underlying_style: 1,
-        data_provider: None,
-    });
+    let curve_id = core
+        .register_curve_pool(&RegisterCurvePoolParams {
+            address: Address::from([0xc0u8; 20]),
+            tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
+            a_coefficient: 100,
+            a_precision: 100,
+            fee: 4_000_000,
+            admin_fee: 5_000_000_000,
+            rate_multipliers: vec![U256::from(1u64), U256::from(1u64)],
+            balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
+            update_block: 0,
+            swap_style: 0,
+            lending_rate_style: 0,
+            d_variant: 1,
+            y_variant: 1,
+            yd_variant: 0,
+            base_pool: None,
+            initial_a_coefficient: None,
+            future_a_coefficient: None,
+            initial_a_coefficient_time: None,
+            future_a_coefficient_time: None,
+            create_timestamp: None,
+            fee_gamma: None,
+            mid_fee: None,
+            offpeg_fee_multiplier: None,
+            out_fee: None,
+            gamma: None,
+            lp_token: None,
+            use_lending: vec![false, false],
+            precision_multipliers: vec![U256::from(1u64), U256::from(1u64)],
+            tokens_underlying: None,
+            metapool_rate_style: 1,
+            metapool_underlying_style: 1,
+            data_provider: None,
+        })
+        .expect("curve registration");
     assert_eq!(core.pool_family(curve_id), Some("curve"));
 
     // Balancer weighted (2-token)
-    let bal_weighted_id =
-        core.register_balancer_weighted_pool(&RegisterBalancerWeightedPoolParams {
+    let bal_weighted_id = core
+        .register_balancer_weighted_pool(&RegisterBalancerWeightedPoolParams {
             address: Address::from([0xb1u8; 20]),
             vault: Address::from([0xa0u8; 20]),
             pool_id: [0x11u8; 32],
@@ -365,24 +375,27 @@ fn pool_family_dispatches_every_registered_family() {
             pow_version: 2,
             balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
             update_block: 0,
-        });
+        })
+        .expect("balancer weighted registration");
     assert_eq!(core.pool_family(bal_weighted_id), Some("balancer-weighted"));
 
     // Balancer stable (2-token, MetaStable — bpt_idx=None)
-    let bal_stable_id = core.register_balancer_stable_pool(&RegisterBalancerStablePoolParams {
-        address: Address::from([0xb2u8; 20]),
-        vault: Address::from([0xb0u8; 20]),
-        pool_id: [0x22u8; 32],
-        tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
-        amp: 100,
-        scaling_factors: vec![U256::from(1u64), U256::from(1u64)],
-        swap_fee: 1_000_000_000_000_000,
-        bpt_idx: None,
-        invariant_version: 2,
-        balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
-        update_block: 0,
-        rate_provider: None,
-    });
+    let bal_stable_id = core
+        .register_balancer_stable_pool(&RegisterBalancerStablePoolParams {
+            address: Address::from([0xb2u8; 20]),
+            vault: Address::from([0xb0u8; 20]),
+            pool_id: [0x22u8; 32],
+            tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
+            amp: 100,
+            scaling_factors: vec![U256::from(1u64), U256::from(1u64)],
+            swap_fee: 1_000_000_000_000_000,
+            bpt_idx: None,
+            invariant_version: 2,
+            balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
+            update_block: 0,
+            rate_provider: None,
+        })
+        .expect("balancer stable registration");
     assert_eq!(core.pool_family(bal_stable_id), Some("balancer-stable"));
 
     // Suppress unused-import warning for TickInfo/U128 when the V4 tick_data
@@ -942,40 +955,42 @@ fn registered_family_readers_tag_every_registered_family() {
 
     // Curve.
     let curve_addr = Address::from([0xc0u8; 20]);
-    let curve_id = core.register_curve_pool(&RegisterCurvePoolParams {
-        address: curve_addr,
-        tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
-        a_coefficient: 100,
-        a_precision: 100,
-        fee: 4_000_000,
-        admin_fee: 5_000_000_000,
-        rate_multipliers: vec![U256::from(1u64), U256::from(1u64)],
-        balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
-        update_block: 0,
-        swap_style: 0,
-        lending_rate_style: 0,
-        d_variant: 1,
-        y_variant: 1,
-        yd_variant: 0,
-        base_pool: None,
-        initial_a_coefficient: None,
-        future_a_coefficient: None,
-        initial_a_coefficient_time: None,
-        future_a_coefficient_time: None,
-        create_timestamp: None,
-        fee_gamma: None,
-        mid_fee: None,
-        offpeg_fee_multiplier: None,
-        out_fee: None,
-        gamma: None,
-        lp_token: None,
-        use_lending: vec![false, false],
-        precision_multipliers: vec![U256::from(1u64), U256::from(1u64)],
-        tokens_underlying: None,
-        metapool_rate_style: 1,
-        metapool_underlying_style: 1,
-        data_provider: None,
-    });
+    let curve_id = core
+        .register_curve_pool(&RegisterCurvePoolParams {
+            address: curve_addr,
+            tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
+            a_coefficient: 100,
+            a_precision: 100,
+            fee: 4_000_000,
+            admin_fee: 5_000_000_000,
+            rate_multipliers: vec![U256::from(1u64), U256::from(1u64)],
+            balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
+            update_block: 0,
+            swap_style: 0,
+            lending_rate_style: 0,
+            d_variant: 1,
+            y_variant: 1,
+            yd_variant: 0,
+            base_pool: None,
+            initial_a_coefficient: None,
+            future_a_coefficient: None,
+            initial_a_coefficient_time: None,
+            future_a_coefficient_time: None,
+            create_timestamp: None,
+            fee_gamma: None,
+            mid_fee: None,
+            offpeg_fee_multiplier: None,
+            out_fee: None,
+            gamma: None,
+            lp_token: None,
+            use_lending: vec![false, false],
+            precision_multipliers: vec![U256::from(1u64), U256::from(1u64)],
+            tokens_underlying: None,
+            metapool_rate_style: 1,
+            metapool_underlying_style: 1,
+            data_provider: None,
+        })
+        .expect("curve registration");
     assert_eq!(
         core.registered_pool_by_address(&curve_addr),
         Some((curve_id, RegisteredPoolFamily::Curve)),
@@ -983,8 +998,8 @@ fn registered_family_readers_tag_every_registered_family() {
 
     // Balancer weighted.
     let bal_weighted_addr = Address::from([0xb1u8; 20]);
-    let bal_weighted_id =
-        core.register_balancer_weighted_pool(&RegisterBalancerWeightedPoolParams {
+    let bal_weighted_id = core
+        .register_balancer_weighted_pool(&RegisterBalancerWeightedPoolParams {
             address: bal_weighted_addr,
             vault: Address::from([0xa0u8; 20]),
             pool_id: [0x11u8; 32],
@@ -998,7 +1013,8 @@ fn registered_family_readers_tag_every_registered_family() {
             pow_version: 2,
             balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
             update_block: 0,
-        });
+        })
+        .expect("balancer weighted registration");
     assert_eq!(
         core.registered_pool_by_address(&bal_weighted_addr),
         Some((bal_weighted_id, RegisteredPoolFamily::BalancerWeighted)),
@@ -1006,20 +1022,22 @@ fn registered_family_readers_tag_every_registered_family() {
 
     // Balancer stable.
     let bal_stable_addr = Address::from([0xb2u8; 20]);
-    let bal_stable_id = core.register_balancer_stable_pool(&RegisterBalancerStablePoolParams {
-        address: bal_stable_addr,
-        vault: Address::from([0xb0u8; 20]),
-        pool_id: [0x22u8; 32],
-        tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
-        amp: 100,
-        scaling_factors: vec![U256::from(1u64), U256::from(1u64)],
-        swap_fee: 1_000_000_000_000_000,
-        bpt_idx: None,
-        invariant_version: 2,
-        balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
-        update_block: 0,
-        rate_provider: None,
-    });
+    let bal_stable_id = core
+        .register_balancer_stable_pool(&RegisterBalancerStablePoolParams {
+            address: bal_stable_addr,
+            vault: Address::from([0xb0u8; 20]),
+            pool_id: [0x22u8; 32],
+            tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
+            amp: 100,
+            scaling_factors: vec![U256::from(1u64), U256::from(1u64)],
+            swap_fee: 1_000_000_000_000_000,
+            bpt_idx: None,
+            invariant_version: 2,
+            balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
+            update_block: 0,
+            rate_provider: None,
+        })
+        .expect("balancer stable registration");
     assert_eq!(
         core.registered_pool_by_address(&bal_stable_addr),
         Some((bal_stable_id, RegisteredPoolFamily::BalancerStable)),

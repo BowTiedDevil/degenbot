@@ -106,6 +106,7 @@ mod tests {
             ],
             update_block: 0,
         })
+        .expect("balancer weighted registration")
     }
 
     #[test]

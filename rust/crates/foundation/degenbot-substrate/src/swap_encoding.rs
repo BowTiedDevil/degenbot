@@ -65,9 +65,8 @@ impl BotState {
         recipient: Address,
     ) -> Result<EncodedCall, EncodeSwapError> {
         let entry = self
-            .registry
             .pools
-            .get(&pool_id)
+            .get(pool_id)
             .ok_or(EncodeSwapError::NotRegistered { pool_id })?;
         match entry {
             PoolEntry::V2(p) => encode_v2_swap(p.0.address, zero_for_one, amount_out, recipient)

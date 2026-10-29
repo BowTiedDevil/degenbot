@@ -185,40 +185,42 @@ fn standalone_rust_consumer_curve_get_dy_equals_recorded_constant() {
         .expect("standard_plain probe");
 
     let mut state = BotState::new();
-    let pool_id = state.register_curve_pool(&RegisterCurvePoolParams {
-        address: Address::with_last_byte(0xcc),
-        tokens: vec![Address::ZERO, Address::with_last_byte(0x01)],
-        a_coefficient: 100,
-        a_precision: 100,
-        fee: 500_000,
-        admin_fee: 0,
-        rate_multipliers: u256_vec(&plain.inputs.rate_multipliers),
-        balances: u256_vec(&plain.inputs.balances),
-        update_block: 0,
-        swap_style: 1,         // STANDARD
-        lending_rate_style: 1, // NONE
-        d_variant: 1,
-        y_variant: 1,
-        yd_variant: 1,
-        base_pool: None,
-        initial_a_coefficient: None,
-        future_a_coefficient: None,
-        initial_a_coefficient_time: None,
-        future_a_coefficient_time: None,
-        create_timestamp: None,
-        fee_gamma: None,
-        mid_fee: None,
-        offpeg_fee_multiplier: None,
-        out_fee: None,
-        gamma: None,
-        lp_token: None,
-        use_lending: Vec::new(),
-        precision_multipliers: u256_vec(&plain.inputs.precision_multipliers),
-        tokens_underlying: None,
-        metapool_rate_style: 1,
-        metapool_underlying_style: 1,
-        data_provider: None,
-    });
+    let pool_id = state
+        .register_curve_pool(&RegisterCurvePoolParams {
+            address: Address::with_last_byte(0xcc),
+            tokens: vec![Address::ZERO, Address::with_last_byte(0x01)],
+            a_coefficient: 100,
+            a_precision: 100,
+            fee: 500_000,
+            admin_fee: 0,
+            rate_multipliers: u256_vec(&plain.inputs.rate_multipliers),
+            balances: u256_vec(&plain.inputs.balances),
+            update_block: 0,
+            swap_style: 1,         // STANDARD
+            lending_rate_style: 1, // NONE
+            d_variant: 1,
+            y_variant: 1,
+            yd_variant: 1,
+            base_pool: None,
+            initial_a_coefficient: None,
+            future_a_coefficient: None,
+            initial_a_coefficient_time: None,
+            future_a_coefficient_time: None,
+            create_timestamp: None,
+            fee_gamma: None,
+            mid_fee: None,
+            offpeg_fee_multiplier: None,
+            out_fee: None,
+            gamma: None,
+            lp_token: None,
+            use_lending: Vec::new(),
+            precision_multipliers: u256_vec(&plain.inputs.precision_multipliers),
+            tokens_underlying: None,
+            metapool_rate_style: 1,
+            metapool_underlying_style: 1,
+            data_provider: None,
+        })
+        .expect("curve registration");
 
     let dx = u256(&plain.args.dx);
     let expected = u256(&plain.expected.dy);

@@ -785,7 +785,7 @@ mod tests {
         // Concurrent write must complete promptly (no guard held across await).
         let write = tokio::time::timeout(std::time::Duration::from_millis(500), async {
             let c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
-            let n = c.concentrated_liquidity().registered_pool_count();
+            let n = c.registered_v4_pool_count();
             std::hint::black_box(n);
         })
         .await;

@@ -108,7 +108,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [075](ADR-075-mirrored-engine-surfaces-stay.md) | The mirrored engine surfaces stay — the driver/stages mirror is accepted, policed by the drift gates | accepted |
 | [076](ADR-076-epoch-phases.md) | The epoch phases — `SolveCycle::run_epoch` decomposes into named phases behind one interface | accepted |
 | [077](ADR-077-refusal-vocabulary.md) | The refusal vocabulary — one `RefusalKind` owned by the registration outcome ledger, and the eligibility gate moves core-side | accepted |
-| [078](ADR-078-family-write-door.md) | The family write door — one `PoolRegistration` request, one verdict, family as data | accepted |
+| [078](ADR-078-family-write-door.md) | The family write door — one `PoolRegistration` request, one verdict, family as data; pool identity is one table's | accepted |
 | [079](ADR-079-seat-host-split.md) | The seat host split — two seat models behind one host loop | accepted |
 | [080](ADR-080-cl-state-module.md) | The concentrated-liquidity state module — the Concentrated Liquidity Kernel's state-side sibling | accepted / implemented (journals, bitmap seeding, and viability/cache extracted into `families/concentrated_liquidity/{state_journal,state_seeding,state_walk}` over the `JournalHost`/`WalkHost` seams; test suites merged at `state_fixture`) |
 | [081](ADR-081-one-pool-lookup.md) | One pool lookup at the state seam | accepted |

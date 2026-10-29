@@ -2443,43 +2443,45 @@ mod tests {
     fn curve_handle() -> PyLiquidityPool {
         let one_e18 = U256::from(10u64).pow(U256::from(18u64));
         let mut state = BotState::new();
-        let pool_id = state.register_curve_pool(&degenbot_pools::RegisterCurvePoolParams {
-            address: Address::repeat_byte(0xd1),
-            tokens: vec![Address::repeat_byte(0x01), Address::repeat_byte(0x02)],
-            a_coefficient: 10,
-            a_precision: 100,
-            fee: 4_000_000,
-            admin_fee: 0,
-            rate_multipliers: vec![one_e18, one_e18],
-            balances: vec![
-                U256::from(1_000u64) * one_e18,
-                U256::from(2_000u64) * one_e18,
-            ],
-            update_block: 0,
-            swap_style: 0,
-            lending_rate_style: 0,
-            d_variant: 1,
-            y_variant: 1,
-            yd_variant: 1,
-            base_pool: None,
-            initial_a_coefficient: None,
-            future_a_coefficient: None,
-            initial_a_coefficient_time: None,
-            future_a_coefficient_time: None,
-            create_timestamp: None,
-            fee_gamma: None,
-            mid_fee: None,
-            offpeg_fee_multiplier: None,
-            out_fee: None,
-            gamma: None,
-            lp_token: None,
-            use_lending: vec![false, false],
-            precision_multipliers: vec![one_e18, one_e18],
-            tokens_underlying: None,
-            metapool_rate_style: 0,
-            metapool_underlying_style: 0,
-            data_provider: None,
-        });
+        let pool_id = state
+            .register_curve_pool(&degenbot_pools::RegisterCurvePoolParams {
+                address: Address::repeat_byte(0xd1),
+                tokens: vec![Address::repeat_byte(0x01), Address::repeat_byte(0x02)],
+                a_coefficient: 10,
+                a_precision: 100,
+                fee: 4_000_000,
+                admin_fee: 0,
+                rate_multipliers: vec![one_e18, one_e18],
+                balances: vec![
+                    U256::from(1_000u64) * one_e18,
+                    U256::from(2_000u64) * one_e18,
+                ],
+                update_block: 0,
+                swap_style: 0,
+                lending_rate_style: 0,
+                d_variant: 1,
+                y_variant: 1,
+                yd_variant: 1,
+                base_pool: None,
+                initial_a_coefficient: None,
+                future_a_coefficient: None,
+                initial_a_coefficient_time: None,
+                future_a_coefficient_time: None,
+                create_timestamp: None,
+                fee_gamma: None,
+                mid_fee: None,
+                offpeg_fee_multiplier: None,
+                out_fee: None,
+                gamma: None,
+                lp_token: None,
+                use_lending: vec![false, false],
+                precision_multipliers: vec![one_e18, one_e18],
+                tokens_underlying: None,
+                metapool_rate_style: 0,
+                metapool_underlying_style: 0,
+                data_provider: None,
+            })
+            .expect("curve registration");
         handle_for(state, pool_id)
     }
 
@@ -2487,8 +2489,8 @@ mod tests {
     fn balancer_handles() -> (PyLiquidityPool, PyLiquidityPool) {
         let one_e18 = U256::from(10u64).pow(U256::from(18u64));
         let mut state = BotState::new();
-        let weighted_id = state.register_balancer_weighted_pool(
-            &degenbot_pools::RegisterBalancerWeightedPoolParams {
+        let weighted_id = state
+            .register_balancer_weighted_pool(&degenbot_pools::RegisterBalancerWeightedPoolParams {
                 address: Address::repeat_byte(0xb1),
                 vault: Address::repeat_byte(0xba),
                 pool_id: [0x07u8; 32],
@@ -2502,10 +2504,10 @@ mod tests {
                 pow_version: 2,
                 balances: vec![U256::from(500_000u64), U256::from(1_500_000u64)],
                 update_block: 3,
-            },
-        );
-        let stable_id = state.register_balancer_stable_pool(
-            &degenbot_pools::RegisterBalancerStablePoolParams {
+            })
+            .expect("balancer weighted registration");
+        let stable_id = state
+            .register_balancer_stable_pool(&degenbot_pools::RegisterBalancerStablePoolParams {
                 address: Address::repeat_byte(0xb2),
                 vault: Address::repeat_byte(0xba),
                 pool_id: [0x08u8; 32],
@@ -2518,8 +2520,8 @@ mod tests {
                 balances: vec![U256::from(800_000u64), U256::from(800_000u64)],
                 update_block: 4,
                 rate_provider: None,
-            },
-        );
+            })
+            .expect("balancer stable registration");
         // One shared core, two handles — the topology the arms ride.
         let core = Arc::new(StateLock::new(state));
         let weighted = PyLiquidityPool::new(Arc::clone(&core), weighted_id, 1);

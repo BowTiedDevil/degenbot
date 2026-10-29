@@ -10,9 +10,9 @@
 //! `concentrated_liquidity_route.rs`.
 //!
 //! The capability's own methods never touch `BotState`'s private fields: they reach the
-//! family-agnostic pool tables through the [`RegistryCore`] view parameter
-//! each caller passes — a split borrow that lets one call mutate capability
-//! state and registry core together. `BotState`'s public concentrated-liquidity
+//! family-agnostic pool table through the `PoolTable` parameter each caller
+//! passes — a split borrow that lets one call mutate capability state and the
+//! pool table together. `BotState`'s public concentrated-liquidity
 //! surface lives here as two `impl BotState` blocks: the one-line delegation
 //! wrappers over the capability (the composition root at the bottom of this
 //! module), and the id-keyed apply doors — swap, genesis seed, liquidity update,
@@ -50,11 +50,11 @@ use super::apply_telemetry::{
 use super::{
     BotState, BufferedV3PoolEvent, BufferedV4PoolEvent, ConcentratedLiquidityPoolMut, PoolEntry,
     PoolTickCoverage, RegisterV3PoolError, RegisterV3PoolParams, RegisterV4PoolError,
-    RegisterV4PoolParams, RegistrationLifecycle, TickInfo, V3PoolState, V4PoolIdentity,
-    V4PoolState, V4SwapUpdate,
+    RegisterV4PoolParams, RegisteredPoolFamily, RegistrationLifecycle, TickInfo, V3PoolState,
+    V4PoolIdentity, V4PoolState, V4SwapUpdate,
 };
 
-use super::RegistryCore;
+use super::pool_table::{PoolClaim, PoolTable};
 
 /// Why a concentrated-liquidity state write refused a pool.
 ///
@@ -87,7 +87,7 @@ pub enum ConcentratedLiquidityApplyError {
 /// state-view registry, the keyed registration gate, the snapshot seed
 /// block, the pump delivery cutoff, and the per-pool event horizons. The
 /// capability's method set (this module) reaches the registry core through
-/// the [`RegistryCore`] view its callers pass; `BotState` remains the
+/// the `PoolTable` its callers pass; `BotState` remains the
 /// composition root and delegates its public concentrated liquidity surface here.
 pub struct ConcentratedLiquidityOrchestration {
     /// Dual-buffer for V3 liquidity (Mint/Burn) events awaiting pool
@@ -100,10 +100,6 @@ pub struct ConcentratedLiquidityOrchestration {
         (Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
         BufferedV4PoolEvent,
     >,
-    /// V4 pool registry: `(pool_manager, pool_id)` -> `pool_id` (single entry
-    /// per pool - ADR-003 Option I: orientation derived at solve from
-    /// `zero_for_one`, not stored as separate forward/reverse entries).
-    pub(crate) v4_pool_ids: HashMap<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId), u64>,
     /// Rust-owned V4 pool-manager -> `StateView` registry (ADR-005 / Option 2).
     /// The canonical V4 scalar state is read via the `StateView`'s
     /// `getSlot0`/`getLiquidity`, not `getPool(poolManager)` (which reverts on
@@ -186,12 +182,9 @@ pub(crate) trait LiquidityFamily {
     /// This family's registered pool state.
     type State: RegistrationState;
 
-    /// The registered `pool_id` behind `key`, when the pool is registered.
-    fn pool_id(
-        orch: &ConcentratedLiquidityOrchestration,
-        reg: &RegistryCore,
-        key: &Self::Key,
-    ) -> Option<u64>;
+    /// The identity this family's key claims — what the pool table resolves a
+    /// registration and retires one by.
+    fn lookup(key: &Self::Key) -> PoolLookup;
 
     /// Drain this family's retained pump tail for `key`.
     fn drain_pump(
@@ -222,16 +215,10 @@ pub(crate) trait LiquidityFamily {
     fn diag_rewind(key: &Self::Key, before: u64, after: u64);
 
     /// This family's registered state for `pool_id`.
-    fn state_mut(reg: &mut RegistryCore, pool_id: u64) -> Option<&mut Self::State>;
+    fn state_mut(reg: &mut PoolTable, pool_id: u64) -> Option<&mut Self::State>;
 
     /// Apply one buffered event to a registered pool.
     fn apply(state: &mut Self::State, event: Self::Event);
-    /// Forget this family's registration index for `key`, returning the pool id.
-    fn forget_registration(
-        orch: &mut ConcentratedLiquidityOrchestration,
-        reg: &mut RegistryCore,
-        key: &Self::Key,
-    ) -> Option<u64>;
 
     /// Discard any buffered events for a pool that is leaving the registry.
     fn discard_buffered(orch: &mut ConcentratedLiquidityOrchestration, key: &Self::Key);
@@ -356,12 +343,8 @@ impl LiquidityFamily for V3Family {
     type Event = BufferedV3PoolEvent;
     type State = V3PoolState;
 
-    fn pool_id(
-        _orch: &ConcentratedLiquidityOrchestration,
-        reg: &RegistryCore,
-        key: &Self::Key,
-    ) -> Option<u64> {
-        reg.pool_addresses.get(key).copied()
+    fn lookup(key: &Self::Key) -> PoolLookup {
+        PoolLookup::from_address(*key)
     }
 
     fn drain_pump(
@@ -371,23 +354,14 @@ impl LiquidityFamily for V3Family {
         orch.v3_buffer.drain_pump(key)
     }
 
-    fn state_mut(reg: &mut RegistryCore, pool_id: u64) -> Option<&mut Self::State> {
-        reg.pools
-            .get_mut(&pool_id)
+    fn state_mut(reg: &mut PoolTable, pool_id: u64) -> Option<&mut Self::State> {
+        reg.get_mut(pool_id)
             .and_then(PoolEntry::v3_mut)
             .map(|(_, state)| state)
     }
 
     fn apply(state: &mut Self::State, event: Self::Event) {
         ConcentratedLiquidityOrchestration::apply_buffered_v3_event(state, event);
-    }
-
-    fn forget_registration(
-        _orch: &mut ConcentratedLiquidityOrchestration,
-        reg: &mut RegistryCore,
-        key: &Self::Key,
-    ) -> Option<u64> {
-        reg.pool_addresses.remove(key)
     }
 
     fn discard_buffered(orch: &mut ConcentratedLiquidityOrchestration, key: &Self::Key) {
@@ -545,12 +519,11 @@ impl LiquidityFamily for V4Family {
     type Event = BufferedV4PoolEvent;
     type State = V4PoolState;
 
-    fn pool_id(
-        orch: &ConcentratedLiquidityOrchestration,
-        _reg: &RegistryCore,
-        key: &Self::Key,
-    ) -> Option<u64> {
-        orch.v4_pool_ids.get(key).copied()
+    fn lookup(key: &Self::Key) -> PoolLookup {
+        PoolLookup::V4 {
+            pool_manager: key.0,
+            pool_id: key.1,
+        }
     }
 
     fn drain_pump(
@@ -560,23 +533,14 @@ impl LiquidityFamily for V4Family {
         orch.v4_buffer.drain_pump(key)
     }
 
-    fn state_mut(reg: &mut RegistryCore, pool_id: u64) -> Option<&mut Self::State> {
-        reg.pools
-            .get_mut(&pool_id)
+    fn state_mut(reg: &mut PoolTable, pool_id: u64) -> Option<&mut Self::State> {
+        reg.get_mut(pool_id)
             .and_then(PoolEntry::v4_mut)
             .map(|(_, state)| state)
     }
 
     fn apply(state: &mut Self::State, event: Self::Event) {
         ConcentratedLiquidityOrchestration::apply_buffered_v4_event(state, event);
-    }
-
-    fn forget_registration(
-        orch: &mut ConcentratedLiquidityOrchestration,
-        _reg: &mut RegistryCore,
-        key: &Self::Key,
-    ) -> Option<u64> {
-        orch.v4_pool_ids.remove(key)
     }
 
     fn discard_buffered(orch: &mut ConcentratedLiquidityOrchestration, key: &Self::Key) {
@@ -682,15 +646,14 @@ impl LiquidityFamily for V4Family {
 }
 
 impl ConcentratedLiquidityOrchestration {
-    /// An empty capability - every buffer, registry, and horizon starts
-    /// unseeded; `BotState::with_journal_depth` composes it with a
-    /// [`RegistryCore`].
+    /// An empty capability - every buffer, view, gate, and horizon starts
+    /// unseeded; `BotState::with_journal_depth` composes it beside the pool
+    /// table.
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {
             v3_buffer: ::degenbot_pools::LiquidityEventBuffer::new(),
             v4_buffer: ::degenbot_pools::LiquidityEventBuffer::new(),
-            v4_pool_ids: HashMap::new(),
             v4_state_views: HashMap::new(),
             registration_gate: crate::registration_gate::RegistrationGate::default(),
             snapshot_seed_block: None,
@@ -764,7 +727,7 @@ pub enum InstallWordOutcome {
 
 #[expect(
     clippy::unused_self,
-    reason = "capability methods operate on a caller-owned RegistryCore threaded as an explicit parameter; converting them to associated functions churns the whole composition seam"
+    reason = "capability methods operate on a caller-owned PoolTable threaded as an explicit parameter; converting them to associated functions churns the whole composition seam"
 )]
 #[expect(
     clippy::too_many_arguments,
@@ -788,7 +751,7 @@ impl ConcentratedLiquidityOrchestration {
     /// the immutable config / current state scalars under validation here.
     pub(crate) fn register_v3_pool(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         params: &RegisterV3PoolParams,
     ) -> Result<u64, RegisterV3PoolError> {
         use ::degenbot_pools::state::spec_bounds as sb;
@@ -798,12 +761,6 @@ impl ConcentratedLiquidityOrchestration {
         sb::validate_v3_fee(params.fee).map_err(RegisterV3PoolError::SpecViolation)?;
         sb::validate_tick_spacing(params.tick_spacing)
             .map_err(RegisterV3PoolError::SpecViolation)?;
-
-        if reg.pool_addresses.contains_key(&params.address) {
-            return Err(RegisterV3PoolError::AlreadyRegistered {
-                address: params.address,
-            });
-        }
 
         // [diag] registration-seed probe: log every V3 pool's seed scalar state
         // (update_block + sqrtPriceX96 + tick) so a solver-state mismatch can be
@@ -821,20 +778,19 @@ impl ConcentratedLiquidityOrchestration {
             "register-v3-seed"
         );
 
-        let pool_id = reg.next_pool_id;
-        reg.next_pool_id += 1;
         let address = params.address;
 
         // the `seed_from_store` path is retired — the DB
         // seeding is handled by the Db arm of `assemble_v3_tick_map` (held
         // snapshot tx). Just clone + flow the params through.
         let params = params.clone();
-        let (identity, state) = V3PoolState::from_params(params, reg.journal_depth);
-        reg.pools
-            .insert(pool_id, PoolEntry::V3(Box::new((identity, state))));
-        reg.pool_addresses.insert(address, pool_id);
-
-        Ok(pool_id)
+        let (identity, state) = V3PoolState::from_params(params, reg.journal_depth());
+        reg.register(
+            PoolClaim::new(PoolLookup::Address(address), RegisteredPoolFamily::V3),
+            PoolEntry::V3(Box::new((identity, state))),
+        )
+        .pool_id()
+        .ok_or(RegisterV3PoolError::AlreadyRegistered { address })
     }
     /// Update a V3 pool's state from a Swap event.
     ///
@@ -845,7 +801,7 @@ impl ConcentratedLiquidityOrchestration {
     /// affected `pool_id` and overlays `tick_priors` into `tick_data`).
     pub(crate) fn update_v3_pool(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         pool_address: Address,
         sqrt_price_x96: U256,
         liquidity: u128,
@@ -853,13 +809,12 @@ impl ConcentratedLiquidityOrchestration {
         block_number: u64,
         tick_priors: Vec<(i32, TickBefore)>,
     ) {
-        let Some(&pool_id) = reg.pool_addresses.get(&pool_address) else {
+        let Some(pool_id) = reg.pool_id_by_address(&pool_address) else {
             return;
         };
 
         let Some(state) = reg
-            .pools
-            .get_mut(&pool_id)
+            .get_mut(pool_id)
             .and_then(PoolEntry::v3_mut)
             .map(|(_, s)| s)
         else {
@@ -923,14 +878,13 @@ impl ConcentratedLiquidityOrchestration {
     }
     /// Resolve a V3 pool's routing presence (`concentrated_liquidity_route` axis),
     /// keyed by registry pool address.
-    fn presence_by_address(&self, reg: &RegistryCore, pool_address: &Address) -> PoolPresence {
-        let lifecycle =
-            reg.pool_addresses
-                .get(pool_address)
-                .and_then(|&id| match reg.pools.get(&id) {
-                    Some(PoolEntry::V3(p)) => Some(p.1.registration_lifecycle),
-                    _ => None,
-                });
+    fn presence_by_address(&self, reg: &PoolTable, pool_address: &Address) -> PoolPresence {
+        let lifecycle = reg
+            .pool_id_by_address(pool_address)
+            .and_then(|id| match reg.get(id) {
+                Some(PoolEntry::V3(p)) => Some(p.1.registration_lifecycle),
+                _ => None,
+            });
         PoolPresence::from_lifecycle(lifecycle)
     }
     /// The strict sparse-word gate's predicate for one tick mutation: the first
@@ -943,7 +897,7 @@ impl ConcentratedLiquidityOrchestration {
     /// rollback would restore a state the chain never had.
     fn sparse_gate_word(
         &self,
-        reg: &RegistryCore,
+        reg: &PoolTable,
         pool_id: u64,
         tick_lower: i32,
         tick_upper: i32,
@@ -951,7 +905,7 @@ impl ConcentratedLiquidityOrchestration {
         if !self.strict_sparse_apply {
             return None;
         }
-        match reg.pools.get(&pool_id)? {
+        match reg.get(pool_id)? {
             PoolEntry::V3(p) => {
                 p.1.unknown_boundary_word(tick_lower, tick_upper, p.0.tick_spacing)
             }
@@ -972,7 +926,7 @@ impl ConcentratedLiquidityOrchestration {
     /// the caller backfills the word and re-routes; `None` when it applied.
     fn apply_tick_mutation(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         pool_id: u64,
         tick_lower: i32,
         tick_upper: i32,
@@ -982,7 +936,7 @@ impl ConcentratedLiquidityOrchestration {
         if let Some(word) = self.sparse_gate_word(reg, pool_id, tick_lower, tick_upper) {
             return Some(ApplyOutcome::MissingTickWord { pool_id, word });
         }
-        match reg.pools.get_mut(&pool_id) {
+        match reg.get_mut(pool_id) {
             Some(PoolEntry::V3(p)) => {
                 p.1.apply_liquidity_update(tick_lower, tick_upper, liquidity_delta, block_number);
             }
@@ -1007,7 +961,7 @@ impl ConcentratedLiquidityOrchestration {
     /// priors).
     pub(crate) fn route_event(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         phase: Phase,
         pool_address: Address,
         event: BufferedV3PoolEvent,
@@ -1028,7 +982,7 @@ impl ConcentratedLiquidityOrchestration {
                 // Table invariant: ApplyDirect implies registered. Defensive
                 // fallback (never expected) degrades to a named no-op rather
                 // than panicking inside the hot dispatch path.
-                let Some(pool_id) = reg.pool_addresses.get(&pool_address).copied() else {
+                let Some(pool_id) = reg.pool_id_by_address(&pool_address) else {
                     debug_assert!(
                         false,
                         "ApplyDirect for an unregistered pool — routing table invariant violated"
@@ -1042,7 +996,7 @@ impl ConcentratedLiquidityOrchestration {
                         tick,
                         block_number,
                     }) => {
-                        if let Some(PoolEntry::V3(p)) = reg.pools.get_mut(&pool_id) {
+                        if let Some(PoolEntry::V3(p)) = reg.get_mut(pool_id) {
                             p.1.apply_swap(
                                 sqrt_price_x96,
                                 liquidity,
@@ -1138,12 +1092,12 @@ impl ConcentratedLiquidityOrchestration {
     #[must_use]
     pub(crate) fn sync_tick_data_by_pool_id(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         pool_id: u64,
         tick_data: HashMap<i32, TickInfo>,
         update_block: u64,
     ) -> bool {
-        let Some(entry) = reg.pools.get_mut(&pool_id) else {
+        let Some(entry) = reg.get_mut(pool_id) else {
             return false;
         };
         match entry {
@@ -1178,11 +1132,11 @@ impl ConcentratedLiquidityOrchestration {
     #[must_use]
     pub(crate) fn mark_bitmap_words_known_by_pool_id(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         pool_id: u64,
         words: &[i32],
     ) -> bool {
-        let Some(entry) = reg.pools.get_mut(&pool_id) else {
+        let Some(entry) = reg.get_mut(pool_id) else {
             return false;
         };
         match entry {
@@ -1207,20 +1161,15 @@ impl ConcentratedLiquidityOrchestration {
     /// already (defensive), applies directly.
     pub(crate) fn buffer_backfill_v3_liquidity_update(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         pool_address: Address,
         tick_lower: i32,
         tick_upper: i32,
         liquidity_delta: i128,
         block_number: u64,
     ) {
-        if let Some(&key) = reg.pool_addresses.get(&pool_address) {
-            if let Some(state) = reg
-                .pools
-                .get_mut(&key)
-                .and_then(PoolEntry::v3_mut)
-                .map(|(_, s)| s)
-            {
+        if let Some(key) = reg.pool_id_by_address(&pool_address) {
+            if let Some(state) = reg.get_mut(key).and_then(PoolEntry::v3_mut).map(|(_, s)| s) {
                 // A `Quarantined` pool defers ALL live/backfill events
                 // to the buffer so the pin's `update_block` cannot outrun
                 // `last_complete_block`. `Live` pools apply directly (the
@@ -1267,10 +1216,10 @@ impl ConcentratedLiquidityOrchestration {
     /// netting to zero lands both halves.
     pub(crate) fn apply_backfill_buffer<F: LiquidityFamily>(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         key: &F::Key,
     ) {
-        let Some(pool_id) = F::pool_id(self, reg, key) else {
+        let Some(pool_id) = reg.pool_id_for(&F::lookup(key)) else {
             F::diag_drain(key, "backfill", DrainPhase::NotRegistered, 0);
             return;
         };
@@ -1291,10 +1240,10 @@ impl ConcentratedLiquidityOrchestration {
     /// the in-progress block's events stay buffered.
     pub(crate) fn apply_pump_buffer<F: LiquidityFamily>(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         key: &F::Key,
     ) {
-        let Some(pool_id) = F::pool_id(self, reg, key) else {
+        let Some(pool_id) = reg.pool_id_for(&F::lookup(key)) else {
             F::diag_drain(key, "pump", DrainPhase::NotRegistered, 0);
             return;
         };
@@ -1315,7 +1264,7 @@ impl ConcentratedLiquidityOrchestration {
     /// backwards (an apply must never rewind the pool's freshness).
     fn apply_buffered_events<F: LiquidityFamily>(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         pool_id: u64,
         key: &F::Key,
         verb: &'static str,
@@ -1390,10 +1339,10 @@ impl ConcentratedLiquidityOrchestration {
     /// was already taken.
     pub(crate) fn take_snapshot_seed<F: LiquidityFamily>(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         key: &F::Key,
     ) -> Option<HashMap<i32, TickInfo>> {
-        let pool_id = F::pool_id(self, reg, key)?;
+        let pool_id = reg.pool_id_for(&F::lookup(key))?;
         F::state_mut(reg, pool_id)?.snapshot_seed_mut().take()
     }
 
@@ -1401,10 +1350,10 @@ impl ConcentratedLiquidityOrchestration {
     /// shape (exactly once).
     pub(crate) fn take_post_drain_snapshot<F: LiquidityFamily>(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         key: &F::Key,
     ) -> Option<(HashMap<i32, TickInfo>, u64)> {
-        let pool_id = F::pool_id(self, reg, key)?;
+        let pool_id = reg.pool_id_for(&F::lookup(key))?;
         F::state_mut(reg, pool_id)?.post_drain_snapshot_mut().take()
     }
     /// Freeze the post-drain `(tick_data, block)` pair atomically with the
@@ -1419,12 +1368,12 @@ impl ConcentratedLiquidityOrchestration {
     /// mis-stamped lie shape.
     pub(crate) fn pin_post_drain_snapshot<F: LiquidityFamily>(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         key: &F::Key,
     ) {
         let cutoff = self.pump_complete_cutoff;
         let witnessed = F::event_horizon(self, key);
-        let Some(pool_id) = F::pool_id(self, reg, key) else {
+        let Some(pool_id) = reg.pool_id_for(&F::lookup(key)) else {
             return;
         };
         let Some(state) = F::state_mut(reg, pool_id) else {
@@ -1453,11 +1402,11 @@ impl ConcentratedLiquidityOrchestration {
     /// backward stamp the two-stamp rule forbids.
     pub(crate) fn sync_pool_state<F: LiquidityFamily>(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         key: &F::Key,
         update: F::Sync,
     ) -> bool {
-        let Some(pool_id) = F::pool_id(self, reg, key) else {
+        let Some(pool_id) = reg.pool_id_for(&F::lookup(key)) else {
             return false;
         };
         let Some(state) = F::state_mut(reg, pool_id) else {
@@ -1473,13 +1422,13 @@ impl ConcentratedLiquidityOrchestration {
     /// churn that len alone would miss. `None` = pool gone.
     pub(crate) fn tick_fingerprint(
         &self,
-        reg: &RegistryCore,
+        reg: &PoolTable,
         pool_id: u64,
     ) -> Option<(u64, usize, u64)> {
         // One concentrated liquidity row (ADR-073 D2): the slice observation is the family read
         // module's observe door (TickFingerprint probe); this method keeps
         // the registry lookup.
-        let design = match reg.pools.get(&pool_id) {
+        let design = match reg.get(pool_id) {
             Some(PoolEntry::V3(p)) => concentrated_liquidity::ConcentratedLiquidityState::V3 {
                 state: &p.1,
                 scalars: concentrated_liquidity::DesignScalars::new(p.0.fee, p.0.tick_spacing),
@@ -1507,13 +1456,13 @@ impl ConcentratedLiquidityOrchestration {
     /// RPC. Pair with [`Self::install_word_fetch`].
     pub(crate) fn stage_word_fetch_by_pool_id(
         &mut self,
-        reg: &RegistryCore,
+        reg: &PoolTable,
         pool_id: u64,
         word: i32,
         block: u64,
         retried: bool,
     ) -> Option<StagedWordFetch> {
-        let (key, fetcher) = match reg.pools.get(&pool_id) {
+        let (key, fetcher) = match reg.get(pool_id) {
             Some(PoolEntry::V3(p)) => {
                 (degenbot_pools::TickWordKey::from(&p.0), p.1.fetcher.clone())
             }
@@ -1531,7 +1480,7 @@ impl ConcentratedLiquidityOrchestration {
         // otherwise go known-minus-missing-ticks alongside the event's own
         // later application). First attempt honors the companion context.
         let fetch_context = if retried {
-            match reg.pools.get(&pool_id).map(|entry| match entry {
+            match reg.get(pool_id).map(|entry| match entry {
                 PoolEntry::V3(p) => p.1.update_block,
                 PoolEntry::V4(p) => p.1.update_block,
                 PoolEntry::AerodromeV2(..)
@@ -1565,7 +1514,7 @@ impl ConcentratedLiquidityOrchestration {
     /// (fetch failed / pool gone → the companion gate raises).
     pub(crate) fn install_word_fetch(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         staged: &StagedWordFetch,
         fetched: &::degenbot_pools::FetchedTickWord,
     ) -> InstallWordOutcome {
@@ -1598,14 +1547,14 @@ impl ConcentratedLiquidityOrchestration {
     /// successful merge (checked-empty included).
     pub(crate) fn ensure_word_known_by_pool_id(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         pool_id: u64,
         word: i32,
         block: u64,
     ) -> bool {
         // Clone the stored source off the state first: the fetch call must
         // not hold the pool borrow, and `merge_tick_word` re-borrows `self`.
-        let attempt = match reg.pools.get(&pool_id) {
+        let attempt = match reg.get(pool_id) {
             Some(PoolEntry::V3(p)) => {
                 p.1.fetcher
                     .clone()
@@ -1646,7 +1595,7 @@ impl ConcentratedLiquidityOrchestration {
     /// ADR-005 sparse-map feature parity.
     pub(crate) fn merge_tick_word(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         pool_id: u64,
         fetched: &::degenbot_pools::FetchedTickWord,
     ) -> bool {
@@ -1654,7 +1603,7 @@ impl ConcentratedLiquidityOrchestration {
         // V3 and V4, not inlined per arm). The `bool` wraps the trait's
         // always-`true` return: `false`
         // for non-concentrated-liquidity / unregistered pools (the non-concentrated-liquidity no-op).
-        let Some(entry) = reg.pools.get_mut(&pool_id) else {
+        let Some(entry) = reg.get_mut(pool_id) else {
             return false;
         };
         match entry.as_concentrated_liquidity_mut() {
@@ -1720,7 +1669,7 @@ impl ConcentratedLiquidityOrchestration {
     /// with the same `(pool_manager, pool_id)` is already registered.
     pub(crate) fn register_v4_pool(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         params: &RegisterV4PoolParams,
     ) -> Result<u64, RegisterV4PoolError> {
         use ::degenbot_pools::state::spec_bounds as sb;
@@ -1761,39 +1710,39 @@ impl ConcentratedLiquidityOrchestration {
             });
         }
 
-        let key = (params.pool_manager, params.pool_id);
-        if self.v4_pool_ids.contains_key(&key) {
-            return Err(RegisterV4PoolError::AlreadyRegistered {
-                pool_manager: params.pool_manager,
-                pool_id: params.pool_id,
-            });
-        }
-
-        let pool_id = reg.next_pool_id;
-        reg.next_pool_id += 1;
+        let (pool_manager, v4_pool_id) = (params.pool_manager, params.pool_id);
 
         // the `seed_from_store` path is retired — the DB
         // seeding is handled by the Db arm of `assemble_v4_tick_map` (held
         // snapshot tx). Just clone + flow the params through.
         let params = params.clone();
-        let (identity, state) = V4PoolState::from_params(params, reg.journal_depth);
-        reg.pools
-            .insert(pool_id, PoolEntry::V4(Box::new((identity, state))));
-        self.v4_pool_ids.insert(key, pool_id);
-
-        Ok(pool_id)
+        let (identity, state) = V4PoolState::from_params(params, reg.journal_depth());
+        reg.register(
+            PoolClaim::new(
+                PoolLookup::V4 {
+                    pool_manager,
+                    pool_id: v4_pool_id,
+                },
+                RegisteredPoolFamily::V4,
+            ),
+            PoolEntry::V4(Box::new((identity, state))),
+        )
+        .pool_id()
+        .ok_or(RegisterV4PoolError::AlreadyRegistered {
+            pool_manager,
+            pool_id: v4_pool_id,
+        })
     }
     /// Resolve a V4 pool's routing presence (`concentrated_liquidity_route` axis),
     /// keyed by the (`pool_manager`, pool id) singleton key.
     fn presence_by_pool_id(
         &self,
-        reg: &RegistryCore,
+        reg: &PoolTable,
         key: &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
     ) -> PoolPresence {
-        let lifecycle = self
-            .v4_pool_ids
-            .get(key)
-            .and_then(|&id| match reg.pools.get(&id) {
+        let lifecycle = reg
+            .pool_id_by_key(key.0, &key.1)
+            .and_then(|id| match reg.get(id) {
                 Some(PoolEntry::V4(p)) => Some(p.1.registration_lifecycle),
                 _ => None,
             });
@@ -1804,7 +1753,7 @@ impl ConcentratedLiquidityOrchestration {
     /// `swap_priors` overlays tick priors onto DIRECT swap application only.
     pub(crate) fn route_event_by_key(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         phase: Phase,
         pool_manager: Address,
         v4_pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
@@ -1824,7 +1773,7 @@ impl ConcentratedLiquidityOrchestration {
             RouteAction::ApplyDirect => {
                 // Table invariant: ApplyDirect implies registered. Defensive
                 // fallback (never expected) stages rather than drops.
-                let Some(id) = self.v4_pool_ids.get(&(pool_manager, v4_pool_id)).copied() else {
+                let Some(id) = reg.pool_id_by_key(pool_manager, &v4_pool_id) else {
                     debug_assert!(
                         false,
                         "ApplyDirect for an unregistered V4 pool — routing table invariant violated"
@@ -1838,7 +1787,7 @@ impl ConcentratedLiquidityOrchestration {
                         tick,
                         block_number,
                     }) => {
-                        if let Some(PoolEntry::V4(p)) = reg.pools.get_mut(&id) {
+                        if let Some(PoolEntry::V4(p)) = reg.get_mut(id) {
                             p.1.apply_swap(
                                 sqrt_price_x96,
                                 liquidity,
@@ -1912,7 +1861,7 @@ impl ConcentratedLiquidityOrchestration {
     /// Buffer a V4 `ModifyLiquidity` event from the backfill phase.
     pub(crate) fn buffer_backfill_v4_liquidity_update(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         pool_manager: Address,
         pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId,
         tick_lower: i32,
@@ -1921,13 +1870,8 @@ impl ConcentratedLiquidityOrchestration {
         block_number: u64,
     ) {
         let key = (pool_manager, pool_id);
-        if let Some(&id) = self.v4_pool_ids.get(&key) {
-            if let Some(state) = reg
-                .pools
-                .get_mut(&id)
-                .and_then(PoolEntry::v4_mut)
-                .map(|(_, s)| s)
-            {
+        if let Some(id) = reg.pool_id_by_key(key.0, &key.1) {
+            if let Some(state) = reg.get_mut(id).and_then(PoolEntry::v4_mut).map(|(_, s)| s) {
                 // A `Quarantined` pool defers ALL live/backfill events
                 // to the buffer so the pin's `update_block` cannot outrun
                 // `last_complete_block`. `Live` pools apply directly (the
@@ -1992,10 +1936,10 @@ impl ConcentratedLiquidityOrchestration {
     /// carve-out).
     pub(crate) fn begin_registration_quarantine<F: LiquidityFamily>(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         key: F::Key,
     ) {
-        let Some(pool_id) = F::pool_id(self, reg, &key) else {
+        let Some(pool_id) = reg.pool_id_for(&F::lookup(&key)) else {
             return;
         };
         let Some(state) = F::state_mut(reg, pool_id) else {
@@ -2016,10 +1960,10 @@ impl ConcentratedLiquidityOrchestration {
     /// unregistered pool.
     pub(crate) fn mark_registration_live<F: LiquidityFamily>(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         key: F::Key,
     ) {
-        let Some(pool_id) = F::pool_id(self, reg, &key) else {
+        let Some(pool_id) = reg.pool_id_for(&F::lookup(&key)) else {
             return;
         };
         if let Some(buffered) = F::drain_pump(self, &key) {
@@ -2053,39 +1997,29 @@ impl ConcentratedLiquidityOrchestration {
     /// [`Self::mark_registration_live`]) and mark it `Live`, so no
     /// registered pool is left buffering forever. No-op when nothing is
     /// quarantined.
-    pub(crate) fn release_all_v3_v4_quarantined(&mut self, reg: &mut RegistryCore) {
+    pub(crate) fn release_all_v3_v4_quarantined(&mut self, reg: &mut PoolTable) {
         // Collect the still-Quarantined V3 addresses and V4 (pm, pool_id) keys
         // first (drain buffers are keyed by those, not `pool_id`), then release
         // each via the existing set_live flush+mark. Collect-then-apply avoids
-        // holding a `&mut reg.pools` borrow across the drain calls.
+        // holding a `&mut reg` borrow across the drain calls.
         let v3_addrs: Vec<Address> = reg
-            .pools
-            .iter()
-            .filter_map(|(&id, e)| match e {
+            .entries()
+            .filter_map(|(_, e)| match e {
                 PoolEntry::V3(p)
                     if p.1.registration_lifecycle == RegistrationLifecycle::Quarantined =>
                 {
-                    if let PoolEntry::V3(q) = &reg.pools[&id] {
-                        Some(q.0.address)
-                    } else {
-                        None
-                    }
+                    Some(p.0.address)
                 }
                 _ => None,
             })
             .collect();
         let v4_keys: Vec<(Address, degenbot_decoders::v4_swap_decoder::V4PoolId)> = reg
-            .pools
-            .iter()
-            .filter_map(|(&id, e)| match e {
+            .entries()
+            .filter_map(|(_, e)| match e {
                 PoolEntry::V4(p)
                     if p.1.registration_lifecycle == RegistrationLifecycle::Quarantined =>
                 {
-                    if let PoolEntry::V4(q) = &reg.pools[&id] {
-                        Some((q.0.pool_manager, q.0.pool_id))
-                    } else {
-                        None
-                    }
+                    Some((p.0.pool_manager, p.0.pool_id))
                 }
                 _ => None,
             })
@@ -2107,15 +2041,6 @@ impl ConcentratedLiquidityOrchestration {
             self.mark_registration_live::<V4Family>(reg, (pm, pid));
         }
     }
-    /// Look up the pool ID for a registered `(pool_manager, pool_id)` pair.
-    #[must_use]
-    pub fn pool_id_by_key(
-        &self,
-        pool_manager: Address,
-        pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
-    ) -> Option<u64> {
-        self.v4_pool_ids.get(&(pool_manager, *pool_id)).copied()
-    }
     /// One-read fast-path lookup for the `PyO3` `build_v4_pool` re-build guard
     /// (missed-WS-pong incident 2026-08-28).
     ///
@@ -2135,41 +2060,18 @@ impl ConcentratedLiquidityOrchestration {
     #[must_use]
     pub(crate) fn try_registered_v4(
         &self,
-        reg: &RegistryCore,
+        reg: &PoolTable,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<RegisteredV4> {
-        let id = self.pool_id_by_key(pool_manager, pool_id)?;
-        let (identity, state) = reg.pools.get(&id).and_then(PoolEntry::v4)?;
+        let id = reg.pool_id_by_key(pool_manager, pool_id)?;
+        let (identity, state) = reg.get(id).and_then(PoolEntry::v4)?;
         Some(RegisteredV4 {
             pool_id: id,
             pool_key: identity.pool_key.clone(),
             protocol_fee: state.protocol_fee,
             coverage: state.coverage,
         })
-    }
-    /// Number of pools registered under a `(pool_manager, pool_id)` key.
-    #[must_use]
-    pub fn registered_pool_count(&self) -> usize {
-        self.v4_pool_ids.len()
-    }
-    // ------------------------------------------------------------------
-    // Capability interface for registry-side consumers
-    // ------------------------------------------------------------------
-
-    /// Enumerate the registered V4 pools - `(pool_manager, pool_id)` ->
-    /// internal pool id. Registry-side consumers (the sim-anchor projection,
-    /// the storage probe) see V4 registration ONLY through this
-    /// capability-scoped read.
-    pub(crate) fn registered_v4_pools(
-        &self,
-    ) -> impl Iterator<
-        Item = (
-            &(Address, degenbot_decoders::v4_swap_decoder::V4PoolId),
-            &u64,
-        ),
-    > {
-        self.v4_pool_ids.iter()
     }
     /// Remove a pool's registration and everything buffered for it, for either
     /// key shape. Returns the pool id that left the registry.
@@ -2179,12 +2081,11 @@ impl ConcentratedLiquidityOrchestration {
     /// concentrated-liquidity buffers for a non-CL address is a no-op.
     pub(crate) fn unregister_pool<F: LiquidityFamily>(
         &mut self,
-        reg: &mut RegistryCore,
+        reg: &mut PoolTable,
         key: &F::Key,
     ) -> Option<u64> {
-        let pool_id = F::forget_registration(self, reg, key)?;
+        let pool_id = reg.unregister(&F::lookup(key))?;
         F::discard_buffered(self, key);
-        reg.pools.remove(&pool_id);
         Some(pool_id)
     }
 
@@ -2250,19 +2151,15 @@ impl BotState {
         match key {
             PoolLookup::Address(address) => {
                 let pool_id = self.pool_id_by_address(&address)?;
-                let (_identity, state) =
-                    self.registry.pools.get(&pool_id).and_then(PoolEntry::v3)?;
+                let (_identity, state) = self.pools.get(pool_id).and_then(PoolEntry::v3)?;
                 state.snapshot_seed.as_ref()
             }
             PoolLookup::V4 {
                 pool_manager,
                 pool_id,
             } => {
-                let pool_id = self
-                    .concentrated_liquidity
-                    .pool_id_by_key(pool_manager, &pool_id)?;
-                let (_identity, state) =
-                    self.registry.pools.get(&pool_id).and_then(PoolEntry::v4)?;
+                let pool_id = self.pools.pool_id_by_key(pool_manager, &pool_id)?;
+                let (_identity, state) = self.pools.get(pool_id).and_then(PoolEntry::v4)?;
                 state.snapshot_seed.as_ref()
             }
         }
@@ -2334,7 +2231,7 @@ impl BotState {
         op: &'static str,
     ) -> Result<&mut dyn ConcentratedLiquidityPoolMut, ConcentratedLiquidityApplyError> {
         let Some(key) = PoolLookup::from_pool_id(self, pool_id) else {
-            return Err(match self.registry.pools.get(&pool_id) {
+            return Err(match self.pools.get(pool_id) {
                 Some(entry) => ConcentratedLiquidityApplyError::UnsupportedFamily {
                     pool_id,
                     family: entry_family(entry),
@@ -2459,14 +2356,14 @@ impl BotState {
         match key {
             PoolLookup::Address(address) => self
                 .concentrated_liquidity
-                .unregister_pool::<V3Family>(&mut self.registry, &address)
+                .unregister_pool::<V3Family>(&mut self.pools, &address)
                 .is_some(),
             PoolLookup::V4 {
                 pool_manager,
                 pool_id,
             } => self
                 .concentrated_liquidity
-                .unregister_pool::<V4Family>(&mut self.registry, &(pool_manager, pool_id))
+                .unregister_pool::<V4Family>(&mut self.pools, &(pool_manager, pool_id))
                 .is_some(),
         }
     }
@@ -2486,7 +2383,7 @@ impl BotState {
         pool_id: u64,
         ticks: impl IntoIterator<Item = (i32, TickInfo)>,
     ) -> bool {
-        let Some(PoolEntry::V3(pool)) = self.registry.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::V3(pool)) = self.pools.get_mut(pool_id) else {
             return false;
         };
         pool.1.tick_data.extend(ticks);
@@ -2509,7 +2406,7 @@ impl BotState {
         params: &RegisterV3PoolParams,
     ) -> Result<u64, RegisterV3PoolError> {
         self.concentrated_liquidity
-            .register_v3_pool(&mut self.registry, params)
+            .register_v3_pool(&mut self.pools, params)
     }
 
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::update_v3_pool`].
@@ -2523,7 +2420,7 @@ impl BotState {
         tick_priors: Vec<(i32, TickBefore)>,
     ) {
         self.concentrated_liquidity.update_v3_pool(
-            &mut self.registry,
+            &mut self.pools,
             pool_address,
             sqrt_price_x96,
             liquidity,
@@ -2541,7 +2438,7 @@ impl BotState {
         update_block: u64,
     ) -> bool {
         self.concentrated_liquidity.sync_tick_data_by_pool_id(
-            &mut self.registry,
+            &mut self.pools,
             pool_id,
             tick_data,
             update_block,
@@ -2551,7 +2448,7 @@ impl BotState {
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::mark_bitmap_words_known_by_pool_id`].
     pub fn mark_bitmap_words_known_by_pool_id(&mut self, pool_id: u64, words: &[i32]) -> bool {
         self.concentrated_liquidity
-            .mark_bitmap_words_known_by_pool_id(&mut self.registry, pool_id, words)
+            .mark_bitmap_words_known_by_pool_id(&mut self.pools, pool_id, words)
     }
     /// Apply a liquidity-position change to a pool, for either key shape.
     ///
@@ -2607,7 +2504,7 @@ impl BotState {
             PoolLookup::Address(pool_address) => {
                 self.concentrated_liquidity
                     .buffer_backfill_v3_liquidity_update(
-                        &mut self.registry,
+                        &mut self.pools,
                         pool_address,
                         update.tick_lower,
                         update.tick_upper,
@@ -2621,7 +2518,7 @@ impl BotState {
             } => {
                 self.concentrated_liquidity
                     .buffer_backfill_v4_liquidity_update(
-                        &mut self.registry,
+                        &mut self.pools,
                         pool_manager,
                         pool_id,
                         update.tick_lower,
@@ -2660,7 +2557,7 @@ impl BotState {
         match (key, update) {
             (PoolLookup::Address(address), PoolStateUpdate::V3(update)) => self
                 .concentrated_liquidity
-                .sync_pool_state::<V3Family>(&mut self.registry, &address, update)
+                .sync_pool_state::<V3Family>(&mut self.pools, &address, update)
                 .then_some(())
                 .ok_or(PoolRefusal::Unregistered),
             (
@@ -2671,7 +2568,7 @@ impl BotState {
                 PoolStateUpdate::V4(update),
             ) => self
                 .concentrated_liquidity
-                .sync_pool_state::<V4Family>(&mut self.registry, &(pool_manager, pool_id), update)
+                .sync_pool_state::<V4Family>(&mut self.pools, &(pool_manager, pool_id), update)
                 .then_some(())
                 .ok_or(PoolRefusal::Unregistered),
             (key, update) => Err(PoolRefusal::FamilyMismatch {
@@ -2685,7 +2582,7 @@ impl BotState {
     #[must_use]
     pub fn tick_fingerprint(&self, pool_id: u64) -> Option<(u64, usize, u64)> {
         self.concentrated_liquidity
-            .tick_fingerprint(&self.registry, pool_id)
+            .tick_fingerprint(&self.pools, pool_id)
     }
 
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::stage_word_fetch_by_pool_id`].
@@ -2697,7 +2594,7 @@ impl BotState {
         retried: bool,
     ) -> Option<StagedWordFetch> {
         self.concentrated_liquidity.stage_word_fetch_by_pool_id(
-            &self.registry,
+            &self.pools,
             pool_id,
             word,
             block,
@@ -2712,7 +2609,7 @@ impl BotState {
         fetched: &::degenbot_pools::FetchedTickWord,
     ) -> InstallWordOutcome {
         self.concentrated_liquidity
-            .install_word_fetch(&mut self.registry, staged, fetched)
+            .install_word_fetch(&mut self.pools, staged, fetched)
     }
 
     /// Arm or disarm the strict sparse-word apply gate for this state owner
@@ -2733,7 +2630,7 @@ impl BotState {
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::ensure_word_known_by_pool_id`].
     pub fn ensure_word_known_by_pool_id(&mut self, pool_id: u64, word: i32, block: u64) -> bool {
         self.concentrated_liquidity.ensure_word_known_by_pool_id(
-            &mut self.registry,
+            &mut self.pools,
             pool_id,
             word,
             block,
@@ -2747,7 +2644,7 @@ impl BotState {
         fetched: &::degenbot_pools::FetchedTickWord,
     ) -> bool {
         self.concentrated_liquidity
-            .merge_tick_word(&mut self.registry, pool_id, fetched)
+            .merge_tick_word(&mut self.pools, pool_id, fetched)
     }
 
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::register_v4_state_view`].
@@ -2784,7 +2681,7 @@ impl BotState {
         params: &RegisterV4PoolParams,
     ) -> Result<u64, RegisterV4PoolError> {
         self.concentrated_liquidity
-            .register_v4_pool(&mut self.registry, params)
+            .register_v4_pool(&mut self.pools, params)
     }
 
     /// Coverage flag for the address-registered (V3) pool behind `pool_id`
@@ -2795,7 +2692,7 @@ impl BotState {
     /// shapes resolve into this one interior.
     #[must_use]
     pub(crate) fn coverage_by_pool_id(&self, pool_id: u64) -> Option<PoolTickCoverage> {
-        match self.registry.pools.get(&pool_id) {
+        match self.pools.get(pool_id) {
             Some(PoolEntry::V3(p)) => {
                 let design = concentrated_liquidity::ConcentratedLiquidityState::V3 {
                     state: &p.1,
@@ -2824,10 +2721,8 @@ impl BotState {
                 pool_manager,
                 pool_id,
             } => {
-                let pid = self
-                    .concentrated_liquidity
-                    .pool_id_by_key(pool_manager, &pool_id)?;
-                match self.registry.pools.get(&pid) {
+                let pid = self.pools.pool_id_by_key(pool_manager, &pool_id)?;
+                match self.pools.get(pid) {
                     Some(PoolEntry::V4(p)) => {
                         let design = concentrated_liquidity::ConcentratedLiquidityState::V4 {
                             state: &p.1,
@@ -2851,18 +2746,24 @@ impl BotState {
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::release_all_v3_v4_quarantined`].
     pub fn release_all_quarantined(&mut self) {
         self.concentrated_liquidity
-            .release_all_v3_v4_quarantined(&mut self.registry);
+            .release_all_v3_v4_quarantined(&mut self.pools);
     }
 
-    /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::pool_id_by_key`].
+    /// The pool registered under this `(pool_manager, pool_id)` pair — the V4
+    /// key's one resolution, answered by the pool table.
     #[must_use]
     pub fn pool_id_by_key(
         &self,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<u64> {
-        self.concentrated_liquidity
-            .pool_id_by_key(pool_manager, pool_id)
+        self.pools.pool_id_by_key(pool_manager, pool_id)
+    }
+
+    /// The number of pools registered under a `(pool_manager, pool_id)` key.
+    #[must_use]
+    pub fn registered_v4_pool_count(&self) -> usize {
+        self.pools.v4_count()
     }
 
     /// Delegates to the concentrated liquidity orchestration capability - see [`ConcentratedLiquidityOrchestration::try_registered_v4`].
@@ -2873,7 +2774,7 @@ impl BotState {
         pool_id: &degenbot_decoders::v4_swap_decoder::V4PoolId,
     ) -> Option<RegisteredV4> {
         self.concentrated_liquidity
-            .try_registered_v4(&self.registry, pool_manager, pool_id)
+            .try_registered_v4(&self.pools, pool_manager, pool_id)
     }
 
     /// The address-keyed swap apply (the payload shape is the V3 scalar form —
@@ -2973,7 +2874,7 @@ impl BotState {
         match (key, event) {
             (PoolLookup::Address(pool_address), BufferedPoolEvent::V3(event)) => Ok(self
                 .concentrated_liquidity
-                .route_event(&mut self.registry, phase, pool_address, event, swap_priors)),
+                .route_event(&mut self.pools, phase, pool_address, event, swap_priors)),
             (
                 PoolLookup::V4 {
                     pool_manager,
@@ -2981,7 +2882,7 @@ impl BotState {
                 },
                 BufferedPoolEvent::V4(event),
             ) => Ok(self.concentrated_liquidity.route_event_by_key(
-                &mut self.registry,
+                &mut self.pools,
                 phase,
                 pool_manager,
                 pool_id,
@@ -3004,11 +2905,10 @@ impl BotState {
     /// Snapshot all key-registered (V4) pool state for verification.
     #[must_use]
     pub fn registered_pools_snapshot(&self) -> HashMap<u64, (V4PoolIdentity, V4PoolState)> {
-        self.registry
-            .pools
-            .iter()
+        self.pools
+            .entries()
             .filter_map(|(id, e)| match e {
-                PoolEntry::V4(p) => Some((*id, (p.0.clone(), p.1.clone()))),
+                PoolEntry::V4(p) => Some((id, (p.0.clone(), p.1.clone()))),
                 PoolEntry::V2(..)
                 | PoolEntry::V3(..)
                 | PoolEntry::Curve(..)

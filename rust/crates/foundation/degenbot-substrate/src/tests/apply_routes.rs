@@ -338,9 +338,8 @@ fn backfill_live_in_range_post_seed_adjusts_in_range_liquidity() {
         PoolLiquidityUpdate::new(-60, 60, 123_456_i128, 6),
     );
     let Some(state) = core
-        .registry
         .pools
-        .get(&pool_id)
+        .get(pool_id)
         .and_then(PoolEntry::v3)
         .map(|(_, s)| s)
     else {
@@ -376,9 +375,8 @@ fn backfill_live_in_range_pre_seed_does_not_adjust_scalar() {
         PoolLiquidityUpdate::new(-60, 60, 250_000_i128, 4),
     );
     let Some(state) = core
-        .registry
         .pools
-        .get(&pool_id)
+        .get(pool_id)
         .and_then(PoolEntry::v3)
         .map(|(_, s)| s)
     else {
@@ -439,9 +437,8 @@ fn v3_restore_before_block_past_newest_leaves_state_untouched() {
     let tick_present;
     {
         let Some(state) = core
-            .registry
             .pools
-            .get(&pool_id)
+            .get(pool_id)
             .and_then(PoolEntry::v3)
             .map(|(_, s)| s)
         else {
@@ -473,9 +470,8 @@ fn v3_restore_before_block_past_newest_leaves_state_untouched() {
 
     // The landed-at state must survive unchanged.
     let Some(state) = core
-        .registry
         .pools
-        .get(&pool_id)
+        .get(pool_id)
         .and_then(PoolEntry::v3)
         .map(|(_, s)| s)
     else {

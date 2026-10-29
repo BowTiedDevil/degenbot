@@ -106,7 +106,7 @@ impl SimAnchorState {
     #[must_use]
     pub fn snapshot(state: &BotState) -> Self {
         Self {
-            tracked_pools: state.registry.pool_addresses.clone(),
+            tracked_pools: state.pools.tracked_addresses(),
             anchor_words: state.project_sim_anchor_scalars().into_iter().collect(),
         }
     }
@@ -319,7 +319,7 @@ mod tests {
         }
 
         // tracked_pools parity: the tripwire set is the full pool-address map.
-        // pool_addresses covers V2/V3 contract addresses; V4 is keyed by
+        // the address index covers V2/V3 contract addresses; V4 is keyed by
         // (PoolManager, pool_id) and lives outside the address map.
         assert_eq!(snap.tracked_pools.len(), 2);
         assert_eq!(

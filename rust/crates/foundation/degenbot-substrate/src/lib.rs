@@ -11,10 +11,11 @@
 //! the substrate through the [`telemetry_port`] function-pointer bundle,
 //! installed once at boot by the host crate.
 //!
-//! This module is the composition root — [`RegistryCore`], [`BotState`], and the
-//! re-exports consumers name those types and their error types through. A
-//! `BotState` method lives with the capability it orchestrates: registry reads
-//! and clocks in [`pool_registry`], key resolution in [`pool_lookup`],
+//! This module is the composition root — [`BotState`], the pool table it owns
+//! (`pool_table::PoolTable`), and the re-exports consumers name those types
+//! and their error types through. A `BotState` method lives with the capability
+//! it orchestrates: pool-table reads and clocks in [`pool_registry`], key
+//! resolution in [`pool_lookup`],
 //! quarantine in [`quarantine_gate`], the reorg journal in [`reorg_journal`],
 //! concentrated-liquidity apply and backfill replay in
 //! [`concentrated_liquidity_orchestration`], swap reads in [`swap_simulation`],
@@ -38,6 +39,7 @@ pub mod planning;
 pub mod pool_ingress;
 pub mod pool_lookup;
 pub mod pool_registry;
+pub mod pool_table;
 
 pub use pool_lookup::PoolLookup;
 pub mod quarantine_gate;
@@ -128,35 +130,6 @@ use hashbrown::HashMap;
 #[cfg(test)]
 mod tests;
 
-/// The shared registry core - the family-agnostic field set every structural
-/// family reads: the pool tables, the token registry, the id counter, the
-/// reorg journal depth, and the ADR-040 quarantine set. `BotState` composes
-/// this core alongside the family capabilities ([`ConcentratedLiquidityOrchestration`]),
-/// and every `impl BotState` row that reads it is the front for one capability:
-/// [`pool_registry`] (tables + clocks), [`pool_lookup`] (key resolution),
-/// [`quarantine_gate`], [`reorg_journal`], and the per-family orchestration
-/// modules.
-struct RegistryCore {
-    /// Pool registry: `pool_id` -> `PoolEntry`.
-    pools: HashMap<u64, PoolEntry>,
-    /// Pool contract address -> `pool_id`.
-    pool_addresses: HashMap<Address, u64>,
-    /// Token registry: address -> `TokenEntry`.
-    tokens: HashMap<Address, TokenEntry>,
-    /// Auto-incrementing pool ID.
-    next_pool_id: u64,
-    /// Reorg journal depth (in blocks) for every pool - one mainnet epoch
-    /// by default (ADR-003). Applied uniformly to V2/V3/V4.
-    journal_depth: usize,
-    /// ADR-040 quarantine set: pool ids currently EXCLUDED from solve
-    /// resolution (tainted-by-desync surfaces). Family-agnostic - spans
-    /// V2/V3/V4 and every other family because the gate sits in the
-    /// projection dispatcher, not per state type. Each transition bumps the
-    /// pool's `state_nonce` (dirties it) so cached hop projections and
-    /// in-flight candidates invalidate.
-    quarantined_pools: hashbrown::HashSet<u64>,
-}
-
 /// The single owner of all runtime state.
 ///
 /// All pool data, token metadata, engines, and encoded results live here.
@@ -167,13 +140,18 @@ struct RegistryCore {
 /// orchestrator seam; `BotState` is a private deep module with its own test
 /// seam.
 pub struct BotState {
-    /// The shared registry core: the pool tables, the token registry, the
-    /// id counter, the journal depth, and the quarantine set.
-    registry: RegistryCore,
+    /// The pool table: the registered entries, the address and V4 key
+    /// indexes, the id counter, the reorg journal depth, and the ADR-040
+    /// quarantine set. Identity allocation, the duplicate refusal, and the
+    /// quarantine transition are the table's own operations, so no family
+    /// arm reproduces any of them.
+    pools: pool_table::PoolTable,
+    /// Token registry: address -> `TokenEntry`.
+    tokens: HashMap<Address, TokenEntry>,
     /// The concentrated-liquidity (V3 + V4) orchestration capability: the
-    /// dual liquidity buffers, `v4_pool_ids`, the state-view registry, the
-    /// registration gate, the snapshot seed block, the pump delivery
-    /// cutoff, and the per-pool event horizons.
+    /// dual liquidity buffers, the state-view registry, the registration
+    /// gate, the snapshot seed block, the pump delivery cutoff, and the
+    /// per-pool event horizons.
     concentrated_liquidity: ConcentratedLiquidityOrchestration,
 }
 
@@ -188,14 +166,8 @@ impl BotState {
     #[must_use]
     pub fn with_journal_depth(journal_depth: usize) -> Self {
         Self {
-            registry: RegistryCore {
-                pools: HashMap::new(),
-                pool_addresses: HashMap::new(),
-                tokens: HashMap::new(),
-                next_pool_id: 1,
-                journal_depth,
-                quarantined_pools: hashbrown::HashSet::new(),
-            },
+            pools: pool_table::PoolTable::new(journal_depth),
+            tokens: HashMap::new(),
             concentrated_liquidity: ConcentratedLiquidityOrchestration::new(),
         }
     }

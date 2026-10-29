@@ -240,7 +240,9 @@ fn door_parity_v4() {
 fn door_parity_curve() {
     let params = curve_params(Address::from([0xc0u8; 20]));
     let mut direct = BotState::new();
-    let direct_id = direct.register_curve_pool(&params);
+    let direct_id = direct
+        .register_curve_pool(&params)
+        .expect("curve registration");
     let mut door = BotState::new();
     let verdict = door.register_pool(PoolRegistration::Curve(Box::new(params.clone())));
     assert_eq!(
@@ -257,7 +259,9 @@ fn door_parity_curve() {
 fn door_parity_balancer_weighted() {
     let params = balancer_weighted_params(Address::from([0xb1u8; 20]));
     let mut direct = BotState::new();
-    let direct_id = direct.register_balancer_weighted_pool(&params);
+    let direct_id = direct
+        .register_balancer_weighted_pool(&params)
+        .expect("balancer weighted registration");
     let mut door = BotState::new();
     let verdict = door.register_pool(PoolRegistration::BalancerWeighted(Box::new(params.clone())));
     assert_eq!(
@@ -274,7 +278,9 @@ fn door_parity_balancer_weighted() {
 fn door_parity_balancer_stable() {
     let params = balancer_stable_params(Address::from([0xb2u8; 20]));
     let mut direct = BotState::new();
-    let direct_id = direct.register_balancer_stable_pool(&params);
+    let direct_id = direct
+        .register_balancer_stable_pool(&params)
+        .expect("balancer stable registration");
     let mut door = BotState::new();
     let verdict = door.register_pool(PoolRegistration::BalancerStable(Box::new(params.clone())));
     assert_eq!(
@@ -465,22 +471,6 @@ fn door_refuses_duplicate_aerodrome_as_already_registered() {
         ),
         "the Aerodrome duplicate is a typed refusal, got {verdict:?}"
     );
-}
-
-// ---------------------------------------------------------------------------
-// Additive discipline: the direct entries keep their exact behavior.
-// ---------------------------------------------------------------------------
-
-#[test]
-#[should_panic(expected = "pool already registered")]
-fn direct_curve_register_still_panics_on_duplicate() {
-    // The door pre-checks duplicates for Curve, but the direct entry is
-    // untouched: its own assertion still fires. This pins the additive
-    // discipline — the door refuses; the direct path is byte-identical.
-    let params = curve_params(Address::from([0xc1u8; 20]));
-    let mut core = BotState::new();
-    core.register_curve_pool(&params);
-    core.register_curve_pool(&params);
 }
 
 #[test]

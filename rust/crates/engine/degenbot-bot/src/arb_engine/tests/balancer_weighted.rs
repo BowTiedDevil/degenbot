@@ -68,7 +68,8 @@ fn balancer_weighted_5050_finds_profitable_arb() {
             Address::from([0xd1u8; 20]),
             1000,
             2000,
-        ));
+        ))
+        .expect("balancer weighted registration");
     // Pool B: 1000 token0 / 1950 token1 (mispriced — cheaper token1 here)
     let pool_b = engine
         .core
@@ -77,7 +78,8 @@ fn balancer_weighted_5050_finds_profitable_arb() {
             Address::from([0xd2u8; 20]),
             1000,
             1950,
-        ));
+        ))
+        .expect("balancer weighted registration");
     // Path: token0 → token1 (pool A) → token0 (pool B)
     register_path(
         &mut engine,
@@ -116,7 +118,8 @@ fn balancer_weighted_8020_finds_profitable_arb() {
             Address::from([0xe1u8; 20]),
             800_000,
             200_000,
-        ));
+        ))
+        .expect("balancer weighted registration");
     let pool_b = engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
@@ -124,7 +127,8 @@ fn balancer_weighted_8020_finds_profitable_arb() {
             Address::from([0xe2u8; 20]),
             800_000,
             195_000,
-        ));
+        ))
+        .expect("balancer weighted registration");
     register_path(
         &mut engine,
         vec![
@@ -193,11 +197,13 @@ fn balancer_weighted_5050_matches_v2_mobius_on_same_reserves() {
     let bw_a = engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .register_balancer_weighted_pool(&bw_params(Address::from([0xf3u8; 20]), 1000, 2000));
+        .register_balancer_weighted_pool(&bw_params(Address::from([0xf3u8; 20]), 1000, 2000))
+        .expect("balancer weighted registration");
     let bw_b = engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .register_balancer_weighted_pool(&bw_params(Address::from([0xf4u8; 20]), 1000, 1950));
+        .register_balancer_weighted_pool(&bw_params(Address::from([0xf4u8; 20]), 1000, 1950))
+        .expect("balancer weighted registration");
     // Solve V2-V2 path
     register_path(
         &mut engine,
@@ -291,7 +297,8 @@ fn balancer_weighted_mixed_with_v2_finds_arb() {
     let bw = engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
-        .register_balancer_weighted_pool(&bw_params);
+        .register_balancer_weighted_pool(&bw_params)
+        .expect("balancer weighted registration");
     // V2 → Balancer weighted path
     register_path(
         &mut engine,
@@ -324,7 +331,8 @@ fn balancer_weighted_rejects_mixed_with_concentrated_liquidity() {
             Address::from([0xb1u8; 20]),
             1000,
             2000,
-        ));
+        ))
+        .expect("balancer weighted registration");
     // Register a V3 pool
     let v3 = core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)

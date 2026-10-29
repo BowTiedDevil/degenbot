@@ -26,7 +26,11 @@ use degenbot_pools::{BalancerStablePoolState, RegisterBalancerStablePoolParams};
 use degenbot_pools::{BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams};
 use degenbot_pools::{CurvePoolState, RegisterCurvePoolParams};
 
-use super::{check_metapool_liquidity, resolve_dy_inputs, BotState, PoolEntry};
+use super::pool_table::PoolClaim;
+use super::{
+    check_metapool_liquidity, resolve_dy_inputs, BotState, PoolEntry, PoolLookup, RegisterRefusal,
+    RegisteredPoolFamily,
+};
 
 impl BotState {
     /// Register a Curve `StableSwap` pool by contract address.
@@ -41,40 +45,45 @@ impl BotState {
     ///
     /// Returns the auto-assigned pool ID.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the pool address is already registered. The caller pre-checks
-    /// hook / dynamic-fee rejection at the Python seam for V4; Curve has no
-    /// analogous admission floor in this sub-slice (the stableswap math stays
-    /// Python-side at calc time, so there's no Rust correctness floor to
-    /// enforce yet).
-    pub fn register_curve_pool(&mut self, params: &RegisterCurvePoolParams) -> u64 {
-        assert!(
-            !self.registry.pool_addresses.contains_key(&params.address),
-            "pool already registered: {}",
-            params.address
-        );
-
-        assert!(
-            params.balances.len() == params.tokens.len()
-                && params.balances.len() == params.rate_multipliers.len(),
-            "Curve params mismatch: tokens={}, balances={}, rate_multipliers={} (must all be N)",
-            params.tokens.len(),
-            params.balances.len(),
-            params.rate_multipliers.len(),
-        );
-
-        let pool_id = self.registry.next_pool_id;
-        self.registry.next_pool_id += 1;
+    /// [`RegisterRefusal::AlreadyRegistered`] when the address already holds a
+    /// registration — the shared refusal vocabulary, because this family has no
+    /// `Register*PoolError` of its own.
+    ///
+    /// [`RegisterRefusal::SpecViolation`] when the coin, balance, and
+    /// rate-multiplier vectors disagree in length: an N-inconsistent pool has no
+    /// n-coin state to build. Curve has no admission floor beyond it (the
+    /// stableswap math stays Python-side at calc time, so there's no Rust
+    /// correctness floor to enforce yet).
+    pub fn register_curve_pool(
+        &mut self,
+        params: &RegisterCurvePoolParams,
+    ) -> Result<u64, RegisterRefusal> {
+        if params.balances.len() != params.tokens.len()
+            || params.balances.len() != params.rate_multipliers.len()
+        {
+            return Err(RegisterRefusal::SpecViolation {
+                detail: format!(
+                    "Curve params mismatch: tokens={}, balances={}, rate_multipliers={} (must all be N)",
+                    params.tokens.len(),
+                    params.balances.len(),
+                    params.rate_multipliers.len(),
+                ),
+            });
+        }
 
         let (identity, state) =
-            CurvePoolState::from_params(params.clone(), self.registry.journal_depth);
-        self.registry
-            .pools
-            .insert(pool_id, PoolEntry::Curve(Box::new((identity, state))));
-        self.registry.pool_addresses.insert(params.address, pool_id);
-
-        pool_id
+            CurvePoolState::from_params(params.clone(), self.pools.journal_depth());
+        self.pools
+            .register(
+                PoolClaim::new(
+                    PoolLookup::Address(params.address),
+                    RegisteredPoolFamily::Curve,
+                ),
+                PoolEntry::Curve(Box::new((identity, state))),
+            )
+            .into_result()
     }
 
     /// Apply a Curve `external_update` (new balances from an `Exchange` event)
@@ -110,7 +119,7 @@ impl BotState {
         balances: Vec<U256>,
         block_number: u64,
     ) -> Option<u64> {
-        let entry = self.registry.pools.get_mut(&pool_id)?;
+        let entry = self.pools.get_mut(pool_id)?;
         entry
             .as_balance_vector_mut()?
             .apply_balance_update(balances, block_number);
@@ -140,9 +149,8 @@ impl BotState {
         override_balances: Option<&[U256]>,
     ) -> Result<U256, CurveInputsError> {
         let (identity, state) = self
-            .registry
             .pools
-            .get(&pool_id)
+            .get(pool_id)
             .and_then(PoolEntry::curve)
             .ok_or(CurveInputsError::UnknownPool(pool_id))?;
         curve_read::get_dy(state, identity, i, j, dx, block_number, override_balances)
@@ -171,9 +179,8 @@ impl BotState {
         override_balances: Option<&[U256]>,
     ) -> Result<U256, CurveInputsError> {
         let (identity, state) = self
-            .registry
             .pools
-            .get(&pool_id)
+            .get(pool_id)
             .and_then(PoolEntry::curve)
             .ok_or(CurveInputsError::UnknownPool(pool_id))?;
         let base_addr = identity.base_pool.ok_or(CurveInputsError::NotMetapool)?;
@@ -183,9 +190,8 @@ impl BotState {
         // The contract's zero-balance refusal, evaluated where the balance
         // vectors are read (core-side; the companion's pre-validation is gone).
         let base_balances: &[U256] = self
-            .registry
             .pools
-            .get(&base_id)
+            .get(base_id)
             .and_then(PoolEntry::curve)
             .map_or(&[], |(_, base_state)| &base_state.balances[..]);
         check_metapool_liquidity(&state.balances, base_balances)?;
@@ -222,9 +228,8 @@ impl BotState {
         block_number: u64,
     ) -> Result<U256, CurveInputsError> {
         let (identity, state) = self
-            .registry
             .pools
-            .get(&pool_id)
+            .get(pool_id)
             .and_then(PoolEntry::curve)
             .ok_or(CurveInputsError::UnknownPool(pool_id))?;
         curve_read::calc_token_amount(state, identity, amounts, deposit, block_number)
@@ -248,9 +253,8 @@ impl BotState {
         block_number: u64,
     ) -> Result<U256, CurveInputsError> {
         let (identity, state) = self
-            .registry
             .pools
-            .get(&pool_id)
+            .get(pool_id)
             .and_then(PoolEntry::curve)
             .ok_or(CurveInputsError::UnknownPool(pool_id))?;
         curve_read::calc_withdraw_one_coin(state, identity, token_amount, i, block_number)
@@ -264,45 +268,46 @@ impl BotState {
     /// be built over a `PyLiquidityPool` handle that reads back through
     /// [`Self::get_balancer_weighted_pool`].
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the pool's address is already registered, or if
-    /// `balances.len()` doesn't match `tokens.len()` / `weights.len()` /
-    /// `scaling_factors.len()` (a builder wiring error — the builder always
-    /// passes N-token tuples of consistent arity).
+    /// [`RegisterRefusal::AlreadyRegistered`] when the address already holds a
+    /// registration — the shared refusal vocabulary, because this family has no
+    /// `Register*PoolError` of its own.
+    ///
+    ///
+    /// [`RegisterRefusal::SpecViolation`] when `balances.len()` doesn't match
+    /// `tokens.len()` / `weights.len()` / `scaling_factors.len()`: an
+    /// N-inconsistent pool has no weighted state to build.
     pub fn register_balancer_weighted_pool(
         &mut self,
         params: &RegisterBalancerWeightedPoolParams,
-    ) -> u64 {
-        assert!(
-            !self.registry.pool_addresses.contains_key(&params.address),
-            "pool already registered: {}",
-            params.address
-        );
-
-        assert!(
-            params.balances.len() == params.tokens.len()
-                && params.balances.len() == params.weights.len()
-                && params.balances.len() == params.scaling_factors.len(),
-            "Balancer weighted params mismatch: tokens={}, balances={}, weights={}, scaling_factors={} (must all be N)",
-            params.tokens.len(),
-            params.balances.len(),
-            params.weights.len(),
-            params.scaling_factors.len(),
-        );
-
-        let pool_id = self.registry.next_pool_id;
-        self.registry.next_pool_id += 1;
+    ) -> Result<u64, RegisterRefusal> {
+        if params.balances.len() != params.tokens.len()
+            || params.balances.len() != params.weights.len()
+            || params.balances.len() != params.scaling_factors.len()
+        {
+            return Err(RegisterRefusal::SpecViolation {
+                detail: format!(
+                    "Balancer weighted params mismatch: tokens={}, balances={}, weights={}, scaling_factors={} (must all be N)",
+                    params.tokens.len(),
+                    params.balances.len(),
+                    params.weights.len(),
+                    params.scaling_factors.len(),
+                ),
+            });
+        }
 
         let (identity, state) =
-            BalancerWeightedPoolState::from_params(params.clone(), self.registry.journal_depth);
-        self.registry.pools.insert(
-            pool_id,
-            PoolEntry::BalancerWeighted(Box::new((identity, state))),
-        );
-        self.registry.pool_addresses.insert(params.address, pool_id);
-
-        pool_id
+            BalancerWeightedPoolState::from_params(params.clone(), self.pools.journal_depth());
+        self.pools
+            .register(
+                PoolClaim::new(
+                    PoolLookup::Address(params.address),
+                    RegisteredPoolFamily::BalancerWeighted,
+                ),
+                PoolEntry::BalancerWeighted(Box::new((identity, state))),
+            )
+            .into_result()
     }
 
     /// Register a Balancer V2 stable pool. The pool's immutable config
@@ -313,53 +318,56 @@ impl BotState {
     /// companion will be built over a `PyLiquidityPool` handle
     /// that reads back through [`Self::get_balancer_stable_pool`].
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the pool's address is already registered, if
-    /// `balances.len()` doesn't match `tokens.len()` / `scaling_factors.len()`,
-    /// or if `bpt_idx` is `Some(i)` with `i >= tokens.len()` (a builder
-    /// wiring error — the builder always passes N-token tuples of
-    /// consistent arity and resolves `bpt_idx` via `detect_bpt_index`).
+    /// [`RegisterRefusal::AlreadyRegistered`] when the address already holds a
+    /// registration — the shared refusal vocabulary, because this family has no
+    /// `Register*PoolError` of its own.
+    ///
+    ///
+    /// [`RegisterRefusal::SpecViolation`] when `balances.len()` doesn't match
+    /// `tokens.len()` / `scaling_factors.len()`, or when `bpt_idx` is
+    /// `Some(i)` with `i >= tokens.len()` (the BPT must be in the token list
+    /// for its balance to be addressable).
     pub fn register_balancer_stable_pool(
         &mut self,
         params: &RegisterBalancerStablePoolParams,
-    ) -> u64 {
-        assert!(
-            !self.registry.pool_addresses.contains_key(&params.address),
-            "pool already registered: {}",
-            params.address
-        );
-
-        assert!(
-            params.balances.len() == params.tokens.len()
-                && params.balances.len() == params.scaling_factors.len(),
-            "Balancer stable params mismatch: tokens={}, balances={}, scaling_factors={} (must all be N)",
-            params.tokens.len(),
-            params.balances.len(),
-            params.scaling_factors.len(),
-        );
-
-        if let Some(idx) = params.bpt_idx {
-            assert!(
-                idx < params.tokens.len(),
-                "Balancer stable bpt_idx {} >= tokens.len() {} (BPT must be in-token-list)",
-                idx,
-                params.tokens.len(),
-            );
+    ) -> Result<u64, RegisterRefusal> {
+        if params.balances.len() != params.tokens.len()
+            || params.balances.len() != params.scaling_factors.len()
+        {
+            return Err(RegisterRefusal::SpecViolation {
+                detail: format!(
+                    "Balancer stable params mismatch: tokens={}, balances={}, scaling_factors={} (must all be N)",
+                    params.tokens.len(),
+                    params.balances.len(),
+                    params.scaling_factors.len(),
+                ),
+            });
         }
 
-        let pool_id = self.registry.next_pool_id;
-        self.registry.next_pool_id += 1;
+        if let Some(idx) = params.bpt_idx {
+            if idx >= params.tokens.len() {
+                return Err(RegisterRefusal::SpecViolation {
+                    detail: format!(
+                        "Balancer stable bpt_idx {idx} >= tokens.len() {} (BPT must be in-token-list)",
+                        params.tokens.len(),
+                    ),
+                });
+            }
+        }
 
         let (identity, state) =
-            BalancerStablePoolState::from_params(params.clone(), self.registry.journal_depth);
-        self.registry.pools.insert(
-            pool_id,
-            PoolEntry::BalancerStable(Box::new((identity, state))),
-        );
-        self.registry.pool_addresses.insert(params.address, pool_id);
-
-        pool_id
+            BalancerStablePoolState::from_params(params.clone(), self.pools.journal_depth());
+        self.pools
+            .register(
+                PoolClaim::new(
+                    PoolLookup::Address(params.address),
+                    RegisteredPoolFamily::BalancerStable,
+                ),
+                PoolEntry::BalancerStable(Box::new((identity, state))),
+            )
+            .into_result()
     }
 }
 

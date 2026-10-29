@@ -38,7 +38,9 @@ mod tests {
     #[test]
     fn register_and_read_back_balances() {
         let mut core = BotState::new();
-        let pool_id = core.register_balancer_weighted_pool(&two_token_params(10, &[1_000, 2_000]));
+        let pool_id = core
+            .register_balancer_weighted_pool(&two_token_params(10, &[1_000, 2_000]))
+            .expect("balancer weighted registration");
         let s = core
             .pool_slice::<degenbot_pools::BalancerWeightedPoolState>(pool_id)
             .expect("balancer weighted pool registered");
@@ -58,7 +60,9 @@ mod tests {
     #[test]
     fn apply_balance_update_journals_and_lands_new_balances() {
         let mut core = BotState::new();
-        let pool_id = core.register_balancer_weighted_pool(&two_token_params(10, &[1_000, 2_000]));
+        let pool_id = core
+            .register_balancer_weighted_pool(&two_token_params(10, &[1_000, 2_000]))
+            .expect("balancer weighted registration");
         let affected = core.apply_balance_update_by_pool_id(
             pool_id,
             vec![U256::from(1_500), U256::from(2_500)],
@@ -108,7 +112,9 @@ mod tests {
     #[test]
     fn restore_before_block_lands_at_prior_balances() {
         let mut core = BotState::new();
-        let pool_id = core.register_balancer_weighted_pool(&two_token_params(10, &[1_000, 2_000]));
+        let pool_id = core
+            .register_balancer_weighted_pool(&two_token_params(10, &[1_000, 2_000]))
+            .expect("balancer weighted registration");
         let _ = core.apply_balance_update_by_pool_id(
             pool_id,
             vec![U256::from(1_500), U256::from(2_500)],
@@ -133,7 +139,9 @@ mod tests {
     #[test]
     fn restore_to_before_registration_is_an_error() {
         let mut core = BotState::new();
-        let pool_id = core.register_balancer_weighted_pool(&two_token_params(10, &[1_000, 2_000]));
+        let pool_id = core
+            .register_balancer_weighted_pool(&two_token_params(10, &[1_000, 2_000]))
+            .expect("balancer weighted registration");
         // Target at the registration block → rolling back past registration.
         let res = core
             .restore_pool_before_block(pool_id, 10)

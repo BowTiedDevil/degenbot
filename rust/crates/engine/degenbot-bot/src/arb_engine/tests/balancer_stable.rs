@@ -42,7 +42,8 @@ fn balancer_stable_finds_profitable_arb() {
             Address::from([0xe1u8; 20]),
             1000,
             2000,
-        ));
+        ))
+        .expect("balancer stable registration");
     // Pool B: 1000 token0 / 1950 token1 (mispriced)
     let pool_b = engine
         .core
@@ -51,7 +52,8 @@ fn balancer_stable_finds_profitable_arb() {
             Address::from([0xe2u8; 20]),
             1000,
             1950,
-        ));
+        ))
+        .expect("balancer stable registration");
     // Path: token0 → token1 (pool A) → token0 (pool B)
     register_path(
         &mut engine,
@@ -90,7 +92,8 @@ fn balancer_stable_unprofitable_path_returns_none() {
             Address::from([0xf1u8; 20]),
             1000,
             2000,
-        ));
+        ))
+        .expect("balancer stable registration");
     let pool_b = engine
         .core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
@@ -98,7 +101,8 @@ fn balancer_stable_unprofitable_path_returns_none() {
             Address::from([0xf2u8; 20]),
             1000,
             2000,
-        ));
+        ))
+        .expect("balancer stable registration");
     register_path(
         &mut engine,
         vec![
@@ -139,7 +143,8 @@ fn balancer_stable_mixed_with_v2_finds_arb() {
             Address::from([0xa4u8; 20]),
             1000,
             1950,
-        ));
+        ))
+        .expect("balancer stable registration");
     // V2 → Balancer stable path
     register_path(
         &mut engine,
@@ -173,7 +178,8 @@ fn balancer_stable_rejects_mixed_with_concentrated_liquidity() {
             Address::from([0xb3u8; 20]),
             1000,
             2000,
-        ));
+        ))
+        .expect("balancer stable registration");
     let v3 = core
         .write_at(degenbot_substrate::state_lock::LockSite::Solver)
         .register_v3_pool(&RegisterV3PoolParams {

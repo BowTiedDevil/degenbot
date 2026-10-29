@@ -1297,25 +1297,31 @@ standalone-Rust bot and the PyBot driver drive the same core.
 _Avoid_: confusing it with the `PyBot` adapter (the thin PyO3 shell) or with
 `BotState` (the data owner the orchestrator drives).
 
-**Registry core**:
-`RegistryCore` — the shared registry struct `BotState` composes: `pools`,
-`pool_addresses`, `tokens`, `next_pool_id`, `journal_depth`, and the
-ADR-040 `quarantined_pools` set — the one canonical object space every handle
-reads through, and the view concentrated-liquidity-orchestration fns receive as their `reg`
-parameter.
+**Pool table**:
+`PoolTable` (in `degenbot-substrate`) — the one owner of pool identity:
+the entry table, the address index, the `(PoolManager, pool_id)` index, the
+id counter, the reorg journal depth, and the ADR-040 quarantine set. The
+canonical object space every pool handle reads through, and the value
+concentrated-liquidity-orchestration fns receive as their `reg` parameter.
+Identity changes are its operations, not its fields: `register` is the one
+duplicate refusal, `allocate` the one monotonic id allocation plus key
+binding, and one quarantine transition dirties a pool's `state_nonce` in
+either direction. `BotState` owns exactly one, beside the token table.
 _Avoid_: "session registry" for it; the `SessionObjectRegistry` is the
-identity-only layer, the registry core is the live state.
+identity-only layer, the pool table is the live state. Also avoid reaching
+for its fields — a caller resolves a key (`pool_id_for`) or borrows an entry
+(`get`/`get_mut`), never the tables.
 
 **Concentrated-liquidity orchestration capability**:
 `ConcentratedLiquidityOrchestration` — the one struct owning every concentrated-liquidity-local state surface:
-the V3/V4 liquidity event buffers, `v4_pool_ids`, the V4 state-view registry,
+the V3/V4 liquidity event buffers, the V4 state-view registry,
 the registration gate, the snapshot seed block, the pump delivery cutoff, and
 the per-pool event horizons. `BotState` stays the composition root and
 delegates its public concentrated-liquidity surface to it one-line-at-a-time; callers that need
 only concentrated-liquidity-local state reach the capability directly through `BotState::concentrated_liquidity()` /
 `concentrated_liquidity_mut()` over the capability's `pub` method set, capability fns reach the
-registry core only through the `RegistryCore` view their callers pass, and
-registry-side consumers (the sim-anchor projection, the storage probe) see
-V4 registration only through `registered_v4_pools()`.
+pool table only through the `&PoolTable` their callers pass, and registry-side
+consumers (the sim-anchor projection, the storage probe) see V4 registration
+only through `PoolTable::v4_entries()`.
 _Avoid_: reaching into `state.concentrated_liquidity.<field>` from registry-side code or growing
 concentrated-liquidity policy outside the capability's method set.

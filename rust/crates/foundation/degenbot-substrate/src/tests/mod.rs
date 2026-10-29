@@ -10,6 +10,7 @@ mod apply_routes;
 mod pool_identity;
 mod pool_key_census;
 mod pool_lookup;
+mod pool_table;
 mod quarantine;
 mod registration;
 mod registration_door;
