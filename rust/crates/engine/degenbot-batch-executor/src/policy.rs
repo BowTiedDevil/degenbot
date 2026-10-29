@@ -15,8 +15,9 @@ use std::sync::{Arc, Mutex};
 use degenbot_arbitrage::{FeeOnTransferRegistry, PoolDivergence};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_submission::{
-    Dispatcher, NonceLane, PathSuppression, ReceiptProbe, SubmissionTarget, TxSigner,
+    Dispatcher, PathSuppression, ReceiptProbe, SubmissionLedger, SubmissionTarget, TxSigner,
 };
+use degenbot_substrate::nonce::NonceLane;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
 use parking_lot::RwLock as ParkingRwLock;
@@ -111,7 +112,7 @@ pub struct ExecutorRuntime {
     /// The receipt probe the spawned monitors poll.
     pub probe: Arc<dyn ReceiptProbe + Send + Sync>,
     /// The host-minted sign-time nonce lane.
-    pub nonce_lane: Arc<NonceLane>,
+    pub nonce_lane: Arc<NonceLane<SubmissionLedger>>,
     /// Additional broadcast providers fanned out alongside the read provider.
     pub extra_broadcast: Vec<Arc<AlloyProvider>>,
     /// Where the signed transaction is sent (the relay posture value).
@@ -243,11 +244,12 @@ mod tests {
                 .expect("the anvil key is valid"),
             ),
             probe: Arc::new(NoopProbe),
-            nonce_lane: Arc::new(NonceLane::new(
-                Arc::new(degenbot_substrate::nonce::NonceAuthority::new(0)),
-                Arc::new(degenbot_submission::SubmissionLedger::new()),
-                "settlement",
-            )),
+            nonce_lane: Arc::new(
+                Arc::new(degenbot_substrate::nonce::NonceAuthority::new(0)).mint_lane(
+                    "settlement",
+                    Arc::new(degenbot_submission::SubmissionLedger::new()),
+                ),
+            ),
             extra_broadcast: Vec::new(),
             target: SubmissionTarget::Public,
         };

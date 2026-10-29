@@ -25,7 +25,8 @@ use degenbot_substrate::pool_ingress::{AlloyLiquidityLogSource, AlloySampleVerif
 use degenbot_substrate::RouteRegistry;
 
 use degenbot_rpc::pending_tx_stream::PendingTxStream;
-use degenbot_submission::submission_ledger::NonceLane;
+use degenbot_submission::submission_ledger::SubmissionLedger;
+use degenbot_substrate::nonce::NonceLane;
 
 use super::driver_loop::BackrunDriver;
 use super::node_capability::NodeCapability;
@@ -397,7 +398,7 @@ pub struct BackrunBoot {
     strategy: BackrunStrategyBoot,
     hub: Arc<Hub>,
     namespace_root: Option<PathBuf>,
-    nonce_lane: Arc<NonceLane>,
+    nonce_lane: Arc<NonceLane<SubmissionLedger>>,
     stream: Option<PendingTxStream>,
 }
 
@@ -745,7 +746,7 @@ pub fn backrun_boot(
     strategy: BackrunStrategyBoot,
     hub: Arc<Hub>,
     namespace_root: Option<PathBuf>,
-    nonce_lane: Arc<NonceLane>,
+    nonce_lane: Arc<NonceLane<SubmissionLedger>>,
     stream: Option<PendingTxStream>,
 ) -> BackrunBoot {
     install_frame_trace_sink(&strategy.ecosystem);
@@ -765,7 +766,7 @@ pub fn backrun_boot(
 pub fn backrun_spawn_factory(
     strategy: BackrunStrategyBoot,
     hub: Arc<Hub>,
-    nonce_lane: Arc<NonceLane>,
+    nonce_lane: Arc<NonceLane<SubmissionLedger>>,
     stream: Option<PendingTxStream>,
 ) -> DriverSpawnFactory {
     Box::new(move |namespace| {

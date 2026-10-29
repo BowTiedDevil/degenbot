@@ -24,9 +24,11 @@ use degenbot_arbitrage::{
 use degenbot_executor::composers::{EncodeOptions, PathInfo};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_submission::{
-    dispatch_and_submit, Dispatcher, NonceLane, PathSuppression, PipelineFailure, ReceiptProbe,
-    SimFuture, SimLeaf, SimSubmitPipeline, SubmissionTarget, SubmitLeaf, SubmitRecord, TxSigner,
+    dispatch_and_submit, Dispatcher, PathSuppression, PipelineFailure, ReceiptProbe, SimFuture,
+    SimLeaf, SimSubmitPipeline, SubmissionLedger, SubmissionTarget, SubmitLeaf, SubmitRecord,
+    TxSigner,
 };
+use degenbot_substrate::nonce::NonceLane;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::BotState;
 use parking_lot::RwLock;
@@ -105,7 +107,7 @@ pub struct ExecutorConfig {
     /// The receipt probe the spawned monitors poll.
     pub(crate) probe: Arc<dyn ReceiptProbe + Send + Sync>,
     /// The host-minted sign-time nonce lane.
-    pub(crate) nonce_lane: Arc<NonceLane>,
+    pub(crate) nonce_lane: Arc<NonceLane<SubmissionLedger>>,
     /// The live-submission skip (a safety policy value, S3 — the driver's
     /// run-mode stance).
     pub(crate) dry_run: bool,

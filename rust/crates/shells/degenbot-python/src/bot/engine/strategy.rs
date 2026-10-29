@@ -17,7 +17,7 @@ use degenbot_bot::bot_core::session_boot::{
     SessionConstruction,
 };
 use degenbot_bot::strategy_host::{FacetStatus, HeadReconciler, HostError, StrategyHost};
-use degenbot_substrate::nonce::{NonceAuthority, StrategyId};
+use degenbot_substrate::nonce::{NonceAuthority, NonceLane, StrategyId};
 
 #[cfg(feature = "submission")]
 use degenbot_bot::hosted_sources::{HeadTrigger, HostedHeadClock};
@@ -27,6 +27,18 @@ use degenbot_rpc::pending_tx_stream::PendingTxFeedConfig;
 use degenbot_submission::head_reconciliation::{
     AlloyChainNonceRead, HeadLanes, HeadReconciliation,
 };
+
+/// The submission-ledger lane one hosted strategy stamps through.
+#[cfg(feature = "submission")]
+type HostedLane = Arc<NonceLane<degenbot_submission::SubmissionLedger>>;
+
+/// One hosted backrun arm's lane, keyed by the ecosystem that boots it.
+#[cfg(feature = "submission")]
+type BackrunLanes = Vec<(
+    StrategyId,
+    degenbot_strategy::backrun_driver::BackrunEcosystem,
+    HostedLane,
+)>;
 
 /// The Python-facing name of a driver's FSM state.
 fn state_name(state: degenbot_bot::strategy_host::DriverPose) -> &'static str {
@@ -327,20 +339,9 @@ fn hosted_plane(
 fn hosted_lanes(
     nonce: &Arc<NonceAuthority>,
     ledger: &Arc<degenbot_submission::SubmissionLedger>,
-) -> (
-    HeadLanes,
-    Vec<(
-        StrategyId,
-        degenbot_strategy::backrun_driver::BackrunEcosystem,
-        Arc<degenbot_submission::NonceLane>,
-    )>,
-) {
+) -> (HeadLanes, BackrunLanes) {
     let settlement_id = StrategyId::new(degenbot_strategy::StrategyName::Settlement.as_str());
-    let settlement_lane = Arc::new(degenbot_submission::NonceLane::new(
-        Arc::clone(nonce),
-        Arc::clone(ledger),
-        settlement_id.clone(),
-    ));
+    let settlement_lane = Arc::new(nonce.mint_lane(settlement_id.clone(), Arc::clone(ledger)));
     // The settlement seam is the Python-driven arm of this one hosted
     // process, so its lane is process-global: every settlement submission
     // stamps through the shared authority once the boot installs it.
@@ -364,11 +365,7 @@ fn hosted_lanes(
         ),
     ] {
         let id = StrategyId::new(name.as_str());
-        let lane = Arc::new(degenbot_submission::NonceLane::new(
-            Arc::clone(nonce),
-            Arc::clone(ledger),
-            id.clone(),
-        ));
+        let lane = Arc::new(nonce.mint_lane(id.clone(), Arc::clone(ledger)));
         backruns.push((id.clone(), ecosystem, Arc::clone(&lane)));
         lanes.insert(id, lane);
     }
@@ -432,11 +429,7 @@ fn head_trigger(
 fn hosted_arms(
     cfg: &degenbot_config::schema::BotConfig,
     backrun_resources: &degenbot_strategy::backrun_driver::BackrunBootResources,
-    backruns: Vec<(
-        StrategyId,
-        degenbot_strategy::backrun_driver::BackrunEcosystem,
-        Arc<degenbot_submission::NonceLane>,
-    )>,
+    backruns: BackrunLanes,
 ) -> (Vec<HostedArmBoot>, Option<HostedHeadClock>) {
     use degenbot_eventhub::PendingTxSource;
     use degenbot_rpc::backrun_feed::BackrunFeedConfig;

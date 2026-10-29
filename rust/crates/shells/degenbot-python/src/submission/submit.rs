@@ -35,9 +35,10 @@ use crate::submission::dispatcher::PyDispatcher;
 use crate::submission::params::parse_access_list;
 use crate::submission::signer::PyTxSigner;
 use degenbot_submission::{
-    dispatch_and_submit, fetch_fee_history, NonceLane, PoolKey, ReceiptProbe, SkipReason,
+    dispatch_and_submit, fetch_fee_history, PoolKey, ReceiptProbe, SkipReason, SubmissionLedger,
     SubmissionTarget, SubmitCandidate, SubmitOutcome, SubmitRecord,
 };
+use degenbot_substrate::nonce::NonceLane;
 use pyo3::exceptions::PyValueError;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyList};
 use std::collections::HashSet;
@@ -203,75 +204,70 @@ impl PyReceiptProbe {
 ///
 /// The settlement seam is the Python-driven arm of the one hosted process, so
 /// its lane is process-global: the hosted boot installs it, and every
-/// settlement submission stamps through the shared authority. A process with
-/// no host (a legacy standalone seam) leaves it unset and keeps the private
-/// dispatcher reservation table.
-static SETTLEMENT_LANE: parking_lot::Mutex<Option<Arc<NonceLane>>> = parking_lot::Mutex::new(None);
+/// settlement submission stamps through the shared authority. A process that
+/// never booted a host owns no authority to stamp from, so the seam refuses the
+/// submission rather than minting a second, private reservation table.
+static SETTLEMENT_LANE: parking_lot::Mutex<Option<Arc<NonceLane<SubmissionLedger>>>> =
+    parking_lot::Mutex::new(None);
 
 /// Install the settlement lane at host boot. A later boot replaces the lane, so
 /// a rebuilt engine in the same process always drives through its own ledger.
-pub(crate) fn install_settlement_lane(lane: Arc<NonceLane>) {
+pub(crate) fn install_settlement_lane(lane: Arc<NonceLane<SubmissionLedger>>) {
     *SETTLEMENT_LANE.lock() = Some(lane);
 }
 
 /// The installed settlement lane, if the process booted with a host.
 #[must_use]
-pub(crate) fn settlement_lane() -> Option<Arc<NonceLane>> {
+pub(crate) fn settlement_lane() -> Option<Arc<NonceLane<SubmissionLedger>>> {
     SETTLEMENT_LANE.lock().clone()
 }
 
-/// The process-local settlement lane for a host-less process.
-static LOCAL_SETTLEMENT_LANE: std::sync::OnceLock<Arc<NonceLane>> = std::sync::OnceLock::new();
+/// Why the settlement seam refused a submission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SettlementLaneError {
+    /// No strategy host booted in this process, so no lane binds the operator
+    /// account's nonces and a settlement submission has nothing to stamp from.
+    NoHostedLane,
+}
 
-/// The settlement nonce lane for one submission, seeded from the
+impl std::fmt::Display for SettlementLaneError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoHostedLane => f.write_str(
+                "settlement submission requires the strategy host boot: this process installed no \
+                 settlement nonce lane",
+            ),
+        }
+    }
+}
+
+/// Resolve the settlement lane the process boot installed, seeded from the
 /// submission-time chain read so its first stamp never re-issues a nonce the
 /// chain has already consumed.
 ///
-/// The hosted process uses the lane its boot installed. A process with no host
-/// is the legacy standalone settlement seam: it warns loudly and mints a
-/// process-local lane over its own authority, so every signing path still
-/// issues through the authority contract instead of a private reservation
-/// table.
-/// The process-local lane a host-less process mints once and shares.
-fn local_settlement_lane() -> Arc<NonceLane> {
-    Arc::clone(LOCAL_SETTLEMENT_LANE.get_or_init(|| {
-        Arc::new(NonceLane::new(
-            Arc::new(degenbot_substrate::nonce::NonceAuthority::new(0)),
-            Arc::new(degenbot_submission::SubmissionLedger::new()),
-            "settlement",
-        ))
-    }))
-}
-
-/// Resolve the settlement lane from the installed boot lane (or the legacy
-/// process-local fallback), then seed it from the submission-time chain read so
-/// its first stamp never re-issues a nonce the chain has already consumed.
+/// Split from [`settlement_nonce_lane`] so the refusal is testable without the
+/// process-global install slot.
 ///
-/// Split from [`settlement_nonce_lane`] so the fallback choice is testable
-/// without the process-global install slot.
-#[must_use]
+/// # Errors
+///
+/// [`SettlementLaneError::NoHostedLane`] when no boot installed a lane.
 pub(crate) fn settlement_lane_for(
-    installed: Option<Arc<NonceLane>>,
+    installed: Option<Arc<NonceLane<SubmissionLedger>>>,
     operator_nonce: u64,
-) -> Arc<NonceLane> {
-    let lane = if let Some(lane) = installed {
-        lane
-    } else {
-        tracing::warn!(
-            target: "degenbot.strategy.nonce",
-            "settlement submitted with no strategy host boot: routing through a process-local \
-             authority (legacy path); boot the strategy host to share the operator-account lane"
-        );
-        local_settlement_lane()
-    };
-    lane.observe_chain_nonce(operator_nonce);
-    lane
+) -> Result<Arc<NonceLane<SubmissionLedger>>, SettlementLaneError> {
+    let lane = installed.ok_or(SettlementLaneError::NoHostedLane)?;
+    lane.authority().observe_confirmed(operator_nonce);
+    Ok(lane)
 }
 
-/// The settlement lane for one submission: the host-installed lane when the
-/// process booted a strategy host, a process-local fallback otherwise.
-#[must_use]
-pub(crate) fn settlement_nonce_lane(operator_nonce: u64) -> Arc<NonceLane> {
+/// The settlement lane for one submission: the lane the hosted boot installed.
+///
+/// # Errors
+///
+/// [`SettlementLaneError::NoHostedLane`] when no boot installed a lane.
+pub(crate) fn settlement_nonce_lane(
+    operator_nonce: u64,
+) -> Result<Arc<NonceLane<SubmissionLedger>>, SettlementLaneError> {
     settlement_lane_for(settlement_lane(), operator_nonce)
 }
 
@@ -313,7 +309,8 @@ impl ReceiptProbe for PyReceiptProbe {
 ///         (the Rust leaves lock the SAME `Arc`).
 ///     `provider`: the `AsyncAlloyProvider` (the typed RPC handle).
 ///     `signer`: the `PyTxSigner` (per-tx key never crosses to Python).
-///     `operator_nonce`: the baseline account nonce.
+///     `operator_nonce`: the account's next chain nonce — the seed of the
+///         hosted authority's confirmed clock, never a reservation.
 ///     `current_block`: the by-ref block clock read.
 ///     `dry_run`: skip live submission (commit pools anyway).
 ///     `inject_code`: skip live submission (the injected contract doesn't
@@ -326,6 +323,8 @@ impl ReceiptProbe for PyReceiptProbe {
 ///     "broadcast_failed", "detail": "..."?}`.
 ///
 /// # Errors
+/// `RuntimeError`: If the process never booted a strategy host, so no
+///         settlement lane owns the operator account's nonces.
 /// `ValueError`: If the dispatch+submit leaf returns a `SubmissionError`
 ///         (a non-"not-found" RPC error during broadcast/access-list/sign).
 #[pyfunction]
@@ -370,11 +369,12 @@ pub fn dispatch_and_submit_py<'py>(
             .unwrap_or_default();
 
     // The settlement seam is the Python-driven arm of the one hosted process:
-    // when the strategy host boot installed its lane, every settlement
-    // submission stamps through the shared authority. A legacy process with no
-    // host mints a process-local lane (with a loud deprecation) rather than a
-    // second reservation table.
-    let nonce_lane = settlement_nonce_lane(operator_nonce);
+    // the strategy host boot installed its lane, and every settlement
+    // submission stamps through that shared authority. A process that never
+    // booted a host refuses here — there is no second reservation table to fall
+    // back to.
+    let nonce_lane = settlement_nonce_lane(operator_nonce)
+        .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
     // ── GIL release across the RPC submits ──
     future_into_py(py, async move {
         let outcome: SubmitOutcome = dispatch_and_submit(
@@ -501,46 +501,46 @@ pub(crate) fn skip_reason_to_py(reason: &SkipReason) -> (&'static str, Option<St
 #[expect(clippy::expect_used, reason = "test assertions fail loudly")]
 mod settlement_nonce_lane_tests {
     use super::*;
-    use degenbot_submission::SubmissionLedger;
     use degenbot_substrate::nonce::NonceAuthority;
 
-    fn lane() -> Arc<NonceLane> {
-        Arc::new(NonceLane::new(
-            Arc::new(NonceAuthority::new(0)),
-            Arc::new(SubmissionLedger::new()),
-            "settlement",
-        ))
+    fn lane() -> Arc<NonceLane<SubmissionLedger>> {
+        let authority = Arc::new(NonceAuthority::new(0));
+        Arc::new(authority.mint_lane("settlement", Arc::new(SubmissionLedger::new())))
     }
 
-    /// A host-less process still issues through an authority: it mints a
-    /// process-local lane rather than falling back to a private reservation
-    /// table, and the submission-time chain read seeds it.
+    /// A process with no host boot refuses the submission: settlement stamps
+    /// through the hosted authority, and a private process-local authority is
+    /// exactly what the seam must never mint.
     #[test]
-    fn without_a_host_the_seam_mints_a_seeded_local_lane() {
-        let local = settlement_lane_for(None, 7);
-        assert_eq!(local.strategy().as_str(), "settlement");
+    fn without_a_host_the_seam_refuses_the_submission() {
         assert_eq!(
-            local.authority().confirmed(),
-            7,
-            "the submission-time chain read seeds the local authority"
+            settlement_lane_for(None, 7).err(),
+            Some(SettlementLaneError::NoHostedLane),
+            "no booted lane means no settlement submission"
         );
-        let lease = local.stamp().expect("local lane stamps");
-        assert_eq!(lease.nonce(), 7);
     }
 
-    /// A hosted process uses the installed lane and seeds it forward-only.
+    /// A hosted process uses the installed lane and seeds its authority from
+    /// the submission-time chain read, forward-only.
     #[test]
     fn with_a_host_the_seam_reuses_the_installed_lane() {
         let installed = lane();
-        let resolved = settlement_lane_for(Some(Arc::clone(&installed)), 7);
+        let resolved = settlement_lane_for(Some(Arc::clone(&installed)), 7)
+            .expect("the installed lane resolves");
         assert!(
             Arc::ptr_eq(&resolved, &installed),
-            "the installed lane is used, not a fallback"
+            "the installed lane is used, not a private mint"
         );
         assert_eq!(
             installed.authority().confirmed(),
             7,
             "the submission-time chain read seeds the authority"
+        );
+        settlement_lane_for(Some(Arc::clone(&installed)), 6).expect("a stale read still resolves");
+        assert_eq!(
+            installed.authority().confirmed(),
+            7,
+            "a stale chain read never rewinds the confirmed nonce"
         );
     }
 }

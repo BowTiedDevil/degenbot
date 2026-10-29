@@ -40,7 +40,8 @@ use crate::gap_quarantine_journal::{
 };
 use degenbot_submission::dispatcher::Dispatcher;
 use degenbot_submission::signer::TxSigner;
-use degenbot_submission::submission_ledger::NonceLane;
+use degenbot_submission::submission_ledger::SubmissionLedger;
+use degenbot_substrate::nonce::NonceLane;
 
 use super::driver_boot::{BackrunBootError, BackrunStrategyBoot};
 use super::driver_policy::{initial_wallet_gas_cost, wallet_gas_cost_at};
@@ -215,7 +216,7 @@ pub(super) async fn run_frame(
     head: u64,
     spent: &mut U256,
     dispatcher: &Arc<Mutex<Dispatcher>>,
-    nonce_lane: &Arc<NonceLane>,
+    nonce_lane: &Arc<NonceLane<SubmissionLedger>>,
     signer: Option<&TxSigner>,
     gap_probe: &crate::gap_probe::GapProbe,
     quarantine: &mut Quarantine,
@@ -961,7 +962,7 @@ struct LoopBoot {
     strategy: BackrunStrategy,
     pl: PipelineConfig,
     dispatcher: Arc<Mutex<Dispatcher>>,
-    nonce_lane: Arc<NonceLane>,
+    nonce_lane: Arc<NonceLane<SubmissionLedger>>,
     signer: Option<TxSigner>,
     gap_probe: crate::gap_probe::GapProbe,
     sim_provider: Arc<AlloyProvider>,
@@ -1002,7 +1003,7 @@ impl BackrunDriver {
         strategy: BackrunStrategyBoot,
         hub: Arc<Hub>,
         namespace_root: Option<PathBuf>,
-        nonce_lane: Arc<NonceLane>,
+        nonce_lane: Arc<NonceLane<SubmissionLedger>>,
         stream: Option<PendingTxStream>,
     ) -> Result<DriverHandle, BackrunBootError> {
         let BackrunStrategyBoot {
@@ -1102,7 +1103,7 @@ impl BackrunDriver {
             )
             .await
             .unwrap_or_default();
-        nonce_lane.observe_chain_nonce(operator_nonce);
+        nonce_lane.authority().observe_confirmed(operator_nonce);
 
         tracing::info!(
             bid_mode = cfg.bid_mode_legal(),

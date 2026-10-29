@@ -3,6 +3,16 @@
 **Status: accepted** (2026-09-19). Records the landed dynamic host (commits
 184b800fe, 8015f23f3, b9c8d8954, 73d902f9d, 971917465, 6e057be05). Basis:
 
+> **Amendment (2026-10-29): the host-less settlement lane is retired.** The
+> process-local fallback this ADR describes (a process with no host minting its
+> own authority and lane behind a warning) is deleted. `NonceLane` now lives in
+> `degenbot-substrate` beside the authority it binds, generic over the
+> `NonceLedger` trait, and `NonceAuthority::mint_lane` is its only constructor; a
+> settlement submission in a process that never booted a host fails loudly
+> instead. The submission-time chain seed moved with it:
+> `NonceAuthority::observe_confirmed` is the forward-only clock entry, replacing
+> `NonceLane::observe_chain_nonce`.
+>
 > **Amendment (2026-09-20): the standalone sidecar file is removed.** This
 > ADR originally kept `bin/backrun_sidecar.rs` green as a parallel deployment
 > shape ("a host of size one") per its "not removed and stays green"

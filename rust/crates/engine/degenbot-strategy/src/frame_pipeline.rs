@@ -91,11 +91,12 @@ use degenbot_simulation::{SimulationOverrideParams, WarmCodeCacheInner};
 use degenbot_submission::dispatcher::Dispatcher;
 use degenbot_submission::monitor::ReceiptProbe;
 use degenbot_submission::signer::TxSigner;
-use degenbot_submission::submission_ledger::NonceLane;
+use degenbot_submission::submission_ledger::SubmissionLedger;
 use degenbot_submission::submit::{
     dispatch_and_submit, BundleTarget, SubmissionTarget, SubmitCandidate,
 };
 use degenbot_substrate::connector_index::V2ConnectorIndex;
+use degenbot_substrate::nonce::NonceLane;
 use degenbot_substrate::SimAnchorOracle;
 use hashbrown::HashMap as HbMap;
 use parking_lot::RwLock;
@@ -948,7 +949,7 @@ pub struct FrameSubmit<'a> {
     /// fan-out's public fallback relay).
     pub provider: &'a Arc<AlloyProvider>,
     pub dispatcher: &'a Arc<Mutex<Dispatcher>>,
-    pub nonce_lane: &'a Arc<NonceLane>,
+    pub nonce_lane: &'a Arc<NonceLane<SubmissionLedger>>,
     pub signer: Option<&'a TxSigner>,
 }
 

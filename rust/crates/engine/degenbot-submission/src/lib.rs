@@ -97,8 +97,8 @@ pub use sim_pipeline::{
     PipelineFailure, SimFuture, SimLeaf, SimSubmitPipeline, SubmitFuture, SubmitLeaf,
 };
 pub use submission_ledger::{
-    HeadPolicy, LedgerDecline, NonceLane, Notification, NotificationKind, PolicyAction,
-    RepackageRequest, ShadowPosture, SubmissionLedger, SubmissionRecord, SubmissionState, TargetId,
+    HeadPolicy, LedgerDecline, Notification, NotificationKind, PolicyAction, RepackageRequest,
+    ShadowPosture, SubmissionLedger, SubmissionRecord, SubmissionState, TargetId,
 };
 pub use submit::{
     dispatch_and_submit, fetch_fee_history, SkipReason, SubmissionTarget, SubmitCandidate,

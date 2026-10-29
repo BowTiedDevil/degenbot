@@ -48,7 +48,8 @@ use crate::fee::finalize_fees;
 use crate::monitor::{monitor_pending_transaction_default, ReceiptProbe, SubmittedTx};
 use crate::params::TxParams;
 use crate::signer::TxSigner;
-use crate::submission_ledger::{NonceLane, TargetId};
+use crate::submission_ledger::SubmissionLedger;
+use degenbot_substrate::nonce::NonceLane;
 
 // ─────────────────────────────────────────────────────────────────────────
 // The submit candidate (decoupled from the Simulation `SimResult`)
@@ -308,7 +309,7 @@ pub async fn dispatch_and_submit(
     provider: &AlloyProvider,
     signer: &TxSigner,
     probe: Arc<dyn ReceiptProbe + Send + Sync>,
-    nonce_lane: &Arc<NonceLane>,
+    nonce_lane: &Arc<NonceLane<SubmissionLedger>>,
     current_block: u64,
     dry_run: bool,
     inject_code: bool,
@@ -502,16 +503,14 @@ pub async fn dispatch_and_submit(
         //     reconcile exactly what was built.
         {
             let signed_hash = alloy::primitives::keccak256(&raw_signed);
-            let target_id = match &target {
-                SubmissionTarget::Bundle(bt) => TargetId::new(bt.target_tx_hash),
+            let target_hash = match &target {
+                SubmissionTarget::Bundle(bt) => bt.target_tx_hash,
                 // Both non-auction arms identify the submission by the freshly
                 // signed backrun's hash.
-                SubmissionTarget::BuilderRelay { .. } | SubmissionTarget::Public => {
-                    TargetId::new(signed_hash)
-                }
+                SubmissionTarget::BuilderRelay { .. } | SubmissionTarget::Public => signed_hash,
             };
             nonce_lane
-                .record_signed(&lease, target_id, signed_hash, current_block)
+                .record_signed(&lease, target_hash, signed_hash, current_block)
                 .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
         }
 
@@ -558,8 +557,7 @@ pub async fn dispatch_and_submit(
                         .record_broadcast(&lease)
                         .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
                     nonce_lane
-                        .ledger()
-                        .record_broadcast(nonce_lane.strategy(), lease.nonce())
+                        .record_broadcast(&lease)
                         .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
                     outcome.records.push(SubmitRecord::Submitted {
                         path_id: candidate.path_id,
@@ -662,8 +660,7 @@ pub async fn dispatch_and_submit(
                     .record_broadcast(&lease)
                     .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
                 nonce_lane
-                    .ledger()
-                    .record_broadcast(nonce_lane.strategy(), lease.nonce())
+                    .record_broadcast(&lease)
                     .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
                 outcome.records.push(SubmitRecord::Submitted {
                     path_id: candidate.path_id,
@@ -737,8 +734,7 @@ pub async fn dispatch_and_submit(
                 .record_broadcast(&lease)
                 .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
             nonce_lane
-                .ledger()
-                .record_broadcast(nonce_lane.strategy(), lease.nonce())
+                .record_broadcast(&lease)
                 .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))?;
             hash
         } else {
@@ -1032,13 +1028,13 @@ mod tests {
 
     /// A sign-time lane over a fresh authority seeded at `operator_nonce` and
     /// an empty ledger — the sole nonce source every dispatch path now takes.
-    fn lane(operator_nonce: u64) -> Arc<NonceLane> {
-        Arc::new(NonceLane::new(
-            Arc::new(degenbot_substrate::nonce::NonceAuthority::new(
-                operator_nonce,
-            )),
-            Arc::new(crate::submission_ledger::SubmissionLedger::new()),
+    fn lane(operator_nonce: u64) -> Arc<NonceLane<SubmissionLedger>> {
+        let authority = Arc::new(degenbot_substrate::nonce::NonceAuthority::new(
+            operator_nonce,
+        ));
+        Arc::new(authority.mint_lane(
             "test-strategy",
+            Arc::new(crate::submission_ledger::SubmissionLedger::new()),
         ))
     }
 
@@ -1454,7 +1450,7 @@ mod tests {
     async fn a_hosted_submission_stamps_through_the_authority_and_records_the_ledger() {
         // Nonces come from the process-wide authority and each signed
         // submission is recorded in the per-head ledger.
-        use crate::submission_ledger::{NonceLane, SubmissionLedger, SubmissionState};
+        use crate::submission_ledger::{SubmissionLedger, SubmissionState};
         use degenbot_substrate::nonce::StrategyId;
 
         let asserter = Asserter::new();
@@ -1472,11 +1468,7 @@ mod tests {
         let strategy = StrategyId::new("settlement");
         let authority = Arc::new(degenbot_substrate::nonce::NonceAuthority::new(42));
         let ledger = Arc::new(SubmissionLedger::new());
-        let lane = Arc::new(NonceLane::new(
-            Arc::clone(&authority),
-            Arc::clone(&ledger),
-            strategy.clone(),
-        ));
+        let lane = Arc::new(authority.mint_lane(strategy.clone(), Arc::clone(&ledger)));
 
         let outcome = dispatch_and_submit(
             vec![

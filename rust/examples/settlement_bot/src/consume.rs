@@ -445,8 +445,7 @@ mod tests {
     use degenbot::core::address_utils::parse_address;
     use degenbot::solvers::SolvePathResult;
     use degenbot::submission::{
-        Dispatcher, NonceLane, PathSuppression, ReceiptProbe, SubmissionLedger, SubmissionTarget,
-        TxSigner,
+        Dispatcher, PathSuppression, ReceiptProbe, SubmissionLedger, SubmissionTarget, TxSigner,
     };
     use degenbot::substrate::nonce::NonceAuthority;
 
@@ -531,11 +530,10 @@ mod tests {
                     .unwrap(),
                 ),
                 probe: Arc::new(NoopProbe),
-                nonce_lane: Arc::new(NonceLane::new(
-                    Arc::new(NonceAuthority::new(0)),
-                    Arc::new(SubmissionLedger::new()),
-                    "settlement",
-                )),
+                nonce_lane: Arc::new(
+                    Arc::new(NonceAuthority::new(0))
+                        .mint_lane("settlement", Arc::new(SubmissionLedger::new())),
+                ),
                 extra_broadcast: Vec::new(),
                 target: SubmissionTarget::Public,
             },

@@ -151,7 +151,7 @@ probe), append the landing record:
 
 ## 5. Cancel/replacement hygiene
 
-- Nonces come from the process `NonceAuthority`: `NonceLane::lease` at sign
+- Nonces come from the process `NonceAuthority`: `NonceLane::stamp` at sign
   time, lowest-free above the chain nonce. Each strategy owns its own lane;
   the hosted head feed reconciles per head and delivers typed outcomes
   (`Landed`/`Stale`/`Orphaned`) to the owning strategy only.

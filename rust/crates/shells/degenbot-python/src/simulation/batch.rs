@@ -682,7 +682,8 @@ pub fn build_batch_executor_py(
         dispatcher: dispatcher.inner_arc(),
         signer: Arc::new(signer.signer().clone()),
         probe: Arc::new(PyReceiptProbe::new(&submit_provider.provider_arc())),
-        nonce_lane: settlement_lane_for(settlement_lane(), operator_nonce),
+        nonce_lane: settlement_lane_for(settlement_lane(), operator_nonce)
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?,
         extra_broadcast: broadcast_providers
             .unwrap_or_default()
             .iter()

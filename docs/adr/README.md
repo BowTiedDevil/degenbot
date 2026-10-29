@@ -88,7 +88,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [054](ADR-054-strategy-plumbing-surface.md) | The strategy plumbing surface | accepted |
 | [055](ADR-055-pending-tx-strategy-seams.md) | Pending-transaction strategy seams | accepted |
 | [056](ADR-056-retire-gated-serving-seam.md) | Retire the gated serving seam | accepted |
-| [057](ADR-057-strategy-host.md) | The strategy host — one process, many drivers | accepted |
+| [057](ADR-057-strategy-host.md) | The strategy host — one process, many drivers | accepted (host-less settlement lane retired) |
 | [058](ADR-058-strategy-crate-split.md) | The strategy crate split | accepted |
 | [059](ADR-059-pool-family-kernel.md) | The pool family kernel | accepted |
 | [060](ADR-060-collapse-v2-walk-representation-vs-interface.md) | Collapsing the V2 walk dispatch | accepted (Option B shipped; Option A refuted by probe) |
@@ -98,7 +98,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [064](ADR-064-session-object-registry-cutover.md) | The session object registry is the cutover | accepted |
 | [065](ADR-065-verdict-single-configuration-authority.md) | The verdict is the single configuration authority | accepted |
 | [066](ADR-066-deterministic-stub-generation.md) | Deterministic stub generation | accepted (supersedes ADR-053) |
-| [067](ADR-067-strategy-substrate-home.md) | The strategy substrate gets one home | accepted |
+| [067](ADR-067-strategy-substrate-home.md) | The strategy substrate gets one home | accepted (nonce lane homed with its authority) |
 | [068](ADR-068-updater-golden-capture-replay.md) | Golden capture replay is the updater coherence harness | proposed |
 | [069](ADR-069-prepared-hop-entry-surface.md) | The prepared hop becomes one value | accepted |
 | [070](ADR-070-updaters-are-the-sole-db-writers.md) | Updaters are the sole DB writers — the `writer` cargo fence, read-only opens, path-only schema init | accepted |

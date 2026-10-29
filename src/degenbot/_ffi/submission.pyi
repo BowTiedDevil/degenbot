@@ -501,7 +501,8 @@ def dispatch_and_submit_py(
             (the Rust leaves lock the SAME `Arc`).
         `provider`: the `AsyncAlloyProvider` (the typed RPC handle).
         `signer`: the `PyTxSigner` (per-tx key never crosses to Python).
-        `operator_nonce`: the baseline account nonce.
+        `operator_nonce`: the account's next chain nonce — the seed of the
+            hosted authority's confirmed clock, never a reservation.
         `current_block`: the by-ref block clock read.
         `dry_run`: skip live submission (commit pools anyway).
         `inject_code`: skip live submission (the injected contract doesn't
@@ -514,6 +515,8 @@ def dispatch_and_submit_py(
         "broadcast_failed", "detail": "..."?}`.
 
     # Errors
+    `RuntimeError`: If the process never booted a strategy host, so no
+            settlement lane owns the operator account's nonces.
     `ValueError`: If the dispatch+submit leaf returns a `SubmissionError`
             (a non-"not-found" RPC error during broadcast/access-list/sign).
     """

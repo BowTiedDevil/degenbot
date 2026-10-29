@@ -17,13 +17,20 @@
 //! lease and every broadcast it still owns, so a successor's stamp self-heals
 //! the chain.
 //!
+//! Strategies reach the authority through the seam it mints for them: a
+//! [`NonceLane`] binds one strategy's name to the shared authority and to that
+//! strategy's own ledger, so signing is lane-shaped while issuance stays
+//! process-wide.
+//!
 //! The authority never panics on caller input: every state contradiction is a
 //! typed [`DeclineKind`], and the shared ledger lock is non-poisoning
 //! (`parking_lot`) so one strategy's failure cannot wedge another's sign path.
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 
+use alloy::primitives::B256;
 use parking_lot::Mutex;
 
 /// The name a strategy is registered under at the host, used as the ledger key.
@@ -223,6 +230,23 @@ impl NonceAuthority {
         let mut state = self.state.lock();
         state.confirmed = confirmed;
         state.land_below(confirmed);
+    }
+
+    /// Advance the confirmed chain nonce from an observed chain read, never
+    /// rewinding it.
+    ///
+    /// A sign path that fetched the account's next nonce seeds the clock before
+    /// its first stamp, so no lane can issue a nonce the chain has already
+    /// consumed. The per-head refresh is gated on outstanding work, so an idle
+    /// process has no head read to lean on: this is the entry point that makes
+    /// its first sign safe. A read that reports a lower value (an RPC race)
+    /// must not revoke a live lease, so only a forward move is applied; the
+    /// reorg-safe rewind stays the head feed's call
+    /// ([`set_confirmed_reorg`](Self::set_confirmed_reorg)).
+    pub fn observe_confirmed(&self, confirmed: u64) {
+        if confirmed > self.confirmed() {
+            let _ = self.set_confirmed_reorg(confirmed);
+        }
     }
 
     /// Reconcile the confirmed chain nonce after a head update that may rewind,
@@ -437,6 +461,182 @@ impl NonceAuthority {
         nonces.extend(state.leases.values().copied());
         nonces.sort_unstable();
         nonces
+    }
+}
+
+/// What a lane's per-strategy ledger must provide: the two writes a sign path
+/// makes into submission truth.
+///
+/// The lane is the authority's seam, so it names no submission type: a target
+/// crosses as the raw hash it is built to follow, and the decline stays the
+/// ledger's own (the lane forwards it unchanged). The reconcile half of that
+/// truth is not a lane read — the landed/stale/orphaned facts travel the host's
+/// notice seam to the strategy that owns them.
+pub trait NonceLedger: fmt::Debug + Send + Sync {
+    /// Why the ledger refused a write.
+    type Decline: fmt::Display;
+
+    /// Record a freshly signed submission against its stamped nonce.
+    ///
+    /// # Errors
+    ///
+    /// The ledger's own decline — an outstanding record is already tracked at
+    /// this strategy and nonce.
+    fn record_signed(
+        &self,
+        strategy: &StrategyId,
+        nonce: u64,
+        target: B256,
+        bundle_hash: B256,
+        built_at_head: u64,
+    ) -> Result<(), Self::Decline>;
+
+    /// Promote the strategy's signed record at `nonce` to broadcast: the bytes
+    /// are on the wire.
+    ///
+    /// # Errors
+    ///
+    /// The ledger's own decline — no record is tracked, or it is not signed.
+    fn record_broadcast(&self, strategy: &StrategyId, nonce: u64) -> Result<(), Self::Decline>;
+}
+
+impl NonceAuthority {
+    /// Mint one strategy's lane: the only way a lane comes into existence.
+    ///
+    /// The authority is the issuance owner, so the binding to itself is minted
+    /// here; the caller supplies the strategy's ledger, whose concrete type is
+    /// the composition root's to choose.
+    #[must_use]
+    pub fn mint_lane<L: NonceLedger>(
+        self: &Arc<Self>,
+        strategy: impl Into<StrategyId>,
+        ledger: Arc<L>,
+    ) -> NonceLane<L> {
+        NonceLane {
+            authority: Arc::clone(self),
+            ledger,
+            strategy: strategy.into(),
+        }
+    }
+}
+
+/// The sign-time nonce seam for one strategy.
+///
+/// A submission path obtains its nonce here at TX-build/sign time: the lane's
+/// [`stamp`](Self::stamp) is the issuance entry, and every signed submission is
+/// recorded in the same ledger the host reconciles per head. A lane therefore
+/// keeps no private nonce reservation table — the shared authority arbitrates
+/// the operator account's nonces across strategies.
+#[derive(Debug)]
+pub struct NonceLane<L: NonceLedger> {
+    authority: Arc<NonceAuthority>,
+    ledger: Arc<L>,
+    strategy: StrategyId,
+}
+
+impl<L: NonceLedger> NonceLane<L> {
+    /// The lane's strategy identity.
+    #[must_use]
+    pub fn strategy(&self) -> &StrategyId {
+        &self.strategy
+    }
+
+    /// The shared nonce authority.
+    #[must_use]
+    pub fn authority(&self) -> &Arc<NonceAuthority> {
+        &self.authority
+    }
+
+    /// The strategy's submission ledger.
+    #[must_use]
+    pub fn ledger(&self) -> &Arc<L> {
+        &self.ledger
+    }
+
+    /// Sign-time stamp: obtain the lowest-free nonce from the authority.
+    ///
+    /// The default v1 repackage policy runs here: when the authority declines
+    /// because the lane's own stale reservation is in the way
+    /// ([`DeclineKind::StrategyLeaseOutstanding`] or
+    /// [`DeclineKind::BelowChainNonce`]), the lane releases that lease and
+    /// re-stamps once at the next available nonce. A non-stale decline
+    /// (exhausted space, no lease to relinquish) propagates unchanged.
+    ///
+    /// # Errors
+    ///
+    /// The authority's [`DeclineKind`] once no stale lease can be relinquished.
+    pub fn stamp(&self) -> Result<NonceLease, DeclineKind> {
+        let mut relinquished = false;
+        loop {
+            match self.authority.lease(&self.strategy) {
+                Ok(lease) => return Ok(lease),
+                Err(decline) => {
+                    if relinquished {
+                        return Err(decline);
+                    }
+                    let Some(existing) = self.authority.lease_of(&self.strategy) else {
+                        return Err(decline);
+                    };
+                    self.authority.release_lease(&existing)?;
+                    relinquished = true;
+                }
+            }
+        }
+    }
+
+    /// Record a freshly signed submission against the stamped lease's nonce.
+    ///
+    /// # Errors
+    ///
+    /// The ledger's [`Decline`](NonceLedger::Decline) when it refuses the stamp
+    /// record.
+    pub fn record_signed(
+        &self,
+        lease: &NonceLease,
+        target: B256,
+        bundle_hash: B256,
+        built_at_head: u64,
+    ) -> Result<(), L::Decline> {
+        self.ledger.record_signed(
+            &self.strategy,
+            lease.nonce(),
+            target,
+            bundle_hash,
+            built_at_head,
+        )
+    }
+
+    /// Promote the stamp record to broadcast once the signed bytes are on the
+    /// wire.
+    ///
+    /// # Errors
+    ///
+    /// The ledger's [`Decline`](NonceLedger::Decline) when it refuses the
+    /// promotion.
+    pub fn record_broadcast(&self, lease: &NonceLease) -> Result<(), L::Decline> {
+        self.ledger.record_broadcast(&self.strategy, lease.nonce())
+    }
+
+    /// Release a lease whose transaction never reached the wire, freeing the
+    /// nonce without clearing the lane's outstanding broadcasts.
+    ///
+    /// # Errors
+    ///
+    /// [`DeclineKind::UnknownLease`] when the lease is no longer outstanding.
+    pub fn release(&self, lease: &NonceLease) -> Result<u64, DeclineKind> {
+        self.authority.release_lease(lease)
+    }
+
+    /// Release a broadcast the lane's strategy owns after a monitor declared
+    /// the transaction expired (it will never land). Frees the authority slot
+    /// so the account's nonce prefix cannot wedge on a dropped transaction.
+    ///
+    /// # Errors
+    ///
+    /// [`DeclineKind::UnknownBroadcast`] when the nonce is not a broadcast
+    /// owned by this lane's strategy.
+    pub fn release_broadcast(&self, nonce: u64) -> Result<u64, DeclineKind> {
+        self.authority.release_broadcast(&self.strategy, nonce)
     }
 }
 
@@ -815,6 +1015,171 @@ mod tests {
         );
         let _ = authority.set_confirmed_reorg(10);
         assert_eq!(authority.outstanding_nonces(), vec![10]);
+    }
+
+    /// One stamp record: the owning strategy, the nonce, the target and wire
+    /// hashes, and the head the stamp was built at.
+    type StampRecord = (StrategyId, u64, B256, B256, u64);
+
+    /// A lane's ledger fixture: records what the lane wrote, in order.
+    #[derive(Debug, Default)]
+    struct RecordingLedger {
+        signed: Mutex<Vec<StampRecord>>,
+        broadcasts: Mutex<Vec<(StrategyId, u64)>>,
+    }
+
+    impl NonceLedger for RecordingLedger {
+        type Decline = LedgerRefusal;
+
+        fn record_signed(
+            &self,
+            strategy: &StrategyId,
+            nonce: u64,
+            target: B256,
+            bundle_hash: B256,
+            built_at_head: u64,
+        ) -> Result<(), LedgerRefusal> {
+            self.signed
+                .lock()
+                .push((strategy.clone(), nonce, target, bundle_hash, built_at_head));
+            Ok(())
+        }
+
+        fn record_broadcast(&self, strategy: &StrategyId, nonce: u64) -> Result<(), LedgerRefusal> {
+            self.broadcasts.lock().push((strategy.clone(), nonce));
+            Ok(())
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct LedgerRefusal;
+
+    impl fmt::Display for LedgerRefusal {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("the fixture ledger refused the write")
+        }
+    }
+
+    /// One authority, one ledger, two minted lanes: issuance is process-wide,
+    /// so the two strategies stamp one contiguous prefix and each stamp record
+    /// lands in the lane's own ledger row.
+    #[test]
+    fn two_strategies_minted_from_one_authority_stamp_a_contiguous_prefix() {
+        let authority = Arc::new(NonceAuthority::new(41));
+        let ledger = Arc::new(RecordingLedger::default());
+        let settlement = authority.mint_lane("settlement", Arc::clone(&ledger));
+        let backrun = authority.mint_lane("mevblocker_backrun", Arc::clone(&ledger));
+
+        assert_eq!(settlement.strategy().as_str(), "settlement");
+        assert!(
+            Arc::ptr_eq(settlement.authority(), &authority),
+            "both lanes bind the one authority they were minted from"
+        );
+        assert!(
+            Arc::ptr_eq(settlement.ledger(), &ledger),
+            "both lanes bind the one ledger the composition root supplied"
+        );
+
+        let first = settlement.stamp().expect("settlement stamp");
+        let second = backrun.stamp().expect("backrun stamp");
+        assert_eq!(
+            (first.nonce(), second.nonce()),
+            (41, 42),
+            "one authority hands the two lanes one contiguous prefix"
+        );
+        assert_eq!(authority.outstanding_nonces(), vec![41, 42]);
+
+        // The stamp record is the lane's: it names its own strategy and nonce.
+        settlement
+            .record_signed(&first, B256::repeat_byte(1), B256::repeat_byte(2), 7)
+            .expect("record the settlement stamp");
+        assert_eq!(
+            *ledger.signed.lock(),
+            vec![(
+                sid("settlement"),
+                41,
+                B256::repeat_byte(1),
+                B256::repeat_byte(2),
+                7
+            )]
+        );
+
+        settlement
+            .record_broadcast(&first)
+            .expect("promote the settlement stamp");
+        assert_eq!(*ledger.broadcasts.lock(), vec![(sid("settlement"), 41)]);
+    }
+
+    /// A rewind inside a minted lane's window revokes that lane's lease and
+    /// advises its owner; the sibling lane's reservations are untouched.
+    #[test]
+    fn a_rewind_advises_the_minted_lane_whose_lease_it_revoked() {
+        let authority = Arc::new(NonceAuthority::new(10));
+        let ledger = Arc::new(RecordingLedger::default());
+        let settlement = authority.mint_lane("settlement", Arc::clone(&ledger));
+        let backrun = authority.mint_lane("txpool_backrun", Arc::clone(&ledger));
+
+        assert_eq!(backrun.stamp().expect("backrun stamp").nonce(), 10);
+        authority.set_confirmed(11);
+
+        let advisories = authority.set_confirmed_reorg(10);
+        assert_eq!(advisories.len(), 1);
+        assert_eq!(advisories[0].strategy(), backrun.strategy());
+        assert_eq!(advisories[0].nonce(), 10);
+        assert!(authority.lease_of(backrun.strategy()).is_none());
+
+        // Issuance recovers at the rewound head: the revoked lane re-stamps
+        // above the sibling's fresh lease rather than behind it.
+        assert_eq!(
+            settlement.stamp().expect("settlement stamp").nonce(),
+            10,
+            "the recovered head is fillable by the lane the rewind never named"
+        );
+        assert_eq!(backrun.stamp().expect("backrun re-stamp").nonce(), 11);
+    }
+
+    #[test]
+    fn observe_confirmed_advances_without_rewinding() {
+        let authority = NonceAuthority::new(10);
+        authority.observe_confirmed(12);
+        assert_eq!(authority.confirmed(), 12);
+        authority.observe_confirmed(11);
+        assert_eq!(
+            authority.confirmed(),
+            12,
+            "a stale chain read never rewinds the confirmed nonce"
+        );
+    }
+
+    #[test]
+    fn a_lane_stamp_repackages_past_a_stale_lease() {
+        let authority = Arc::new(NonceAuthority::new(10));
+        let lane = authority.mint_lane("a", Arc::new(RecordingLedger::default()));
+        let lease = lane.stamp().expect("first stamp");
+        assert_eq!(lease.nonce(), 10);
+        // The chain passes the lease; the next sign repackages at 11.
+        authority.set_confirmed(11);
+        let restamped = lane.stamp().expect("repackage");
+        assert_eq!(restamped.nonce(), 11);
+        assert_eq!(
+            authority.lease_of(lane.strategy()).expect("lease").nonce(),
+            11
+        );
+    }
+
+    /// The expiry escape hatch at the lane level: releasing a broadcast frees
+    /// exactly that nonce and the next stamp refills it, keeping the prefix
+    /// contiguous.
+    #[test]
+    fn a_lane_releases_an_expired_broadcast_and_refills_the_slot() {
+        let authority = Arc::new(NonceAuthority::new(50));
+        let lane = authority.mint_lane("a", Arc::new(RecordingLedger::default()));
+        let lease = lane.stamp().expect("stamp");
+        authority.record_broadcast(&lease).expect("broadcast");
+        assert_eq!(authority.outstanding_nonces(), vec![50]);
+
+        assert_eq!(lane.release_broadcast(50), Ok(50));
+        assert_eq!(lane.stamp().expect("refill").nonce(), 50);
     }
 
     use proptest::prelude::*;

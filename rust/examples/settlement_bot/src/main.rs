@@ -1149,11 +1149,12 @@ fn build_batch_executor(
             probe: std::sync::Arc::new(dispatch::ProviderReceiptProbe {
                 provider: std::sync::Arc::new(provider.clone()),
             }),
-            nonce_lane: std::sync::Arc::new(degenbot::submission::NonceLane::new(
-                std::sync::Arc::new(degenbot::substrate::nonce::NonceAuthority::new(0)),
-                std::sync::Arc::new(degenbot::submission::SubmissionLedger::new()),
-                "settlement",
-            )),
+            nonce_lane: std::sync::Arc::new(
+                std::sync::Arc::new(degenbot::substrate::nonce::NonceAuthority::new(0)).mint_lane(
+                    "settlement",
+                    std::sync::Arc::new(degenbot::submission::SubmissionLedger::new()),
+                ),
+            ),
             extra_broadcast: Vec::new(),
             target: degenbot::submission::SubmissionTarget::Public,
         },

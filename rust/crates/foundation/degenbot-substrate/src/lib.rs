@@ -2,8 +2,8 @@
 //! (ADR-067): the live state owner [`BotState`], the planning workspace
 //! (`planning::Workspace`), pool ingress, the connector index, executor hop
 //! views, the sim-anchor oracle, the route registry, the session object
-//! registry, the sign-time nonce authority, the driver spawn seam, and the
-//! command-stream path-info projection. Both consumers compose it as a peer:
+//! registry, the sign-time nonce authority and the per-strategy lane it mints,
+//! the driver spawn seam, and the command-stream path-info projection. Both consumers compose it as a peer:
 //! `degenbot-bot` (the pump + engine host) and `degenbot-strategy` (the strategy plane). PyO3-free by
 //! role; the binding crate reaches it through `degenbot-bot` re-exports.
 //!

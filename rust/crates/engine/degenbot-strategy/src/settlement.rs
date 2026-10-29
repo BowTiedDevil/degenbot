@@ -46,7 +46,7 @@
 //!   second head source would double-read the chain nonce.
 //!
 //! [`DriverSpawnFactory`]: degenbot_substrate::driver_spawn::DriverSpawnFactory
-//! [`NonceLane`]: degenbot_submission::NonceLane
+//! [`NonceLane`]: degenbot_substrate::nonce::NonceLane
 
 use degenbot_config::BotConfig;
 

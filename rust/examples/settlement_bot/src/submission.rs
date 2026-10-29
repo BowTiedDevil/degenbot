@@ -24,7 +24,8 @@
 //! `NonceAuthority` + `SubmissionLedger` directly (the standalone sidecar's
 //! host-of-size-one shape) and the lane stamps every operator nonce. The
 //! driver's `operator_nonce` is retained only as the submission-time chain seed
-//! (`NonceLane::observe_chain_nonce`), never as a private reservation.
+//! of the authority's confirmed clock
+//! (`NonceAuthority::observe_confirmed`), never as a private reservation.
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -33,11 +34,11 @@ use std::sync::{Arc, Mutex};
 
 use degenbot::rpc::provider::AlloyProvider;
 use degenbot::submission::{
-    dispatch_and_submit, monitor_pending_transaction, Dispatcher, MonitorOutcome, NonceLane,
-    PoolKey, ReceiptProbe, SkipReason, SubmissionLedger, SubmissionTarget, SubmitCandidate,
-    SubmitRecord, SubmittedTx, TxSigner,
+    dispatch_and_submit, monitor_pending_transaction, Dispatcher, MonitorOutcome, PoolKey,
+    ReceiptProbe, SkipReason, SubmissionLedger, SubmissionTarget, SubmitCandidate, SubmitRecord,
+    SubmittedTx, TxSigner,
 };
-use degenbot::substrate::nonce::NonceAuthority;
+use degenbot::substrate::nonce::{NonceAuthority, NonceLane};
 
 /// The boxed future the signing seam returns: the core's ONE submit record
 /// for the one candidate handed in.
@@ -146,7 +147,7 @@ pub struct LiveSubmissionSeam<'a> {
     pub inject_code: bool,
     /// The sign-time nonce seam: the exercise's standalone one-account
     /// authority, shared by every candidate this seam submits.
-    pub nonce_lane: Arc<NonceLane>,
+    pub nonce_lane: Arc<NonceLane<SubmissionLedger>>,
 }
 
 impl<'a> LiveSubmissionSeam<'a> {
@@ -171,11 +172,10 @@ impl<'a> LiveSubmissionSeam<'a> {
             signer,
             probe,
             inject_code,
-            nonce_lane: Arc::new(NonceLane::new(
-                Arc::new(NonceAuthority::new(0)),
-                Arc::new(SubmissionLedger::new()),
-                "settlement",
-            )),
+            nonce_lane: Arc::new(
+                Arc::new(NonceAuthority::new(0))
+                    .mint_lane("settlement", Arc::new(SubmissionLedger::new())),
+            ),
         }
     }
 }
@@ -190,7 +190,9 @@ impl SubmissionSeam for LiveSubmissionSeam<'_> {
         // The driver's `operator_nonce` is the submission-time chain read, not
         // a reservation: seed the authority so the lane's first stamp cannot
         // re-issue a nonce the chain already consumed.
-        self.nonce_lane.observe_chain_nonce(operator_nonce);
+        self.nonce_lane
+            .authority()
+            .observe_confirmed(operator_nonce);
         Box::pin(async move {
             let outcome = dispatch_and_submit(
                 vec![candidate],

@@ -1455,7 +1455,8 @@ use degenbot_strategy::frame_pipeline::{
 };
 use degenbot_submission::dispatcher::Dispatcher;
 use degenbot_submission::signer::TxSigner;
-use degenbot_submission::submission_ledger::NonceLane;
+use degenbot_submission::submission_ledger::SubmissionLedger;
+use degenbot_substrate::nonce::NonceLane;
 use std::sync::Mutex;
 
 /// The node under the dispatch seam: no receipts, no head block, but the
@@ -1505,12 +1506,9 @@ fn submit_cfg(dry_run: bool) -> BackrunConfig {
 
 /// A sign-time lane over a fresh authority and empty ledger (the sole nonce
 /// source every dispatch path takes).
-fn submit_lane() -> Arc<NonceLane> {
-    Arc::new(NonceLane::new(
-        Arc::new(degenbot_substrate::nonce::NonceAuthority::new(0)),
-        Arc::new(degenbot_submission::submission_ledger::SubmissionLedger::new()),
-        "spent-accounting-test",
-    ))
+fn submit_lane() -> Arc<NonceLane<SubmissionLedger>> {
+    let authority = Arc::new(degenbot_substrate::nonce::NonceAuthority::new(0));
+    Arc::new(authority.mint_lane("spent-accounting-test", Arc::new(SubmissionLedger::new())))
 }
 
 /// A deterministic test key (the alloy test default — never use on mainnet).

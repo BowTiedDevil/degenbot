@@ -156,9 +156,9 @@ and broadcasts form a contiguous prefix above it.
 _Avoid_: "nonce manager", "nonce pool".
 
 **NonceLane**:
-The nonce-flighting seam the NonceAuthority exposes to one strategy: a host-minted binding
-to the shared authority and the strategy's submission ledger, whose `stamp()` is the only
-issuance entry.
+The nonce-flighting seam the NonceAuthority exposes to one strategy: an authority-minted
+binding to the shared authority and the strategy's ledger (behind the substrate
+`NonceLedger` trait), whose `stamp()` is the only issuance entry.
 _Avoid_: a private reservation table; using "lane" for the fleet's **Lane** (thread
 ownership) or for the authority itself.
 

@@ -417,7 +417,7 @@ pub async fn monitor_pending_transaction_default(
 mod tests {
     use super::*;
     use crate::dispatcher::Dispatcher;
-    use crate::submission_ledger::{NonceLane, SubmissionLedger};
+    use crate::submission_ledger::SubmissionLedger;
     use degenbot_substrate::nonce::NonceAuthority;
     use proptest::prelude::*;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -669,7 +669,7 @@ mod tests {
         // The nonce lane the tx was signed against (the reservation the monitor
         // does NOT own — asserted only to show the abort leaves it stampable).
         let authority = Arc::new(NonceAuthority::new(tx_nonce));
-        let lane = NonceLane::new(authority, Arc::new(SubmissionLedger::new()), "abort-probe");
+        let lane = authority.mint_lane("abort-probe", Arc::new(SubmissionLedger::new()));
 
         // A never-confirming, never-advancing probe: with the clock parked at
         // the submission block, `blocks_waited` stays 0 and no receipt is ever

@@ -2,6 +2,15 @@
 
 **Status: accepted (decision); extraction is an implementation task sequenced after the pool-construction work.**
 
+Status note — the nonce module's home list gains the per-strategy lane. GLOSSARY
+defines `NonceLane` as the seam *the `NonceAuthority` exposes to one strategy*, but
+the type was authored in `degenbot-submission` while the authority it binds lives in
+this substrate, and `degenbot-bot` (which owns the host that mints lanes) cannot
+depend on the submission crate — so the concept had no type-graph home and the
+mint was pinned by source greps instead of an interface. The lane now lives in
+`degenbot_substrate::nonce` beside its authority, generic over the `NonceLedger`
+trait, and `NonceAuthority::mint_lane` is its only constructor.
+
 ## Context
 
 ADR-061 made pool-state provisioning a plane capability and placed the substrate —

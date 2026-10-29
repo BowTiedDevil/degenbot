@@ -88,9 +88,10 @@ The dynamic strategy host landed 2026-09-19
 `RouteRegistry`, and the `NonceAuthority`
 (`degenbot-bot/src/nonce_authority.rs`), and drivers attach through the bound
 `HostHub` pair (`EngineDriver::from_stages_with_hub`,
-`degenbot-bot/src/arb_engine/driver.rs`). The per-strategy submission ledger,
-`NonceLane`, and the default `HeadPolicy` live in
-`degenbot-submission/src/submission_ledger.rs`; the backrun arm is a
+`degenbot-bot/src/arb_engine/driver.rs`). The per-strategy submission ledger and
+the default `HeadPolicy` live in
+`degenbot-submission/src/submission_ledger.rs`, and the `NonceLane` that binds them
+to one strategy lives beside its authority in `degenbot-substrate/src/nonce.rs`; the backrun arm is a
 registrable driver (`degenbot-strategy/src/backrun_driver.rs`); and the
 operator drives admission through the engine adapter's `enable_strategy` /
 `disable_strategy` / `strategies` verbs. The driver FSM is
@@ -137,9 +138,9 @@ now lands on top of it ([ADR-057](adr/ADR-057-strategy-host.md)).
 | Journal extraction (V2/V3/V4) | `degenbot-simulation/src/sim/evm/journal_pools.rs` |
 | Sandbox + `ExplicitPoolState` | `degenbot-substrate/src/planning.rs` |
 | Strategy facets (activation + knobs) | `degenbot-config/src/schema.rs` (`strategy.*`) |
-| Strategy host (hub + registry + authority + FSM) | `degenbot-bot/src/strategy_host.rs` |
-| Nonce authority | `degenbot-bot/src/nonce_authority.rs` |
+| Strategy host (hub + registry + authority binding + FSM) | `degenbot-bot/src/strategy_host.rs` |
 | Hub hoist / driver attach | `degenbot-bot/src/arb_engine/driver.rs` |
-| Submission ledger + `NonceLane` + `HeadPolicy` | `degenbot-submission/src/submission_ledger.rs` |
+| Submission ledger + `HeadPolicy` | `degenbot-submission/src/submission_ledger.rs` |
+| `NonceAuthority` + the `NonceLane` it mints | `degenbot-substrate/src/nonce.rs` |
 | Registrable backrun driver | `degenbot-strategy/src/backrun_driver.rs` |
 | Settled-block seam today | `degenbot-bot/src/bot_core/stage_handlers.rs` |

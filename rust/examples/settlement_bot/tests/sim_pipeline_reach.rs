@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use degenbot::batch_executor::{BatchExecutor, BatchWork, ExecutorConfig, ExecutorRuntime};
 use degenbot::submission::{
-    Dispatcher, NonceLane, PathSuppression, ReceiptProbe, SimFuture, SimLeaf, SimSubmitPipeline,
+    Dispatcher, PathSuppression, ReceiptProbe, SimFuture, SimLeaf, SimSubmitPipeline,
     SubmissionLedger, SubmissionTarget, SubmitFuture, SubmitLeaf, TxSigner,
 };
 struct EchoSim;
@@ -146,11 +146,10 @@ async fn offline_executor(
                 .unwrap(),
             ),
             probe: Arc::new(NoopProbe),
-            nonce_lane: Arc::new(NonceLane::new(
-                Arc::new(degenbot::substrate::nonce::NonceAuthority::new(0)),
-                Arc::new(SubmissionLedger::new()),
-                "settlement",
-            )),
+            nonce_lane: Arc::new(
+                Arc::new(degenbot::substrate::nonce::NonceAuthority::new(0))
+                    .mint_lane("settlement", Arc::new(SubmissionLedger::new())),
+            ),
             extra_broadcast: Vec::new(),
             target: SubmissionTarget::Public,
         },

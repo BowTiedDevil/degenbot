@@ -27,14 +27,14 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 use degenbot_bot::strategy_host::StrategyHost;
-use degenbot_substrate::nonce::StrategyId;
+use degenbot_substrate::nonce::{NonceLane, StrategyId};
 use parking_lot::Mutex;
 
-use crate::submission_ledger::{HeadPolicy, NonceLane};
+use crate::submission_ledger::{HeadPolicy, SubmissionLedger};
 
 /// The per-strategy sign-time lanes the head feed folds notices through,
 /// keyed by the owning strategy.
-pub type HeadLanes = HashMap<StrategyId, Arc<NonceLane>>;
+pub type HeadLanes = HashMap<StrategyId, Arc<NonceLane<SubmissionLedger>>>;
 
 /// The chain's confirmed-nonce read the reconciliation drives once per head.
 ///
@@ -268,7 +268,7 @@ mod tests {
         host: Arc<Mutex<StrategyHost>>,
         authority: Arc<NonceAuthority>,
         ledger: Arc<SubmissionLedger>,
-        lane: Arc<NonceLane>,
+        lane: Arc<NonceLane<SubmissionLedger>>,
         read: Arc<FakeRead>,
         strategy: StrategyId,
     }
@@ -289,11 +289,7 @@ mod tests {
         host.attach_reconciler(
             Arc::clone(&ledger) as Arc<dyn degenbot_bot::strategy_host::HeadReconciler>
         );
-        let lane = Arc::new(NonceLane::new(
-            Arc::clone(&authority),
-            Arc::clone(&ledger),
-            strategy.clone(),
-        ));
+        let lane = Arc::new(authority.mint_lane(strategy.clone(), Arc::clone(&ledger)));
         Rig {
             host: Arc::new(Mutex::new(host)),
             authority,
@@ -317,7 +313,12 @@ mod tests {
 
     fn signed_broadcast(rig: &Rig, lease: &NonceLease) {
         rig.lane
-            .record_signed(lease, target(0), alloy::primitives::B256::repeat_byte(7), 0)
+            .record_signed(
+                lease,
+                target(0).hash(),
+                alloy::primitives::B256::repeat_byte(7),
+                0,
+            )
             .expect("record signed");
         rig.authority.record_broadcast(lease).expect("broadcast");
         rig.ledger
