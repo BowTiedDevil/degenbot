@@ -3579,6 +3579,7 @@ mod tests {
         bitmap: alloy::primitives::U256,
         rows: &[(i32, u128, i128)],
     ) -> pyo3::Bound<'py, crate::bot::py_bot_io::PyBotIo> {
+        use alloy::sol_types::SolCall;
         use degenbot_rpc::offline::OfflineProvider;
         use serde_json::json;
         use std::sync::Arc;
@@ -3586,13 +3587,17 @@ mod tests {
         let addr_lower = pool.to_checksum(None).to_lowercase();
         let mut calls: std::collections::HashMap<String, Option<String>> =
             std::collections::HashMap::new();
-        let bitmap_calldata = degenbot_rpc::abi::encode_tick_bitmap(0);
+        let bitmap_calldata =
+            degenbot_rpc::abi::IUniswapV3Pool::tickBitmapCall { wordPosition: 0 }.abi_encode();
         calls.insert(
             format!("{}:0x{}", addr_lower, hex_encode(&bitmap_calldata)),
             Some(word_u256(&bitmap)),
         );
         for &(tick, gross, net) in rows {
-            let td_calldata = degenbot_rpc::abi::encode_tick_data(tick);
+            let td_calldata = degenbot_rpc::abi::IUniswapV3Pool::ticksCall {
+                tick: tick.try_into().expect("fixture tick within int24"),
+            }
+            .abi_encode();
             let mut response = String::new();
             response.push_str(&word_u128(gross));
             response.push_str(&word_i128(net));
@@ -3710,6 +3715,7 @@ mod tests {
     #[test]
     fn assemble_v3_tick_map_chain_arm_fires_with_offline_io() {
         use alloy::primitives::U256;
+        use alloy::sol_types::SolCall;
         use degenbot_rpc::offline::OfflineProvider;
         use serde_json::json;
         use std::sync::Arc;
@@ -3727,14 +3733,18 @@ mod tests {
                 std::collections::HashMap::new();
 
             // tickBitmap(int16) → uint256
-            let bitmap_calldata = degenbot_rpc::abi::encode_tick_bitmap(0);
+            let bitmap_calldata =
+                degenbot_rpc::abi::IUniswapV3Pool::tickBitmapCall { wordPosition: 0 }.abi_encode();
             calls.insert(
                 format!("{}:0x{}", addr_lower, hex_encode(&bitmap_calldata)),
                 Some(word_u256(&bitmap)),
             );
             // ticks(int24) → (uint128 gross, int128 net)
             for &(tick, gross, net) in &[(10_i32, 1_000u128, -500i128), (20, 2_000, 750)] {
-                let td_calldata = degenbot_rpc::abi::encode_tick_data(tick);
+                let td_calldata = degenbot_rpc::abi::IUniswapV3Pool::ticksCall {
+                    tick: tick.try_into().expect("fixture tick within int24"),
+                }
+                .abi_encode();
                 let mut response = String::new();
                 response.push_str(&word_u128(gross));
                 response.push_str(&word_i128(net));

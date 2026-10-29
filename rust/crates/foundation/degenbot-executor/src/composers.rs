@@ -28,8 +28,7 @@
 #[cfg(test)]
 use crate::encoders::{self, SENTINEL_SELF};
 use alloy::primitives::{Address, U256};
-use degenbot_abi::abi_types::AbiValue;
-use degenbot_abi::encoder::encode_rust;
+use alloy::sol_types::SolCall;
 
 /// `NATIVE_CURRENCY_ADDRESS` — V4's native-ETH currency is `address(0)`.
 ///
@@ -37,11 +36,13 @@ use degenbot_abi::encoder::encode_rust;
 /// the encoders' [`NATIVE_ADDRESS`] (the same `Address::ZERO`).
 pub const NATIVE_CURRENCY_ADDRESS: Address = Address::ZERO;
 
-/// The `execute(bytes,uint256)` 4-byte function selector
-/// (`keccak256("execute(bytes,uint256)")[:4]` = `0xab5898e8`).
-///
-/// The 4-byte selector for `execute(bytes,uint256)`, `0xab5898e8`.
-pub const EXECUTE_SELECTOR: [u8; 4] = [0xab, 0x58, 0x98, 0xe8];
+alloy::sol! {
+    /// The `cmd_executor` entry point: one command stream plus the packed
+    /// profit-check/bribe config word.
+    interface ICommandExecutor {
+        function execute(bytes commands, uint256 config) external;
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Hop descriptors + PathInfo
@@ -584,29 +585,21 @@ pub fn config_for_options(
 ///
 /// `config` is the packed `execute()` config uint256 (see
 /// [`config::pack_config`]); `0` = skip profit check, no bribe.
-///
-/// # Errors
-///
-/// Returns [`degenbot_abi::abi_types::AbiValue`] encoding errors (should not
-/// happen with valid inputs).
+#[must_use]
 pub fn encode_execute_call(
     executor_address: Address,
     commands: &[u8],
     config: U256,
-) -> Result<EncodedCall, degenbot_core::errors::AbiDecodeError> {
-    let values = [
-        AbiValue::Bytes(commands.to_vec()),
-        AbiValue::Uint(config, 256),
-    ];
-    let encoded = encode_rust(&["bytes", "uint256"], &values)?;
-    let mut data = Vec::with_capacity(4 + encoded.len());
-    data.extend_from_slice(&EXECUTE_SELECTOR);
-    data.extend_from_slice(&encoded);
-    Ok(EncodedCall {
+) -> EncodedCall {
+    let call = ICommandExecutor::executeCall {
+        commands: commands.to_vec().into(),
+        config,
+    };
+    EncodedCall {
         to: executor_address,
-        data,
+        data: call.abi_encode(),
         value: U256::ZERO,
-    })
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

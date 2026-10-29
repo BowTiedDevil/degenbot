@@ -100,11 +100,7 @@ fn reference_calldata(
     );
     let commands = encode_cmd_stream(&ctx, &request).expect("fixture encodes");
     let config = config_for_options(opts, U256::ZERO).expect("fixture config packs");
-    Bytes::from(
-        encode_execute_call(ctx.executor, &commands, config)
-            .expect("fixture execute call encodes")
-            .data,
-    )
+    Bytes::from(encode_execute_call(ctx.executor, &commands, config).data)
 }
 
 fn v3_path() -> PathInfo {

@@ -38,7 +38,7 @@ use degenbot_db::ApplyLiquidityAtTick;
 use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_pools::RegisterV3PoolParams;
 use degenbot_pools::TickInfo;
-use degenbot_rpc::abi::{fetch_tick_bitmap, fetch_tick_data, fetch_v3_slot0_liquidity};
+use degenbot_rpc::abi::{ContractRead, IUniswapV3Pool, Slot0Prefix, TickLiquidity};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
@@ -129,11 +129,16 @@ struct Captured {
 }
 
 async fn capture(provider: &Arc<AlloyProvider>, pool: Address, spacing: i32) -> Captured {
-    let (sqrt, tick_wide, liq_wide) = fetch_v3_slot0_liquidity(provider, &pool, None)
+    let slot0 = Slot0Prefix::read(provider, pool, None)
         .await
         .expect("slot0");
+    let liq_wide = provider
+        .read(pool, IUniswapV3Pool::liquidityCall {}, None)
+        .await
+        .expect("liquidity");
+    let (sqrt, tick_wide) = (slot0.sqrt_price_x96, slot0.tick);
     let tick: i32 = tick_wide.try_into().expect("tick fits i32");
-    let liquidity: u128 = liq_wide.try_into().expect("liquidity fits u128");
+    let liquidity: u128 = liq_wide;
     let word = i64::from(tick.div_euclid(spacing) >> 8);
     let max_w = 887_272i64.div_euclid(i64::from(spacing)) >> 8;
     let mut ladder = BTreeMap::new();
@@ -144,7 +149,12 @@ async fn capture(provider: &Arc<AlloyProvider>, pool: Address, spacing: i32) -> 
             continue;
         }
         let w = i16::try_from(w).expect("word fits i16");
-        let bitmap = fetch_tick_bitmap(provider, &pool, w, None)
+        let bitmap = provider
+            .read(
+                pool,
+                IUniswapV3Pool::tickBitmapCall { wordPosition: w },
+                None,
+            )
             .await
             .expect("bitmap");
         for bit in 0..256u32 {
@@ -154,8 +164,9 @@ async fn capture(provider: &Arc<AlloyProvider>, pool: Address, spacing: i32) -> 
             let t: i32 = ((i64::from(w) * 256 + i64::from(bit)) * i64::from(spacing))
                 .try_into()
                 .expect("tick fits i32");
-            let (gross, net) = fetch_tick_data(provider, &pool, t, None)
+            let (gross, net) = TickLiquidity::read(provider, pool, t, None)
                 .await
+                .map(|l| (l.gross, l.net))
                 .expect("tick fetch");
             wide.insert(t, (gross.to::<u128>(), net));
             if (-1..=1).contains(&dw) {

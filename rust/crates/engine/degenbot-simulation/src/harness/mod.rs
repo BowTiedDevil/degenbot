@@ -793,7 +793,7 @@ fn approve_data(spender: Address, amount: U256) -> Vec<u8> {
     HarnessToken::approveCall { spender, amount }.abi_encode()
 }
 fn balance_of_data(account: Address) -> Vec<u8> {
-    degenbot_rpc::abi::encode_balance_of(&account)
+    degenbot_rpc::abi::IERC20::balanceOfCall { account }.abi_encode()
 }
 /// `PM.balanceOf(owner, id)` — the ERC-6909 claim balances, with
 /// `id = uint256(uint160(currency))`.
@@ -827,15 +827,7 @@ pub fn execute_data_config(payload: &[u8], config: U256) -> Bytes {
     // is `data` (selector + ABI-encoded (bytes, uint256)). `to`/`value` are the
     // caller's concern (execute_payload_config transacts to self.executor).
     let executor = Address::ZERO; // unused (data only); the caller sets the target.
-    match degenbot_executor::composers::encode_execute_call(executor, payload, config) {
-        Ok(call) => Bytes::from(call.data),
-        Err(e) => {
-            // Should not happen with valid inputs; fall back to an empty payload
-            // so the transact surfaces a clear contract revert rather than a panic.
-            let _ = e;
-            Bytes::new()
-        }
-    }
+    Bytes::from(degenbot_executor::composers::encode_execute_call(executor, payload, config).data)
 }
 
 fn init_v3(a: Address, b: Address, fee: u32) -> Vec<u8> {
@@ -1052,7 +1044,7 @@ mod tests {
         // The workspace RPC encoder produces the same bytes.
         assert_eq!(
             balance_of_data(account),
-            degenbot_rpc::abi::encode_balance_of(&account)
+            degenbot_rpc::abi::IERC20::balanceOfCall { account }.abi_encode()
         );
     }
 
@@ -1213,7 +1205,10 @@ mod tests {
             }
             .abi_encode()
         );
-        assert_eq!(balance_of_data(x), degenbot_rpc::abi::encode_balance_of(&x));
+        assert_eq!(
+            balance_of_data(x),
+            degenbot_rpc::abi::IERC20::balanceOfCall { account: x }.abi_encode()
+        );
         assert_eq!(
             pm_balance_of_data(x, y),
             HarnessV4PoolManager::balanceOfCall {

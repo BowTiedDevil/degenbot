@@ -17,10 +17,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Raw tick-word fetch primitives that must stay outside `degenbot-strategy`.
+/// Raw tick-word fetch primitives that must stay outside `degenbot-strategy`:
+/// the `sol!` call shapes a tick-word read issues, the narrowing that decodes
+/// them, and the bootstrap entry points.
 const FORBIDDEN_TICK_FETCHES: &[&str] = &[
-    "fetch_tick_bitmap",
-    "fetch_tick_data",
+    "tickBitmapCall",
+    "ticksCall",
+    "getTickBitmapCall",
+    "getTickLiquidityCall",
+    "TickLiquidity",
     "bootstrap_v3_tick_word",
     "bootstrap_v4_tick_word",
 ];

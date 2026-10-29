@@ -109,17 +109,15 @@ fn encode_single_address(selector: [u8; 4], account: Address) -> Result<Bytes, A
 /// wrap) so the in-process revm path can build the execute calldata without
 /// a cycle.
 ///
-/// # Errors
-///
-/// Returns [`AbiDecodeError`] if the `(bytes, uint256)` encoding fails.
+#[must_use]
 pub fn wrap_execute_calldata(
     executor_address: Address,
     cmd_bytes: &[u8],
     config: alloy::primitives::U256,
-) -> Result<Bytes, AbiDecodeError> {
-    let encoded =
-        degenbot_executor::composers::encode_execute_call(executor_address, cmd_bytes, config)?;
-    Ok(Bytes::from(encoded.data))
+) -> Bytes {
+    Bytes::from(
+        degenbot_executor::composers::encode_execute_call(executor_address, cmd_bytes, config).data,
+    )
 }
 
 #[expect(clippy::unwrap_used)]

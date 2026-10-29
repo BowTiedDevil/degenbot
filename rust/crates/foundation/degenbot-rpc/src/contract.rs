@@ -24,8 +24,10 @@
 //! The `encode_for_types` and `decode_for_types` functions take `&[AbiType]`
 //! directly, avoiding string parsing overhead.
 
+use crate::abi::ContractRead;
 use crate::provider::AlloyProvider;
 use alloy::primitives::{Address, Bytes};
+use alloy::sol_types::SolCall;
 use dashmap::DashMap;
 use degenbot_abi::abi_types::{AbiType, AbiValue, CachedAbiTypes};
 use degenbot_abi::signature_parser;
@@ -329,25 +331,10 @@ impl Contract {
         args: &[String],
         block_number: Option<u64>,
     ) -> ProviderResult<Vec<String>> {
-        // Parse function signature
-        let func = self.parse_function_signature(function_signature)?;
-
-        // Encode arguments (use cached types when available)
-        let encoded_args = if let Some(cached) = func.input_cache() {
-            encode_arguments_cached(cached, &func.inputs, args)?
-        } else {
-            encode_arguments(&func.inputs, args)?
-        };
-
-        // Build calldata: selector + encoded_args
-        let mut calldata = Vec::with_capacity(4 + encoded_args.len());
-        calldata.extend_from_slice(&func.selector);
-        calldata.extend_from_slice(&encoded_args);
-
-        // Execute eth_call
+        let (func, calldata) = self.encode_calldata(function_signature, args)?;
         let result = self
             .provider
-            .eth_call(&self.address, Bytes::from(calldata), block_number)
+            .call(self.address, calldata, block_number)
             .await?;
 
         // Decode return values (use cached types when available)
@@ -355,6 +342,25 @@ impl Contract {
             || decode_return_data(&result, &func.outputs).map_err(Into::into),
             |cached| decode_return_data_cached(cached, &result, &func.outputs).map_err(Into::into),
         )
+    }
+
+    /// Intake one of the two: call a getter the caller declares as a typed
+    /// `sol!` call, decoded into its declared return type.
+    ///
+    /// The typed intake lands on [`ContractRead::read`] — the same verb a
+    /// standalone consumer reads through — so a `sol!`-homed getter needs
+    /// neither signature text nor a hand-built calldata here.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError` from the `eth_call` or `DecodingError` when the
+    /// return data does not decode as the call's declared return type.
+    pub async fn read<C: SolCall>(
+        &self,
+        call: C,
+        block_number: Option<u64>,
+    ) -> ProviderResult<C::Return> {
+        self.provider.read(self.address, call, block_number).await
     }
 
     /// Call a contract function and return typed `AbiValue` results.
@@ -372,25 +378,10 @@ impl Contract {
         args: &[String],
         block_number: Option<u64>,
     ) -> ProviderResult<Vec<AbiValue>> {
-        // Parse function signature
-        let func = self.parse_function_signature(function_signature)?;
-
-        // Encode arguments (use cached types when available)
-        let encoded_args = if let Some(cached) = func.input_cache() {
-            encode_arguments_cached(cached, &func.inputs, args)?
-        } else {
-            encode_arguments(&func.inputs, args)?
-        };
-
-        // Build calldata: selector + encoded_args
-        let mut calldata = Vec::with_capacity(4 + encoded_args.len());
-        calldata.extend_from_slice(&func.selector);
-        calldata.extend_from_slice(&encoded_args);
-
-        // Execute eth_call
+        let (func, calldata) = self.encode_calldata(function_signature, args)?;
         let result = self
             .provider
-            .eth_call(&self.address, Bytes::from(calldata), block_number)
+            .call(self.address, calldata, block_number)
             .await?;
 
         // Decode into typed values
@@ -414,6 +405,25 @@ impl Contract {
                     .map_err(Into::into)
             },
         )
+    }
+
+    /// The declared-shape intake's shared first half: parse the signature, then
+    /// encode its arguments behind the 4-byte selector.
+    fn encode_calldata(
+        &self,
+        function_signature: &str,
+        args: &[String],
+    ) -> ProviderResult<(Arc<FunctionSignature>, Bytes)> {
+        let func = self.parse_function_signature(function_signature)?;
+        let encoded_args = if let Some(cached) = func.input_cache() {
+            encode_arguments_cached(cached, &func.inputs, args)?
+        } else {
+            encode_arguments(&func.inputs, args)?
+        };
+        let mut calldata = Vec::with_capacity(4 + encoded_args.len());
+        calldata.extend_from_slice(&func.selector);
+        calldata.extend_from_slice(&encoded_args);
+        Ok((func, Bytes::from(calldata)))
     }
 
     /// Parse and cache a function signature.

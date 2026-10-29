@@ -55,7 +55,7 @@ use degenbot_core::runtime::bridged_block_on;
 use degenbot_pools::TickInfo;
 use degenbot_pools::{FetchedTickWord, TickWordFetchError, TickWordKey, TickWordSource};
 
-use crate::abi::{fetch_tick_bitmap, fetch_tick_data, fetch_v4_tick_bitmap, fetch_v4_tick_data};
+use crate::abi::{ContractRead, IUniswapV3Pool, IUniswapV4StateView, TickLiquidity};
 use crate::provider::AlloyProvider;
 
 /// The policy for a bitmap read whose return data fails to decode — the
@@ -252,13 +252,28 @@ impl TickWordTransport for AlloyProvider {
     ) -> Result<U256, ProviderError> {
         match key {
             TickWordKey::V3 { address, .. } => {
-                fetch_tick_bitmap(self, address, word, Some(block)).await
+                self.read(
+                    *address,
+                    IUniswapV3Pool::tickBitmapCall { wordPosition: word },
+                    Some(block),
+                )
+                .await
             }
             TickWordKey::V4 {
                 state_view,
                 pool_id,
                 ..
-            } => fetch_v4_tick_bitmap(self, state_view, pool_id, word, Some(block)).await,
+            } => {
+                self.read(
+                    *state_view,
+                    IUniswapV4StateView::getTickBitmapCall {
+                        poolId: (*pool_id).into(),
+                        wordPosition: word,
+                    },
+                    Some(block),
+                )
+                .await
+            }
         }
     }
 
@@ -268,16 +283,17 @@ impl TickWordTransport for AlloyProvider {
         tick: i32,
         block: u64,
     ) -> Result<(U128, i128), ProviderError> {
-        match key {
+        let liquidity = match key {
             TickWordKey::V3 { address, .. } => {
-                fetch_tick_data(self, address, tick, Some(block)).await
+                TickLiquidity::read(self, *address, tick, Some(block)).await?
             }
             TickWordKey::V4 {
                 state_view,
                 pool_id,
                 ..
-            } => fetch_v4_tick_data(self, state_view, pool_id, tick, Some(block)).await,
-        }
+            } => TickLiquidity::read_v4(self, *state_view, *pool_id, tick, Some(block)).await?,
+        };
+        Ok((liquidity.gross, liquidity.net))
     }
 }
 
@@ -333,6 +349,7 @@ mod tests {
     use super::*;
     use crate::offline::OfflineProvider;
     use alloy::primitives::{address, Address, U128, U256};
+    use alloy::sol_types::SolCall;
     use serde_json::json;
 
     /// The V3 pool address used in the recorded-call fixtures.
@@ -401,7 +418,10 @@ mod tests {
             std::collections::HashMap::new();
 
         // tickBitmap(int16) → uint256
-        let bitmap_calldata = crate::abi::encode_tick_bitmap(bitmap_word);
+        let bitmap_calldata = IUniswapV3Pool::tickBitmapCall {
+            wordPosition: bitmap_word,
+        }
+        .abi_encode();
         calls.insert(
             call_key(V3_POOL, &bitmap_calldata),
             Some(word_u256(bitmap_value)),
@@ -409,7 +429,10 @@ mod tests {
 
         // ticks(int24) → (uint128 gross, int128 net)
         for &(tick, gross, net) in tick_responses {
-            let td_calldata = crate::abi::encode_tick_data(tick);
+            let td_calldata = IUniswapV3Pool::ticksCall {
+                tick: tick.try_into().expect("fixture tick within int24"),
+            }
+            .abi_encode();
             let mut response = String::new();
             response.push_str(&word_u128(gross));
             response.push_str(&word_i128(net));
@@ -544,14 +567,22 @@ mod tests {
         // Build V4 fixture.
         let mut calls: std::collections::HashMap<String, Option<String>> =
             std::collections::HashMap::new();
-        let bm_calldata = crate::abi::encode_v4_tick_bitmap(&pool_id, 0);
+        let bm_calldata = IUniswapV4StateView::getTickBitmapCall {
+            poolId: pool_id.into(),
+            wordPosition: 0,
+        }
+        .abi_encode();
         calls.insert(
             call_key(V4_STATE_VIEW, &bm_calldata),
             Some(word_u256(bitmap)),
         );
 
         // Encode ticks(int24) — V4 tick at (word<<8 + bit)*spacing = 10.
-        let td_calldata = crate::abi::encode_v4_tick_data(&pool_id, 10);
+        let td_calldata = IUniswapV4StateView::getTickLiquidityCall {
+            poolId: pool_id.into(),
+            tick: 10i32.try_into().expect("fixture tick within int24"),
+        }
+        .abi_encode();
         let mut response = String::new();
         response.push_str(&word_u128(42));
         response.push_str(&word_i128(-7));

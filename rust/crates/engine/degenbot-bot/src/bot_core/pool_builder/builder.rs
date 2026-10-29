@@ -18,7 +18,8 @@ use hashbrown::HashMap;
 use std::sync::Arc;
 
 use alloy::dyn_abi::{DynSolType, DynSolValue};
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, Bytes, B256, U256};
+use alloy::sol_types::SolCall;
 use degenbot_core::address_utils::address_to_checksum_string;
 use degenbot_core::errors::ProviderError;
 use degenbot_db::error::DbError;
@@ -38,7 +39,11 @@ use degenbot_pools::{
 };
 use degenbot_pools::{ConcentratedLiquiditySlotLayout, RegisterV3PoolParams};
 use degenbot_pools::{RegisterV4PoolParams, V4PoolKey};
-use degenbot_rpc::abi::{self, ContractRead};
+use degenbot_rpc::abi::{
+    self, BalancerPoolId, ContractRead, IAerodromeFactory, IBalancerPool, IBalancerPoolFactory,
+    IBalancerVault, ICurvePool, IPoolIdentity, IUniswapV2Pair, IUniswapV3Pool, IUniswapV4StateView,
+    Slot0Prefix, V2Reserves, V4Slot0,
+};
 use degenbot_rpc::multicall3::{self, MulticallResult, MULTICALL3_ADDRESS};
 use degenbot_rpc::tick_bootstrap::{fetch_tick_word_via, UnreadableBitmapPolicy};
 use degenbot_uniswap::deployments;
@@ -439,9 +444,15 @@ pub async fn fetch_v2_immutable_data(
     block: Option<u64>,
 ) -> Result<V2Immutable, ProviderError> {
     Ok(V2Immutable {
-        factory: abi::fetch_pool_factory(read, address, block).await?,
-        token0: abi::fetch_pool_token0(read, address, block).await?,
-        token1: abi::fetch_pool_token1(read, address, block).await?,
+        factory: read
+            .read(*address, IPoolIdentity::factoryCall {}, block)
+            .await?,
+        token0: read
+            .read(*address, IPoolIdentity::token0Call {}, block)
+            .await?,
+        token1: read
+            .read(*address, IPoolIdentity::token1Call {}, block)
+            .await?,
     })
 }
 
@@ -456,9 +467,15 @@ pub async fn fetch_v3_immutable_data(
     address: &Address,
     block: Option<u64>,
 ) -> Result<V3Immutable, ProviderError> {
-    let factory = abi::fetch_pool_factory(read, address, block).await?;
-    let token0 = abi::fetch_pool_token0(read, address, block).await?;
-    let token1 = abi::fetch_pool_token1(read, address, block).await?;
+    let factory = read
+        .read(*address, IPoolIdentity::factoryCall {}, block)
+        .await?;
+    let token0 = read
+        .read(*address, IPoolIdentity::token0Call {}, block)
+        .await?;
+    let token1 = read
+        .read(*address, IPoolIdentity::token1Call {}, block)
+        .await?;
     let fee = abi::fetch_no_arg_uint(read, b"fee()", address, block, &DynSolType::Uint(24)).await?;
     let tick_spacing =
         abi::fetch_no_arg_int(read, b"tickSpacing()", address, block, &DynSolType::Int(24)).await?;
@@ -546,7 +563,15 @@ pub async fn fetch_aerodrome_stable_and_fee(
     let stable = abi::fetch_no_arg_bool(read, b"stable()", address, block).await?;
     // The fee read takes the pool's own `stable()` answer, so the stable flag
     // must be known before it — the one data dependency in this assembly.
-    let fee_bps = abi::fetch_aerodrome_fee(read, factory, address, stable, block)
+    let fee_bps = read
+        .read(
+            *factory,
+            IAerodromeFactory::getFeeCall {
+                pool: *address,
+                stable,
+            },
+            block,
+        )
         .await?
         .to::<u64>();
     Ok(AerodromeV2Common { stable, fee_bps })
@@ -576,13 +601,41 @@ pub async fn probe_pool_type(
     address: Address,
     block: Option<u64>,
 ) -> Result<PoolFamily, PoolBuilderError> {
-    if probe_present(io, address, abi::encode_slot0(), block).await? {
+    if probe_present(
+        io,
+        address,
+        IUniswapV3Pool::slot0Call {}.abi_encode(),
+        block,
+    )
+    .await?
+    {
         Ok(PoolFamily::V3)
-    } else if probe_present(io, address, abi::encode_get_reserves(), block).await? {
+    } else if probe_present(
+        io,
+        address,
+        IUniswapV2Pair::getReservesCall {}.abi_encode(),
+        block,
+    )
+    .await?
+    {
         Ok(PoolFamily::V2)
-    } else if probe_present(io, address, abi::encode_get_pool_id(), block).await? {
+    } else if probe_present(
+        io,
+        address,
+        IBalancerPool::getPoolIdCall {}.abi_encode(),
+        block,
+    )
+    .await?
+    {
         Ok(
-            if probe_present(io, address, abi::encode_get_weights(), block).await? {
+            if probe_present(
+                io,
+                address,
+                IBalancerPool::getNormalizedWeightsCall {}.abi_encode(),
+                block,
+            )
+            .await?
+            {
                 PoolFamily::BalancerWeighted
             } else {
                 PoolFamily::BalancerStable
@@ -615,9 +668,14 @@ async fn probe_present(
 ///
 /// `coins(uint256)` is exposed by every supported Curve family
 /// (stable/metapools/two/tricrypto) — it is the positive identity signal. A
-/// revert means the selector is absent and a garbage return means the call
-/// site is not a Curve coin getter: both are "not Curve". A provider failure
-/// that is not a revert propagates.
+/// revert means the selector is absent and an answer that does not decode as
+/// an address means the call site is not a Curve coin getter: both are "not
+/// Curve". A provider failure that is neither a revert nor a decode failure
+/// propagates.
+///
+/// The typed read owns the ABI decode, so the garbage-return case arrives as
+/// [`ProviderError::DecodingError`] instead of as bytes; an undecodable answer
+/// is absence, never an RPC fault.
 ///
 /// `coins(0)` needs the index word in the calldata (the ABI decoder rejects a
 /// bare selector), so this cannot reuse [`probe_present`].
@@ -627,11 +685,13 @@ async fn probe_curve(
     block: Option<u64>,
 ) -> Result<bool, ProviderError> {
     match read
-        .call(address, abi::encode_curve_coins_uint(0).into(), block)
+        .read(address, ICurvePool::coinsCall { i: U256::ZERO }, block)
         .await
     {
-        Ok(bytes) => Ok(abi::decode_curve_coins(&bytes).is_ok()),
-        Err(ProviderError::ExecutionReverted { .. }) => Ok(false),
+        Ok(_) => Ok(true),
+        Err(ProviderError::ExecutionReverted { .. } | ProviderError::DecodingError { .. }) => {
+            Ok(false)
+        }
         Err(e) => Err(e),
     }
 }
@@ -723,7 +783,8 @@ pub async fn build_v2(
     block: Option<u64>,
 ) -> Result<RegisterV2PoolParams, PoolBuilderError> {
     let imm = fetch_v2_immutable_data(io, &address, block).await?;
-    let (r0, r1) = abi::fetch_v2_reserves(io, &address, block).await?;
+    let v2 = V2Reserves::read(io, address, block).await?;
+    let (r0, r1) = (v2.reserve0, v2.reserve1);
     let id = resolve_v2_dex(io, address, imm.factory, block)
         .await?
         .ok_or(PoolBuilderError::UnknownVariant {
@@ -789,7 +850,8 @@ pub async fn build_aerodrome_v2(
     block: Option<u64>,
 ) -> Result<RegisterAerodromeV2PoolParams, PoolBuilderError> {
     let imm = fetch_v2_immutable_data(io, &address, block).await?;
-    let (r0, r1) = abi::fetch_v2_reserves(io, &address, block).await?;
+    let v2 = V2Reserves::read(io, address, block).await?;
+    let (r0, r1) = (v2.reserve0, v2.reserve1);
     let common = fetch_aerodrome_stable_and_fee(io, &address, &imm.factory, block).await?;
 
     let id = if common.stable {
@@ -1017,7 +1079,13 @@ pub async fn fetch_balancer_factory(
     block: Option<u64>,
 ) -> Option<Address> {
     for factory in candidates {
-        let Ok(owns) = abi::fetch_balancer_is_pool_from_factory(read, factory, pool, block).await
+        let Ok(owns) = read
+            .read(
+                *factory,
+                IBalancerPoolFactory::isPoolFromFactoryCall { pool: *pool },
+                block,
+            )
+            .await
         else {
             continue;
         };
@@ -1040,13 +1108,22 @@ pub async fn probe_balancer_type(
     address: &Address,
     block: Option<u64>,
 ) -> Result<BalancerFamily, ProviderError> {
-    if abi::fetch_balancer_weights(read, address, block)
+    if read
+        .read(*address, IBalancerPool::getNormalizedWeightsCall {}, block)
         .await
         .is_ok()
     {
         return Ok(BalancerFamily::Weighted);
     }
-    if abi::fetch_balancer_amp(read, address, block).await.is_ok() {
+    if read
+        .read(
+            *address,
+            IBalancerPool::getAmplificationParameterCall {},
+            block,
+        )
+        .await
+        .is_ok()
+    {
         return Ok(BalancerFamily::Stable);
     }
     Err(ProviderError::DecodingError {
@@ -1087,8 +1164,17 @@ pub async fn build_balancer_weighted(
         return Err(PoolBuilderError::Spec(SpecRefusal::BalancerBrokenPool));
     }
 
-    let pool_id = abi::fetch_balancer_pool_id(io, &address, block).await?;
-    let (tokens, balances) = abi::fetch_balancer_vault_tokens(io, &vault, &pool_id, block).await?;
+    let pool_id = BalancerPoolId::read(io, address, block).await?;
+    let vault_tokens = io
+        .read(
+            vault,
+            IBalancerVault::getPoolTokensCall {
+                poolId: pool_id.0.into(),
+            },
+            block,
+        )
+        .await?;
+    let (tokens, balances) = (vault_tokens.tokens, vault_tokens.balances);
 
     // A composable weighted pool (`ManagedPool`) registers its own BPT as a
     // Vault token and reports weights only for the underlying tokens, so the
@@ -1101,8 +1187,12 @@ pub async fn build_balancer_weighted(
         ));
     }
 
-    let fee = abi::fetch_balancer_swap_fee(io, &address, block).await?;
-    let weights = abi::fetch_balancer_weights(io, &address, block).await?;
+    let fee = io
+        .read(address, IBalancerPool::getSwapFeePercentageCall {}, block)
+        .await?;
+    let weights = io
+        .read(address, IBalancerPool::getNormalizedWeightsCall {}, block)
+        .await?;
 
     let bytecode = io.get_code(address, block).await?;
     let pow_version = detect_pow_version(&bytecode);
@@ -1115,7 +1205,7 @@ pub async fn build_balancer_weighted(
     Ok(RegisterBalancerWeightedPoolParams {
         address,
         vault,
-        pool_id,
+        pool_id: pool_id.0,
         tokens,
         weights,
         scaling_factors,
@@ -1159,10 +1249,28 @@ pub async fn build_balancer_stable(
         return Err(PoolBuilderError::Spec(SpecRefusal::BalancerBrokenPool));
     }
 
-    let pool_id = abi::fetch_balancer_pool_id(io, &address, block).await?;
-    let (tokens, balances) = abi::fetch_balancer_vault_tokens(io, &vault, &pool_id, block).await?;
-    let fee = abi::fetch_balancer_swap_fee(io, &address, block).await?;
-    let amp = abi::fetch_balancer_amp(io, &address, block).await?;
+    let pool_id = BalancerPoolId::read(io, address, block).await?;
+    let vault_tokens = io
+        .read(
+            vault,
+            IBalancerVault::getPoolTokensCall {
+                poolId: pool_id.0.into(),
+            },
+            block,
+        )
+        .await?;
+    let (tokens, balances) = (vault_tokens.tokens, vault_tokens.balances);
+    let fee = io
+        .read(address, IBalancerPool::getSwapFeePercentageCall {}, block)
+        .await?;
+    let amp = io
+        .read(
+            address,
+            IBalancerPool::getAmplificationParameterCall {},
+            block,
+        )
+        .await?
+        .value;
 
     let bpt_idx = tokens.iter().position(|t| *t == address);
     let invariant_version =
@@ -1174,7 +1282,10 @@ pub async fn build_balancer_stable(
 
     // getRateProviders reverts for WeightedPool2Tokens / MetaStablePools —
     // degrade to an empty list (mirrors the Python `except -> []`).
-    let providers = match abi::fetch_balancer_rate_providers(io, &address, block).await {
+    let providers = match io
+        .read(address, IBalancerPool::getRateProvidersCall {}, block)
+        .await
+    {
         Ok(p) => p,
         Err(
             degenbot_core::errors::ProviderError::DecodingError { .. }
@@ -1198,7 +1309,10 @@ pub async fn build_balancer_stable(
                 // unable to price its own tokens: a pool fact, not a transport
                 // fault, so it refuses by name instead of surfacing as an RPC
                 // error.
-                match abi::fetch_balancer_rate(io, provider, block).await {
+                match io
+                    .read(*provider, IBalancerPool::getRateCall {}, block)
+                    .await
+                {
                     Ok(rate) => rate,
                     Err(
                         degenbot_core::errors::ProviderError::ExecutionReverted { .. }
@@ -1219,7 +1333,7 @@ pub async fn build_balancer_stable(
     Ok(RegisterBalancerStablePoolParams {
         address,
         vault,
-        pool_id,
+        pool_id: pool_id.0,
         tokens,
         amp: amp.to::<u128>(),
         scaling_factors,
@@ -1359,13 +1473,15 @@ async fn reconcile_db_seed_v3(
     }
     let mut chain_words = HashMap::new();
     for word in seed_row_words(seed, tick_spacing) {
-        let bitmap = abi::fetch_tick_bitmap(
-            &PacedRead::new(io),
-            &address,
-            tick_word_i16(word)?,
-            Some(block),
-        )
-        .await?;
+        let bitmap = PacedRead::new(io)
+            .read(
+                address,
+                IUniswapV3Pool::tickBitmapCall {
+                    wordPosition: tick_word_i16(word)?,
+                },
+                Some(block),
+            )
+            .await?;
         chain_words.insert(word, bitmap);
     }
     reconcile_tracked_rows(&chain_words, &seed.ticks, tick_spacing)?;
@@ -1391,14 +1507,16 @@ async fn reconcile_db_seed_v4(
     }
     let mut chain_words = HashMap::new();
     for word in seed_row_words(seed, tick_spacing) {
-        let bitmap = abi::fetch_v4_tick_bitmap(
-            &PacedRead::new(io),
-            &state_view,
-            &pool_id,
-            tick_word_i16(word)?,
-            Some(block),
-        )
-        .await?;
+        let bitmap = PacedRead::new(io)
+            .read(
+                state_view,
+                IUniswapV4StateView::getTickBitmapCall {
+                    poolId: pool_id.into(),
+                    wordPosition: tick_word_i16(word)?,
+                },
+                Some(block),
+            )
+            .await?;
         chain_words.insert(word, bitmap);
     }
     reconcile_tracked_rows(&chain_words, &seed.ticks, tick_spacing)?;
@@ -1678,16 +1796,23 @@ async fn fetch_erc20_decimals(
     token: Address,
     block: Option<u64>,
 ) -> Result<u8, PoolBuilderError> {
-    let calldata = abi::selector(b"decimals()");
-    let bytes = read.call(token, calldata.to_vec().into(), block).await?;
+    let calldata = Bytes::from(abi::selector(b"decimals()").to_vec());
+    let bytes = read.call(token, calldata, block).await?;
     // An empty return is a coin that cannot serve an ERC20 read at all (an
     // old vyper pool's ETH sentinel has no code; a junk `coins()` return is
     // the same shape): the pool is refused, not decoded.
     if bytes.is_empty() {
         return Err(PoolBuilderError::Spec(SpecRefusal::NoCodeCoin));
     }
-    let dec = abi::decode_uint256(&bytes)?;
-    Ok(dec.to::<u8>())
+    if bytes.len() < 32 {
+        return Err(PoolBuilderError::Rpc(ProviderError::DecodingError {
+            message: format!(
+                "decimals() returned {} bytes, shorter than one word",
+                bytes.len()
+            ),
+        }));
+    }
+    Ok(U256::from_be_slice(&bytes[..32]).to::<u8>())
 }
 
 /// Assemble `build_v3` params for a concentrated-liquidity (V3-style) pool.
@@ -1710,8 +1835,12 @@ pub async fn build_v3(
     block: Option<u64>,
 ) -> Result<RegisterV3PoolParams, PoolBuilderError> {
     let imm = fetch_v3_immutable_data(io, &address, block).await?;
+    let slot0 = Slot0Prefix::read(io, address, block).await?;
+    let liquidity = io
+        .read(address, IUniswapV3Pool::liquidityCall {}, block)
+        .await?;
     let (sqrt_price_x96, tick_i, liquidity) =
-        abi::fetch_v3_slot0_liquidity(io, &address, block).await?;
+        (slot0.sqrt_price_x96, slot0.tick, U256::from(liquidity));
     let tick = i32::try_from(tick_i).unwrap_or(0);
     let update_block = block.unwrap_or(0);
 
@@ -1852,8 +1981,23 @@ pub async fn build_v4(
     io: &ConstructionIo,
     block: Option<u64>,
 ) -> Result<V4BuildResult, PoolBuilderError> {
-    let (sqrt_price_x96, tick_i, protocol_fee_u, lp_fee_u, liquidity_u) =
-        abi::fetch_v4_slot0_liquidity(io, &id.state_view, &id.pool_id, block).await?;
+    let slot0 = V4Slot0::read(io, id.state_view, id.pool_id, block).await?;
+    let liquidity_u = io
+        .read(
+            id.state_view,
+            IUniswapV4StateView::getLiquidityCall {
+                poolId: id.pool_id.into(),
+            },
+            block,
+        )
+        .await?;
+    let (sqrt_price_x96, tick_i, protocol_fee_u, lp_fee_u) = (
+        slot0.sqrt_price_x96,
+        slot0.tick,
+        slot0.protocol_fee,
+        slot0.lp_fee,
+    );
+    let liquidity_u = U256::from(liquidity_u);
     let protocol_fee = protocol_fee_u.to::<u32>();
     let lp_fee = lp_fee_u.to::<u32>();
     let tick = i32::try_from(tick_i).unwrap_or(0);

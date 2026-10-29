@@ -14,10 +14,11 @@ use hashbrown::HashMap;
 
 use alloy::dyn_abi::DynSolValue;
 use alloy::primitives::{aliases::U112, aliases::U128, Address, Bytes, FixedBytes, I256, U256};
+use alloy::sol_types::SolCall;
 use async_trait::async_trait;
 use degenbot_core::errors::ProviderError;
 use degenbot_pools::SpecRefusal;
-use degenbot_rpc::abi;
+use degenbot_rpc::abi::{self, ContractRead, Slot0Prefix, TickLiquidity, V2Reserves, V4Slot0};
 
 use super::{builder, curve_choreography};
 use crate::bot_core::construction_io::{
@@ -375,7 +376,7 @@ async fn fetch_v2_immutable_data_decodes() {
 async fn fetch_v2_reserves_decodes_two_uint256() {
     let mut f = FakeRpc::new();
     f.set(
-        abi::encode_get_reserves()[..4].try_into().unwrap(),
+        abi::selector(b"getReserves()"),
         enc(DynSolValue::Tuple(vec![
             DynSolValue::Uint(U256::from(1_000_000u64), 256),
             DynSolValue::Uint(U256::from(2_000_000u64), 256),
@@ -385,7 +386,10 @@ async fn fetch_v2_reserves_decodes_two_uint256() {
         ])),
     );
     let io = io_with(f);
-    let (r0, r1) = abi::fetch_v2_reserves(&io, &TO, None).await.unwrap();
+    let (r0, r1) = V2Reserves::read(&io, TO, None)
+        .await
+        .map(|r| (r.reserve0, r.reserve1))
+        .unwrap();
     assert_eq!(r0, U256::from(1_000_000u64));
     assert_eq!(r1, U256::from(2_000_000u64));
 }
@@ -420,16 +424,18 @@ async fn fetch_v3_immutable_data_decodes_incl_negative_tick_spacing() {
 async fn fetch_v3_slot0_liquidity_decodes() {
     let mut f = FakeRpc::new();
     let sqrt = U256::from(1u128 << 96);
+    f.set(abi::selector(b"slot0()"), slot0_ret(sqrt, -123));
     f.set(
-        abi::encode_slot0()[..4].try_into().unwrap(),
-        slot0_ret(sqrt, -123),
-    );
-    f.set(
-        abi::encode_liquidity()[..4].try_into().unwrap(),
+        abi::selector(b"liquidity()"),
         enc(DynSolValue::Uint(U256::from(42), 128)),
     );
     let io = io_with(f);
-    let (s, t, liq) = abi::fetch_v3_slot0_liquidity(&io, &TO, None).await.unwrap();
+    let slot0 = Slot0Prefix::read(&io, TO, None).await.unwrap();
+    let liquidity = io
+        .read(TO, abi::IUniswapV3Pool::liquidityCall {}, None)
+        .await
+        .unwrap();
+    let (s, t, liq) = (slot0.sqrt_price_x96, slot0.tick, U256::from(liquidity));
     assert_eq!(s, sqrt);
     assert_eq!(t, I256::try_from(-123i128).unwrap());
     assert_eq!(liq, U256::from(42));
@@ -440,7 +446,7 @@ async fn fetch_v4_slot0_liquidity_decodes() {
     let mut f = FakeRpc::new();
     let sqrt = U256::from(1u128 << 95);
     f.set(
-        abi::encode_get_slot0(&POOL_ID)[..4].try_into().unwrap(),
+        abi::selector(b"getSlot0(bytes32)"),
         enc(DynSolValue::Tuple(vec![
             DynSolValue::Uint(sqrt, 160),
             DynSolValue::Int(I256::try_from(7i128).unwrap(), 24),
@@ -449,13 +455,28 @@ async fn fetch_v4_slot0_liquidity_decodes() {
         ])),
     );
     f.set(
-        abi::encode_get_liquidity(&POOL_ID)[..4].try_into().unwrap(),
+        abi::selector(b"getLiquidity(bytes32)"),
         enc(DynSolValue::Uint(U256::from(99), 128)),
     );
     let io = io_with(f);
-    let (s, t, pf, lf, liq) = abi::fetch_v4_slot0_liquidity(&io, &SV, &POOL_ID, None)
+    let slot0 = V4Slot0::read(&io, SV, POOL_ID, None).await.unwrap();
+    let liquidity = io
+        .read(
+            SV,
+            abi::IUniswapV4StateView::getLiquidityCall {
+                poolId: POOL_ID.into(),
+            },
+            None,
+        )
         .await
         .unwrap();
+    let (s, t, pf, lf, liq) = (
+        slot0.sqrt_price_x96,
+        slot0.tick,
+        slot0.protocol_fee,
+        slot0.lp_fee,
+        U256::from(liquidity),
+    );
     assert_eq!(s, sqrt);
     assert_eq!(t, I256::try_from(7i128).unwrap());
     assert_eq!(pf, U256::from(1));
@@ -468,12 +489,17 @@ async fn fetch_tick_bitmap_decodes() {
     let mut f = FakeRpc::new();
     let bitmap = U256::from(0xFFu64) << 70;
     f.set(
-        abi::encode_tick_bitmap(3)[..4].try_into().unwrap(),
+        abi::selector(b"tickBitmap(int16)"),
         enc(DynSolValue::Uint(bitmap, 256)),
     );
     let io = io_with(f);
     assert_eq!(
-        abi::fetch_tick_bitmap(&PacedRead::new(&io), &TO, 3, None)
+        PacedRead::new(&io)
+            .read(
+                TO,
+                abi::IUniswapV3Pool::tickBitmapCall { wordPosition: 3 },
+                None
+            )
             .await
             .unwrap(),
         bitmap
@@ -486,7 +512,7 @@ async fn fetch_tick_bitmap_decodes() {
 #[tokio::test]
 async fn the_tick_pace_bounds_tick_reads_only() {
     let mut f = FakeRpc::new();
-    let selector: [u8; 4] = abi::encode_tick_bitmap(3)[..4].try_into().unwrap();
+    let selector: [u8; 4] = abi::selector(b"tickBitmap(int16)");
     f.set(selector, enc(DynSolValue::Uint(U256::ZERO, 256)));
     let io = io_with(f).with_tick_fetch_pace(TickFetchPace::from_millis(40));
 
@@ -506,10 +532,20 @@ async fn the_tick_pace_bounds_tick_reads_only() {
 
     // Two tick reads are one interval apart.
     let paced = std::time::Instant::now();
-    abi::fetch_tick_bitmap(&PacedRead::new(&io), &TO, 3, None)
+    PacedRead::new(&io)
+        .read(
+            TO,
+            abi::IUniswapV3Pool::tickBitmapCall { wordPosition: 3 },
+            None,
+        )
         .await
         .unwrap();
-    abi::fetch_tick_bitmap(&PacedRead::new(&io), &TO, 3, None)
+    PacedRead::new(&io)
+        .read(
+            TO,
+            abi::IUniswapV3Pool::tickBitmapCall { wordPosition: 3 },
+            None,
+        )
         .await
         .unwrap();
     assert!(
@@ -523,15 +559,16 @@ async fn the_tick_pace_bounds_tick_reads_only() {
 async fn fetch_tick_data_decodes() {
     let mut f = FakeRpc::new();
     f.set(
-        abi::encode_tick_data(120)[..4].try_into().unwrap(),
+        abi::selector(b"ticks(int24)"),
         enc(DynSolValue::Tuple(vec![
             DynSolValue::Uint(U256::from(111), 128),
             DynSolValue::Int(I256::try_from(-25i128).unwrap(), 128),
         ])),
     );
     let io = io_with(f);
-    let (gross, net) = abi::fetch_tick_data(&PacedRead::new(&io), &TO, 120, None)
+    let (gross, net) = TickLiquidity::read(&PacedRead::new(&io), TO, 120, None)
         .await
+        .map(|l| (l.gross, l.net))
         .unwrap();
     assert_eq!(gross.to_string(), "111");
     assert_eq!(net, -25i128);
@@ -542,14 +579,20 @@ async fn fetch_v4_tick_bitmap_decodes() {
     let mut f = FakeRpc::new();
     let bitmap = U256::from(0x7u64) << 3;
     f.set(
-        abi::encode_v4_tick_bitmap(&POOL_ID, -4)[..4]
-            .try_into()
-            .unwrap(),
+        abi::selector(b"getTickBitmap(bytes32,int16)"),
         enc(DynSolValue::Uint(bitmap, 256)),
     );
     let io = io_with(f);
     assert_eq!(
-        abi::fetch_v4_tick_bitmap(&PacedRead::new(&io), &SV, &POOL_ID, -4, None)
+        PacedRead::new(&io)
+            .read(
+                SV,
+                abi::IUniswapV4StateView::getTickBitmapCall {
+                    poolId: POOL_ID.into(),
+                    wordPosition: -4
+                },
+                None
+            )
             .await
             .unwrap(),
         bitmap
@@ -560,17 +603,16 @@ async fn fetch_v4_tick_bitmap_decodes() {
 async fn fetch_v4_tick_data_decodes() {
     let mut f = FakeRpc::new();
     f.set(
-        abi::encode_v4_tick_data(&POOL_ID, 5)[..4]
-            .try_into()
-            .unwrap(),
+        abi::selector(b"getTickLiquidity(bytes32,int24)"),
         enc(DynSolValue::Tuple(vec![
             DynSolValue::Uint(U256::from(7), 128),
             DynSolValue::Int(I256::try_from(3i128).unwrap(), 128),
         ])),
     );
     let io = io_with(f);
-    let (gross, net) = abi::fetch_v4_tick_data(&PacedRead::new(&io), &SV, &POOL_ID, 5, None)
+    let (gross, net) = TickLiquidity::read_v4(&PacedRead::new(&io), SV, POOL_ID, 5, None)
         .await
+        .map(|l| (l.gross, l.net))
         .unwrap();
     assert_eq!(gross.to_string(), "7");
     assert_eq!(net, 3i128);
@@ -588,7 +630,10 @@ async fn probe_pool_type_dispatches() {
 
     // coins(0) answers with an address → Curve.
     let mut f = FakeRpc::new();
-    f.set_full(abi::encode_curve_coins_uint(0), addr_word(TO));
+    f.set_full(
+        abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
+        addr_word(TO),
+    );
     assert_eq!(
         builder::probe_pool_type(&io_with(f), TO, None)
             .await
@@ -598,7 +643,10 @@ async fn probe_pool_type_dispatches() {
 
     // coins(0) answers with garbage → unknown identity, not Curve.
     let mut f = FakeRpc::new();
-    f.set_full(abi::encode_curve_coins_uint(0), vec![0u8; 1]);
+    f.set_full(
+        abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
+        vec![0u8; 1],
+    );
     assert!(matches!(
         builder::probe_pool_type(&io_with(f), TO, None).await,
         Err(builder::PoolBuilderError::UnknownPoolIdentity { address }) if address == TO
@@ -607,7 +655,7 @@ async fn probe_pool_type_dispatches() {
     // slot0() present → V3.
     let mut f = FakeRpc::new();
     f.set(
-        abi::encode_slot0()[..4].try_into().unwrap(),
+        abi::selector(b"slot0()"),
         slot0_ret(U256::from(1u128 << 96), 0),
     );
     assert_eq!(
@@ -620,7 +668,7 @@ async fn probe_pool_type_dispatches() {
     // getReserves() present, no slot0 → V2.
     let mut f = FakeRpc::new();
     f.set(
-        abi::encode_get_reserves()[..4].try_into().unwrap(),
+        abi::selector(b"getReserves()"),
         enc(DynSolValue::Tuple(vec![
             DynSolValue::Uint(U256::ZERO, 112),
             DynSolValue::Uint(U256::ZERO, 112),
@@ -748,7 +796,7 @@ async fn build_v2_assembles_register_params_from_onchain() {
     f.set(abi::selector(b"token0()"), addr_word(tok0));
     f.set(abi::selector(b"token1()"), addr_word(tok1));
     f.set(
-        abi::encode_get_reserves()[..4].try_into().unwrap(),
+        abi::selector(b"getReserves()"),
         enc(DynSolValue::Tuple(vec![
             DynSolValue::Uint(U256::from(123_456_789u64), 112),
             DynSolValue::Uint(U256::from(987_654_321u64), 112),
@@ -821,16 +869,16 @@ async fn build_v3_assembles_sparse_register_params_from_onchain() {
         enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
     );
     f.set(
-        abi::encode_slot0()[..4].try_into().unwrap(),
+        abi::selector(b"slot0()"),
         slot0_ret(U256::from(1u128 << 96), 0),
     );
     f.set(
-        abi::encode_liquidity()[..4].try_into().unwrap(),
+        abi::selector(b"liquidity()"),
         enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
     );
     // tick=0, spacing=60 → word 0; zero bitmap → sparse, no per-tick reads.
     f.set(
-        abi::encode_tick_bitmap(0)[..4].try_into().unwrap(),
+        abi::selector(b"tickBitmap(int16)"),
         enc(DynSolValue::Uint(U256::ZERO, 256)),
     );
     let io = io_with(f);
@@ -859,7 +907,7 @@ async fn build_v4_assembles_sparse_register_params_from_onchain() {
 
     let mut f = FakeRpc::new();
     f.set(
-        abi::encode_get_slot0(&pid)[..4].try_into().unwrap(),
+        abi::selector(b"getSlot0(bytes32)"),
         enc(DynSolValue::Tuple(vec![
             DynSolValue::Uint(U256::from(1u128 << 96), 160),
             DynSolValue::Int(I256::try_from(5i32).unwrap(), 24),
@@ -868,12 +916,12 @@ async fn build_v4_assembles_sparse_register_params_from_onchain() {
         ])),
     );
     f.set(
-        abi::encode_get_liquidity(&pid)[..4].try_into().unwrap(),
+        abi::selector(b"getLiquidity(bytes32)"),
         enc(DynSolValue::Uint(U256::from(2_000_000_000u64), 128)),
     );
     // tick=5, spacing=1 -> word 0; zero bitmap -> sparse, no per-tick reads.
     f.set(
-        abi::encode_v4_tick_bitmap(&pid, 0)[..4].try_into().unwrap(),
+        abi::selector(b"getTickBitmap(bytes32,int16)"),
         enc(DynSolValue::Uint(U256::ZERO, 256)),
     );
     let io = io_with(f);
@@ -985,17 +1033,17 @@ async fn build_v3_db_hit_yields_tracked() {
         enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
     );
     f.set(
-        abi::encode_slot0()[..4].try_into().unwrap(),
+        abi::selector(b"slot0()"),
         slot0_ret(U256::from(1u128 << 96), 0),
     );
     f.set(
-        abi::encode_liquidity()[..4].try_into().unwrap(),
+        abi::selector(b"liquidity()"),
         enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
     );
     // The chain-truth intake gate reads the pool's word 0 from chain: bit 1
     // (tick 60 at spacing 60) must match the DB row below.
     f.set(
-        abi::encode_tick_bitmap(0)[..4].try_into().unwrap(),
+        abi::selector(b"tickBitmap(int16)"),
         enc(DynSolValue::Uint(U256::from(1u64) << 1, 256)),
     );
     let io = io_with(f);
@@ -1053,17 +1101,17 @@ async fn build_v3_db_hit_stamps_tick_data_block_at_db_liquidity_update_block() {
         enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
     );
     f.set(
-        abi::encode_slot0()[..4].try_into().unwrap(),
+        abi::selector(b"slot0()"),
         slot0_ret(U256::from(1u128 << 96), 0),
     );
     f.set(
-        abi::encode_liquidity()[..4].try_into().unwrap(),
+        abi::selector(b"liquidity()"),
         enc(DynSolValue::Uint(U256::from(1_000_000u64), 128)),
     );
     // The chain-truth intake gate reads word 0 from chain: bit 1 (tick 60 at
     // spacing 60) must match the DB row below.
     f.set(
-        abi::encode_tick_bitmap(0)[..4].try_into().unwrap(),
+        abi::selector(b"tickBitmap(int16)"),
         enc(DynSolValue::Uint(U256::from(1u64) << 1, 256)),
     );
     let io = io_with(f);
@@ -1145,11 +1193,14 @@ const T1: Address = alloy::primitives::address!("0xa0b86991c6218b36c1d19d4a2e9eb
 async fn fetch_balancer_weights_decodes_uint256_array() {
     let mut f = FakeRpc::new();
     f.set(
-        abi::encode_get_weights()[..4].try_into().unwrap(),
+        abi::selector(b"getNormalizedWeights()"),
         u256_array_ret(&[500_000_000_000_000_000u64, 500_000_000_000_000_000u64]),
     );
     let io = io_with(f);
-    let w = abi::fetch_balancer_weights(&io, &TO, None).await.unwrap();
+    let w = io
+        .read(TO, abi::IBalancerPool::getNormalizedWeightsCall {}, None)
+        .await
+        .unwrap();
     assert_eq!(w.len(), 2);
     assert_eq!(w[0], U256::from(500_000_000_000_000_000u64));
     assert_eq!(w[1], U256::from(500_000_000_000_000_000u64));
@@ -1164,7 +1215,7 @@ async fn probe_balancer_type_weights_first_then_stable() {
     // getNormalizedWeights responds → Weighted.
     let mut f = FakeRpc::new();
     f.set(
-        abi::encode_get_weights()[..4].try_into().unwrap(),
+        abi::selector(b"getNormalizedWeights()"),
         u256_array_ret(&[500_000_000_000_000_000u64]),
     );
     let io = io_with(f);
@@ -1176,7 +1227,7 @@ async fn probe_balancer_type_weights_first_then_stable() {
     // Only getAmplificationParameter → Stable.
     let mut f = FakeRpc::new();
     f.set(
-        abi::encode_get_amp()[..4].try_into().unwrap(),
+        abi::selector(b"getAmplificationParameter()"),
         enc(DynSolValue::Tuple(vec![
             DynSolValue::Uint(U256::from(100u64), 256),
             DynSolValue::Bool(false),
@@ -1196,9 +1247,7 @@ async fn probe_balancer_type_weights_first_then_stable() {
 /// (unregistered factory revision) reports no owner.
 #[tokio::test]
 async fn fetch_balancer_factory_reports_the_owning_candidate() {
-    let sel: [u8; 4] = abi::encode_balancer_is_pool_from_factory(&TO)[..4]
-        .try_into()
-        .unwrap();
+    let sel: [u8; 4] = abi::selector(b"isPoolFromFactory(address)");
 
     // Every candidate reverts (no response configured) → no owner.
     let io = io_with(FakeRpc::new());
@@ -1230,22 +1279,17 @@ async fn fetch_balancer_factory_reports_the_owning_candidate() {
 async fn build_balancer_weighted_assembles_params() {
     let mut f = FakeRpc::new();
     let pool_id = [0xcd; 32];
+    f.set(abi::selector(b"getPoolId()"), pool_id_ret(&pool_id));
     f.set(
-        abi::encode_get_pool_id()[..4].try_into().unwrap(),
-        pool_id_ret(&pool_id),
-    );
-    f.set(
-        abi::encode_get_pool_tokens(&pool_id)[..4]
-            .try_into()
-            .unwrap(),
+        abi::selector(b"getPoolTokens(bytes32)"),
         pool_tokens_ret(&[T0, T1], &[U256::from(1_000u64), U256::from(2_000u64)]),
     );
     f.set(
-        abi::encode_get_swap_fee()[..4].try_into().unwrap(),
+        abi::selector(b"getSwapFeePercentage()"),
         enc(DynSolValue::Uint(U256::from(5_000_000_000_000_000u64), 256)),
     );
     f.set(
-        abi::encode_get_weights()[..4].try_into().unwrap(),
+        abi::selector(b"getNormalizedWeights()"),
         u256_array_ret(&[500_000_000_000_000_000u64, 500_000_000_000_000_000u64]),
     );
     // Token decimals: both 18 → scaling factor ONE (1e18) each. (The FakeRpc
@@ -1275,22 +1319,17 @@ async fn build_balancer_weighted_assembles_params() {
 async fn build_balancer_stable_assembles_params_with_rate_providers() {
     let mut f = FakeRpc::new();
     let pool_id = [0xef; 32];
+    f.set(abi::selector(b"getPoolId()"), pool_id_ret(&pool_id));
     f.set(
-        abi::encode_get_pool_id()[..4].try_into().unwrap(),
-        pool_id_ret(&pool_id),
-    );
-    f.set(
-        abi::encode_get_pool_tokens(&pool_id)[..4]
-            .try_into()
-            .unwrap(),
+        abi::selector(b"getPoolTokens(bytes32)"),
         pool_tokens_ret(&[T0, T1], &[U256::from(100u64), U256::from(200u64)]),
     );
     f.set(
-        abi::encode_get_swap_fee()[..4].try_into().unwrap(),
+        abi::selector(b"getSwapFeePercentage()"),
         enc(DynSolValue::Uint(U256::from(5_000_000_000_000_000u64), 256)),
     );
     f.set(
-        abi::encode_get_amp()[..4].try_into().unwrap(),
+        abi::selector(b"getAmplificationParameter()"),
         enc(DynSolValue::Tuple(vec![
             DynSolValue::Uint(U256::from(100u64), 256),
             DynSolValue::Bool(false),
@@ -1312,7 +1351,7 @@ async fn build_balancer_stable_assembles_params_with_rate_providers() {
         ])),
     );
     f.set(
-        abi::encode_get_rate()[..4].try_into().unwrap(),
+        abi::selector(b"getRate()"),
         enc(DynSolValue::Uint(
             U256::from(1_020_000_000_000_000_000u64),
             256,
@@ -1340,23 +1379,18 @@ async fn build_balancer_stable_assembles_params_with_rate_providers() {
 fn balancer_stable_fakes(tokens: &[Address]) -> FakeRpc {
     let mut f = FakeRpc::new();
     let pool_id = [0xef; 32];
-    f.set(
-        abi::encode_get_pool_id()[..4].try_into().unwrap(),
-        pool_id_ret(&pool_id),
-    );
+    f.set(abi::selector(b"getPoolId()"), pool_id_ret(&pool_id));
     let balances: Vec<U256> = (0..tokens.len()).map(|_| U256::from(100u64)).collect();
     f.set(
-        abi::encode_get_pool_tokens(&pool_id)[..4]
-            .try_into()
-            .unwrap(),
+        abi::selector(b"getPoolTokens(bytes32)"),
         pool_tokens_ret(tokens, &balances),
     );
     f.set(
-        abi::encode_get_swap_fee()[..4].try_into().unwrap(),
+        abi::selector(b"getSwapFeePercentage()"),
         enc(DynSolValue::Uint(U256::from(5_000_000_000_000_000u64), 256)),
     );
     f.set(
-        abi::encode_get_amp()[..4].try_into().unwrap(),
+        abi::selector(b"getAmplificationParameter()"),
         enc(DynSolValue::Tuple(vec![
             DynSolValue::Uint(U256::from(100u64), 256),
             DynSolValue::Bool(false),
@@ -1468,22 +1502,17 @@ async fn build_balancer_stable_rejects_a_known_broken_pool() {
 async fn build_balancer_weighted_refuses_a_pool_with_an_unreadable_coin() {
     let mut f = FakeRpc::new();
     let pool_id = [0xac; 32];
+    f.set(abi::selector(b"getPoolId()"), pool_id_ret(&pool_id));
     f.set(
-        abi::encode_get_pool_id()[..4].try_into().unwrap(),
-        pool_id_ret(&pool_id),
-    );
-    f.set(
-        abi::encode_get_pool_tokens(&pool_id)[..4]
-            .try_into()
-            .unwrap(),
+        abi::selector(b"getPoolTokens(bytes32)"),
         pool_tokens_ret(&[T0, T1], &[U256::from(1_000u64), U256::from(2_000u64)]),
     );
     f.set(
-        abi::encode_get_swap_fee()[..4].try_into().unwrap(),
+        abi::selector(b"getSwapFeePercentage()"),
         enc(DynSolValue::Uint(U256::from(5_000_000_000_000_000u64), 256)),
     );
     f.set(
-        abi::encode_get_weights()[..4].try_into().unwrap(),
+        abi::selector(b"getNormalizedWeights()"),
         u256_array_ret(&[500_000_000_000_000_000u64, 500_000_000_000_000_000u64]),
     );
     // `decimals()` returns no data at all → the ABI word cannot decode.
@@ -1504,23 +1533,18 @@ async fn build_balancer_weighted_refuses_a_pool_with_an_unreadable_coin() {
 async fn build_balancer_weighted_refuses_a_composable_weighted_pool() {
     let mut f = FakeRpc::new();
     let pool_id = [0xab; 32];
-    f.set(
-        abi::encode_get_pool_id()[..4].try_into().unwrap(),
-        pool_id_ret(&pool_id),
-    );
+    f.set(abi::selector(b"getPoolId()"), pool_id_ret(&pool_id));
     // `TO` is Vault token 0 — the pool's own BPT — and the weights cover the
     // two underlying tokens only.
     f.set(
-        abi::encode_get_pool_tokens(&pool_id)[..4]
-            .try_into()
-            .unwrap(),
+        abi::selector(b"getPoolTokens(bytes32)"),
         pool_tokens_ret(
             &[TO, T0, T1],
             &[U256::ZERO, U256::from(1_000u64), U256::from(2_000u64)],
         ),
     );
     f.set(
-        abi::encode_get_weights()[..4].try_into().unwrap(),
+        abi::selector(b"getNormalizedWeights()"),
         u256_array_ret(&[500_000_000_000_000_000u64, 500_000_000_000_000_000u64]),
     );
     let io = io_with(f);
@@ -1578,10 +1602,19 @@ async fn discover_curve_coins_uint256_prototype_stops_at_zero() {
     let mut f = FakeRpc::new();
     let coin0: Address = alloy::primitives::address!("0xaaa0000000000000000000000000000000000001");
     // Coin 0 populated; coin 1 is the zero address → discovery stops after 1.
-    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
-    f.set_full(abi::encode_curve_coins_uint(1), addr_word(Address::ZERO));
     f.set_full(
-        abi::encode_curve_balances_uint(0),
+        abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
+        addr_word(coin0),
+    );
+    f.set_full(
+        abi::ICurvePool::coinsCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
+        addr_word(Address::ZERO),
+    );
+    f.set_full(
+        abi::ICurvePool::balancesCall { i: U256::ZERO }.abi_encode(),
         enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
     );
     let io = io_with(f);
@@ -1603,9 +1636,12 @@ async fn discover_curve_coins_falls_back_to_int128_prototype() {
     let mut f = FakeRpc::new();
     let coin0: Address = alloy::primitives::address!("0xbbb0000000000000000000000000000000000001");
     // No uint256 responses → that path reverts; int128 prototype is used.
-    f.set_full(abi::encode_curve_coins_int128(0), addr_word(coin0));
     f.set_full(
-        abi::encode_curve_balances_int128(0),
+        abi::ICurvePoolInt128::coinsCall { i: 0i128 }.abi_encode(),
+        addr_word(coin0),
+    );
+    f.set_full(
+        abi::ICurvePoolInt128::balancesCall { i: 0i128 }.abi_encode(),
         enc(DynSolValue::Uint(U256::from(42u64), 256)),
     );
     let io = io_with(f);
@@ -1657,7 +1693,7 @@ async fn fetch_curve_balances_loops_count_indices() {
     let mut f = FakeRpc::new();
     for (i, expected) in [(0u8, 111u64), (1, 222), (2, 333)] {
         f.set_full(
-            abi::encode_curve_balances_uint(i),
+            abi::ICurvePool::balancesCall { i: U256::from(i) }.abi_encode(),
             enc(DynSolValue::Uint(U256::from(expected), 256)),
         );
     }
@@ -1785,14 +1821,8 @@ async fn detect_curve_lending_ctoken_override_precision() {
     let underlying: Address =
         alloy::primitives::address!("0xddd0000000000000000000000000000000000001");
     // cToken probe on the token address.
-    f.set(
-        abi::encode_lending_is_ctoken()[..4].try_into().unwrap(),
-        enc(DynSolValue::Bool(true)),
-    );
-    f.set(
-        abi::encode_lending_underlying()[..4].try_into().unwrap(),
-        addr_word(underlying),
-    );
+    f.set(abi::selector(b"isCToken()"), enc(DynSolValue::Bool(true)));
+    f.set(abi::selector(b"underlying()"), addr_word(underlying));
     f.set(
         abi::selector(b"decimals()"),
         enc(DynSolValue::Uint(U256::from(8u64), 256)),
@@ -1813,10 +1843,7 @@ async fn detect_curve_lending_ytoken_no_override() {
     let underlying: Address =
         alloy::primitives::address!("0xddd0000000000000000000000000000000000002");
     // isCToken reverts (no response) → falls through to token() probe.
-    f.set(
-        abi::encode_lending_token()[..4].try_into().unwrap(),
-        addr_word(underlying),
-    );
+    f.set(abi::selector(b"token()"), addr_word(underlying));
     let io = io_with(f);
     let r = curve_choreography::detect_curve_lending_tokens(&io, &[ytoken], &[18], None).await;
     assert_eq!(r.use_lending, vec![true]);
@@ -1841,7 +1868,7 @@ async fn find_curve_lp_token_returns_none_when_all_zero_or_revert() {
     // The fake resolves by full calldata (`get_lp_token(pool)` — identical for
     // every registry target) → zero on every registry → None.
     f.set_full(
-        abi::encode_curve_get_lp_token(&TO),
+        abi::ICurveRegistry::get_lp_tokenCall { pool: TO }.abi_encode(),
         addr_word(Address::ZERO),
     );
     let io = io_with(f);
@@ -1856,7 +1883,10 @@ async fn find_curve_lp_token_returns_first_nonzero() {
     let mut f = FakeRpc::new();
     let lp: Address = alloy::primitives::address!("0xfff0000000000000000000000000000000000002");
     // First registry returns the LP (non-zero) → Some, no second probe needed.
-    f.set_full(abi::encode_curve_get_lp_token(&TO), addr_word(lp));
+    f.set_full(
+        abi::ICurveRegistry::get_lp_tokenCall { pool: TO }.abi_encode(),
+        addr_word(lp),
+    );
     let io = io_with(f);
     assert_eq!(
         curve_choreography::find_curve_lp_token(&io, TO, &[REGISTRY], None).await,
@@ -1870,9 +1900,12 @@ async fn detect_curve_metapool_resolves_base_and_underlying() {
     let base: Address = alloy::primitives::address!("0x0bb0000000000000000000000000000000000001");
     let u1: Address = alloy::primitives::address!("0x0111000000000000000000000000000000000001");
     let u2: Address = alloy::primitives::address!("0x0111000000000000000000000000000000000002");
-    f.set_full(abi::encode_curve_is_meta(&TO), enc(DynSolValue::Bool(true)));
     f.set_full(
-        abi::encode_curve_get_underlying_coins(&TO),
+        abi::ICurveRegistry::is_metaCall { pool: TO }.abi_encode(),
+        enc(DynSolValue::Bool(true)),
+    );
+    f.set_full(
+        abi::ICurveRegistry::get_underlying_coinsCall { pool: TO }.abi_encode(),
         addr8([
             u1,
             u2,
@@ -1897,7 +1930,7 @@ async fn detect_curve_metapool_resolves_base_and_underlying() {
 async fn detect_curve_metapool_not_meta() {
     let mut f = FakeRpc::new();
     f.set_full(
-        abi::encode_curve_is_meta(&TO),
+        abi::ICurveRegistry::is_metaCall { pool: TO }.abi_encode(),
         enc(DynSolValue::Bool(false)),
     );
     let io = io_with(f);
@@ -1912,9 +1945,12 @@ async fn detect_curve_metapool_3crv_base_fallback() {
     let coin0: Address = alloy::primitives::address!("0xaaa0000000000000000000000000000000000001");
     // base_pool() reverts (no response), get_base_pool reverts (no response),
     // second coin == 3Crv LP → tripool fallback.
-    f.set_full(abi::encode_curve_is_meta(&TO), enc(DynSolValue::Bool(true)));
     f.set_full(
-        abi::encode_curve_get_underlying_coins(&TO),
+        abi::ICurveRegistry::is_metaCall { pool: TO }.abi_encode(),
+        enc(DynSolValue::Bool(true)),
+    );
+    f.set_full(
+        abi::ICurveRegistry::get_underlying_coinsCall { pool: TO }.abi_encode(),
         addr8([
             coin0,
             Address::ZERO,
@@ -1954,15 +1990,27 @@ async fn build_curve_pool_assembles_plain_pool_params() {
     let coin1: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000002");
 
     // Coins (uint256 prototype) + balances.
-    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
-    f.set_full(abi::encode_curve_coins_uint(1), addr_word(coin1));
+    f.set_full(
+        abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
+        addr_word(coin0),
+    );
+    f.set_full(
+        abi::ICurvePool::coinsCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
+        addr_word(coin1),
+    );
     // coin index 2 reverts (no response) → discovery stops at 2 coins.
     f.set_full(
-        abi::encode_curve_balances_uint(0),
+        abi::ICurvePool::balancesCall { i: U256::ZERO }.abi_encode(),
         enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
     );
     f.set_full(
-        abi::encode_curve_balances_uint(1),
+        abi::ICurvePool::balancesCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
         enc(DynSolValue::Uint(U256::from(2_000_000u64), 256)),
     );
 
@@ -2050,8 +2098,17 @@ async fn build_curve_pool_rejects_fewer_than_two_coins() {
     // Only one coin discovered → Spec error (BrokenPool guard).
     let mut f = FakeRpc::new();
     let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000003");
-    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
-    f.set_full(abi::encode_curve_coins_uint(1), addr_word(Address::ZERO));
+    f.set_full(
+        abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
+        addr_word(coin0),
+    );
+    f.set_full(
+        abi::ICurvePool::coinsCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
+        addr_word(Address::ZERO),
+    );
     // Params must succeed (they're fetched before the min-tokens guard).
     f.set(
         abi::selector(b"A()"),
@@ -2082,14 +2139,26 @@ async fn build_curve_pool_rejects_a_pool_whose_required_getter_reverts() {
     let mut f = FakeRpc::new();
     let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000007");
     let coin1: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000008");
-    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
-    f.set_full(abi::encode_curve_coins_uint(1), addr_word(coin1));
     f.set_full(
-        abi::encode_curve_balances_uint(0),
+        abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
+        addr_word(coin0),
+    );
+    f.set_full(
+        abi::ICurvePool::coinsCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
+        addr_word(coin1),
+    );
+    f.set_full(
+        abi::ICurvePool::balancesCall { i: U256::ZERO }.abi_encode(),
         enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
     );
     f.set_full(
-        abi::encode_curve_balances_uint(1),
+        abi::ICurvePool::balancesCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
         enc(DynSolValue::Uint(U256::from(2_000_000u64), 256)),
     );
     f.set(
@@ -2124,14 +2193,26 @@ async fn build_curve_pool_rejects_a_coin_with_no_code() {
     let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000006");
     let sentinel: Address = alloy::primitives::address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
 
-    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
-    f.set_full(abi::encode_curve_coins_uint(1), addr_word(sentinel));
     f.set_full(
-        abi::encode_curve_balances_uint(0),
+        abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
+        addr_word(coin0),
+    );
+    f.set_full(
+        abi::ICurvePool::coinsCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
+        addr_word(sentinel),
+    );
+    f.set_full(
+        abi::ICurvePool::balancesCall { i: U256::ZERO }.abi_encode(),
         enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
     );
     f.set_full(
-        abi::encode_curve_balances_uint(1),
+        abi::ICurvePool::balancesCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
         enc(DynSolValue::Uint(U256::from(2_000_000u64), 256)),
     );
     f.set(
@@ -2165,14 +2246,26 @@ async fn build_curve_pool_rejects_a_coin_whose_decimals_read_reverts() {
     let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000011");
     let coin1: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000012");
 
-    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
-    f.set_full(abi::encode_curve_coins_uint(1), addr_word(coin1));
     f.set_full(
-        abi::encode_curve_balances_uint(0),
+        abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
+        addr_word(coin0),
+    );
+    f.set_full(
+        abi::ICurvePool::coinsCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
+        addr_word(coin1),
+    );
+    f.set_full(
+        abi::ICurvePool::balancesCall { i: U256::ZERO }.abi_encode(),
         enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
     );
     f.set_full(
-        abi::encode_curve_balances_uint(1),
+        abi::ICurvePool::balancesCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
         enc(DynSolValue::Uint(U256::from(2_000_000u64), 256)),
     );
     f.set(
@@ -2217,10 +2310,19 @@ async fn build_curve_pool_rejects_a_coin_whose_balance_read_fails() {
 
     // Two coins, but only coin 0's balance answers; coin 1's balance read
     // reverts (no FakeRpc response).
-    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
-    f.set_full(abi::encode_curve_coins_uint(1), addr_word(coin1));
     f.set_full(
-        abi::encode_curve_balances_uint(0),
+        abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
+        addr_word(coin0),
+    );
+    f.set_full(
+        abi::ICurvePool::coinsCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
+        addr_word(coin1),
+    );
+    f.set_full(
+        abi::ICurvePool::balancesCall { i: U256::ZERO }.abi_encode(),
         enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
     );
 
@@ -2258,7 +2360,8 @@ async fn fetch_token_balance_supply_allowance_decode_uint256() {
         U256::from(1_000_000_000u64).to_be_bytes::<32>().to_vec(),
     );
     let io = io_with(f);
-    let bal = abi::fetch_token_balance(&io, &TO, &SV, None)
+    let bal = io
+        .read(TO, abi::IERC20::balanceOfCall { account: SV }, None)
         .await
         .expect("balanceOf decodes");
     assert_eq!(bal, U256::from(1_000_000_000u64));
@@ -2272,7 +2375,8 @@ async fn fetch_token_balance_supply_allowance_decode_uint256() {
         total.to_be_bytes::<32>().to_vec(),
     );
     let io2 = io_with(f2);
-    let sup = abi::fetch_token_total_supply(&io2, &TO, None)
+    let sup = io2
+        .read(TO, abi::IERC20::totalSupplyCall {}, None)
         .await
         .expect("totalSupply decodes");
     assert_eq!(sup, total);
@@ -2284,7 +2388,15 @@ async fn fetch_token_balance_supply_allowance_decode_uint256() {
         U256::from(4_321u64).to_be_bytes::<32>().to_vec(),
     );
     let io3 = io_with(f3);
-    let allowance = abi::fetch_token_allowance(&io3, &TO, &SV, &TO, None)
+    let allowance = io3
+        .read(
+            TO,
+            abi::IERC20::allowanceCall {
+                owner: SV,
+                spender: TO,
+            },
+            None,
+        )
         .await
         .expect("allowance decodes");
     assert_eq!(allowance, U256::from(4_321u64));
@@ -2410,15 +2522,15 @@ fn v3_route_fake(factory: Address, token0: Address, token1: Address) -> FakeRpc 
         enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
     );
     f.set(
-        abi::encode_slot0()[..4].try_into().unwrap(),
+        abi::selector(b"slot0()"),
         slot0_ret(U256::from(1u128 << 96), 0),
     );
     f.set(
-        abi::encode_liquidity()[..4].try_into().unwrap(),
+        abi::selector(b"liquidity()"),
         enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
     );
     f.set(
-        abi::encode_tick_bitmap(0)[..4].try_into().unwrap(),
+        abi::selector(b"tickBitmap(int16)"),
         enc(DynSolValue::Uint(U256::ZERO, 256)),
     );
     f
@@ -2645,15 +2757,15 @@ async fn construction_identity_parity_guard_reads_registered_identity_and_refuse
         enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
     );
     f.set(
-        abi::encode_slot0()[..4].try_into().unwrap(),
+        abi::selector(b"slot0()"),
         slot0_ret(U256::from(1u128 << 96), 0),
     );
     f.set(
-        abi::encode_liquidity()[..4].try_into().unwrap(),
+        abi::selector(b"liquidity()"),
         enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
     );
     f.set(
-        abi::encode_tick_bitmap(0)[..4].try_into().unwrap(),
+        abi::selector(b"tickBitmap(int16)"),
         enc(DynSolValue::Uint(U256::ZERO, 256)),
     );
     let io = io_with(f);
@@ -2752,7 +2864,7 @@ async fn construction_door_v2_matches_the_route_interior() {
     f.set(abi::selector(b"token0()"), addr_word(tok0));
     f.set(abi::selector(b"token1()"), addr_word(tok1));
     f.set(
-        abi::encode_get_reserves()[..4].try_into().unwrap(),
+        abi::selector(b"getReserves()"),
         enc(DynSolValue::Tuple(vec![
             DynSolValue::Uint(U256::from(123_456_789u64), 112),
             DynSolValue::Uint(U256::from(987_654_321u64), 112),
@@ -2839,15 +2951,15 @@ async fn construction_door_v3_matches_the_route_interior() {
         enc(DynSolValue::Int(I256::try_from(60i32).unwrap(), 24)),
     );
     f.set(
-        abi::encode_slot0()[..4].try_into().unwrap(),
+        abi::selector(b"slot0()"),
         slot0_ret(U256::from(1u128 << 96), 0),
     );
     f.set(
-        abi::encode_liquidity()[..4].try_into().unwrap(),
+        abi::selector(b"liquidity()"),
         enc(DynSolValue::Uint(U256::from(1_000_000_000u64), 128)),
     );
     f.set(
-        abi::encode_tick_bitmap(0)[..4].try_into().unwrap(),
+        abi::selector(b"tickBitmap(int16)"),
         enc(DynSolValue::Uint(U256::ZERO, 256)),
     );
     let io = io_with(f);
@@ -2922,7 +3034,7 @@ async fn construction_door_v4_matches_the_route_interior() {
 
     let mut f = FakeRpc::new();
     f.set(
-        abi::encode_get_slot0(&pid)[..4].try_into().unwrap(),
+        abi::selector(b"getSlot0(bytes32)"),
         enc(DynSolValue::Tuple(vec![
             DynSolValue::Uint(U256::from(1u128 << 96), 160),
             DynSolValue::Int(I256::try_from(5i32).unwrap(), 24),
@@ -2931,11 +3043,11 @@ async fn construction_door_v4_matches_the_route_interior() {
         ])),
     );
     f.set(
-        abi::encode_get_liquidity(&pid)[..4].try_into().unwrap(),
+        abi::selector(b"getLiquidity(bytes32)"),
         enc(DynSolValue::Uint(U256::from(2_000_000_000u64), 128)),
     );
     f.set(
-        abi::encode_v4_tick_bitmap(&pid, 0)[..4].try_into().unwrap(),
+        abi::selector(b"getTickBitmap(bytes32,int16)"),
         enc(DynSolValue::Uint(U256::ZERO, 256)),
     );
     let io = io_with(f);
@@ -3148,14 +3260,26 @@ async fn the_curve_door_arm_constructs_registers_and_reuses() {
     let mut f = FakeRpc::new();
     let coin0: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000001");
     let coin1: Address = alloy::primitives::address!("0xaac0000000000000000000000000000000000002");
-    f.set_full(abi::encode_curve_coins_uint(0), addr_word(coin0));
-    f.set_full(abi::encode_curve_coins_uint(1), addr_word(coin1));
     f.set_full(
-        abi::encode_curve_balances_uint(0),
+        abi::ICurvePool::coinsCall { i: U256::ZERO }.abi_encode(),
+        addr_word(coin0),
+    );
+    f.set_full(
+        abi::ICurvePool::coinsCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
+        addr_word(coin1),
+    );
+    f.set_full(
+        abi::ICurvePool::balancesCall { i: U256::ZERO }.abi_encode(),
         enc(DynSolValue::Uint(U256::from(1_000_000u64), 256)),
     );
     f.set_full(
-        abi::encode_curve_balances_uint(1),
+        abi::ICurvePool::balancesCall {
+            i: U256::from(1u64),
+        }
+        .abi_encode(),
         enc(DynSolValue::Uint(U256::from(2_000_000u64), 256)),
     );
     f.set(

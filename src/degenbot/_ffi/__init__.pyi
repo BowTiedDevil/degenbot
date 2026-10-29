@@ -2004,11 +2004,11 @@ class BotIo:
         Fetch a V3 pool's tick bitmap word via `tickBitmap(int16)`, performing
         the encode -> call -> decode choreography in Rust.
 
-        Calldata + return decode from `degenbot_rpc::abi` (B2) — no hand-rolled
-        `selector` / `sign_extend_to_32_bytes` here. The encode/decode helpers
-        are shared with `AlloyTickWordSource` (the standalone-Rust `cargo add
-        degenbot` consumer path), so the choreography stays byte-identical
-        across the pyo3 adapter and the alloy impl ).
+        Calldata + return decode come from `degenbot_rpc::abi`'s `sol!` home —
+        no hand-rolled selector or word masking here. The read is shared with
+        `AlloyTickWordSource` (the standalone-Rust `cargo add degenbot` consumer
+        path), so the choreography stays byte-identical across the pyo3 adapter
+        and the alloy impl.
 
         Errors propagate: provider revert surfaces as `PyErr` (the Python
         caller's `except Exception: return` handles it).
@@ -2020,10 +2020,10 @@ class BotIo:
         Fetch a V3 pool's tick liquidity data via `ticks(int24)`, performing
         the encode -> call -> decode choreography in Rust.
 
-        Calldata + return decode from `degenbot_rpc::abi` (B2). The result's
-        first two fields (`liquidity_gross: uint128`, `liquidity_net: int128`)
-        are right-aligned in their 32-byte ABI words; `decode_tick_data` reads
-        those 64 bytes directly.
+        Calldata + return decode from `degenbot_rpc::abi`'s `sol!` home. The
+        narrowing keeps the result's first two fields (`liquidity_gross:
+        uint128`, `liquidity_net: int128`), both right-aligned in their 32-byte
+        ABI words, and leaves the rest of the `ticks` tuple unread.
 
         Errors propagate (see [`Self::fetch_tick_bitmap`]).
         """
@@ -2047,7 +2047,7 @@ class BotIo:
         I/O call path (cache + checksum are out of scope; the caller still owns
         those). The `balanceOf(address)` selector (`0x70a08231`) + ABI-encoded
         `address` arg and the `uint256` return decode are sourced from the
-        `sol!`-generated definitions in `degenbot_rpc::abi` (B2).
+        `sol!`-generated definitions in `degenbot_rpc::abi`.
 
         Errors propagate: a provider call revert or decode failure surfaces as a
         `PyErr` to the caller (no swallowing) — matches the Python impl's no-
@@ -2124,8 +2124,8 @@ class BotIo:
         Fetch a V4 pool's tick bitmap via `getTickBitmap(bytes32,int16)` on the
         state-view contract.
 
-        Calldata + return decode from `degenbot_rpc::abi` (B2). V4 adds a
-        `pool_id` (`bytes32`) prefix argument before the `int16` word position.
+        Calldata + return decode from `degenbot_rpc::abi`'s `sol!` home. V4 adds
+        a `pool_id` (`bytes32`) prefix argument before the `int16` word position.
 
         Errors propagate.
         """
@@ -2141,8 +2141,8 @@ class BotIo:
         Fetch a V4 pool's tick liquidity via `getTickLiquidity(bytes32,int24)`
         on the state-view contract.
 
-        Calldata + return decode from `degenbot_rpc::abi` (B2). V4 adds a
-        `pool_id` (`bytes32`) prefix argument before the `int24` tick. The V4
+        Calldata + return decode from `degenbot_rpc::abi`'s `sol!` home. V4 adds
+        a `pool_id` (`bytes32`) prefix argument before the `int24` tick. The V4
         tick return is just `(uint128, int128)` — exactly 2 fields.
 
         Errors propagate.

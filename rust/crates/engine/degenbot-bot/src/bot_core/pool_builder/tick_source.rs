@@ -25,7 +25,7 @@ use std::sync::Arc;
 use alloy::primitives::{U128, U256};
 use degenbot_core::errors::ProviderError;
 use degenbot_pools::{TickWordKey, TickWordSource};
-use degenbot_rpc::abi;
+use degenbot_rpc::abi::{ContractRead, IUniswapV3Pool, IUniswapV4StateView, TickLiquidity};
 use degenbot_rpc::tick_bootstrap::{TickWordTransport, TransportTickWordSource};
 
 use crate::bot_core::construction_io::{ConstructionIo, NoDb, PacedRead};
@@ -56,21 +56,29 @@ impl TickWordTransport for ConstructionIo {
     ) -> Result<U256, ProviderError> {
         match key {
             TickWordKey::V3 { address, .. } => {
-                abi::fetch_tick_bitmap(&PacedRead::new(self), address, word, Some(block)).await
+                PacedRead::new(self)
+                    .read(
+                        *address,
+                        IUniswapV3Pool::tickBitmapCall { wordPosition: word },
+                        Some(block),
+                    )
+                    .await
             }
             TickWordKey::V4 {
                 state_view,
                 pool_id,
                 ..
             } => {
-                abi::fetch_v4_tick_bitmap(
-                    &PacedRead::new(self),
-                    state_view,
-                    pool_id,
-                    word,
-                    Some(block),
-                )
-                .await
+                PacedRead::new(self)
+                    .read(
+                        *state_view,
+                        IUniswapV4StateView::getTickBitmapCall {
+                            poolId: (*pool_id).into(),
+                            wordPosition: word,
+                        },
+                        Some(block),
+                    )
+                    .await
             }
         }
     }
@@ -81,24 +89,25 @@ impl TickWordTransport for ConstructionIo {
         tick: i32,
         block: u64,
     ) -> Result<(U128, i128), ProviderError> {
-        match key {
+        let liquidity = match key {
             TickWordKey::V3 { address, .. } => {
-                abi::fetch_tick_data(&PacedRead::new(self), address, tick, Some(block)).await
+                TickLiquidity::read(&PacedRead::new(self), *address, tick, Some(block)).await?
             }
             TickWordKey::V4 {
                 state_view,
                 pool_id,
                 ..
             } => {
-                abi::fetch_v4_tick_data(
+                TickLiquidity::read_v4(
                     &PacedRead::new(self),
-                    state_view,
-                    pool_id,
+                    *state_view,
+                    *pool_id,
                     tick,
                     Some(block),
                 )
-                .await
+                .await?
             }
-        }
+        };
+        Ok((liquidity.gross, liquidity.net))
     }
 }

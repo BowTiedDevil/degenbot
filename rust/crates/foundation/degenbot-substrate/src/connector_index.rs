@@ -676,7 +676,7 @@ impl V2ConnectorIndex {
         &self,
         provider: &Arc<AlloyProvider>,
     ) -> Result<(), String> {
-        use degenbot_rpc::abi::fetch_v3_slot0_liquidity;
+        use degenbot_rpc::abi::{ContractRead, IUniswapV3Pool};
 
         // One deterministic sample per distinct layout (lowest pool_id).
         let mut samples: hashbrown::HashMap<ConcentratedLiquiditySlotLayout, &V3Edge> =
@@ -695,19 +695,20 @@ impl V2ConnectorIndex {
                 // Transport failure is INCONCLUSIVE at boot (a hermetic or
                 // offline boot has no node) — warn and continue; only a
                 // satisfy-both-reads MISMATCH refuses the lane.
-                let (_, _, onchain) =
-                    match fetch_v3_slot0_liquidity(provider, &edge.address, None).await {
-                        Ok(v) => v,
-                        Err(e) => {
-                            tracing::warn!(
-                                pool = %edge.address,
-                                error = %e,
-                                "layout probe: node unreachable - fork layouts UNVERIFIED this boot"
-                            );
-                            return Ok(());
-                        }
-                    };
-                let onchain = u128::try_from(onchain).unwrap_or(u128::MAX);
+                let onchain = match provider
+                    .read(edge.address, IUniswapV3Pool::liquidityCall {}, None)
+                    .await
+                {
+                    Ok(v) => u128::try_from(U256::from(v)).unwrap_or(u128::MAX),
+                    Err(e) => {
+                        tracing::warn!(
+                            pool = %edge.address,
+                            error = %e,
+                            "layout probe: node unreachable - fork layouts UNVERIFIED this boot"
+                        );
+                        return Ok(());
+                    }
+                };
                 let word = match provider
                     .get_storage_at(&edge.address, U256::from(layout.liquidity_slot()), None)
                     .await

@@ -30,7 +30,10 @@ use alloy::primitives::U256;
 use degenbot_core::errors::ProviderError;
 use degenbot_pools::narrow_v2_reserve;
 use degenbot_pools::RegisteredPoolFamily;
-use degenbot_rpc::abi;
+use degenbot_rpc::abi::{
+    ContractRead, IBalancerVault, IUniswapV3Pool, IUniswapV4StateView, Slot0Prefix, V2Reserves,
+    V4Slot0,
+};
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::BotState;
 
@@ -135,7 +138,8 @@ async fn refresh_reserve_pair(
             })
             .ok_or(RefreshError::MissingIdentity { pool_id })?
     };
-    let (reserve0, reserve1) = abi::fetch_v2_reserves(io, &address, Some(block)).await?;
+    let v2 = V2Reserves::read(io, address, Some(block)).await?;
+    let (reserve0, reserve1) = (v2.reserve0, v2.reserve1);
     let narrow = |value: U256, field: &'static str| {
         narrow_v2_reserve(value, field).map_err(|violation| RefreshError::Spec {
             pool_id,
@@ -177,10 +181,13 @@ async fn refresh_v3(
             .map(|identity| identity.address)
             .ok_or(RefreshError::MissingIdentity { pool_id })?
     };
-    let (sqrt_price_x96, tick_raw, liquidity_raw) =
-        abi::fetch_v3_slot0_liquidity(io, &address, Some(block)).await?;
+    let slot0 = Slot0Prefix::read(io, address, Some(block)).await?;
+    let liquidity_raw = io
+        .read(address, IUniswapV3Pool::liquidityCall {}, Some(block))
+        .await?;
+    let (sqrt_price_x96, tick_raw) = (slot0.sqrt_price_x96, slot0.tick);
     let tick = i32::try_from(tick_raw).unwrap_or(0);
-    let liquidity = liquidity_raw.to::<u128>();
+    let liquidity = liquidity_raw;
 
     let mut guard = state.write_at(LockSite::Orchestrator);
     let (current_sqrt, current_liquidity, current_tick, update_block) = guard
@@ -217,10 +224,19 @@ async fn refresh_v4(
             .ok_or(RefreshError::MissingIdentity { pool_id })?;
         (state_view, identity.pool_id)
     };
-    let (sqrt_price_x96, tick_raw, _protocol_fee, _lp_fee, liquidity_raw) =
-        abi::fetch_v4_slot0_liquidity(io, &state_view, &v4_pool_id, Some(block)).await?;
+    let slot0 = V4Slot0::read(io, state_view, v4_pool_id, Some(block)).await?;
+    let liquidity_raw = io
+        .read(
+            state_view,
+            IUniswapV4StateView::getLiquidityCall {
+                poolId: v4_pool_id.into(),
+            },
+            Some(block),
+        )
+        .await?;
+    let (sqrt_price_x96, tick_raw) = (slot0.sqrt_price_x96, slot0.tick);
     let tick = i32::try_from(tick_raw).unwrap_or(0);
-    let liquidity = liquidity_raw.to::<u128>();
+    let liquidity = liquidity_raw;
 
     let mut guard = state.write_at(LockSite::Orchestrator);
     let (current_sqrt, current_liquidity, current_tick, update_block) = guard
@@ -283,8 +299,16 @@ async fn refresh_balancer(
         }
         .ok_or(RefreshError::MissingIdentity { pool_id })?
     };
-    let (_tokens, balances) =
-        abi::fetch_balancer_vault_tokens(io, &vault, &v4_style_id, block).await?;
+    let balances = io
+        .read(
+            vault,
+            IBalancerVault::getPoolTokensCall {
+                poolId: v4_style_id.into(),
+            },
+            block,
+        )
+        .await?
+        .balances;
     // The historical Balancer update stamped `block_number or 0` (the driver's
     // resolved block is `None` when the caller gave none), so the refresh
     // preserves that stamp rather than inventing a head default.

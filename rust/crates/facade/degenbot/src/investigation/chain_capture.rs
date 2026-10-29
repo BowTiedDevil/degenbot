@@ -211,7 +211,11 @@ pub async fn scrape_v2_state(
 ) -> Result<FetchedState, String> {
     use degenbot_rpc::abi;
     let bytes = provider
-        .eth_call(&pair, Bytes::from(abi::encode_get_reserves()), Some(block))
+        .eth_call(
+            &pair,
+            Bytes::from(abi::IUniswapV2Pair::getReservesCall {}.abi_encode()),
+            Some(block),
+        )
         .await
         .map_err(|e| format!("getReserves: {e}"))?;
     let r = abi::IUniswapV2Pair::getReservesCall::abi_decode_returns(&bytes)
@@ -241,11 +245,16 @@ pub async fn scrape_v3_state(
     block: u64,
     scan: TickScan,
 ) -> Result<FetchedState, String> {
-    use degenbot_rpc::abi;
-    let (sqrt_price_x96, tick, liquidity) =
-        abi::fetch_v3_slot0_liquidity(provider, &pool, Some(block))
-            .await
-            .map_err(|e| format!("v3 scalars: {e}"))?;
+    use degenbot_rpc::abi::{ContractRead, IUniswapV3Pool, Slot0Prefix};
+    let slot0 = Slot0Prefix::read(provider, pool, Some(block))
+        .await
+        .map_err(|e| format!("v3 slot0: {e}"))?;
+    let liquidity = provider
+        .read(pool, IUniswapV3Pool::liquidityCall {}, Some(block))
+        .await
+        .map_err(|e| format!("v3 liquidity: {e}"))?;
+    let (sqrt_price_x96, tick) = (slot0.sqrt_price_x96, slot0.tick);
+    let liquidity = U256::from(liquidity);
     let tick_data = match scan {
         TickScan::Lens(lens) => scan_v3_via_lens(provider, lens, pool, tick_spacing, block).await?,
         TickScan::DirectPool => scan_v3_direct(provider, pool, tick_spacing, block).await?,
@@ -377,11 +386,25 @@ pub async fn scrape_v4_state(
     tick_spacing: i32,
     block: u64,
 ) -> Result<FetchedState, String> {
-    use degenbot_rpc::abi::{self, IUniswapV4StateView};
-    let (sqrt_price_x96, tick, protocol_fee, lp_fee, liquidity) =
-        abi::fetch_v4_slot0_liquidity(provider, &state_view, &pool_id.0, Some(block))
-            .await
-            .map_err(|e| format!("v4 scalars: {e}"))?;
+    use degenbot_rpc::abi::{ContractRead, IUniswapV4StateView, V4Slot0};
+    let slot0 = V4Slot0::read(provider, state_view, pool_id.0, Some(block))
+        .await
+        .map_err(|e| format!("v4 slot0: {e}"))?;
+    let liquidity = provider
+        .read(
+            state_view,
+            IUniswapV4StateView::getLiquidityCall { poolId: pool_id },
+            Some(block),
+        )
+        .await
+        .map_err(|e| format!("v4 liquidity: {e}"))?;
+    let (sqrt_price_x96, tick, protocol_fee, lp_fee) = (
+        slot0.sqrt_price_x96,
+        slot0.tick,
+        slot0.protocol_fee,
+        slot0.lp_fee,
+    );
+    let liquidity = U256::from(liquidity);
     let words: Vec<i16> = word_positions(tick_spacing).collect();
     let bitmap_calls: Vec<(Address, Bytes)> = words
         .iter()
@@ -760,11 +783,17 @@ mod tests {
                         .expect("liq"),
                 );
                 calls.insert(
-                    call_key(pool, &degenbot_rpc::abi::encode_slot0()),
+                    call_key(
+                        pool,
+                        &degenbot_rpc::abi::IUniswapV3Pool::slot0Call {}.abi_encode(),
+                    ),
                     serde_json::Value::String(hex_str(&slot0)),
                 );
                 calls.insert(
-                    call_key(pool, &degenbot_rpc::abi::encode_liquidity()),
+                    call_key(
+                        pool,
+                        &degenbot_rpc::abi::IUniswapV3Pool::liquidityCall {}.abi_encode(),
+                    ),
                     serde_json::Value::String(hex_str(&liq)),
                 );
                 let words: Vec<i16> = word_positions(spacing).collect();
@@ -888,7 +917,10 @@ mod tests {
                     word_be_u(U256::from(entry["block_number"].as_u64().expect("ts"))),
                 ]);
                 calls.insert(
-                    call_key(pair, &degenbot_rpc::abi::encode_get_reserves()),
+                    call_key(
+                        pair,
+                        &degenbot_rpc::abi::IUniswapV2Pair::getReservesCall {}.abi_encode(),
+                    ),
                     serde_json::Value::String(hex_str(&reserves)),
                 );
             }

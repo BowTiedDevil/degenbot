@@ -13,7 +13,9 @@ use degenbot_pools::PoolTickCoverage;
 use degenbot_pools::TickInfo;
 use hashbrown::{HashMap, HashSet};
 
-use crate::abi::{decode_tick_bitmap, decode_tick_data, encode_tick_bitmap, encode_tick_data};
+use alloy::sol_types::SolCall;
+
+use crate::abi::{IUniswapV3Pool, TickLiquidity};
 use crate::multicall3::{multicall3_batch, MulticallResult};
 use crate::provider::AlloyProvider;
 
@@ -201,13 +203,13 @@ async fn verify_v3(
     // tick batch only when needed.
     let mut calls = Vec::with_capacity(ticks.len() + words.len());
     for &tick in &ticks {
-        calls.push((pool, Bytes::from(encode_tick_data(tick))));
+        calls.push((pool, tick_calldata(tick)?));
     }
     for &word in &words {
         let word_i16 = i16::try_from(word).map_err(|_| LiquidityMapVerifyError::Decode {
             reason: format!("V3 bitmap word {word} does not fit int16"),
         })?;
-        calls.push((pool, Bytes::from(encode_tick_bitmap(word_i16))));
+        calls.push((pool, bitmap_calldata(word_i16)));
     }
 
     let results = multicall3_batch(provider, &calls, block_number)
@@ -235,8 +237,8 @@ async fn verify_v3(
     if !missing.is_empty() {
         let calls: Vec<_> = missing
             .iter()
-            .map(|&tick| (pool, Bytes::from(encode_tick_data(tick))))
-            .collect();
+            .map(|&tick| tick_calldata(tick).map(|data| (pool, data)))
+            .collect::<Result<Vec<_>, _>>()?;
         let results = multicall3_batch(provider, &calls, block_number)
             .await
             .map_err(LiquidityMapVerifyError::provider)?;
@@ -457,9 +459,12 @@ fn decode_v3_result(
             reason: format!("V3 ticks({tick}) reverted"),
         });
     }
-    decode_tick_data(&result.return_data).map_err(|e| LiquidityMapVerifyError::Decode {
-        reason: format!("V3 ticks({tick}): {e}"),
-    })
+    let liquidity = TickLiquidity::decode(&result.return_data).map_err(|e| {
+        LiquidityMapVerifyError::Decode {
+            reason: format!("V3 ticks({tick}): {e}"),
+        }
+    })?;
+    Ok((liquidity.gross, liquidity.net))
 }
 
 fn decode_v3_bitmap_result(
@@ -471,9 +476,28 @@ fn decode_v3_bitmap_result(
             reason: format!("V3 tickBitmap({word}) reverted"),
         });
     }
-    decode_tick_bitmap(&result.return_data).map_err(|e| LiquidityMapVerifyError::Decode {
-        reason: format!("V3 tickBitmap({word}): {e}"),
+    IUniswapV3Pool::tickBitmapCall::abi_decode_returns(&result.return_data).map_err(|e| {
+        LiquidityMapVerifyError::Decode {
+            reason: format!("V3 tickBitmap({word}): {e}"),
+        }
     })
+}
+
+/// The `ticks(int24)` calldata for `tick`.
+fn tick_calldata(tick: i32) -> Result<Bytes, LiquidityMapVerifyError> {
+    let call = IUniswapV3Pool::ticksCall {
+        tick: tick
+            .try_into()
+            .map_err(|_| LiquidityMapVerifyError::Decode {
+                reason: format!("V3 tick {tick} does not fit int24"),
+            })?,
+    };
+    Ok(Bytes::from(call.abi_encode()))
+}
+
+/// The `tickBitmap(int16)` calldata for `word`.
+fn bitmap_calldata(word: i16) -> Bytes {
+    Bytes::from(IUniswapV3Pool::tickBitmapCall { wordPosition: word }.abi_encode())
 }
 
 const V4_POOLS_BASE_SLOT: u8 = 6;
@@ -626,9 +650,9 @@ mod tests {
     #[tokio::test]
     async fn v3_discovers_onchain_only_tick_from_supplied_bitmap_word() {
         let pool = address!("0000000000000000000000000000000000000001");
-        let bitmap_calls = vec![(pool, Bytes::from(encode_tick_bitmap(0)))];
+        let bitmap_calls = vec![(pool, bitmap_calldata(0))];
         let bitmap_batch = crate::multicall3::encode_aggregate3(&bitmap_calls).unwrap();
-        let tick_calls = vec![(pool, Bytes::from(encode_tick_data(0)))];
+        let tick_calls = vec![(pool, tick_calldata(0).unwrap())];
         let tick_batch = crate::multicall3::encode_aggregate3(&tick_calls).unwrap();
         let ticks_return = {
             let mut data = vec![0u8; 64];
@@ -826,8 +850,8 @@ mod tests {
     async fn v3_reads_tick_rows_and_bitmap_through_existing_batch_behavior() {
         let pool = address!("0000000000000000000000000000000000000001");
         let calls = vec![
-            (pool, Bytes::from(encode_tick_data(120))),
-            (pool, Bytes::from(encode_tick_bitmap(0))),
+            (pool, tick_calldata(120).unwrap()),
+            (pool, bitmap_calldata(0)),
         ];
         let batch = crate::multicall3::encode_aggregate3(&calls).unwrap();
         let ticks_return = {
@@ -857,7 +881,7 @@ mod tests {
     #[tokio::test]
     async fn v3_reverted_subcall_is_read_not_divergence() {
         let pool = address!("0000000000000000000000000000000000000001");
-        let calls = vec![(pool, Bytes::from(encode_tick_data(0)))];
+        let calls = vec![(pool, tick_calldata(0).unwrap())];
         let batch = crate::multicall3::encode_aggregate3(&calls).unwrap();
         let json = serde_json::json!({
             "chain_id": 1,

@@ -965,12 +965,15 @@ calls.
 
 **ContractRead**:
 The one call primitive the ABI read family and the construction transports share: one
-`eth_call(to, data, block)` returning the raw return bytes. Each `abi::fetch_*` helper is
-generic over it, so selectors, calldata and return decoders are written once and read
-through an `AlloyProvider`, a shared `Arc<AlloyProvider>`, or a construction transport;
-a transport supplies call policy (pacing, retry, canned bytes), nothing else.
-_Avoid_: a second fetch family per transport; a transport-specific copy of an
-`encode → call → decode` helper.
+`eth_call(to, data, block)` returning the raw return bytes, plus the typed verb `read`
+that encodes a `sol!`-declared call, issues that one call, and decodes the declared
+return type. Selectors, calldata and return shapes are therefore written once (in the
+`sol!` declarations) and read through an `AlloyProvider`, a shared
+`Arc<AlloyProvider>`, or a construction transport; a transport supplies call policy
+(pacing, retry, canned bytes), nothing else.
+_Avoid_: a second read family per transport; a per-getter `encode_*`/`decode_*` pair or
+`fetch_*` wrapper that re-assembles the pipeline at each call site (a read that answers
+more than the snapshot keeps states its narrowing in a named adapter).
 
 **NoDb**:
 The construction adapter whose methods always return nothing, used when no database is

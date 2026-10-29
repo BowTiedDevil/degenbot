@@ -308,7 +308,19 @@ mod tests {
     use super::*;
     use alloy::dyn_abi::DynSolValue;
     use alloy::primitives::{address, keccak256, Address, Bytes, B256};
+    use alloy::sol_types::SolCall;
     use degenbot_pools::TickInfo;
+    use degenbot_rpc::abi::IUniswapV3Pool;
+
+    /// The `ticks(int24)` calldata for `tick`.
+    fn tick_calldata(tick: i32) -> Bytes {
+        Bytes::from(
+            IUniswapV3Pool::ticksCall {
+                tick: tick.try_into().unwrap(),
+            }
+            .abi_encode(),
+        )
+    }
     use degenbot_rpc::multicall3::{encode_aggregate3, MULTICALL3_ADDRESS};
     use degenbot_rpc::offline::OfflineProvider;
     use degenbot_rpc::provider::AlloyProvider;
@@ -397,7 +409,12 @@ mod tests {
             .map(|word| {
                 (
                     pool,
-                    Bytes::from(degenbot_rpc::abi::encode_tick_bitmap(*word)),
+                    Bytes::from(
+                        IUniswapV3Pool::tickBitmapCall {
+                            wordPosition: *word,
+                        }
+                        .abi_encode(),
+                    ),
                 )
             })
             .collect();
@@ -413,9 +430,16 @@ mod tests {
                 (true, value.to_be_bytes::<32>().to_vec())
             })
             .collect();
-        let tick_batch =
-            encode_aggregate3(&[(pool, Bytes::from(degenbot_rpc::abi::encode_tick_data(256)))])
-                .unwrap();
+        let tick_batch = encode_aggregate3(&[(
+            pool,
+            Bytes::from(
+                IUniswapV3Pool::ticksCall {
+                    tick: 256_i32.try_into().unwrap(),
+                }
+                .abi_encode(),
+            ),
+        )])
+        .unwrap();
         serde_json::json!({
             call_key(MULTICALL3_ADDRESS, &bitmap_batch): aggregate_return(&bitmap_values),
             call_key(MULTICALL3_ADDRESS, &tick_batch): aggregate_return(&[(true, tick_return(9, 4))]),
@@ -541,7 +565,10 @@ mod tests {
     #[tokio::test]
     async fn snapshot_verification_with_nonunit_spacing_checks_tick_rows_only() {
         let pool = ActiveWindowPool::ADDRESS;
-        let tick_call = degenbot_rpc::abi::encode_tick_data(120);
+        let tick_call = IUniswapV3Pool::ticksCall {
+            tick: 120_i32.try_into().unwrap(),
+        }
+        .abi_encode();
         let batch = encode_aggregate3(&[(pool, Bytes::from(tick_call))]).unwrap();
         let response = aggregate_return(&[(true, tick_return(7, 3))]);
         let json = serde_json::json!({ call_key(MULTICALL3_ADDRESS, &batch): response });
@@ -606,14 +633,11 @@ mod tests {
         }
         let pool = ActiveWindowPool { ticks };
         let address = ActiveWindowPool::ADDRESS;
-        let mut calls = vec![
-            (address, Bytes::from(degenbot_rpc::abi::encode_tick_data(0))),
-            (address, Bytes::from(degenbot_rpc::abi::encode_tick_data(1))),
-        ];
+        let mut calls = vec![(address, tick_calldata(0)), (address, tick_calldata(1))];
         calls.extend((-2..=2).map(|word| {
             (
                 address,
-                Bytes::from(degenbot_rpc::abi::encode_tick_bitmap(word)),
+                Bytes::from(IUniswapV3Pool::tickBitmapCall { wordPosition: word }.abi_encode()),
             )
         }));
         let batch = encode_aggregate3(&calls).unwrap();

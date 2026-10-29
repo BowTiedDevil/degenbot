@@ -35,6 +35,7 @@
 //! [PoolIO]: degenbot/builders/pool_io.py
 //! [ConstructionIo]: degenbot_bot::bot_core::construction_io
 
+use alloy::primitives::U256;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
 use std::fmt::Write as _;
@@ -47,6 +48,10 @@ use degenbot_bot::bot_core::construction_io::{BlockSelector, PacedRead};
 use degenbot_bot::bot_core::pool_builder::builder::BalancerFamily;
 use degenbot_core::errors::ProviderError;
 use degenbot_core::runtime::get_runtime;
+use degenbot_rpc::abi::{
+    BalancerPoolId, ContractRead, IBalancerPool, IBalancerVault, IPoolIdentity, IUniswapV3Pool,
+    IUniswapV4StateView, Slot0Prefix, TickLiquidity, V2Reserves, V4Slot0, IERC20,
+};
 
 /// Slot0 + liquidity state tuple returned by
 /// [`PyBotIo::fetch_v4_slot0_liquidity`]:
@@ -510,9 +515,8 @@ impl PyBotIo {
         };
         let addr = alloy::primitives::Address::from(addr);
         let r = py.detach(|| {
-            get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_pool_factory(&io, &addr, None).await
-            })
+            get_runtime()
+                .block_on(async move { io.read(addr, IPoolIdentity::factoryCall {}, None).await })
         });
         match r {
             Ok(a) => Some(a.to_checksum(None)),
@@ -577,7 +581,8 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_v2_reserves(&io, &addr, block_num).await
+                let reserves = V2Reserves::read(&io, addr, block_num).await?;
+                Ok::<_, ProviderError>((reserves.reserve0, reserves.reserve1))
             })
         });
         let (r0, r1) = match r {
@@ -619,7 +624,11 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_v3_slot0_liquidity(&io, &addr, block_num).await
+                let slot0 = Slot0Prefix::read(&io, addr, block_num).await?;
+                let liquidity = io
+                    .read(addr, IUniswapV3Pool::liquidityCall {}, block_num)
+                    .await?;
+                Ok::<_, ProviderError>((slot0.sqrt_price_x96, slot0.tick, U256::from(liquidity)))
             })
         });
         let (sqrt, tick, liq) = match r {
@@ -668,13 +677,23 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_v4_slot0_liquidity(
-                    &io,
-                    &state_view,
-                    &pool_id_arr,
-                    block_num,
-                )
-                .await
+                let slot0 = V4Slot0::read(&io, state_view, pool_id_arr, block_num).await?;
+                let liquidity = io
+                    .read(
+                        state_view,
+                        IUniswapV4StateView::getLiquidityCall {
+                            poolId: pool_id_arr.into(),
+                        },
+                        block_num,
+                    )
+                    .await?;
+                Ok::<_, ProviderError>((
+                    slot0.sqrt_price_x96,
+                    slot0.tick,
+                    slot0.protocol_fee,
+                    slot0.lp_fee,
+                    U256::from(liquidity),
+                ))
             })
         });
         let (sqrt, tick, protocol_fee, lp_fee, liq) = match r {
@@ -741,7 +760,7 @@ impl PyBotIo {
     /// I/O call path (cache + checksum are out of scope; the caller still owns
     /// those). The `balanceOf(address)` selector (`0x70a08231`) + ABI-encoded
     /// `address` arg and the `uint256` return decode are sourced from the
-    /// `sol!`-generated definitions in `degenbot_rpc::abi` (B2).
+    /// `sol!`-generated definitions in `degenbot_rpc::abi`.
     ///
     /// Errors propagate: a provider call revert or decode failure surfaces as a
     /// `PyErr` to the caller (no swallowing) — matches the Python impl's no-
@@ -760,8 +779,14 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_token_balance(&io, &token_addr, &owner_addr, block_num)
-                    .await
+                io.read(
+                    token_addr,
+                    IERC20::balanceOfCall {
+                        account: owner_addr,
+                    },
+                    block_num,
+                )
+                .await
             })
         });
         let n = match r {
@@ -796,11 +821,12 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_token_allowance(
-                    &io,
-                    &token_addr,
-                    &owner_addr,
-                    &spender_addr,
+                io.read(
+                    token_addr,
+                    IERC20::allowanceCall {
+                        owner: owner_addr,
+                        spender: spender_addr,
+                    },
                     block_num,
                 )
                 .await
@@ -833,7 +859,8 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_token_total_supply(&io, &token_addr, block_num).await
+                io.read(token_addr, IERC20::totalSupplyCall {}, block_num)
+                    .await
             })
         });
         let n = match r {
@@ -936,11 +963,11 @@ impl PyBotIo {
     /// Fetch a V3 pool's tick bitmap word via `tickBitmap(int16)`, performing
     /// the encode -> call -> decode choreography in Rust.
     ///
-    /// Calldata + return decode from `degenbot_rpc::abi` (B2) — no hand-rolled
-    /// `selector` / `sign_extend_to_32_bytes` here. The encode/decode helpers
-    /// are shared with `AlloyTickWordSource` (the standalone-Rust `cargo add
-    /// degenbot` consumer path), so the choreography stays byte-identical
-    /// across the pyo3 adapter and the alloy impl ).
+    /// Calldata + return decode come from `degenbot_rpc::abi`'s `sol!` home —
+    /// no hand-rolled selector or word masking here. The read is shared with
+    /// `AlloyTickWordSource` (the standalone-Rust `cargo add degenbot` consumer
+    /// path), so the choreography stays byte-identical across the pyo3 adapter
+    /// and the alloy impl.
     ///
     /// Errors propagate: provider revert surfaces as `PyErr` (the Python
     /// caller's `except Exception: return` handles it).
@@ -960,13 +987,15 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_tick_bitmap(
-                    &PacedRead::new(&io),
-                    &addr,
-                    word_i16,
-                    block_num,
-                )
-                .await
+                PacedRead::new(&io)
+                    .read(
+                        addr,
+                        IUniswapV3Pool::tickBitmapCall {
+                            wordPosition: word_i16,
+                        },
+                        block_num,
+                    )
+                    .await
             })
         });
         let bitmap = match r {
@@ -982,10 +1011,10 @@ impl PyBotIo {
     /// Fetch a V3 pool's tick liquidity data via `ticks(int24)`, performing
     /// the encode -> call -> decode choreography in Rust.
     ///
-    /// Calldata + return decode from `degenbot_rpc::abi` (B2). The result's
-    /// first two fields (`liquidity_gross: uint128`, `liquidity_net: int128`)
-    /// are right-aligned in their 32-byte ABI words; `decode_tick_data` reads
-    /// those 64 bytes directly.
+    /// Calldata + return decode from `degenbot_rpc::abi`'s `sol!` home. The
+    /// narrowing keeps the result's first two fields (`liquidity_gross:
+    /// uint128`, `liquidity_net: int128`), both right-aligned in their 32-byte
+    /// ABI words, and leaves the rest of the `ticks` tuple unread.
     ///
     /// Errors propagate (see [`Self::fetch_tick_bitmap`]).
     #[pyo3(signature = (pool_address, tick, block=None))]
@@ -1003,8 +1032,9 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_tick_data(&PacedRead::new(&io), &addr, tick_i32, block_num)
+                TickLiquidity::read(&PacedRead::new(&io), addr, tick_i32, block_num)
                     .await
+                    .map(|l| (l.gross, l.net))
             })
         });
         let (gross, net) = match r {
@@ -1024,8 +1054,8 @@ impl PyBotIo {
     /// Fetch a V4 pool's tick bitmap via `getTickBitmap(bytes32,int16)` on the
     /// state-view contract.
     ///
-    /// Calldata + return decode from `degenbot_rpc::abi` (B2). V4 adds a
-    /// `pool_id` (`bytes32`) prefix argument before the `int16` word position.
+    /// Calldata + return decode from `degenbot_rpc::abi`'s `sol!` home. V4 adds
+    /// a `pool_id` (`bytes32`) prefix argument before the `int16` word position.
     ///
     /// Errors propagate.
     #[pyo3(signature = (state_view_address, pool_id, word_position, block=None))]
@@ -1049,14 +1079,16 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_v4_tick_bitmap(
-                    &PacedRead::new(&io),
-                    &state_view,
-                    &pool_id_arr,
-                    word_i16,
-                    block_num,
-                )
-                .await
+                PacedRead::new(&io)
+                    .read(
+                        state_view,
+                        IUniswapV4StateView::getTickBitmapCall {
+                            poolId: pool_id_arr.into(),
+                            wordPosition: word_i16,
+                        },
+                        block_num,
+                    )
+                    .await
             })
         });
         let bitmap = match r {
@@ -1072,8 +1104,8 @@ impl PyBotIo {
     /// Fetch a V4 pool's tick liquidity via `getTickLiquidity(bytes32,int24)`
     /// on the state-view contract.
     ///
-    /// Calldata + return decode from `degenbot_rpc::abi` (B2). V4 adds a
-    /// `pool_id` (`bytes32`) prefix argument before the `int24` tick. The V4
+    /// Calldata + return decode from `degenbot_rpc::abi`'s `sol!` home. V4 adds
+    /// a `pool_id` (`bytes32`) prefix argument before the `int24` tick. The V4
     /// tick return is just `(uint128, int128)` — exactly 2 fields.
     ///
     /// Errors propagate.
@@ -1097,14 +1129,15 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_v4_tick_data(
+                TickLiquidity::read_v4(
                     &PacedRead::new(&io),
-                    &state_view,
-                    &pool_id_arr,
+                    state_view,
+                    pool_id_arr,
                     tick_i32,
                     block_num,
                 )
                 .await
+                .map(|l| (l.gross, l.net))
             })
         });
         let (gross, net) = match r {
@@ -1139,7 +1172,9 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_balancer_pool_id(&io, &addr, block_num).await
+                BalancerPoolId::read(&io, addr, block_num)
+                    .await
+                    .map(|id| id.0)
             })
         });
         let id = match r {
@@ -1169,7 +1204,8 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_balancer_swap_fee(&io, &addr, block_num).await
+                io.read(addr, IBalancerPool::getSwapFeePercentageCall {}, block_num)
+                    .await
             })
         });
         let val = match r {
@@ -1201,7 +1237,13 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_balancer_amp(&io, &addr, block_num).await
+                io.read(
+                    addr,
+                    IBalancerPool::getAmplificationParameterCall {},
+                    block_num,
+                )
+                .await
+                .map(|r| r.value)
             })
         });
         let val = match r {
@@ -1234,7 +1276,8 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_balancer_weights(&io, &addr, block_num).await
+                io.read(addr, IBalancerPool::getNormalizedWeightsCall {}, block_num)
+                    .await
             })
         });
         let weights = match r {
@@ -1271,7 +1314,8 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_balancer_rate_providers(&io, &addr, block_num).await
+                io.read(addr, IBalancerPool::getRateProvidersCall {}, block_num)
+                    .await
             })
         });
         let providers = match r {
@@ -1320,8 +1364,15 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_balancer_vault_tokens(&io, &vault, &pool_id, block_num)
-                    .await
+                io.read(
+                    vault,
+                    IBalancerVault::getPoolTokensCall {
+                        poolId: pool_id.into(),
+                    },
+                    block_num,
+                )
+                .await
+                .map(|r| (r.tokens, r.balances))
             })
         });
         let (tokens, balances) = match r {
@@ -1365,7 +1416,8 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_rpc::abi::fetch_balancer_rate(&io, &provider, block_num).await
+                io.read(provider, IBalancerPool::getRateCall {}, block_num)
+                    .await
             })
         });
         let val = match r {

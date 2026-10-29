@@ -88,6 +88,7 @@ fn live_provider() -> Arc<degenbot_rpc::provider::AlloyProvider> {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "live network + DB: V3 anchor PoolIngress verification"]
+#[expect(clippy::too_many_lines, reason = "one live probe reads top-to-bottom")]
 async fn live_v3_anchor_ingress_solves_production_chain() {
     let provider = live_provider();
     let db_path = std::env::var("DEGENBOT_DB_PATH").unwrap();
@@ -106,9 +107,18 @@ async fn live_v3_anchor_ingress_solves_production_chain() {
     let head = provider.get_block_number().await.unwrap();
 
     let anchor = *rt.index().unwrap().v3_edge_by_address(ANCHOR).unwrap();
-    let (sqrt, tick, liq) = degenbot_rpc::abi::fetch_v3_slot0_liquidity(&provider, &ANCHOR, None)
+    let slot0 = degenbot_rpc::abi::Slot0Prefix::read(&provider, ANCHOR, None)
         .await
         .unwrap();
+    let liq = degenbot_rpc::abi::ContractRead::read(
+        &provider,
+        ANCHOR,
+        degenbot_rpc::abi::IUniswapV3Pool::liquidityCall {},
+        None,
+    )
+    .await
+    .unwrap();
+    let (sqrt, tick) = (slot0.sqrt_price_x96, slot0.tick);
     let tick = i32::try_from(tick).unwrap();
 
     // Replayed post-state: price/liquidity staged, NO touched ticks.
@@ -122,7 +132,7 @@ async fn live_v3_anchor_ingress_solves_production_chain() {
         kind: PoolPostKind::Typed(TypedPoolPost::V3 {
             sqrt_price_x96: Some(sqrt),
             tick: Some(tick),
-            liquidity: Some(u128::try_from(liq).unwrap()),
+            liquidity: Some(liq),
             touched_ticks: Vec::new(),
         }),
     };
@@ -156,9 +166,10 @@ async fn live_v3_anchor_ingress_solves_production_chain() {
         let edge = *rt.index().unwrap().edge_by_address(mid).unwrap();
         let m0 = rt.token_addr(edge.token0_id).unwrap();
         let m1 = rt.token_addr(edge.token1_id).unwrap();
-        let (r0, r1) = degenbot_rpc::abi::fetch_v2_reserves(&provider, &mid, None)
+        let reserves = degenbot_rpc::abi::V2Reserves::read(&provider, mid, None)
             .await
             .unwrap();
+        let (r0, r1) = (reserves.reserve0, reserves.reserve1);
         let id = solver
             .admit_v2(&BackrunV2Pool {
                 address: mid,

@@ -19,7 +19,6 @@
 
 use alloy::primitives::{Address, Bytes, U256};
 use degenbot_db::{DbError, DegenbotDb};
-use degenbot_rpc::abi::decode_uint256;
 use degenbot_rpc::provider::AlloyProvider;
 use rusqlite::Connection;
 
@@ -319,20 +318,18 @@ pub async fn verify_touched_positions_on_conn(
 }
 
 /// Map a Multicall3 sub-call result to a U256: a successful call with a
-/// decodable 32-byte return decodes; anything else (revert, short return) is
-/// `U256::ZERO` — matching the prior per-call
-/// `eth_call().ok().and_then(decode).unwrap_or(ZERO)` semantics. Delegates the
-/// byte decode to the home `degenbot_rpc::abi::decode_uint256` (the single
-/// deep home for onchain pool-state probing — see GLOSSARY.md) — Aave's
-/// `scaledBalanceOf` / `getPreviousIndex` / `balanceOf` returns are all
-/// generic `uint256` words, so the method-named `decode_balance_of` would be
-/// a semantic lie here.
+/// 32-byte return decodes to its big-endian word; anything else (revert,
+/// short return) is `U256::ZERO` — matching the prior per-call
+/// `eth_call().ok().and_then(decode).unwrap_or(ZERO)` semantics. The read is a
+/// caller-declared `uint256` word rather than a named getter's answer: Aave's
+/// `scaledBalanceOf` / `getPreviousIndex` / `balanceOf` returns are all generic
+/// `uint256` words, so no getter's return type describes them.
 fn result_to_u256(result: &MulticallResult) -> U256 {
-    if result.success {
-        decode_uint256(&result.return_data).unwrap_or(U256::ZERO)
-    } else {
-        U256::ZERO
+    let bytes = &result.return_data;
+    if !result.success || bytes.len() < 32 {
+        return U256::ZERO;
     }
+    U256::from_be_slice(&bytes[..32])
 }
 
 // ── stkAAVE balance + GHO discount verification ─────────────────────────

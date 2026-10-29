@@ -134,9 +134,7 @@ impl CmdExecutorAdapter {
         let Ok(config) = config_for_options(opts, U256::ZERO) else {
             return CmdExecutorOutcome::Declined(CmdExecutorDecline::ExecuteCall);
         };
-        let Ok(call) = encode_execute_call(self.context.executor(), &commands, config) else {
-            return CmdExecutorOutcome::Declined(CmdExecutorDecline::ExecuteCall);
-        };
+        let call = encode_execute_call(self.context.executor(), &commands, config);
         CmdExecutorOutcome::Encoded(Bytes::from(call.data))
     }
 

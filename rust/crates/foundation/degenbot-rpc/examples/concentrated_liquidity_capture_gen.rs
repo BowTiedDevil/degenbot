@@ -63,7 +63,7 @@ use degenbot_pools::TickWordSource;
 use degenbot_pools::{
     v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, SimulateSwapError, V3PoolState,
 };
-use degenbot_rpc::abi::fetch_v3_slot0_liquidity;
+use degenbot_rpc::abi::{ContractRead, IUniswapV3Pool, Slot0Prefix};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_rpc::AlloyTickWordSource;
 use serde_json::{json, Value};
@@ -205,10 +205,15 @@ fn main() -> ExitCode {
             let provider = Arc::new(AlloyProvider::new(&rpc, 10).await.expect("provider"));
             let mut out = Vec::with_capacity(POOLS.len());
             for (a, _ts, _f, _t0, _t1) in POOLS {
-                let (sp, tick, liq) = fetch_v3_slot0_liquidity(&provider, &addr(a), Some(block))
+                let pool = addr(a);
+                let slot0 = Slot0Prefix::read(&provider, pool, Some(block))
                     .await
                     .expect("slot0");
-                out.push((sp, tick, liq));
+                let liquidity = provider
+                    .read(pool, IUniswapV3Pool::liquidityCall {}, Some(block))
+                    .await
+                    .expect("liquidity");
+                out.push((slot0.sqrt_price_x96, slot0.tick, U256::from(liquidity)));
             }
             out
         });

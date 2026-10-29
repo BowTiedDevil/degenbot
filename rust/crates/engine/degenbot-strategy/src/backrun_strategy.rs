@@ -639,8 +639,9 @@ async fn admit_hop_pool(
             let reserves = match view_v2_reserves(scratch, e.address) {
                 Some(r) => r,
                 None => {
-                    match degenbot_rpc::abi::fetch_v2_reserves(provider, &e.address, None).await {
-                        Ok((r0, r1)) => {
+                    match degenbot_rpc::abi::V2Reserves::read(provider, e.address, None).await {
+                        Ok(reserves) => {
+                            let (r0, r1) = (reserves.reserve0, reserves.reserve1);
                             let (Ok(r0), Ok(r1)) = (u128::try_from(r0), u128::try_from(r1)) else {
                                 hop_admit_fail(
                                     trace,

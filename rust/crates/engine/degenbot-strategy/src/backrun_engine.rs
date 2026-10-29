@@ -440,11 +440,18 @@ impl BackrunSolver {
         slot_layout: ConcentratedLiquiditySlotLayout,
         ingress: &PoolIngress,
     ) -> Result<u64, V3LadderReject> {
-        let (sqrt_price_x96, tick, liquidity) =
-            degenbot_rpc::abi::fetch_v3_slot0_liquidity(provider, &address, None)
-                .await
-                .map_err(|e| V3LadderReject::Slot0Fetch(e.to_string()))?;
-        let liquidity = u128::try_from(liquidity).map_err(|_| V3LadderReject::Slot0Width)?;
+        let slot0 = degenbot_rpc::abi::Slot0Prefix::read(provider, address, None)
+            .await
+            .map_err(|e| V3LadderReject::Slot0Fetch(e.to_string()))?;
+        let liquidity = degenbot_rpc::abi::ContractRead::read(
+            provider,
+            address,
+            degenbot_rpc::abi::IUniswapV3Pool::liquidityCall {},
+            None,
+        )
+        .await
+        .map_err(|e| V3LadderReject::Slot0Fetch(e.to_string()))?;
+        let (sqrt_price_x96, tick) = (slot0.sqrt_price_x96, slot0.tick);
         let tick_i32 = i32::try_from(tick).map_err(|_| V3LadderReject::Slot0Width)?;
         ingress
             .admit_v3_verified(
@@ -663,7 +670,8 @@ mod tests {
 
     #[test]
     fn golden_candidate_composes_to_execute_calldata() {
-        use degenbot_executor::composers::EXECUTE_SELECTOR;
+        use alloy::sol_types::SolCall as _;
+        use degenbot_executor::composers::ICommandExecutor::executeCall;
         // canonical order: TOK (0x..aa1) < WETH -> token0 = TOK
         let token0 = TOK;
         let candidate = LaneCandidate {
@@ -702,7 +710,7 @@ mod tests {
         let CmdExecutorOutcome::Encoded(cd) = outcome else {
             panic!("golden candidate encodes")
         };
-        assert_eq!(&cd[0..4], &EXECUTE_SELECTOR[..]);
+        assert_eq!(&cd[0..4], &executeCall::SELECTOR);
         // config = (1000 << 8) | 1 rides the head of the ABI tail; just
         // sanity the total size bounds (selector + 0x40 + words + bytes).
         assert!(cd.len() > 4 + 32 * 3 + 64);
@@ -832,7 +840,8 @@ mod tests {
     /// path needs no leading self-fund byte.
     #[test]
     fn golden_v4_lane_composes_to_execute_calldata() {
-        use degenbot_executor::composers::EXECUTE_SELECTOR;
+        use alloy::sol_types::SolCall as _;
+        use degenbot_executor::composers::ICommandExecutor::executeCall;
         use degenbot_executor::encoders::{
             BEGIN_EXECUTION, CMD_SET_ADDRESS, CMD_V4_SWAP_COMPACT, CMD_V4_UNLOCK,
         };
@@ -880,7 +889,7 @@ mod tests {
         let CmdExecutorOutcome::Encoded(cd) = outcome else {
             panic!("V4 lane encodes")
         };
-        assert_eq!(&cd[0..4], &EXECUTE_SELECTOR[..]);
+        assert_eq!(&cd[0..4], &executeCall::SELECTOR);
         // Decode the `execute(bytes,uint256)` ABI tail: head slot 0 is the
         // offset (0x40) to the `bytes`, so the length word starts at 4+0x40.
         let mut len_word = [0u8; 32];

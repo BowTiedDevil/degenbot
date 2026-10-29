@@ -26,6 +26,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use alloy::primitives::{address, keccak256, Bytes, U256};
+use alloy::sol_types::SolCall as _;
+use degenbot_executor::composers::ICommandExecutor::executeCall;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_strategy::backrun::{BackrunConfig, Decision, MevblockerBackrun};
@@ -93,8 +95,6 @@ const FRAME_SENDER: alloy::primitives::Address =
     address!("F977814e90dA44bFA03b6295A0616a897441aceC");
 const EXECUTOR: alloy::primitives::Address = address!("30b28ed8aa581fbc0191c3b532b0697773070e97");
 const OPERATOR: alloy::primitives::Address = address!("5c603b8a137A40426E0dDFA981EC10c245AF080e");
-/// `execute(bytes,uint256)`
-const EXECUTE_SELECTOR: [u8; 4] = [0xab, 0x58, 0x98, 0xe8];
 const BRIBE_BIPS: u16 = 9_800;
 const GAS_FLOOR_WEI: u64 = 50_000_000_000_000;
 
@@ -244,17 +244,12 @@ fn composed_profit(tx: alloy::primitives::B256) -> Option<u128> {
         })
 }
 
-/// Decode the composed `execute(bytes,uint256)` config word (head word 1):
-/// the packed tuple of check mode, bribe share, recipient index, and the
-/// profit-expectation ceiling.
+/// Decode the composed `execute(bytes,uint256)` config word: the packed tuple
+/// of check mode, bribe share, recipient index, and the profit-expectation
+/// ceiling.
 fn composed_config(cd: &Bytes) -> (u8, u16, u8, U256) {
-    assert_eq!(
-        cd[0..4],
-        EXECUTE_SELECTOR,
-        "the composed artifact is an execute() call"
-    );
-    let raw: [u8; 32] = cd[4 + 32..4 + 64].try_into().unwrap();
-    degenbot_submission::bundle::decode_config_word(U256::from_be_bytes(raw))
+    let call = executeCall::abi_decode(cd).expect("the composed artifact is an execute() call");
+    degenbot_submission::bundle::decode_config_word(call.config)
 }
 
 async fn runtime(

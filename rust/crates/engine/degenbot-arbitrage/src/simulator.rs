@@ -1200,15 +1200,7 @@ where
             message: format!("config_for_options failed: {e}"),
         }
     })?;
-    let execute_calldata = wrap_execute_calldata(ctx.executor_address, &cmd_bytes, execute_config)
-        .map_err(|e| {
-            guard.verdict = SimVerdict::Error;
-            guard.error_reason = Some(degenbot_bot::telemetry::error_reason::SIM_PRE_ENCODE);
-            ProviderError::RpcError {
-                code: -32603,
-                message: format!("execute() ABI encode failed: {e}"),
-            }
-        })?;
+    let execute_calldata = wrap_execute_calldata(ctx.executor_address, &cmd_bytes, execute_config);
 
     // Build the 7 calldata blobs (the balance reads + the execute call).
     #[expect(clippy::expect_used)] // address always encodes (documented)

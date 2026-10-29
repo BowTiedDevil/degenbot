@@ -59,7 +59,7 @@ use degenbot_pools::{
     v3_simulate_swap, PoolTickCoverage, RegisterV3PoolParams, SimulateSwapError, V3PoolState,
     V3SwapOutcome,
 };
-use degenbot_rpc::abi::fetch_v3_slot0_liquidity;
+use degenbot_rpc::abi::{ContractRead, IUniswapV3Pool, Slot0Prefix};
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_rpc::AlloyTickWordSource;
 
@@ -143,10 +143,19 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
         .block_on(async {
             let provider = Arc::new(AlloyProvider::new(&rpc_url, 3).await.expect("provider"));
             // 1. Fetch on-chain slot0 + liquidity at the captured block.
-            let (sp, tick_wide, liq) = fetch_v3_slot0_liquidity(&provider, &pool, Some(block))
+            let slot0 = Slot0Prefix::read(&provider, pool, Some(block))
                 .await
-                .expect("fetch slot0+liquidity");
-            (provider, sp, tick_wide, liq)
+                .expect("fetch slot0");
+            let liquidity = provider
+                .read(pool, IUniswapV3Pool::liquidityCall {}, Some(block))
+                .await
+                .expect("fetch liquidity");
+            (
+                provider,
+                slot0.sqrt_price_x96,
+                slot0.tick,
+                U256::from(liquidity),
+            )
         });
     let tick: i32 = tick_i256.try_into().expect("tick fits i32");
     let liquidity: u128 = liquidity_u256.to::<u128>();
