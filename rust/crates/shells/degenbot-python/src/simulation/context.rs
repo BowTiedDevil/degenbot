@@ -1,26 +1,23 @@
 //! `PySimulateContext` — the session-static config bag the cockpit constructs
-//! once per `BotRunner` and reuses across every block's
-//! `dispatch_profitable_py` call.
+//! once per `BotRunner` and reuses across every block's sim fan-out.
 //!
 //! Mirrors `PyDispatcher::for_block`'s "construct once, drive many" shape, but
 //! longer-lived: the executor/weth/pm/multicall addresses + the inject flag +
 //! the runtime bytecode + the precomputed [`WarmupSlots`] do not vary per
 //! block. The per-block parts (`base_fee_next` / `current_block` /
-//! `block_priority_fees`) are `dispatch_profitable_py` call-args (A4), not
-//! fields here — they are stitched into a borrowed `SimulateContext<'_>` at
-//! call time.
+//! `block_priority_fees`) are call-args, not fields here — they are stitched
+//! into a borrowed `SimulateContext<'_>` at call time.
 //!
 //! Holds an `Arc<AlloyProvider>` — cloned at construction via
-//! [`PyAsyncAlloyProvider::provider_arc`] — so the A4 pyfunction can move an
-//! owned handle into the `future_into_py` async block + construct the
-//! `SimulateContext` borrowing it (the `'static` future owns the arc; the
-//! `<'a>` borrow is block-local).
+//! [`PyAsyncAlloyProvider::provider_arc`] — so a caller can move an owned
+//! handle into an async block + construct the `SimulateContext` borrowing it
+//! (the `'static` future owns the arc; the `<'a>` borrow is block-local).
 //!
 //! # GIL discipline
 //!
 //! `#[new]` runs under the GIL (it must reach into the Python
 //! `PyAsyncAlloyProvider` + the bytearray + the address strings). The fields
-//! are plain owned data (arc + addresses + bytes); the A4 pyfunction releases
+//! are plain owned data (arc + addresses + bytes); the sim fan-out releases
 //! the GIL across the RPC `.await`s. No business logic here — pure config
 //! storage (the ADR-005 PyO3-layer discipline).
 
@@ -38,12 +35,11 @@ use std::sync::Arc;
 /// The session-static simulation config bag.
 ///
 /// Construct once per session from a `&PyAsyncAlloyProvider` + the addresses +
-/// the inject flag + the executor runtime bytecode. Hands to
-/// `dispatch_profitable_py` (A4) each block alongside the per-block args.
+/// the inject flag + the executor runtime bytecode. Read each block alongside
+/// the per-block args.
 #[pyclass(name = "SimulateContext", module = "degenbot._ffi.simulation")]
-// Every field is consumed by `dispatch_profitable_py` when it
-// stitches them into the borrowed `SimulateContext<'_>`; until A4 lands only
-// `provider` is read (by the `rpc_url` getter).
+// Every field is stitched into the borrowed `SimulateContext<'_>` the sim
+// fan-out consumes.
 pub struct PySimulateContext {
     /// The typed RPC provider handle (cloned from the `PyAsyncAlloyProvider`
     /// the cockpit holds). Moved into A4's async block; the borrowed

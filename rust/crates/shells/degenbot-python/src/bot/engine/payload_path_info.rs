@@ -4,21 +4,21 @@
 //! The inline-sim payload entries bypass the FFI dispatch entirely (Python
 //! constructs `SubmitCandidate`s straight from the payload dicts), so the
 //! `[profit]` hop-detail render needs a Python-visible `path_infos` source for
-//! them. This exposes the SAME render shape `PyDispatchOutcome.path_infos`
-//! emits, built from the engine's `path_info_for` projection — attribute
-//! parity by construction (one serializer: `path_info_to_py_dict`).
+//! them. This exposes the SAME render shape the batch seam's `path_info_dict()`
+//! emits, built from the engine's `path_info_for` projection — shape parity by
+//! construction (one serializer: `path_info_to_py_dict`).
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::simulation::outcome::path_info_to_py_dict;
+use crate::simulation::render::path_info_to_py_dict;
 
 use super::PyArbEngine;
 
 #[pymethods]
 impl PyArbEngine {
     /// The `[profit]`-render `path_infos` dict for ONE registered path (the
-    /// same shape `DispatchOutcome.path_infos[pid]` carries) or `None` when
+    /// same shape the batch seam's `path_info_dict()` carries) or `None` when
     /// the path is unregistered/unresolvable. SIMPIPE2 T3: payload entries
     /// skip the FFI sim, so the driver enriches merged outcomes per entry.
     ///

@@ -13,8 +13,8 @@
 //!
 //! `PathSuppression` is **not** composed into [`Dispatcher`] :
 //! it lives behind its own `Arc<Mutex<PathSuppression>>`, held here alongside
-//! the `Dispatcher` arc, so the simulation seam (`dispatch_profitable_py`)
-//! can lock suppression WITHOUT locking the `Dispatcher` (which the
+//! the `Dispatcher` arc, so the sim fan-out can lock suppression WITHOUT
+//! locking the `Dispatcher` (which the
 //! submission monitor tasks contend for). The `Dispatcher` never touches
 //! suppression; the 5 suppression accessors below delegate to the suppression
 //! arc.
@@ -116,8 +116,8 @@ impl PyDivergentPool {
 pub struct PyDispatcher {
     pub(crate) inner: Arc<Mutex<Dispatcher>>,
     /// The standalone path-suppression tracker — held alongside the
-    /// `Dispatcher` arc so the simulation seam (`dispatch_profitable_py`)
-    /// can lock suppression WITHOUT locking the `Dispatcher` (the submission
+    /// `Dispatcher` arc so the sim fan-out can lock suppression WITHOUT
+    /// locking the `Dispatcher` (the submission
     /// monitor tasks contend for the `Dispatcher` lock; suppression is
     /// touched only at the sim fan-out bookends, dormant across the RPC
     /// `.await`s, and uncontended during the fan-out).
@@ -142,27 +142,26 @@ impl PyDispatcher {
         Arc::clone(&self.inner)
     }
 
-    /// Borrow the shared `Arc<Mutex<PathSuppression>>` (for the simulation
-    /// seam's `dispatch_profitable_py` — which locks suppression
-    /// for the `dispatch_profitable_results` call; the `Dispatcher` arc is
-    /// NOT touched, so monitor-task contention on the `Dispatcher` is
-    /// unaffected).
+    /// Borrow the shared `Arc<Mutex<PathSuppression>>` (for the sim fan-out —
+    /// which locks suppression for the `dispatch_profitable_results` call; the
+    /// `Dispatcher` arc is NOT touched, so monitor-task contention on the
+    /// `Dispatcher` is unaffected).
     pub(crate) fn suppression_arc(&self) -> Arc<Mutex<PathSuppression>> {
         Arc::clone(&self.suppression)
     }
 
-    /// Borrow the shared `Arc<Mutex<PoolDivergence>>` (for the simulation
-    /// seam's `dispatch_profitable_py` — which locks divergence
-    /// at the dispatch skip + feedback bookends; the `Dispatcher` arc is
+    /// Borrow the shared `Arc<Mutex<PoolDivergence>>` (for the sim fan-out —
+    /// which locks divergence at the dispatch skip + feedback bookends; the
+    /// `Dispatcher` arc is
     /// NOT touched, so monitor-task contention on the `Dispatcher` is
     /// unaffected).
     pub(crate) fn pool_divergence_arc(&self) -> Arc<Mutex<PoolDivergence>> {
         Arc::clone(&self.pool_divergence)
     }
 
-    /// Borrow the shared `Arc<Mutex<FeeOnTransferRegistry>>` (for the
-    /// simulation seam's `dispatch_profitable_py` — which locks
-    /// the registry at the dispatch skip + feedback + success bookends).
+    /// Borrow the shared `Arc<Mutex<FeeOnTransferRegistry>>` (for the sim
+    /// fan-out — which locks the registry at the dispatch skip + feedback +
+    /// success bookends).
     pub(crate) fn fot_registry_arc(&self) -> Arc<Mutex<FeeOnTransferRegistry>> {
         Arc::clone(&self.fot_registry)
     }

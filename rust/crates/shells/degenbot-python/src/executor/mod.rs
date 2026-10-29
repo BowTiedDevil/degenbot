@@ -13,12 +13,11 @@
 //! `v4_output_is_native` `PyO3` pyfunctions + their `HopTypes` /
 //! `extract_hop` / `extract_path_info` / `hop_to_py` / `path_info_to_py`
 //! helpers are RETIRED. The encode path moved to the Rust core
-//! (`dispatch_profitable_py` calls `composers::encode_cmd_stream` internally —
-//! A5 "now called internally by the seam, not from the example"), and the
-//! candidate resolves its `composers::PathInfo` from a registered `path_id`
-//! via `PyArbEngine::path_info_for_core`. The `[profit]`
+//! (`composers::encode_cmd_stream`, called by the executor's own row builders,
+//! never from Python), and a candidate resolves its `composers::PathInfo` from
+//! a registered `path_id` via `PyArbEngine::path_info_for_core`. The `[profit]`
 //! hop-detail render reads `outcome.path_infos` as plain `dict`s (built in
-//! `simulation/outcome.rs`). The Python `hop_info` dataclasses are deleted.
+//! `simulation/render.rs`). The Python `hop_info` dataclasses are deleted.
 //! No Python caller reaches `encode_cmd_stream` / `v4_*` on `degenbot._ffi`
 //! anymore — the `_DelegateSpy` test pinned them as Rust-bound builtins,
 //! but the example never invoked them post-A5.

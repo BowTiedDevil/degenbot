@@ -24,7 +24,6 @@ __all__ = [
     "BatchOutcomeSet",
     "CandidateAssembly",
     "DispatchCandidate",
-    "DispatchOutcome",
     "ExecutorPolicyValues",
     "FailureDetail",
     "FailureKind",
@@ -36,7 +35,6 @@ __all__ = [
     "SubmitVerdict",
     "assemble_dispatch_candidates_py",
     "build_batch_executor_py",
-    "dispatch_profitable_py",
     "executor_policy_py",
     "merge_payload_results_py",
     "simulate_in_process_revert_probe",
@@ -142,8 +140,7 @@ class BatchOutcome:
     def path_info_dict(self, /) -> dict:
         """
         The `[profit]`/`[sim-fail]` render dict for this record's path
-        (`path_type` + per-hop dicts — the ONE serializer shape
-        `DispatchOutcome.path_infos` emits).
+        (`path_type` + per-hop dicts — the ONE hop/path serializer shape).
         """
     @property
     def path_type(self, /) -> str:
@@ -261,124 +258,15 @@ class DispatchCandidate:
                 has no command-stream encoder arm (Solidly / Balancer / Curve),
                 or `hop_outputs`/`consumed_inputs` length ≠ path hops.
         """
+    @property
+    def path_id(self, /) -> int:
+        """
+        The arb path id this candidate was built for.
 
-@final
-class DispatchOutcome:
-    """
-    The read-only outcome of a block's profitable-dispatch fan-out.
-
-    Constructed by `dispatch_profitable_py` (A4); the cockpit renders the
-    `[sim]` summary from the counters + `fail_buckets`, then hands
-    `gas_profitable` straight to `dispatch_and_submit_py`.
-    """
-    @property
-    def candidate_count(self, /) -> int: ...
-    @property
-    def divergent_dropped(self, /) -> int:
+        The candidate's identity: it is the key the sim fan-out joins on and
+        the id the submit records carry, so a driver that holds a batch of
+        candidates can name the path it is about to simulate or submit.
         """
-        The per-call pool-divergence skip count  — candidates
-        dropped pre-sim because they routed through a pool flagged `SolverCalc`
-        within the decay window. Mirrors `thin_dropped` / `suppressed_count`.
-        """
-    @property
-    def exception_count(self, /) -> int: ...
-    @property
-    def fail_buckets(self, /) -> dict:
-        """
-        The revert/no-profit/overflow bucket tally — `{bucket: count}`.
-
-        Drives the `[sim] … by reason: {breakdown}` summary line (rendered in
-        Python — D4 stays-python).
-        """
-    @property
-    def fail_count(self, /) -> int: ...
-    @property
-    def failures(self, /) -> list:
-        """
-        The per-path simulation failure detail — `list[dict[str, Any]]`, one
-        entry per failed candidate in fan-out order. Each dict carries:
-          - `path_id` (`int`),
-          - `bucket` (`str`) — the `classify_revert` label for reverts, else
-            the orchestration-only bucket (`int128-overflow`, `encode-failed`,
-            `rpc-failed`, `balance-decode`, `no-profit`),
-          - `fail_index` (`int | None`) — the index of the failing call in the
-            7-call vector when attributable to one (the revert branch + the
-            balance-decode branch); `None` for orchestration-only buckets,
-          - `revert_data` (`str`) — the raw revert bytes as `0x`-prefixed hex;
-            `"0x"` (empty) for orchestration-only buckets.
-          - `reverting_frame` (`dict | None`) — the inspector-captured deep
-            attribution for `execute()` reverts: `depth` (`int`), `target`
-            (`str` address), `selector` (`str` 4-byte hex), `revert_data`
-            (`str` hex), `label` (`str`). `None` for orchestration-only buckets
-            + the balance-decode branch .
-          - `captured_swaps` (`list[dict]`) — the V2/V3/V4 swap events captured
-            before the revert (per-swap `family`/`emitter`/`amount0`/`amount1`/"+ "
-            `sqrt_price_x96`/`liquidity`/`tick`). Empty for orchestration-only
-            buckets + the balance-decode branch .
-
-        Consumed by the Python companion's `[sim-fail]` renderer so the
-        operator can identify WHICH path reverted against WHICH pools.
-        Built at construction (the core-producing `SimFailure`s are owned,
-        not rebuilt on access).
-        """
-    @property
-    def fot_dropped(self, /) -> int:
-        """
-        The per-call candidate count dropped because a hop's input token was
-        FoT-confirmed .
-        """
-    @property
-    def gas_profitable(self, /) -> list:
-        """
-        The gas-profitable candidates — `list[PySubmitCandidate]`, the direct
-        handoff to `dispatch_and_submit_py`.
-
-        Each access rebuilds the list from the held core `SubmitCandidate`s
-        (the join source-of-truth lives in Rust; Python sees fresh wrappers).
-        """
-    @property
-    def gas_unprofitable_count(self, /) -> int: ...
-    @property
-    def path_infos(self, /) -> dict:
-        """
-        The input candidates' `PathInfo` keyed by `path_id` — `{path_id:
-        dict}`. Populated from the INPUT batch (every candidate passed in,
-        not filtered to survivors). The `[profit]` hop-detail log looks up
-        `path_infos[cand.path_id]` per survivor; preserved here (Decision 1=B,
-        A5) so the cockpit doesn't thread a separate map.
-
-        Each value is a plain `dict` (the Python `hop_info`
-        dataclass render type retired):
-          - `path_type` (`str`) — the combined pool-type label,
-          - `hops` (`list[dict]`) — one dict per hop, carrying a `family`
-            discriminator (`"V2"`/`"V3"`/`"V4"`) + that variant's fields.
-
-        Built directly from the Rust `HopInfo`s (no Python dataclass
-        reconstruction — `path_info_to_py`/`hop_to_py` retired).
-        """
-    @property
-    def profitable_captured_swaps(self, /) -> list:
-        """
-        The SUCCESS-path captured swaps — `list[dict]`, one entry per
-        profitable survivor, each dict carrying `path_id` (`int`) +
-        `captured_swaps` (`list[dict]` of per-swap `family`/`emitter`/
-        `amount0`/`amount1`/`sqrt_price_x96`/`liquidity`/`tick`).
-
-        The matching success-path surface to each `SimFailure.captured_swaps`
-        the revert path surfaces via `failures()`. Each entry's swap list is
-        the V2/V3/V4 `Swap` events the in-process EVM emitted during the
-        survivor's `execute()` — the ground-truth hop output (no
-        `getAmountOut` recompute, no Multicall3 reserves re-fetch needed). The
-        step-5 classifier (`logs/permutation_analyzer.py` +
-        `format_sim_diag_line`) re-points at these to retire
-        `diagnostic.rs::recompute_v2/v3_amount_out`. Empty for survivors that
-        swapped zero pools (shouldn't happen — `encode_cmd_stream` only builds
-        swap commands for paths with hops).
-        """
-    @property
-    def suppressed_count(self, /) -> int: ...
-    @property
-    def thin_dropped(self, /) -> int: ...
 
 @final
 class ExecutorPolicyValues:
@@ -419,7 +307,7 @@ class FailureDetail:
     """
     The per-candidate failure detail (the core's `FailureDetail`). The render
     dicts the `[sim-fail]`/`[sim-diag]` renderers consume decode through
-    `record()` — the ONE serializer shape `DispatchOutcome.failures` emits.
+    `record()` — the ONE serializer shape a failure record crosses as.
     """
     @property
     def bucket(self, /) -> str:
@@ -434,7 +322,7 @@ class FailureDetail:
         """
     def record(self, /) -> dict:
         """
-        The full render record — the `DispatchOutcome.failures` dict shape.
+        The full render record — the `[sim-fail]`/`[sim-diag]` dict shape.
         """
 
 @final
@@ -455,10 +343,9 @@ class FailureKind:
 @final
 class PayloadOutcome:
     """
-    The merged inline-sim payload record set — the payload arm of
-    `PyDispatchOutcome`, built by `merge_payload_results_py`. Rust owns every
-    policy fact; Python renders + stitches these getters into the merged
-    outcome view.
+    The merged inline-sim payload record set, built by
+    `merge_payload_results_py`. Rust owns every policy fact; Python renders +
+    stitches these getters into the merged outcome view.
     """
     @property
     def candidates(self, /) -> list:
@@ -476,7 +363,7 @@ class PayloadOutcome:
     def path_infos(self, /) -> dict:
         """
         `{path_id: path_info dict}` — the [profit]-render source (the SAME
-        one-serializer shape `PyDispatchOutcome.path_infos` emits).
+        one-serializer shape the batch seam's `path_info_dict()` emits).
         """
     @property
     def unprofitable_count(self, /) -> int:
@@ -538,8 +425,8 @@ class SimulateContext:
     The session-static simulation config bag.
 
     Construct once per session from a `&PyAsyncAlloyProvider` + the addresses +
-    the inject flag + the executor runtime bytecode. Hands to
-    `dispatch_profitable_py` (A4) each block alongside the per-block args.
+    the inject flag + the executor runtime bytecode. Read each block alongside
+    the per-block args.
     """
     def __new__(
         cls,
@@ -753,36 +640,6 @@ def build_batch_executor_py(
     `ValueError` on malformed addresses/args.
     """
 
-def dispatch_profitable_py(
-    candidates: list,
-    context: SimulateContext,
-    dispatcher: Dispatcher,
-    base_fee_next: SupportsIndex,
-    current_block: SupportsIndex,
-    block_timestamp: SupportsIndex,
-    min_profit_margin_bps: SupportsIndex,
-    *,
-    engine: ArbitrageEngine | None = None,
-) -> Any:
-    """
-    The signature re-exported so the `#[pyo3(signature)]` reference stays in
-    sync with the exposed type (mirrors the convention in `submit.rs`).
-
-    # Errors
-
-    `ValueError`: if `candidates` holds a non-`PyDispatchCandidate` element
-    (the GIL-held arg extraction rejects it before the async block is created),
-    None — the core `dispatch_profitable_results` is infallible (every
-    per-path failure is tallied into `outcome.fail_buckets`, not propagated).
-
-    # Panics
-
-    Panics if the dispatcher or suppression mutex is poisoned (a peer task
-    panicked while holding it). Cannot happen under normal operation; a poison
-    indicates a bug in a sibling task (the dispatcher/suppression mutexes are
-    only ever locked for short synchronous spans).
-    """
-
 def executor_policy_py(values: ConfigValues) -> ExecutorPolicyValues:
     """
     The verdict-named executor policy, as the resolution oracle reads it: the
@@ -823,16 +680,15 @@ def merge_payload_results_py(
        Python receives the verdict as a `kind` string only — it never reads
        the threshold value.
     3. The boundary extracts the payload's primitive fields into the crate
-       `PayloadRow`, and the crate-owned join reassembles the core row, so the
-       submit row shape is the
-       exact `PyDispatchOutcome.gas_profitable` handoff.
+       `PayloadRow`, and the crate-owned join reassembles the core row, so a
+       submit row is the exact shape the submit seam consumes.
 
     Args:
         payloads: list of payload dicts (one per inline-sim entry).
         engine: the `PyArbEngine` (the typed-hop resolver — the same
             engine the payload-producing result batch came from).
         `executor_address`: the session executor contract (the join stamps it
-            identically on every row, like `dispatch_profitable_py` does).
+            identically on every row, like the batch arm's join does).
 
     Returns:
         `PayloadOutcome` — the merged record set Python renders (submit rows,
@@ -864,7 +720,7 @@ def simulate_in_process_revert_probe(path_id: SupportsIndex, runtime_bytecode: b
       - `failures` (`list[dict]`) — one entry per failed candidate, each
         carrying `path_id`, `bucket`, `fail_index`, `revert_data`,
         `reverting_frame`, `captured_swaps`, `optimal_input`, `hop_outputs`
-        (same shape as `PyDispatchOutcome.failures()`).
+        (the same shape the batch seam's `FailureDetail.record()` emits).
       - `fail_buckets` (`dict[str, int]`) — the bucket tally.
 
     No RPC. `CacheDB<EmptyDB>` handles all state reads (empty → zero). The
@@ -917,7 +773,6 @@ __all__ = [
     "BatchOutcomeSet",
     "CandidateAssembly",
     "DispatchCandidate",
-    "DispatchOutcome",
     "ExecutorPolicyValues",
     "FailureDetail",
     "FailureKind",
@@ -929,7 +784,6 @@ __all__ = [
     "SubmitVerdict",
     "assemble_dispatch_candidates_py",
     "build_batch_executor_py",
-    "dispatch_profitable_py",
     "executor_policy_py",
     "merge_payload_results_py",
     "simulate_in_process_revert_probe",

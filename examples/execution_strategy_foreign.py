@@ -16,8 +16,7 @@ re-derivation of the canonical settlement-arbitrage 7-call bundle (ADR-019 R / A
 Guardrails:
 - Probe (declared read-calls) and Assess/Fee (gate rule + pricing) are declared
   data / built-in defaults — NOT Python re-implementations of the canonical
-  bundle. The canonical `dispatch_profitable_py` path is used unchanged (the
-  wall).
+  bundle. The canonical batch-executor path is used unchanged (the wall).
 - Amounts stay integer fixed-point (u256); never floats.
 
 Run: `uv run python examples/execution_strategy_foreign.py`

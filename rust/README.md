@@ -74,7 +74,7 @@ foundation capabilities.
 | `degenbot-arbitrage` | Settlement-arbitrage searcher policy: pre/post balance checks, profit and priority-fee policy, and dispatch categorization. |
 | `degenbot-simulation` | The generic in-process revm executor and simulation dispatch. It does not own searcher-specific policy. |
 | `degenbot-execution` | The user-owned execution-adapter seam and its value/protocol types; it ships no default strategy. |
-| `degenbot-submission` | EIP-1559 signing, fee finalization, and typed transaction envelopes. |
+| `degenbot-submission` | Nonce-leased dispatch, EIP-1559 signing, raw and relay broadcast, receipt monitoring, and the submission ledger. |
 | `degenbot-workers` | Worker-role state machine, budget authority, priority dispatch, and cordon posture. |
 
 Strategy and engine ownership is intentionally separate. See

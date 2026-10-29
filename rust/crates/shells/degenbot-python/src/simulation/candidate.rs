@@ -1,5 +1,5 @@
-//! `PyDispatchCandidate` — the builder the cockpit constructs from each solved
-//! arb path before handing the batch to `dispatch_profitable_py` (A4).
+//! `PyDispatchCandidate` — the per-path builder the assembly seam wraps each
+//! solved arb path's core candidate in.
 //!
 //! Mirrors [`PySubmitCandidate`]'s `#[new]` shape (a builder pyclass holding
 //! the core [`DispatchCandidate`]). The candidate resolves its
@@ -33,8 +33,8 @@ use pyo3::exceptions::PyValueError;
 /// hop_outputs, solve_block)` + the `engine_registry.paths.get(path_id)`
 /// `PathInfo` resolve. Construct one per solved path, per block.
 #[pyclass(name = "DispatchCandidate", module = "degenbot._ffi.simulation")]
-// `inner` is read by `dispatch_profitable_py` (pending) — not yet landed;
-// the field is dead until then.
+// `pub(crate)`: the assembly seam wraps each core candidate in this class
+// (`simulation::assembly`).
 pub struct PyDispatchCandidate {
     pub(crate) inner: DispatchCandidate,
 }
@@ -105,6 +105,16 @@ impl PyDispatchCandidate {
                 use_v4_batch,
             )?,
         })
+    }
+
+    /// The arb path id this candidate was built for.
+    ///
+    /// The candidate's identity: it is the key the sim fan-out joins on and
+    /// the id the submit records carry, so a driver that holds a batch of
+    /// candidates can name the path it is about to simulate or submit.
+    #[getter]
+    fn path_id(&self) -> u64 {
+        self.inner.path_id
     }
 }
 

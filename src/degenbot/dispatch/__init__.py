@@ -29,13 +29,11 @@ Symbol map (FFI name → stable companion name):
 
 - CandidateAssembly → CandidateAssembly
 - DispatchCandidate → DispatchCandidate
-- DispatchOutcome → DispatchOutcome
 - Dispatcher → Dispatcher
 - SimulateContext → SimulateContext
 - TxSigner → TxSigner
 - assemble_dispatch_candidates_py → assemble_dispatch_candidates
 - build_batch_executor_py → build_batch_executor
-- dispatch_profitable_py → dispatch_profitable
 - merge_payload_results_py → merge_payload_results
 - dispatch_and_submit_py → dispatch_and_submit (wrapper: dict → typed records)
 - fetch_fee_history_py → fetch_fee_history
@@ -53,7 +51,6 @@ from degenbot._ffi.simulation import (
     BatchOutcomeSet,
     CandidateAssembly,
     DispatchCandidate,
-    DispatchOutcome,
     FailureDetail,
     FailureKind,
     PayloadOutcome,
@@ -65,7 +62,6 @@ from degenbot._ffi.simulation import (
 )
 from degenbot._ffi.simulation import assemble_dispatch_candidates_py as assemble_dispatch_candidates
 from degenbot._ffi.simulation import build_batch_executor_py as build_batch_executor
-from degenbot._ffi.simulation import dispatch_profitable_py as dispatch_profitable
 from degenbot._ffi.simulation import merge_payload_results_py as merge_payload_results
 from degenbot._ffi.submission import Dispatcher, SimSubmitPipeline, SubmitCandidate, TxSigner
 from degenbot._ffi.submission import dispatch_and_submit_py as _dispatch_and_submit_py
@@ -151,7 +147,6 @@ __all__ = [
     "BatchOutcomeSet",
     "CandidateAssembly",
     "DispatchCandidate",
-    "DispatchOutcome",
     "Dispatcher",
     "FailureDetail",
     "FailureKind",
@@ -172,7 +167,6 @@ __all__ = [
     "assemble_dispatch_candidates",
     "build_batch_executor",
     "dispatch_and_submit",
-    "dispatch_profitable",
     "fetch_fee_history",
     "merge_payload_results",
     "typed_submit_record",

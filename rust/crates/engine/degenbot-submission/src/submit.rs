@@ -58,14 +58,15 @@ use degenbot_substrate::nonce::NonceLane;
 /// A pre-submit candidate — the profitable sim result + the resolved path
 /// pools (the keys for mutual-exclusivity).
 ///
-/// Decoupled from `degenbot_simulation::SimResult` to avoid a
-/// `degenbot-submission → degenbot-simulation` dependency (which would close a
-/// `degenbot-simulation → degenbot-submission → degenbot-simulation` cycle —
-/// the simulation crate already depends on submission for `PathSuppression`).
-/// The submission crate owns its OWN input shape; the umbrella `Bot` / Python
-/// driver maps `SimResult` → `SubmitCandidate` at the seam (resolving the
-/// `path_pools` from `path_info.hops` — `pool_id_hex` for V4, `pool_address`
-/// for V2/V3 — ports L2623).
+/// Decoupled from the simulation crate's `SimResult` on purpose, and it stays
+/// decoupled: submission consumes a candidate's economics (profit, gas, fees),
+/// its ready-to-sign calldata, and the pools it touches — not the simulation
+/// crate's state and journal payloads — so reaching for sim types here would
+/// widen this crate's dependency surface to the revm stack and freeze the
+/// submit seam against a shape only one caller produces. The umbrella `Bot` /
+/// Python driver maps `SimResult` → `SubmitCandidate` at the seam instead
+/// (resolving the `path_pools` from `path_info.hops` — `pool_id_hex` for V4,
+/// `pool_address` for V2/V3 — ports L2623).
 ///
 /// Ports the Python `gas_profitable` tuple `(path_id, gross, net, gas,
 /// tx_params, path_info)` (L2428 — the dispatch fan-out output the submit loop
@@ -552,6 +553,13 @@ pub async fn dispatch_and_submit(
                             outcome: "bundle_accepted",
                         },
                     );
+                    // Two books, two calls — neither subsumes the other: the
+                    // authority promotes the account lease to a broadcast (the
+                    // nonce stays outstanding until the chain confirms it),
+                    // while the lane's ledger promotes its own signed stamp for
+                    // this strategy. Head reconciliation and the monitor read
+                    // both, so collapsing this pair into one call leaves one
+                    // book stale.
                     nonce_lane
                         .authority()
                         .record_broadcast(&lease)

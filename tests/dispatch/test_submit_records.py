@@ -16,6 +16,7 @@ import pytest
 
 from degenbot.dispatch import (
     SkippedRecord,
+    SubmitCandidate,
     SubmitContext,
     SubmitSkipReason,
     SubmittedRecord,
@@ -116,3 +117,30 @@ class TestDispatchAndSubmitWrapper:
         assert records[1].path_id == 3
         assert records[1].reason is SubmitSkipReason.DRY_RUN
         assert records[1].detail is None
+
+
+class TestSubmitCandidateGetters:
+    """Read-only getters on ``SubmitCandidate``.
+
+    The ``[dispatch]`` per-path log reads ``path_id``/``gross_profit``/
+    ``net_profit``/``gas_used``/``priority_fee`` off each survivor and the
+    submit orchestration sorts on the same fields, so the pyclass must expose
+    them by name.
+    """
+
+    def test_money_and_gas_getters_round_trip(self) -> None:
+        cand = SubmitCandidate(
+            path_id=42,
+            gross_profit=2_000_000_000_000_000_000,
+            net_profit=1_500_000_000_000_000_000,
+            gas_used=200_000,
+            priority_fee=2_000_000_000,
+            base_fee_next=1_000_000_000,
+            execute_calldata=b"\xde\xad",
+            executor_address="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        assert cand.path_id == 42
+        assert cand.gross_profit == 2_000_000_000_000_000_000
+        assert cand.net_profit == 1_500_000_000_000_000_000
+        assert cand.gas_used == 200_000
+        assert cand.priority_fee == 2_000_000_000

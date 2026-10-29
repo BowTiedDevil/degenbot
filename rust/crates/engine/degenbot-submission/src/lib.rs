@@ -1,12 +1,14 @@
-//! # `degenbot-submission` — EIP-1559 transaction signing + fee finalization
+//! # `degenbot-submission` — the transaction-submission mechanism
 //!
-//! A pyo3-free core crate owning the **transaction-submission mechanism** for
-//! the MEV bot: it holds the operator private key once via
+//! A pyo3-free core crate owning the path from a profitable candidate to a
+//! confirmed nonce for the MEV bot: it holds the operator private key once via
 //! [`alloy::signers::local::PrivateKeySigner`], finalizes the EIP-1559 fee
-//! fields, and signs type-2 `TxEnvelope` transactions ready for
-//! `eth_sendRawTransaction`.
+//! fields, signs type-2 `TxEnvelope` transactions, dispatches them under a
+//! nonce lease, broadcasts them (raw fan-out, `MEVBlocker` bundle, or builder
+//! relay), monitors the receipts, and reconciles the submission ledger as the
+//! head advances.
 //!
-//! # What lives here (rows N4 + N5 of the submission scope — `port-now`)
+//! # What lives here
 //!
 //! - [`signer::TxSigner`] — `pub struct TxSigner { signer: PrivateKeySigner,
 //!   chain_id: u64 }` holding the operator key ONCE (constructed from
@@ -23,15 +25,33 @@
 //!   calldata/`gas`/`nonce`/`value=0`/`accessList` + the two fee fields).
 //!   `chain_id` is NOT here — it lives on `TxSigner` (the signer owns the
 //!   replay-protection context; no duplicated-state smell).
+//! - [`submit::dispatch_and_submit`] — the claim → finalize → re-compute
+//!   access list → sign → broadcast → monitor orchestration, over the
+//!   version-agnostic [`SubmissionTarget`] (raw fan-out, `MEVBlocker` bundle,
+//!   builder-relay bundle); [`SubmitCandidate`] is its input shape,
+//!   [`SubmitOutcome`]/[`SubmitRecord`]/[`SkipReason`] its result.
+//! - [`dispatcher::Dispatcher`] — nonce and pool-key claim arbitration across
+//!   the monitor tasks, plus per-path [`PathSuppression`].
+//! - [`monitor::monitor_pending_transaction`] — receipt polling to a
+//!   [`MonitorOutcome`] (`BLOCKS_BEFORE_NONCE_EXPIRES` bounds the wait).
+//! - [`submission_ledger::SubmissionLedger`] — the per-target record of
+//!   signed/broadcast/confirmed submissions, with [`HeadPolicy`] declines and
+//!   [`RepackageRequest`]/[`Notification`] outputs.
+//! - [`head_reconciliation`] — replays the ledger's outstanding submissions
+//!   against each new head.
+//! - [`sim_pipeline`] — the sim→submit seam ([`SimSubmitPipeline`],
+//!   [`SimLeaf`]/[`SubmitLeaf`]).
+//! - [`relay`] / [`bundle`] — the relay fan-out and the `MEVBlocker`
+//!   `eth_sendBundle` wire.
 //!
 //! # Standalone-core constraint (ADR-005)
 //!
 //! A standalone Rust consumer `cargo add degenbot` reaches this crate via the
 //! umbrella `pub use degenbot_submission;` and can sign + broadcast EIP-1559
 //! transactions with **zero Python, zero `pyo3`** (verified by
-//! `just check-no-pyo3-in-cores`). The broadcast itself (`eth_sendRawTransaction`
-//! `bytes → TxHash`) is the sibling RPC task; this crate owns only
-//! the SIGNING that produces the bytes.
+//! `just check-no-pyo3-in-cores`). Signing, dispatch, broadcast (through
+//! `degenbot-rpc`'s typed provider or a relay), monitoring, and reconciliation
+//! all live here; nothing in the crate reaches for a Python runtime.
 //!
 //! # Parity gate (`docs/architecture/parity-gate.md`)
 //!
@@ -55,15 +75,11 @@
 //!
 //! # Non-goals
 //!
-//! - The `eth_sendRawTransaction` broadcast (`bytes → TxHash`) — the sibling RPC task.
 //! - `next_base_fee` (consumed via `base_fee_next`).
 //! - `_compute_priority_fee` (the `priority_fee` value) (consumed
 //!   via `tx_params`; for the parity gate it is a fixture).
-//! - The submit orchestration (claim nonce → finalize → re-compute access
-//!   list → sign → broadcast → monitor) — the N6 sibling.
 //! - Private-key CONFIG load — stays Python (the driver loads the key and
 //!   hands it to the Rust signer ONCE).
-//! - The `SubmittedTx` monitor / dispatcher state — sibling tasks in the epic.
 
 pub mod bundle;
 pub mod dispatcher;

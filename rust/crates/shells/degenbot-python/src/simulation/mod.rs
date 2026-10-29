@@ -25,18 +25,18 @@
 //!   arg-extract → GIL release (`py.detach`) → strategy call → result wrap.
 //!   No business logic. Mirrors the `submission/` subtree's discipline exactly.
 //! - **Python companion** (`examples/eth_settlement_arbitrage_v2_v3_v4_rust.py`): the
-//!   cockpit renders the `[sim]` summary from `PyDispatchOutcome` and chains
-//!   `dispatch_profitable_py` → `dispatch_and_submit_py`.
+//!   cockpit enqueues batches into [`batch::PyBatchExecutor`] and renders the
+//!   `[sim]` summary from the drained Batch outcome records.
 //!
-//! The seam's output is the submission seam's input shape: the wrapper joins
-//! each surviving `SimResult` → `PySubmitCandidate` at result-wrap time, so the
-//! cockpit chains simulate → submit with no field reshuffling.
+//! The seam's output is the submission seam's input shape: the batch executor
+//! joins each surviving `SimResult` → `PySubmitCandidate` at result-wrap time,
+//! so the cockpit chains simulate → submit with no field reshuffling.
 //!
 //! ## Surface
 //!
-//! Three pyclasses: [`PySimulateContext`] (the session-static config bag),
-//! [`PyDispatchCandidate`] (the per-path builder), and [`PyDispatchOutcome`]
-//! (the read-only result), plus the `dispatch_profitable_py` pyfunction.
+//! Two pyclasses: [`PySimulateContext`] (the session-static config bag) and
+//! [`PyDispatchCandidate`] (the per-path builder); the batch executor's own
+//! classes live in [`batch`].
 
 use pyo3::prelude::*;
 
@@ -47,11 +47,10 @@ pub mod context;
 pub mod dispatch;
 pub mod in_process_probe;
 mod inline_hook;
-pub mod outcome;
+pub mod render;
 
 pub use candidate::PyDispatchCandidate;
 pub use context::PySimulateContext;
-pub use outcome::PyDispatchOutcome;
 
 /// The `degenbot._ffi.simulation` Python submodule (declarative
 /// `#[pymodule]`), carrying the simulation pyclasses + the
@@ -61,7 +60,7 @@ pub use outcome::PyDispatchOutcome;
 #[pyo3(module = "degenbot._ffi")]
 pub mod simulation {
     #[pymodule_export]
-    use super::{PyDispatchCandidate, PyDispatchOutcome, PySimulateContext};
+    use super::{PyDispatchCandidate, PySimulateContext};
 
     #[pymodule_export]
     use super::assembly::{assemble_dispatch_candidates_py, PyCandidateAssembly};
@@ -74,9 +73,7 @@ pub mod simulation {
     };
 
     #[pymodule_export]
-    use super::dispatch::{
-        dispatch_profitable_py, merge_payload_results_py, PyPayloadOutcome, PyPayloadVerdict,
-    };
+    use super::dispatch::{merge_payload_results_py, PyPayloadOutcome, PyPayloadVerdict};
 
     #[pymodule_export]
     use super::in_process_probe::{

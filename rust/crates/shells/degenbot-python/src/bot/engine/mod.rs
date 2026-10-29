@@ -157,7 +157,7 @@ impl PyArbEngine {
 
     /// The cross-block warm bytecode cache arc (Option A) — the
     /// persistent `Arc<RwLock<WarmCodeCacheInner>>` held for the engine's life.
-    /// `dispatch_profitable_py` clones this into the per-block
+    /// The batch executor's sim stage clones this into the per-block
     /// `BlockSimHandle::build` so the `WarmCodeCache` layer shares one inner
     /// map across every per-block EVM. One Arc clone, no map copy.
     pub(crate) fn warm_code_cache_arc(

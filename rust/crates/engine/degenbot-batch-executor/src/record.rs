@@ -276,12 +276,6 @@ pub struct BatchCounters {
     pub exception_count: usize,
     /// Suppression-skip count.
     pub suppressed_count: usize,
-    /// Thin-margin-skip count.
-    pub thin_dropped: usize,
-    /// Pool-divergence-skip count.
-    pub divergent_dropped: usize,
-    /// Fee-on-transfer-skip count.
-    pub fot_dropped: usize,
     /// Empty-hop-skip count (the `[sim-none]` log's input).
     pub empty_hop_count: usize,
     /// Resolve-miss-skip count.
@@ -298,14 +292,19 @@ pub fn fold_counters(batch: &[BatchOutcome]) -> BatchCounters {
     let mut c = BatchCounters::default();
     for o in batch {
         match o.assembly {
-            AssemblyVerdict::Assembled => {}
+            // Verdicts that carry no counter of their own: an assembled record
+            // is counted by its sim verdict below, and the thin-margin /
+            // divergence / FoT skips tally only on the core fan-out's
+            // `DispatchOutcome` (where the pre-filters run), never as a batch
+            // fold.
+            AssemblyVerdict::Assembled
+            | AssemblyVerdict::SkipThinMargin
+            | AssemblyVerdict::SkipDivergentPool
+            | AssemblyVerdict::SkipFeeOnTransfer => {}
             AssemblyVerdict::SkipEmptyHops => c.empty_hop_count += 1,
             AssemblyVerdict::SkipResolveMiss => c.resolve_miss_count += 1,
             AssemblyVerdict::SkipPayloadServed => c.payload_served_count += 1,
             AssemblyVerdict::SkipSuppressed => c.suppressed_count += 1,
-            AssemblyVerdict::SkipThinMargin => c.thin_dropped += 1,
-            AssemblyVerdict::SkipDivergentPool => c.divergent_dropped += 1,
-            AssemblyVerdict::SkipFeeOnTransfer => c.fot_dropped += 1,
         }
         match &o.simulate {
             Some(SimulateVerdict::Profitable(_)) => {

@@ -179,7 +179,7 @@ def test_degenbot_arbitrage_info_record_reaches_handler() -> None:
 # concurrent writers — holding the GIL across the I/O wait. Under a burst of
 # concurrent Rust log calls (chatty V4 solve debug, multi-candidate dispatch)
 # this stalls every thread waiting on the GIL, including the asyncio main loop
-# parked at ``await dispatch_profitable_py(...)`` whose Rust future is the one
+# parked at ``await executor.next_outcome()`` whose Rust future is the one
 # parked mid-``log::info!``. The in-loop header-staleness watchdog cannot fire
 # because the pump's tokio worker is parked before its select.
 #

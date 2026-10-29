@@ -7,12 +7,11 @@ record (``path_id`` + ``bucket`` + the failing call index + the raw revert
 bytes) to the path's hop token summary so the operator can identify WHICH
 path reverted against WHICH pools.
 
-These tests stub the ``DispatchOutcome`` shape (the PyO3 pyclass is too
-heavy to instantiate without a full simulate round-trip; the renderer only
-reads the two attributes — ``failures: list[dict]`` and ``path_infos:
-dict[int, dict]`` — so ``FakeDispatchOutcome`` carries exactly those attrs)..
-``path_infos`` values are plain dicts (``{path_type, hops: [hop_dict, …]}``),
-not the retired ``*HopInfo`` dataclasses.
+The renderer reads the batch render view's two failure attributes
+(``failures: list[dict]`` and ``path_infos: dict[int, dict]``), so these build
+the real :class:`MergedOutcome` — no double, no PyO3 round-trip. ``path_infos``
+values are plain dicts (``{path_type, hops: [hop_dict, …]}``), not the retired
+``*HopInfo`` dataclasses.
 """
 
 from __future__ import annotations
@@ -25,8 +24,12 @@ import pytest
 from degenbot.diagnostics import FailureAction, failure_action
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.runner import _render
-from degenbot.runner._render import _render_sim_failures, format_failure_breakdown, hop_fields
-from tests.fakes.session import FakeDispatchOutcome
+from degenbot.runner._render import (
+    MergedOutcome,
+    _render_sim_failures,
+    format_failure_breakdown,
+    hop_fields,
+)
 from tests.helpers import verdict_probe as probe
 
 # ── Fixtures ─────────────────────────────────────────────────────────────
@@ -70,17 +73,24 @@ def _hops() -> list[dict[str, Any]]:
     ]
 
 
-def _outcome(failures: list[dict[str, Any]]) -> Any:
-    """A stub ``DispatchOutcome`` exposing only the renderer-read attrs."""
+def _outcome(failures: list[dict[str, Any]]) -> MergedOutcome:
+    """A batch render view carrying only the renderer-read failure attrs."""
     path_info = {"path_type": "V2-V2", "hops": _hops()}
-    return FakeDispatchOutcome(
+    return MergedOutcome(
+        gas_profitable=[],
+        gas_unprofitable_count=0,
+        exception_count=0,
+        fail_count=len(failures),
+        candidate_count=len(failures),
+        suppressed_count=0,
+        fail_buckets={},
         failures=failures,
         path_infos={1: path_info, 2: path_info},
     )
 
 
 def _render(
-    outcome: Any,
+    outcome: MergedOutcome,
     *,
     armed: bool = False,
     ignore: str = "",

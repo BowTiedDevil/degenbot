@@ -30,7 +30,7 @@ use indexmap::IndexMap;
 use tokio::sync::mpsc::UnboundedSender;
 
 use degenbot_substrate::driver_spawn::{DriverExit, DriverSpawnFactory, LaneNamespace};
-use degenbot_substrate::nonce::{NonceAuthority, NonceLane, NonceLedger, StrategyId};
+use degenbot_substrate::nonce::{NonceAuthority, StrategyId};
 use degenbot_substrate::route_registry::RouteRegistry;
 
 /// The operator pose of one registered strategy driver: the host's
@@ -547,17 +547,6 @@ impl StrategyHost {
         &self.nonce
     }
 
-    /// Mint one strategy's sign-time lane over the host's authority.
-    ///
-    /// The host owns the process's issuance authority, so this is where a
-    /// hosted strategy's lane comes from. The ledger is the caller's, which is
-    /// what keeps this crate free of the submission plane's ledger type: the
-    /// composition root that owns it names it, the host only binds it.
-    #[must_use]
-    pub fn mint_lane<L: NonceLedger>(&self, id: &StrategyId, ledger: Arc<L>) -> NonceLane<L> {
-        self.nonce.mint_lane(id.clone(), ledger)
-    }
-
     /// Install the submission-truth arm the head feed reconciles against.
     ///
     /// Called once at boot by the layer that owns the per-strategy ledger. A
@@ -1013,69 +1002,6 @@ mod tests {
         host.register(id.clone(), FacetStatus::Configured)
             .expect("register");
         id
-    }
-
-    /// A lane's ledger fixture: the host mints over whatever ledger the
-    /// composition root owns, so the bot-side test supplies its own.
-    #[derive(Debug, Default)]
-    struct FixtureLedger {
-        stamps: parking_lot::Mutex<Vec<(StrategyId, u64)>>,
-    }
-
-    impl NonceLedger for FixtureLedger {
-        type Decline = &'static str;
-
-        fn record_signed(
-            &self,
-            strategy: &StrategyId,
-            nonce: u64,
-            _target: alloy::primitives::B256,
-            _bundle_hash: alloy::primitives::B256,
-            _built_at_head: u64,
-        ) -> Result<(), &'static str> {
-            self.stamps.lock().push((strategy.clone(), nonce));
-            Ok(())
-        }
-
-        fn record_broadcast(
-            &self,
-            _strategy: &StrategyId,
-            _nonce: u64,
-        ) -> Result<(), &'static str> {
-            Ok(())
-        }
-    }
-
-    /// The host is a mint door: two lanes minted through one host stamp one
-    /// contiguous prefix and each stamp record names its own strategy.
-    #[test]
-    fn the_host_mints_strategy_lanes_over_its_one_authority() {
-        let host = host();
-        let ledger = Arc::new(FixtureLedger::default());
-        let settlement = host.mint_lane(&sid("settlement"), Arc::clone(&ledger));
-        let backrun = host.mint_lane(&sid("backrun"), Arc::clone(&ledger));
-
-        assert!(
-            Arc::ptr_eq(settlement.authority(), host.nonce()),
-            "a minted lane binds the host's own authority"
-        );
-        let settlement_lease = settlement.stamp().expect("settlement stamp");
-        let backrun_lease = backrun.stamp().expect("backrun stamp");
-        assert_eq!(
-            (settlement_lease.nonce(), backrun_lease.nonce()),
-            (7, 8),
-            "the host's authority hands its lanes one contiguous prefix"
-        );
-
-        settlement
-            .record_signed(
-                &settlement_lease,
-                alloy::primitives::B256::ZERO,
-                alloy::primitives::B256::ZERO,
-                1,
-            )
-            .expect("record the stamp");
-        assert_eq!(*ledger.stamps.lock(), vec![(sid("settlement"), 7)]);
     }
 
     #[test]

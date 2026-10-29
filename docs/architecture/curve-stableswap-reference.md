@@ -19,7 +19,7 @@ Identifies which D-calculation formula pair (`calc_d` / `calc_dp`) a pool uses i
 | `VARIANT_BETA_DP` | Standard formula | Variant beta formula |
 | `VARIANT_GAMMA_DP` | Standard formula | Variant gamma formula |
 
-Resolution: `resolve_d_variant()` in `_variant_groups.py`, called by `CurvePoolBuilder.build()`.
+Resolution: the core's `resolve_d_variant()` (`degenbot_pools::sim::curve_strategies`, invoked by the construction choreography) turns the pool address into the discriminant the pool identity stores; the Python pool rebuilds the enum from it (`DVariant(arm.d_variant)`).
 
 ### YVariant
 
@@ -31,7 +31,7 @@ Identifies which Y-calculation formula a pool uses in `_get_y()`. Controls amp d
 | `VARIANT_0` | Without `A_PRECISION` | Without `A_PRECISION` |
 | `VARIANT_1` | With `A_PRECISION` | Without `A_PRECISION` |
 
-Resolution: `resolve_y_variant()` in `_variant_groups.py`.
+Resolution: the core's `resolve_y_variant()` (`degenbot_pools::sim::curve_strategies`); the Python pool rebuilds `YVariant(arm.y_variant)`.
 
 ### YDVariant
 
@@ -42,7 +42,7 @@ Identifies which Y_D-calculation formula a pool uses in `_get_y_d()`. Controls w
 | `STANDARD` | Without `A_PRECISION` |
 | `VARIANT_0` | With `A_PRECISION` |
 
-Resolution: `resolve_yd_variant()` in `_variant_groups.py`.
+Resolution: the core's `resolve_yd_variant()` (`degenbot_pools::sim::curve_strategies`); the Python pool rebuilds `YDVariant(arm.yd_variant)`.
 
 ## Strategy Enum Values
 
@@ -100,7 +100,7 @@ Identifies which `_stored_rates_from_*()` method provides lending rates.
 | `RETH` | rETH oracle rates |
 | `ORACLE` | Oracle-based rates |
 
-Strategy resolution is done by `resolve_pool_strategies()` in `_pool_strategies.py`, which combines the address→strategy mapping with variant group resolution. The `PoolStrategies` dataclass is frozen (immutable after creation) and picklable. Calculators are auto-constructed from enum values in `__post_init__` via each enum's `make_calculator()` factory method; explicitly-passed calculator arguments are preserved.
+Strategy resolution is done by the core's `resolve_curve_strategy_discriminants()` (`degenbot_pools::sim::curve_strategies`), which combines the address→strategy map with variant-group resolution into the seven `u8` discriminants the pool identity stores. The Python `PoolStrategies` dataclass is frozen (immutable after creation) and is rebuilt field-by-field from exactly those discriminants. No Python calculator is constructed: the core derives its math axes from the same discriminants.
 
 ## Crypto Pool Internals
 
@@ -216,7 +216,7 @@ Curve V1 pools are written in Vyper. The source is the ground truth for all calc
 
 ### Step 3: Check the address mapping
 
-The address→strategy mapping in `_pool_strategies.py` was derived from old class-level frozensets, not verified against contract source. Two common errors:
+The address→strategy mapping in the core (`rust/crates/foundation/degenbot-pools/src/sim/curve_strategies.rs`) was derived from old class-level frozensets, not verified against contract source. Two common errors:
 
 1. **Wrong `LendingRateStyle`.** A pool was grouped into a cToken/yToken frozenset because the old Python code routed it through `_stored_rates_from_ctokens()`, but the contract has `USE_LENDING = [False, ...]`. The old code worked because the `_stored_rates_from_*()` method returns `PRECISION * LENDING_PRECISION` when `use_lending` is all-False — same as `rate_multipliers`. The new code creates a data provider that makes spurious on-chain calls, potentially returning different rates.
 

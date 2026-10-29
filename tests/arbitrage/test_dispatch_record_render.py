@@ -11,9 +11,23 @@ typed values rather than on a session the renderer would have to reach into.
 
 from __future__ import annotations
 
+import dataclasses
+
 from degenbot.runner import _dispatch as dispatch_module
-from degenbot.runner._render import DisplayPolicy
-from tests.fakes.session import FakeBatchOutcome
+from degenbot.runner._render import DisplayPolicy, MergedOutcome
+
+#: A drained batch that carried nothing at all (the falsy render view).
+_EMPTY_BATCH = MergedOutcome(
+    gas_profitable=[],
+    gas_unprofitable_count=0,
+    exception_count=0,
+    fail_count=0,
+    candidate_count=0,
+    suppressed_count=0,
+    fail_buckets={},
+    failures=[],
+    path_infos={},
+)
 
 
 class _CapturingLogger:
@@ -62,8 +76,8 @@ def _live_policy() -> DisplayPolicy:
     return DisplayPolicy(live=True, sim_exit_on_fail=False, exit_ignore_buckets="")
 
 
-def _outcome_with_candidate() -> FakeBatchOutcome:
-    return FakeBatchOutcome(gas_profitable=[object()])
+def _outcome_with_candidate() -> MergedOutcome:
+    return dataclasses.replace(_EMPTY_BATCH, gas_profitable=[object()], candidate_count=1)
 
 
 def test_silent_veto_streak_warns_once() -> None:
@@ -103,7 +117,7 @@ class TestDisplayPolicyVeto:
         assert _live_policy().vetoed(_outcome_with_candidate(), 1) is False
 
     def test_a_candidate_free_batch_is_not_a_veto(self) -> None:
-        assert _live_policy().vetoed(FakeBatchOutcome(), 0) is False
+        assert _live_policy().vetoed(_EMPTY_BATCH, 0) is False
 
     def test_a_dry_run_batch_is_not_a_veto(self) -> None:
         dry_run = DisplayPolicy(live=False, sim_exit_on_fail=False, exit_ignore_buckets="")

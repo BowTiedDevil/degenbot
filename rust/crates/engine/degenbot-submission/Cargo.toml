@@ -1,6 +1,6 @@
 [package]
 name = "degenbot-submission"
-description = "Pure-Rust EIP-1559 transaction signing + fee finalization — operator-key holding LocalSigner + TxEnvelope/Typed2718 type-2 encoding."
+description = "Pure-Rust transaction-submission mechanism — operator-key holding LocalSigner + EIP-1559 type-2 encoding, nonce-leased dispatch, raw/relay broadcast, receipt monitoring, and submission-ledger reconciliation."
 keywords = ["mev", "eip-1559", "signing", "transactions"]
 version.workspace = true
 edition.workspace = true
@@ -19,14 +19,6 @@ alloy = { version = "^2.5", features = ["full", "signer-local", "network"] }
 # feature set (# no default-tls native openssl).
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 degenbot-core.workspace = true
-# The per-process event hub: the backrun driver registers the MEVBlocker feed's
-# PendingTx drop-oldest ring on it (Phase B1).
-degenbot-eventhub.workspace = true
-# The typed config schema + 12-factor loader: the hosted boot sources every
-# migrated knob from the loaded `BotConfig` (a backrun facet +
-# logging artifacts) and resolves the chain-node join through the shared
-# `DEGENBOT_RPC_HTTP_CHAINID_<id>`/`DEGENBOT_DB_PATH` resolvers.
-degenbot-config.workspace = true
 # T4 economics metrics record through the bot crate's instruments module —
 # one-way (bot never depends on submission); default builds get the inert
 # stub twin so this adds no metrics code without the `otel` feature.
@@ -39,40 +31,19 @@ degenbot-rpc.workspace = true
 # Per-session run artifacts: the driver's stdout fmt sink and the default
 # JSONL trace path. The `tracing` feature supplies the MakeWriter bridge.
 degenbot-runs = { workspace = true, features = ["tracing"] }
-# The frame pipeline: frame-replay seam + journal-pool extraction
-# (degenbot-simulation) over the bot crate's workspace/planning scope.
-degenbot-simulation.workspace = true
-# The zero-warmup `WarmupSlots` the frame-replay handle's override set rides.
-degenbot-executor.workspace = true
-# Slot layouts (V2 reserves slot, CL slot0/tick layouts) + `ConcentratedLiquiditySlotLayout`.
-degenbot-pools.workspace = true
-# `WarmCodeCacheInner::shared_default()` returns a parking_lot RwLock.
-parking_lot = "^0.13" 
-degenbot-decoders.workspace = true
-# The DB-backed connector index reads the
-# workspace DB once at startup.
-degenbot-db.workspace = true
-
-# V3 pool CREATE2 resolution (the router wire never names the pool).
-degenbot-uniswap.workspace = true
+# The non-poisoning `Mutex` the ledger, dispatcher, and head-reconciliation
+# state hold across monitor-task boundaries: one strategy's panic cannot wedge
+# the rest.
+parking_lot = "^0.13"
 thiserror = { version = "^2.0" }
 # OTel tier-1 spans: plain `tracing` spans - the
 # process-wide subscriber (degenbot-bot/degenbot-python) exports them;
 # no OTel dependency here (core-crate rule).
 tracing = { version = "^0.1" }
-# Console subscriber for process entrypoints (observe-mode visibility; the
-# OTel layering is the bot crates job).
-tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "registry", "fmt", "env-filter"
-, "time"
-] }
 # Async runtime for the dispatcher's `active_tasks` `JoinSet` (auto-discards
 # completed tasks) + the by-reference `current_block` `Mutex<u64>` clock read
 # across consumer/monitor task boundaries (ADR-005 standalone core).
 tokio = { version = "^1.54", features = ["rt", "sync", "time", "macros"] }
-
-# The anchored touched-set discovery walker: the frame pipeline's cycle
-# finder runs the shared pathfinding DFS over the connector index's edge set.
-degenbot-pathfinding.workspace = true
 
 # Gated (not default) so pure-Rust consumers build without pulling pyo3.
 # Enables `impl From<degenbot_submission::SubmissionError> for pyo3::PyErr` so
@@ -86,15 +57,24 @@ futures-util = { version = "^0.3", default-features = false, features = ["async-
 tokio-tungstenite = { version = "^0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 
 [dev-dependencies]
+# Test-only: the OTel span-capture layer (`lib.rs` `span_capture`) installs a
+# `registry()` subscriber to read back recorded span fields; no shipped path
+# builds a subscriber here (the process-wide one is a consumer's job).
+tracing-subscriber = { version = "^0.3", default-features = false, features = ["std", "registry", "fmt", "env-filter", "time"] }
+# Test-only: the ledger and head-reconciliation `#[cfg(test)]` modules and the
+# `mock_third_family`/`hosted_driver_ambient_runtime` integration tests drive a
+# real `Hub` (the pending-tx feed the backrun driver registers).
+degenbot-eventhub.workspace = true
 # `test-utils` gates the pending-tx pump's frame-injection support
 # (`PendingTxPump::push`) so the §4.2 wire-shape tests can feed the submit
 # orchestration without a live node. (`AlloyProvider::from_provider` is
 # ungated — the offline provider builds on it at runtime.) Production builds
 # (the umbrella, the cdylib) never enable this feature.
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
-# The frame-pipeline fixture test hand-builds `ReplayOutcome` journals
-# (revm state) to drive replay→extract→admit→solve end-to-end offline.
-revm = { version = "^43.0", default-features = false, features = ["std"] }
+# `hosted_driver_ambient_runtime` wraps an async DB (`WrapDatabaseAsync`) as the
+# revm read surface a driver's ambient runtime polls; `asyncdb` is what exposes
+# it now that no production dependency pulls it in transitively.
+revm = { version = "^43.0", default-features = false, features = ["std", "asyncdb"] }
 serde_json = { version = "^1.0" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 tokio-tungstenite = { version = "^0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }

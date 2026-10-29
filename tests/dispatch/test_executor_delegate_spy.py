@@ -102,28 +102,25 @@ class TestExampleRoutesThroughRust:
         )
 
     def test_sim_dispatch_routes_through_rust_seam(self) -> None:
-        """The driver routes the sim+submit flow through the Rust seam (A5).
+        """The driver routes the sim+submit flow through the Rust seam.
 
-        A5 superseded the per-symbol ``_ffi.<symbol>`` routing that this
-        class previously enforced: the five encoder/warmup symbols moved INTO
-        the Rust core (``degenbot_simulation`` / ``degenbot_executor``), called
-        internally by ``dispatch_profitable`` + ``SimulateContext``
-        construction. The sim-submit pipeline split the route across two
-        leaves: the simulate leaf (``degenbot.runner._sim_submit``) calls
-        ``dispatch_profitable``, and the submit leaf
-        (``degenbot.runner._dispatch``) exposes ``submitter``/
-        ``relay_providers`` DI seams whose default is the Rust pyfunction
-        ``dispatch_and_submit``, so the production path (no injected
-        submitter) stays Rust-bound. Both pyfunctions are imported via the
-        companion package ``degenbot.dispatch`` (stable re-exports of the FFI
-        symbols — the driver does not import ``degenbot_rs`` directly).
+        The five encoder/warmup symbols moved INTO the Rust core
+        (``degenbot_simulation`` / ``degenbot_executor``), called internally by
+        the ordered lane, so the driver builds the executor and enqueues work
+        rather than authoring per-step choreography. The submit leaf
+        (``degenbot.runner._dispatch``) exposes ``submitter``/``relay_providers``
+        DI seams whose default is the Rust pyfunction ``dispatch_and_submit``,
+        so the production path (no injected submitter) stays Rust-bound. The
+        pyfunctions are imported via the companion package ``degenbot.dispatch``
+        (stable re-exports of the FFI symbols — the driver does not import
+        ``degenbot_rs`` directly).
         """
         sim_src = (REPO / "src" / "degenbot" / "runner" / "_sim_submit.py").read_text()
         assert "engine_builder or build_batch_executor_py" in sim_src, (
             "driver must construct the core batch executor (build_batch_executor_py), "
             "bound as the construction seam's production default"
         )
-        assert "dispatch_profitable" not in sim_src and "dispatch_and_submit" not in sim_src, (
+        assert "dispatch_and_submit" not in sim_src, (
             "the cut-over driver authors no sim/submit choreography — the "
             "ordered lane runs core-side"
         )

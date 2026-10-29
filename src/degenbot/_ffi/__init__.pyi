@@ -228,9 +228,9 @@ class ArbitrageEngine:
         the pool was registered) sit undrained, leaving phantom/missing
         liquidity that fails on-chain verification. This drains both the
         backfill and the pump buffer in order (backfill first, then pump),
-        matching what the orphaned `register_v3_pool` path did via
-        `register_with_concentrated_liquidity_buffers`. Safe to call on an already-registered pool;
-        a no-op if the pool is unregistered or has no buffered events.
+        matching what the orphaned `register_v3_pool` path did. Safe to call on
+        an already-registered pool; a no-op if the pool is unregistered or has no
+        buffered events.
         """
     def apply_buffer_v4(self, /, pool_manager: str, pool_id_hex: str) -> None:
         """
@@ -381,7 +381,7 @@ class ArbitrageEngine:
     def payload_path_info(self, /, path_id: SupportsIndex) -> dict | None:
         """
         The `[profit]`-render `path_infos` dict for ONE registered path (the
-        same shape `DispatchOutcome.path_infos[pid]` carries) or `None` when
+        same shape the batch seam's `path_info_dict()` carries) or `None` when
         the path is unregistered/unresolvable. SIMPIPE2 T3: payload entries
         skip the FFI sim, so the driver enriches merged outcomes per entry.
 

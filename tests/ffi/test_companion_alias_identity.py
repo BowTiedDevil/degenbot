@@ -64,11 +64,9 @@ ALIAS_TABLE: list[tuple[str, str, str, str]] = [
     (_DISPATCH, "DispatchCandidate", _SIM, "DispatchCandidate"),
     (_DISPATCH, "assemble_dispatch_candidates", _SIM, "assemble_dispatch_candidates_py"),
     (_DISPATCH, "build_batch_executor", _SIM, "build_batch_executor_py"),
-    (_DISPATCH, "DispatchOutcome", _SIM, "DispatchOutcome"),
     (_DISPATCH, "SimulateContext", _SIM, "SimulateContext"),
     (_DISPATCH, "PayloadOutcome", _SIM, "PayloadOutcome"),
     (_DISPATCH, "PayloadVerdict", _SIM, "PayloadVerdict"),
-    (_DISPATCH, "dispatch_profitable", _SIM, "dispatch_profitable_py"),
     (_DISPATCH, "merge_payload_results", _SIM, "merge_payload_results_py"),
     # degenbot.dispatch — submission seam
     # dispatch_and_submit is deliberately NOT pinned here: it is the one
@@ -143,7 +141,6 @@ def test_dispatch_all_pins_public_surface() -> None:
         "BatchOutcomeSet",
         "CandidateAssembly",
         "DispatchCandidate",
-        "DispatchOutcome",
         "Dispatcher",
         "FailureDetail",
         "FailureKind",
@@ -164,7 +161,6 @@ def test_dispatch_all_pins_public_surface() -> None:
         "assemble_dispatch_candidates",
         "build_batch_executor",
         "dispatch_and_submit",
-        "dispatch_profitable",
         "fetch_fee_history",
         "merge_payload_results",
         "typed_submit_record",

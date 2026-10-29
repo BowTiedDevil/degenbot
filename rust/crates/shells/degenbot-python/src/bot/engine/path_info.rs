@@ -26,8 +26,8 @@ impl PyArbEngine {
     /// `BotState` identities.
     ///
     /// `pub(crate)` so `PyDispatchCandidate::__new__` builds the held
-    /// `PathInfo` without going through Python — the candidate the cockpit
-    /// hands to `dispatch_profitable_py` is Rust-resolved end-to-end.
+    /// `PathInfo` without going through Python — a candidate's path identity
+    /// is Rust-resolved end-to-end.
     #[must_use]
     pub(crate) fn path_info_for_core(
         &self,

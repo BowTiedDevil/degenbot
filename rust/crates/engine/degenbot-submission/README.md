@@ -1,8 +1,8 @@
 # degenbot-submission
 
-Pure-Rust EIP-1559 transaction signing + fee finalization — operator-key holding LocalSigner + TxEnvelope/Typed2718 type-2 encoding.
+Pure-Rust transaction-submission mechanism — operator-key holding LocalSigner + EIP-1559 type-2 encoding, nonce-leased dispatch, raw/relay broadcast, receipt monitoring, and submission-ledger reconciliation.
 
-EIP-1559 transaction signing and fee finalization: an operator-key-holding LocalSigner plus TxEnvelope / Typed2718 type-2 encoding for settlement submission.
+From a profitable candidate to a confirmed nonce: the operator-key-holding LocalSigner, EIP-1559 fee finalization and type-2 signing, nonce-leased dispatch, raw and relay broadcast, receipt monitoring, and the submission ledger reconciled against each new head.
 
 ## Usage
 

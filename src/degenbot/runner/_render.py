@@ -30,7 +30,7 @@ from degenbot.pathfinding import FAMILY_TAG_TO_POOL_KIND, POOL_KIND_TAG, PoolKin
 
 if TYPE_CHECKING:
     from degenbot.diagnostics import FailureAction
-    from degenbot.dispatch import Dispatcher, DispatchOutcome
+    from degenbot.dispatch import Dispatcher
     from degenbot.runner.config import ArbitrageConfig
 
 # Cap on per-batch `[sim-fail]` lines emitted by the renderer. A thin-margin
@@ -65,11 +65,6 @@ def _family_label(family: Any) -> str:
     return str(family)
 
 
-# A sim-dispatch outcome handed to the renderers: the FFI batch outcome or
-# MergedOutcome (the payload-stitched adapter — structurally identical view).
-type _SimOutcome = DispatchOutcome | MergedOutcome
-
-
 @dataclasses.dataclass(frozen=True, slots=True)
 class _RenderCandidate:
     """The display-fold view of one gas-profitable Batch outcome record.
@@ -93,10 +88,10 @@ class MergedOutcome:
     """The named sim/submit render view over one drained batch.
 
     The view is an exact FOLD over the batch's Batch outcome records
-    (:meth:`from_records`) — the renderers keep ``DispatchOutcome`` attribute
-    parity (the ``[sim]``/``[profit]``/``[sim-fail]`` contract) without
-    re-tallying on every property access. Falsy when empty: the drain skips
-    render+submit bookkeeping on falsy outcomes.
+    (:meth:`from_records`) — the renderers read the folded counters directly
+    (the ``[sim]``/``[profit]``/``[sim-fail]`` contract) instead of re-tallying
+    on every property access. Falsy when empty: the drain skips render+submit
+    bookkeeping on falsy outcomes.
     """
 
     gas_profitable: list[_RenderCandidate]
@@ -105,9 +100,6 @@ class MergedOutcome:
     fail_count: int
     candidate_count: int
     suppressed_count: int
-    thin_dropped: int
-    divergent_dropped: int
-    fot_dropped: int
     fail_buckets: dict[str, int]
     failures: list[dict[str, Any]]
     path_infos: dict[int, dict[str, Any]]
@@ -151,7 +143,7 @@ class MergedOutcome:
         fail_buckets: dict[str, int] = {}
         failures: list[dict[str, Any]] = []
         path_infos: dict[int, dict[str, Any]] = {}
-        suppressed = thin = divergent = fot = 0
+        suppressed = 0
         for rec in records:
             match rec.assembly:
                 case AssemblyVerdict.SkipEmptyHops:
@@ -207,9 +199,6 @@ class MergedOutcome:
                 len(gas_profitable) + gas_unprofitable_count + fail_count + exception_count
             ),
             suppressed_count=suppressed,
-            thin_dropped=thin,
-            divergent_dropped=divergent,
-            fot_dropped=fot,
             fail_buckets=fail_buckets,
             failures=failures,
             path_infos=path_infos,
@@ -250,7 +239,7 @@ class DisplayPolicy:
             exit_ignore_buckets=cfg.sim_exit_ignore_buckets,
         )
 
-    def vetoed(self, outcome: _SimOutcome, submitted_count: int) -> bool:
+    def vetoed(self, outcome: MergedOutcome, submitted_count: int) -> bool:
         """Whether this batch is a fully-vetoed live batch (the smoke FSM input).
 
         A live-armed session whose candidates clear the sim gates but whose
@@ -349,7 +338,7 @@ def hop_fields(hop: dict[str, Any], *, default: Any = _UNSET) -> HopFields:
 
 
 def render_outcome(
-    outcome: _SimOutcome,
+    outcome: MergedOutcome,
     *,
     dispatcher: Dispatcher,
     current_block: int,
@@ -394,14 +383,14 @@ def _hop_token_summary(hops: list[dict[str, Any]] | tuple[dict[str, Any], ...]) 
     return " ".join(parts)
 
 
-def _render_sim_summary(outcome: _SimOutcome) -> None:
-    """Render the ``[sim]`` line from ``DispatchOutcome`` fields (D4 stay-Python).
+def _render_sim_summary(outcome: MergedOutcome) -> None:
+    """Render the ``[sim]`` line from the folded batch outcome (D4 stay-Python).
 
     Ports the prior ``[sim] N candidates: X ok (Y profitable, Z below
 
     threshold), W failed, V exceptions …`` summary. Appends the
 
-    suppressed/thin/divergent drops when non-zero.
+    suppressed drop count when non-zero.
 
     """
     profitable = outcome.gas_profitable
@@ -414,18 +403,8 @@ def _render_sim_summary(outcome: _SimOutcome) -> None:
 
     extra = ""
 
-    if (
-        outcome.suppressed_count
-        or outcome.thin_dropped
-        or outcome.divergent_dropped
-        or outcome.fot_dropped
-    ):
-        extra = (
-            f" — suppressed={outcome.suppressed_count}, "
-            f"thin={outcome.thin_dropped}, "
-            f"divergent={outcome.divergent_dropped}, "
-            f"fot={outcome.fot_dropped}"
-        )
+    if outcome.suppressed_count:
+        extra = f" — suppressed={outcome.suppressed_count}"
 
     # Sim-ready timestamp: the render fires the instant the merged outcome is
     # consumed — pairing this with the block header time (pump.block INFO ts)
@@ -443,7 +422,7 @@ def _render_sim_summary(outcome: _SimOutcome) -> None:
     )
 
 
-def _render_profit_logs(outcome: _SimOutcome) -> None:
+def _render_profit_logs(outcome: MergedOutcome) -> None:
     """Render the ``[profit]`` per-path hop-detail log (D4 stay-Python)."""
     for cand in outcome.gas_profitable:
         path_info = outcome.path_infos.get(cand.path_id)
@@ -540,7 +519,7 @@ def _dump_failure_fixture(
 
 
 def _render_sim_failures(
-    outcome: _SimOutcome,
+    outcome: MergedOutcome,
     *,
     current_block: int,
     sim_exit_on_fail: bool,

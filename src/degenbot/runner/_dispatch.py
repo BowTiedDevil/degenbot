@@ -28,7 +28,7 @@ from degenbot.dispatch import SkippedRecord, SubmitSkipReason, SubmittedRecord
 from degenbot.logging import logger as bot_logger
 
 if TYPE_CHECKING:
-    from degenbot.runner._render import DisplayPolicy, _SimOutcome
+    from degenbot.runner._render import DisplayPolicy, MergedOutcome
     from degenbot.runner.config import ArbitrageConfig
 
 # Cached relay submit providers (broadcast fan-out). Built lazily on the
@@ -266,7 +266,7 @@ def render_submit_records(
 
 def track_submission_smoke(
     smoke: SubmissionSmoke,
-    outcome: _SimOutcome,
+    outcome: MergedOutcome,
     records: list[Any],
     *,
     policy: DisplayPolicy,

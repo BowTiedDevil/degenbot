@@ -1,4 +1,4 @@
-//! Snapshot store + concentrated-liquidity-registration orchestration (ADR-006 D4).
+//! Concentrated-liquidity verification orchestration (ADR-006 D4).
 //!
 //! Extracted from `py_binding.rs` so the pure-logic core is testable without
 //! `PyO3`. `py_binding.rs` (in `degenbot-python`) keeps the `PyO3` arg-parsing
@@ -10,25 +10,11 @@
 //! These helpers were trapped in `solvers/arb_engine` for historical
 //! ADR-005 reasons. D4 moves them onto the Bot / chain-pump layer — i.e.
 //! `bot_core` — so the verify orchestrator is reachable from `PyBot` without
-//! routing through the solver. `register_with_concentrated_liquidity_buffers` is generic over the
-//! engine type `E` (it never inspects the engine, only passes `&mut E` to the
-//! caller's closures), so it can live in the lower `bot_core` layer without a
-//! circular dependency on `arb_engine::ArbitrageEngine`. The
-//! concrete `E = ArbitrageEngine` is supplied by the call sites in
-//! `degenbot-python::bot::engine::register`.
-//!
-//! ## What's pure here
-//! - [`register_with_concentrated_liquidity_buffers`] — the concentrated liquidity pool-registration orchestration:
-//!   register → apply backfill buffer → capture backfill-boundary snapshot →
-//!   apply pump buffer, all under a single engine-lock acquisition (so the pump
-//!   cannot race between registration and verification). Pure: generic over
-//!   `E`, takes closures for the engine-specific bits + an `Arc<Mutex<E>>`.
+//! routing through the solver.
 
 use hashbrown::HashMap;
-use std::sync::Arc;
 
 use alloy::primitives::Address;
-use parking_lot::Mutex;
 
 use crate::bot_core::registration_ledger::{RefusalKind, RegistrationPhase};
 use degenbot_pools::TickInfo;
@@ -177,124 +163,14 @@ where
     Ok(())
 }
 
-/// Helper that registers a concentrated liquidity pool, applies backfill/pump buffers, and captures
-/// a backfill-boundary snapshot while the engine lock is held.
-///
-/// The lock ordering is load-bearing: `register` + `apply_backfill` +
-/// `take_backfill_snapshot` + `apply_pump` run under a single lock acquisition
-/// so the WS pump cannot interleave a `dispatch_log`/`dispatch_reorg_log`
-/// between registration and the post-backfill state capture (the structural
-/// closure of the register/verify race).
-///
-/// Generic over the engine type `E` (ADR-006 D4): the helper never inspects
-/// the engine, only forwards `&mut E` to the caller's closures, so it can live
-/// in `bot_core` without a circular dependency on
-/// `arb_engine::ArbitrageEngine`. The concrete `E = ArbitrageEngine`
-/// is supplied at the call sites in `degenbot-python::bot::engine::register`.
-///
-/// Returns the registration key + the captured backfill-boundary snapshot.
-pub fn register_with_concentrated_liquidity_buffers<E, Key, BackfillSnapshot>(
-    engine: &Arc<Mutex<E>>,
-    register: impl FnOnce(&mut E) -> Key,
-    apply_backfill: impl FnOnce(&mut E),
-    take_backfill_snapshot: impl FnOnce(&E, &Key) -> Option<BackfillSnapshot>,
-    apply_pump: impl FnOnce(&mut E),
-) -> (Key, Option<BackfillSnapshot>) {
-    let mut engine = engine.lock();
-    let key = register(&mut engine);
-    apply_backfill(&mut engine);
-    let backfill_snapshot = take_backfill_snapshot(&engine, &key);
-    apply_pump(&mut engine);
-    (key, backfill_snapshot)
-}
-
 #[expect(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::bot_core::registration_ledger::VerifyOrigin;
+    use parking_lot::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
-
-    /// A stand-in engine type — `register_with_concentrated_liquidity_buffers` is generic over `E`
-    /// and never inspects it, so a unit-struct suffices to exercise the
-    /// ordering + lock-acquisition contract without pulling in the concrete
-    /// `ArbitrageEngine` (which lives in the higher `solvers` layer).
-    #[derive(Default)]
-    struct DummyEngine;
-
-    /// `register_with_concentrated_liquidity_buffers` runs register →
-    /// `apply_backfill` → `take_backfill_snapshot` → `apply_pump` in ORDER under one
-    /// lock acquisition, returning the key + the captured snapshot. (The
-    /// ordering is load-bearing for the no-race guarantee.)
-    #[test]
-    fn register_with_concentrated_liquidity_buffers_runs_in_order_under_one_lock() {
-        let engine = Arc::new(Mutex::new(DummyEngine));
-        let order = Arc::new(AtomicUsize::new(0));
-        let snap_calls = Arc::new(AtomicUsize::new(0));
-
-        let key = 42u8;
-        let (returned_key, returned_snap) = register_with_concentrated_liquidity_buffers(
-            &engine,
-            {
-                let order = Arc::clone(&order);
-                move |_| {
-                    assert_eq!(
-                        order.fetch_add(1, Ordering::SeqCst),
-                        0,
-                        "register runs first"
-                    );
-                    key
-                }
-            },
-            {
-                let order = Arc::clone(&order);
-                move |_| {
-                    assert_eq!(
-                        order.fetch_add(1, Ordering::SeqCst),
-                        1,
-                        "apply_backfill runs second"
-                    );
-                }
-            },
-            {
-                let snap_calls = Arc::clone(&snap_calls);
-                let order = Arc::clone(&order);
-                move |_engine, k: &u8| {
-                    snap_calls.fetch_add(1, Ordering::SeqCst);
-                    assert_eq!(*k, key, "snapshot key matches the registered key");
-                    assert_eq!(
-                        order.fetch_add(1, Ordering::SeqCst),
-                        2,
-                        "snapshot capture runs third"
-                    );
-                    Some(*k)
-                }
-            },
-            {
-                let order = Arc::clone(&order);
-                move |_| {
-                    assert_eq!(
-                        order.fetch_add(1, Ordering::SeqCst),
-                        3,
-                        "apply_pump runs fourth"
-                    );
-                }
-            },
-        );
-
-        assert_eq!(returned_key, key);
-        assert_eq!(returned_snap, Some(key));
-        assert_eq!(
-            snap_calls.load(Ordering::SeqCst),
-            1,
-            "snapshot taken exactly once"
-        );
-        assert_eq!(
-            order.load(Ordering::SeqCst),
-            4,
-            "all four phases ran exactly once"
-        );
-    }
+    use std::sync::Arc;
 
     // -----------------------------------------------------------------
     // run_concentrated_liquidity_verification orchestrator

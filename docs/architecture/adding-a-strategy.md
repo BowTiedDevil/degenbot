@@ -169,7 +169,9 @@ The ledger arrives as the caller's type behind the `NonceLedger` trait (also
 substrate): stamp recording and its promotion to broadcast are the two writes a
 lane makes, and naming no submission type is what lets the substrate crate own
 the lane. `SubmissionLedger` implements the trait; the composition root that owns
-the concrete ledger supplies it. `StrategyHost::mint_lane` is the hosted door.
+the concrete ledger supplies it. A hosted strategy mints off the host's one
+authority — `host.nonce().mint_lane("<name>", ledger)` — the same constructor
+every other caller uses.
 
 `stamp()` is the only issuance entry. It calls `NonceAuthority::lease`, which
 returns the **lowest free nonce at or above the confirmed chain nonce** so leases
@@ -401,8 +403,7 @@ Pin every seam a family depends on at its own level:
 2. Add the config facet + `StrategyName` variant + schema test (§7).
 3. Implement the family body (`PendingTxReaction` or settled-block stage).
 4. Add the driver partitions: a boot resolver + spawn factory (§6).
-5. Bind the lane: `host.mint_lane(&StrategyId::new("<name>"), ledger.clone())`
-   (§3).
+5. Bind the lane: `host.nonce().mint_lane("<name>", ledger.clone())` (§3).
 6. Register the facet and attach the spawn in the boot (§1, §2).
 7. Subscribe head notices and feed them through `HeadPolicy` (§4).
 8. Pin the seams, including a mock-family integration test (§9), and update the

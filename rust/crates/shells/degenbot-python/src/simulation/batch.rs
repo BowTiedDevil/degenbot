@@ -45,7 +45,7 @@ use crate::prelude::*;
 use crate::rpc::async_provider::PyAsyncAlloyProvider;
 use crate::simulation::assembly::RawEngineResult;
 use crate::simulation::dispatch::payload_row_from_dict;
-use crate::simulation::outcome::{path_info_to_py_dict, sim_failure_to_dict};
+use crate::simulation::render::{path_info_to_py_dict, sim_failure_to_dict};
 use crate::submission::dispatcher::PyDispatcher;
 use crate::submission::signer::PyTxSigner;
 use crate::submission::submit::{
@@ -130,7 +130,7 @@ impl PySimReceipt {
 
 /// The per-candidate failure detail (the core's `FailureDetail`). The render
 /// dicts the `[sim-fail]`/`[sim-diag]` renderers consume decode through
-/// `record()` — the ONE serializer shape `DispatchOutcome.failures` emits.
+/// `record()` — the ONE serializer shape a failure record crosses as.
 #[pyclass(
     name = "FailureDetail",
     module = "degenbot._ffi.simulation",
@@ -156,7 +156,7 @@ impl PyFailureDetail {
         &self.inner.bucket
     }
 
-    /// The full render record — the `DispatchOutcome.failures` dict shape.
+    /// The full render record — the `[sim-fail]`/`[sim-diag]` dict shape.
     fn record<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         sim_failure_to_dict(py, &self.inner)
     }
@@ -362,8 +362,7 @@ impl PyBatchOutcome {
     }
 
     /// The `[profit]`/`[sim-fail]` render dict for this record's path
-    /// (`path_type` + per-hop dicts — the ONE serializer shape
-    /// `DispatchOutcome.path_infos` emits).
+    /// (`path_type` + per-hop dicts — the ONE hop/path serializer shape).
     fn path_info_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         path_info_to_py_dict(py, &PathInfo::new(self.inner.path_info.hops.clone()))
     }
@@ -516,8 +515,8 @@ impl PyBatchExecutor {
         drop(engine);
 
         // The per-block priority-fee percentiles from the dispatcher's ring
-        // (the latest recorded block's p10/p50 — the same lookup
-        // `dispatch_profitable_py` performed pre-cut-over).
+        // (the latest recorded block's p10/p50 — the core fan-out's
+        // `BlockPriorityFees` input).
         let block_priority_fees: Option<BlockPriorityFees> = {
             #[expect(clippy::expect_used)] // invariant-guarded (documented)
             let guard = self.dispatcher.lock().expect("dispatcher mutex poisoned");

@@ -1,11 +1,12 @@
 //! Curve pool strategy + variant resolution.
 //!
-//! Ports the Python `curve/_pool_strategies.py` + `curve/_variant_groups.py`
-//! address→strategy dispatch into pure-Rust static maps producing the raw
+//! The address→strategy dispatch, as pure-Rust static maps producing the raw
 //! `u8` discriminants that [`crate::state::curve_state::RegisterCurvePoolParams`]
-//! stores. Frozen at construction time; the Rust calc path (the swap engine)
-//! later dispatches on these values. No I/O, no `pyo3` — a standalone `cargo
-//! add degenbot` consumer resolves strategies directly.
+//! stores. These maps are the live authority: a pool receiving these
+//! discriminants at construction does not re-resolve its own address. Frozen at
+//! construction time; the Rust calc path (the swap engine) later dispatches on
+//! these values. No I/O, no `pyo3` — a standalone `cargo add degenbot` consumer
+//! resolves strategies directly.
 //!
 //! ## Discriminant values (single source of truth)
 //!
@@ -72,7 +73,7 @@ impl Default for CurveStrategyDiscriminants {
 }
 
 // ---------------------------------------------------------------------------
-// Variant groups (transliterated from `_variant_groups.py`).
+// Variant groups: address membership selects the D/Y/Y_D variant discriminant.
 // ---------------------------------------------------------------------------
 
 /// D-variant group 0 → `DVariant::VARIANT_ALPHA` (2).
@@ -206,8 +207,7 @@ pub fn resolve_yd_variant(addr: Address) -> u8 {
 }
 
 // ---------------------------------------------------------------------------
-// Address → swap/lending/metapool strategy map (transliterated from
-// `_pool_strategies.py` `_POOL_STRATEGIES`). Each entry lists only the
+// Address → swap/lending/metapool strategy map. Each entry lists only the
 // non-default fields as `(swap_style, lending_rate_style)` or
 // `(metapool_rate_style, metapool_underlying_style)`; unlisted fields stay 1.
 // ---------------------------------------------------------------------------
@@ -308,7 +308,7 @@ fn mapped_strategies(addr: Address) -> Option<(u8, u8, u8, u8)> {
 ///
 /// Combines the variant-group resolution (d/y/yd) with the address-specific
 /// swap/lending/metapool map. Unlisted pools fall through to `STANDARD`/`NONE`
-/// defaults (mirrors `_pool_strategies.resolve_pool_strategies`).
+/// defaults.
 #[must_use]
 pub fn resolve_curve_strategy_discriminants(addr: Address) -> CurveStrategyDiscriminants {
     let (swap_style, lending_rate_style, metapool_rate_style, metapool_underlying_style) =

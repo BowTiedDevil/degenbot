@@ -97,9 +97,9 @@ impl PyArbEngine {
     /// the pool was registered) sit undrained, leaving phantom/missing
     /// liquidity that fails on-chain verification. This drains both the
     /// backfill and the pump buffer in order (backfill first, then pump),
-    /// matching what the orphaned `register_v3_pool` path did via
-    /// `register_with_concentrated_liquidity_buffers`. Safe to call on an already-registered pool;
-    /// a no-op if the pool is unregistered or has no buffered events.
+    /// matching what the orphaned `register_v3_pool` path did. Safe to call on
+    /// an already-registered pool; a no-op if the pool is unregistered or has no
+    /// buffered events.
     #[pyo3(signature = (pool_address))]
     fn apply_buffer_v3(&self, py: Python<'_>, pool_address: &str) -> PyResult<()> {
         let addr = pool_address.parse::<Address>().map_err(|e| {

@@ -2610,10 +2610,11 @@ impl PyBot {
     ///     `ValueError`: If the pool address is malformed or already
     ///         registered, or the list lengths mismatch.
     #[expect(clippy::too_many_arguments)]
-    // `y_variant` / `yd_variant` mirror the public Python kwargs and the
-    // `resolve_y_variant` / `resolve_yd_variant` vocabulary in
-    // `degenbot.curve._variant_groups`; they are intentional domain terms,
-    // not a naming slip, so the `similar_names` nudge does not apply here.
+    // `y_variant` / `yd_variant` carry the public Python kwargs' names, which
+    // in turn mirror the `resolve_y_variant` / `resolve_yd_variant`
+    // discriminants the core assigns (`degenbot_pools::sim::curve_strategies`);
+    // they are intentional domain terms, not a naming slip, so the
+    // `similar_names` nudge does not apply here.
     #[expect(clippy::similar_names)]
     #[pyo3(signature = (
         address,

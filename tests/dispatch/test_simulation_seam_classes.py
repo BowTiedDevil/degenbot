@@ -1,15 +1,13 @@
 """Smoke tests for the simulation-seam pyclasses.
 
-These are constructor-shape tests, not behavioral parity tests — A4
-(``dispatch_profitable_py``) and A6 (parity) cover behavior. The goal here is
+These are constructor-shape tests, not behavioral parity tests — the batch
+executor's drain suites and the parity corpus cover behavior. The goal here is
 to pin the ``#[new]`` arg extraction + the getter shapes so a follow-up
 session cannot silently break the cockpit's construction sites.
 
 Note: ``SimulateContext`` constructs an ``AsyncAlloyProvider`` against a
 localhost URL that is never dialed (no RPC call is made at construction — only
-the provider arc is cloned). ``DispatchOutcome`` has no ``#[new]``: it is
-built internally by ``dispatch_profitable_py`` (A4) via ``from_join``; this
-test only asserts it is registered + introspectable.
+the provider arc is cloned).
 """
 
 from __future__ import annotations
@@ -20,7 +18,6 @@ from tests.helpers.seam import (
     AlloyProvider,
     AsyncAlloyProvider,
     DispatchCandidate,
-    DispatchOutcome,
     SimulateContext,
 )
 
@@ -188,24 +185,3 @@ class TestPySimulateContext:
             injected_address=EXECUTOR,
         )
         assert isinstance(ctx, SimulateContext)
-
-
-class TestPyDispatchOutcome:
-    """``DispatchOutcome`` is registered but built only by A4's ``from_join``."""
-
-    def test_class_is_registered(self) -> None:
-        # No #[new]; the cockpit cannot construct one directly. Asserting the
-        # class is reachable (the registration in add_simulation_module ran).
-        assert DispatchOutcome is not None
-        # The getters exist as descriptors on the type.
-        for getter in (
-            "gas_profitable",
-            "gas_unprofitable_count",
-            "exception_count",
-            "fail_count",
-            "candidate_count",
-            "suppressed_count",
-            "thin_dropped",
-            "fail_buckets",
-        ):
-            assert hasattr(DispatchOutcome, getter), f"missing getter {getter}"

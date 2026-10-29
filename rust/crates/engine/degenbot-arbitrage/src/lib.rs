@@ -90,11 +90,8 @@ pub use simulator::{
     MAX_PRIORITY_FEE_PERCENTILE, MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
 };
 // The swap-event-capture inspector's decoded per-swap struct. Re-exported
-// here so the PyO3 wrapper (`degenbot-python` outcome) can name the
-// success-path `captured_swaps` element type — the same struct
-// `SimFailure.captured_swaps` carries (the revert path already surfaces it
-// via `failures()`); the success path surfaces it via
-// `PyDispatchOutcome.profitable_captured_swaps` (the prerequisite for the
-// step-5 classifier re-point at decoded swap amounts instead of the
-// `diagnostic.rs` onchain recompute).
+// here so a consumer of the sim surface can name the captured-swap element
+// type: `SimFailure.captured_swaps` (the revert path) and the survivor's
+// capture both carry it, so the step-5 classifier reads decoded swap amounts
+// instead of the `diagnostic.rs` onchain recompute.
 pub use degenbot_simulation::sim::evm::inspectors::CapturedSwap;

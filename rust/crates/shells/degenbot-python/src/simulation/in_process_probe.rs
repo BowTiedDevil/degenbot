@@ -1,7 +1,7 @@
 //! `simulate_in_process_revert_probe` — the ADR-005 Tier-2 dual-driver
 //! parity entrypoint for the revm inspector.
 //!
-//! The production inspector path (`dispatch_profitable_py`) runs over a real
+//! The production inspector path (the batch executor's sim stage) runs over a real
 //! provider (`WrapDatabaseAsync<AlloyDB>`) — the cold-miss fallback RPCs the
 //! node. The Tier-2 dual-driver parity test can't depend on a live RPC, so
 //! this binding exposes the **in-process** path (`simulate_in_process_with_db`
@@ -40,7 +40,7 @@ use pyo3::types::{PyBytes, PyDict, PyList};
 use revm::database::CacheDB;
 use revm::database_interface::EmptyDB;
 
-use crate::simulation::outcome::captured_swap_to_dict;
+use crate::simulation::render::captured_swap_to_dict;
 
 // ---- the SELFDESTRUCT-gift success-path fixture (mirrors the Rust
 //      parity_evm_sim.rs test — a non-None SimResult over CacheDB<EmptyDB>) ----
@@ -176,7 +176,7 @@ fn smoke_v2_path(path_id: u64) -> SimulatePath {
 ///   - `failures` (`list[dict]`) — one entry per failed candidate, each
 ///     carrying `path_id`, `bucket`, `fail_index`, `revert_data`,
 ///     `reverting_frame`, `captured_swaps`, `optimal_input`, `hop_outputs`
-///     (same shape as `PyDispatchOutcome.failures()`).
+///     (the same shape the batch seam's `FailureDetail.record()` emits).
 ///   - `fail_buckets` (`dict[str, int]`) — the bucket tally.
 ///
 /// No RPC. `CacheDB<EmptyDB>` handles all state reads (empty → zero). The
@@ -234,7 +234,7 @@ pub fn simulate_in_process_revert_probe<'py>(
         ))
     })?;
 
-    // 4. Wrap the outcome as a dict (mirror PyDispatchOutcome.failures()).
+    // 4. Wrap the outcome as a dict (the batch seam's failure-record shape).
     let out = PyDict::new(py);
     // `result` is `None` for reverts/non-profitable (the only paths this probe
     // exercises). A success-path `SimResult` is non-trivial to render + isn't
