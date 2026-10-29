@@ -18,9 +18,11 @@
 
 use std::borrow::Borrow;
 use std::collections::{HashMap, VecDeque};
-use std::hash::{BuildHasherDefault, Hasher};
+use std::hash::BuildHasherDefault;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+use degenbot_primitives::WordHasher;
 use std::time::{Duration, Instant};
 
 mod expansion;
@@ -210,38 +212,12 @@ pub struct Edge {
 /// A key uniquely identifying a pool within a traversal.
 pub type EdgeKey = (u64, PoolKind);
 
-/// Hasher for `u64` token IDs: the scheme and constants are rustc-hash's
-/// `FxHash`, inlined to preserve the zero-dependency-leaf constraint.
-/// Token-ID hashing runs ~1.5M times during graph construction; the default
-/// `SipHash` costs several instructions per byte for 8-byte keys with no
-/// security benefit here (keys are internal IDs, not adversarial input).
-#[derive(Default)]
-pub(crate) struct U64Hasher {
-    hash: u64,
-}
-
-impl Hasher for U64Hasher {
-    #[inline]
-    fn finish(&self) -> u64 {
-        self.hash
-    }
-
-    #[inline]
-    fn write_u64(&mut self, n: u64) {
-        self.hash = (self.hash.rotate_left(5) ^ n).wrapping_mul(0x517C_C1B7_2722_0A95);
-    }
-
-    #[inline]
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.hash =
-                (self.hash.rotate_left(5) ^ u64::from(b)).wrapping_mul(0x517C_C1B7_2722_0A95);
-        }
-    }
-}
-
-/// Hasher-builder for token-ID maps.
-pub(crate) type U64BuildHasher = BuildHasherDefault<U64Hasher>;
+/// Hasher-builder for token-ID maps: the leaf's own `WordHasher` (same
+/// `FxHash` scheme this module previously inlined). Token-ID hashing runs
+/// ~1.5M times during graph construction; the default `SipHash` costs
+/// several instructions per byte for 8-byte keys with no security benefit
+/// here (keys are internal IDs, not adversarial input).
+pub(crate) type U64BuildHasher = BuildHasherDefault<WordHasher>;
 
 /// Compact internal edge: neighbor is a compact token index, `pool_idx`
 /// identifies the pool in the graph's `pools` table. 8 bytes, cache-dense.
