@@ -63,6 +63,7 @@ fn market_context(
         registry,
         db_arm,
         None,
+        None,
         degenbot_substrate::pool_ingress::VerifyLevel::default(),
         None,
     );

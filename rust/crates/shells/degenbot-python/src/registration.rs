@@ -2,7 +2,7 @@
 //!
 //! Thin translation only. The vocabulary (`RegistrationOutcome` and its
 //! bounded tags), the typed build-refusal classification, and the four memos
-//! live in `degenbot_bot::bot_core::registration_ledger`; this module converts
+//! live in `degenbot_bot::bot_core`; this module converts
 //! Python strings, tuples, and exception-derived kinds into them and converts
 //! the answers back. Nothing here decides an outcome — a Python caller that
 //! cannot name a failure kind gets a `ValueError` rather than a guessed tag.
@@ -12,7 +12,7 @@
 
 use crate::prelude::*;
 
-use degenbot_bot::bot_core::registration_ledger::{
+use degenbot_bot::bot_core::{
     BuildFailure, BuildRefusal, HopSignature, OutcomeLabel, PathAdmission, PipelineReport,
     PolicyVerdict, PreBuildIdentity, RegistrationLedger, RegistrationOutcome,
     RegistrationUnitOutcome,
@@ -359,7 +359,7 @@ fn to_view(refusal: BuildRefusal) -> PyBuildRefusal {
 /// The delta one unit fold applies to a driver's summary counters — the
 /// core's [`PipelineReport`] after exactly one `absorb`. The counter
 /// ARITHMETIC is the core's (one definition in
-/// `degenbot_bot::bot_core::registration_ledger`); a driver that keeps its
+/// `degenbot_bot::bot_core`); a driver that keeps its
 /// own counter storage applies this answer mechanically, field for field.
 #[pyclass(name = "RegistrationFoldDelta", module = "degenbot._ffi")]
 pub struct PyRegistrationFoldDelta {

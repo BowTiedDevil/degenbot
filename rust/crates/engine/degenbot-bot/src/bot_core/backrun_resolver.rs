@@ -35,6 +35,7 @@ use std::sync::Mutex as StdMutex;
 
 /// A pending pool lookup the planner owes discovery.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub enum PoolQuery {
     /// Uniswap-v2-family pair for the (unordered) token pair. Production
     /// adapter: CREATE2 pair address from factory + init code hash, then one
@@ -45,11 +46,13 @@ pub enum PoolQuery {
     V3Pool(u64, u64, u32),
     /// V4 pool: token pair evidence + `poolId` on a manager address (the
     /// upstream restore path feeds these directly).
+    #[cfg_attr(test, expect(dead_code))]
     V4Pool(u64, u64, [u8; 32], Address),
 }
 
 /// A discovered pool ready for graph staging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct ResolvedPool {
     pub pool_id: u64,
     pub pool_kind: PoolKind,
@@ -57,12 +60,14 @@ pub struct ResolvedPool {
 
 /// Async discovery port. Mock in tests; the production adapter lands in the
 /// driver-wiring task with the bot's provider (ADR-022 D3 single provider).
+#[cfg_attr(not(test), expect(dead_code))]
 pub trait PairDiscovery {
     fn resolve(&self, query: &PoolQuery) -> impl Future<Output = Option<ResolvedPool>> + Send;
 }
 
 /// One new graph edge staged for the single-writer apply step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct StagedEdge {
     pub token_a: u64,
     pub token_b: u64,
@@ -72,6 +77,7 @@ pub struct StagedEdge {
 
 /// Per-stage churn counters (telemetry-facing; small closed sets only).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct PlannerChurn {
     pub new_pairs: u32,
     pub rejected_fot: u32,
@@ -81,6 +87,7 @@ pub struct PlannerChurn {
 
 /// The planner's output.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct StagedPlan {
     pub new_edges: Vec<StagedEdge>,
     /// Queries discovery could not resolve this pass; the dispatcher may
@@ -89,6 +96,7 @@ pub struct StagedPlan {
     pub churn: PlannerChurn,
 }
 
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct PlannerConfig {
     /// Hard cap on NEW graph edges staged per incoming event.
     pub max_new_edges_per_event: u32,
@@ -106,6 +114,7 @@ impl std::fmt::Debug for PlannerConfig {
 
 /// Warm-set driven staged planner. Confirmation inserts into the warm set so
 /// later events skip re-discovery.
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct OnDemandPathPlanner {
     warm: StdMutex<HashSet<(u64, u64)>>,
     cfg: PlannerConfig,
@@ -113,6 +122,7 @@ pub struct OnDemandPathPlanner {
 
 impl OnDemandPathPlanner {
     #[must_use]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn new(warm: HashSet<(u64, u64)>, cfg: PlannerConfig) -> Self {
         Self {
             warm: StdMutex::new(warm),
@@ -123,6 +133,7 @@ impl OnDemandPathPlanner {
     /// Poisson-proof lock (poisoned at panic keeps the consensus set; the
     /// registry discipline treats any panic in this module as orchestrator
     /// fatal elsewhere).
+    #[cfg_attr(not(test), expect(dead_code))]
     fn warm(&self) -> std::sync::MutexGuard<'_, HashSet<(u64, u64)>> {
         self.warm
             .lock()
@@ -130,6 +141,7 @@ impl OnDemandPathPlanner {
     }
 
     /// Stage edges for the event's (unordered) token pairs.
+    #[cfg_attr(not(test), expect(dead_code))]
     pub async fn stage_for_legs<D: PairDiscovery>(
         &self,
         legs: &[(u64, u64)],
@@ -172,6 +184,7 @@ impl OnDemandPathPlanner {
     }
 }
 
+#[cfg_attr(not(test), expect(dead_code))]
 fn normalized(t0: u64, t1: u64) -> (u64, u64) {
     if t0 <= t1 {
         (t0, t1)
@@ -184,6 +197,7 @@ fn normalized(t0: u64, t1: u64) -> (u64, u64) {
 /// list under its write lock. Dedupe key: (normalized pair, `pool_id`, `kind`) —
 /// parallel pools on the same pair (fee tiers) are distinct edges; exact
 /// re-staging is a no-op. Returns the number of edges actually added.
+#[cfg_attr(not(test), expect(dead_code))]
 pub fn apply_staged(
     authoritative: &mut Vec<(u64, u64, u64, PoolKind)>,
     staged: &[StagedEdge],
@@ -205,12 +219,14 @@ pub fn apply_staged(
 /// translate Addresses to ids before staging. Retained on the module contract
 /// (documented seam) rather than a parallel map.
 #[derive(Debug, Default)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct OnDemandAddressMap {
     map: Mutex<HashMap<Address, u64, hashbrown::DefaultHashBuilder>>,
 }
 
 impl OnDemandAddressMap {
     #[must_use]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn new() -> Self {
         Self {
             map: Mutex::new(HashMap::new()),
@@ -219,6 +235,7 @@ impl OnDemandAddressMap {
 
     /// Intern a token address to a stable id (100 + insertion index, reversed
     /// so ids are stable across map growth in tests).
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn intern(&self, a: Address) -> u64 {
         // Poisoned guard still owns the interned map; interning is monotone.
         let mut map = self

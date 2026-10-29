@@ -1,24 +1,20 @@
-//! On-demand backrun pair resolution + staged path planning (task B6H2KO).
+//! The on-demand backrun pair resolution + staged path planning lab.
 //!
-//! Seam: `degenbot_bot::bot_core::backrun_resolver::{
-//!   PoolQuery, ResolvedPool, PairDiscovery, StagedPlan, StagedEdge,
-//!   OnDemandPathPlanner, apply_staged, PlannerConfig
-//! }`.
+//! It sits beside the resolver it exercises rather than in `tests/`, because
+//! an integration target is a separate crate and cannot see the resolver's
+//! `pub(crate)` seam (ADR-084 D2(b)).
 //!
 //! Single-writer discipline: the planner NEVER mutates the shared graph; it
 //! stages edges the dispatcher merges under its write lock via `apply_staged`,
 //! then rebuilds `PathGraph` from the authoritative list.
 
-#![expect(clippy::unwrap_used)]
-
-use std::collections::HashSet;
-
-use alloy::primitives::Address;
-use degenbot_bot::bot_core::backrun_resolver::{
-    apply_staged, OnDemandPathPlanner, PairDiscovery, PlannerConfig, PoolKind, PoolQuery,
-    ResolvedPool, StagedEdge,
+use crate::bot_core::backrun_resolver::{
+    apply_staged, OnDemandAddressMap, OnDemandPathPlanner, PairDiscovery, PlannerConfig, PoolKind,
+    PoolQuery, ResolvedPool, StagedEdge,
 };
+use alloy::primitives::Address;
 use degenbot_pathfinding::PathGraph;
+use std::collections::HashSet;
 
 fn id(n: u8) -> u64 {
     100 + u64::from(n)
@@ -238,7 +234,7 @@ fn t09_address_intern_kv_is_stable() {
     let b = Address::new([
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
     ]);
-    let m = degenbot_bot::bot_core::backrun_resolver::OnDemandAddressMap::new();
+    let m = OnDemandAddressMap::new();
     let i1 = m.intern(a);
     assert_eq!(m.intern(a), i1, "same address same id");
     let i2 = m.intern(b);

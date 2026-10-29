@@ -992,10 +992,7 @@ impl PipelineInstruments {
 
     /// FF-T5: the resolved fleet profile — one series,
     /// value 1, the labels carry the tier.
-    pub fn set_fleet_profile(
-        &self,
-        summary: &crate::arb_engine::fleet_status::FleetProfileSummary,
-    ) {
+    pub fn set_fleet_profile(&self, summary: &crate::arb_engine::FleetProfileSummary) {
         self.fleet_profile.record(
             1.0,
             &[
@@ -1315,7 +1312,7 @@ impl PipelineInstruments {
                 binding,
                 oversubscribed,
             } => {
-                self.set_fleet_profile(&crate::arb_engine::fleet_status::FleetProfileSummary {
+                self.set_fleet_profile(&crate::arb_engine::FleetProfileSummary {
                     profile,
                     binding,
                     oversubscribed,
@@ -1703,7 +1700,7 @@ fn pipeline() -> Option<&'static PipelineInstruments> {
                 // pipeline, record the fleet profile now (the install
                 // path re-fires through note_fleet_profile when the
                 // pipeline came first).
-                if let Some(summary) = crate::arb_engine::fleet_status::fleet_profile_summary() {
+                if let Some(summary) = crate::arb_engine::fleet_profile_summary() {
                     instruments.set_fleet_profile(&summary);
                 }
                 instruments
@@ -1725,7 +1722,7 @@ fn export_worker_census(entries: &[degenbot_core::worker_census::WorkerCensusEnt
 /// site calls this; the pipeline may not exist yet — the build path
 /// below re-reads the summary so both orders land one series). No-op
 /// while the pipeline is un-built (non-otel builds / gate off).
-pub fn note_fleet_profile(summary: &crate::arb_engine::fleet_status::FleetProfileSummary) {
+pub fn note_fleet_profile(summary: &crate::arb_engine::FleetProfileSummary) {
     if let Some(p) = pipeline() {
         p.set_fleet_profile(summary);
     }

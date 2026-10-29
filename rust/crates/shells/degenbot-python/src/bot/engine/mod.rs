@@ -68,7 +68,7 @@ pub struct PyArbEngine {
     /// sources, and the host-owned supervisor for the drivers the start flow
     /// boots. The core session boot composes all four, so the engine holds one
     /// handle instead of four it must wire in order.
-    pub(crate) session: degenbot_bot::bot_core::session_boot::EngineSession,
+    pub(crate) session: degenbot_bot::bot_core::EngineSession,
 
     /// Receiver for the result batch channel.
     /// Created in `new()`, consumed by `__anext__`.

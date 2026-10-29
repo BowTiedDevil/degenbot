@@ -64,6 +64,7 @@ pub enum CalcTokensInError {
 /// The build-and-register return payload: `(pool_id, identity)` with the
 /// core-computed identity `(token0, token1, address, variant)` — the
 /// builder's return surface (checksummed hex strings).
+#[expect(dead_code)]
 pub type PoolBuildPayload = (u64, (String, String, String, String));
 
 impl Bot {

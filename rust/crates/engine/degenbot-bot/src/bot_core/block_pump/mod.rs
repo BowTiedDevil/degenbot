@@ -118,7 +118,7 @@ fn feed_executor_throttle_sample(now_ms: u64, events: u64, throttled_usec: u64) 
     // Feeder-site contract (T3/T9): the wrapper feeds the owner AND wakes
     // the fleet hosts on a real (non-`Held`) transition — never a raw
     // `observe_throttle` call.
-    crate::arb_engine::fleet_wake::feed_throttle(
+    crate::arb_engine::feed_throttle(
         now_ms,
         ThrottleSample {
             events,
@@ -246,6 +246,7 @@ pub struct SubscribeState {
     /// Python uses this as the backfill target.
     pub first_block: u64,
     /// Block timestamp from first observed block.
+    #[expect(dead_code)]
     pub first_timestamp: u64,
     /// The merged stream of WS events (block headers + logs).
     /// `None` after `resume()` consumes it.

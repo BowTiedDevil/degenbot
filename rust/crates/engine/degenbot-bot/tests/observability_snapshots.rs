@@ -35,7 +35,7 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use degenbot_bot::bot_core::stage_telemetry::StageTelemetry;
+use degenbot_bot::bot_core::StageTelemetry;
 use degenbot_bot::metrics::{build_prometheus_provider, render};
 use degenbot_bot::otel;
 use degenbot_substrate::epoch::Epoch;

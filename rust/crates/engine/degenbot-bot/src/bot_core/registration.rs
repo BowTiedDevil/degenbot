@@ -88,6 +88,7 @@ pub fn parse_address_str(s: &str) -> Result<Address, RefusalKind> {
 ///
 /// # Errors
 /// [`RefusalKind::MalformedInput`] for the first unparseable entry.
+#[cfg_attr(not(test), expect(dead_code))]
 pub fn parse_address_list(items: &[String]) -> Result<Vec<Address>, RefusalKind> {
     items.iter().map(|s| parse_address_str(s)).collect()
 }

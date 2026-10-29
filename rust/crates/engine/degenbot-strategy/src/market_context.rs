@@ -22,7 +22,7 @@ use alloy::primitives::Address;
 use degenbot_db::connection::DegenbotDb;
 use degenbot_simulation::WarmCodeCacheInner;
 use degenbot_substrate::connector_index::V2ConnectorIndex;
-use degenbot_substrate::pool_ingress::PoolIngress;
+use degenbot_substrate::pool_ingress::{PoolIngress, VerifyLevel};
 use degenbot_substrate::RouteRegistry;
 use parking_lot::RwLock;
 
@@ -81,6 +81,12 @@ impl MarketContext {
     #[must_use]
     pub fn ingress(&self) -> &PoolIngress {
         self.kit.ingress()
+    }
+
+    /// The frame's chain-sample policy, passed to every ingress admission.
+    #[must_use]
+    pub fn verify_level(&self) -> VerifyLevel {
+        self.kit.verify_level()
     }
 
     /// The frozen registry handle (`None` when the discovery fan is shut).

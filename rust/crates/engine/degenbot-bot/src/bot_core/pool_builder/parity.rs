@@ -149,6 +149,7 @@ pub fn verify_address_identity(
 /// tick_spacing)` — the immutable-key fields the resolver and the builder must
 /// agree on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct V4Identity {
     /// The pool key's first currency.
     pub currency0: Address,
@@ -165,6 +166,7 @@ pub struct V4Identity {
 /// # Errors
 ///
 /// [`IdentityDivergence`] when any field differs.
+#[cfg_attr(not(test), expect(dead_code))]
 pub fn verify_v4_identity(
     minted: V4Identity,
     registered: V4Identity,

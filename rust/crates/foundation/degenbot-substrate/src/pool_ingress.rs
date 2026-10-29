@@ -1,5 +1,15 @@
-//! Pool ingress: the single home for V3 pool-state admission into a planning
+//! Pool ingress: the single home for pool-state admission into a planning
 //! [`Workspace`].
+//!
+//! One entry, [`PoolIngress::admit`], carries every family: a [`PoolAdmission`]
+//! names the pool's identity and the state its registration needs, and the
+//! ingress dispatches on the family tag. A V2 request resolves its fees and
+//! reserves and registers — no staging, no sample. A concentrated-liquidity
+//! request stages the tick map with `Db → Chain` precedence, reads the chain
+//! scalars when the request asks for them, merges a replayed overlay when it
+//! carries one, samples the staged map under the caller's stance, and
+//! registers. Callers never read a tick word themselves, and the
+//! family × origin verb matrix does not exist.
 //!
 //! Before this module the tree carried four V3 tick-map staging
 //! implementations with two precedence semantics: the settlement registration
@@ -37,6 +47,7 @@
 
 use std::sync::Arc;
 
+use alloy::primitives::aliases::U112;
 use alloy::primitives::{Address, B256, I256, U128, U256};
 use degenbot_db::snapshot::{LiquidityAtTick as DbLiquidityAtTick, LiquidityMap, TickMapDb};
 use degenbot_db::LiquidityUpdateEvent;
@@ -47,6 +58,7 @@ pub use degenbot_pool_updater::fetch::{AlloyLiquidityLogSource, LiquidityLogSour
 use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_pools::TickInfo;
 use degenbot_pools::{TickWordKey, TickWordSource};
+use degenbot_rpc::abi::{ContractRead, IUniswapV3Pool, Slot0Prefix};
 use degenbot_rpc::liquidity_verifier::{
     verify_liquidity_map, LiquidityMap as RpcLiquidityMap, LiquidityMapTarget,
 };
@@ -203,19 +215,32 @@ impl TickMapSampleVerifier for AlloySampleVerifier {
     }
 }
 
-/// Why the ingress could not admit or stage a V3 pool. Stages map 1:1 onto
-/// the per-hop JSONL witness labels.
+/// Why the ingress could not admit one pool. Stages map 1:1 onto the per-hop
+/// JSONL witness labels, so a refused admission names the step that stopped it
+/// rather than one lumped label per family.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IngressDecline {
     /// The `slot0`/`liquidity` `eth_call` failed.
     Slot0Fetch(String),
     /// A slot0/liquidity value did not fit its wire type.
     Slot0Width,
+    /// The admission needed a chain scalar read and the ingress holds no
+    /// provider (a joinless boot cannot admit at head).
+    ChainUnconfigured,
     /// The Chain-arm tick-map bootstrap failed (transport/revert or a
     /// malformed return).
     TickMapFetch(String),
     /// The Db arm failed (a read error, or an intake reconciliation refusal).
     Db(String),
+    /// A discovered V2 fee is unusable (the refusal's own wording).
+    Fee(String),
+    /// A V2 reserve did not fit the on-chain `uint112` width.
+    ReserveWidth {
+        /// The refused side (`reserve0` / `reserve1`).
+        side: &'static str,
+        /// The value that did not fit.
+        value: u128,
+    },
     /// The workspace refused the fetched state (spec violation,
     /// `AlreadyRegistered`, ...).
     Register(String),
@@ -229,26 +254,34 @@ impl IngressDecline {
     #[must_use]
     pub fn stage(&self) -> &'static str {
         match self {
-            Self::Slot0Fetch(_) => "admit-v3-slot0-fetch",
-            Self::Slot0Width => "admit-v3-slot0-width",
-            Self::TickMapFetch(_) => "admit-v3-tick-map-fetch",
-            Self::Db(_) => "admit-v3-db",
-            Self::Register(_) => "admit-v3-register",
-            Self::Verify(_) => "admit-v3-verify",
+            Self::Slot0Fetch(_) => "admit-slot0-fetch",
+            Self::Slot0Width => "admit-slot0-width",
+            Self::ChainUnconfigured => "admit-chain-unconfigured",
+            Self::TickMapFetch(_) => "admit-tick-map-fetch",
+            Self::Db(_) => "admit-db",
+            Self::Fee(_) => "admit-fee",
+            Self::ReserveWidth { .. } => "admit-reserve-width",
+            Self::Register(_) => "admit-register",
+            Self::Verify(_) => "admit-verify",
         }
     }
 
-    /// The step's error detail (empty for width refusals, whose identity is
-    /// the stage itself).
+    /// The step's error detail (the stage itself identifies a refusal that
+    /// carries no wording).
     #[must_use]
     pub fn detail(&self) -> String {
         match self {
             Self::Slot0Fetch(d)
             | Self::TickMapFetch(d)
             | Self::Db(d)
+            | Self::Fee(d)
             | Self::Register(d)
             | Self::Verify(d) => d.clone(),
             Self::Slot0Width => "slot0/liquidity value out of type range".into(),
+            Self::ChainUnconfigured => "no chain provider attached to the ingress".into(),
+            Self::ReserveWidth { side, value } => {
+                format!("{side} {value} out of the uint112 range")
+            }
         }
     }
 }
@@ -264,26 +297,57 @@ impl From<TickMapAssemblyError> for IngressDecline {
     }
 }
 
-/// A V3 pool's admission payload. `slot_layout` is mandatory — the fork the
-/// caller READ the `slot0`/`liquidity` scalars through; the ingress passes it
-/// to [`ExplicitPoolState::V3`] verbatim.
+/// A V2 pair's admission identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IngressV3Params {
+pub struct V2Identity {
+    pub address: Address,
+    pub token0: Address,
+    pub token1: Address,
+}
+
+/// A V2 pair's pricing state: the reserves the caller read plus the discovered
+/// directional fees, resolved at admission so an unusable fee never reaches the
+/// workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct V2State {
+    pub reserve0: u128,
+    pub reserve1: u128,
+    pub fees: crate::executor_hop::V2FeePair,
+}
+
+/// A V3 pool's admission identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct V3Identity {
     pub address: Address,
     pub token0: Address,
     pub token1: Address,
     pub fee: u32,
     pub tick_spacing: i32,
-    pub sqrt_price_x96: U256,
-    pub liquidity: u128,
-    pub tick: i32,
-    pub slot_layout: ConcentratedLiquiditySlotLayout,
 }
 
-/// A V4 pool's admission payload. `state_view` is bootstrap-only; complete
-/// map verification always targets `manager` through the shared verifier.
+/// The `slot0` scalars a V3 admission stages: read by the ingress, or carried by
+/// the caller.
+///
+/// A V4 admission has no such choice — [`V4State`] is always carried, because
+/// the pool manager exposes no `slot0` read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IngressV4Params {
+pub enum V3State {
+    /// Read `slot0` and `liquidity` from the pool contract at `head` through the
+    /// ingress's chain provider (the cold-hop door).
+    Chain,
+    /// The scalars the caller carries: a replayed post-state, or an explicit
+    /// state the caller already read.
+    Carried {
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+    },
+}
+
+/// A V4 pool's admission identity. `state_view` is bootstrap-only; complete map
+/// verification always targets `manager` through the shared verifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct V4Identity {
     pub manager: Address,
     pub state_view: Option<Address>,
     pub pool_id: B256,
@@ -292,9 +356,63 @@ pub struct IngressV4Params {
     pub fee: u32,
     pub tick_spacing: i32,
     pub hooks: Address,
+}
+
+/// A V4 pool's pricing state, carried by the caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct V4State {
     pub sqrt_price_x96: U256,
     pub liquidity: u128,
     pub tick: i32,
+}
+
+/// Whether an admission merges replayed touched ticks into the staged map.
+#[derive(Debug, Clone)]
+pub enum AdmissionOrigin {
+    /// No overlay: the `Db → Chain` arms stage the map as they find it.
+    Explicit,
+    /// The caller's crossed ticks win over the staged rows before the sample.
+    Replay { overlay: HashMap<i32, TickInfo> },
+}
+
+/// One pool's admission request: the family-tagged identity plus the state that
+/// family's registration needs. Everything else — staging precedence, the chain
+/// scalar read, the overlay merge, the sample, registration — belongs to the
+/// ingress.
+///
+/// The stance a concentrated-liquidity admission samples under is an argument to
+/// [`PoolIngress::admit`]; a V2 request has no tick map, so its stance is inert.
+#[derive(Debug, Clone)]
+pub enum PoolAdmission {
+    /// A V2 pair: reserves + discovered fees, registered as-is.
+    V2 {
+        identity: V2Identity,
+        state: V2State,
+    },
+    /// A V3 pool. `slot_layout` is the fork the caller READ the `slot0` scalars
+    /// through; the ingress passes it to [`ExplicitPoolState::V3`] verbatim.
+    V3 {
+        identity: V3Identity,
+        state: V3State,
+        slot_layout: ConcentratedLiquiditySlotLayout,
+        origin: AdmissionOrigin,
+    },
+    /// A V4 pool; `identity` carries the manager-keyed `pool_id`, the
+    /// `state_view`, and the hooks.
+    V4 {
+        identity: V4Identity,
+        state: V4State,
+        origin: AdmissionOrigin,
+    },
+}
+
+/// The resolved V3 scalars one admission registers with, whichever arm supplied
+/// them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct V3Scalars {
+    sqrt_price_x96: U256,
+    liquidity: u128,
+    tick: i32,
 }
 
 /// A Db-staged map plus the backfill window that brought it to head.
@@ -339,8 +457,10 @@ pub struct PoolIngress {
     db: Option<DbArm>,
     chain: Option<Arc<dyn TickWordSource>>,
     memo: Mutex<MapMemo>,
-    /// The chain-sample policy (default [`VerifyLevel::Bootstrap`]).
-    verify_level: VerifyLevel,
+    /// The chain provider the explicit V3 door reads its scalars through.
+    /// Absent on an RPC-less ingress: an at-head V3 admission then declines
+    /// rather than inventing the state.
+    provider: Option<Arc<AlloyProvider>>,
     /// Pool identity → the freshness block whose staged map was sampled.
     /// Bootstrap memoization is process-scoped but never suppresses a later
     /// admission whose seed block requires a fresh sample.
@@ -364,7 +484,7 @@ impl PoolIngress {
             db,
             chain,
             memo: Mutex::new(MapMemo::empty()),
-            verify_level: VerifyLevel::default(),
+            provider: None,
             verified: Mutex::new(HashMap::new()),
             verifier: None,
             witness: None,
@@ -377,22 +497,11 @@ impl PoolIngress {
         self.chain = Some(chain);
     }
 
-    /// Set the chain-sample verification policy. Setting [`VerifyLevel::Off`]
-    /// emits one loud journal entry: the operator has declared confidence, and
-    /// the two-stamp clock check still runs.
-    pub fn set_verify_level(&mut self, level: VerifyLevel) {
-        if level == VerifyLevel::Off {
-            tracing::warn!(
-                "pool ingress verify_level=off: chain-sample verification of staged V3 tick maps is disabled by operator declaration; the two-stamp clock still aborts (snapshot-internal consistency is schema/decode validation, not an intake gate)"
-            );
-        }
-        self.verify_level = level;
-    }
-
-    /// The active chain-sample policy.
-    #[must_use]
-    pub fn verify_level(&self) -> VerifyLevel {
-        self.verify_level
+    /// Attach the chain provider the explicit V3 door reads `slot0` and
+    /// `liquidity` through (the driver passes the resolved node join's
+    /// provider).
+    pub fn set_provider(&mut self, provider: Arc<AlloyProvider>) {
+        self.provider = Some(provider);
     }
 
     /// Attach the chain-sample verifier (the driver wires the provider-backed
@@ -521,98 +630,196 @@ impl PoolIngress {
         Ok(chain_arm(Some(ticks)).into_seed(block, identity))
     }
 
-    /// Stage, chain-sample-verify (per [`VerifyLevel`]), then register a V3
-    /// pool. The verification composes the pump's snapshot-block machinery
-    /// through [`TickMapSampleVerifier`]; a mismatch or transport failure is a
-    /// loud [`IngressDecline::Verify`], never a silent fallback.
+    /// Admit one pool: the single door for every family.
+    ///
+    /// A V2 request resolves its fees and reserves and registers — no staging,
+    /// no sample, no overlay (a pair has no tick map to stage, so `stance` is
+    /// inert for it). A concentrated-liquidity request stages the tick map with
+    /// `Db → Chain` precedence, reads the chain scalars when its state asks for
+    /// them, merges a replay overlay when its origin carries one, samples the
+    /// staged map under `stance`, and only then registers.
+    ///
+    /// `stance` is the caller's chain-sample policy for this admission: a
+    /// boot-configured stance flows in here rather than living on the ingress,
+    /// so one value decides and no second copy can disagree. The sample
+    /// composes the pump's snapshot-block machinery through
+    /// [`TickMapSampleVerifier`]; a mismatch or transport failure is a loud
+    /// [`IngressDecline::Verify`], never a silent fallback.
     ///
     /// # Errors
     ///
-    /// [`IngressDecline`] naming the refused staging, verification, or
-    /// registration step.
-    pub async fn admit_v3_verified(
+    /// [`IngressDecline`] naming the refused staging, scalar read,
+    /// verification, or registration step.
+    pub async fn admit(
         &self,
         ws: &mut Workspace,
-        params: IngressV3Params,
+        admission: PoolAdmission,
+        stance: VerifyLevel,
         head: u64,
     ) -> Result<u64, IngressDecline> {
-        let seed =
-            self.stage_v3_tick_map(params.address, params.tick, params.tick_spacing, head)?;
-        self.verify_staged(
-            TickMapPoolIdentity::V3(params.address),
-            params.tick_spacing,
-            &seed,
-        )
-        .await?;
-        Self::register_v3(ws, params, seed, head)
+        match admission {
+            PoolAdmission::V2 { identity, state } => {
+                let fees = state
+                    .fees
+                    .resolve()
+                    .map_err(|refusal| IngressDecline::Fee(refusal.to_string()))?;
+                let reserve0 =
+                    U112::try_from(state.reserve0).map_err(|_| IngressDecline::ReserveWidth {
+                        side: "reserve0",
+                        value: state.reserve0,
+                    })?;
+                let reserve1 =
+                    U112::try_from(state.reserve1).map_err(|_| IngressDecline::ReserveWidth {
+                        side: "reserve1",
+                        value: state.reserve1,
+                    })?;
+                ws.register_with_state(
+                    PlanningPoolParams {
+                        address: identity.address,
+                        token0: identity.token0,
+                        token1: identity.token1,
+                    },
+                    ExplicitPoolState::V2 {
+                        reserve0,
+                        reserve1,
+                        fee_token0: fees.token0.retained_fraction(),
+                        fee_token1: fees.token1.retained_fraction(),
+                    },
+                    head,
+                )
+                .map_err(|error| IngressDecline::Register(format!("{error:?}")))
+            }
+            PoolAdmission::V3 {
+                identity,
+                state,
+                slot_layout,
+                origin,
+            } => {
+                let scalars = match state {
+                    V3State::Chain => self.read_v3_scalars(identity.address).await?,
+                    V3State::Carried {
+                        sqrt_price_x96,
+                        liquidity,
+                        tick,
+                    } => V3Scalars {
+                        sqrt_price_x96,
+                        liquidity,
+                        tick,
+                    },
+                };
+                let mut seed = self.stage_v3_tick_map(
+                    identity.address,
+                    scalars.tick,
+                    identity.tick_spacing,
+                    head,
+                )?;
+                if let AdmissionOrigin::Replay { overlay } = origin {
+                    merge_replay_overlay(&mut seed, overlay, identity.tick_spacing, "V3")?;
+                }
+                self.verify_staged(
+                    TickMapPoolIdentity::V3(identity.address),
+                    identity.tick_spacing,
+                    &seed,
+                    stance,
+                )
+                .await?;
+                Self::register_v3(ws, identity, scalars, slot_layout, seed, head)
+            }
+            PoolAdmission::V4 {
+                identity,
+                state,
+                origin,
+            } => {
+                let mut seed = self.stage_v4_tick_map_with_state_view(
+                    identity.manager,
+                    identity.pool_id,
+                    identity.state_view,
+                    state.tick,
+                    identity.tick_spacing,
+                    head,
+                )?;
+                if let AdmissionOrigin::Replay { overlay } = origin {
+                    merge_replay_overlay(&mut seed, overlay, identity.tick_spacing, "V4")?;
+                }
+                self.verify_staged(
+                    TickMapPoolIdentity::V4 {
+                        manager: identity.manager,
+                        pool_id: identity.pool_id,
+                    },
+                    identity.tick_spacing,
+                    &seed,
+                    stance,
+                )
+                .await?;
+                Self::register_v4(ws, identity, state, seed, head)
+            }
+        }
     }
 
-    /// Merge replay-provided touched rows into the Db/Chain seed, project those
-    /// post-state rows onto the seed's bitmap, verify the final map under the
-    /// active policy, and only then register it. Existing bitmap words and bits
-    /// are preserved, including words previously checked empty.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same typed [`IngressDecline`] stages as cold-hop admission.
-    pub async fn admit_v3_replay(
-        &self,
-        ws: &mut Workspace,
-        params: IngressV3Params,
-        overlay: HashMap<i32, TickInfo>,
-        head: u64,
-    ) -> Result<u64, IngressDecline> {
-        let mut seed =
-            self.stage_v3_tick_map(params.address, params.tick, params.tick_spacing, head)?;
-        merge_replay_overlay(&mut seed, overlay, params.tick_spacing, "V3")?;
-        self.verify_staged(
-            TickMapPoolIdentity::V3(params.address),
-            params.tick_spacing,
-            &seed,
-        )
-        .await?;
-        Self::register_v3(ws, params, seed, head)
+    /// Read a V3 pool's `slot0` + `liquidity` at head through the chain
+    /// provider — the explicit door's contract read, inside the entry so no
+    /// caller repeats it.
+    async fn read_v3_scalars(&self, address: Address) -> Result<V3Scalars, IngressDecline> {
+        let Some(provider) = self.provider.as_deref() else {
+            return Err(IngressDecline::ChainUnconfigured);
+        };
+        let slot0 = Slot0Prefix::read(provider, address, None)
+            .await
+            .map_err(|error| IngressDecline::Slot0Fetch(error.to_string()))?;
+        let liquidity =
+            ContractRead::read(provider, address, IUniswapV3Pool::liquidityCall {}, None)
+                .await
+                .map_err(|error| IngressDecline::Slot0Fetch(error.to_string()))?;
+        let tick = i32::try_from(slot0.tick).map_err(|_| IngressDecline::Slot0Width)?;
+        Ok(V3Scalars {
+            sqrt_price_x96: slot0.sqrt_price_x96,
+            liquidity,
+            tick,
+        })
     }
 
     /// Register a staged V3 seed into `ws`, naming the typed rejection on
     /// refusal.
     fn register_v3(
         ws: &mut Workspace,
-        params: IngressV3Params,
+        identity: V3Identity,
+        scalars: V3Scalars,
+        slot_layout: ConcentratedLiquiditySlotLayout,
         seed: TickMapSeed,
         head: u64,
     ) -> Result<u64, IngressDecline> {
         ws.register_with_state(
             PlanningPoolParams {
-                address: params.address,
-                token0: params.token0,
-                token1: params.token1,
+                address: identity.address,
+                token0: identity.token0,
+                token1: identity.token1,
             },
             ExplicitPoolState::V3 {
-                sqrt_price_x96: params.sqrt_price_x96,
-                liquidity: params.liquidity,
-                tick: params.tick,
-                fee: params.fee,
-                tick_spacing: params.tick_spacing,
+                sqrt_price_x96: scalars.sqrt_price_x96,
+                liquidity: scalars.liquidity,
+                tick: scalars.tick,
+                fee: identity.fee,
+                tick_spacing: identity.tick_spacing,
                 seed,
-                slot_layout: params.slot_layout,
+                slot_layout,
             },
             head,
         )
-        .map_err(|e| IngressDecline::Register(format!("{e:?}")))
+        .map_err(|error| IngressDecline::Register(format!("{error:?}")))
     }
 
-    /// Apply the [`VerifyLevel`] policy to a freshly staged seed. Integrity
-    /// already ran inside staging (the Tracked self-contradiction abort is
-    /// upstream of this method and unconditional); this is the chain SAMPLE
-    /// only.
+    /// Apply the caller's [`VerifyLevel`] policy to a freshly staged seed.
+    /// Integrity already ran inside staging (the Tracked self-contradiction
+    /// abort is upstream of this method and unconditional); this is the chain
+    /// SAMPLE only.
     async fn verify_staged(
         &self,
         identity: TickMapPoolIdentity,
         tick_spacing: i32,
         seed: &TickMapSeed,
+        stance: VerifyLevel,
     ) -> Result<(), IngressDecline> {
-        if self.verify_level == VerifyLevel::Off {
+        if stance == VerifyLevel::Off {
             return Ok(());
         }
         let Some(verifier) = self.verifier.as_ref() else {
@@ -621,7 +828,7 @@ impl PoolIngress {
         if seed.coverage != degenbot_pools::PoolTickCoverage::Tracked {
             return Ok(());
         }
-        if self.verify_level == VerifyLevel::Bootstrap
+        if stance == VerifyLevel::Bootstrap
             && self.verified.lock().get(&identity) == Some(&seed.seed_block)
         {
             return Ok(());
@@ -645,96 +852,30 @@ impl PoolIngress {
         Ok(())
     }
 
-    /// Stage, policy-sample, and register explicit V4 state without replay
-    /// overlay. This is the cold-hop/explicit-state ingress behavior.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed staging, verification, or registration decline.
-    pub async fn admit_v4_verified(
-        &self,
-        ws: &mut Workspace,
-        params: IngressV4Params,
-        head: u64,
-    ) -> Result<u64, IngressDecline> {
-        let seed = self.stage_v4_tick_map_with_state_view(
-            params.manager,
-            params.pool_id,
-            params.state_view,
-            params.tick,
-            params.tick_spacing,
-            head,
-        )?;
-        self.verify_staged(
-            TickMapPoolIdentity::V4 {
-                manager: params.manager,
-                pool_id: params.pool_id,
-            },
-            params.tick_spacing,
-            &seed,
-        )
-        .await?;
-        Self::register_v4(ws, params, seed, head)
-    }
-
-    /// Merge replay-provided V4 rows into the Db/Chain seed using the pool's
-    /// real spacing, verify the final bitmap+tick map, then register it.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same typed staging, verification, or registration declines
-    /// as explicit V4 admission.
-    pub async fn admit_v4_replay(
-        &self,
-        ws: &mut Workspace,
-        params: IngressV4Params,
-        overlay: HashMap<i32, TickInfo>,
-        head: u64,
-    ) -> Result<u64, IngressDecline> {
-        let mut seed = self.stage_v4_tick_map_with_state_view(
-            params.manager,
-            params.pool_id,
-            params.state_view,
-            params.tick,
-            params.tick_spacing,
-            head,
-        )?;
-        merge_replay_overlay(&mut seed, overlay, params.tick_spacing, "V4")?;
-        self.verify_staged(
-            TickMapPoolIdentity::V4 {
-                manager: params.manager,
-                pool_id: params.pool_id,
-            },
-            params.tick_spacing,
-            &seed,
-        )
-        .await?;
-        Self::register_v4(ws, params, seed, head)
-    }
-
     fn register_v4(
         ws: &mut Workspace,
-        params: IngressV4Params,
+        identity: V4Identity,
+        state: V4State,
         seed: TickMapSeed,
         head: u64,
     ) -> Result<u64, IngressDecline> {
         ws.register_with_state(
             PlanningPoolParams {
-                address: params.manager,
-                token0: params.token0,
-                token1: params.token1,
+                address: identity.manager,
+                token0: identity.token0,
+                token1: identity.token1,
             },
             ExplicitPoolState::V4 {
-                pool_id: params.pool_id.0,
-                fee: params.fee,
-                tick_spacing: params.tick_spacing,
-                state_view: params.state_view.unwrap_or(Address::ZERO),
-                hooks: params.hooks,
-                hook_flags: derive_hook_flags(params.hooks),
+                pool_id: identity.pool_id.0,
+                fee: identity.fee,
+                tick_spacing: identity.tick_spacing,
+                state_view: identity.state_view.unwrap_or(Address::ZERO),
+                hooks: identity.hooks,
+                hook_flags: derive_hook_flags(identity.hooks),
                 protocol_fee: 0,
-                sqrt_price_x96: params.sqrt_price_x96,
-                liquidity: params.liquidity,
-                tick: params.tick,
+                sqrt_price_x96: state.sqrt_price_x96,
+                liquidity: state.liquidity,
+                tick: state.tick,
                 seed,
             },
             head,
@@ -1175,14 +1316,13 @@ mod tests {
         });
         let calls = Arc::new(AtomicUsize::new(0));
         let mut ingress = PoolIngress::new(Some(arm(db)), Some(chain));
-        ingress.set_verify_level(VerifyLevel::Strict);
         ingress.set_verifier(Arc::new(FakeVerifier {
             calls: Arc::clone(&calls),
             fail: true,
         }));
         let mut ws = a_new_workspace();
         ingress
-            .admit_v3_verified(&mut ws, params(POOL), 100)
+            .admit(&mut ws, v3_carried(POOL), VerifyLevel::Strict, 100)
             .await
             .expect("sparse pools admit without claiming full verification");
         assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -1215,23 +1355,175 @@ mod tests {
     fn decline_stages_are_stable_labels() {
         assert_eq!(
             IngressDecline::Slot0Fetch("timeout".into()).stage(),
-            "admit-v3-slot0-fetch"
+            "admit-slot0-fetch"
         );
-        assert_eq!(IngressDecline::Slot0Width.stage(), "admit-v3-slot0-width");
+        assert_eq!(IngressDecline::Slot0Width.stage(), "admit-slot0-width");
+        assert_eq!(
+            IngressDecline::ChainUnconfigured.stage(),
+            "admit-chain-unconfigured"
+        );
         assert_eq!(
             IngressDecline::TickMapFetch("revert".into()).stage(),
-            "admit-v3-tick-map-fetch"
+            "admit-tick-map-fetch"
         );
-        assert_eq!(IngressDecline::Db("locked".into()).stage(), "admit-v3-db");
+        assert_eq!(IngressDecline::Db("locked".into()).stage(), "admit-db");
+        assert_eq!(
+            IngressDecline::Fee("V2 fee is missing".into()).stage(),
+            "admit-fee"
+        );
+        assert_eq!(
+            IngressDecline::ReserveWidth {
+                side: "reserve0",
+                value: u128::MAX,
+            }
+            .stage(),
+            "admit-reserve-width"
+        );
         assert_eq!(
             IngressDecline::Register("AlreadyRegistered".into()).stage(),
-            "admit-v3-register"
+            "admit-register"
         );
         assert_eq!(
             IngressDecline::Verify("mismatch".into()).stage(),
-            "admit-v3-verify"
+            "admit-verify"
         );
         let _ = CHAIN;
+    }
+
+    /// The V2 arm of the one door: a pair registers without a tick map, and the
+    /// stance is inert for it (no verifier call even under `Strict`).
+    #[tokio::test]
+    async fn v2_admission_registers_without_staging_or_sampling() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut ingress = PoolIngress::new(None, None);
+        ingress.set_verifier(Arc::new(FakeVerifier {
+            calls: Arc::clone(&calls),
+            fail: true,
+        }));
+        let mut ws = a_new_workspace();
+        let id = ingress
+            .admit(
+                &mut ws,
+                v2_admission(POOL, 500_000, 1_000, fee_pair(3)),
+                VerifyLevel::Strict,
+                100,
+            )
+            .await
+            .expect("a V2 pair registers");
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "V2 has no map to sample");
+        assert_eq!(ws.pool_id_by_address(&POOL), Some(id));
+        assert_eq!(
+            ws.v2_reserves(id),
+            Some((U256::from(500_000u64), U256::from(1_000u64), 100)),
+            "the request's head stamps the registration"
+        );
+    }
+
+    #[tokio::test]
+    async fn v2_fee_refusal_is_a_typed_decline_before_registration() {
+        let ingress = PoolIngress::new(None, None);
+        let mut ws = a_new_workspace();
+        let err = ingress
+            .admit(
+                &mut ws,
+                v2_admission(
+                    POOL,
+                    500_000,
+                    1_000,
+                    crate::executor_hop::V2FeePair::missing(),
+                ),
+                VerifyLevel::default(),
+                100,
+            )
+            .await
+            .expect_err("a missing fee must decline");
+        assert_eq!(err.stage(), "admit-fee");
+        assert!(err.detail().contains("missing"), "{}", err.detail());
+        assert_eq!(
+            ws.pool_id_by_address(&POOL),
+            None,
+            "a refused fee never enters the workspace"
+        );
+    }
+
+    #[tokio::test]
+    async fn v2_reserve_width_is_a_typed_decline() {
+        let ingress = PoolIngress::new(None, None);
+        let mut ws = a_new_workspace();
+        let err = ingress
+            .admit(
+                &mut ws,
+                v2_admission(POOL, u128::MAX, 1_000, fee_pair(3)),
+                VerifyLevel::default(),
+                100,
+            )
+            .await
+            .expect_err("a reserve past uint112 must decline");
+        assert_eq!(
+            err,
+            IngressDecline::ReserveWidth {
+                side: "reserve0",
+                value: u128::MAX,
+            }
+        );
+        assert!(err.detail().contains("reserve0"));
+        assert_eq!(ws.pool_id_by_address(&POOL), None);
+    }
+
+    /// The explicit V3 door's chain read needs a provider; an RPC-less ingress
+    /// declines loudly instead of inventing scalars.
+    #[tokio::test]
+    async fn at_head_v3_admission_without_a_provider_declines() {
+        let ingress = PoolIngress::new(None, None);
+        let mut ws = a_new_workspace();
+        let err = ingress
+            .admit(
+                &mut ws,
+                PoolAdmission::V3 {
+                    identity: v3_identity(POOL),
+                    state: V3State::Chain,
+                    slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
+                    origin: AdmissionOrigin::Explicit,
+                },
+                VerifyLevel::default(),
+                100,
+            )
+            .await
+            .expect_err("a chain read without a provider must decline");
+        assert_eq!(err, IngressDecline::ChainUnconfigured);
+        assert_eq!(err.stage(), "admit-chain-unconfigured");
+        assert_eq!(ws.pool_id_by_address(&POOL), None);
+    }
+
+    /// A V2 admission request with the discovered `fee_bips` charge in both
+    /// directions.
+    fn v2_admission(
+        address: Address,
+        reserve0: u128,
+        reserve1: u128,
+        fees: crate::executor_hop::V2FeePair,
+    ) -> PoolAdmission {
+        PoolAdmission::V2 {
+            identity: V2Identity {
+                address,
+                token0: Address::new([0x02; 20]),
+                token1: Address::new([0x03; 20]),
+            },
+            state: V2State {
+                reserve0,
+                reserve1,
+                fees,
+            },
+        }
+    }
+
+    /// A validated directional fee pair charging `fee_bips` of 1,000,000.
+    fn fee_pair(fee_bips: u64) -> crate::executor_hop::V2FeePair {
+        crate::executor_hop::V2FeePair::from_discovered(
+            Some(i64::try_from(fee_bips).unwrap()),
+            Some(i64::try_from(fee_bips).unwrap()),
+            Some(1_000_000),
+        )
     }
 
     /// A verifier fake: counts calls and can fail on demand.
@@ -1257,17 +1549,43 @@ mod tests {
         }
     }
 
-    fn params(address: Address) -> IngressV3Params {
-        IngressV3Params {
+    /// The V3 identity every fixture admits.
+    fn v3_identity(address: Address) -> V3Identity {
+        V3Identity {
             address,
             token0: Address::new([0x02; 20]),
             token1: Address::new([0x03; 20]),
             fee: 3_000,
             tick_spacing: 60,
+        }
+    }
+
+    /// The `slot0` scalars every V3 fixture carries.
+    fn v3_state() -> V3State {
+        V3State::Carried {
             sqrt_price_x96: U256::from(1u128) << 96,
             liquidity: 1_000_000,
             tick: 0,
+        }
+    }
+
+    /// A V3 admission carrying its `slot0` scalars, without an overlay.
+    fn v3_carried(address: Address) -> PoolAdmission {
+        PoolAdmission::V3 {
+            identity: v3_identity(address),
+            state: v3_state(),
             slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
+            origin: AdmissionOrigin::Explicit,
+        }
+    }
+
+    /// A replayed V3 admission carrying `overlay` as its crossed ticks.
+    fn v3_replay(address: Address, overlay: HashMap<i32, TickInfo>) -> PoolAdmission {
+        PoolAdmission::V3 {
+            identity: v3_identity(address),
+            state: v3_state(),
+            slot_layout: ConcentratedLiquiditySlotLayout::UniswapV3,
+            origin: AdmissionOrigin::Replay { overlay },
         }
     }
 
@@ -1325,7 +1643,6 @@ mod tests {
             update_blocks: HashMap::new(),
         });
         let mut ingress = PoolIngress::new(Some(arm(db)), None);
-        ingress.set_verify_level(VerifyLevel::Strict);
         ingress.set_verifier(Arc::new(RecordingVerifier {
             calls: Arc::clone(&calls),
             seen: Arc::clone(&seen),
@@ -1349,7 +1666,7 @@ mod tests {
             },
         );
         ingress
-            .admit_v3_replay(&mut ws, params(POOL), overlay, 100)
+            .admit(&mut ws, v3_replay(POOL, overlay), VerifyLevel::Strict, 100)
             .await
             .expect("replay admission crosses the verifier");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -1372,14 +1689,18 @@ mod tests {
         let (db, _) = empty_db();
         let calls = Arc::new(AtomicUsize::new(0));
         let mut ingress = PoolIngress::new(Some(db), None);
-        ingress.set_verify_level(VerifyLevel::Off);
         ingress.set_verifier(Arc::new(FakeVerifier {
             calls: Arc::clone(&calls),
             fail: true,
         }));
         let mut ws = a_new_workspace();
         ingress
-            .admit_v3_replay(&mut ws, params(POOL), HashMap::new(), 100)
+            .admit(
+                &mut ws,
+                v3_replay(POOL, HashMap::new()),
+                VerifyLevel::Off,
+                100,
+            )
             .await
             .expect("Off admits the replay anchor without sampling");
         assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -1390,17 +1711,26 @@ mod tests {
         let (db, _) = empty_db();
         let calls = Arc::new(AtomicUsize::new(0));
         let mut ingress = PoolIngress::new(Some(db), None);
-        ingress.set_verify_level(VerifyLevel::Bootstrap);
         ingress.set_verifier(Arc::new(FakeVerifier {
             calls: Arc::clone(&calls),
             fail: false,
         }));
         ingress
-            .admit_v3_replay(&mut a_new_workspace(), params(POOL), HashMap::new(), 100)
+            .admit(
+                &mut a_new_workspace(),
+                v3_replay(POOL, HashMap::new()),
+                VerifyLevel::Bootstrap,
+                100,
+            )
             .await
             .expect("first replay anchor admits");
         ingress
-            .admit_v3_replay(&mut a_new_workspace(), params(POOL), HashMap::new(), 101)
+            .admit(
+                &mut a_new_workspace(),
+                v3_replay(POOL, HashMap::new()),
+                VerifyLevel::Bootstrap,
+                101,
+            )
             .await
             .expect("later replay anchor admits");
         assert_eq!(calls.load(Ordering::SeqCst), 2);
@@ -1408,8 +1738,6 @@ mod tests {
 
     #[test]
     fn verify_level_defaults_to_bootstrap() {
-        let ingress = PoolIngress::new(None, None);
-        assert_eq!(ingress.verify_level(), VerifyLevel::Bootstrap);
         assert_eq!(VerifyLevel::default(), VerifyLevel::Bootstrap);
         assert_eq!(VerifyLevel::Strict.label(), "strict");
         assert_eq!(VerifyLevel::Bootstrap.label(), "bootstrap");
@@ -1421,18 +1749,19 @@ mod tests {
         let (db, _) = empty_db();
         let calls = Arc::new(AtomicUsize::new(0));
         let mut ingress = PoolIngress::new(Some(db), None);
-        ingress.set_verify_level(VerifyLevel::Bootstrap);
         ingress.set_verifier(Arc::new(FakeVerifier {
             calls: Arc::clone(&calls),
             fail: false,
         }));
         let mut ws = Workspace::new();
         ingress
-            .admit_v3_verified(&mut ws, params(POOL), 100)
+            .admit(&mut ws, v3_carried(POOL), VerifyLevel::Bootstrap, 100)
             .await
             .expect("admits");
         assert_eq!(calls.load(Ordering::SeqCst), 1, "first admission verified");
-        let _ = ingress.admit_v3_verified(&mut ws, params(POOL), 101).await;
+        let _ = ingress
+            .admit(&mut ws, v3_carried(POOL), VerifyLevel::Bootstrap, 101)
+            .await;
         assert_eq!(
             calls.load(Ordering::SeqCst),
             2,
@@ -1445,14 +1774,17 @@ mod tests {
         let (db, _) = empty_db();
         let calls = Arc::new(AtomicUsize::new(0));
         let mut ingress = PoolIngress::new(Some(db), None);
-        ingress.set_verify_level(VerifyLevel::Strict);
         ingress.set_verifier(Arc::new(FakeVerifier {
             calls: Arc::clone(&calls),
             fail: false,
         }));
         let mut ws = a_new_workspace();
-        let _ = ingress.admit_v3_verified(&mut ws, params(POOL), 100).await;
-        let _ = ingress.admit_v3_verified(&mut ws, params(POOL), 101).await;
+        let _ = ingress
+            .admit(&mut ws, v3_carried(POOL), VerifyLevel::Strict, 100)
+            .await;
+        let _ = ingress
+            .admit(&mut ws, v3_carried(POOL), VerifyLevel::Strict, 101)
+            .await;
         assert_eq!(calls.load(Ordering::SeqCst), 2, "Strict never memoizes");
     }
 
@@ -1461,14 +1793,13 @@ mod tests {
         let (db, _) = empty_db();
         let calls = Arc::new(AtomicUsize::new(0));
         let mut ingress = PoolIngress::new(Some(db), None);
-        ingress.set_verify_level(VerifyLevel::Off);
         ingress.set_verifier(Arc::new(FakeVerifier {
             calls: Arc::clone(&calls),
             fail: true,
         }));
         let mut ws = a_new_workspace();
         ingress
-            .admit_v3_verified(&mut ws, params(POOL), 100)
+            .admit(&mut ws, v3_carried(POOL), VerifyLevel::Off, 100)
             .await
             .expect("Off admits without sampling even when the verifier would fail");
         assert_eq!(
@@ -1492,11 +1823,10 @@ mod tests {
             fetches: Arc::clone(&fetches),
             update_blocks: HashMap::new(),
         });
-        let mut ingress = PoolIngress::new(Some(arm(db)), None);
-        ingress.set_verify_level(VerifyLevel::Off);
+        let ingress = PoolIngress::new(Some(arm(db)), None);
         let mut ws = a_new_workspace();
         ingress
-            .admit_v3_verified(&mut ws, params(POOL), 100)
+            .admit(&mut ws, v3_carried(POOL), VerifyLevel::Off, 100)
             .await
             .expect("an internally inconsistent snapshot stages without a chain-truth refusal");
     }
@@ -1506,17 +1836,16 @@ mod tests {
         let (db, _) = empty_db();
         let calls = Arc::new(AtomicUsize::new(0));
         let mut ingress = PoolIngress::new(Some(db), None);
-        ingress.set_verify_level(VerifyLevel::Strict);
         ingress.set_verifier(Arc::new(FakeVerifier {
             calls: Arc::clone(&calls),
             fail: true,
         }));
         let mut ws = a_new_workspace();
         let err = ingress
-            .admit_v3_verified(&mut ws, params(POOL), 100)
+            .admit(&mut ws, v3_carried(POOL), VerifyLevel::Strict, 100)
             .await
             .expect_err("a mismatch must decline, not fall back");
-        assert_eq!(err.stage(), "admit-v3-verify");
+        assert_eq!(err.stage(), "admit-verify");
         assert!(err.detail().contains("mismatch"));
     }
 
@@ -1694,6 +2023,19 @@ mod tests {
         update_block: i64,
     }
 
+    /// A V4 ingress whose Db arm serves `map` stamped at `update_block`.
+    fn v4_ingress(map: Option<LiquidityMap>, update_block: i64) -> PoolIngress {
+        PoolIngress::new(
+            Some(DbArm::new(
+                Arc::new(FakeV4Db { map, update_block }),
+                Arc::new(FakeV4Source {
+                    calls: Arc::new(Mutex::new(Vec::new())),
+                }),
+            )),
+            None,
+        )
+    }
+
     impl TickMapDb for FakeV4Db {
         fn fetch_liquidity_map(
             &self,
@@ -1806,8 +2148,9 @@ mod tests {
     const V4_MANAGER: Address = Address::new([0x44; 20]);
     const V4_POOL_ID: B256 = B256::new([0x55; 32]);
 
-    fn v4_params() -> IngressV4Params {
-        IngressV4Params {
+    /// The V4 identity every fixture admits.
+    fn v4_identity() -> V4Identity {
+        V4Identity {
             manager: V4_MANAGER,
             state_view: Some(Address::new([0x77; 20])),
             pool_id: V4_POOL_ID,
@@ -1816,9 +2159,19 @@ mod tests {
             fee: 500,
             tick_spacing: 10,
             hooks: Address::ZERO,
-            sqrt_price_x96: U256::from(1_u128) << 96,
-            liquidity: 1_000_000,
-            tick: 0,
+        }
+    }
+
+    /// A V4 admission; `origin` decides whether a replay overlay merges.
+    fn v4_admission(origin: AdmissionOrigin) -> PoolAdmission {
+        PoolAdmission::V4 {
+            identity: v4_identity(),
+            state: V4State {
+                sqrt_price_x96: U256::from(1_u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+            },
+            origin,
         }
     }
 
@@ -1850,36 +2203,33 @@ mod tests {
                 update_block: 200,
             })
         };
-        let mut backfill = PoolIngress::new(
+        let backfill = PoolIngress::new(
             Some(DbArm::new(stale_db(), Arc::new(FailingV4Source))),
             None,
         );
-        backfill.set_verify_level(VerifyLevel::Off);
         let err = backfill
-            .admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
+            .admit(
+                &mut Workspace::new(),
+                v4_admission(AdmissionOrigin::Explicit),
+                VerifyLevel::Off,
+                202,
+            )
             .await
             .expect_err("backfill failure is loud");
         assert!(matches!(err, IngressDecline::Db(detail) if detail.contains("archive node")));
 
-        let mut verifier = PoolIngress::new(
-            Some(DbArm::new(
-                Arc::new(FakeV4Db {
-                    map: Some(tracked_v4_map()),
-                    update_block: 202,
-                }),
-                Arc::new(FakeV4Source {
-                    calls: Arc::new(Mutex::new(Vec::new())),
-                }),
-            )),
-            None,
-        );
-        verifier.set_verify_level(VerifyLevel::Strict);
+        let mut verifier = v4_ingress(Some(tracked_v4_map()), 202);
         verifier.set_verifier(Arc::new(FakeVerifier {
             calls: Arc::new(AtomicUsize::new(0)),
             fail: true,
         }));
         let err = verifier
-            .admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
+            .admit(
+                &mut Workspace::new(),
+                v4_admission(AdmissionOrigin::Explicit),
+                VerifyLevel::Strict,
+                202,
+            )
             .await
             .expect_err("verification failure is loud");
         assert!(matches!(err, IngressDecline::Verify(detail) if detail.contains("mismatch")));
@@ -1917,7 +2267,6 @@ mod tests {
             )),
             None,
         );
-        ingress.set_verify_level(VerifyLevel::Strict);
         ingress.set_verifier(Arc::new(RecordingVerifier {
             seen: Arc::clone(&seen),
         }));
@@ -1939,7 +2288,12 @@ mod tests {
             },
         );
         ingress
-            .admit_v4_replay(&mut Workspace::new(), v4_params(), overlay, 202)
+            .admit(
+                &mut Workspace::new(),
+                v4_admission(AdmissionOrigin::Replay { overlay }),
+                VerifyLevel::Strict,
+                202,
+            )
             .await
             .expect("V4 replay crosses the shared sample seam");
 
@@ -1964,104 +2318,86 @@ mod tests {
     #[tokio::test]
     async fn v4_strict_bootstrap_off_and_sparse_follow_the_shared_policy() {
         let strict_calls = Arc::new(AtomicUsize::new(0));
-        let mut strict = PoolIngress::new(
-            Some(DbArm::new(
-                Arc::new(FakeV4Db {
-                    map: Some(tracked_v4_map()),
-                    update_block: 202,
-                }),
-                Arc::new(FakeV4Source {
-                    calls: Arc::new(Mutex::new(Vec::new())),
-                }),
-            )),
-            None,
-        );
-        strict.set_verify_level(VerifyLevel::Strict);
+        let mut strict = v4_ingress(Some(tracked_v4_map()), 202);
         strict.set_verifier(Arc::new(FakeVerifier {
             calls: Arc::clone(&strict_calls),
             fail: false,
         }));
         strict
-            .admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
+            .admit(
+                &mut Workspace::new(),
+                v4_admission(AdmissionOrigin::Explicit),
+                VerifyLevel::Strict,
+                202,
+            )
             .await
             .unwrap();
         strict
-            .admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
+            .admit(
+                &mut Workspace::new(),
+                v4_admission(AdmissionOrigin::Explicit),
+                VerifyLevel::Strict,
+                202,
+            )
             .await
             .unwrap();
         assert_eq!(strict_calls.load(Ordering::SeqCst), 2);
 
         let bootstrap_calls = Arc::new(AtomicUsize::new(0));
-        let mut bootstrap = PoolIngress::new(
-            Some(DbArm::new(
-                Arc::new(FakeV4Db {
-                    map: Some(tracked_v4_map()),
-                    update_block: 202,
-                }),
-                Arc::new(FakeV4Source {
-                    calls: Arc::new(Mutex::new(Vec::new())),
-                }),
-            )),
-            None,
-        );
-        bootstrap.set_verify_level(VerifyLevel::Bootstrap);
+        let mut bootstrap = v4_ingress(Some(tracked_v4_map()), 202);
         bootstrap.set_verifier(Arc::new(FakeVerifier {
             calls: Arc::clone(&bootstrap_calls),
             fail: false,
         }));
         bootstrap
-            .admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
+            .admit(
+                &mut Workspace::new(),
+                v4_admission(AdmissionOrigin::Explicit),
+                VerifyLevel::Bootstrap,
+                202,
+            )
             .await
             .unwrap();
         bootstrap
-            .admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
+            .admit(
+                &mut Workspace::new(),
+                v4_admission(AdmissionOrigin::Explicit),
+                VerifyLevel::Bootstrap,
+                202,
+            )
             .await
             .unwrap();
         assert_eq!(bootstrap_calls.load(Ordering::SeqCst), 1);
 
         let off_calls = Arc::new(AtomicUsize::new(0));
-        let mut off = PoolIngress::new(
-            Some(DbArm::new(
-                Arc::new(FakeV4Db {
-                    map: Some(tracked_v4_map()),
-                    update_block: 202,
-                }),
-                Arc::new(FakeV4Source {
-                    calls: Arc::new(Mutex::new(Vec::new())),
-                }),
-            )),
-            None,
-        );
-        off.set_verify_level(VerifyLevel::Off);
+        let mut off = v4_ingress(Some(tracked_v4_map()), 202);
         off.set_verifier(Arc::new(FakeVerifier {
             calls: Arc::clone(&off_calls),
             fail: true,
         }));
-        off.admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
-            .await
-            .unwrap();
+        off.admit(
+            &mut Workspace::new(),
+            v4_admission(AdmissionOrigin::Explicit),
+            VerifyLevel::Off,
+            202,
+        )
+        .await
+        .unwrap();
         assert_eq!(off_calls.load(Ordering::SeqCst), 0);
 
         let sparse_calls = Arc::new(AtomicUsize::new(0));
-        let mut sparse = PoolIngress::new(
-            Some(DbArm::new(
-                Arc::new(FakeV4Db {
-                    map: None,
-                    update_block: 202,
-                }),
-                Arc::new(FakeV4Source {
-                    calls: Arc::new(Mutex::new(Vec::new())),
-                }),
-            )),
-            None,
-        );
-        sparse.set_verify_level(VerifyLevel::Strict);
+        let mut sparse = v4_ingress(None, 202);
         sparse.set_verifier(Arc::new(FakeVerifier {
             calls: Arc::clone(&sparse_calls),
             fail: true,
         }));
         sparse
-            .admit_v4_verified(&mut Workspace::new(), v4_params(), 202)
+            .admit(
+                &mut Workspace::new(),
+                v4_admission(AdmissionOrigin::Explicit),
+                VerifyLevel::Strict,
+                202,
+            )
             .await
             .unwrap();
         assert_eq!(sparse_calls.load(Ordering::SeqCst), 0);

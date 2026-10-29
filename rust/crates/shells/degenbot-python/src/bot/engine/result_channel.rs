@@ -11,7 +11,7 @@ use super::{
 };
 use crate::conversion::alloy::{PyI256, PyU256};
 use crate::prelude::*;
-use degenbot_bot::arb_engine::inline_sim::{InlineSwapFamily, SimulatedPathResult};
+use degenbot_bot::arb_engine::{InlineSwapFamily, SimulatedPathResult};
 use pyo3::types::{PyBytes, PyString};
 
 fn address_to_checksum<'py>(py: Python<'py>, a: &Address) -> Bound<'py, PyString> {

@@ -29,8 +29,8 @@ use std::collections::HashMap;
 
 use alloy::primitives::{Address, Bytes, U256};
 use async_trait::async_trait;
-use degenbot::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
-use degenbot_bot::bot_core::pool_builder::builder::build_erc20_metadata;
+use degenbot::bot_core::{ConstructionIo, NoDb, RpcConstruction};
+use degenbot_bot::bot_core::build_erc20_metadata;
 use degenbot_core::errors::ProviderError;
 
 /// Path to the shared ERC-20 fixture (loaded by both this Rust test and the

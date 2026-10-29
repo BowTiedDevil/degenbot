@@ -70,18 +70,13 @@ impl PyArbEngine {
                         ))
                     })?;
 
-            degenbot_bot::bot_core::liquidity_verifier::verify_live_map(
-                &provider,
-                key,
-                pool.as_ref(),
-                block_number,
-            )
-            .await
-            .map_err(|mismatch| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "pool {key} liquidity map verification FAILED: {mismatch}"
-                ))
-            })
+            degenbot_bot::bot_core::verify_live_map(&provider, key, pool.as_ref(), block_number)
+                .await
+                .map_err(|mismatch| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "pool {key} liquidity map verification FAILED: {mismatch}"
+                    ))
+                })
         })
     }
 

@@ -41,9 +41,14 @@ pub mod investigation;
 /// `arb_engine`); the stateless solver math lives in [`crate::solvers`].
 pub use degenbot_bot as bot;
 
-/// Engine-session end DETECTION facts: the typed cause vocabulary, the heartbeat
-/// stall watchdog, and the once-only delivery channel both drivers share.
-pub use degenbot_bot::arb_engine::session_end;
+pub mod session_end {
+    //! Engine-session end DETECTION facts: the typed cause vocabulary, the
+    //! heartbeat stall watchdog, and the once-only delivery channel both drivers
+    //! share.
+    pub use degenbot_bot::arb_engine::{
+        Heartbeat, SessionEndCause, SessionEndDetection, SessionEndFacts, SessionEndPublisher,
+    };
+}
 
 /// ADR-050 / Gap G1: the public Rust driver seam over the
 /// crate-private engine. `cargo add degenbot` reaches the full
@@ -176,37 +181,30 @@ pub use degenbot_workers as workers;
 
 /// The construction door (ADR-078 D2): ONE request ([`PoolConstruction`]), ONE
 /// verdict ([`ConstructionVerdict`]), family as data. The builder verbs and the
-/// construction interior stay engine-side under
-/// `degenbot::bot_core::pool_builder`.
-pub use degenbot_bot::bot_core::pool_builder::construction_door::{
-    ConstructionVerdict, PoolConstruction,
-};
+/// construction interior stay engine-side under [`crate::bot_core`].
+pub use degenbot_bot::bot_core::{ConstructionVerdict, PoolConstruction};
 
 /// The engine session's strategy-plane boot: the one home of the
 /// mint → register → attach → install → start order the composition root drives.
 /// A `cargo add degenbot` consumer boots the hosted strategy plane here — the
 /// facet table, the arm feeds, the head trigger, and the reconciler arrive as
 /// values, so the boot carries no strategy or submission dependency of its own.
-pub use degenbot_bot::bot_core::session_boot::{
+pub use degenbot_bot::bot_core::{
     EngineSession, FacetBoot, HeadTriggerComposer, HostedArmBoot, HostedBoot, SessionBootError,
     SessionConstruction,
 };
 
 /// [`PoolConstruction::V4`]'s caller-supplied identity overrides — the door's
 /// own argument vocabulary.
-pub use degenbot_bot::bot_core::pool_builder::builder::V4PoolBuildOverrides;
+pub use degenbot_bot::bot_core::V4PoolBuildOverrides;
 
 /// The verdict's payloads: the constructed, registered pool (with the fresh
 /// build's identity), or the typed refusal.
-pub use degenbot_bot::bot_core::pool_builder::route::{
-    BuiltIdentity, ConstructedPool, ConstructionRefusal,
-};
+pub use degenbot_bot::bot_core::{BuiltIdentity, ConstructedPool, ConstructionRefusal};
 
-pub use degenbot_bot::bot_core::registration_ledger::{PreBuildIdentity, RefusalKind};
+pub use degenbot_bot::bot_core::{PreBuildIdentity, RefusalKind};
 
-pub use degenbot_bot::bot_core::registration_lifecycle::{
-    run_registration_lifecycle, run_verify_lifecycle,
-};
+pub use degenbot_bot::bot_core::{run_registration_lifecycle, run_verify_lifecycle};
 
 /// The reason a build refused a pool as out of spec — the builder's
 /// `PoolBuilderError::Spec` payload, so a consumer can name the refusal without

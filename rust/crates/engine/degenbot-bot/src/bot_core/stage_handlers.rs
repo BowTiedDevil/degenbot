@@ -86,6 +86,7 @@ pub enum Stage {
 
 /// Every stage hook, in cycle order. The conformance harness asserts an
 /// implementer observes each of these across the scripted lifecycle.
+#[cfg_attr(not(test), expect(dead_code))]
 pub const ALL_STAGES: [Stage; 8] = [
     Stage::StreamingComplete,
     Stage::Resolve,
@@ -124,6 +125,7 @@ impl fmt::Display for Stage {
 /// variant without declaring its successors does not compile — half of the
 /// compile-fails-if-incomplete property.
 #[must_use]
+#[cfg_attr(not(test), expect(dead_code))]
 pub const fn legal_successors(previous: Option<Stage>) -> &'static [Stage] {
     match previous {
         None | Some(Stage::Rewind) => &[Stage::StreamingComplete],
@@ -457,6 +459,7 @@ impl std::error::Error for StageError {}
 /// I6 bookkeeping: at most one rewind in flight; a second request fails
 /// fast instead of interleaving reorg episodes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct RewindTracker {
     /// The open rewind's target epoch, if one is in flight.
     in_flight: Option<Epoch>,
@@ -468,6 +471,7 @@ impl RewindTracker {
     ///
     /// # Errors
     /// [`DoubleRewind`] when a rewind is already in flight.
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn open(&mut self, to_epoch: Epoch) -> Result<Epoch, DoubleRewind> {
         if let Some(in_flight) = self.in_flight {
             return Err(DoubleRewind {
@@ -480,12 +484,14 @@ impl RewindTracker {
     }
 
     /// Complete the in-flight rewind; returns its target epoch.
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn settle(&mut self) -> Option<Epoch> {
         self.in_flight.take()
     }
 
     /// Is a rewind currently in flight?
     #[must_use]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub const fn is_in_flight(&self) -> bool {
         self.in_flight.is_some()
     }
@@ -494,6 +500,7 @@ impl RewindTracker {
 /// A second rewind was requested while one was in flight — I6 forbids it
 /// and the request must fail fast, never queue.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct DoubleRewind {
     /// The rewind already in flight.
     pub in_flight: Epoch,

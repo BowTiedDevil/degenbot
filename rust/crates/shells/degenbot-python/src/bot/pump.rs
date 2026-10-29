@@ -58,7 +58,7 @@ pub(crate) fn start(
 
 /// Awaitable session-end DETECTION FACT over [`EngineDriver::wait_session_end`].
 ///
-/// Resolves the core [`SessionEndCause`](degenbot_bot::arb_engine::session_end::SessionEndCause)
+/// Resolves the core [`SessionEndCause`](degenbot_bot::arb_engine::SessionEndCause)
 /// name once the pump task finishes — cooperative timed exit
 /// (`HOTPATH_SHUTDOWN_MS`), WS stream end, abort, or panic. A consumer that
 /// awaits it AFTER the pump already ended still resolves (the completion is a

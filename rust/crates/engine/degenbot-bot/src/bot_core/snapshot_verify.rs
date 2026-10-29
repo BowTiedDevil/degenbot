@@ -45,6 +45,7 @@ use degenbot_pools::V4PoolState;
 /// Methods are **sync** (the impl blocks internally):
 /// keeping `async` out of the pure layer keeps `snapshot_verify.rs` tokio-free
 /// at the type level.
+#[cfg_attr(not(test), expect(dead_code))]
 pub trait VerifyRpc {
     /// Is on-chain verification configured (`rpc_url` set)? When `false`, the
     /// orchestrator skips both phases — the pure control-flow equivalent of
@@ -85,6 +86,7 @@ pub trait VerifyRpc {
     ///
     /// Returns [`VerifyOrigin::Mismatch`] when the fetched on-chain tick data
     /// disagrees with `tick_data`.
+    #[cfg_attr(test, expect(dead_code))]
     fn verify_v4_snapshot(
         &self,
         state_view: Address,
@@ -100,6 +102,7 @@ pub trait VerifyRpc {
     ///
     /// Returns [`VerifyOrigin::Mismatch`] when the fetched on-chain state
     /// disagrees with `pools`.
+    #[cfg_attr(test, expect(dead_code))]
     fn verify_v4_backfill(
         &self,
         state_view: Address,
@@ -133,6 +136,7 @@ pub trait VerifyRpc {
 /// (a snapshot mismatch short-circuits before the backfill phase runs), or
 /// [`RefusalKind::VerifyNotConfigured`] when verification is opted into but
 /// never configured.
+#[cfg_attr(not(test), expect(dead_code))]
 pub fn run_concentrated_liquidity_verification<R, F1, F2>(
     rpc: &R,
     snapshot_block: Option<u64>,

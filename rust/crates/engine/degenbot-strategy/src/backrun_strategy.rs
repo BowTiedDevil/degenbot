@@ -9,9 +9,7 @@
 use std::collections::HashSet;
 
 use crate::backrun::{Decision, ObserveReason};
-use crate::backrun_engine::{
-    BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate, LaneFamily, PathReject,
-};
+use crate::backrun_engine::{BackrunHopRef, BackrunSolver, LaneCandidate, LaneFamily, PathReject};
 use crate::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
 use crate::execution_context::ExecutionContext;
 use crate::project_candidate;
@@ -27,7 +25,10 @@ use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
 use degenbot_simulation::sim::evm::{read_view_word, ScratchDb, ScratchEvm};
-use degenbot_substrate::connector_index::V2ConnectorIndex;
+use degenbot_substrate::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
+use degenbot_substrate::pool_ingress::{
+    AdmissionOrigin, PoolAdmission, V2Identity, V2State, V3Identity, V3State, V4Identity, V4State,
+};
 use hashbrown::HashMap as HbMap;
 
 use crate::anchored_dfs::{resolve_hop, AnchorPool, DfsCycle, ResolvedHop};
@@ -263,17 +264,29 @@ pub async fn admit_extracted_verified(
                     skip(trace, st.address, "v2-fee");
                     continue;
                 };
-                let Ok(p_id) = solver.admit_v2(&BackrunV2Pool {
-                    address: st.address,
-                    token0,
-                    token1,
-                    reserve0: r0,
-                    reserve1: r1,
-                    fees: degenbot_substrate::executor_hop::V2FeePair::new(
-                        fees.token0,
-                        fees.token1,
-                    ),
-                }) else {
+                let Ok(p_id) = solver
+                    .admit(
+                        rt.ingress(),
+                        PoolAdmission::V2 {
+                            identity: V2Identity {
+                                address: st.address,
+                                token0,
+                                token1,
+                            },
+                            state: V2State {
+                                reserve0: r0,
+                                reserve1: r1,
+                                fees: degenbot_substrate::executor_hop::V2FeePair::new(
+                                    fees.token0,
+                                    fees.token1,
+                                ),
+                            },
+                        },
+                        rt.verify_level(),
+                        seed_block,
+                    )
+                    .await
+                else {
                     skip(trace, st.address, "v2-admit");
                     continue;
                 };
@@ -346,19 +359,26 @@ pub async fn admit_extracted_verified(
                 let crossed = touched_ticks.len();
                 trace.push(StageEvent::AnchorStage { pool: st.address });
                 let p_id = match solver
-                    .admit_v3_replay(
-                        st.address,
-                        token0,
-                        token1,
-                        edge.fee,
-                        spacing,
-                        sqrt,
-                        liq,
-                        tk,
-                        tick_data,
-                        seed_block,
-                        *layout,
+                    .admit(
                         rt.ingress(),
+                        PoolAdmission::V3 {
+                            identity: V3Identity {
+                                address: st.address,
+                                token0,
+                                token1,
+                                fee: edge.fee,
+                                tick_spacing: spacing,
+                            },
+                            state: V3State::Carried {
+                                sqrt_price_x96: sqrt,
+                                liquidity: liq,
+                                tick: tk,
+                            },
+                            slot_layout: *layout,
+                            origin: AdmissionOrigin::Replay { overlay: tick_data },
+                        },
+                        rt.verify_level(),
+                        seed_block,
                     )
                     .await
                 {
@@ -438,21 +458,28 @@ pub async fn admit_extracted_verified(
                     );
                 }
                 let p_id = match solver
-                    .admit_v4_replay(
-                        st.address,
-                        edge.state_view,
-                        edge.token0,
-                        edge.token1,
-                        *pool_id,
-                        edge.fee,
-                        edge.tick_spacing,
-                        edge.hooks,
-                        sqrt,
-                        liq,
-                        tk,
-                        tick_data,
-                        seed_block,
+                    .admit(
                         rt.ingress(),
+                        PoolAdmission::V4 {
+                            identity: V4Identity {
+                                manager: st.address,
+                                state_view: edge.state_view,
+                                pool_id: *pool_id,
+                                token0: edge.token0,
+                                token1: edge.token1,
+                                fee: edge.fee,
+                                tick_spacing: edge.tick_spacing,
+                                hooks: edge.hooks,
+                            },
+                            state: V4State {
+                                sqrt_price_x96: sqrt,
+                                liquidity: liq,
+                                tick: tk,
+                            },
+                            origin: AdmissionOrigin::Replay { overlay: tick_data },
+                        },
+                        rt.verify_level(),
+                        seed_block,
                     )
                     .await
                 {
@@ -629,87 +656,120 @@ async fn admit_hop_pool(
         return Some(id);
     }
     match hop {
-        ResolvedHop::V2(e) => {
-            // The frame-replay scratch serves a connector the replay already
-            // touched; a cold connector misses to the raw RPC. Both a failed
-            // scratch read AND a failed RPC read are admission failures — the
-            // sub-step that refused is traced so a declined hop is legible.
-            let reserves = match view_v2_reserves(scratch, e.address) {
-                Some(r) => r,
-                None => {
-                    match degenbot_rpc::abi::V2Reserves::read(provider, e.address, None).await {
-                        Ok(reserves) => {
-                            let (r0, r1) = (reserves.reserve0, reserves.reserve1);
-                            let (Ok(r0), Ok(r1)) = (u128::try_from(r0), u128::try_from(r1)) else {
-                                hop_admit_fail(
-                                    trace,
-                                    address,
-                                    "reserves-rpc-width",
-                                    "reserves exceed u128",
-                                );
-                                return None;
-                            };
-                            (r0, r1)
-                        }
-                        Err(err) => {
-                            hop_admit_fail(trace, address, "reserves-rpc", &err.to_string());
-                            return None;
-                        }
-                    }
-                }
-            };
-            let (Some(token0), Some(token1)) =
-                (rt.token_addr(e.token0_id), rt.token_addr(e.token1_id))
-            else {
-                hop_admit_fail(trace, address, "token-join", "V2 token id unresolved");
-                return None;
-            };
-            match solver.admit_v2(&BackrunV2Pool {
-                address: e.address,
-                token0,
-                token1,
-                reserve0: reserves.0,
-                reserve1: reserves.1,
-                fees: e.fees,
-            }) {
-                Ok(id) => Some(id),
-                Err(reason) => {
-                    hop_admit_fail(trace, address, "admit-v2", &reason.to_string());
-                    None
-                }
+        ResolvedHop::V2(e) => admit_hop_v2(rt, solver, scratch, provider, e, head, trace).await,
+        ResolvedHop::V3(e) => admit_hop_v3(rt, solver, e, head, trace).await,
+    }
+}
+
+/// Admit one walker V2 hop: the frame-replay scratch serves a connector the
+/// replay already touched, and a cold connector misses to the raw RPC. Both a
+/// failed scratch read AND a failed RPC read are admission failures — the
+/// sub-step that refused is traced so a declined hop is legible.
+async fn admit_hop_v2(
+    rt: &MarketContext,
+    solver: &mut BackrunSolver,
+    scratch: &mut ScratchEvm<ScratchDb<'_>>,
+    provider: &AlloyProvider,
+    edge: &V2Edge,
+    head: u64,
+    trace: &mut StageTrace,
+) -> Option<u64> {
+    let address = edge.address;
+    let reserves = match view_v2_reserves(scratch, address) {
+        Some(r) => r,
+        None => match degenbot_rpc::abi::V2Reserves::read(provider, address, None).await {
+            Ok(reserves) => {
+                let (r0, r1) = (reserves.reserve0, reserves.reserve1);
+                let (Ok(r0), Ok(r1)) = (u128::try_from(r0), u128::try_from(r1)) else {
+                    hop_admit_fail(trace, address, "reserves-rpc-width", "reserves exceed u128");
+                    return None;
+                };
+                (r0, r1)
             }
-        }
-        ResolvedHop::V3(e) => {
-            let (Some(token0), Some(token1)) =
-                (rt.token_addr(e.token0_id), rt.token_addr(e.token1_id))
-            else {
-                hop_admit_fail(trace, address, "token-join", "V3 token id unresolved");
+            Err(err) => {
+                hop_admit_fail(trace, address, "reserves-rpc", &err.to_string());
                 return None;
-            };
-            match solver
-                .admit_v3_full(
-                    provider,
-                    e.address,
+            }
+        },
+    };
+    let (Some(token0), Some(token1)) =
+        (rt.token_addr(edge.token0_id), rt.token_addr(edge.token1_id))
+    else {
+        hop_admit_fail(trace, address, "token-join", "V2 token id unresolved");
+        return None;
+    };
+    match solver
+        .admit(
+            rt.ingress(),
+            PoolAdmission::V2 {
+                identity: V2Identity {
+                    address,
                     token0,
                     token1,
-                    e.fee,
-                    e.tick_spacing,
-                    None,
-                    head,
-                    e.layout,
-                    rt.ingress(),
-                )
-                .await
-            {
-                Ok(id) => Some(id),
-                Err(reject) => {
-                    // The refused step, not one lumped label: a Db read failure,
-                    // an archive RPC failure, a width refusal, and an
-                    // AlreadyRegistered duplicate will not share a line.
-                    hop_admit_fail(trace, address, reject.stage(), &reject.detail());
-                    None
-                }
-            }
+                },
+                state: V2State {
+                    reserve0: reserves.0,
+                    reserve1: reserves.1,
+                    fees: edge.fees,
+                },
+            },
+            rt.verify_level(),
+            head,
+        )
+        .await
+    {
+        Ok(id) => Some(id),
+        Err(reason) => {
+            hop_admit_fail(trace, address, reason.stage(), &reason.detail());
+            None
+        }
+    }
+}
+
+/// Admit one walker V3 hop at head: the ingress reads the pool's `slot0` /
+/// `liquidity` scalars and stages the tick map, so this lane never reads a tick
+/// word.
+async fn admit_hop_v3(
+    rt: &MarketContext,
+    solver: &mut BackrunSolver,
+    edge: &V3Edge,
+    head: u64,
+    trace: &mut StageTrace,
+) -> Option<u64> {
+    let address = edge.address;
+    let (Some(token0), Some(token1)) =
+        (rt.token_addr(edge.token0_id), rt.token_addr(edge.token1_id))
+    else {
+        hop_admit_fail(trace, address, "token-join", "V3 token id unresolved");
+        return None;
+    };
+    match solver
+        .admit(
+            rt.ingress(),
+            PoolAdmission::V3 {
+                identity: V3Identity {
+                    address,
+                    token0,
+                    token1,
+                    fee: edge.fee,
+                    tick_spacing: edge.tick_spacing,
+                },
+                state: V3State::Chain,
+                slot_layout: edge.layout,
+                origin: AdmissionOrigin::Explicit,
+            },
+            rt.verify_level(),
+            head,
+        )
+        .await
+    {
+        Ok(id) => Some(id),
+        Err(reject) => {
+            // The refused step, not one lumped label: a Db read failure, an
+            // archive RPC failure, a width refusal, and an AlreadyRegistered
+            // duplicate will not share a line.
+            hop_admit_fail(trace, address, reject.stage(), &reject.detail());
+            None
         }
     }
 }

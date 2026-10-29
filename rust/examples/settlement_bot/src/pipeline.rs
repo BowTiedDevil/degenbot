@@ -4,11 +4,11 @@
 //! `PathRegistrationPipeline._registration_unit` (the per-path build/verify/
 //! register unit) hand-wired: the D7KMQO policy gate, the W73FVY dup
 //! fast-path, and the prepare→arm→fold sequence. The CONTRACT it coordinates
-//! is the core's (`degenbot::bot::bot_core::registration_ledger`): the typed
-//! [`RegistrationUnitOutcome`](degenbot::bot::bot_core::registration_ledger::RegistrationUnitOutcome)
+//! is the core's (`degenbot::bot_core`): the typed
+//! [`RegistrationUnitOutcome`](degenbot::bot::bot_core::RegistrationUnitOutcome)
 //! vocabulary, the
-//! [`PipelineReport`](degenbot::bot::bot_core::registration_ledger::PipelineReport)
-//! counter fold, and the [`RegistrationLedger`](degenbot::bot::bot_core::registration_ledger::RegistrationLedger)
+//! [`PipelineReport`](degenbot::bot::bot_core::PipelineReport)
+//! counter fold, and the [`RegistrationLedger`](degenbot::bot::bot_core::RegistrationLedger)
 //! memos — this module declares none of them. The at-most-once verify window
 //! is the CORE's too (`degenbot::bot::bot_core::VerifyClaims`, entered by
 //! `EngineDriver::run_*_registration_lifecycle`); this layer keeps only the
@@ -29,11 +29,11 @@ use degenbot::pathfinding::{
 
 use crate::discovery::{BuiltGraph, DiscoveryParams};
 use crate::policy::{HopView, PathPolicy};
-use degenbot::bot::bot_core::registration_ledger::{
+use degenbot::bot::bot_core::{
     HopSignature, OutcomeLabel, PipelineReport, RegistrationLedger, RegistrationOutcome,
     RegistrationUnitOutcome,
 };
-use degenbot::bot_core::verification_retry::RetryPolicy;
+use degenbot::bot_core::RetryPolicy;
 
 /// A path that passed every driver gate and is ready for the registration
 /// stage.

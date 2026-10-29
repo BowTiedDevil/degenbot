@@ -6,13 +6,17 @@ rebuild. The quoter translates companion concepts into the leaf's terms (token
 pair to indices, the hypothetical balances, the block's scaling factors) and maps
 the leaf's verdict.
 
-The stable species adds one verdict of its own: a ComposableStablePool whose
-rates are construction-static may be quoting stale rates, which the pool reports
-as ``StaleRateResult`` rather than passing off as an exact answer.
+Every read answers a :class:`QuoteVerdict` — the computed amount pair plus the
+species' fact about how exact it is — so an answer never travels inside an
+exception. The stable species adds one fact of its own: a ComposableStablePool
+whose rates are construction-static may be quoting stale rates, so its verdict
+is not exact. :func:`answer` is the companions' boundary render, where such a
+verdict becomes ``StaleRateResult``.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING, cast
 
 from degenbot.exceptions.pool import StaleRateResult
@@ -24,6 +28,43 @@ if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
     from degenbot.types import Pool
     from degenbot.types.rpc_types import BlockIdentifier
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class QuoteVerdict:
+    """One computed swap answer and the species' fact about how exact it is.
+
+    ``amount_in`` and ``amount_out`` are the leaf's computed pair;
+    ``stale_rates`` states that the answer rests on rates no live provider
+    refreshed. An exact answer carries ``stale_rates=False``, so trust reads off
+    the value rather than off an exception wrapped around the amounts.
+    """
+
+    amount_in: int
+    amount_out: int
+    stale_rates: bool = False
+
+
+def answer(verdict: QuoteVerdict, *, exact_input: bool) -> int:
+    """Answer a companion swap verb with the amount that verb names.
+
+    The companions' ``calculate_tokens_*`` verbs are the public boundary and
+    keep returning an ``int``. A quote that is not exact is therefore refused
+    here, with the computed amounts readable on the exception — the contract
+    callers catch (README documents the ``except StaleRateResult`` pattern). The
+    quoter states the caveat as a value; rendering it is this seam's policy.
+
+    Returns:
+        The amount the verb answers with: an exact-input request is answered with
+        the output amount, an exact-output request with the input amount.
+
+    Raises:
+        StaleRateResult: If the quote rests on construction-static rates.
+
+    """
+    if verdict.stale_rates:
+        raise StaleRateResult(amount_in=verdict.amount_in, amount_out=verdict.amount_out)
+    return verdict.amount_out if exact_input else verdict.amount_in
 
 
 class BalancerSwapQuoter:
@@ -40,11 +81,11 @@ class BalancerSwapQuoter:
         token_out: Erc20Token,
         quantity: int,
         override_state: BalancerV2PoolState | None = None,
-    ) -> int:
+    ) -> QuoteVerdict:
         """Calculate the `token_out` amount for an exact input of `quantity`.
 
         Returns:
-            The computed output amount.
+            The computed verdict (this leaf's answers are exact).
 
         """
         amount_out = cast(
@@ -56,8 +97,7 @@ class BalancerSwapQuoter:
                 override_balances=self._override_balances(override_state),
             ),
         )
-        self._verdict(amount_in=quantity, amount_out=amount_out)
-        return amount_out
+        return self._verdict(amount_in=quantity, amount_out=amount_out)
 
     def exact_out(
         self,
@@ -65,11 +105,11 @@ class BalancerSwapQuoter:
         token_out: Erc20Token,
         quantity: int,
         override_state: BalancerV2PoolState | None = None,
-    ) -> int:
+    ) -> QuoteVerdict:
         """Calculate the `token_in` amount required to take `quantity` of `token_out` out.
 
         Returns:
-            The computed input amount.
+            The computed verdict (this leaf's answers are exact).
 
         """
         amount_in = cast(
@@ -81,8 +121,7 @@ class BalancerSwapQuoter:
                 override_balances=self._override_balances(override_state),
             ),
         )
-        self._verdict(amount_in=amount_in, amount_out=quantity)
-        return amount_in
+        return self._verdict(amount_in=amount_in, amount_out=quantity)
 
     @staticmethod
     def _override_balances(override_state: BalancerV2PoolState | None) -> list[int] | None:
@@ -94,8 +133,19 @@ class BalancerSwapQuoter:
         """
         return list(override_state.balances) if override_state is not None else None
 
-    def _verdict(self, *, amount_in: int, amount_out: int) -> None:
-        """Apply this species' verdict to a computed answer (the weighted leaf has none)."""
+    def _verdict(  # ruff:ignore[no-self-use]
+        self,
+        *,
+        amount_in: int,
+        amount_out: int,
+    ) -> QuoteVerdict:
+        """State this species' verdict on a computed answer (the weighted leaf has none).
+
+        Returns:
+            The verdict: the computed pair, exact.
+
+        """
+        return QuoteVerdict(amount_in=amount_in, amount_out=amount_out)
 
 
 class BalancerStableSwapQuoter(BalancerSwapQuoter):
@@ -103,7 +153,8 @@ class BalancerStableSwapQuoter(BalancerSwapQuoter):
 
     A ComposableStablePool's rates move with yield accrual, so a quote against
     construction-static rates is not an exact answer — the leaf still computes it,
-    and this quoter reports it as a ``StaleRateResult`` instead of returning it.
+    and this quoter states the stale-rate fact on the verdict rather than
+    refusing the answer itself.
     """
 
     def __init__(
@@ -130,11 +181,12 @@ class BalancerStableSwapQuoter(BalancerSwapQuoter):
         quantity: int,
         override_state: BalancerV2PoolState | None = None,
         block_identifier: BlockIdentifier | None = None,
-    ) -> int:
+    ) -> QuoteVerdict:
         """Calculate the `token_out` amount for an exact input of `quantity`.
 
         Returns:
-            The computed output amount.
+            The computed verdict, carrying the stale-rate fact when this pool's
+            rates are construction-static.
 
         """
         amount_out = cast(
@@ -147,8 +199,7 @@ class BalancerStableSwapQuoter(BalancerSwapQuoter):
                 override_scaling_factors=self._scaling_factors(block_identifier),
             ),
         )
-        self._verdict(amount_in=quantity, amount_out=amount_out)
-        return amount_out
+        return self._verdict(amount_in=quantity, amount_out=amount_out)
 
     def exact_out(
         self,
@@ -157,11 +208,12 @@ class BalancerStableSwapQuoter(BalancerSwapQuoter):
         quantity: int,
         override_state: BalancerV2PoolState | None = None,
         block_identifier: BlockIdentifier | None = None,
-    ) -> int:
+    ) -> QuoteVerdict:
         """Calculate the `token_in` amount required to take `quantity` of `token_out` out.
 
         Returns:
-            The computed input amount.
+            The computed verdict, carrying the stale-rate fact when this pool's
+            rates are construction-static.
 
         """
         amount_in = cast(
@@ -174,8 +226,7 @@ class BalancerStableSwapQuoter(BalancerSwapQuoter):
                 override_scaling_factors=self._scaling_factors(block_identifier),
             ),
         )
-        self._verdict(amount_in=amount_in, amount_out=quantity)
-        return amount_in
+        return self._verdict(amount_in=amount_in, amount_out=quantity)
 
     def _scaling_factors(self, block_identifier: BlockIdentifier | None) -> list[int] | None:
         """Resolve the block's scaling factors for the leaf.
@@ -189,12 +240,16 @@ class BalancerStableSwapQuoter(BalancerSwapQuoter):
             return None
         return list(self._resolve_scaling_factors(block_identifier))
 
-    def _verdict(self, *, amount_in: int, amount_out: int) -> None:
-        """Report a quote that rests on construction-static rates.
+    def _verdict(self, *, amount_in: int, amount_out: int) -> QuoteVerdict:
+        """State whether this pool's quote rests on construction-static rates.
 
-        Raises:
-            StaleRateResult: If this pool's rates cannot be refreshed.
+        Returns:
+            The verdict: the computed pair, carrying the stale-rate fact when this
+            pool's rates are construction-static.
 
         """
-        if self._stale_rates:
-            raise StaleRateResult(amount_in=amount_in, amount_out=amount_out)
+        return QuoteVerdict(
+            amount_in=amount_in,
+            amount_out=amount_out,
+            stale_rates=self._stale_rates,
+        )

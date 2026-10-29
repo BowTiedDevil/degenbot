@@ -203,7 +203,7 @@ impl BackrunStrategyBoot {
     /// The verification policy selected by this strategy facet.
     #[must_use]
     pub fn verify_level(&self) -> degenbot_substrate::pool_ingress::VerifyLevel {
-        self.ingress().verify_level()
+        self.kit.verify_level()
     }
 }
 
@@ -284,6 +284,7 @@ impl BackrunBootResources {
             provider
                 .as_ref()
                 .map(|provider| Arc::new(AlloyTickWordSource::new(Arc::clone(provider))) as _),
+            provider.clone(),
             cfg.verify_ticks,
             provider
                 .as_ref()

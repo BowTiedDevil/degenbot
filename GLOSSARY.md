@@ -1158,6 +1158,14 @@ side's amount and zero for the side genuinely unconsumed.
 _Avoid_: decoding `exc.args` positionally; comparing a kind by identity (the seam builds a
 fresh instance per refusal, so compare by value); fabricating `IncompleteSwap(0, 0)`.
 
+**QuoteVerdict**:
+A leaf quoter's answer: the computed `amount_in`/`amount_out` pair plus the species' fact
+about how exact it is (`stale_rates` for a Balancer stable pool whose rates no live
+provider refreshed). An exact answer carries no fact, so trust reads off the value
+instead of off an exception wrapped around the amounts. The companions'
+`calculate_tokens_*` verbs are the boundary that renders an inexact verdict — as
+`StaleRateResult` — and keep returning `int`.
+
 **SwapQuoter**:
 The Python companion's per-family owner of the *whole* swap round trip — one object per
 family, reached through the companion's `swap_quoter` read, that turns a companion-level
@@ -1330,7 +1338,7 @@ process).
 The live-process view of the plan, projected budget, and census rows.
 
 **Bot orchestrator**:
-`bot_core::bot::Bot` — the per-chain pure-Rust facade that owns the shared
+`degenbot_bot::bot_core::Bot` — the per-chain pure-Rust facade that owns the shared
 `BotState` handle, the event bus, and the construction-I/O attachment, so the
 standalone-Rust bot and the PyBot driver drive the same core.
 _Avoid_: confusing it with the `PyBot` adapter (the thin PyO3 shell) or with

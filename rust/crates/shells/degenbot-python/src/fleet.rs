@@ -302,7 +302,7 @@ pub fn set_posture_policy(patch: &Bound<'_, PyDict>) -> PyResult<Py<PyDict>> {
         // Retune wake gap: a live retune can change the
         // admission guard with no message in flight. Wake every parked host
         // so the fleet re-reads the owner now, not at the backstop bound.
-        degenbot_bot::arb_engine::fleet_wake::wake_hosts();
+        degenbot_bot::arb_engine::wake_hosts();
     }
 
     effective_policy_dict(py, effective, owner.current())

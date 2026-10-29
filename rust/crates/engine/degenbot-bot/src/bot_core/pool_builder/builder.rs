@@ -490,6 +490,7 @@ pub async fn fetch_v3_immutable_data(
 
 /// Camelot V2 pool fee configuration read from the pool (ADR-005).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct CamelotState {
     /// The pool's `stableSwap()` flag.
     pub stable: bool,
@@ -507,6 +508,7 @@ pub struct CamelotState {
 /// # Errors
 ///
 /// Returns a [`ProviderError`] when any of the four reads fails.
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn fetch_camelot_state(
     read: &impl ContractRead,
     address: &Address,
@@ -916,6 +918,7 @@ pub async fn build_aerodrome_v2(
 /// the pool contract address (bytes 0..20), `specialization` (uint16, 20..22)
 /// and `nonce` (bytes 22..32).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(dead_code)]
 pub struct DecodedBalancerPoolId {
     /// The pool contract address (low 20 bytes of the identifier).
     pub pool_address: Address,
@@ -927,6 +930,7 @@ pub struct DecodedBalancerPoolId {
 
 /// Decode a 32-byte Balancer V2 pool identifier.
 #[must_use]
+#[expect(dead_code)]
 pub fn decode_balancer_pool_id(raw: &[u8; 32]) -> DecodedBalancerPoolId {
     DecodedBalancerPoolId {
         pool_address: Address::from_slice(&raw[0..20]),

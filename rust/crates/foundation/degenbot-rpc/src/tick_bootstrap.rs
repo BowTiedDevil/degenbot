@@ -8,7 +8,7 @@
 //! no GIL. The `degenbot-python` shell constructs the same impl over a
 //! `PyBotIo`'s native provider (`make_tick_bootstrap_rpc`); the bot core's
 //! live-miss source is the same adapter over its `ConstructionIo`
-//! [`TickWordTransport`] impl (`bot_core::pool_builder::tick_source`).
+//! [`TickWordTransport`] impl in `degenbot_bot`'s pool-builder tick source.
 //!
 //! ## One choreography, two transports
 //!

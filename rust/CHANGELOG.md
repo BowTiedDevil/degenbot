@@ -6,6 +6,52 @@ All notable changes to the Rust workspace crates are recorded here.
 
 ### Changed
 
+- **ADR-084 D2 (the engine's doors):** `degenbot-bot`'s two capability homes
+  are curated surfaces. Every `bot_core` / `arb_engine` submodule is
+  `pub(crate)`; the items the drivers use are re-exported at those two module
+  level, so a consumer names ONE segment below the door
+  (`degenbot_bot::bot_core::Bot`, `degenbot::bot::arb_engine::EngineDriver`)
+  and never an implementation module beneath it. The external-import census is
+  pinned by `architecture_gates::no_bot_core_or_arb_engine_deep_paths`, which
+  covers every member crate's sources, test and example targets included.
+  `degenbot_bot::fleet_intake` and `degenbot::session_end` stand as module
+  doors in front of the crate-private trees. The removed published paths, with
+  their replacements:
+
+  | Was | Is |
+  | --- | --- |
+  | `degenbot_bot::bot_core::pool_builder::builder::*` | `degenbot_bot::bot_core::*` (the build verbs, `PoolFamily`, `BalancerFamily`, `PoolBuilderError`, `V4BuildResult`, `V4PoolBuildIdentity`, `V4PoolBuildOverrides`, `derive_hook_flags`) |
+  | `degenbot_bot::bot_core::pool_builder::construction_door::*` | `degenbot_bot::bot_core::{PoolConstruction, ConstructionVerdict}` |
+  | `degenbot_bot::bot_core::pool_builder::route::*` | `degenbot_bot::bot_core::{BuiltIdentity, ConstructedPool, ConstructionRefusal, ConstructionRoute, V3RouteInputs}` |
+  | `degenbot_bot::bot_core::pool_builder::curve_choreography::fetch_curve_balances` | `degenbot_bot::bot_core::fetch_curve_balances` |
+  | `degenbot_bot::bot_core::pool_builder::parity::IdentityDivergence` | `degenbot_bot::bot_core::IdentityDivergence` |
+  | `degenbot_bot::bot_core::construction_io::*` | `degenbot_bot::bot_core::*` (`ConstructionIo`, the two adapters, `DbConstruction`/`RpcConstruction`, `BlockSelector`, `PacedRead`, `TickFetchPace`) |
+  | `degenbot_bot::bot_core::registration::*` | `degenbot_bot::bot_core::*` (`parse_address_str`, `tick_rows`, `ensure_registration_fleet_hosted`, `V4RegisteredEcho`) |
+  | `degenbot_bot::bot_core::registration_ledger::*` | `degenbot_bot::bot_core::*` |
+  | `degenbot_bot::bot_core::registration_lifecycle::*` | `degenbot_bot::bot_core::*` |
+  | `degenbot_bot::bot_core::build_register::*` | `degenbot_bot::bot_core::*` |
+  | `degenbot_bot::bot_core::bot::*` | `degenbot_bot::bot_core::*` (`Bot`, `SnapshotOpenError`, `CloseSnapshotTxError`, `BlockStreamError`) |
+  | `degenbot_bot::bot_core::reorg_coordinator::*` | `degenbot_bot::bot_core::*` |
+  | `degenbot_bot::bot_core::liquidity_verifier::verify_live_map` | `degenbot_bot::bot_core::verify_live_map` |
+  | `degenbot_bot::bot_core::pool_ops::*` | `degenbot_bot::bot_core::*` (the calc/simulate/encode entries + `SwapOpError`) |
+  | `degenbot_bot::bot_core::refresh::*` | `degenbot_bot::bot_core::*` (`refresh_pool`, `RefreshError`, `RefreshOutcome`) |
+  | `degenbot_bot::bot_core::session_boot::*` | `degenbot_bot::bot_core::*` |
+  | `degenbot_bot::bot_core::verification_retry::*` | `degenbot_bot::bot_core::*` (`RetryPolicy`, `retry_policy_from_config`, `retry_verification_call`, `is_retryable`) |
+  | `degenbot_bot::bot_core::stage_telemetry::StageTelemetry` | `degenbot_bot::bot_core::StageTelemetry` |
+  | `degenbot_bot::arb_engine::lifecycle::PathRegistrationError` | `degenbot_bot::arb_engine::PathRegistrationError` |
+  | `degenbot_bot::arb_engine::fleet_status::*` | `degenbot_bot::arb_engine::*` (`fleet_runtime_status`, `FleetBinding`, `FleetProfileSummary`) |
+  | `degenbot_bot::arb_engine::fleet_wake::wake_hosts` | `degenbot_bot::arb_engine::wake_hosts` |
+  | `degenbot_bot::arb_engine::inline_sim::*` | `degenbot_bot::arb_engine::*` |
+  | `degenbot_bot::arb_engine::session_end::*` | `degenbot_bot::arb_engine::*` (umbrella: `degenbot::session_end::*`) |
+  | `degenbot_bot::arb_engine::fleet_intake::*` | `degenbot_bot::fleet_intake::*` |
+  | `degenbot_bot::arb_engine::{driver, engine_stages, path_info, path_objects}::*` | `degenbot_bot::arb_engine::*` |
+
+  Two crate-owned labs needed the tree itself rather than a consumer door: the
+  backrun-resolver lab is now an in-crate `#[cfg(test)]` module
+  (`bot_core/backrun_resolver_tests.rs`) because an integration target cannot
+  see `pub(crate)`, and the observability snapshot lab reaches
+  `StageTelemetry` through the door (ADR-084 D2(b), decided per lab).
+
 - **ADR-084 D7 (the umbrella construction surface):** the umbrella's
   construction re-exports are pruned to the ADR-078 D2 door — `PoolConstruction`,
   `ConstructionVerdict`, and the types those two publicly name

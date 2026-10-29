@@ -160,18 +160,21 @@ impl PumpTelemetry {
 
     /// Number of headers seen since construction (exposed for tests).
     #[must_use]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn header_count(&self) -> u64 {
         self.header_count
     }
 
     /// Number of applied logs seen since construction (exposed for tests).
     #[must_use]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn log_count(&self) -> u64 {
         self.log_count
     }
 
     /// Number of periodic stats logs emitted (exposed for tests).
     #[must_use]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn stat_emissions(&self) -> u64 {
         self.stat_emissions
     }

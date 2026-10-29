@@ -808,7 +808,7 @@ Balancer V2 stable pools (MetaStablePool and ComposableStablePool) use the Stabl
 Two pool shapes share the same `BalancerV2StablePool` interface:
 
 - **MetaStablePool** — a 2-token stable pool with no BPT token and near-static rates: exact swap math needs no rate provider and no extra I/O.
-- **ComposableStablePool** — a multi-token stable pool that includes its own BPT token; time-varying rates (e.g., bb-a-* yield tokens) require a live `BalancerRateProvider`, and without one a swap call raises `StaleRateResult` (the approximate result is still readable on the exception).
+- **ComposableStablePool** — a multi-token stable pool that includes its own BPT token; time-varying rates (e.g., bb-a-* yield tokens) require a live `BalancerRateProvider`, and without one a swap call raises `StaleRateResult` (the approximate result is still readable on the exception). The pool's swap verbs are the boundary that refuses an approximate answer; the swap math still computes it, and the quoter reports it as an inexact verdict.
 
 <!-- invisible-code-block: python
 from degenbot._ffi import Bot
@@ -909,8 +909,8 @@ amount_out = meta_pool.calculate_tokens_out_from_tokens_in(
 assert amount_out == 908727110808623404  # ≈ 0.9087 wstETH per WETH @ 1.1 rate
 
 # ComposableStablePool: time-varying rates require a live rate provider;
-# without one the call raises StaleRateResult (the approximate result is
-# still readable on the exception).
+# without one the call raises StaleRateResult — the swap verbs refuse an
+# approximate answer and leave the computed amounts readable on the exception.
 assert isinstance(comp_pool, BalancerV2StablePool)
 assert [t.symbol for t in comp_pool.tokens] == ['TUSD', '50TUSD50USDC', 'USDC']
 assert comp_pool.fee == Fraction(3, 10000)         # 0.03%
@@ -922,7 +922,7 @@ try:
         token_in_quantity=10**18,
     )
 except StaleRateResult as e:
-    # StaleRateResult wraps the approximate result so callers can still read it
+    # StaleRateResult carries the approximate result so callers can still read it
     assert e.amount_in == 10**18
     assert e.amount_out == 1001103
 ```

@@ -17,7 +17,6 @@ impl BlockPump {
     /// observes until
     /// both a newHeads notification and a log for the same block arrive,
     /// confirming the logs subscription is live and caught up.
-    #[expect(clippy::missing_errors_doc)]
     pub async fn subscribe(
         rpc_url: &str,
         bot: Arc<Bot>,
@@ -96,6 +95,7 @@ impl BlockPump {
     ///
     /// Panics if `subscribe_state.combined_stream` is `None` (i.e., `subscribe()`
     /// was not called first).
+    #[cfg_attr(not(test), expect(dead_code))]
     pub async fn resume_from_subscribe(&mut self, subscribe_state: SubscribeState) {
         #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let combined = subscribe_state

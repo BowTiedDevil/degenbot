@@ -12,7 +12,7 @@
 use super::{Arc, PyArbEngine, StrategyHostError, UnconfiguredStrategyError, UnknownStrategyError};
 use crate::prelude::*;
 
-use degenbot_bot::bot_core::session_boot::{
+use degenbot_bot::bot_core::{
     EngineSession, FacetBoot, HeadTriggerComposer, HostedArmBoot, HostedBoot, SessionBootError,
     SessionConstruction,
 };

@@ -372,7 +372,7 @@ mod _ffi {
     use crate::pathfinding::{build_path_graph, PathGraph};
 
     // S12: the core registration outcome ledger + its bounded tag vocabulary
-    // (`degenbot_bot::bot_core::registration_ledger`), projected for the
+    // (`degenbot_bot::bot_core`), projected for the
     // Python registration pipeline. The tags are exported so Python builds its
     // label enum FROM the core vocabulary rather than re-declaring it.
     #[pymodule_export]

@@ -17,12 +17,15 @@ use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
-use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
+use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, LaneFamily};
 use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains};
 use degenbot_strategy::frame_pipeline::MarketContext;
 use degenbot_strategy::ETHEREUM_WETH as WETH;
 use degenbot_substrate::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_substrate::executor_hop::{V2FeePair, V2Fees};
+use degenbot_substrate::pool_ingress::{
+    PoolAdmission, PoolIngress, V2Identity, V2State, VerifyLevel,
+};
 use hashbrown::HashMap as HbMap;
 
 fn v2_fee_pair() -> V2FeePair {
@@ -128,6 +131,7 @@ fn market_context(
         registry,
         db_arm,
         None,
+        None,
         degenbot_substrate::pool_ingress::VerifyLevel::default(),
         None,
     );
@@ -219,15 +223,26 @@ fn chain_refs(anchor_id: u64, mid_id: u64) -> Vec<BackrunHopRef> {
 }
 
 fn admit_mid(solver: &mut BackrunSolver) -> u64 {
-    solver
-        .admit_v2(&BackrunV2Pool {
-            address: MID,
-            token0: TOK,
-            token1: WETH,
-            reserve0: 2_000,
-            reserve1: 400_000,
-            fees: v2_fee_pair(),
-        })
+    // The entry is async and these fixtures are synchronous; a bare ingress
+    // suffices because a pair registers without a staging arm.
+    degenbot_core::runtime::get_runtime()
+        .block_on(solver.admit(
+            &PoolIngress::new(None, None),
+            PoolAdmission::V2 {
+                identity: V2Identity {
+                    address: MID,
+                    token0: TOK,
+                    token1: WETH,
+                },
+                state: V2State {
+                    reserve0: 2_000,
+                    reserve1: 400_000,
+                    fees: v2_fee_pair(),
+                },
+            },
+            VerifyLevel::default(),
+            1,
+        ))
         .unwrap()
 }
 

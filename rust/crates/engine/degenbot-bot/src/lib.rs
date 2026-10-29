@@ -247,7 +247,7 @@ pub mod instruments {
     }
 
     /// no-op (FF-T5 fleet profile metric)
-    pub fn note_fleet_profile(_summary: &crate::arb_engine::fleet_status::FleetProfileSummary) {}
+    pub fn note_fleet_profile(_summary: &crate::arb_engine::FleetProfileSummary) {}
 
     /// The census vocabulary, shared with the otel build (data-only here;
     /// the default build compiles zero metrics code).
@@ -270,11 +270,13 @@ pub mod instruments {
         degenbot_substrate::telemetry_port::register(None);
     }
 }
-pub mod allocator_ctrl;
+pub(crate) mod allocator_ctrl;
 pub mod arb_engine;
-/// The PRG-3 intake surface: the documented single re-export the
-/// pyo3 leaf depends on — no other `arb_engine` module is public surface.
-pub use arb_engine::fleet_intake;
+/// The PRG-3 intake surface: the one intake door a driver names, in front of
+/// the crate-private `arb_engine::fleet_intake` tree.
+pub mod fleet_intake {
+    pub use crate::arb_engine::fleet_intake::*;
+}
 pub use degenbot_substrate::connector_index;
 pub mod failure_policy;
 pub mod hosted_sources;

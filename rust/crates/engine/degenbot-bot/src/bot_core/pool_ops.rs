@@ -52,6 +52,7 @@ pub enum SwapOpError {
 /// The concentrated liquidity 5-tuple payload the staged fetch-sim seams surface — the legacy
 /// `(amount0, amount1, sqrt_price_x96, liquidity, tick)` tuple fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct ConcentratedLiquiditySwapPayload {
     /// Absolute token0 amount moved.
     pub amount0: U256,
@@ -71,6 +72,7 @@ pub struct ConcentratedLiquiditySwapPayload {
 /// `UnsupportedFamily` → the exact-output family-gap error (the exact-output
 /// seam) or `None` (the exact-input seam).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub enum StagedSwapOutcome {
     /// The swap computed; payload per the legacy 5-tuple.
     Computed(ConcentratedLiquiditySwapPayload),
@@ -361,6 +363,7 @@ pub fn calculate_tokens_in_for_pair(
 /// the missing words first, then runs the disarmed sim and maps the concentrated liquidity
 /// payload to the legacy 5-tuple fields.
 #[must_use]
+#[cfg_attr(not(test), expect(dead_code))]
 pub fn simulate_swap_with_fetch(
     state: &StateLock<BotState>,
     pool_id: u64,

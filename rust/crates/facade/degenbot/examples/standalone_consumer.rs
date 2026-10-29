@@ -62,12 +62,12 @@ use revm::state::AccountInfo;
 // via the umbrella (no pyo3). `FailingConstruction` is a module-level RPC
 // stub (never actually called — the standalone example is no-network) used
 // to prove the `ConstructionIo` seam + probe/dispatch compile and run.
-use degenbot::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
-use degenbot::bot_core::pool_builder::builder::{
+use degenbot::bot_core::{
     build_aerodrome_v2, build_balancer_stable, build_balancer_weighted, build_curve_pool,
     build_erc20_metadata, build_v2, build_v3, build_v4, probe_pool_type, resolve_v4_identity,
     PoolBuilderError, V4PoolBuildIdentity, V4PoolBuildOverrides,
 };
+use degenbot::bot_core::{ConstructionIo, NoDb, RpcConstruction};
 use degenbot::errors::ProviderError;
 use degenbot::rpc::provider::EthBlock;
 

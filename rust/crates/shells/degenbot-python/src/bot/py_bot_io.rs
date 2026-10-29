@@ -33,7 +33,7 @@
 //! block the runtime, reacquire. Never `block_on` while holding the GIL.
 //!
 //! [PoolIO]: degenbot/builders/pool_io.py
-//! [ConstructionIo]: degenbot_bot::bot_core::construction_io
+//! [ConstructionIo]: degenbot_bot::bot_core::ConstructionIo
 
 use alloy::primitives::U256;
 use pyo3::prelude::*;
@@ -44,8 +44,8 @@ use std::sync::Arc;
 use crate::provider::AlloyProvider;
 use crate::rpc::provider::PyAlloyProvider;
 use crate::rpc::revert_to_pyerr;
-use degenbot_bot::bot_core::construction_io::{BlockSelector, PacedRead};
-use degenbot_bot::bot_core::pool_builder::builder::BalancerFamily;
+use degenbot_bot::bot_core::BalancerFamily;
+use degenbot_bot::bot_core::{BlockSelector, PacedRead};
 use degenbot_core::errors::ProviderError;
 use degenbot_core::runtime::get_runtime;
 use degenbot_rpc::abi::{
@@ -71,7 +71,7 @@ fn address_lower_hex(a: alloy::primitives::Address) -> String {
 /// [`BalancerFamily`] that the `getNormalizedWeights()` /
 /// `getAmplificationParameter()` probe resolves.
 ///
-/// [`BalancerFamily`] (`degenbot_bot::bot_core::pool_builder::builder`)
+/// [`BalancerFamily`] (`degenbot_bot::bot_core::BalancerFamily`)
 /// stays the semantic owner; this mirrors exactly its two discriminants, so a
 /// builder call site compares an enum member instead of string-matching the
 /// wire. [`balancer_family_to_py`]`s `match` is exhaustive over the core enum,
@@ -198,8 +198,7 @@ pub struct PyBotIo {
     /// Interior-mutable (`Mutex`) because `PyBotIo` is constructed before the
     /// `ConstructionIo` is attached (the `Bot.__init__` sequence: construct
     /// `PyBot` → attach I/O → construct `PyBotIo` → attach I/O to `PyBotIo`).
-    construction_io:
-        parking_lot::Mutex<Option<Arc<degenbot_bot::bot_core::construction_io::ConstructionIo>>>,
+    construction_io: parking_lot::Mutex<Option<Arc<degenbot_bot::bot_core::ConstructionIo>>>,
 }
 
 #[pymethods]
@@ -246,7 +245,7 @@ impl PyBotIo {
                 // (the read-only `open` would reject the write-back).
                 match py.detach(|| degenbot_db::DegenbotDb::open_for_writes(&path_buf)) {
                     Ok((db, _state)) => {
-                        use degenbot_bot::bot_core::construction_io::{
+                        use degenbot_bot::bot_core::{
                             AlloyRpcConstruction, ConstructionIo, DegenbotDbConstruction,
                         };
                         Some(std::sync::Arc::new(ConstructionIo::new(
@@ -552,10 +551,7 @@ impl PyBotIo {
         }
         py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::builder::fetch_erc20_metadata_batch(
-                    &io, &addrs,
-                )
-                .await
+                degenbot_bot::bot_core::fetch_erc20_metadata_batch(&io, &addrs).await
             })
         })
     }
@@ -733,10 +729,7 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::curve_choreography::fetch_curve_balances(
-                    &io, pool, count, block_num,
-                )
-                .await
+                degenbot_bot::bot_core::fetch_curve_balances(&io, pool, count, block_num).await
             })
         });
         let balances = match r {
@@ -911,7 +904,7 @@ impl PyBotIo {
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<u8> {
-        use degenbot_bot::bot_core::pool_builder::builder::{PoolBuilderError, PoolFamily};
+        use degenbot_bot::bot_core::{PoolBuilderError, PoolFamily};
 
         // The construction-IO / address / block conversions `expect`: for the
         // alloy-backed Offline/RPC providers the builder dispatches through,
@@ -932,10 +925,7 @@ impl PyBotIo {
         let family = py
             .detach(|| {
                 get_runtime().block_on(async move {
-                    degenbot_bot::bot_core::pool_builder::builder::probe_pool_type(
-                        &io, addr, block_num,
-                    )
-                    .await
+                    degenbot_bot::bot_core::probe_pool_type(&io, addr, block_num).await
                 })
             })
             .map_err(|e| match e {
@@ -1459,13 +1449,8 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let owning = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::builder::fetch_balancer_factory(
-                    &io,
-                    &pool,
-                    &candidates,
-                    block_num,
-                )
-                .await
+                degenbot_bot::bot_core::fetch_balancer_factory(&io, &pool, &candidates, block_num)
+                    .await
             })
         });
         Ok(owning.map(address_lower_hex))
@@ -1497,10 +1482,7 @@ impl PyBotIo {
         let block_num = self.resolve_block(py, block)?;
         let r = py.detach(|| {
             get_runtime().block_on(async move {
-                degenbot_bot::bot_core::pool_builder::builder::probe_balancer_type(
-                    &io, &addr, block_num,
-                )
-                .await
+                degenbot_bot::bot_core::probe_balancer_type(&io, &addr, block_num).await
             })
         });
         let family = match r {
@@ -1546,9 +1528,7 @@ impl PyBotIo {
     /// `None` for bare test fixtures that construct `PyBotIo(provider=…)` without
     /// a `Bot` (the methods then degrade to the no-DB / error shape).
     #[must_use]
-    fn construction_io(
-        &self,
-    ) -> Option<std::sync::Arc<degenbot_bot::bot_core::construction_io::ConstructionIo>> {
+    fn construction_io(&self) -> Option<std::sync::Arc<degenbot_bot::bot_core::ConstructionIo>> {
         self.construction_io.lock().clone()
     }
 
@@ -1559,8 +1539,8 @@ impl PyBotIo {
     /// fallback the builder-choreography port retires) error here.
     pub(crate) fn required_construction_io(
         &self,
-    ) -> PyResult<std::sync::Arc<degenbot_bot::bot_core::construction_io::ConstructionIo>> {
-        use degenbot_bot::bot_core::construction_io::{AlloyRpcConstruction, ConstructionIo, NoDb};
+    ) -> PyResult<std::sync::Arc<degenbot_bot::bot_core::ConstructionIo>> {
+        use degenbot_bot::bot_core::{AlloyRpcConstruction, ConstructionIo, NoDb};
         if let Some(io) = self.construction_io() {
             return Ok(io);
         }
@@ -1648,7 +1628,7 @@ fn extract_block_selector(block: Option<&Bound<'_, PyAny>>) -> PyResult<Option<B
 /// [`ConstructionIo`] (the seam that owns the RPC clock).
 fn resolve_block_tag(
     py: Python<'_>,
-    io: &Arc<degenbot_bot::bot_core::construction_io::ConstructionIo>,
+    io: &Arc<degenbot_bot::bot_core::ConstructionIo>,
     selector: BlockSelector,
 ) -> PyResult<u64> {
     let io = Arc::clone(io);
@@ -1661,7 +1641,7 @@ fn resolve_block_tag(
 /// with no RPC; a typed tag reads the head.
 pub(crate) fn resolve_block_against(
     py: Python<'_>,
-    io: &Arc<degenbot_bot::bot_core::construction_io::ConstructionIo>,
+    io: &Arc<degenbot_bot::bot_core::ConstructionIo>,
     block: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Option<u64>> {
     let Some(selector) = extract_block_selector(block)? else {

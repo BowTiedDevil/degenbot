@@ -27,10 +27,6 @@ use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::EpochDelta;
 use degenbot_substrate::{log_dispatcher, BotState};
 
-// The lifecycle cluster's typed errors — re-exported from here so the
-// shell's `degenbot_bot::bot_core::bot::*Error` import paths hold.
-pub use crate::bot_core::lifecycle::{BlockStreamError, CloseSnapshotTxError, SnapshotOpenError};
-
 /// The per-chain orchestrator: a thin facade over a shared
 /// [`BotState`] (the pure-data registries/swap math/reorg journal) plus the
 /// `chain_id` (ADR-006 D1) and, in later slices, the cohesive helpers

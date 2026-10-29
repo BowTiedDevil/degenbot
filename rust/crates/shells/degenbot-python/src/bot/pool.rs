@@ -24,8 +24,12 @@ use crate::bot::errmap::{
     encode_swap_failed, exact_output_family_gap, hooked_pool_approximation, pool_unregistered,
     swap_family_gap, swap_math_in_overflow, swap_math_overflow, swap_unknown_pool,
 };
-use degenbot_bot::bot_core::pool_ops::{self, SwapOpError};
-use degenbot_bot::bot_core::refresh::{RefreshError, RefreshOutcome};
+use degenbot_bot::bot_core::{
+    calculate_tokens_in, calculate_tokens_in_for_pair, calculate_tokens_out,
+    calculate_tokens_out_for_pair, calculate_tokens_out_with_fetch, curve_data_provider,
+    encode_swap, pool_family, simulate_mainline, simulate_override_with_fetch, RefreshError,
+    RefreshOutcome, SwapOpError,
+};
 use degenbot_pools::TickInfo;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::swap_simulation::{
@@ -486,7 +490,7 @@ impl PyLiquidityPool {
     /// `""` sentinel a caller could mistake for a missing field.
     pub(crate) fn family_of(&self, py: Python<'_>) -> PyResult<&'static str> {
         let core = self.core.clone();
-        let family = py.detach(move || pool_ops::pool_family(&core, self.pool_id));
+        let family = py.detach(move || pool_family(&core, self.pool_id));
         family.ok_or_else(|| pool_unregistered(self.pool_id))
     }
 
@@ -558,7 +562,7 @@ impl PyLiquidityPool {
             state,
         };
         let core = self.core.clone();
-        Ok(py.detach(move || pool_ops::simulate_override_with_fetch(&core, &mut over, block)))
+        Ok(py.detach(move || simulate_override_with_fetch(&core, &mut over, block)))
     }
 
     /// Read the pool's hypothetical state off the Python per-family pool-state
@@ -735,9 +739,8 @@ impl PyLiquidityPool {
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
         let core = self.core.clone();
-        let result = py.detach(move || {
-            pool_ops::calculate_tokens_out(&core, self.pool_id, zero_for_one, amount)
-        });
+        let result =
+            py.detach(move || calculate_tokens_out(&core, self.pool_id, zero_for_one, amount));
         match result {
             Ok(out) => {
                 let bound = crate::conversion::alloy::u256_to_py(py, &out)?;
@@ -794,7 +797,7 @@ impl PyLiquidityPool {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
         let core = self.core.clone();
         let outcome = py.detach(move || {
-            pool_ops::calculate_tokens_out_for_pair(
+            calculate_tokens_out_for_pair(
                 &core,
                 self.pool_id,
                 index_in,
@@ -854,7 +857,7 @@ impl PyLiquidityPool {
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
         let core = self.core.clone();
         let outcome = py.detach(move || {
-            pool_ops::calculate_tokens_in_for_pair(
+            calculate_tokens_in_for_pair(
                 &core,
                 self.pool_id,
                 index_in,
@@ -883,9 +886,8 @@ impl PyLiquidityPool {
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
         let core = self.core.clone();
-        let result = py.detach(move || {
-            pool_ops::calculate_tokens_in(&core, self.pool_id, zero_for_one, amount)
-        });
+        let result =
+            py.detach(move || calculate_tokens_in(&core, self.pool_id, zero_for_one, amount));
         let result = match result {
             Ok(v) => v,
             Err(SwapOpError::AmountOverflow) => return Err(swap_math_overflow()),
@@ -932,13 +934,7 @@ impl PyLiquidityPool {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
         let core = self.core.clone();
         let result = py.detach(move || {
-            pool_ops::calculate_tokens_out_with_fetch(
-                &core,
-                self.pool_id,
-                zero_for_one,
-                amount,
-                block,
-            )
+            calculate_tokens_out_with_fetch(&core, self.pool_id, zero_for_one, amount, block)
         });
         match result {
             Ok(out) => {
@@ -1034,8 +1030,7 @@ impl PyLiquidityPool {
             },
         };
         let core = self.core.clone();
-        let read =
-            py.detach(move || pool_ops::simulate_mainline(&core, self.pool_id, &request, block));
+        let read = py.detach(move || simulate_mainline(&core, self.pool_id, &request, block));
         match read {
             SwapRead::Computed(SwapOutcome::V3(o) | SwapOutcome::V4(o)) => {
                 if o.caveats.contains(Caveats::HOOKED_POOL) {
@@ -1103,9 +1098,8 @@ impl PyLiquidityPool {
         };
 
         let core = self.core.clone();
-        let result = py.detach(move || {
-            pool_ops::encode_swap(&core, self.pool_id, zero_for_one, amount, recip)
-        });
+        let result =
+            py.detach(move || encode_swap(&core, self.pool_id, zero_for_one, amount, recip));
 
         match result {
             Ok(Some(call)) => Ok(Some((
@@ -1810,13 +1804,8 @@ impl PyLiquidityPool {
         let pool_id = self.pool_id;
         let outcome = py.detach(move || {
             runtime::get_runtime().block_on(async move {
-                degenbot_bot::bot_core::refresh::refresh_pool(
-                    &core,
-                    pool_id,
-                    &construction_io,
-                    block_number,
-                )
-                .await
+                degenbot_bot::bot_core::refresh_pool(&core, pool_id, &construction_io, block_number)
+                    .await
             })
         });
         match outcome {
@@ -2920,7 +2909,7 @@ impl PyCurveView {
     fn curve_provider(&self, py: Python<'_>) -> Option<Arc<dyn CurveDataProvider>> {
         let core = Arc::clone(&self.pool.core);
         let pool_id = self.pool.pool_id;
-        py.detach(move || pool_ops::curve_data_provider(&core, pool_id))
+        py.detach(move || curve_data_provider(&core, pool_id))
     }
 
     /// Read a `Vec<U256>` from the stored Curve data provider via `f`,

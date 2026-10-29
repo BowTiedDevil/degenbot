@@ -14,9 +14,7 @@ use degenbot_pools::V2ReservesParts;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
-use degenbot_strategy::backrun_engine::{
-    BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneCandidate, LaneFamily,
-};
+use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, LaneCandidate, LaneFamily};
 use degenbot_strategy::backrun_strategy::{admit_extracted, backrun_encode_options};
 use degenbot_strategy::cmd_executor_adapter::{CmdExecutorAdapter, CmdExecutorOutcome};
 use degenbot_strategy::execution_context::{ExecutionContext, ETHEREUM_V4_POOL_MANAGER};
@@ -26,7 +24,8 @@ use degenbot_strategy::strategy_kit::StrategyKit;
 use degenbot_substrate::connector_index::V2ConnectorIndex;
 use degenbot_substrate::path_info::build_path_info;
 use degenbot_substrate::{
-    pool_ingress::VerifyLevel, BotState, RegisterV2PoolParams, RouteRegistry,
+    pool_ingress::{PoolAdmission, V2Identity, V2State, VerifyLevel},
+    BotState, RegisterV2PoolParams, RouteRegistry,
 };
 
 const TOKEN0: Address = address!("0000000000000000000000000000000000000aa1");
@@ -87,7 +86,14 @@ fn discovered_non_default_v2_fee_reaches_executor_bytes_with_settlement_parity()
 
     let index = V2ConnectorIndex::load(&db, CHAIN_ID).unwrap();
     let registry = Arc::new(RouteRegistry::new(index));
-    let kit = StrategyKit::resolve(Some(registry), None, None, VerifyLevel::default(), None);
+    let kit = StrategyKit::resolve(
+        Some(registry),
+        None,
+        None,
+        None,
+        VerifyLevel::default(),
+        None,
+    );
     let runtime = MarketContext::new(CHAIN_ID, Some(Arc::new(db)), kit, 8, 4);
     let mut solver = BackrunSolver::new();
     let affected = admit_extracted(
@@ -111,15 +117,24 @@ fn discovered_non_default_v2_fee_reaches_executor_bytes_with_settlement_parity()
         .edge_by_address(POOL_Q)
         .expect("discovered Q edge");
     let q_fees = q.fees.resolve().expect("valid discovered Q fee");
-    let q_id = solver
-        .admit_v2(&BackrunV2Pool {
-            address: POOL_Q,
-            token0: TOKEN0,
-            token1: TOKEN1,
-            reserve0: 200_000,
-            reserve1: 900,
-            fees: q.fees,
-        })
+    let q_id = degenbot_core::runtime::get_runtime()
+        .block_on(solver.admit(
+            runtime.ingress(),
+            PoolAdmission::V2 {
+                identity: V2Identity {
+                    address: POOL_Q,
+                    token0: TOKEN0,
+                    token1: TOKEN1,
+                },
+                state: V2State {
+                    reserve0: 200_000,
+                    reserve1: 900,
+                    fees: q.fees,
+                },
+            },
+            runtime.verify_level(),
+            1,
+        ))
         .expect("discovered Q fee admits");
     let p_id = affected[0].workspace_pool_id;
 

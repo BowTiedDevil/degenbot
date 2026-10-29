@@ -27,15 +27,13 @@ use crate::discovery::{BatchedPathFinder, BuiltGraph, DiscoveryParams};
 use crate::pipeline::{PrepareOutcome, PreparedCandidate, RegistrationPipeline};
 use crate::progress::{progress_line, ProgressCadence};
 use alloy::primitives::Address;
-use degenbot::bot::bot_core::registration_ledger::{
+use degenbot::bot::bot_core::{
     BuildFailure, OutcomeLabel, PipelineReport, RefusalKind, RegisterRefusal, RegistrationLedger,
     RegistrationOutcome, RegistrationUnitOutcome,
 };
-use degenbot::bot_core::construction_io::ConstructionIo;
-use degenbot::bot_core::pool_builder::builder::{
-    build_v2, build_v3, build_v4, V4PoolBuildIdentity,
-};
 use degenbot::bot_core::Bot;
+use degenbot::bot_core::ConstructionIo;
+use degenbot::bot_core::{build_v2, build_v3, build_v4, V4PoolBuildIdentity};
 use degenbot::db::discovery_read::DiscoveryPoolRow;
 use degenbot::db::snapshot::TickMapDb;
 use degenbot::pathfinding::PoolKind;
@@ -218,7 +216,7 @@ async fn build_and_register(
         Err(err) => {
             if matches!(
                 err,
-                degenbot::bot::arb_engine::lifecycle::PathRegistrationError::RegistryFull { .. }
+                degenbot::bot::arb_engine::PathRegistrationError::RegistryFull { .. }
             ) {
                 RegistrationUnitOutcome::Cap
             } else {
@@ -619,7 +617,7 @@ pub(crate) fn emit_register_failure_sample(detail: &str) {
 )]
 mod tests {
     use super::*;
-    use degenbot::bot::bot_core::registration_ledger::{
+    use degenbot::bot::bot_core::{
         OutcomeLabel, PipelineReport, RegistrationOutcome, RegistrationUnitOutcome,
     };
     use degenbot::pools::state::v2_state::{RegisterV2PoolError, RegisterV2PoolParams};

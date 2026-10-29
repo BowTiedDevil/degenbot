@@ -29,17 +29,22 @@
 //!
 //! # Module layout
 //!
+//! Every module below is `pub(crate)`; the items a driver needs are
+//! re-exported from this module (ADR-084 D2 — a door, not a tree).
+//!
 //! | Module | Concern |
 //! |--------|---------|
-//! | [`lane_walk`] | THE ONE lane walk: per-bin solve, the pipelined-sim pacing, and the walk-adjacent clamp/flush helpers |
-//! | [`solve_cycle`] | The solve cycle as a deep module (ADR-045): the concentrated-liquidity-hop clamp + profit recompute live here |
-//! | [`delivery_lifecycle`] | Delivery lifecycle: channel open/send/close + the end-of-stream contract (incident 2026-08-20 #2) |
-//! | [`delivery_policy`] | Delivery policy: diff computation, thresholds, delivered-bookkeeping |
-//! | [`block_cursor`] | The engine block cursor — one owner of the engine-side block-coordinate residue |
-//! | [`detached_cycle`] | THE one detached/in-cycle solve-arm machine: per-cycle states, the merge pipe, the gauge pair, the seq counters, the ledger door, the disposition counters, the fan-in tripwire, and the ONE sidecar spawn |
-//! | [`lifecycle`] | Path registration, buffer management, engine accessors |
-//! | [`py_binding`] | PyO3 wrapper (`PyArbitrageEngine`) |
-//! | [`tests`] | Unit tests |
+//! | `lane_walk` | THE ONE lane walk: per-bin solve, the pipelined-sim pacing, and the walk-adjacent clamp/flush helpers |
+//! | `solve_cycle` | The solve cycle as a deep module (ADR-045): the concentrated-liquidity-hop clamp + profit recompute live here |
+//! | `delivery_lifecycle` | Delivery lifecycle: channel open/send/close + the end-of-stream contract |
+//! | `delivery_policy` | Delivery policy: diff computation, thresholds, delivered-bookkeeping |
+//! | `block_cursor` | The engine block cursor — one owner of the engine-side block-coordinate residue |
+//! | `detached_cycle` | THE one detached/in-cycle solve-arm machine: per-cycle states, the merge pipe, the gauge pair, the seq counters, the ledger door, the disposition counters, the fan-in tripwire, and the ONE sidecar spawn |
+//! | `lifecycle` | Path registration, buffer management, engine accessors |
+//! | `session_end` | The session-end detection facts the drivers rank into their own verdicts |
+//! | `tests` | Unit tests |
+//!
+//! The `PyO3` wrapper (`PyArbitrageEngine`) lives in the `degenbot_rs` shell.
 use self::block_cursor::BlockCursor;
 use self::boot_stamp::BootStamp;
 use self::delivery_policy::DeliveryPolicy;
@@ -78,33 +83,35 @@ mod diagnostic;
 // adapter), and `epoch_delta_parity`/`test_oracle` (the parity
 // oracle, GONE now that `EpochDelta` is sole authority) are deleted —
 // hard cutover, Q6.
-pub mod engine_stages;
+mod engine_stages;
 // ADR-050: the public Rust driver seam above the one
 // stage seam. The engine type stays `pub(crate)`; this composes
 // `EngineStages` + the pump session state so a `cargo add degenbot`
 // consumer can run the subscribe→resume(+auto-backfill)→stop ritual.
-pub mod driver;
+mod driver;
 pub(crate) mod executor;
 
-// The engine-session end DETECTION facts: the cause vocabulary, the heartbeat
-// stall watchdog, and the once-only delivery channel shared by both drivers.
-pub mod fleet_intake;
+// The PRG-3 registration intake surface — a crate-private tree behind the
+// crate-root `fleet_intake` door.
+pub(crate) mod fleet_intake;
 mod fleet_registration_executor;
 mod fleet_sim_executor;
 pub(crate) mod fleet_solve_executor;
-pub mod fleet_status;
-pub mod inline_sim;
-pub mod lifecycle;
-pub mod path_info;
+mod fleet_status;
+mod inline_sim;
+mod lifecycle;
+mod path_info;
 mod path_lifecycle;
-pub mod session_end;
+// The engine-session end DETECTION facts: the cause vocabulary, the heartbeat
+// stall watchdog, and the once-only delivery channel shared by both drivers.
+mod session_end;
 // ADR-045: the path-identity registry (`PathRegistry`) —
 // registered paths, reverse index, signatures, id allocator, cap, dedups.
 mod path_registry;
 // the session's path-object ADAPTER over that registry — the owner side of
 // `degenbot_substrate::session_registry::PathObjectAdapter`, so the session names
 // canonical paths without a second path store.
-pub mod path_objects;
+mod path_objects;
 // The typed operator re-parameterization value crossing
 // the driver seam — `EngineRetune`, applied at construction and at runtime via
 // `EngineStages::apply_retune`.
@@ -113,7 +120,7 @@ mod retune;
 // registration) — the executors are thin role descriptors over it; the
 // solve executor's exclusion (per-seat channel model + posture-invariant
 // typed-submit admission) is documented in the module doc.
-pub mod fleet_wake;
+mod fleet_wake;
 mod seat_host;
 
 // The process-wide boot statics (`install_boot`, `global_executor`, the
@@ -169,11 +176,25 @@ pub use diagnostic::{
 };
 pub use driver::{DriverError, EngineChannelHandles, EngineDriver, PhaseError};
 pub use engine_stages::EngineStages;
+pub use fleet_status::{
+    fleet_profile_summary, fleet_runtime_status, FleetBinding, FleetProfileSummary,
+};
+pub(crate) use fleet_wake::feed_throttle;
+pub use fleet_wake::wake_hosts;
 pub use inline_sim::{
     AccessListRow, CapturedSwapRow, InlineSimFailure, InlineSimRequest, InlineSimulator,
     InlineSwapFamily, SimulatedPathResult,
 };
+/// Path registration's rejection vocabulary — the typed refusal the drivers
+/// map onto their own error surfaces.
+pub use lifecycle::PathRegistrationError;
 pub use retune::EngineRetune;
+/// The engine-session end DETECTION facts: the typed cause vocabulary, the
+/// heartbeat stall watchdog, and the once-only delivery channel the drivers
+/// rank into their own end-state verdicts.
+pub use session_end::{
+    Heartbeat, SessionEndCause, SessionEndDetection, SessionEndFacts, SessionEndPublisher,
+};
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------

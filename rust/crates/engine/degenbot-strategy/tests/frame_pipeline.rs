@@ -31,7 +31,7 @@ use std::sync::Arc;
 use degenbot_pathfinding::PoolKind;
 use degenbot_strategy::anchored_dfs::{AnchorPool, AnchoredGraph};
 use degenbot_strategy::backrun::ObserveReason;
-use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
+use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, LaneFamily};
 use degenbot_strategy::backrun_strategy::{
     admit_extracted, backrun_encode_options, cycle_refs, cycle_touched_legs, net_bid,
     solve_dfs_chains, BackrunIntents, CycleHop,
@@ -47,6 +47,7 @@ use degenbot_strategy::frame_pipeline::{
 use degenbot_strategy::project_candidate;
 use degenbot_substrate::connector_index::{V2ConnectorIndex, V2Edge};
 use degenbot_substrate::executor_hop::{V2FeePair, V2Fees};
+use degenbot_substrate::pool_ingress::{PoolAdmission, PoolIngress, V2Identity, V2State};
 
 fn v2_fee_pair() -> V2FeePair {
     V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
@@ -115,6 +116,7 @@ fn market_context(
     let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
         registry,
         db_arm,
+        None,
         None,
         degenbot_substrate::pool_ingress::VerifyLevel::default(),
         None,
@@ -270,16 +272,15 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     // Admit the connector the walker would have discovered (the admission
     // shape is unchanged; the discovery traversal itself is exercised in the
     // live e2e).
-    let q_id = solver
-        .admit_v2(&BackrunV2Pool {
-            address: Q,
-            token0: affected[0].token0,
-            token1: affected[0].token1,
-            reserve0: 200_000,
-            reserve1: 900,
-            fees: v2_fee_pair(),
-        })
-        .expect("connector admits");
+    let q_id = admit_v2(
+        &mut solver,
+        rt.ingress(),
+        Q,
+        affected[0].token0,
+        affected[0].token1,
+        (200_000, 900),
+        SEED,
+    );
 
     // solve: both drift cycles declared + evaluated; the golden profit. The
     // refs replicate the anchored lane's re-derived traversal exacts (anchor
@@ -383,16 +384,15 @@ fn weth_entry_cycle_refs_reproduce_the_committed_two_hop_traversal() {
         &mut StageTrace::default(),
     );
     assert_eq!(affected.len(), 1);
-    let q_id = solver
-        .admit_v2(&BackrunV2Pool {
-            address: Q,
-            token0: affected[0].token0,
-            token1: affected[0].token1,
-            reserve0: 200_000,
-            reserve1: 900,
-            fees: v2_fee_pair(),
-        })
-        .expect("connector admits");
+    let q_id = admit_v2(
+        &mut solver,
+        rt.ingress(),
+        Q,
+        affected[0].token0,
+        affected[0].token1,
+        (200_000, 900),
+        SEED,
+    );
 
     let a = &affected[0];
     let hops = [
@@ -1070,8 +1070,41 @@ fn best_chain_profit(chains: &[(u128, u128)], max_in: u128) -> (u128, u128) {
     best
 }
 
-/// Admit an abstract-units V2 fixture pool (canonical token order by
-/// address, which the fixture constants already are).
+/// Admit one V2 fixture through the ingress's single entry. The entry is async
+/// and these fixtures are synchronous, so the admission rides the shared runtime
+/// handle the pipeline itself uses.
+fn admit_v2(
+    solver: &mut BackrunSolver,
+    ingress: &PoolIngress,
+    address: Address,
+    token0: Address,
+    token1: Address,
+    reserves: (u128, u128),
+    head: u64,
+) -> u64 {
+    degenbot_core::runtime::get_runtime()
+        .block_on(solver.admit(
+            ingress,
+            PoolAdmission::V2 {
+                identity: V2Identity {
+                    address,
+                    token0,
+                    token1,
+                },
+                state: V2State {
+                    reserve0: reserves.0,
+                    reserve1: reserves.1,
+                    fees: v2_fee_pair(),
+                },
+            },
+            degenbot_substrate::pool_ingress::VerifyLevel::default(),
+            head,
+        ))
+        .expect("the V2 fixture admits")
+}
+
+/// Admit an abstract-units V2 fixture pool (canonical token order by address,
+/// which the fixture constants already are).
 fn admitted_pair(
     solver: &mut BackrunSolver,
     addr: Address,
@@ -1080,16 +1113,15 @@ fn admitted_pair(
     r0: u128,
     r1: u128,
 ) -> u64 {
-    solver
-        .admit_v2(&BackrunV2Pool {
-            address: addr,
-            token0,
-            token1,
-            reserve0: r0,
-            reserve1: r1,
-            fees: v2_fee_pair(),
-        })
-        .unwrap()
+    admit_v2(
+        solver,
+        &PoolIngress::new(None, None),
+        addr,
+        token0,
+        token1,
+        (r0, r1),
+        1,
+    )
 }
 
 /// The honest drop: a frame whose affected pool trades no WETH quote

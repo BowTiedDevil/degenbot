@@ -15,7 +15,7 @@
 //! [`RefusalKind`] vocabulary (no typed-error mapper).
 //!
 //! Address parsing shares the same contract:
-//! [`degenbot_bot::bot_core::registration::parse_address_str`] owns the
+//! [`degenbot_bot::bot_core::parse_address_str`] owns the
 //! `Invalid address '<input>': <source>` vocabulary; the shell only wraps
 //! its error in the historical `ValueError`.
 //!
@@ -26,7 +26,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use degenbot_bot::arb_engine::DriverError;
-use degenbot_bot::bot_core::registration_ledger::{
+use degenbot_bot::bot_core::{
     BuildFailure, IdentityMismatchShape, LifecyclePrecondition, RefusalKind, RegisterRefusal,
     SnapshotLoadReason, UnsupportedSubject, VerifyOrigin,
 };
@@ -271,18 +271,15 @@ pub(crate) fn map_register_v2_err(err: &RegisterV2PoolError) -> PyErr {
 /// `PathRegistryFullError` stop signal; every `Invalid` refusal keeps the
 /// legacy `ValueError` with its verbatim message.
 pub(crate) fn map_path_registration_err(
-    err: degenbot_bot::arb_engine::lifecycle::PathRegistrationError,
+    err: degenbot_bot::arb_engine::PathRegistrationError,
 ) -> pyo3::PyErr {
     match err {
-        degenbot_bot::arb_engine::lifecycle::PathRegistrationError::Invalid(msg) => {
-            PyValueError::new_err(msg)
+        degenbot_bot::arb_engine::PathRegistrationError::Invalid(msg) => PyValueError::new_err(msg),
+        degenbot_bot::arb_engine::PathRegistrationError::RegistryFull { cap, registered } => {
+            PathRegistryFullError::new_err(format!(
+                "registered-path cap reached ({registered}/{cap}) — the crawl must stop discovery"
+            ))
         }
-        degenbot_bot::arb_engine::lifecycle::PathRegistrationError::RegistryFull {
-            cap,
-            registered,
-        } => PathRegistryFullError::new_err(format!(
-            "registered-path cap reached ({registered}/{cap}) — the crawl must stop discovery"
-        )),
     }
 }
 
@@ -303,9 +300,9 @@ pub(crate) fn map_no_construction_io(method: &'static str) -> pyo3::PyErr {
 /// unknown-pool and unsupported-family `ValueError`s, and the legacy `0`
 /// mapping for unrecovered sparse-map misses (done core-side).
 pub(crate) fn map_calc_tokens_out_err(
-    err: &degenbot_bot::bot_core::build_register::CalcTokensOutError,
+    err: &degenbot_bot::bot_core::CalcTokensOutError,
 ) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::build_register::CalcTokensOutError;
+    use degenbot_bot::bot_core::CalcTokensOutError;
     match err {
         CalcTokensOutError::Overflow | CalcTokensOutError::NotComputable => {
             PyValueError::new_err(
@@ -328,9 +325,9 @@ pub(crate) fn map_calc_tokens_out_err(
 /// Map a core `CalcTokensInError` to the shell's historical surfaces: the
 /// overflow `ValueError` and the typed exact-output family gap.
 pub(crate) fn map_calc_tokens_in_err(
-    err: &degenbot_bot::bot_core::build_register::CalcTokensInError,
+    err: &degenbot_bot::bot_core::CalcTokensInError,
 ) -> pyo3::PyErr {
-    use degenbot_bot::bot_core::build_register::CalcTokensInError;
+    use degenbot_bot::bot_core::CalcTokensInError;
     match err {
         CalcTokensInError::Overflow => PyValueError::new_err(
             "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)",
@@ -419,9 +416,9 @@ mod tests {
 
     use super::*;
     use alloy::primitives::{Address, B256, U256};
-    use degenbot_bot::bot_core::pool_builder::builder::PoolBuilderError;
-    use degenbot_bot::bot_core::pool_builder::parity::IdentityDivergence;
-    use degenbot_bot::bot_core::registration_ledger::RegistrationPhase;
+    use degenbot_bot::bot_core::IdentityDivergence;
+    use degenbot_bot::bot_core::PoolBuilderError;
+    use degenbot_bot::bot_core::RegistrationPhase;
     use degenbot_core::errors::ProviderError;
     use degenbot_pools::RegisterAerodromePoolError;
     use degenbot_pools::RegisterV2PoolError;
@@ -744,15 +741,14 @@ mod tests {
 
     #[test]
     fn path_registration_err_pins_the_vocabulary() {
-        let err = map_path_registration_err(
-            degenbot_bot::arb_engine::lifecycle::PathRegistrationError::Invalid(
+        let err =
+            map_path_registration_err(degenbot_bot::arb_engine::PathRegistrationError::Invalid(
                 "path crosses itself".to_string(),
-            ),
-        );
+            ));
         assert_eq!(value_error(&err), "path crosses itself");
 
         let err = map_path_registration_err(
-            degenbot_bot::arb_engine::lifecycle::PathRegistrationError::RegistryFull {
+            degenbot_bot::arb_engine::PathRegistrationError::RegistryFull {
                 cap: 100,
                 registered: 128,
             },
@@ -927,7 +923,7 @@ mod tests {
 
     #[test]
     fn calc_tokens_out_err_pins_the_vocabulary() {
-        use degenbot_bot::bot_core::build_register::CalcTokensOutError;
+        use degenbot_bot::bot_core::CalcTokensOutError;
         let overflow = "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)";
         assert_eq!(
             value_error(&map_calc_tokens_out_err(&CalcTokensOutError::Overflow)),
@@ -956,7 +952,7 @@ mod tests {
 
     #[test]
     fn calc_tokens_in_err_pins_the_vocabulary() {
-        use degenbot_bot::bot_core::build_register::CalcTokensInError;
+        use degenbot_bot::bot_core::CalcTokensInError;
         assert_eq!(
             value_error(&map_calc_tokens_in_err(&CalcTokensInError::Overflow)),
             "Pool swap math overflowed uint256 intermediate (on-chain getAmountOut SafeMath revert)"

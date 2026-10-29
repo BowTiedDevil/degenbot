@@ -18,7 +18,7 @@
 
 use std::time::{Duration, Instant};
 
-use degenbot::bot::bot_core::registration_ledger::PipelineReport;
+use degenbot::bot::bot_core::PipelineReport;
 
 /// The engine's registered-path cap from the schema's
 /// `pathfinding.max_registered_paths`. `0` is the operator's uncapped
@@ -142,7 +142,7 @@ pub fn progress_line(report: &PipelineReport) -> String {
 )]
 mod tests {
     use super::*;
-    use degenbot::bot::bot_core::registration_ledger::RegistrationOutcome;
+    use degenbot::bot::bot_core::RegistrationOutcome;
 
     #[test]
     fn the_env_layer_resolves_the_six_schema_owned_keys() {

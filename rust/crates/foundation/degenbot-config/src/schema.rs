@@ -514,7 +514,7 @@ crate::config_schema! {
     // core one; 0 is the declared off posture.
     builders BuildersConfig {
         tick_fetch_min_interval_ms [ms] = 0, env = "DEGENBOT_TICK_FETCH_MIN_INTERVAL_MS", def = "0",
-            doc = "Minimum interval (ms) between the on-chain tick RPCs a construction tick fetch issues, pacing a constrained fork/archive source below its advertised rate (dRPC's free plan advertises 100 req/s, so 20 => 50 req/s, leaving headroom for the anvil fork's own background fetching). Honoured by the core construction gate (degenbot_bot::bot_core::construction_io::TickFetchPace) and by the Python tick loop, which reads the same key. 0 (or unset) disables the clamp entirely.";
+            doc = "Minimum interval (ms) between the on-chain tick RPCs a construction tick fetch issues, pacing a constrained fork/archive source below its advertised rate (dRPC's free plan advertises 100 req/s, so 20 => 50 req/s, leaving headroom for the anvil fork's own background fetching). Honoured by the core construction gate (degenbot_bot::bot_core::TickFetchPace) and by the Python tick loop, which reads the same key. 0 (or unset) disables the clamp entirely.";
     }
 
     solve SolveConfig {

@@ -72,7 +72,7 @@ fn market_context(
         degenbot_substrate::pool_ingress::DbArm::new(db, std::sync::Arc::new(NoBackfill))
     });
     let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
-        registry, db_arm, None, verify, verifier,
+        registry, db_arm, None, None, verify, verifier,
     );
     MarketContext::new(1, db, kit, 8, 4)
 }

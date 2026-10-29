@@ -47,22 +47,25 @@ Pool-state provisioning is a plane capability (ADR-061), not machinery a
 strategy builds. The boot resolves one `StrategyKit` per strategy
 (`StrategyKit::resolve`,
 `rust/crates/engine/degenbot-strategy/src/strategy_kit.rs`) and hands it to the spawn
-factory; a strategy composes `kit.provision.ingress` (the one V3/V4
-`PoolIngress` seam) and `kit.discovery` (frozen registry + startup graph), and
-never an ingress it constructed itself.
+factory; a strategy composes `kit.provision.ingress` (the one
+`PoolIngress` seam, all three families) and `kit.discovery` (frozen registry +
+startup graph), and never an ingress it constructed itself.
 
 Tick maps enter the planning sandbox only through the sealed `TickMapSeed`
 boundary (`rust/crates/foundation/degenbot-substrate/src/planning.rs`): the `Db` and
 `Chain` provenance constructors are crate-private to the substrate crate and minted by
-`PoolIngress`. Replay facts cross the ingress's `admit_v3_replay` /
-`admit_v4_replay` interface; a strategy cannot fabricate a sparse ladder or
-call `Workspace::register_with_state` directly.
+`PoolIngress`. Every admission crosses the ingress's one `admit` entry with a
+family-tagged `PoolAdmission` request (`V2` registers in place; `V3`/`V4`
+carry their `slot0` state, either read at head by the ingress or carried from a
+replayed post-state, plus an explicit-or-replay origin); a strategy cannot
+fabricate a sparse ladder or call `Workspace::register_with_state` directly.
 
-Verification is a typed policy on the provisioning cell: `VerifyLevel`
-(default `bootstrap`) with `strict` / `off` alternatives. The shared full
-liquidity-map verifier is a deep module in `degenbot-rpc`; V4 verification
-targets `PoolManager` + `PoolId`, while `StateView` remains optional
-scalar/bootstrap configuration. Integrity is distinct from sampling and
+Verification is a typed policy the boot resolves once and the kit carries
+(`StrategyKit::verify_level`), passed as an argument to every `admit` call:
+`VerifyLevel` (default `bootstrap`) with `strict` / `off` alternatives. The
+shared full liquidity-map verifier is a deep module in `degenbot-rpc`; V4
+verification targets `PoolManager` + `PoolId`, while `StateView` remains
+optional scalar/bootstrap configuration. Integrity is distinct from sampling and
 **unconditional** — the Tracked self-contradiction abort and the two-stamp
 liquidity clock run under every level, so `off` never means "proceed on a
 self-contradictory map".

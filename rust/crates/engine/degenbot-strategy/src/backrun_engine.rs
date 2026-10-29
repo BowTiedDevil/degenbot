@@ -5,49 +5,21 @@
 //! scope's scratch state never touches the mainline pump's registry), admits
 //! pools with explicit typed state, declares two-hop paths, and evaluates
 //! them with the solvers' envelope-gated mixed solve (V2-V2 = the closed-form
-//! integer Mobius; no hand-composed pricing anywhere). Pool state arrives via
-//! the frame pipeline's replay-extracted post-states (`admit_v2`,
-//! `admit_v3_replay`) or the ingress-routed cold-hop ladder
-//! (`admit_v3_full`); discovery over the DB connector index is the pipeline's
-//! job.
+//! integer Mobius; no hand-composed pricing anywhere). Pool state arrives as a
+//! [`PoolAdmission`] — a replayed post-state or an at-head request — through
+//! one [`BackrunSolver::admit`] call; discovery over the DB connector index is
+//! the pipeline's job.
 
 use alloy::primitives::{Address, B256, U256};
 use degenbot_pathfinding::PoolKind;
 use degenbot_pools::solve::SolvePathResult;
-use degenbot_pools::ConcentratedLiquiditySlotLayout;
-use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant, TickInfo};
+use degenbot_pools::{ConcentratedLiquidityVariant, Identity, ReservePairVariant};
 
-use degenbot_substrate::executor_hop::{V2FeePair, V2FeeRefusal, V2Fees};
-use degenbot_substrate::planning::{ExplicitPoolState, PlanningHop, PlanningPoolParams, Workspace};
-use degenbot_substrate::pool_ingress::{IngressV3Params, IngressV4Params, PoolIngress};
+use degenbot_substrate::executor_hop::V2Fees;
+use degenbot_substrate::planning::{PlanningHop, Workspace};
+use degenbot_substrate::pool_ingress::{IngressDecline, PoolAdmission, PoolIngress, VerifyLevel};
 
 pub use degenbot_substrate::planning::PathReject;
-
-/// One admitted V2 pool: identity + the LIVE reserves the caller fetched
-/// (the adapter keeps this narrow; reserves come from `fetch_v2_reserves`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BackrunV2Pool {
-    pub address: Address,
-    pub token0: Address,
-    pub token1: Address,
-    pub reserve0: u128,
-    pub reserve1: u128,
-    /// Direction-specific discovered fees, including typed refusals.
-    pub fees: V2FeePair,
-}
-
-/// Why a V2 pool could not enter solver admission.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum V2AdmissionError {
-    #[error("discovered V2 fee is unusable: {0}")]
-    Fee(#[from] V2FeeRefusal),
-    #[error("reserve0 out of uint112: {0}")]
-    Reserve0Width(u128),
-    #[error("reserve1 out of uint112: {0}")]
-    Reserve1Width(u128),
-    #[error("V2 workspace registration failed: {0}")]
-    Registration(String),
-}
 
 /// The standalone frame solver: the backrun lane's driver shell over a
 /// planning [`Workspace`] (FORK-1 isolation — the scope's scratch state
@@ -76,37 +48,23 @@ impl BackrunSolver {
         self.ws.pool_id_by_address(address)
     }
 
-    /// Admit a V2 pool with the discovered directional fees. Fee refusal is
-    /// resolved before any workspace mutation.
+    /// Admit one pool into this frame's workspace scope through the ingress's
+    /// single entry. The ingress owns the family dispatch — V2 registration, the
+    /// `Db → Chain` staging, the chain scalar read, the overlay merge, the
+    /// sample — and this method supplies only the scope those facts land in.
     ///
     /// # Errors
     ///
-    /// Returns a typed fee/reserve refusal or the workspace registration
-    /// rejection.
-    pub fn admit_v2(&mut self, p: &BackrunV2Pool) -> Result<u64, V2AdmissionError> {
-        let fees = p.fees.resolve()?;
-        let Ok(reserve0) = p.reserve0.try_into() else {
-            return Err(V2AdmissionError::Reserve0Width(p.reserve0));
-        };
-        let Ok(reserve1) = p.reserve1.try_into() else {
-            return Err(V2AdmissionError::Reserve1Width(p.reserve1));
-        };
-        self.ws
-            .register_with_state(
-                PlanningPoolParams {
-                    address: p.address,
-                    token0: p.token0,
-                    token1: p.token1,
-                },
-                ExplicitPoolState::V2 {
-                    reserve0,
-                    reserve1,
-                    fee_token0: fees.token0.retained_fraction(),
-                    fee_token1: fees.token1.retained_fraction(),
-                },
-                1,
-            )
-            .map_err(|e| V2AdmissionError::Registration(format!("{e:?}")))
+    /// Returns the ingress's typed [`IngressDecline`] without registering a
+    /// partial seed.
+    pub async fn admit(
+        &mut self,
+        ingress: &PoolIngress,
+        admission: PoolAdmission,
+        stance: VerifyLevel,
+        head: u64,
+    ) -> Result<u64, IngressDecline> {
+        ingress.admit(&mut self.ws, admission, stance, head).await
     }
 
     /// Declare a path from admitted pool ids + directions; returns its index.
@@ -175,14 +133,6 @@ impl Default for BackrunSolver {
         Self::new()
     }
 }
-
-/// Why a cold-connector V3 hop could not be admitted: the ingress decline
-/// names the refused step (`slot0` fetch/width, the Db arm, the Chain-arm
-/// tick-map bootstrap, or registration), so the per-hop JSONL trace
-/// distinguishes a network/spec failure from a registration refusal (an
-/// `AlreadyRegistered` duplicate is a different beast from a dead
-/// archive-node call and must not share one opaque label).
-pub use degenbot_substrate::pool_ingress::IngressDecline as V3LadderReject;
 
 /// One executable hop of a lane candidate (executor-composer input). Both
 /// the declared solver key (`pool_id`) and the composer identity (`pool`)
@@ -315,164 +265,6 @@ pub struct LaneCandidate {
     pub profit: u128,
 }
 
-impl BackrunSolver {
-    /// Admit a replayed V3 post-state through the policy-enforcing ingress.
-    /// The ingress owns Db/Chain staging, overlay merge, bitmap provenance,
-    /// verification, and registration; this method only carries the typed
-    /// replay facts and the workspace boundary.
-    ///
-    /// # Errors
-    ///
-    /// Returns the ingress's typed decline without registering a partial seed.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "replay identity + post-state + ingress describe distinct layers"
-    )]
-    pub async fn admit_v3_replay(
-        &mut self,
-        address: Address,
-        token0: Address,
-        token1: Address,
-        fee: u32,
-        tick_spacing: i32,
-        sqrt_price_x96: U256,
-        liquidity: u128,
-        tick: i32,
-        overlay: hashbrown::HashMap<i32, TickInfo>,
-        seed_block: u64,
-        slot_layout: ConcentratedLiquiditySlotLayout,
-        ingress: &PoolIngress,
-    ) -> Result<u64, V3LadderReject> {
-        ingress
-            .admit_v3_replay(
-                &mut self.ws,
-                IngressV3Params {
-                    address,
-                    token0,
-                    token1,
-                    fee,
-                    tick_spacing,
-                    sqrt_price_x96,
-                    liquidity,
-                    tick,
-                    slot_layout,
-                },
-                overlay,
-                seed_block,
-            )
-            .await
-    }
-
-    /// Admit a replayed V4 post-state through the policy-enforcing ingress.
-    /// The ingress owns Db→Chain staging, Db-to-head backfill, bitmap merge,
-    /// verification, and registration; this method carries only typed replay
-    /// facts and the workspace boundary.
-    ///
-    /// # Errors
-    ///
-    /// Returns the ingress's typed decline without registering a partial seed.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "replay identity + post-state + ingress describe distinct layers"
-    )]
-    pub async fn admit_v4_replay(
-        &mut self,
-        manager: Address,
-        state_view: Option<Address>,
-        token0: Address,
-        token1: Address,
-        pool_id: B256,
-        fee: u32,
-        tick_spacing: i32,
-        hooks: Address,
-        sqrt_price_x96: U256,
-        liquidity: u128,
-        tick: i32,
-        overlay: hashbrown::HashMap<i32, TickInfo>,
-        seed_block: u64,
-        ingress: &PoolIngress,
-    ) -> Result<u64, V3LadderReject> {
-        ingress
-            .admit_v4_replay(
-                &mut self.ws,
-                IngressV4Params {
-                    manager,
-                    state_view,
-                    pool_id,
-                    token0,
-                    token1,
-                    fee,
-                    tick_spacing,
-                    hooks,
-                    sqrt_price_x96,
-                    liquidity,
-                    tick,
-                },
-                overlay,
-                seed_block,
-            )
-            .await
-    }
-
-    /// Register a V3 pool at HEAD through the ingress, optionally OVERRIDING
-    /// `sqrt_price_x96` with the post-target staged price (the
-    /// V3-affected-pool path). The slot0/liquidity scalars are read here
-    /// through the caller's `slot_layout`; the tick map is the ingress's
-    /// `Db → Chain` responsibility — this lane never reads a tick word.
-    ///
-    /// # Errors
-    ///
-    /// [`IngressDecline`] naming the refused staging or registration step.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "pool identity + staged override describe distinct layers"
-    )]
-    pub async fn admit_v3_full(
-        &mut self,
-        provider: &degenbot_rpc::provider::AlloyProvider,
-        address: Address,
-        token0: Address,
-        token1: Address,
-        fee: u32,
-        tick_spacing: i32,
-        sqrt_override: Option<U256>,
-        head: u64,
-        slot_layout: ConcentratedLiquiditySlotLayout,
-        ingress: &PoolIngress,
-    ) -> Result<u64, V3LadderReject> {
-        let slot0 = degenbot_rpc::abi::Slot0Prefix::read(provider, address, None)
-            .await
-            .map_err(|e| V3LadderReject::Slot0Fetch(e.to_string()))?;
-        let liquidity = degenbot_rpc::abi::ContractRead::read(
-            provider,
-            address,
-            degenbot_rpc::abi::IUniswapV3Pool::liquidityCall {},
-            None,
-        )
-        .await
-        .map_err(|e| V3LadderReject::Slot0Fetch(e.to_string()))?;
-        let (sqrt_price_x96, tick) = (slot0.sqrt_price_x96, slot0.tick);
-        let tick_i32 = i32::try_from(tick).map_err(|_| V3LadderReject::Slot0Width)?;
-        ingress
-            .admit_v3_verified(
-                &mut self.ws,
-                IngressV3Params {
-                    address,
-                    token0,
-                    token1,
-                    fee,
-                    tick_spacing,
-                    sqrt_price_x96: sqrt_override.unwrap_or(sqrt_price_x96),
-                    liquidity,
-                    tick: tick_i32,
-                    slot_layout,
-                },
-                head,
-            )
-            .await
-    }
-}
-
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
@@ -487,33 +279,8 @@ mod tests {
     use crate::project_candidate;
     use alloy::primitives::{address, aliases::U112};
     use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
-
-    /// The ladder reject is legible: each stage maps to a distinct JSONL
-    /// `stage` label so a failed hop admission names the refused step
-    /// (RPC fetch vs spec/width vs registration) instead of one lumped
-    /// opaque label.
-    #[test]
-    fn ladder_reject_stages_report_the_refused_step() {
-        assert_eq!(
-            V3LadderReject::Slot0Fetch("timeout".into()).stage(),
-            "admit-v3-slot0-fetch"
-        );
-        assert_eq!(V3LadderReject::Slot0Width.stage(), "admit-v3-slot0-width");
-        assert_eq!(
-            V3LadderReject::TickMapFetch("revert".into()).stage(),
-            "admit-v3-tick-map-fetch"
-        );
-        assert_eq!(
-            V3LadderReject::Db("database is locked".into()).stage(),
-            "admit-v3-db"
-        );
-        let reg = V3LadderReject::Register("AlreadyRegistered { 0xb001 }".into());
-        assert_eq!(reg.stage(), "admit-v3-register");
-        assert!(
-            reg.detail().contains("AlreadyRegistered"),
-            "detail survives"
-        );
-    }
+    use degenbot_substrate::executor_hop::V2FeePair;
+    use degenbot_substrate::planning::{ExplicitPoolState, PlanningPoolParams};
 
     const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
     const TOK: Address = address!("0000000000000000000000000000000000000aa1");
@@ -528,36 +295,56 @@ mod tests {
             .expect("valid fixture fee")
     }
 
+    /// Admit one V2 request through the door. The entry is async and these
+    /// fixtures are synchronous, so the admission rides the shared runtime
+    /// handle the strategy itself uses.
+    fn admit_v2(
+        solver: &mut BackrunSolver,
+        address_: Address,
+        r0: u128,
+        r1: u128,
+        fees: V2FeePair,
+    ) -> Result<u64, IngressDecline> {
+        degenbot_core::runtime::get_runtime().block_on(solver.admit(
+            &PoolIngress::new(None, None),
+            PoolAdmission::V2 {
+                identity: degenbot_substrate::pool_ingress::V2Identity {
+                    address: address_,
+                    token0: TOK,
+                    token1: WETH,
+                },
+                state: degenbot_substrate::pool_ingress::V2State {
+                    reserve0: r0,
+                    reserve1: r1,
+                    fees,
+                },
+            },
+            VerifyLevel::default(),
+            1,
+        ))
+    }
+
     #[test]
-    fn v2_admission_typed_refuses_missing_and_unrepresentable_fees_before_registration() {
+    fn v2_admission_refuses_an_unusable_fee_before_registration() {
         let mut solver = BackrunSolver::new();
-        let result = solver.admit_v2(&BackrunV2Pool {
-            address: P,
-            token0: TOK,
-            token1: WETH,
-            reserve0: 500_000,
-            reserve1: 1_000,
-            fees: degenbot_substrate::executor_hop::V2FeePair::from_discovered(
-                Some(3),
-                Some(3),
-                Some(0),
-            ),
-        });
-        assert_eq!(
-            result,
-            Err(V2AdmissionError::Fee(
-                degenbot_substrate::executor_hop::V2FeeRefusal::ZeroDenominator
-            ))
+        let zero_denominator = admit_v2(
+            &mut solver,
+            P,
+            500_000,
+            1_000,
+            V2FeePair::from_discovered(Some(3), Some(3), Some(0)),
+        )
+        .expect_err("a zero fee denominator must decline");
+        assert!(matches!(zero_denominator, IngressDecline::Fee(_)));
+        assert_eq!(zero_denominator.stage(), "admit-fee");
+        let missing = admit_v2(&mut solver, Q, 200_000, 900, V2FeePair::missing())
+            .expect_err("a missing fee must decline");
+        assert_eq!(missing.stage(), "admit-fee");
+        assert!(
+            missing.detail().to_lowercase().contains("missing"),
+            "the refusal names the fee defect: {}",
+            missing.detail()
         );
-        let missing = solver.admit_v2(&BackrunV2Pool {
-            address: Q,
-            token0: TOK,
-            token1: WETH,
-            reserve0: 200_000,
-            reserve1: 900,
-            fees: V2FeePair::missing(),
-        });
-        assert_eq!(missing, Err(V2AdmissionError::Fee(V2FeeRefusal::Missing)));
         assert_eq!(
             solver.registered_pool_id(&P),
             None,

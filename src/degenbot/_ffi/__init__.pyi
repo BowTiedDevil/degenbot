@@ -728,7 +728,7 @@ class BalancerFamily:
     [`BalancerFamily`] that the `getNormalizedWeights()` /
     `getAmplificationParameter()` probe resolves.
 
-    [`BalancerFamily`] (`degenbot_bot::bot_core::pool_builder::builder`)
+    [`BalancerFamily`] (`degenbot_bot::bot_core::BalancerFamily`)
     stays the semantic owner; this mirrors exactly its two discriminants, so a
     builder call site compares an enum member instead of string-matching the
     wire. [`balancer_family_to_py`]`s `match` is exhaustive over the core enum,
@@ -3928,7 +3928,7 @@ class RegistrationFoldDelta:
     The delta one unit fold applies to a driver's summary counters — the
     core's [`PipelineReport`] after exactly one `absorb`. The counter
     ARITHMETIC is the core's (one definition in
-    `degenbot_bot::bot_core::registration_ledger`); a driver that keeps its
+    `degenbot_bot::bot_core`); a driver that keeps its
     own counter storage applies this answer mechanically, field for field.
     """
     @property

@@ -9,7 +9,7 @@ from degenbot.balancer.libraries.constants import PowVersion
 from degenbot.balancer.libraries.scaling_helpers import (
     _compute_scaling_factor,
 )
-from degenbot.balancer.pool_quoter import BalancerSwapQuoter
+from degenbot.balancer.pool_quoter import BalancerSwapQuoter, answer
 from degenbot.balancer.types import (
     BalancerV2PoolState,
     BalancerV2WeightedPoolExternalUpdate,
@@ -226,11 +226,14 @@ class BalancerV2Pool(AbstractLiquidityPool):
             The computed integer value.
 
         """
-        return self.swap_quoter.exact_in(
-            token_in,
-            token_out,
-            token_in_quantity,
-            override_state=override_state,
+        return answer(
+            self.swap_quoter.exact_in(
+                token_in,
+                token_out,
+                token_in_quantity,
+                override_state=override_state,
+            ),
+            exact_input=True,
         )
 
     def calculate_tokens_in_from_tokens_out(
@@ -248,11 +251,14 @@ class BalancerV2Pool(AbstractLiquidityPool):
             The computed integer value.
 
         """
-        return self.swap_quoter.exact_out(
-            token_in,
-            token_out,
-            token_out_quantity,
-            override_state=override_state,
+        return answer(
+            self.swap_quoter.exact_out(
+                token_in,
+                token_out,
+                token_out_quantity,
+                override_state=override_state,
+            ),
+            exact_input=False,
         )
 
     def external_update(

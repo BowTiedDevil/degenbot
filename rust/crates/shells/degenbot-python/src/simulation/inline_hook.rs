@@ -44,7 +44,7 @@ use alloy::primitives::{Bytes, U256};
 use degenbot_arbitrage::{
     simulate_path_on_evm_in_span, FailBuckets, SimResult, SimulateContext, SimulatePath, SolveStep,
 };
-use degenbot_bot::arb_engine::inline_sim::{
+use degenbot_bot::arb_engine::{
     AccessListRow, CapturedSwapRow, InlineSimFailure, InlineSimRequest, InlineSimulator,
     InlineSwapFamily, SimulatedPathResult,
 };
@@ -324,7 +324,7 @@ impl degenbot_workers::lane::EscalationPort for SimRuntimeEscalationPort {
 /// (`block_in_place` + ambient-handle drive) is DELETED with the tokio
 /// solve stance (LW-T9): every caller is a fleet worker seat — plain OS
 /// thread, NO ambient runtime, pinned structurally by the LW-T2 wedge test
-/// in `degenbot_bot::arb_engine::fleet_solve_executor` — and sim
+/// in the engine's fleet-executed solve arms — and sim
 /// escalations drive on the injected `EscalationPort`, never an ambient
 /// `Handle`. A future caller that DOES hold an ambient runtime now fails
 /// loudly (`block_on` inside a runtime panics — the 2026-09-05 soak freeze

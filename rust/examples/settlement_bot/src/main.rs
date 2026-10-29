@@ -337,7 +337,7 @@ impl SettlementBotConfig {
         // The retry policy is declared in the core schema, and the projection
         // from that declaration lives beside the retry dance.
         let verification_retry_policy =
-            degenbot::bot_core::verification_retry::retry_policy_from_config(&loaded.config.verify);
+            degenbot::bot_core::retry_policy_from_config(&loaded.config.verify);
 
         Ok(Self {
             operator_address,
@@ -874,15 +874,11 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("live construction provider from {http}: {e}"))?;
         let (live_db, _live_schema) = degenbot::db::DegenbotDb::open(&db_path)
             .map_err(|e| format!("open live construction DB {}: {e}", db_path.display()))?;
-        let io = degenbot::bot_core::construction_io::ConstructionIo::new(
-            std::sync::Arc::new(
-                degenbot::bot_core::construction_io::DegenbotDbConstruction::new(
-                    std::sync::Arc::new(live_db),
-                ),
-            ),
-            std::sync::Arc::new(
-                degenbot::bot_core::construction_io::AlloyRpcConstruction::new(provider),
-            ),
+        let io = degenbot::bot_core::ConstructionIo::new(
+            std::sync::Arc::new(degenbot::bot_core::DegenbotDbConstruction::new(
+                std::sync::Arc::new(live_db),
+            )),
+            std::sync::Arc::new(degenbot::bot_core::AlloyRpcConstruction::new(provider)),
         );
         let live_ctx = live::LiveContext {
             chain_id: CHAIN_ID,

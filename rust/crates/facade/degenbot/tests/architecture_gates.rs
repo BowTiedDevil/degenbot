@@ -2773,6 +2773,80 @@ fn no_new_pools_deep_paths() {
     );
 }
 
+/// ADR-084 D2: the engine's capability homes are doors, not trees. A consumer
+/// names an item at the door (`degenbot_bot::bot_core::Bot`,
+/// `degenbot::bot::arb_engine::EngineDriver`, `degenbot_bot::fleet_intake`);
+/// a second lowercase segment beneath `bot_core` or `arb_engine`
+/// (`…::bot_core::pool_builder::build_v2`) names an implementation module and
+/// bypasses the surface the door re-exports.
+///
+/// The external-import census IS the acceptance test: every `.rs` of every
+/// member crate — test and example targets included, because they are
+/// separate crates that cannot see `pub(crate)` — except the crate that owns
+/// the tree.
+/// A re-exported module name at the door (`…::bot_core::session_end`) carries
+/// no second segment and is therefore not a bypass.
+/// live-invariant gate (ADR-087 D2): watches every live `.rs` reference to a `degenbot_bot` module beneath a capability door; not tripwire precedent.
+#[test]
+fn no_bot_core_or_arb_engine_deep_paths() {
+    let bot_crate = workspace_root().join("crates/engine/degenbot-bot");
+    let mut offenders = std::collections::BTreeSet::<String>::new();
+    for root in ["crates", "examples"] {
+        for_each_rust_source(&workspace_root().join(root), &mut |path, text| {
+            // The owning crate names its own modules directly.
+            if path.starts_with(&bot_crate) {
+                return;
+            }
+            // This file's own text is the rule, not a consumer reference.
+            if path.file_name().and_then(|name| name.to_str()) == Some("architecture_gates.rs") {
+                return;
+            }
+            offenders.extend(bot_door_deep_paths(text));
+        });
+    }
+    assert!(
+        offenders.is_empty(),
+        "`degenbot_bot` door bypass(es) (ADR-084 D2: name an item at the \
+         `bot_core` / `arb_engine` door, never an implementation module beneath \
+         it): {offenders:#?}"
+    );
+}
+
+/// Every structural `<root>::<bot_core|arb_engine>::<module>::` reference in
+/// `text`, as `<root>::<door>::<module>` keys.
+///
+/// The roots are the crate name and the umbrella's two alias chains
+/// (`degenbot::bot::<door>`, `degenbot::<door>`); the `degenbot::` row skips an
+/// alias `bot::` tail so the alias form is counted once per spelling.
+fn bot_door_deep_paths(text: &str) -> Vec<String> {
+    const DOORS: [&str; 2] = ["bot_core", "arb_engine"];
+    let mut found = Vec::new();
+    for root in ["degenbot_bot::", "degenbot::bot::", "degenbot::"] {
+        for (start, _) in text.match_indices(root) {
+            let mut cursor = start + root.len();
+            if root == "degenbot::" && text[cursor..].starts_with("bot::") {
+                cursor += "bot::".len();
+            }
+            let rest = &text[cursor..];
+            let door_len = module_segment_len(rest);
+            if door_len == 0 || !rest[door_len..].starts_with("::") {
+                continue;
+            }
+            let door = &rest[..door_len];
+            if !DOORS.contains(&door) {
+                continue;
+            }
+            let after = &rest[door_len + 2..];
+            let module_len = module_segment_len(after);
+            if module_len == 0 || !after[module_len..].starts_with("::") {
+                continue;
+            }
+            found.push(format!("{root}{door}::{}", &after[..module_len]));
+        }
+    }
+    found
+}
+
 /// Every structural `degenbot_pools::<capability>::<module>::` reference in
 /// `text`, as `degenbot_pools::<capability>::<module>` keys.
 ///

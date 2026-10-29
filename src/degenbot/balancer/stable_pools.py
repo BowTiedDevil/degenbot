@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, cast, runtime_c
 
 from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
 from degenbot.balancer.math import fixed_point_mul_down
-from degenbot.balancer.pool_quoter import BalancerStableSwapQuoter
+from degenbot.balancer.pool_quoter import BalancerStableSwapQuoter, answer
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
@@ -354,31 +354,32 @@ class BalancerV2StablePool(AbstractLiquidityPool):
             ),
         )
 
-    def _should_warn_stale_rates(self) -> bool:
-        """Whether a StaleRateResult should wrap the computed result.
+    def _stale_rates(self) -> bool:
+        """Whether this pool's quotes rest on construction-static rates.
 
         ComposableStablePools have time-varying rates (bb-a-* tokens accrue
         yield). Without a live rate provider, the construction-time rates
-        become stale as blocks pass. MetaStablePools have near-static rates
-        (wstETH/wETH conversion), so stale rates are not a concern.
+        become stale as blocks pass, so the quoter states the stale-rate fact on
+        every verdict. MetaStablePools have near-static rates (wstETH/wETH
+        conversion), so their quotes are exact.
 
         Returns:
-            The computed boolean value.
+            True when this pool's quotes carry the stale-rate fact.
 
         """
         if self.bpt_idx is None:
-            # MetaStablePool: rates are near-static, no warning needed
             return False
-        # ComposableStablePool: warn if using static (stale) rates
-        return self.bpt_idx is not None and self._rate_provider_is_static
+        # A ComposableStablePool's rates move with yield accrual, so a static
+        # rate provider makes every quote inexact.
+        return self._rate_provider_is_static
 
     @property
     def swap_quoter(self) -> BalancerStableSwapQuoter:
         """The pool's swap quoter.
 
         The quoter carries this pool's rate facts: a static-rate Composable pool
-        reports its quotes as ``StaleRateResult``; a live-provider pool resolves
-        the block's scaling factors for each read.
+        states the stale-rate fact on every verdict; a live-provider pool
+        resolves the block's scaling factors for each read.
 
         Returns:
             The stable-pool quoter for this pool.
@@ -387,7 +388,7 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         return BalancerStableSwapQuoter(
             self._py_pool,
             self._tokens,
-            stale_rates=self._should_warn_stale_rates(),
+            stale_rates=self._stale_rates(),
             resolve_scaling_factors=(
                 None if self._rate_provider_is_static else self._resolve_scaling_factors
             ),
@@ -407,21 +408,23 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         Python-side (the MetaStable block-rate lookup is driver data), the
         swap math is fully Rust-owned.
 
-        For ComposableStablePools without a live rate provider the result
-        is wrapped in ``StaleRateResult`` because construction-time rates
-        may be stale.
+        For ComposableStablePools without a live rate provider the answer is
+        refused as ``StaleRateResult`` because construction-time rates may be
+        stale; the computed amounts stay readable on the exception.
 
         Returns:
-            The computed integer value (unwrapped from ``StaleRateResult``
-            semantics when rates cannot be stale).
+            The computed output amount.
 
         """
-        return self.swap_quoter.exact_in(
-            token_in,
-            token_out,
-            token_in_quantity,
-            override_state=override_state,
-            block_identifier=block_identifier,
+        return answer(
+            self.swap_quoter.exact_in(
+                token_in,
+                token_out,
+                token_in_quantity,
+                override_state=override_state,
+                block_identifier=block_identifier,
+            ),
+            exact_input=True,
         )
 
     def calculate_tokens_in_from_tokens_out(
@@ -437,16 +440,23 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         Thin driver shell over the Rust core: the MetaStable block-rate
         resolution stays Python-side, the swap math is fully Rust-owned.
 
+        For ComposableStablePools without a live rate provider the answer is
+        refused as ``StaleRateResult`` because construction-time rates may be
+        stale; the computed amounts stay readable on the exception.
+
         Returns:
-            The computed integer value.
+            The computed input amount.
 
         """
-        return self.swap_quoter.exact_out(
-            token_in,
-            token_out,
-            token_out_quantity,
-            override_state=override_state,
-            block_identifier=block_identifier,
+        return answer(
+            self.swap_quoter.exact_out(
+                token_in,
+                token_out,
+                token_out_quantity,
+                override_state=override_state,
+                block_identifier=block_identifier,
+            ),
+            exact_input=False,
         )
 
     def external_update(

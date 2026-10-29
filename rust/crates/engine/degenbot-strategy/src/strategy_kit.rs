@@ -15,8 +15,9 @@
 //! - **provision** ([`ProvisionCell`]): the single V3 pool-state ingress
 //!   (`Db -> Chain` tick-map precedence, per-block memo) the strategy admits
 //!   through. The boot builds it from the held DB connection and attaches the
-//!   chain arm + chain-sample policy; the verify policy value flows on
-//!   [`PoolIngress::set_verify_level`] (ADR-061 D7).
+//!   chain arm, chain provider, and chain-sample policy; the policy value is
+//!   the kit's own and rides into every [`PoolIngress::admit`] call (ADR-061
+//!   D7).
 //! - **discovery** ([`DiscoveryHandles`]): the frozen route registry and the
 //!   startup discovery graph built from its connector index. `None` keeps the
 //!   discovery fan shut — frames observe; connectors are never guessed.
@@ -28,6 +29,7 @@
 use std::sync::Arc;
 
 use degenbot_pools::TickWordSource;
+use degenbot_rpc::provider::AlloyProvider;
 use degenbot_substrate::pool_ingress::{
     DbArm, IngressWitness, PoolIngress, TickMapPoolIdentity, TickMapSampleVerifier, VerifyLevel,
 };
@@ -63,6 +65,10 @@ pub struct StrategyKit {
     pub provision: ProvisionCell,
     /// Discovery handles; `None` means the fan is shut.
     pub discovery: Option<DiscoveryHandles>,
+    /// The facet-selected chain-sample policy: one boot-resolved value that
+    /// every admission passes to [`PoolIngress::admit`]. The ingress holds no
+    /// copy, so a configured stance and an admitting stance cannot disagree.
+    verify_level: VerifyLevel,
 }
 
 /// The ingress's backfill witness, written to the offline-review JSONL
@@ -115,22 +121,33 @@ impl StrategyKit {
         [StrategyCell::Provision, StrategyCell::Discovery];
 
     /// Resolve the kit once at boot: build the ingress over the held DB arm
-    /// (whose paired transport closes any Db-to-head lag), attach the chain arm
-    /// and the chain-sample policy, and build the discovery graph from the
-    /// frozen registry.
+    /// (whose paired transport closes any Db-to-head lag), attach the chain arm,
+    /// the chain provider the explicit V3 door reads through, and the
+    /// chain-sample policy, then build the discovery graph from the frozen
+    /// registry.
     ///
     /// This is the ONE kit resolve site; a strategy composes the result and
-    /// never its own ingress.
+    /// never its own ingress. Setting [`VerifyLevel::Off`] emits one loud
+    /// journal entry here: the operator has declared confidence, and the
+    /// two-stamp clock check still runs.
     #[must_use]
     pub fn resolve(
         registry: Option<Arc<RouteRegistry>>,
         db: Option<DbArm>,
         chain: Option<Arc<dyn TickWordSource>>,
+        provider: Option<Arc<AlloyProvider>>,
         verify: VerifyLevel,
         verifier: Option<Arc<dyn TickMapSampleVerifier>>,
     ) -> Self {
+        if verify == VerifyLevel::Off {
+            tracing::warn!(
+                "ingress verify_ticks=off: chain-sample verification of staged V3 tick maps is disabled by operator declaration; the two-stamp clock still aborts (snapshot-internal consistency is schema/decode validation, not an intake gate)"
+            );
+        }
         let mut ingress = PoolIngress::new(db, chain);
-        ingress.set_verify_level(verify);
+        if let Some(provider) = provider {
+            ingress.set_provider(provider);
+        }
         ingress.set_witness(Arc::new(TraceBackfillWitness));
         if let Some(verifier) = verifier {
             ingress.set_verifier(verifier);
@@ -142,6 +159,7 @@ impl StrategyKit {
         Self {
             provision: ProvisionCell { ingress },
             discovery,
+            verify_level: verify,
         }
     }
 
@@ -171,6 +189,13 @@ impl StrategyKit {
     #[must_use]
     pub fn ingress(&self) -> &PoolIngress {
         &self.provision.ingress
+    }
+
+    /// The facet-selected chain-sample policy every admission passes to
+    /// [`PoolIngress::admit`].
+    #[must_use]
+    pub fn verify_level(&self) -> VerifyLevel {
+        self.verify_level
     }
 }
 

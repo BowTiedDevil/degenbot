@@ -11,7 +11,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use degenbot_bot::arb_engine::fleet_status::fleet_runtime_status;
+use degenbot_bot::arb_engine::fleet_runtime_status;
 
 /// The runtime fleet status (FF-T5): budget, plan, census - a dict with
 /// `fleet_booted`, `profile`, `quota_cpus`, `binding`,

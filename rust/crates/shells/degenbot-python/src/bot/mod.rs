@@ -51,9 +51,9 @@ fn narrow_reserve(
 pub use crate::bot::pool::PyLiquidityPool;
 use crate::bot::pool::TickData;
 use crate::bot::token::PyErc20Token;
-use degenbot_bot::bot_core::pool_builder::construction_door::PoolConstruction;
-use degenbot_bot::bot_core::pool_builder::route::{self, BuiltIdentity};
-use degenbot_bot::bot_core::registration_ledger::RefusalKind;
+use degenbot_bot::bot_core::BuiltIdentity;
+use degenbot_bot::bot_core::PoolConstruction;
+use degenbot_bot::bot_core::RefusalKind;
 use degenbot_bot::bot_core::{
     Bot, RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams,
     RegisterCurvePoolParams,
@@ -277,7 +277,7 @@ impl PyBot {
         py: Python<'_>,
         pm: Address,
         pid: &[u8; 32],
-    ) -> PyResult<Option<degenbot_bot::bot_core::registration::V4RegisteredEcho>> {
+    ) -> PyResult<Option<degenbot_bot::bot_core::V4RegisteredEcho>> {
         // PRG-2: the keyed registration gate refuses an immutable-admission
         // pool (dynamic fee / fee-exceeds-encoder-limit) BEFORE any RPC work
         // on the registration path, with the exact exception class the live
@@ -314,7 +314,7 @@ impl PyBot {
             .transpose()
         };
         let tokens = request.tokens.as_deref();
-        let overrides = degenbot_bot::bot_core::pool_builder::builder::V4PoolBuildOverrides {
+        let overrides = degenbot_bot::bot_core::V4PoolBuildOverrides {
             currency0: parse_opt(tokens.and_then(|t| t.first()), "currency0")?,
             currency1: parse_opt(tokens.and_then(|t| t.get(1)), "currency1")?,
             fee: request.fee,
@@ -646,7 +646,7 @@ impl PyBot {
     fn submit_registration_unit(&self, fn_work: Py<PyAny>) -> PyResult<intake::PyIntakeReceipt> {
         // The PRG-3 stance gate is core-owned (the typed refusal carries the
         // historical message); the receipt itself stays pyo3-bound here.
-        degenbot_bot::bot_core::registration::ensure_registration_fleet_hosted()
+        degenbot_bot::bot_core::ensure_registration_fleet_hosted()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         intake::submit(fn_work)
     }
@@ -671,7 +671,7 @@ impl PyBot {
     /// `RuntimeError` if no pump state is attached (no engine constructed
     /// against this bot) or the receiver was already handed out.
     pub fn block_stream(&self) -> PyResult<crate::bot::engine::BlockStream> {
-        use degenbot_bot::bot_core::bot::BlockStreamError;
+        use degenbot_bot::bot_core::BlockStreamError;
         // D4 state: the pump `Mutex<Option<Arc<EngineDriver>>>` is read here;
         // the once-only receiver hand-off is the core `Bot::block_stream`.
         let pump = self.pump.lock().clone();
@@ -708,7 +708,7 @@ impl PyBot {
     /// out of range.
     #[pyo3(signature = (db_path, chain_id))]
     fn load_snapshot_from_db(&self, py: Python<'_>, db_path: &str, chain_id: u64) -> PyResult<()> {
-        use degenbot_bot::bot_core::bot::SnapshotOpenError;
+        use degenbot_bot::bot_core::SnapshotOpenError;
         // The core opens the `SnapshotDb` — a read-only handle with a held
         // deferred read transaction — and reads `S =
         // min(fetch_newest_update_block(V3), V4)` INSIDE the held tx so `S`
@@ -748,7 +748,7 @@ impl PyBot {
     /// # Errors
     /// `PyRuntimeError` if the `COMMIT` fails.
     fn close_snapshot_tx(&self, py: Python<'_>) -> PyResult<()> {
-        use degenbot_bot::bot_core::bot::CloseSnapshotTxError;
+        use degenbot_bot::bot_core::CloseSnapshotTxError;
         // Canary: capture S_snapshot (read inside the
         // held tx) before committing, then re-read S_live after COMMIT on the
         // same connection (now seeing the live DB). If S_live > S_snapshot the
@@ -805,7 +805,7 @@ impl PyBot {
         database_path: Option<&str>,
     ) -> PyResult<()> {
         use crate::bot::py_bot_io::extract_native_alloy;
-        use degenbot_bot::bot_core::construction_io::{
+        use degenbot_bot::bot_core::{
             AlloyRpcConstruction, ConstructionIo, DegenbotDbConstruction, NoDb,
         };
 
@@ -829,40 +829,39 @@ impl PyBot {
         // cold-start skip; a `Bot` restart after the file exists picks it
         // up) — is shell-owned ([`open_construction_db`], run under this
         // py.detach).
-        let db: std::sync::Arc<
-            dyn degenbot_bot::bot_core::construction_io::DbConstruction + Send + Sync,
-        > = match py.detach(|| open_construction_db(database_path)) {
-            Some(db) => {
-                // Bind the session's position reader HERE, and only
-                // here: this is the one point in a bot boot where the
-                // session and the database handle its reads are sourced
-                // from are both in hand. The reader is a lending
-                // integration's, the session registry is the engine's,
-                // and neither may take the other's edge, so the boot
-                // that already owns both composes them. Nothing about
-                // the reading is decided at this site — which rows
-                // answer, how fresh they are, and which faults refuse
-                // are the observer's own (`degenbot_aave::positions`).
-                #[cfg(feature = "aave-updater")]
-                {
-                    let observer: std::sync::Arc<
-                        dyn degenbot_substrate::session_registry::PositionObserver,
-                    > = std::sync::Arc::new(degenbot_aave::AavePositionObserver::new(
-                        std::sync::Arc::clone(&db),
-                    ));
-                    // A refused second install is the registry's to
-                    // report: it already logs at ERROR and hands the
-                    // observer back, precisely because it cannot be the
-                    // site that installs one.
-                    let _ = self
-                        .bot
-                        .session_registry()
-                        .install_position_observer(observer);
+        let db: std::sync::Arc<dyn degenbot_bot::bot_core::DbConstruction + Send + Sync> =
+            match py.detach(|| open_construction_db(database_path)) {
+                Some(db) => {
+                    // Bind the session's position reader HERE, and only
+                    // here: this is the one point in a bot boot where the
+                    // session and the database handle its reads are sourced
+                    // from are both in hand. The reader is a lending
+                    // integration's, the session registry is the engine's,
+                    // and neither may take the other's edge, so the boot
+                    // that already owns both composes them. Nothing about
+                    // the reading is decided at this site — which rows
+                    // answer, how fresh they are, and which faults refuse
+                    // are the observer's own (`degenbot_aave::positions`).
+                    #[cfg(feature = "aave-updater")]
+                    {
+                        let observer: std::sync::Arc<
+                            dyn degenbot_substrate::session_registry::PositionObserver,
+                        > = std::sync::Arc::new(degenbot_aave::AavePositionObserver::new(
+                            std::sync::Arc::clone(&db),
+                        ));
+                        // A refused second install is the registry's to
+                        // report: it already logs at ERROR and hands the
+                        // observer back, precisely because it cannot be the
+                        // site that installs one.
+                        let _ = self
+                            .bot
+                            .session_registry()
+                            .install_position_observer(observer);
+                    }
+                    std::sync::Arc::new(DegenbotDbConstruction::new(db))
                 }
-                std::sync::Arc::new(DegenbotDbConstruction::new(db))
-            }
-            None => std::sync::Arc::new(NoDb),
-        };
+                None => std::sync::Arc::new(NoDb),
+            };
 
         let io = ConstructionIo::new(db, rpc);
         // Attach to the shared `Bot` (interior-mutable `construction_io` field);
@@ -1751,7 +1750,7 @@ impl PyBot {
                 // cockpit's resolved route (the ordered factory rungs) rides
                 // the call; an absent list is the generic-only route (the
                 // behavior-preserving default).
-                let plan = route::ConstructionRoute {
+                let plan = degenbot_bot::bot_core::ConstructionRoute {
                     factories: factories
                         .clone()
                         .unwrap_or_default()
@@ -2054,14 +2053,11 @@ impl PyBot {
         // topics/data/block, and the coordinator consumes only the block +
         // pool identity.
         log.removed = true;
-        let coordinator = degenbot_bot::bot_core::reorg_coordinator::ReorgCoordinator::new(
-            std::sync::Arc::clone(&self.bot),
-        );
+        let coordinator =
+            degenbot_bot::bot_core::ReorgCoordinator::new(std::sync::Arc::clone(&self.bot));
         match coordinator.dispatch_reorg_log(&log, None) {
-            Ok(degenbot_bot::bot_core::reorg_coordinator::ReorgOutcome::Restored) => Ok("restored"),
-            Ok(degenbot_bot::bot_core::reorg_coordinator::ReorgOutcome::IdempotentNoop) => {
-                Ok("noop")
-            }
+            Ok(degenbot_bot::bot_core::ReorgOutcome::Restored) => Ok("restored"),
+            Ok(degenbot_bot::bot_core::ReorgOutcome::IdempotentNoop) => Ok("noop"),
             Err(e) => Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "dispatch_reorg_log: {e:?}"
             ))),
@@ -2575,7 +2571,7 @@ impl PyBot {
                 hooks: hook_addr,
             },
             state_view: state_view_addr,
-            hook_flags: degenbot_bot::bot_core::pool_builder::builder::derive_hook_flags(hook_addr),
+            hook_flags: degenbot_bot::bot_core::derive_hook_flags(hook_addr),
             protocol_fee,
             sqrt_price_x96: sp,
             liquidity,
@@ -3188,7 +3184,7 @@ impl PyBot {
 
 /// Parse one address string, raising the historical `ValueError`. The
 /// `Invalid address '<input>': <source>` vocabulary is core-owned
-/// ([`degenbot_bot::bot_core::registration::parse_address_str`]); this
+/// ([`degenbot_bot::bot_core::parse_address_str`]); this
 /// adapter only crosses the error into Python.
 /// Extract checked tick-bitmap WORD positions from a Python iterable (a
 /// `list`/`set`/`tuple` of word ints, or a `dict` whose keys are the words) —
@@ -3217,13 +3213,13 @@ fn extract_checked_bitmap_words(
 }
 
 fn parse_address(s: &str) -> PyResult<Address> {
-    degenbot_bot::bot_core::registration::parse_address_str(s).map_err(|kind| {
+    degenbot_bot::bot_core::parse_address_str(s).map_err(|kind| {
         pyo3::exceptions::PyValueError::new_err(kind.detail().unwrap_or_default().to_string())
     })
 }
 
 /// Serialize the core-normalized rows
-/// ([`degenbot_bot::bot_core::registration::tick_rows`] owns the `TickInfo`
+/// ([`degenbot_bot::bot_core::tick_rows`] owns the `TickInfo`
 /// narrowing half) to the tick-data wire shape via [`TickData::to_py`], so the
 /// builder can pass the returned dict straight back into
 /// `register_*_pool(tick_data=..., ...)` without reshaping.
@@ -3238,14 +3234,14 @@ fn build_tick_rows_py<'py>(
 /// extract error (and its precedence over parse errors) stays here; the
 /// string→address parse with the historical `Invalid address` message
 /// vocabulary is core-owned
-/// ([`degenbot_bot::bot_core::registration::parse_address_str`]).
+/// ([`degenbot_bot::bot_core::parse_address_str`]).
 fn parse_address_list(list: &Bound<'_, PyList>) -> PyResult<Vec<Address>> {
     list.iter()
         .map(|item| {
             let s: String = item.extract().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("token address must be a str: {e}"))
             })?;
-            degenbot_bot::bot_core::registration::parse_address_str(&s).map_err(|kind| {
+            degenbot_bot::bot_core::parse_address_str(&s).map_err(|kind| {
                 pyo3::exceptions::PyValueError::new_err(
                     kind.detail().unwrap_or_default().to_string(),
                 )

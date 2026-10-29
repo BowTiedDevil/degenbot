@@ -43,14 +43,13 @@ use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
-use degenbot_strategy::backrun_engine::{
-    BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily, PathReject,
-};
+use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, LaneFamily, PathReject};
 use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains};
 use degenbot_strategy::frame_pipeline::MarketContext;
 use degenbot_strategy::ETHEREUM_WETH as WETH;
 use degenbot_substrate::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_substrate::executor_hop::{V2FeePair, V2Fees};
+use degenbot_substrate::pool_ingress::{PoolAdmission, V2Identity, V2State};
 use hashbrown::HashMap as HbMap;
 
 fn v2_fee_pair() -> V2FeePair {
@@ -97,6 +96,7 @@ fn market_context(
     let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
         registry,
         db_arm,
+        None,
         None,
         degenbot_substrate::pool_ingress::VerifyLevel::default(),
         None,
@@ -475,15 +475,24 @@ async fn sequence_deficit_pools_capture_inject_reproduce() {
         &mut degenbot_strategy::frame_pipeline::StageTrace::default(),
     );
     assert_eq!(affected.len(), 1, "the anchor admits under the ladder map");
-    let v2_id = solver
-        .admit_v2(&BackrunV2Pool {
-            address: v2,
-            token0: token,
-            token1: WETH,
-            reserve0: 100_000_000_000u128,
-            reserve1: 100_000_000_000u128,
-            fees: v2_fee_pair(),
-        })
+    let v2_id = degenbot_core::runtime::get_runtime()
+        .block_on(solver.admit(
+            rt.ingress(),
+            PoolAdmission::V2 {
+                identity: V2Identity {
+                    address: v2,
+                    token0: token,
+                    token1: WETH,
+                },
+                state: V2State {
+                    reserve0: 100_000_000_000u128,
+                    reserve1: 100_000_000_000u128,
+                    fees: v2_fee_pair(),
+                },
+            },
+            rt.verify_level(),
+            head,
+        ))
         .expect("the WETH-quoted V2 connector admits");
     let chain = probe_chain(
         pool,
@@ -521,15 +530,24 @@ async fn sequence_deficit_pools_capture_inject_reproduce() {
         &mut degenbot_strategy::frame_pipeline::StageTrace::default(),
     );
     assert_eq!(affected.len(), 1, "the anchor admits under the wide map");
-    let v2_id = solver
-        .admit_v2(&BackrunV2Pool {
-            address: v2,
-            token0: token,
-            token1: WETH,
-            reserve0: 100_000_000_000u128,
-            reserve1: 100_000_000_000u128,
-            fees: v2_fee_pair(),
-        })
+    let v2_id = degenbot_core::runtime::get_runtime()
+        .block_on(solver.admit(
+            rt.ingress(),
+            PoolAdmission::V2 {
+                identity: V2Identity {
+                    address: v2,
+                    token0: token,
+                    token1: WETH,
+                },
+                state: V2State {
+                    reserve0: 100_000_000_000u128,
+                    reserve1: 100_000_000_000u128,
+                    fees: v2_fee_pair(),
+                },
+            },
+            rt.verify_level(),
+            head,
+        ))
         .expect("the WETH-quoted V2 connector admits");
     let chain = probe_chain(
         pool,

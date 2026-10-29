@@ -149,9 +149,7 @@ pub fn register_v4_with(
             // and blind the ADR-037 guards in replay.
             hooks: p.hooks.unwrap_or_default(),
         },
-        hook_flags: crate::bot_core::pool_builder::builder::derive_hook_flags(
-            p.hooks.unwrap_or_default(),
-        ),
+        hook_flags: crate::bot_core::derive_hook_flags(p.hooks.unwrap_or_default()),
         protocol_fee: protocol_fee_override.unwrap_or(p.protocol_fee.unwrap_or(0)),
         sqrt_price_x96: p.sqrt_price_x96.expect("v4 sqrt_price_x96").0,
         liquidity: u128::try_from(p.liquidity.expect("v4 liquidity").0).unwrap(),
@@ -211,9 +209,7 @@ pub fn build_v4_state(p: &PoolData) -> V4PoolState {
             // Same as register_v4_with: carry the REAL hook address.
             hooks: p.hooks.unwrap_or_default(),
         },
-        hook_flags: crate::bot_core::pool_builder::builder::derive_hook_flags(
-            p.hooks.unwrap_or_default(),
-        ),
+        hook_flags: crate::bot_core::derive_hook_flags(p.hooks.unwrap_or_default()),
         protocol_fee: p.protocol_fee.unwrap_or(0),
         sqrt_price_x96: p.sqrt_price_x96.expect("v4 sqrt_price_x96").0,
         liquidity: u128::try_from(p.liquidity.expect("v4 liquidity").0).unwrap(),

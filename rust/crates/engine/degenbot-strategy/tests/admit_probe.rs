@@ -16,11 +16,12 @@ use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_simulation::sim::evm::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
-use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, BackrunV2Pool, LaneFamily};
+use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, LaneFamily};
 use degenbot_strategy::backrun_strategy::{admit_extracted, solve_dfs_chains};
 use degenbot_strategy::frame_pipeline::MarketContext;
 use degenbot_strategy::ETHEREUM_WETH as WETH;
 use degenbot_substrate::executor_hop::{V2FeePair, V2Fees};
+use degenbot_substrate::pool_ingress::{PoolAdmission, V2Identity, V2State};
 
 fn v2_fee_pair() -> V2FeePair {
     V2FeePair::from_discovered(Some(3), Some(3), Some(1_000))
@@ -66,6 +67,7 @@ fn market_context(
     let kit = degenbot_strategy::strategy_kit::StrategyKit::resolve(
         registry,
         db_arm,
+        None,
         None,
         degenbot_substrate::pool_ingress::VerifyLevel::default(),
         None,
@@ -171,14 +173,24 @@ async fn live_v3_anchor_ingress_solves_production_chain() {
             .unwrap();
         let (r0, r1) = (reserves.reserve0, reserves.reserve1);
         let id = solver
-            .admit_v2(&BackrunV2Pool {
-                address: mid,
-                token0: m0,
-                token1: m1,
-                reserve0: u128::try_from(r0).unwrap(),
-                reserve1: u128::try_from(r1).unwrap(),
-                fees: v2_fee_pair(),
-            })
+            .admit(
+                rt.ingress(),
+                PoolAdmission::V2 {
+                    identity: V2Identity {
+                        address: mid,
+                        token0: m0,
+                        token1: m1,
+                    },
+                    state: V2State {
+                        reserve0: u128::try_from(r0).unwrap(),
+                        reserve1: u128::try_from(r1).unwrap(),
+                        fees: v2_fee_pair(),
+                    },
+                },
+                rt.verify_level(),
+                head,
+            )
+            .await
             .unwrap();
         let (zfo, out_id) = if edge.token0_id == in_id {
             (true, edge.token1_id)

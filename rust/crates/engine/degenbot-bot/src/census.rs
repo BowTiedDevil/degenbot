@@ -127,7 +127,7 @@ pub enum CensusEvent {
     /// carry the tier.
     FleetProfileResolved {
         profile: &'static str,
-        binding: crate::arb_engine::fleet_status::FleetBinding,
+        binding: crate::arb_engine::FleetBinding,
         oversubscribed: bool,
     },
     /// A batch of `n` candidates entered the simulate fan-out.
