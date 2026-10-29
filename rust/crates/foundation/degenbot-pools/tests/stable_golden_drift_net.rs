@@ -334,13 +334,13 @@ fn curve_arm_matches_golden_snapshot() {
 }
 
 // ---------------------------------------------------------------------------
-// CP-proxy precheck regression (Solvers H-2)
+// CP-proxy precheck regression
 // ---------------------------------------------------------------------------
 
 /// An 80/20 Balancer weighted hop (the shared `weighted_hop` builder is 50/50
 /// only). With the input token at weight 0.8 the true entry marginal rate is
 /// 4x the constant-product proxy rate (`w_in/w_out` = 4), which is exactly the
-/// divergence the H-2 false rejection rides.
+/// divergence the precheck's false rejection rode.
 fn weighted_8020_hop(base: u128, swap_fee: u128) -> ResolvedHop {
     let eight = U256::from(ONE_E18) * U256::from(8u64) / U256::from(10u64);
     let two = U256::from(ONE_E18) * U256::from(2u64) / U256::from(10u64);
@@ -358,15 +358,14 @@ fn weighted_8020_hop(base: u128, swap_fee: u128) -> ResolvedHop {
     }
 }
 
-/// Regression for the H-2 false rejection: the shared golden-section
+/// Regression for the precheck's false rejection: the shared golden-section
 /// template's V2-equivalent Möbius profitability precheck treats every hop as
 /// constant-product. On this path the CP-proxy product is
 /// `0.997 * 0.997 * 1.005 = 0.99898 < 1`, so the precheck declares the path
 /// unprofitable — while the true weighted entry-rate product is
 /// `(0.997 * 4) * (0.997 * 1.005) = 4.0`, so the path is profitable at real
-/// weighted math. The precheck is a bracket hint; it must not reject. (The
-/// adversarial review's original counterexample numbers were lost with its
-/// `.scratch` doc; this is a re-derived instance of the same class.)
+/// weighted math. The precheck is a bracket hint; it must not reject. A
+/// re-derived instance of the adversarial-review counterexample class.
 #[test]
 fn weighted_arm_does_not_reject_cp_proxy_unprofitable_but_profitable_path() {
     let base = ONE_E18;
@@ -447,7 +446,7 @@ fn curve_imbalanced_hop(balance_in: u128, balance_out: u128, fee: u128) -> Resol
     }
 }
 
-/// The stable-family instances of the H-2 false rejection: on a 2:1-imbalanced
+/// The stable-family instances of the same false rejection: on a 2:1-imbalanced
 /// stable pool the CP proxy's entry rate is `γ · (b_out/b_in) ≈ γ/2`, while
 /// the true stableswap entry rate stays near the peg. The V2 hop's reserve
 /// imbalance must clear each family's true entry discount: Balancer stable at

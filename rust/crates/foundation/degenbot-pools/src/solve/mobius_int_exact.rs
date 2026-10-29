@@ -22,19 +22,19 @@
 //!   with floor-`isqrt` and floor-division. The model envelope treats each
 //!   per-hop swap `y = γ·s·x / (D·r + γ·x)` as if its floor division were
 //!   mathematical division.
-//! - [`exact_mobius_solve`] is exact at the **discrete EVM-simulation
+//! - [`exact_mobius_solve`] bridges to the **discrete EVM-simulation
 //!   layer** — the actual on-chain chain applies floor (`EVM DIV`) at every
 //!   hop, producing a piecewise-linear staircase that *approximates* that
-//!   rational envelope. The discrete optimum can sit at `x* + δ` for small
-//!   `|δ|` because the staircase is locally sub-constant-slope near `x*`.
-//!   [`exact_mobius_solve`] calls [`compute_mobius_model_optimal_input`] for
-//!   the model-optimum anchor, then runs `int_simulate_path` at `x*` and
-//!   `x* ± 2` (the floor-exact swap chain) to find the discrete argmax of
-//!   `int_simulate_path(x) - x` — the true on-chain profit optimum.
-//!
-//! The closed form and the ±2 search compose into a single EVM-exact result:
-//! the closed form narrows the search to a tight neighborhood; the ±2 sweep
-//! patches the staircase jog that the rational envelope smooths over.
+//!   rational envelope. Near the envelope optimum the staircase is flat to
+//!   within the floor jog (~1 wei per hop) over a plateau that measured
+//!   thousands of wei wide on thin-margin paths, so the discrete argmax is
+//!   ILL-CONDITIONED: it can sit arbitrarily far from the model anchor, and
+//!   no fixed-radius sweep finds it. [`exact_mobius_solve`] therefore does
+//!   NOT return the discrete argmax. It anchors at the model optimum and
+//!   sweeps `x* ± 2`, which lands on the plateau: the returned profit is
+//!   within the floor-jog residual of the discrete max (measured ≤ 1 wei
+//!   against a ±4096-wei brute-scan reference over the thin-margin grid —
+//!   see the `displacement` test module).
 //!
 //! Module-level qualifier: the "exact" in *this module's name*
 //! (`mobius_int_exact`) is a discipline label distinguishing the integer
@@ -59,15 +59,19 @@ use crate::solve::mobius_int::{
 };
 use degenbot_math::v2::{int_simulate_path, IntHopState};
 
-/// Result of [`exact_mobius_solve`] — the discrete-EVM-sim-exact optimum of
-/// the on-chain swap chain (NOT the closed-form Möbius-model optimum).
+/// Result of [`exact_mobius_solve`] — a plateau point of the discrete
+/// EVM-sim staircase of the on-chain swap chain (NOT the closed-form
+/// Möbius-model optimum, and NOT the discrete argmax).
 ///
-/// The discrete optimum is found by anchoring at the model-optimum `x* =
+/// The point is found by anchoring at the model-optimum `x* =
 /// (√(K·M) - M) / N` (see [`compute_mobius_model_optimal_input`]) and
 /// sweeping the floor-exact swap chain `int_simulate_path` at `x*` and `x* ±
-/// 2`. The model envelope smooths over the per-hop floor-division staircase
-/// jog; the ±2 sweep patches it. See the module-level doc for the two-layer
-/// discipline ("model layer" vs "discrete-EVM-sim layer").
+/// 2`. The discrete argmax is ill-conditioned (the staircase is
+/// floor-jog-flat over a wide plateau near the optimum), so no fixed-radius
+/// sweep attains it; the ±2 sweep lands on the plateau and the returned
+/// profit is within the floor-jog residual of the discrete max (measured ≤ 1
+/// wei on 2-hop thin-margin paths). See the module-level doc for the
+/// two-layer discipline ("model layer" vs "discrete-EVM-sim layer").
 ///
 /// `optimal_input` is the discrete argmax of `int_simulate_path(x) - x`;
 /// `profit` is the corresponding on-chain profit. Both are `U256` (zero when
@@ -109,15 +113,19 @@ pub struct ExactMobiusResult {
 ///    [`compute_mobius_model_optimal_input`]. This is the Möbius-model
 ///    optimum (exact over the reals), NOT the discrete EVM-sim optimum.
 /// 4. EVM-simulate at `x*` and nearby points (±2) via `int_simulate_path`
-///    to find the discrete argmax of `int_simulate_path(x) - x` — the true
-///    on-chain profit optimum (the model envelope smooths over per-hop
-///    floor-division staircase jog; the ±2 sweep patches that jog).
+///    and keep the best of `int_simulate_path(x) - x`. This is NOT the
+///    discrete argmax: the staircase is floor-jog-flat over a wide plateau
+///    near the optimum, so the argmax can sit arbitrarily far from the
+///    anchor. The ±2 neighborhood lands on the plateau; the returned profit
+///    is within the floor-jog residual of the discrete max (measured ≤ 1
+///    wei on 2-hop thin-margin paths against a ±4096-wei brute scan).
 /// 5. Return best result.
 ///
-/// This produces **discrete-EVM-sim-exact** results with zero float
-/// conversions: the closed form narrows the search to a tight neighborhood
-/// of the model-optimum anchor; the ±2 sweep picks the discrete optimum
-/// the staircase actually attains.
+/// This produces results with zero float conversions: the closed form
+/// narrows the search to a tight neighborhood of the model-optimum anchor;
+/// the ±2 sweep picks a plateau point of the staircase. Exactness holds at
+/// the Möbius-model layer; the discrete layer carries the bounded residual
+/// documented above.
 ///
 /// # Errors
 ///
@@ -778,6 +786,122 @@ mod tests {
             ceil_root - U2048::from(1u64)
         );
         assert_eq!(isqrt_u2048(U2048::MAX), ceil_root);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Staircase displacement: the residual contract
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod displacement {
+    #![expect(clippy::unwrap_used)]
+
+    use super::*;
+
+    /// Reference discrete argmax over `[anchor - R, anchor + R]` — the
+    /// brute-scan truth the solver's residual is measured against.
+    fn window_argmax(anchor: U256, radius: u64, hops: &[IntHopState]) -> Option<(U256, U256)> {
+        let mut best: Option<(U256, U256)> = None;
+        let start = anchor
+            .saturating_sub(U256::from(radius))
+            .max(U256::from(1u64));
+        let end = anchor.saturating_add(U256::from(radius));
+        let mut x = start;
+        while x <= end {
+            if let Ok(sim) = int_simulate_path(x, hops) {
+                if sim.final_output > x {
+                    let profit = sim.final_output - x;
+                    if best.is_none_or(|(_, p)| profit > p) {
+                        best = Some((x, profit));
+                    }
+                }
+            }
+            if x == U256::MAX {
+                break;
+            }
+            x += U256::from(1u64);
+        }
+        best
+    }
+
+    /// Near-fee-threshold margins flatten the envelope near the optimum, so
+    /// floor jogs dominate and the true discrete argmax wanders far from the
+    /// model anchor (the adversarial-review counterexample class). The
+    /// residual — the solver's profit shortfall against a ±4096-wei
+    /// brute-scan reference — must stay within the floor-jog scale (1 wei on
+    /// these 2-hop paths).
+    #[test]
+    fn displacement_residual_stays_within_floor_jog() {
+        let fees = [(997u64, 1000u64), (9975, 10000), (9995, 10000)];
+        let bases = [
+            1_000_000_000_000u128,
+            1_000_000_000_000_000_000u128,
+            10u128.pow(24),
+        ];
+        for &(g, d) in &fees {
+            for &base in &bases {
+                for delta_ppm in (6100u128..=20_000).step_by(900) {
+                    let b = U256::from(base);
+                    let s1 = b + b * U256::from(delta_ppm) / U256::from(1_000_000u64);
+                    let hops = vec![IntHopState::new(b, s1, g, d), IntHopState::new(b, b, g, d)];
+                    let Ok(coeffs) = compute_int_mobius_coefficients(&hops) else {
+                        continue;
+                    };
+                    if !coeffs.is_profitable {
+                        continue;
+                    }
+                    let anchor = compute_mobius_model_optimal_input(&coeffs);
+                    if anchor.is_zero() {
+                        continue;
+                    }
+                    let Some((_, window_profit)) = window_argmax(anchor, 4096, &hops) else {
+                        continue;
+                    };
+                    let r = exact_mobius_solve(&hops).unwrap();
+                    assert!(
+                        window_profit.saturating_sub(r.profit) <= U256::from(1u64),
+                        "residual {} > 1 wei (g={g}/{d} base={base} dppm={delta_ppm} \
+                         anchor={anchor} window={window_profit} solver={})",
+                        window_profit - r.profit,
+                        r.profit
+                    );
+                }
+            }
+        }
+    }
+
+    /// Pin the ill-conditioning itself (re-derived counterexample of the
+    /// adversarial-review class): the true argmax sits more than 64 wei from
+    /// the anchor — outside any small fixed-radius sweep — while the profit
+    /// plateau is flat, so the solver's profit is still within 1 wei of the
+    /// window max.
+    #[test]
+    fn argmax_displacement_exceeds_fixed_sweeps_but_residual_is_bounded() {
+        let b = U256::from(1_000_000_000_000u128);
+        let s1 = b + b * U256::from(9_700u64) / U256::from(1_000_000u64);
+        let hops = vec![
+            IntHopState::new(b, s1, 997, 1000),
+            IntHopState::new(b, b, 997, 1000),
+        ];
+        let coeffs = compute_int_mobius_coefficients(&hops).unwrap();
+        let anchor = compute_mobius_model_optimal_input(&coeffs);
+        let (wx, window_profit) = window_argmax(anchor, 4096, &hops).unwrap();
+        let disp = if wx > anchor {
+            wx - anchor
+        } else {
+            anchor - wx
+        };
+        assert!(
+            disp > U256::from(64u64),
+            "counterexample must keep the argmax outside small sweeps (disp={disp})"
+        );
+        let r = exact_mobius_solve(&hops).unwrap();
+        assert!(
+            window_profit.saturating_sub(r.profit) <= U256::from(1u64),
+            "residual {} > 1 wei",
+            window_profit - r.profit
+        );
     }
 }
 
