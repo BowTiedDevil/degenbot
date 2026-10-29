@@ -1,11 +1,15 @@
 """Calculation mixin for Uniswap V2-style constant-product pools.
 
 Provides read-only calculation methods that operate on state held by
-V2PoolState (or a compatible state mixin). All methods are non-mutating
-and delegate to standalone calculation functions where possible.
+V2PoolState (or a compatible state mixin). All methods are non-mutating.
+
+The swap verbs (calculate_tokens_out_from_tokens_in /
+calculate_tokens_in_from_tokens_out) delegate to the pool's `swap_quoter`; the
+pricing verbs below are pure functions over state and stay here.
 
 Pools with different calculation paths (e.g., Aerodrome's stable mode,
-Camelot's k invariant) define their own calc mixin instead of using this one.
+Camelot's k invariant) answer through their own quoter instead of using this
+one.
 
 See: contract_reference/uniswap/V2/UniswapV2Factory.sol (UniswapV2Pair swap/mint/burn)
 """
@@ -13,18 +17,14 @@ See: contract_reference/uniswap/V2/UniswapV2Factory.sol (UniswapV2Pair swap/mint
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import (
-    InvalidSwapInputAmount,
-    LiquidityPoolError,
-)
-from degenbot.uniswap import SwapRefusalKind, SwapRefused, swap_refusal_to_error
 
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
     from degenbot.types import Pool
+    from degenbot.uniswap.v2_pool_quoter import UniswapV2SwapQuoter
     from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 
@@ -70,9 +70,14 @@ class UniswapV2PoolCalc:
         """Block of the last state update (concrete pool provides)."""
         raise NotImplementedError
 
-    # Pool handle (set by the concrete UniswapV2Pool companion in MRO).
-    # Calc delegation routes the constant-product math through it — the
-    # registered reads by direct delegation, the override reads through the
+    @property
+    def swap_quoter(self) -> UniswapV2SwapQuoter:
+        """The pool's swap quoter (concrete pool provides)."""
+        raise NotImplementedError
+
+    # Pool handle (set by the concrete UniswapV2Pool companion in MRO). The
+    # swap quoter reads the pool's constant-product state and math through it —
+    # the registered reads by direct delegation, the override reads through the
     # swap-simulation door.
     _py_pool: Pool
 
@@ -90,60 +95,12 @@ class UniswapV2PoolCalc:
         Returns:
             The required input token amount.
 
-        Raises:
-            InvalidSwapInputAmount: If token_out_quantity is not positive.
-            DegenbotValueError: If token_out is not held by this pool.
-            LiquidityPoolError: If the requested output exceeds available reserves.
-
         """
-        if token_out_quantity <= 0:  # pragma: no cover
-            raise InvalidSwapInputAmount
-
-        if token_out == self._token1:
-            zero_for_one = True
-        elif token_out == self._token0:
-            zero_for_one = False
-        else:  # pragma: no cover
-            raise DegenbotValueError(
-                message=f"Could not identify token_out: {token_out}! This pool holds: {self._token0} {self._token1}",  # ruff:ignore[line-too-long]
-            )
-
-        if override_state is None:
-            # Delegate the constant-product math to the Rust pool handle. Rust
-            # reads reserves + fee under a single read guard (no separate Python
-            # state read beforehand — no pump-interleave risk).
-            # Rust returns 0 on overdraw (amount_out >= reserve_out); convert to
-            # the original Python contract's LiquidityPoolError.
-            result: int = self._py_pool.calculate_tokens_in(
-                zero_for_one=zero_for_one,
-                amount_out=token_out_quantity,
-            )
-            if result == 0:
-                raise LiquidityPoolError(
-                    message=f"Requested amount out ({token_out_quantity}) >= pool reserves",
-                )
-            return result
-
-        # Override path: the exact-output read runs core-side through the
-        # swap-simulation door over the override reserves (the door borrows the
-        # fee fractions from the registration), so the companion holds no swap
-        # math. A refusal is the historical overdraw verdict — the requested
-        # output is not available against those reserves.
-        # The typed read (ADR-037/t2): a refusal is the overdraw verdict.
-        try:
-            read = self._py_pool.simulate(
-                zero_for_one=zero_for_one,
-                amount_specified=token_out_quantity,
-                override_state=override_state,
-            )
-        except SwapRefused as exc:
-            reserves_out = (
-                override_state.reserves_token1 if zero_for_one else override_state.reserves_token0
-            )
-            raise LiquidityPoolError(
-                message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})",  # ruff:ignore[line-too-long]
-            ) from exc
-        return int(read.amount0_delta if zero_for_one else read.amount1_delta)
+        return self.swap_quoter.exact_out(
+            token_out,
+            token_out_quantity,
+            override_state=override_state,
+        )
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -156,79 +113,12 @@ class UniswapV2PoolCalc:
         Returns:
             The expected output token amount.
 
-        Raises:
-            InvalidSwapInputAmount: If token_in_quantity is not positive.
-            DegenbotValueError: If token_in is not held by this pool.
-            LiquidityPoolError: If `uint256` swap math overflows (on-chain revert).
-            swap_refusal_to_error: Renders a refusal that is not a
-                swap-geometry verdict — the walk entered an unfetched word
-                and the on-demand fetch failed (MissingLiquidityData).
-
         """
-        if token_in_quantity <= 0:  # pragma: no cover
-            raise InvalidSwapInputAmount
-
-        if token_in == self._token0:
-            zero_for_one = True
-        elif token_in == self._token1:
-            zero_for_one = False
-        else:  # pragma: no cover
-            raise DegenbotValueError(
-                message=f"Could not identify token_in: {token_in}! Pool holds: {self._token0} {self._token1}",  # ruff:ignore[line-too-long]
-            )
-
-        if override_state is None:
-            # Delegate the constant-product math to the Rust pool handle. Rust
-            # reads reserves + fee under a single read guard (no separate Python
-            # state read beforehand — no pump-interleave).
-            #
-            # cdbc03bb: Rust mirrors on-chain `getAmountOut` SafeMath and
-            # reverts on `uint256` overflow (e.g. `amount_in = 2**256 - 1`
-            # overflows `amount_in * gamma_numer`); the FFI surfaces that
-            # revert as a `ValueError`. Translate it to the original Python
-            # contract's `LiquidityPoolError` (mirrors
-            # `calculate_tokens_in_from_tokens_out`'s overdraw-sentinel
-            # translation below).
-            try:
-                return cast(
-                    "int",
-                    self._py_pool.calculate_tokens_out(
-                        zero_for_one=zero_for_one,
-                        amount_in=token_in_quantity,
-                    ),
-                )
-            except ValueError as e:
-                raise LiquidityPoolError(
-                    message=(
-                        f"Input amount ({token_in_quantity}) overflows "
-                        "uint256 swap math (on-chain revert)"
-                    ),
-                ) from e
-
-        # Override path: the exact-input read runs core-side through the
-        # swap-simulation door over the override reserves (the door borrows the
-        # fee fractions from the registration), so the companion holds no swap
-        # math. The read's signed deltas ARE the answer: the output side is the
-        # negative of the token that left the pool.
-        # The typed read (ADR-037/t2): a refusal is the overflow verdict.
-        try:
-            read = self._py_pool.simulate(
-                zero_for_one=zero_for_one,
-                amount_specified=-token_in_quantity,
-                override_state=override_state,
-            )
-        except SwapRefused as exc:
-            if exc.kind != SwapRefusalKind.NotComputable:  # ty: ignore[unresolved-attribute]
-                # An infrastructure failure (an unfetchable word), not a
-                # swap-geometry verdict — render it honestly.
-                raise swap_refusal_to_error(exc) from exc
-            raise LiquidityPoolError(
-                message=(
-                    f"Input amount ({token_in_quantity}) overflows "
-                    "uint256 swap math (on-chain revert)"
-                ),
-            ) from exc
-        return -int(read.amount1_delta if zero_for_one else read.amount0_delta)
+        return self.swap_quoter.exact_in(
+            token_in,
+            token_in_quantity,
+            override_state=override_state,
+        )
 
     def get_absolute_price(
         self,

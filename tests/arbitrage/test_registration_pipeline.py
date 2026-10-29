@@ -394,6 +394,11 @@ class _FakeV3Pool:
         self.token1 = FakeToken(address=token1)
         self._py_pool = _PoolIdentity(pool_id=pool_id)
 
+    @property
+    def engine_pool_id(self) -> int:
+        """The engine id the companion's public read answers."""
+        return self._py_pool.pool_id
+
 
 class _RecordingRegistry:
     """Engine-registry double: records verify + crawl-path calls."""

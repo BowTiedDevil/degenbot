@@ -40,14 +40,9 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.crypto import keccak256
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import (
-    HookedPoolResult,
-    IncompleteSwap,
-    LiquidityPoolError,
-)
-from degenbot.uniswap import SwapRefusalKind, SwapRefused, swap_refusal_to_error
 from degenbot.uniswap.concentrated_liquidity_base import ConcentratedLiquidityBase
 from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc
+from degenbot.uniswap.v4_pool_quoter import UniswapV4SwapQuoter
 from degenbot.uniswap.v4_pool_state import V4PoolState
 from degenbot.uniswap.v4_types import (
     UniswapV4PoolKey,
@@ -58,24 +53,6 @@ from degenbot.utils.bytes import to_0x_hex
 if TYPE_CHECKING:
     from degenbot.types import Pool
     from degenbot.types.chain import ChecksummedAddress
-    from degenbot.uniswap import SwapRead
-
-
-def _signed_amounts(read: SwapRead, *, zero_for_one: bool) -> tuple[int, int]:
-    """Split a computed swap read's signed deltas into (amount_in, amount_out).
-
-    The Rust seam returns the deposited-`+`/sent-`-` per-token deltas; the
-    input side reads positive and the output side negative.
-
-    Returns:
-        The ``(amount_in, amount_out)`` unsigned magnitudes.
-
-    """
-    amount0_delta = int(read.amount0_delta)
-    amount1_delta = int(read.amount1_delta)
-    if zero_for_one:
-        return amount0_delta, -amount1_delta
-    return amount1_delta, -amount0_delta
 
 
 @dataclasses.dataclass(slots=True)
@@ -144,6 +121,17 @@ class Hooks(Enum):
     AFTER_SWAP_RETURNS_DELTA = 1 << 2
     AFTER_ADD_LIQUIDITY_RETURNS_DELTA = 1 << 1
     AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA = 1 << 0
+
+
+# The hooks that run around a swap — the ones whose effect a hypothetical read
+# cannot model, so a pool carrying any of them never presents an override read
+# as an answer.
+_SWAP_MODIFYING_HOOKS = frozenset({
+    Hooks.AFTER_SWAP,
+    Hooks.AFTER_SWAP_RETURNS_DELTA,
+    Hooks.BEFORE_SWAP,
+    Hooks.BEFORE_SWAP_RETURNS_DELTA,
+})
 
 
 class UniswapV4Pool(
@@ -357,6 +345,23 @@ class UniswapV4Pool(
         """
         return self.name
 
+    @property
+    def swap_quoter(self) -> UniswapV4SwapQuoter:
+        """The pool's swap quoter.
+
+        Built over the pool's live reads and handle, so a replaced read or
+        handle is always honoured.
+
+        Returns:
+            The V4 swap quoter for this pool.
+
+        """
+        return UniswapV4SwapQuoter(
+            self,
+            self._py_pool,
+            swap_hooks=self.active_hooks & _SWAP_MODIFYING_HOOKS,
+        )
+
     def calculate_tokens_in_from_tokens_out(
         self,
         token_out: Erc20Token,
@@ -368,61 +373,12 @@ class UniswapV4Pool(
         Returns:
             The required input token amount.
 
-        Raises:
-            DegenbotValueError: If token_out is not held by this pool.
-            HookedPoolResult: If the pool has active hooks that affect the swap.
-            IncompleteSwap: If the swap cannot fulfill the full output amount.
-            LiquidityPoolError: If the simulated execution cannot compute.
-            swap_refusal_to_error: Renders a refusal that is not a
-                swap-geometry verdict — the walk entered an unfetched word
-                and the on-demand fetch failed (MissingLiquidityData).
-
         """
-        if token_out not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError(message="token_out not found!")
-        zero_for_one = token_out == self._token1
-        # The typed read (ADR-037/t2): a refusal is the not-computable
-        # verdict (the real pool's revert-analog).
-        try:
-            read = self._py_pool.simulate(
-                zero_for_one=zero_for_one,
-                amount_specified=token_out_quantity,
-                override_state=override_state,
-            )
-        except SwapRefused as exc:
-            if exc.kind != SwapRefusalKind.NotComputable:  # ty: ignore[unresolved-attribute]
-                # An infrastructure failure (an unfetchable word), not a
-                # swap-geometry verdict — render it honestly.
-                raise swap_refusal_to_error(exc) from exc
-            raise LiquidityPoolError(
-                message=(
-                    f"Simulated execution could not compute. "
-                    f"pool={self.address} zfo={zero_for_one} "
-                    f"amount_out={token_out_quantity}"
-                ),
-            ) from exc
-        amount_in, amount_out = _signed_amounts(read, zero_for_one=zero_for_one)
-        if override_state is not None:
-            conflicting_hooks = {
-                Hooks.AFTER_SWAP,
-                Hooks.AFTER_SWAP_RETURNS_DELTA,
-                Hooks.BEFORE_SWAP,
-                Hooks.BEFORE_SWAP_RETURNS_DELTA,
-            } & self.active_hooks
-            if conflicting_hooks:
-                raise HookedPoolResult(
-                    amount_in=amount_in,
-                    amount_out=amount_out,
-                    hooks=conflicting_hooks,
-                )
-        # The verdict is the seam's (`specified_met`); the payload amounts are
-        # the read's own end amounts, never a re-derivation from the deltas.
-        if not read.specified_met:
-            raise IncompleteSwap(
-                amount_in=amount_in,
-                amount_out=amount_out,
-            )
-        return amount_in
+        return self.swap_quoter.exact_out(
+            token_out,
+            token_out_quantity,
+            override_state=override_state,
+        )
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -435,61 +391,12 @@ class UniswapV4Pool(
         Returns:
             The expected output token amount.
 
-        Raises:
-            DegenbotValueError: If token_in is not held by this pool.
-            HookedPoolResult: If the pool has active hooks that affect the swap.
-            IncompleteSwap: If the swap cannot fulfill the full input amount.
-            LiquidityPoolError: If the simulated execution cannot compute.
-            swap_refusal_to_error: Renders a refusal that is not a
-                swap-geometry verdict — the walk entered an unfetched word
-                and the on-demand fetch failed (MissingLiquidityData).
-
         """
-        if token_in not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError(message="token_in not found!")
-        zero_for_one = token_in == self._token0
-        # The typed read (ADR-037/t2): a refusal is the not-computable
-        # verdict (the real pool's revert-analog).
-        try:
-            read = self._py_pool.simulate(
-                zero_for_one=zero_for_one,
-                amount_specified=-token_in_quantity,
-                override_state=override_state,
-            )
-        except SwapRefused as exc:
-            if exc.kind != SwapRefusalKind.NotComputable:  # ty: ignore[unresolved-attribute]
-                # An infrastructure failure (an unfetchable word), not a
-                # swap-geometry verdict — render it honestly.
-                raise swap_refusal_to_error(exc) from exc
-            raise LiquidityPoolError(
-                message=(
-                    f"Simulated execution could not compute. "
-                    f"pool={self.address} zfo={zero_for_one} "
-                    f"amount_in={token_in_quantity}"
-                ),
-            ) from exc
-        amount_in, amount_out = _signed_amounts(read, zero_for_one=zero_for_one)
-        if override_state is not None:
-            conflicting_hooks = {
-                Hooks.AFTER_SWAP,
-                Hooks.AFTER_SWAP_RETURNS_DELTA,
-                Hooks.BEFORE_SWAP,
-                Hooks.BEFORE_SWAP_RETURNS_DELTA,
-            } & self.active_hooks
-            if conflicting_hooks:
-                raise HookedPoolResult(
-                    amount_in=amount_in,
-                    amount_out=amount_out,
-                    hooks=conflicting_hooks,
-                )
-            # The verdict is the seam's (`specified_met`); the payload amounts
-            # are the read's own end amounts, never a re-derivation.
-            if not read.specified_met:
-                raise IncompleteSwap(
-                    amount_in=amount_in,
-                    amount_out=amount_out,
-                )
-        return amount_out
+        return self.swap_quoter.exact_in(
+            token_in,
+            token_in_quantity,
+            override_state=override_state,
+        )
 
     @property
     def address(self) -> ChecksummedAddress:

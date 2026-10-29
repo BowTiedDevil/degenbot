@@ -29,7 +29,7 @@ from fractions import Fraction
 
 import pytest
 
-import degenbot.aerodrome.v2_pool_calc as calc_mod
+import degenbot.aerodrome.v2_pool_quoter as quoter_mod
 from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.seam import Bot
@@ -97,23 +97,17 @@ def volatile_pool():
 
 class TestPoolCalcRouting:
     """Routing is construction-time WIRING, not a runtime branch: the pool's
-    `_wire_calculations` binds exactly one exact-in calc per stable flag, and
+    quoter binds exactly one exact-in leaf per stable flag, and
     `calculate_tokens_out_from_tokens_in` dispatches only through the bound
     seam. Asserted on the wiring itself plus an instance-level fake — no
     module-global patching.
     """
 
     def test_stable_pool_wires_the_stable_calc(self, stable_pool) -> None:
-        assert (
-            stable_pool._calc_tokens_out_from_tokens_in
-            == calc_mod.AerodromeV2PoolCalc._calc_tokens_out_stable
-        )
+        assert stable_pool.swap_quoter._tokens_out_leaf is quoter_mod._leaf_tokens_out_stable
 
     def test_volatile_pool_wires_the_volatile_calc(self, volatile_pool) -> None:
-        assert (
-            volatile_pool._calc_tokens_out_from_tokens_in
-            == calc_mod.AerodromeV2PoolCalc._calc_tokens_out_volatile
-        )
+        assert volatile_pool.swap_quoter._tokens_out_leaf is quoter_mod._leaf_tokens_out_volatile
 
     def test_calculate_out_dispatches_only_through_the_wired_calc(self, stable_pool) -> None:
         calls: list[object] = []
@@ -122,11 +116,18 @@ class TestPoolCalcRouting:
             calls.append(ctx)
             return 123
 
-        stable_pool._calc_tokens_out_from_tokens_in = recording_calc
-        out = stable_pool.calculate_tokens_out_from_tokens_in(stable_pool._token0, 100_000_000)
+        t0 = stable_pool._token0
+        quoter = quoter_mod.AerodromeV2SwapQuoter(
+            stable_pool,
+            stable_pool._py_pool,
+            stable=stable_pool._stable,
+            fee=stable_pool._fee,
+        )
+        quoter._tokens_out_leaf = recording_calc
+        out = quoter.exact_in(t0, 100_000_000)
 
-        # The public entry point consults ONLY the bound seam: the fake's
-        # return value comes out, and exactly one request arrived.
+        # The read consults ONLY the bound seam: the fake's return value comes
+        # out, and exactly one request arrived.
         assert out == 123
         assert len(calls) == 1
 

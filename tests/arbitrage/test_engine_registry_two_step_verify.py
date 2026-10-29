@@ -28,15 +28,20 @@ from tests.fakes.engine import FakeEngine as _RecordingVerifyEngine
 _V4_POOL_ID_HEX = to_0x_hex(b"V4POOLID")
 
 
+class _PyPool:
+    """The Rust handle slice a companion's engine identity read goes through."""
+
+    pool_id = 7
+
+
 class _FakeV3Pool:
     """Minimal V3 pool double exposing the attributes register_v3_pool reads."""
 
     address = "0xV3POOL"
 
-    class _PyPool:
-        pool_id = 7
-
-    _py_pool = _PyPool()
+    @property
+    def engine_pool_id(self) -> int:
+        return 7
 
 
 class _FakeV4Pool:
@@ -45,10 +50,9 @@ class _FakeV4Pool:
     pool_id = b"V4POOLID"
     address = "0xV4PM"
 
-    class _PyPool:
-        pool_id = 9
-
-    _py_pool = _PyPool()
+    @property
+    def engine_pool_id(self) -> int:
+        return 9
 
 
 def _registry_started_with_seed() -> tuple[runner.EngineRegistry, _RecordingVerifyEngine]:

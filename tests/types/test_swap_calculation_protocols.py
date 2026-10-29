@@ -3,7 +3,12 @@
 import inspect
 
 from degenbot.balancer.pools import BalancerV2Pool
-from degenbot.types.pool_protocols import MultiTokenSwapCalculation, TwoTokenSwapCalculation
+from degenbot.types.pool_protocols import (
+    MultiTokenSwapCalculation,
+    MultiTokenSwapQuote,
+    TwoTokenSwapCalculation,
+    TwoTokenSwapQuote,
+)
 
 
 class TestSwapCalculationProtocols:
@@ -16,6 +21,18 @@ class TestSwapCalculationProtocols:
         """MultiTokenSwapCalculation declares the N-token pool swap interface."""
         attrs = MultiTokenSwapCalculation.__protocol_attrs__
         assert "calculate_tokens_out_from_tokens_in" in attrs
+
+    def test_two_token_swap_quote_declares_one_named_token(self):
+        """TwoTokenSwapQuote: the quoter names one token, the pool implies the other."""
+        assert TwoTokenSwapQuote.__protocol_attrs__ == {"exact_in"}
+        params = inspect.signature(TwoTokenSwapQuote.exact_in).parameters
+        assert list(params) == ["self", "token", "quantity", "override_state"]
+
+    def test_multi_token_swap_quote_declares_both_tokens(self):
+        """MultiTokenSwapQuote: the quoter names both sides of the swap."""
+        assert MultiTokenSwapQuote.__protocol_attrs__ == {"exact_in"}
+        params = inspect.signature(MultiTokenSwapQuote.exact_in).parameters
+        assert list(params) == ["self", "token_in", "token_out", "quantity", "override_state"]
 
 
 class TestBalancerParameterOrder:

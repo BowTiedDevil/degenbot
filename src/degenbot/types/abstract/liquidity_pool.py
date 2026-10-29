@@ -24,6 +24,34 @@ class AbstractLiquidityPool(AddressComparable, ABC):
     _bound_pool_type: PoolTypeDescriptor | None = None
 
     @property
+    def engine_pool_id(self) -> int:
+        """The engine's own identifier for this pool.
+
+        The state owner's answer, read off the live handle — never a Python cache
+        of it. Drivers that key work by pool (path registration, hop resolution)
+        read this instead of reaching through the handle themselves.
+
+        Returns:
+            The core ``pool_id`` this pool is registered under.
+
+        """
+        return self._py_pool.pool_id
+
+    @property
+    def engine_family(self) -> str:
+        """The registration family the core holds this pool under.
+
+        The tag vocabulary the session registry keys identity by (``"v3"``,
+        ``"balancer-weighted"``, ...), read off the live handle so a Python
+        consumer cannot carry a second, drifting notion of the pool's family.
+
+        Returns:
+            The Rust registration-family tag.
+
+        """
+        return self._py_pool.pool_family
+
+    @property
     def pool_type(self) -> PoolTypeDescriptor:
         """The immutable resolved identity of this pool.
 

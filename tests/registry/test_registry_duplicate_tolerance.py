@@ -16,7 +16,6 @@ it is safe under real concurrent worker threads.
 
 from __future__ import annotations
 
-import dataclasses
 import threading
 from dataclasses import dataclass
 
@@ -25,7 +24,6 @@ import pytest
 from degenbot.exceptions import DegenbotValueError
 from degenbot.registry.pool import ManagedPoolRegistry, PoolRegistry
 from degenbot.registry.token import TokenRegistry
-from tests.fakes.pools import FakePoolHandle
 from tests.helpers.seam import Bot
 
 CHAIN = 1
@@ -40,7 +38,7 @@ class FakePool:
     """An address-keyed pool companion; the registry reads its family off the handle."""
 
     address: str
-    _py_pool: FakePoolHandle = dataclasses.field(default_factory=lambda: FakePoolHandle("v2"))
+    engine_family: str = "v2"
 
 
 @dataclass(frozen=True)

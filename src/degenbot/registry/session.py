@@ -246,8 +246,7 @@ def pool_family_of(pool: object) -> str:
             cannot be told which pool it is.
 
     """
-    handle = getattr(pool, "_py_pool", None)
-    family = getattr(handle, "pool_family", None)
+    family = getattr(pool, "engine_family", None)
     if not isinstance(family, str):
         msg = (
             f"cannot name a session pool for {type(pool).__name__}: it carries no live "

@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, cast, runtime_c
 
 from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
 from degenbot.balancer.math import fixed_point_mul_down
+from degenbot.balancer.pool_quoter import BalancerStableSwapQuoter
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import StaleRateResult
 from degenbot.types.abstract import AbstractLiquidityPool
 
 from .types import (
@@ -372,6 +372,27 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         # ComposableStablePool: warn if using static (stale) rates
         return self.bpt_idx is not None and self._rate_provider_is_static
 
+    @property
+    def swap_quoter(self) -> BalancerStableSwapQuoter:
+        """The pool's swap quoter.
+
+        The quoter carries this pool's rate facts: a static-rate Composable pool
+        reports its quotes as ``StaleRateResult``; a live-provider pool resolves
+        the block's scaling factors for each read.
+
+        Returns:
+            The stable-pool quoter for this pool.
+
+        """
+        return BalancerStableSwapQuoter(
+            self._py_pool,
+            self._tokens,
+            stale_rates=self._should_warn_stale_rates(),
+            resolve_scaling_factors=(
+                None if self._rate_provider_is_static else self._resolve_scaling_factors
+            ),
+        )
+
     def calculate_tokens_out_from_tokens_in(
         self,
         token_in: Erc20Token,
@@ -394,31 +415,14 @@ class BalancerV2StablePool(AbstractLiquidityPool):
             The computed integer value (unwrapped from ``StaleRateResult``
             semantics when rates cannot be stale).
 
-        Raises:
-            StaleRateResult: See function documentation.
-
         """
-        idx_in = self._tokens.index(token_in)
-        idx_out = self._tokens.index(token_out)
-        override_balances = list(override_state.balances) if override_state is not None else None
-        override_scaling_factors = (
-            None
-            if self._rate_provider_is_static
-            else list(self._resolve_scaling_factors(block_identifier))
+        return self.swap_quoter.exact_in(
+            token_in,
+            token_out,
+            token_in_quantity,
+            override_state=override_state,
+            block_identifier=block_identifier,
         )
-        result: int = self._py_pool.calculate_tokens_out_for_pair(
-            index_in=idx_in,
-            index_out=idx_out,
-            amount_in=token_in_quantity,
-            override_balances=override_balances,
-            override_scaling_factors=override_scaling_factors,
-        )
-        if self._should_warn_stale_rates():
-            raise StaleRateResult(
-                amount_in=token_in_quantity,
-                amount_out=result,
-            )
-        return result
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -436,31 +440,14 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         Returns:
             The computed integer value.
 
-        Raises:
-            StaleRateResult: See function documentation.
-
         """
-        idx_in = self._tokens.index(token_in)
-        idx_out = self._tokens.index(token_out)
-        override_balances = list(override_state.balances) if override_state is not None else None
-        override_scaling_factors = (
-            None
-            if self._rate_provider_is_static
-            else list(self._resolve_scaling_factors(block_identifier))
+        return self.swap_quoter.exact_out(
+            token_in,
+            token_out,
+            token_out_quantity,
+            override_state=override_state,
+            block_identifier=block_identifier,
         )
-        result: int = self._py_pool.calculate_tokens_in_for_pair(
-            index_in=idx_in,
-            index_out=idx_out,
-            amount_out=token_out_quantity,
-            override_balances=override_balances,
-            override_scaling_factors=override_scaling_factors,
-        )
-        if self._should_warn_stale_rates():
-            raise StaleRateResult(
-                amount_in=result,
-                amount_out=token_out_quantity,
-            )
-        return result
 
     def external_update(
         self,

@@ -995,10 +995,16 @@ class TestPathRegistrationPipeline:
     class _FakePool:
         address: str
 
-        # PRG-5: the unit resolves the engine hop key off the build handle.
+        # PRG-5: the unit resolves the engine hop key off the pool's own
+        # public engine identity read.
         _py_pool: object = None
         _fee_token0: int = 1
         _fee_token1: int = 1
+
+        @property
+        def engine_pool_id(self) -> int:
+            """The engine id the companion's public read answers."""
+            return self._py_pool.pool_id
 
     class _FakeCtxBot:
         def __init__(self, database_path: Path) -> None:

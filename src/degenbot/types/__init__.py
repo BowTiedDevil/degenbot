@@ -7,9 +7,11 @@ from .address_comparable import AddressComparable
 from .concrete import BoundedCache, KeyedDefaultDict
 from .pool_protocols import (
     MultiTokenSwapCalculation,
+    MultiTokenSwapQuote,
     PoolSimulation,
     StateManageablePool,
     TwoTokenSwapCalculation,
+    TwoTokenSwapQuote,
 )
 
 __all__ = (
@@ -18,9 +20,11 @@ __all__ = (
     "DexIdentity",
     "KeyedDefaultDict",
     "MultiTokenSwapCalculation",
+    "MultiTokenSwapQuote",
     "Pool",
     "PoolSimulation",
     "StateManageablePool",
     "TwoTokenSwapCalculation",
+    "TwoTokenSwapQuote",
     "dex_identity",
 )

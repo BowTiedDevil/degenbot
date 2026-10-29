@@ -17,31 +17,21 @@ from degenbot.types.abstract import AbstractLiquidityPool
 
 
 @dataclass(frozen=True)
-class FakePoolHandle:
-    """Stand-in for the live Rust ``Pool`` handle a companion wraps.
-
-    The registries read a companion's registration family off its handle (the
-    handle reports the family the core registered it under), so a fake pool
-    needs one to be nameable in a session.
-    """
-
-    pool_family: str = "v2"
-
-
-@dataclass(frozen=True)
 class FakeSessionPool:
     """Minimal address-keyed pool companion carrying a family tag.
 
     Enough for a registry test that is about identity, not pool behavior: the
-    registries only read ``address`` and the handle's family.
+    registries only read ``address`` and the registration family the companion
+    reports for its live handle.
     """
 
     address: str
     pool_family: str = "v2"
 
     @property
-    def _py_pool(self) -> FakePoolHandle:
-        return FakePoolHandle(self.pool_family)
+    def engine_family(self) -> str:
+        """The registration family the handle reports."""
+        return self.pool_family
 
 
 class FakeV2Pool:

@@ -945,7 +945,7 @@ class PathRegistrationPipeline:
             The core pool id serving as the hop key.
 
         """
-        return pool._py_pool.pool_id  # ruff:ignore[private-member-access]
+        return pool.engine_pool_id
 
     def record_skip(
         self,

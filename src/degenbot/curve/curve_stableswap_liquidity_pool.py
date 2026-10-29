@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, NamedTuple, Self, cast
 
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.curve.pool_quoter import CurveSwapQuoter
 from degenbot.curve.stableswap_pool_state import PoolStrategies, StableswapPoolState
 from degenbot.curve.types import (
     BasePoolPort,
@@ -25,8 +26,7 @@ from degenbot.curve.types import (
 )
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import EVMRevertError, InvalidSwapInputAmount, MissingCurveData
-from degenbot.logging import logger
+from degenbot.exceptions.pool import MissingCurveData
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.concrete import BoundedCache
 
@@ -594,6 +594,23 @@ class CurveStableswapPool(
         dy = self._curve.calc_withdraw_one_coin(_token_amount, i, block_number)
         return (cast("int", dy),)
 
+    @property
+    def swap_quoter(self) -> CurveSwapQuoter:
+        """The pool's swap quoter.
+
+        Built over the pool's live reads, Curve arm, and block resolver, so a
+        replaced read or handle is always honoured.
+
+        Returns:
+            The Curve swap quoter for this pool.
+
+        """
+        return CurveSwapQuoter(
+            self,
+            self._curve,
+            resolve_block=self._resolve_block_number,
+        )
+
     def get_dy(
         self,
         i: int,
@@ -620,52 +637,14 @@ class CurveStableswapPool(
         Returns:
             The computed integer value.
 
-        Raises:
-            EVMRevertError: See function documentation.
-
         """
-        block_number = self._resolve_block_number(block_identifier)
-        override_balances = list(override_state.balances) if override_state is not None else None
-        try:
-            return cast(
-                "int",
-                self._curve.get_dy(i, j, dx, block_number, override_balances),
-            )
-        except ValueError as e:
-            raise EVMRevertError(error=str(e)) from e
-
-    def _get_dy_underlying(
-        self,
-        i: int,
-        j: int,
-        dx: int,
-        block_identifier: BlockIdentifier | None = None,
-        override_state: CurveStableswapPoolState | None = None,
-    ) -> int:
-        """Metapool underlying `dy` — Rust-owned base-pool delegation.
-
-        Delegates to `Pool.curve().get_dy_underlying`: the metapool snapshot +
-        the base-pool `calc_token_amount` / `get_dy` /
-        `calc_withdraw_one_coin` ops run through the Rust
-        `BotCurveBasePoolPort`, retiring the Python `_LazyBasePool` go-between
-        for the swap path.
-
-        Returns:
-            The computed integer value.
-
-        Raises:
-            EVMRevertError: See function documentation.
-
-        """
-        block_number = self._resolve_block_number(block_identifier)
-        override_balances = list(override_state.balances) if override_state is not None else None
-        try:
-            return cast(
-                "int",
-                self._curve.get_dy_underlying(i, j, dx, block_number, override_balances),
-            )
-        except ValueError as e:
-            raise EVMRevertError(error=str(e)) from e
+        return self.swap_quoter.get_dy(
+            i,
+            j,
+            dx,
+            block_identifier=block_identifier,
+            override_state=override_state,
+        )
 
     def calculate_tokens_out_from_tokens_in(
         self,
@@ -684,107 +663,13 @@ class CurveStableswapPool(
         Returns:
             The computed integer value.
 
-        Raises:
-            DegenbotValueError: See function documentation.
-            InvalidSwapInputAmount: See function documentation.
-
         """
-        block_number = self._resolve_block_number(block_identifier)
-
-        if token_in_quantity <= 0:
-            raise InvalidSwapInputAmount
-
-        if override_state:
-            logger.debug("Overrides applied:")
-            logger.debug(f"Balances: {override_state.balances}")
-
-        tokens_used_this_pool = [
-            token_in in self._tokens,
-            token_out in self._tokens,
-        ]
-
-        tokens_used_in_base_pool = []
-        if self.base_pool is not None:
-            tokens_used_in_base_pool = [
-                token_in in self.base_pool.tokens,
-                token_out in self.base_pool.tokens,
-            ]
-
-        if all(tokens_used_this_pool):
-            # The zero-balance refusal is core-owned: `curve().get_dy` raises the
-            # typed `NoLiquidity` where the balances are read, so this delegates.
-            return self.get_dy(
-                i=self._tokens.index(token_in),
-                j=self._tokens.index(token_out),
-                dx=token_in_quantity,
-                block_identifier=block_number,
-                override_state=override_state,
-            )
-        if any(tokens_used_this_pool) and any(tokens_used_in_base_pool):
-            return self._get_dy_metapool_with_base(
-                token_in,
-                token_out,
-                token_in_quantity,
-                block_number,
-                override_state,
-            )
-        if all(tokens_used_in_base_pool):
-            if TYPE_CHECKING:
-                assert self.tokens_underlying is not None
-            token_in_from_basepool = token_in in self.tokens_underlying
-            token_out_from_basepool = token_out in self.tokens_underlying
-            assert token_in_from_basepool or token_out_from_basepool
-
-            return self._get_dy_underlying(
-                i=self.tokens_underlying.index(token_in),
-                j=self.tokens_underlying.index(token_out),
-                dx=token_in_quantity,
-                block_identifier=block_number,
-                override_state=override_state,
-            )
-
-        raise DegenbotValueError(
-            message="Tokens not held by pool or in underlying base pool",
-        )  # pragma: no cover
-
-    def _get_dy_metapool_with_base(
-        self,
-        token_in: Erc20Token,
-        token_out: Erc20Token,
-        token_in_quantity: int,
-        block_number: int,
-        override_state: CurveStableswapPoolState | None,
-    ) -> int:
-        """Resolve a swap that spans this metapool and its underlying base pool.
-
-        The zero-balance refusal is core-owned (`curve().get_dy_underlying`
-        raises the typed `NoLiquidity` where the balance vectors are read), so
-        this only maps the combined underlying indices and delegates.
-
-        Returns:
-            The computed integer value.
-
-        """
-        if TYPE_CHECKING:
-            assert self.tokens_underlying is not None
-
-        token_in_from_metapool = token_in in self._tokens
-        token_out_from_metapool = token_out in self._tokens
-
-        return self._get_dy_underlying(
-            i=(
-                self._tokens.index(token_in)
-                if token_in_from_metapool
-                else self.tokens_underlying.index(token_in)
-            ),
-            j=(
-                self._tokens.index(token_out)
-                if token_out_from_metapool
-                else self.tokens_underlying.index(token_out)
-            ),
-            dx=token_in_quantity,
-            block_identifier=block_number,
+        return self.swap_quoter.exact_in(
+            token_in,
+            token_out,
+            token_in_quantity,
             override_state=override_state,
+            block_identifier=block_identifier,
         )
 
 

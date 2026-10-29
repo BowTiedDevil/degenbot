@@ -9,6 +9,7 @@ from degenbot.balancer.libraries.constants import PowVersion
 from degenbot.balancer.libraries.scaling_helpers import (
     _compute_scaling_factor,
 )
+from degenbot.balancer.pool_quoter import BalancerSwapQuoter
 from degenbot.balancer.types import (
     BalancerV2PoolState,
     BalancerV2WeightedPoolExternalUpdate,
@@ -199,6 +200,16 @@ class BalancerV2Pool(AbstractLiquidityPool):
         """Tokens."""
         return self._tokens
 
+    @property
+    def swap_quoter(self) -> BalancerSwapQuoter:
+        """The pool's swap quoter.
+
+        Returns:
+            The weighted-pool quoter for this pool.
+
+        """
+        return BalancerSwapQuoter(self._py_pool, self._tokens)
+
     def calculate_tokens_out_from_tokens_in(
         self,
         token_in: Erc20Token,
@@ -215,16 +226,11 @@ class BalancerV2Pool(AbstractLiquidityPool):
             The computed integer value.
 
         """
-        return cast(
-            "int",
-            self._py_pool.calculate_tokens_out_for_pair(
-                index_in=self._tokens.index(token_in),
-                index_out=self._tokens.index(token_out),
-                amount_in=token_in_quantity,
-                override_balances=(
-                    list(override_state.balances) if override_state is not None else None
-                ),
-            ),
+        return self.swap_quoter.exact_in(
+            token_in,
+            token_out,
+            token_in_quantity,
+            override_state=override_state,
         )
 
     def calculate_tokens_in_from_tokens_out(
@@ -242,16 +248,11 @@ class BalancerV2Pool(AbstractLiquidityPool):
             The computed integer value.
 
         """
-        return cast(
-            "int",
-            self._py_pool.calculate_tokens_in_for_pair(
-                index_in=self._tokens.index(token_in),
-                index_out=self._tokens.index(token_out),
-                amount_out=token_out_quantity,
-                override_balances=(
-                    list(override_state.balances) if override_state is not None else None
-                ),
-            ),
+        return self.swap_quoter.exact_out(
+            token_in,
+            token_out,
+            token_out_quantity,
+            override_state=override_state,
         )
 
     def external_update(

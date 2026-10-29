@@ -215,3 +215,45 @@ class MultiTokenSwapCalculation(Protocol):
     ) -> int:
         """Calculate output token amount for a given input with explicit token_out."""
         ...
+
+
+# ── Swap-quoter protocols ────────────────────────────────────────────
+#
+# The quoter-shape twins of the two calculation protocols above: the
+# `calculate_tokens_*` verbs are the companions' public surface, the quoter is
+# the per-family object that answers them. Same split, same reason — a 2-token
+# pool's quoter names one token, an N-token pool's names both.
+#
+# Only the exact-input verb is universal: a family whose pool answers the
+# reverse read too (V2/V3/V4/Balancer/Aerodrome) declares its own `exact_out`
+# alongside, and a family that answers exact-input only (Curve, Camelot's
+# stable leaf) simply has no such verb.
+
+
+@runtime_checkable
+class TwoTokenSwapQuote(Protocol):
+    """A 2-token pool's swap quoter: the other token is the implied output."""
+
+    def exact_in(
+        self,
+        token: Erc20Token,
+        quantity: int,
+        override_state: AbstractPoolState | None = None,
+    ) -> int:
+        """Calculate the amount of the other token an exact input of `quantity` returns."""
+        ...
+
+
+@runtime_checkable
+class MultiTokenSwapQuote(Protocol):
+    """An N-token pool's swap quoter: the caller names the token leaving the pool."""
+
+    def exact_in(
+        self,
+        token_in: Erc20Token,
+        token_out: Erc20Token,
+        quantity: int,
+        override_state: AbstractPoolState | None = None,
+    ) -> int:
+        """Calculate the `token_out` amount an exact input of `quantity` of `token_in` returns."""
+        ...

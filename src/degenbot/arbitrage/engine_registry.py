@@ -211,7 +211,7 @@ class EngineRegistry:
                 f"Asymmetric V2 fees detected for {pool.address} "
                 f"(fee_token0={pool._fee_token0}, fee_token1={pool._fee_token1}).",  # ruff:ignore[private-member-access]
             )
-        return pool._py_pool.pool_id  # ruff:ignore[private-member-access]
+        return pool.engine_pool_id
 
     @staticmethod
     def register_aerodrome_pool(pool: AerodromeV2Pool) -> int:
@@ -228,7 +228,7 @@ class EngineRegistry:
             The registered pool's engine ``pool_id``.
 
         """
-        return pool._py_pool.pool_id  # ruff:ignore[private-member-access]
+        return pool.engine_pool_id
 
     async def register_v3_pool(
         self,
@@ -268,7 +268,7 @@ class EngineRegistry:
                 snapshot_block=self._verify_snapshot_block,
             )
         )
-        return pool._py_pool.pool_id  # ruff:ignore[private-member-access]
+        return pool.engine_pool_id
 
     async def register_v4_pool(
         self,
@@ -309,7 +309,7 @@ class EngineRegistry:
                 snapshot_block=self._verify_snapshot_block,
             )
         )
-        return pool._py_pool.pool_id  # ruff:ignore[private-member-access]
+        return pool.engine_pool_id
 
     def pool_id(self, pool: UniswapV2Pool | AerodromeV2Pool | UniswapV3Pool | UniswapV4Pool) -> int:
         """Resolve the engine ``pool_id`` of a pool from its canonical identity.

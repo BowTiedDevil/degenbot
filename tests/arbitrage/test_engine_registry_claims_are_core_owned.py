@@ -79,6 +79,11 @@ class _FakeV3Pool:
     address: str
     _py_pool: _PoolHandle
 
+    @property
+    def engine_pool_id(self) -> int:
+        """The engine id the companion's public read answers."""
+        return self._py_pool.pool_id
+
 
 @dataclass
 class _FakeV4Pool:
@@ -87,6 +92,11 @@ class _FakeV4Pool:
     address: str
     pool_id: bytes
     _py_pool: _PoolHandle
+
+    @property
+    def engine_pool_id(self) -> int:
+        """The engine id the companion's public read answers."""
+        return self._py_pool.pool_id
 
 
 def _fake_v3_pool(pool_id: int) -> _FakeV3Pool:

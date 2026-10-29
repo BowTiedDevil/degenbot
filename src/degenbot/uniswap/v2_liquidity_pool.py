@@ -2,23 +2,15 @@
 
 from __future__ import annotations
 
-import dataclasses
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
-from degenbot.aerodrome.math import (
-    calc_exact_in_stable_camelot as _rs_calc_exact_in_stable_camelot,
-)
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import (
-    InvalidSwapInputAmount,
-    LiquidityPoolError,
-)
 from degenbot.types.abstract import AbstractLiquidityPool
-from degenbot.uniswap import SwapRefusalKind, SwapRefused, swap_refusal_to_error
 from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
+from degenbot.uniswap.v2_pool_quoter import UniswapV2SwapQuoter
 from degenbot.uniswap.v2_pool_state import V2PoolState
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolSimulationResult,
@@ -278,6 +270,24 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
             ),
         )
 
+    @property
+    def swap_quoter(self) -> UniswapV2SwapQuoter:
+        """The pool's swap quoter.
+
+        Built over the pool's live reads and handle, so a replaced read or
+        handle is always honoured.
+
+        Returns:
+            The V2 swap quoter for this pool.
+
+        """
+        return UniswapV2SwapQuoter(
+            self,
+            self._py_pool,
+            fee_token0=self._fee_token0,
+            fee_token1=self._fee_token1,
+        )
+
     def simulate_exact_input_swap(
         self,
         token_in: Erc20Token,
@@ -289,82 +299,11 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
         Returns:
             The simulation result with delta amounts and state transitions.
 
-        Raises:
-            DegenbotValueError: If token_in is unknown.
-            InvalidSwapInputAmount: If token_in_quantity is not positive.
-            swap_refusal_to_error: Renders a refusal that is not a
-                swap-geometry verdict — the walk entered an unfetched word
-                and the on-demand fetch failed (MissingLiquidityData).
-            LiquidityPoolError: If the swap cannot compute against the pool state.
-
         """
-        if token_in not in self.tokens:
-            raise DegenbotValueError(message="token_in is unknown.")
-
-        if token_in_quantity <= 0:  # pragma: no cover
-            raise InvalidSwapInputAmount
-
-        # One atomic snapshot drives the whole simulation: the read's deltas
-        # and its end reserves both come from the swap-simulation door over
-        # `state`, so a Rust-side sync_reserves (pump) can't interleave.
-        state = override_state if override_state is not None else self.state
-        zero_for_one = token_in == self._token0
-        if self.stable_swap:
-            # A Camelot-stable read refuses at the door (its arm needs the
-            # `10**decimals` scales the V2 registration identity does not
-            # carry), so this family keeps its Solidly leaf and its end state is
-            # the same override reserves advanced by the deltas that leaf
-            # produced.
-            token_out_quantity = self.calculate_tokens_out_from_tokens_in(
-                token_in=token_in,
-                token_in_quantity=token_in_quantity,
-                override_state=state,
-            )
-            token0_delta = -token_out_quantity if zero_for_one is False else token_in_quantity
-            token1_delta = -token_out_quantity if zero_for_one is True else token_in_quantity
-            return UniswapV2PoolSimulationResult(
-                amount0_delta=token0_delta,
-                amount1_delta=token1_delta,
-                initial_state=state,
-                final_state=dataclasses.replace(
-                    state,
-                    reserves_token0=state.reserves_token0 + token0_delta,
-                    reserves_token1=state.reserves_token1 + token1_delta,
-                    block=self.update_block if override_state is not None else None,
-                ),
-            )
-
-        # The typed read (ADR-037/t2): a refusal is the overdraw verdict —
-        # the requested input is not computable against those reserves.
-        try:
-            read = self._py_pool.simulate(
-                zero_for_one=zero_for_one,
-                amount_specified=-token_in_quantity,
-                override_state=state,
-            )
-        except SwapRefused as exc:
-            if exc.kind != SwapRefusalKind.NotComputable:  # ty: ignore[unresolved-attribute]
-                # An infrastructure failure (an unfetchable word), not a
-                # swap-geometry verdict — render it honestly.
-                raise swap_refusal_to_error(exc) from exc
-            raise LiquidityPoolError(
-                message=(
-                    f"Input amount ({token_in_quantity}) overflows "
-                    "uint256 swap math (on-chain revert)"
-                ),
-            ) from exc
-        assert read.reserves_token0 is not None  # pragma: no cover — reserve-pair arm asserted
-        assert read.reserves_token1 is not None  # pragma: no cover — reserve-pair arm asserted
-        return UniswapV2PoolSimulationResult(
-            amount0_delta=int(read.amount0_delta),
-            amount1_delta=int(read.amount1_delta),
-            initial_state=state,
-            final_state=dataclasses.replace(
-                state,
-                reserves_token0=read.reserves_token0,
-                reserves_token1=read.reserves_token1,
-                block=self.update_block if override_state is not None else None,
-            ),
+        return self.swap_quoter.simulate_exact_in(
+            token_in,
+            token_in_quantity,
+            override_state=override_state,
         )
 
     def simulate_exact_output_swap(
@@ -378,127 +317,9 @@ class UniswapV2Pool(V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
         Returns:
             The simulation result with delta amounts and state transitions.
 
-        Raises:
-            DegenbotValueError: If token_out is unknown.
-            InvalidSwapInputAmount: If token_out_quantity is not positive.
-            swap_refusal_to_error: Renders a refusal that is not a
-                swap-geometry verdict — the walk entered an unfetched word
-                and the on-demand fetch failed (MissingLiquidityData).
-            LiquidityPoolError: If the requested output exceeds the pool reserves.
-
         """
-        if token_out not in self.tokens:
-            raise DegenbotValueError(message="token_out is unknown.")
-
-        if token_out_quantity <= 0:  # pragma: no cover
-            raise InvalidSwapInputAmount
-
-        # See `simulate_exact_input_swap`: one snapshot, one door read, and the
-        # end state is the read's own post-swap reserves.
-        state = override_state if override_state is not None else self.state
-        zero_for_one = token_out == self._token1
-        # The typed read (ADR-037/t2): a refusal is the overdraw verdict —
-        # the requested output exceeds the pool's reserves.
-        try:
-            read = self._py_pool.simulate(
-                zero_for_one=zero_for_one,
-                amount_specified=token_out_quantity,
-                override_state=state,
-            )
-        except SwapRefused as exc:
-            if exc.kind != SwapRefusalKind.NotComputable:  # ty: ignore[unresolved-attribute]
-                # An infrastructure failure (an unfetchable word), not a
-                # swap-geometry verdict — render it honestly.
-                raise swap_refusal_to_error(exc) from exc
-            reserves_out = state.reserves_token1 if zero_for_one else state.reserves_token0
-            raise LiquidityPoolError(
-                message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})",  # ruff:ignore[line-too-long]
-            ) from exc
-        assert read.reserves_token0 is not None  # pragma: no cover — reserve-pair arm asserted
-        assert read.reserves_token1 is not None  # pragma: no cover — reserve-pair arm asserted
-        return UniswapV2PoolSimulationResult(
-            amount0_delta=int(read.amount0_delta),
-            amount1_delta=int(read.amount1_delta),
-            initial_state=state,
-            final_state=dataclasses.replace(
-                state,
-                reserves_token0=read.reserves_token0,
-                reserves_token1=read.reserves_token1,
-                block=self.update_block if override_state is not None else None,
-            ),
-        )
-
-    def calculate_tokens_out_from_tokens_in(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int,
-        override_state: UniswapV2PoolState | None = None,
-    ) -> int:
-        """Calculate the expected token OUTPUT for a target INPUT at current reserves.
-
-        Strategy dispatch: Camelot stable pools
-        (``stable_swap=True``) use the solidly-stable invariant with Camelot's
-        k/get_y; all other V2 pools fall through to ``super()`` — the
-        ``UniswapV2PoolCalc`` Rust-delegation path is unperturbed for
-        the volatile majority.
-
-        Returns:
-            The expected output token amount.
-
-        """
-        if self.stable_swap:
-            return self._calculate_tokens_out_from_tokens_in_stable_swap(
-                token_in=token_in,
-                token_in_quantity=token_in_quantity,
-                override_state=override_state,
-            )
-        return super().calculate_tokens_out_from_tokens_in(
-            token_in=token_in,
-            token_in_quantity=token_in_quantity,
+        return self.swap_quoter.simulate_exact_out(
+            token_out,
+            token_out_quantity,
             override_state=override_state,
-        )
-
-    def _calculate_tokens_out_from_tokens_in_stable_swap(
-        self,
-        token_in: Erc20Token,
-        token_in_quantity: int,
-        override_state: UniswapV2PoolState | None = None,
-    ) -> int:
-        """Camelot solidly-stable swap calculation (folded from CamelotPoolCalc).
-
-        Routes through the Rust ``degenbot-solidly-math`` core
-        (``solidly_calc_exact_in_stable_camelot``), which bakes in Camelot's
-        ``k_camelot``/``get_y_camelot`` variant.
-
-        ``fee_tokenN`` is the FEE ``Fraction`` (e.g. ``Fraction(3, 1000)``).
-
-        Returns:
-            The computed integer value.
-
-        """
-        precision_multiplier_token0: int = 10**self.token0.decimals
-        precision_multiplier_token1: int = 10**self.token1.decimals
-
-        fee = self.fee_token0 if token_in == self.token0 else self.fee_token1
-        token_in_index = 0 if token_in == self.token0 else 1
-
-        if override_state is not None:
-            reserves_token0 = override_state.reserves_token0
-            reserves_token1 = override_state.reserves_token1
-        else:
-            reserves_token0 = self.reserves_token0
-            reserves_token1 = self.reserves_token1
-
-        return cast(
-            "int",
-            _rs_calc_exact_in_stable_camelot(
-                token_in_quantity,
-                token_in_index,
-                reserves_token0,
-                reserves_token1,
-                precision_multiplier_token0,
-                precision_multiplier_token1,
-                fee.numerator,
-                fee.denominator,
-            ),
         )

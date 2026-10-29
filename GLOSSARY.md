@@ -1158,6 +1158,22 @@ side's amount and zero for the side genuinely unconsumed.
 _Avoid_: decoding `exc.args` positionally; comparing a kind by identity (the seam builds a
 fresh instance per refusal, so compare by value); fabricating `IncompleteSwap(0, 0)`.
 
+**SwapQuoter**:
+The Python companion's per-family owner of the *whole* swap round trip — one object per
+family, reached through the companion's `swap_quoter` read, that turns a companion-level
+request (a token and a quantity, or a token pair) into the family's read and back. It owns
+the family's arm choice, its refusal verdict, its delta decode and answer. Two shapes: a
+**door quoter** runs the full round trip (companion concepts to seam vocabulary
+`zero_for_one` / signed `amount_specified`, registered read vs the door over an override
+state, the refusal fork, delta decoding, post-state rebuild), where a **leaf quoter** only
+translates arguments into a pure Rust math leaf's terms and maps that leaf's verdict. Its
+interface is two-token (`exact_in(token, quantity)`) or multi-token
+(`exact_in(token_in, token_out, quantity)`), mirroring the pool protocols; a family that
+also answers the reverse read declares its own `exact_out`. The companions' public
+`calculate_tokens_*` verbs delegate to it, and pricing helpers stay on the companion.
+_Avoid_: "calc mixin" for the swap verbs; calling the Rust swap-simulation owner
+(**Swap simulation**) a quoter; a per-site `try`/`except SwapRefused` beside the quoter.
+
 **Caveats**:
 The additive flag set on an outcome, whose empty value means the number is exact.
 Variants name why a number may be approximate (sparse tick coverage, hooked pool).

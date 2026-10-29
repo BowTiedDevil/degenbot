@@ -10,6 +10,7 @@ from degenbot.aerodrome.types import (
     AerodromeV3PoolState,
 )
 from degenbot.aerodrome.v2_pool_calc import AerodromeV2PoolCalc
+from degenbot.aerodrome.v2_pool_quoter import AerodromeV2SwapQuoter
 from degenbot.aerodrome.v2_pool_state import AerodromeV2PoolState as AerodromeV2PoolStateMixin
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
@@ -121,9 +122,6 @@ class AerodromeV2Pool(
         fee_numer, fee_denom = py_pool.aerodrome_fee
         self._fee = Fraction(fee_numer, fee_denom)
 
-        # Wire calculation strategy at construction.
-        self._wire_calculations(stable=self._stable)
-
         self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {100 * self._fee.numerator / self._fee.denominator:.2f}%)"  # ruff:ignore[line-too-long]
 
         self._initial_state_block = py_pool.reserve_pair().update_block
@@ -147,6 +145,24 @@ class AerodromeV2Pool(
     def reserves_token1(self) -> int:
         """Reserves token1."""
         return self.state.reserves_token1
+
+    @property
+    def swap_quoter(self) -> AerodromeV2SwapQuoter:
+        """The pool's swap quoter.
+
+        Built over the pool's live reads and handle, so a replaced read or
+        handle is always honoured. The species wires the quoter's leaves.
+
+        Returns:
+            The Aerodrome V2 swap quoter for this pool.
+
+        """
+        return AerodromeV2SwapQuoter(
+            self,
+            self._py_pool,
+            stable=self._stable,
+            fee=self._fee,
+        )
 
     @property
     def state(self) -> PoolState:

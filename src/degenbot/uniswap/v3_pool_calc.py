@@ -4,11 +4,9 @@ Provides calculation methods that operate on state held by V3PoolState.
 All methods are read-only with respect to pool state — they compute
 results based on current state but don't modify it.
 
-These methods match the Uniswap V3 contract's math:
-- calculate_tokens_out_from_tokens_in / calculate_tokens_in_from_tokens_out:
-  degenbot interface (delegated to the Rust-routed
-  simulate_exact_input_swap / simulate_exact_output_swap)
-- get_absolute_price / get_absolute_exchange_rate / get_nominal_price / get_nominal_rate: pricing
+The swap verbs (calculate_tokens_out_from_tokens_in /
+calculate_tokens_in_from_tokens_out) delegate to the pool's `swap_quoter`; the
+pricing verbs below are pure functions over state and stay here.
 
 See: contract_reference/uniswap/V3/UniswapV3Factory.sol
 (UniswapV3Pool swap, Oracle, Tick, TickBitmap, SqrtPriceMath, SwapMath)
@@ -21,11 +19,11 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import IncompleteSwap
 from degenbot.uniswap.v3_functions import exchange_rate_from_sqrt_price_x96
 
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
+    from degenbot.uniswap.v3_pool_quoter import UniswapV3SwapQuoter
     from degenbot.uniswap.v3_types import UniswapV3PoolSimulationResult, UniswapV3PoolState
 
 
@@ -89,6 +87,11 @@ class UniswapV3PoolCalc:
         """Exact-output swap simulation (routed to the Rust seam)."""
         ...
 
+    @property
+    def swap_quoter(self) -> UniswapV3SwapQuoter:
+        """The pool's swap quoter (concrete pool provides)."""
+        raise NotImplementedError
+
     FEE_DENOMINATOR = 1_000_000
 
     def calculate_tokens_out_from_tokens_in(
@@ -102,35 +105,12 @@ class UniswapV3PoolCalc:
         Returns:
             The expected output token amount.
 
-        Raises:
-            DegenbotValueError: If token_in is not held by this pool.
-            IncompleteSwap: If the swap cannot fulfill the full input amount.
-
         """
-        if token_in not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError(message="token_in not found!")
-
-        zero_for_one = token_in == self._token0
-
-        # ADR-005: delegate to the Rust-routed exact-input seam (override +
-        # mainline both route to Rust; the default MIN/MAX price limit matches
-        # the explicit limit below). Raises LiquidityPoolError on failure.
-        result = self.simulate_exact_input_swap(
-            token_in=token_in,
-            token_in_quantity=token_in_quantity,
+        return self.swap_quoter.exact_in(
+            token_in,
+            token_in_quantity,
             override_state=override_state,
         )
-        amount0_delta = result.amount0_delta
-        amount1_delta = result.amount1_delta
-        # The verdict is the seam's (`specified_met`); the payload amounts are
-        # the read's own end amounts, never a re-derivation from the deltas.
-        if not result.specified_met:
-            raise IncompleteSwap(
-                amount_in=amount0_delta if zero_for_one else amount1_delta,
-                amount_out=-amount1_delta if zero_for_one else -amount0_delta,
-            )
-
-        return -amount1_delta if zero_for_one else -amount0_delta
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -143,35 +123,12 @@ class UniswapV3PoolCalc:
         Returns:
             The required input token amount.
 
-        Raises:
-            DegenbotValueError: If token_out is not held by this pool.
-            IncompleteSwap: If the swap cannot fulfill the full output amount.
-
         """
-        if token_out not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError(message="token_out not found!")
-
-        is_zero_for_one = token_out == self._token1
-
-        # ADR-005: delegate to the Rust-routed exact-output seam (override +
-        # mainline both route to Rust; the default MIN/MAX price limit matches
-        # the explicit limit below). Raises LiquidityPoolError on failure.
-        result = self.simulate_exact_output_swap(
-            token_out=token_out,
-            token_out_quantity=token_out_quantity,
+        return self.swap_quoter.exact_out(
+            token_out,
+            token_out_quantity,
             override_state=override_state,
         )
-        amount0_delta = result.amount0_delta
-        amount1_delta = result.amount1_delta
-        # The verdict is the seam's (`specified_met`); the payload amounts are
-        # the read's own end amounts, never a re-derivation from the deltas.
-        if not result.specified_met:
-            raise IncompleteSwap(
-                amount_in=amount0_delta if is_zero_for_one else amount1_delta,
-                amount_out=-amount1_delta if is_zero_for_one else -amount0_delta,
-            )
-
-        return amount0_delta if is_zero_for_one else amount1_delta
 
     def get_absolute_price(
         self,

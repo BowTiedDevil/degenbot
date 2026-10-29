@@ -28,16 +28,14 @@ known-empty on a Tracked pool (complete map).
 
 from __future__ import annotations
 
-import dataclasses
 from typing import TYPE_CHECKING, Any, ClassVar, Self, TypedDict, cast
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import InvalidSwapInputAmount
-from degenbot.uniswap import SwapRefused, swap_refusal_to_error
 from degenbot.uniswap.concentrated_liquidity_base import ConcentratedLiquidityBase
 from degenbot.uniswap.v3_pool_calc import UniswapV3PoolCalc
+from degenbot.uniswap.v3_pool_quoter import UniswapV3SwapQuoter
 from degenbot.uniswap.v3_pool_state import V3PoolState
 from degenbot.uniswap.v3_types import (
     UniswapV3PoolSimulationResult,
@@ -274,6 +272,19 @@ class UniswapV3Pool(
             ),
         )
 
+    @property
+    def swap_quoter(self) -> UniswapV3SwapQuoter:
+        """The pool's swap quoter.
+
+        Built over the pool's live reads and handle, so a replaced read or
+        handle is always honoured.
+
+        Returns:
+            The V3 swap quoter for this pool.
+
+        """
+        return UniswapV3SwapQuoter(self, self._py_pool)
+
     def simulate_exact_input_swap(
         self,
         token_in: Erc20Token,
@@ -286,18 +297,12 @@ class UniswapV3Pool(
         Returns:
             The simulation result with signed deltas and the end state.
 
-        Raises:
-            DegenbotValueError: If token_in is unknown.
-
         """
-        if token_in not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError(message=f"Unknown token {token_in}")
-        zero_for_one = token_in == self._token0
-        return self._simulate_swap(
-            zero_for_one=zero_for_one,
-            amount_specified=-token_in_quantity,
-            override_state=override_state,
+        return self.swap_quoter.simulate_exact_in(
+            token_in,
+            token_in_quantity,
             sqrt_price_limit_x96=sqrt_price_limit_x96,
+            override_state=override_state,
         )
 
     def simulate_exact_output_swap(
@@ -312,79 +317,10 @@ class UniswapV3Pool(
         Returns:
             The simulation result with signed deltas and the end state.
 
-        Raises:
-            DegenbotValueError: If token_out is unknown.
-
         """
-        if token_out not in self.tokens:  # pragma: no cover
-            raise DegenbotValueError(message=f"Unknown token {token_out}")
-        zero_for_one = token_out == self._token1
-        return self._simulate_swap(
-            zero_for_one=zero_for_one,
-            amount_specified=token_out_quantity,
-            override_state=override_state,
+        return self.swap_quoter.simulate_exact_out(
+            token_out,
+            token_out_quantity,
             sqrt_price_limit_x96=sqrt_price_limit_x96,
-        )
-
-    def _simulate_swap(
-        self,
-        *,
-        zero_for_one: bool,
-        amount_specified: int,
-        override_state: PoolState | None,
-        sqrt_price_limit_x96: int | None = None,
-    ) -> UniswapV3PoolSimulationResult:
-        """Run one simulation through the Rust swap-simulation seam.
-
-        The one verb behind both public entry points: exact-in passes a
-        negative ``amount_specified``, exact-out a positive one, and a
-        non-``None`` ``override_state`` selects the hypothetical path. The
-        seam owns the sign mapping (deposited +, sent -) and the end state;
-        this shell only assembles the result value.
-
-        Returns:
-            The simulation result with signed deltas and the end state.
-
-        Raises:
-            InvalidSwapInputAmount: On a zero-amount swap.
-            swap_refusal_to_error: Renders the seam's typed refusal as
-                IncompleteSwap (the real pool's revert-analog — the walk
-                exhausted the tick range with input remaining) or
-                MissingLiquidityData (the walk entered an unfetched word and
-                the on-demand fetch failed).
-
-        """
-        initial_state = override_state if override_state is not None else self.state
-        if amount_specified == 0:
-            # The real pool reverts a zero-amount swap; mirror that honestly
-            # instead of flattening it into a generic compute failure.
-            raise InvalidSwapInputAmount
-        # The typed read + the ONE refusal adapter (ADR-037/t2): the seam
-        # raises `SwapRefused` with a typed kind; the adapter renders the
-        # historical exceptions (IncompleteSwap for the revert-analog
-        # verdict, MissingLiquidityData for the unfetchable word).
-        try:
-            read = self._py_pool.simulate(
-                zero_for_one=zero_for_one,
-                amount_specified=amount_specified,
-                sqrt_price_limit_x96=sqrt_price_limit_x96,
-                override_state=override_state,
-            )
-        except SwapRefused as exc:
-            raise swap_refusal_to_error(exc) from exc
-        assert read.liquidity is not None  # pragma: no cover — concentrated-liquidity arm asserted
-        assert read.sqrt_price_x96 is not None  # pragma: no cover — CL arm asserted
-        assert read.tick is not None  # pragma: no cover — concentrated-liquidity arm asserted
-        return UniswapV3PoolSimulationResult(
-            amount0_delta=int(read.amount0_delta),
-            amount1_delta=int(read.amount1_delta),
-            specified_met=read.specified_met,
-            initial_state=initial_state,
-            final_state=dataclasses.replace(
-                initial_state,
-                liquidity=read.liquidity,
-                sqrt_price_x96=read.sqrt_price_x96,
-                tick=read.tick,
-                block=self.update_block if override_state is None else initial_state.block,
-            ),
+            override_state=override_state,
         )
