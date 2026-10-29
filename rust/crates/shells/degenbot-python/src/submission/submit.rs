@@ -320,7 +320,11 @@ impl ReceiptProbe for PyReceiptProbe {
 ///     A list of record dicts — `{"kind": "submitted", "path_id": ...,
 ///     "tx_hash": "0x...", "nonce": ...}` or `{"kind": "skipped",
 ///     "path_id": ..., "reason": "pools_claimed"|"dry_run"|"inject_code"|
-///     "broadcast_failed", "detail": "..."?}`.
+///     "broadcast_failed"|"nonce_contended", "detail": "..."?}`.
+///
+///     A `nonce_contended` record marks a candidate the batch could not get a
+///     nonce for (the candidate in hand and the unprocessed tail behind it);
+///     it is blocked, not decided.
 ///
 /// # Errors
 /// `RuntimeError`: If the process never booted a strategy host, so no
@@ -494,6 +498,7 @@ pub(crate) fn skip_reason_to_py(reason: &SkipReason) -> (&'static str, Option<St
         SkipReason::DryRun => ("dry_run", None),
         SkipReason::InjectCode => ("inject_code", None),
         SkipReason::BroadcastFailed(detail) => ("broadcast_failed", Some(detail.clone())),
+        SkipReason::NonceContended => ("nonce_contended", None),
     }
 }
 

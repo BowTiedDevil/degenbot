@@ -3,10 +3,14 @@
 //!
 //! A record is created when a strategy signs against an authority-granted
 //! nonce ([`SubmissionState::Signed`]) and promoted to
-//! [`SubmissionState::Broadcast`] once the bytes are on the wire. Chain
-//! reconciliation then closes the record out: a nonce the chain has passed
-//! landed, a nonce that left the authority's outstanding set without landing
-//! went stale, and a record whose immediate predecessor was vacated is
+//! [`SubmissionState::Broadcast`] once the bytes are on the wire. A delivery
+//! attempt whose fate is unknown — a transport failure that may or may not
+//! have handed the bytes to a channel — parks the record in
+//! [`SubmissionState::DeliveryUnknown`]: the submission may be live, so the
+//! record stays outstanding until chain evidence or the hold's expiry settles
+//! it. Chain reconciliation then closes the record out: a nonce the chain has
+//! passed landed, a nonce that left the authority's outstanding set without
+//! landing went stale, and a record whose immediate predecessor was vacated is
 //! orphaned — the gap below it is the strategy's natural fill.
 //!
 //! # Why the ledger keeps its own state
@@ -74,15 +78,23 @@ impl From<B256> for TargetId {
 /// Where a submitted record sits between sign time and its on-chain fate.
 ///
 /// `Landed`, `Stale`, and `Orphaned` are terminal: a record is a record of what
-/// happened, never a candidate for a second outcome. The transitions are a
-/// total, closed table — every event from every state answers with a next state
-/// or a typed decline, never a panic.
+/// happened, never a candidate for a second outcome. `Signed`, `Broadcast`, and
+/// `DeliveryUnknown` are outstanding, and all three close out the same way. The
+/// transitions are a total, closed table — every event from every state answers
+/// with a next state or a typed decline, never a panic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubmissionState {
     /// Signed against an authority nonce; not yet on the wire.
     Signed,
     /// Broadcast; the transaction hash is on the wire.
     Broadcast,
+    /// A delivery attempt failed without a verdict: the bytes reached a channel
+    /// that may hold them, so the submission is neither acknowledged nor dead.
+    ///
+    /// The record stays outstanding because the transaction may be live: the
+    /// chain passing the nonce lands it, and a reservation that leaves the
+    /// authority's outstanding set without a landing transaction stales it.
+    DeliveryUnknown,
     /// The chain's next nonce passed this record's nonce: the nonce slot was
     /// consumed on-chain. This is a nonce-level claim — a record that was
     /// signed but never broadcast can reach `Landed` because the account's
@@ -107,6 +119,9 @@ impl SubmissionState {
 
     /// The broadcast move: [`SubmissionState::Signed`] -> [`SubmissionState::Broadcast`].
     ///
+    /// A delivery-unknown record cannot be promoted: no channel acknowledged
+    /// the bytes, so `broadcast` would record a wire fact that never happened.
+    ///
     /// # Errors
     ///
     /// [`LedgerDecline::BroadcastRequiresSigned`] from any other state.
@@ -115,6 +130,20 @@ impl SubmissionState {
             Ok(Self::Broadcast)
         } else {
             Err(LedgerDecline::BroadcastRequiresSigned)
+        }
+    }
+
+    /// The delivery-unknown move: [`SubmissionState::Signed`] ->
+    /// [`SubmissionState::DeliveryUnknown`].
+    ///
+    /// # Errors
+    ///
+    /// [`LedgerDecline::DeliveryUnknownRequiresSigned`] from any other state.
+    pub fn on_delivery_unknown(self) -> Result<Self, LedgerDecline> {
+        if self == Self::Signed {
+            Ok(Self::DeliveryUnknown)
+        } else {
+            Err(LedgerDecline::DeliveryUnknownRequiresSigned)
         }
     }
 
@@ -172,14 +201,17 @@ pub enum LedgerDecline {
     /// `broadcast` is only legal from [`SubmissionState::Signed`].
     #[error("broadcast requires a Signed record")]
     BroadcastRequiresSigned,
+    /// `delivery_unknown` is only legal from [`SubmissionState::Signed`].
+    #[error("delivery-unknown requires a Signed record")]
+    DeliveryUnknownRequiresSigned,
     /// `landed` refuses a terminal record.
-    #[error("landed requires an outstanding (Signed or Broadcast) record")]
+    #[error("landed requires an outstanding (non-terminal) record")]
     LandedRequiresOutstanding,
     /// `stale` refuses a terminal record.
-    #[error("stale requires an outstanding (Signed or Broadcast) record")]
+    #[error("stale requires an outstanding (non-terminal) record")]
     StaleRequiresOutstanding,
     /// `orphaned` refuses a terminal record.
-    #[error("orphaned requires an outstanding (Signed or Broadcast) record")]
+    #[error("orphaned requires an outstanding (non-terminal) record")]
     OrphanedRequiresOutstanding,
 }
 
@@ -540,6 +572,34 @@ impl SubmissionLedger {
         Ok(record.state)
     }
 
+    /// Park a signed record whose delivery attempt produced no verdict.
+    ///
+    /// The bytes may be live: the channel may hold them even though the
+    /// attempt failed. The record stays outstanding so reconciliation can land
+    /// it on chain evidence, and the caller keeps the nonce reserved for the
+    /// same reason — releasing it would let a different transaction be signed
+    /// over a possibly-live one.
+    ///
+    /// # Errors
+    ///
+    /// [`LedgerDecline::UnknownRecord`] if the strategy tracks no record at this
+    /// nonce; [`LedgerDecline::DeliveryUnknownRequiresSigned`] if the record is
+    /// not signed.
+    pub fn record_delivery_unknown(
+        &self,
+        strategy: &StrategyId,
+        nonce: u64,
+    ) -> Result<SubmissionState, LedgerDecline> {
+        let mut state = self.state.lock();
+        let record = state
+            .by_strategy
+            .get_mut(strategy)
+            .and_then(|records| records.get_mut(&nonce))
+            .ok_or(LedgerDecline::UnknownRecord)?;
+        record.state = record.state.on_delivery_unknown()?;
+        Ok(record.state)
+    }
+
     /// Reconcile every outstanding record against the chain's confirmed nonce
     /// and the authority's outstanding set, returning one notification per
     /// state change.
@@ -688,6 +748,7 @@ impl SubmissionLedger {
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
+    clippy::panic,
     reason = "unit tests: a malformed fixture must fail the test loudly"
 )]
 mod tests {
@@ -722,6 +783,7 @@ mod tests {
     fn the_state_transition_table_is_total_and_closed() {
         let states = [
             SubmissionState::Signed,
+            SubmissionState::DeliveryUnknown,
             SubmissionState::Broadcast,
             SubmissionState::Landed,
             SubmissionState::Stale,
@@ -732,10 +794,18 @@ mod tests {
 
             if state == SubmissionState::Signed {
                 assert_eq!(state.on_broadcast(), Ok(SubmissionState::Broadcast));
+                assert_eq!(
+                    state.on_delivery_unknown(),
+                    Ok(SubmissionState::DeliveryUnknown)
+                );
             } else {
                 assert_eq!(
                     state.on_broadcast(),
                     Err(LedgerDecline::BroadcastRequiresSigned)
+                );
+                assert_eq!(
+                    state.on_delivery_unknown(),
+                    Err(LedgerDecline::DeliveryUnknownRequiresSigned)
                 );
             }
 
@@ -816,6 +886,84 @@ mod tests {
         assert_eq!(
             ledger.record_broadcast(&sid("settlement"), 10),
             Err(LedgerDecline::BroadcastRequiresSigned)
+        );
+    }
+
+    #[test]
+    fn the_delivery_unknown_hold_is_only_entered_from_signed() {
+        let ledger = SubmissionLedger::new();
+        assert_eq!(
+            ledger.record_delivery_unknown(&sid("settlement"), 10),
+            Err(LedgerDecline::UnknownRecord)
+        );
+        sign(&ledger, "settlement", 10, 100);
+        assert_eq!(
+            ledger.record_delivery_unknown(&sid("settlement"), 10),
+            Ok(SubmissionState::DeliveryUnknown)
+        );
+        assert_eq!(
+            ledger.state_of(&sid("settlement"), 10),
+            Some(SubmissionState::DeliveryUnknown)
+        );
+        // A hold is entered once, and it cannot be promoted to a broadcast: no
+        // channel ever acknowledged the bytes.
+        assert_eq!(
+            ledger.record_delivery_unknown(&sid("settlement"), 10),
+            Err(LedgerDecline::DeliveryUnknownRequiresSigned)
+        );
+        assert_eq!(
+            ledger.record_broadcast(&sid("settlement"), 10),
+            Err(LedgerDecline::BroadcastRequiresSigned)
+        );
+        // An acknowledged broadcast is not a hold either.
+        sign(&ledger, "settlement", 11, 100);
+        ledger
+            .record_broadcast(&sid("settlement"), 11)
+            .expect("broadcast");
+        assert_eq!(
+            ledger.record_delivery_unknown(&sid("settlement"), 11),
+            Err(LedgerDecline::DeliveryUnknownRequiresSigned)
+        );
+    }
+
+    #[test]
+    fn a_delivery_unknown_record_lands_when_the_chain_passes_its_nonce() {
+        // The hold keeps the nonce outstanding at the authority, so the chain
+        // passing the slot is the evidence that the bytes were live after all.
+        let ledger = SubmissionLedger::new();
+        sign(&ledger, "settlement", 10, 100);
+        ledger
+            .record_delivery_unknown(&sid("settlement"), 10)
+            .expect("hold");
+        assert!(ledger.has_outstanding(), "a hold is still outstanding");
+
+        let notifications = ledger.reconcile(11, &[10]);
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].nonce(), 10);
+        assert_eq!(notifications[0].kind(), NotificationKind::Landed);
+        assert_eq!(
+            ledger.state_of(&sid("settlement"), 10),
+            Some(SubmissionState::Landed)
+        );
+        assert!(!ledger.has_outstanding());
+    }
+
+    #[test]
+    fn a_delivery_unknown_record_goes_stale_when_its_hold_ends() {
+        // A hold whose reservation is gone without a landing transaction: the
+        // nonce left the outstanding set, so the record is stale.
+        let ledger = SubmissionLedger::new();
+        sign(&ledger, "settlement", 10, 100);
+        ledger
+            .record_delivery_unknown(&sid("settlement"), 10)
+            .expect("hold");
+
+        let notifications = ledger.reconcile(10, &[]);
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].kind(), NotificationKind::Stale);
+        assert_eq!(
+            ledger.state_of(&sid("settlement"), 10),
+            Some(SubmissionState::Stale)
         );
     }
 
@@ -1253,12 +1401,23 @@ mod tests {
         (before, None)
     }
 
-    fn fixture() -> impl Strategy<Value = (u64, Vec<(usize, u64, bool)>, Vec<bool>)> {
+    fn fixture() -> impl Strategy<Value = (u64, Vec<(usize, u64, u8)>, Vec<bool>)> {
         (
             0u64..6,
-            proptest::collection::vec((0usize..2, 0u64..8, any::<bool>()), 0..8),
+            // The third field seeds the record's pre-reconciliation state:
+            // 0 = signed, 1 = broadcast, 2 = delivery-unknown.
+            proptest::collection::vec((0usize..2, 0u64..8, 0u8..3), 0..8),
             proptest::collection::vec(any::<bool>(), 0..8),
         )
+    }
+
+    /// The state a fixture seed stands a record up in before reconciliation.
+    fn seed_state(seed: u8) -> SubmissionState {
+        match seed % 3 {
+            0 => SubmissionState::Signed,
+            1 => SubmissionState::Broadcast,
+            _ => SubmissionState::DeliveryUnknown,
+        }
     }
 
     proptest! {
@@ -1270,17 +1429,26 @@ mod tests {
         ) {
             let ledger = SubmissionLedger::new();
             // Nonces are unique per account; drop duplicate seeds.
-            let mut deduped: BTreeMap<(usize, u64), bool> = BTreeMap::new();
-            for (index, nonce, broadcast) in seeds {
-                deduped.insert((index, nonce), broadcast);
+            let mut deduped: BTreeMap<(usize, u64), u8> = BTreeMap::new();
+            for (index, nonce, seed) in seeds {
+                deduped.insert((index, nonce), seed);
             }
-            for (&(index, nonce), &broadcast) in &deduped {
+            for (&(index, nonce), &seed) in &deduped {
                 let strategy = sid(&format!("s{index}"));
                 ledger
                     .record_signed(&strategy, nonce, target(nonce), hash(nonce), 100)
                     .expect("record_signed");
-                if broadcast {
-                    ledger.record_broadcast(&strategy, nonce).expect("broadcast");
+                match seed_state(seed) {
+                    SubmissionState::Signed => {}
+                    SubmissionState::Broadcast => {
+                        ledger.record_broadcast(&strategy, nonce).expect("broadcast");
+                    }
+                    SubmissionState::DeliveryUnknown => {
+                        ledger
+                            .record_delivery_unknown(&strategy, nonce)
+                            .expect("hold");
+                    }
+                    other => panic!("fixture seed cannot stand up a {other:?} record"),
                 }
             }
             let outstanding: Vec<u64> = outstanding_flags
@@ -1306,13 +1474,9 @@ mod tests {
                 .collect();
 
             let mut expected_reported: BTreeMap<(usize, u64), NotificationKind> = BTreeMap::new();
-            for (&(index, nonce), &broadcast) in &deduped {
+            for (&(index, nonce), &seed) in &deduped {
                 let strategy = sid(&format!("s{index}"));
-                let before = if broadcast {
-                    SubmissionState::Broadcast
-                } else {
-                    SubmissionState::Signed
-                };
+                let before = seed_state(seed);
                 let (after, kind) = oracle(before, nonce, confirmed, &outstanding_set);
                 prop_assert_eq!(
                     ledger.state_of(&strategy, nonce),

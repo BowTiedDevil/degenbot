@@ -25,6 +25,9 @@
 //!   calldata/`gas`/`nonce`/`value=0`/`accessList` + the two fee fields).
 //!   `chain_id` is NOT here — it lives on `TxSigner` (the signer owns the
 //!   replay-protection context; no duplicated-state smell).
+//! - [`delivery`] — the delivery-failure classifier: the one
+//!   `Release`/`Hold`/`Promote` policy the three delivery arms share, from the
+//!   provider's own error taxonomy.
 //! - [`submit::dispatch_and_submit`] — the claim → finalize → re-compute
 //!   access list → sign → broadcast → monitor orchestration, over the
 //!   version-agnostic [`SubmissionTarget`] (raw fan-out, `MEVBlocker` bundle,
@@ -35,7 +38,8 @@
 //! - [`monitor::monitor_pending_transaction`] — receipt polling to a
 //!   [`MonitorOutcome`] (`BLOCKS_BEFORE_NONCE_EXPIRES` bounds the wait).
 //! - [`submission_ledger::SubmissionLedger`] — the per-target record of
-//!   signed/broadcast/confirmed submissions, with [`HeadPolicy`] declines and
+//!   signed/broadcast/delivery-unknown/confirmed submissions, with
+//!   [`HeadPolicy`] declines and
 //!   [`RepackageRequest`]/[`Notification`] outputs.
 //! - [`head_reconciliation`] — replays the ledger's outstanding submissions
 //!   against each new head.
@@ -82,6 +86,7 @@
 //!   hands it to the Rust signer ONCE).
 
 pub mod bundle;
+pub mod delivery;
 pub mod dispatcher;
 pub mod error;
 pub mod fee;

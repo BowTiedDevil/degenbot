@@ -189,17 +189,18 @@ impl FailureKind {
     /// Map a submit-lane skip reason onto the taxonomy.
     ///
     /// The lane's typed skips (pools already claimed, dry-run, inject-code
-    /// guard) are orchestration outcomes, not sim failures — `Other` carries
-    /// them; a broadcast RPC failure is `RpcFailed`. No drain reads inside
-    /// the submit slot today (the spike's attribution table), so this mapping
-    /// is the contract, not a parity surface.
+    /// guard, and a nonce-contended block) are orchestration outcomes, not sim
+    /// failures — `Other` carries them; a broadcast RPC failure is `RpcFailed`.
+    /// No drain reads inside the submit slot today (the spike's attribution
+    /// table), so this mapping is the contract, not a parity surface.
     #[must_use]
     pub fn from_skip_reason(reason: &degenbot_submission::SkipReason) -> Self {
         match reason {
             degenbot_submission::SkipReason::BroadcastFailed(_) => Self::RpcFailed,
             degenbot_submission::SkipReason::PoolsClaimed
             | degenbot_submission::SkipReason::DryRun
-            | degenbot_submission::SkipReason::InjectCode => Self::Other,
+            | degenbot_submission::SkipReason::InjectCode
+            | degenbot_submission::SkipReason::NonceContended => Self::Other,
         }
     }
 

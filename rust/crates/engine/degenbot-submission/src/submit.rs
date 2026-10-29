@@ -43,6 +43,7 @@ use serde_json::json;
 
 use degenbot_rpc::provider::AlloyProvider;
 
+use crate::delivery::{classify_delivery_failure, DeliveryFailureClass, DeliveryVerdict};
 use crate::dispatcher::{Dispatcher, PoolKey};
 use crate::fee::finalize_fees;
 use crate::monitor::{monitor_pending_transaction_default, ReceiptProbe, SubmittedTx};
@@ -164,7 +165,19 @@ pub enum SkipReason {
     InjectCode,
     /// The broadcast RPC failed (the `Web3Exception` skip, L2654 — corresponds
     /// to [`AlloyProvider::eth_send_raw_transaction`] returning `Err`).
+    ///
+    /// The record says the candidate was not submitted; what became of its
+    /// nonce is the delivery classifier's verdict, not the record's.
     BroadcastFailed(String),
+    /// The batch could not obtain a nonce: the lane's stamp was declined,
+    /// because another strategy holds the slot or because a reservation sits
+    /// below the confirmed head.
+    ///
+    /// The candidate in hand and every candidate behind it in the batch are
+    /// recorded with this reason. Nonce contention blocks a candidate, it does
+    /// not kill it: a blocked candidate is a retry candidate for its strategy,
+    /// while a broadcast failure or a pool collision is final.
+    NonceContended,
 }
 
 /// The per-candidate submit record (ports the loop's submit + skip outcomes).
@@ -251,8 +264,10 @@ enum StepVerdict<T> {
     Continue(T),
     /// Do not submit this candidate — the typed reason, recorded as a skip.
     Skip(SkipReason),
-    /// Stop the batch where it stands.
-    AbortBatch,
+    /// Stop the batch where it stands. The reason is per-candidate: the
+    /// candidate in hand and every candidate behind it are recorded with it,
+    /// so a stopped batch never drops a candidate without an outcome.
+    AbortBatch(SkipReason),
 }
 
 /// The batch-scoped state the pipeline stages mutate.
@@ -418,11 +433,13 @@ impl SubmitBatch<'_> {
     ///
     /// The lane's default policy repackages past the strategy's own stale
     /// reservation. A non-stale decline aborts the batch: the alternative is
-    /// signing against a nonce the authority refused.
+    /// signing against a nonce the authority refused. The abort carries the
+    /// nonce-contention reason, so every candidate it stops is recorded as
+    /// blocked rather than dropped.
     fn stamp_nonce(&self) -> StepVerdict<NonceLease> {
         match self.nonce_lane.stamp() {
             Ok(lease) => StepVerdict::Continue(lease),
-            Err(_decline) => StepVerdict::AbortBatch,
+            Err(_decline) => StepVerdict::AbortBatch(SkipReason::NonceContended),
         }
     }
 
@@ -524,14 +541,18 @@ impl SubmitBatch<'_> {
     /// Stage 9 — send the signed bytes down the submission target's channel.
     ///
     /// The three arms are deliberately NOT one code path behind a delivery
-    /// strategy: they differ in what an acceptance commits to, in which
-    /// destination sees the bytes, and above all in their failure policy — which
-    /// is why each arm keeps its own body, and its own nonce-release decision.
+    /// strategy: they differ in which destination sees the bytes, in what an
+    /// acceptance commits to, and in the evidence a failed attempt carries.
+    /// Their failure POLICY is not theirs to choose — every arm hands its
+    /// evidence to [`crate::delivery::classify_delivery_failure`] and acts on
+    /// the verdict through [`Self::conclude_failed_delivery`], so the arms
+    /// cannot drift into different nonce policies.
     ///
     /// # Errors
     ///
-    /// [`crate::SubmissionError::Nonce`] when the accepted transmission cannot
-    /// be promoted to a broadcast on both nonce books.
+    /// [`crate::SubmissionError::Nonce`] when an accepted (or promoted)
+    /// transmission cannot be recorded on both nonce books, or when the ledger
+    /// refuses a delivery-unknown hold.
     async fn deliver(
         &self,
         candidate: &SubmitCandidate,
@@ -572,8 +593,12 @@ impl SubmitBatch<'_> {
     /// (packed config, recipient 0) is the `fee_recipient` payment those docs
     /// require.
     ///
-    /// Failure policy: the bundle never reached the auction, so the lease goes
-    /// back and the next candidate may stamp the nonce.
+    /// Failure policy: the bid is pinned to exactly one block and the auction
+    /// books a bid only by acknowledging it, so a round trip that ends without
+    /// an acknowledgement leaves no bid for that block — and no later block can
+    /// include a bid pinned to a passed one. The pin is the bid's whole
+    /// liveness window, which is what makes this arm's evidence definitive
+    /// (`DeliveryFailureClass::NotAdmitted`) and the verdict `Release`.
     ///
     /// # Errors
     ///
@@ -622,7 +647,6 @@ impl SubmitBatch<'_> {
                     degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
                     format_args!("path {} mevblocker bundle rejected: {e}", candidate.path_id),
                 );
-                Self::record_broadcast_failure(candidate);
                 crate::bundle::trace_wire_jsonl(
                     "bundle_wire_error",
                     &json!({
@@ -632,12 +656,16 @@ impl SubmitBatch<'_> {
                         "error": format!("{e}"),
                     }),
                 );
-                // The bundle never reached the auction: free the lease so the
-                // next candidate can stamp.
-                let _ = self.nonce_lane.release(lease);
-                Ok(StepVerdict::Skip(SkipReason::BroadcastFailed(format!(
-                    "mevblocker bundle rejected: {e}"
-                ))))
+                // No acknowledgement for a bid pinned to one block: definitive
+                // non-liveness for that slot, so the classifier releases the
+                // lease.
+                self.conclude_failed_delivery(
+                    candidate,
+                    &[DeliveryFailureClass::NotAdmitted],
+                    lease,
+                    raw_signed,
+                    format!("mevblocker bundle rejected: {e}"),
+                )
             }
         }
     }
@@ -651,8 +679,10 @@ impl SubmitBatch<'_> {
     /// body, which is why a signing failure fails this arm before any relay sees
     /// a bundle.
     ///
-    /// Failure policy: no relay holds the bundle, so the lease goes back and the
-    /// next candidate may stamp the nonce.
+    /// Failure policy: no relay holds the bundle, and the bundle is pinned to
+    /// one block — the same liveness bound the auction arm reads, so the
+    /// evidence is definitive (`DeliveryFailureClass::NotAdmitted`) and the
+    /// verdict is `Release`.
     ///
     /// # Errors
     ///
@@ -681,13 +711,15 @@ impl SubmitBatch<'_> {
                     degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
                     format_args!("path {} relay signature failed: {e}", candidate.path_id),
                 );
-                Self::record_broadcast_failure(candidate);
-                // No relay ever saw a bundle: free the lease so the next
-                // candidate can stamp.
-                let _ = self.nonce_lane.release(lease);
-                return Ok(StepVerdict::Skip(SkipReason::BroadcastFailed(format!(
-                    "relay sign failed: {e}"
-                ))));
+                // No relay ever saw a bundle, so nothing was admitted for the
+                // pinned block: definitive non-liveness.
+                return self.conclude_failed_delivery(
+                    candidate,
+                    &[DeliveryFailureClass::NotAdmitted],
+                    lease,
+                    raw_signed,
+                    format!("relay sign failed: {e}"),
+                );
             }
         };
         let outcomes = crate::relay::send_bundle_to_relays(relays, &body, &header).await;
@@ -709,13 +741,15 @@ impl SubmitBatch<'_> {
                 candidate.path_id
             ),
         );
-        Self::record_broadcast_failure(candidate);
-        // Every relay rejected the bundle: free the lease so the next candidate
-        // can stamp.
-        let _ = self.nonce_lane.release(lease);
-        Ok(StepVerdict::Skip(SkipReason::BroadcastFailed(
+        // Every relay refused to admit the bundle for its pinned block: the
+        // same definitive non-liveness the auction arm reads.
+        self.conclude_failed_delivery(
+            candidate,
+            &[DeliveryFailureClass::NotAdmitted],
+            lease,
+            raw_signed,
             "every builder relay rejected the bundle".to_string(),
-        )))
+        )
     }
 
     /// Stage 9, arm 3 — the raw fan-out.
@@ -724,10 +758,13 @@ impl SubmitBatch<'_> {
     /// list means the read provider alone (the legacy single-endpoint
     /// behavior). First acceptance defines the tracked hash.
     ///
-    /// Failure policy: every relay rejected the raw transaction, so the lease
-    /// goes back and the next candidate may stamp the nonce. No monitor is
-    /// spawned (there is no transaction to track) and the pools were never
-    /// reserved.
+    /// Failure policy: [`crate::delivery::classify_delivery_failure`] decides
+    /// from every attempt's class. A unanimously definitive refusal releases the
+    /// lease; a node that already holds the bytes promotes the submission to a
+    /// tracked broadcast; any ambiguous transport failure holds the lease and
+    /// parks the ledger record in `DeliveryUnknown`. A failed delivery never
+    /// reserves the pools, and no monitor is spawned unless the classifier
+    /// promoted a live hash.
     ///
     /// # Errors
     ///
@@ -748,6 +785,7 @@ impl SubmitBatch<'_> {
                 .collect()
         };
         let mut accepted_hash: Option<B256> = None;
+        let mut failures: Vec<DeliveryFailureClass> = Vec::new();
         for relay_provider in &broadcast_targets {
             match relay_provider.eth_send_raw_transaction(raw_signed).await {
                 Ok(hash) => {
@@ -758,19 +796,21 @@ impl SubmitBatch<'_> {
                         degenbot_bot::telemetry::error_kind::SUBMIT_FAILURE,
                         format_args!("path {} relay broadcast failed: {e}", candidate.path_id),
                     );
+                    // Every attempt's class is evidence: one relay answering
+                    // "already known" or one transport failure decides the
+                    // verdict even beside a relay that refused outright.
+                    failures.push(DeliveryFailureClass::from_provider_error(&e));
                 }
             }
         }
         let Some(tx_hash) = accepted_hash else {
-            Self::record_broadcast_failure(candidate);
-            // The claimed nonce and pools are deliberately NOT released: an
-            // errored relay response proves nothing about whether the bytes
-            // reached a mempool, so a possibly-live transaction keeps its
-            // nonce reserved until head reconciliation or a manual cleanup
-            // settles it. No monitor is spawned — there is no hash to track.
-            return Ok(StepVerdict::Skip(SkipReason::BroadcastFailed(
+            return self.conclude_failed_delivery(
+                candidate,
+                &failures,
+                lease,
+                raw_signed,
                 "all relays rejected the raw transaction".to_string(),
-            )));
+            );
         };
         degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::SubmitOutcome {
             outcome: "relay_accepted",
@@ -802,11 +842,78 @@ impl SubmitBatch<'_> {
         Ok(())
     }
 
-    /// The census pair every delivery failure shares: the skipped-broadcast
+    /// Apply the classifier's verdict to a failed delivery attempt: the one
+    /// place a failure becomes a lease and ledger decision.
+    ///
+    /// - `Promote` — a channel already holds these exact bytes. The submission
+    ///   is live, so it is promoted on both books and handed on as a tracked
+    ///   submission under the signed bytes' hash (the same hash the provider
+    ///   computes locally before broadcasting), which is what makes the caller
+    ///   reserve the pools, record it, and spawn its monitor.
+    /// - `Hold` — the attempt's fate is unknown. The ledger record parks in
+    ///   `DeliveryUnknown` and the lease stays held: releasing it would let a
+    ///   different transaction be signed over a possibly-live one.
+    /// - `Release` — definitive non-liveness. The lease goes back so the next
+    ///   candidate may stamp the nonce.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::SubmissionError::Nonce`] when a promoted delivery cannot be
+    /// recorded on both nonce books or the ledger refuses the hold.
+    fn conclude_failed_delivery(
+        &self,
+        candidate: &SubmitCandidate,
+        failures: &[DeliveryFailureClass],
+        lease: &NonceLease,
+        raw_signed: &Bytes,
+        detail: String,
+    ) -> Result<StepVerdict<B256>, crate::SubmissionError> {
+        match classify_delivery_failure(failures) {
+            DeliveryVerdict::Promote => {
+                self.promote_broadcast(lease)?;
+                Ok(StepVerdict::Continue(alloy::primitives::keccak256(
+                    raw_signed,
+                )))
+            }
+            DeliveryVerdict::Hold => {
+                self.hold_delivery(lease)?;
+                Self::record_broadcast_failure(candidate);
+                Ok(StepVerdict::Skip(SkipReason::BroadcastFailed(detail)))
+            }
+            DeliveryVerdict::Release => {
+                let _ = self.nonce_lane.release(lease);
+                Self::record_broadcast_failure(candidate);
+                Ok(StepVerdict::Skip(SkipReason::BroadcastFailed(detail)))
+            }
+        }
+    }
+
+    /// Park the delivery-unknown hold: the lane's ledger record moves to
+    /// `DeliveryUnknown` and the lease stays reserved, because the bytes may be
+    /// live at the nonce it holds.
+    ///
+    /// The write goes to the lane's ledger directly rather than through the
+    /// `NonceLedger` seam: that seam carries the two writes a sign path makes
+    /// through the lane, and this crate owns both the ledger type and the hold.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::SubmissionError::Nonce`] when the ledger refuses the transition.
+    /// The signing path always records a `Signed` record before delivery, so a
+    /// refusal means the two books disagree about the submission.
+    fn hold_delivery(&self, lease: &NonceLease) -> Result<(), crate::SubmissionError> {
+        self.nonce_lane
+            .ledger()
+            .record_delivery_unknown(self.nonce_lane.strategy(), lease.nonce())
+            .map(|_state| ())
+            .map_err(|e| crate::SubmissionError::Nonce(e.to_string()))
+    }
+
+    /// The census pair every failed delivery shares: the skipped-broadcast
     /// outcome plus the profit the batch left on the table.
     ///
-    /// The lease release is deliberately NOT here — it belongs to each arm's own
-    /// failure policy.
+    /// The lease and ledger decision is deliberately NOT here — it belongs to
+    /// the classifier's verdict ([`Self::conclude_failed_delivery`]).
     fn record_broadcast_failure(candidate: &SubmitCandidate) {
         degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::SubmitOutcome {
             outcome: "skipped_broadcast_failed",
@@ -928,6 +1035,11 @@ impl SubmitBatch<'_> {
 /// `'static` spawned tasks can clone the handle into the monitor (the umbrella
 /// `Bot` builds a probe wrapping `AlloyProvider::get_transaction_receipt`).
 ///
+/// A stopped batch still answers for every candidate it stopped: a refused
+/// nonce stamp records the candidate in hand and the unprocessed tail as
+/// [`SkipReason::NonceContended`], so no candidate leaves the pipeline without
+/// an outcome.
+///
 /// # Parity gate (`docs/architecture/parity-gate.md`)
 ///
 /// The submit order (net-desc), the mutual-exclusivity skip, the
@@ -1012,14 +1124,15 @@ pub async fn dispatch_and_submit(
 
     // T4: per-batch latency anchor — candidate loop start → each broadcast.
     let batch_start = std::time::Instant::now();
-    for candidate in candidates {
-        SubmitBatch::record_candidate_economics(&candidate);
+    for (index, candidate) in candidates.iter().enumerate() {
+        SubmitBatch::record_candidate_economics(candidate);
         let path_pools = candidate.path_pools.clone();
 
         // The bookkeeping around the stages is uniform even though the stages
         // are not: a `Skip` records the typed reason and moves to the next
-        // candidate, an `AbortBatch` ends the batch where it stands. What each
-        // stage decides stays inside its own method.
+        // candidate, an `AbortBatch` records the reason against every candidate
+        // it stops and ends the batch. What each stage decides stays inside its
+        // own method.
         macro_rules! stage {
             ($verdict:expr) => {
                 match $verdict {
@@ -1031,20 +1144,30 @@ pub async fn dispatch_and_submit(
                         });
                         continue;
                     }
-                    StepVerdict::AbortBatch => break,
+                    StepVerdict::AbortBatch(reason) => {
+                        // The candidate in hand plus the whole unprocessed tail:
+                        // a stopped batch reports each one, in submit order.
+                        for blocked in &candidates[index..] {
+                            outcome.records.push(SubmitRecord::Skipped {
+                                path_id: blocked.path_id,
+                                reason: reason.clone(),
+                            });
+                        }
+                        break;
+                    }
                 }
             };
         }
 
-        let () = stage!(batch.guard_mutual_exclusion(&candidate, &path_pools, &state));
+        let () = stage!(batch.guard_mutual_exclusion(candidate, &path_pools, &state));
         let () = stage!(batch.guard_dry_run(&path_pools, &mut state));
-        let () = stage!(batch.guard_inject_code(&candidate, &path_pools, &mut state));
+        let () = stage!(batch.guard_inject_code(candidate, &path_pools, &mut state));
         let lease = stage!(batch.stamp_nonce());
         let nonce = lease.nonce();
-        let tx_params = stage!(SubmitBatch::build_tx_params(&candidate, nonce)?);
+        let tx_params = stage!(SubmitBatch::build_tx_params(candidate, nonce)?);
         let tx_params = stage!(batch.recompute_access_list(tx_params).await);
         let raw_signed = stage!(batch.sign_and_record(&tx_params, &lease)?);
-        let tx_hash = stage!(batch.deliver(&candidate, &raw_signed, &lease).await?);
+        let tx_hash = stage!(batch.deliver(candidate, &raw_signed, &lease).await?);
         let () = stage!(batch.reserve_and_record(&path_pools, &mut state));
 
         degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::SubmitOutcome {
@@ -1062,7 +1185,7 @@ pub async fn dispatch_and_submit(
         // T4: realized profit — this candidate's net profit lands on the
         // realized counter iff its tx confirms.
         let () =
-            stage!(batch.spawn_monitor(tx_hash, nonce, path_pools, candidate_net_wei(&candidate)));
+            stage!(batch.spawn_monitor(tx_hash, nonce, path_pools, candidate_net_wei(candidate)));
     }
 
     // with the empty-batch gate the span is optional - the outcome
@@ -1216,6 +1339,7 @@ mod tests {
     use super::*;
     use crate::dispatcher::Dispatcher;
     use crate::signer::TxSigner;
+    use crate::submission_ledger::SubmissionState;
     use alloy::primitives::{address, Address, Bytes, B256, U256};
     use alloy::providers::{Provider, ProviderBuilder};
     use alloy::rpc::client::ClientBuilder;
@@ -1239,13 +1363,25 @@ mod tests {
     /// A sign-time lane over a fresh authority seeded at `operator_nonce` and
     /// an empty ledger — the sole nonce source every dispatch path now takes.
     fn lane(operator_nonce: u64) -> Arc<NonceLane<SubmissionLedger>> {
-        let authority = Arc::new(degenbot_substrate::nonce::NonceAuthority::new(
-            operator_nonce,
-        ));
-        Arc::new(authority.mint_lane(
-            "test-strategy",
-            Arc::new(crate::submission_ledger::SubmissionLedger::new()),
-        ))
+        books(operator_nonce).2
+    }
+
+    /// A lane plus the two nonce books it writes — the authority and the
+    /// ledger — so a test can assert both sides of a delivery decision.
+    fn books(
+        operator_nonce: u64,
+    ) -> (
+        Arc<degenbot_substrate::nonce::NonceAuthority>,
+        Arc<SubmissionLedger>,
+        Arc<NonceLane<SubmissionLedger>>,
+        degenbot_substrate::nonce::StrategyId,
+    ) {
+        use degenbot_substrate::nonce::{NonceAuthority, StrategyId};
+        let authority = Arc::new(NonceAuthority::new(operator_nonce));
+        let ledger = Arc::new(SubmissionLedger::new());
+        let strategy = StrategyId::new("test-strategy");
+        let lane = Arc::new(authority.mint_lane(strategy.clone(), Arc::clone(&ledger)));
+        (authority, ledger, lane, strategy)
     }
 
     fn mock_provider(asserter: &Asserter) -> AlloyProvider {
@@ -1564,16 +1700,19 @@ mod tests {
 
     #[tokio::test]
     async fn submit_skips_on_broadcast_failure() {
-        // The broadcast RPC fails → skip with BroadcastFailed. The nonce is
-        // claimed but NOT released (leaked until manual cleanup — ports the
-        // `continue` on Web3Exception).
+        // The node refused the signed bytes for good, so the classifier reads a
+        // unanimously definitive set: the lease goes back and the next candidate
+        // may stamp the same nonce. Nothing is on the wire, so no monitor is
+        // spawned and the pool is never reserved; the ledger keeps the signed
+        // record for head reconciliation to close out.
         let asserter = Asserter::new();
         asserter.push_success(&empty_access_list_response()); // access-list ok
-        asserter.push_failure_msg("eth_sendRawTransaction failed"); // broadcast fails
+        asserter.push_failure_msg("nonce too low: next nonce 8, tx nonce 7"); // definitive refusal
         let provider = mock_provider(&asserter);
         let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
         let s = signer();
         let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
+        let (authority, ledger, lane, strategy) = books(7);
 
         let outcome = dispatch_and_submit(
             vec![candidate(1, 5_000_000_000u128, &[POOL_A])],
@@ -1581,7 +1720,7 @@ mod tests {
             &provider,
             &s,
             probe,
-            &lane(7),
+            &lane,
             100,
             false,
             false,
@@ -1607,6 +1746,209 @@ mod tests {
             .is_pool_pending(&PoolKey::new(POOL_A)));
         // No monitor task spawned.
         assert_eq!(dispatcher.lock().unwrap().active_task_count(), 0);
+        // Definitive non-liveness: the lease is back on both books' terms.
+        assert_eq!(
+            authority.lease_of(&strategy),
+            None,
+            "a definitive refusal frees the reservation"
+        );
+        assert_eq!(authority.outstanding_nonces(), Vec::<u64>::new());
+        assert_eq!(
+            ledger.state_of(&strategy, 7),
+            Some(SubmissionState::Signed),
+            "the signed record stays outstanding for reconciliation"
+        );
+        // The freed nonce is re-issuable.
+        assert_eq!(lane.stamp().expect("re-stamp the freed nonce").nonce(), 7);
+    }
+
+    #[tokio::test]
+    async fn an_already_known_broadcast_promotes_to_a_tracked_submission() {
+        // A node answering "already known" holds these exact signed bytes: the
+        // submission is live, not failed. It is recorded as submitted under the
+        // signed bytes' hash, promoted on both nonce books, and monitored — the
+        // same shape an acknowledged broadcast takes.
+        let asserter = Asserter::new();
+        asserter.push_success(&empty_access_list_response());
+        asserter.push_failure_msg("already known");
+        let provider = mock_provider(&asserter);
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
+        let s = signer();
+        let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
+        let (authority, ledger, lane, strategy) = books(7);
+
+        let outcome = dispatch_and_submit(
+            vec![candidate(1, 5_000_000_000u128, &[POOL_A])],
+            &dispatcher,
+            &provider,
+            &s,
+            probe,
+            &lane,
+            100,
+            false,
+            false,
+            &[],
+            SubmissionTarget::Public,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.submitted_count(), 1);
+        assert_eq!(outcome.skipped_count(), 0);
+        let SubmitRecord::Submitted {
+            tx_hash,
+            nonce,
+            path_id,
+        } = &outcome.records[0]
+        else {
+            panic!("expected Submitted, got {:?}", outcome.records[0]);
+        };
+        assert_eq!((*path_id, *nonce), (1, 7));
+        let record = ledger.record_of(&strategy, 7).expect("ledger record");
+        assert_eq!(
+            *tx_hash,
+            record.bundle_hash(),
+            "the tracked hash is keccak256 of the signed bytes"
+        );
+        assert_eq!(
+            ledger.state_of(&strategy, 7),
+            Some(SubmissionState::Broadcast)
+        );
+        assert_eq!(
+            authority.outstanding_nonces(),
+            vec![7],
+            "the promotion keeps the nonce outstanding on the authority book"
+        );
+        assert!(dispatcher
+            .lock()
+            .unwrap()
+            .is_pool_pending(&PoolKey::new(POOL_A)));
+        assert_eq!(
+            dispatcher.lock().unwrap().active_task_count(),
+            1,
+            "a promoted submission is monitored"
+        );
+        dispatcher.lock().unwrap().abort_all_tasks();
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_relay_answer_holds_the_lease_and_the_ledger_record() {
+        // The relay's answer cannot be read back as a transaction hash. The
+        // bytes were sent, so whether they are live is unknown: the classifier
+        // holds — the lease stays reserved and the ledger record parks in
+        // DeliveryUnknown — and no monitor is spawned, because there is no hash
+        // to track.
+        let asserter = Asserter::new();
+        asserter.push_success(&empty_access_list_response());
+        asserter.push_success(&serde_json::json!("0xnot-a-transaction-hash"));
+        let provider = mock_provider(&asserter);
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
+        let s = signer();
+        let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
+        let (authority, ledger, lane, strategy) = books(7);
+
+        let outcome = dispatch_and_submit(
+            vec![candidate(1, 5_000_000_000u128, &[POOL_A])],
+            &dispatcher,
+            &provider,
+            &s,
+            probe,
+            &lane,
+            100,
+            false,
+            false,
+            &[],
+            SubmissionTarget::Public,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.skipped_count(), 1);
+        assert_eq!(outcome.submitted_count(), 0);
+        assert_eq!(
+            authority.lease_of(&strategy).expect("held lease").nonce(),
+            7,
+            "ambiguity keeps the reservation: the bytes may be live"
+        );
+        assert_eq!(authority.outstanding_nonces(), vec![7]);
+        assert_eq!(
+            ledger.state_of(&strategy, 7),
+            Some(SubmissionState::DeliveryUnknown)
+        );
+        assert_eq!(dispatcher.lock().unwrap().active_task_count(), 0);
+        assert!(!dispatcher
+            .lock()
+            .unwrap()
+            .is_pool_pending(&PoolKey::new(POOL_A)));
+    }
+
+    #[tokio::test]
+    async fn a_declined_stamp_records_every_candidate_the_abort_stops() {
+        // Another strategy's reservation sits below the confirmed head, so this
+        // lane's stamp is declined before anything is signed. The batch stops —
+        // and every candidate it stops leaves a blocked record instead of
+        // vanishing into an unprocessed tail.
+        let asserter = Asserter::new();
+        let provider = mock_provider(&asserter);
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
+        let s = signer();
+        let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
+        let (authority, ledger, lane, strategy) = books(5);
+        let other = authority.mint_lane(
+            degenbot_substrate::nonce::StrategyId::new("other"),
+            Arc::new(SubmissionLedger::new()),
+        );
+        assert_eq!(
+            other.stamp().expect("the other lane holds nonce 5").nonce(),
+            5
+        );
+        authority.set_confirmed(6);
+
+        let outcome = dispatch_and_submit(
+            vec![
+                candidate(1, 5_000_000_000u128, &[POOL_A]),
+                candidate(2, 4_000_000_000u128, &[POOL_B]),
+            ],
+            &dispatcher,
+            &provider,
+            &s,
+            probe,
+            &lane,
+            100,
+            false,
+            false,
+            &[],
+            SubmissionTarget::Public,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.submitted_count(), 0);
+        assert_eq!(
+            outcome.records,
+            vec![
+                SubmitRecord::Skipped {
+                    path_id: 1,
+                    reason: SkipReason::NonceContended,
+                },
+                SubmitRecord::Skipped {
+                    path_id: 2,
+                    reason: SkipReason::NonceContended,
+                },
+            ],
+            "the candidate in hand and the unprocessed tail are both recorded"
+        );
+        assert_eq!(outcome.skipped_count(), 2);
+        assert!(
+            asserter.read_q().is_empty(),
+            "the batch stopped at the stamp: nothing was signed or broadcast"
+        );
+        assert_eq!(
+            ledger.records(),
+            Vec::new(),
+            "no submission record exists for a candidate that never signed"
+        );
+        assert_eq!(authority.lease_of(&strategy), None);
     }
 
     #[tokio::test]
@@ -2079,11 +2421,19 @@ mod tests {
     async fn bundle_channel_skips_typed_when_relay_unreachable() {
         // No relay on the port → a typed BroadcastFailed skip with the
         // mevblocker attribution, NOT a panic, NOT a public-mempool fallback.
+        //
+        // The arm's classified policy is Release: the bid is valid for exactly
+        // the block it was pinned to and the auction books a bid only by
+        // acknowledging it, so the pin bounds the failure's liveness window and
+        // a round trip that ends without an acknowledgement leaves no bid for
+        // that block. The lease therefore goes back, and the ledger keeps the
+        // signed record for reconciliation.
         let asserter = Asserter::new();
         let provider = mock_provider(&asserter);
         let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
         let s = signer();
         let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
+        let (authority, ledger, lane, strategy) = books(0);
 
         // A bound-then-dropped listener guarantees connection-refused.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -2103,7 +2453,7 @@ mod tests {
             &provider,
             &s,
             probe,
-            &lane(0),
+            &lane,
             6,
             false,
             false,
@@ -2122,5 +2472,67 @@ mod tests {
             }
             other => panic!("expected typed broadcast-failure skip, got {other:?}"),
         }
+        assert_eq!(
+            authority.lease_of(&strategy),
+            None,
+            "the pinned bid's failure is definitive non-liveness for its slot"
+        );
+        assert_eq!(ledger.state_of(&strategy, 0), Some(SubmissionState::Signed));
+        assert_eq!(dispatcher.lock().unwrap().active_task_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn builder_relay_arm_releases_the_lease_when_every_relay_rejects() {
+        // No relay is listening, so every POST is a rejection and no relay
+        // holds the bundle. As with the auction arm, the bid is pinned to one
+        // block: the pin bounds the failure's liveness window, so the arm's
+        // classified policy is Release and the lease goes back.
+        let asserter = Asserter::new();
+        asserter.push_success(&empty_access_list_response());
+        let provider = mock_provider(&asserter);
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
+        let s = signer();
+        let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
+        let (authority, ledger, lane, strategy) = books(3);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        drop(listener);
+
+        let target = SubmissionTarget::BuilderRelay {
+            relays: vec![format!("http://{addr}")],
+            target_raw: Bytes::from_static(&[0x02, 0xf8, 0x01]),
+            block_number: 42,
+        };
+        let outcome = dispatch_and_submit(
+            vec![candidate(4, 1_000_000_000u128, &[POOL_A])],
+            &dispatcher,
+            &provider,
+            &s,
+            probe,
+            &lane,
+            41,
+            false,
+            false,
+            &[],
+            target,
+        )
+        .await
+        .expect("dispatch completes");
+
+        assert_eq!(
+            outcome.records,
+            vec![SubmitRecord::Skipped {
+                path_id: 4,
+                reason: SkipReason::BroadcastFailed(
+                    "every builder relay rejected the bundle".to_string()
+                ),
+            }]
+        );
+        assert_eq!(authority.lease_of(&strategy), None);
+        assert_eq!(ledger.state_of(&strategy, 3), Some(SubmissionState::Signed));
+        assert_eq!(dispatcher.lock().unwrap().active_task_count(), 0);
     }
 }

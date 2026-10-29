@@ -28,6 +28,9 @@ class SubmitSkipReason(StrEnum):
     DRY_RUN = "dry_run"
     INJECT_CODE = "inject_code"
     BROADCAST_FAILED = "broadcast_failed"
+    # The batch could not obtain a nonce, so the candidate was blocked rather
+    # than decided: it remains a retry candidate for its strategy.
+    NONCE_CONTENDED = "nonce_contended"
 
 
 @dataclass(frozen=True, slots=True)

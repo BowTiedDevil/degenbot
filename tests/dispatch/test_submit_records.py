@@ -44,6 +44,7 @@ class TestTypedSubmitRecord:
             ("dry_run", SubmitSkipReason.DRY_RUN, None),
             ("inject_code", SubmitSkipReason.INJECT_CODE, None),
             ("broadcast_failed", SubmitSkipReason.BROADCAST_FAILED, "rpc down"),
+            ("nonce_contended", SubmitSkipReason.NONCE_CONTENDED, None),
         ],
     )
     def test_skipped_reasons_convert(
