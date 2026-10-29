@@ -659,10 +659,13 @@ fn touched_set_trace_reports_cap_pins_and_multi_touched() {
     cx.trace.render("0xtouched");
 
     let traced = std::fs::read_to_string(&trace_path).expect("trace file was written");
+    // The capture file is process-global: sibling tests in this binary emit
+    // their own events into it while this one runs, so the solve lookup keys
+    // on this frame's tx (every line still parses: appends are atomic).
     let solve = traced
         .lines()
         .map(|l| serde_json::from_str::<serde_json::Value>(l).expect("trace line parses"))
-        .find(|v| v["kind"] == "solve")
+        .find(|v| v["kind"] == "solve" && v["tx"] == "0xtouched")
         .expect("the solve event was emitted");
     let chain_trace = &solve["chains"][0];
     assert_eq!(

@@ -115,7 +115,6 @@ pub use crate::market_context::MarketContext;
 /// Append one JSON line to the offline-review capture
 /// (`logging.trace_jsonl`, best-effort).
 pub fn trace_jsonl(kind: &str, mut v: serde_json::Value) {
-    use std::io::Write;
     // The typed `logging.trace_jsonl` key wins; absent, the capture defaults
     // to the session's `trace.jsonl` installed at boot (see degenbot-runs).
     let Some(path) = degenbot_runs::configured_trace_jsonl_path() else {
@@ -135,13 +134,7 @@ pub fn trace_jsonl(kind: &str, mut v: serde_json::Value) {
             dst.insert(k, val);
         }
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        let _ = writeln!(f, "{line}");
-    }
+    degenbot_runs::append_trace_line(&path, &line.to_string());
 }
 
 fn now_unix_ms() -> u64 {

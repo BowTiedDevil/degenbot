@@ -76,6 +76,36 @@ pub fn configured_trace_jsonl_path() -> Option<PathBuf> {
     typed.or_else(|| trace_jsonl_default().map(Path::to_path_buf))
 }
 
+/// Append one pre-serialized line to a trace JSONL capture, best-effort:
+/// an open or write failure is swallowed (capture must never disturb its
+/// caller).
+///
+/// A process-wide lock serializes every append — the strategy stages, the
+/// submission wire log, and the test seams all share one capture file —
+/// because a `writeln!` onto an unbuffered `File` goes through the fmt
+/// machinery as several small `write` syscalls. Two threads appending
+/// concurrently then interleave mid-line and the JSONL capture becomes
+/// unparseable.
+pub fn append_trace_line(path: &Path, line: &str) {
+    use std::io::Write;
+    use std::sync::Mutex;
+    static APPEND_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = APPEND_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+    let mut buf = String::with_capacity(line.len() + 1);
+    buf.push_str(line);
+    buf.push('\n');
+    let _ = f.write_all(buf.as_bytes());
+}
+
 /// One session's artifact directory.
 #[derive(Debug, Clone)]
 pub struct RunDirectory {
@@ -381,5 +411,47 @@ mod tests {
             engine_component(" backrun-sidecar ").unwrap(),
             "backrun-sidecar"
         );
+    }
+
+    #[test]
+    fn concurrent_appends_never_interleave_lines() {
+        let path = std::env::temp_dir().join(format!(
+            "degenbot-runs-append-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let writers = 8_u64;
+        let lines_per_writer = 100_u64;
+        // Long lines: a fmt-driven append splits them into several `write`
+        // syscalls, which is exactly the shape that interleaves under
+        // contention.
+        let body = "x".repeat(180);
+        std::thread::scope(|s| {
+            for w in 0..writers {
+                let (path, body) = (&path, &body);
+                s.spawn(move || {
+                    for i in 0..lines_per_writer {
+                        append_trace_line(path, &format!("writer-{w}-line-{i}-{body}"));
+                    }
+                });
+            }
+        });
+
+        let traced = std::fs::read_to_string(&path).expect("capture readable");
+        let mut seen = std::collections::HashSet::new();
+        for (n, line) in traced.lines().enumerate() {
+            assert!(
+                seen.insert(line.to_owned()),
+                "line {n} is a torn or duplicated write: {line}"
+            );
+        }
+        assert_eq!(
+            seen.len(),
+            usize::try_from(writers * lines_per_writer).unwrap(),
+            "every appended line landed whole"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 }

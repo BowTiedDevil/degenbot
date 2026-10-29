@@ -166,7 +166,6 @@ pub fn decode_config_word(config: U256) -> (u8, u16, u8, U256) {
 /// behavior can be replayed away from the hot loop. Best-effort: capture
 /// failures never disturb submission.
 pub fn trace_wire_jsonl(kind: &str, v: &Json) {
-    use std::io::Write;
     // The typed `logging.trace_jsonl` key wins; absent, the capture defaults
     // to the session's `trace.jsonl` installed at boot (see degenbot-runs).
     let Some(path) = degenbot_runs::configured_trace_jsonl_path() else {
@@ -183,13 +182,7 @@ pub fn trace_wire_jsonl(kind: &str, v: &Json) {
             dst.insert(k.clone(), val.clone());
         }
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        let _ = writeln!(f, "{line}");
-    }
+    degenbot_runs::append_trace_line(&path, &line.to_string());
 }
 
 /// Errors from the relay round-trip.
