@@ -66,7 +66,8 @@ fn walk(hops: &[IntHopState]) -> Solve {
 }
 
 /// `(opt, profit, outputs)` from sweeping `int_simulate_path` at `anchor - 2
-/// ..= anchor + 2`, mirroring the `exact_mobius_solve` neighborhood.
+/// ..= anchor + 2` — a local reference search used to cross-check the walk,
+/// independent of the production solver's anchor-only evaluation.
 fn sweep(anchor: U256, hops: &[IntHopState]) -> Solve {
     let mut best: Solve = None;
     for delta in -2i32..=2 {

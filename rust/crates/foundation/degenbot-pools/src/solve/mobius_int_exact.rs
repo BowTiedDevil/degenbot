@@ -75,9 +75,9 @@ use degenbot_math::v2::{int_simulate_path, IntHopState};
 /// 2-hop thin-margin paths). See the module-level doc for the two-layer
 /// discipline ("model layer" vs "discrete-EVM-sim layer").
 ///
-/// `optimal_input` is the discrete argmax of `int_simulate_path(x) - x`;
-/// `profit` is the corresponding on-chain profit. Both are `U256` (zero when
-/// unprofitable).
+/// `optimal_input` is the model anchor `x*` (the floor-exact evaluation
+/// point); `profit` is the corresponding on-chain profit. Both are `U256`
+/// (zero when unprofitable).
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ExactMobiusResult {
@@ -88,7 +88,8 @@ pub struct ExactMobiusResult {
     pub profit: U256,
     /// Whether the path is profitable (K > M).
     pub is_profitable: bool,
-    /// Whether the closed-form solution was used (as opposed to bounded search).
+    /// Whether the closed-form anchor was used (as opposed to the
+    /// zero-anchor micro-profit probe at input 1).
     #[cfg_attr(
         not(test),
         expect(
