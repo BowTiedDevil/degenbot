@@ -1545,7 +1545,11 @@ fn submit_cfg(dry_run: bool) -> BackrunConfig {
 /// source every dispatch path takes).
 fn submit_lane() -> Arc<NonceLane<SubmissionLedger>> {
     let authority = Arc::new(degenbot_substrate::nonce::NonceAuthority::new(0));
-    Arc::new(authority.mint_lane("spent-accounting-test", Arc::new(SubmissionLedger::new())))
+    Arc::new(authority.mint_lane(
+        "spent-accounting-test",
+        Arc::new(SubmissionLedger::new()),
+        degenbot_substrate::nonce::LanePolicy::default(),
+    ))
 }
 
 /// A deterministic test key (the alloy test default — never use on mainnet).

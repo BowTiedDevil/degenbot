@@ -176,15 +176,33 @@ _Avoid_: "lane root", "strategy directory", "sandbox".
 
 **Submission ledger**:
 The per-strategy record of every signed submission — nonce, followed target, bundle hash,
-built-at head, and state `Signed → Broadcast → Landed | Stale | Orphaned` — whose
-reconcile outcomes are nonce-level facts, not byte-level ones.
+built-at head, the hash it replaced, and state
+`Signed → Broadcast → Landed | Stale | Orphaned`, with `DeliveryUnknown` for an unresolved
+delivery — whose reconcile outcomes are nonce-level facts, not byte-level ones.
 _Avoid_: "submission table", "tx log", "journal".
+
+**Delivery-unknown hold**:
+The slot a signed submission whose delivery attempt left its fate open occupies on both
+books: the authority keeps the nonce (carrying the signed bytes' fee caps) and the ledger
+record parks in `DeliveryUnknown`, because the bytes may be live at that nonce. It ends by
+chain evidence (the chain passes the nonce) or by the lane's window expiring, which the
+head sweep releases into **Replace-or-dominate**.
+_Avoid_: "leaked lease" (a hold is bounded), "stuck nonce", "orphan".
+
+**Replace-or-dominate**:
+The state a **Delivery-unknown hold** enters when its window closes: the slot is still
+occupied, so nothing is issued at it for free, and only a replacement carrying fees that
+dominate the held transaction's (the standard replacement bump) may re-sign it. Ordinary
+issuance parks the slot until chain evidence.
+_Avoid_: "freed nonce", "retry", "resubmit" (a re-send of the same bytes is not a
+replacement).
 
 **Head reconciliation**:
 The once-per-head fold of the operator account's nonce-lifespan facts into each hosted
-strategy's default policy: one claim per chain head drives the refresh and the reconcile,
-and every typed notice folds through the owning lane's **HeadPolicy**. Extra triggers on
-an already-reconciled head are free.
+strategy's default policy: one claim per chain head drives the chain-nonce read, the
+stale-slot sweep, the refresh and the reconcile, and every typed notice folds through the
+owning lane's **HeadPolicy**. Extra triggers on an already-reconciled head are free, and a
+head whose read failed sweeps nothing — a hold is never released on stale data.
 _Avoid_: "head tick" (the feed's trigger, not the reconciliation); "nonce refresh" (only
 one step of it); per-driver reconcile loops.
 

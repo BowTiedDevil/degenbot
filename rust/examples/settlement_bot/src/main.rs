@@ -1149,6 +1149,7 @@ fn build_batch_executor(
                 std::sync::Arc::new(degenbot::substrate::nonce::NonceAuthority::new(0)).mint_lane(
                     "settlement",
                     std::sync::Arc::new(degenbot::submission::SubmissionLedger::new()),
+                    degenbot::substrate::nonce::LanePolicy::default(),
                 ),
             ),
             extra_broadcast: Vec::new(),

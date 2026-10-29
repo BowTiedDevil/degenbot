@@ -347,8 +347,9 @@ pub enum StrategyNotice {
         /// The vacated predecessor nonce the strategy may re-stamp at.
         fillable_nonce: u64,
     },
-    /// A reorg rewind revoked the strategy's live lease for `nonce`; the lease
-    /// must be re-obtained at the recovered head.
+    /// The strategy's live lease for `nonce` was revoked: a reorg rewound the
+    /// window it was stamped inside, or the head sweep found the chain had
+    /// already passed it. The lease must be re-obtained.
     LeaseRevoked {
         /// The revoked lease's nonce.
         nonce: u64,

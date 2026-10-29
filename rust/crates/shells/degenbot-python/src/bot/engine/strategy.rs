@@ -17,7 +17,19 @@ use degenbot_bot::bot_core::{
     SessionConstruction,
 };
 use degenbot_bot::strategy_host::{FacetStatus, HeadReconciler, HostError, StrategyHost};
-use degenbot_substrate::nonce::{NonceAuthority, NonceLane, StrategyId};
+use degenbot_substrate::nonce::{HoldWindow, LanePolicy, NonceAuthority, NonceLane, StrategyId};
+
+/// The lane policy a registered strategy is minted with: the process-default
+/// hold window under the strategy's own census label.
+///
+/// The window is a per-lane parameter so an arm can price a held slot-minute
+/// for itself; the composition root currently gives every registered strategy
+/// the default, and the label comes from the closed `StrategyName` vocabulary
+/// rather than from the registered string, so the census value set stays
+/// compile-time.
+fn lane_policy(name: degenbot_strategy::StrategyName) -> LanePolicy {
+    LanePolicy::new(HoldWindow::DEFAULT, name.as_str())
+}
 
 #[cfg(feature = "submission")]
 use degenbot_bot::hosted_sources::{HeadTrigger, HostedHeadClock};
@@ -341,7 +353,11 @@ fn hosted_lanes(
     ledger: &Arc<degenbot_submission::SubmissionLedger>,
 ) -> (HeadLanes, BackrunLanes) {
     let settlement_id = StrategyId::new(degenbot_strategy::StrategyName::Settlement.as_str());
-    let settlement_lane = Arc::new(nonce.mint_lane(settlement_id.clone(), Arc::clone(ledger)));
+    let settlement_lane = Arc::new(nonce.mint_lane(
+        settlement_id.clone(),
+        Arc::clone(ledger),
+        lane_policy(degenbot_strategy::StrategyName::Settlement),
+    ));
     // The settlement seam is the Python-driven arm of this one hosted
     // process, so its lane is process-global: every settlement submission
     // stamps through the shared authority once the boot installs it.
@@ -365,7 +381,7 @@ fn hosted_lanes(
         ),
     ] {
         let id = StrategyId::new(name.as_str());
-        let lane = Arc::new(nonce.mint_lane(id.clone(), Arc::clone(ledger)));
+        let lane = Arc::new(nonce.mint_lane(id.clone(), Arc::clone(ledger), lane_policy(name)));
         backruns.push((id.clone(), ecosystem, Arc::clone(&lane)));
         lanes.insert(id, lane);
     }

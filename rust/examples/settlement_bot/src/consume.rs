@@ -530,10 +530,11 @@ mod tests {
                     .unwrap(),
                 ),
                 probe: Arc::new(NoopProbe),
-                nonce_lane: Arc::new(
-                    Arc::new(NonceAuthority::new(0))
-                        .mint_lane("settlement", Arc::new(SubmissionLedger::new())),
-                ),
+                nonce_lane: Arc::new(Arc::new(NonceAuthority::new(0)).mint_lane(
+                    "settlement",
+                    Arc::new(SubmissionLedger::new()),
+                    degenbot::substrate::nonce::LanePolicy::default(),
+                )),
                 extra_broadcast: Vec::new(),
                 target: SubmissionTarget::Public,
             },

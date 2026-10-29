@@ -110,6 +110,7 @@ pub use dispatcher::{
     CommittedTx, Dispatcher, PathSuppression, PoolKey, BLOCK_TIMES_WINDOW, FEE_HISTORY_WINDOW,
     PATH_SUPPRESS_RETRY_INTERVAL, PATH_SUPPRESS_THRESHOLD,
 };
+pub use head_reconciliation::SweepOutcome;
 pub use monitor::{
     monitor_pending_transaction, monitor_pending_transaction_default, MonitorOutcome, ReceiptProbe,
     SubmittedTx, BLOCKS_BEFORE_NONCE_EXPIRES,
@@ -118,8 +119,9 @@ pub use sim_pipeline::{
     PipelineFailure, SimFuture, SimLeaf, SimSubmitPipeline, SubmitFuture, SubmitLeaf,
 };
 pub use submission_ledger::{
-    HeadPolicy, LedgerDecline, Notification, NotificationKind, PolicyAction, RepackageRequest,
-    ShadowPosture, SubmissionLedger, SubmissionRecord, SubmissionState, TargetId,
+    release_hold, replace_hold, HeadPolicy, HoldDecline, LedgerDecline, Notification,
+    NotificationKind, PolicyAction, RepackageRequest, Replacement, ShadowPosture, SubmissionLedger,
+    SubmissionRecord, SubmissionState, TargetId,
 };
 pub use submit::{
     dispatch_and_submit, fetch_fee_history, SkipReason, SubmissionTarget, SubmitCandidate,

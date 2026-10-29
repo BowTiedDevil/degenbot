@@ -72,6 +72,25 @@ impl DeliveryFailureClass {
         Self::Unclassified,
     ];
 
+    /// The class's census label: the closed value set the delivery telemetry
+    /// counts.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AlreadyKnown => "already_known",
+            Self::NonceTooLow => "nonce_too_low",
+            Self::InsufficientFunds => "insufficient_funds",
+            Self::ReplacementUnderpriced => "replacement_underpriced",
+            Self::Malformed => "malformed",
+            Self::NotAdmitted => "not_admitted",
+            Self::Timeout => "timeout",
+            Self::Connection => "connection",
+            Self::RetryBudget => "retry_budget",
+            Self::RateLimited => "rate_limited",
+            Self::Unclassified => "unclassified",
+        }
+    }
+
     /// Whether the class proves the signed bytes are already live.
     #[must_use]
     pub const fn is_liveness_signal(self) -> bool {
@@ -185,6 +204,17 @@ pub enum DeliveryVerdict {
 }
 
 impl DeliveryVerdict {
+    /// The verdict's census label: the closed value set the delivery telemetry
+    /// counts, in the join's own vocabulary.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Release => "release",
+            Self::Hold => "hold",
+            Self::Promote => "promote",
+        }
+    }
+
     /// The rank the join orders by: definitive non-liveness below ambiguity
     /// below liveness.
     const fn rank(self) -> u8 {
@@ -235,6 +265,20 @@ pub fn classify_delivery_failure(failures: &[DeliveryFailureClass]) -> DeliveryV
         verdict = verdict.join(evidence_of(*failure));
     }
     verdict
+}
+
+/// The class that decided the verdict: the most evidential member of the set,
+/// in the join's ranking (liveness above ambiguity above a definite refusal).
+///
+/// Telemetry reads it so a verdict is attributable — "which attempt told us" —
+/// without a second policy helper. `None` for an empty set, whose verdict is the
+/// join's identity rather than any attempt's evidence.
+#[must_use]
+pub fn deciding_failure(failures: &[DeliveryFailureClass]) -> Option<DeliveryFailureClass> {
+    failures
+        .iter()
+        .copied()
+        .max_by_key(|class| evidence_of(*class).rank())
 }
 
 #[cfg(test)]
@@ -513,6 +557,53 @@ mod tests {
             class.is_ambiguous(),
             "nothing about an unclassifiable failure proves the bytes are not live"
         );
+    }
+
+    #[test]
+    fn the_deciding_class_is_the_most_evidential_member() {
+        use DeliveryFailureClass::{AlreadyKnown, NotAdmitted, Timeout};
+
+        assert_eq!(deciding_failure(&[]), None);
+        assert_eq!(deciding_failure(&[NotAdmitted]), Some(NotAdmitted));
+        assert_eq!(
+            deciding_failure(&[NotAdmitted, Timeout]),
+            Some(Timeout),
+            "ambiguity outranks a refusal"
+        );
+        assert_eq!(
+            deciding_failure(&[Timeout, NotAdmitted, AlreadyKnown]),
+            Some(AlreadyKnown),
+            "a liveness signal outranks everything"
+        );
+        // The attribution and the verdict agree on the evidence class.
+        for &(class, verdict) in TRUTH_TABLE {
+            assert_eq!(
+                verdict.as_str(),
+                classify_delivery_failure(&[class]).as_str()
+            );
+            assert_eq!(deciding_failure(&[class]), Some(class));
+        }
+    }
+
+    #[test]
+    fn every_class_and_verdict_has_a_distinct_census_label() {
+        let mut labels: Vec<&'static str> = DeliveryFailureClass::ALL
+            .iter()
+            .map(|class| class.as_str())
+            .collect();
+        labels.sort_unstable();
+        let before = labels.len();
+        labels.dedup();
+        assert_eq!(before, labels.len(), "class labels must be unique");
+
+        let mut verdict_labels = vec![
+            DeliveryVerdict::Release.as_str(),
+            DeliveryVerdict::Hold.as_str(),
+            DeliveryVerdict::Promote.as_str(),
+        ];
+        verdict_labels.sort_unstable();
+        verdict_labels.dedup();
+        assert_eq!(verdict_labels.len(), 3, "verdict labels must be unique");
     }
 
     proptest! {

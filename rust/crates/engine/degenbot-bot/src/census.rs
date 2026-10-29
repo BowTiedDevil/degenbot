@@ -161,6 +161,27 @@ pub enum CensusEvent {
     ProfitMissed { wei: f64 },
     /// One monitor outcome (`confirmed`, `expired`).
     MonitorOutcome { outcome: &'static str },
+    /// One delivery attempt's classified failure: the arm's verdict
+    /// (`release` | `hold` | `promote`) with the class that decided it
+    /// (the delivery taxonomy's closed labels, or `none` for a set with no
+    /// recorded failure).
+    DeliveryVerdict {
+        class: &'static str,
+        verdict: &'static str,
+    },
+    /// One delivery-unknown hold entered: a signed submission whose delivery
+    /// attempt left its fate open now freezes the nonce it was signed against.
+    DeliveryHoldEntered { strategy: &'static str },
+    /// One delivery-unknown hold the head sweep released: the slot moved into
+    /// replace-or-dominate and the ledger record closed stale.
+    DeliveryHoldSwept { strategy: &'static str },
+    /// One lease the head sweep released because the chain had passed its
+    /// nonce: one stale reservation no longer freezes every lane's stamp.
+    NonceLeaseSwept { strategy: &'static str },
+    /// One lane parked instead of signing: its own delivery-unknown hold owns
+    /// the slot, so the frames in hand wait for chain evidence or an explicit
+    /// replacement.
+    DeliverySlotParked { strategy: &'static str },
     /// Detached merge-pipe in-flight depth (stragglers sent but not yet
     /// applied/dropped), sampled at enqueue + per disposition.
     MergeInFlight { count: u64 },

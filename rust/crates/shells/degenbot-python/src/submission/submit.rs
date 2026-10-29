@@ -510,7 +510,14 @@ mod settlement_nonce_lane_tests {
 
     fn lane() -> Arc<NonceLane<SubmissionLedger>> {
         let authority = Arc::new(NonceAuthority::new(0));
-        Arc::new(authority.mint_lane("settlement", Arc::new(SubmissionLedger::new())))
+        Arc::new(authority.mint_lane(
+            "settlement",
+            Arc::new(SubmissionLedger::new()),
+            degenbot_substrate::nonce::LanePolicy::new(
+                degenbot_substrate::nonce::HoldWindow::DEFAULT,
+                degenbot_strategy::StrategyName::Settlement.as_str(),
+            ),
+        ))
     }
 
     /// A process with no host boot refuses the submission: settlement stamps

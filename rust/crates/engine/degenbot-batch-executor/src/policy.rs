@@ -248,6 +248,7 @@ mod tests {
                 Arc::new(degenbot_substrate::nonce::NonceAuthority::new(0)).mint_lane(
                     "settlement",
                     Arc::new(degenbot_submission::SubmissionLedger::new()),
+                    degenbot_substrate::nonce::LanePolicy::default(),
                 ),
             ),
             extra_broadcast: Vec::new(),

@@ -61,6 +61,18 @@ const ALLOWED_LABELS: &[&str] = &[
     "mode",
     "arm",
     "verdict",
+    // `degenbot_delivery_verdicts{class}`: the delivery taxonomy's deciding
+    // failure class — the closed value set of
+    // `degenbot_submission::delivery::DeliveryFailureClass` (`as_str` is the one
+    // conversion, `ALL` is the set).
+    "class",
+    // `degenbot_{delivery.holds_entered,delivery.holds_swept,nonce.leases_swept,
+    // delivery.slots_parked}{strategy}`: the lane's census label, supplied at
+    // mint (`LanePolicy`) and compile-pinned to the closed
+    // `degenbot_strategy::StrategyName` vocabulary by the composition root;
+    // `unlabelled` is the one extra value a lane with no registered strategy
+    // reports as.
+    "strategy",
     "sink",
     "service.version",
     "role",

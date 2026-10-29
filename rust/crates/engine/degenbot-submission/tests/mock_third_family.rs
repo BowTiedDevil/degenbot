@@ -29,7 +29,7 @@ use degenbot_bot::strategy_host::{
 use degenbot_eventhub::{Hub, HubClass, HubError, HubEvent};
 use degenbot_submission::{SubmissionLedger, SubmissionState};
 use degenbot_substrate::driver_spawn::{DriverExit, DriverSpawnFactory};
-use degenbot_substrate::nonce::{NonceAuthority, StrategyId};
+use degenbot_substrate::nonce::{LanePolicy, NonceAuthority, StrategyId};
 use degenbot_substrate::RouteRegistry;
 
 /// The mock third strategy family. A real family is named by its config facet
@@ -100,11 +100,13 @@ impl MockThirdFamily {
 
         // Lane consumption over the one process authority: the lease is the
         // lowest free nonce at or above the confirmed chain nonce.
-        let lane = services
-            .authority
-            .mint_lane(self.id.clone(), Arc::clone(&services.ledger));
+        let lane = services.authority.mint_lane(
+            self.id.clone(),
+            Arc::clone(&services.ledger),
+            LanePolicy::default(),
+        );
         let lease = lane.stamp().expect("authority grants a contiguous nonce");
-        lane.record_signed(&lease, B256::ZERO, B256::ZERO, 0)
+        lane.record_signed(&lease, B256::ZERO, B256::ZERO, 0, None)
             .expect("record signed");
         services
             .authority
@@ -307,8 +309,12 @@ fn mock_family_lane_consumption_keeps_authority_contiguity() {
     let ledger = Arc::new(SubmissionLedger::new());
     let family = MockThirdFamily::new();
     let peer = StrategyId::new("mock-peer-family");
-    let lane_a = authority.mint_lane(family.id().clone(), Arc::clone(&ledger));
-    let lane_b = authority.mint_lane(peer, Arc::clone(&ledger));
+    let lane_a = authority.mint_lane(
+        family.id().clone(),
+        Arc::clone(&ledger),
+        LanePolicy::default(),
+    );
+    let lane_b = authority.mint_lane(peer, Arc::clone(&ledger), LanePolicy::default());
 
     let lease_a = lane_a.stamp().expect("family stamp");
     let lease_b = lane_b.stamp().expect("peer stamp");
@@ -344,13 +350,17 @@ fn mock_family_ledger_classifies_terminal_miss_and_observed_orphan() {
     host.enable(family.id()).expect("enable");
     host.attach_reconciler(Arc::clone(&ledger) as Arc<dyn HeadReconciler>);
 
-    let lane = authority.mint_lane(family.id().clone(), Arc::clone(&ledger));
+    let lane = authority.mint_lane(
+        family.id().clone(),
+        Arc::clone(&ledger),
+        LanePolicy::default(),
+    );
 
     // Two signed broadcasts; the lower is then vacated without landing, so the
     // upper's immediate predecessor is neither confirmed nor outstanding.
     let lease_10 = lane.stamp().expect("stamp 10");
     assert_eq!(lease_10.nonce(), 10);
-    lane.record_signed(&lease_10, B256::ZERO, B256::ZERO, 10)
+    lane.record_signed(&lease_10, B256::ZERO, B256::ZERO, 10, None)
         .expect("sign 10");
     authority
         .record_broadcast(&lease_10)
@@ -361,7 +371,7 @@ fn mock_family_ledger_classifies_terminal_miss_and_observed_orphan() {
 
     let lease_11 = lane.stamp().expect("stamp 11");
     assert_eq!(lease_11.nonce(), 11);
-    lane.record_signed(&lease_11, B256::ZERO, B256::ZERO, 10)
+    lane.record_signed(&lease_11, B256::ZERO, B256::ZERO, 10, None)
         .expect("sign 11");
     authority
         .record_broadcast(&lease_11)
@@ -413,9 +423,13 @@ fn mock_family_ledger_lands_a_submitted_record() {
     host.enable(family.id()).expect("enable");
     host.attach_reconciler(Arc::clone(&ledger) as Arc<dyn HeadReconciler>);
 
-    let lane = authority.mint_lane(family.id().clone(), Arc::clone(&ledger));
+    let lane = authority.mint_lane(
+        family.id().clone(),
+        Arc::clone(&ledger),
+        LanePolicy::default(),
+    );
     let lease = lane.stamp().expect("stamp 10");
-    lane.record_signed(&lease, B256::ZERO, B256::ZERO, 10)
+    lane.record_signed(&lease, B256::ZERO, B256::ZERO, 10, None)
         .expect("sign 10");
     authority
         .record_broadcast(&lease)

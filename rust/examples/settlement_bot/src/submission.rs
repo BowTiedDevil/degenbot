@@ -172,10 +172,11 @@ impl<'a> LiveSubmissionSeam<'a> {
             signer,
             probe,
             inject_code,
-            nonce_lane: Arc::new(
-                Arc::new(NonceAuthority::new(0))
-                    .mint_lane("settlement", Arc::new(SubmissionLedger::new())),
-            ),
+            nonce_lane: Arc::new(Arc::new(NonceAuthority::new(0)).mint_lane(
+                "settlement",
+                Arc::new(SubmissionLedger::new()),
+                degenbot::substrate::nonce::LanePolicy::default(),
+            )),
         }
     }
 }

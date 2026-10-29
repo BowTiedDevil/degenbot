@@ -159,22 +159,42 @@ constructor, so the binding to the issuance owner is the owner's to hand out.
 
 ```rust
 pub fn mint_lane<L: NonceLedger>(self: &Arc<Self>, strategy: impl Into<StrategyId>,
-                                 ledger: Arc<L>) -> NonceLane<L>;
+                                 ledger: Arc<L>, policy: LanePolicy) -> NonceLane<L>;
 pub fn stamp(&self) -> Result<NonceLease, DeclineKind>;
 pub fn record_signed(&self, lease: &NonceLease, target: B256, bundle_hash: B256,
-                     built_at_head: u64) -> Result<(), L::Decline>;
+                     built_at_head: u64, replaces: Option<B256>) -> Result<(), L::Decline>;
 pub fn record_broadcast(&self, lease: &NonceLease) -> Result<(), L::Decline>;
 pub fn release(&self, lease: &NonceLease) -> Result<u64, DeclineKind>;
 pub fn release_broadcast(&self, nonce: u64) -> Result<u64, DeclineKind>;
+pub fn record_hold(&self, lease: &NonceLease, fees: HeldFees, at_head: u64)
+    -> Result<DeliveryHold, DeclineKind>;
+pub fn release_hold(&self, nonce: u64) -> Result<DeliveryHold, DeclineKind>;
+pub fn replace(&self, fees: HeldFees) -> Result<NonceLease, DeclineKind>;
 ```
+
+`LanePolicy` carries the lane's per-strategy governance: its **hold window** (how
+long an unresolved delivery freezes the nonce it was signed against — settlement
+and speculative arms price a slot-minute differently) and its **census label**,
+a `&'static` value from the closed `StrategyName` vocabulary so the delivery
+telemetry's label set stays compile-time.
 
 The ledger arrives as the caller's type behind the `NonceLedger` trait (also
 substrate): stamp recording and its promotion to broadcast are the two writes a
 lane makes, and naming no submission type is what lets the substrate crate own
 the lane. `SubmissionLedger` implements the trait; the composition root that owns
 the concrete ledger supplies it. A hosted strategy mints off the host's one
-authority — `host.nonce().mint_lane("<name>", ledger)` — the same constructor
-every other caller uses.
+authority — `host.nonce().mint_lane("<name>", ledger, policy)` — the same
+constructor every other caller uses.
+
+A delivery attempt whose fate is unknown parks a **delivery-unknown hold** on
+both books (`record_hold` on the authority, the ledger record in
+`DeliveryUnknown`): the nonce stays occupied and carries the signed bytes' fee
+caps. `stamp()` then declines with `DeclineKind::DeliveryUnknownHold` — the lane
+never silently re-signs over a possibly-live transaction — until chain evidence
+clears the hold or the lane reprices through `replace`, which requires fees that
+dominate the held transaction's under the standard replacement bump. The head
+sweep (`HeadReconciliation`) releases expired holds into replace-or-dominate and
+releases leases the chain has already passed.
 
 `stamp()` is the only issuance entry. It calls `NonceAuthority::lease`, which
 returns the **lowest free nonce at or above the confirmed chain nonce** so leases
@@ -406,7 +426,8 @@ Pin every seam a family depends on at its own level:
 2. Add the config facet + `StrategyName` variant + schema test (§7).
 3. Implement the family body (`PendingTxReaction` or settled-block stage).
 4. Add the driver partitions: a boot resolver + spawn factory (§6).
-5. Bind the lane: `host.nonce().mint_lane("<name>", ledger.clone())` (§3).
+5. Bind the lane: `host.nonce().mint_lane("<name>", ledger.clone(), policy)` (§3),
+   with the strategy's `LanePolicy` (hold window + census label).
 6. Register the facet and attach the spawn in the boot (§1, §2).
 7. Subscribe head notices and feed them through `HeadPolicy` (§4).
 8. Pin the seams, including a mock-family integration test (§9), and update the
@@ -429,7 +450,7 @@ Pin every seam a family depends on at its own level:
 | Session phase table | `strategy_host.rs:169` | `SessionPhase::{on_start,on_run,on_query,on_shutdown}` |
 | Authority lease | `nonce_authority.rs:295` | `lease(&StrategyId) -> Result<NonceLease, DeclineKind>` |
 | Authority reorg head | `nonce_authority.rs:247` | `set_confirmed_reorg(confirmed) -> Vec<ReorgAdvisory>` |
-| Lane bind | `degenbot-substrate/src/nonce.rs` | `NonceAuthority::mint_lane(strategy, ledger) -> NonceLane` |
+| Lane bind | `degenbot-substrate/src/nonce.rs` | `NonceAuthority::mint_lane(strategy, ledger, LanePolicy) -> NonceLane` |
 | Lane stamp | `submission_ledger.rs:404` | `stamp() -> Result<NonceLease, DeclineKind>` |
 | Ledger reconcile | `submission_ledger.rs:673` | `reconcile(confirmed, outstanding) -> Vec<Notification>` |
 | Head policy | `submission_ledger.rs:527` | `on_notice(&HeadNotice) -> Result<PolicyAction, DeclineKind>` |
@@ -451,7 +472,7 @@ inventing them:
 | Brief name | Landed shape | Disposition |
 |---|---|---|
 | `ReactionKind` / `EachPoll` | `HubClass` + `OverflowPolicy` typed at `Hub::register_source`; per-poll tick is `HeadSubscription::changed` | Documented as the typed reaction (§5); no production change needed. |
-| `NonceAuthority::lane_for` | `NonceAuthority::mint_lane(strategy, ledger)` (`degenbot-substrate/src/nonce.rs`) | Documented as the lane's only constructor (§3). |
+| `NonceAuthority::lane_for` | `NonceAuthority::mint_lane(strategy, ledger, LanePolicy)` (`degenbot-substrate/src/nonce.rs`) | Documented as the lane's only constructor (§3). |
 | `DriverState` | `DriverPose` (`strategy_host.rs:41`) | Documented as `DriverPose` (§1); `DriverState` is retired prose. |
 | `persist_observables` (test) | Observability-name pins `tests/trace_default.rs`, `tests/trace_explicit.rs` | Documented as the observability pin pattern (§9). |
 

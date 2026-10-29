@@ -38,7 +38,9 @@ use std::sync::Arc;
 
 use alloy::primitives::B256;
 use degenbot_bot::strategy_host::{HeadNotice, HeadReconciler, StrategyNotice};
-use degenbot_substrate::nonce::{DeclineKind, NonceLane, NonceLedger, StrategyId};
+use degenbot_substrate::nonce::{
+    DeclineKind, DeliveryHold, HeldFees, NonceLane, NonceLease, NonceLedger, StrategyId,
+};
 use parking_lot::Mutex;
 
 /// The identity of the transaction a submitted record was built to follow.
@@ -213,6 +215,11 @@ pub enum LedgerDecline {
     /// `orphaned` refuses a terminal record.
     #[error("orphaned requires an outstanding (non-terminal) record")]
     OrphanedRequiresOutstanding,
+    /// A hold release is only legal from [`SubmissionState::DeliveryUnknown`]:
+    /// any other outstanding state means the two books disagree about what the
+    /// nonce holds.
+    #[error("hold release requires a DeliveryUnknown record")]
+    HoldReleaseRequiresDeliveryUnknown,
 }
 
 /// One strategy's record of a submission.
@@ -223,6 +230,7 @@ pub struct SubmissionRecord {
     target: TargetId,
     bundle_hash: B256,
     built_at_head: u64,
+    replaces: Option<B256>,
     state: SubmissionState,
 }
 
@@ -255,6 +263,18 @@ impl SubmissionRecord {
     #[must_use]
     pub const fn built_at_head(&self) -> u64 {
         self.built_at_head
+    }
+
+    /// The wire hash of the submission these bytes superseded at the same
+    /// nonce — the replacement chain's one link — or `None` for ordinary
+    /// issuance.
+    ///
+    /// A record names what it replaced, so the monitor tracks the transaction
+    /// that is actually on the wire and the chain of reprices at one nonce
+    /// reads back through the records that followed it.
+    #[must_use]
+    pub const fn replaces(&self) -> Option<B256> {
+        self.replaces
     }
 
     /// The record's current state.
@@ -444,6 +464,7 @@ impl NonceLedger for SubmissionLedger {
         target: B256,
         bundle_hash: B256,
         built_at_head: u64,
+        replaces: Option<B256>,
     ) -> Result<(), LedgerDecline> {
         SubmissionLedger::record_signed(
             self,
@@ -452,6 +473,7 @@ impl NonceLedger for SubmissionLedger {
             TargetId::new(target),
             bundle_hash,
             built_at_head,
+            replaces,
         )
     }
 
@@ -484,6 +506,102 @@ impl HeadReconciler for SubmissionLedger {
     fn has_outstanding(&self) -> bool {
         SubmissionLedger::has_outstanding(self)
     }
+}
+
+/// Why a two-book lane verb was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum HoldDecline {
+    /// The nonce authority refused the slot decision.
+    #[error("nonce authority declined: {0}")]
+    Authority(DeclineKind),
+    /// The strategy's ledger refused the record decision.
+    #[error("submission ledger declined: {0}")]
+    Ledger(LedgerDecline),
+}
+
+impl From<DeclineKind> for HoldDecline {
+    fn from(decline: DeclineKind) -> Self {
+        Self::Authority(decline)
+    }
+}
+
+impl From<LedgerDecline> for HoldDecline {
+    fn from(decline: LedgerDecline) -> Self {
+        Self::Ledger(decline)
+    }
+}
+
+/// One replacement: the lease re-signed at the held nonce, and the wire hash the
+/// fresh bytes supersede.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Replacement {
+    lease: NonceLease,
+    replaces: B256,
+}
+
+impl Replacement {
+    /// The lease at the held nonce.
+    #[must_use]
+    pub fn lease(&self) -> &NonceLease {
+        &self.lease
+    }
+
+    /// The wire hash of the transaction these bytes replace.
+    #[must_use]
+    pub const fn replaces(&self) -> B256 {
+        self.replaces
+    }
+}
+
+/// Release one lane's delivery-unknown hold on both books: the authority slot
+/// moves into replace-or-dominate and the ledger record closes stale.
+///
+/// Two books, two calls — neither subsumes the other. The authority owns wire
+/// truth (the slot stays occupied and only a dominating replacement may reuse
+/// it), the ledger owns submission truth (this submission's own outcome is
+/// settled, so nothing tracks it any more). Collapsing the pair leaves one book
+/// claiming a fate the other never recorded.
+///
+/// # Errors
+///
+/// [`HoldDecline::Authority`] when the lane holds no delivery-unknown hold;
+/// [`HoldDecline::Ledger`] when the ledger's record is not in the hold.
+pub fn release_hold(
+    lane: &NonceLane<SubmissionLedger>,
+    nonce: u64,
+) -> Result<DeliveryHold, HoldDecline> {
+    let hold = lane.release_hold(nonce)?;
+    lane.ledger().record_hold_release(lane.strategy(), nonce)?;
+    Ok(hold)
+}
+
+/// Re-sign at the nonce the lane's delivery-unknown hold occupies, replacing
+/// the held transaction, on both books.
+///
+/// The authority licenses the swap (the lane must still hold the delivery-unknown
+/// nonce and the fees must dominate the held transaction's), and the ledger
+/// closes the held record stale and hands back the wire hash the replacement
+/// supersedes so the fresh record can name it.
+///
+/// # Errors
+///
+/// [`HoldDecline::Authority`] when the lane holds no delivery-unknown nonce or
+/// the fees miss the replacement bump; [`HoldDecline::Ledger`] when the ledger
+/// has no record at the held nonce.
+pub fn replace_hold(
+    lane: &NonceLane<SubmissionLedger>,
+    fees: HeldFees,
+) -> Result<Replacement, HoldDecline> {
+    let hold = lane.hold().ok_or(DeclineKind::UnknownHold)?;
+    let replaces = lane
+        .ledger()
+        .record_of(lane.strategy(), hold.nonce())
+        .map(|record| record.bundle_hash())
+        .ok_or(LedgerDecline::UnknownRecord)?;
+    let lease = lane.replace(fees)?;
+    lane.ledger()
+        .record_hold_release(lane.strategy(), lease.nonce())?;
+    Ok(Replacement { lease, replaces })
 }
 
 #[derive(Debug, Default)]
@@ -527,6 +645,7 @@ impl SubmissionLedger {
         target: TargetId,
         bundle_hash: B256,
         built_at_head: u64,
+        replaces: Option<B256>,
     ) -> Result<(), LedgerDecline> {
         let mut state = self.state.lock();
         let records = state.by_strategy.entry(strategy.clone()).or_default();
@@ -544,6 +663,7 @@ impl SubmissionLedger {
                 target,
                 bundle_hash,
                 built_at_head,
+                replaces,
                 state: SubmissionState::Signed,
             },
         );
@@ -597,6 +717,44 @@ impl SubmissionLedger {
             .and_then(|records| records.get_mut(&nonce))
             .ok_or(LedgerDecline::UnknownRecord)?;
         record.state = record.state.on_delivery_unknown()?;
+        Ok(record.state)
+    }
+
+    /// Close a delivery-unknown record as stale because the bounded hold
+    /// ended: the head sweep released the nonce its bytes were signed against.
+    ///
+    /// The record is terminal afterwards. The nonce may still be occupied at
+    /// the authority — a released hold moves to replace-or-dominate, so a
+    /// replacement re-signs over it — but this submission's own outcome is
+    /// settled: nothing tracks it any more.
+    ///
+    /// Idempotent on the already-released record: the head sweep closes the
+    /// record when it releases the slot, and the lane's replacement then closes
+    /// it again on its way to the fresh sign. The verb's postcondition is that
+    /// the record is not an open hold, and an already-stale record satisfies it.
+    ///
+    /// # Errors
+    ///
+    /// [`LedgerDecline::UnknownRecord`] if the strategy tracks no record at this
+    /// nonce; [`LedgerDecline::HoldReleaseRequiresDeliveryUnknown`] if the
+    /// record is neither a hold nor already released (the authority's hold and
+    /// the ledger's record disagree about what the nonce holds).
+    pub fn record_hold_release(
+        &self,
+        strategy: &StrategyId,
+        nonce: u64,
+    ) -> Result<SubmissionState, LedgerDecline> {
+        let mut state = self.state.lock();
+        let record = state
+            .by_strategy
+            .get_mut(strategy)
+            .and_then(|records| records.get_mut(&nonce))
+            .ok_or(LedgerDecline::UnknownRecord)?;
+        match record.state {
+            SubmissionState::DeliveryUnknown => record.state = record.state.on_stale()?,
+            SubmissionState::Stale => {}
+            _ => return Err(LedgerDecline::HoldReleaseRequiresDeliveryUnknown),
+        }
         Ok(record.state)
     }
 
@@ -753,7 +911,7 @@ impl SubmissionLedger {
 )]
 mod tests {
     use super::*;
-    use degenbot_substrate::nonce::NonceAuthority;
+    use degenbot_substrate::nonce::{LanePolicy, NonceAuthority};
     use proptest::prelude::*;
 
     fn sid(name: &str) -> StrategyId {
@@ -775,7 +933,14 @@ mod tests {
 
     fn sign(ledger: &SubmissionLedger, strategy: &str, nonce: u64, head: u64) {
         ledger
-            .record_signed(&sid(strategy), nonce, target(nonce), hash(nonce), head)
+            .record_signed(
+                &sid(strategy),
+                nonce,
+                target(nonce),
+                hash(nonce),
+                head,
+                None,
+            )
             .expect("record_signed");
     }
 
@@ -862,7 +1027,7 @@ mod tests {
         let ledger = SubmissionLedger::new();
         sign(&ledger, "settlement", 10, 100);
         assert_eq!(
-            ledger.record_signed(&sid("settlement"), 10, target(10), hash(10), 101),
+            ledger.record_signed(&sid("settlement"), 10, target(10), hash(10), 101, None),
             Err(LedgerDecline::DuplicateRecord)
         );
     }
@@ -965,6 +1130,72 @@ mod tests {
             ledger.state_of(&sid("settlement"), 10),
             Some(SubmissionState::Stale)
         );
+    }
+
+    #[test]
+    fn a_hold_release_closes_the_record_and_is_idempotent() {
+        let ledger = SubmissionLedger::new();
+        sign(&ledger, "settlement", 10, 100);
+        assert_eq!(
+            ledger.record_hold_release(&sid("settlement"), 10),
+            Err(LedgerDecline::HoldReleaseRequiresDeliveryUnknown),
+            "a signed record is not a hold: the two books disagree"
+        );
+        ledger
+            .record_delivery_unknown(&sid("settlement"), 10)
+            .expect("hold");
+        assert_eq!(
+            ledger.record_hold_release(&sid("settlement"), 10),
+            Ok(SubmissionState::Stale)
+        );
+        assert_eq!(
+            ledger.record_hold_release(&sid("settlement"), 10),
+            Ok(SubmissionState::Stale),
+            "a second release is the same fact, not a disagreement"
+        );
+        assert_eq!(
+            ledger.record_hold_release(&sid("settlement"), 11),
+            Err(LedgerDecline::UnknownRecord)
+        );
+        // A broadcast is not a hold either.
+        sign(&ledger, "settlement", 11, 100);
+        ledger
+            .record_broadcast(&sid("settlement"), 11)
+            .expect("broadcast");
+        assert_eq!(
+            ledger.record_hold_release(&sid("settlement"), 11),
+            Err(LedgerDecline::HoldReleaseRequiresDeliveryUnknown)
+        );
+    }
+
+    #[test]
+    fn a_resign_after_a_release_names_the_transaction_it_replaced() {
+        let ledger = SubmissionLedger::new();
+        sign(&ledger, "settlement", 10, 100);
+        ledger
+            .record_delivery_unknown(&sid("settlement"), 10)
+            .expect("hold");
+        ledger
+            .record_hold_release(&sid("settlement"), 10)
+            .expect("release");
+        ledger
+            .record_signed(
+                &sid("settlement"),
+                10,
+                target(99),
+                hash(99),
+                101,
+                Some(hash(10)),
+            )
+            .expect("re-sign at the released nonce");
+        let record = ledger.record_of(&sid("settlement"), 10).expect("record");
+        assert_eq!(record.state(), SubmissionState::Signed);
+        assert_eq!(
+            record.replaces(),
+            Some(hash(10)),
+            "the replacement chain keeps its one link"
+        );
+        assert_eq!(record.bundle_hash(), hash(99));
     }
 
     #[test]
@@ -1119,7 +1350,7 @@ mod tests {
         );
         // The authority may hand the same nonce back out; the strategy re-signs.
         ledger
-            .record_signed(&sid("settlement"), 10, target(99), hash(99), 101)
+            .record_signed(&sid("settlement"), 10, target(99), hash(99), 101, None)
             .expect("re-sign at a reused nonce");
         let record = ledger.record_of(&sid("settlement"), 10).expect("record");
         assert_eq!(record.state(), SubmissionState::Signed);
@@ -1193,7 +1424,7 @@ mod tests {
     fn a_lane_stamp_repackages_past_a_stale_lease() {
         let authority = Arc::new(NonceAuthority::new(10));
         let ledger = Arc::new(SubmissionLedger::new());
-        let lane = authority.mint_lane(sid("a"), Arc::clone(&ledger));
+        let lane = authority.mint_lane(sid("a"), Arc::clone(&ledger), LanePolicy::default());
         let lease = lane.stamp().expect("first stamp");
         assert_eq!(lease.nonce(), 10);
         // The chain passes the lease; the next sign repackages at 11.
@@ -1210,8 +1441,8 @@ mod tests {
     fn two_lanes_one_outstanding_each_never_share_a_nonce() {
         let authority = Arc::new(NonceAuthority::new(50));
         let ledger = Arc::new(SubmissionLedger::new());
-        let a = authority.mint_lane(sid("a"), Arc::clone(&ledger));
-        let b = authority.mint_lane(sid("b"), Arc::clone(&ledger));
+        let a = authority.mint_lane(sid("a"), Arc::clone(&ledger), LanePolicy::default());
+        let b = authority.mint_lane(sid("b"), Arc::clone(&ledger), LanePolicy::default());
 
         let lease_a = a.stamp().expect("a stamp");
         let lease_b = b.stamp().expect("b stamp");
@@ -1232,7 +1463,7 @@ mod tests {
     fn a_lane_releases_an_expired_broadcast_and_refills_the_slot() {
         let authority = Arc::new(NonceAuthority::new(50));
         let ledger = Arc::new(SubmissionLedger::new());
-        let lane = authority.mint_lane(sid("a"), Arc::clone(&ledger));
+        let lane = authority.mint_lane(sid("a"), Arc::clone(&ledger), LanePolicy::default());
         let lease = lane.stamp().expect("stamp");
         authority.record_broadcast(&lease).expect("broadcast");
         assert_eq!(authority.outstanding_nonces(), vec![50]);
@@ -1250,7 +1481,8 @@ mod tests {
     fn the_default_policy_restamps_an_orphan_and_defers_stale() {
         let authority = Arc::new(NonceAuthority::new(5));
         let ledger = Arc::new(SubmissionLedger::new());
-        let lane = Arc::new(authority.mint_lane(sid("a"), Arc::clone(&ledger)));
+        let lane =
+            Arc::new(authority.mint_lane(sid("a"), Arc::clone(&ledger), LanePolicy::default()));
         let policy = HeadPolicy::new(Arc::clone(&lane));
         let orphan = HeadNotice::new(sid("a"), 6, StrategyNotice::Orphaned { fillable_nonce: 5 });
         assert_eq!(
@@ -1297,9 +1529,16 @@ mod tests {
         host.subscribe_head(&settlement, settlement_tx)
             .expect("subscribe");
 
-        let settlement_lane =
-            Arc::new(authority.mint_lane(settlement.clone(), Arc::clone(&ledger)));
-        let backrun_lane = Arc::new(authority.mint_lane(backrun.clone(), Arc::clone(&ledger)));
+        let settlement_lane = Arc::new(authority.mint_lane(
+            settlement.clone(),
+            Arc::clone(&ledger),
+            LanePolicy::default(),
+        ));
+        let backrun_lane = Arc::new(authority.mint_lane(
+            backrun.clone(),
+            Arc::clone(&ledger),
+            LanePolicy::default(),
+        ));
         let settlement_policy = HeadPolicy::new(Arc::clone(&settlement_lane));
 
         // (i) Lowest-free issuance under a pending prior nonce: settlement's
@@ -1307,7 +1546,7 @@ mod tests {
         let settlement0 = settlement_lane.stamp().expect("settlement stamp");
         assert_eq!(settlement0.nonce(), 0);
         settlement_lane
-            .record_signed(&settlement0, target(0).hash(), hash(0), 0)
+            .record_signed(&settlement0, target(0).hash(), hash(0), 0, None)
             .expect("record signed");
         authority.record_broadcast(&settlement0).expect("broadcast");
         ledger
@@ -1316,7 +1555,7 @@ mod tests {
         let backrun1 = backrun_lane.stamp().expect("backrun stamp");
         assert_eq!(backrun1.nonce(), 1, "the pending 0 is skipped");
         backrun_lane
-            .record_signed(&backrun1, target(1).hash(), hash(1), 0)
+            .record_signed(&backrun1, target(1).hash(), hash(1), 0, None)
             .expect("record signed");
 
         // (ii) Repackage-on-decline round: the chain advances past backrun's
@@ -1340,7 +1579,7 @@ mod tests {
         // (iii) Orphan fill via the notification policy: backrun's broadcast
         // at 2 is vacated, leaving settlement's outstanding 3 above a gap.
         backrun_lane
-            .record_signed(&backrun2, target(2).hash(), hash(2), 2)
+            .record_signed(&backrun2, target(2).hash(), hash(2), 2, None)
             .expect("record signed");
         authority.record_broadcast(&backrun2).expect("broadcast");
         ledger
@@ -1349,7 +1588,7 @@ mod tests {
         let settlement3 = settlement_lane.stamp().expect("settlement stamp");
         assert_eq!(settlement3.nonce(), 3);
         settlement_lane
-            .record_signed(&settlement3, target(3).hash(), hash(3), 2)
+            .record_signed(&settlement3, target(3).hash(), hash(3), 2, None)
             .expect("record signed");
         authority.release_strategy(&backrun);
 
@@ -1436,7 +1675,7 @@ mod tests {
             for (&(index, nonce), &seed) in &deduped {
                 let strategy = sid(&format!("s{index}"));
                 ledger
-                    .record_signed(&strategy, nonce, target(nonce), hash(nonce), 100)
+                    .record_signed(&strategy, nonce, target(nonce), hash(nonce), 100, None)
                     .expect("record_signed");
                 match seed_state(seed) {
                     SubmissionState::Signed => {}

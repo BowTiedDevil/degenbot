@@ -202,6 +202,21 @@ pub struct PipelineInstruments {
     profit_missed: Counter<f64>,
     /// Monitor outcomes, labeled (`confirmed`, `expired`).
     monitor_outcomes: Counter<u64>,
+    /// Classified delivery failures: the deciding failure class and the verdict
+    /// it produced (`release` | `hold` | `promote`). Both label values come from
+    /// the delivery taxonomy's closed enums.
+    delivery_verdicts: Counter<u64>,
+    /// Delivery-unknown holds entered, by the owning lane's census label.
+    delivery_holds_entered: Counter<u64>,
+    /// Delivery-unknown holds the head sweep released, by lane label. The
+    /// series to watch for "a lane is holding and why".
+    delivery_holds_swept: Counter<u64>,
+    /// Leases the head sweep released because the chain had passed their nonce,
+    /// by lane label.
+    nonce_leases_swept: Counter<u64>,
+    /// Lanes parked on their own delivery-unknown hold instead of signing, by
+    /// lane label.
+    delivery_slots_parked: Counter<u64>,
     detached_in_flight: Gauge<f64>,
     /// detached stragglers DROPPED by the Q1a stale policy.
     detached_stale_dropped: Counter<u64>,
@@ -589,6 +604,26 @@ impl PipelineInstruments {
             monitor_outcomes: meter
                 .u64_counter("degenbot.monitor.outcomes")
                 .with_description("Monitor outcomes (confirmed/expired)")
+                .build(),
+            delivery_verdicts: meter
+                .u64_counter("degenbot.delivery.verdicts")
+                .with_description("Delivery-failure verdicts by deciding class")
+                .build(),
+            delivery_holds_entered: meter
+                .u64_counter("degenbot.delivery.holds_entered")
+                .with_description("Delivery-unknown holds entered, by lane")
+                .build(),
+            delivery_holds_swept: meter
+                .u64_counter("degenbot.delivery.holds_swept")
+                .with_description("Delivery-unknown holds released by the head sweep, by lane")
+                .build(),
+            nonce_leases_swept: meter
+                .u64_counter("degenbot.nonce.leases_swept")
+                .with_description("Below-confirmed leases released by the head sweep, by lane")
+                .build(),
+            delivery_slots_parked: meter
+                .u64_counter("degenbot.delivery.slots_parked")
+                .with_description("Lanes parked on their own delivery-unknown hold, by lane")
                 .build(),
             registration_skips: meter
                 .u64_counter("degenbot.registration.skips")
@@ -1057,6 +1092,43 @@ impl PipelineInstruments {
             .add(1, &[KeyValue::new("outcome", outcome.to_owned())]);
     }
 
+    /// One classified delivery failure; both values are closed sets — the
+    /// delivery taxonomy's deciding class and its verdict.
+    pub fn count_delivery_verdict(&self, class: &str, verdict: &str) {
+        self.delivery_verdicts.add(
+            1,
+            &[
+                KeyValue::new("class", class.to_owned()),
+                KeyValue::new("verdict", verdict.to_owned()),
+            ],
+        );
+    }
+
+    /// One delivery-unknown hold entered; `strategy` is the lane's closed
+    /// census label.
+    pub fn count_delivery_hold_entered(&self, strategy: &str) {
+        self.delivery_holds_entered
+            .add(1, &[KeyValue::new("strategy", strategy.to_owned())]);
+    }
+
+    /// One delivery-unknown hold the head sweep released.
+    pub fn count_delivery_hold_swept(&self, strategy: &str) {
+        self.delivery_holds_swept
+            .add(1, &[KeyValue::new("strategy", strategy.to_owned())]);
+    }
+
+    /// One below-confirmed lease the head sweep released.
+    pub fn count_nonce_lease_swept(&self, strategy: &str) {
+        self.nonce_leases_swept
+            .add(1, &[KeyValue::new("strategy", strategy.to_owned())]);
+    }
+
+    /// One lane parked on its own delivery-unknown hold.
+    pub fn count_delivery_slot_parked(&self, strategy: &str) {
+        self.delivery_slots_parked
+            .add(1, &[KeyValue::new("strategy", strategy.to_owned())]);
+    }
+
     /// PRG-2: one registration-candidate skip; `reason` is a small
     /// closed set (`v4-admission`, `path-cap`, `dup`, `pool-build-error`,
     /// `engine-reject`, `register-fail`, ...). The live registration-gate
@@ -1333,6 +1405,19 @@ impl PipelineInstruments {
             CensusEvent::ProfitRealized { wei } => self.add_profit_realized(wei),
             CensusEvent::ProfitMissed { wei } => self.add_profit_missed(wei),
             CensusEvent::MonitorOutcome { outcome } => self.count_monitor_outcome(outcome),
+            CensusEvent::DeliveryVerdict { class, verdict } => {
+                self.count_delivery_verdict(class, verdict);
+            }
+            CensusEvent::DeliveryHoldEntered { strategy } => {
+                self.count_delivery_hold_entered(strategy);
+            }
+            CensusEvent::DeliveryHoldSwept { strategy } => {
+                self.count_delivery_hold_swept(strategy);
+            }
+            CensusEvent::NonceLeaseSwept { strategy } => self.count_nonce_lease_swept(strategy),
+            CensusEvent::DeliverySlotParked { strategy } => {
+                self.count_delivery_slot_parked(strategy);
+            }
             CensusEvent::MergeInFlight { count } => self.set_detached_in_flight(count),
             CensusEvent::StragglerDropped => self.count_detached_stale_dropped(),
             CensusEvent::StragglerSendFailed => self.count_detached_send_failed(),
