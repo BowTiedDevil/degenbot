@@ -234,9 +234,13 @@ pub use state::tick_map_verify::Slot0HeadScalars;
 /// The `PoolEntry` dispatch row, the per-family reader traits over it, the
 /// family tag a registration concerns, and the token-entry metadata beside it.
 pub use sim::registry::{
-    ConcentratedLiquidityPool, ConcentratedLiquidityPoolMut, PoolEntry, PoolEntrySlice,
-    RegisteredPoolFamily, TokenEntry,
+    ConcentratedLiquidityPool, PoolEntry, PoolEntrySlice, RegisteredPoolFamily, TokenEntry,
 };
+
+/// The concentrated-liquidity family's write door (ADR-080 D1/D4) — the write
+/// twin of `ConcentratedLiquidityPool`, whose five verbs are written once in
+/// the family tree (`families/concentrated_liquidity/state_mutation.rs`).
+pub use families::concentrated_liquidity::state_mutation::ConcentratedLiquidityPoolMut;
 
 /// The `PoolEntry`-dispatched stateless swap simulator and the Curve strategy
 /// resolver a builder needs before it can name a hop.

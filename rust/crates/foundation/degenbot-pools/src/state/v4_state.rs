@@ -14,6 +14,7 @@ use std::sync::Arc;
 use alloy::primitives::{Address, I256, U160, U256};
 
 use crate::families::concentrated_liquidity::state_journal;
+use crate::families::concentrated_liquidity::state_mutation;
 use crate::families::concentrated_liquidity::state_seeding;
 use crate::families::concentrated_liquidity::state_walk::{self, TickRangeCache};
 use crate::families::liquidity_event::LiquidityEvent;
@@ -516,7 +517,8 @@ impl V4PoolState {
 
     // `merge_tick_word` lives on the `ConcentratedLiquidityPoolMut` trait —
     // one body shared with `V3PoolState`. See
-    // `impl ConcentratedLiquidityPoolMut for V4PoolState` in `registry.rs`.
+    // `impl ConcentratedLiquidityPoolMut for V4PoolState` in
+    // `families/concentrated_liquidity/state_mutation.rs`.
 
     /// Construct from registration params with a journal of the given depth.
     #[must_use]
@@ -582,7 +584,8 @@ impl V4PoolState {
 
     // `apply_swap` + `apply_liquidity_update` live on the
     // `ConcentratedLiquidityPoolMut` trait — one body shared by V3 and V4.
-    // See `impl ConcentratedLiquidityPoolMut for V4PoolState` in `registry.rs`.
+    // See `impl ConcentratedLiquidityPoolMut for V4PoolState` in
+    // `families/concentrated_liquidity/state_mutation.rs`.
 
     /// Invalidate the cached tick ranges (call after any state mutation) —
     /// the verb lives once in the concentrated liquidity family state module
@@ -751,6 +754,31 @@ impl state_walk::WalkHost for V4PoolState {
 
     fn set_tick_data_block(&mut self, block: u64) {
         self.tick_data_block = block;
+    }
+}
+
+// The five write verbs live once in the concentrated liquidity state module
+// (`families/concentrated_liquidity/state_mutation.rs`); this impl is the
+// family-specific field access those verbs go through.
+impl state_mutation::StateMutationHost for V4PoolState {
+    fn initial_state_block(&self) -> u64 {
+        self.initial_state_block
+    }
+
+    fn bump_state_nonce(&mut self) {
+        self.state_nonce = self.state_nonce.wrapping_add(1);
+    }
+
+    fn set_sqrt_price_x96(&mut self, sqrt_price_x96: U256) {
+        self.sqrt_price_x96 = sqrt_price_x96;
+    }
+
+    fn set_active_liquidity(&mut self, liquidity: u128) {
+        self.liquidity = liquidity;
+    }
+
+    fn set_current_tick(&mut self, tick: i32) {
+        self.tick = tick;
     }
 }
 
@@ -1020,7 +1048,7 @@ pub fn v4_simulate_swap(
 #[cfg(test)]
 mod apply_inherent_tests {
     use super::*;
-    use crate::sim::registry::ConcentratedLiquidityPoolMut;
+    use crate::families::concentrated_liquidity::state_mutation::ConcentratedLiquidityPoolMut;
     use crate::state::state_history::{ReorgJournal, V3BlockDelta};
     use crate::state::v3_state::PoolTickCoverage;
     use crate::TickInfo;
@@ -1099,117 +1127,6 @@ mod apply_inherent_tests {
         assert_eq!(state.tick_data.get(&100), Some(&new_tick_info));
         assert_eq!(state.journal.len(), before_len + 1);
         assert_eq!(state.journal.newest_block(), Some(7));
-        {
-            let cache = state.cached_tick_ranges.lock();
-            assert!(matches!(
-                cache.zfo,
-                crate::state::v3_state::CachedTickRanges::StillEmpty
-            ));
-            assert!(matches!(
-                cache.ofz,
-                crate::state::v3_state::CachedTickRanges::StillEmpty
-            ));
-        }
-    }
-
-    #[test]
-    fn merge_tick_word_via_trait_merges_ticks_marks_word_known_invalidates_cache() {
-        // `merge_tick_word` lives on the
-        // `ConcentratedLiquidityPoolMut` trait. Verify the trait-dispatch path
-        // lands ticks + marks the word known + invalidates the cached ranges
-        // (the same observable behavior the prior inherent method had, now
-        // reached through `&mut dyn ConcentratedLiquidityPoolMut`).
-        let liq = 1_000_000u128;
-        let mut state = state_with_position(liq);
-        // Seed the cache so the invalidate assertion is observable.
-        let _ = state.build_int_v4_sequence(60, 3_000, true);
-        let fetched = crate::sim::tick_fetch::FetchedTickWord {
-            word: 7,
-            ticks: {
-                let mut m = HashMap::new();
-                m.insert(
-                    420,
-                    TickInfo {
-                        liquidity_gross: U256::from(500u64).to::<U128>(),
-                        liquidity_net: 500i128,
-                        block: 9,
-                    },
-                );
-                m
-            },
-            bitmap: None,
-        };
-        let before_len = state.journal.len();
-
-        let concentrated_liquidity: &mut dyn ConcentratedLiquidityPoolMut = &mut state;
-        let applied = concentrated_liquidity.merge_tick_word(&fetched);
-
-        assert!(
-            applied,
-            "trait merge_tick_word returns true on a concentrated liquidity pool"
-        );
-        assert_eq!(
-            state.tick_data.get(&420),
-            Some(&TickInfo {
-                liquidity_gross: U256::from(500u64).to::<U128>(),
-                liquidity_net: 500i128,
-                block: 9,
-            }),
-            "fetched tick landed in tick_data"
-        );
-        assert!(
-            state.known_bitmap_words.contains(&7),
-            "fetched word marked known"
-        );
-        assert_eq!(
-            state.journal.len(),
-            before_len,
-            "merge_tick_word never journals (no rollback delta)"
-        );
-        {
-            let cache = state.cached_tick_ranges.lock();
-            assert!(
-                matches!(
-                    cache.zfo,
-                    crate::state::v3_state::CachedTickRanges::StillEmpty
-                ) && matches!(
-                    cache.ofz,
-                    crate::state::v3_state::CachedTickRanges::StillEmpty
-                ),
-                "cache invalidated"
-            );
-        }
-    }
-
-    #[test]
-    fn replace_tick_data_swaps_map_advances_block_and_invalidates_cache() {
-        // V4 twin of the V3 test — proves the trait method dispatches onto
-        // V4PoolState through dyn ConcentratedLiquidityPoolMut.
-        let liq = 1_000_000u128;
-        let mut state = state_with_position(liq);
-        assert_eq!(state.update_block, 0);
-
-        let mut new_data = HashMap::new();
-        new_data.insert(
-            120,
-            TickInfo {
-                liquidity_gross: U256::from(7u64).to::<U128>(),
-                liquidity_net: 7i128,
-                block: 5,
-            },
-        );
-
-        state.replace_tick_data(new_data, 5, 60);
-
-        // replace advances only the LIQUIDITY clock (scalars/price
-        // untouched).
-        assert_eq!(state.tick_data_block, 5);
-        assert_eq!(
-            state.update_block, 0,
-            "price clock untouched by a tick-map replace"
-        );
-        assert!(state.tick_data.contains_key(&120));
-        assert!(!state.tick_data.contains_key(&-60));
         {
             let cache = state.cached_tick_ranges.lock();
             assert!(matches!(

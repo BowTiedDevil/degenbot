@@ -26,8 +26,8 @@ use proptest::prelude::*;
 
 // ------------------------------------------------------------------
 // apply_liquidity_update — the journal-capture contract shared by the
-// two adapters' trait impls (`ConcentratedLiquidityPoolMut` in
-// `registry.rs`): tick-map mutation per Solidity `Tick.update`, the
+// two adapters' write-door impls (`ConcentratedLiquidityPoolMut` in
+// `state_mutation.rs`): tick-map mutation per Solidity `Tick.update`, the
 // in-range scalar adjust, the two-stamp clock rule, and the delta's
 // scalar_priors shape.
 // ------------------------------------------------------------------

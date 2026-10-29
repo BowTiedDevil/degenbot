@@ -15,6 +15,7 @@ use std::sync::Arc;
 use alloy::primitives::{Address, B256, I256, U160, U256};
 
 use crate::families::concentrated_liquidity::state_journal;
+use crate::families::concentrated_liquidity::state_mutation;
 use crate::families::concentrated_liquidity::state_seeding;
 use crate::families::concentrated_liquidity::state_walk;
 use crate::sim::tick_fetch::TickWordSource;
@@ -625,7 +626,8 @@ impl V3PoolState {
 
     // `merge_tick_word` lives on the `ConcentratedLiquidityPoolMut` trait —
     // one body shared with `V4PoolState`. See
-    // `impl ConcentratedLiquidityPoolMut for V3PoolState` in `registry.rs`.
+    // `impl ConcentratedLiquidityPoolMut for V3PoolState` in
+    // `families/concentrated_liquidity/state_mutation.rs`.
 
     /// Construct from registration params with a journal of the given depth.
     #[must_use]
@@ -701,7 +703,8 @@ impl V3PoolState {
 
     // `apply_swap` + `apply_liquidity_update` live on the
     // `ConcentratedLiquidityPoolMut` trait — one body shared by V3 and V4.
-    // See `impl ConcentratedLiquidityPoolMut for V3PoolState` in `registry.rs`.
+    // See `impl ConcentratedLiquidityPoolMut for V3PoolState` in
+    // `families/concentrated_liquidity/state_mutation.rs`.
     /// Invalidate the cached tick ranges (call after any state mutation) —
     /// the verb lives once in the concentrated liquidity family state module
     /// (`families/concentrated_liquidity/state_walk.rs`).
@@ -867,6 +870,31 @@ impl state_walk::WalkHost for V3PoolState {
 
     fn set_tick_data_block(&mut self, block: u64) {
         self.tick_data_block = block;
+    }
+}
+
+// The five write verbs live once in the concentrated liquidity state module
+// (`families/concentrated_liquidity/state_mutation.rs`); this impl is the
+// family-specific field access those verbs go through.
+impl state_mutation::StateMutationHost for V3PoolState {
+    fn initial_state_block(&self) -> u64 {
+        self.initial_state_block
+    }
+
+    fn bump_state_nonce(&mut self) {
+        self.state_nonce = self.state_nonce.wrapping_add(1);
+    }
+
+    fn set_sqrt_price_x96(&mut self, sqrt_price_x96: U256) {
+        self.sqrt_price_x96 = sqrt_price_x96;
+    }
+
+    fn set_active_liquidity(&mut self, liquidity: u128) {
+        self.liquidity = liquidity;
+    }
+
+    fn set_current_tick(&mut self, tick: i32) {
+        self.tick = tick;
     }
 }
 
@@ -1279,7 +1307,7 @@ pub fn v3_simulate_swap(
 #[cfg(test)]
 mod apply_inherent_tests {
     use super::*;
-    use crate::sim::registry::ConcentratedLiquidityPoolMut;
+    use crate::families::concentrated_liquidity::state_mutation::ConcentratedLiquidityPoolMut;
     use crate::state::state_history::{ReorgJournal, ScalarPriors, TickBefore, V3BlockDelta};
     use alloy::primitives::{I256, U128, U256};
     use hashbrown::{HashMap, HashSet};
@@ -1439,109 +1467,6 @@ mod apply_inherent_tests {
                 "ofz cache must be invalidated"
             );
         }
-    }
-
-    #[test]
-    fn apply_swap_advances_both_clocks() {
-        // a Swap rewrites the slot0 head AND crosses ticks, so it
-        // advances BOTH the price clock and the liquidity clock.
-        let mut state = state_with_position(1_000_000u128);
-        assert_eq!(state.update_block, 0);
-        assert_eq!(state.tick_data_block, 0);
-        state.apply_swap(U256::from(2u128) << 96, 1_000_001, 1, 7, &[]);
-        assert_eq!(state.update_block, 7, "price clock advanced by the swap");
-        assert_eq!(
-            state.tick_data_block, 7,
-            "liquidity clock advanced by the swap"
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "monotonicity violated: tick_data_block")]
-    fn replace_tick_data_backward_block_panics() {
-        // Two-stamp monotonicity on the liquidity clock: replacing the tick map
-        // with data from a block BELOW the current liquidity clock is a
-        // backward stamp → panic loudly.
-        let mut state = state_with_position(1_000_000u128);
-        state.tick_data_block = 10;
-        let empty: HashMap<i32, TickInfo> = HashMap::new();
-        state.replace_tick_data(empty, 5, 60);
-    }
-
-    #[test]
-    fn replace_tick_data_swaps_map_advances_block_seeds_words_invalidates_cache() {
-        // What: replace_tick_data must (1) wholesale-swaps tick_data,
-        // (2) advance update_block only if newer (monotonic), (3) re-seed
-        // known_bitmap_words from the new keys, (4) invalidate the cached
-        // tick ranges. Scalars are NOT touched.
-        let liq = 1_000_000u128;
-        let mut state = state_with_position(liq);
-        let sp_before = state.sqrt_price_x96;
-
-        // Pre-condition: known_bitmap_words is empty, update_block is 0.
-        assert!(state.known_bitmap_words.is_empty());
-        assert_eq!(state.update_block, 0);
-
-        // New tick_data: a single tick at 120 (word 2 at tick_spacing 60).
-        let mut new_data = HashMap::new();
-        new_data.insert(
-            120,
-            TickInfo {
-                liquidity_gross: U256::from(7u64).to::<U128>(),
-                liquidity_net: 7i128,
-                block: 5,
-            },
-        );
-
-        state.replace_tick_data(new_data.clone(), 5, 60);
-
-        // (1) tick_data swapped (old -60/+60 gone, 120 present).
-        assert_eq!(
-            state.tick_data.get(&120).map(|t| t.liquidity_gross),
-            Some(U256::from(7u64).to::<U128>())
-        );
-        assert!(!state.tick_data.contains_key(&-60));
-        assert!(!state.tick_data.contains_key(&60));
-        // (2) Two-stamp rule: the tick-map replace advances only the LIQUIDITY clock;
-        // the price clock is untouched (scalars aren't changed).
-        assert_eq!(state.tick_data_block, 5);
-        assert_eq!(state.update_block, 0);
-        // (3) known_bitmap_words seeded from the new keys (word of tick 120
-        // at spacing 60 = 120.div_euclid(60) >> 8 = 2 >> 8 = 0).
-        assert!(state
-            .known_bitmap_words
-            .contains(&V3PoolState::word_of(120, 60)));
-        // (4) cache invalidated.
-        {
-            let cache = state.cached_tick_ranges.lock();
-            assert!(matches!(cache.zfo, CachedTickRanges::StillEmpty));
-            assert!(matches!(cache.ofz, CachedTickRanges::StillEmpty));
-        }
-        // Scalars untouched.
-        assert_eq!(state.sqrt_price_x96, sp_before);
-    }
-
-    #[test]
-    fn replace_tick_data_does_not_rewind_block() {
-        // replace_tick_data advances only the LIQUIDITY clock
-        // (`tick_data_block`) — scalars untouched, so the PRICE clock
-        // (`update_block`) never moves here. Advancing the liquidity clock to a
-        // NEWER block is fine; a lower block is a monotonicity panic (guarded
-        // elsewhere).
-        let liq = 1_000_000u128;
-        let mut state = state_with_position(liq);
-        state.update_block = 10;
-        assert_eq!(state.tick_data_block, 0);
-        let empty: HashMap<i32, TickInfo> = HashMap::new();
-        state.replace_tick_data(empty, 3, 60);
-        assert_eq!(
-            state.update_block, 10,
-            "the price clock is untouched by a tick-map replace"
-        );
-        assert_eq!(
-            state.tick_data_block, 3,
-            "the liquidity clock advances to the replace block"
-        );
     }
 
     // ------------------------------------------------------------------

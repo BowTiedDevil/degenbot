@@ -50,6 +50,11 @@ pub(crate) mod solve;
 /// data-generically over the two designs' state structs.
 pub(crate) mod state_journal;
 
+/// The five write verbs — tick-map replacement, fetched-word merge, known-word
+/// marking, swap application, and liquidity application — written once
+/// data-generically over the two designs' state structs.
+pub(crate) mod state_mutation;
+
 /// Bitmap-word seeding and registration-coverage bookkeeping: the family's
 /// shared seeding verbs, written once data-generically over the two designs'
 /// state structs.
@@ -80,7 +85,7 @@ use hashbrown::{HashMap, HashSet};
 
 use super::door::{Observe, Observed, ReadOutcome, SwapReadRequest};
 
-use crate::sim::registry::ConcentratedLiquidityPoolMut;
+use self::state_mutation::ConcentratedLiquidityPoolMut;
 use crate::sim::tick_fetch::{FetchedTickWord, TickWordKey, TickWordSource};
 use crate::state::int_v3_hop::IntV3TickRangeSequence;
 use crate::state::v3_state::{SimulateSwapError, V3SwapOutcome};

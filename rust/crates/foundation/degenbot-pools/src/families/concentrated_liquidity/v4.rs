@@ -28,8 +28,8 @@ use alloy::primitives::{Address, I256};
 
 use super::{CaptureRefusal, DesignScalars, Observe, Observed, OverrideScalars};
 
+use super::state_mutation::ConcentratedLiquidityPoolMut as _;
 use crate::families::door::FamilyApply;
-use crate::sim::registry::ConcentratedLiquidityPoolMut as _;
 use crate::state::int_v3_hop::IntV3TickRangeSequence;
 use crate::state::v3_state::V3SwapOutcome;
 use crate::state::v3_state::{PoolTickCoverage, SimulateSwapError};

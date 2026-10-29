@@ -7,7 +7,7 @@
 
 use super::V4PoolState;
 use crate::families::concentrated_liquidity::state_fixture::{ClStateFixture, LIQ};
-use crate::sim::registry::ConcentratedLiquidityPoolMut;
+use crate::families::concentrated_liquidity::state_mutation::ConcentratedLiquidityPoolMut;
 use crate::state::int_v3_hop::IntV3TickRangeSequence;
 use crate::state::state_history::{ReorgJournal, V3BlockDelta};
 use crate::state::v3_state::{PoolTickCoverage, RegistrationLifecycle};
@@ -81,7 +81,7 @@ impl ClStateFixture for V4PoolState {
         block: u64,
         tick_priors: &[(i32, TickInfo)],
     ) {
-        crate::sim::registry::ConcentratedLiquidityPoolMut::apply_swap(
+        ConcentratedLiquidityPoolMut::apply_swap(
             self,
             sqrt_price_x96,
             liquidity,
@@ -92,9 +92,29 @@ impl ClStateFixture for V4PoolState {
     }
 
     fn apply_liquidity_update(&mut self, lower: i32, upper: i32, delta: i128, block: u64) {
-        crate::sim::registry::ConcentratedLiquidityPoolMut::apply_liquidity_update(
-            self, lower, upper, delta, block,
-        );
+        ConcentratedLiquidityPoolMut::apply_liquidity_update(self, lower, upper, delta, block);
+    }
+
+    fn replace_tick_data(
+        &mut self,
+        tick_data: HashMap<i32, TickInfo>,
+        tick_data_block: u64,
+        tick_spacing: i32,
+    ) -> bool {
+        ConcentratedLiquidityPoolMut::replace_tick_data(
+            self,
+            tick_data,
+            tick_data_block,
+            tick_spacing,
+        )
+    }
+
+    fn merge_tick_word(&mut self, fetched: &crate::sim::tick_fetch::FetchedTickWord) -> bool {
+        ConcentratedLiquidityPoolMut::merge_tick_word(self, fetched)
+    }
+
+    fn mark_words_known(&mut self, words: &[i32]) {
+        ConcentratedLiquidityPoolMut::mark_bitmap_words_known(self, words);
     }
 
     fn build_int_sequence(

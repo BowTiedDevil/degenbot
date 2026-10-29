@@ -13,12 +13,12 @@
 //! The binary is fully single-threaded (one #[test] drives every phase) so
 //! cross-thread allocation noise cannot skew counts.
 
-use degenbot_pools::sim::registry::ConcentratedLiquidityPoolMut;
 use degenbot_pools::state::v2_state::RegisterV2PoolParams;
 use degenbot_pools::state::v2_state::V2PoolState;
 use degenbot_pools::state::v3_state::{
     ConcentratedLiquiditySlotLayout, PoolTickCoverage, RegisterV3PoolParams, V3PoolState,
 };
+use degenbot_pools::ConcentratedLiquidityPoolMut;
 use degenbot_pools::TickInfo;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

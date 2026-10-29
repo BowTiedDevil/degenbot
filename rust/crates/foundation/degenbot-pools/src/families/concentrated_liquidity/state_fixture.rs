@@ -12,6 +12,7 @@
 #![expect(clippy::expect_used, clippy::panic)]
 
 use alloy::primitives::{U128, U256};
+use hashbrown::HashMap;
 
 use crate::families::concentrated_liquidity::state_journal::JournalHost;
 use crate::families::concentrated_liquidity::state_seeding::SeedingHost;
@@ -69,6 +70,20 @@ pub(crate) trait ClStateFixture:
 
     /// Apply a Mint/Burn over `[lower, upper)`.
     fn apply_liquidity_update(&mut self, lower: i32, upper: i32, delta: i128, block: u64);
+
+    /// Wholesale-replace the tick map from a `block`-stamped snapshot.
+    fn replace_tick_data(
+        &mut self,
+        tick_data: HashMap<i32, TickInfo>,
+        tick_data_block: u64,
+        tick_spacing: i32,
+    ) -> bool;
+
+    /// Merge one fetched tick-bitmap word into the tick map.
+    fn merge_tick_word(&mut self, fetched: &crate::sim::tick_fetch::FetchedTickWord) -> bool;
+
+    /// Record checked bitmap words as known.
+    fn mark_words_known(&mut self, words: &[i32]);
 
     /// The adapter's integer tick-range walk — `build_int_v3_sequence` on
     /// V3, `build_int_v4_sequence` (with the state's own packed protocol
