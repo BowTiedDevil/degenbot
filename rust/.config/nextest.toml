@@ -8,5 +8,13 @@ retries = 0
 # Mark anything over 10s as slow; over 20s (2x) fail it so regressions are visible.
 slow-timeout = { period = "10s", terminate-after = 2 }
 
+# The dependency-charter gate shells out to `cargo tree` per member batch; its
+# cost scales with the workspace member census (~7.5s solo at 36 members) and
+# suite-wide parallelism contends for those subprocesses, so the suite-wide
+# 20s ceiling is a contention artifact, not a regression signal.
+[[profile.ci.overrides]]
+filter = "test(dependency_charter_is_respected)"
+slow-timeout = { period = "30s", terminate-after = 2 }
+
 [profile.ci.junit]
 path = "nextest-ci.junit.xml"
