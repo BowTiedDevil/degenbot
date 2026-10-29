@@ -93,7 +93,8 @@ use degenbot_submission::monitor::ReceiptProbe;
 use degenbot_submission::signer::TxSigner;
 use degenbot_submission::submission_ledger::SubmissionLedger;
 use degenbot_submission::submit::{
-    dispatch_and_submit, BundleTarget, SubmissionTarget, SubmitCandidate,
+    dispatch_and_submit, BundleTarget, SkipReason, SubmissionTarget, SubmitCandidate,
+    SubmitOutcome, SubmitRecord,
 };
 use degenbot_substrate::connector_index::V2ConnectorIndex;
 use degenbot_substrate::nonce::NonceLane;
@@ -936,12 +937,52 @@ pub struct FrameSubmit<'a> {
     pub signer: Option<&'a TxSigner>,
 }
 
+/// What one frame's submit ordering concluded, as the driver routes on it.
+///
+/// A bid is terminal only once its bytes reached a channel. A bid the nonce
+/// authority blocked never left the process: the candidate is blocked, not
+/// dead, so it rides [`Self::SubmitBlocked`] into the frame's park and its next
+/// frontier pass re-solves and re-signs against a freshly stamped nonce.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameDispatch {
+    /// The pass concluded with this decision.
+    Decided(Decision),
+    /// The lane declined the nonce stamp: the bid waits for the slot.
+    SubmitBlocked,
+}
+
+/// Whether a submit batch's records hold a bid blocked by nonce CONTENTION.
+///
+/// Nonce contention is the one class that parks. A batch that stops on a
+/// declined stamp records [`SkipReason::NonceContended`] against the candidate
+/// in hand AND every candidate behind it, so a blocked bid is visible whether
+/// it reached its own stamp stage or sat in the aborted batch's tail. Every
+/// other skip is final by its own logic: a broadcast the node refused is the
+/// delivery classifier's verdict (a nonce policy, not the bid's life), a claimed
+/// pool belongs to another path, and the mode guards are operator choices. A
+/// candidate the batch submitted was never blocked.
+#[must_use]
+pub fn nonce_blocked(outcome: &SubmitOutcome) -> bool {
+    outcome.records.iter().any(|record| match record {
+        SubmitRecord::Submitted { .. } => false,
+        SubmitRecord::Skipped { reason, .. } => match reason {
+            SkipReason::NonceContended => true,
+            SkipReason::PoolsClaimed
+            | SkipReason::DryRun
+            | SkipReason::InjectCode
+            | SkipReason::BroadcastFailed(_) => false,
+        },
+    })
+}
+
 /// The frame's submit ordering: liveness probe on the target → the
 /// mined-target gate → the candidate build → channel dispatch → spent
 /// accounting. A mined target can never be backrun — observe
 /// `already_settled`. A probe failure carries no positive evidence, so it
 /// never kills the bid; the `MEVBlocker` bundle's block anchoring is the
-/// final backstop. Returns the post-gate decision the driver routes on.
+/// final backstop. Returns the post-gate verdict the driver routes on: a bid the
+/// nonce authority's stamp refused is [`FrameDispatch::SubmitBlocked`], not a
+/// decision, because that candidate is blocked rather than dead.
 ///
 /// # Panics
 ///
@@ -959,7 +1000,7 @@ pub async fn dispatch_frame(
     artifacts: FrameArtifacts,
     submit: FrameSubmit<'_>,
     spent: &mut U256,
-) -> Decision {
+) -> FrameDispatch {
     let provider = submit.provider;
     let target_mined = if matches!(artifacts.decision, Decision::Bid { .. }) {
         FrameProbe {
@@ -985,7 +1026,7 @@ pub async fn dispatch_frame(
         Decision::Bid { bid_wei } => {
             let Some(s) = submit.signer else {
                 tracing::warn!("bid decided without a signer loaded - skipping");
-                return Decision::Bid { bid_wei };
+                return FrameDispatch::Decided(Decision::Bid { bid_wei });
             };
             // A Bid can only be decided on a positive recomposed net bid,
             // so this refusal keeps a bare-sweep bid out of the auction even
@@ -995,7 +1036,7 @@ pub async fn dispatch_frame(
                     tx = %ev.hash,
                     "bid decided without a composed candidate - refusing"
                 );
-                return Decision::Bid { bid_wei };
+                return FrameDispatch::Decided(Decision::Bid { bid_wei });
             };
             let base_fee_next = provider
                 .get_block(head)
@@ -1047,7 +1088,7 @@ pub async fn dispatch_frame(
                     tx = %ev.hash,
                     "builder-relay slot without the target raw signed bytes - refusing"
                 );
-                return Decision::Bid { bid_wei };
+                return FrameDispatch::Decided(Decision::Bid { bid_wei });
             };
             match dispatch_and_submit(
                 vec![candidate],
@@ -1078,6 +1119,27 @@ pub async fn dispatch_frame(
                                 .map_or(0u128, |e| e.wallet_gas_cost_wei),
                         );
                     }
+                    if nonce_blocked(&outcome) {
+                        // The candidate never reached a channel: the lane
+                        // declined its nonce stamp. Nothing was signed, and the
+                        // bytes a retry would carry embed the contended nonce,
+                        // so the frame parks for a fresh solve and a fresh
+                        // signature instead of holding stale bytes.
+                        trace_jsonl(
+                            "submit_blocked",
+                            serde_json::json!({
+                                "tx": ev.hash.to_string(),
+                                "bid_wei": bid_wei.to_string(),
+                                "reason": "nonce_contended",
+                            }),
+                        );
+                        tracing::info!(
+                            tx = %ev.hash,
+                            bid_wei = %bid_wei,
+                            "bid blocked on nonce contention - frame parks for the next frontier pass"
+                        );
+                        return FrameDispatch::SubmitBlocked;
+                    }
                     tracing::info!(
                         tx = %ev.hash,
                         target = %ev.hash,
@@ -1089,15 +1151,15 @@ pub async fn dispatch_frame(
                 }
                 Err(e) => tracing::warn!(tx = %ev.hash, error = %e, "bid dispatch failed"),
             }
-            Decision::Bid { bid_wei }
+            FrameDispatch::Decided(Decision::Bid { bid_wei })
         }
         Decision::Observe { reason } => {
             tracing::info!(tx = %ev.hash, reason = reason.as_str(), "observe");
-            Decision::Observe { reason }
+            FrameDispatch::Decided(Decision::Observe { reason })
         }
         Decision::Drop { reason } => {
             tracing::debug!(tx = %ev.hash, reason = reason.as_str(), "drop");
-            Decision::Drop { reason }
+            FrameDispatch::Decided(Decision::Drop { reason })
         }
     }
 }

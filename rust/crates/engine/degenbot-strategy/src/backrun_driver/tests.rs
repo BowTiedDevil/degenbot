@@ -14,9 +14,10 @@ use std::sync::Arc;
 
 use super::driver_loop::{
     decode_predecessor, journal_reentry_outcome, nonce_lane_evidence, outcome_for,
-    pool_known_gap_for_tick, predecessor_hash, quarantine_journal_path, record_gap_park,
-    reentry_outcome, route_failed_hydration, route_unhydratable_hydration, run_frame, DriverHandle,
-    FrameOutcome, GapParkMemo, LoopDecline, LoopPhase, LoopShared, ReentryOutcome, FEED_PREFIX,
+    park_blocked_frame, pool_known_gap_for_tick, predecessor_hash, quarantine_journal_path,
+    record_gap_park, reentry_outcome, route_failed_hydration, route_unhydratable_hydration,
+    run_frame, DriverHandle, FrameOutcome, GapParkMemo, LoopDecline, LoopPhase, LoopShared,
+    ReentryOutcome, FEED_PREFIX,
 };
 use super::node_capability::NodeCapability;
 use crate::frame_pipeline::{bid_submission_target, build_broadcast_relays};
@@ -299,7 +300,12 @@ fn rescue_outcome_mapping_routes_transient_gap_and_terminal() {
     );
     assert_eq!(
         reentry_outcome(FrameOutcome::GapPending),
-        ReentryOutcome::GapPending
+        ReentryOutcome::Reparked
+    );
+    assert_eq!(
+        reentry_outcome(FrameOutcome::SubmitBlocked),
+        ReentryOutcome::Reparked,
+        "a blocked bid re-parked the frame inside the pass, so the router adds nothing"
     );
     assert_eq!(reentry_outcome(FrameOutcome::Bid), ReentryOutcome::Terminal);
     assert_eq!(
@@ -712,6 +718,14 @@ fn temp_journal(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     (dir, path)
 }
 
+fn park_line_count(path: &std::path::Path) -> usize {
+    std::fs::read_to_string(path).map_or(0, |raw| {
+        raw.lines()
+            .filter(|line| line.contains("\"kind\":\"park\""))
+            .count()
+    })
+}
+
 fn resolve_count(path: &std::path::Path) -> usize {
     std::fs::read_to_string(path).map_or(0, |raw| {
         raw.lines()
@@ -775,10 +789,99 @@ fn gap_pending_reentry_does_not_resolve_or_duplicate() {
     let mut journal = QuarantineJournal::open(&path).expect("open");
     let mut q = Quarantine::new();
     let f = parked(62);
-    journal_reentry_outcome(&f, ReentryOutcome::GapPending, &mut q, Some(&mut journal));
+    journal_reentry_outcome(&f, ReentryOutcome::Reparked, &mut q, Some(&mut journal));
 
     assert_eq!(q.len(), 0, "run_frame already re-parked; no duplicate");
     assert_eq!(resolve_count(&path), 0, "the fresh park is its own truth");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// P2b: a blocked bid re-parked the frame and wrote its park inside the pass;
+/// the router neither resolves it nor pushes a duplicate.
+#[test]
+fn blocked_reentry_does_not_resolve_or_duplicate() {
+    let (dir, path) = temp_journal("blocked");
+    let mut journal = QuarantineJournal::open(&path).expect("open");
+    let mut q = Quarantine::new();
+    let f = parked(65);
+    journal_reentry_outcome(&f, ReentryOutcome::Reparked, &mut q, Some(&mut journal));
+
+    assert_eq!(q.len(), 0, "the pass already re-parked; no duplicate");
+    assert_eq!(
+        resolve_count(&path),
+        0,
+        "a blocked bid never resolves the frame"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A blocked bid parks at the frame's own nonce — a zero-width gap, because the
+/// frame reached the submit stage at the frontier. The park is durable and
+/// journal-deduped, the next frontier pass re-enters it with no predecessor
+/// prefix, and a head that passed the claim reports the consumption for the
+/// caller's classification.
+#[test]
+fn a_blocked_bid_parks_at_the_frontier_and_reenters_on_the_next_pass() {
+    use crate::gap_quarantine::FrameState;
+
+    let (dir, path) = temp_journal("blocked-park");
+    let mut journal = QuarantineJournal::open(&path).expect("open");
+    let mut q = Quarantine::new();
+    let f = parked(66);
+    let ev = f.to_event();
+    let mut memo: GapParkMemo = None;
+
+    assert_eq!(
+        park_blocked_frame(&ev, &mut q, Some(&mut journal), &mut memo),
+        1,
+        "the blocked frame is parked exactly once"
+    );
+    assert_eq!(
+        q.state(f.hash),
+        Some(FrameState::Tracked),
+        "a blocked bid is tracked, never resolved"
+    );
+    assert_eq!(park_line_count(&path), 1, "the park is durable");
+    assert_eq!(resolve_count(&path), 0, "a blocked bid writes no resolve");
+
+    let read = crate::gap_quarantine_journal::read_pending(&path).expect("read");
+    assert_eq!(read.pending.len(), 1, "a restart resumes the blocked frame");
+    assert_eq!(
+        read.pending[0].expected_nonce, read.pending[0].claimed_nonce,
+        "the park boundary is the frame's own nonce: it reached the frontier"
+    );
+
+    // The next frontier pass re-enters: no gap, so no predecessor prefix.
+    assert_eq!(
+        q.poll(f.from, ev.nonce, &[])[0].1,
+        QuarantineDecision::Rescue {
+            predecessors: vec![]
+        },
+        "the blocked frame re-enters on the next frontier pass"
+    );
+    assert!(q.is_empty(), "the re-entered frame leaves the FSM");
+
+    // Blocked again: the identical (hash, boundary) park is folded, so a
+    // persistently blocked frame writes one park line, not one per head.
+    assert_eq!(
+        park_blocked_frame(&ev, &mut q, Some(&mut journal), &mut memo),
+        1,
+        "the re-entered frame is parked once more, not duplicated"
+    );
+    assert_eq!(
+        park_line_count(&path),
+        1,
+        "the repeat park is journal-deduped"
+    );
+
+    // A head that passed the claim is chain evidence: the caller classifies the
+    // consumption (the landed target's own receipt).
+    assert_eq!(
+        q.poll(f.from, ev.nonce + 1, &[])[0].1,
+        QuarantineDecision::NonceConsumed
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

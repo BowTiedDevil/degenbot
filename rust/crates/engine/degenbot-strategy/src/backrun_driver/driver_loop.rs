@@ -32,7 +32,7 @@ use parking_lot::Mutex as ParkingMutex;
 use crate::backrun_strategy::BackrunStrategy;
 use crate::frame_pipeline::{
     build_block_handle, dispatch_frame, load_fixture_frames, process_frame_with_prefix,
-    trace_jsonl, FrameSubmit, MarketContext, PipelineConfig,
+    trace_jsonl, FrameDispatch, FrameSubmit, MarketContext, PipelineConfig,
 };
 use crate::gap_quarantine::{NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision};
 use crate::gap_quarantine_journal::{
@@ -60,8 +60,15 @@ const HEAD_WATCH_WAIT: Duration = Duration::from_secs(2);
 /// the frame parked for the next frontier pass. Everything else is terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FrameOutcome {
-    /// A bid was decided; terminal whether or not dispatch landed.
+    /// A bid was decided and dispatched; terminal once its bytes reached a
+    /// channel. A bid the nonce authority blocked is [`Self::SubmitBlocked`],
+    /// never this arm.
     Bid,
+    /// The bid could not be signed: the lane declined the nonce stamp. The
+    /// candidate is blocked, not dead — the pass parked the frame itself, so
+    /// the next frontier pass re-enters it, re-solves, and signs FRESH bytes
+    /// (the contended nonce is never reused).
+    SubmitBlocked,
     /// The pass re-parked the frame (the interim pool-pred path can repeat a
     /// same-boundary re-park; the FSM guard and journal dedup bound it).
     GapPending,
@@ -81,7 +88,9 @@ pub(super) enum FrameOutcome {
 pub(super) fn reentry_outcome(outcome: FrameOutcome) -> ReentryOutcome {
     match outcome {
         FrameOutcome::Bid | FrameOutcome::Terminal(_) => ReentryOutcome::Terminal,
-        FrameOutcome::GapPending => ReentryOutcome::GapPending,
+        // Both a gap re-park and a nonce-blocked bid parked the frame inside
+        // the pass itself, so this router neither pushes nor resolves.
+        FrameOutcome::GapPending | FrameOutcome::SubmitBlocked => ReentryOutcome::Reparked,
         // `PredecessorMalformed` is routed to the structural lane before this
         // router; when reached, its fallback is the same transient re-park.
         FrameOutcome::ReplayUnavailable
@@ -129,15 +138,18 @@ pub(super) fn outcome_for(reason: ObserveReason) -> FrameOutcome {
 ///
 /// A resolve is written only for a terminal pass; a transient replay failure
 /// keeps the original park record alive and re-parks the frame so the next
-/// frontier pass retries, and a fresh gap-pending park is its own truth.
+/// frontier pass retries, and a park the pass wrote itself (a gap re-park or a
+/// nonce-blocked bid) is its own truth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ReentryOutcome {
     /// The frame's quarantine life is over (a bid, or a terminal observe/drop).
     Terminal,
-    /// The pass re-parked the frame. In the interim pool-pred path a re-park
-    /// can repeat the same gap; the FSM guard and the journal dedup bound those
-    /// repeats, so this is not proof of a new boundary.
-    GapPending,
+    /// The pass re-parked the frame itself. In the interim pool-pred path a
+    /// re-park can repeat the same gap; the FSM guard and the journal dedup
+    /// bound those repeats, so this is not proof of a new boundary. A blocked
+    /// bid re-parks the same way: the pass wrote the park, and one re-entry per
+    /// head advance is the whole retry budget.
+    Reparked,
     /// A transient replay failure; retry on the next frontier pass.
     Transient,
 }
@@ -145,10 +157,10 @@ pub(super) enum ReentryOutcome {
 /// Apply one rescue re-entry's outcome to the journal and quarantine.
 ///
 /// Terminal resolves after the pass (a dispatched bid or a terminal observe);
-/// a gap-pending pass wrote its own fresh park record, which is the truth the
-/// fold reads; a transient replay failure re-parks the ORIGINAL frame, whose
-/// park record still stands. Terminal and gap-pending passes are disjoint, so
-/// no resolve ever races a fresh park for the same hash.
+/// a pass that re-parked the frame wrote its own fresh park record, which is
+/// the truth the fold reads; a transient replay failure re-parks the ORIGINAL
+/// frame, whose park record still stands. Terminal and re-parking passes are
+/// disjoint, so no resolve ever races a fresh park for the same hash.
 pub(super) fn journal_reentry_outcome(
     frame: &ParkedFrame,
     outcome: ReentryOutcome,
@@ -159,7 +171,7 @@ pub(super) fn journal_reentry_outcome(
         ReentryOutcome::Transient => {
             quarantine.push(frame.clone());
         }
-        ReentryOutcome::GapPending => {}
+        ReentryOutcome::Reparked => {}
         ReentryOutcome::Terminal => {
             if let Some(journal) = journal {
                 let resolved_unix_ms = now_unix_ms();
@@ -213,6 +225,71 @@ pub(super) fn record_gap_park(
     true
 }
 
+/// The park shape of one frame: the wire fields a re-entry needs, against the
+/// boundary it was parked at. `expected_at_capture` is the head-state account
+/// nonce at capture, so `[expected, claimed)` is the predecessor set.
+pub(super) fn parked_frame(
+    ev: &degenbot_rpc::backrun_feed::BackrunFeedEvent,
+    expected_at_capture: u64,
+) -> ParkedFrame {
+    ParkedFrame {
+        hash: ev.hash,
+        from: ev.from,
+        to: ev.to,
+        value: ev.value,
+        data: ev.data.clone(),
+        gas: ev.gas,
+        max_fee_per_gas: ev.max_fee_per_gas,
+        max_priority_fee_per_gas: ev.max_priority_fee_per_gas,
+        claimed_nonce: ev.nonce,
+        expected_at_capture,
+        chain_id: ev.chain_id,
+        tx_type: ev.tx_type,
+        access_list: ev.access_list.clone(),
+        received_unix_ms: ev.received_unix_ms,
+        raw_signed_tx: ev.raw_signed_tx.clone(),
+    }
+}
+
+/// Park a frame whose bid nonce contention blocked, and journal the park.
+///
+/// The frame's own nonce is the boundary: it reached the submit stage, so that
+/// nonce sits at the frontier (a frame ahead of the parent state parks at its
+/// gap instead), and the re-entry therefore needs no predecessor prefix. The
+/// park is durable, so a restart resumes the blocked frame, and it rides the
+/// same `(hash, boundary)` journal dedup as every other park: a persistently
+/// blocked frame re-enters once per head advance — never a spin — and writes
+/// one park line, not one per pass.
+pub(super) fn park_blocked_frame(
+    ev: &degenbot_rpc::backrun_feed::BackrunFeedEvent,
+    quarantine: &mut Quarantine,
+    journal: Option<&mut QuarantineJournal>,
+    memo: &mut GapParkMemo,
+) -> usize {
+    let parked_count = quarantine.push(parked_frame(ev, ev.nonce));
+    let record = ParkRecord::new(ev, ev.nonce, now_unix_ms());
+    if !record_gap_park(journal, &record, ev.hash, ev.nonce, memo) {
+        trace_jsonl(
+            "quarantine",
+            serde_json::json!({
+                "action": "park_deduped",
+                "tx": ev.hash.to_string(),
+                "reason": "nonce_contended",
+            }),
+        );
+    }
+    trace_jsonl(
+        "quarantine",
+        serde_json::json!({
+            "action": "park_blocked",
+            "tx": ev.hash.to_string(),
+            "claimed_nonce": ev.nonce,
+            "parked": parked_count,
+        }),
+    );
+    parked_count
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "the frame handler takes the runtime surfaces it needs"
@@ -238,7 +315,7 @@ pub(super) async fn run_frame(
     signer: Option<&TxSigner>,
     gap_probe: &crate::gap_probe::GapProbe,
     quarantine: &mut Quarantine,
-    journal: Option<&mut QuarantineJournal>,
+    mut journal: Option<&mut QuarantineJournal>,
     gap_park_memo: &mut GapParkMemo,
 ) -> FrameOutcome {
     // Decode-stage reject: a frame whose gas field reads zero can never
@@ -338,26 +415,15 @@ pub(super) async fn run_frame(
         expected,
     }) = &artifacts.replay_frame_error
     {
-        let parked = ParkedFrame {
-            hash: ev.hash,
-            from: ev.from,
-            to: ev.to,
-            value: ev.value,
-            data: ev.data.clone(),
-            gas: ev.gas,
-            max_fee_per_gas: ev.max_fee_per_gas,
-            max_priority_fee_per_gas: ev.max_priority_fee_per_gas,
-            claimed_nonce: ev.nonce,
-            expected_at_capture: *expected,
-            chain_id: ev.chain_id,
-            tx_type: ev.tx_type,
-            access_list: ev.access_list.clone(),
-            received_unix_ms: ev.received_unix_ms,
-            raw_signed_tx: ev.raw_signed_tx.clone(),
-        };
-        let parked_count = quarantine.push(parked);
+        let parked_count = quarantine.push(parked_frame(ev, *expected));
         let record = ParkRecord::new(ev, *expected, now_unix_ms());
-        if !record_gap_park(journal, &record, ev.hash, *expected, gap_park_memo) {
+        if !record_gap_park(
+            journal.as_deref_mut(),
+            &record,
+            ev.hash,
+            *expected,
+            gap_park_memo,
+        ) {
             trace_jsonl(
                 "quarantine",
                 serde_json::json!({
@@ -415,9 +481,18 @@ pub(super) async fn run_frame(
     )
     .await;
     match decision {
-        Decision::Bid { .. } => FrameOutcome::Bid,
-        Decision::Observe { reason } => outcome_for(reason),
-        Decision::Drop { reason } => FrameOutcome::Terminal(reason),
+        FrameDispatch::SubmitBlocked => {
+            let parked_count = park_blocked_frame(ev, quarantine, journal, gap_park_memo);
+            tracing::info!(
+                tx = %ev.hash,
+                parked = parked_count,
+                "bid blocked on nonce contention - frame parked for the next frontier pass"
+            );
+            FrameOutcome::SubmitBlocked
+        }
+        FrameDispatch::Decided(Decision::Bid { .. }) => FrameOutcome::Bid,
+        FrameDispatch::Decided(Decision::Observe { reason }) => outcome_for(reason),
+        FrameDispatch::Decided(Decision::Drop { reason }) => FrameOutcome::Terminal(reason),
     }
 }
 
@@ -1544,7 +1619,14 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
                                 .await;
                                 // The caller observed the re-park, so it can key
                                 // the suppression guard on the boundary the
-                                // re-park actually carried.
+                                // re-park actually carried. A nonce-blocked bid
+                                // is deliberately NOT guarded: its retry is the
+                                // point of the park, and an identical-rescue
+                                // guard would freeze the frame until the
+                                // predecessor content changed. The head clock
+                                // (one polled re-entry per advance) and the
+                                // journal's `(hash, boundary)` dedup are its
+                                // bound instead.
                                 if outcome == FrameOutcome::GapPending {
                                     if let Some(boundary) = quarantine.expected_boundary(frame.hash)
                                     {

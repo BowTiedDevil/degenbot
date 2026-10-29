@@ -1488,12 +1488,14 @@ use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_strategy::backrun::{BackrunConfig, Decision, SubmissionSlot};
 use degenbot_strategy::frame_pipeline::{
-    dispatch_frame, BidEconomics, FrameArtifacts, FrameSubmit, StageTimings,
+    dispatch_frame, nonce_blocked, BidEconomics, FrameArtifacts, FrameDispatch, FrameSubmit,
+    StageTimings,
 };
 use degenbot_submission::dispatcher::Dispatcher;
 use degenbot_submission::signer::TxSigner;
 use degenbot_submission::submission_ledger::SubmissionLedger;
-use degenbot_substrate::nonce::NonceLane;
+use degenbot_submission::submit::{SkipReason, SubmitOutcome, SubmitRecord};
+use degenbot_substrate::nonce::{HeldFees, LanePolicy, NonceAuthority, NonceLane};
 use std::sync::Mutex;
 
 /// The node under the dispatch seam: no receipts, no head block, but the
@@ -1665,7 +1667,7 @@ async fn spent_accounting_accumulates_per_submitted_candidate() {
     )
     .await;
     assert!(
-        matches!(frame_1, Decision::Bid { bid_wei } if bid_wei == bid),
+        matches!(decided(frame_1), Decision::Bid { bid_wei } if bid_wei == bid),
         "the driver routes on the post-gate decision"
     );
     assert_eq!(
@@ -1691,7 +1693,7 @@ async fn spent_accounting_accumulates_per_submitted_candidate() {
         &mut spent,
     )
     .await;
-    assert!(matches!(frame_2, Decision::Bid { bid_wei } if bid_wei == bid));
+    assert!(matches!(decided(frame_2), Decision::Bid { bid_wei } if bid_wei == bid));
     assert_eq!(
         spent,
         U256::from(FRAME_GAS_WEI * 2),
@@ -1715,10 +1717,324 @@ async fn spent_accounting_accumulates_per_submitted_candidate() {
         &mut spent,
     )
     .await;
-    assert!(matches!(frame_3, Decision::Bid { bid_wei } if bid_wei == bid));
+    assert!(matches!(decided(frame_3), Decision::Bid { bid_wei } if bid_wei == bid));
     assert_eq!(
         spent,
         U256::from(FRAME_GAS_WEI * 2),
         "a candidate the submit leaf skipped never spends"
     );
+}
+// ─────────────── the blocked bid: park, never drop (nonce contention) ──────
+//
+// A bid whose nonce stamp the lane declined never reached a channel: it is
+// blocked, not dead. `dispatch_frame` answers with the park verdict, and ONLY
+// nonce contention earns it — every other skip is final by its own logic.
+
+/// The decision one dispatch concluded with; a blocked bid fails the test.
+fn decided(outcome: FrameDispatch) -> Decision {
+    match outcome {
+        FrameDispatch::Decided(decision) => decision,
+        FrameDispatch::SubmitBlocked => panic!("the bid was blocked, not decided"),
+    }
+}
+
+/// A lane holding its own delivery-unknown nonce: its next stamp declines, so
+/// nothing can be signed through it until chain evidence or a dominating
+/// replacement frees the slot.
+fn held_submit_lane(authority: &Arc<NonceAuthority>) -> Arc<NonceLane<SubmissionLedger>> {
+    let lane = Arc::new(authority.mint_lane(
+        "blocked-bid-test",
+        Arc::new(SubmissionLedger::new()),
+        LanePolicy::default(),
+    ));
+    let lease = lane.stamp().expect("the first stamp leases the slot");
+    lane.record_hold(&lease, HeldFees::new(30_000_000_000, 2_000_000_000), 100)
+        .expect("park the delivery-unknown hold");
+    lane
+}
+
+/// A mined receipt: what the target-liveness probe reads once the target landed.
+fn mined_receipt(hash: B256) -> serde_json::Value {
+    serde_json::json!({
+        "type": "0x2",
+        "status": "0x1",
+        "cumulativeGasUsed": "0x5208",
+        "logsBloom": format!("0x{}", "00".repeat(256)),
+        "logs": [],
+        "transactionHash": hash.to_string(),
+        "transactionIndex": "0x0",
+        "blockHash": B256::repeat_byte(0x65).to_string(),
+        "blockNumber": "0x64",
+        "gasUsed": "0x5208",
+        "effectiveGasPrice": "0x1",
+        "from": Address::with_last_byte(7).to_string(),
+        "to": Address::with_last_byte(9).to_string(),
+        "contractAddress": null,
+    })
+}
+
+/// Only nonce contention parks a bid: the blocked verdict is the park's whole
+/// licence, so every other submit outcome must stay terminal.
+#[test]
+fn only_nonce_contention_parks_a_bid() {
+    let submitted = SubmitRecord::Submitted {
+        path_id: 1,
+        tx_hash: B256::repeat_byte(0x11),
+        nonce: 7,
+    };
+    let skipped = |path_id: u64, reason: SkipReason| SubmitOutcome {
+        records: vec![SubmitRecord::Skipped { path_id, reason }],
+    };
+
+    assert!(
+        !nonce_blocked(&SubmitOutcome {
+            records: vec![submitted.clone()],
+        }),
+        "a submitted bid was never blocked"
+    );
+
+    // Dead by their own logic: a broadcast the node refused, a pool another
+    // path owns, and the two mode guards.
+    for reason in [
+        SkipReason::PoolsClaimed,
+        SkipReason::DryRun,
+        SkipReason::InjectCode,
+        SkipReason::BroadcastFailed(String::from("insufficient funds for gas * price + value")),
+    ] {
+        assert!(
+            !nonce_blocked(&skipped(1, reason.clone())),
+            "{reason:?} must stay terminal"
+        );
+    }
+
+    // The candidate in hand: the lane declined its stamp.
+    assert!(nonce_blocked(&skipped(1, SkipReason::NonceContended)));
+
+    // The abort tail: the batch stopped on an earlier candidate's stamp, so this
+    // candidate never reached its own — it is recorded blocked all the same.
+    assert!(
+        nonce_blocked(&SubmitOutcome {
+            records: vec![
+                submitted,
+                SubmitRecord::Skipped {
+                    path_id: 2,
+                    reason: SkipReason::NonceContended,
+                },
+                SubmitRecord::Skipped {
+                    path_id: 3,
+                    reason: SkipReason::NonceContended,
+                },
+            ],
+        }),
+        "an aborted batch's unprocessed tail is blocked, not dropped"
+    );
+}
+
+/// A blocked bid signs nothing and spends nothing; when the slot frees, the
+/// re-entered frame re-solves and re-signs against the FRESH nonce — the
+/// contended slot is never reused, so no stale bytes ever go out.
+#[tokio::test]
+async fn a_blocked_bid_reenters_and_signs_a_fresh_transaction() {
+    let bid = U256::from(123_000_000_000_000_000u64);
+    let pl = submit_pl();
+    let authority = Arc::new(NonceAuthority::new(0));
+    let lane = held_submit_lane(&authority);
+    let signer = submit_signer();
+    let dispatcher = Arc::new(Mutex::new(Dispatcher::for_block(100)));
+    let event = submit_event(9, 0);
+
+    let asserter = Asserter::new();
+    // The blocked pass consumes the bid gate alone: the declined stamp stops the
+    // batch before the access-list read and the broadcast.
+    queue_bid_gate(&asserter);
+    // The re-entry runs the whole leaf: gate, access list, broadcast.
+    queue_bid_gate(&asserter);
+    asserter.push_success(&serde_json::json!({"accessList": [], "gasUsed": "0x0"}));
+    asserter.push_success(&serde_json::json!(format!("0x{}", "22".repeat(32))));
+    let provider = Arc::new(submit_provider(&asserter));
+
+    let mut spent = U256::ZERO;
+    let cfg = submit_cfg(false);
+
+    let blocked = dispatch_frame(
+        &cfg,
+        &pl,
+        &event,
+        100,
+        bid_artifacts(bid),
+        FrameSubmit {
+            provider: &provider,
+            dispatcher: &dispatcher,
+            nonce_lane: &lane,
+            signer: Some(&signer),
+        },
+        &mut spent,
+    )
+    .await;
+    assert_eq!(
+        blocked,
+        FrameDispatch::SubmitBlocked,
+        "a declined stamp blocks the bid instead of ending the frame"
+    );
+    assert_eq!(spent, U256::ZERO, "a blocked bid spends nothing");
+    assert!(
+        lane.ledger().is_empty(),
+        "the blocked pass signed no bytes at all"
+    );
+    assert_eq!(
+        authority.outstanding_nonces(),
+        vec![0],
+        "the hold keeps its slot: neither signed nor released"
+    );
+
+    // Chain evidence settles the hold, and the frame re-enters on its next
+    // frontier pass with a fresh solve and a fresh stamp.
+    authority.set_confirmed(1);
+    let reentered = dispatch_frame(
+        &cfg,
+        &pl,
+        &event,
+        100,
+        bid_artifacts(bid),
+        FrameSubmit {
+            provider: &provider,
+            dispatcher: &dispatcher,
+            nonce_lane: &lane,
+            signer: Some(&signer),
+        },
+        &mut spent,
+    )
+    .await;
+    assert!(matches!(decided(reentered), Decision::Bid { bid_wei } if bid_wei == bid));
+    assert_eq!(
+        spent,
+        U256::from(FRAME_GAS_WEI),
+        "the dispatched bid spends"
+    );
+    let records = lane.ledger().records_for(lane.strategy());
+    assert_eq!(
+        records.len(),
+        1,
+        "exactly one signature, made by the re-entry"
+    );
+    assert_eq!(
+        records[0].nonce(),
+        1,
+        "the fresh bytes carry the newly stamped nonce, never the contended one"
+    );
+    assert_eq!(authority.outstanding_nonces(), vec![1]);
+}
+
+/// A target that landed during the park settles through the mined-target gate:
+/// the re-entry observes `already_settled` and signs nothing.
+#[tokio::test]
+async fn a_reentered_blocked_bid_settles_a_target_that_landed_meanwhile() {
+    let bid = U256::from(123_000_000_000_000_000u64);
+    let pl = submit_pl();
+    let authority = Arc::new(NonceAuthority::new(0));
+    let lane = held_submit_lane(&authority);
+    let signer = submit_signer();
+    let dispatcher = Arc::new(Mutex::new(Dispatcher::for_block(100)));
+    let event = submit_event(4, 0);
+
+    let asserter = Asserter::new();
+    queue_bid_gate(&asserter);
+    // The target mined while the frame was parked: the re-entry's liveness probe
+    // finds its receipt.
+    asserter.push_success(&mined_receipt(event.hash));
+    let provider = Arc::new(submit_provider(&asserter));
+
+    let mut spent = U256::ZERO;
+    let cfg = submit_cfg(false);
+
+    let blocked = dispatch_frame(
+        &cfg,
+        &pl,
+        &event,
+        100,
+        bid_artifacts(bid),
+        FrameSubmit {
+            provider: &provider,
+            dispatcher: &dispatcher,
+            nonce_lane: &lane,
+            signer: Some(&signer),
+        },
+        &mut spent,
+    )
+    .await;
+    assert_eq!(blocked, FrameDispatch::SubmitBlocked);
+
+    authority.set_confirmed(1);
+    let settled = dispatch_frame(
+        &cfg,
+        &pl,
+        &event,
+        100,
+        bid_artifacts(bid),
+        FrameSubmit {
+            provider: &provider,
+            dispatcher: &dispatcher,
+            nonce_lane: &lane,
+            signer: Some(&signer),
+        },
+        &mut spent,
+    )
+    .await;
+    assert_eq!(
+        settled,
+        FrameDispatch::Decided(Decision::Observe {
+            reason: ObserveReason::AlreadySettled,
+        }),
+        "a target that landed during the park is settled, not re-bid"
+    );
+    assert_eq!(spent, U256::ZERO, "a settled target never spends");
+    assert!(
+        lane.ledger().is_empty(),
+        "no bytes were signed for a settled target"
+    );
+}
+
+/// A broadcast the node refused for good is a definitive rejection: the
+/// candidate is dead by its own logic and the frame stays terminal.
+#[tokio::test]
+async fn a_definitive_broadcast_rejection_stays_terminal() {
+    let bid = U256::from(123_000_000_000_000_000u64);
+    let pl = submit_pl();
+    let authority = Arc::new(NonceAuthority::new(0));
+    let lane = Arc::new(authority.mint_lane(
+        "rejected-bid-test",
+        Arc::new(SubmissionLedger::new()),
+        LanePolicy::default(),
+    ));
+    let signer = submit_signer();
+    let dispatcher = Arc::new(Mutex::new(Dispatcher::for_block(100)));
+
+    let asserter = Asserter::new();
+    queue_bid_gate(&asserter);
+    asserter.push_success(&serde_json::json!({"accessList": [], "gasUsed": "0x0"}));
+    asserter.push_failure_msg("nonce too low: next nonce 8, tx nonce 7");
+    let provider = Arc::new(submit_provider(&asserter));
+
+    let mut spent = U256::ZERO;
+    let outcome = dispatch_frame(
+        &submit_cfg(false),
+        &pl,
+        &submit_event(5, 0),
+        100,
+        bid_artifacts(bid),
+        FrameSubmit {
+            provider: &provider,
+            dispatcher: &dispatcher,
+            nonce_lane: &lane,
+            signer: Some(&signer),
+        },
+        &mut spent,
+    )
+    .await;
+    assert_eq!(
+        decided(outcome),
+        Decision::Bid { bid_wei: bid },
+        "a rejected candidate is dead by its own logic: the frame is terminal"
+    );
+    assert_eq!(spent, U256::ZERO, "a rejected candidate never spends");
 }
