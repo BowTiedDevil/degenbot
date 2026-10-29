@@ -1,0 +1,13 @@
+[package]
+name = "degenbot-primitives"
+description = "Dense-index primitives: key interning, frozen key-to-id lookup, word hashing (zero-dependency leaf; no alloy/pyo3/tokio)."
+keywords = ["interner", "dense-index", "hash", "index", "mev"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true

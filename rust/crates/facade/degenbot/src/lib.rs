@@ -76,6 +76,10 @@ pub use degenbot_pools as pools;
 pub use degenbot_pools::solve as solvers;
 
 /// Pathfinding graph (`PathGraph`) + edge graph.
+/// Dense-index primitives — key interning, frozen key→id lookup, word hashing
+/// (zero-dependency leaf).
+pub use degenbot_primitives as primitives;
+
 pub use degenbot_pathfinding as pathfinding;
 
 /// family modules, byte-verified against canonical sources by the tier-3 oracles.

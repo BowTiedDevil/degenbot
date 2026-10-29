@@ -194,7 +194,7 @@ fn python_phrases(line: &str) -> Vec<(String, String, String)> {
 
 #[test]
 fn workspace_membership_is_exact_and_role_grouped() {
-    const EXPECTED_NAMES: [&str; 35] = [
+    const EXPECTED_NAMES: [&str; 36] = [
         "degenbot",
         "degenbot-aave",
         "degenbot-abi",
@@ -219,6 +219,7 @@ fn workspace_membership_is_exact_and_role_grouped() {
         "degenbot-pool-updater",
         "degenbot-pools",
         "degenbot-price",
+        "degenbot-primitives",
         "degenbot-rpc",
         "degenbot-runs",
         "degenbot-settlement-bot-example",
@@ -2165,7 +2166,7 @@ fn assert_umbrella_aliases_catalogged(
         .filter(|line| line.trim().starts_with("pub use degenbot"))
         .count();
     assert_eq!(
-        alias_count, 55,
+        alias_count, 56,
         "the umbrella alias count moved; update the catalog row that states it"
     );
     for line in facade_lib.lines() {

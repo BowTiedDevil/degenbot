@@ -46,6 +46,7 @@ degenbot-pathfinding.workspace = true
 degenbot-pool-updater.workspace = true
 degenbot-pools.workspace = true
 degenbot-price.workspace = true
+degenbot-primitives.workspace = true
 degenbot-rpc.workspace = true
 # Per-session run artifacts (stdout log + trace JSONL) - engine-general and
 # pyo3-free; standalone consumers reach it as `degenbot::runs`.

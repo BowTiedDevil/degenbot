@@ -23,6 +23,7 @@ implementor · **(v)** console operator (`degenbot`).
 | **Multi-hop solve** | `degenbot_pools::solve` | Rust-only | `solve_path_with_min_profit`, `SolveOutcome`, `GateDeps`, `WalkMemo` (the W2 door, pinned by `solve_door_census.txt`) | (ii) pools-path solve probe: `just check-consumer-probes`; production caller `bot` `solve_cycle` | no pyo3, no db, no async runtime; fixture I/O gated behind `capture-fixtures` |
 | **CL walk memo & telemetry** | `degenbot_pools::solve::concentrated_liquidity` | Rust-only | `WalkMemo`, `WalkTelemetry`, `PreparedConcentratedLiquidityHop` | production: `bot` lane walk + telemetry | no I/O; telemetry shapes pinned by the pipeline census (ADR-083) |
 | **Path search** | `degenbot_pathfinding` | Rust-only | crate root | production: `bot` path registry | no tokio, no db, no pyo3 |
+| **Dense-index primitives** | `degenbot_primitives` | Rust-only | `Interner`, `FrozenInterner`, `WordHasher`, `FastHashMap` | (i) pure-Rust consumer: registry-side tables indexed by interned ids | std only: no alloy, no tokio, no pyo3 |
 | **Arbitrage orchestration** | `degenbot_arbitrage` | Rust-only | crate root | production: engine stage consumers | no pyo3 |
 | **The engine** | `degenbot_bot` | `degenbot.bot` (driver shell) | crate root; `arb_engine` is internal | (i) pure-Rust consumer: `examples/settlement_bot` | engine owns orchestration, not family math (ADR-073); no solver math duplication |
 | **Shared substrate (state owner)** | `degenbot_substrate` | Rust-only | `BotState`, `PoolLookup`, `planning` | (i) `examples/settlement_bot` drives through it | the state owner carries no strategy policy (ADR-003) |
@@ -48,7 +49,7 @@ implementor · **(v)** console operator (`degenbot`).
 | **Uniswap family encoding & DEX identity** | `degenbot_uniswap::dex_identity` | `degenbot._ffi.dex_identity` | `DexIdentity`, `DexVariant`, `preset_for_variant` | production: every V2/V3 path | no pyo3 |
 | **ABI encoding** | `degenbot_abi` | `degenbot._ffi.abi` | crate root | production: submission/decoders | no pyo3 |
 | **Orderbook index** | `degenbot_order_index` | Rust-only | crate root | production: orderbook consumers | one minimal default-features-off dep |
-| **The umbrella capability map** | `degenbot` | `degenbot` (the Python package) | the 55 `pub use degenbot_*` aliases + curated items | (i) `cargo add degenbot`; (iii) Python driver probe: `just check-consumer-probes` (`test_solve_surface_probe.py`) | aliases only; no new logic |
+| **The umbrella capability map** | `degenbot` | `degenbot` (the Python package) | the 56 `pub use degenbot_*` aliases + curated items | (i) `cargo add degenbot`; (iii) Python driver probe: `just check-consumer-probes` (`test_solve_surface_probe.py`) | aliases only; no new logic |
 | **The console** | `degenbot_cli` + `degenbot_cli_core` | `degenbot` console shim (`uv run degenbot`) / native binary | `Command` tree, `config show --resolved` | (v) `degenbot config show --resolved` — asserted in `just check-consumer-probes` | the CLI is a thin caller of `degenbot_cli_core::run_args` |
 
 ## Notes

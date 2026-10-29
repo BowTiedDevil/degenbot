@@ -2234,6 +2234,7 @@ dependencies = [
  "degenbot-pool-updater",
  "degenbot-pools",
  "degenbot-price",
+ "degenbot-primitives",
  "degenbot-rpc",
  "degenbot-runs",
  "degenbot-simulation",
@@ -2618,6 +2619,10 @@ dependencies = [
  "thiserror",
  "tracing",
 ]
+
+[[package]]
+name = "degenbot-primitives"
+version = "0.6.0-alpha.19"
 
 [[package]]
 name = "degenbot-rpc"
