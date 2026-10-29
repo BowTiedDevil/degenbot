@@ -15,6 +15,8 @@
 //! writes, so a driver holding an address, a `(pool_manager, pool_id)` pair, or
 //! a typed identity reaches one registry — never a mirror.
 
+use std::fmt;
+
 use alloy::primitives::Address;
 use hashbrown::HashMap;
 
@@ -25,6 +27,8 @@ use crate::{
     RegisteredPoolFamily, TickInfo,
 };
 use degenbot_decoders::v4_swap_decoder::V4PoolId;
+use degenbot_pools::TickMap;
+use degenbot_rpc::liquidity_verifier::LiquidityMapTarget;
 
 /// The pool key the verify lifecycle runs over.
 ///
@@ -124,6 +128,64 @@ impl PoolLookup {
             .pools
             .get_mut(&pool_id)
             .and_then(PoolEntry::as_concentrated_liquidity_mut)
+    }
+
+    /// The on-chain contract identity this key names — what the
+    /// contract-facing liquidity-map verifier reads.
+    ///
+    /// The family travels in the value (ADR-082): a caller hands a key to the
+    /// verifier and never names a design there.
+    #[must_use]
+    pub fn liquidity_map_target(&self) -> LiquidityMapTarget {
+        match self {
+            Self::Address(address) => LiquidityMapTarget::V3(*address),
+            Self::V4 {
+                pool_manager,
+                pool_id,
+            } => LiquidityMapTarget::V4 {
+                pool_manager: *pool_manager,
+                pool_id: (*pool_id).into(),
+            },
+        }
+    }
+
+    /// The pool's immutable tick spacing, or `None` when the key names no
+    /// registered concentrated-liquidity pool.
+    ///
+    /// Takes the lock rather than a guard, exactly like
+    /// [`Self::own_liquidity_clock`]: the state owner's fused accessors chain
+    /// key → spacing under ONE `read_at(Registration)`, so this must not be
+    /// recomposed from two single-step reads (nested reads are a self-deadlock
+    /// when a writer queues between them — soak-2026-08-22).
+    #[must_use]
+    pub fn tick_spacing(&self, core: &StateLock<BotState>) -> Option<i32> {
+        match self {
+            Self::Address(address) => core.pool_tick_spacing_by_address(address),
+            Self::V4 {
+                pool_manager,
+                pool_id,
+            } => core.pool_tick_spacing_by_v4_key(*pool_manager, pool_id),
+        }
+    }
+
+    /// The pool's tick bookkeeping map, cloned into an owned family-free
+    /// handle so a verifier can compare it once the state lock is released.
+    ///
+    /// `None` when the key names no registered concentrated-liquidity pool.
+    /// The family match is the ONE place that decides which registry entry
+    /// holds the map; everything above reads it through [`TickMap`].
+    #[must_use]
+    pub fn tick_map_snapshot(&self, state: &BotState) -> Option<Box<dyn TickMap + Send + Sync>> {
+        let pool_id = self.resolve(state)?;
+        match state.registry.pools.get(&pool_id)? {
+            PoolEntry::V3(pool) => Some(pool.clone()),
+            PoolEntry::V4(pool) => Some(pool.clone()),
+            PoolEntry::V2(..)
+            | PoolEntry::Curve(..)
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
+        }
     }
 
     /// The pool's tick coverage, or `None` when the pool is not registered
@@ -297,6 +359,24 @@ impl PoolLookup {
     }
 }
 
+/// The key text a log line or span field carries: a V3 pool's address, or a
+/// V4 pool's `pool_manager:pool_id` pair.
+impl fmt::Display for PoolLookup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Address(address) => write!(f, "{address}"),
+            Self::V4 {
+                pool_manager,
+                pool_id,
+            } => write!(
+                f,
+                "{pool_manager}:0x{}",
+                alloy::hex::encode_prefixed(pool_id)
+            ),
+        }
+    }
+}
+
 /// The family tag for a registered entry — the single family-name source so
 /// [`BotState::pool_family`] and the typed dispatchers cannot drift.
 ///
@@ -412,5 +492,136 @@ impl BotState {
         }
         let (pool_id, _) = self.registered_pool_by_address(&identity.address())?;
         (self.pool_family(pool_id) == Some(identity.family_tag())).then_some(pool_id)
+    }
+}
+
+#[expect(clippy::expect_used)]
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use alloy::primitives::{Address, B256, U256};
+    use hashbrown::HashMap;
+
+    use super::{BotState, PoolLookup, StateLock, TickInfo};
+    use crate::state_lock::LockSite;
+    use crate::{PoolTickCoverage, RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey};
+    use degenbot_decoders::v4_swap_decoder::V4PoolId;
+    use degenbot_rpc::liquidity_verifier::LiquidityMapTarget;
+
+    fn new_core() -> Arc<StateLock<BotState>> {
+        Arc::new(StateLock::new(BotState::new()))
+    }
+
+    fn one_tick() -> HashMap<i32, TickInfo> {
+        HashMap::from([(
+            60,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(100),
+                liquidity_net: 100i128,
+                block: 0,
+            },
+        )])
+    }
+
+    fn reg_v3(core: &mut BotState, address: Address) {
+        core.register_v3_pool(&RegisterV3PoolParams {
+            address,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: one_tick(),
+            update_block: 0,
+            tick_data_block: None,
+            coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
+            ..Default::default()
+        })
+        .expect("test setup: V3 registration");
+    }
+
+    fn reg_v4(core: &mut BotState, pool_manager: Address, pool_id: V4PoolId) {
+        core.register_v4_pool(&RegisterV4PoolParams {
+            pool_manager,
+            pool_id,
+            pool_key: V4PoolKey {
+                currency0: Address::ZERO,
+                currency1: Address::from([1u8; 20]),
+                fee: 500,
+                tick_spacing: 10,
+                hooks: Address::ZERO,
+            },
+            state_view: Address::ZERO,
+            hook_flags: 0,
+            protocol_fee: 0,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: one_tick(),
+            update_block: 0,
+            tick_data_block: None,
+            coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
+            ..Default::default()
+        })
+        .expect("test setup: V4 registration");
+    }
+
+    /// One table over the key shapes: a lookup projects its own family's
+    /// contract target, tick spacing, tick map and key text, so these verbs are
+    /// the only place the family is read.
+    #[test]
+    fn every_key_shape_projects_its_own_target_spacing_map_and_text() {
+        let core = new_core();
+        let address = Address::from([0x11u8; 20]);
+        let pool_manager = Address::from([0x22u8; 20]);
+        let pool_id = [0x33u8; 32];
+        {
+            let mut state = core.write_at(LockSite::Registration);
+            reg_v3(&mut state, address);
+            reg_v4(&mut state, pool_manager, pool_id);
+        }
+
+        let cases = [
+            (
+                PoolLookup::from_address(address),
+                LiquidityMapTarget::V3(address),
+                60,
+                address.to_string(),
+            ),
+            (
+                PoolLookup::V4 {
+                    pool_manager,
+                    pool_id,
+                },
+                LiquidityMapTarget::V4 {
+                    pool_manager,
+                    pool_id: B256::from(pool_id),
+                },
+                10,
+                format!("{pool_manager}:0x{}", alloy::hex::encode_prefixed(pool_id)),
+            ),
+        ];
+        for (key, target, spacing, text) in cases {
+            assert_eq!(key.liquidity_map_target(), target, "target for {key}");
+            assert_eq!(key.tick_spacing(&core), Some(spacing), "spacing for {key}");
+            assert_eq!(key.to_string(), text, "key text");
+            let map = key
+                .tick_map_snapshot(&core.read_at(LockSite::Registration))
+                .expect("a registered pool has a tick map");
+            assert_eq!(map.tick_spacing(), spacing, "map spacing for {key}");
+            assert_eq!(map.tick_data().len(), 1, "map rows for {key}");
+        }
+
+        let unregistered = PoolLookup::from_address(Address::from([0xeeu8; 20]));
+        assert_eq!(unregistered.tick_spacing(&core), None);
+        assert!(unregistered
+            .tick_map_snapshot(&core.read_at(LockSite::Registration))
+            .is_none());
     }
 }

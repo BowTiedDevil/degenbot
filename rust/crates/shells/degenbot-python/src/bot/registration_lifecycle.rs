@@ -4,7 +4,7 @@
 //! solvability — quarantine, seed verification, drain + pin, post-drain
 //! verification, `Live` — is core-owned (ADR-022 D1): `EngineDriver` in
 //! `degenbot-bot` is its only home, and a Rust consumer reaches it through the
-//! driver's own `run_v3_registration_lifecycle{,_sync,_with_retry*}` entries.
+//! driver's own `run_registration_lifecycle{,_sync,_with_retry*}` entries.
 //!
 //! What this module owns is the Python seam around those entries, once:
 //! resolving the family's target (a pool address, or the
@@ -27,6 +27,7 @@ use crate::bot::PyBot;
 use crate::config::RetryPolicy;
 use crate::prelude::*;
 use degenbot_bot::arb_engine::EngineDriver;
+use degenbot_substrate::PoolLookup;
 
 /// The concentrated-liquidity family a lifecycle targets.
 #[derive(Clone, Copy)]
@@ -54,6 +55,58 @@ impl Family {
             Self::V4 => "v4",
         }
     }
+
+    /// The pool key this family addresses, parsed from its Python-spelled
+    /// target: `address` for V3, the `(pool_manager, pool_id_hex)` pair for V4.
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` naming the field that would not parse
+    /// (`Invalid V3 address: ...` / `Invalid pool_manager: ...` /
+    /// `Invalid pool_id: ...`).
+    fn lookup(
+        self,
+        address: Option<&str>,
+        pool_manager: Option<&str>,
+        pool_id_hex: Option<&str>,
+    ) -> PyResult<PoolLookup> {
+        match self {
+            Self::V3 => Ok(PoolLookup::from_address(
+                address
+                    .unwrap_or_default()
+                    .parse::<Address>()
+                    .map_err(|e| PyValueError::new_err(format!("Invalid V3 address: {e}")))?,
+            )),
+            Self::V4 => {
+                let pool_manager: Address = pool_manager
+                    .unwrap_or_default()
+                    .parse()
+                    .map_err(|e| PyValueError::new_err(format!("Invalid pool_manager: {e}")))?;
+                let pool_id = hex_string_to_pool_id(pool_id_hex.unwrap_or_default())
+                    .map_err(|e| PyValueError::new_err(format!("Invalid pool_id: {e}")))?;
+                Ok(PoolLookup::V4 {
+                    pool_manager,
+                    pool_id,
+                })
+            }
+        }
+    }
+}
+
+/// The one Python `(family, target)` → [`PoolLookup`] conversion: the family
+/// names the key shape, the target carries the values, and every seam that
+/// takes a pool from Python states the key once (ADR-082).
+///
+/// # Errors
+///
+/// `ValueError` on an unknown family or a target that does not parse.
+pub(crate) fn pool_lookup(
+    family: &str,
+    address: Option<&str>,
+    pool_manager: Option<&str>,
+    pool_id_hex: Option<&str>,
+) -> PyResult<PoolLookup> {
+    Family::parse(family)?.lookup(address, pool_manager, pool_id_hex)
 }
 
 /// How the caller parks the core-owned choreography.
@@ -89,14 +142,6 @@ impl Mode {
     }
 }
 
-/// The typed target a lifecycle addresses, once its Python spelling has been
-/// resolved.
-#[derive(Debug)]
-enum Target {
-    V3(Address),
-    V4(Address, [u8; 32]),
-}
-
 /// One pool's registration verify-lifecycle, as a Python caller states it.
 ///
 /// The value says *what* to run and *how* the caller parks it; the
@@ -118,37 +163,19 @@ pub struct PyRegistrationLifecycle {
 }
 
 impl PyRegistrationLifecycle {
-    /// Resolve the family's Python-supplied target into typed core values.
+    /// Resolve the family's Python-supplied target into the core pool key.
     ///
     /// # Errors
     ///
-    /// `ValueError` carrying the historical target-refusal vocabulary
+    /// `ValueError` carrying the target-refusal vocabulary
     /// (`Invalid V3 address: ...` / `Invalid pool_manager: ...` /
     /// `Invalid pool_id: ...`).
-    fn target(&self) -> PyResult<Target> {
-        match self.family {
-            Family::V3 => Ok(Target::V3(self.v3_address()?)),
-            Family::V4 => {
-                let pool_manager: Address = self
-                    .pool_manager
-                    .as_deref()
-                    .unwrap_or_default()
-                    .parse()
-                    .map_err(|e| PyValueError::new_err(format!("Invalid pool_manager: {e}")))?;
-                let pool_id =
-                    hex_string_to_pool_id(self.pool_id_hex.as_deref().unwrap_or_default())
-                        .map_err(|e| PyValueError::new_err(format!("Invalid pool_id: {e}")))?;
-                Ok(Target::V4(pool_manager, pool_id))
-            }
-        }
-    }
-
-    fn v3_address(&self) -> PyResult<Address> {
-        self.address
-            .as_deref()
-            .unwrap_or_default()
-            .parse()
-            .map_err(|e| PyValueError::new_err(format!("Invalid V3 address: {e}")))
+    fn target(&self) -> PyResult<PoolLookup> {
+        self.family.lookup(
+            self.address.as_deref(),
+            self.pool_manager.as_deref(),
+            self.pool_id_hex.as_deref(),
+        )
     }
 
     /// The core retry policy the value carries, for the retry-wrapped mode.
@@ -297,13 +324,7 @@ pub(crate) fn run_registration_lifecycle(
     driver: &Arc<EngineDriver>,
     lifecycle: &PyRegistrationLifecycle,
 ) -> PyResult<Py<PyAny>> {
-    let key = match lifecycle.target()? {
-        Target::V3(address) => degenbot_substrate::PoolLookup::from_address(address),
-        Target::V4(pool_manager, pool_id) => degenbot_substrate::PoolLookup::V4 {
-            pool_manager,
-            pool_id,
-        },
-    };
+    let key = lifecycle.target()?;
     let snapshot_block = lifecycle.snapshot_block;
     match lifecycle.mode {
         Mode::Async => {

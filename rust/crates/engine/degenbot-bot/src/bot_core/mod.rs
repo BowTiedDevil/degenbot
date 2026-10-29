@@ -90,9 +90,7 @@ pub use registration_ledger::{
     SnapshotLoadReason, UnregistrableRecord, UnsupportedSubject, VerifyOrigin, REFUSAL_KIND_TAGS,
     REGISTRATION_OUTCOMES,
 };
-pub use registration_lifecycle::{
-    run_v3_registration_lifecycle, run_v4_registration_lifecycle, run_verify_lifecycle,
-};
+pub use registration_lifecycle::{run_registration_lifecycle, run_verify_lifecycle};
 
 pub use stage_handlers::{
     AffectedPaths, CandidateId, Finalize, FinalizeOutcome, Gate, GateOutcome, Publish,

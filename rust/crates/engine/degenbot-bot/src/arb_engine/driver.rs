@@ -979,60 +979,24 @@ impl EngineDriver {
         let provider = self.verify_provider.lock().clone();
         self.verifications
             .run_exclusive(&claim_key, || async move {
-                let result = async move {
-                    match key {
-                        PoolLookup::Address(address) => {
-                            let span = tracing::info_span!(
-                                "degenbot.pool.verify_lifecycle",
-                                pool.version = "v3",
-                                pool.address = %address,
-                            );
-                            crate::bot_core::run_v3_registration_lifecycle(
-                                &core,
-                                provider.as_ref(),
-                                address,
-                                snapshot_block,
-                            )
-                            .instrument(span)
-                            .await
-                        }
-                        PoolLookup::V4 {
-                            pool_manager,
-                            pool_id,
-                        } => {
-                            let span = tracing::info_span!(
-                                "degenbot.pool.verify_lifecycle",
-                                pool.version = "v4",
-                                pool.manager = %pool_manager,
-                                pool.id = %alloy::hex::encode_prefixed(pool_id),
-                            );
-                            crate::bot_core::run_v4_registration_lifecycle(
-                                &core,
-                                provider.as_ref(),
-                                pool_manager,
-                                pool_id,
-                                snapshot_block,
-                            )
-                            .instrument(span)
-                            .await
-                        }
-                    }
-                }
+                let span = tracing::info_span!(
+                    "degenbot.pool.verify_lifecycle",
+                    pool.version = key.family().tag(),
+                    pool.address = %key,
+                );
+                let result = crate::bot_core::run_registration_lifecycle(
+                    &core,
+                    provider.as_ref(),
+                    key,
+                    snapshot_block,
+                )
+                .instrument(span)
                 .await;
 
-                match (key, result.is_ok()) {
-                    (PoolLookup::Address(address), true) => {
-                        diag!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle complete");
-                    }
-                    (PoolLookup::Address(address), false) => {
-                        op_warn!(domain = pump, version = "v3", address = %address, "registration verify-lifecycle FAILED");
-                    }
-                    (PoolLookup::V4 { pool_id, .. }, true) => {
-                        diag!(domain = pump, version = "v4", pool_id = %alloy::hex::encode_prefixed(pool_id), "registration verify-lifecycle complete");
-                    }
-                    (PoolLookup::V4 { pool_id, .. }, false) => {
-                        op_warn!(domain = pump, version = "v4", pool_id = %alloy::hex::encode_prefixed(pool_id), "registration verify-lifecycle FAILED");
-                    }
+                if result.is_ok() {
+                    diag!(domain = pump, version = %key.family().tag(), pool = %key, "registration verify-lifecycle complete");
+                } else {
+                    op_warn!(domain = pump, version = %key.family().tag(), pool = %key, "registration verify-lifecycle FAILED");
                 }
                 result
             })

@@ -7,10 +7,10 @@
 //! The sequence is ONE machine ([`run_verify_lifecycle`]) over one pool key
 //! ([`PoolLookup`]): a V3 pool is addressed by contract address, a V4 pool
 //! by `(pool_manager, pool_id)`, and that is the only difference between the two
-//! families here. The two `run_concentrated_liquidity_*_lifecycle` entries are
-//! the key adapters over it, so a rule learned about this machine — the lock
-//! scope, the tripwire, the seed-consumed-once discipline — holds for both
-//! designs by construction rather than by a second copy agreeing (ADR-080 D2).
+//! families here. [`run_registration_lifecycle`] is the provider-backed key
+//! adapter over it, so a rule learned about this machine — the lock scope, the
+//! tripwire, the seed-consumed-once discipline — holds for both designs by
+//! construction rather than by a second copy agreeing (ADR-080 D2).
 //!
 //! Decision D4 (lifecycle), per ADR-022:
 //! - a **sparse** pool is `Live` immediately, receives **no verification
@@ -22,10 +22,11 @@
 //! The module is deliberately **runtime-agnostic**: the two RPC-bound verify
 //! steps (`verify_seed`, `verify_post_drain`) are supplied as async closures,
 //! so the core state-machine is unit-testable without a live provider. The
-//! concrete provider-backed adapters (`run_v3_registration_lifecycle` /
-//! `run_v4_registration_lifecycle`) wire them to `liquidity_verifier` with the
-//! bot's **single** `AlloyProvider` passed-in (ADR-022 D3 — one provider per
-//! bot; never stored on `BotState`, which is I/O-free per ADR-001).
+//! concrete provider-backed door ([`run_registration_lifecycle`]) wires them to
+//! `liquidity_verifier` with the bot's **single** `AlloyProvider` passed-in
+//! (ADR-022 D3 — one provider per bot; never stored on `BotState`, which is
+//! I/O-free per ADR-001). It takes the same [`PoolLookup`] the machine runs
+//! over, so both designs enter through one body.
 //!
 //! **Lock discipline (preserved exactly):** no guard is held across the
 //! `verify_seed` / `verify_post_drain` `.await`s (take-pin-then-drop); the
@@ -37,15 +38,12 @@
 use hashbrown::HashMap;
 use std::future::Future;
 
-use alloy::primitives::Address;
-
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::PoolLookup;
 
-use degenbot_decoders::v4_swap_decoder::V4PoolId;
 use degenbot_rpc::provider::AlloyProvider;
 
-use super::liquidity_verifier::{verify_v3_liquidity_map, verify_v4_liquidity_map};
+use super::liquidity_verifier::verify_snapshot_map;
 use super::registration_ledger::{LifecyclePrecondition, RefusalKind, RegistrationPhase};
 use degenbot_pools::PoolTickCoverage;
 use degenbot_pools::TickInfo;
@@ -195,11 +193,15 @@ where
     Ok(())
 }
 
-/// Concrete V3 registration-lifecycle: same choreography as
-/// [`run_verify_lifecycle`] with an address key, but the two verify steps run through
-/// `liquidity_verifier::verify_v3_liquidity_map` against the bot's **single**
-/// `AlloyProvider` (ADR-022 D3 — one provider per bot/chain, passed-in). V3
-/// needs no `state_view` (the per-pool verify reads `pool.ticks()` directly).
+/// Drive one pool through the registration verify-lifecycle against the bot's
+/// **single** `AlloyProvider` (ADR-022 D3 — one provider per bot/chain,
+/// passed-in).
+///
+/// The key is a value ([`PoolLookup`]): a V3 pool by contract address, a V4
+/// pool by `(pool_manager, pool_id)`. One body serves both designs, so the
+/// verify steps, the tick-spacing read and the on-chain target cannot drift
+/// apart per family (ADR-081/ADR-082).
+///
 /// A `None` provider only matters for a **Tracked** pool (which reaches a
 /// verify step and fails fast with the missing-provider
 /// [`LifecyclePrecondition`] — D-C); Sparse / unregistered no-op paths never
@@ -208,28 +210,28 @@ where
 /// # Errors
 ///
 /// Returns a [`RefusalKind`] at the lifecycle phase: a verify failure
-/// (mismatch = fatal tripwire) or
+/// (mismatch = fatal tripwire), or
 /// [`LifecyclePrecondition::MissingVerifyProvider`] when a tracked pool needs
 /// to verify with no provider configured.
-pub async fn run_v3_registration_lifecycle(
+pub async fn run_registration_lifecycle(
     core: &StateLock<BotState>,
     provider: Option<&AlloyProvider>,
-    address: Address,
+    key: PoolLookup,
     snapshot_block: Option<u64>,
 ) -> Result<(), RefusalKind> {
     let provider = provider.cloned();
+    // The spacing is read inside each closure, not up front: a Sparse pool
+    // never verifies and so never needs it.
     run_verify_lifecycle(
         core,
-        PoolLookup::from_address(address),
+        key,
         snapshot_block,
         |seed, block| {
             let provider = provider.clone();
             async move {
                 let p = provider.ok_or_else(missing_verify_provider)?;
-                let tick_spacing = core
-                    .pool_tick_spacing_by_address(&address)
-                    .ok_or_else(missing_tick_spacing)?;
-                verify_v3_liquidity_map(&p, address, &seed, tick_spacing, block, "seed")
+                let tick_spacing = key.tick_spacing(core).ok_or_else(missing_tick_spacing)?;
+                verify_snapshot_map(&p, key, &seed, tick_spacing, block, "seed")
                     .await
                     .map_err(|kind| kind.at_phase(RegistrationPhase::Lifecycle))
             }
@@ -238,82 +240,10 @@ pub async fn run_v3_registration_lifecycle(
             let provider = provider.clone();
             async move {
                 let p = provider.ok_or_else(missing_verify_provider)?;
-                let tick_spacing = core
-                    .pool_tick_spacing_by_address(&address)
-                    .ok_or_else(missing_tick_spacing)?;
-                verify_v3_liquidity_map(&p, address, &tick_data, tick_spacing, block, "post-drain")
+                let tick_spacing = key.tick_spacing(core).ok_or_else(missing_tick_spacing)?;
+                verify_snapshot_map(&p, key, &tick_data, tick_spacing, block, "post-drain")
                     .await
                     .map_err(|kind| kind.at_phase(RegistrationPhase::Lifecycle))
-            }
-        },
-    )
-    .await
-}
-
-/// Concrete V4 registration-lifecycle: V4 twin of
-/// [`run_v3_registration_lifecycle`]. Full-map reads target the canonical
-/// `PoolManager` and `PoolId`; `StateView` remains outside this verification
-/// seam.
-///
-/// # Errors
-///
-/// Returns a [`RefusalKind`] at the lifecycle phase: a verify failure
-/// (mismatch = fatal tripwire), or
-/// [`LifecyclePrecondition::MissingVerifyProvider`] when a tracked pool has no
-/// verification provider.
-pub async fn run_v4_registration_lifecycle(
-    core: &StateLock<BotState>,
-    provider: Option<&AlloyProvider>,
-    pool_manager: Address,
-    pool_id: V4PoolId,
-    snapshot_block: Option<u64>,
-) -> Result<(), RefusalKind> {
-    let provider = provider.cloned();
-    run_verify_lifecycle(
-        core,
-        PoolLookup::V4 {
-            pool_manager,
-            pool_id,
-        },
-        snapshot_block,
-        |seed, block| {
-            let provider = provider.clone();
-            async move {
-                let p = provider.ok_or_else(missing_verify_provider)?;
-                let tick_spacing = core
-                    .pool_tick_spacing_by_v4_key(pool_manager, &pool_id)
-                    .ok_or_else(missing_tick_spacing)?;
-                verify_v4_liquidity_map(
-                    &p,
-                    pool_manager,
-                    pool_id,
-                    &seed,
-                    tick_spacing,
-                    block,
-                    "seed",
-                )
-                .await
-                .map_err(|kind| kind.at_phase(RegistrationPhase::Lifecycle))
-            }
-        },
-        |tick_data, block| {
-            let provider = provider.clone();
-            async move {
-                let p = provider.ok_or_else(missing_verify_provider)?;
-                let tick_spacing = core
-                    .pool_tick_spacing_by_v4_key(pool_manager, &pool_id)
-                    .ok_or_else(missing_tick_spacing)?;
-                verify_v4_liquidity_map(
-                    &p,
-                    pool_manager,
-                    pool_id,
-                    &tick_data,
-                    tick_spacing,
-                    block,
-                    "post-drain",
-                )
-                .await
-                .map_err(|kind| kind.at_phase(RegistrationPhase::Lifecycle))
             }
         },
     )
@@ -696,27 +626,50 @@ mod tests {
         );
     }
 
-    /// A missing provider for a TRACKED V4 pool is a no-config fail-fast:
-    /// the tripwire fires and the pool never reaches `Live`.
+    /// A missing provider for a TRACKED pool is a no-config fail-fast for
+    /// either key shape: the tripwire fires and the pool never reaches `Live`.
     #[tokio::test]
-    async fn tracked_v4_missing_provider_blocks_live() {
+    async fn tracked_missing_provider_blocks_live_for_both_pool_keys() {
         let core = new_core();
+        let v3_addr = Address::from([0x45u8; 20]);
         let pm = Address::from([0x44u8; 20]);
         let pid = [0xbu8; 32];
+        let v3_id = {
+            let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
+            reg_v3(&mut c, v3_addr, PoolTickCoverage::Tracked)
+        };
         {
             let mut c = core.write_at(degenbot_substrate::state_lock::LockSite::Registration);
             reg_v4(&mut c, pm, pid, PoolTickCoverage::Tracked);
         }
-        let result =
-            crate::bot_core::run_v4_registration_lifecycle(&core, None, pm, pid, Some(42)).await;
-        assert!(matches!(
-            result,
-            Err(RefusalKind::LifecyclePrecondition {
-                reason: LifecyclePrecondition::MissingVerifyProvider,
-                ..
-            })
-        ));
+
+        for key in [
+            PoolLookup::from_address(v3_addr),
+            PoolLookup::V4 {
+                pool_manager: pm,
+                pool_id: pid,
+            },
+        ] {
+            let result =
+                crate::bot_core::run_registration_lifecycle(&core, None, key, Some(42)).await;
+            assert!(
+                matches!(
+                    result,
+                    Err(RefusalKind::LifecyclePrecondition {
+                        reason: LifecyclePrecondition::MissingVerifyProvider,
+                        ..
+                    })
+                ),
+                "pool {key} must fail fast on the missing verify provider"
+            );
+        }
+
         let c = core.read_at(degenbot_substrate::state_lock::LockSite::Registration);
+        assert_eq!(
+            lifecycle_v3(&c, v3_id),
+            RegistrationLifecycle::Quarantined,
+            "tracked V3 without a provider must stay Quarantined"
+        );
         assert_eq!(
             c.pool_id_by_key(pm, &pid).map(|id| lifecycle_v4(&c, id)),
             Some(RegistrationLifecycle::Quarantined),

@@ -195,7 +195,7 @@ pub use degenbot_bot::bot_core::pool_builder::route::{
 pub use degenbot_bot::bot_core::registration_ledger::{PreBuildIdentity, RefusalKind};
 
 pub use degenbot_bot::bot_core::registration_lifecycle::{
-    run_v3_registration_lifecycle, run_v4_registration_lifecycle, run_verify_lifecycle,
+    run_registration_lifecycle, run_verify_lifecycle,
 };
 
 /// The reason a build refused a pool as out of spec — the builder's

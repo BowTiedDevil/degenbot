@@ -160,9 +160,9 @@ pub trait TickMapSampleVerifier: Send + Sync {
     ) -> Result<(), String>;
 }
 
-/// The `AlloyProvider`-backed sample verifier: delegates to the snapshot-block
-/// [`verify_v3_liquidity_map`] so the ingress and the settlement pump share one
-/// verification implementation.
+/// The `AlloyProvider`-backed sample verifier: delegates to the shared
+/// contract-facing map verifier (`degenbot_rpc::liquidity_verifier`) so the
+/// ingress and the settlement pump share one verification implementation.
 pub struct AlloySampleVerifier {
     provider: Arc<AlloyProvider>,
 }

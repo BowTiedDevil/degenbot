@@ -675,35 +675,36 @@ class ArbitrageEngine:
         """
         Number of registered V4 pools.
         """
-    def verify_v3_pool(
-        self, /, address: str, rpc_url: str, block_number: SupportsIndex | None
-    ) -> Any:
-        """
-        Verify a single V3 pool's liquidity map against on-chain state.
-
-        Takes a pool address and verifies the `tick_data` at the given block.
-        Returns Ok if the liquidity map matches, or a `RuntimeError` with
-        details of the mismatch.
-
-        This is an async method — returns a coroutine that must be awaited.
-        Uses `future_into_py` instead of `block_on` so it integrates with
-        the Python asyncio event loop (no deadlock when called from async code).
-        """
-    def verify_v4_pool(
+    def verify_pool(
         self,
         /,
-        pool_id_hex: str,
+        family: str,
         rpc_url: str,
-        state_view_address: str,
-        block_number: SupportsIndex | None,
+        block_number: SupportsIndex | None = None,
+        *,
+        address: str | None = None,
+        pool_manager: str | None = None,
+        pool_id_hex: str | None = None,
     ) -> Any:
         """
-        Verify a single V4 pool's liquidity map against on-chain state.
+        Verify a registered pool's liquidity map against on-chain state.
 
-        Takes a `pool_id` (hex) and verifies the `tick_data` at the given block
-        using the `StateView` contract.
+        `family` is `"v3"` (targeting `address`) or `"v4"` (targeting the
+        `(pool_manager, pool_id_hex)` pair); the key's registered identity is
+        also the on-chain read target — the pool contract for V3, the canonical
+        `PoolManager` storage for V4. Every tick row, the bitmap words those rows
+        imply, and the ±2 word window around the active tick are compared at
+        `block_number` (the chain tip when omitted).
 
-        This is an async method — returns a coroutine that must be awaited.
+        The pool's tick map is cloned out of the engine inside `py.detach`; the
+        comparison runs on the caller's event loop, so the method is async and
+        returns a coroutine to await.
+
+        # Errors
+
+        `ValueError` on a family/target that does not parse; `RuntimeError` when
+        the pool is not registered in the engine, the provider cannot be built,
+        or the comparison finds a divergence.
         """
 
 @final
