@@ -209,9 +209,11 @@ fn u256_to_signed_delta(amount_out: U256, amount_in: U256) -> Option<I256> {
     Some(out - inm)
 }
 
-/// The internal buffer shared between the inspector + its handle.
+/// The internal buffer shared between the inspector + its handle. The
+/// frame-stack state machine is engine-neutral — the evm2 inspector drives
+/// the same buffer (the revm hooks below are a thin delegation layer).
 #[derive(Debug, Default)]
-pub(super) struct SwapEventBuffer {
+pub(crate) struct SwapEventBuffer {
     /// Committed swaps — only logs from frames that **committed** (didn't
     /// revert). Reverted-frame swaps are dropped at `end_frame_reverted` so
     /// the captured set matches the onchain committed receipt logs (revm's
@@ -236,7 +238,7 @@ pub(super) struct SwapEventBuffer {
     /// mirroring revm's journal flattening, so only committed swaps reach
     /// `swaps`, while reverted-frame swaps are preserved (not discarded) in
     /// `reverted_swaps` for the divergence diagnostic.
-    frame_stack: Vec<Vec<CapturedSwap>>,
+    pub frame_stack: Vec<Vec<CapturedSwap>>,
     /// Every `log_full` invocation count (diagnostic — includes non-swap logs
     /// AND reverted-frame logs; counts hook firings, NOT committed swaps).
     pub log_full_count: usize,
@@ -268,6 +270,46 @@ impl Default for SwapEventCaptureInspector {
     }
 }
 
+impl SwapEventBuffer {
+    /// Push a fresh tentative buffer for a new execution frame (`LOG`s decoded
+    /// here land in the top buffer until the frame's commit/revert is known).
+    pub(crate) fn begin_frame(&mut self) {
+        self.frame_stack.push(Vec::new());
+    }
+
+    /// Decode + stage a `LOG` into the top frame's tentative buffer (or
+    /// directly into the committed `swaps` if no frame is active).
+    pub(crate) fn capture_swap_log(&mut self, log: &Log) {
+        let Some(swap) = CapturedSwap::from_log_with_emitter(log) else {
+            return;
+        };
+        match self.frame_stack.last_mut() {
+            Some(frame) => frame.push(swap),
+            None => self.swaps.push(swap),
+        }
+    }
+
+    /// Pop the top frame + merge its tentative swaps into the parent frame
+    /// (or the committed `swaps` sink if this was the root frame).
+    pub(crate) fn end_frame_committed(&mut self) {
+        let Some(frame_swaps) = self.frame_stack.pop() else {
+            return;
+        };
+        match self.frame_stack.last_mut() {
+            Some(parent) => parent.extend(frame_swaps),
+            None => self.swaps.extend(frame_swaps),
+        }
+    }
+
+    /// Pop the top frame + move its tentative swaps into `reverted_swaps`
+    /// (NOT discarded — the revert-tolerant diagnostic buffer).
+    pub(crate) fn end_frame_reverted(&mut self) {
+        if let Some(frame_swaps) = self.frame_stack.pop() {
+            self.reverted_swaps.extend(frame_swaps);
+        }
+    }
+}
+
 impl SwapEventCaptureInspector {
     /// Create an inspector + its drain handle (shared `Rc<RefCell<...>>`).
     #[must_use]
@@ -288,53 +330,24 @@ impl SwapEventCaptureInspector {
     // /`frame_end` overrides below are the thin revm-bridging layer.
     // -----------------------------------------------------------------
 
-    /// Push a fresh tentative buffer for a new execution frame (`LOG`s decoded
-    /// here land in the top buffer until the frame's commit/revert is known).
+    // The frame-stack ops live on `SwapEventBuffer` (shared with the evm2
+    // inspector); these are the thin `Rc<RefCell>`-unwrapping delegates the
+    // revm hooks below call.
+
     fn begin_frame(&self) {
-        self.buf.borrow_mut().frame_stack.push(Vec::new());
+        self.buf.borrow_mut().begin_frame();
     }
 
-    /// Decode + stage a `LOG` into the top frame's tentative buffer (or directly
-    /// into the committed `swaps` if no frame is active — a defensive fallback
-    /// for the case where `log_full` fires outside any `frame_start`/`frame_end`,
-    /// which shouldn't occur under revm's frame dispatch).
     fn capture_swap_log(&self, log: &Log) {
-        let Some(swap) = CapturedSwap::from_log_with_emitter(log) else {
-            return;
-        };
-        let mut buf = self.buf.borrow_mut();
-        match buf.frame_stack.last_mut() {
-            Some(frame) => frame.push(swap),
-            None => buf.swaps.push(swap),
-        }
+        self.buf.borrow_mut().capture_swap_log(log);
     }
 
-    /// Pop the top frame + merge its tentative swaps into the parent frame (or
-    /// the committed `swaps` sink if this was the root frame). Called when the
-    /// frame's `FrameResult` indicates success.
     fn end_frame_committed(&self) {
-        let mut buf = self.buf.borrow_mut();
-        let Some(frame_swaps) = buf.frame_stack.pop() else {
-            return;
-        };
-        match buf.frame_stack.last_mut() {
-            Some(parent) => parent.extend(frame_swaps),
-            None => buf.swaps.extend(frame_swaps),
-        }
+        self.buf.borrow_mut().end_frame_committed();
     }
 
-    /// Pop the top frame + move its tentative swaps into `reverted_swaps`
-    /// (NOT discarded). Called when the frame's `FrameResult` indicates revert
-    /// — the swap logs it emitted are NOT in the committed receipt, so they
-    /// must not be in `swaps` (the committed buffer) either. But they ARE
-    /// preserved in `reverted_swaps` for the revert-tolerant divergence
-    /// diagnostic (the V4 `unlock`-reverts-`CurrencyNotSettled` case where the
-    /// actual swap output `out_a'` is needed to compare to `hop_outputs[0]`).
     fn end_frame_reverted(&self) {
-        let mut buf = self.buf.borrow_mut();
-        if let Some(frame_swaps) = buf.frame_stack.pop() {
-            buf.reverted_swaps.extend(frame_swaps);
-        }
+        self.buf.borrow_mut().end_frame_reverted();
     }
 }
 

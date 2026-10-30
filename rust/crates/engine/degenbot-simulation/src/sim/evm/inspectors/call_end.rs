@@ -18,7 +18,7 @@ use super::call_trace::{CallFrame, FrameOutcome};
 
 /// Pair `outcome` with the innermost unmatched frame (the most-recently-pushed
 /// frame whose `outcome` is still `None`).
-pub(super) fn pair_lifo(frames: &mut [CallFrame], outcome: FrameOutcome) {
+pub(crate) fn pair_lifo(frames: &mut [CallFrame], outcome: FrameOutcome) {
     if let Some(frame) = frames.iter_mut().rev().find(|f| f.outcome.is_none()) {
         frame.outcome = Some(outcome);
     }

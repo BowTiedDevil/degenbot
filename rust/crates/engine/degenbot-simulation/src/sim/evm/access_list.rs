@@ -27,7 +27,7 @@
 // storage, journaled_state, etc.) are ubiquitous here.
 
 use alloy::primitives::map::AddressHashMap;
-use alloy::primitives::B256;
+use alloy::primitives::{Address, B256};
 use alloy::rpc::types::eth::AccessList;
 use revm::bytecode::opcode::{SLOAD, SSTORE};
 use revm::inspector::Inspector;
@@ -109,10 +109,40 @@ fn storage_keys_for(account: &Account) -> Vec<B256> {
 /// (the [`Inspector`] that writes during `execute()`) + its [`AccessListHandle`]
 /// (the handle `simulate_path_on_evm` reads from after the run).
 #[derive(Debug, Default)]
-struct CollectedSlots {
+pub(crate) struct CollectedSlots {
     /// `address ->` the set of storage slot keys (B256, the EIP-2930 wire
     /// type) `execute()` touched. `BTreeSet` for deterministic emission.
     touched: AddressHashMap<BTreeSet<B256>>,
+}
+
+impl CollectedSlots {
+    /// Record one `(address, slot)` touch (an `SLOAD`/`SSTORE` observed at
+    /// the `step` hook).
+    pub(crate) fn record(&mut self, address: Address, slot: B256) {
+        self.touched.entry(address).or_default().insert(slot);
+    }
+
+    /// Drain the collected slot set into an EIP-2930 [`AccessList`],
+    /// resetting the collector to empty for reuse on the next path. Accounts
+    /// with no touched storage contribute no `AccessListItem` (mirrors
+    /// [`emit_access_list_from_state`]).
+    pub(crate) fn take_access_list(&mut self) -> AccessList {
+        let touched = std::mem::take(&mut self.touched);
+        let items: Vec<alloy::rpc::types::eth::AccessListItem> = touched
+            .into_iter()
+            .filter_map(|(address, slots)| {
+                if slots.is_empty() {
+                    None
+                } else {
+                    Some(alloy::rpc::types::eth::AccessListItem {
+                        address,
+                        storage_keys: slots.into_iter().collect(),
+                    })
+                }
+            })
+            .collect();
+        AccessList::from(items)
+    }
 }
 
 /// An [`Inspector`] that collects the EIP-2930 access list as a byproduct of
@@ -203,21 +233,7 @@ impl AccessListHandle {
     /// pre-warms (mirrors [`emit_access_list_from_state`]).
     #[must_use]
     pub fn take_access_list(&self) -> AccessList {
-        let touched = std::mem::take(&mut self.slots.borrow_mut().touched);
-        let items: Vec<alloy::rpc::types::eth::AccessListItem> = touched
-            .into_iter()
-            .filter_map(|(address, slots)| {
-                if slots.is_empty() {
-                    None
-                } else {
-                    Some(alloy::rpc::types::eth::AccessListItem {
-                        address,
-                        storage_keys: slots.into_iter().collect(),
-                    })
-                }
-            })
-            .collect();
-        AccessList::from(items)
+        self.slots.borrow_mut().take_access_list()
     }
 }
 
@@ -236,12 +252,7 @@ impl<CTX, INTR: InterpreterTypes> Inspector<CTX, INTR> for AccessListCollector {
             // revm's stack Vec grows by appending, so the TOP (the slot for
             // both `SLOAD` + `SSTORE`) is `data().last()`, not `first()`.
             if let Some(&slot) = interp.stack.data().last() {
-                self.slots
-                    .borrow_mut()
-                    .touched
-                    .entry(address)
-                    .or_default()
-                    .insert(B256::from(slot));
+                self.slots.borrow_mut().record(address, B256::from(slot));
             }
         }
     }

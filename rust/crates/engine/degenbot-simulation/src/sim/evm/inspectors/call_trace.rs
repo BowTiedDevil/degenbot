@@ -217,9 +217,10 @@ impl CallTrace {
     }
 }
 
-/// The internal buffer shared between the inspector + its handle.
+/// The internal buffer shared between the inspector + its handle. Kept
+/// engine-neutral so the evm2 inspector drives the same LIFO pairing.
 #[derive(Debug, Default)]
-pub(super) struct CallTraceBuffer {
+pub(crate) struct CallTraceBuffer {
     /// Pushed in call order; outcomes LIFO-paired at `call_end`.
     pub frames: Vec<CallFrame>,
     /// The current call depth (incremented at `call`/`create`, decremented at

@@ -607,6 +607,482 @@ fn view_reads_match_revm_session() {
     assert_eq!(revm_parts, evm2_parts);
 }
 
+// ── Phase 2: composite inspector suite ──
+
+use std::collections::BTreeSet;
+
+use degenbot_decoders::v2_swap_decoder::V2_SWAP_TOPIC;
+use degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
+use degenbot_decoders::v4_swap_decoder::V4_SWAP_TOPIC;
+
+const CHILD: Address = Address::with_last_byte(0x99);
+
+/// Append a minimal-length push of `v` to the bytecode.
+fn push_u256(code: &mut Vec<u8>, v: &U256) {
+    let bytes = v.to_be_bytes::<32>();
+    let first = bytes.iter().position(|b| *b != 0).unwrap_or(31).min(31);
+    let trimmed = &bytes[first..];
+    code.push(0x5f + trimmed.len() as u8);
+    code.extend_from_slice(trimmed);
+}
+
+/// Append a LOGn emission: `data_words` (32-byte BE words) written to memory
+/// at offset 0, then LOG with `topics`. Reusing the memory region across
+/// logs is safe — each LOG executes immediately after its own MSTOREs.
+fn push_log(code: &mut Vec<u8>, topics: &[B256], data_words: &[U256]) {
+    for (i, w) in data_words.iter().enumerate() {
+        push_u256(code, w);
+        code.extend([0x60, 32 * i as u8]); // PUSH1 offset
+        code.push(0x52); // MSTORE
+    }
+    for t in topics.iter().rev() {
+        push_u256(code, &U256::from_be_slice(t.as_slice()));
+    }
+    code.extend([0x60, 32 * data_words.len() as u8]); // PUSH1 size
+    code.push(0x60);
+    code.push(0x00); // PUSH1 offset 0
+    code.push(0xa0 + topics.len() as u8); // LOGn
+}
+
+/// The V2-swap-shaped log the fixtures emit (emitter-bound topics).
+fn v2_log_parts(emitter_byte: u8) -> ([B256; 3], [U256; 4]) {
+    let sender = Address::with_last_byte(0x11);
+    let to = Address::with_last_byte(0x22);
+    let _ = emitter_byte;
+    (
+        [V2_SWAP_TOPIC, sender.into_word(), to.into_word()],
+        [
+            U256::from(1_000_000_000_000_000_000_u64), // amount0_in
+            U256::ZERO,
+            U256::ZERO,
+            U256::from(3_000_000_000_u64), // amount1_out
+        ],
+    )
+}
+
+/// Bytecode: emit the V2/V3/V4 swap-family logs, STOP.
+fn all_families_code() -> Vec<u8> {
+    let mut code = Vec::new();
+    let (v2_topics, v2_data) = v2_log_parts(0x00);
+    push_log(&mut code, &v2_topics, &v2_data);
+    push_log(
+        &mut code,
+        &[
+            V3_SWAP_TOPIC,
+            Address::with_last_byte(0x33).into_word(),
+            Address::with_last_byte(0x44).into_word(),
+        ],
+        &[
+            U256::from(500u64),
+            U256::from(4000u64),
+            U256::from(12345u64),
+            U256::from(999u64),
+            U256::from(7u64),
+        ],
+    );
+    push_log(
+        &mut code,
+        &[
+            V4_SWAP_TOPIC,
+            B256::from(U256::from(77u64)),
+            Address::with_last_byte(0x55).into_word(),
+        ],
+        &[
+            U256::from(111u64),
+            U256::from(222u64),
+            U256::from(333u64),
+            U256::from(444u64),
+            U256::from(5u64),
+            U256::from(6u64),
+        ],
+    );
+    code.push(0x00); // STOP
+    code
+}
+
+/// Bytecode: CALL `child` with empty in/out + full-ish gas, POP the result.
+fn call_child_code(child: Address) -> Vec<u8> {
+    let mut code = Vec::new();
+    for _ in 0..5 {
+        code.push(0x5f); // out_size, out_offset, in_size, in_offset, value
+    }
+    code.push(0x73); // PUSH20
+    code.extend_from_slice(child.as_slice());
+    code.extend([0x61, 0xff, 0xff]); // PUSH2 0xffff gas
+    code.push(0xf1); // CALL
+    code.push(0x50); // POP
+    code
+}
+
+/// A scripted fallback serving code for a fixed address set (the
+/// multi-contract fixtures).
+#[derive(Clone)]
+struct CodeMap(Vec<(Address, Vec<u8>)>);
+
+impl CodeMap {
+    fn code_at(&self, address: &Address) -> Bytes {
+        self.0
+            .iter()
+            .find(|(a, _)| a == address)
+            .map(|(_, c)| Bytes::from(c.clone()))
+            .unwrap_or_default()
+    }
+}
+
+struct RevmCodeMap<'f>(&'f CodeMap);
+
+impl revm::database_interface::DatabaseRef for RevmCodeMap<'_> {
+    type Error = core::convert::Infallible;
+    fn basic_ref(&self, address: Address) -> Result<Option<revm::state::AccountInfo>, Self::Error> {
+        let code = revm::bytecode::Bytecode::new_raw(self.0.code_at(&address));
+        Ok(Some(revm::state::AccountInfo {
+            balance: U256::ZERO,
+            nonce: 0,
+            code_hash: code.hash_slow(),
+            code: Some(code),
+            ..Default::default()
+        }))
+    }
+    fn code_by_hash_ref(&self, _: B256) -> Result<revm::bytecode::Bytecode, Self::Error> {
+        Ok(revm::bytecode::Bytecode::default())
+    }
+    fn storage_ref(&self, _: Address, _: U256) -> Result<U256, Self::Error> {
+        Ok(U256::ZERO)
+    }
+    fn block_hash_ref(&self, _: u64) -> Result<B256, Self::Error> {
+        Ok(B256::ZERO)
+    }
+}
+
+/// Owns its map: evm2's inspector downcast works on a `'static` trait
+/// object, so the DB stack must not borrow the fixture.
+struct Evm2CodeMap(CodeMap);
+
+impl ::evm2::evm::Database for Evm2CodeMap {
+    type Error = core::convert::Infallible;
+    fn get_account(
+        &mut self,
+        address: &Address,
+    ) -> Result<Option<::evm2::evm::AccountInfo>, Self::Error> {
+        Ok(Some(::evm2::evm::AccountInfo::default().with_code(
+            ::evm2::bytecode::Bytecode::new_raw(self.0.code_at(address)),
+        )))
+    }
+    fn get_code_by_hash(&mut self, _: &B256) -> Result<::evm2::bytecode::Bytecode, Self::Error> {
+        Ok(::evm2::bytecode::Bytecode::default())
+    }
+    fn get_storage(
+        &mut self,
+        _: &Address,
+        _: &::evm2::interpreter::Word,
+    ) -> Result<::evm2::interpreter::Word, Self::Error> {
+        Ok(U256::ZERO)
+    }
+    fn get_block_hash(&mut self, _: &::evm2::interpreter::Word) -> Result<B256, Self::Error> {
+        Ok(B256::ZERO)
+    }
+}
+
+/// The captured swap set is identical across engines over V2/V3/V4
+/// swap-family logs emitted from one contract.
+#[test]
+fn swap_capture_matches_across_engines() {
+    use crate::sim::evm::SwapEventCaptureInspector;
+    use revm::context::TxEnv;
+    use revm::{InspectEvm, MainBuilder, MainContext};
+
+    let codes = CodeMap(vec![(CONTRACT, all_families_code())]);
+
+    // revm side — the production composite's swap member.
+    let revm_swaps = {
+        let db = revm::database::CacheDB::new(RevmCodeMap(&codes));
+        let mut ctx = revm::context::Context::mainnet().with_db(db);
+        ctx.cfg
+            .set_spec_and_mainnet_gas_params(revm::primitives::hardfork::SpecId::CANCUN);
+        let mut evm = ctx.build_mainnet_with_inspector(crate::sim::evm::SimInspector::default());
+        // `inspect_one`'s inspector type is fixed by the build — the full
+        // `SimInspector` tuple; only the swap member's handle is read.
+        let (collector, _al) = crate::sim::evm::AccessListCollector::new();
+        let (trace_insp, _trace) = crate::sim::evm::CallTraceInspector::new();
+        let (swap_insp, swap_handle) = SwapEventCaptureInspector::new();
+        let tx = TxEnv::builder()
+            .caller(CALLER)
+            .kind(TxKind::Call(CONTRACT))
+            .value(U256::ZERO)
+            .gas_limit(GAS_LIMIT)
+            .nonce(0)
+            .build()
+            .expect("well-formed tx");
+        let result = evm
+            .inspect_one(tx, (collector, (trace_insp, swap_insp)))
+            .expect("revm inspect");
+        assert!(result.is_success());
+        // Read the count before the drain — `take_swaps` resets it.
+        assert_eq!(swap_handle.log_full_count(), 3);
+        swap_handle.take_swaps()
+    };
+
+    // evm2 side — the composite inspector.
+    let evm2_swaps = {
+        use super::inspectors::Evm2SimInspector;
+        use ::evm2::ethereum::TxEnvelope;
+        use alloy::consensus::transaction::Recovered;
+        use alloy::consensus::TxLegacy;
+
+        let db = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(Evm2CodeMap(codes.clone())));
+        let mut evm = build_pilot_evm(db);
+        evm.set_inspector(Evm2SimInspector::default());
+        let tx = Recovered::new_unchecked(
+            TxEnvelope::Legacy(TxLegacy {
+                to: TxKind::Call(CONTRACT),
+                gas_limit: GAS_LIMIT,
+                nonce: 0,
+                ..Default::default()
+            }),
+            CALLER,
+        );
+        let result = evm.transact(&tx).expect("evm2 transact").discard();
+        assert!(result.status);
+        let insp = evm
+            .inspector_mut()
+            .and_then(|i| i.downcast_mut::<Evm2SimInspector>())
+            .expect("composite inspector set");
+        assert_eq!(insp.log_count(), 3);
+        insp.take_swaps()
+    };
+
+    assert_eq!(revm_swaps.len(), 3, "revm sanity: {revm_swaps:?}");
+    assert_eq!(revm_swaps, evm2_swaps, "swap captures diverge");
+    let families: Vec<_> = evm2_swaps.iter().map(|s| s.family).collect();
+    assert_eq!(
+        families,
+        [
+            crate::sim::evm::SwapFamily::V2,
+            crate::sim::evm::SwapFamily::V3,
+            crate::sim::evm::SwapFamily::V4
+        ]
+    );
+}
+
+/// A swap emitted inside a reverting sub-call is captured into the
+/// reverted-frame buffer (NOT the committed set) on both engines, and the
+/// call trace attributes the revert to the child frame identically.
+#[test]
+fn reverting_subcall_capture_matches_across_engines() {
+    use crate::sim::evm::{CallTraceInspector, FrameOutcome, SwapEventCaptureInspector};
+    use revm::context::TxEnv;
+    use revm::{InspectEvm, MainBuilder, MainContext};
+
+    // CHILD: emit a V2 swap log, then REVERT.
+    let mut child_code = Vec::new();
+    let (topics, data) = v2_log_parts(0x99);
+    push_log(&mut child_code, &topics, &data);
+    child_code.extend([0x5f, 0x5f, 0xfd]); // PUSH0 PUSH0 REVERT
+
+    // CONTRACT: CALL CHILD, emit its own V2 swap log, STOP.
+    let mut parent_code = call_child_code(CHILD);
+    let (ptopics, pdata) = v2_log_parts(0x01);
+    push_log(&mut parent_code, &ptopics, &pdata);
+    parent_code.push(0x00); // STOP
+
+    let codes = CodeMap(vec![(CONTRACT, parent_code), (CHILD, child_code)]);
+
+    // revm side.
+    let (revm_swaps, revm_reverted, revm_trace) = {
+        let db = revm::database::CacheDB::new(RevmCodeMap(&codes));
+        let mut ctx = revm::context::Context::mainnet().with_db(db);
+        ctx.cfg
+            .set_spec_and_mainnet_gas_params(revm::primitives::hardfork::SpecId::CANCUN);
+        let mut evm = ctx.build_mainnet_with_inspector(crate::sim::evm::SimInspector::default());
+        let (collector, _al) = crate::sim::evm::AccessListCollector::new();
+        let (trace_insp, trace_handle) = CallTraceInspector::new();
+        let (swap_insp, swap_handle) = SwapEventCaptureInspector::new();
+        let tx = TxEnv::builder()
+            .caller(CALLER)
+            .kind(TxKind::Call(CONTRACT))
+            .value(U256::ZERO)
+            .gas_limit(GAS_LIMIT)
+            .nonce(0)
+            .build()
+            .expect("well-formed tx");
+        let result = evm
+            .inspect_one(tx, (collector, (trace_insp, swap_insp)))
+            .expect("revm inspect");
+        assert!(result.is_success(), "parent survives the child revert");
+        (
+            swap_handle.take_swaps(),
+            swap_handle.take_reverted_swaps(),
+            trace_handle.take_trace(),
+        )
+    };
+
+    // evm2 side.
+    let (evm2_swaps, evm2_reverted, evm2_trace) = {
+        use super::inspectors::Evm2SimInspector;
+        use ::evm2::ethereum::TxEnvelope;
+        use alloy::consensus::transaction::Recovered;
+        use alloy::consensus::TxLegacy;
+
+        let db = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(Evm2CodeMap(codes.clone())));
+        let mut evm = build_pilot_evm(db);
+        evm.set_inspector(Evm2SimInspector::default());
+        let tx = Recovered::new_unchecked(
+            TxEnvelope::Legacy(TxLegacy {
+                to: TxKind::Call(CONTRACT),
+                gas_limit: GAS_LIMIT,
+                nonce: 0,
+                ..Default::default()
+            }),
+            CALLER,
+        );
+        let result = evm.transact(&tx).expect("evm2 transact").discard();
+        assert!(result.status, "parent survives the child revert");
+        let insp = evm
+            .inspector_mut()
+            .and_then(|i| i.downcast_mut::<Evm2SimInspector>())
+            .expect("composite inspector set");
+        (
+            insp.take_swaps(),
+            insp.take_reverted_swaps(),
+            insp.take_trace(),
+        )
+    };
+
+    // Committed = the parent's swap only; reverted = the child's.
+    assert_eq!(revm_swaps.len(), 1, "revm committed: {revm_swaps:?}");
+    assert_eq!(revm_reverted.len(), 1, "revm reverted: {revm_reverted:?}");
+    assert_eq!(revm_swaps, evm2_swaps, "committed swap sets diverge");
+    assert_eq!(revm_reverted, evm2_reverted, "reverted swap sets diverge");
+
+    // The trace: two frames — the root call (success) and the child call
+    // (revert) — identical across engines.
+    assert_eq!(
+        revm_trace.frames.len(),
+        2,
+        "revm sanity: {:?}",
+        revm_trace.frames
+    );
+    assert_eq!(revm_trace.frames, evm2_trace.frames, "call traces diverge");
+    assert!(matches!(
+        evm2_trace.frames[1].outcome,
+        Some(FrameOutcome::Revert { .. })
+    ));
+    assert!(evm2_trace.deepest_revert().is_some());
+}
+
+/// The EIP-2930 access list the collector records is identical across
+/// engines — and on evm2 it matches the executed transaction's account
+/// changes (the ADR-019 D3 property on the evm2 journal).
+#[test]
+fn access_list_matches_across_engines_and_journal() {
+    use crate::sim::evm::AccessListCollector;
+    use revm::context::TxEnv;
+    use revm::{InspectEvm, MainBuilder, MainContext};
+
+    // CONTRACT: SLOAD slot 1, SSTORE slot 2 = 0x99, CALL CHILD, STOP.
+    let mut contract_code = vec![0x60, 0x01, 0x54, 0x60, 0x99, 0x60, 0x02, 0x55];
+    contract_code.extend(call_child_code(CHILD));
+    contract_code.push(0x00);
+    // CHILD: SLOAD slot 7, STOP.
+    let child_code = vec![0x60, 0x07, 0x54, 0x00];
+
+    let codes = CodeMap(vec![(CONTRACT, contract_code), (CHILD, child_code)]);
+    let want: BTreeSet<(Address, B256)> = [
+        (CONTRACT, B256::from(U256::from(1u64))),
+        (CONTRACT, B256::from(U256::from(2u64))),
+        (CHILD, B256::from(U256::from(7u64))),
+    ]
+    .into_iter()
+    .collect();
+
+    let al_set = |al: alloy::rpc::types::eth::AccessList| -> BTreeSet<(Address, B256)> {
+        al.iter()
+            .flat_map(|item| item.storage_keys.iter().map(move |k| (item.address, *k)))
+            .collect()
+    };
+
+    // revm side.
+    let revm_al = {
+        let db = revm::database::CacheDB::new(RevmCodeMap(&codes));
+        let mut ctx = revm::context::Context::mainnet().with_db(db);
+        ctx.cfg
+            .set_spec_and_mainnet_gas_params(revm::primitives::hardfork::SpecId::CANCUN);
+        let mut evm = ctx.build_mainnet_with_inspector(crate::sim::evm::SimInspector::default());
+        let (collector, handle) = AccessListCollector::new();
+        let (trace_insp, _trace) = crate::sim::evm::CallTraceInspector::new();
+        let (swap_insp, _swaps) = crate::sim::evm::SwapEventCaptureInspector::new();
+        let tx = TxEnv::builder()
+            .caller(CALLER)
+            .kind(TxKind::Call(CONTRACT))
+            .value(U256::ZERO)
+            .gas_limit(GAS_LIMIT)
+            .nonce(0)
+            .build()
+            .expect("well-formed tx");
+        let result = evm
+            .inspect_one(tx, (collector, (trace_insp, swap_insp)))
+            .expect("revm inspect");
+        assert!(result.is_success());
+        handle.take_access_list()
+    };
+
+    // evm2 side — one transact drives BOTH the collector and the account
+    // changes (the D3 comparison needs the same run).
+    let (evm2_al, journal_set) = {
+        use super::inspectors::Evm2SimInspector;
+        use ::evm2::ethereum::TxEnvelope;
+        use alloy::consensus::transaction::Recovered;
+        use alloy::consensus::TxLegacy;
+
+        let db = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(Evm2CodeMap(codes.clone())));
+        let mut evm = build_pilot_evm(db);
+        evm.set_inspector(Evm2SimInspector::default());
+        let tx = Recovered::new_unchecked(
+            TxEnvelope::Legacy(TxLegacy {
+                to: TxKind::Call(CONTRACT),
+                gas_limit: GAS_LIMIT,
+                nonce: 0,
+                ..Default::default()
+            }),
+            CALLER,
+        );
+        let executed = evm.transact(&tx).expect("evm2 transact");
+        let journal: BTreeSet<(Address, B256)> = executed
+            .account_changes()
+            .flat_map(|changes| {
+                let address = changes.address;
+                changes
+                    .storage
+                    .slots
+                    .keys()
+                    .map(move |k| (address, B256::from(*k)))
+            })
+            .collect();
+        let _ = executed.discard();
+        let al = evm
+            .inspector_mut()
+            .and_then(|i| i.downcast_mut::<Evm2SimInspector>())
+            .expect("composite inspector set")
+            .take_access_list();
+        (al, journal)
+    };
+
+    assert_eq!(
+        al_set(revm_al),
+        want,
+        "revm collector diverges from the fixture"
+    );
+    assert_eq!(
+        al_set(evm2_al),
+        want,
+        "evm2 collector diverges from the fixture"
+    );
+    assert_eq!(
+        journal_set, want,
+        "evm2 account-changes journal diverges (D3)"
+    );
+}
+
 /// Inspector-driven capture — the engine's swap-event oracle's seam — is
 /// identical across engines: same log, same verdict.
 #[test]
