@@ -46,9 +46,13 @@ the flag.**
 1. One feature, one home: `degenbot-simulation/evm2` gates the
    `src/sim/evm2/` module and its test targets. No default lane enables it;
    no other crate gains an evm2 dependency during the pilot.
-2. The pin follows reth 2.9.0's rev (`f93318f`), with `version = "0.1.0"`
-   on the dependency so `cargo publish` can strip the git source. Bumping
-   the pin is a deliberate, reviewed event (MSRV and API churn ride along).
+2. The dependency tracks main HEAD (amended 2026-10-30; it initially
+   pinned reth 2.9.0's rev `f93318f`). The feature is opt-in and the
+   differential gate is the drift alarm, so tracking HEAD costs nothing a
+   lane would pay for and buys early warning on upstream API churn — each
+   `cargo update` is a deliberate, reviewed event (MSRV and API churn ride
+   along). `version = "0.1.0"` on the dependency lets `cargo publish`
+   strip the git source.
 3. Only pure-Rust precompile backends are enabled (no GMP/MCL/aws-lc native
    builds), matching the revm dependency's backend shape and keeping the
    devcontainer build contract intact.
