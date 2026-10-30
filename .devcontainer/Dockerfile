@@ -5,6 +5,10 @@
 # requires (ADR-089).
 FROM fedora:45
 
+# patchelf: maturin uses it to set the rpath on the degenbot_rs cdylib, so
+# the extension resolves its shared libraries on its own. Without it `just dev`
+# warns "Failed to set rpath" and installs a rpath-less .so that only loads
+# with the venv's LD_LIBRARY_PATH shim in place.
 RUN dnf install -y \
         gcc gcc-c++ make pkgconf-pkg-config \
         uv python3 python3-devel python3-pip \
@@ -16,7 +20,7 @@ RUN dnf install -y \
         git \
         just \
         ripgrep \
-        mold lld llvm-devel \
+        mold lld llvm-devel patchelf \
         sudo tmux vim htop procps-ng psmisc \
         glibc-langpack-en \
         hostname \

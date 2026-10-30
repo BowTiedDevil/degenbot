@@ -95,6 +95,7 @@ time):
 | `uv`        | `uv`                                      | Fedora packages uv directly (unlike Ubuntu).     |
 | LLVM 23 | `llvm-devel` | llvm-config + headers + libs for evm2-jit's inkwell pin (llvm-sys 23.1 exact). ADR-089. |
 | mold, lld   | `mold`, `lld`                             | Faster cargo linkers (dev-only perf; analysis lived in `rust/PERF_RESULTS.md`, dropped in `f082db7a7`). mold is the default via the user-level `~/.cargo/config.toml` baked in the Dockerfile; lld is installed as a fallback. Scoped to the devcontainer (NOT committed as `rust/.cargo/config.toml`) so CI and non-devcontainer cloners keep using the default system linker. |
+| `patchelf`  | `patchelf`                                | maturin's rpath tool for the `degenbot_rs` cdylib. Without it `just dev` warns "Failed to set rpath" and installs a rpath-less `.so` that only loads with the venv's `LD_LIBRARY_PATH` shim. |
 | `tmux`      | `tmux`                                    | baked in (was runtime-installed before)          |
 | git / curl  | `git`, `curl`, `ca-certificates`, ...     |                                                  |
 
