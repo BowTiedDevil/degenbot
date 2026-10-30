@@ -1280,6 +1280,167 @@ fn storage_memo_serves_the_same_block_read_on_both_engines() {
     assert_eq!(memo_evm2.stats(), (1, 1), "evm2 memo: one hit, one miss");
 }
 
+// ── Phase 4: the settlement bundle on a journaled sequence ──
+
+/// The dispatching accumulate/copy contract: calldata word 0xffff copies
+/// slot 5 to slot 6; any other word accumulates it into slot 5. The copy
+/// steps prove mid-sequence visibility of accumulated writes.
+fn accumulate_code() -> Vec<u8> {
+    vec![
+        0x60, 0x00, 0x35, // CALLDATALOAD(0)          [in]
+        0x80, // DUP1                                 [in, in]
+        0x61, 0xff, 0xff, // PUSH2 0xffff            [in, in, 0xffff]
+        0x14, // EQ                                   [in, eq]
+        0x60, 0x13, // PUSH1 0x13 (copy dest)
+        0x57, // JUMPI
+        // accumulate:                               [in]
+        0x60, 0x05, 0x54, // SLOAD 5                 [in, s5]
+        0x01, // ADD                                  [sum]
+        0x60, 0x05, 0x55, // SSTORE 5
+        0x00, // STOP
+        0x5b, // JUMPDEST (copy)                     [in]
+        0x50, // POP
+        0x60, 0x05, 0x54, // SLOAD 5
+        0x60, 0x06, 0x55, // SSTORE 6
+        0x00, // STOP
+    ]
+}
+
+/// The 7-call settlement-bundle shape — journaled accumulation across
+/// read/execute/read steps — settles identically on both engines: per-step
+/// verdicts + gas, the accumulated writes, and post-sequence invisibility.
+#[test]
+fn settlement_bundle_sequence_matches_across_engines() {
+    use crate::sim::evm::{SimInspector, SimSession, SimStep};
+    use ::evm2::ethereum::TxEnvelope;
+    use alloy::consensus::transaction::Recovered;
+    use alloy::consensus::TxLegacy;
+    use revm::context::TxEnv;
+    use revm::{MainBuilder, MainContext};
+
+    const COPY: u64 = 0xffff;
+    let codes = CodeMap(vec![(CONTRACT, accumulate_code())]);
+    // The 7-step vector: accumulate ×3, copy, accumulate ×2, copy.
+    let inputs = [1u64, 2, 3, COPY, 4, 5, COPY];
+
+    // revm side — the production sequence verb.
+    let (revm_calls, revm_writes, revm_after) = {
+        let db = revm::database::CacheDB::new(RevmCodeMap(&codes));
+        let mut ctx = revm::context::Context::mainnet().with_db(db);
+        ctx.cfg
+            .set_spec_and_mainnet_gas_params(revm::primitives::hardfork::SpecId::CANCUN);
+        let mut evm = ctx.build_mainnet_with_inspector(SimInspector::default());
+        let mut session = SimSession::new(&mut evm);
+        let steps: Vec<SimStep<_>> = inputs
+            .iter()
+            .enumerate()
+            .map(|(nonce, &input)| {
+                SimStep::Transact(
+                    TxEnv::builder()
+                        .caller(CALLER)
+                        .kind(TxKind::Call(CONTRACT))
+                        .data(word(input))
+                        .value(U256::ZERO)
+                        .gas_limit(GAS_LIMIT)
+                        .nonce(nonce as u64)
+                        .build()
+                        .expect("well-formed step"),
+                )
+            })
+            .collect();
+        let seq = session.run_sequence(steps).expect("revm sequence");
+        let mut writes: Vec<(Address, U256, U256)> = seq
+            .state
+            .get(&CONTRACT)
+            .map(|account| {
+                account
+                    .storage
+                    .iter()
+                    .map(|(k, s)| (CONTRACT, *k, s.present_value()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        writes.sort();
+        let after = session
+            .read_word(CONTRACT, U256::from(SLOT))
+            .expect("revm view read");
+        (
+            seq.calls
+                .iter()
+                .map(|c| {
+                    (
+                        c.is_success(),
+                        c.tx_gas_used(),
+                        c.output().cloned().unwrap_or_default(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            writes,
+            after,
+        )
+    };
+
+    // evm2 side — the checkpoint-scoped sequence verb.
+    let (evm2_calls, evm2_writes, evm2_after) = {
+        let db = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(Evm2CodeMap(codes.clone())));
+        let mut evm = build_pilot_evm(db);
+        let mut session = super::session::Evm2SimSession::new(&mut evm);
+        let steps: Vec<_> = inputs
+            .iter()
+            .enumerate()
+            .map(|(nonce, &input)| {
+                Recovered::new_unchecked(
+                    TxEnvelope::Legacy(TxLegacy {
+                        to: TxKind::Call(CONTRACT),
+                        input: word(input),
+                        gas_limit: GAS_LIMIT,
+                        nonce: nonce as u64,
+                        ..Default::default()
+                    }),
+                    CALLER,
+                )
+            })
+            .collect();
+        let seq = session.run_sequence(&steps).expect("evm2 sequence");
+        let after = session
+            .read_word(CONTRACT, U256::from(SLOT))
+            .expect("evm2 view read");
+        (
+            seq.calls
+                .iter()
+                .map(|c| {
+                    (
+                        c.verdict == crate::sim::evm::RunVerdict::Success,
+                        c.gas_used,
+                        c.output.clone(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            seq.storage_writes,
+            after,
+        )
+    };
+
+    assert_eq!(revm_calls.len(), 7, "revm sanity");
+    assert_eq!(
+        revm_calls, evm2_calls,
+        "per-step verdicts/gas/output diverge"
+    );
+    assert_eq!(revm_writes, evm2_writes, "accumulated writes diverge");
+    // The accumulated final state: slot 5 = 15, slot 6 = 15 (the copy ran
+    // after the last accumulate — mid-sequence visibility proven).
+    assert_eq!(
+        evm2_writes,
+        [
+            (CONTRACT, U256::from(5u64), U256::from(15u64)),
+            (CONTRACT, U256::from(6u64), U256::from(15u64))
+        ],
+        "accumulated state sanity"
+    );
+    // Post-sequence invisibility: the shared view carries nothing.
+    assert_eq!((revm_after, evm2_after), (U256::ZERO, U256::ZERO));
+}
+
 /// Inspector-driven capture — the engine's swap-event oracle's seam — is
 /// identical across engines: same log, same verdict.
 #[test]

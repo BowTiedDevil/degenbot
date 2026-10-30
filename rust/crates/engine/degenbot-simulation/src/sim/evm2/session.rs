@@ -17,7 +17,7 @@ use degenbot_pools::{
 
 use ::evm2::ethereum::RecoveredTxEnvelope;
 use ::evm2::evm::TxResult;
-use ::evm2::{BaseEvmTypes, Evm};
+use ::evm2::{BaseEvmTypes, Evm, ExecutionConfig};
 
 use crate::sim::evm::RunVerdict;
 
@@ -31,6 +31,15 @@ pub enum Evm2SimError {
     /// The EVM refused the envelope (validation or handler error).
     #[error("transact refused: {0}")]
     Transact(String),
+    /// A journaled sequence step refused; the accumulated overlay was
+    /// rolled back before the error escaped.
+    #[error("sequence step {index} refused: {source}")]
+    Sequence {
+        /// The refusing step's index.
+        index: usize,
+        /// The refusal class.
+        source: Box<Evm2SimError>,
+    },
 }
 
 /// One settled run: the verdict, the gas burned, the top-level return data,
@@ -51,16 +60,43 @@ pub struct Evm2SimRun {
     pub storage_writes: Vec<(Address, U256, U256)>,
 }
 
+/// One journaled sequence's settled shape — the revm-side `SimSequence`
+/// analog: per-step results in order plus the accumulated writes.
+#[derive(Debug)]
+pub struct Evm2SimSequence {
+    /// The steps' results, in step order.
+    pub calls: Vec<Evm2SimRun>,
+    /// The accumulated storage writes, merged in step order (a later step
+    /// overwrites an earlier step's value for the same slot), sorted for
+    /// deterministic comparison.
+    pub storage_writes: Vec<(Address, U256, U256)>,
+}
+
 /// The settle-verb session over the shared evm2 EVM (see the module doc).
 pub struct Evm2SimSession<'h, 'a> {
     evm: &'h mut Evm<'a, BaseEvmTypes>,
+    /// The block env a journaled sequence's throwaway EVM runs under (the
+    /// shared EVM's own block env — captured at construction because the
+    /// EVM exposes no block-env getter).
+    block_env: ::evm2::env::BlockEnvExt,
 }
 
 impl<'h, 'a> Evm2SimSession<'h, 'a> {
-    /// Wrap the EVM the caller owns for the session's scope.
+    /// Wrap the EVM the caller owns for the session's scope. The journaled
+    /// sequence verb runs under a default block env; production callers
+    /// carrying a pumped block use [`Self::with_block_env`].
     #[must_use]
     pub fn new(evm: &'h mut Evm<'a, BaseEvmTypes>) -> Self {
-        Self { evm }
+        Self::with_block_env(evm, ::evm2::env::BlockEnvExt::default())
+    }
+
+    /// Wrap the EVM with the block env its sequences replay under.
+    #[must_use]
+    pub fn with_block_env(
+        evm: &'h mut Evm<'a, BaseEvmTypes>,
+        block_env: ::evm2::env::BlockEnvExt,
+    ) -> Self {
+        Self { evm, block_env }
     }
 
     /// Run ONE transaction envelope and settle it — `transact` + `discard`
@@ -92,6 +128,79 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
             gas_used: result.tx_gas_used(),
             output: result.output.clone(),
             storage_writes,
+        })
+    }
+
+    /// Run `steps` in order over ONE accumulating accepted overlay and
+    /// settle — the revm-side `SimSession::run_sequence` analog (journaled
+    /// accumulation across calls: a step sees every earlier step's writes).
+    ///
+    /// The accumulation runs on a THROWAWAY EVM built per sequence over the
+    /// shared EVM's own database handle: each step commits into the
+    /// throwaway's accepted overlay, reads fall through to the shared DB
+    /// stack (warming it exactly as `run` does), and the whole throwaway —
+    /// overlay included — drops when the sequence ends. The shared EVM's
+    /// settled view never carries a sequence's writes into the next path
+    /// (the same isolation contract `run` states). A step that reverts
+    /// still commits (a revert's nonce/gas effects persist, matching the
+    /// revm journal) and keeps the sequence running.
+    ///
+    /// # Errors
+    ///
+    /// [`Evm2SimError::Sequence`] carrying the refusing step's index.
+    pub fn run_sequence(
+        &mut self,
+        steps: &[RecoveredTxEnvelope],
+    ) -> Result<Evm2SimSequence, Evm2SimError> {
+        let spec = self.evm.spec_id();
+        // The throwaway EVM: the shared DB by mutable handle (reads warm
+        // the shared stack; the accumulation dies with it), configured
+        // from the shared EVM's own `Version` so runtime feature
+        // relaxations (the frame-replay checks) carry over.
+        let exec =
+            ExecutionConfig::<BaseEvmTypes>::for_spec_and_version(spec, self.evm.version().clone());
+        let mut seq_evm = Evm::new_with_execution_config(
+            exec,
+            spec,
+            self.block_env,
+            ::evm2::ethereum::ethereum_tx_registry(spec),
+            self.evm.state_mut().initial_mut(),
+            ::evm2::Precompiles::base(spec),
+        );
+        let mut calls = Vec::with_capacity(steps.len());
+        let mut writes = std::collections::BTreeMap::new();
+        for (index, tx) in steps.iter().enumerate() {
+            let executed = match seq_evm.transact(tx) {
+                Ok(executed) => executed,
+                Err(err) => {
+                    return Err(Evm2SimError::Sequence {
+                        index,
+                        source: Box::new(Evm2SimError::Transact(err.to_string())),
+                    });
+                }
+            };
+            // The writes stream through a sink (`commit_with`) rather than
+            // `account_changes`: the iterator's `impl Trait` over-captures
+            // the EVM borrow under the Rust 2024 capture rules.
+            let mut sink = StepWrites { writes: Vec::new() };
+            let Ok(result) = executed.commit_with(&mut sink);
+            let storage_writes = sink.writes;
+            for (address, key, value) in &storage_writes {
+                writes.insert((*address, *key), *value);
+            }
+            calls.push(Evm2SimRun {
+                verdict: verdict_of(&result),
+                gas_used: result.tx_gas_used(),
+                output: result.output.clone(),
+                storage_writes,
+            });
+        }
+        Ok(Evm2SimSequence {
+            calls,
+            storage_writes: writes
+                .into_iter()
+                .map(|((address, key), value)| (address, key, value))
+                .collect(),
         })
     }
 
@@ -138,6 +247,22 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
     /// The raw evm2 EVM — the documented escape hatch (see the module doc).
     pub fn evm_mut(&mut self) -> &mut Evm<'a, BaseEvmTypes> {
         self.evm
+    }
+}
+
+/// The per-step write collector for `commit_with` — the changed-slot set
+/// the sequence merges into its accumulated writes.
+struct StepWrites {
+    writes: Vec<(Address, U256, U256)>,
+}
+
+impl ::evm2::evm::StateChangeSink for StepWrites {
+    type Error = core::convert::Infallible;
+
+    fn storage(&mut self, change: ::evm2::evm::StorageChange) -> Result<(), Self::Error> {
+        self.writes
+            .push((change.address, change.key, change.current));
+        Ok(())
     }
 }
 
