@@ -69,10 +69,11 @@ the flag.**
    (amended 2026-10-30; this clause initially read "out of scope"). It is a
    fail-soft hybrid: `JitInterpreterRunner` falls back to the interpreter
    when no compiled program exists, so the differential gate covers the JIT
-   with no new divergence surface. Its costs stay out of every default lane:
-   LLVM 23.1 exactly (the F45 devcontainer's `llvm-devel`), and the
-   unreleased inkwell git rev re-pinned at the workspace root (cargo's
-   `[patch]` is not transitive; dropped at publish like reth's copy).
+   with no new divergence surface. Its only cost outside the default lanes
+   is LLVM 23 (the F45 devcontainer's `llvm-devel`; `evm2-jit-llvm` binds
+   the C API directly and probes `llvm-config`/`llvm-config-23`). evm2
+   dropped its inkwell dependency at `86fa2648` (2026-10-30), retiring the
+   workspace-root inkwell `[patch]` re-pin this clause originally carried.
 
 ## Rejected alternatives
 

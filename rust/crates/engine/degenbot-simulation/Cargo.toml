@@ -65,8 +65,8 @@ evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0
 ] }
 # evm2-jit — the JIT interpreter runner (ADR-089). Same main-HEAD tracking
 # as evm2.
-# `llvm` binds LLVM 23.1 exactly (inkwell llvm23-1; the workspace root
-# re-pins inkwell's git rev — the evm2-side patch is not transitive).
+# `llvm` compiles against LLVM 23 (`llvm-config`/`llvm-config-23`; the F45
+# devcontainer's `llvm-devel`).
 evm2-jit = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, optional = true, features = [
     "asm-keccak",
     "llvm",

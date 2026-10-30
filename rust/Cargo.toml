@@ -224,12 +224,6 @@ codegen-units = 1
 # This is intentionally opt-level 1: the development extension
 # should exercise representative optimized code, and release remains the only
 # profile that pays for thin LTO and stripping.
-# evm2's own inkwell patch is not transitive (cargo applies [patch] only
-# from the workspace root): the LLVM-23-capable inkwell rev must be re-pinned
-# here for evm2-jit (ADR-089). Dropped by cargo publish, same as reth's copy.
-[patch.crates-io]
-inkwell = { git = "https://github.com/TheDan64/inkwell", rev = "c9d9734ae17dbaf1d9902dab3b8ee9d2041781ff" }
-
 [profile.dev]
 # More codegen units for faster incremental dev builds across all crates.
 opt-level = 1

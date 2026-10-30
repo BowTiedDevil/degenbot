@@ -1,7 +1,7 @@
 # degenbot devcontainer base.
 
 # Pinned major: `latest` drifts silently (it moved F43→F44 under us). F45 is
-# the first Fedora whose llvm is 23.x — the version evm2-jit's inkwell pin
+# the first Fedora whose llvm is 23.x — the version evm2-jit's LLVM backend
 # requires (ADR-089).
 FROM fedora:45
 

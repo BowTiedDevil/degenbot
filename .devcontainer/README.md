@@ -6,7 +6,7 @@ VSCode auto-discovers `devcontainer.json` in this directory.
 `consistency=cached`, which is Docker-Desktop-only). VSCode and the devcontainer
 CLI both need to be pointed at `podman` (see setup below).
 
-**Base image: `fedora:45`** (pinned major — `latest` drifts silently; F45 is the first Fedora with LLVM 23, which the evm2-jit pilot's inkwell pin requires, ADR-089). Everything
+**Base image: `fedora:45`** (pinned major — `latest` drifts silently; F45 is the first Fedora with LLVM 23, which the evm2-jit pilot requires, ADR-089). Everything
 dnf-installable is baked into a minimal `Dockerfile` — there are **zero
 devcontainer features**. Only one tool is still curl-installed, because it has
 no Fedora package: `foundry`. (uv, unlike on Ubuntu, IS packaged by Fedora.)
@@ -93,7 +93,7 @@ time):
 | `just`      | `just`                                    |                                                  |
 | `direnv`    | `direnv`                                  | Hooked into `/etc/bashrc` at build time. The repo `.envrc` is a deliberate no-op inside the container (guarded on `/run/.containerenv`; `containerEnv` owns those vars) — it exists for the host side of the bind mount. |
 | `uv`        | `uv`                                      | Fedora packages uv directly (unlike Ubuntu).     |
-| LLVM 23 | `llvm-devel` | llvm-config + headers + libs for evm2-jit's inkwell pin (llvm-sys 23.1 exact). ADR-089. |
+| LLVM 23 | `llvm-devel` | llvm-config + headers + libs for evm2-jit's LLVM backend. ADR-089. |
 | mold, lld   | `mold`, `lld`                             | Faster cargo linkers (dev-only perf; analysis lived in `rust/PERF_RESULTS.md`, dropped in `f082db7a7`). mold is the default via the user-level `~/.cargo/config.toml` baked in the Dockerfile; lld is installed as a fallback. Scoped to the devcontainer (NOT committed as `rust/.cargo/config.toml`) so CI and non-devcontainer cloners keep using the default system linker. |
 | `patchelf`  | `patchelf`                                | maturin's rpath tool for the `degenbot_rs` cdylib. Without it `just dev` warns "Failed to set rpath" and installs a rpath-less `.so` that only loads with the venv's `LD_LIBRARY_PATH` shim. |
 | `tmux`      | `tmux`                                    | baked in (was runtime-installed before)          |
