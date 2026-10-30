@@ -162,13 +162,13 @@ fn fixed_anchor_recovers_walk_optimum_on_diverging_three_hop_paths() {
                 "fixed closed form + ±2 sweep must match walk (a{a} b{b} c{c} g{g})"
             );
 
-            // Regression: the old failure entered the micro-profit branch.
+            // Regression: the old failure entered the micro-profit branch,
+            // which reports input 1 when profitable.
             let r = exact_mobius_solve(&hops).unwrap();
             assert!(
-                r.used_closed_form,
+                r.is_profitable && r.optimal_input != U256::from(1u64),
                 "must not take the micro-profit fallback"
             );
-            assert_ne!(r.optimal_input, U256::from(1u64));
         }
     }
 }

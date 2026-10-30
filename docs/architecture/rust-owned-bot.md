@@ -174,7 +174,7 @@ The optimal input is the closed-form `x_opt = (√(K·M) - M) / N`, solvable via
 - Checks `K > M` for profitability
 - Computes `x_opt = (isqrt(K·M) - M) / N` using `isqrt_u512` (Newton's method in U512, ~100ns)
 - EVM-simulates at `x_opt` and ±2 neighbors to handle floor-division rounding
-- Returns best result with `used_closed_form: bool`
+- Returns the anchor evaluation (`optimal_input`, `profit`, `is_profitable`, `hop_outputs`)
 
 **Performance**: 131ns for a 2-hop V2 path (17× faster than the iterative `int_mobius_solve_with_refinement`).
 

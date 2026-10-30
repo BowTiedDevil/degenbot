@@ -88,16 +88,6 @@ pub struct ExactMobiusResult {
     pub profit: U256,
     /// Whether the path is profitable (K > M).
     pub is_profitable: bool,
-    /// Whether the closed-form anchor was used (as opposed to the
-    /// zero-anchor micro-profit probe at input 1).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "kernel surface read by the in-crate labs (cfg(test)); unreached in the lib build (ADR-084 W2 demotion)"
-        )
-    )]
-    pub used_closed_form: bool,
     /// Per-hop output amounts. `hop_outputs[i]` = output after hop `i`.
     /// Empty if not profitable.
     pub hop_outputs: Vec<U256>,
@@ -141,7 +131,6 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
             optimal_input: U256::ZERO,
             profit: U256::ZERO,
             is_profitable: false,
-            used_closed_form: false,
             hop_outputs: Vec::new(),
         });
     }
@@ -159,7 +148,6 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
                     optimal_input: U256::from(1u64),
                     profit: sim.final_output - U256::from(1u64),
                     is_profitable: true,
-                    used_closed_form: false,
                     hop_outputs: sim.steps.iter().map(|s| s.output).collect::<Vec<_>>(),
                 });
             }
@@ -168,7 +156,6 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
             optimal_input: U256::ZERO,
             profit: U256::ZERO,
             is_profitable: false,
-            used_closed_form: false,
             hop_outputs: Vec::new(),
         });
     }
@@ -191,7 +178,6 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
             optimal_input: U256::ZERO,
             profit: U256::ZERO,
             is_profitable: false,
-            used_closed_form: true,
             hop_outputs: Vec::new(),
         });
     };
@@ -205,7 +191,6 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
         },
         profit,
         is_profitable: !profit.is_zero(),
-        used_closed_form: true,
         hop_outputs: if profit.is_zero() {
             Vec::new()
         } else {
@@ -738,8 +723,8 @@ mod tests {
     fn test_deep_three_hop_discriminant_does_not_wrap() {
         // 3-hop 1e24: bit_len(K) + bit_len(M) > 512, so the pre-fix U512
         // product wrapped and collapsed the anchor to zero. The widened
-        // discriminant must produce a real anchor, and the solver must use
-        // the closed form rather than the 1-wei micro-profit fallback.
+        // discriminant must produce a real anchor, and the solver must
+        // evaluate it rather than the 1-wei micro-profit fallback.
         let base = pow10(24);
         let hops = vec![
             IntHopState::new(base, base * U256::from(100u64), 9995, 10000),
@@ -754,8 +739,11 @@ mod tests {
         assert!(!compute_mobius_model_optimal_input(&coeffs).is_zero());
 
         let result = exact_mobius_solve(&hops).unwrap();
+        // The micro-probe is the only non-anchor path and reports input 1
+        // when profitable, so this pins the same fact without a provenance
+        // flag.
         assert!(
-            result.used_closed_form,
+            result.is_profitable && result.optimal_input != U256::from(1u64),
             "must not enter micro-profit fallback"
         );
         assert!(
