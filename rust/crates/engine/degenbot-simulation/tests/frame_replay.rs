@@ -23,7 +23,7 @@
 
 use std::time::Duration;
 
-use alloy::primitives::{address, Address, Bytes, U256};
+use alloy::primitives::{address, b256, Address, Bytes, B256, U256};
 use degenbot_simulation::sim::evm::frame_replay::{
     read_view_word, BaseFeeSource, CountingFrameDb, FrameRpcCounter, PredStatus, ReplayFrameError,
     ReplayableTx, ScratchBlock, ScratchEvm, SequenceReplayError,
@@ -786,6 +786,124 @@ fn halted_predecessor_commits_and_the_sequence_proceeds() {
     assert!(sequence.predecessor_gas[0] > 0, "the halt burned gas");
 }
 
+/// The block the live legs replay at: a committed pin, so a run's verdict
+/// never rides the moving head. The transfer leg builds synthetic frames and
+/// needs any well-formed block; the router-swap leg replays its committed
+/// fixture from this block.
+const LIVE_PIN: u64 = 26_305_117;
+
+/// The committed router-swap fixture landing in [`LIVE_PIN`]: a
+/// `swapExactTokensForTokens` frame that settles at its parent block at
+/// post-state parity with the node's per-tx diff, and is its sender's first
+/// tx in the block (its nonce validates against the parent view).
+const V2_ROUTER_FIXTURE_TX: B256 =
+    b256!("0xc75ac941a8d3759e783fb3da868f373fa55f9b13d4c1469b9f2fd530dcec7095");
+
+/// The Uniswap V2 Router 02.
+const V2_ROUTER: Address = address!("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D");
+
+/// swapExactTokensForTokens only: ETH-carrying selectors move balances in
+/// ways the seam does not claim to model (see the router-swap leg's balance
+/// channel).
+const V2_SWAP_SELECTORS: [[u8; 4]; 1] = [[0x38, 0xed, 0x17, 0x39]];
+
+/// The live legs' acquisition readout: which frame a leg replayed and via
+/// which route. Assertions carry pass/fail; this carries the why.
+#[expect(
+    clippy::print_stdout,
+    reason = "the acquisition route is the live legs' operator readout; a \
+              --nocapture run is its consumer, not a debug leftover"
+)]
+fn replay_note(msg: &str) {
+    println!("{msg}");
+}
+
+/// The router-swap leg's candidate domain: its selector on a plain 1559
+/// frame. `ReplayableTx` carries no tx-type or access list, so fixtures outside
+/// that class diverge on gas-money by construction (characterized in the
+/// module doc).
+fn is_router_swap_candidate(t: &alloy::rpc::types::Transaction) -> bool {
+    use alloy::consensus::Transaction as _;
+
+    t.to() == Some(V2_ROUTER)
+        && matches!(t.inner.tx_type(), alloy::consensus::TxType::Eip1559)
+        && t.inner.access_list().is_none_or(|al| al.is_empty())
+        && V2_SWAP_SELECTORS
+            .iter()
+            .any(|sel| t.input().get(0..4) == Some(&sel[..]))
+}
+
+/// The committed fixture's landing tx when the node serves it at the pinned
+/// block and it sits in the leg's replayable domain. A frame the node cannot
+/// serve, one outside the domain, or one whose sender already sent earlier in
+/// the block degrades to the window scan with a note — never a silent miss.
+async fn committed_router_frame(
+    provider: &alloy::providers::RootProvider,
+) -> Option<alloy::rpc::types::Transaction> {
+    use alloy::consensus::Transaction as _;
+    use alloy::eips::BlockId;
+    use alloy::providers::Provider as _;
+
+    let fetched = provider.get_transaction_by_hash(V2_ROUTER_FIXTURE_TX).await;
+    let t = match fetched {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            replay_note(&format!(
+                "replay[v2_router] committed fixture {V2_ROUTER_FIXTURE_TX} is not retrievable; \
+                 falling back to the live scan"
+            ));
+            return None;
+        }
+        Err(err) => {
+            replay_note(&format!(
+                "replay[v2_router] committed fixture {V2_ROUTER_FIXTURE_TX} lookup failed ({err}); \
+                 falling back to the live scan"
+            ));
+            return None;
+        }
+    };
+    if t.block_number != Some(LIVE_PIN) {
+        replay_note(&format!(
+            "replay[v2_router] committed fixture {V2_ROUTER_FIXTURE_TX} does not land at block \
+             {LIVE_PIN}; falling back to the live scan"
+        ));
+        return None;
+    }
+    if !is_router_swap_candidate(&t) {
+        replay_note(&format!(
+            "replay[v2_router] committed fixture {V2_ROUTER_FIXTURE_TX} is outside the \
+             replayable domain; falling back to the live scan"
+        ));
+        return None;
+    }
+    let parent_nonce = provider
+        .get_transaction_count(t.inner.signer())
+        .block_id(BlockId::number(LIVE_PIN.saturating_sub(1)))
+        .await
+        .unwrap();
+    if parent_nonce != t.nonce() {
+        replay_note(&format!(
+            "replay[v2_router] committed fixture {V2_ROUTER_FIXTURE_TX} is not its sender's \
+             first tx in the block; falling back to the live scan"
+        ));
+        return None;
+    }
+    Some(t)
+}
+
+/// The committed fixture is pinned: a zeroed pin or hash would silently
+/// degrade to the moving-head scan — the window-luck these fixtures exist to
+/// end.
+#[test]
+fn committed_router_fixture_is_pinned() {
+    assert_ne!(LIVE_PIN, 0, "the live legs pin a block");
+    assert_ne!(
+        V2_ROUTER_FIXTURE_TX,
+        B256::ZERO,
+        "the router-swap leg names its fixture frame"
+    );
+}
+
 /// Live wiring: `scratch_evm()` over a real forked node stacks + replays a
 /// plain (21000-gas) transfer twice; the second replay is warm (0 reads).
 #[tokio::test(flavor = "multi_thread")]
@@ -803,9 +921,9 @@ async fn live_scratch_evm_replays_a_plain_transfer_and_warms() {
     let alloy_provider =
         degenbot_rpc::provider::AlloyProvider::from_provider(Arc::new(provider.clone()));
 
-    // pin
-    let head = provider.get_block_number().await.unwrap();
-    let pin = head.saturating_sub(1);
+    // The committed pin: this leg replays synthetic frames, so the block only
+    // has to be well-formed — but it must not ride the moving head either.
+    let pin = LIVE_PIN;
     let block = provider
         .get_block_by_number(BlockNumberOrTag::Number(pin))
         .await
@@ -876,73 +994,70 @@ async fn live_v2_router_swap_replay_matches_chain_post_state() {
     use alloy::providers::{Provider, ProviderBuilder};
     use degenbot_simulation::{BlockSimHandle, SimulationOverrideParams};
 
-    const V2_ROUTER: Address = address!("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D");
-    // swapExactTokensForTokens only: ETH-carrying selectors move balances in
-    // ways the seam does not claim to model (see the balance channel below).
-    const V2_SWAP_SELECTORS: [[u8; 4]; 1] = [[0x38, 0xed, 0x17, 0x39]];
-
     let rpc_url = std::env::var("DEGENBOT_RPC_HTTP_CHAINID_1").unwrap();
     let provider: alloy::providers::RootProvider =
         ProviderBuilder::default().connect_http(rpc_url.parse().unwrap());
     let alloy_provider =
         degenbot_rpc::provider::AlloyProvider::from_provider(Arc::new(provider.clone()));
 
-    // Pin the block with `DEGENBOT_PARITY_BLOCK` (the pinned block must carry
-    // a router V2 swap); the default scans back from head (up to 100 blocks)
-    // for the most recent block with a runnable router swap.
-    let head = provider.get_block_number().await.unwrap();
-    let scan_blocks = match std::env::var("DEGENBOT_PARITY_BLOCK") {
-        Ok(b) => vec![b.parse::<u64>().unwrap()],
-        Err(_) => (1..=100u64)
-            .rev()
-            .map(|i| head.saturating_sub(i))
-            .collect::<Vec<_>>(),
-    };
+    // The committed fixture first: one fixed frame, never whatever the moving
+    // head happens to carry. `DEGENBOT_PARITY_BLOCK` hunts a frame at one
+    // block (an operator harvesting a replacement fixture); the newest-first
+    // window covers only a committed frame that cannot carry the leg.
     let mut fixture = None;
-    for pin_number in &scan_blocks {
-        if *pin_number == 0 {
-            continue;
-        }
-        let block = provider
-            .get_block_by_number(BlockNumberOrTag::Number(*pin_number))
-            .full()
-            .await
-            .unwrap()
-            .expect("fixture block exists");
-        let txs: Vec<alloy::rpc::types::Transaction> = block.transactions.txns().cloned().collect();
-        let candidate = txs
-            .into_iter()
-            .filter(|t| t.to() == Some(V2_ROUTER))
-            // ReplayableTx's input domain is plain 1559 frames: it carries no
-            // tx-type or access list, so fixtures outside that class diverge
-            // on gas-money by construction (characterized in the module doc).
-            .filter(|t| matches!(t.inner.tx_type(), alloy::consensus::TxType::Eip1559))
-            .filter(|t| t.inner.access_list().is_none_or(|al| al.is_empty()))
-            .filter(|t| {
-                let input = t.input();
-                V2_SWAP_SELECTORS
-                    .iter()
-                    .any(|sel| input.get(0..4) == Some(&sel[..]))
-            })
-            .collect::<Vec<_>>();
-        // The frame nonce must validate against the PARENT view, so the
-        // fixture must be the sender's first tx in its block.
-        for nested in candidate {
-            let parent_nonce = provider
-                .get_transaction_count(nested.inner.signer())
-                .block_id(BlockId::number(pin_number.saturating_sub(1)))
+    let mut via = "live scan";
+    if let Some(committed) = committed_router_frame(&provider).await {
+        fixture = Some((committed, LIVE_PIN));
+        via = "committed fixture";
+    } else {
+        let head = provider.get_block_number().await.unwrap();
+        let scan_blocks = match std::env::var("DEGENBOT_PARITY_BLOCK") {
+            Ok(b) => vec![b.parse::<u64>().unwrap()],
+            Err(_) => (1..=100u64)
+                .rev()
+                .map(|i| head.saturating_sub(i))
+                .collect::<Vec<_>>(),
+        };
+        for pin_number in &scan_blocks {
+            if *pin_number == 0 {
+                continue;
+            }
+            let block = provider
+                .get_block_by_number(BlockNumberOrTag::Number(*pin_number))
+                .full()
                 .await
-                .unwrap();
-            if parent_nonce == nested.nonce() {
-                fixture = Some((nested, *pin_number));
+                .unwrap()
+                .expect("fixture block exists");
+            let txs: Vec<alloy::rpc::types::Transaction> =
+                block.transactions.txns().cloned().collect();
+            let candidate = txs
+                .into_iter()
+                .filter(is_router_swap_candidate)
+                .collect::<Vec<_>>();
+            // The frame nonce must validate against the PARENT view, so the
+            // fixture must be the sender's first tx in its block.
+            for nested in candidate {
+                let parent_nonce = provider
+                    .get_transaction_count(nested.inner.signer())
+                    .block_id(BlockId::number(pin_number.saturating_sub(1)))
+                    .await
+                    .unwrap();
+                if parent_nonce == nested.nonce() {
+                    fixture = Some((nested, *pin_number));
+                    break;
+                }
+            }
+            if fixture.is_some() {
                 break;
             }
         }
-        if fixture.is_some() {
-            break;
-        }
     }
-    let (fixture, pin) = fixture.expect("no router V2 swap found in the scanned blocks");
+    let (fixture, pin) =
+        fixture.expect("no router V2 swap found (the committed fixture plus the scanned blocks)");
+    replay_note(&format!(
+        "replay[v2_router] via {via}: pin={pin} tx={}",
+        fixture.inner.hash()
+    ));
     let block = provider
         .get_block_by_number(BlockNumberOrTag::Number(pin))
         .full()

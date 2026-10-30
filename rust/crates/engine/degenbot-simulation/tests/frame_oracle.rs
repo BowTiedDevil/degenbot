@@ -26,11 +26,11 @@
 //! discovery + discipline shape of the sibling suites, not a new one.
 //!
 //! Archetypes (one fixture each): direct V2 router (Router02), direct V3
-//! router (an exactInput/exactOutput call on the v1 SwapRouter deployment or
-//! its SwapRouter02 successor — measured on the live node: the v1 deployment
-//! itself draws ZERO direct calls for hours on end, so the direct-V3 router
-//! form is only observable through the shared selector surface), SwapRouter02
-//! (selector-agnostic), UniversalRouter multi-hop, 1inch v5 aggregation
+//! router (an exactInput/exactOutput call on either V3-router deployment —
+//! the seat is selector-gated over both families, the v1 SwapRouter's
+//! deadline-param one and its 02 successor's no-deadline one), SwapRouter02
+//! (selector-agnostic: the 02 multicall wrapper forms), UniversalRouter
+//! multi-hop, 1inch v5 aggregation
 //! router, CoW batch settle (multi-pool touch — the FULL descriptor set is
 //! asserted recovered, not just the first pool). The archived capture's
 //! aggregation frame rode the 1inch v6 router; both deployments journal the
@@ -158,14 +158,23 @@ impl Archetype {
     }
 }
 
-/// The direct V3 router calls: identical selector surface on the v1 and 02
-/// deployments (`exactInputSingle`/`exactInput`/`exactOutputSingle`/
-/// `exactOutput`).
-const DIRECT_V3_SELECTORS: [[u8; 4]; 4] = [
-    [0x41, 0x4b, 0xf3, 0x89], // exactInputSingle
-    [0xc0, 0x4b, 0x8d, 0x59], // exactInput
-    [0xdb, 0x3e, 0x21, 0x98], // exactOutputSingle
-    [0xf2, 0x8c, 0x04, 0x91], // exactOutput
+/// The direct V3 router calls: `exactInputSingle`/`exactInput`/
+/// `exactOutputSingle`/`exactOutput` in both deployments' shapes. The v1
+/// SwapRouter carries a deadline argument in every form
+/// (`0x414bf389`/`0xc04b8d59`/`0xdb3e2198`/`0xf28c0498`); SwapRouter02
+/// dropped it (`0x04e45aaf`/`0xb858183f`/`0x5023b4df`/`0x09b81346`) — eight
+/// distinct selectors, measured on-chain, all landing in the direct seat. The
+/// 02 `multicall` wrapper (`0xac9650d8`/`0x5ae401dc`) is outside the surface
+/// and rides the selector-agnostic SwapRouter02 seat.
+const DIRECT_V3_SELECTORS: [[u8; 4]; 8] = [
+    [0x41, 0x4b, 0xf3, 0x89], // v1 exactInputSingle
+    [0xc0, 0x4b, 0x8d, 0x59], // v1 exactInput
+    [0xdb, 0x3e, 0x21, 0x98], // v1 exactOutputSingle
+    [0xf2, 0x8c, 0x04, 0x98], // v1 exactOutput
+    [0x04, 0xe4, 0x5a, 0xaf], // 02 exactInputSingle
+    [0xb8, 0x58, 0x18, 0x3f], // 02 exactInput
+    [0x50, 0x23, 0xb4, 0xdf], // 02 exactOutputSingle
+    [0x09, 0xb8, 0x13, 0x46], // 02 exactOutput
 ];
 
 /// A frame (`to` + calldata head) belongs to `arch`: the router target plus
@@ -181,17 +190,20 @@ fn classifies_as(arch: Archetype, to: Address, input: &[u8]) -> bool {
         }
 }
 
+/// Every archetype seat, in classification order (the selector-gated seat
+/// precedes the selector-agnostic one it overlaps with on `to`).
+const ARCHETYPES: [Archetype; 6] = [
+    Archetype::DirectV2Router,
+    Archetype::DirectV3Router,
+    Archetype::SwapRouter02,
+    Archetype::UniversalRouterMultiHop,
+    Archetype::OneInchV5,
+    Archetype::CoWBatchSettle,
+];
+
 /// The archetype a frame's `to` + calldata classify into (`None` = untracked;
 /// the direct V3 router form additionally discriminates its selector).
 fn archetype_of(to: Address, input: &[u8]) -> Option<Archetype> {
-    const ARCHETYPES: [Archetype; 6] = [
-        Archetype::DirectV2Router,
-        Archetype::DirectV3Router,
-        Archetype::SwapRouter02,
-        Archetype::UniversalRouterMultiHop,
-        Archetype::OneInchV5,
-        Archetype::CoWBatchSettle,
-    ];
     ARCHETYPES
         .into_iter()
         .find(|arch| classifies_as(*arch, to, input))
@@ -200,13 +212,14 @@ fn archetype_of(to: Address, input: &[u8]) -> Option<Archetype> {
 /// The archived capture loader's tolerance surface, narrowed to the fields
 /// the oracle consumes (the loader contract is best-effort: skip malformed
 /// lines, keep the rest).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct CapturedFrame {
     hash: B256,
     from: Address,
     to: Address,
     nonce: u64,
     gas: u64,
+    input: Bytes,
 }
 
 /// The checked-in capture (the live soak's archived frames). The env
@@ -243,15 +256,21 @@ fn load_capture_frames(path: &PathBuf) -> Vec<ClassifiedFrame> {
             return Vec::new();
         }
     };
+    classify_capture_text(&text)
+}
+
+/// Classify every parseable line of a capture text into its archetype,
+/// deduping by hash — the text seam the offline tests classify injected
+/// lines through.
+fn classify_capture_text(text: &str) -> Vec<ClassifiedFrame> {
     let mut out: Vec<ClassifiedFrame> = Vec::new();
     for line in text.lines() {
         let Some(frame) = parse_captured_frame(line) else {
             continue;
         };
-        // The capture loader stores no calldata, so the archived frames can
-        // only ride selector-agnostic archetypes — their `to` targets
-        // (CoW/1inch) are all outside the selector-gated one anyway.
-        let Some(archetype) = archetype_of(frame.to, &[]) else {
+        // The captured calldata carries the seat: the selector-gated direct-V3
+        // form discriminates on it, the selector-agnostic seats ignore it.
+        let Some(archetype) = archetype_of(frame.to, &frame.input) else {
             continue;
         };
         if out.iter().any(|c| c.frame.hash == frame.hash) {
@@ -273,15 +292,21 @@ fn parse_captured_frame(line: &str) -> Option<CapturedFrame> {
         .as_object()?
         .to_owned();
     let sget = |k: &str| obj.get(k).and_then(Value::as_str).filter(|s| !s.is_empty());
-    let uget = |k: &str| obj.get(k).and_then(Value::as_u64);
+    let uget = |k: &str| {
+        obj.get(k)
+            .and_then(json_quantity)
+            .and_then(|n| u64::try_from(n).ok())
+    };
     let addr = |k: &str| sget(k).and_then(|s| s.parse().ok());
     let hash = sget("hash")?.trim_start_matches("0x");
+    let input = sget("data")?.trim_start_matches("0x");
     Some(CapturedFrame {
         hash: format!("0x{hash}").parse().ok()?,
         from: addr("from")?,
         to: addr("to")?,
         nonce: uget("nonce")?,
         gas: uget("gas")?,
+        input: alloy::hex::decode(input).ok()?.into(),
     })
 }
 
@@ -753,16 +778,137 @@ fn oracle_masks_untracked_bits_and_flags_tracked_divergence() {
 const CONTROL_CAPTURE_HASH: &str =
     "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-/// A known-good capture line with `hash` substituted: the at-rest gate's
-/// positive control, and the base the injected-red variants mangle.
+/// A well-formed capture line with its `to`, `data`, and `hash` substituted:
+/// the base the injected-red variants mangle and the classification tests
+/// build honest frames from.
+fn capture_line(to: Address, data: &str, hash: &str) -> String {
+    format!(
+        r#"{{"chain_id":1,"data":"{data}","from":"0x5ed864e8f37dcb4f79c5172a815d1b3a9147eaab","gas":1465989,"hash":"{hash}","kind":"frame","nonce":35332,"to":"0x{to_hex}","value":"0x0"}}"#,
+        to_hex = alloy::hex::encode(to),
+    )
+}
+
+/// The at-rest gate's positive control: [`capture_line`] with the control
+/// hash and the known-good payload.
 fn injected_capture_line(hash: &str) -> String {
-    let line = r#"{"chain_id":1,"data":"0x13d79a0b","from":"0x5ed864e8f37dcb4f79c5172a815d1b3a9147eaab","gas":1465989,"hash":"<hash>","kind":"frame","nonce":35332,"to":"0x9008d19f58aabd9ed0d60971565aa8510560ab41","value":"0x0"}"#;
-    line.replace("<hash>", hash)
+    capture_line(GPV2_SETTLEMENT, "0x13d79a0b", hash)
+}
+
+/// The direct-V3 seat's discrimination is the captured calldata, not the
+/// deployment: both deadline shapes — the v1 SwapRouter's and the
+/// SwapRouter02's no-deadline family — land in the direct seat on either
+/// V3-router `to`, while a selector outside the direct form (the 02 multicall
+/// wrapper) rides the selector-agnostic SwapRouter02 seat and an untracked
+/// selector on a V3-router `to` classifies nowhere.
+#[test]
+fn direct_v3_classification_is_selector_gated() {
+    let input = |selector: [u8; 4]| {
+        let mut out = selector.to_vec();
+        out.extend_from_slice(&[0u8; 32]);
+        out
+    };
+
+    for selector in [
+        [0x41, 0x4b, 0xf3, 0x89], // v1 exactInputSingle (deadline arg)
+        [0xc0, 0x4b, 0x8d, 0x59], // v1 exactInput (the archived direct-V3 frame's)
+        [0xdb, 0x3e, 0x21, 0x98], // v1 exactOutputSingle (deadline arg)
+        [0xf2, 0x8c, 0x04, 0x98], // v1 exactOutput (deadline arg)
+        [0x04, 0xe4, 0x5a, 0xaf], // 02 exactInputSingle (no deadline arg)
+        [0xb8, 0x58, 0x18, 0x3f], // 02 exactInput (no deadline arg)
+        [0x50, 0x23, 0xb4, 0xdf], // 02 exactOutputSingle (corpus line 3)
+        [0x09, 0xb8, 0x13, 0x46], // 02 exactOutput (no deadline arg)
+    ] {
+        for to in [SWAP_ROUTER_V1, SWAP_ROUTER_02] {
+            assert_eq!(
+                archetype_of(to, &input(selector)),
+                Some(Archetype::DirectV3Router),
+                "the direct form classifies on {selector:?} at {to}"
+            );
+        }
+    }
+
+    assert_eq!(
+        archetype_of(SWAP_ROUTER_02, &input([0xac, 0x96, 0x50, 0xd8])),
+        Some(Archetype::SwapRouter02),
+        "the 02 multicall wrapper rides the selector-agnostic seat"
+    );
+    assert_eq!(
+        archetype_of(SWAP_ROUTER_V1, &input([0xde, 0xad, 0xbe, 0xef])),
+        None,
+        "an untracked selector on the v1 deployment classifies nowhere"
+    );
+    assert_eq!(
+        archetype_of(SWAP_ROUTER_02, &input([0xde, 0xad, 0xbe, 0xef])),
+        Some(Archetype::SwapRouter02),
+        "the 02 seat stays the catch-all for its traffic outside the direct surface"
+    );
+    assert_eq!(
+        archetype_of(GPV2_SETTLEMENT, &input([0xde, 0xad, 0xbe, 0xef])),
+        Some(Archetype::CoWBatchSettle),
+        "only the direct-V3 seat is selector-gated"
+    );
+}
+
+/// The capture loader classifies by the captured calldata: an archived
+/// V3-router frame carrying a direct selector lands in the direct-V3 seat,
+/// the loader's `0x`-strip tolerance covers a doubled prefix, and a frame
+/// outside the direct form carries no seat there.
+#[test]
+fn capture_loader_classifies_frames_by_calldata() {
+    let classify = |to: Address, data: &str| {
+        classify_capture_text(&capture_line(to, data, CONTROL_CAPTURE_HASH))
+    };
+
+    for data in ["0xc04b8d59", "0x0xc04b8d59"] {
+        let frames = classify(SWAP_ROUTER_V1, data);
+        assert_eq!(frames.len(), 1, "{data} parses to one frame");
+        assert_eq!(frames[0].archetype, Archetype::DirectV3Router, "{data}");
+        assert_eq!(
+            frames[0].frame.input.as_ref(),
+            [0xc0, 0x4b, 0x8d, 0x59].as_slice(),
+            "{data} threads its calldata through"
+        );
+    }
+
+    let frames = classify(SWAP_ROUTER_02, "0xac9650d8");
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].archetype, Archetype::SwapRouter02);
+
+    assert!(
+        classify(SWAP_ROUTER_V1, "0xdeadbeef").is_empty(),
+        "a non-direct selector on a V3-router `to` carries no seat"
+    );
+}
+
+/// The loader accepts exactly the at-rest gate's quantity surface: a line
+/// whose quantities are JSON numbers and its hex/decimal-string twin parse to
+/// the same frame, and both pass the strict gate — a gate-green line the
+/// loader skips would be a silent fixture loss at replay.
+#[test]
+fn capture_loader_accepts_the_gate_quantity_encodings() {
+    let numeric = capture_line(SWAP_ROUTER_V1, "0xc04b8d59", CONTROL_CAPTURE_HASH);
+    let strings = numeric
+        .replace("\"gas\":1465989", "\"gas\":\"0x165e85\"")
+        .replace("\"nonce\":35332", "\"nonce\":\"35332\"");
+
+    for line in [&numeric, &strings] {
+        assert!(
+            capture_line_violations(line).is_empty(),
+            "the gate accepts both encodings: {line}"
+        );
+    }
+
+    let numeric_frames = classify_capture_text(&numeric);
+    let string_frames = classify_capture_text(&strings);
+    assert_eq!(numeric_frames.len(), 1, "the numeric line parses");
+    assert_eq!(string_frames.len(), 1, "the string line parses");
+    assert_eq!(numeric_frames[0].frame, string_frames[0].frame);
+    assert_eq!(numeric_frames[0].archetype, string_frames[0].archetype);
 }
 
 /// The archived capture classifies to router archetypes and dedupes: the
-/// committed fixture carries a CoW batch settle, a 1inch aggregation swap, and
-/// a SwapRouter02 frame, and a frame captured more than once contributes one
+/// committed corpus carries one fixture per archetype seat — every live leg
+/// resolves from it — and a frame captured more than once contributes one
 /// entry. The corpus is also validated strict-clean at rest: the replay loader
 /// skips a malformed line by contract, so without this gate a mangled entry
 /// would only surface as a live leg that cannot resolve its frame.
@@ -782,18 +928,12 @@ fn capture_frames_classify_to_archetypes_and_dedupe() {
             assert_ne!(a.frame.hash, b.frame.hash, "frames deduped by hash");
         }
     }
-    assert!(
-        frames
-            .iter()
-            .any(|c| matches!(c.archetype, Archetype::CoWBatchSettle)),
-        "the capture must carry a CoW settle frame: {frames:?}"
-    );
-    assert!(
-        frames
-            .iter()
-            .any(|c| matches!(c.archetype, Archetype::OneInchV5)),
-        "the capture must carry a 1inch aggregation frame: {frames:?}"
-    );
+    for arch in ARCHETYPES {
+        assert!(
+            frames.iter().any(|c| c.archetype == arch),
+            "every seat is corpus-backed — missing {arch:?}: {frames:?}"
+        );
+    }
     for f in &frames {
         assert_ne!(f.frame.hash, B256::ZERO);
         assert_ne!(f.frame.to, Address::ZERO);
@@ -1503,6 +1643,7 @@ fn matches_capture(t: &alloy::rpc::types::Transaction, f: &CapturedFrame) -> boo
         && t.nonce() == f.nonce
         && t.gas_limit() == f.gas
         && t.to() == Some(f.to)
+        && t.input() == &f.input
 }
 
 /// The archived-capture route: the leg's committed frame when every gate holds.

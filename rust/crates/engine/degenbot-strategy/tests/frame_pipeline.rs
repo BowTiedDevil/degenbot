@@ -1232,15 +1232,18 @@ async fn dry_run_fixture_frames_replay_end_to_end_without_classifier() {
 
     for ev in &frames {
         // A capture replayed at a LATER head has a stale nonce (the tx has
-        // long since landed). Re-arm the frame's nonce to the pinned view's
-        // parent count so the REPLAY path is genuinely exercised end-to-end
-        // (the signer reaches the seam as recovered data; the seam validates
-        // the nonce faithfully against the layered view).
+        // long since landed). Re-arm the frame's nonce to the count the
+        // pinned view actually carries — the view's state is AT `pin` and the
+        // frame runs in the next block's env — so the REPLAY path is genuinely
+        // exercised end-to-end (the signer reaches the seam as recovered data;
+        // the seam validates the nonce faithfully against the layered view).
+        // A failed arm read fails loud: a silently stale nonce would read as a
+        // seam rejection, not a transport miss.
         let mut frame = ev.clone();
         frame.nonce = provider
-            .get_transaction_count(&ev.from, Some(pin.saturating_sub(1)))
+            .get_transaction_count(&ev.from, Some(pin))
             .await
-            .unwrap_or(ev.nonce);
+            .expect("the node serves the arm count");
         let artifacts = process_frame(
             &mut strategy,
             &mut runtime,

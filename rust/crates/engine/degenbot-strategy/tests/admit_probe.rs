@@ -88,6 +88,12 @@ fn live_provider() -> Arc<degenbot_rpc::provider::AlloyProvider> {
     ))
 }
 
+/// The recency is the point, not a fixture gap: the anchor and its mids are
+/// discovered from the production Db index and read at `latest`, and the leg
+/// asserts the CURRENT production chain admits and solves — a historical pin
+/// would replay a market state the wire no longer carries. The verdict can
+/// therefore move with market conditions: an unprofitable chain is a true
+/// negative of the production path, not a harness fault.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "live network + DB: V3 anchor PoolIngress verification"]
 #[expect(clippy::too_many_lines, reason = "one live probe reads top-to-bottom")]

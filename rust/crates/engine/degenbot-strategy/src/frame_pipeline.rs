@@ -605,6 +605,28 @@ pub fn load_fixture_frames(path: &std::path::Path) -> Vec<BackrunFeedEvent> {
         .collect()
 }
 
+/// A capture quantity: an unsigned JSON integer, or a string in decimal or
+/// `0x` hex form. The capture mixes encodings across eras, and every one of
+/// them must read to the same value — or a corpus line silently loses its
+/// gas price, value, or nonce at replay.
+fn quantity(value: &serde_json::Value) -> Option<U256> {
+    match value {
+        serde_json::Value::Number(n) => n.as_u64().map(U256::from),
+        serde_json::Value::String(s) => {
+            let (body, radix) = match s.strip_prefix("0x") {
+                Some(hex) => (hex, 16),
+                None => (s.as_str(), 10),
+            };
+            if body.is_empty() {
+                None
+            } else {
+                U256::from_str_radix(body, radix).ok()
+            }
+        }
+        _ => None,
+    }
+}
+
 fn parse_frame_line(line: &str, now: u64) -> Option<BackrunFeedEvent> {
     let obj = serde_json::from_str::<serde_json::Value>(line)
         .ok()?
@@ -614,15 +636,17 @@ fn parse_frame_line(line: &str, now: u64) -> Option<BackrunFeedEvent> {
             .and_then(serde_json::Value::as_str)
             .filter(|s| !s.is_empty())
     };
-    let uget = |k: &str| obj.get(k).and_then(serde_json::Value::as_u64);
+    let uget = |k: &str| {
+        obj.get(k)
+            .and_then(quantity)
+            .and_then(|n| u64::try_from(n).ok())
+    };
     let addr = |k: &str| sget(k).and_then(|s| s.parse().ok());
     Some(BackrunFeedEvent {
         chain_id: uget("chain_id").unwrap_or(1),
         from: addr("from")?,
         to: addr("to"),
-        value: sget("value")
-            .and_then(|s| U256::from_str_radix(s.trim_start_matches("0x"), 16).ok())
-            .unwrap_or_default(),
+        value: obj.get("value").and_then(quantity).unwrap_or_default(),
         data: sget("data")
             .and_then(|s| alloy::hex::decode(s).ok())
             .map(Bytes::from)
@@ -1599,7 +1623,42 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
 
 #[cfg(test)]
 mod tests {
+    use super::parse_frame_line;
     use crate::backrun_strategy::net_bid;
+
+    /// The capture mixes quantity encodings across eras — JSON numbers,
+    /// decimal strings, and `0x` strings — and every one must read to the
+    /// same value, or a corpus line silently loses its gas price, value, or
+    /// nonce at replay.
+    #[test]
+    #[expect(clippy::expect_used, reason = "literals are the spec")]
+    fn fixture_loader_reads_every_quantity_encoding() {
+        let frame = parse_frame_line(
+            r#"{"chain_id":"1","data":"0x13d79a0b","from":"0x5ed864e8f37dcb4f79c5172a815d1b3a9147eaab","gas":"0x16e360","hash":"0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","kind":"frame","max_fee_per_gas":"597019390","max_priority_fee_per_gas":26001402,"nonce":"27976","to":"0x9008d19f58aabd9ed0d60971565aa8510560ab41","tx_type":"2","value":202798883305400}"#,
+            1_790_000_000_000,
+        )
+        .expect("the mixed-encoding line parses");
+        assert_eq!(frame.gas, 1_500_000, "hex-string gas");
+        assert_eq!(frame.nonce, 27_976, "decimal-string nonce");
+        assert_eq!(frame.max_fee_per_gas, 597_019_390, "decimal-string max fee");
+        assert_eq!(frame.max_priority_fee_per_gas, 26_001_402);
+        assert_eq!(frame.tx_type, 2, "hex-string tx type");
+        assert_eq!(
+            frame.value,
+            U256::from(202_798_883_305_400u64),
+            "JSON-number value"
+        );
+
+        let with_value = |value: &str| {
+            format!(
+                r#"{{"data":"0x13d79a0b","from":"0x5ed864e8f37dcb4f79c5172a815d1b3a9147eaab","gas":21000,"hash":"0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","nonce":7,"to":"0x9008d19f58aabd9ed0d60971565aa8510560ab41","value":{value}}}"#
+            )
+        };
+        for value in ["12345", "\"12345\"", "\"0x3039\""] {
+            let frame = parse_frame_line(&with_value(value), 0).expect("a value encoding parses");
+            assert_eq!(frame.value, U256::from(12_345u64), "value encoding {value}");
+        }
+    }
 
     /// The live defect, pinned: the first two landed bids tendered a ~110
     /// gwei gross while the receipts show the wallet burning ~527 gwei of
