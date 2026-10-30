@@ -9,10 +9,16 @@
 //! - [`balancer`] — Balancer V2 `FixedPoint` / `LogExpMath` / `WeightedMath` / `StableMath`
 //! - [`solidly`] — Solidly / Aerodrome / Camelot stable-pool invariants
 //!
+//! One shared primitive module sits beside the families: [`bigint`] — the
+//! 2048-bit width with its widening/narrowing conversions and the floor
+//! integer square roots, owned here because the family math and its solver
+//! consumers both need them.
+//!
 //! Consolidated from five workspace crates that shared provenance, the ADR-009
 //! lockstep version, and the same consumer set (ADR-035).
 
 pub mod balancer;
+pub mod bigint;
 pub mod concentrated_liquidity;
 pub mod curve;
 pub mod solidly;

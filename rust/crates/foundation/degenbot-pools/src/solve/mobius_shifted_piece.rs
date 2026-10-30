@@ -70,13 +70,9 @@
 #![expect(clippy::large_enum_variant)]
 
 use alloy::primitives::{Sign as AlloySign, U256};
+use degenbot_math::bigint::{isqrt_u2048, U2048};
 use degenbot_math::v2::IntHopState;
 use num_bigint::BigInt;
-
-use crate::solve::mobius_int_exact::isqrt_u2048;
-
-/// 2048-bit unsigned integer — width for the composed determinant magnitude.
-type U2048 = alloy::primitives::Uint<2048, 32>;
 
 /// 1024-bit signed integer — fast-path coefficient width.
 ///

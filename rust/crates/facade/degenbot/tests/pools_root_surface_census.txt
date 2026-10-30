@@ -5,7 +5,7 @@
 #
 # The pin is review-required: `architecture_gates.rs::pools_root_surface_is_pinned`
 # fails when a module is added, removed, or re-homed without a review of this
-# file, and the root `pub` name count (1014) is asserted so untracked surface
+# file, and the root `pub` name count (1011) is asserted so untracked surface
 # growth fails loudly. The tick-word merge policy (the `sim::tick_fetch`
 # capability's `policy` half) is the review that moved 966 -> 1012: every new
 # door name has a named consumer outside the capability crate (substrate, bot,
@@ -15,6 +15,11 @@
 # reserves read addresses the slot by name instead of re-owning the literal)
 # and `ConcentratedLiquiditySlotLayout::slot0_slot` is the fork's slot0 word-0
 # accessor that read path calls — both consumed by `degenbot-simulation`.
+# The 1014 -> 1011 review is the wide-integer relocation: `isqrt_u512`,
+# `isqrt_u2048`, and `narrow_u512_to_u256` are Newton-iteration arithmetic, not
+# pools surface, and now live in `degenbot-math::bigint`, which the Möbius
+# solve modules import. The three left the door with no pools-side replacement:
+# a shade wider than U256 is a `degenbot-math` concern, not a pool family one.
 # The count is per NAME, not per statement (the previous
 # granularity pinned 681 statements): a `pub fn`/`struct`/`enum`/`trait`/
 # `const`/`type`/`mod` declaration counts once, and a `pub use` counts one per
