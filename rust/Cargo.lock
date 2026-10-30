@@ -2560,7 +2560,6 @@ name = "degenbot-pathfinding"
 version = "0.6.0-alpha.19"
 dependencies = [
  "criterion",
- "degenbot-primitives",
 ]
 
 [[package]]
@@ -2624,6 +2623,9 @@ dependencies = [
 [[package]]
 name = "degenbot-primitives"
 version = "0.6.0-alpha.19"
+dependencies = [
+ "hashbrown 0.17.1",
+]
 
 [[package]]
 name = "degenbot-rpc"
@@ -2718,7 +2720,6 @@ dependencies = [
  "degenbot-math",
  "degenbot-pathfinding",
  "degenbot-pools",
- "degenbot-primitives",
  "degenbot-rpc",
  "degenbot-runs",
  "degenbot-simulation",

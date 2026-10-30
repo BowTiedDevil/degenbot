@@ -14,70 +14,13 @@
 //!    is one [`FrozenInterner::lookup`] call and all *by-id* access is plain
 //!    array indexing. No hash table, no probe, no per-key allocation.
 //!
-//! For key sets that never freeze (mutable registries with removal), use
-//! [`FastHashMap`] instead: a [`std::collections::HashMap`] keyed through
-//! [`WordHasher`], which hashes fixed-size byte keys (addresses, hashes) in a
-//! few multiplies instead of `SipHash`'s per-byte rounds.
-//!
-//! This crate is a zero-dependency leaf: `std` only, no alloy/pyo3/tokio.
+//! General-purpose maps are out of scope here: the workspace standard is
+//! hashbrown (foldhash); this crate exists only for the intern-then-index
+//! pattern hashbrown does not provide.
 
-use std::collections::HashMap;
-use std::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
+use std::hash::{BuildHasher, Hash};
 
-/// Multiplier for the `FxHash` scheme (rustc-hash's constants, inlined to keep
-/// this leaf dependency-free). Shared with `degenbot-pathfinding`'s `U64Hasher`.
-const FX_MULTIPLIER: u64 = 0x517C_C1B7_2722_0A95;
-
-/// Hasher for fixed-size byte keys (addresses, 32-byte hashes, `u64` ids).
-///
-/// Folds whole words with the `FxHash` scheme so a 20-byte address is ~3
-/// multiplies; the default `SipHash` walks the same bytes with several
-/// instructions per byte and a finalization step, for keys that are internal
-/// identifiers, not adversarial input.
-#[derive(Default, Debug, Clone)]
-pub struct WordHasher {
-    hash: u64,
-}
-
-impl WordHasher {
-    fn fold_word(&mut self, word: u64) {
-        self.hash = (self.hash.rotate_left(5) ^ word).wrapping_mul(FX_MULTIPLIER);
-    }
-
-    fn fold_bytes(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.hash = (self.hash.rotate_left(5) ^ u64::from(b)).wrapping_mul(FX_MULTIPLIER);
-        }
-    }
-}
-
-impl Hasher for WordHasher {
-    #[inline]
-    fn finish(&self) -> u64 {
-        self.hash
-    }
-
-    #[inline]
-    fn write(&mut self, bytes: &[u8]) {
-        // `as_chunks` hands back exactly-8-byte arrays; no conversion to fail.
-        let (words, remainder) = bytes.as_chunks::<8>();
-        for word in words {
-            self.fold_word(u64::from_le_bytes(*word));
-        }
-        self.fold_bytes(remainder);
-    }
-
-    #[inline]
-    fn write_u64(&mut self, n: u64) {
-        self.fold_word(n);
-    }
-}
-
-/// A [`HashMap`] keyed through [`WordHasher`].
-///
-/// The drop-in replacement for `HashMap<Address, V>`-shaped maps whose keys are
-/// internal identifiers; drop-in for mutable key sets, no freeze required.
-pub type FastHashMap<K, V> = HashMap<K, V, BuildHasherDefault<WordHasher>>;
+use hashbrown::HashMap;
 
 /// Build-phase interner: assigns each first-seen key a dense [`u32`] id.
 ///
@@ -85,12 +28,12 @@ pub type FastHashMap<K, V> = HashMap<K, V, BuildHasherDefault<WordHasher>>;
 /// already had, so callers can intern during registration while filling side
 /// `Vec`s indexed by id.
 #[derive(Debug, Clone)]
-pub struct Interner<K, S: BuildHasher + Default = BuildHasherDefault<WordHasher>> {
+pub struct Interner<K, S: BuildHasher + Default = hashbrown::DefaultHashBuilder> {
     ids: HashMap<K, u32, S>,
     keys: Vec<K>,
 }
 
-impl<K> Interner<K, BuildHasherDefault<WordHasher>>
+impl<K> Interner<K, hashbrown::DefaultHashBuilder>
 where
     K: Hash + Eq,
 {
@@ -104,7 +47,10 @@ where
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            ids: HashMap::with_capacity_and_hasher(capacity, BuildHasherDefault::default()),
+            ids: HashMap::with_capacity_and_hasher(
+                capacity,
+                hashbrown::DefaultHashBuilder::default(),
+            ),
             keys: Vec::with_capacity(capacity),
         }
     }
@@ -181,7 +127,7 @@ where
     }
 }
 
-impl<K> Default for Interner<K, BuildHasherDefault<WordHasher>>
+impl<K> Default for Interner<K, hashbrown::DefaultHashBuilder>
 where
     K: Hash + Eq,
 {

@@ -9,9 +9,6 @@ rust-version.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-[dependencies]
-degenbot-primitives.workspace = true
-
 [lints]
 workspace = true
 [dev-dependencies]

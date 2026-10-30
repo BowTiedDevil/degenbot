@@ -4,12 +4,7 @@
 //!   exact lookups, reverse map).
 //! - `frozen` tests pin the freeze contract (same ids survive, lookup without
 //!   hashing still answers exactly).
-//! - `hasher` tests pin [`WordHasher`] against std's `Hash` contract: equal
-//!   keys hash equal through any hasher, and a [`FastHashMap`] behaves as a
-//!   map over byte-string keys.
-
-use super::{FastHashMap, FrozenInterner, Interner, WordHasher};
-use std::hash::{Hash, Hasher};
+use super::{FrozenInterner, Interner};
 
 /// A fixed-size byte key shaped like an EVM address (20 bytes) — the primary
 /// intended key species. Hash flows through `Hasher::write`, as it does for
@@ -190,93 +185,4 @@ fn freezing_an_empty_interner_stays_empty() {
     assert!(frozen.is_empty());
     assert_eq!(frozen.len(), 0);
     assert_eq!(frozen.lookup(&AddressKey::new(1)), None);
-}
-
-// ---------------------------------------------------------------------------
-// WordHasher / FastHashMap: the std Hash contract on byte keys
-// ---------------------------------------------------------------------------
-
-#[test]
-fn word_hasher_is_deterministic_and_key_sensitive() {
-    let hash_of = |bytes: &[u8]| {
-        let mut hasher = WordHasher::default();
-        hasher.write(bytes);
-        hasher.finish()
-    };
-
-    assert_eq!(
-        hash_of(b"fixed key"),
-        hash_of(b"fixed key"),
-        "equal bytes, equal hash"
-    );
-    assert_ne!(
-        hash_of(b"fixed key"),
-        hash_of(b"fixed Key"),
-        "distinct bytes hash apart"
-    );
-    assert_ne!(
-        hash_of(&[1u8; 20]),
-        hash_of(&[1u8; 19]),
-        "length participates in the hash"
-    );
-}
-
-#[test]
-fn word_hasher_agrees_with_std_hash_equivalence_for_address_keys() {
-    // std's contract: equal keys must hash equal under ANY hasher. The map
-    // seam only relies on that, never on hash values matching SipHash.
-    let a = AddressKey::new(3);
-    let a_copy = AddressKey::new(3);
-    let b = AddressKey::new(4);
-
-    let hash_with = |key: &AddressKey| {
-        let mut hasher = WordHasher::default();
-        key.hash(&mut hasher);
-        hasher.finish()
-    };
-
-    assert_eq!(hash_with(&a), hash_with(&a_copy));
-    assert_ne!(hash_with(&a), hash_with(&b));
-}
-
-#[test]
-fn fast_hash_map_behaves_as_a_map_over_address_keys() {
-    let mut map: FastHashMap<AddressKey, u64> = FastHashMap::default();
-    for seed in 0..32u8 {
-        map.insert(AddressKey::new(seed), u64::from(seed) * 100);
-    }
-
-    for seed in 0..32u8 {
-        assert_eq!(
-            map.get(&AddressKey::new(seed)),
-            Some(&(u64::from(seed) * 100))
-        );
-    }
-    assert_eq!(map.get(&AddressKey::new(200)), None);
-    assert_eq!(map.len(), 32);
-}
-
-#[test]
-fn fast_hash_map_over_32_byte_keys_inserts_and_probes() {
-    let mut map: FastHashMap<Hash32Key, usize> = FastHashMap::default();
-    for seed in 0..64u8 {
-        map.insert(Hash32Key::new(seed), usize::from(seed));
-    }
-    assert_eq!(map.get(&Hash32Key::new(17)), Some(&17));
-    assert_eq!(map.get(&Hash32Key::new(255)), None);
-}
-
-#[test]
-fn word_hasher_write_u64_matches_write_of_le_bytes() {
-    // The `write_u64` fast path must agree with the generic byte path on the
-    // same value, or keys hashed through different Hash impls would disagree.
-    let value = 0x0123_4567_89AB_CDEFu64;
-
-    let mut fast = WordHasher::default();
-    fast.write_u64(value);
-
-    let mut generic = WordHasher::default();
-    generic.write(&value.to_le_bytes());
-
-    assert_eq!(fast.finish(), generic.finish());
 }

@@ -17,7 +17,7 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use degenbot_primitives::FastHashMap;
+use hashbrown::HashMap;
 
 use alloy::primitives::Address;
 use degenbot_db::connection::DegenbotDb;
@@ -49,8 +49,8 @@ pub struct MarketContext {
     db: Option<Arc<DegenbotDb>>,
     /// The boot-resolved composition the context views over.
     kit: StrategyKit,
-    token_ids: Mutex<FastHashMap<Address, u64>>,
-    token_addrs: Mutex<FastHashMap<u64, Address>>,
+    token_ids: Mutex<HashMap<Address, u64>>,
+    token_addrs: Mutex<HashMap<u64, Address>>,
 }
 
 impl MarketContext {
@@ -73,8 +73,8 @@ impl MarketContext {
             warm_cache: WarmCodeCacheInner::shared_default(),
             db,
             kit,
-            token_ids: Mutex::new(FastHashMap::default()),
-            token_addrs: Mutex::new(FastHashMap::default()),
+            token_ids: Mutex::new(HashMap::new()),
+            token_addrs: Mutex::new(HashMap::new()),
         }
     }
 
