@@ -272,6 +272,341 @@ fn jit_runner_matches_the_interpreter() {
     }
 }
 
+// ── Phase 1: engine core — overrides, session, isolation ──
+
+/// Canonical mainnet WETH9 + PoolManager (the override params' targets).
+const WETH: Address = Address::new([
+    0xc0, 0x2a, 0xaa, 0x39, 0xb2, 0x23, 0xfe, 0x8d, 0x0a, 0x0e, 0x5c, 0x4f, 0x27, 0xea, 0xd9, 0x08,
+    0x3c, 0x75, 0x6c, 0xc2,
+]);
+const PM: Address = Address::new([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x44, 0x4c, 0x5d, 0xc7, 0x5c, 0xb3, 0x58, 0x38, 0x0d, 0x2e,
+    0x3d, 0xe0, 0x8a, 0x90,
+]);
+const OWNER: Address = Address::with_last_byte(0x9e);
+const INJECTED: Address = Address::with_last_byte(0xbb);
+const RUNTIME: &[u8] = &[0xde, 0xad, 0xbe, 0xef];
+
+/// The override params the gate applies to both engines (the warmup slots
+/// derive from the same helper the production path uses).
+fn override_params() -> crate::sim::evm::SimulationOverrideParams {
+    crate::sim::evm::SimulationOverrideParams {
+        owner: OWNER,
+        inject_code: true,
+        injected_address: Some(INJECTED),
+        runtime_bytecode: Bytes::from_static(RUNTIME),
+        warmup: degenbot_executor::compute_simulation_warmup_slots(INJECTED, WETH),
+        weth_address: WETH,
+        pool_manager_address: PM,
+    }
+}
+
+/// The override application writes identical state on both engines:
+/// balances, injected code, the three 1-wei warmup touches, and the
+/// operational WETH9 balanceOf raise.
+#[test]
+fn override_application_writes_match_across_engines() {
+    let params = override_params();
+
+    // revm side — the production apply.
+    let mut revm_db = revm::database::CacheDB::new(revm::database_interface::EmptyDB::new());
+    crate::sim::evm::apply_simulation_overrides(&mut revm_db, &params)
+        .expect("revm override application");
+
+    // evm2 side — the port.
+    let mut evm2_db = super::pilot_db();
+    super::state_override::apply_simulation_overrides(&mut evm2_db, &params);
+
+    let eth = |e: u64| U256::from(e) * U256::from(10u128.pow(18));
+    use ::evm2::evm::Database;
+    use revm::database_interface::DatabaseRef;
+    // Balances.
+    assert_eq!(
+        revm_db.basic_ref(OWNER).unwrap().unwrap().balance,
+        evm2_db.get_account(&OWNER).unwrap().unwrap().balance,
+    );
+    assert_eq!(
+        revm_db.basic_ref(INJECTED).unwrap().unwrap().balance,
+        evm2_db.get_account(&INJECTED).unwrap().unwrap().balance,
+    );
+    assert_eq!(revm_db.basic_ref(OWNER).unwrap().unwrap().balance, eth(100));
+    // Injected code hash.
+    assert_eq!(
+        revm_db.basic_ref(INJECTED).unwrap().unwrap().code_hash,
+        evm2_db.get_account(&INJECTED).unwrap().unwrap().code_hash,
+    );
+    // The three 1-wei warmup touches + the WETH9 operational raise.
+    let one_wei = U256::from(1u64);
+    for (account, slot, want) in [
+        (WETH, params.warmup.weth_balance, eth(10)),
+        (PM, params.warmup.erc6909_weth, one_wei),
+        (PM, params.warmup.erc6909_native, one_wei),
+    ] {
+        let revm_got = revm_db.storage_ref(account, slot).unwrap();
+        let evm2_got = evm2_db.get_storage(&account, &slot).unwrap();
+        assert_eq!(
+            (revm_got, evm2_got),
+            (want, want),
+            "slot {slot} on {account}"
+        );
+    }
+}
+
+/// The settle verb: one store transaction through `Evm2SimSession::run` and
+/// the revm `SimSession::run` over identical stacks — identical verdict,
+/// gas, output, and storage write.
+#[test]
+fn session_settle_matches_revm_session() {
+    use crate::sim::evm::{SimInspector, SimSession};
+    use ::evm2::ethereum::TxEnvelope;
+    use alloy::consensus::transaction::Recovered;
+    use alloy::consensus::TxLegacy;
+
+    let fixture = Fixture {
+        contract_code: store_code(),
+    };
+
+    // revm side — the production session over the layered stack.
+    let (revm_verdict, revm_gas, revm_output, revm_writes) = {
+        use revm::context::TxEnv;
+        use revm::{MainBuilder, MainContext};
+
+        let scripted = RevmScripted {
+            fixture: &fixture,
+            contract_reads: Rc::new(Cell::new(0)),
+        };
+        let bsd = RevmBotStateDb::new(&degenbot_substrate::NO_SIM_ANCHOR, scripted);
+        let warm =
+            RevmWarmCodeCache::with_owner(RevmWarmCodeCacheInner::shared_default(), BLOCK, bsd);
+        let db = revm::database::CacheDB::new(warm);
+        let mut ctx = revm::context::Context::mainnet().with_db(db);
+        ctx.cfg
+            .set_spec_and_mainnet_gas_params(revm::primitives::hardfork::SpecId::CANCUN);
+        let mut evm = ctx.build_mainnet_with_inspector(SimInspector::default());
+        let mut session = SimSession::new(&mut evm);
+        let tx = TxEnv::builder()
+            .caller(CALLER)
+            .kind(TxKind::Call(CONTRACT))
+            .data(word(VALUE))
+            .value(U256::ZERO)
+            .gas_limit(GAS_LIMIT)
+            .nonce(0)
+            .build()
+            .expect("well-formed pilot tx");
+        let run = session.run(tx).expect("revm session run");
+        let writes: Vec<(Address, U256, U256)> = run
+            .state
+            .get(&CONTRACT)
+            .map(|account| {
+                account
+                    .storage
+                    .iter()
+                    .map(|(k, s)| (CONTRACT, *k, s.present_value()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        (run.verdict, run.gas_used, run.output, writes)
+    };
+
+    // evm2 side — the ported session over the pilot layered stack.
+    let (evm2_verdict, evm2_gas, evm2_output, evm2_writes) = {
+        use super::session::Evm2SimSession;
+
+        let scripted = Evm2Scripted {
+            fixture: &fixture,
+            contract_reads: Rc::new(Cell::new(0)),
+        };
+        let bsd = BotStateDb::new(&degenbot_substrate::NO_SIM_ANCHOR, scripted);
+        let warm = WarmCodeCache::with_owner(WarmCodeCacheInner::shared_default(), BLOCK, bsd);
+        let db = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(warm));
+        let mut evm = build_pilot_evm(db);
+        let mut session = Evm2SimSession::new(&mut evm);
+        let tx = Recovered::new_unchecked(
+            TxEnvelope::Legacy(TxLegacy {
+                to: TxKind::Call(CONTRACT),
+                input: word(VALUE),
+                gas_limit: GAS_LIMIT,
+                nonce: 0,
+                ..Default::default()
+            }),
+            CALLER,
+        );
+        let run = session.run(&tx).expect("evm2 session run");
+        (run.verdict, run.gas_used, run.output, run.storage_writes)
+    };
+
+    assert_eq!(
+        (revm_verdict, revm_gas, revm_output),
+        (evm2_verdict, evm2_gas, evm2_output),
+        "session verdicts diverge"
+    );
+    let want_write = (CONTRACT, U256::from(SLOT), U256::from(VALUE));
+    assert!(
+        revm_writes.contains(&want_write),
+        "revm sanity: {revm_writes:?}"
+    );
+    assert!(
+        evm2_writes.contains(&want_write),
+        "evm2 write missing: {evm2_writes:?}"
+    );
+}
+
+/// The isolation contract: a settled run's writes are invisible to the next
+/// run and to the view reads between runs — on both engines.
+#[test]
+fn a_run_is_invisible_to_the_next_run_on_both_engines() {
+    use ::evm2::ethereum::TxEnvelope;
+    use alloy::consensus::transaction::Recovered;
+    use alloy::consensus::TxLegacy;
+
+    let fixture = Fixture {
+        contract_code: store_code(),
+    };
+    let scripted = Evm2Scripted {
+        fixture: &fixture,
+        contract_reads: Rc::new(Cell::new(0)),
+    };
+    let bsd = BotStateDb::new(&degenbot_substrate::NO_SIM_ANCHOR, scripted);
+    let warm = WarmCodeCache::with_owner(WarmCodeCacheInner::shared_default(), BLOCK, bsd);
+    let db = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(warm));
+    let mut evm = build_pilot_evm(db);
+    let mut session = super::session::Evm2SimSession::new(&mut evm);
+    let tx = Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            to: TxKind::Call(CONTRACT),
+            input: word(VALUE),
+            gas_limit: GAS_LIMIT,
+            nonce: 0,
+            ..Default::default()
+        }),
+        CALLER,
+    );
+
+    let first = session.run(&tx).expect("first run");
+    assert_eq!(first.verdict, crate::sim::evm::RunVerdict::Success);
+    // The settled write is invisible to the view between runs.
+    let between = session
+        .read_word(CONTRACT, U256::from(SLOT))
+        .expect("view read");
+    assert_eq!(
+        between,
+        U256::ZERO,
+        "the first run's write leaked into the shared view"
+    );
+    // And to the next run's execution (the contract re-stores from zero —
+    // verdict + gas identical to the first run).
+    let second = session.run(&tx).expect("second run");
+    assert_eq!(
+        second.gas_used, first.gas_used,
+        "the next run saw the first run's state"
+    );
+}
+
+/// Typed view reads: the same packed reserves word decodes to the same parts
+/// through both sessions' slot tables.
+#[test]
+fn view_reads_match_revm_session() {
+    use crate::sim::evm::{SimInspector, SimSession};
+    use degenbot_pools::V2_RESERVES_SLOT;
+
+    // reserve0 = 1000, reserve1 = 2000 packed at the pair's slot 8.
+    let reserves_word = U256::from(1000u128) | (U256::from(2000u128) << 112);
+
+    // revm side.
+    let revm_parts = {
+        use revm::database_interface::DatabaseRef;
+        use revm::{MainBuilder, MainContext};
+
+        struct ReservesDb {
+            word: U256,
+        }
+        impl DatabaseRef for ReservesDb {
+            type Error = core::convert::Infallible;
+            fn basic_ref(
+                &self,
+                _: Address,
+            ) -> Result<Option<revm::state::AccountInfo>, Self::Error> {
+                Ok(None)
+            }
+            fn code_by_hash_ref(&self, _: B256) -> Result<revm::bytecode::Bytecode, Self::Error> {
+                Ok(revm::bytecode::Bytecode::default())
+            }
+            fn storage_ref(&self, address: Address, slot: U256) -> Result<U256, Self::Error> {
+                Ok(
+                    if address == CONTRACT && slot == U256::from(V2_RESERVES_SLOT) {
+                        self.word
+                    } else {
+                        U256::ZERO
+                    },
+                )
+            }
+            fn block_hash_ref(&self, _: u64) -> Result<B256, Self::Error> {
+                Ok(B256::ZERO)
+            }
+        }
+        let db = revm::database::CacheDB::new(ReservesDb {
+            word: reserves_word,
+        });
+        let ctx = revm::context::Context::mainnet().with_db(db);
+        let mut evm = ctx.build_mainnet_with_inspector(SimInspector::default());
+        let mut session = SimSession::new(&mut evm);
+        session
+            .read_v2_reserves(CONTRACT)
+            .expect("revm reserves read")
+    };
+
+    // evm2 side.
+    let evm2_parts = {
+        struct ReservesDb {
+            word: U256,
+        }
+        impl ::evm2::evm::Database for ReservesDb {
+            type Error = core::convert::Infallible;
+            fn get_account(
+                &mut self,
+                _: &Address,
+            ) -> Result<Option<::evm2::evm::AccountInfo>, Self::Error> {
+                Ok(None)
+            }
+            fn get_code_by_hash(
+                &mut self,
+                _: &B256,
+            ) -> Result<::evm2::bytecode::Bytecode, Self::Error> {
+                Ok(::evm2::bytecode::Bytecode::default())
+            }
+            fn get_storage(
+                &mut self,
+                address: &Address,
+                key: &::evm2::interpreter::Word,
+            ) -> Result<::evm2::interpreter::Word, Self::Error> {
+                Ok(
+                    if *address == CONTRACT && *key == U256::from(V2_RESERVES_SLOT) {
+                        self.word
+                    } else {
+                        U256::ZERO
+                    },
+                )
+            }
+            fn get_block_hash(
+                &mut self,
+                _: &::evm2::interpreter::Word,
+            ) -> Result<B256, Self::Error> {
+                Ok(B256::ZERO)
+            }
+        }
+        let db = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(ReservesDb {
+            word: reserves_word,
+        }));
+        let mut evm = build_pilot_evm(db);
+        let mut session = super::session::Evm2SimSession::new(&mut evm);
+        session
+            .read_v2_reserves(CONTRACT)
+            .expect("evm2 reserves read")
+    };
+
+    assert_eq!(revm_parts, evm2_parts);
+}
+
 /// Inspector-driven capture — the engine's swap-event oracle's seam — is
 /// identical across engines: same log, same verdict.
 #[test]
