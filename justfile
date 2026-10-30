@@ -223,7 +223,13 @@ test-golden-replay:
 # `-p`/`--package` must ALSO drop the trailing `--workspace`: nextest gives
 # --workspace precedence and silently runs every workspace member when both
 # selections are present, so the documented `-p <crate>` narrowing would never
-# narrow.
+# narrow. The gated feature list narrows with it: each entry is `<package>/
+# <feature>`, and a selection keeps exactly the entries whose owning package it
+# selected (`-p degenbot-pools` keeps the two pools entries) and drops the rest
+# — cargo rejects a feature spec naming a package the run does not select
+# (`the package 'degenbot-pools' does not contain these features: degenbot-bot/
+# executor-ab-probe, ...`). A selection whose packages own none of them passes
+# no `--features` at all.
 #
 # Why the whole-workspace default over `-p <crate>`: resolver v3 unifies
 # features for `--workspace`, so its artifacts are the one warm, canonical set
@@ -244,18 +250,56 @@ test-rust-nextest *args: check-toolchain
     # argv rides "$@" — each flag and its value reach cargo intact (`-p <crate>`,
     # `-E 'test(a) or test(b)'`). `-p`/`--package` must ALSO drop the trailing
     # `--workspace`: nextest gives --workspace precedence and silently runs
-    # every workspace member when both selections are present.
+    # every workspace member when both selections are present, and the same
+    # scan records the selected packages so the gated feature list can narrow
+    # to what those packages own.
     selection="--workspace"
-    for arg in "$@"; do
-        case "$arg" in
-            -p|--package|--package=*) selection="" ;;
-        esac
-    done
-    # Fixture-corpus and lab features ride every lane (ADR-084 D3): the golden
+    # Fixture-corpus and lab features ride every lane (ADR-084): the golden
     # corpora, the simulation harness, and the cache-lab strategies behind
     # their gated module are executed here, never silently skipped behind
-    # required-features.
-    cargo nextest run --locked --manifest-path rust/Cargo.toml $selection --profile ci --no-fail-fast --features degenbot-pools/capture-fixtures,degenbot-pools/cache-lab,degenbot-bot/executor-ab-probe,degenbot-simulation/test-harness "$@"
+    # required-features. Every entry is tagged with its owning package, the
+    # text before the first `/` (the same prefix cargo binds a feature spec to).
+    fixed_features="degenbot-pools/capture-fixtures,degenbot-pools/cache-lab,degenbot-bot/executor-ab-probe,degenbot-simulation/test-harness"
+    packages=""
+    pending_package=""
+    for arg in "$@"; do
+        if [ -n "$pending_package" ]; then
+            packages="$packages $arg"
+            pending_package=""
+            continue
+        fi
+        case "$arg" in
+            -p|--package) selection=""; pending_package=1 ;;
+            --package=*) selection=""; packages="$packages ${arg#--package=}" ;;
+            -p?*) selection=""; packages="$packages ${arg#-p}" ;;
+        esac
+    done
+    if [ -n "$packages" ]; then
+        # A narrowed selection carries exactly the gated features its own
+        # packages declare. Handing it the whole list is a cargo error (the
+        # package does not contain another package's features), and passing
+        # none when some are owned would leave that package's corpora behind
+        # required-features — green over a silently skipped corpus. The
+        # unselected packages' gated binaries are not in this run at all, so
+        # nothing is skipped by leaving their features out.
+        selected_features=""
+        for feature in ${fixed_features//,/ }; do
+            for package in $packages; do
+                # `name@version` package specs still name the same package.
+                if [ "${package%%@*}" = "${feature%%/*}" ]; then
+                    selected_features="${selected_features:+$selected_features,}$feature"
+                fi
+            done
+        done
+        fixed_features="$selected_features"
+    fi
+    # An empty --features value is a cargo error, so a selection that owns no
+    # gated feature passes no flag.
+    feature_flag=""
+    if [ -n "$fixed_features" ]; then
+        feature_flag="--features $fixed_features"
+    fi
+    cargo nextest run --locked --manifest-path rust/Cargo.toml $selection --profile ci --no-fail-fast $feature_flag "$@"
 
 # Run the fork/RPC-gated suites — the legs every offline gate (test, pre-push,
 # CI) deliberately deselects:
