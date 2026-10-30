@@ -1505,6 +1505,158 @@ mod tests {
         writer.join().expect("writer thread");
     }
 
+    /// A method-keyed scripted transport serving empty accounts (zero
+    /// balance, zero nonce, no code, zero storage) — enough for the
+    /// INVALID-executor fixture, whose execute() reverts before any pool
+    /// read. Serves either engine's read pattern (the revm override apply
+    /// pre-fetches WETH/PM accounts; the evm2 apply does not).
+    #[expect(clippy::expect_used)] // test-only scripted transport (static values always encode)
+    mod empty_transport {
+        use super::*;
+        use alloy::providers::RootProvider;
+        use alloy::rpc::client::RpcClient;
+        use alloy::rpc::json_rpc::{
+            ErrorPayload, RequestPacket, Response, ResponsePacket, ResponsePayload,
+            SerializedRequest,
+        };
+        use alloy::transports::{TransportError, TransportFut};
+        use serde_json::value::{to_raw_value, RawValue};
+
+        pub fn provider() -> AlloyProvider {
+            let client = RpcClient::new(EmptyTransport, true);
+            let root: RootProvider = RootProvider::new(client);
+            AlloyProvider::from_provider(
+                Arc::new(root) as Arc<dyn alloy::providers::Provider<alloy::network::Ethereum>>
+            )
+        }
+
+        #[derive(Clone, Copy)]
+        struct EmptyTransport;
+
+        fn success(value: &str) -> ResponsePayload {
+            let raw: Box<RawValue> =
+                to_raw_value(&serde_json::Value::String(value.into())).expect("valid JSON string");
+            ResponsePayload::Success(raw)
+        }
+
+        impl tower::Service<RequestPacket> for EmptyTransport {
+            type Response = ResponsePacket;
+            type Error = TransportError;
+            type Future = TransportFut<'static>;
+
+            fn poll_ready(
+                &mut self,
+                _cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Result<(), Self::Error>> {
+                std::task::Poll::Ready(Ok(()))
+            }
+
+            fn call(&mut self, req: RequestPacket) -> Self::Future {
+                Box::pin(async move {
+                    let respond = |req: &SerializedRequest| -> Response {
+                        let payload = match req.method() {
+                            "eth_getBalance" | "eth_getTransactionCount" => success("0x0"),
+                            "eth_getCode" => success("0x"),
+                            "eth_getStorageAt" => success(&format!("0x{:064x}", 0)),
+                            other => {
+                                return Response {
+                                    id: req.id().clone(),
+                                    payload: ResponsePayload::Failure(ErrorPayload {
+                                        code: -32601,
+                                        message: format!("method not found: {other}").into(),
+                                        data: None,
+                                    }),
+                                };
+                            }
+                        };
+                        Response {
+                            id: req.id().clone(),
+                            payload,
+                        }
+                    };
+                    Ok(match req {
+                        RequestPacket::Single(r) => ResponsePacket::Single(respond(&r)),
+                        RequestPacket::Batch(rs) => {
+                            ResponsePacket::Batch(rs.iter().map(respond).collect())
+                        }
+                    })
+                })
+            }
+        }
+    }
+
+    /// The end-to-end engine parity run (ADR-089): the full dispatch fan-out
+    /// over a scripted provider with the INVALID-executor fixture — run
+    /// under BOTH feature sets (default = revm arm, `evm2` = the twin arm),
+    /// the fixed expectations ARE the parity gate.
+    #[expect(clippy::expect_used)] // test-only: runtime build + thread join
+    #[test]
+    fn dispatch_end_to_end_revert_fixture_matches_fixed_expectations() {
+        let provider = empty_transport::provider();
+        let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+        let pool_divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
+        let fot_registry = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
+        let bot_state = Arc::new(StateLock::new(BotState::new()));
+
+        let cands = vec![
+            candidate(40, 1_000_000_000_000_000_000u128, 1_000),
+            candidate(41, 1_000_000_000_000_000_000u128, 1_000),
+        ];
+
+        // The handle build needs a multi-thread runtime (the blocking
+        // adapters); the sync dispatch runs inside `block_on` on a worker.
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("multi-thread runtime");
+        let sim_thread = std::thread::spawn(move || {
+            let mut the_ctx = ctx(&provider);
+            the_ctx.runtime_bytecode = Bytes::from_static(&[0xfe]); // INVALID
+            rt.block_on(async {
+                dispatch_profitable_results(
+                    cands,
+                    &the_ctx,
+                    &suppression,
+                    100,
+                    0,
+                    &pool_divergence,
+                    &fot_registry,
+                    Some(bot_state),
+                    #[cfg(not(feature = "evm2"))]
+                    Some(degenbot_simulation::WarmCodeCacheInner::shared_default()),
+                    #[cfg(feature = "evm2")]
+                    None,
+                )
+            })
+        });
+        let outcome = sim_thread.join().expect("fan-out thread");
+
+        assert_eq!(outcome.candidate_count, 2);
+        assert_eq!(outcome.fail_count, 2);
+        assert_eq!(outcome.exception_count, 0);
+        assert_eq!(
+            outcome.gas_profitable.len() + outcome.gas_unprofitable.len(),
+            0,
+            "the INVALID executor yields no profitable path"
+        );
+        // Both candidates: execute() call [3] halts on 0xfe → the "empty"
+        // bucket with deep frame attribution on whichever engine ran.
+        assert_eq!(outcome.fail_buckets.get("empty"), 2);
+        assert_eq!(outcome.failures.len(), 2);
+        for failure in &outcome.failures {
+            assert_eq!(failure.bucket, "empty");
+            assert_eq!(failure.fail_index, Some(3), "the execute() call failed");
+            let frame = failure
+                .reverting_frame
+                .as_ref()
+                .expect("deep frame attribution");
+            assert_eq!(frame.depth, 1);
+            assert_eq!(frame.target, EXECUTOR);
+            assert_eq!(frame.label, "empty");
+        }
+    }
+
     /// Tier 1 parity: the in-process serial branch
     /// (`Some(bot_state)`) tallies `rpc-failed` for every candidate when the
     /// per-block EVM build fails. Under a `current_thread` tokio runtime,

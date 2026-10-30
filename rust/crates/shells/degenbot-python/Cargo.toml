@@ -129,6 +129,11 @@ bot = ["dep:degenbot-bot", "dep:degenbot-substrate", "dep:degenbot-ingestion", "
 price = ["dep:degenbot-price", "rpc"]
 submission = ["dep:degenbot-submission", "dep:degenbot-strategy", "rpc"]
 simulation = ["dep:degenbot-simulation", "dep:degenbot-arbitrage", "dep:degenbot-batch-executor", "dep:degenbot-workers", "rpc", "executor", "submission"]
+# The evm2 engine (ADR-089): stacked on `simulation`, forwards to the
+# strategy's engine switch — an extension built with this feature drives
+# every sim through evm2 instead of revm (compile-time, one engine per
+# build, per the hard-swap wiring).
+evm2 = ["simulation", "degenbot-arbitrage/evm2"]
 executor = ["dep:degenbot-executor"]
 execution = ["dep:degenbot-execution", "executor"]
 fork = ["dep:degenbot-fork"]
