@@ -67,11 +67,15 @@ impl AsyncDatabase for AlloyAsyncDb<'_> {
         if balance.is_zero() && nonce == 0 && code.is_empty() {
             return Ok(None);
         }
+        // `new_raw` (never `new_legacy`): foreign code may be an EIP-7702
+        // delegation designator, and only the raw constructor auto-detects
+        // it — a legacy-wrapped 7702 account fails validation
+        // (`RejectCallerWithCode`) and decodes wrong downstream.
         Ok(Some(
             AccountInfo::default()
                 .with_balance(balance)
                 .with_nonce(nonce)
-                .with_code(Bytecode::new_legacy(code)),
+                .with_code(Bytecode::new_raw(code)),
         ))
     }
 
