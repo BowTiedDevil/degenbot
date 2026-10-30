@@ -2,6 +2,7 @@
 //! the V3-family analogue of [`degenbot_math::v2::IntHopState`].
 
 use alloy::primitives::{U256, U512};
+use degenbot_math::bigint::narrow_u512_to_u256;
 use degenbot_math::v2::IntHopState;
 
 /// Ceiling division of `U512` / `U512` → `U256` (matches on-chain
@@ -17,19 +18,7 @@ pub fn u512_div_ceil(num: U512, denom: U512) -> U256 {
     }
     let q = num / denom;
     let r = num % denom;
-    u512_to_u256(if r.is_zero() { q } else { q + U512::from(1u64) })
-}
-
-/// Narrow `U512` → `U256` with an overflow assert (mirrors the helper in
-/// `degenbot-bot`/`narrow_u512_to_u256`; consolidated into a shared
-/// `v2-math` pub fn by the solver-kernel extraction epic).
-#[must_use]
-fn u512_to_u256(v: U512) -> U256 {
-    assert!(
-        v <= U512::from(U256::MAX),
-        "U512 → U256 narrowing overflow (corrupt/synthetic input;          spec-bound pool state is unreachable — enforced at register_*_pool)",
-    );
-    v.to::<U256>()
+    narrow_u512_to_u256(if r.is_zero() { q } else { q + U512::from(1u64) })
 }
 
 /// A parity-faithful exact-in swap step that REACHES its target price —
@@ -73,7 +62,7 @@ fn exact_in_step_to_target(
             } else {
                 u512_div_ceil(net_in_u512, denom_u512)
             };
-            let out = u512_to_u256((U512::from(l) * U512::from(sp_diff)) / U512::from(q96));
+            let out = narrow_u512_to_u256((U512::from(l) * U512::from(sp_diff)) / U512::from(q96));
             (net_in, out)
         }
     } else {
@@ -90,7 +79,7 @@ fn exact_in_step_to_target(
             let out = if denom_u512.is_zero() {
                 U256::ZERO
             } else {
-                u512_to_u256(out_u512 / denom_u512)
+                narrow_u512_to_u256(out_u512 / denom_u512)
             };
             (net_in, out)
         }
@@ -246,13 +235,13 @@ impl IntV3TickRangeHop {
             // U512 division for exact truncation
             let numerator_0_u512 = U512::from(numerator_0);
             let sp_u512 = U512::from(sp);
-            u512_to_u256(numerator_0_u512 / sp_u512)
+            narrow_u512_to_u256(numerator_0_u512 / sp_u512)
         };
 
         // token1_virt = (L · sqrtPriceX96) / 2^96
         // L·sqrtPriceX96: max u128 · U256 = 288 bits, fits in U512
         let numerator_1 = U512::from(l) * U512::from(sp);
-        let token1_virt = u512_to_u256(numerator_1 / U512::from(q96));
+        let token1_virt = narrow_u512_to_u256(numerator_1 / U512::from(q96));
 
         (token0_virt, token1_virt)
     }
