@@ -2,6 +2,15 @@
 
 ## Status
 
+**Implemented (2026-10-30, phase 5 cutover `5bc38246e`).** Phases 0–5
+landed: the evm2 engine is the only engine on production paths; the revm
+engine, the pilot scaffolding, and every feature flag retired per ADR-087.
+Phase 6 (the performance roadmap below) is the open work; the JIT stays in
+fail-soft `blocking` mode until its worker-pool productionization, and the
+revm dependency remains lib-level for the `oracle`/`harness`/`capture` lab
+modules (the Tier-3 truth source until their deliberate migration
+decision).
+
 Accepted (2026-10-30).
 
 ## Context
