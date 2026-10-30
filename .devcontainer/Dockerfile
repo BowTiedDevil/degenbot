@@ -1,6 +1,9 @@
 # degenbot devcontainer base.
 
-FROM fedora:latest
+# Pinned major: `latest` drifts silently (it moved F43→F44 under us). F45 is
+# the first Fedora whose llvm is 23.x — the version evm2-jit's inkwell pin
+# requires (ADR-089).
+FROM fedora:45
 
 RUN dnf install -y \
         gcc gcc-c++ make pkgconf-pkg-config \
@@ -13,10 +16,7 @@ RUN dnf install -y \
         git \
         just \
         ripgrep \
-        # Faster linkers for cargo (dev-only perf; analysis lived in rust/PERF_RESULTS.md (dropped in `f082db7a7`)).
-        # mold is the default via the user-level ~/.cargo/config.toml below;
-        # lld is installed as a fallback (switch via that config).
-        mold lld \
+        mold lld llvm-devel \
         sudo tmux vim htop procps-ng psmisc \
         glibc-langpack-en \
         hostname \

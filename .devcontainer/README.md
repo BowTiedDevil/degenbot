@@ -6,7 +6,7 @@ VSCode auto-discovers `devcontainer.json` in this directory.
 `consistency=cached`, which is Docker-Desktop-only). VSCode and the devcontainer
 CLI both need to be pointed at `podman` (see setup below).
 
-**Base image: `fedora:latest`** (currently resolves to Fedora 44). Everything
+**Base image: `fedora:45`** (pinned major — `latest` drifts silently; F45 is the first Fedora with LLVM 23, which the evm2-jit pilot's inkwell pin requires, ADR-089). Everything
 dnf-installable is baked into a minimal `Dockerfile` — there are **zero
 devcontainer features**. Only one tool is still curl-installed, because it has
 no Fedora package: `foundry`. (uv, unlike on Ubuntu, IS packaged by Fedora.)
@@ -82,7 +82,7 @@ no state fork.
 ## What's inside
 
 All of the following come from Fedora's dnf repos via the Dockerfile (so they
-are `dnf upgrade`-able and pinned to whatever `fedora:latest` ships at build
+are `dnf upgrade`-able and pinned to whatever the `fedora:45` repos ship at build
 time):
 
 | Tool        | dnf package(s)                            | Notes                                            |
@@ -93,6 +93,7 @@ time):
 | `just`      | `just`                                    |                                                  |
 | `direnv`    | `direnv`                                  | Hooked into `/etc/bashrc` at build time. The repo `.envrc` is a deliberate no-op inside the container (guarded on `/run/.containerenv`; `containerEnv` owns those vars) — it exists for the host side of the bind mount. |
 | `uv`        | `uv`                                      | Fedora packages uv directly (unlike Ubuntu).     |
+| LLVM 23 | `llvm-devel` | llvm-config + headers + libs for evm2-jit's inkwell pin (llvm-sys 23.1 exact). ADR-089. |
 | mold, lld   | `mold`, `lld`                             | Faster cargo linkers (dev-only perf; analysis lived in `rust/PERF_RESULTS.md`, dropped in `f082db7a7`). mold is the default via the user-level `~/.cargo/config.toml` baked in the Dockerfile; lld is installed as a fallback. Scoped to the devcontainer (NOT committed as `rust/.cargo/config.toml`) so CI and non-devcontainer cloners keep using the default system linker. |
 | `tmux`      | `tmux`                                    | baked in (was runtime-installed before)          |
 | git / curl  | `git`, `curl`, `ca-certificates`, ...     |                                                  |
