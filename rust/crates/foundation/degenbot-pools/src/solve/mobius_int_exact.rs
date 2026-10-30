@@ -62,22 +62,9 @@ use crate::solve::mobius_int::{
 };
 use degenbot_math::v2::{int_simulate_path, IntHopState};
 
-/// Result of [`exact_mobius_solve`] — the floor-exact EVM-sim evaluation
-/// of the on-chain swap chain AT the Möbius-model anchor (NOT the discrete
-/// argmax).
-///
-/// The anchor is the model-optimum `x* = (√(K·M) - M) / N` (see
-/// [`compute_mobius_model_optimal_input`]). The discrete argmax is
-/// ill-conditioned (the staircase is floor-jog-flat over a wide plateau
-/// near the optimum), so no fixed-radius search attains it, and any
-/// search's capture is bounded by the floor jog; the returned profit is
-/// within the floor-jog residual of the discrete max (measured ≤ 1 wei on
-/// 2-hop thin-margin paths). See the module-level doc for the two-layer
-/// discipline ("model layer" vs "discrete-EVM-sim layer").
-///
-/// `optimal_input` is the model anchor `x*` (the floor-exact evaluation
-/// point); `profit` is the corresponding on-chain profit. Both are `U256`
-/// (zero when unprofitable).
+/// Result of [`exact_mobius_solve`]: the floor-exact EVM-sim evaluation at
+/// the Möbius-model anchor, not the discrete argmax. The module doc owns the
+/// two-layer contract and the residual bound.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ExactMobiusResult {
@@ -105,20 +92,12 @@ pub struct ExactMobiusResult {
 ///    the analytic argmax of the rational envelope, via
 ///    [`compute_mobius_model_optimal_input`]. This is the Möbius-model
 ///    optimum (exact over the reals), NOT the discrete EVM-sim optimum.
-/// 4. EVM-simulate at `x*` via `int_simulate_path` and return
-///    `int_simulate_path(x*) - x*`. This is NOT the discrete argmax: the
-///    staircase is floor-jog-flat over a wide plateau near the optimum, so
-///    the argmax can sit arbitrarily far from the anchor. No neighborhood
-///    tightening runs: the envelope dominates the floored chain pointwise
-///    and the anchor evaluation reaches the envelope to within the
-///    propagated floor jog, so the residual against the discrete max is
-///    jog-bounded (measured ≤ 1 wei on 2-hop thin-margin paths against a
-///    ±4096-wei brute scan) and a sweep's capture is at most that jog.
-/// 5. Return the result.
+/// 4. EVM-simulate once at `x*` via `int_simulate_path` and return
+///    `int_simulate_path(x*) - x*`.
 ///
-/// This produces results with zero float conversions. Exactness holds at
-/// the Möbius-model layer; the discrete layer carries the bounded residual
-/// documented above.
+/// The result is the anchor evaluation, not the discrete argmax; the module
+/// doc owns the two-layer contract, the ill-conditioning, and the residual
+/// bound. No float conversion occurs on any step.
 ///
 /// # Errors
 ///
@@ -210,18 +189,9 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
 /// ```
 ///
 /// This is the **analytic argmax of the Möbius model envelope** over the
-/// reals — NOT the discrete optimum of the actual swap chain. The model
-/// envelope treats the per-hop swap `y = γ·s·x / (D·r + γ·x)` as if its
-/// floor division were mathematical division; the actual on-chain chain
-/// applies floor (`EVM DIV`) at each hop, producing a piecewise-linear
-/// staircase that *approximates* this rational envelope. The discrete
-/// optimum can sit at `x* + δ` for small `|δ|` because the staircase is
-/// locally sub-constant-slope near `x*`.
-///
-/// [`exact_mobius_solve`] bridges the two layers: it calls this fn for the
-/// model-optimum anchor, then runs the **floor-exact EVM-simulation sweep**
-/// `int_simulate_path(x*)` at `x*` and `x* ± 2` to find the discrete argmax
-/// of `int_simulate_path(x) - x` — the true on-chain profit optimum.
+/// reals — NOT the discrete optimum of the actual swap chain, which applies
+/// floor (`EVM DIV`) at every hop. [`exact_mobius_solve`] uses it as the
+/// anchor; the module doc owns the two-layer contract and the residual bound.
 ///
 /// # Arithmetic discipline
 ///

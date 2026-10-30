@@ -110,7 +110,7 @@ The engine matches on path composition to select the solver:
 
 | Path type | Solver | Method |
 |-----------|--------|--------|
-| V2-V2 | `exact_mobius_solve` | Closed-form √(K·M) via U512 isqrt; ±2 neighborhood search |
+| V2-V2 | `exact_mobius_solve` | Closed-form √(K·M) via U512 isqrt; one floor-exact evaluation at that anchor |
 | V3-V3, V4-V4 | `int_solve_v3_v3` | Piecewise integer-Möbius per (k₁,k₂) tick-range pair; closed-form per segment |
 | V2-V3, V3-V2, V2-V4, V4-V2, V3-V4, V4-V3 | `exact_solve_mixed_v2_v3_sequence` | V3/V4 effective reserves + piecewise tick-range enumeration; closed-form per range |
 
@@ -173,7 +173,7 @@ The optimal input is the closed-form `x_opt = (√(K·M) - M) / N`, solvable via
 - Computes K, M, N as U512 integers via `compute_int_mobius_coefficients`
 - Checks `K > M` for profitability
 - Computes `x_opt = (isqrt(K·M) - M) / N` using `isqrt_u512` (Newton's method in U512, ~100ns)
-- EVM-simulates at `x_opt` and ±2 neighbors to handle floor-division rounding
+- EVM-simulates once at `x_opt`; the residual against the discrete argmax is bounded by the propagated floor jog (the `mobius_int_exact` module doc owns the contract)
 - Returns the anchor evaluation (`optimal_input`, `profit`, `is_profitable`, `hop_outputs`)
 
 **Performance**: 131ns for a 2-hop V2 path (17× faster than the iterative `int_mobius_solve_with_refinement`).
