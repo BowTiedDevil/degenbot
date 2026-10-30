@@ -178,7 +178,8 @@ fn solve_solidly_2hop_all_solidly_matches_grid_scan() {
     );
     // Golden-section must not miss the global optimum: scan a fine grid
     // (1-token steps) and assert the solver's profit is within one grid
-    // step of the grid max (±3 verification radius tolerance).
+    // step of the grid max. The grid step dwarfs the arm's wei-scale residual,
+    // so this asserts where the peak is, not its exact height.
     let max_reserve = U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64));
     let grid_step = U256::from(10u64).pow(U256::from(18u64)); // 1 token
     let grid_best_profit = grid_scan_best(resolved, max_reserve, grid_step);

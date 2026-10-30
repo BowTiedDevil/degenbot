@@ -3,13 +3,14 @@
 //! the discrete optimum on realistic one-Solidly-hop pools.
 //!
 //! On these paths the stable-pool profit curve is a flat plateau near its
-//! peak, so the arm's bracket residual — its final integer verify scans only
-//! ±3 candidates — costs a handful of wei at most. That flatness is the whole
-//! reason the golden arm may stand in for an exact search.
+//! peak, so the arm's bracket residual — it returns the golden loop's closing
+//! midpoint as-is, with no integer re-scan — costs a handful of wei at most.
+//! That flatness is the whole reason the golden arm may stand in for an exact
+//! search.
 //!
 //! Why this test exists: the flatness is a *measured* property, not a proof.
-//! A future change to the arm (its bracket, its iteration count, its verify
-//! radius) or to the Solidly math leaf can move the peak or widen the
+//! A future change to the arm (its bracket, its iteration count, the point it
+//! returns) or to the Solidly math leaf can move the peak or widen the
 //! residual. This test sweeps a fine window around the arm's own answer at
 //! unit resolution and fails, loudly and with the offending path's
 //! parameters, whenever the arm's profit falls more than [`TOLERANCE_WEI`]
@@ -29,8 +30,9 @@ use degenbot_pools::solve::{
 };
 
 /// Sweep half-width, in native input units, around the arm's returned answer.
-/// The arm's own integer verify only scans ±3, so this window is an
-/// independent check of the local plateau rather than a replay of the arm.
+/// The arm returns its bracket midpoint without a local re-scan, so this
+/// window is an independent check of the local plateau rather than a replay of
+/// the arm.
 /// Chosen (with [`SAMPLE_SIZE`]) so the sampled sweep stays well under ~2 s
 /// on the dispatch machine.
 const SWEEP_RADIUS: u64 = 8_000;

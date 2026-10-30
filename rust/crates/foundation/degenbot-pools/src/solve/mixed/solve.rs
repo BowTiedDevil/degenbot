@@ -538,11 +538,26 @@ const GOLDEN_SECTION_ITERATIONS: usize = 25;
 /// Balancer weighted, Balancer stable, Curve stableswap).
 ///
 /// Owns the whole search: the V2-equivalent Möbius bracket hint, the ±5x
-/// bracket around the Möbius optimum, the phi-approximated golden loop, and
-/// the ±3 integer verification. The family-specific parts enter as closures:
-/// `simulate` evaluates one candidate input against the real math leaf, and
-/// `simulate_outputs` returns the per-hop outputs for the winning input. All
-/// four arms share one integer-verification order (see [`ascending_sweep`]).
+/// bracket around the Möbius optimum, the phi-approximated golden loop, and the
+/// single evaluation of the loop's closing midpoint that becomes the result.
+/// The family-specific parts enter as closures: `simulate` evaluates one
+/// candidate input against the real math leaf, and `simulate_outputs` returns
+/// the per-hop outputs for the returned input.
+///
+/// The returned input is that closing midpoint, evaluated ONCE — there is no
+/// local re-scan around it. The loop is a unimodal search on the REAL leaf (not
+/// on the Möbius model that only supplied the bracket), so it converges to the
+/// smooth argmax of the simulated profit curve; the midpoint therefore sits
+/// within loop resolution of that argmax, and an integer polish could harvest
+/// only the leaf's floor-division jog — the wei-scale staircase the true argmax
+/// sits on. Measured against a swept-best reference across 1230 paths (the
+/// drift-net corpora plus thin-margin grids), that jog is: at most 1 wei for
+/// Solidly and Curve stableswap, at most 4 wei for Balancer weighted at 4e18
+/// balances, and at most 1014 wei for a 2:1-imbalanced Balancer-stable hop at
+/// 1e18 balances — the stable leaf's floor jitter at its largest observed
+/// scale, and still ~12 orders of magnitude below gas. No family's jog reaches
+/// an executable profit signal, so the sweep costs simulations without ever
+/// changing a dispatch decision.
 pub(crate) fn solve_golden_section_path_int(
     v2_equiv: &[degenbot_math::v2::IntHopState],
     simulate: &impl Fn(U256) -> U256,
@@ -591,12 +606,17 @@ pub(crate) fn solve_golden_section_path_int(
     }
 
     // --- Golden-section search ---
-    // Anchored brackets keep the historical fixed iteration count (the pinned
-    // corpora were captured under it). An UNANCHORED full-width bracket (no
-    // usable Möbius hint) sizes the count to the bracket width: each
-    // iteration keeps phi ≈ 0.618 of the span (~2^-0.694), so resolving a
-    // width-W bracket to the ±3 verification radius takes ~1.5*log2(W/4)
-    // iterations (~87 at W = 1e18, ≤ 381 at any U256 width).
+    // Anchor: the per-iteration budget has to resolve the bracket it starts
+    // from, and the two bracket classes start from wildly different widths.
+    // An ANCHORED bracket is the ±5x window around the Möbius optimum — always
+    // within a factor of the model's answer, hence resolvable by a fixed count:
+    // 25 iterations was measured on the pinned drift-net corpora (and on the
+    // golden-parity matrix), where it lands the midpoint within the leaf's jog
+    // of the discrete argmax. An UNANCHORED bracket is the full
+    // `[1, max_reserve]` fallback, whose width a fixed count cannot resolve
+    // (each iteration keeps phi ≈ 0.618 of the span, ~2^-0.694, so the
+    // remaining width after `n` iterations is W·0.618^n regardless of how small
+    // W was meant to be): that class sizes the count to the width instead.
     let iterations = if x_mobius.is_zero() {
         let width_bits = 256usize - (x_high - x_low).leading_zeros();
         (width_bits.saturating_sub(2) * 3 / 2).max(GOLDEN_SECTION_ITERATIONS)
@@ -639,69 +659,39 @@ pub(crate) fn solve_golden_section_path_int(
     verify_best(simulate, simulate_outputs, x_opt)
 }
 
-/// Integer verification + result construction for the golden-section template:
-/// resolve `center` to the max-profit input with the shared ascending ±3 sweep
-/// ([`ascending_sweep`]), then build the [`SolvePathResult`]. Returns `None`
-/// when no candidate is profitable.
+/// Result construction for the golden-section template: evaluate the loop's
+/// closing midpoint `center` once against the real leaf and build the
+/// [`SolvePathResult`] from that evaluation. Returns `None` when it is not
+/// profitable.
+///
+/// WHY the midpoint stands in for an integer polish: see
+/// [`solve_golden_section_path_int`]'s anchor rationale — the loop converges to
+/// the smooth argmax of the real leaf, and the leaf's floor jog (≤ 1 wei
+/// Solidly/Curve, ≤ 4 wei weighted at 4e18, ≤ 1014 wei a 2:1 stable hop at
+/// 1e18) is orders of magnitude below any executable profit signal.
 fn verify_best(
     simulate: &impl Fn(U256) -> U256,
     simulate_outputs: &impl Fn(U256) -> Vec<U256>,
     center: U256,
 ) -> Option<SolvePathResult> {
-    let (best_input, best_profit) = ascending_sweep(simulate, center)?;
+    let profit = simulate(center).saturating_sub(center);
+    if profit.is_zero() {
+        return None;
+    }
 
-    let hop_outputs = simulate_outputs(best_input);
+    let hop_outputs = simulate_outputs(center);
     let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
-    consumed_inputs.push(best_input);
+    consumed_inputs.push(center);
     for i in 1..hop_outputs.len() {
         consumed_inputs.push(hop_outputs[i - 1]);
     }
     Some(SolvePathResult {
-        optimal_input: best_input,
-        profit: best_profit,
+        optimal_input: center,
+        profit,
         hop_outputs,
         consumed_inputs,
         ..Default::default()
     })
-}
-
-/// The shared integer-verification order: an ascending `center-3 ..= center+3`
-/// scan (candidate set clamped at 1) where the earliest max-profit candidate
-/// wins ties. Returns the input and its profit, or `None` when no candidate is
-/// profitable.
-///
-/// All four stable arms use this one order. The outward `center±delta` walk it
-/// replaces was measured against it on the golden-parity matrix and each arm's
-/// drift-net corpus: profits were identical to within a single wei, this scan
-/// was never worse (and a wei better on a few paths), and its worst-case
-/// residual matched the walk's — so the simpler scan is the survivor.
-fn ascending_sweep(simulate: &impl Fn(U256) -> U256, center: U256) -> Option<(U256, U256)> {
-    const SEARCH_RADIUS: u64 = 3;
-    let one = U256::from(1u64);
-    let start = center.saturating_sub(U256::from(SEARCH_RADIUS)).max(one);
-    let end = center + U256::from(SEARCH_RADIUS) + one;
-
-    let mut best_input = U256::ZERO;
-    let mut best_profit = U256::ZERO;
-    let mut cand = start;
-    while cand <= end {
-        let output = simulate(cand);
-        let profit = output.saturating_sub(cand);
-        if profit > best_profit {
-            best_profit = profit;
-            best_input = cand;
-        }
-        if cand == U256::MAX {
-            break;
-        }
-        cand += one;
-    }
-
-    if best_profit.is_zero() {
-        None
-    } else {
-        Some((best_input, best_profit))
-    }
 }
 
 // ---------------------------------------------------------------------------

@@ -187,10 +187,12 @@ Parity on the synthesized 288-path corpus (4 shapes × 3 decimal scales × 3
 Solidly fees × 2 V2 fees × 4 basis-point imbalances):
 `288 paths, 143 profitable, 143 fast-path, 50 equal, 93 strictly better, 0 regressions`.
 The 93 "strictly better" paths beat the golden arm by a few **wei** on flat
-stable-pool plateaus (the golden arm's 25-iteration bracket midpoint plus ±3
-sweep lands on a jagged point a few wei below the discrete max). The `t`-arm
-spends 7 path simulations against the golden arm's 36, but 1e-18 of a token is
-not a product feature.
+stable-pool plateaus (the golden arm's 25-iteration bracket midpoint lands on a
+jagged point a few wei below the discrete max). The `t`-arm
+spends 7 path simulations against the golden arm's 28 — the two bracket
+evaluations, one per iteration of the 25-iteration loop, and the loop's closing
+midpoint evaluated once as the answer — but 1e-18 of a token is not a product
+feature.
 
 ### Verdict
 
@@ -363,20 +365,24 @@ refactor. The snapshots — not the new code's output — are the oracle.
 ### The evidence
 
 The four stable-family solve arms (Solidly, Balancer-weighted, Balancer-stable,
-Curve) each carried a private copy of the same search — the V2-equivalent
-Möbius precheck, the ±5× bracket around the model optimum, the 25-iteration
-phi-approximated golden loop, and a ±3 integer verification. They collapsed to
-family-specific closures over one shared golden-section template, preserving two
-quietly-accumulated probe-order differences verbatim (ascending
-`center−3..=center+3` for Solidly/weighted, outward-from-best for stable/Curve)
-via an explicit sweep enum, and keeping the `hops < 2` guard on the two arms
-that had it. Net −254 lines.
+Curve) run one shared search: the V2-equivalent Möbius precheck, the ±5× bracket
+around the model optimum, the phi-approximated golden loop, and one evaluation of
+that loop's closing midpoint as the answer. The family-specific parts are
+closures over the template, and the `hops < 2` guard stays on the arms that carry
+it.
 
 The drift net: each arm is pinned by a synthetic corpus (24 paths spanning
 bases, fees, imbalances, and hop placement), 4 corpora × 24 paths = **96 pinned
 `(optimal_input, profit)` pairs**. Pre-extraction 4/4 PASS; post-extraction 4/4
 PASS — 96/96 pairs byte-identical, 0 wei drift. The committed captured mixed
 corpora carry no Solidly/Balancer/Curve legs, so a synthetic corpus is the net.
+
+A deliberate change is re-pinned rather than merely drifted. The net's last
+re-pin replaced the arms' ±3-candidate integer sweep with the bare midpoint, on
+a measured intended delta: the sweep captured at most the leaf's floor jog —
+≤ 1 wei for Solidly/Curve, ≤ 4 wei for weighted at 4e18 balances, ≤ 1014 wei for
+a 2:1-imbalanced Balancer-stable hop at 1e18 balances, over 1230 paths. The 96
+re-pinned pairs moved by at most 4 wei.
 
 The salvaged brute-force corpus of §2 is the same idea applied to the golden
 arm's **optimality** rather than to a refactor: a fine brute-force sweep pins

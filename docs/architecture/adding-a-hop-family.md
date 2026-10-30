@@ -138,13 +138,13 @@ The family's nested `pub(crate) mod solve` owns everything the family contribute
 - **the solve entry** — the family's path-level solve, registered on the row: the
   dispatch-row adapter (`solve_solidly_entry` `solidly.rs:894`) over the family's
   own search (`solve_solidly_path_int` `:911`), built on the shared golden
-  template `solve_golden_section_path_int` (`src/solve/mixed/solve.rs:545`) where the
+  template `solve_golden_section_path_int` (`src/solve/mixed/solve.rs:561`) where the
   stable-family search applies. The template's family-specific parts enter as two
-  closures (`simulate`, `simulate_outputs`); the ±3 integer-verification order
-  (`verify_best` `:624`, `ascending_sweep` `:656`) is shared by every arm, not a
-  per-family choice. A family whose search genuinely differs does not reuse the
-  template — but it must still own the whole search (precheck, bracket, refine,
-  verify), never a fragment.
+  closures (`simulate`, `simulate_outputs`); its returned input — the golden
+  loop's closing midpoint, evaluated once (`verify_best` `:672`) — is the
+  template's, not a per-family choice. A family whose search genuinely differs
+  does not reuse the template — but it must still own the whole search (precheck,
+  bracket, converge), never a fragment.
 - **the envelope lines** — the family's line builder, registered on the row:
   `solidly_hop_lines` (`solidly.rs:1052`) delegating to `solidly_stable_lines`
   (`:1144`) / `solidly_stable_rise` (`:1192`); `weighted_hop_lines`
