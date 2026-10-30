@@ -32,12 +32,19 @@
 //!   no fixed-radius sweep finds it. [`exact_mobius_solve`] therefore does
 //!   NOT search for it: it returns the floor-exact evaluation AT the model
 //!   anchor. The residual against the discrete max is bounded by the
-//!   propagated floor jog (measured ≤ 1 wei on 2-hop paths against a
-//!   ±4096-wei brute-scan reference — see the `displacement` test module),
-//!   because the envelope dominates the floored chain pointwise while the
-//!   anchor evaluation reaches it to within the jog. Tightening sweeps
-//!   capture at most that jog — a 1-wei lottery on a minority of paths —
-//!   so the solve evaluates the anchor once and stops.
+//!   COMPUTED propagated floor jog (`mobius_int::floor_jog_bound`): hop
+//!   `i`'s sub-wei floor jitter carried at the marginal rates of every hop
+//!   downstream of it (`Σᵢ Π_{j>i} γⱼsⱼ/rⱼ`), plus the plateau-slope slack
+//!   of flooring the anchor. That is the familiar one-wei-per-hop count on
+//!   any path whose hop rates stay at or under 1, and the sound
+//!   generalization of it where a skewed pool amplifies earlier jitter —
+//!   never a measured constant. Measured against a ±4096-wei brute-scan
+//!   reference (see the `displacement` test module): max residual 1 wei on
+//!   2-hop and 2 wei on 3-hop ladders, both under their bounds. The envelope
+//!   dominates the floored chain pointwise while the anchor evaluation
+//!   reaches it to within the jog, so tightening sweeps capture at most that
+//!   jog — a sub-wei lottery on a minority of paths — and the solve
+//!   evaluates the anchor once and stops.
 //!
 //! Module-level qualifier: the "exact" in *this module's name*
 //! (`mobius_int_exact`) is a discipline label distinguishing the integer
@@ -144,7 +151,9 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
 
     // No neighborhood tightening around the anchor: the envelope dominates
     // the floored chain pointwise, so the residual against the discrete max
-    // is bounded by the propagated floor jog (~1 wei/hop), and at the
+    // is bounded by the propagated floor jog (see
+    // `mobius_int::floor_jog_bound` — the one-wei-per-hop count wherever no
+    // hop rate exceeds 1), and at the
     // envelope optimum the composed marginal rate is 1 — every nearby
     // candidate is a near-independent draw at that jog (measured: a ±2
     // sweep's capture is exactly 1 wei on ~16% of thin-margin paths, never
@@ -423,6 +432,7 @@ pub fn narrow_u512_to_u256(v: U512) -> U256 {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::solve::mobius_int::floor_jog_bound;
 
     fn u256(n: u64) -> U256 {
         U256::from(n)
@@ -537,9 +547,12 @@ mod tests {
         let result = exact_mobius_solve(&hops).unwrap();
         assert!(result.is_profitable);
 
-        // The anchor carries no argmax guarantee, but the floor-jog bound
-        // does: no ±3 neighbor may beat the returned profit by more than
-        // the propagated jog (~1 wei per hop on this 2-hop path).
+        // The anchor carries no argmax guarantee, but the COMPUTED floor-jog
+        // bound does: no ±3 neighbor may beat the returned profit by more than
+        // `mobius_int::floor_jog_bound` allows for these hops — the propagated
+        // jog (amplified here by a first-hop rate above 1) plus the floored
+        // anchor's plateau slack, never a measured constant.
+        let bound = floor_jog_bound(&hops);
         let x_opt = result.optimal_input;
         for delta in -3i64..=3 {
             let candidate = if delta >= 0 {
@@ -554,8 +567,9 @@ mod tests {
             if output > candidate {
                 let profit = output - candidate;
                 assert!(
-                    profit <= result.profit + U256::from(2u64),
-                    "Neighbor {candidate} profit {profit} exceeds {} by more than the floor jog",
+                    profit <= result.profit + bound,
+                    "Neighbor {candidate} profit {profit} exceeds {} by more than the \
+                     computed floor-jog bound {bound}",
                     result.profit
                 );
             }
@@ -760,9 +774,15 @@ mod tests {
 
 #[cfg(test)]
 mod displacement {
-    #![expect(clippy::unwrap_used)]
+    #![expect(clippy::unwrap_used, clippy::print_stdout)]
 
     use super::*;
+    use crate::solve::mobius_int::floor_jog_bound;
+
+    /// Brute radius of the reference argmax window, in wei — far wider than
+    /// any fixed-radius tightening sweep, so the reference is the truth the
+    /// anchor-only solve is measured against.
+    const WINDOW_RADIUS: u64 = 4096;
 
     /// Reference discrete argmax over `[anchor - R, anchor + R]` — the
     /// brute-scan truth the solver's residual is measured against.
@@ -790,12 +810,51 @@ mod displacement {
         best
     }
 
+    /// Measure the anchor-only solve's residual against the
+    /// ±[`WINDOW_RADIUS`]-wei brute-scan reference and assert it stays within
+    /// the COMPUTED [`floor_jog_bound`]. Returns the measured residual and
+    /// the bound it was checked against, so a grid can track both; `None` for
+    /// a case the solver legitimately skips (not profitable, zero anchor, or
+    /// no profitable input in the window).
+    fn residual_against_window(hops: &[IntHopState], case: &str) -> Option<(U256, U256)> {
+        let coeffs = compute_int_mobius_coefficients(hops).ok()?;
+        if !coeffs.is_profitable {
+            return None;
+        }
+        let anchor = compute_mobius_model_optimal_input(&coeffs);
+        if anchor.is_zero() {
+            return None;
+        }
+        let (_, window_profit) = window_argmax(anchor, WINDOW_RADIUS, hops)?;
+        let solved = exact_mobius_solve(hops).unwrap();
+        let residual = window_profit.saturating_sub(solved.profit);
+        let bound = floor_jog_bound(hops);
+        assert!(
+            residual <= bound,
+            "residual {residual} > floor_jog_bound {bound} ({case} hops={} anchor={anchor} \
+             window={window_profit} solver={})",
+            hops.len(),
+            solved.profit
+        );
+        Some((residual, bound))
+    }
+
     /// Near-fee-threshold margins flatten the envelope near the optimum, so
     /// floor jogs dominate and the true discrete argmax wanders far from the
     /// model anchor (the adversarial-review counterexample class). The
-    /// residual — the solver's profit shortfall against a ±4096-wei
-    /// brute-scan reference — must stay within the floor-jog scale (1 wei on
-    /// these 2-hop paths).
+    /// residual — the solver's profit shortfall against a ±4096-wei brute-scan
+    /// reference — must stay within the COMPUTED [`floor_jog_bound`], never a
+    /// measured constant: on these thin-margin ladders the bound is the
+    /// one-wei-per-hop count plus one wei of floored-anchor slack (every hop
+    /// rate sits at or under 1 except the diverging hop's, whose excess is a
+    /// few thousandths of a wei per wei).
+    ///
+    /// Measured maxima on this grid (re-print by running this test):
+    ///
+    /// | hops | `floor_jog_bound` | max residual |
+    /// |------|-------------------|--------------|
+    /// | 2    | 3 wei             | 1 wei        |
+    /// | 3    | 4 wei             | 2 wei        |
     #[test]
     fn displacement_residual_stays_within_floor_jog() {
         let fees = [(997u64, 1000u64), (9975, 10000), (9995, 10000)];
@@ -804,43 +863,74 @@ mod displacement {
             1_000_000_000_000_000_000u128,
             10u128.pow(24),
         ];
+        // Indexed by hop count, so a deeper ladder can never silently borrow a
+        // shallower ladder's measurement.
+        let mut max_residual = [U256::ZERO; 4];
+        let mut min_bound = [U256::MAX; 4];
+        let mut measured = [0usize; 4];
         for &(g, d) in &fees {
             for &base in &bases {
+                let b = U256::from(base);
+                // 2-hop ladder: one diverging hop + one neutral hop.
                 for delta_ppm in (6100u128..=20_000).step_by(900) {
-                    let b = U256::from(base);
                     let s1 = b + b * U256::from(delta_ppm) / U256::from(1_000_000u64);
                     let hops = vec![IntHopState::new(b, s1, g, d), IntHopState::new(b, b, g, d)];
-                    let Ok(coeffs) = compute_int_mobius_coefficients(&hops) else {
-                        continue;
-                    };
-                    if !coeffs.is_profitable {
-                        continue;
+                    let case = format!("2-hop g={g}/{d} base={base} dppm={delta_ppm}");
+                    if let Some((residual, bound)) = residual_against_window(&hops, &case) {
+                        measured[hops.len()] += 1;
+                        max_residual[hops.len()] = max_residual[hops.len()].max(residual);
+                        min_bound[hops.len()] = min_bound[hops.len()].min(bound);
                     }
-                    let anchor = compute_mobius_model_optimal_input(&coeffs);
-                    if anchor.is_zero() {
-                        continue;
+                }
+                // 3-hop ladder: `hop3`-shaped (one diverging hop, two neutral
+                // hops) with the break-even margin scaled by the third fee, so
+                // the ladder walks the same near-threshold band one hop deeper.
+                let breakeven_ppm = 1_000_000u128 * u128::from(d).pow(3) / u128::from(g).pow(3);
+                for delta_ppm in (breakeven_ppm + 600..=breakeven_ppm + 15_000).step_by(900) {
+                    let s1 = b + b * U256::from(delta_ppm) / U256::from(1_000_000u64);
+                    let hops = vec![
+                        IntHopState::new(b, s1, g, d),
+                        IntHopState::new(b, b, g, d),
+                        IntHopState::new(b, b, g, d),
+                    ];
+                    let case = format!("3-hop g={g}/{d} base={base} dppm={delta_ppm}");
+                    if let Some((residual, bound)) = residual_against_window(&hops, &case) {
+                        measured[hops.len()] += 1;
+                        max_residual[hops.len()] = max_residual[hops.len()].max(residual);
+                        min_bound[hops.len()] = min_bound[hops.len()].min(bound);
                     }
-                    let Some((_, window_profit)) = window_argmax(anchor, 4096, &hops) else {
-                        continue;
-                    };
-                    let r = exact_mobius_solve(&hops).unwrap();
-                    assert!(
-                        window_profit.saturating_sub(r.profit) <= U256::from(1u64),
-                        "residual {} > 1 wei (g={g}/{d} base={base} dppm={delta_ppm} \
-                         anchor={anchor} window={window_profit} solver={})",
-                        window_profit - r.profit,
-                        r.profit
-                    );
                 }
             }
+        }
+        // The grid's coverage and its measured maxima — the numbers the module
+        // doc and the test doc cite, printed rather than pinned so a re-run
+        // re-measures them instead of trusting a stale constant.
+        println!(
+            "grid: 2-hop {} cases max residual {} wei (min bound {}); \
+             3-hop {} cases max residual {} wei (min bound {})",
+            measured[2], max_residual[2], min_bound[2], measured[3], max_residual[3], min_bound[3],
+        );
+        for hops in [2usize, 3] {
+            assert!(
+                measured[hops] > 0,
+                "the {hops}-hop ladder must produce measurable, profitable cases"
+            );
+            // The tightest bound the grid produced still covers the worst
+            // residual it measured — the contract, over the whole family.
+            assert!(
+                max_residual[hops] <= min_bound[hops],
+                "{hops}-hop residual {} exceeds the tightest bound {}",
+                max_residual[hops],
+                min_bound[hops]
+            );
         }
     }
 
     /// Pin the ill-conditioning itself (re-derived counterexample of the
     /// adversarial-review class): the true argmax sits more than 64 wei from
     /// the anchor — outside any small fixed-radius sweep — while the profit
-    /// plateau is flat, so the solver's profit is still within 1 wei of the
-    /// window max.
+    /// plateau is flat, so the solver's profit still lands within the computed
+    /// floor-jog bound of the window max.
     #[test]
     fn argmax_displacement_exceeds_fixed_sweeps_but_residual_is_bounded() {
         let b = U256::from(1_000_000_000_000u128);
@@ -851,7 +941,7 @@ mod displacement {
         ];
         let coeffs = compute_int_mobius_coefficients(&hops).unwrap();
         let anchor = compute_mobius_model_optimal_input(&coeffs);
-        let (wx, window_profit) = window_argmax(anchor, 4096, &hops).unwrap();
+        let (wx, _) = window_argmax(anchor, WINDOW_RADIUS, &hops).unwrap();
         let disp = if wx > anchor {
             wx - anchor
         } else {
@@ -861,11 +951,12 @@ mod displacement {
             disp > U256::from(64u64),
             "counterexample must keep the argmax outside small sweeps (disp={disp})"
         );
-        let r = exact_mobius_solve(&hops).unwrap();
+        // Two hops' jitter plus the floored anchor's one wei of plateau slope:
+        // the bound is computed from the hop list, not a measured residual.
+        assert_eq!(floor_jog_bound(&hops), U256::from(3u64));
         assert!(
-            window_profit.saturating_sub(r.profit) <= U256::from(1u64),
-            "residual {} > 1 wei",
-            window_profit - r.profit
+            residual_against_window(&hops, "argmax-displacement pin").is_some(),
+            "the pin must be a profitable, anchored case"
         );
     }
 }

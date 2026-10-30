@@ -24,6 +24,8 @@
 
 #![expect(non_snake_case)]
 
+#[cfg(test)]
+use alloy::primitives::U256;
 use alloy::primitives::U512;
 use degenbot_math::v2::IntHopState;
 
@@ -143,11 +145,195 @@ pub fn compute_int_mobius_coefficients(
     })
 }
 
+// ---------------------------------------------------------------------------
+// floor_jog_bound
+// ---------------------------------------------------------------------------
+
+// The residual bound is the solver contract's *measured* side: its consumer is
+// the `displacement` test module in `mobius_int_exact`, which is why these
+// items compile under `cfg(test)` only. A production consumer that needs the
+// bound (rather than only the tests that assert it) drops the cfg.
+
+/// `⌈numer / denom⌉` over `U512`. Every call site guards `denom` non-zero.
+#[cfg(test)]
+fn ceil_div(numer: U512, denom: U512) -> U512 {
+    let quotient = numer / denom;
+    if (numer % denom).is_zero() {
+        quotient
+    } else {
+        quotient + U512::from(1u64)
+    }
+}
+
+/// Scale `acc` by one hop's zero-input marginal rate `ρ = γ·s/r`, rounding
+/// up (`acc` and the result are in `1/2³²` wei). `None` when the
+/// widened product leaves `U512` or the hop degenerates to a zero
+/// denominator — both mean a jog far past `U256`.
+#[cfg(test)]
+fn scaled_hop_rate(acc: U512, hop: &IntHopState) -> Option<U512> {
+    let rate_numer = U512::from(hop.gamma_numer).checked_mul(U512::from(hop.reserve_out))?;
+    let numer = rate_numer.checked_mul(acc)?;
+    let denom = U512::from(hop.fee_denom).checked_mul(U512::from(hop.reserve_in))?;
+    if denom.is_zero() {
+        return None;
+    }
+    Some(ceil_div(numer, denom))
+}
+
+/// Bound the anchor-only solve's residual on this path, in wei: the
+/// floor-exact EVM chain's shortfall against the smooth Möbius envelope it
+/// staircases, plus the plateau-slope slack of evaluating the floored anchor.
+///
+/// This is a property of the hop list alone (nothing about the solver's
+/// arithmetic), so it lives beside the coefficients rather than in
+/// `mobius_int_exact`.
+///
+/// # Derivation
+///
+/// Hop `i`'s swap is the real function
+///
+/// ```text
+/// fᵢ(x) = γᵢ·sᵢ·x / (rᵢ + γᵢ·x)
+/// ```
+///
+/// (`γᵢ` := `gamma_numer` / `fee_denom` — the fee-retained fraction,
+/// `rᵢ` = `reserve_in`, `sᵢ` = `reserve_out`), so the EVM hop is
+/// `⌊fᵢ(x)⌋ = fᵢ(x) − εᵢ` with the per-hop floor jitter
+/// `εᵢ = fᵢ(x) − ⌊fᵢ(x)⌋ ∈ [0, 1)` — EVM `DIV` loses strictly less than one
+/// wei (`⌊a/b⌋ > a/b − 1`). Its marginal output rate
+///
+/// ```text
+/// fᵢ'(x) = γᵢ·sᵢ·rᵢ / (rᵢ + γᵢ·x)² ≤ fᵢ'(0) = γᵢ·sᵢ/rᵢ =: ρᵢ
+/// ```
+///
+/// is non-increasing in `x`, so the zero-input rate `ρᵢ` is hop `i`'s
+/// largest.
+///
+/// Let `Xᵢ` be the envelope chain (`X₀ = x`, `X_{i+1} = fᵢ(Xᵢ)`) and `xᵢ`
+/// the floored chain (`x₀ = x`, `x_{i+1} = ⌊fᵢ(xᵢ)⌋`) from the same input.
+/// Every `fᵢ` is increasing and `⌊·⌋ ≤ ·`, so by induction `Xᵢ ≥ xᵢ`; with
+/// `δᵢ := Xᵢ − xᵢ ≥ 0`,
+///
+/// ```text
+/// δ_{i+1} = fᵢ(Xᵢ) − ⌊fᵢ(xᵢ)⌋ = [fᵢ(Xᵢ) − fᵢ(xᵢ)] + εᵢ ≤ ρᵢ·δᵢ + εᵢ
+/// ```
+///
+/// (mean value theorem with `fᵢ' ≤ ρᵢ` on `[xᵢ, Xᵢ]`). Unrolling from
+/// `δ₀ = 0` propagates the jog:
+///
+/// ```text
+/// δₙ ≤ Σ_{i<n} εᵢ·Gᵢ < Σ_{i<n} Gᵢ,     Gᵢ := Π_{i<j<n} ρⱼ   (empty product = 1)
+/// ```
+///
+/// — hop `i`'s sub-wei jitter is carried by the marginal rates of every hop
+/// downstream of it, while the last hop's jitter has no downstream hop and
+/// enters with weight `G_{n−1} = 1`.
+///
+/// # Why a plain hop count is unsound
+///
+/// `Gᵢ ≤ 1` iff every downstream `ρⱼ ≤ 1`, so `Σ Gᵢ ≤ n` — the familiar
+/// "one wei per hop" — holds only while no hop's rate exceeds 1. A skewed
+/// pool (`sᵢ > rᵢ`, hence `ρᵢ > 1`) *amplifies* the jitter of every hop
+/// before it, and a count of `n` would then understate the residual.
+/// `Σ Gᵢ` is the sound generalization: it equals `n` exactly on a path whose
+/// every hop rate is ≤ 1 (each `⌈Gᵢ⌉ = 1`) and exceeds it only where a count
+/// would be unsound.
+///
+/// # Anchor-flooring slack
+///
+/// `exact_mobius_solve` evaluates the envelope at the floored anchor
+/// `x̂ = ⌊x*⌋` instead of searching for the discrete argmax `x*`. The
+/// floored chain's profit at input `x` is `P(x) = L(x) − x − δₙ(x)`, so
+///
+/// ```text
+/// P(x*) − P(x̂) ≤ [g(x*) − g(x̂)] + δₙ(x̂),     g(x) := L(x) − x
+/// ```
+///
+/// and `g` is concave with its real maximizer at `x*`, one wei right of
+/// `x̂`. Integer inputs at or left of `x̂` never beat it (`g` increases up to
+/// `x*`), and integer inputs right of it are at most `x̂ + 1` (`g` decreases
+/// past `x*`), so by concavity
+///
+/// ```text
+/// g(x*) − g(x̂) ≤ max(0, L'(x̂) − 1) ≤ max(0, Πᵢρᵢ − 1)
+/// ```
+///
+/// — at most one wei of plateau slope for every profitable path whose
+/// zero-input composed rate stays under 2, which is every thin-margin cycle
+/// (`L'(0) = Πρᵢ = 1 + margin`). That term is added as `⌈Πρᵢ⌉ − 1`, making
+/// the returned value an upper bound on the anchor-only residual for ANY hop
+/// list.
+///
+/// # Rounding
+///
+/// Ratios accumulate in `1/2³²`-wei fixed point with a ceiling at each step
+/// and one final ceiling, so the returned integer over-approximates the exact
+/// `Σ Gᵢ + slack`. A path whose jog exceeds `U256::MAX` wei saturates there
+/// instead of overflowing (a wrap would understate the bound).
+///
+/// # Contract use
+///
+/// The `displacement` tests in `mobius_int_exact` assert the solver's
+/// measured residual against a brute-scan reference stays within this bound
+/// on 2- and 3-hop ladders. An empty path has no hop to jog and returns
+/// zero.
+#[cfg(test)]
+#[must_use]
+pub(crate) fn floor_jog_bound(hops: &[IntHopState]) -> U256 {
+    // Fixed-point scale for the rate accumulation (`1/2³²` wei): the
+    // per-step ceiling leaks less than one wei over the whole path.
+    const SCALE: u64 = 1 << 32;
+
+    let Some((first, downstream)) = hops.split_first() else {
+        return U256::ZERO;
+    };
+    let scale = U512::from(SCALE);
+    let ceiling = U512::from(U256::MAX);
+
+    // Walk the tail backwards: `acc` holds `Gᵢ` at hop `i`, in 1/scale wei.
+    // The last hop's jitter has no downstream rate to amplify it, so the sum
+    // opens with `G_{n−1} = 1`.
+    let mut acc = scale;
+    let mut sum = scale;
+    for hop in downstream.iter().rev() {
+        let Some(next_acc) = scaled_hop_rate(acc, hop) else {
+            return U256::MAX;
+        };
+        let Some(next_sum) = sum.checked_add(next_acc) else {
+            return U256::MAX;
+        };
+        acc = next_acc;
+        sum = next_sum;
+        if acc > ceiling || sum > ceiling {
+            return U256::MAX;
+        }
+    }
+
+    // `Πρᵢ = ρ₀·G₀`: `acc` already carries the downstream product `G₀`, so
+    // one more hop-0 ratio completes the zero-input composed rate.
+    let Some(composed_rate) = scaled_hop_rate(acc, first) else {
+        return U256::MAX;
+    };
+    if composed_rate > ceiling {
+        return U256::MAX;
+    }
+    let anchor_slack = if composed_rate > scale {
+        ceil_div(composed_rate - scale, scale)
+    } else {
+        U512::ZERO
+    };
+
+    let bound = ceil_div(sum + anchor_slack * scale, scale);
+    if bound > ceiling {
+        return U256::MAX;
+    }
+    bound.to::<U256>()
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use alloy::primitives::U256;
 
     fn u256(n: u64) -> U256 {
         U256::from(n)
@@ -168,6 +354,49 @@ mod tests {
         ];
         let coeffs = compute_int_mobius_coefficients(&hops).unwrap();
         assert!(!coeffs.is_profitable);
+    }
+
+    #[test]
+    fn floor_jog_bound_empty_path() {
+        // No hop, no jog.
+        assert_eq!(floor_jog_bound(&[]), U256::ZERO);
+    }
+
+    #[test]
+    fn floor_jog_bound_is_the_hop_count_when_no_hop_rate_exceeds_one() {
+        // γ·s/r = 0.997 on every hop → every downstream product stays ≤ 1, so
+        // each ceil'd Gᵢ is 1 and the propagated jog collapses to the plain
+        // one-wei-per-hop count. Πρ < 1 here, so no anchor slack either.
+        for n in 1..=4usize {
+            let hops: Vec<IntHopState> = (0..n)
+                .map(|_| IntHopState::new(u256(1_000_000), u256(1_000_000), 997, 1000))
+                .collect();
+            assert_eq!(floor_jog_bound(&hops), u256(n as u64));
+        }
+    }
+
+    #[test]
+    fn floor_jog_bound_amplifies_early_jitter_by_downstream_rates() {
+        // Hop 1's zero-input rate is ρ₁ = 997·4/1000 = 3.988, so hop 0's
+        // sub-wei jitter is carried at that rate: G = [ρ₁, 1] → Σ = 4.988,
+        // plus ⌈Πρ − 1⌉ = ⌈0.997·3.988 − 1⌉ = 3 wei of anchor slack, so
+        // ⌈7.988⌉ = 8. A hop count of 2 wei would be unsound here.
+        let hops = vec![
+            IntHopState::new(u256(1_000_000), u256(1_000_000), 997, 1000),
+            IntHopState::new(u256(1_000_000), u256(4_000_000), 997, 1000),
+        ];
+        assert_eq!(floor_jog_bound(&hops), u256(8));
+    }
+
+    #[test]
+    fn floor_jog_bound_saturates_rather_than_wrapping() {
+        // ρ ≈ 2^320 dwarfs any feasible jog; the bound must saturate at
+        // U256::MAX, since a wrap would understate it.
+        let hops = vec![
+            IntHopState::new(u256(1), U256::MAX, u64::MAX, 1),
+            IntHopState::new(u256(1), U256::MAX, u64::MAX, 1),
+        ];
+        assert_eq!(floor_jog_bound(&hops), U256::MAX);
     }
 
     #[test]
