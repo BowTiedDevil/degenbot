@@ -138,9 +138,12 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
     let x_approx = compute_mobius_model_optimal_input(&coeffs);
 
     if x_approx.is_zero() {
-        // Even though K > M, the integer square root may give x* = 0
-        // when the profit is vanishingly small (K/M ≈ 1).
-        // Try a small input to detect micro-profits.
+        // K > M yet the floored anchor is zero: the envelope optimum lies
+        // in (0, 1) wei, so every integer input sits past the peak, where
+        // envelope profit strictly decreases. The discrete staircase tracks
+        // that decrease within the floor jog, leaving the smallest inputs as
+        // the only candidates — 1 is the minimal probe, and anything larger
+        // differs from it by at most the jog the anchor evaluation accepts.
         let sim = int_simulate_path(U256::from(1u64), hops);
         if let Ok(sim) = sim {
             if sim.final_output > U256::from(1u64) {
