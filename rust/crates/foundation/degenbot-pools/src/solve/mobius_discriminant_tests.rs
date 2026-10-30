@@ -6,7 +6,7 @@
 //! `wrapping_mul` — it never panics, in any profile). The wrapped product is
 //! smaller than the true `K*M`, so its floor square root can fall below `M`;
 //! the guard in `compute_mobius_model_optimal_input` then collapses the model
-//! anchor to zero, and `exact_mobius_solve` takes its 1-wei micro-profit
+//! anchor to zero, and `anchored_mobius_solve` takes its 1-wei micro-profit
 //! fallback and reports `optimal_input = 1` as a plausible optimum.
 //!
 //! This file pins the domain boundary on the all-V2 synthetic grid from
@@ -19,7 +19,7 @@
 
 use crate::solve::concentrated_liquidity::{solve_piecewise, MixedHopView};
 use crate::solve::mobius_int::{compute_int_mobius_coefficients, IntMobiusCoefficients};
-use crate::solve::mobius_int_exact::{compute_mobius_model_optimal_input, exact_mobius_solve};
+use crate::solve::mobius_int_anchor::{anchored_mobius_solve, compute_mobius_model_optimal_input};
 use crate::solve::runtime::SolveRuntimeConfig;
 use alloy::primitives::U256;
 use degenbot_math::bigint::{isqrt_u512, narrow_u512_to_u256};
@@ -52,7 +52,7 @@ fn prefix_model_anchor(coeffs: &IntMobiusCoefficients) -> U256 {
 type Solve = Option<(U256, U256, Vec<U256>)>;
 
 fn baseline(hops: &[IntHopState]) -> Solve {
-    let r = exact_mobius_solve(hops).ok()?;
+    let r = anchored_mobius_solve(hops).ok()?;
     if !r.is_profitable || r.optimal_input.is_zero() || r.profit.is_zero() {
         return None;
     }
@@ -163,7 +163,7 @@ fn fixed_anchor_recovers_walk_optimum_on_diverging_three_hop_paths() {
 
             // Regression: the old failure entered the micro-profit branch,
             // which reports input 1 when profitable.
-            let r = exact_mobius_solve(&hops).unwrap();
+            let r = anchored_mobius_solve(&hops).unwrap();
             assert!(
                 r.is_profitable && r.optimal_input != U256::from(1u64),
                 "must not take the micro-profit fallback"

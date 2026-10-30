@@ -2491,7 +2491,7 @@ fn solve_door_census_is_the_external_surface() {
                     "gate",
                     "mixed",
                     "mobius_int",
-                    "mobius_int_exact",
+                    "mobius_int_anchor",
                     "mobius_shifted_piece",
                     "profit_envelope",
                     "runtime",

@@ -13,8 +13,8 @@
 //!
 //! ## Two layers of "exact"
 //!
-//! The module has a deliberate two-layer discipline so each candidate name
-//! self-documents what it is exact *at*:
+//! The two layers are named apart so each symbol states what it is exact
+//! *at*:
 //!
 //! - [`compute_mobius_model_optimal_input`] is exact at the **Möbius-model
 //!   layer** — it returns the analytic argmax of the smooth rational envelope
@@ -22,14 +22,14 @@
 //!   with floor-`isqrt` and floor-division. The model envelope treats each
 //!   per-hop swap `y = γ·s·x / (D·r + γ·x)` as if its floor division were
 //!   mathematical division.
-//! - [`exact_mobius_solve`] bridges to the **discrete EVM-simulation
+//! - [`anchored_mobius_solve`] evaluates the **discrete EVM-simulation
 //!   layer** — the actual on-chain chain applies floor (`EVM DIV`) at every
 //!   hop, producing a piecewise-linear staircase that *approximates* that
 //!   rational envelope. Near the envelope optimum the staircase is flat to
 //!   within the floor jog (~1 wei per hop) over a plateau that measured
 //!   thousands of wei wide on thin-margin paths, so the discrete argmax is
 //!   ILL-CONDITIONED: it can sit arbitrarily far from the model anchor, and
-//!   no fixed-radius sweep finds it. [`exact_mobius_solve`] therefore does
+//!   no fixed-radius sweep finds it. [`anchored_mobius_solve`] therefore does
 //!   NOT search for it: it returns the floor-exact evaluation AT the model
 //!   anchor. The residual against the discrete max is bounded by the
 //!   COMPUTED propagated floor jog (`mobius_int::floor_jog_bound`): hop
@@ -45,13 +45,6 @@
 //!   reaches it to within the jog, so tightening sweeps capture at most that
 //!   jog — a jog-scale lottery on a minority of paths — and the solve
 //!   evaluates the anchor once and stops.
-//!
-//! Module-level qualifier: the "exact" in *this module's name*
-//! (`mobius_int_exact`) is a discipline label distinguishing the integer
-//! pathway (no floats — pure `U512` + `isqrt_u512` + floor-division; contrast
-//! with the now-deleted f64 recurrence module). The per-function rename above
-//! keeps that discipline label while making the layer of exactness explicit
-//! at each per-candidate symbol.
 
 // The module is `pub(crate)` since the W2 demotion, so
 // `clippy::must_use_candidate` (a public-API pedantic lint) no longer applies
@@ -65,12 +58,12 @@ use crate::solve::mobius_int::{
 use degenbot_math::bigint::{isqrt_u2048, narrow_u512_to_u256, u2048_to_u512, u512_to_u2048};
 use degenbot_math::v2::{int_simulate_path, IntHopState};
 
-/// Result of [`exact_mobius_solve`]: the floor-exact EVM-sim evaluation at
+/// Result of [`anchored_mobius_solve`]: the floor-exact EVM-sim evaluation at
 /// the Möbius-model anchor, not the discrete argmax. The module doc owns the
 /// two-layer contract and the residual bound.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
-pub struct ExactMobiusResult {
+pub struct AnchoredMobiusResult {
     /// Optimal input amount (uint256). Zero if not profitable.
     pub optimal_input: U256,
     /// Profit = int_simulate_path(optimal_input, hops) - optimal_input.
@@ -83,7 +76,7 @@ pub struct ExactMobiusResult {
     pub hop_outputs: Vec<U256>,
 }
 
-/// Solve for the optimal arbitrage input using integer-exact Möbius coefficients.
+/// Solve at the Möbius-model anchor using integer-exact Möbius coefficients.
 ///
 /// # Algorithm
 ///
@@ -105,11 +98,11 @@ pub struct ExactMobiusResult {
 /// # Errors
 ///
 /// Returns `MobiusError::EmptyHops` if the hops list is empty.
-pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, MobiusError> {
+pub fn anchored_mobius_solve(hops: &[IntHopState]) -> Result<AnchoredMobiusResult, MobiusError> {
     let coeffs = compute_int_mobius_coefficients(hops)?;
 
     if !coeffs.is_profitable {
-        return Ok(ExactMobiusResult {
+        return Ok(AnchoredMobiusResult {
             optimal_input: U256::ZERO,
             profit: U256::ZERO,
             is_profitable: false,
@@ -129,7 +122,7 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
         let sim = int_simulate_path(U256::from(1u64), hops);
         if let Ok(sim) = sim {
             if sim.final_output > U256::from(1u64) {
-                return Ok(ExactMobiusResult {
+                return Ok(AnchoredMobiusResult {
                     optimal_input: U256::from(1u64),
                     profit: sim.final_output - U256::from(1u64),
                     is_profitable: true,
@@ -137,7 +130,7 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
                 });
             }
         }
-        return Ok(ExactMobiusResult {
+        return Ok(AnchoredMobiusResult {
             optimal_input: U256::ZERO,
             profit: U256::ZERO,
             is_profitable: false,
@@ -161,7 +154,7 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
     let Ok(sim) = int_simulate_path(x_approx, hops) else {
         // Anchor's swap reverts on-chain (uint256 overflow) → no viable
         // arb input.
-        return Ok(ExactMobiusResult {
+        return Ok(AnchoredMobiusResult {
             optimal_input: U256::ZERO,
             profit: U256::ZERO,
             is_profitable: false,
@@ -170,7 +163,7 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
     };
     let profit = sim.final_output.saturating_sub(x_approx);
 
-    Ok(ExactMobiusResult {
+    Ok(AnchoredMobiusResult {
         optimal_input: if profit.is_zero() {
             U256::ZERO
         } else {
@@ -195,7 +188,7 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
 ///
 /// This is the **analytic argmax of the Möbius model envelope** over the
 /// reals — NOT the discrete optimum of the actual swap chain, which applies
-/// floor (`EVM DIV`) at every hop. [`exact_mobius_solve`] uses it as the
+/// floor (`EVM DIV`) at every hop. [`anchored_mobius_solve`] uses it as the
 /// anchor; the module doc owns the two-layer contract and the residual bound.
 ///
 /// # Arithmetic discipline
@@ -254,7 +247,7 @@ mod tests {
         U256::from(n)
     }
 
-    // ── exact_mobius_solve tests ──────────────────────────────────
+    // ── anchored_mobius_solve tests ──────────────────────────────────
 
     #[test]
     fn test_exact_solve_not_profitable() {
@@ -263,7 +256,7 @@ mod tests {
             IntHopState::new(u256(1_000_000), u256(1_000_000), 997, 1000),
             IntHopState::new(u256(1_000_000), u256(1_000_000), 997, 1000),
         ];
-        let result = exact_mobius_solve(&hops).unwrap();
+        let result = anchored_mobius_solve(&hops).unwrap();
         assert!(!result.is_profitable);
         assert!(result.optimal_input.is_zero());
         assert!(result.profit.is_zero());
@@ -276,7 +269,7 @@ mod tests {
             IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
             IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
         ];
-        let result = exact_mobius_solve(&hops).unwrap();
+        let result = anchored_mobius_solve(&hops).unwrap();
         assert!(result.is_profitable);
         assert!(!result.optimal_input.is_zero());
         assert!(!result.profit.is_zero());
@@ -295,7 +288,7 @@ mod tests {
             IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
             IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
         ];
-        let result = exact_mobius_solve(&hops).unwrap();
+        let result = anchored_mobius_solve(&hops).unwrap();
         assert!(result.is_profitable);
 
         // The anchor carries no argmax guarantee, but the COMPUTED floor-jog
@@ -329,7 +322,7 @@ mod tests {
 
     #[test]
     fn test_exact_solve_empty_hops() {
-        let result = exact_mobius_solve(&[]);
+        let result = anchored_mobius_solve(&[]);
         assert!(result.is_err());
     }
 
@@ -344,7 +337,7 @@ mod tests {
             997,
             1000,
         )];
-        let result = exact_mobius_solve(&hops).unwrap();
+        let result = anchored_mobius_solve(&hops).unwrap();
         // K = 997 * 2_000_000 = 1_994_000_000
         // M = 1000 * 1_000_000 = 1_000_000_000
         // K > M → profitable in the Möbius sense
@@ -358,7 +351,7 @@ mod tests {
             IntHopState::new(u256(2_000_000), u256(2_050_000), 997, 1000),
             IntHopState::new(u256(2_050_000), u256(2_000_000), 997, 1000),
         ];
-        let result = exact_mobius_solve(&hops).unwrap();
+        let result = anchored_mobius_solve(&hops).unwrap();
         assert!(result.is_profitable);
         assert!(!result.profit.is_zero());
     }
@@ -376,7 +369,7 @@ mod tests {
             IntHopState::new(weth_reserves, usdc_reserves, 997, 1000),
         ];
 
-        let exact_result = exact_mobius_solve(&hops).unwrap();
+        let exact_result = anchored_mobius_solve(&hops).unwrap();
 
         // Same-product with fees → never profitable
         assert!(!exact_result.is_profitable);
@@ -395,7 +388,7 @@ mod tests {
             IntHopState::new(u256(1_000_000), u256(1_010_000), 997, 1000),
             IntHopState::new(u256(1_000_000), u256(1_005_000), 997, 1000),
         ];
-        let result = exact_mobius_solve(&hops).unwrap();
+        let result = anchored_mobius_solve(&hops).unwrap();
         // These pools barely disagree — fees may eat all profit
         // Just verify no panic and result is consistent
         if result.is_profitable {
@@ -415,7 +408,7 @@ mod tests {
             IntHopState::new(large, large / U256::from(2u64), 997, 1000),
             IntHopState::new(large / U256::from(2u64), large, 997, 1000),
         ];
-        let result = exact_mobius_solve(&hops).unwrap();
+        let result = anchored_mobius_solve(&hops).unwrap();
         // Same product with fees → not profitable
         assert!(!result.is_profitable);
     }
@@ -449,7 +442,7 @@ mod tests {
         );
         assert!(!compute_mobius_model_optimal_input(&coeffs).is_zero());
 
-        let result = exact_mobius_solve(&hops).unwrap();
+        let result = anchored_mobius_solve(&hops).unwrap();
         // The micro-probe is the only non-anchor path and reports input 1
         // when profitable, so this pins the same fact without a provenance
         // flag.
@@ -528,7 +521,7 @@ mod displacement {
             return None;
         }
         let (_, window_profit) = window_argmax(anchor, WINDOW_RADIUS, hops)?;
-        let solved = exact_mobius_solve(hops).unwrap();
+        let solved = anchored_mobius_solve(hops).unwrap();
         let residual = window_profit.saturating_sub(solved.profit);
         let bound = floor_jog_bound(hops);
         assert!(
@@ -675,7 +668,7 @@ mod proptests {
     use proptest::prelude::*;
 
     proptest! {
-        /// exact_mobius_solve never panics, and if profitable, the profit
+        /// anchored_mobius_solve never panics, and if profitable, the profit
         /// is verified by EVM-exact simulation.
         #[test]
         fn exact_solve_never_panics(
@@ -688,7 +681,7 @@ mod proptests {
                 IntHopState::new(U256::from(r1_lo), U256::from(s1_lo), 997, 1000),
                 IntHopState::new(U256::from(r2_lo), U256::from(s2_lo), 997, 1000),
             ];
-            let result = exact_mobius_solve(&hops).unwrap();
+            let result = anchored_mobius_solve(&hops).unwrap();
             if result.is_profitable {
                 let output = int_simulate_path(result.optimal_input, &hops).unwrap().final_output;
                 assert!(output > result.optimal_input);
@@ -704,12 +697,12 @@ mod proptests {
     }
 
     #[test]
-    fn test_exact_mobius_solve_hop_outputs_profitable() {
+    fn test_anchored_mobius_solve_hop_outputs_profitable() {
         let hops = vec![
             IntHopState::new(u256_hop(1_000_000), u256_hop(5_000_000), 997, 1000),
             IntHopState::new(u256_hop(1_500_000), u256_hop(3_000_000), 997, 1000),
         ];
-        let result = exact_mobius_solve(&hops).unwrap();
+        let result = anchored_mobius_solve(&hops).unwrap();
         assert!(result.is_profitable);
 
         // 2 hops → 2 hop_outputs
@@ -728,13 +721,13 @@ mod proptests {
     }
 
     #[test]
-    fn test_exact_mobius_solve_hop_outputs_not_profitable() {
+    fn test_anchored_mobius_solve_hop_outputs_not_profitable() {
         // Same-product pools → not profitable → empty hop_outputs
         let hops = vec![
             IntHopState::new(u256_hop(1_000_000), u256_hop(1_000_000), 997, 1000),
             IntHopState::new(u256_hop(1_000_000), u256_hop(1_000_000), 997, 1000),
         ];
-        let result = exact_mobius_solve(&hops).unwrap();
+        let result = anchored_mobius_solve(&hops).unwrap();
         assert!(!result.is_profitable);
         assert!(result.hop_outputs.is_empty());
     }

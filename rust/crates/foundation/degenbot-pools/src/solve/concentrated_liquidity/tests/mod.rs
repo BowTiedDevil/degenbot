@@ -2437,7 +2437,7 @@ fn reference_uncapped_concentrated_liquidity_solve(
             })
             .collect();
 
-        if let Ok(result) = crate::solve::mobius_int_exact::exact_mobius_solve(&flat_hops) {
+        if let Ok(result) = crate::solve::mobius_int_anchor::anchored_mobius_solve(&flat_hops) {
             if result.is_profitable && !result.optimal_input.is_zero() {
                 let total_optimal_input = result.optimal_input.saturating_add(total_crossing_cost);
                 for delta in -2i32..=2 {
@@ -2570,7 +2570,7 @@ fn reference_uncapped_mixed_solve(
         }
 
         if valid {
-            if let Ok(result) = crate::solve::mobius_int_exact::exact_mobius_solve(&flat_hops) {
+            if let Ok(result) = crate::solve::mobius_int_anchor::anchored_mobius_solve(&flat_hops) {
                 if result.is_profitable && !result.optimal_input.is_zero() {
                     let total_optimal_input =
                         result.optimal_input.saturating_add(total_crossing_cost);

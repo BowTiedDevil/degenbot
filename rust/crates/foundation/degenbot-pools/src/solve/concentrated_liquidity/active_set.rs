@@ -321,7 +321,7 @@ pub(super) fn walk_piece_anchor_transitional(hops: &[PieceView], ks: &[usize]) -
         gross_sum = gross_sum.saturating_add(piece.gross_input_offset);
         flat_hops.push(piece.hop);
     }
-    let Ok(result) = crate::solve::mobius_int_exact::exact_mobius_solve(&flat_hops) else {
+    let Ok(result) = crate::solve::mobius_int_anchor::anchored_mobius_solve(&flat_hops) else {
         return gross_sum;
     };
     if !result.is_profitable || result.optimal_input.is_zero() {

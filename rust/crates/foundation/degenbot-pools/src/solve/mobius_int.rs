@@ -4,7 +4,7 @@
 //! (`mobius.rs`), the f64-seed-then-integer-refine path, and the f64 V3
 //! tick-range solvers have all been removed. Every path composes to
 //! `l(x) = K·x / (M + N·x)` via the U512 2×2 matrix recurrence below, and the
-//! closed-form optimal input lives in [`crate::solve::mobius_int_exact`].
+//! closed-form optimal input lives in [`crate::solve::mobius_int_anchor`].
 //!
 //! The per-hop swap primitive — `IntHopState`, `IntHopState::swap`, and
 //! `int_simulate_path` — has been extracted into the standalone
@@ -150,7 +150,7 @@ pub fn compute_int_mobius_coefficients(
 // ---------------------------------------------------------------------------
 
 // The residual bound is the solver contract's *measured* side: its consumer is
-// the `displacement` test module in `mobius_int_exact`, which is why these
+// the `displacement` test module in `mobius_int_anchor`, which is why these
 // items compile under `cfg(test)` only. A production consumer that needs the
 // bound (rather than only the tests that assert it) drops the cfg.
 
@@ -186,7 +186,7 @@ fn scaled_hop_rate(acc: U512, hop: &IntHopState) -> Option<U512> {
 ///
 /// This is a property of the hop list alone (nothing about the solver's
 /// arithmetic), so it lives beside the coefficients rather than in
-/// `mobius_int_exact`.
+/// `mobius_int_anchor`.
 ///
 /// # Derivation
 ///
@@ -241,7 +241,7 @@ fn scaled_hop_rate(acc: U512, hop: &IntHopState) -> Option<U512> {
 ///
 /// # Anchor-flooring slack
 ///
-/// `exact_mobius_solve` evaluates the envelope at the floored anchor
+/// `anchored_mobius_solve` evaluates the envelope at the floored anchor
 /// `x̂ = ⌊x*⌋` instead of searching for the discrete argmax `x*`. The
 /// floored chain's profit at input `x` is `P(x) = L(x) − x − δₙ(x)`, so
 ///
@@ -273,7 +273,7 @@ fn scaled_hop_rate(acc: U512, hop: &IntHopState) -> Option<U512> {
 ///
 /// # Contract use
 ///
-/// The `displacement` tests in `mobius_int_exact` assert the solver's
+/// The `displacement` tests in `mobius_int_anchor` assert the solver's
 /// measured residual against a brute-scan reference stays within this bound
 /// on 2- and 3-hop ladders. An empty path has no hop to jog and returns
 /// zero.

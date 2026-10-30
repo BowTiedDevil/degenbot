@@ -110,7 +110,7 @@ The engine matches on path composition to select the solver:
 
 | Path type | Solver | Method |
 |-----------|--------|--------|
-| V2-V2 | `exact_mobius_solve` | Closed-form √(K·M) via U512 isqrt; one floor-exact evaluation at that anchor |
+| V2-V2 | `anchored_mobius_solve` | Closed-form √(K·M) via U512 isqrt; one floor-exact evaluation at that anchor |
 | V3-V3, V4-V4 | `int_solve_v3_v3` | Piecewise integer-Möbius per (k₁,k₂) tick-range pair; closed-form per segment |
 | V2-V3, V3-V2, V2-V4, V4-V2, V3-V4, V4-V3 | `exact_solve_mixed_v2_v3_sequence` | V3/V4 effective reserves + piecewise tick-range enumeration; closed-form per range |
 
@@ -168,12 +168,12 @@ l(x) = K·x / (M + N·x)
 
 The optimal input is the closed-form `x_opt = (√(K·M) - M) / N`, solvable via integer square root on U512.
 
-### 5.2 Integer-Exact Solver (`mobius_int_exact.rs`)
+### 5.2 Anchored Möbius Solver (`mobius_int_anchor.rs`)
 
 - Computes K, M, N as U512 integers via `compute_int_mobius_coefficients`
 - Checks `K > M` for profitability
 - Computes `x_opt = (isqrt(K·M) - M) / N` using `isqrt_u512` (Newton's method in U512, ~100ns)
-- EVM-simulates once at `x_opt`; the residual against the discrete argmax is bounded by the propagated floor jog (the `mobius_int_exact` module doc owns the contract)
+- EVM-simulates once at `x_opt`; the residual against the discrete argmax is bounded by the propagated floor jog (the `mobius_int_anchor` module doc owns the contract)
 - Returns the anchor evaluation (`optimal_input`, `profit`, `is_profitable`, `hop_outputs`)
 
 **Performance**: 131ns for a 2-hop V2 path (17× faster than the iterative `int_mobius_solve_with_refinement`).
@@ -183,7 +183,7 @@ The optimal input is the closed-form `x_opt = (√(K·M) - M) / N`, solvable via
 Concentrated-liquidity hops produce `IntV3TickRangeSequence` — a vector of `IntV3TickRangeHop` structs, each carrying integer sqrt-price bounds and liquidity. The solver:
 
 1. For each (k₁, k₂) pair of ending tick ranges, computes a single (K, M, N) triple by composing the shifted Möbius transforms
-2. Calls `exact_mobius_solve` for closed-form optimal input — **no golden-section search**
+2. Calls `anchored_mobius_solve` for the closed-form model anchor — **no golden-section search**
 3. Validates via `int_simulate_v3_v3_path` with full piecewise simulation
 
 Crossing constants (additive amounts from tick-range boundaries) fold into the Möbius coefficient recurrence, so each (k₁, k₂) segment is still a single closed-form solve.
@@ -691,7 +691,7 @@ Every `Python::attach()` call site has a `// SAFETY:` comment documenting the no
 
               ┌──────────────────────────┐
               │   Möbius Solvers        │
-              │  exact_mobius_solve     │ ← V2-V2, closed-form √(K·M)
+              │  anchored_mobius_solve  │ ← V2-V2, closed-form √(K·M)
               │  int_solve_v3_v3        │ ← V3-V3/V4-V4, piecewise integer-Möbius
               │  exact_solve_mixed_     │ ← V2-V3/V2-V4/V3-V4, sequence + crossing
               │    v2_v3_sequence       │
@@ -716,7 +716,7 @@ Every `Python::attach()` call site has a `// SAFETY:` comment documenting the no
 
 | Module | Test count | Coverage |
 |--------|-----------|----------|
-| `mobius_int_exact` | 25+ | isqrt correctness, exact vs f64, never-panics |
+| `mobius_int_anchor` | 25+ | isqrt correctness, exact vs f64, never-panics |
 | `mobius_v3_int` | 14+ | Effective reserves, mixed sequence solver, crossing computation |
 | `v2_block_engine` | 15+ | Registration, dual-orientation, solve, dependency tracking |
 | `v3_block_engine` | 10+ | Registration, swap + mint/burn updates, tick-range construction |

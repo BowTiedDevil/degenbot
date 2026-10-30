@@ -95,6 +95,6 @@ pub(crate) mod bounded_brent;
 pub(crate) mod mixed;
 pub(crate) mod mobius_int;
 #[expect(clippy::doc_markdown)]
-pub(crate) mod mobius_int_exact;
+pub(crate) mod mobius_int_anchor;
 pub(crate) mod mobius_shifted_piece;
 pub(crate) mod profit_envelope;

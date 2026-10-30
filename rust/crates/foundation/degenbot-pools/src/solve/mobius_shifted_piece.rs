@@ -757,7 +757,7 @@ fn compute_big(hops: &[ShiftedPieceHop]) -> BigShiftedCoeffs {
 /// the nonnegative half-line (`A·D − B·C ≤ D²`, i.e. slope ≤ 1 at `x = 0`)
 /// or the composition is degenerate (`C ≤ 0`). The result is exact at the
 /// Möbius-model layer — same two-layer discipline as
-/// `mobius_int_exact::compute_mobius_model_optimal_input`: EVM floor
+/// `mobius_int_anchor::compute_mobius_model_optimal_input`: EVM floor
 /// staircase effects are the caller's ±2 sweep.
 ///
 /// Dispatches over the fast / `BigInt` representation carried by
@@ -859,7 +859,7 @@ mod tests {
         // x* must equal the unshifted model optimum exactly.
         let unshifted = [hops[0].hop.clone(), hops[1].hop.clone()];
         let flat = crate::solve::mobius_int::compute_int_mobius_coefficients(&unshifted).unwrap();
-        let expect = crate::solve::mobius_int_exact::compute_mobius_model_optimal_input(&flat);
+        let expect = crate::solve::mobius_int_anchor::compute_mobius_model_optimal_input(&flat);
         assert_eq!(shifted_piece_model_optimal_input(&coeffs), Some(expect));
     }
 

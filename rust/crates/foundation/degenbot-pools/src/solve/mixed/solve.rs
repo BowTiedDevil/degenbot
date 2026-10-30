@@ -8,7 +8,7 @@
 //! `impl ArbitrageEngine` associated fns with `#[allow(unused_self)]`).
 //!
 //! The concentrated liquidity hop uses `crate::solve::concentrated_liquidity::*` (same crate); the V2 + concentrated liquidity
-//! Möbius arms call `crate::solve::mobius_int::*` / `crate::solve::mobius_int_exact::*`.
+//! Möbius arms call `crate::solve::mobius_int::*` / `crate::solve::mobius_int_anchor::*`.
 
 use std::collections::BTreeSet;
 
@@ -405,7 +405,7 @@ fn solve_exact_v2_entry(
         .collect();
     if int_hops.len() == resolved.hops.len() {
         SolveArmOutcome::walked(
-            crate::solve::mobius_int_exact::exact_mobius_solve(&int_hops)
+            crate::solve::mobius_int_anchor::anchored_mobius_solve(&int_hops)
                 .ok()
                 .and_then(|r| {
                     if r.is_profitable && !r.optimal_input.is_zero() && !r.profit.is_zero() {
@@ -564,7 +564,7 @@ pub(crate) fn solve_golden_section_path_int(
     simulate_outputs: &impl Fn(U256) -> Vec<U256>,
 ) -> Option<SolvePathResult> {
     use crate::solve::mobius_int::compute_int_mobius_coefficients;
-    use crate::solve::mobius_int_exact::compute_mobius_model_optimal_input;
+    use crate::solve::mobius_int_anchor::compute_mobius_model_optimal_input;
 
     // --- Bracket hint (V2-equivalent Möbius) ---
     // The constant-product proxy coefficients serve ONLY to narrow the

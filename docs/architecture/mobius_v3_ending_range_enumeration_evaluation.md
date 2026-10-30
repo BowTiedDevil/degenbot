@@ -50,7 +50,7 @@ Hot path: `arb_engine/solve_cycle/` resolves each hop; V3/V4 hops call
 mixed V2+concentrated liquidity paths go through `exact_solve_mixed_path_n` /
 `exact_solve_mixed_v2_v3_sequence`. All of these enumerate ending-range
 tuples: `max_candidates = 10` per concentrated-liquidity hop, mixed-radix counter, per-tuple
-`exact_mobius_solve` on the *unshifted* ending-range `IntHopState`s, then
+`anchored_mobius_solve` on the *unshifted* ending-range `IntHopState`s, then
 `total_optimal_input = piecewise_optimal + Σ crossing_gross_input`, then a
 ±2 neighbor sweep validated by the piecewise simulator
 (`int_simulate_concentrated_liquidity_path_n` / `int_simulate_mixed_path_n`).
@@ -278,7 +278,7 @@ incremental in `k`).
 - **Wei-scale staircase.** EVM floor rounding makes discrete `P` not exactly
   concave; the discrete argmax can jog by a couple of wei, and a true optimum
   within rounding noise of a piece boundary sits in "both pieces". The final
-  ±2 sweep (same discipline as `exact_mobius_solve`) plus "best validated
+  ±2 sweep (same discipline as `anchored_mobius_solve`) plus "best validated
   candidate" tracking covers this; the walk's termination check must use the
   *interior* test, not exact-argmax equality.
 - **Anchor overshoot with the transitional anchor (`7J22EQ`).** The
@@ -354,7 +354,7 @@ surfaced:
    window with two monotone bisections over the landed-tuple map
    (componentwise non-decreasing in x) and refines the stop-region pieces
    with a windowed ternary search + dense sweep (`walk_refine_window`) —
-   the two-layer discipline of `exact_mobius_solve` generalized to windows.
+   the two-layer discipline of `anchored_mobius_solve` generalized to windows.
 2. **The EVM floor staircase rules out pointwise direction tests.** The
    discrete profit is flat to ±1 wei over tens of wei around the top, so
    neither "argmax hugs the edge" nor pointwise edge-score comparisons are
@@ -393,7 +393,7 @@ green; clippy `-D warnings` clean.
 - Fixture: `logs/fixtures/v2_v3_v3_solver_divergence_25641093.md` (a gitignored
   logs/ artifact, since removed).
 - Code: `rust/crates/engine/degenbot-solvers/src/mobius_v3_int.rs`,
-  `rust/crates/engine/degenbot-solvers/src/mobius_int_exact.rs`,
+  `rust/crates/engine/degenbot-solvers/src/mobius_int_anchor.rs`,
   `rust/crates/engine/degenbot-solvers/src/mobius_int.rs`,
   `rust/crates/foundation/degenbot-pools/src/int_v3_hop.rs`,
   `rust/crates/foundation/degenbot-pools/src/tick_bitmap.rs`,
