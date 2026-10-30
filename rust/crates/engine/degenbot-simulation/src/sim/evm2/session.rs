@@ -42,6 +42,17 @@ pub enum Evm2SimError {
     },
 }
 
+impl Evm2SimError {
+    /// The refusing step's index (mirrors `SimError::step_index`).
+    #[must_use]
+    pub fn step_index(&self) -> Option<usize> {
+        match self {
+            Self::Sequence { index, .. } => Some(*index),
+            Self::Database(_) | Self::Transact(_) => None,
+        }
+    }
+}
+
 /// One settled run: the verdict, the gas burned, the top-level return data,
 /// and the storage writes it produced (captured from the transaction's
 /// account changes before the scratch was discarded).
@@ -60,6 +71,36 @@ pub struct Evm2SimRun {
     pub storage_writes: Vec<(Address, U256, U256)>,
 }
 
+/// The capture a journaled sequence drains from its throwaway EVM's
+/// composite inspector (the settlement bundle's byproducts — the revm
+/// side's handle-drained trio plus the access list).
+#[derive(Debug, Default)]
+pub struct Evm2SequenceCapture {
+    /// The call trace (revert attribution).
+    pub trace: crate::sim::evm::CallTrace,
+    /// The committed swap events.
+    pub swaps: Vec<crate::sim::evm::CapturedSwap>,
+    /// The reverted-frame swap events (the divergence diagnostic).
+    pub reverted_swaps: Vec<crate::sim::evm::CapturedSwap>,
+    /// Every `log` hook invocation count (the revm-side `log_full_count`
+    /// analog).
+    pub log_count: usize,
+    /// The EIP-2930 access list the sequence touched.
+    pub access_list: alloy::rpc::types::eth::AccessList,
+}
+
+/// One step of a journaled sequence (the revm-side `SimStep` analog):
+/// `Transact` steps run bare; `Inspect` steps run with the composite
+/// capture inspector borrowed for that step — the settlement bundle's
+/// balance reads stay out of the execute()-only access list (ADR-019 D3).
+#[derive(Debug)]
+pub enum Evm2SimStep {
+    /// A bare step (no capture).
+    Transact(RecoveredTxEnvelope),
+    /// A captured step (the composite inspector rides just this step).
+    Inspect(RecoveredTxEnvelope),
+}
+
 /// One journaled sequence's settled shape — the revm-side `SimSequence`
 /// analog: per-step results in order plus the accumulated writes.
 #[derive(Debug)]
@@ -70,6 +111,8 @@ pub struct Evm2SimSequence {
     /// overwrites an earlier step's value for the same slot), sorted for
     /// deterministic comparison.
     pub storage_writes: Vec<(Address, U256, U256)>,
+    /// The drained inspector capture (see [`Evm2SequenceCapture`]).
+    pub capture: Evm2SequenceCapture,
 }
 
 /// The settle-verb session over the shared evm2 EVM (see the module doc).
@@ -148,17 +191,13 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
     /// # Errors
     ///
     /// [`Evm2SimError::Sequence`] carrying the refusing step's index.
-    pub fn run_sequence(
-        &mut self,
-        steps: &[RecoveredTxEnvelope],
-    ) -> Result<Evm2SimSequence, Evm2SimError> {
+    pub fn run_sequence(&mut self, steps: &[Evm2SimStep]) -> Result<Evm2SimSequence, Evm2SimError> {
         let spec = self.evm.spec_id();
         // The throwaway EVM: the shared DB by mutable handle (reads warm
         // the shared stack; the accumulation dies with it), configured
         // from the shared EVM's own `Version` so runtime feature
         // relaxations (the frame-replay checks) carry over.
-        let exec =
-            ExecutionConfig::<BaseEvmTypes>::for_spec_and_version(spec, self.evm.version().clone());
+        let exec = ExecutionConfig::<BaseEvmTypes>::for_spec_and_version(spec, *self.evm.version());
         let mut seq_evm = Evm::new_with_execution_config(
             exec,
             spec,
@@ -167,10 +206,19 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
             self.evm.state_mut().initial_mut(),
             ::evm2::Precompiles::base(spec),
         );
+        // The bundle's capture is a sequence byproduct: a fresh composite
+        // inspector rides the sequence as a BORROWED slot
+        // (`transact_with_inspector`), drained from the local value after
+        // the loop — no typed retrieval off the locally-borrowed EVM.
+        let mut inspector = crate::sim::evm2::inspectors::Evm2SimInspector::default();
         let mut calls = Vec::with_capacity(steps.len());
         let mut writes = std::collections::BTreeMap::new();
-        for (index, tx) in steps.iter().enumerate() {
-            let executed = match seq_evm.transact(tx) {
+        for (index, step) in steps.iter().enumerate() {
+            let settled = match step {
+                Evm2SimStep::Transact(tx) => seq_evm.transact(tx),
+                Evm2SimStep::Inspect(tx) => seq_evm.transact_with_inspector(tx, &mut inspector),
+            };
+            let executed = match settled {
                 Ok(executed) => executed,
                 Err(err) => {
                     return Err(Evm2SimError::Sequence {
@@ -195,12 +243,20 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
                 storage_writes,
             });
         }
+        let capture = Evm2SequenceCapture {
+            trace: inspector.take_trace(),
+            swaps: inspector.take_swaps(),
+            reverted_swaps: inspector.take_reverted_swaps(),
+            log_count: inspector.log_count(),
+            access_list: inspector.take_access_list(),
+        };
         Ok(Evm2SimSequence {
             calls,
             storage_writes: writes
                 .into_iter()
                 .map(|((address, key), value)| (address, key, value))
                 .collect(),
+            capture,
         })
     }
 

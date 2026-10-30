@@ -1532,6 +1532,517 @@ where
     }))
 }
 
+// ── The evm2 twin (ADR-089, hard-swap wiring) ────────────────────────────
+//
+// `simulate_path_on_evm2` is the evm2 variant of the 7-call seam: the SAME
+// policy (encoders, bucket taxonomy, profit/priority-fee math) driven
+// through `Evm2SimSession`'s journaled sequence. Engine substitutions
+// only: envelopes for `TxEnv`s, the ambient composite inspector for the
+// per-step tuple + handles, and the sequence-returned capture for the
+// handle drains. This twin retires the revm seam at the hard cutover —
+// no genericization layer.
+
+/// The evm2 in-process entry point (mirrors `simulate_in_process_with_db`):
+/// overrides already applied by the caller over the evm2 `CacheDB`; the
+/// EVM built with the engine's per-block policy; the 7-call orchestration
+/// in [`simulate_path_on_evm2`].
+///
+/// # Errors
+///
+/// Same contract as the revm entry (`Ok(None)` for non-profitable /
+/// reverted outcomes; `Err` only on an unrecoverable engine refusal).
+#[cfg(feature = "evm2")]
+pub fn simulate_in_process_with_db_evm2<Db>(
+    ctx: &SimulateContext<'_>,
+    cache_db: ::evm2::evm::CacheDB<Db>,
+    path: &SimulatePath,
+    fail_buckets: &mut FailBuckets,
+) -> ProviderResult<Option<SimResult>>
+where
+    Db: ::evm2::evm::DynDatabase,
+{
+    let mut evm = degenbot_simulation::sim::evm2::build_block_evm2(
+        ::evm2::evm::Db::new(cache_db),
+        ctx.base_fee_next,
+        ctx.current_block,
+        ctx.block_timestamp,
+    );
+    let block_env = degenbot_simulation::sim::evm2::handle_block_env(
+        ctx.base_fee_next,
+        ctx.current_block,
+        ctx.block_timestamp,
+    );
+    let mut session = degenbot_simulation::sim::evm2::session::Evm2SimSession::with_block_env(
+        &mut evm, block_env,
+    );
+    simulate_path_on_evm2(&mut session, ctx, path, fail_buckets)
+}
+
+/// Build a read-only balance-call envelope (mirrors `build_balance_tx` —
+/// the fee field carries `base_fee_next.max(1)` to clear the fee floor).
+#[cfg(feature = "evm2")]
+fn build_balance_envelope(
+    ctx: &SimulateContext<'_>,
+    to: Address,
+    data: &alloy::primitives::Bytes,
+) -> ::evm2::ethereum::RecoveredTxEnvelope {
+    use ::evm2::ethereum::TxEnvelope;
+    use alloy::consensus::transaction::Recovered;
+    use alloy::consensus::TxLegacy;
+    Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            to: TxKind::Call(to),
+            input: alloy::primitives::Bytes::copy_from_slice(data),
+            value: U256::ZERO,
+            gas_limit: BALANCE_CALL_GAS_LIMIT,
+            gas_price: ctx.base_fee_next.max(1),
+            ..Default::default()
+        }),
+        ctx.executor_owner,
+    )
+}
+
+/// Build the `execute(bytes, uint256)` envelope (mirrors `build_execute_tx`).
+#[cfg(feature = "evm2")]
+fn build_execute_envelope(
+    ctx: &SimulateContext<'_>,
+    data: &alloy::primitives::Bytes,
+) -> ::evm2::ethereum::RecoveredTxEnvelope {
+    use ::evm2::ethereum::TxEnvelope;
+    use alloy::consensus::transaction::Recovered;
+    use alloy::consensus::TxLegacy;
+    Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            to: TxKind::Call(ctx.executor_address),
+            input: alloy::primitives::Bytes::copy_from_slice(data),
+            value: U256::ZERO,
+            gas_limit: execute_gas_limit(),
+            gas_price: ctx.base_fee_next.max(1),
+            ..Default::default()
+        }),
+        ctx.executor_owner,
+    )
+}
+
+/// The evm2 variant of [`simulate_path_on_evm`] (see the twin note above).
+/// The policy is verbatim the revm seam's; only the engine surface differs.
+///
+/// # Errors
+///
+/// Same contract as the revm seam.
+#[cfg(feature = "evm2")]
+pub fn simulate_path_on_evm2(
+    session: &mut degenbot_simulation::sim::evm2::session::Evm2SimSession<'_, '_>,
+    ctx: &SimulateContext<'_>,
+    path: &SimulatePath,
+    fail_buckets: &mut FailBuckets,
+) -> ProviderResult<Option<SimResult>> {
+    let span = tracing::info_span!(
+        "degenbot.bundle.simulate",
+        path_id = path.path_id,
+        simulate.verdict = tracing::field::Empty,
+        simulate.expected_profit = tracing::field::Empty,
+        simulate.error_reason = tracing::field::Empty,
+    );
+    simulate_path_on_evm2_in_span(session, ctx, path, fail_buckets, &span)
+}
+
+/// The caller-held-span form (mirrors `simulate_path_on_evm_in_span`).
+///
+/// # Errors
+///
+/// Same contract as the revm seam.
+#[cfg(feature = "evm2")]
+pub fn simulate_path_on_evm2_in_span(
+    session: &mut degenbot_simulation::sim::evm2::session::Evm2SimSession<'_, '_>,
+    ctx: &SimulateContext<'_>,
+    path: &SimulatePath,
+    fail_buckets: &mut FailBuckets,
+    span: &tracing::Span,
+) -> ProviderResult<Option<SimResult>> {
+    let (result, sim_dur) = degenbot_simulation::sim::evm::sim_metrics::timed(|| {
+        simulate_path_on_evm2_seam(session, ctx, path, fail_buckets, span)
+    });
+    degenbot_simulation::sim::evm::sim_metrics::record_sim(sim_dur);
+    result
+}
+
+#[cfg(feature = "evm2")]
+#[expect(clippy::too_many_lines)] // the revm seam's twin — same body shape
+fn simulate_path_on_evm2_seam(
+    session: &mut degenbot_simulation::sim::evm2::session::Evm2SimSession<'_, '_>,
+    ctx: &SimulateContext<'_>,
+    path: &SimulatePath,
+    fail_buckets: &mut FailBuckets,
+    span: &tracing::Span,
+) -> ProviderResult<Option<SimResult>> {
+    use degenbot_simulation::sim::evm2::session::Evm2SimStep;
+
+    let _enter = span.enter();
+    let mut guard = SimSpanVerdict {
+        span: span.clone(),
+        error_reason: None,
+        verdict: SimVerdict::NotProfitable,
+        started: std::time::Instant::now(),
+        profit: None,
+    };
+    // C3 — int128 check (verbatim the revm seam's guard).
+    if path.steps.len() != path.path_info.hops.len() {
+        return Ok(None);
+    }
+    for (i, hop) in path.path_info.hops.iter().enumerate() {
+        if let HopInfo::V4(_) = hop {
+            let amount_specified = if i == 0 {
+                path.optimal_input
+            } else {
+                path.steps[i].consumed_input
+            };
+            let output_amount = path.steps[i].output;
+            if !fits_int128(amount_specified) || !fits_int128(output_amount) {
+                fail_buckets.record(
+                    path.path_id,
+                    "int128-overflow",
+                    None,
+                    alloy::primitives::Bytes::new(),
+                    path.optimal_input,
+                    path.expected_outputs_vec(),
+                );
+                return Ok(None);
+            }
+        }
+    }
+
+    // The boundary-bridge observation probe (verbatim the revm seam's).
+    if ::degenbot_config::holder::config().aave.bridge_probe {
+        if let Some(desc) = scan_for_v4_v2_boundary_bridge(&path.path_info.hops, ctx.weth_address) {
+            op_info!(domain = sim, path_id = path.path_id,
+                desc = %desc,
+                "V4 native to V2 WETH boundary; 3-hop composer does not encode this"
+            );
+        }
+    }
+
+    let cmd_bytes = encode_cmd_stream(&ctx.encode_context(), &path.encode_request());
+    let Some(cmd_bytes) = cmd_bytes else {
+        fail_buckets.record(
+            path.path_id,
+            "encode-failed",
+            None,
+            alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.expected_outputs_vec(),
+        );
+        return Ok(None);
+    };
+
+    let execute_config = config_for_options(path.opts, U256::ZERO).map_err(|e| {
+        guard.verdict = SimVerdict::Error;
+        guard.error_reason = Some(degenbot_bot::telemetry::error_reason::SIM_PRE_ENCODE);
+        ProviderError::RpcError {
+            code: -32603,
+            message: format!("config_for_options failed: {e}"),
+        }
+    })?;
+    let execute_calldata = wrap_execute_calldata(ctx.executor_address, &cmd_bytes, execute_config);
+
+    #[expect(clippy::expect_used)] // address always encodes (documented)
+    let weth_call =
+        encode_balance_of_calldata(ctx.executor_address).expect("valid address encodes");
+    #[expect(clippy::expect_used)] // address always encodes (documented)
+    let eth_call =
+        encode_get_eth_balance_calldata(ctx.executor_address).expect("valid address encodes");
+    #[expect(clippy::expect_used)] // address + weth always encode (documented)
+    let erc6909_call = encode_erc6909_balance_of_calldata(ctx.executor_address, ctx.weth_address)
+        .expect("valid address + weth encode");
+
+    // The 7 calls: 3 pre-balance reads, execute(), 3 post-balance reads, as
+    // ONE journaled sequence. The `Inspect` step at [3] is the evm2 analog
+    // of the revm tuple-on-execute-step: the composite capture rides ONLY
+    // the execute() step, so the access list is execute()-only (ADR-019 D3).
+    let steps: Vec<Evm2SimStep> = vec![
+        Evm2SimStep::Transact(build_balance_envelope(ctx, ctx.weth_address, &weth_call)),
+        Evm2SimStep::Transact(build_balance_envelope(
+            ctx,
+            ctx.multicall3_address,
+            &eth_call,
+        )),
+        Evm2SimStep::Transact(build_balance_envelope(
+            ctx,
+            ctx.pool_manager_address,
+            &erc6909_call,
+        )),
+        Evm2SimStep::Inspect(build_execute_envelope(ctx, &execute_calldata)),
+        Evm2SimStep::Transact(build_balance_envelope(ctx, ctx.weth_address, &weth_call)),
+        Evm2SimStep::Transact(build_balance_envelope(
+            ctx,
+            ctx.multicall3_address,
+            &eth_call,
+        )),
+        Evm2SimStep::Transact(build_balance_envelope(
+            ctx,
+            ctx.pool_manager_address,
+            &erc6909_call,
+        )),
+    ];
+    let sequence = match session.run_sequence(&steps) {
+        Ok(sequence) => sequence,
+        Err(err) => {
+            fail_buckets.record(
+                path.path_id,
+                "rpc-failed",
+                err.step_index(),
+                alloy::primitives::Bytes::new(),
+                path.optimal_input,
+                path.expected_outputs_vec(),
+            );
+            return Ok(None);
+        }
+    };
+    let results = &sequence.calls;
+
+    // The drained capture (the revm handle-drains' analog).
+    let captured_call_trace = sequence.capture.trace;
+    let captured_swaps = sequence.capture.swaps;
+    let reverted_swaps = sequence.capture.reverted_swaps;
+
+    // Classify + tally the first failing call (verbatim the revm seam's).
+    if let Some(fail_idx) = results
+        .iter()
+        .position(|call| call.verdict != degenbot_simulation::sim::evm::RunVerdict::Success)
+    {
+        log_reverted_swaps_vs_hop_outputs(
+            path.path_id,
+            &reverted_swaps,
+            &path.path_info.hops,
+            path.expected_outputs_vec().as_slice(),
+        );
+        let revert_data = alloy::primitives::Bytes::copy_from_slice(&results[fail_idx].output);
+        let bucket = degenbot_decoders::revert::classify_revert(&revert_data);
+        // Deep attribution via the captured call trace (verbatim the revm
+        // seam's body — the shared CallTrace/FrameOutcome types carry it).
+        if let Some(frame) = captured_call_trace.failing_frame() {
+            diag_trace!(domain = sim, path_id = path.path_id, first_fail_call = fail_idx,
+                full_call_trace = %captured_call_trace.render_debug(),
+                "[sim-trace]"
+            );
+            let frame_revert_data = match &frame.outcome {
+                Some(degenbot_simulation::FrameOutcome::Revert { data, .. }) => data.clone(),
+                _ => alloy::primitives::Bytes::new(),
+            };
+            let frame_label = degenbot_decoders::revert::classify_revert(&frame_revert_data);
+            let bucket_label = frame_label.clone();
+            fail_buckets.record_revert(
+                path.path_id,
+                &bucket_label,
+                Some(fail_idx),
+                RevertingFrame {
+                    depth: frame.depth,
+                    target: frame.target,
+                    selector: frame.selector,
+                    revert_data: frame_revert_data,
+                    label: frame_label,
+                    outcome_kind: match &frame.outcome {
+                        Some(degenbot_simulation::FrameOutcome::Revert { .. }) => "revert",
+                        Some(degenbot_simulation::FrameOutcome::Success { .. }) => {
+                            "success-unexpected"
+                        }
+                        _ => "halt",
+                    },
+                    gas_used: frame
+                        .outcome
+                        .as_ref()
+                        .map(|o| {
+                            use degenbot_simulation::FrameOutcome;
+                            match o {
+                                FrameOutcome::Revert { gas_used, .. }
+                                | FrameOutcome::Halt { gas_used, .. }
+                                | FrameOutcome::Success { gas_used, .. } => *gas_used,
+                            }
+                        })
+                        .unwrap_or_default(),
+                },
+                captured_swaps.clone(),
+                path.optimal_input,
+                path.expected_outputs_vec(),
+            );
+        } else {
+            fail_buckets.record(
+                path.path_id,
+                &bucket,
+                Some(fail_idx),
+                revert_data,
+                path.optimal_input,
+                path.expected_outputs_vec(),
+            );
+        }
+        return Ok(None);
+    }
+
+    // C2 — gross profit: decode the 6 balance diffs (the revm `output()?`
+    // semantics: a halted call yields NO output → balance-decode).
+    let decode = |idx: usize| -> Option<U256> {
+        if results[idx].verdict == degenbot_simulation::sim::evm::RunVerdict::Halted {
+            return None;
+        }
+        Some(decode_balance(&results[idx].output))
+    };
+    let Some(weth_before) = decode(0) else {
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(0),
+            alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.expected_outputs_vec(),
+        );
+        return Ok(None);
+    };
+    let Some(eth_before) = decode(1) else {
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(1),
+            alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.expected_outputs_vec(),
+        );
+        return Ok(None);
+    };
+    let Some(erc6909_before) = decode(2) else {
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(2),
+            alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.expected_outputs_vec(),
+        );
+        return Ok(None);
+    };
+    let Some(weth_after) = decode(4) else {
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(4),
+            alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.expected_outputs_vec(),
+        );
+        return Ok(None);
+    };
+    let Some(eth_after) = decode(5) else {
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(5),
+            alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.expected_outputs_vec(),
+        );
+        return Ok(None);
+    };
+    let Some(erc6909_after) = decode(6) else {
+        fail_buckets.record(
+            path.path_id,
+            "balance-decode",
+            Some(6),
+            alloy::primitives::Bytes::new(),
+            path.optimal_input,
+            path.expected_outputs_vec(),
+        );
+        return Ok(None);
+    };
+
+    let combined_before = weth_before + eth_before + erc6909_before;
+    let combined_after = weth_after + eth_after + erc6909_after;
+    let gross_profit = combined_after.saturating_sub(combined_before);
+    if gross_profit.is_zero() {
+        use degenbot_simulation::FrameOutcome as FO;
+        let call_trace: Vec<String> = captured_call_trace
+            .frames
+            .iter()
+            .map(|f| {
+                let kind = match &f.outcome {
+                    Some(FO::Revert { .. }) => "revert",
+                    Some(FO::Success { .. }) => "ok",
+                    _ => "halt",
+                };
+                let gas = f
+                    .outcome
+                    .as_ref()
+                    .map(|o| match o {
+                        FO::Revert { gas_used, .. }
+                        | FO::Halt { gas_used, .. }
+                        | FO::Success { gas_used, .. } => *gas_used,
+                    })
+                    .unwrap_or_default();
+                format!(
+                    "d{}:{:#x}:0x{}:{}=g{}",
+                    f.depth,
+                    f.target,
+                    alloy::primitives::hex::encode(f.selector),
+                    kind,
+                    gas
+                )
+            })
+            .collect();
+        fail_buckets.record_no_profit(
+            path.path_id,
+            "no-profit",
+            captured_swaps.clone(),
+            reverted_swaps.clone(),
+            sequence.capture.log_count,
+            path.optimal_input,
+            path.expected_outputs_vec(),
+            call_trace,
+            u128::try_from(weth_before).unwrap_or_default(),
+            u128::try_from(weth_after).unwrap_or_default(),
+            u128::try_from(eth_before).unwrap_or_default(),
+            u128::try_from(eth_after).unwrap_or_default(),
+            u128::try_from(erc6909_before).unwrap_or_default(),
+            u128::try_from(erc6909_after).unwrap_or_default(),
+        );
+        return Ok(None);
+    }
+
+    // The execute() call's gas (evm2 per-call, same as revm's
+    // `total_gas_spent` — the parity gate pins them equal).
+    let gas_used = results[3].gas_used;
+
+    let priority_fee = compute_priority_fee(
+        gross_profit,
+        gas_used,
+        ctx.base_fee_next,
+        path.solve_block,
+        ctx.current_block,
+        ctx.block_priority_fees.as_ref(),
+    );
+
+    let gas_fee = U256::from(gas_used)
+        .saturating_mul(U256::from(ctx.base_fee_next.saturating_add(priority_fee)));
+    let net_profit = gross_profit.saturating_sub(gas_fee);
+
+    // ADR-019 D3 — the execute()-only access list, drained from the
+    // sequence's capture (the revm handle's `take_access_list` analog).
+    let access_list = sequence.capture.access_list;
+
+    guard.verdict = SimVerdict::Profitable;
+    let profit_i128 = i128::try_from(net_profit).unwrap_or(i128::from(i64::MAX));
+    guard.profit = Some(i64::try_from(profit_i128).unwrap_or(i64::MAX));
+    Ok(Some(SimResult {
+        path_id: path.path_id,
+        gross_profit,
+        net_profit,
+        gas_used,
+        priority_fee,
+        base_fee_next: ctx.base_fee_next,
+        execute_calldata,
+        access_list: Some(access_list),
+        captured_swaps,
+        hop_count: path.hop_count(),
+    }))
+}
+
 /// Build a read-only balance-call `TxEnv` (caller = owner, target = `to`, gas =
 /// [`BALANCE_CALL_GAS_LIMIT`]). `gas_price` is set to `ctx.base_fee_next` so the
 /// top-level tx clears revm's `max_fee_per_gas >= basefee` check (the simulate
@@ -2294,6 +2805,111 @@ mod tests {
             failures[0].captured_swaps.is_empty(),
             "the cafebabe stub emits no swap events before reverting"
         );
+    }
+
+    /// The seam-twin parity gate (ADR-089): the SAME smoke fixtures through
+    /// both engines' 7-call orchestration — identical outcomes, identical
+    /// bucket tallies, identical deep revert attribution.
+    #[cfg(feature = "evm2")]
+    #[test]
+    fn simulate_in_process_matches_across_engines() {
+        for (path_id, bytecode, bucket, label, revert_data) in [
+            // The INVALID-executor fixture: Halt, no data, "empty" bucket.
+            (
+                7u64,
+                Bytes::from_static(&[0xfe]),
+                "empty",
+                "empty",
+                &b""[..],
+            ),
+            // The REVERT-with-data fixture: the 4-byte selector.
+            (
+                42u64,
+                Bytes::from_static(&[
+                    0x63, 0xca, 0xfe, 0xba, 0xbe, 0x60, 0x00, 0x52, 0x60, 0x04, 0x60, 0x1c, 0xfd,
+                ]),
+                "unknown:0xcafebabe",
+                "unknown:0xcafebabe",
+                &[0xca, 0xfe, 0xba, 0xbe][..],
+            ),
+        ] {
+            let run_revm = |buckets: &mut FailBuckets| {
+                let asserter = Asserter::new();
+                let provider = smoke_provider(&asserter);
+                let mut ctx = smoke_ctx(&provider);
+                ctx.runtime_bytecode = bytecode.clone();
+                let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
+                degenbot_simulation::apply_simulation_overrides(
+                    &mut cache_db,
+                    &ctx.override_params(),
+                )
+                .expect("revm overrides apply");
+                simulate_in_process_with_db(&ctx, cache_db, &smoke_v2_path(path_id), buckets)
+                    .unwrap()
+            };
+            let run_evm2 = |buckets: &mut FailBuckets| {
+                let asserter = Asserter::new();
+                let provider = smoke_provider(&asserter);
+                let mut ctx = smoke_ctx(&provider);
+                ctx.runtime_bytecode = bytecode.clone();
+                let mut cache_db = ::evm2::evm::InMemoryDB::default();
+                degenbot_simulation::sim::evm2::state_override::apply_simulation_overrides(
+                    &mut cache_db,
+                    &ctx.override_params(),
+                );
+                simulate_in_process_with_db_evm2(&ctx, cache_db, &smoke_v2_path(path_id), buckets)
+                    .unwrap()
+            };
+
+            let mut revm_buckets = FailBuckets::new();
+            let revm_result = run_revm(&mut revm_buckets);
+            let mut evm2_buckets = FailBuckets::new();
+            let evm2_result = run_evm2(&mut evm2_buckets);
+
+            assert!(
+                revm_result.is_none() && evm2_result.is_none(),
+                "reverting execute"
+            );
+            assert_eq!(revm_buckets.get(bucket), 1, "revm bucket");
+            assert_eq!(evm2_buckets.get(bucket), 1, "evm2 bucket");
+
+            let revm_failures = revm_buckets.failures();
+            let evm2_failures = evm2_buckets.failures();
+            assert_eq!(revm_failures.len(), 1);
+            assert_eq!(evm2_failures.len(), 1);
+            let (rf, ef) = (&revm_failures[0], &evm2_failures[0]);
+            assert_eq!((rf.path_id, rf.fail_index), (ef.path_id, ef.fail_index));
+            let (rf_frame, ef_frame) = (
+                rf.reverting_frame.as_ref().expect("revm frame"),
+                ef.reverting_frame.as_ref().expect("evm2 frame"),
+            );
+            assert_eq!(rf_frame.depth, ef_frame.depth, "frame depth diverges");
+            assert_eq!(rf_frame.target, ef_frame.target, "frame target diverges");
+            assert_eq!(rf_frame.selector, ef_frame.selector);
+            assert_eq!(rf_frame.label, ef_frame.label, "frame label diverges");
+            assert_eq!(
+                rf_frame.revert_data, ef_frame.revert_data,
+                "frame data diverges"
+            );
+            assert_eq!(
+                rf_frame.outcome_kind, ef_frame.outcome_kind,
+                "frame kind diverges"
+            );
+            assert_eq!(ef_frame.label, label, "evm2 label sanity");
+            assert_eq!(
+                ef_frame.revert_data.as_ref(),
+                revert_data,
+                "evm2 data sanity"
+            );
+            // The deep-capture gas figures match on non-halt outcomes (the
+            // engines burn the same gas in the frame). On a HALT the
+            // accounting differs by design: revm's error path reports a
+            // zeroed gas tracker, evm2 reports the actual burn — a
+            // documented diagnostic-field divergence, not a verdict one.
+            if ef_frame.outcome_kind != "halt" {
+                assert_eq!(rf_frame.gas_used, ef_frame.gas_used, "frame gas diverges");
+            }
+        }
     }
 
     /// The no-profit smoke: executor injected as EMPTY bytecode (no-op) → all 7

@@ -1389,7 +1389,7 @@ fn settlement_bundle_sequence_matches_across_engines() {
             .iter()
             .enumerate()
             .map(|(nonce, &input)| {
-                Recovered::new_unchecked(
+                super::session::Evm2SimStep::Transact(Recovered::new_unchecked(
                     TxEnvelope::Legacy(TxLegacy {
                         to: TxKind::Call(CONTRACT),
                         input: word(input),
@@ -1398,7 +1398,7 @@ fn settlement_bundle_sequence_matches_across_engines() {
                         ..Default::default()
                     }),
                     CALLER,
-                )
+                ))
             })
             .collect();
         let seq = session.run_sequence(&steps).expect("evm2 sequence");
@@ -1439,6 +1439,111 @@ fn settlement_bundle_sequence_matches_across_engines() {
     );
     // Post-sequence invisibility: the shared view carries nothing.
     assert_eq!((revm_after, evm2_after), (U256::ZERO, U256::ZERO));
+}
+
+/// The per-block production handles: both build over the same scripted
+/// provider, apply the same overrides, and settle the same frame — and
+/// their scratch engines replay the same foreign frame with the same
+/// cold-read count.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn block_handles_settle_and_replay_identically() {
+    use ::evm2::ethereum::TxEnvelope;
+    use alloy::consensus::transaction::Recovered;
+    use alloy::consensus::TxLegacy;
+    use revm::context::TxEnv;
+
+    let provider = scripted_transport::provider(Fixture {
+        contract_code: store_code(),
+    });
+    let params = override_params();
+    let warm_revm = crate::sim::evm::WarmCodeCacheInner::shared_default();
+    let warm_evm2 = WarmCodeCacheInner::shared_default();
+
+    let mut revm_handle = crate::sim::evm::BlockSimHandle::build(
+        &provider,
+        0,
+        BLOCK,
+        1_700_000_000,
+        &params,
+        &degenbot_substrate::NO_SIM_ANCHOR,
+        &warm_revm,
+        None,
+        false,
+    )
+    .expect("revm handle builds over the scripted provider");
+    let mut evm2_handle = super::handle::Evm2BlockSimHandle::build(
+        &provider,
+        0,
+        BLOCK,
+        1_700_000_000,
+        &params,
+        &degenbot_substrate::NO_SIM_ANCHOR,
+        &warm_evm2,
+        None,
+        false,
+    )
+    .expect("evm2 handle builds over the scripted provider");
+
+    // The settle verb through both sessions.
+    let (revm_verdict, revm_gas, revm_output) = {
+        let mut session = revm_handle.session();
+        let tx = TxEnv::builder()
+            .caller(CALLER)
+            .kind(TxKind::Call(CONTRACT))
+            .data(word(VALUE))
+            .value(U256::ZERO)
+            .gas_limit(GAS_LIMIT)
+            .nonce(0)
+            .build()
+            .expect("well-formed tx");
+        let run = session.run(tx).expect("revm session run");
+        (run.verdict, run.gas_used, run.output)
+    };
+    let (evm2_verdict, evm2_gas, evm2_output) = {
+        let mut session = evm2_handle.session();
+        let tx = Recovered::new_unchecked(
+            TxEnvelope::Legacy(TxLegacy {
+                to: TxKind::Call(CONTRACT),
+                input: word(VALUE),
+                gas_limit: GAS_LIMIT,
+                nonce: 0,
+                ..Default::default()
+            }),
+            CALLER,
+        );
+        let run = session.run(&tx).expect("evm2 session run");
+        (run.verdict, run.gas_used, run.output)
+    };
+    assert_eq!(
+        (revm_verdict, revm_gas, revm_output),
+        (evm2_verdict, evm2_gas, evm2_output),
+        "handle session verdicts diverge"
+    );
+
+    // The scratch engines: same foreign frame, same cold-read count.
+    let revm_replay = revm_handle
+        .scratch_evm()
+        .expect("revm scratch builds")
+        .replay(&replay_tx(0, VALUE))
+        .expect("revm scratch replay");
+    let evm2_replay = evm2_handle
+        .scratch_evm()
+        .expect("evm2 scratch builds")
+        .replay(&replay_tx(0, VALUE))
+        .expect("evm2 scratch replay");
+    assert_eq!(revm_replay.status, evm2_replay.status);
+    assert_eq!(
+        revm_replay.touched, evm2_replay.touched,
+        "scratch touched sets diverge"
+    );
+    assert_eq!(
+        revm_replay.rpc_reads, evm2_replay.rpc_reads,
+        "scratch cold-read counts diverge"
+    );
+    assert!(
+        evm2_replay.rpc_reads > 0,
+        "sanity: the scratch forwarded cold reads"
+    );
 }
 
 /// Inspector-driven capture — the engine's swap-event oracle's seam — is

@@ -20,6 +20,10 @@ workspace = true
 # stays thin + generic; the settlement-arbitrage bundle is this strategy's concern, not the
 # engine's.
 degenbot-simulation.workspace = true
+# Optional: the evm2 engine (ADR-089) — the seam twin's envelope types.
+# Declared directly (not a workspace dep) mirroring degenbot-simulation's
+# declaration; `default-features = false` keeps the same surface shape.
+evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, optional = true, features = ["asm-keccak", "blst", "c-kzg", "secp256k1", "serde"] }
 degenbot-config.workspace = true
 # `BotState` (ADR-003 state owner) — the snapshot surface the dispatch
 # fan-out reads via `BlockSimHandle`.
@@ -71,6 +75,11 @@ degenbot-order-index = { workspace = true, optional = true }
 # both consumer paths (the `degenbot` umbrella + the `degenbot_rs` cdylib)
 # enable it.
 order-index = ["dep:degenbot-order-index"]
+
+# The evm2 engine twin (ADR-089): the seam's evm2 variant over
+# `degenbot_simulation::sim::evm2`. Opt-in while the differential gate
+# runs both engines; the revm seam retires at the hard cutover.
+evm2 = ["dep:evm2", "degenbot-simulation/evm2"]
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.23", features = ["registry", "ansi"] }

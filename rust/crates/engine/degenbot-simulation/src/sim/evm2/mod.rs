@@ -16,8 +16,10 @@
 //! run leaves no writes in the shared read cache.
 
 pub mod alloy_async_db;
+pub mod blocking_async_db;
 pub mod bot_state_db;
 pub mod frame_replay;
+pub mod handle;
 pub mod inspectors;
 pub mod session;
 pub mod state_override;
@@ -51,7 +53,9 @@ pub fn build_pilot_evm_jit<'a>(
 use ::evm2::env::BlockEnvExt;
 use ::evm2::ethereum::ethereum_tx_registry;
 use ::evm2::evm::InMemoryDB;
-use ::evm2::{BaseEvmTypes, Evm, Precompiles, SpecId};
+use ::evm2::{BaseEvmTypes, Evm, EvmFeatures, ExecutionConfig, Precompiles, SpecId, Version};
+
+use alloy::primitives::U256;
 
 /// The hardfork both engines are pinned to in the parity gate. The opcodes
 /// the pilot exercises are stable since Shanghai, so one mid-range spec keeps
@@ -65,8 +69,60 @@ pub type PilotDb = InMemoryDB;
 pub type PilotEvm = Evm<'static, BaseEvmTypes>;
 
 /// An empty pilot database.
+#[must_use]
 pub fn pilot_db() -> PilotDb {
     InMemoryDB::default()
+}
+
+/// The block env the production EVM policy pins from the pump's
+/// primitives (shared by [`build_block_evm2`] and callers that open a
+/// session with `with_block_env`).
+#[must_use]
+pub fn handle_block_env(
+    base_fee_next: u128,
+    current_block: u64,
+    block_timestamp: u64,
+) -> BlockEnvExt {
+    BlockEnvExt {
+        basefee: U256::from(base_fee_next),
+        number: U256::from(current_block),
+        timestamp: U256::from(block_timestamp),
+        ..Default::default()
+    }
+}
+
+/// Build a production-policy evm2 EVM over `db` — the `build_block_evm`
+/// analog: [`handle::EVM2_PRODUCTION_SPEC`], the nonce check disabled
+/// (each bundle call is `eth_call`-shaped — parity with the node's lenient
+/// simulate), the block env pinned from the pump's primitives, and the
+/// composite capture inspector baked in. The per-block handle uses this
+/// policy too (its own construction predates the extractor — both must
+/// stay in lockstep).
+#[must_use]
+pub fn build_block_evm2<'a>(
+    db: impl ::evm2::evm::DynDatabase + 'a,
+    base_fee_next: u128,
+    current_block: u64,
+    block_timestamp: u64,
+) -> Evm<'a, BaseEvmTypes> {
+    let block_env = BlockEnvExt {
+        basefee: U256::from(base_fee_next),
+        number: U256::from(current_block),
+        timestamp: U256::from(block_timestamp),
+        ..Default::default()
+    };
+    let mut version = Version::new(handle::EVM2_PRODUCTION_SPEC);
+    version.features.remove(EvmFeatures::NONCE_CHECK);
+    let mut evm = Evm::new_with_execution_config(
+        ExecutionConfig::for_spec_and_version(handle::EVM2_PRODUCTION_SPEC, version),
+        handle::EVM2_PRODUCTION_SPEC,
+        block_env,
+        ethereum_tx_registry(handle::EVM2_PRODUCTION_SPEC),
+        db,
+        Precompiles::base(handle::EVM2_PRODUCTION_SPEC),
+    );
+    evm.set_inspector(inspectors::Evm2SimInspector::default());
+    evm
 }
 
 /// Build an evm2 mainnet EVM over `db` at [`PILOT_SPEC`]. Generic over the

@@ -1275,6 +1275,8 @@ dependencies = [
  "ark-std 0.6.0",
  "digest 0.10.7",
  "num-bigint 0.4.8",
+ "serde",
+ "serde-encoded-bytes",
  "serde_with",
 ]
 
@@ -1592,6 +1594,7 @@ checksum = "c20659f9bbee16cbbd2f7393e40ab6309f5a98f76a2eb57a995ec508b72387fe"
 dependencies = [
  "cc",
  "glob",
+ "serde",
  "threadpool",
  "zeroize",
 ]
@@ -2345,6 +2348,7 @@ dependencies = [
  "degenbot-simulation",
  "degenbot-submission",
  "degenbot-substrate",
+ "evm2",
  "parking_lot 0.13.0",
  "revm",
  "serde_json",
@@ -3088,6 +3092,7 @@ dependencies = [
  "digest 0.11.3",
  "elliptic-curve 0.14.3",
  "rfc6979 0.6.0",
+ "serdect 0.4.3",
  "signature 3.0.0",
  "spki 0.8.1",
  "zeroize",
@@ -3150,6 +3155,7 @@ dependencies = [
  "pkcs8 0.11.0",
  "rand_core 0.10.1",
  "sec1 0.8.1",
+ "serdect 0.4.3",
  "subtle",
  "zeroize",
 ]
@@ -4410,6 +4416,7 @@ dependencies = [
  "ecdsa 0.17.0",
  "elliptic-curve 0.14.3",
  "primeorder 0.14.0",
+ "serdect 0.4.3",
  "sha2 0.11.1",
  "wnaf",
 ]
@@ -4952,6 +4959,7 @@ dependencies = [
  "elliptic-curve 0.14.3",
  "primefield",
  "primeorder 0.14.0",
+ "serdect 0.4.3",
  "sha2 0.11.1",
 ]
 
@@ -6390,6 +6398,7 @@ dependencies = [
  "ctutils",
  "der 0.8.3",
  "hybrid-array",
+ "serdect 0.4.3",
  "subtle",
  "zeroize",
 ]
@@ -6425,6 +6434,7 @@ checksum = "d7f404a8dab7a7a5a631e741d8699aa9c8e1d689fc26ccf897c7187565490b69"
 dependencies = [
  "rand 0.9.5",
  "secp256k1-sys 0.14.1",
+ "serde",
 ]
 
 [[package]]
@@ -6515,6 +6525,17 @@ checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde-encoded-bytes"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "988156b15813ab36ef7527430ed5d055d826f0d5fae2d17514a943360db27200"
+dependencies = [
+ "base64 0.22.1",
+ "hex",
+ "serde",
 ]
 
 [[package]]

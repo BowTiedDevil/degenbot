@@ -65,11 +65,24 @@ where
         self
     }
 
-    /// Arm the on-demand divergence probe for this wrapper (skips the env
-    /// gate; mirrors the revm-side arming).
+    /// The `Option`-carrying form (mirrors the revm-side
+    /// `with_storage_memo_opt` — the handle passes its optional memo
+    /// through).
     #[must_use]
-    pub fn with_divergence_probe(mut self) -> Self {
-        self.divergence_probe = true;
+    pub fn with_storage_memo_opt(
+        mut self,
+        memo: Option<&std::sync::Arc<crate::sim::evm::StorageMemo>>,
+    ) -> Self {
+        self.storage_memo = memo.cloned();
+        self
+    }
+
+    /// Arm (or disarm) the on-demand divergence probe for this wrapper
+    /// (the armed form skips the env gate; mirrors the revm-side
+    /// `with_divergence_probe(bool)`).
+    #[must_use]
+    pub fn with_divergence_probe(mut self, arm: bool) -> Self {
+        self.divergence_probe = arm;
         self
     }
 }
