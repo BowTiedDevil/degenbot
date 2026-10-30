@@ -81,14 +81,59 @@ release has no date, reth's production mileage on the pinned rev is the
 best de-risking signal available now, and a big-bang swap would land
 without the layer-by-layer parity evidence the gate accumulates.
 
-**Track evm2 HEAD instead of reth's rev.** Rejected: reth's rev carries
-production validation; HEAD adds churn without adding signal.
+**Track evm2 HEAD instead of reth's rev.** Initially rejected (reth's rev
+carries production validation), then accepted by the D2 amendment
+(2026-10-30): the opt-in feature plus the differential gate make HEAD's
+churn cheap and its early warning valuable.
 
 **Parallel implementations as a habit.** This project defaults against
 parallel implementations. The exception stands because the truth-source
 risk is asymmetric: a silent execution divergence corrupts the solver's
 accuracy oracle, not just a runtime path. The flag has a recorded deletion
 condition (D5), not an open-ended lifetime.
+
+## Post-cutover performance roadmap
+
+Recorded 2026-10-30. These presuppose the evm2 engine is the one running
+(the gate's end-state); they are the cutover's prize, not a reason to skip
+its discipline. Ordered by expected impact on the measured hot path.
+
+1. **AOT-compile the injected executor at build time.** The executor
+   bytecode is committed in-repo and runs on every simulated candidate;
+   `evm2-jit-build` compiles it to native code at `cargo build` time into
+   an AOT artifact preloaded into the `ArtifactStore` at handle-build.
+   Zero first-touch stall, zero worker-pool dependency, on the hottest
+   contract in the system.
+2. **JIT the tracked pool set at registration, persist across blocks.**
+   Pool bytecode is immutable and the tracked set is a few hundred
+   contracts; registration (already a lifecycle event) submits bytecode to
+   the `JitBackend` worker pool. The warm code cache avoids RPC fetches;
+   the JIT artifact store avoids interpretation. Blocks advance, the
+   compiled set doesn't.
+3. **Coroutine fan-out for cold misses.** The serial fan-out's structural
+   weakness is a cold storage slot parking the whole queue on RPC
+   (`WrapDatabaseAsync` blocks a thread). evm2's `AsyncDatabase` +
+   `transact_async` yields the fiber instead: candidate k's read flies
+   while candidate k+1 runs. The shared per-block `CacheDB` discipline is
+   unchanged; cold misses overlap execution instead of serializing it.
+4. **Speculative parallel candidate evaluation.** `ExecutedTx::detach` /
+   `discard` / `commit` plus `StateChangeSource`/`Sink` streaming makes
+   every candidate's read-set explicit and mergeable: per-worker EVMs over
+   the shared warm read layer, detached pending states collected, only the
+   winner applied. The EIP-7928 BAL support supplies the conflict-detection
+   input for free.
+5. **BAL-driven next-block prefetch.** The read-set stream doubles as a
+   prefetch oracle: slots this block's candidates touched are next block's.
+   Feed them into the storage memo as async prefetch at block start,
+   hiding RPC latency inside the mempool idle gap.
+6. **Frame replay on persistent JIT programs.** Pending-tx replays
+   re-execute the same mempool transactions across consecutive blocks;
+   their programs compile once and stay hot on the pending-tx strategy's
+   time-to-bid critical path.
+
+Sequencing: 1 and 2 first (always-on, low risk), then measure — the
+`rpc_cache_fanout` shape settles whether the per-block budget is
+execution-bound (4 next) or RPC-latency-bound (3 next).
 
 ## Consequences
 
