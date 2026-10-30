@@ -40,16 +40,21 @@ use std::sync::{Arc, Mutex};
 
 use alloy::primitives::U256;
 use degenbot_executor::composers::{EncodeOptions, HopInfo, PathInfo};
+#[cfg(not(feature = "evm2"))]
 use degenbot_simulation::BlockSimHandle;
 use degenbot_submission::PathSuppression;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
 use parking_lot::RwLock;
 
+#[cfg(not(feature = "evm2"))]
+use crate::simulate_path_on_evm;
+#[cfg(feature = "evm2")]
+use crate::simulate_path_on_evm2;
 use crate::{
     diverging_pool_keys, fot_suspected_token, hop_input_token, hop_output_token, hop_pool_key,
-    is_solver_calc_failure, simulate_path_on_evm, FailBuckets, FeeOnTransferRegistry,
-    PoolDivergence, SimFailure, SimResult, SimulateContext, SimulatePath,
+    is_solver_calc_failure, FailBuckets, FeeOnTransferRegistry, PoolDivergence, SimFailure,
+    SimResult, SimulateContext, SimulatePath,
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -70,8 +75,64 @@ use crate::{
 /// The output is emitted at `debug` level, so it is gated behind the tracing
 /// filter (`RUST_LOG=...=debug` / `=trace`) rather than appearing on stderr by
 /// default — the `debug` level is the gate.
+#[cfg(not(feature = "evm2"))]
 fn v2_calc_trace(handle: &mut BlockSimHandle<'_>, sim_path: &SimulatePath) {
     let mut session = handle.session();
+    v2_calc_trace_body(&mut session, sim_path);
+}
+
+/// The evm2 twin of the probe (ADR-089) — the same reserves read through
+/// the evm2 session.
+#[cfg(feature = "evm2")]
+fn v2_calc_trace(
+    handle: &mut degenbot_simulation::sim::evm2::handle::Evm2BlockSimHandle<'_>,
+    sim_path: &SimulatePath,
+) {
+    let mut session = handle.session();
+    v2_calc_trace_body(&mut session, sim_path);
+}
+
+/// The session verb the probe needs (both engines expose it over the same
+/// slot table).
+trait V2ReservesReader {
+    /// The engine's read-error type.
+    type Error: std::fmt::Display;
+    /// Read + decode the pair's packed reserves word.
+    fn read_v2_reserves(
+        &mut self,
+        pair: alloy::primitives::Address,
+    ) -> Result<degenbot_pools::V2ReservesParts, Self::Error>;
+}
+
+#[cfg(not(feature = "evm2"))]
+impl<Db, Insp> V2ReservesReader for degenbot_simulation::sim::evm::session::SimSession<'_, Db, Insp>
+where
+    Db: revm::database_interface::Database + revm::database_interface::DatabaseRef,
+    <Db as revm::database_interface::DatabaseRef>::Error: std::fmt::Display,
+{
+    type Error = degenbot_simulation::sim::evm::SimError;
+    fn read_v2_reserves(
+        &mut self,
+        pair: alloy::primitives::Address,
+    ) -> Result<degenbot_pools::V2ReservesParts, Self::Error> {
+        Self::read_v2_reserves(self, pair)
+    }
+}
+
+#[cfg(feature = "evm2")]
+impl V2ReservesReader for degenbot_simulation::sim::evm2::session::Evm2SimSession<'_, '_> {
+    type Error = degenbot_simulation::sim::evm2::session::Evm2SimError;
+    fn read_v2_reserves(
+        &mut self,
+        pair: alloy::primitives::Address,
+    ) -> Result<degenbot_pools::V2ReservesParts, Self::Error> {
+        Self::read_v2_reserves(self, pair)
+    }
+}
+
+/// The probe body, generic over either engine's session (both expose
+/// `read_v2_reserves` over the same slot table).
+fn v2_calc_trace_body<S: V2ReservesReader>(session: &mut S, sim_path: &SimulatePath) {
     for hop in &sim_path.path_info.hops {
         if let HopInfo::V2(v2) = hop {
             let reserves = match session.read_v2_reserves(v2.pool_address) {
@@ -661,7 +722,10 @@ pub fn dispatch_profitable_results(
             };
             // The warm-code cache arc; degrade to a fresh per-call cache if
             // the caller wired `bot_state` without one (safe — no
-            // cross-block persistence, no panic).
+            // cross-block persistence, no panic). Unused under `evm2`: the
+            // twin arm keeps its own per-call cache until the cutover wires
+            // one owner per engine.
+            #[cfg_attr(feature = "evm2", expect(unused_variables))]
             let warm_cache =
                 warm_cache.unwrap_or_else(degenbot_simulation::WarmCodeCacheInner::shared_default);
             // The engine `BlockSimHandle` build takes the block-env primitives
@@ -687,7 +751,11 @@ pub fn dispatch_profitable_results(
             // per-fanout already, but the memo costs nothing and covers any
             // handle re-arms inside this fanout (same-height pre-state).
             let storage_memo = std::sync::Arc::new(degenbot_simulation::StorageMemo::new());
-            match BlockSimHandle::build(
+            // ADR-089 (hard-swap wiring): the compile-time `evm2` feature
+            // selects the engine for this build's dispatch — the evm2 handle
+            // + seam twin below retire this revm arm at the cutover.
+            #[cfg(not(feature = "evm2"))]
+            let fanout = match BlockSimHandle::build(
                 ctx.provider,
                 ctx.base_fee_next,
                 sim_block,
@@ -741,7 +809,61 @@ pub fn dispatch_profitable_results(
                         (c.path_id, buckets, Ok(None))
                     })
                     .collect(),
-            }
+            };
+            // The evm2 twin arm (ADR-089): the same fan-out over
+            // `Evm2BlockSimHandle` + `simulate_path_on_evm2`. The warm-cache
+            // owner stays revm-typed while both engines coexist (the bot
+            // wires one owner per engine at the cutover), so this arm uses
+            // a per-call evm2 cache — the same degrade contract as the
+            // revm arm's `unwrap_or_else`.
+            #[cfg(feature = "evm2")]
+            let fanout = {
+                // Bound before the match: a scrutinee temporary would
+                // otherwise extend the anchor borrow past the arm.
+                let evm2_warm_cache = degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner::shared_default();
+                match degenbot_simulation::sim::evm2::handle::Evm2BlockSimHandle::build(
+                    ctx.provider,
+                    ctx.base_fee_next,
+                    sim_block,
+                    ctx.block_timestamp,
+                    &ctx.override_params(),
+                    &anchor,
+                    &evm2_warm_cache,
+                    Some(&storage_memo),
+                    false,
+                ) {
+                    Some(mut handle) => candidates
+                        .into_iter()
+                        .map(|c| {
+                            let pid = c.path_id;
+                            let sim_path = c.to_simulate_path();
+                            v2_calc_trace(&mut handle, &sim_path);
+                            let mut buckets = FailBuckets::new();
+                            let mut session = handle.session();
+                            let result =
+                                simulate_path_on_evm2(&mut session, ctx, &sim_path, &mut buckets)
+                                    .map_err(|e| format!("{e}"));
+                            (pid, buckets, result)
+                        })
+                        .collect(),
+                    None => candidates
+                        .into_iter()
+                        .map(|c| {
+                            let mut buckets = FailBuckets::new();
+                            buckets.record(
+                                c.path_id,
+                                "rpc-failed",
+                                None,
+                                alloy::primitives::Bytes::new(),
+                                c.optimal_input,
+                                c.expected_outputs_vec(),
+                            );
+                            (c.path_id, buckets, Ok(None))
+                        })
+                        .collect(),
+                }
+            };
+            fanout
         }
         // ADR-019 D1 — the legacy RPC `eth_simulateV1` path retired; the
         // in-process revm path (the `Some` arm above) is the sole executor.
