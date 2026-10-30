@@ -21,8 +21,9 @@ use degenbot_pools::{
     encode_v4_liquidity_slot, encode_v4_slot0, v4_liquidity_slot, v4_pool_state_base_slot,
     v4_slot0_slot, V4Slot0Parts,
 };
-use degenbot_simulation::sim::evm::frame_replay::{BaseFeeSource, ReplayOutcome};
-use degenbot_simulation::sim::evm::journal_pools::{
+use degenbot_simulation::sim::evm2::frame_replay::Evm2ReplayOutcome;
+use degenbot_simulation::sim::frame_replay::BaseFeeSource;
+use degenbot_simulation::sim::journal_pools::{
     PoolFamily, PoolPostKind, TypedPoolPost, V4PoolDescriptor,
 };
 use degenbot_simulation::RunVerdict;
@@ -125,7 +126,6 @@ fn market_context(
 }
 
 use degenbot_strategy::pending_tx::{FrameContext, PendingTxReaction};
-use revm::state::{Account, AccountStatus, EvmState, EvmStorageSlot};
 
 // ─────────────────── the golden frame (offline, end to end) ────────────────
 
@@ -139,26 +139,18 @@ const SEED: u64 = 7;
 /// The replayed journal of ONE V2 swap frame: post-target reserves packed at
 /// the pair's slot 8 (`476_259` TOK / `1_050` WETH — the golden target's 50-WETH
 /// swap settled), touched + status flag set.
-fn golden_replay_outcome() -> ReplayOutcome {
+fn golden_replay_outcome() -> Evm2ReplayOutcome {
     let reserves = slot_layout::pack_v2_reserves_word(U112::from(476_259u64), U112::from(1_050u64));
     let slot8 = U256::from_be_bytes(reserves.0);
-    let mut state = EvmState::default();
-    let mut account = Account::default();
-    account.status = AccountStatus::Touched;
-    account.storage.insert(
-        U256::from(slot_layout::V2_RESERVES_SLOT),
-        EvmStorageSlot {
-            original_value: U256::ZERO,
-            present_value: slot8,
-            transaction_id: revm::state::TransactionId::ZERO,
-            is_cold: false,
-        },
-    );
-    state.insert(P, account);
-    ReplayOutcome {
+    let slot = U256::from(slot_layout::V2_RESERVES_SLOT);
+    Evm2ReplayOutcome {
         status: RunVerdict::Success,
-        state,
-        touched: vec![(P, vec![U256::from(slot_layout::V2_RESERVES_SLOT)])],
+        gas_used: 21_000,
+        output: Bytes::new(),
+        storage_writes: vec![(P, slot, slot8)],
+        slot_values: vec![(P, slot, slot8)],
+        accounts: vec![(P, ::evm2::evm::AccountInfo::default())],
+        touched: vec![(P, vec![slot])],
         rpc_reads: 0,
         wall: std::time::Duration::from_micros(42),
         base_fee_source: BaseFeeSource::Projected,
@@ -225,12 +217,12 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     );
 
     // extract: the journalled slot-8 word decodes to the post-target pair.
-    let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
+    let extracted = degenbot_simulation::sim::journal_pools::extract_pool_post_states(
         &outcome,
         &descriptors.by_address,
     );
     assert_eq!(extracted.len(), 1, "one touched tracked pool extracted");
-    let degenbot_simulation::sim::evm::journal_pools::PoolPostState {
+    let degenbot_simulation::sim::journal_pools::PoolPostState {
         address,
         family,
         kind,
@@ -238,11 +230,11 @@ fn golden_frame_extract_admit_solve_compose_end_to_end() {
     assert_eq!(*address, P);
     assert!(matches!(
         family,
-        degenbot_simulation::sim::evm::journal_pools::PoolFamily::V2Pair
+        degenbot_simulation::sim::journal_pools::PoolFamily::V2Pair
     ));
     let reserves = match kind {
-        degenbot_simulation::sim::evm::journal_pools::PoolPostKind::Typed(
-            degenbot_simulation::sim::evm::journal_pools::TypedPoolPost::V2 { reserves },
+        degenbot_simulation::sim::journal_pools::PoolPostKind::Typed(
+            degenbot_simulation::sim::journal_pools::TypedPoolPost::V2 { reserves },
         ) => reserves,
         other => panic!("expected typed V2 post-state, got {other:?}"),
     };
@@ -371,7 +363,7 @@ fn weth_entry_cycle_refs_reproduce_the_committed_two_hop_traversal() {
     let (rt, _tok_id, _weth_id) = runtime_fixture();
     let outcome = golden_replay_outcome();
     let descriptors = build_descriptors(rt.index(), &outcome.touched, &test_execution());
-    let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
+    let extracted = degenbot_simulation::sim::journal_pools::extract_pool_post_states(
         &outcome,
         &descriptors.by_address,
     );
@@ -689,26 +681,18 @@ const P2: Address = address!("000000000000000000000000000000000000b003");
 
 /// The replayed journal of ONE USDC-frame V2 swap: post-target reserves
 /// packed at the pair's slot 8 (`900_000` TOK / `1_100` USDC settled).
-fn usdc_frame_replay_outcome() -> ReplayOutcome {
+fn usdc_frame_replay_outcome() -> Evm2ReplayOutcome {
     let reserves = slot_layout::pack_v2_reserves_word(U112::from(900_000u64), U112::from(1_100u64));
     let slot8 = U256::from_be_bytes(reserves.0);
-    let mut state = EvmState::default();
-    let mut account = Account::default();
-    account.status = AccountStatus::Touched;
-    account.storage.insert(
-        U256::from(slot_layout::V2_RESERVES_SLOT),
-        EvmStorageSlot {
-            original_value: U256::ZERO,
-            present_value: slot8,
-            transaction_id: revm::state::TransactionId::ZERO,
-            is_cold: false,
-        },
-    );
-    state.insert(P2, account);
-    ReplayOutcome {
+    let slot = U256::from(slot_layout::V2_RESERVES_SLOT);
+    Evm2ReplayOutcome {
         status: RunVerdict::Success,
-        state,
-        touched: vec![(P2, vec![U256::from(slot_layout::V2_RESERVES_SLOT)])],
+        gas_used: 21_000,
+        output: Bytes::new(),
+        storage_writes: vec![(P2, slot, slot8)],
+        slot_values: vec![(P2, slot, slot8)],
+        accounts: vec![(P2, ::evm2::evm::AccountInfo::default())],
+        touched: vec![(P2, vec![slot])],
         rpc_reads: 0,
         wall: std::time::Duration::from_micros(42),
         base_fee_source: BaseFeeSource::Projected,
@@ -761,7 +745,7 @@ fn usdc_quoted_pair_admits_with_quote_orientation() {
     let outcome = usdc_frame_replay_outcome();
 
     let descriptors = build_descriptors(rt.index(), &outcome.touched, &test_execution());
-    let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
+    let extracted = degenbot_simulation::sim::journal_pools::extract_pool_post_states(
         &outcome,
         &descriptors.by_address,
     );
@@ -874,7 +858,7 @@ fn unsupported_family_observes_loudly_not_silently() {
     assert!(
         matches!(
             descriptors.by_address.get(&P),
-            Some(degenbot_simulation::sim::evm::journal_pools::PoolFamily::V2Pair)
+            Some(degenbot_simulation::sim::journal_pools::PoolFamily::V2Pair)
         ),
         "positive path: a known V2 address still types as V2Pair"
     );
@@ -957,7 +941,7 @@ fn known_v4_roster_extracts_the_typed_post_state() {
         "the manager descriptor set owns the index roster"
     );
 
-    let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
+    let extracted = degenbot_simulation::sim::journal_pools::extract_pool_post_states(
         &outcome,
         &descriptors.by_address,
     );
@@ -998,7 +982,7 @@ fn manager_without_roster_edges_stays_unsupported() {
     assert!(pools.is_empty());
     assert!(descriptors.hit_v4);
 
-    let extracted = degenbot_simulation::sim::evm::journal_pools::extract_pool_post_states(
+    let extracted = degenbot_simulation::sim::journal_pools::extract_pool_post_states(
         &outcome,
         &descriptors.by_address,
     );
@@ -1019,25 +1003,18 @@ fn manager_without_roster_edges_stays_unsupported() {
 
 /// One hand-built frame whose only touched account is `manager`, holding the
 /// given `(slot, present_value)` writes.
-fn manager_journal_outcome(manager: Address, writes: &[(U256, U256)]) -> ReplayOutcome {
-    let mut state = EvmState::default();
-    let mut account = Account::default();
-    account.status = AccountStatus::Touched;
-    for (slot, value) in writes {
-        account.storage.insert(
-            *slot,
-            EvmStorageSlot {
-                original_value: U256::ZERO,
-                present_value: *value,
-                transaction_id: revm::state::TransactionId::ZERO,
-                is_cold: false,
-            },
-        );
-    }
-    state.insert(manager, account);
-    ReplayOutcome {
+fn manager_journal_outcome(manager: Address, writes: &[(U256, U256)]) -> Evm2ReplayOutcome {
+    let slot_values: Vec<(Address, U256, U256)> = writes
+        .iter()
+        .map(|(slot, value)| (manager, *slot, *value))
+        .collect();
+    Evm2ReplayOutcome {
         status: RunVerdict::Success,
-        state,
+        gas_used: 21_000,
+        output: Bytes::new(),
+        storage_writes: slot_values.clone(),
+        accounts: vec![(manager, ::evm2::evm::AccountInfo::default())],
+        slot_values,
         touched: vec![(manager, writes.iter().map(|(slot, _)| *slot).collect())],
         rpc_reads: 0,
         wall: std::time::Duration::from_micros(1),
@@ -1440,7 +1417,7 @@ fn bid_ladder_is_floor_of_bribe_share() {
 /// exactly one honest label, and the JSONL evidence carries the nonce pair.
 #[test]
 fn replay_reasons_split() {
-    use degenbot_simulation::sim::evm::frame_replay::ReplayFrameError;
+    use degenbot_simulation::sim::frame_replay::ReplayFrameError;
 
     let (r, v) =
         degenbot_strategy::frame_pipeline::replay_observe_reason(&ReplayFrameError::GapPending {

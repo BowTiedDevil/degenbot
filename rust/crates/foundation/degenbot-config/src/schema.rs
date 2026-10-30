@@ -107,12 +107,12 @@ pub const SHELL_OWNED_KEYS: &[&str] = &[
 /// environment like any other key), so it stays declared; classifying it keeps
 /// "declared but honoured by nobody" from hiding behind a fixture name.
 pub const TEST_ONLY_KEYS: &[&str] = &[
-    "capture.swap_capture_probe",
     "offline.clcap_block",
     "offline.clcap_max_fetches",
     "offline.clcap_path_cap",
     "offline.clcap_rpc",
     "offline.scan_block",
+    "offline.fixture_db",
     "offline.v3_fixture_block",
     "offline.v3_fixture_rpc",
     "simulation.probe_fixture",
@@ -602,8 +602,6 @@ crate::config_schema! {
             doc = "Capture only paths whose solve time is at least this many microseconds.";
         solver_capture_out [opt path] = None, env = "DEGENBOT_SOLVER_CAPTURE_OUT", def = "(unset; site picks a working-file default)",
             doc = "Solver-capture output JSONL path (site-specific fallback).";
-        swap_capture_probe [bool] = false, env = "DEGENBOT_SWAP_CAPTURE_PROBE", def = "false",
-            doc = "Swap-capture correctness example gate (`1` enables).";
     }
 
     verify VerifyConfig {

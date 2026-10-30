@@ -51,6 +51,9 @@ degenbot-submission = { workspace = true, optional = true, features = ["pyo3"] }
 # outside the binding/CLI/umbrella depends on it.
 degenbot-strategy = { workspace = true, optional = true }
 degenbot-simulation = { workspace = true, optional = true }
+# The engine (ADR-089 cutover) — the in-process probes drive the evm2
+# in-memory DB; optional, riding the `simulation` feature.
+evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, optional = true, features = ["asm-keccak", "blst", "secp256k1", "serde"] }
 degenbot-workers = { workspace = true, optional = true }
 revm = { version = "^43.0", default-features = false }
 degenbot-arbitrage = { workspace = true, optional = true, features = ["order-index"] }
@@ -128,12 +131,7 @@ experimental-inspect = ["pyo3/experimental-inspect"]
 bot = ["dep:degenbot-bot", "dep:degenbot-substrate", "dep:degenbot-ingestion", "dep:degenbot-workers", "rpc", "decoders", "uniswap", "db"]
 price = ["dep:degenbot-price", "rpc"]
 submission = ["dep:degenbot-submission", "dep:degenbot-strategy", "rpc"]
-simulation = ["dep:degenbot-simulation", "dep:degenbot-arbitrage", "dep:degenbot-batch-executor", "dep:degenbot-workers", "rpc", "executor", "submission"]
-# The evm2 engine (ADR-089): stacked on `simulation`, forwards to the
-# strategy's engine switch — an extension built with this feature drives
-# every sim through evm2 instead of revm (compile-time, one engine per
-# build, per the hard-swap wiring).
-evm2 = ["simulation", "degenbot-arbitrage/evm2"]
+simulation = ["dep:degenbot-simulation", "dep:degenbot-arbitrage", "dep:degenbot-batch-executor", "dep:degenbot-workers", "dep:evm2", "rpc", "executor", "submission"]
 executor = ["dep:degenbot-executor"]
 execution = ["dep:degenbot-execution", "executor"]
 fork = ["dep:degenbot-fork"]

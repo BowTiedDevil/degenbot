@@ -33,6 +33,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use ::evm2::bytecode::Bytecode;
+use ::evm2::evm::{AccountInfo, InMemoryDB};
 use alloy::network::Ethereum;
 use alloy::primitives::{address, aliases::U112, Address, Bytes, I256, U128, U256};
 use alloy::providers::{Provider, ProviderBuilder};
@@ -53,10 +55,6 @@ use degenbot::math::solidly::{calc_d as solidly_calc_d, calc_f as solidly_calc_f
 use degenbot::simulation::apply_simulation_overrides;
 use degenbot::substrate::swap_simulation::{SwapRead, SwapRequest};
 use degenbot::{bot_core::Bot, BotState, RegisterV2PoolParams};
-use revm::bytecode::Bytecode;
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
-use revm::state::AccountInfo;
 
 // PoolBuilder (T2, 3FVZF4): the construction-I/O traits + build fns reached
 // via the umbrella (no pyo3). `FailingConstruction` is a module-level RPC
@@ -820,26 +818,20 @@ fn in_process_sim_standalone_slice() {
         block_priority_fees: None,
     };
 
-    let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
-    apply_simulation_overrides(&mut cache_db, &ctx.override_params())
-        .expect("standalone: overrides apply over EmptyDB");
+    let mut cache_db = InMemoryDB::default();
+    apply_simulation_overrides(&mut cache_db, &ctx.override_params());
     cache_db.insert_account_info(
-        MULTICALL3,
-        AccountInfo {
-            balance: U256::ZERO,
-            nonce: 1,
-            code: Some(Bytecode::new_raw(Bytes::from(MULTICALL3_BYTECODE.to_vec()))),
-            ..Default::default()
-        },
+        &MULTICALL3,
+        AccountInfo::default()
+            .with_nonce(1)
+            .with_code(Bytecode::new_raw(Bytes::from(MULTICALL3_BYTECODE.to_vec()))),
     );
     cache_db.insert_account_info(
-        GIFT,
-        AccountInfo {
-            balance: ONE_ETH,
-            nonce: 1,
-            code: Some(Bytecode::new_raw(Bytes::from(GIFT_BYTECODE.to_vec()))),
-            ..Default::default()
-        },
+        &GIFT,
+        AccountInfo::default()
+            .with_balance(ONE_ETH)
+            .with_nonce(1)
+            .with_code(Bytecode::new_raw(Bytes::from(GIFT_BYTECODE.to_vec()))),
     );
     let path = SimulatePath {
         path_id: 42,

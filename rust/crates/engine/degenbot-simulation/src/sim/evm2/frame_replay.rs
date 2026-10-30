@@ -37,12 +37,12 @@ use ::evm2::evm::{Database, Db, DynDatabase, ExecutedTx};
 use ::evm2::registry::{HandlerError, HandlerResult};
 use ::evm2::{BaseEvmTypes, Evm, EvmFeatures, ExecutionConfig, Precompiles, Version};
 
-use super::PILOT_SPEC;
-use crate::sim::evm::frame_replay::{
+use super::handle::EVM2_PRODUCTION_SPEC as FRAME_SPEC;
+use crate::sim::frame_replay::{
     BaseFeeSource, FrameRpcCounter, PredStatus, ReplayFrameError, ReplayableTx, ScratchBlock,
     SequenceReplayError,
 };
-use crate::sim::evm::RunVerdict;
+use crate::sim::RunVerdict;
 
 /// The cold-path bridge of a scratch stack: counts forwarded reads and
 /// otherwise forwards untouched (the revm-side `CountingFrameDb` analog —
@@ -107,6 +107,12 @@ pub struct Evm2ReplayOutcome {
     pub output: Bytes,
     /// The frame's storage writes, sorted for deterministic comparison.
     pub storage_writes: Vec<(Address, U256, U256)>,
+    /// Every touched slot's settled value (reads included — the journal
+    /// words `journal_pools` extracts pool post-states from), sorted.
+    pub slot_values: Vec<(Address, U256, U256)>,
+    /// The settled account infos of the accounts the frame touched
+    /// (nonce/balance after the run — the revm `state.info` analog), sorted.
+    pub accounts: Vec<(Address, ::evm2::evm::AccountInfo)>,
     /// The deterministic touched-slot set (mirrors `SimRun::touched`).
     pub touched: Vec<(Address, Vec<U256>)>,
     /// Cold reads forwarded to the cold path during this replay.
@@ -116,6 +122,16 @@ pub struct Evm2ReplayOutcome {
     /// Whether the projected base fee settled or the disabled-check
     /// fallback ran.
     pub base_fee_source: BaseFeeSource,
+}
+
+/// Read ONE word through a layered DB view — the admission layer's read
+/// for connector state from the SAME chain view the frames replay over
+/// (the revm-side `read_view_word` analog). `None` on a read failure; a
+/// zero word reads through as `Some(U256::ZERO)` — the caller decides
+/// whether zero is usable pool state.
+#[must_use]
+pub fn read_view_word<Ext: Database>(ext: &mut Ext, address: Address, slot: U256) -> Option<U256> {
+    ext.get_storage(&address, &slot).ok()
 }
 
 /// The settled sequence: per-predecessor status + gas, then the frame.
@@ -282,6 +298,8 @@ struct Settled {
     gas_used: u64,
     output: Bytes,
     storage_writes: Vec<(Address, U256, U256)>,
+    slot_values: Vec<(Address, U256, U256)>,
+    accounts: Vec<(Address, ::evm2::evm::AccountInfo)>,
     touched: Vec<(Address, Vec<U256>)>,
 }
 
@@ -326,23 +344,23 @@ fn build_frame_evm<'a>(
     block: &ScratchBlock,
     disable_base_fee: bool,
 ) -> Evm<'a, BaseEvmTypes> {
-    let mut version = Version::new(PILOT_SPEC);
+    let mut version = Version::new(FRAME_SPEC);
     version.features.remove(EvmFeatures::BALANCE_CHECK);
     if disable_base_fee {
         version.features.remove(EvmFeatures::BASE_FEE_CHECK);
     }
     Evm::new_with_execution_config(
-        ExecutionConfig::for_spec_and_version(PILOT_SPEC, version),
-        PILOT_SPEC,
+        ExecutionConfig::for_spec_and_version(FRAME_SPEC, version),
+        FRAME_SPEC,
         BlockEnvExt {
             basefee: U256::from(block.base_fee_next),
             number: U256::from(block.number),
             timestamp: U256::from(block.timestamp),
             ..Default::default()
         },
-        ethereum_tx_registry(PILOT_SPEC),
+        ethereum_tx_registry(FRAME_SPEC),
         db,
-        Precompiles::base(PILOT_SPEC),
+        Precompiles::base(FRAME_SPEC),
     )
 }
 
@@ -398,22 +416,54 @@ fn settle(
         })
         .collect();
     touched.sort();
+    let mut slot_values: Vec<(Address, U256, U256)> = executed
+        .account_changes()
+        .flat_map(|changes| {
+            let address = changes.address;
+            changes
+                .storage
+                .slots
+                .iter()
+                .map(move |(key, slot)| (address, *key, slot.value.current))
+        })
+        .collect();
+    slot_values.sort();
+    let mut accounts: Vec<(Address, ::evm2::evm::AccountInfo)> = executed
+        .account_changes()
+        .filter(|changes| changes.touched)
+        .filter_map(|changes| changes.current.map(|info| (changes.address, info.clone())))
+        .collect();
+    accounts.sort_by_key(|(a, _)| *a);
     let result = if commit {
         executed.commit()
     } else {
         executed.discard()
     };
+    let status = if result.status {
+        RunVerdict::Success
+    } else if result.stop == ::evm2::interpreter::InstrStop::Revert {
+        RunVerdict::Reverted
+    } else {
+        RunVerdict::Halted
+    };
+    if status != RunVerdict::Success {
+        // The journal-flattening parity rule (revm's settled reverted/
+        // halted frame): no pool state survives — storage writes, slot
+        // values, and the per-account slot sets all drop; the account
+        // infos (nonce/gas effects) stay.
+        storage_writes.clear();
+        slot_values.clear();
+        for (_, slots) in &mut touched {
+            slots.clear();
+        }
+    }
     Ok(Settled {
-        status: if result.status {
-            RunVerdict::Success
-        } else if result.stop == ::evm2::interpreter::InstrStop::Revert {
-            RunVerdict::Reverted
-        } else {
-            RunVerdict::Halted
-        },
+        status,
         gas_used: result.tx_gas_used(),
         output: result.output.clone(),
         storage_writes,
+        slot_values,
+        accounts,
         touched,
     })
 }
@@ -463,6 +513,8 @@ fn outcome(
         gas_used: settled.gas_used,
         output: settled.output,
         storage_writes: settled.storage_writes,
+        slot_values: settled.slot_values,
+        accounts: settled.accounts,
         touched: settled.touched,
         rpc_reads,
         wall,

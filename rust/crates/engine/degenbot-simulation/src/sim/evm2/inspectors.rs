@@ -25,12 +25,10 @@ use alloy::rpc::types::eth::AccessList;
 use ::evm2::interpreter::{op, Interpreter, Message, MessageResult};
 use ::evm2::{BaseEvmTypes, Inspector};
 
-use crate::sim::evm::access_list::CollectedSlots;
-use crate::sim::evm::inspectors::call_end::pair_lifo;
-use crate::sim::evm::inspectors::call_trace::{
-    CallFrame, CallTrace, CallTraceBuffer, FrameOutcome,
-};
-use crate::sim::evm::inspectors::swap_event::{CapturedSwap, SwapEventBuffer};
+use crate::sim::capture::pair_lifo;
+use crate::sim::capture::CollectedSlots;
+use crate::sim::capture::{CallFrame, CallTrace, CallTraceBuffer, FrameOutcome};
+use crate::sim::capture::{CapturedSwap, SwapEventBuffer};
 
 /// The evm2 composite inspector (see the module doc). `Default` — set into
 /// the EVM once at build; drained after runs via the `take_*` verbs.

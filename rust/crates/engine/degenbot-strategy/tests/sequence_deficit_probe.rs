@@ -40,7 +40,7 @@ use degenbot_pools::RegisterV3PoolParams;
 use degenbot_pools::TickInfo;
 use degenbot_rpc::abi::{ContractRead, IUniswapV3Pool, Slot0Prefix, TickLiquidity};
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_simulation::sim::evm::journal_pools::{
+use degenbot_simulation::sim::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, LaneFamily, PathReject};

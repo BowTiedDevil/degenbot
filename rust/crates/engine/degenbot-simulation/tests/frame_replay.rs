@@ -23,17 +23,18 @@
 
 use std::time::Duration;
 
+use ::evm2::bytecode::Bytecode;
+use ::evm2::evm::{AccountInfo, InMemoryDB};
 use alloy::primitives::{address, b256, Address, Bytes, B256, U256};
-use degenbot_simulation::sim::evm::frame_replay::{
-    read_view_word, BaseFeeSource, CountingFrameDb, FrameRpcCounter, PredStatus, ReplayFrameError,
-    ReplayableTx, ScratchBlock, ScratchEvm, SequenceReplayError,
+use degenbot_simulation::sim::evm2::frame_replay::{
+    read_view_word, Evm2CountingFrameDb, Evm2ScratchEvm,
 };
-use degenbot_simulation::sim::evm::session::{SimSession, SimStep};
-use degenbot_simulation::{RunVerdict, SimInspector};
-use revm::bytecode::Bytecode;
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
-use revm::state::AccountInfo;
+use degenbot_simulation::sim::evm2::session::{Evm2SimSession, Evm2SimStep};
+use degenbot_simulation::sim::frame_replay::{
+    BaseFeeSource, FrameRpcCounter, PredStatus, ReplayFrameError, ReplayableTx, ScratchBlock,
+    SequenceReplayError,
+};
+use degenbot_simulation::RunVerdict;
 
 use degenbot_executor::WarmupSlots;
 
@@ -143,19 +144,19 @@ const MERGE_CODE: &[u8] = &[
 /// `INVALID`: the predecessor halts.
 const HALTER_CODE: &[u8] = &[0xFE];
 
-type TestExt = CacheDB<CountingFrameDb<CacheDB<EmptyDB>>>;
+type TestExt = ::evm2::evm::CacheDB<::evm2::evm::Db<Evm2CountingFrameDb<InMemoryDB>>>;
 
 /// The scratch ext with the counter embedded BELOW its persistent cache (the
 /// production shape): only true cold fetches are counted.
-fn scratch() -> ScratchEvm<TestExt> {
+fn scratch() -> Evm2ScratchEvm<TestExt> {
     let counter = std::sync::Arc::new(FrameRpcCounter::default());
-    let mut db = CacheDB::new(EmptyDB::default());
-    let sender = AccountInfo {
-        balance: U256::from(1_000_000_000_000_000_000u64),
-        nonce: 7,
-        ..Default::default()
-    };
-    db.insert_account_info(SENDER, sender);
+    let mut db = InMemoryDB::default();
+    db.insert_account_info(
+        &SENDER,
+        AccountInfo::default()
+            .with_balance(U256::from(1_000_000_000_000_000_000u64))
+            .with_nonce(7),
+    );
     for (addr, code) in [
         (WRITER, WRITER_CODE),
         (READER, READER_CODE),
@@ -166,15 +167,55 @@ fn scratch() -> ScratchEvm<TestExt> {
         (HALTER, HALTER_CODE),
     ] {
         db.insert_account_info(
-            addr,
-            AccountInfo {
-                code: Some(Bytecode::new_raw(Bytes::copy_from_slice(code))),
-                ..Default::default()
-            },
+            &addr,
+            AccountInfo::default().with_code(Bytecode::new_raw(Bytes::copy_from_slice(code))),
         );
     }
-    let ext = CacheDB::new(CountingFrameDb::new(db, std::sync::Arc::clone(&counter)));
-    ScratchEvm::with_counter(ext, block_env(), counter)
+    let ext = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(Evm2CountingFrameDb::new(
+        db,
+        std::sync::Arc::clone(&counter),
+    )));
+    Evm2ScratchEvm::with_counter(ext, block_env(), counter)
+}
+
+/// The settled value of `key` at `address` in an outcome's journal words
+/// (the revm `outcome.state` lookup's evm2 form).
+fn slot_of(
+    outcome: &degenbot_simulation::sim::evm2::frame_replay::Evm2ReplayOutcome,
+    address: Address,
+    key: U256,
+) -> Option<U256> {
+    outcome
+        .slot_values
+        .iter()
+        .find(|(a, k, _)| *a == address && *k == key)
+        .map(|(_, _, v)| *v)
+}
+
+/// The settled balance of `address` in an outcome (the revm `state.info`
+/// lookup's evm2 form).
+fn balance_of(
+    outcome: &degenbot_simulation::sim::evm2::frame_replay::Evm2ReplayOutcome,
+    address: Address,
+) -> Option<U256> {
+    outcome
+        .accounts
+        .iter()
+        .find(|(a, _)| *a == address)
+        .map(|(_, info)| info.balance)
+}
+
+/// The settled nonce of `address` in an outcome (the revm `state.info`
+/// lookup's evm2 form).
+fn nonce_of(
+    outcome: &degenbot_simulation::sim::evm2::frame_replay::Evm2ReplayOutcome,
+    address: Address,
+) -> Option<u64> {
+    outcome
+        .accounts
+        .iter()
+        .find(|(a, _)| *a == address)
+        .map(|(_, info)| info.nonce)
 }
 
 fn tx(to: Address, data: &[u8], nonce: u64) -> ReplayableTx {
@@ -233,14 +274,11 @@ fn frame_loopback_surfaces_touched_slots_and_telemetry() {
         "fee-validation path recorded"
     );
     assert!(
-        out.state.get(&SENDER).map(|acc| acc.info.nonce) == Some(8),
+        nonce_of(&out, SENDER) == Some(8),
         "post-state carries the sender's nonce bump"
     );
     assert_eq!(
-        out.state
-            .get(&WRITER)
-            .and_then(|acc| acc.storage.get(&U256::ZERO))
-            .map(|s| s.present_value),
+        slot_of(&out, WRITER, U256::ZERO),
         Some(U256::from(0x2A)),
         "post-state carries the settled slot value"
     );
@@ -284,11 +322,7 @@ fn reverted_frame_returns_no_partial_state_and_contained_writes() {
         out.status
     );
     assert!(
-        out.state
-            .get(&REVERTER)
-            .and_then(|acc| acc.storage.get(&U256::ZERO))
-            .map(|s| s.present_value)
-            != Some(U256::from(0x07)),
+        slot_of(&out, REVERTER, U256::ZERO) != Some(U256::from(0x07)),
         "the mid-flight SSTORE contributes no slot entry"
     );
     assert!(
@@ -304,11 +338,7 @@ fn reverted_frame_returns_no_partial_state_and_contained_writes() {
         "follow-up clean"
     );
     assert_eq!(
-        after
-            .state
-            .get(&READER)
-            .and_then(|acc| acc.storage.get(&U256::ZERO))
-            .map(|s| s.present_value),
+        slot_of(&after, READER, U256::ZERO),
         Some(U256::ZERO),
         "the reverted frame's mid-flight SSTORE did not leak into the scratch ext"
     );
@@ -319,15 +349,9 @@ fn reverted_frame_returns_no_partial_state_and_contained_writes() {
 /// invisible to the next run and to every frame, while a sequence run
 /// accumulates its journal across steps (the settlement bundle's 7-call shape)
 /// and still commits nothing.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one scenario script: frame-vs-run isolation and sequence accumulation share the fixture"
-)]
 #[test]
 fn a_run_is_invisible_to_the_next_run_and_to_frames() {
-    use revm::context::Context as RevmContext;
-    use revm::primitives::TxKind;
-    use revm::{MainBuilder, MainContext};
+    use alloy::primitives::TxKind;
 
     let mut scratch = scratch();
 
@@ -335,39 +359,38 @@ fn a_run_is_invisible_to_the_next_run_and_to_frames() {
     let frame = scratch.replay(&tx(DUAL, &[], 7)).expect("frame executes");
     assert!(matches!(frame.status, RunVerdict::Success));
 
-    let dual_write = |nonce: u64| {
-        revm::context::TxEnv::builder()
-            .caller(SENDER)
-            .kind(TxKind::Call(DUAL))
-            .data(Bytes::new())
-            .gas_limit(100_000)
-            .gas_price(BASE_FEE_GWEI)
-            .nonce(nonce)
-            .build()
-            .unwrap()
+    let dual_tx = |nonce: u64, data: &[u8]| {
+        use ::evm2::ethereum::TxEnvelope;
+        use alloy::consensus::transaction::Recovered;
+        use alloy::consensus::TxLegacy;
+        Recovered::new_unchecked(
+            TxEnvelope::Legacy(TxLegacy {
+                to: TxKind::Call(DUAL),
+                input: Bytes::copy_from_slice(data),
+                gas_limit: 100_000,
+                gas_price: BASE_FEE_GWEI,
+                nonce,
+                ..Default::default()
+            }),
+            SENDER,
+        )
     };
-    let dual_read = |nonce: u64| {
-        revm::context::TxEnv::builder()
-            .caller(SENDER)
-            .kind(TxKind::Call(DUAL))
-            .data(Bytes::copy_from_slice(&[0x00]))
-            .gas_limit(100_000)
-            .gas_price(BASE_FEE_GWEI)
-            .nonce(nonce)
-            .build()
-            .unwrap()
-    };
+    let dual_write = |nonce: u64| dual_tx(nonce, &[]);
+    let dual_read = |nonce: u64| dual_tx(nonce, &[0x00]);
     let returned_word =
         |output: &Bytes| U256::from_be_slice(&output[output.len().saturating_sub(32)..]);
 
     // 2. A session over the SAME layered ext: its first run reads the DUAL
     //    slot at 0 — no frame state reached the settled view.
-    let mut evm = RevmContext::mainnet()
-        .with_db(scratch.ext_mut())
-        .build_mainnet_with_inspector(SimInspector::default());
-    let mut session = SimSession::new(&mut evm);
+    let mut evm = degenbot_simulation::sim::evm2::build_block_evm2(
+        ::evm2::evm::Db::new(scratch.ext_mut()),
+        0,
+        0,
+        0,
+    );
+    let mut session = Evm2SimSession::new(&mut evm);
     let observed = session
-        .run(dual_read(7))
+        .run(&dual_read(7))
         .expect("settlement read run settles");
     assert!(matches!(observed.verdict, RunVerdict::Success));
     assert_eq!(
@@ -377,29 +400,19 @@ fn a_run_is_invisible_to_the_next_run_and_to_frames() {
     );
 
     // 3. A write run settles its SSTORE into ITS OWN outcome...
-    let written = session.run(dual_write(7)).expect("write run settles");
+    let written = session.run(&dual_write(7)).expect("write run settles");
     assert!(matches!(written.verdict, RunVerdict::Success));
-    assert_eq!(
-        written
-            .state
-            .get(&DUAL)
-            .and_then(|acc| acc.storage.get(&U256::from(5u64)))
-            .map(|s| s.present_value),
-        Some(U256::from(0x2A)),
-        "the write settled inside the run"
-    );
     assert!(
-        written
-            .touched()
-            .iter()
-            .any(|(address, slots)| *address == DUAL && slots.contains(&U256::from(5u64))),
-        "the run reports the slot it wrote"
+        written.storage_writes.iter().any(|(address, key, value)| {
+            *address == DUAL && *key == U256::from(5u64) && *value == U256::from(0x2A)
+        }),
+        "the write settled inside the run"
     );
 
     // 4. ...and is INVISIBLE to the next run: every run starts from the same
     //    settled view because `run` finalized (never committed) the journal.
     let after = session
-        .run(dual_read(7))
+        .run(&dual_read(7))
         .expect("follow-up read run settles");
     assert_eq!(
         returned_word(&after.output),
@@ -413,9 +426,9 @@ fn a_run_is_invisible_to_the_next_run_and_to_frames() {
     //    journal without committing.
     {
         let sequence = session
-            .run_sequence(vec![
-                SimStep::Transact(dual_write(7)),
-                SimStep::Transact(dual_read(8)),
+            .run_sequence(&[
+                Evm2SimStep::Transact(dual_write(7)),
+                Evm2SimStep::Transact(dual_read(8)),
             ])
             .expect("the sequence settles");
         assert_eq!(
@@ -424,36 +437,33 @@ fn a_run_is_invisible_to_the_next_run_and_to_frames() {
             "every step's result is returned, none summarized away"
         );
         assert_eq!(
-            sequence.calls[1]
-                .output()
-                .map(|bytes| { U256::from_be_slice(&bytes[bytes.len().saturating_sub(32)..]) }),
-            Some(U256::from(0x2A)),
+            U256::from_be_slice(
+                &sequence.calls[1].output[sequence.calls[1].output.len().saturating_sub(32)..]
+            ),
+            U256::from(0x2A),
             "a sequence accumulates across its steps"
         );
-        assert_eq!(
-            sequence
-                .state
-                .get(&DUAL)
-                .and_then(|acc| acc.storage.get(&U256::from(5u64)))
-                .map(|s| s.present_value),
-            Some(U256::from(0x2A)),
+        assert!(
+            sequence.storage_writes.iter().any(|(address, key, value)| {
+                *address == DUAL && *key == U256::from(5u64) && *value == U256::from(0x2A)
+            }),
             "the settled sequence state carries the accumulated write"
         );
     }
 
     // 6. Neither side reaches the frame layer: the next frame reads the slot
     //    at 0 — the runs' writes and the discarded journal are gone.
+    drop(evm);
     let frame2 = scratch
         .replay(&tx(DUAL, &[0x00], 7))
         .expect("follow-up frame executes");
     assert!(matches!(frame2.status, RunVerdict::Success));
     assert!(
         frame2
-            .state
-            .get(&DUAL)
-            .and_then(|acc| acc.storage.get(&U256::from(5u64)))
-            .map(|s| s.present_value)
-            .is_none_or(|v| v == U256::ZERO),
+            .slot_values
+            .iter()
+            .find(|(address, key, _)| *address == DUAL && *key == U256::from(5u64))
+            .is_none_or(|(_, _, v)| *v == U256::ZERO),
         "frame sees no writes from the session side"
     );
 }
@@ -475,10 +485,7 @@ fn underpriced_frame_falls_back_to_disabled_basefee() {
     );
     assert_eq!(out.base_fee_source, BaseFeeSource::DisabledFallback);
     assert_eq!(
-        out.state
-            .get(&WRITER)
-            .and_then(|acc| acc.storage.get(&U256::from(4u64)))
-            .map(|s| s.present_value),
+        slot_of(&out, WRITER, U256::from(4u64)),
         Some(U256::from(0x2A)),
         "the fallback path still settles the frame"
     );
@@ -541,7 +548,7 @@ fn sequence_state_never_leaks_into_the_ext() {
     assert!(matches!(sequence.frame.status, RunVerdict::Success));
 
     assert_eq!(
-        read_view_word(scratch.ext(), GATE, U256::ZERO),
+        read_view_word(scratch.ext_mut(), GATE, U256::ZERO),
         Some(U256::ZERO),
         "no predecessor storage reached the ext"
     );
@@ -659,7 +666,7 @@ fn underpriced_predecessor_falls_back_and_commits() {
     assert_eq!(sequence.predecessors, vec![PredStatus::Success]);
     assert!(matches!(sequence.frame.status, RunVerdict::Success));
     assert_eq!(
-        sequence.frame.state.get(&SENDER).map(|acc| acc.info.nonce),
+        nonce_of(&sequence.frame, SENDER),
         Some(9),
         "the underpriced predecessor consumed its nonce"
     );
@@ -723,19 +730,14 @@ fn same_account_two_predecessors_merge_nonce_balance_and_storage() {
     );
     assert!(matches!(sequence.frame.status, RunVerdict::Success));
     assert_eq!(
-        sequence
-            .frame
-            .state
-            .get(&MERGE)
-            .and_then(|account| account.storage.get(&U256::from(2u64)))
-            .map(|slot| slot.present_value),
+        slot_of(&sequence.frame, MERGE, U256::from(2u64)),
         Some(U256::from(0x54)),
         "the frame sums BOTH predecessor writes: slot0(0x2A) + slot1(0x2A)"
     );
     // The frame itself is at nonce 9, so its post-state nonce is 10 — proof
     // the two predecessors' bumps (7->8->9) were both in the overlay.
     assert_eq!(
-        sequence.frame.state.get(&SENDER).map(|acc| acc.info.nonce),
+        nonce_of(&sequence.frame, SENDER),
         Some(10),
         "the sender nonce advanced through both predecessors and the frame"
     );
@@ -756,11 +758,7 @@ fn same_account_two_predecessors_merge_nonce_balance_and_storage() {
         .expect("sequence executes");
     let pred_gas: u64 = sequence2.predecessor_gas.iter().sum();
     assert_eq!(
-        sequence2
-            .frame
-            .state
-            .get(&SENDER)
-            .map(|acc| acc.info.balance),
+        balance_of(&sequence2.frame, SENDER),
         Some(initial - price * U256::from(pred_gas + 21_000)),
         "balance deducts once per step; the frame is a 21000-gas transfer"
     );
@@ -779,7 +777,7 @@ fn halted_predecessor_commits_and_the_sequence_proceeds() {
     assert_eq!(sequence.predecessors, vec![PredStatus::Halted]);
     assert!(matches!(sequence.frame.status, RunVerdict::Success));
     assert_eq!(
-        sequence.frame.state.get(&SENDER).map(|acc| acc.info.nonce),
+        nonce_of(&sequence.frame, SENDER),
         Some(9),
         "the halt consumed its nonce and the frame ran at the next one"
     );
@@ -913,7 +911,7 @@ async fn live_scratch_evm_replays_a_plain_transfer_and_warms() {
 
     use alloy::eips::BlockNumberOrTag;
     use alloy::providers::{Provider, ProviderBuilder};
-    use degenbot_simulation::{BlockSimHandle, SimulationOverrideParams};
+    use degenbot_simulation::{Evm2BlockSimHandle as BlockSimHandle, SimulationOverrideParams};
 
     let rpc_url = std::env::var("DEGENBOT_RPC_HTTP_CHAINID_1").unwrap();
     let provider: alloy::providers::RootProvider =
@@ -992,7 +990,7 @@ async fn live_v2_router_swap_replay_matches_chain_post_state() {
     use alloy::consensus::Transaction as ConsensusTx;
     use alloy::eips::{BlockId, BlockNumberOrTag};
     use alloy::providers::{Provider, ProviderBuilder};
-    use degenbot_simulation::{BlockSimHandle, SimulationOverrideParams};
+    use degenbot_simulation::{Evm2BlockSimHandle as BlockSimHandle, SimulationOverrideParams};
 
     let rpc_url = std::env::var("DEGENBOT_RPC_HTTP_CHAINID_1").unwrap();
     let provider: alloy::providers::RootProvider =
@@ -1155,17 +1153,14 @@ async fn live_v2_router_swap_replay_matches_chain_post_state() {
     for (addr_key, body) in post {
         let addr: Address = padded(addr_key, 40).parse().unwrap();
         if let Some(storage) = body.get("storage").and_then(|s| s.as_object()) {
-            let account = out
-                .state
-                .get(&addr)
-                .expect("frame must not miss a node-touched account");
+            assert!(
+                out.accounts.iter().any(|(a, _)| *a == addr),
+                "frame must not miss a node-touched account"
+            );
             for (slot_key, value) in storage {
                 let slot = hex_u256(&padded(slot_key, 64));
                 let expected = hex_u256(value.as_str().expect("storage value is hex"));
-                let got = account
-                    .storage
-                    .get(&slot)
-                    .map_or(U256::ZERO, |s| s.present_value);
+                let got = slot_of(&out, addr, slot).unwrap_or(U256::ZERO);
                 assert_eq!(
                     got, expected,
                     "post-state disagreement at {addr_key} slot {slot_key}"
@@ -1173,9 +1168,9 @@ async fn live_v2_router_swap_replay_matches_chain_post_state() {
             }
         }
         if let Some(nonce) = body.get("nonce").and_then(|v| v.as_str()) {
-            if let Some(account) = out.state.get(&addr) {
+            if let Some(got_nonce) = nonce_of(&out, addr) {
                 assert_eq!(
-                    U256::from(account.info.nonce),
+                    U256::from(got_nonce),
                     hex_u256(nonce),
                     "post-nonce disagreement at {addr_key}"
                 );

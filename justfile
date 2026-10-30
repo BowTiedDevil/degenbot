@@ -344,10 +344,10 @@ test-fork: dev
     echo
     echo "▶ Rust live revm fork legs: degenbot-simulation live_* (run-ignored only)"
     rust_rc=0
-    # The evm2 feature rides the lane so the pilot's live_ fork-truth legs
-    # run (ADR-089 D5: the live legs are part of the cutover gate).
+    # The live_ fork-truth legs run on the engine (ADR-089: post-cutover
+    # the evm2 engine is unconditional — no feature flag to carry).
     DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" cargo nextest run --locked --manifest-path rust/Cargo.toml \
-        -p degenbot-simulation --features degenbot-simulation/evm2 -E 'test(live_)' --run-ignored only --no-fail-fast || rust_rc=$?
+        -p degenbot-simulation -E 'test(live_)' --run-ignored only --no-fail-fast || rust_rc=$?
     echo
     # Both legs always run: a failing first leg must not starve the lane of
     # the second leg's evidence. The lane still fails closed on any leg.
@@ -700,16 +700,7 @@ check-uv-lock:
 test-python: dev
     {{ py_run }} pytest -x -q --no-header
 
-# Build the editable extension with the evm2 engine (ADR-089) in place of
-# the default revm one. `--features evm2` appends to the script's pinned
-# `dev-features` (cargo unifies repeated feature flags).
-dev-evm2:
-    scripts/build_extension.sh develop --features evm2
 
-# The pre-cutover Python probe: the full pytest suite against the
-# evm2-built extension (ADR-089 phase 5 precondition).
-test-python-evm2: dev-evm2
-    {{ py_run }} pytest -x -q --no-header
 
 # Spray tripwire over the Python suite (scripts/pytest_noise_gate.sh). Runs
 # pytest with the whole child-process output captured to a log file, then scans

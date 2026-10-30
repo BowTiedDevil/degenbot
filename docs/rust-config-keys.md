@@ -168,7 +168,6 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 | `DEGENBOT_SOLVER_CAPTURE_MIN_SIMS` | `capture.solver_capture_min_sims` | `u64` | `2000` | `core` | Capture only paths with at least this many walk sims. |
 | `DEGENBOT_SOLVER_CAPTURE_MIN_US` | `capture.solver_capture_min_us` | `u64` | `50000` | `core` | Capture only paths whose solve time is at least this many microseconds. |
 | `DEGENBOT_SOLVER_CAPTURE_OUT` | `capture.solver_capture_out` | `Option<path>` | `(unset; site picks a working-file default)` | `core` | Solver-capture output JSONL path (site-specific fallback). |
-| `DEGENBOT_SWAP_CAPTURE_PROBE` | `capture.swap_capture_probe` | `bool` | `false` | `test-only` | Swap-capture correctness example gate (`1` enables). |
 ## `verify`
 
 | Env var | TOML key | Type | Default | Owner | Description |
@@ -273,7 +272,7 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 | `DEGENBOT_CLCAP_MAX_FETCHES` | `offline.clcap_max_fetches` | `usize` | `320` | `test-only` | Max active-set fetches backfilled by the concentrated liquidity capture generator. |
 | `DEGENBOT_CLCAP_PATH_CAP` | `offline.clcap_path_cap` | `usize` | `12` | `test-only` | Per-block path cap for the concentrated liquidity capture generator. |
 | `DEGENBOT_SCAN_BLOCK` | `offline.scan_block` | `Option<u64>` | `(unset)` | `test-only` | Block for the concentrated liquidity boundary-scan examples. |
-| `DEGENBOT_FIXTURE_DB` | `offline.fixture_db` | `Option<path>` | `(unset)` | `core` | Database path for the standalone-consumer fixture example. |
+| `DEGENBOT_FIXTURE_DB` | `offline.fixture_db` | `Option<path>` | `(unset)` | `test-only` | Database path for the standalone-consumer fixture example. |
 | `DEGENBOT_V3_FIXTURE_RPC` | `offline.v3_fixture_rpc` | `Option<string>` | `(unset)` | `test-only` | Network-gated V3 IIA fixture reproduction RPC endpoint (test-only). |
 | `DEGENBOT_V3_FIXTURE_BLOCK` | `offline.v3_fixture_block` | `Option<u64>` | `(unset)` | `test-only` | Network-gated V3 IIA fixture reproduction block (test-only). |
 ## `test_hooks`

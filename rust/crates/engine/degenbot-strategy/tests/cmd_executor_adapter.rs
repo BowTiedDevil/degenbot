@@ -10,7 +10,7 @@ use degenbot_executor::composers::{
     EncodeRequest, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo,
 };
 use degenbot_executor::grammar_ledger::{Bribe, FundingSource, ProfitCapture};
-use degenbot_simulation::sim::evm::journal_pools::{PoolFamily, V4PoolDescriptor};
+use degenbot_simulation::sim::journal_pools::{PoolFamily, V4PoolDescriptor};
 use degenbot_strategy::cmd_executor_adapter::{
     CmdExecutorAdapter, CmdExecutorDecline, CmdExecutorOutcome, CmdExecutorRejection,
 };

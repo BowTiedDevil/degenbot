@@ -41,7 +41,7 @@ use degenbot_pools::{
 };
 use hashbrown::HashMap;
 
-use super::frame_replay::ReplayOutcome;
+use super::evm2::frame_replay::Evm2ReplayOutcome;
 
 /// The per-pool layout knowledge the extractor needs, projected from the
 /// engine's tracked-pool registry by the caller.
@@ -218,27 +218,27 @@ pub struct PoolPostState {
 }
 
 /// Extract the typed post-state of every touched pool that appears in
-/// `descriptors`, in `ReplayOutcome::touched` order (address-sorted).
+/// `descriptors`, in `Evm2ReplayOutcome::touched` order (address-sorted).
 ///
-/// Reads journalled words ONLY from `outcome.state` (the settled, revert-
-/// filtered journal) — a reverted frame surfaces no pool state at all.
+/// Reads journalled words ONLY from `outcome.slot_values` (the settled,
+/// revert-filtered journal) — a reverted frame surfaces no pool state at
+/// all.
 #[must_use]
 pub fn extract_pool_post_states(
-    outcome: &ReplayOutcome,
+    outcome: &Evm2ReplayOutcome,
     descriptors: &HashMap<Address, PoolFamily>,
 ) -> Vec<PoolPostState> {
     let mut out = Vec::new();
+    let journal: HashMap<(Address, U256), U256> = outcome
+        .slot_values
+        .iter()
+        .map(|(a, k, v)| ((*a, *k), *v))
+        .collect();
     for (address, slots) in &outcome.touched {
         let Some(family) = descriptors.get(address) else {
             continue;
         };
-        let journal_word = |slot: U256| {
-            outcome
-                .state
-                .get(address)
-                .and_then(|account| account.storage.get(&slot))
-                .map(|s| s.present_value)
-        };
+        let journal_word = |slot: U256| journal.get(&(*address, slot)).copied();
         if let PoolFamily::V4PoolManager { pools } = family {
             let typed = extract_v4_pool_states(pools, slots, &journal_word);
             if typed.is_empty() {

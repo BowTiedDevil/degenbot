@@ -34,8 +34,8 @@ use super::inspectors::Evm2SimInspector;
 use super::session::Evm2SimSession;
 use super::state_override::apply_simulation_overrides;
 use super::warm_code_cache::{WarmCodeCache, WarmCodeCacheInner};
-use crate::sim::evm::frame_replay::{FrameRpcCounter, ScratchBlock};
-use crate::sim::evm::SimulationOverrideParams;
+use crate::sim::frame_replay::{FrameRpcCounter, ScratchBlock};
+use crate::sim::SimulationOverrideParams;
 
 /// The production engine spec (see the module doc).
 pub const EVM2_PRODUCTION_SPEC: SpecId = SpecId::OSAKA;
@@ -67,7 +67,7 @@ pub struct Evm2BlockSimHandle<'a> {
     block_timestamp: u64,
     oracle: &'a dyn SimAnchorOracle,
     warm_cache: Arc<RwLock<WarmCodeCacheInner>>,
-    storage_memo: Option<Arc<crate::sim::evm::StorageMemo>>,
+    storage_memo: Option<Arc<crate::sim::StorageMemo>>,
     verify_divergence: bool,
     /// The frame-replay scratch EVM, built lazily on the FIRST
     /// [`Self::scratch_evm`] call (same lifetime contract as the revm
@@ -90,7 +90,7 @@ impl<'a> Evm2BlockSimHandle<'a> {
         override_params: &SimulationOverrideParams,
         oracle: &'a dyn SimAnchorOracle,
         warm_cache: &Arc<RwLock<WarmCodeCacheInner>>,
-        storage_memo: Option<&Arc<crate::sim::evm::StorageMemo>>,
+        storage_memo: Option<&Arc<crate::sim::StorageMemo>>,
         verify_divergence: bool,
     ) -> Option<Self> {
         let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(provider, current_block))?;

@@ -48,6 +48,8 @@
 
 use std::sync::Arc;
 
+use ::evm2::bytecode::Bytecode;
+use ::evm2::evm::{AccountInfo, InMemoryDB};
 use alloy::network::Ethereum;
 use alloy::primitives::{address, Address, Bytes, U256};
 use alloy::providers::{Provider, ProviderBuilder};
@@ -60,10 +62,6 @@ use degenbot::cmd_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopI
 use degenbot::cmd_executor::compute_simulation_warmup_slots;
 use degenbot::simulation::apply_simulation_overrides;
 use degenbot_rpc::provider::AlloyProvider;
-use revm::bytecode::Bytecode;
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
-use revm::state::AccountInfo;
 use serde::Deserialize;
 
 // ---- the SELFDESTRUCT-gift fixture (mirrors the PyO3 binding) ----
@@ -174,25 +172,30 @@ fn evm_sim_success_path_dual_driver_parity() {
         block_priority_fees: None,
     };
 
-    let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
-    apply_simulation_overrides(&mut cache_db, &ctx.override_params())
-        .expect("overrides apply over EmptyDB");
+    let mut cache_db = InMemoryDB::default();
+    apply_simulation_overrides(&mut cache_db, &ctx.override_params());
     // Deploy Multicall3 (so getEthBalance returns real ETH balances).
     cache_db.insert_account_info(
-        SMOKE_MULTICALL3,
+        &SMOKE_MULTICALL3,
         AccountInfo {
             balance: U256::ZERO,
             nonce: 1,
+            code_hash: ::evm2::bytecode::Bytecode::new_raw(Bytes::from(
+                MULTICALL3_BYTECODE.to_vec(),
+            ))
+            .hash_slow(),
             code: Some(Bytecode::new_raw(Bytes::from(MULTICALL3_BYTECODE.to_vec()))),
             ..Default::default()
         },
     );
     // Deploy the gift contract (1 ETH + CALLER SELFDESTRUCT bytecode).
     cache_db.insert_account_info(
-        SMOKE_GIFT,
+        &SMOKE_GIFT,
         AccountInfo {
             balance: ONE_ETH,
             nonce: 1,
+            code_hash: ::evm2::bytecode::Bytecode::new_raw(Bytes::from(GIFT_BYTECODE.to_vec()))
+                .hash_slow(),
             code: Some(Bytecode::new_raw(Bytes::from(GIFT_BYTECODE.to_vec()))),
             ..Default::default()
         },

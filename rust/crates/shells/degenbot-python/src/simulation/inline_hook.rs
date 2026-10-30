@@ -50,7 +50,7 @@ use degenbot_bot::arb_engine::{
 };
 use degenbot_executor::composers::EncodeOptions;
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_simulation::sim::evm::inspectors::SwapFamily;
+use degenbot_simulation::sim::capture::SwapFamily;
 use degenbot_simulation::WarmCodeCacheInner;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::{BotState, SimAnchorState};
@@ -610,7 +610,7 @@ impl InlineSimulator for InlineSimHook {
                             block_timestamp: req.block_timestamp,
                             block_priority_fees: None,
                         };
-                        if let Some(mut handle) = degenbot_simulation::BlockSimHandle::build(
+                        if let Some(mut handle) = degenbot_simulation::Evm2BlockSimHandle::build(
                             &provider,
                             base_fee_next,
                             req.sim_block,

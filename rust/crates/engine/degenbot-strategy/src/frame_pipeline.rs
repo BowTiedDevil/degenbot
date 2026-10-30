@@ -79,15 +79,14 @@ use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_pools::ConcentratedLiquiditySlotLayout;
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
 use degenbot_rpc::provider::{AlloyProvider, DEFAULT_MAX_RETRIES};
-use degenbot_simulation::sim::evm::frame_replay::{
-    ReplayFrameError, ReplayableTx, SequenceReplayError,
-};
-use degenbot_simulation::sim::evm::journal_pools::{
+use degenbot_simulation::sim::evm2::handle::Evm2BlockSimHandle;
+use degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner;
+use degenbot_simulation::sim::frame_replay::{ReplayFrameError, ReplayableTx, SequenceReplayError};
+use degenbot_simulation::sim::journal_pools::{
     extract_pool_post_states, PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
     V4PoolDescriptor, V4PoolSet,
 };
-use degenbot_simulation::sim::evm::BlockSimHandle;
-use degenbot_simulation::{RunVerdict, SimulationOverrideParams, WarmCodeCacheInner};
+use degenbot_simulation::{RunVerdict, SimulationOverrideParams};
 use degenbot_submission::dispatcher::Dispatcher;
 use degenbot_submission::monitor::ReceiptProbe;
 use degenbot_submission::signer::TxSigner;
@@ -551,12 +550,12 @@ impl FrameArtifacts {
 /// `None` when the head block fetch or the handle build fails (no ambient
 /// multi-threaded runtime for `WrapDatabaseAsync` included).
 pub async fn build_block_handle<'a>(
-    provider: &AlloyProvider,
+    provider: &'a AlloyProvider,
     head: u64,
     execution: &ExecutionContext,
     warm_cache: &Arc<RwLock<WarmCodeCacheInner>>,
     oracle: &'a dyn SimAnchorOracle,
-) -> Option<BlockSimHandle<'a>> {
+) -> Option<Evm2BlockSimHandle<'a>> {
     let block = provider.get_block(head).await.ok().flatten()?;
     let timestamp = block.header.timestamp;
     let base_fee = u128::from(block.header.base_fee_per_gas.unwrap_or(0));
@@ -573,7 +572,7 @@ pub async fn build_block_handle<'a>(
         weth_address: execution.weth(),
         pool_manager_address: execution.pool_manager(),
     };
-    BlockSimHandle::build(
+    Evm2BlockSimHandle::build(
         provider,
         base_fee.saturating_mul(12) / 10,
         head,
@@ -1323,7 +1322,7 @@ pub async fn process_frame<S: PendingTxReaction>(
     sim_provider: &AlloyProvider,
     knobs: &BackrunConfig,
     pl: &PipelineConfig,
-    handle: &mut Option<BlockSimHandle<'_>>,
+    handle: &mut Option<Evm2BlockSimHandle<'_>>,
     ev: &BackrunFeedEvent,
     head: u64,
     spent: U256,
@@ -1361,7 +1360,7 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
     sim_provider: &AlloyProvider,
     knobs: &BackrunConfig,
     pl: &PipelineConfig,
-    handle: &mut Option<BlockSimHandle<'_>>,
+    handle: &mut Option<Evm2BlockSimHandle<'_>>,
     ev: &BackrunFeedEvent,
     prefix: &[ReplayableTx],
     head: u64,
@@ -1444,8 +1443,8 @@ pub async fn process_frame_with_prefix<S: PendingTxReaction>(
                 .map(|status| status.label())
                 .collect::<Vec<_>>(),
             "base_fee": match outcome.base_fee_source {
-                degenbot_simulation::sim::evm::frame_replay::BaseFeeSource::Projected => "projected",
-                degenbot_simulation::sim::evm::frame_replay::BaseFeeSource::DisabledFallback => "disabled_fallback",
+                degenbot_simulation::sim::frame_replay::BaseFeeSource::Projected => "projected",
+                degenbot_simulation::sim::frame_replay::BaseFeeSource::DisabledFallback => "disabled_fallback",
             },
             "status": match outcome.status {
                 RunVerdict::Success => "success",

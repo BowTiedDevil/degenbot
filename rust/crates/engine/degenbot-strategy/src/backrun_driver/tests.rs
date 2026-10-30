@@ -335,7 +335,7 @@ fn rescue_outcome_mapping_routes_transient_gap_and_terminal() {
 /// transient; only the FRAME's own malformed death is terminal.
 #[test]
 fn predecessor_failure_classes_route_by_evidence_not_by_death() {
-    use degenbot_simulation::sim::evm::frame_replay::ReplayFrameError;
+    use degenbot_simulation::sim::frame_replay::ReplayFrameError;
 
     // Structurally unrunnable as fetched -> the structural lane (guarded
     // with content by the rescue arm).

@@ -144,6 +144,8 @@ tempfile = { version = "^3.27" }
 async-trait = "0.1"
 alloy = { version = "^2.5", features = ["full"] }
 revm = { version = "^43.0", default-features = false }
+# The engine (ADR-089 cutover) — the parity tests drive the evm2 in-memory DB.
+evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, features = ["asm-keccak", "blst", "secp256k1", "serde"] }
 tokio = { version = "^1.54", features = ["rt-multi-thread", "macros"] }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }

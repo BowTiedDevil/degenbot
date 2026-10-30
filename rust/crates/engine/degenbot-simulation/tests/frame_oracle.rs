@@ -57,13 +57,15 @@ use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use degenbot_executor::WarmupSlots;
 use degenbot_pools::state::slot_layout;
 use degenbot_pools::ConcentratedLiquiditySlotLayout;
-use degenbot_simulation::sim::evm::frame_replay::ReplayableTx;
-use degenbot_simulation::sim::evm::journal_pools::{
+use degenbot_simulation::sim::evm2::handle::Evm2BlockSimHandle;
+use degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner;
+use degenbot_simulation::sim::frame_replay::ReplayableTx;
+use degenbot_simulation::sim::journal_pools::{
     extract_pool_post_states, PoolFamily, PoolPostKind, PoolPostState, TouchedTickWord,
     TypedPoolPost,
 };
 use degenbot_simulation::RunVerdict;
-use degenbot_simulation::{BlockSimHandle, SimulationOverrideParams, WarmCodeCacheInner};
+use degenbot_simulation::SimulationOverrideParams;
 use hashbrown::HashMap;
 use serde_json::Value;
 
@@ -1445,7 +1447,7 @@ macro_rules! live_scratch {
         };
         let anchor = degenbot_substrate::SimAnchorState::default();
         let warm_cache = WarmCodeCacheInner::shared_default();
-        let mut $handle = BlockSimHandle::build(
+        let mut $handle = Evm2BlockSimHandle::build(
             &alloy_provider,
             $base_fee.max(1),
             $pin.saturating_sub(1),

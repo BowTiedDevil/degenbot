@@ -12,7 +12,7 @@ use alloy::primitives::{address, aliases::U112, Address};
 
 use degenbot_db::connection::DegenbotDb;
 use degenbot_pools::V2ReservesParts;
-use degenbot_simulation::sim::evm::journal_pools::{
+use degenbot_simulation::sim::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost, V4PoolSet,
 };
 use degenbot_strategy::backrun_engine::BackrunSolver;

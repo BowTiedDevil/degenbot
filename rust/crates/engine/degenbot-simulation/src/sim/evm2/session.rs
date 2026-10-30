@@ -19,7 +19,7 @@ use ::evm2::ethereum::RecoveredTxEnvelope;
 use ::evm2::evm::TxResult;
 use ::evm2::{BaseEvmTypes, Evm, ExecutionConfig};
 
-use crate::sim::evm::RunVerdict;
+use crate::sim::RunVerdict;
 
 /// The session's error type — the DB read class and the transact-refusal
 /// class, mirroring `SimError`'s split.
@@ -77,11 +77,11 @@ pub struct Evm2SimRun {
 #[derive(Debug, Default)]
 pub struct Evm2SequenceCapture {
     /// The call trace (revert attribution).
-    pub trace: crate::sim::evm::CallTrace,
+    pub trace: crate::sim::capture::CallTrace,
     /// The committed swap events.
-    pub swaps: Vec<crate::sim::evm::CapturedSwap>,
+    pub swaps: Vec<crate::sim::CapturedSwap>,
     /// The reverted-frame swap events (the divergence diagnostic).
-    pub reverted_swaps: Vec<crate::sim::evm::CapturedSwap>,
+    pub reverted_swaps: Vec<crate::sim::CapturedSwap>,
     /// Every `log` hook invocation count (the revm-side `log_full_count`
     /// analog).
     pub log_count: usize,

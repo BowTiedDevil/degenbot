@@ -23,15 +23,8 @@
 //!
 //! [`classify_revert`]: degenbot_decoders::revert::classify_revert
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use alloy::primitives::{Address, Bytes};
-use revm::inspector::Inspector;
-use revm::interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, InstructionResult};
 use serde::Serialize;
-
-use super::call_end::pair_lifo;
 
 /// The outcome of a single call frame, captured at `call_end`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -47,28 +40,6 @@ pub enum FrameOutcome {
     /// that distinguishes an OOG-truncated march from a genuine invalid-opcode
     /// halt at low gas.
     Halt { gas_used: u64, reason: String },
-}
-
-impl FrameOutcome {
-    fn from_result(res: &revm::interpreter::InterpreterResult) -> Self {
-        let gas_used = res.gas.total_gas_spent();
-        match res.result {
-            InstructionResult::Revert => Self::Revert {
-                gas_used,
-                data: res.output.clone(),
-            },
-            InstructionResult::Stop
-            | InstructionResult::Return
-            | InstructionResult::SelfDestruct => Self::Success {
-                gas_used,
-                output: res.output.clone(),
-            },
-            _ => Self::Halt {
-                gas_used,
-                reason: format!("{res:?}"),
-            },
-        }
-    }
 }
 
 /// A captured `call`/`create` frame — caller, target, calldata selector, gas,
@@ -220,154 +191,12 @@ impl CallTrace {
 /// The internal buffer shared between the inspector + its handle. Kept
 /// engine-neutral so the evm2 inspector drives the same LIFO pairing.
 #[derive(Debug, Default)]
-pub(crate) struct CallTraceBuffer {
+pub struct CallTraceBuffer {
     /// Pushed in call order; outcomes LIFO-paired at `call_end`.
     pub frames: Vec<CallFrame>,
     /// The current call depth (incremented at `call`/`create`, decremented at
     /// `call_end`/`create_end`).
     pub depth: usize,
-}
-
-/// A `revm::Inspector` capturing the call trace. Shares an
-/// `Rc<RefCell<CallTraceBuffer>>` (the same handle shape
-/// [`AccessListCollector`](super::super::AccessListCollector) uses) so the
-/// caller drains after `inspect_one` moves the inspector into the EVM.
-#[derive(Debug, Clone)]
-pub struct CallTraceInspector {
-    buf: Rc<RefCell<CallTraceBuffer>>,
-}
-
-/// A read/drain handle to a [`CallTraceInspector`] that was moved into an EVM
-/// via `inspect_one`. Drains the captured [`CallTrace`] after the run.
-#[derive(Debug, Clone)]
-pub struct CallTraceHandle {
-    buf: Rc<RefCell<CallTraceBuffer>>,
-}
-
-impl Default for CallTraceInspector {
-    /// An inspector with no handle — the placeholder baked into a per-block
-    /// EVM via `build_mainnet_with_inspector` (its type fixes
-    /// `InspectEvm::Inspector`; `inspect_one` swaps in a fresh
-    /// inspector-with-handle per run, so the baked-in one is never read).
-    fn default() -> Self {
-        Self {
-            buf: Rc::new(RefCell::new(CallTraceBuffer::default())),
-        }
-    }
-}
-
-impl CallTraceInspector {
-    /// Create an inspector + its drain handle (shared `Rc<RefCell<...>>`).
-    #[must_use]
-    pub fn new() -> (Self, CallTraceHandle) {
-        let buf = Rc::new(RefCell::new(CallTraceBuffer::default()));
-        (
-            Self {
-                buf: Rc::clone(&buf),
-            },
-            CallTraceHandle { buf },
-        )
-    }
-}
-
-impl CallTraceHandle {
-    #[expect(dead_code)]
-    fn push_frame(&self, depth: usize, inputs: &CallInputs) {
-        let selector = selector_of(&inputs.input);
-        self.buf.borrow_mut().frames.push(CallFrame {
-            depth,
-            caller: inputs.caller,
-            target: inputs.target_address,
-            selector,
-            gas_limit: inputs.gas_limit,
-            data: selector.to_vec().into(),
-            outcome: None,
-        });
-    }
-
-    /// Drain the captured [`CallTrace`] (frames in call order) and reset the
-    /// buffer for reuse on the next path.
-    #[must_use]
-    pub fn take_trace(&self) -> CallTrace {
-        let mut buf = self.buf.borrow_mut();
-        let frames = std::mem::take(&mut buf.frames);
-        buf.depth = 0;
-        CallTrace { frames }
-    }
-}
-
-fn selector_of(input: &revm::interpreter::CallInput) -> [u8; 4] {
-    match input {
-        revm::interpreter::CallInput::Bytes(b) => {
-            let mut s = [0u8; 4];
-            if b.len() >= 4 {
-                s.copy_from_slice(&b[..4]);
-            } else if !b.is_empty() {
-                s[..b.len()].copy_from_slice(b);
-            }
-            s
-        }
-        revm::interpreter::CallInput::SharedBuffer(_) => [0u8; 4],
-    }
-}
-
-impl<CTX, INTR: revm::interpreter::InterpreterTypes> Inspector<CTX, INTR> for CallTraceInspector
-where
-    CTX: revm::context_interface::ContextTr,
-{
-    fn call(&mut self, ctx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
-        // Extract the FULL calldata (both `Bytes` + `SharedBuffer` forms) so a
-        // failing frame's exact input is attributable — `selector` alone is
-        // zero-padded for `SharedBuffer` calldata (the Vyper-case here).
-        let data: Bytes = inputs.input.as_bytes(ctx).to_vec().into();
-        let mut buf = self.buf.borrow_mut();
-        buf.depth += 1;
-        let depth = buf.depth;
-        let frame = CallFrame {
-            depth,
-            caller: inputs.caller,
-            target: inputs.target_address,
-            selector: selector_of(&inputs.input),
-            gas_limit: inputs.gas_limit,
-            data,
-            outcome: None,
-        };
-        buf.frames.push(frame);
-        None
-    }
-
-    fn call_end(&mut self, _ctx: &mut CTX, _inputs: &CallInputs, outcome: &mut CallOutcome) {
-        let mut buf = self.buf.borrow_mut();
-        pair_lifo(&mut buf.frames, FrameOutcome::from_result(&outcome.result));
-        buf.depth = buf.depth.saturating_sub(1);
-    }
-
-    fn create(&mut self, _ctx: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
-        let mut buf = self.buf.borrow_mut();
-        buf.depth += 1;
-        let depth = buf.depth;
-        let frame = CallFrame {
-            depth,
-            caller: inputs.caller(),
-            // The precise created address needs the caller's nonce from the
-            // journal; `execute()` uses CALLs, not CREATE, so this is `ZERO`
-            // in the prototype. A follow-on can resolve it via the
-            // context if CREATE-frame attribution ever matters.
-            target: Address::ZERO,
-            selector: [0u8; 4],
-            gas_limit: inputs.gas_limit(),
-            data: Bytes::new(),
-            outcome: None,
-        };
-        buf.frames.push(frame);
-        None
-    }
-
-    fn create_end(&mut self, _ctx: &mut CTX, _inputs: &CreateInputs, outcome: &mut CreateOutcome) {
-        let mut buf = self.buf.borrow_mut();
-        pair_lifo(&mut buf.frames, FrameOutcome::from_result(&outcome.result));
-        buf.depth = buf.depth.saturating_sub(1);
-    }
 }
 
 #[expect(clippy::unwrap_used)]

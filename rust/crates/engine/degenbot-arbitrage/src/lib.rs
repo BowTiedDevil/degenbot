@@ -89,11 +89,9 @@ pub use simulator::{
     EXECUTE_GAS_ENV, GAS_SAFETY_MARGIN, INITIAL_EXECUTE_GAS, INT128_MAX, INT128_MIN,
     MAX_PRIORITY_FEE_PERCENTILE, MIN_PRIORITY_FEE_PERCENTILE, TARGET_PROFIT_RATIO,
 };
-#[cfg(feature = "evm2")]
-pub use simulator::{simulate_in_process_with_db_evm2, simulate_path_on_evm2};
 // The swap-event-capture inspector's decoded per-swap struct. Re-exported
 // here so a consumer of the sim surface can name the captured-swap element
 // type: `SimFailure.captured_swaps` (the revert path) and the survivor's
 // capture both carry it, so the step-5 classifier reads decoded swap amounts
 // instead of the `diagnostic.rs` onchain recompute.
-pub use degenbot_simulation::sim::evm::inspectors::CapturedSwap;
+pub use degenbot_simulation::sim::capture::CapturedSwap;

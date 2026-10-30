@@ -8,9 +8,8 @@
 
 use alloy::primitives::{address, Address, Bytes, B256, U256};
 use degenbot_rpc::backrun_feed::BackrunFeedEvent;
-use degenbot_simulation::sim::evm::frame_replay::{
-    PredStatus, ReplayableTx, ScratchBlock, ScratchEvm,
-};
+use degenbot_simulation::sim::evm2::frame_replay::Evm2ScratchEvm;
+use degenbot_simulation::sim::frame_replay::{PredStatus, ReplayableTx, ScratchBlock};
 use degenbot_simulation::RunVerdict;
 use degenbot_strategy::gap_quarantine::{
     FrameState, NonceConsumed, ParkedFrame, Quarantine, QuarantineDecision,
@@ -18,10 +17,6 @@ use degenbot_strategy::gap_quarantine::{
 use degenbot_strategy::gap_quarantine_journal::{
     read_pending, ParkRecord, QuarantineJournal, Resolution, JOURNAL_FILE_NAME,
 };
-use revm::bytecode::Bytecode;
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
-use revm::state::AccountInfo;
 
 const SENDER: Address = Address::ZERO;
 
@@ -522,24 +517,23 @@ const SEQ_CODE: &[u8] = &[
     0x60, 0x00, 0x54, 0x60, 0x01, 0x55, 0x00, // slot 1 = slot 0; STOP
 ];
 
-fn sequence_scratch() -> ScratchEvm<CacheDB<EmptyDB>> {
-    let mut db = CacheDB::new(EmptyDB::default());
+fn sequence_scratch() -> Evm2ScratchEvm<::evm2::evm::InMemoryDB> {
+    let mut db = ::evm2::evm::InMemoryDB::default();
     db.insert_account_info(
-        SENDER,
-        AccountInfo {
+        &SENDER,
+        ::evm2::evm::AccountInfo {
             balance: U256::from(1_000_000_000_000_000_000u64),
             nonce: 10,
             ..Default::default()
         },
     );
     db.insert_account_info(
-        SEQ_ADDR,
-        AccountInfo {
-            code: Some(Bytecode::new_raw(Bytes::copy_from_slice(SEQ_CODE))),
-            ..Default::default()
-        },
+        &SEQ_ADDR,
+        ::evm2::evm::AccountInfo::default().with_code(::evm2::bytecode::Bytecode::new_raw(
+            Bytes::copy_from_slice(SEQ_CODE),
+        )),
     );
-    ScratchEvm::new(
+    Evm2ScratchEvm::new(
         db,
         ScratchBlock {
             number: 2050,
@@ -594,10 +588,10 @@ fn two_predecessor_rescue_executes_ascending_before_the_frame() {
     assert_eq!(
         sequence
             .frame
-            .state
-            .get(&SEQ_ADDR)
-            .and_then(|account| account.storage.get(&U256::from(1u64)))
-            .map(|slot| slot.present_value),
+            .slot_values
+            .iter()
+            .find(|(address, key, _)| *address == SEQ_ADDR && *key == U256::from(1u64))
+            .map(|(_, _, value)| *value),
         Some(U256::from(0x2A)),
         "the frame mirrors the accumulated slot-0 write"
     );

@@ -238,50 +238,55 @@ pub fn dump_divergence_summary() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sim::evm::BotStateDb;
+    use crate::sim::evm2::bot_state_db::BotStateDb;
     use alloy::primitives::{address, Address, B256, U256};
     use degenbot_pools::RegisterV3PoolParams;
     use degenbot_substrate::divergence_probe::TrackedSlotKind;
     use degenbot_substrate::{divergence_probe::TrackedSlotProbe, BotState, SimAnchorState};
     use hashbrown::HashMap;
-    use revm::database_interface::DatabaseRef;
-    use revm::primitives::{StorageKey, StorageValue, B256 as RevmB256};
-    use revm::state::AccountInfo;
+
+    use ::evm2::evm::Database as _;
 
     const V3_ADDR: Address = address!("888888875ce34e0b60a4a79bb5bc5d34b7e5fab4");
 
-    /// A mock `DatabaseRef` that serves a FIXED storage value per (address,
-    /// slot). Used to drive `storage_ref` against a controlled RPC value so
+    /// A mock `Database` that serves a FIXED storage value per (address,
+    /// slot). Used to drive `get_storage` against a controlled RPC value so
     /// the divergence probe can be asserted deterministically.
     #[derive(Default)]
     struct FixedStorageDb {
         slots: std::collections::HashMap<(Address, U256), U256>,
     }
 
-    impl DatabaseRef for FixedStorageDb {
+    impl ::evm2::evm::Database for FixedStorageDb {
         type Error = std::convert::Infallible;
-        fn basic_ref(&self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        fn get_account(
+            &mut self,
+            _address: &Address,
+        ) -> Result<Option<::evm2::evm::AccountInfo>, Self::Error> {
             Ok(None)
         }
-        fn storage_ref(
-            &self,
-            address: Address,
-            index: StorageKey,
-        ) -> Result<StorageValue, Self::Error> {
+        fn get_code_by_hash(
+            &mut self,
+            _code_hash: &B256,
+        ) -> Result<::evm2::bytecode::Bytecode, Self::Error> {
+            Ok(::evm2::bytecode::Bytecode::default())
+        }
+        fn get_storage(
+            &mut self,
+            address: &Address,
+            index: &::evm2::interpreter::Word,
+        ) -> Result<::evm2::interpreter::Word, Self::Error> {
             Ok(self
                 .slots
-                .get(&(address, index))
+                .get(&(*address, *index))
                 .copied()
-                .unwrap_or(StorageValue::ZERO))
+                .unwrap_or(U256::ZERO))
         }
-        fn code_by_hash_ref(
-            &self,
-            _code_hash: RevmB256,
-        ) -> Result<revm::bytecode::Bytecode, Self::Error> {
-            Ok(revm::bytecode::Bytecode::default())
-        }
-        fn block_hash_ref(&self, _number: u64) -> Result<RevmB256, Self::Error> {
-            Ok(RevmB256::ZERO)
+        fn get_block_hash(
+            &mut self,
+            _number: &::evm2::interpreter::Word,
+        ) -> Result<B256, Self::Error> {
+            Ok(B256::ZERO)
         }
     }
 
@@ -377,10 +382,10 @@ mod tests {
         let mut db = FixedStorageDb::default();
         db.slots.insert((V3_ADDR, U256::ZERO), rpc_word);
 
-        let bot_db = BotStateDb::new(&anchor, db);
+        let mut bot_db = BotStateDb::new(&anchor, db);
         let got = bot_db
-            .storage_ref(V3_ADDR, U256::ZERO)
-            .expect("storage_ref ok");
+            .get_storage(&V3_ADDR, &U256::ZERO)
+            .expect("storage read ok");
         assert_eq!(
             got, rpc_word,
             "rpc value returned unchanged (probe off path)"

@@ -25,8 +25,8 @@ use alloy::primitives::{Address, Bytes, B256, U256};
 use degenbot_eventhub::{HeadSubscription, Hub};
 use degenbot_rpc::pending_tx_stream::PendingTxStream;
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_simulation::sim::evm::frame_replay::ReplayableTx;
-use degenbot_simulation::BlockSimHandle;
+use degenbot_simulation::sim::frame_replay::ReplayableTx;
+use degenbot_simulation::Evm2BlockSimHandle;
 use parking_lot::Mutex as ParkingMutex;
 
 use crate::backrun_strategy::BackrunStrategy;
@@ -307,7 +307,7 @@ pub(super) async fn run_frame(
     sim_provider: &AlloyProvider,
     cfg: &BackrunConfig,
     pl: &PipelineConfig,
-    handle: &mut Option<BlockSimHandle<'_>>,
+    handle: &mut Option<Evm2BlockSimHandle<'_>>,
     head: u64,
     spent: &mut U256,
     dispatcher: &Arc<Mutex<Dispatcher>>,
@@ -410,7 +410,7 @@ pub(super) async fn run_frame(
         reason = decision_reason.map_or("", ObserveReason::as_str),
         "backrun frame decided"
     );
-    if let Some(degenbot_simulation::sim::evm::frame_replay::ReplayFrameError::GapPending {
+    if let Some(degenbot_simulation::sim::frame_replay::ReplayFrameError::GapPending {
         claimed,
         expected,
     }) = &artifacts.replay_frame_error
@@ -1297,7 +1297,7 @@ async fn drive(cfg: BackrunConfig, hub: Arc<Hub>, boot: LoopBoot, shared: Arc<Lo
         .lock()
         .expect("dispatcher mutex poisoned")
         .current_block();
-    let mut handle: Option<BlockSimHandle<'_>> = build_block_handle(
+    let mut handle: Option<Evm2BlockSimHandle<'_>> = build_block_handle(
         &provider,
         current_block,
         &execution,

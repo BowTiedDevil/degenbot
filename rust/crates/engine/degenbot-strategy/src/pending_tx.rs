@@ -15,8 +15,9 @@ use crate::backrun::BackrunConfig;
 use crate::backrun_engine::BackrunSolver;
 use alloy::primitives::{Bytes, U256};
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_simulation::sim::evm::journal_pools::PoolPostState;
-use degenbot_simulation::sim::evm::{ScratchDb, ScratchEvm};
+use degenbot_simulation::sim::evm2::frame_replay::Evm2ScratchEvm;
+use degenbot_simulation::sim::evm2::handle::Evm2ScratchDb;
+use degenbot_simulation::sim::journal_pools::PoolPostState;
 
 use crate::frame_pipeline::{BidEconomics, PipelineConfig, StageTrace};
 use crate::market_context::MarketContext;
@@ -114,7 +115,7 @@ pub trait PendingTxReaction {
         cx: &mut FrameContext<'_>,
         ctx: &MarketContext,
         workspace: &mut BackrunSolver,
-        scratch: &mut ScratchEvm<ScratchDb<'_>>,
+        scratch: &mut Evm2ScratchEvm<Evm2ScratchDb<'_>>,
         provider: &AlloyProvider,
         affected: &Self::Affected,
     ) -> Self::Intents;

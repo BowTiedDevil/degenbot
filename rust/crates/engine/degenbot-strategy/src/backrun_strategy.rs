@@ -21,10 +21,11 @@ use degenbot_pathfinding::PoolKind;
 use degenbot_pools::state::slot_layout;
 use degenbot_pools::TickInfo;
 use degenbot_rpc::provider::AlloyProvider;
-use degenbot_simulation::sim::evm::journal_pools::{
+use degenbot_simulation::sim::evm2::frame_replay::{read_view_word, Evm2ScratchEvm};
+use degenbot_simulation::sim::evm2::handle::Evm2ScratchDb;
+use degenbot_simulation::sim::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
-use degenbot_simulation::sim::evm::{read_view_word, ScratchDb, ScratchEvm};
 use degenbot_substrate::connector_index::{V2ConnectorIndex, V2Edge, V3Edge};
 use degenbot_substrate::pool_ingress::{
     AdmissionOrigin, PoolAdmission, V2Identity, V2State, V3Identity, V3State, V4Identity, V4State,
@@ -527,11 +528,11 @@ fn u112_to_u128(v: alloy::primitives::aliases::U112) -> u128 {
 /// reserves read through as `None` (a pool with zero reserves is not usable
 /// state — the caller falls back or skips).
 fn view_v2_reserves(
-    scratch: &mut ScratchEvm<ScratchDb<'_>>,
+    scratch: &mut Evm2ScratchEvm<Evm2ScratchDb<'_>>,
     pool: Address,
 ) -> Option<(u128, u128)> {
     let word = read_view_word(
-        scratch.ext(),
+        scratch.ext_mut(),
         pool,
         U256::from(slot_layout::V2_RESERVES_SLOT),
     )?;
@@ -638,7 +639,7 @@ pub fn solve_dfs_chains(
 async fn admit_hop_pool(
     rt: &MarketContext,
     solver: &mut BackrunSolver,
-    scratch: &mut ScratchEvm<ScratchDb<'_>>,
+    scratch: &mut Evm2ScratchEvm<Evm2ScratchDb<'_>>,
     provider: &AlloyProvider,
     hop: &ResolvedHop,
     head: u64,
@@ -668,7 +669,7 @@ async fn admit_hop_pool(
 async fn admit_hop_v2(
     rt: &MarketContext,
     solver: &mut BackrunSolver,
-    scratch: &mut ScratchEvm<ScratchDb<'_>>,
+    scratch: &mut Evm2ScratchEvm<Evm2ScratchDb<'_>>,
     provider: &AlloyProvider,
     edge: &V2Edge,
     head: u64,
@@ -877,7 +878,7 @@ async fn cycle_chain(
     affected: &HbMap<u64, &AffectedPool>,
     cycle: &DfsCycle,
     weth_id: u64,
-    scratch: &mut ScratchEvm<ScratchDb<'_>>,
+    scratch: &mut Evm2ScratchEvm<Evm2ScratchDb<'_>>,
     solver: &mut BackrunSolver,
     provider: &AlloyProvider,
     head: u64,
@@ -1104,7 +1105,7 @@ impl PendingTxReaction for BackrunStrategy {
         cx: &mut FrameContext<'_>,
         ctx: &MarketContext,
         workspace: &mut BackrunSolver,
-        scratch: &mut ScratchEvm<ScratchDb<'_>>,
+        scratch: &mut Evm2ScratchEvm<Evm2ScratchDb<'_>>,
         provider: &AlloyProvider,
         affected: &Self::Affected,
     ) -> Self::Intents {

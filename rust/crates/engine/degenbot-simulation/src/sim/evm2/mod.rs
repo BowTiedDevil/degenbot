@@ -26,7 +26,6 @@ pub mod state_override;
 pub mod warm_code_cache;
 
 #[cfg(test)]
-mod parity_tests;
 
 /// Build a pilot EVM armed with the JIT interpreter runner (`evm2-jit`
 /// feature). Fail-soft by construction: a frame without a compiled program

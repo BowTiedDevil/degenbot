@@ -35,7 +35,7 @@ where
     /// The per-block storage memo (see `sim::evm::StorageMemo`): consulted
     /// before the fallback on `get_storage`, populated from the fallback's
     /// own answers. Recreated by the owner on every block advance.
-    pub storage_memo: Option<std::sync::Arc<crate::sim::evm::StorageMemo>>,
+    pub storage_memo: Option<std::sync::Arc<crate::sim::StorageMemo>>,
     /// The per-sim on-demand divergence-probe arm (VERIFY2 T2 — sim-failure
     /// re-verify or a random spot-check), skipping the env gate.
     pub divergence_probe: bool,
@@ -60,7 +60,7 @@ where
     /// Layer the per-block storage memo onto `get_storage` (mirrors the
     /// revm-side `with_storage_memo`).
     #[must_use]
-    pub fn with_storage_memo(mut self, memo: std::sync::Arc<crate::sim::evm::StorageMemo>) -> Self {
+    pub fn with_storage_memo(mut self, memo: std::sync::Arc<crate::sim::StorageMemo>) -> Self {
         self.storage_memo = Some(memo);
         self
     }
@@ -71,7 +71,7 @@ where
     #[must_use]
     pub fn with_storage_memo_opt(
         mut self,
-        memo: Option<&std::sync::Arc<crate::sim::evm::StorageMemo>>,
+        memo: Option<&std::sync::Arc<crate::sim::StorageMemo>>,
     ) -> Self {
         self.storage_memo = memo.cloned();
         self
@@ -144,14 +144,14 @@ where
         // Observation (compares engine vs RPC, never changes what the sim
         // reads); the on-demand arm skips the env gate.
         if self.divergence_probe {
-            crate::sim::evm::divergence_probe::observe_storage_read_forced(
+            crate::sim::divergence_probe::observe_storage_read_forced(
                 self.oracle,
                 *address,
                 *key,
                 rpc_value,
             );
         } else {
-            crate::sim::evm::divergence_probe::observe_storage_read(
+            crate::sim::divergence_probe::observe_storage_read(
                 self.oracle,
                 *address,
                 *key,

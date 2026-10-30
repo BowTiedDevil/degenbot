@@ -40,6 +40,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use ::evm2::evm::InMemoryDB;
 use alloy::network::Ethereum;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
@@ -51,8 +52,6 @@ use degenbot::cmd_executor::composers::{EncodeOptions, HopInfo, PathInfo, V2HopI
 use degenbot::cmd_executor::{compute_simulation_warmup_slots, WarmupSlots};
 use degenbot::simulation::apply_simulation_overrides;
 use degenbot_rpc::provider::AlloyProvider;
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
 use serde::Deserialize;
 
 // ---- the hardcoded smoke fixture (mirrors the Rust smoke test + the PyO3
@@ -224,9 +223,8 @@ fn inspector_dual_driver_parity_cafebabe_revert() {
         block_timestamp: SMOKE_BLOCK_TIMESTAMP,
         block_priority_fees: None,
     };
-    let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
-    apply_simulation_overrides(&mut cache_db, &ctx.override_params())
-        .expect("overrides apply over EmptyDB");
+    let mut cache_db = InMemoryDB::default();
+    apply_simulation_overrides(&mut cache_db, &ctx.override_params());
     let mut buckets = FailBuckets::new();
     let path = smoke_v2_path(fx.fixture.path_id);
     let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets)

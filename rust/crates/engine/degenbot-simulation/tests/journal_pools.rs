@@ -27,6 +27,8 @@
 
 use std::sync::Arc;
 
+use ::evm2::bytecode::Bytecode;
+use ::evm2::evm::{AccountInfo, InMemoryDB};
 use alloy::primitives::{address, b256, Address, Bytes, B256, U256};
 use degenbot_pools::decode_v3_slot0;
 use degenbot_pools::ConcentratedLiquiditySlotLayout;
@@ -39,16 +41,13 @@ use degenbot_pools::{
     encode_v4_liquidity_slot, encode_v4_slot0, v4_liquidity_slot, v4_pool_state_base_slot,
     v4_slot0_slot, v4_tick_mapping_slot, V4Slot0Parts,
 };
-use degenbot_simulation::sim::evm::frame_replay::{ReplayableTx, ScratchBlock, ScratchEvm};
-use degenbot_simulation::sim::evm::journal_pools::{
+use degenbot_simulation::sim::evm2::frame_replay::Evm2ScratchEvm;
+use degenbot_simulation::sim::frame_replay::{ReplayableTx, ScratchBlock};
+use degenbot_simulation::sim::journal_pools::{
     extract_pool_post_states, PoolFamily, PoolPostKind, PoolPostState, TouchedTickWord,
     TypedPoolPost, V4PoolDescriptor, V4PoolSet,
 };
 use degenbot_simulation::RunVerdict;
-use revm::bytecode::Bytecode;
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
-use revm::state::AccountInfo;
 
 const SENDER: Address = address!("0x1111111111111111111111111111111111111111");
 const POOL: Address = address!("0x2222222222222222222222222222222222222222");
@@ -91,30 +90,25 @@ fn block_env() -> ScratchBlock {
     }
 }
 
-type TestExt = CacheDB<EmptyDB>;
+type TestExt = InMemoryDB;
 
-fn scratch() -> ScratchEvm<TestExt> {
-    let mut db = CacheDB::new(EmptyDB::default());
+fn scratch() -> Evm2ScratchEvm<TestExt> {
+    let mut db = InMemoryDB::default();
     for (addr, code) in [(POOL, multi_store_code()), (STRANGER, multi_store_code())] {
         db.insert_account_info(
-            addr,
-            AccountInfo {
-                balance: U256::from(1_000_000_000_000_000_000u64),
-                nonce: 0,
-                code: Some(Bytecode::new_raw(Bytes::copy_from_slice(&code))),
-                ..Default::default()
-            },
+            &addr,
+            AccountInfo::default()
+                .with_balance(U256::from(1_000_000_000_000_000_000u64))
+                .with_code(Bytecode::new_raw(Bytes::copy_from_slice(&code))),
         );
     }
     db.insert_account_info(
-        SENDER,
-        AccountInfo {
-            balance: U256::from(1_000_000_000_000_000_000u64),
-            nonce: 7,
-            ..Default::default()
-        },
+        &SENDER,
+        AccountInfo::default()
+            .with_balance(U256::from(1_000_000_000_000_000_000u64))
+            .with_nonce(7),
     );
-    ScratchEvm::new(db, block_env())
+    Evm2ScratchEvm::new(db, block_env())
 }
 
 /// A tx whose calldata is `pairs` `(slot, value)` words.
@@ -187,28 +181,23 @@ fn relay_code(pool: Address) -> Vec<u8> {
 }
 
 /// A scratch with a relay target plus the managed contract it forwards to.
-fn scratch_relayed(relay: Address, pool: Address) -> ScratchEvm<TestExt> {
-    let mut db = CacheDB::new(EmptyDB::default());
+fn scratch_relayed(relay: Address, pool: Address) -> Evm2ScratchEvm<TestExt> {
+    let mut db = InMemoryDB::default();
     for (addr, code) in [(relay, relay_code(pool)), (pool, multi_store_code())] {
         db.insert_account_info(
-            addr,
-            AccountInfo {
-                balance: U256::from(1_000_000_000_000_000_000u64),
-                nonce: 0,
-                code: Some(Bytecode::new_raw(Bytes::copy_from_slice(&code))),
-                ..Default::default()
-            },
+            &addr,
+            AccountInfo::default()
+                .with_balance(U256::from(1_000_000_000_000_000_000u64))
+                .with_code(Bytecode::new_raw(Bytes::copy_from_slice(&code))),
         );
     }
     db.insert_account_info(
-        SENDER,
-        AccountInfo {
-            balance: U256::from(1_000_000_000_000_000_000u64),
-            nonce: 7,
-            ..Default::default()
-        },
+        &SENDER,
+        AccountInfo::default()
+            .with_balance(U256::from(1_000_000_000_000_000_000u64))
+            .with_nonce(7),
     );
-    ScratchEvm::new(db, block_env())
+    Evm2ScratchEvm::new(db, block_env())
 }
 
 /// A known-V4-pool set owning its descriptors.
@@ -255,10 +244,10 @@ fn v2_pack_is_the_journal_word_and_decode_is_the_engine_state() {
 
     // pack == journal word: the settled storage word at slot 8 IS the pack.
     assert_eq!(
-        out.state
-            .get(&POOL)
-            .and_then(|acc| acc.storage.get(&U256::from(SLOT8)))
-            .map(|s| s.present_value),
+        out.slot_values
+            .iter()
+            .find(|(a, k, _)| *a == POOL && *k == U256::from(SLOT8))
+            .map(|(_, _, v)| *v),
         Some(word)
     );
 
@@ -1059,7 +1048,7 @@ macro_rules! live_scratch {
         };
         let anchor = degenbot_substrate::SimAnchorState::default();
         let warm_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
-        let mut $handle = degenbot_simulation::BlockSimHandle::build(
+        let mut $handle = degenbot_simulation::Evm2BlockSimHandle::build(
             &alloy_provider,
             $base_fee.max(1),
             $pin.saturating_sub(1),

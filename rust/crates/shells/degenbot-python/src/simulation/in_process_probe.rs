@@ -37,8 +37,6 @@ use degenbot_executor::{compute_simulation_warmup_slots, WarmupSlots};
 use degenbot_rpc::provider::AlloyProvider;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
 
 use crate::simulation::render::captured_swap_to_dict;
 
@@ -215,14 +213,13 @@ pub fn simulate_in_process_revert_probe<'py>(
         block_priority_fees: None,
     };
 
-    // 2. Build the CacheDB + apply the executor-injection overrides.
-    let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
-    degenbot_simulation::apply_simulation_overrides(&mut cache_db, &ctx.override_params())
-        .map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "simulate_in_process_revert_probe: override apply failed: {e}"
-            ))
-        })?;
+    // 2. Build the in-memory DB + apply the executor-injection overrides
+    //    (the evm2 apply is infallible — it never touches the backing).
+    let mut cache_db = ::evm2::evm::InMemoryDB::default();
+    degenbot_simulation::sim::evm2::state_override::apply_simulation_overrides(
+        &mut cache_db,
+        &ctx.override_params(),
+    );
 
     // 3. Run the 7-call orchestration (GIL-free — release is implicit: no
     //    Python objects held across the call).
@@ -373,37 +370,31 @@ pub fn simulate_in_process_success_probe(
         block_priority_fees: None,
     };
 
-    // 2. Build the CacheDB + apply overrides (owner, executor, WETH warmup).
-    let mut cache_db: CacheDB<EmptyDB> = CacheDB::new(EmptyDB::default());
-    degenbot_simulation::apply_simulation_overrides(&mut cache_db, &ctx.override_params())
-        .map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "simulate_in_process_success_probe: override apply failed: {e}"
-            ))
-        })?;
+    // 2. Build the in-memory DB + apply overrides (owner, executor, WETH
+    //    warmup) — the evm2 apply is infallible (no backing fetch).
+    let mut cache_db = ::evm2::evm::InMemoryDB::default();
+    degenbot_simulation::sim::evm2::state_override::apply_simulation_overrides(
+        &mut cache_db,
+        &ctx.override_params(),
+    );
 
     // 3. Deploy the supporting contracts (Multicall3 + gift).
     cache_db.insert_account_info(
-        SMOKE_MULTICALL3,
-        revm::state::AccountInfo {
-            balance: alloy::primitives::U256::ZERO,
-            nonce: 1,
-            code: Some(revm::bytecode::Bytecode::new_raw(
-                alloy::primitives::Bytes::from(MULTICALL3_BYTECODE.to_vec()),
+        &SMOKE_MULTICALL3,
+        ::evm2::evm::AccountInfo::default().with_nonce(1).with_code(
+            ::evm2::bytecode::Bytecode::new_raw(alloy::primitives::Bytes::from(
+                MULTICALL3_BYTECODE.to_vec(),
             )),
-            ..Default::default()
-        },
+        ),
     );
     cache_db.insert_account_info(
-        SMOKE_GIFT,
-        revm::state::AccountInfo {
-            balance: ONE_ETH,
-            nonce: 1,
-            code: Some(revm::bytecode::Bytecode::new_raw(
+        &SMOKE_GIFT,
+        ::evm2::evm::AccountInfo::default()
+            .with_balance(ONE_ETH)
+            .with_nonce(1)
+            .with_code(::evm2::bytecode::Bytecode::new_raw(
                 alloy::primitives::Bytes::from(GIFT_BYTECODE.to_vec()),
             )),
-            ..Default::default()
-        },
     );
 
     // 4. Run the 7-call orchestration (GIL-free).

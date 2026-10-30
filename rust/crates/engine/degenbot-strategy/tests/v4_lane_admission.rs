@@ -20,7 +20,7 @@ use degenbot_db::connection::DegenbotDb;
 use degenbot_db::ApplyLiquidityAtTick;
 use degenbot_pools::V2ReservesParts;
 use degenbot_rpc::liquidity_verifier::LiquidityMap as RpcLiquidityMap;
-use degenbot_simulation::sim::evm::journal_pools::{
+use degenbot_simulation::sim::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TouchedTickWord, TypedPoolPost, V4PoolSet,
 };
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, LaneFamily};

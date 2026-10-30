@@ -20,10 +20,10 @@ workspace = true
 # stays thin + generic; the settlement-arbitrage bundle is this strategy's concern, not the
 # engine's.
 degenbot-simulation.workspace = true
-# Optional: the evm2 engine (ADR-089) — the seam twin's envelope types.
-# Declared directly (not a workspace dep) mirroring degenbot-simulation's
-# declaration; `default-features = false` keeps the same surface shape.
-evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, optional = true, features = ["asm-keccak", "blst", "c-kzg", "secp256k1", "serde"] }
+# The evm2 engine (ADR-089 cutover): THE engine — declared directly (not a
+# workspace dep) mirroring degenbot-simulation's declaration;
+# `default-features = false` keeps the same surface shape.
+evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, features = ["asm-keccak", "blst", "c-kzg", "secp256k1", "serde"] }
 degenbot-config.workspace = true
 # `BotState` (ADR-003 state owner) — the snapshot surface the dispatch
 # fan-out reads via `BlockSimHandle`.
@@ -69,12 +69,6 @@ tracing = { version = "^0.1" }
 degenbot-order-index = { workspace = true, optional = true }
 
 [features]
-# ADR-089 (the inverted-flag intermediate): the evm2 engine is DEFAULT —
-# the dispatch's evm2 arm drives production sims. `--no-default-features`
-# builds the revm fallback arm until the hard deletion retires it
-# (ADR-087); consumers enabling `order-index` explicitly are unaffected.
-default = ["evm2"]
-
 # Deterministic profit-descending (+ id tie-break) pre-sim selection via
 # degenbot-order-index, replacing the "candidates arrive pre-sorted" contract.
 # Default off so a direct crate build keeps the caller's pre-sort contract;
@@ -82,10 +76,6 @@ default = ["evm2"]
 # enable it.
 order-index = ["dep:degenbot-order-index"]
 
-# The evm2 engine twin (ADR-089): the seam's evm2 variant over
-# `degenbot_simulation::sim::evm2`. Default-on since the inversion; the
-# revm seam retires at the hard cutover.
-evm2 = ["dep:evm2", "degenbot-simulation/evm2"]
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.23", features = ["registry", "ansi"] }

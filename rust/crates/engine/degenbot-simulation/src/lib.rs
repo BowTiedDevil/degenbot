@@ -63,13 +63,13 @@ pub use oracle::{
 // the strategy crate (`degenbot-arbitrage`) + the PyO3 wrapper. The
 // strategy value types (`SimResult`, `SimulateContext`, `FailBuckets`, …)
 // now live in `degenbot-arbitrage`.
-pub use sim::evm::{
-    apply_simulation_overrides, build_block_evm, divergence_probe, emit_access_list_from_state,
-    AccessListCollector, BaseFeeSource, BlockEvm, BlockSimHandle, BotStateDb, CallFrame, CallTrace,
-    CallTraceHandle, CallTraceInspector, CapturedSwap, CountingFrameDb, FrameOutcome,
-    FrameRpcCounter, ProductionBlockDb, ReplayFrameError, ReplayOutcome, ReplayableTx, RunVerdict,
-    ScratchBlock, ScratchDb, ScratchEvm, SimError, SimInspector, SimRun, SimSequence, SimSession,
-    SimStep, SimulationOverrideParams, StorageMemo, SwapEventCaptureHandle,
-    SwapEventCaptureInspector, SwapFamily, WarmCodeCache, WarmCodeCacheInner,
-    WARM_CODE_CACHE_TTL_BLOCKS,
+pub use sim::capture::{CallFrame, CallTrace, CapturedSwap, FrameOutcome, SwapFamily};
+pub use sim::evm2::bot_state_db::BotStateDb;
+pub use sim::evm2::frame_replay::{Evm2CountingFrameDb, Evm2ReplayOutcome, Evm2ScratchEvm};
+pub use sim::evm2::handle::{Evm2BlockSimHandle, Evm2ProductionBlockDb, Evm2ScratchDb};
+pub use sim::evm2::state_override::apply_simulation_overrides;
+pub use sim::evm2::warm_code_cache::{WarmCodeCache, WarmCodeCacheInner};
+pub use sim::{
+    divergence_probe, BaseFeeSource, FrameRpcCounter, ReplayFrameError, ReplayableTx, RunVerdict,
+    ScratchBlock, SequenceReplayError, SimulationOverrideParams, StorageMemo,
 };

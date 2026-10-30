@@ -16,7 +16,7 @@ use alloy::primitives::U256;
 use ::evm2::bytecode::Bytecode;
 use ::evm2::evm::{AccountInfo, CacheDB};
 
-use crate::sim::evm::state_override::{
+use crate::sim::state_override::{
     SimulationOverrideParams, EXECUTOR_FUND_ETH, ONE_WEI, OWNER_FUND_ETH,
 };
 

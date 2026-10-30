@@ -52,7 +52,7 @@ alloy = { version = "^2.5", features = ["full"] }
 # GMP/MCL/aws-lc native builds) matching the revm dependency's backend shape.
 # `async` enables the AsyncDatabase coroutine seam (the WrapDatabaseAsync
 # replacement) — corosensei is pure Rust.
-evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, optional = true, features = [
+evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, features = [
     "asm-keccak",
     "async",
     "blst",
@@ -129,12 +129,11 @@ evm2-jit-build = { git = "https://github.com/alloy-rs/evm2", branch = "main", ve
 default = []
 # The evm2 pilot engine (src/sim/evm2). Opt-in parallel implementation;
 # off in every default lane, retired by the hard cutover.
-evm2 = ["dep:evm2"]
-# The JIT interpreter runner on top of the pilot (needs LLVM 23.1 in the
-# environment — the F45 devcontainer's llvm-devel; ADR-089). evm2-jit-build
-# is the build.rs's builtins-symbol export (the README's required wiring).
-# evm2-jit-build tracks main HEAD with evm2.
-evm2-jit = ["evm2", "dep:evm2-jit", "dep:evm2-jit-build"]
+# The evm2 engine is THE engine (ADR-089 cutover): the dep is
+# non-optional and the feature alias is gone; the JIT stays opt-in.
+# evm2-jit-build is the build.rs's builtins-symbol export (the README's
+# required wiring), tracking main HEAD with evm2.
+evm2-jit = ["dep:evm2-jit", "dep:evm2-jit-build"]
 # The executor-grammar harness (`src/harness/`) is an investigation/oracle lab
 # with no production consumer: the shipped crate root is the engine (`sim`), the
 # fixture driver (`oracle`), and the capture generator (`capture`). Every
@@ -204,6 +203,3 @@ required-features = ["test-harness"]
 name = "spike_derivation"
 required-features = ["test-harness"]
 
-[[test]]
-name = "evm2_pilot"
-required-features = ["evm2"]

@@ -14,7 +14,7 @@ use degenbot_db::connection::DegenbotDb;
 use degenbot_db::discovery::V3PoolRowInput;
 use degenbot_db::ApplyLiquidityAtTick;
 use degenbot_pools::ConcentratedLiquiditySlotLayout;
-use degenbot_simulation::sim::evm::journal_pools::{
+use degenbot_simulation::sim::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, LaneFamily};
@@ -341,13 +341,11 @@ fn replayed_touched_tick_wins_over_ingress_map() {
     let (rt, _tok, _weth) = runtime(&[120, -120]);
     let mut post = anchor_post_state();
     if let PoolPostKind::Typed(TypedPoolPost::V3 { touched_ticks, .. }) = &mut post.kind {
-        touched_ticks.push(
-            degenbot_simulation::sim::evm::journal_pools::TouchedTickWord {
-                tick: -120,
-                liquidity_gross: 1,
-                liquidity_net: -1,
-            },
-        );
+        touched_ticks.push(degenbot_simulation::sim::journal_pools::TouchedTickWord {
+            tick: -120,
+            liquidity_gross: 1,
+            liquidity_net: -1,
+        });
     }
     let mut solver = BackrunSolver::new();
     let affected = admit_extracted(

@@ -11,7 +11,7 @@ use degenbot_db::{DegenbotDb, V2PoolRowInput};
 use degenbot_execution::{solve_result::HopDescriptor, SolveResult};
 use degenbot_pools::solve::{HopType, MixedPoolRef};
 use degenbot_pools::V2ReservesParts;
-use degenbot_simulation::sim::evm::journal_pools::{
+use degenbot_simulation::sim::journal_pools::{
     PoolFamily, PoolPostKind, PoolPostState, TypedPoolPost,
 };
 use degenbot_strategy::backrun_engine::{BackrunHopRef, BackrunSolver, LaneCandidate, LaneFamily};
