@@ -166,10 +166,20 @@ Phases 1–4 shipped with their gates green (`degenbot-simulation` feature
    the gate's copy-step assertions, and post-sequence invisibility is
    asserted on both engines.
 
-Remaining for phase 4's gate line: the offline replay→extract→admit→solve
-parity run and the facade/Python-shell swap; the strategy's session-verb
-genericization is the next implementation step. Phase 3's false-empty
-provenance probe remains unported (noted in `bot_state_db`).
+Phase 4 completed the hard-swap wiring (chosen over trait genericization
+in review): `Evm2BlockSimHandle` (the production handle twin, OSAKA +
+nonce-check off + composite inspector, driving the async RPC fallback
+through the sync `BlockingAsyncDb` mirror of `WrapDatabaseAsync`),
+`simulate_path_on_evm2` in `degenbot-arbitrage` (the 7-call seam's evm2
+twin, policy verbatim), the dispatch's compile-time engine arms (one
+engine per build; the parity harness runs both builds and compares), and
+the `degenbot-python` `evm2` facade feature. The end-to-end offline
+parity run (`dispatch_end_to_end_revert_fixture_matches_fixed_expectations`)
+passes under both feature builds. One documented diagnostic-field
+divergence: halt-frame gas (revm's error path reports a zeroed tracker,
+evm2 reports the actual burn). Phase 3's false-empty provenance probe
+remains unported (noted in `bot_state_db`), and the pytest probes against
+an evm2-built extension are a lane decision ahead of phase 5.
 
 ## Post-cutover performance roadmap
 
