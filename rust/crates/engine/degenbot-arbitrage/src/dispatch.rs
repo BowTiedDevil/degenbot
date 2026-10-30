@@ -751,9 +751,10 @@ pub fn dispatch_profitable_results(
             // per-fanout already, but the memo costs nothing and covers any
             // handle re-arms inside this fanout (same-height pre-state).
             let storage_memo = std::sync::Arc::new(degenbot_simulation::StorageMemo::new());
-            // ADR-089 (hard-swap wiring): the compile-time `evm2` feature
-            // selects the engine for this build's dispatch — the evm2 handle
-            // + seam twin below retire this revm arm at the cutover.
+            // ADR-089 (the inverted-flag intermediate): the `evm2` feature
+            // is DEFAULT, so this revm arm compiles only for the
+            // `--no-default-features` fallback build; it retires at the
+            // hard deletion.
             #[cfg(not(feature = "evm2"))]
             let fanout = match BlockSimHandle::build(
                 ctx.provider,

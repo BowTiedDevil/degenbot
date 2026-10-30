@@ -6,6 +6,19 @@
 //! reads). Unit-test placement (not `tests/`) so the gate can name the
 //! engine's regular dependencies (`parking_lot`, the substrate oracle).
 
+// Test-fixture code: raw bytecode builders, scripted fallbacks, and direct
+// assertions — the lint expectations mirror the other test modules'.
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    clippy::unused_self,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines,
+    clippy::unnecessary_wraps
+)]
+
 use alloy::primitives::{Address, Bytes, TxKind, B256, U256};
 use std::cell::Cell;
 use std::rc::Rc;
@@ -306,6 +319,9 @@ fn override_params() -> crate::sim::evm::SimulationOverrideParams {
 /// operational WETH9 balanceOf raise.
 #[test]
 fn override_application_writes_match_across_engines() {
+    use ::evm2::evm::Database;
+    use revm::database_interface::DatabaseRef;
+
     let params = override_params();
 
     // revm side — the production apply.
@@ -318,8 +334,6 @@ fn override_application_writes_match_across_engines() {
     super::state_override::apply_simulation_overrides(&mut evm2_db, &params);
 
     let eth = |e: u64| U256::from(e) * U256::from(10u128.pow(18));
-    use ::evm2::evm::Database;
-    use revm::database_interface::DatabaseRef;
     // Balances.
     assert_eq!(
         revm_db.basic_ref(OWNER).unwrap().unwrap().balance,
@@ -704,9 +718,7 @@ fn all_families_code() -> Vec<u8> {
 /// Bytecode: CALL `child` with empty in/out + full-ish gas, POP the result.
 fn call_child_code(child: Address) -> Vec<u8> {
     let mut code = Vec::new();
-    for _ in 0..5 {
-        code.push(0x5f); // out_size, out_offset, in_size, in_offset, value
-    }
+    code.extend([0x5f; 5]); // out_size, out_offset, in_size, in_offset, value
     code.push(0x73); // PUSH20
     code.extend_from_slice(child.as_slice());
     code.extend([0x61, 0xff, 0xff]); // PUSH2 0xffff gas

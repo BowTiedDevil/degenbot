@@ -69,6 +69,12 @@ tracing = { version = "^0.1" }
 degenbot-order-index = { workspace = true, optional = true }
 
 [features]
+# ADR-089 (the inverted-flag intermediate): the evm2 engine is DEFAULT —
+# the dispatch's evm2 arm drives production sims. `--no-default-features`
+# builds the revm fallback arm until the hard deletion retires it
+# (ADR-087); consumers enabling `order-index` explicitly are unaffected.
+default = ["evm2"]
+
 # Deterministic profit-descending (+ id tie-break) pre-sim selection via
 # degenbot-order-index, replacing the "candidates arrive pre-sorted" contract.
 # Default off so a direct crate build keeps the caller's pre-sort contract;
@@ -77,8 +83,8 @@ degenbot-order-index = { workspace = true, optional = true }
 order-index = ["dep:degenbot-order-index"]
 
 # The evm2 engine twin (ADR-089): the seam's evm2 variant over
-# `degenbot_simulation::sim::evm2`. Opt-in while the differential gate
-# runs both engines; the revm seam retires at the hard cutover.
+# `degenbot_simulation::sim::evm2`. Default-on since the inversion; the
+# revm seam retires at the hard cutover.
 evm2 = ["dep:evm2", "degenbot-simulation/evm2"]
 
 [dev-dependencies]

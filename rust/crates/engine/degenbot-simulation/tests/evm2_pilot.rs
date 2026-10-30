@@ -4,6 +4,14 @@
 //! migration stage (layered DB stack, async fallback, inspectors) must keep
 //! this gate green.
 
+// Test-fixture code: raw bytecode builders + direct assertions.
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::redundant_closure_for_method_calls
+)]
+
 use alloy::primitives::{Address, Bytes, TxKind, U256};
 use degenbot_simulation::sim::evm2 as pilot;
 
