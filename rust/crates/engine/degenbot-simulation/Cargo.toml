@@ -118,14 +118,20 @@ tower = { version = "^0.5", default-features = false }
 # relocation to `degenbot-arbitrage` (ADR-019 D4/D7).
 tokio = { version = "^1.54", features = ["rt"] }
 
+[build-dependencies]
+# build.rs's builtins-symbol export — optional, enabled by the evm2-jit
+# feature (same rev pin as evm2).
+evm2-jit-build = { git = "https://github.com/alloy-rs/evm2", rev = "f93318f120f6300599b21170d6c7bef81ed63d87", version = "0.1.0", optional = true }
+
 [features]
 default = []
 # The evm2 pilot engine (src/sim/evm2). Opt-in parallel implementation;
 # off in every default lane, retired by the hard cutover.
 evm2 = ["dep:evm2"]
 # The JIT interpreter runner on top of the pilot (needs LLVM 23.1 in the
-# environment — the F45 devcontainer's llvm-devel; ADR-089).
-evm2-jit = ["evm2", "dep:evm2-jit"]
+# environment — the F45 devcontainer's llvm-devel; ADR-089). evm2-jit-build
+# is the build.rs's builtins-symbol export (the README's required wiring).
+evm2-jit = ["evm2", "dep:evm2-jit", "dep:evm2-jit-build"]
 # The executor-grammar harness (`src/harness/`) is an investigation/oracle lab
 # with no production consumer: the shipped crate root is the engine (`sim`), the
 # fixture driver (`oracle`), and the capture generator (`capture`). Every

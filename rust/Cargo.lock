@@ -2738,6 +2738,7 @@ dependencies = [
  "degenbot-uniswap",
  "evm2",
  "evm2-jit",
+ "evm2-jit-build",
  "hashbrown 0.17.1",
  "hex",
  "parking_lot 0.13.0",
