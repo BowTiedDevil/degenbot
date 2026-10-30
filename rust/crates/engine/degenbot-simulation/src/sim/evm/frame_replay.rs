@@ -270,6 +270,16 @@ impl FrameRpcCounter {
     pub fn reads(&self) -> u64 {
         self.basic.load(Ordering::Relaxed) + self.storage.load(Ordering::Relaxed)
     }
+
+    /// Count one forwarded `basic` read (the evm2 counting layer).
+    pub(crate) fn count_basic(&self) {
+        self.basic.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Count one forwarded `storage` read (the evm2 counting layer).
+    pub(crate) fn count_storage(&self) {
+        self.storage.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 /// A scratch engine over a layered DB: replays ONE frame at a time onto a
@@ -472,12 +482,12 @@ impl<ExtDb: DatabaseRef> DatabaseRef for CountingFrameDb<ExtDb> {
     type Error = ExtDb::Error;
 
     fn basic_ref(&self, address: Address) -> Result<Option<revm::state::AccountInfo>, Self::Error> {
-        self.counter.basic.fetch_add(1, Ordering::Relaxed);
+        self.counter.count_basic();
         self.inner.basic_ref(address)
     }
 
     fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        self.counter.storage.fetch_add(1, Ordering::Relaxed);
+        self.counter.count_storage();
         self.inner.storage_ref(address, index)
     }
 

@@ -2,13 +2,15 @@
 //! `Database` wrapper forwarding every read to the cold-miss fallback, with
 //! the tracked-pool code-less tripwire layered on the membership oracle.
 //!
-//! Pilot scope: the forwarding shape + the invariant tripwire (a tracked pool
+//! Scope: the forwarding shape + the invariant tripwire (a tracked pool
 //! resolving non-existent or code-less is an impossibility — fail loudly at
 //! the value-origin point so the poisoned read can never be simulated or
-//! cached). The diagnostics layered on the revm-side original (divergence
-//! observer, false-empty provenance probe, per-cycle storage memo) are
-//! cutover scope, and the trait is evm2's mutable `Database` for the same
-//! composition reason documented in `warm_code_cache`.
+//! cached) + the revm-side original's read-path diagnostics: the per-cycle
+//! storage memo and the divergence observer (both engine-neutral — the memo
+//! is `sim::evm::StorageMemo`, the probe `sim::evm::divergence_probe`). The
+//! false-empty provenance probe stays cutover scope. The trait is evm2's
+//! mutable `Database` for the same composition reason documented in
+//! `warm_code_cache`.
 
 use alloy::primitives::{Address, B256, KECCAK256_EMPTY};
 use degenbot_substrate::SimAnchorOracle;
@@ -30,6 +32,13 @@ where
     /// The RPC cold-miss fallback (the `AlloyProvider` adapter in the target
     /// stack).
     pub fallback: ExtDb,
+    /// The per-block storage memo (see `sim::evm::StorageMemo`): consulted
+    /// before the fallback on `get_storage`, populated from the fallback's
+    /// own answers. Recreated by the owner on every block advance.
+    pub storage_memo: Option<std::sync::Arc<crate::sim::evm::StorageMemo>>,
+    /// The per-sim on-demand divergence-probe arm (VERIFY2 T2 — sim-failure
+    /// re-verify or a random spot-check), skipping the env gate.
+    pub divergence_probe: bool,
 }
 
 impl<'bot, ExtDb> BotStateDb<'bot, ExtDb>
@@ -40,7 +49,28 @@ where
     /// code-less tripwire.
     #[must_use]
     pub fn new(oracle: &'bot dyn SimAnchorOracle, fallback: ExtDb) -> Self {
-        Self { oracle, fallback }
+        Self {
+            oracle,
+            fallback,
+            storage_memo: None,
+            divergence_probe: false,
+        }
+    }
+
+    /// Layer the per-block storage memo onto `get_storage` (mirrors the
+    /// revm-side `with_storage_memo`).
+    #[must_use]
+    pub fn with_storage_memo(mut self, memo: std::sync::Arc<crate::sim::evm::StorageMemo>) -> Self {
+        self.storage_memo = Some(memo);
+        self
+    }
+
+    /// Arm the on-demand divergence probe for this wrapper (skips the env
+    /// gate; mirrors the revm-side arming).
+    #[must_use]
+    pub fn with_divergence_probe(mut self) -> Self {
+        self.divergence_probe = true;
+        self
     }
 }
 
@@ -86,7 +116,36 @@ where
     /// Forward to the fallback — the revm-side original's serving seam was
     /// retired (ADR-056); the fallback's value is the sim's value.
     fn get_storage(&mut self, address: &Address, key: &Word) -> Result<Word, Self::Error> {
-        self.fallback.get_storage(address, key)
+        // The per-block memo first — a hit is the same block's own earlier
+        // fallback answer (the fallback remains the authority; the memo
+        // never serves engine slots).
+        if let Some(memo) = self.storage_memo.as_ref() {
+            if let Some(value) = memo.get(*address, *key) {
+                return Ok(value);
+            }
+        }
+        let rpc_value = self.fallback.get_storage(address, key)?;
+        if let Some(memo) = self.storage_memo.as_ref() {
+            memo.put(*address, *key, rpc_value);
+        }
+        // Observation (compares engine vs RPC, never changes what the sim
+        // reads); the on-demand arm skips the env gate.
+        if self.divergence_probe {
+            crate::sim::evm::divergence_probe::observe_storage_read_forced(
+                self.oracle,
+                *address,
+                *key,
+                rpc_value,
+            );
+        } else {
+            crate::sim::evm::divergence_probe::observe_storage_read(
+                self.oracle,
+                *address,
+                *key,
+                rpc_value,
+            );
+        }
+        Ok(rpc_value)
     }
 
     /// Block hashes are not in `Bot`'s domain — always fall through.

@@ -17,6 +17,7 @@
 
 pub mod alloy_async_db;
 pub mod bot_state_db;
+pub mod frame_replay;
 pub mod inspectors;
 pub mod session;
 pub mod state_override;

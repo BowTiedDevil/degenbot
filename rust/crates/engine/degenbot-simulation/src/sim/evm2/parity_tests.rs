@@ -610,6 +610,7 @@ fn view_reads_match_revm_session() {
 // ── Phase 2: composite inspector suite ──
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use degenbot_decoders::v2_swap_decoder::V2_SWAP_TOPIC;
 use degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
@@ -1081,6 +1082,202 @@ fn access_list_matches_across_engines_and_journal() {
         journal_set, want,
         "evm2 account-changes journal diverges (D3)"
     );
+}
+
+// ── Phase 3: production stack + frame replay ──
+
+use crate::sim::evm::frame_replay::{FrameRpcCounter, ReplayableTx, ScratchBlock};
+
+const REPLAY_BLOCK: ScratchBlock = ScratchBlock {
+    number: BLOCK,
+    timestamp: 1_700_000_000,
+    base_fee_next: 0,
+};
+
+/// The replayable store-frame: sender `CALLER` stores `value` at slot 5 via
+/// the pilot contract, with EIP-1559 fees over the zero projected base fee.
+fn replay_tx(nonce: u64, value: u64) -> ReplayableTx {
+    ReplayableTx {
+        from: CALLER,
+        to: Some(CONTRACT),
+        value: U256::ZERO,
+        data: word(value),
+        gas_limit: GAS_LIMIT,
+        max_fee_per_gas: 1_000_000_000,
+        max_priority_fee_per_gas: 1_000_000_000,
+        nonce,
+    }
+}
+
+/// A single frame replay settles identically across engines — verdict,
+/// touched set, storage writes, cold-read count, and base-fee source.
+#[test]
+fn frame_replay_parity_over_the_scenario_corpus() {
+    use crate::sim::evm::frame_replay::{CountingFrameDb, ScratchEvm};
+
+    let codes = CodeMap(vec![(CONTRACT, store_code().to_vec())]);
+    let tx = replay_tx(0, VALUE);
+
+    // revm side — CacheDB over the counting bridge over the scripted map.
+    let revm_outcome = {
+        let counter = Arc::new(FrameRpcCounter::default());
+        let db = revm::database::CacheDB::new(CountingFrameDb::new(
+            RevmCodeMap(&codes),
+            Arc::clone(&counter),
+        ));
+        let mut scratch = ScratchEvm::with_counter(db, REPLAY_BLOCK, counter);
+        scratch.replay(&tx).expect("revm replay")
+    };
+
+    // evm2 side — the same stack shape.
+    let evm2_outcome = {
+        use super::frame_replay::{Evm2CountingFrameDb, Evm2ScratchEvm};
+
+        let counter = Arc::new(FrameRpcCounter::default());
+        let db = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(Evm2CountingFrameDb::new(
+            Evm2CodeMap(codes.clone()),
+            Arc::clone(&counter),
+        )));
+        let mut scratch = Evm2ScratchEvm::with_counter(db, REPLAY_BLOCK, counter);
+        scratch.replay(&tx).expect("evm2 replay")
+    };
+
+    assert_eq!(revm_outcome.status, evm2_outcome.status);
+    assert_eq!(
+        revm_outcome.touched, evm2_outcome.touched,
+        "touched sets diverge"
+    );
+    // The writes: revm's settled state map vs evm2's captured changes.
+    let mut revm_writes: Vec<(Address, U256, U256)> = revm_outcome
+        .state
+        .iter()
+        .flat_map(|(address, account)| {
+            account
+                .storage
+                .iter()
+                .map(move |(k, s)| (*address, *k, s.present_value()))
+        })
+        .collect();
+    revm_writes.sort();
+    assert_eq!(revm_writes, evm2_outcome.storage_writes, "writes diverge");
+    assert_eq!(
+        revm_outcome.rpc_reads, evm2_outcome.rpc_reads,
+        "cold-read counts diverge"
+    );
+    assert_eq!(revm_outcome.base_fee_source, evm2_outcome.base_fee_source);
+    assert!(
+        revm_outcome.rpc_reads > 0,
+        "sanity: the frame did forward cold reads"
+    );
+}
+
+/// Sequence replay: two committed predecessors then the frame — identical
+/// dispositions, gas, frame outcome, and accumulated writes across engines.
+#[test]
+fn replay_sequence_commits_predecessors_identically() {
+    use crate::sim::evm::frame_replay::{CountingFrameDb, ScratchEvm};
+
+    let codes = CodeMap(vec![(CONTRACT, store_code().to_vec())]);
+    let prefix = [replay_tx(0, 10), replay_tx(1, 20)];
+    let frame = replay_tx(2, 30);
+
+    let revm_outcome = {
+        let counter = Arc::new(FrameRpcCounter::default());
+        let db = revm::database::CacheDB::new(CountingFrameDb::new(
+            RevmCodeMap(&codes),
+            Arc::clone(&counter),
+        ));
+        let mut scratch = ScratchEvm::with_counter(db, REPLAY_BLOCK, counter);
+        scratch
+            .replay_sequence(&prefix, &frame)
+            .expect("revm sequence")
+    };
+
+    let evm2_outcome = {
+        use super::frame_replay::{Evm2CountingFrameDb, Evm2ScratchEvm};
+
+        let counter = Arc::new(FrameRpcCounter::default());
+        let db = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(Evm2CountingFrameDb::new(
+            Evm2CodeMap(codes.clone()),
+            Arc::clone(&counter),
+        )));
+        let mut scratch = Evm2ScratchEvm::with_counter(db, REPLAY_BLOCK, counter);
+        scratch
+            .replay_sequence(&prefix, &frame)
+            .expect("evm2 sequence")
+    };
+
+    assert_eq!(revm_outcome.predecessors, evm2_outcome.predecessors);
+    assert_eq!(
+        revm_outcome.predecessor_gas, evm2_outcome.predecessor_gas,
+        "predecessor gas diverges"
+    );
+    assert_eq!(revm_outcome.frame.status, evm2_outcome.frame.status);
+    assert_eq!(
+        revm_outcome.frame.touched, evm2_outcome.frame.touched,
+        "frame touched sets diverge"
+    );
+    assert_eq!(
+        revm_outcome.frame.rpc_reads, evm2_outcome.frame.rpc_reads,
+        "sequence cold-read counts diverge"
+    );
+    // The frame's write is the same slot 5 overwrite on both engines.
+    let want_write = (CONTRACT, U256::from(SLOT), U256::from(30u64));
+    assert!(
+        evm2_outcome.frame.storage_writes.contains(&want_write),
+        "evm2 frame write missing: {:?}",
+        evm2_outcome.frame.storage_writes
+    );
+}
+
+/// The per-block storage memo serves a repeated read from its own first
+/// answer — one fallback fetch, one hit — identically through both ports.
+#[test]
+fn storage_memo_serves_the_same_block_read_on_both_engines() {
+    use ::evm2::evm::Database;
+    use revm::database_interface::DatabaseRef;
+
+    let fixture = Fixture {
+        contract_code: store_code(),
+    };
+
+    let memo_revm = Arc::new(crate::sim::evm::StorageMemo::new());
+    let revm_db = crate::sim::evm::BotStateDb::new(
+        &degenbot_substrate::NO_SIM_ANCHOR,
+        RevmScripted {
+            fixture: &fixture,
+            contract_reads: Rc::new(Cell::new(0)),
+        },
+    )
+    .with_storage_memo(Arc::clone(&memo_revm));
+
+    let memo_evm2 = Arc::new(crate::sim::evm::StorageMemo::new());
+    let mut evm2_db = BotStateDb::new(
+        &degenbot_substrate::NO_SIM_ANCHOR,
+        Evm2Scripted {
+            fixture: &fixture,
+            contract_reads: Rc::new(Cell::new(0)),
+        },
+    )
+    .with_storage_memo(Arc::clone(&memo_evm2));
+
+    let slot = U256::from(7u64);
+    let first_revm = revm_db
+        .storage_ref(CONTRACT, slot)
+        .expect("revm first read");
+    let second_revm = revm_db
+        .storage_ref(CONTRACT, slot)
+        .expect("revm second read");
+    let first_evm2 = evm2_db
+        .get_storage(&CONTRACT, &slot)
+        .expect("evm2 first read");
+    let second_evm2 = evm2_db
+        .get_storage(&CONTRACT, &slot)
+        .expect("evm2 second read");
+
+    assert_eq!((first_revm, second_revm), (first_evm2, second_evm2));
+    assert_eq!(memo_revm.stats(), (1, 1), "revm memo: one hit, one miss");
+    assert_eq!(memo_evm2.stats(), (1, 1), "evm2 memo: one hit, one miss");
 }
 
 /// Inspector-driven capture — the engine's swap-event oracle's seam — is
