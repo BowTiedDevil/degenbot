@@ -700,6 +700,17 @@ check-uv-lock:
 test-python: dev
     {{ py_run }} pytest -x -q --no-header
 
+# Build the editable extension with the evm2 engine (ADR-089) in place of
+# the default revm one. `--features evm2` appends to the script's pinned
+# `dev-features` (cargo unifies repeated feature flags).
+dev-evm2:
+    scripts/build_extension.sh develop --features evm2
+
+# The pre-cutover Python probe: the full pytest suite against the
+# evm2-built extension (ADR-089 phase 5 precondition).
+test-python-evm2: dev-evm2
+    {{ py_run }} pytest -x -q --no-header
+
 # Spray tripwire over the Python suite (scripts/pytest_noise_gate.sh). Runs
 # pytest with the whole child-process output captured to a log file, then scans
 # the capture for the two signatures of the historical "exception spray" class:
