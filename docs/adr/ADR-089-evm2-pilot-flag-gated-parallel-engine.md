@@ -92,6 +92,47 @@ risk is asymmetric: a silent execution divergence corrupts the solver's
 accuracy oracle, not just a runtime path. The flag has a recorded deletion
 condition (D5), not an open-ended lifetime.
 
+## Feature-parity roadmap
+
+Recorded 2026-10-30 (accepted in review). Each phase extends the
+differential gate before the engine (D4); phases 1–3 are engine-internal
+(`degenbot-simulation` only), phase 4 is the first cross-crate step.
+
+0. **Seam + gate foundation** (done): pilot EVM, verdict gate, warm-cache
+   and `BotStateDb` ports, `AlloyAsyncDb`, log-inspector parity, live fork
+   leg, JIT runner with builtins export.
+1. **Engine core** — block-env wiring from the pumped block,
+   `SimulationOverrideParams` application, the settle verb (`transact` +
+   `discard`, never commit) and typed view reads. Gate: override parity,
+   view-read parity, run-invisibility.
+2. **Composite inspector suite** — swap-event capture (V2/V3/V4), call
+   trace (revert attribution), access-list emission, with
+   tentative-buffer-on-revert semantics. Gate: three-family LOG parity,
+   reverting-subcall trace parity, access-list == settled-journal parity.
+3. **Production stack + frame replay** — storage memo, divergence
+   observer, false-empty provenance probe, the counting scratch stack, and
+   the `EvmFeatures::BALANCE_CHECK`/`BASE_FEE_CHECK` runtime flags
+   replacing revm's compile-time optional features. Gate: capture-corpus
+   replay parity, RPC read-count parity (behavior-identical, not just
+   result-identical), live legs over replayed frames.
+4. **Strategy driver cutover** — `degenbot-arbitrage`'s engine trait
+   bounds go engine-generic; the 7-call settlement bundle drives an evm2
+   session through the escape hatch; facade + Python shell swapped. Gate:
+   offline replay→extract→admit→solve parity, full pytest, flake-probe.
+5. **Hard cutover** — evm2 only on production paths; revm drops to
+   dev-only for the Tier-3 oracles until their migration decision; flags
+   and pilot scaffolding retire (ADR-087); JIT moves from `blocking` gate
+   mode to the worker pool with compile telemetry. Gate: the pre-push
+   manifest plus a multi-window fork-lane soak.
+6. **The performance roadmap below.**
+
+Risks called out at recording: evm2's moving MSRV (every `cargo update`
+review includes an MSRV check), and the 7-call bundle's
+journaled-accumulation contract — the escape hatch needs an
+invisibility-BETWEEN-calls proof, not just final-state parity. Phase 3 is
+expected to hold the real work (behavior-identical layering); phase 4 is
+mostly mechanical.
+
 ## Post-cutover performance roadmap
 
 Recorded 2026-10-30. These presuppose the evm2 engine is the one running
