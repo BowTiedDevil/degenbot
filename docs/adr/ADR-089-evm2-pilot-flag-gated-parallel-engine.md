@@ -61,8 +61,14 @@ the flag.**
    gate covers every engine capability the strategy uses, including the
    live fork-truth legs. The cutover is hard: the flag, the revm
    dependency, and this ADR's pilot scaffolding retire together.
-6. `evm2-jit` (LLVM/inkwell) is out of scope; reth itself needs an
-   unreleased inkwell patch to build it.
+6. `evm2-jit` enters the pilot behind the stacked `evm2-jit` feature
+   (amended 2026-10-30; this clause initially read "out of scope"). It is a
+   fail-soft hybrid: `JitInterpreterRunner` falls back to the interpreter
+   when no compiled program exists, so the differential gate covers the JIT
+   with no new divergence surface. Its costs stay out of every default lane:
+   LLVM 23.1 exactly (the F45 devcontainer's `llvm-devel`), and the
+   unreleased inkwell git rev re-pinned at the workspace root (cargo's
+   `[patch]` is not transitive; dropped at publish like reth's copy).
 
 ## Rejected alternatives
 

@@ -22,6 +22,28 @@ pub mod warm_code_cache;
 #[cfg(test)]
 mod parity_tests;
 
+/// Build a pilot EVM armed with the JIT interpreter runner (`evm2-jit`
+/// feature). Fail-soft by construction: a frame without a compiled program
+/// falls back to the interpreter, so uncovered bytecode interprets instead
+/// of diverging. `blocking` compiles synchronously — the parity gate sees
+/// the compiled path on first execution instead of racing the worker pool.
+#[cfg(feature = "evm2-jit")]
+pub fn build_pilot_evm_jit<'a>(
+    db: impl ::evm2::evm::DynDatabase + 'a,
+) -> (Evm<'a, BaseEvmTypes>, ::evm2_jit::runtime::JitBackend) {
+    let mut evm = build_pilot_evm(db);
+    let backend = ::evm2_jit::runtime::JitBackend::new(::evm2_jit::runtime::RuntimeConfig {
+        enabled: true,
+        blocking: true,
+        ..Default::default()
+    })
+    .expect("the LLVM 23.1 backend initializes in the F45 devcontainer");
+    evm.set_interpreter_runner(::evm2_jit::evm2_evm::JitInterpreterRunner::new(
+        backend.clone(),
+    ));
+    (evm, backend)
+}
+
 use ::evm2::env::BlockEnvExt;
 use ::evm2::ethereum::ethereum_tx_registry;
 use ::evm2::evm::InMemoryDB;

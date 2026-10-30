@@ -182,6 +182,96 @@ fn run_evm2_inspected(code: Bytes) -> (Verdict, Vec<CapturedLog>) {
     (verdict, captured)
 }
 
+// ── The JIT interpreter runner (evm2-jit) ──
+
+/// `PUSH0 CALLDATALOAD PUSH0 MSTORE PUSH1 32 PUSH0 RETURN` — echo the
+/// calldata word back as 32-byte return data.
+#[cfg(feature = "evm2-jit")]
+fn return_code() -> Bytes {
+    Bytes::from(vec![0x5f, 0x35, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3])
+}
+
+/// Run one call against `code` through a pilot EVM built by `build` (the
+/// plain interpreter or the JIT-armed variant).
+#[cfg(feature = "evm2-jit")]
+fn run_evm2_with(
+    code: Bytes,
+    input: Bytes,
+    build: impl FnOnce(
+        ::evm2::evm::InMemoryDB,
+    ) -> (
+        ::evm2::Evm<'static, ::evm2::BaseEvmTypes>,
+        Option<::evm2_jit::runtime::JitBackend>,
+    ),
+) -> (Verdict, Option<::evm2_jit::runtime::RuntimeStatsSnapshot>) {
+    use ::evm2::ethereum::TxEnvelope;
+    use alloy::consensus::transaction::Recovered;
+    use alloy::consensus::TxLegacy;
+
+    let mut db = super::pilot_db();
+    db.insert_account_info(
+        &CALLER,
+        ::evm2::evm::AccountInfo::default().with_balance(U256::from(FUND)),
+    );
+    db.insert_account_info(
+        &CONTRACT,
+        ::evm2::evm::AccountInfo::default()
+            .with_nonce(1)
+            .with_code(::evm2::bytecode::Bytecode::new_legacy(code)),
+    );
+    let (mut evm, backend) = build(db);
+
+    let tx = Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            to: TxKind::Call(CONTRACT),
+            input,
+            gas_limit: GAS_LIMIT,
+            nonce: 0,
+            ..Default::default()
+        }),
+        CALLER,
+    );
+    let executed = evm.transact(&tx).expect("evm2 jit transact");
+    let slot_value = executed
+        .account_changes()
+        .find(|changes| changes.address == CONTRACT)
+        .and_then(|changes| changes.storage.slots.get(&U256::from(SLOT)))
+        .map(|slot| slot.value.current)
+        .unwrap_or_default();
+    let result = executed.discard();
+    let verdict = Verdict {
+        status: result.status,
+        gas_used: result.tx_gas_used(),
+        output: result.output,
+        slot_value,
+    };
+    (verdict, backend.map(|b| b.stats()))
+}
+
+/// The compiled path must be bit-identical to the interpreter it replaces:
+/// same verdict on every pilot bytecode, and the stats must show the frame
+/// actually executed compiled code (no silent fallback sweep).
+#[cfg(feature = "evm2-jit")]
+#[test]
+fn jit_runner_matches_the_interpreter() {
+    for (name, code) in [
+        ("store", store_code()),
+        ("return", return_code()),
+        ("log1", log1_code()),
+    ] {
+        let (jit, stats) = run_evm2_with(code.clone(), word(VALUE), |db| {
+            let (evm, backend) = super::build_pilot_evm_jit(db);
+            (evm, Some(backend))
+        });
+        let (interp, _) = run_evm2_with(code, word(VALUE), |db| (build_pilot_evm(db), None));
+        assert_eq!(jit, interp, "jit diverged from the interpreter on {name}");
+        assert!(
+            stats.expect("jit backend stats").lookup_hits > 0,
+            "the {name} frame interpreted — the compiled path went unproven"
+        );
+    }
+}
+
 /// Inspector-driven capture — the engine's swap-event oracle's seam — is
 /// identical across engines: same log, same verdict.
 #[test]

@@ -20,7 +20,8 @@ RUN dnf install -y \
         git \
         just \
         ripgrep \
-        mold lld llvm-devel patchelf \
+        mold lld patchelf \
+        llvm-devel libffi-devel zlib-devel libzstd-devel libxml2-devel \
         sudo tmux vim htop procps-ng psmisc \
         glibc-langpack-en \
         hostname \

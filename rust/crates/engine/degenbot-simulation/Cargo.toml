@@ -62,6 +62,13 @@ evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "f93318f120f6300599b211
     "secp256k1",
     "std",
 ] }
+# evm2-jit — the JIT interpreter runner (ADR-089). Same rev pin as evm2.
+# `llvm` binds LLVM 23.1 exactly (inkwell llvm23-1; the workspace root
+# re-pins inkwell's git rev — the evm2-side patch is not transitive).
+evm2-jit = { git = "https://github.com/alloy-rs/evm2", rev = "f93318f120f6300599b21170d6c7bef81ed63d87", version = "0.1.0", default-features = false, optional = true, features = [
+    "asm-keccak",
+    "llvm",
+] }
 # Tick-map fixtures mirror the pools hashbrown maps.
 hashbrown.workspace = true
 degenbot-core.workspace = true
@@ -116,6 +123,9 @@ default = []
 # The evm2 pilot engine (src/sim/evm2). Opt-in parallel implementation;
 # off in every default lane, retired by the hard cutover.
 evm2 = ["dep:evm2"]
+# The JIT interpreter runner on top of the pilot (needs LLVM 23.1 in the
+# environment — the F45 devcontainer's llvm-devel; ADR-089).
+evm2-jit = ["evm2", "dep:evm2-jit"]
 # The executor-grammar harness (`src/harness/`) is an investigation/oracle lab
 # with no production consumer: the shipped crate root is the engine (`sim`), the
 # fixture driver (`oracle`), and the capture generator (`capture`). Every
