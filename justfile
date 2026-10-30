@@ -344,8 +344,10 @@ test-fork: dev
     echo
     echo "▶ Rust live revm fork legs: degenbot-simulation live_* (run-ignored only)"
     rust_rc=0
+    # The evm2 feature rides the lane so the pilot's live_ fork-truth legs
+    # run (ADR-089 D5: the live legs are part of the cutover gate).
     DEGENBOT_RPC_HTTP_CHAINID_1="$rpc_uri" cargo nextest run --locked --manifest-path rust/Cargo.toml \
-        -p degenbot-simulation -E 'test(live_)' --run-ignored only --no-fail-fast || rust_rc=$?
+        -p degenbot-simulation --features degenbot-simulation/evm2 -E 'test(live_)' --run-ignored only --no-fail-fast || rust_rc=$?
     echo
     # Both legs always run: a failing first leg must not starve the lane of
     # the second leg's evidence. The lane still fails closed on any leg.

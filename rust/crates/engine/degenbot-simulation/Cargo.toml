@@ -45,6 +45,23 @@ revm = { version = "^43.0", default-features = false, features = [
 # umbrella's `DynProvider`/`Provider`/`Ethereum` are the same types revm's
 # `AlloyDB<N, P>` consumes. `full` brings the RPC types + provider-http.
 alloy = { version = "^2.5", features = ["full"] }
+# evm2 — the opt-in pilot engine (`evm2` feature). Unpublished on crates.io,
+# so the pin follows reth 2.9.0's rev; the `version` key lets `cargo publish`
+# strip the git source. Features are the pure-Rust precompile backends (no
+# GMP/MCL/aws-lc native builds) matching the revm dependency's backend shape.
+# `async` enables the AsyncDatabase coroutine seam (the WrapDatabaseAsync
+# replacement) — corosensei is pure Rust.
+evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "f93318f120f6300599b21170d6c7bef81ed63d87", version = "0.1.0", default-features = false, optional = true, features = [
+    "asm-keccak",
+    "async",
+    "blst",
+    "bn",
+    "map-foldhash",
+    "parse",
+    "portable",
+    "secp256k1",
+    "std",
+] }
 # Tick-map fixtures mirror the pools hashbrown maps.
 hashbrown.workspace = true
 degenbot-core.workspace = true
@@ -96,6 +113,9 @@ tokio = { version = "^1.54", features = ["rt"] }
 
 [features]
 default = []
+# The evm2 pilot engine (src/sim/evm2). Opt-in parallel implementation;
+# off in every default lane, retired by the hard cutover.
+evm2 = ["dep:evm2"]
 # The executor-grammar harness (`src/harness/`) is an investigation/oracle lab
 # with no production consumer: the shipped crate root is the engine (`sim`), the
 # fixture driver (`oracle`), and the capture generator (`capture`). Every
@@ -164,3 +184,7 @@ required-features = ["test-harness"]
 [[test]]
 name = "spike_derivation"
 required-features = ["test-harness"]
+
+[[test]]
+name = "evm2_pilot"
+required-features = ["evm2"]
