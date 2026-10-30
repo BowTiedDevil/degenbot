@@ -134,6 +134,43 @@ invisibility-BETWEEN-calls proof, not just final-state parity. Phase 3 is
 expected to hold the real work (behavior-identical layering); phase 4 is
 mostly mechanical.
 
+### Roadmap status (2026-10-30)
+
+Phases 1–4 shipped with their gates green (`degenbot-simulation` feature
+`evm2,evm2-jit`: 218 tests; full `just test` per phase):
+
+1. `state_override` port (infallible — evm2's storage insert skips revm's
+   backing prefetch) and `Evm2SimSession` (settle verb, typed view reads,
+   escape hatch).
+2. `Evm2SimInspector` — one inspector over the shared engine-neutral
+   buffers (`SwapEventBuffer`/`CallTraceBuffer`/`CollectedSlots`, widened
+   to `pub(crate)`); the `Rc<RefCell>` handle pattern is gone via
+   `inspector_mut` + `NonStaticAny` downcast.
+3. `Evm2ScratchEvm` + `Evm2CountingFrameDb`; the storage memo and
+   divergence observer wired into the evm2 `BotStateDb`. The
+   balance/base-fee relaxations are `Version` runtime flags — two revm
+   compile-time feature-matrix entries are already dead on this side. The
+   sequence overlay is evm2's internal accepted state; a base-fee
+   rejection restarts the whole sequence (validation-only, so state and
+   cold-read accounting are preserved).
+4. `Evm2SimSession::run_sequence` — the called-out risk materialized:
+   `State::checkpoint`/`rollback` covers the JOURNAL only (commits to the
+   accepted overlay escape it, and the warmed cache keeps serving written
+   values), so the journaled bundle cannot isolate on the shared EVM. The
+   shipped shape builds a THROWAWAY EVM per sequence over the shared
+   EVM's own database handle (`initial_mut`): steps commit into the
+   throwaway's overlay, reads fall through and warm the shared stack, the
+   overlay dies with the throwaway. Per-step writes stream through a
+   `commit_with` sink (`account_changes`' iterator over-captures the EVM
+   borrow under Rust 2024 rules). The invisibility-BETWEEN-calls proof is
+   the gate's copy-step assertions, and post-sequence invisibility is
+   asserted on both engines.
+
+Remaining for phase 4's gate line: the offline replay→extract→admit→solve
+parity run and the facade/Python-shell swap; the strategy's session-verb
+genericization is the next implementation step. Phase 3's false-empty
+provenance probe remains unported (noted in `bot_state_db`).
+
 ## Post-cutover performance roadmap
 
 Recorded 2026-10-30. These presuppose the evm2 engine is the one running
