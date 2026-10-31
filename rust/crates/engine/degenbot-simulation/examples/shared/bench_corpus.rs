@@ -35,7 +35,7 @@ alloy::sol! {
 
 /// The deployer/owner of every fixture contract (and the `execute()` caller —
 /// the executor's owner immutable is the creation sender).
-const DEPLOYER: Address = Address::new([
+pub const DEPLOYER: Address = Address::new([
     0xde, 0xb0, 0x07, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
 ]);
 
@@ -155,7 +155,7 @@ fn v2_out(input: u128, reserve_in: u128, reserve_out: u128) -> u128 {
 /// runtime code — the `CacheDB` stores code by hash, so the account changes
 /// carry the hash but not the bytes); the hash is the lookup key the JIT
 /// runner uses.
-fn deploy(
+pub fn deploy(
     evm: &mut Evm<'_, BaseEvmTypes>,
     creation: Bytes,
     nonce: u64,

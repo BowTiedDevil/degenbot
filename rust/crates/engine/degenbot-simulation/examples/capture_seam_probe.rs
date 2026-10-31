@@ -42,7 +42,8 @@ use degenbot_simulation::sim::evm2::inspectors::Evm2SimInspector;
 
 #[path = "shared/bench_corpus.rs"]
 mod bench_corpus;
-use bench_corpus::{bench_evm, build_corpus};
+use alloy::primitives::{keccak256, Bytes, TxKind};
+use bench_corpus::{bench_evm, build_corpus, deploy, envelope, DEPLOYER};
 
 const ITERS: usize = 30;
 
@@ -246,6 +247,136 @@ fn compare(reference: &ConfigReport, candidate: &ConfigReport) -> bool {
     slots_ok && swaps_ok
 }
 
+/// Hand-assembled creation code for the reverter stub: the runtime stores
+/// four swap-amount words in memory, emits a V2 `Swap` log (selector +
+/// two topics + 128 bytes of data), then REVERTs — a decodable swap event
+/// inside a frame that does not commit.
+fn reverter_creation(selector: [u8; 32], topic1: Address, topic2: Address) -> Bytes {
+    let mut rt = Vec::new();
+    // mem[0]=1 (amount0In), mem[96]=2 (amount1Out); the other words are 0.
+    for (v, off) in [(1u8, 0x00u8), (0, 0x20), (0, 0x40), (2, 0x60)] {
+        rt.extend_from_slice(&[0x60, v, 0x60, off, 0x52]); // PUSH1 v PUSH1 off MSTORE
+    }
+    rt.push(0x73);
+    rt.extend_from_slice(topic2.as_slice()); // PUSH20 topic2
+    rt.push(0x73);
+    rt.extend_from_slice(topic1.as_slice()); // PUSH20 topic1
+    rt.push(0x7f);
+    rt.extend_from_slice(&selector); // PUSH32 selector
+    rt.extend_from_slice(&[0x60, 0x80, 0x60, 0x00, 0xa3]); // LOG3(0, 128)
+    rt.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0xfd]); // REVERT(0, 0)
+    let len = u8::try_from(rt.len()).expect("runtime fits PUSH1");
+    let mut init = vec![
+        0x60, len, 0x60, 0x0c, 0x60, 0x00, 0x39, 0x60, len, 0x60, 0x00, 0xf3,
+    ];
+    init.extend_from_slice(&rt);
+    Bytes::from(init)
+}
+
+/// The reverted-subcall leg: the seam's committed-swap source (result
+/// logs) must be EMPTY for a frame that reverts after logging — the
+/// journal rolls the log back — and the inspector's committed buffer must
+/// agree, while its reverted-swaps diagnostic keeps the event (the one
+/// capture the seam cannot reproduce; diagnostic-only per the `CallTrace`
+/// disposition). This is the class the V4 swap-capture correctness probe
+/// caught live (reverted-frame logs over-captured), so it gates the seam.
+fn reverted_subcall_leg() -> Result<(), String> {
+    let selector = keccak256("Swap(address,uint256,uint256,uint256,uint256,address)");
+    // Decode sanity: the exact log shape the stub emits must decode.
+    let mut data = Vec::with_capacity(128);
+    for v in [1u64, 0, 0, 2] {
+        data.extend_from_slice(&alloy::primitives::U256::from(v).to_be_bytes::<32>());
+    }
+    let synthetic = alloy::primitives::Log::new_unchecked(
+        Address::repeat_byte(0x77),
+        vec![
+            selector,
+            DEPLOYER.into_word(),
+            Address::repeat_byte(0x12).into_word(),
+        ],
+        Bytes::from(data),
+    );
+    let decoded = CapturedSwap::from_log(&synthetic);
+    if decoded.is_none() {
+        return Err("the stub's log shape does not decode as a V2 swap".to_string());
+    }
+    let creation = reverter_creation(selector.into(), DEPLOYER, Address::repeat_byte(0x12));
+
+    // Seam side: the reverted frame's result carries no logs.
+    let mut evm = bench_evm(false);
+    let reverter = deploy(&mut evm, creation.clone(), 0)?;
+    let frame = envelope(
+        DEPLOYER,
+        TxKind::Call(reverter.address),
+        Bytes::new(),
+        1_000_000,
+        1,
+    );
+    let executed = evm
+        .transact(&frame)
+        .map_err(|e| format!("reverter frame: {e:?}"))?;
+    let result = executed.discard();
+    if result.status {
+        return Err("reverter frame unexpectedly succeeded".to_string());
+    }
+    if !result.logs.is_empty() {
+        return Err(format!(
+            "reverted frame's logs must roll back; got {}",
+            result.logs.len()
+        ));
+    }
+    if result
+        .logs
+        .iter()
+        .filter_map(CapturedSwap::from_log)
+        .count()
+        != 0
+    {
+        return Err("seam captured a reverted swap".to_string());
+    }
+
+    // Inspector reference side: the committed buffer agrees (empty), and
+    // the reverted diagnostic buffer keeps the event.
+    let mut ievm = bench_evm(true);
+    let ireverter = deploy(&mut ievm, creation, 0)?;
+    let frame = envelope(
+        DEPLOYER,
+        TxKind::Call(ireverter.address),
+        Bytes::new(),
+        1_000_000,
+        1,
+    );
+    let executed = ievm
+        .transact(&frame)
+        .map_err(|e| format!("reverter frame: {e:?}"))?;
+    let result = executed.discard();
+    if result.status {
+        return Err("reverter frame unexpectedly succeeded".to_string());
+    }
+    let inspector = ievm
+        .inspector_mut()
+        .and_then(|i| i.downcast_mut::<Evm2SimInspector>())
+        .ok_or("inspector downcast")?;
+    let committed = inspector.take_swaps();
+    let reverted_diagnostic = inspector.take_reverted_swaps();
+    if !committed.is_empty() {
+        return Err(format!(
+            "inspector committed buffer captured {} reverted swaps",
+            committed.len()
+        ));
+    }
+    if reverted_diagnostic.len() != 1 {
+        return Err(format!(
+            "inspector reverted diagnostic: want 1 swap, got {}",
+            reverted_diagnostic.len()
+        ));
+    }
+    println!(
+        "reverted-subcall leg: seam logs=0, inspector committed=0, inspector reverted-diagnostic=1 (the seam's documented diagnostic gap)"
+    );
+    Ok(())
+}
+
 fn main() {
     let a = run_inspector_config().unwrap_or_else(|e| {
         eprintln!("A failed: {e}");
@@ -276,10 +407,13 @@ fn main() {
         eprintln!("B ran WITHOUT compiled execution (0 lookup hits) — the probe proves nothing");
         ok = false;
     }
-    if ok {
-        println!("PASS: the post-hoc seam reproduces the inspector capture, including under compiled execution");
-    } else {
+    if !ok {
         eprintln!("FAIL: seam/inspector capture mismatch");
+        std::process::exit(1);
+    }
+    println!("PASS: the post-hoc seam reproduces the inspector capture, including under compiled execution");
+    if let Err(e) = reverted_subcall_leg() {
+        eprintln!("reverted-subcall leg FAILED: {e}");
         std::process::exit(1);
     }
 }
