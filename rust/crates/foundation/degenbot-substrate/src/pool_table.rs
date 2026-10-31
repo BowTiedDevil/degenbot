@@ -213,8 +213,9 @@ impl PoolTable {
             displaced.is_none(),
             "allocation takes a key the table does not already hold"
         );
+        let displaced_entry = self.pools.insert(pool_id, entry);
         debug_assert!(
-            self.pools.insert(pool_id, entry).is_none(),
+            displaced_entry.is_none(),
             "allocation takes a fresh pool id"
         );
         pool_id
