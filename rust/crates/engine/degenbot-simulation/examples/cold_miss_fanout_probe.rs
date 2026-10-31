@@ -84,10 +84,12 @@ use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm2::handle::EVM2_PRODUCTION_SPEC;
 use degenbot_simulation::sim::evm2::session::{Evm2CaptureMode, Evm2SimSession, Evm2SimStep};
 use degenbot_simulation::sim::evm2::warm_code_cache::{WarmCodeCache, WarmCodeCacheInner};
+use degenbot_simulation::sim::hot_slots::HOT_SLOT_DECAY_BLOCKS;
 use degenbot_simulation::sim::prefetch::{
-    path_prefetch_slots, prefetch_paths_into_memo, FamilySlotLayout, PrefetchFacts, V2SlotIndices,
+    path_prefetch_slots, prefetch_paths_into_memo, prewarm_plan, FamilySlotLayout, PrefetchFacts,
+    V2SlotIndices,
 };
-use degenbot_simulation::StorageMemo;
+use degenbot_simulation::{HotSlotStore, StorageMemo};
 
 #[path = "shared/bench_corpus.rs"]
 mod bench_corpus;
@@ -670,9 +672,15 @@ fn drive(ctx: &Arc<FanOutCtx>, frames: &mut [FrameFuture]) -> Result<FanOutRepor
 // ── EVM construction ─────────────────────────────────────────────────────
 
 fn block_env() -> BlockEnvExt {
+    block_env_at(BENCH_BLOCK)
+}
+
+/// The corpus block env pinned to an arbitrary height — a capture's learning
+/// anchor and the fan-out's read anchor are different heights by construction.
+fn block_env_at(number: u64) -> BlockEnvExt {
     BlockEnvExt {
         basefee: U256::from(BENCH_BASE_FEE),
-        number: U256::from(BENCH_BLOCK),
+        number: U256::from(number),
         ..Default::default()
     }
 }
@@ -1495,6 +1503,7 @@ fn main() {
             paths(),
             &harness_layout,
             &facts,
+            &HotSlotStore::new(),
             &memo,
         )
     };
@@ -1639,6 +1648,7 @@ fn main() {
             paths(),
             &FamilySlotLayout::PRODUCTION,
             &facts,
+            &HotSlotStore::new(),
             &production_memo,
         )
     };
@@ -1738,6 +1748,7 @@ fn main() {
             paths(),
             &harness_layout,
             &facts,
+            &HotSlotStore::new(),
             &shadow_memo,
         )
     };
@@ -1775,6 +1786,223 @@ fn main() {
         "  no stale shadow: the anchor move settles like a memo-less cold run ({:?})",
         bumped_reference[0].verdict
     );
+
+    // ── leg 10b: the capture-learned hot set (the derivation's complement) ─
+    println!(
+        "\n[10b] capture-learned hot set: a completed capture teaches the next anchor's prewarm"
+    );
+    let learned_anchor = BENCH_BLOCK + 9;
+    let learned_inner = WarmCodeCacheInner::shared_default();
+    let hot = {
+        let cache = learned_inner.read();
+        cache.hot_slots()
+    };
+    // LEARN: the production capture shape — the 7-call bundle as ONE Seam-mode
+    // sequence, whose `Inspect` (execute()) step is the only captured one — on a
+    // session carrying the store, exactly as the dispatch fan-out's sessions do
+    // (`Evm2BlockSimHandle::session` hands every session the store).
+    let capture_counters = Arc::new(Counters::default());
+    let mut capture_evm = policy_evm(CacheDB::new(Db::new(latency_db(
+        &snapshot,
+        latency,
+        &capture_counters,
+    ))));
+    let learned_capture = {
+        let mut session =
+            Evm2SimSession::with_block_env(&mut capture_evm, block_env_at(learned_anchor - 1))
+                .with_hot_slots(Arc::clone(&hot));
+        session.run_sequence(&steps, Evm2CaptureMode::Seam)
+    };
+    let learned_capture = match learned_capture {
+        Ok(capture) => capture,
+        Err(e) => {
+            println!("  FAILED: {e}");
+            return;
+        }
+    };
+    let captured_accounts = learned_capture.capture.access_list.0.len();
+    let captured_slots: usize = learned_capture
+        .capture
+        .access_list
+        .0
+        .iter()
+        .map(|item| item.storage_keys.len())
+        .sum();
+    println!(
+        "  a completed capture at anchor {} touched {captured_slots} slot(s) over {captured_accounts} account(s); the store learned them",
+        learned_anchor - 1
+    );
+
+    let learned_plan = prewarm_plan(paths(), &harness_layout, &facts, &hot, learned_anchor);
+    println!(
+        "  the next anchor's plan: {} derived + {} learned = {} slot(s), one batch",
+        learned_plan.derived,
+        learned_plan.learned,
+        learned_plan.slots.len()
+    );
+    assert!(
+        learned_plan.learned > 0,
+        "the completed capture taught the store nothing — the learning path is broken"
+    );
+
+    let learned_memo = {
+        let cache = learned_inner.read();
+        cache.storage_memo_for(learned_anchor)
+    };
+    let packets_before = transport.packets().len();
+    let learned_report = {
+        let _guard = runtime.enter();
+        prefetch_paths_into_memo(
+            &provider,
+            learned_anchor,
+            paths(),
+            &harness_layout,
+            &facts,
+            &hot,
+            &learned_memo,
+        )
+    };
+    let learned_packets = transport.packets();
+    let learned_dispatched = learned_packets.len() - packets_before;
+    let learned_members = learned_packets.last().map_or(0, Vec::len);
+    assert_eq!(
+        learned_dispatched, 1,
+        "the derivation + learned complement is ONE batch round trip"
+    );
+    assert_eq!(
+        learned_members,
+        learned_plan.slots.len(),
+        "the batch carries the derivation and the learned complement together"
+    );
+    assert!(
+        learned_packets.last().is_some_and(|packet| packet
+            .iter()
+            .all(|(_, params)| params.contains(&format!("{learned_anchor:#x}")))),
+        "every member (derived or learned) reads the node at the fan-out's anchor"
+    );
+    println!(
+        "  prewarm: {} derived + {} learned slot(s), {} seeded in {} packet(s) x {} member(s)",
+        learned_report.derived,
+        learned_report.learned,
+        learned_report.seeded,
+        learned_dispatched,
+        learned_members,
+    );
+
+    let learned_run = match run_sync_series_anchored(
+        &snapshot,
+        std::slice::from_ref(&corpus.frame),
+        latency,
+        learned_anchor,
+        &learned_inner,
+    ) {
+        Ok(runs) => runs,
+        Err(e) => {
+            println!("  FAILED: {e}");
+            return;
+        }
+    };
+    report_series("fan-out 1 (path prefetch + learned set)", &learned_run);
+    println!(
+        "  storage forwards per fan-out: no prefetch {} -> path prefetch only {} -> path + learned {}",
+        before[0].storage, after_first[0].storage, learned_run[0].storage
+    );
+    assert_eq!(
+        learned_run[0].storage, 0,
+        "with a primed store, fan-out 1 pays no storage forward"
+    );
+    assert_eq!(
+        learned_run[0].verdict, before[0].verdict,
+        "the learned prewarm changed the settled verdict"
+    );
+    println!(
+        "  verdict identity prewarm+learned == no-prewarm: {:?}",
+        learned_run[0].verdict
+    );
+
+    // STALE PREDICTION, FRESH READ: the store learned at `learned_anchor - 1`;
+    // prewarm at a LATER anchor whose chain has moved. The learned members still
+    // dispatch (they are inside the decay window), but their values come from
+    // the node at THIS anchor — so the settled verdict is the memo-less cold
+    // run's, not a stale serve's.
+    let stale_anchor = learned_anchor + 1;
+    let stale_chain = Arc::new(bumped(&snapshot));
+    let stale_transport = StorageTransport::new(Arc::clone(&stale_chain), latency);
+    let stale_provider = stale_transport.provider();
+    let stale_plan = prewarm_plan(paths(), &harness_layout, &facts, &hot, stale_anchor);
+    assert_eq!(
+        stale_plan.learned, learned_plan.learned,
+        "the earlier capture's prediction is still inside the decay window"
+    );
+    let stale_memo = {
+        let cache = learned_inner.read();
+        cache.storage_memo_for(stale_anchor)
+    };
+    let stale_report = {
+        let _guard = runtime.enter();
+        prefetch_paths_into_memo(
+            &stale_provider,
+            stale_anchor,
+            paths(),
+            &harness_layout,
+            &facts,
+            &hot,
+            &stale_memo,
+        )
+    };
+    let stale_run = match run_sync_series_anchored(
+        &stale_chain,
+        std::slice::from_ref(&corpus.frame),
+        latency,
+        stale_anchor,
+        &learned_inner,
+    ) {
+        Ok(runs) => runs,
+        Err(e) => {
+            println!("  FAILED: {e}");
+            return;
+        }
+    };
+    let stale_reference = match run_sync_series(
+        &stale_chain,
+        std::slice::from_ref(&corpus.frame),
+        latency,
+        true,
+    ) {
+        Ok(runs) => runs,
+        Err(e) => {
+            println!("  FAILED: {e}");
+            return;
+        }
+    };
+    println!(
+        "  stale prediction: {} learned slot(s) dispatched at anchor {stale_anchor} against a moved chain, {} seeded from the node at that anchor",
+        stale_report.learned, stale_report.seeded
+    );
+    assert_eq!(
+        stale_run[0].verdict, stale_reference[0].verdict,
+        "the learned prewarm served a stale value instead of the node's at the fan-out's anchor"
+    );
+    println!(
+        "  no stale serve: the moved chain settles like a memo-less cold run ({:?})",
+        stale_reference[0].verdict
+    );
+
+    // DECAY (last: the query prunes the decayed slots out of the store): the
+    // same store asked past the drift window prewarms nothing learned — the hot
+    // set is working memory, not permanent.
+    let decayed_anchor = learned_anchor + HOT_SLOT_DECAY_BLOCKS;
+    let decayed_plan = prewarm_plan(paths(), &harness_layout, &facts, &hot, decayed_anchor);
+    println!(
+        "  decay: at anchor {decayed_anchor} (window {HOT_SLOT_DECAY_BLOCKS} blocks) the learned complement is {} slot(s), the plan {} slot(s)",
+        decayed_plan.learned,
+        decayed_plan.slots.len()
+    );
+    assert_eq!(
+        decayed_plan.learned, 0,
+        "a slot untouched for the whole decay window must drop out of the prewarm"
+    );
+    assert_eq!(decayed_plan.slots.len(), decayed_plan.derived);
 
     // ── verdict identity: the cold path must not change the settled result ─
     println!("\n[11] verdict identity");

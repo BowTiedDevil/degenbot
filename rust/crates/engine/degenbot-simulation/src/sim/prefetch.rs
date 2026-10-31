@@ -1,4 +1,5 @@
-//! Path-derived storage-slot prefetch into the per-anchor [`StorageMemo`].
+//! The storage-slot prewarm into the per-anchor [`StorageMemo`]: the
+//! path-derived set PLUS the capture-learned complement, in ONE batch.
 //!
 //! The steady-state cold cost is a *serial* chain: each storage slot a
 //! settlement frame touches is a separate `eth_getStorageAt` round trip, and the
@@ -35,11 +36,21 @@
 //! | V2/V3 hop holding WETH | that pool's WETH `balanceOf` | WETH9's mapping base is a constant |
 //! | executor | WETH `balanceOf(executor)`, PoolManager ERC6909 balances | fixed slots + addresses from the batch context |
 //!
-//! NOT covered, by design: ERC20 `balanceOf` slots of arbitrary path tokens
-//! (the mapping base is the token's own layout, not the path's — so a pool's
-//! non-WETH balance and the executor's non-WETH profit balance stay
-//! underivable), and per-tick V3/V4 words (unbounded). Those still forward, one
-//! round trip each — that is the residual serial chain this lane leaves.
+//! What the path cannot derive, HISTORY can. The bundle capture records the
+//! exact `(address, slot)` set every settled candidate touched, so
+//! [`HotSlotStore`](super::hot_slots::HotSlotStore) keeps a per-session,
+//! bounded, decaying hot set; the prewarm reads the learned slots under the
+//! addresses the batch's paths NAME ([`path_prefetch_addresses`]) and unions
+//! them with the derivation. That covers the arbitrary ERC20 `balanceOf` bases
+//! (the mapping base is the token's own layout — the word lives at the TOKEN's
+//! address, which the path names) and per-pool drift (a tick word a recent
+//! candidate read). The union is ONE batch: [`prewarm_plan`] dedups the
+//! complement against the derivation before anything is dispatched, so the two
+//! lanes never pay two round trips.
+//!
+//! Still NOT covered: a slot under an address no path names (a learned slot
+//! there is unscoped speculation), and a pool that has never been captured at
+//! this session. Those forward, one round trip each.
 //!
 //! # The degrade contract
 //!
@@ -56,6 +67,11 @@
 //! it and reads pin the same anchor. A fan-out at the next anchor gets a fresh
 //! memo (the cache retires the old one), so a prefetch at N can never serve
 //! N+1.
+//!
+//! A learned slot is an IDENTITY, never a value: the store's decay window bounds
+//! how old a prediction may be, and every predicted slot is still READ from the
+//! node at the fan-out's anchor. A prediction that has drifted therefore costs
+//! one wasted batch member, never a wrong read.
 
 use std::future::Future;
 
@@ -69,6 +85,7 @@ use degenbot_pools::{
 };
 use degenbot_rpc::provider::AlloyProvider;
 
+use super::hot_slots::HotSlotStore;
 use super::storage_memo::StorageMemo;
 
 /// The most slots one prefetch batch may carry. A batch is ONE round trip, so
@@ -200,7 +217,11 @@ pub enum PrefetchSkip {
 pub struct PrefetchReport {
     /// The distinct `(address, slot)` pairs the path derivation produced.
     pub derived: usize,
-    /// The subset the memo did not already hold (the batch's member count).
+    /// The capture-learned pairs the plan added beyond the derivation (the
+    /// derivation's complement, already deduped against it).
+    pub learned: usize,
+    /// The subset of the plan the memo did not already hold (the batch's
+    /// member count).
     pub requested: usize,
     /// The entries actually seeded.
     pub seeded: usize,
@@ -304,6 +325,116 @@ fn parse_pool_id(pool_id_hex: &str) -> Option<B256> {
     Some(B256::from(array))
 }
 
+/// The addresses a batch's paths NAME — the scope the capture-learned
+/// complement is read from.
+///
+/// Every address whose storage a candidate's frame can touch through the path:
+/// each hop's pool, both sides of its pair (a pool's `balanceOf` word lives at
+/// the TOKEN's address, not the pool's), the V4 PoolManager holding V4 pool
+/// state, plus the executor-side addresses in `facts`. A learned slot under an
+/// address no path names is deliberately out of scope: the batch carries only
+/// reads its own pools and tokens can reach.
+#[must_use]
+pub fn path_prefetch_addresses<'a>(
+    paths: impl IntoIterator<Item = &'a PathInfo>,
+    facts: &PrefetchFacts,
+) -> Vec<Address> {
+    let mut addresses: Vec<Address> = Vec::new();
+    let mut seen: std::collections::HashSet<Address> = std::collections::HashSet::new();
+    for path in paths {
+        for hop in &path.hops {
+            match hop {
+                HopInfo::V2(v2) => {
+                    push_address(&mut addresses, &mut seen, v2.pool_address);
+                    push_address(&mut addresses, &mut seen, v2.token0_address);
+                    push_address(&mut addresses, &mut seen, v2.token1_address);
+                }
+                HopInfo::V3(v3) => {
+                    push_address(&mut addresses, &mut seen, v3.pool_address);
+                    push_address(&mut addresses, &mut seen, v3.token0_address);
+                    push_address(&mut addresses, &mut seen, v3.token1_address);
+                }
+                HopInfo::V4(v4) => {
+                    push_address(&mut addresses, &mut seen, v4.pool_manager_address);
+                    push_address(&mut addresses, &mut seen, v4.currency0_address);
+                    push_address(&mut addresses, &mut seen, v4.currency1_address);
+                }
+            }
+        }
+    }
+    push_address(&mut addresses, &mut seen, facts.weth_address);
+    if let Some(pool_manager) = facts.pool_manager_address {
+        push_address(&mut addresses, &mut seen, pool_manager);
+    }
+    addresses
+}
+
+fn push_address(
+    addresses: &mut Vec<Address>,
+    seen: &mut std::collections::HashSet<Address>,
+    address: Address,
+) {
+    if seen.insert(address) {
+        addresses.push(address);
+    }
+}
+
+/// What one fan-out will prewarm, as ONE deduped list (one batch).
+///
+/// The path derivation runs first ([`path_prefetch_slots`]); the capture-learned
+/// complement is whatever the [`HotSlotStore`] holds under the paths' named
+/// addresses at `anchor` that the derivation did not already produce. The
+/// complement is deduped against the derivation here, BEFORE the wire, which is
+/// what keeps the two lanes to one round trip.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PrewarmPlan {
+    /// The batch's slots: derived first (first-touch order), then the learned
+    /// complement, capped at [`MAX_PREFETCH_SLOTS`].
+    pub slots: Vec<(Address, U256)>,
+    /// How many of [`Self::slots`] the path derivation produced.
+    pub derived: usize,
+    /// How many of [`Self::slots`] the learned complement added.
+    pub learned: usize,
+}
+
+/// Derive the batch's slots, union the capture-learned complement, and hand
+/// back the ONE plan the prewarm dispatches.
+///
+/// `anchor` is the block the learned set's decay is measured against — the
+/// same anchor the reads pin, so a slot a capture touched at the previous
+/// anchor is still hot and one that drifted out is not.
+#[must_use]
+pub fn prewarm_plan<'a>(
+    paths: impl IntoIterator<Item = &'a PathInfo>,
+    layout: &FamilySlotLayout,
+    facts: &PrefetchFacts,
+    hot: &HotSlotStore,
+    anchor: u64,
+) -> PrewarmPlan {
+    let paths: Vec<&PathInfo> = paths.into_iter().collect();
+    let mut slots = path_prefetch_slots(paths.iter().copied(), layout, facts);
+    let derived = slots.len();
+    let mut seen: std::collections::HashSet<(Address, U256)> = slots.iter().copied().collect();
+    let mut learned = 0usize;
+    for entry in hot.slots_for(
+        anchor,
+        path_prefetch_addresses(paths.iter().copied(), facts),
+    ) {
+        if slots.len() >= MAX_PREFETCH_SLOTS {
+            break;
+        }
+        if seen.insert(entry) {
+            slots.push(entry);
+            learned += 1;
+        }
+    }
+    PrewarmPlan {
+        slots,
+        derived,
+        learned,
+    }
+}
+
 /// Derive the batch's slot set and seed the anchor's memo from ONE
 /// [`AlloyProvider::get_storage_batch_at`] round trip.
 ///
@@ -312,18 +443,26 @@ fn parse_pool_id(pool_id_hex: &str) -> Option<B256> {
 /// [`StorageMemoCache::for_anchor`](super::StorageMemoCache::for_anchor) handle
 /// for that same anchor.
 ///
-/// Entries the memo already holds are skipped, so a second fan-out at a warm
-/// anchor dispatches nothing. Failure degrades: see [`PrefetchSkip`].
+/// The plan is the derivation PLUS the capture-learned complement
+/// ([`prewarm_plan`]) — both lanes in ONE batch. Entries the memo already holds
+/// are skipped, so a second fan-out at a warm anchor dispatches nothing.
+/// Failure degrades: see [`PrefetchSkip`].
 pub fn prefetch_paths_into_memo<'a>(
     provider: &AlloyProvider,
     anchor: u64,
     paths: impl IntoIterator<Item = &'a PathInfo>,
     layout: &FamilySlotLayout,
     facts: &PrefetchFacts,
+    hot: &HotSlotStore,
     memo: &StorageMemo,
 ) -> PrefetchReport {
-    let slots = path_prefetch_slots(paths, layout, facts);
-    prefetch_into_memo(provider, anchor, &slots, memo)
+    let plan = prewarm_plan(paths, layout, facts, hot, anchor);
+    let mut report = prefetch_into_memo(provider, anchor, &plan.slots, memo);
+    // `prefetch_into_memo` saw the union, so its `derived` is the plan's size;
+    // the lane's own attribution is the plan's.
+    report.derived = plan.derived;
+    report.learned = plan.learned;
+    report
 }
 
 /// Seed `memo` with the node's values for `slots` at `anchor`, in ONE JSON-RPC
@@ -355,6 +494,7 @@ pub fn prefetch_into_memo(
         // A warm memo (every derived entry already known) dispatches nothing.
         return PrefetchReport {
             derived,
+            learned: 0,
             requested: 0,
             seeded: 0,
             skipped: None,
@@ -363,6 +503,7 @@ pub fn prefetch_into_memo(
     let Some(read) = block_on_ambient(provider.get_storage_batch_at(&wanted, anchor)) else {
         return PrefetchReport {
             derived,
+            learned: 0,
             requested: wanted.len(),
             seeded: 0,
             skipped: Some(PrefetchSkip::NoRuntime),
@@ -377,6 +518,7 @@ pub fn prefetch_into_memo(
             }
             PrefetchReport {
                 derived,
+                learned: 0,
                 requested: wanted.len(),
                 seeded,
                 skipped: None,
@@ -391,6 +533,7 @@ pub fn prefetch_into_memo(
             );
             PrefetchReport {
                 derived,
+                learned: 0,
                 requested: wanted.len(),
                 seeded: 0,
                 skipped: Some(PrefetchSkip::RpcFailed),
@@ -431,6 +574,7 @@ mod tests {
     use std::task::{Context, Poll};
 
     use crate::sim::evm2::bot_state_db::BotStateDb;
+    use crate::sim::hot_slots::HOT_SLOT_DECAY_BLOCKS;
     use crate::sim::StorageMemoCache;
 
     use ::evm2::bytecode::Bytecode;
@@ -668,6 +812,8 @@ mod tests {
     #[derive(Debug, Clone)]
     struct ChainStub {
         packets: Arc<Mutex<Vec<usize>>>,
+        /// Every member's pinned block tag, in dispatch order.
+        anchors: Arc<Mutex<Vec<String>>>,
         fail: bool,
     }
 
@@ -675,6 +821,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 packets: Arc::new(Mutex::new(Vec::new())),
+                anchors: Arc::new(Mutex::new(Vec::new())),
                 fail: false,
             }
         }
@@ -690,11 +837,22 @@ mod tests {
             self.packets.lock().unwrap().clone()
         }
 
+        fn anchors(&self) -> Vec<String> {
+            self.anchors.lock().unwrap().clone()
+        }
+
         fn provider(&self) -> AlloyProvider {
             let client = ClientBuilder::default().transport(self.clone(), true);
             let root: RootProvider = RootProvider::new(client);
             AlloyProvider::from_provider(Arc::new(root))
         }
+    }
+
+    /// The block tag a member pinned (`eth_getStorageAt`'s third param).
+    fn block_tag(req: &SerializedRequest) -> String {
+        let params: serde_json::Value =
+            serde_json::from_str(req.params().expect("params").get()).expect("params JSON");
+        params[2].as_str().unwrap_or_default().to_string()
     }
 
     fn answer(req: &SerializedRequest) -> Response {
@@ -730,16 +888,20 @@ mod tests {
         fn call(&mut self, req: alloy::rpc::json_rpc::RequestPacket) -> Self::Future {
             let stub = self.clone();
             Box::pin(async move {
-                let (size, respond) = match req {
-                    alloy::rpc::json_rpc::RequestPacket::Single(one) => {
-                        (1, ResponsePacket::Single(answer(&one)))
-                    }
+                let (size, respond, tags) = match req {
+                    alloy::rpc::json_rpc::RequestPacket::Single(one) => (
+                        1,
+                        ResponsePacket::Single(answer(&one)),
+                        vec![block_tag(&one)],
+                    ),
                     alloy::rpc::json_rpc::RequestPacket::Batch(many) => (
                         many.len(),
                         ResponsePacket::Batch(many.iter().map(answer).collect()),
+                        many.iter().map(block_tag).collect(),
                     ),
                 };
                 stub.packets.lock().unwrap().push(size);
+                stub.anchors.lock().unwrap().extend(tags);
                 if stub.fail {
                     return Err(TransportErrorKind::custom_str("stub transport down"));
                 }
@@ -816,12 +978,14 @@ mod tests {
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &executor_facts(),
+            &HotSlotStore::new(),
             &memo,
         );
         assert_eq!(
             report,
             PrefetchReport {
                 derived: slots.len(),
+                learned: 0,
                 requested: slots.len(),
                 seeded: slots.len(),
                 skipped: None,
@@ -869,12 +1033,14 @@ mod tests {
         let cache = StorageMemoCache::new();
         let paths = [path(vec![v2_hop(POOL_1)])];
         let facts = executor_facts();
+        let hot = HotSlotStore::new();
         let first = prefetch_paths_into_memo(
             &provider,
             7,
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
+            &hot,
             &cache.for_anchor(7),
         );
         assert_eq!(first.seeded, first.derived);
@@ -884,12 +1050,14 @@ mod tests {
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
+            &hot,
             &cache.for_anchor(7),
         );
         assert_eq!(
             second,
             PrefetchReport {
                 derived: first.derived,
+                learned: 0,
                 requested: 0,
                 seeded: 0,
                 skipped: None,
@@ -916,6 +1084,7 @@ mod tests {
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
+            &HotSlotStore::new(),
             &memo,
         );
         assert_eq!(report.skipped, Some(PrefetchSkip::RpcFailed));
@@ -967,6 +1136,7 @@ mod tests {
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
+            &HotSlotStore::new(),
             &seeded,
         );
         assert_eq!(report.seeded, slots.len());
@@ -1000,5 +1170,223 @@ mod tests {
         for (address, slot) in &slots {
             assert!(seeded.holds(*address, *slot));
         }
+    }
+
+    // ── the capture-learned complement ───────────────────────────────────
+
+    /// The named-address scope: every address a path's frame can reach through
+    /// the path (pools, both token sides) plus the executor-side facts
+    /// addresses, each once.
+    #[test]
+    fn the_named_addresses_are_every_address_a_path_reads_through() {
+        let facts = executor_facts();
+        let paths = [path(vec![v2_hop(POOL_1), v3_hop(POOL_3)])];
+        let addresses = path_prefetch_addresses(&paths, &facts);
+        for expected in [POOL_1, POOL_3, TOKEN, WETH, POOL_MANAGER] {
+            assert!(
+                addresses.contains(&expected),
+                "the named scope must include {expected:?}"
+            );
+        }
+        assert_eq!(
+            addresses.len(),
+            5,
+            "two pools + their shared pair's WETH and token + the PoolManager"
+        );
+    }
+
+    /// A learned slot the derivation already covers is not double-counted: the
+    /// plan's learned count is the COMPLEMENT, not the store's whole answer.
+    #[test]
+    fn a_learned_slot_the_derivation_covers_is_not_double_counted() {
+        let hot = HotSlotStore::new();
+        hot.record(100, POOL_1, U256::from(V2_RESERVES_SLOT));
+        let paths = [path(vec![v2_hop(POOL_1)])];
+        let plan = prewarm_plan(
+            &paths,
+            &FamilySlotLayout::PRODUCTION,
+            &executor_facts(),
+            &hot,
+            100,
+        );
+        assert_eq!(plan.learned, 0);
+        assert_eq!(plan.slots.len(), plan.derived);
+    }
+
+    /// A learned slot under an address no path names stays out of the plan —
+    /// the batch carries only reads its own pools and tokens can reach.
+    #[test]
+    fn a_learned_slot_under_an_unnamed_address_stays_out() {
+        let hot = HotSlotStore::new();
+        hot.record(100, Address::new([0x5e; 20]), U256::from(3u64));
+        let paths = [path(vec![v2_hop(POOL_1)])];
+        let facts = executor_facts();
+        let plan = prewarm_plan(&paths, &FamilySlotLayout::PRODUCTION, &facts, &hot, 100);
+        assert_eq!(plan.learned, 0);
+        assert_eq!(
+            plan.slots,
+            path_prefetch_slots(&paths, &FamilySlotLayout::PRODUCTION, &facts)
+        );
+    }
+
+    /// Decay at the plan seam: the same store yields the learned slot while it
+    /// is hot and drops it once the decay window has passed.
+    #[test]
+    fn a_decayed_slot_leaves_the_plan() {
+        let hot = HotSlotStore::new();
+        let touched_at = 100u64;
+        hot.record(touched_at, TOKEN, U256::from(0x77u64));
+        let paths = [path(vec![v2_hop(POOL_1)])];
+        let facts = executor_facts();
+        let hot_plan = prewarm_plan(
+            &paths,
+            &FamilySlotLayout::PRODUCTION,
+            &facts,
+            &hot,
+            touched_at + HOT_SLOT_DECAY_BLOCKS - 1,
+        );
+        assert_eq!(hot_plan.learned, 1);
+        let decayed_plan = prewarm_plan(
+            &paths,
+            &FamilySlotLayout::PRODUCTION,
+            &facts,
+            &hot,
+            touched_at + HOT_SLOT_DECAY_BLOCKS,
+        );
+        assert_eq!(
+            decayed_plan.learned, 0,
+            "a slot untouched for the whole window is not prewarmed"
+        );
+        assert_eq!(decayed_plan.slots.len(), decayed_plan.derived);
+    }
+
+    /// The learned lane end to end: a store primed by the PREVIOUS anchor's
+    /// capture widens the plan with the words the derivation cannot reach, and
+    /// the prewarm still dispatches ONE batch — derivation and complement
+    /// together, every member pinned to the fan-out's anchor, every value the
+    /// node's.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_primed_store_widens_the_one_prewarm_batch() {
+        let stub = ChainStub::new();
+        let provider = stub.provider();
+        let cache = StorageMemoCache::new();
+        let anchor = 101u64;
+        let memo = cache.for_anchor(anchor);
+        let paths = [path(vec![v2_hop(POOL_1)])];
+        let facts = executor_facts();
+        let derived = path_prefetch_slots(&paths, &FamilySlotLayout::PRODUCTION, &facts);
+
+        // A capture at the PREVIOUS anchor touched the two words the path
+        // cannot derive: the token's `balanceOf(pool)` mapping base (the word
+        // lives at the TOKEN's address) and a per-pool drift word.
+        let token_balance =
+            mapping_slot(U256::from(9u64), U256::from_be_bytes(POOL_1.into_word().0));
+        let drift_slot = U256::from(0x1234u64);
+        let hot = HotSlotStore::new();
+        hot.record(anchor - 1, TOKEN, token_balance);
+        hot.record(anchor - 1, POOL_1, drift_slot);
+
+        let plan = prewarm_plan(&paths, &FamilySlotLayout::PRODUCTION, &facts, &hot, anchor);
+        assert_eq!(plan.derived, derived.len());
+        assert_eq!(plan.learned, 2, "the learned complement is the two words");
+        assert_eq!(plan.slots.len(), derived.len() + 2);
+        assert_eq!(
+            &plan.slots[..derived.len()],
+            &derived[..],
+            "the derivation comes first, the complement after it"
+        );
+
+        let report = prefetch_paths_into_memo(
+            &provider,
+            anchor,
+            &paths,
+            &FamilySlotLayout::PRODUCTION,
+            &facts,
+            &hot,
+            &memo,
+        );
+        assert_eq!(report.derived, derived.len());
+        assert_eq!(report.learned, 2);
+        assert_eq!(report.requested, plan.slots.len());
+        assert_eq!(report.seeded, plan.slots.len());
+        assert_eq!(
+            stub.packets(),
+            vec![plan.slots.len()],
+            "ONE batch carries the derivation and the learned complement"
+        );
+        let tag = format!("{anchor:#x}");
+        assert!(
+            stub.anchors().iter().all(|pinned| *pinned == tag),
+            "every member (derived or learned) pins the fan-out's anchor"
+        );
+        assert!(
+            memo.holds(TOKEN, token_balance) && memo.holds(POOL_1, drift_slot),
+            "the learned words are seeded into the anchor's memo"
+        );
+
+        // Verdict identity at the value seam: the learned entries serve the
+        // chain's own answers, exactly as a cold run reads them.
+        let cold = StorageMemoCache::new();
+        let (cold_values, cold_forwards) = read_through_memo(&plan.slots, &cold.for_anchor(anchor));
+        assert_eq!(
+            usize::try_from(cold_forwards).unwrap(),
+            plan.slots.len(),
+            "the un-prewarmed run forwards every planned slot"
+        );
+        let (prewarmed_values, prewarmed_forwards) = read_through_memo(&plan.slots, &memo);
+        assert_eq!(
+            prewarmed_forwards, 0,
+            "every planned read (derived or learned) is served by the memo"
+        );
+        assert_eq!(
+            prewarmed_values, cold_values,
+            "prewarm ≡ no-prewarm: the served values are the chain's own"
+        );
+    }
+
+    /// The stale-anchor contract for the learned lane: a store primed at N is
+    /// consulted at N+1 (the decay window spans it), but the values it predicts
+    /// are read at N+1 — the memo at N keeps nothing and the N+1 memo holds only
+    /// what the N+1 batch dispatched.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_learned_prediction_is_read_at_the_current_anchor() {
+        let stub = ChainStub::new();
+        let provider = stub.provider();
+        let cache = StorageMemoCache::new();
+        let paths = [path(vec![v2_hop(POOL_1)])];
+        let facts = executor_facts();
+        let hot = HotSlotStore::new();
+        hot.record(100, TOKEN, U256::from(0x99u64));
+
+        // The retired anchor's memo: nothing seeded for it.
+        let stale = cache.for_anchor(100);
+        assert_eq!(stale.stats(), (0, 0));
+
+        let anchor = 101u64;
+        let memo = cache.for_anchor(anchor);
+        let plan = prewarm_plan(&paths, &FamilySlotLayout::PRODUCTION, &facts, &hot, anchor);
+        assert_eq!(
+            plan.learned, 1,
+            "the N-primed prediction is still hot at N+1"
+        );
+        let report = prefetch_paths_into_memo(
+            &provider,
+            anchor,
+            &paths,
+            &FamilySlotLayout::PRODUCTION,
+            &facts,
+            &hot,
+            &memo,
+        );
+        assert_eq!(report.requested, plan.slots.len());
+        let tag = format!("{anchor:#x}");
+        assert!(
+            stub.anchors().iter().all(|pinned| *pinned == tag),
+            "the learned prediction's value is read at the fan-out's anchor, never the learned one"
+        );
+        assert!(
+            !stale.holds(TOKEN, U256::from(0x99u64)),
+            "the learning anchor's memo is not the one seeded"
+        );
     }
 }

@@ -148,6 +148,12 @@ pub struct Evm2SimSession<'h, 'a> {
     /// The process-shared interpreter runner (the JIT spine), installed on
     /// each sequence's throwaway EVM. `None` = the stock interpreter.
     jit: Option<std::sync::Arc<dyn ::evm2::evm::InterpreterRunner<BaseEvmTypes>>>,
+    /// The session's capture-learned hot-slot store: every completed sequence
+    /// capture records its access list here, so the next anchor's fan-out can
+    /// prewarm what the path derivation cannot reach (`crate::sim::prefetch`).
+    /// `None` = this session teaches nothing (a lab EVM with no session
+    /// owner).
+    hot_slots: Option<std::sync::Arc<crate::sim::hot_slots::HotSlotStore>>,
 }
 
 impl<'h, 'a> Evm2SimSession<'h, 'a> {
@@ -169,6 +175,7 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
             evm,
             block_env,
             jit: None,
+            hot_slots: None,
         }
     }
 
@@ -181,6 +188,18 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
         runner: Option<std::sync::Arc<dyn ::evm2::evm::InterpreterRunner<BaseEvmTypes>>>,
     ) -> Self {
         self.jit = runner;
+        self
+    }
+
+    /// Install the session's capture-learned hot-slot store — the learning
+    /// path: every sequence capture this session completes records its access
+    /// list there (see [`Self::run_sequence`]).
+    #[must_use]
+    pub fn with_hot_slots(
+        mut self,
+        hot_slots: std::sync::Arc<crate::sim::hot_slots::HotSlotStore>,
+    ) -> Self {
+        self.hot_slots = Some(hot_slots);
         self
     }
 
@@ -343,6 +362,17 @@ impl<'h, 'a> Evm2SimSession<'h, 'a> {
                 access_list: seam_slots.take_access_list(),
             },
         };
+        // The learning path: a completed capture's access list IS the exact
+        // `(address, slot)` set the sequence touched, so it is the prewarm's
+        // historical knowledge — recorded against the height the sequence's
+        // reads were pinned to (the session's replay block, which production
+        // sets to the fan-out's `sim_block`). The store keys on identity only:
+        // the next prewarm reads the VALUES from the node at its own anchor, so
+        // a drifted prediction costs one batch member, never a wrong read.
+        if let Some(hot_slots) = &self.hot_slots {
+            let anchor = u64::try_from(self.block_env.number).unwrap_or(u64::MAX);
+            hot_slots.record_capture(anchor, &capture.access_list);
+        }
         Ok(Evm2SimSequence {
             calls,
             storage_writes: writes

@@ -27,6 +27,7 @@ use ::evm2::bytecode::Bytecode;
 use ::evm2::evm::{AccountInfo, Database};
 use ::evm2::interpreter::Word;
 
+use crate::sim::hot_slots::HotSlotStore;
 use crate::sim::sim_metrics;
 use crate::sim::storage_memo::{StorageMemo, StorageMemoCache};
 
@@ -58,6 +59,12 @@ pub struct WarmCodeCacheInner {
     /// session-scoped shared-read-cache handle — the same one every handle
     /// build receives.
     storage_memo: StorageMemoCache,
+    /// The session's capture-learned hot-slot set (the prewarm's history half,
+    /// see [`HotSlotStore`]): CROSS-block by design — what one anchor's captures
+    /// teach is exactly what the next anchor's prewarm wants, so it outlives the
+    /// per-anchor memo it feeds. Owned here for the same reason the memo cache
+    /// is: this value is the engine's session-scoped shared-read-cache handle.
+    hot_slots: Arc<HotSlotStore>,
 }
 
 impl WarmCodeCacheInner {
@@ -69,6 +76,7 @@ impl WarmCodeCacheInner {
             bytecode: B256HashMap::default(),
             ttl_blocks,
             storage_memo: StorageMemoCache::new(),
+            hot_slots: Arc::new(HotSlotStore::new()),
         }
     }
 
@@ -97,6 +105,15 @@ impl WarmCodeCacheInner {
     #[must_use]
     pub fn storage_memo_for(&self, anchor: u64) -> Arc<StorageMemo> {
         self.storage_memo.for_anchor(anchor)
+    }
+
+    /// The session's capture-learned hot-slot set — the prewarm's history half,
+    /// and the store every handle session's captures teach. Takes `&self` and
+    /// hands back an owned handle so the caller can drop the `RwLock` guard
+    /// before any provider I/O (the fan-out never holds it across a read).
+    #[must_use]
+    pub fn hot_slots(&self) -> Arc<HotSlotStore> {
+        Arc::clone(&self.hot_slots)
     }
 }
 

@@ -180,7 +180,14 @@ impl<'a> Evm2BlockSimHandle<'a> {
     /// engine's one door to it (the revm handle's `session` contract).
     #[must_use]
     pub fn session(&mut self) -> Evm2SimSession<'_, 'a> {
-        Evm2SimSession::with_block_env(&mut self.evm, self.block_env).with_jit(self.jit.clone())
+        // The session's captures teach the session-scoped hot-slot store (the
+        // prewarm's history half). Taken as an owned handle so no lock guard
+        // rides the session — the fan-out must never hold this `RwLock` across
+        // provider I/O.
+        let hot_slots = self.warm_cache.read().hot_slots();
+        Evm2SimSession::with_block_env(&mut self.evm, self.block_env)
+            .with_jit(self.jit.clone())
+            .with_hot_slots(hot_slots)
     }
 
     /// The frame-replay seam: a scratch engine over a FRESHLY STACKED

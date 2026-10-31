@@ -295,3 +295,67 @@ fn an_inspect_step_drives_the_capture() {
         "the inspected call's warmed slots reach the drained access list"
     );
 }
+
+/// The learning path at the engine seam: a completed capture's access list
+/// teaches the session's hot-slot store, attributed to the session's replay
+/// height — the slot identity (never a value) is what the next anchor's prewarm
+/// consumes.
+#[test]
+fn a_completed_capture_teaches_the_session_hot_slot_store() {
+    use degenbot_simulation::sim::evm2::session::Evm2CaptureMode;
+    use degenbot_simulation::sim::hot_slots::HOT_SLOT_DECAY_BLOCKS;
+    use degenbot_simulation::HotSlotStore;
+
+    let (mut ext, _counter) = ext();
+    let hot = std::sync::Arc::new(HotSlotStore::new());
+    let mut evm = degenbot_simulation::sim::evm2::build_block_evm2(
+        ::evm2::evm::Db::new(&mut ext),
+        BASE_FEE_GWEI,
+        BLOCK,
+        TIMESTAMP,
+    );
+    let mut session = Evm2SimSession::with_block_env(
+        &mut evm,
+        ::evm2::env::BlockEnvExt {
+            number: U256::from(BLOCK),
+            ..Default::default()
+        },
+    )
+    .with_hot_slots(std::sync::Arc::clone(&hot));
+
+    // The production capture mechanism (`Seam`): the captured step's slots come
+    // back from the state layer — the write path SSTOREs the dual contract's
+    // own slot 5.
+    let sequence = session
+        .run_sequence(&[Evm2SimStep::Inspect(dual_tx(&[]))], Evm2CaptureMode::Seam)
+        .expect("the inspect step settles");
+    assert!(
+        !sequence.capture.access_list.0.is_empty(),
+        "the seam capture recorded the step's slots"
+    );
+
+    // Every captured `(address, slot)` is now hot at the session's replay
+    // height — the exact set, no more.
+    for item in &sequence.capture.access_list.0 {
+        for key in &item.storage_keys {
+            assert!(
+                hot.slots_for(BLOCK, [item.address])
+                    .contains(&(item.address, U256::from_be_bytes(key.0))),
+                "the capture's slot {key} at {} did not reach the store",
+                item.address
+            );
+        }
+    }
+    assert!(
+        hot.slots_for(BLOCK, [DUAL])
+            .contains(&(DUAL, U256::from(5u64))),
+        "the captured step's own SSTORE slot is hot"
+    );
+
+    // Drift decay: the same store, asked past the window, has dropped the set.
+    assert!(
+        hot.slots_for(BLOCK + HOT_SLOT_DECAY_BLOCKS, [DUAL])
+            .is_empty(),
+        "an uncaptured slot decays out of the prewarm's hot set"
+    );
+}

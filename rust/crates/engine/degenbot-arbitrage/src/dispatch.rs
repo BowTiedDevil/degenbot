@@ -736,9 +736,13 @@ pub fn dispatch_profitable_results(
                 // value it cached) the moment the anchor moves, incl. a reorg
                 // rewind. The degrade path above mints a per-call cache, hence
                 // a fresh slot — the old per-fan-out scope, unchanged.
-                let storage_memo = {
+                // The per-anchor memo AND the session's cross-block hot-slot
+                // store are both session-scoped (the warm-cache owner); taken
+                // together under one short read guard so neither rides it
+                // across provider I/O.
+                let (storage_memo, hot_slots) = {
                     let cache = evm2_warm_cache.read();
-                    cache.storage_memo_for(sim_block)
+                    (cache.storage_memo_for(sim_block), cache.hot_slots())
                 };
                 // Path-derived prefetch: the candidates name their pools before
                 // the sim runs, so the slots the frame is guaranteed to read
@@ -754,6 +758,16 @@ pub fn dispatch_profitable_results(
                 // un-prefetched path (see `sim::prefetch`'s degrade contract).
                 // A warm memo — every derived entry already known — dispatches
                 // nothing, so the anchor's second fan-out pays no batch.
+                //
+                // The batch is the DERIVATION PLUS the capture-learned
+                // complement (`prewarm_plan`): the slots this session's earlier
+                // captures touched under the batch's own named addresses
+                // (arbitrary ERC20 `balanceOf` bases, per-pool drift words) ride
+                // the SAME batch — never a second round trip — and their values
+                // are read from the node at this anchor like every other member.
+                // The learning side is the handle's own: `session()` hands each
+                // candidate the store, so a completed capture's access list
+                // teaches the next anchor's prewarm.
                 let prefetch = degenbot_simulation::sim::prefetch::prefetch_paths_into_memo(
                     ctx.provider,
                     sim_block,
@@ -764,6 +778,7 @@ pub fn dispatch_profitable_results(
                         pool_manager_address: Some(ctx.pool_manager_address),
                         warmup: ctx.warmup,
                     },
+                    &hot_slots,
                     &storage_memo,
                 );
                 diag!(
@@ -771,6 +786,7 @@ pub fn dispatch_profitable_results(
                     current_block,
                     anchor = sim_block,
                     derived = prefetch.derived,
+                    learned = prefetch.learned,
                     requested = prefetch.requested,
                     seeded = prefetch.seeded,
                     skipped = ?prefetch.skipped,
@@ -1660,6 +1676,7 @@ mod tests {
     /// warm. The two fan-outs' outcomes are identical — the lane changes the
     /// reads, never the verdict.
     #[expect(clippy::expect_used)] // test-only: runtime build + thread join
+    #[expect(clippy::too_many_lines)] // the three fan-outs' wire observations read top-down
     #[test]
     fn the_fanout_prefetches_the_anchors_slot_set_once() {
         use prefetch_transport::Recorder;
@@ -1672,84 +1689,146 @@ mod tests {
         let bot_state = Arc::new(StateLock::new(BotState::new()));
         let warm = degenbot_simulation::WarmCodeCacheInner::shared_default();
 
+        // Prime the session's capture-learned hot-slot store the way a
+        // completed capture at the previous anchor would: a drift word the path
+        // cannot derive, under a pool the batch's paths NAME. It must ride the
+        // SAME batch as the derivation — never a second round trip — and a
+        // learned word under an address no path names must stay out.
+        let learned_pool: Address = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let drift_slot = U256::from(0x1234u64);
+        let stranger = Address::new([0x5e; 20]);
+        {
+            let cache = warm.read();
+            let hot = cache.hot_slots();
+            hot.record(100, learned_pool, drift_slot);
+            hot.record(100, stranger, U256::from(0x77u64));
+        }
+
         let cands = vec![
             candidate(70, 1_000_000_000_000_000_000u128, 1_000),
             candidate(71, 1_000_000_000_000_000_000u128, 1_000),
         ];
+        // The same candidates one block later: `sim_block` (the fan-out's read
+        // anchor) moves with the batch's promoted solve block.
+        let moved = cands
+            .iter()
+            .map(|candidate| {
+                let mut moved = candidate.clone();
+                moved.solve_block = 101;
+                moved
+            })
+            .collect::<Vec<_>>();
 
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
             .expect("multi-thread runtime");
-        let (first, first_batches, first_members, second, second_batches) =
-            std::thread::spawn(move || {
-                rt.block_on(async {
-                    let mut the_ctx = ctx(&provider);
-                    the_ctx.runtime_bytecode = Bytes::from_static(&[0xfe]); // INVALID
-                    let first = dispatch_profitable_results(
-                        cands.clone(),
-                        &the_ctx,
-                        &suppression,
-                        100,
-                        0,
-                        &pool_divergence,
-                        &fot_registry,
-                        Some(Arc::clone(&bot_state)),
-                        Some(Arc::clone(&warm)),
-                    );
-                    let first_batches = recorder.storage_batches();
-                    let first_members = recorder.storage_members();
-                    let second = dispatch_profitable_results(
-                        cands,
-                        &the_ctx,
-                        &suppression,
-                        100,
-                        0,
-                        &pool_divergence,
-                        &fot_registry,
-                        Some(bot_state),
-                        Some(warm),
-                    );
-                    (
-                        first,
-                        first_batches,
-                        first_members,
-                        second,
-                        recorder.storage_batches(),
-                    )
-                })
+        let (
+            first,
+            first_batches,
+            first_members,
+            second_batches,
+            moved_run,
+            moved_batches,
+            moved_members,
+        ) = std::thread::spawn(move || {
+            rt.block_on(async {
+                let mut the_ctx = ctx(&provider);
+                the_ctx.runtime_bytecode = Bytes::from_static(&[0xfe]); // INVALID
+                let first = dispatch_profitable_results(
+                    cands.clone(),
+                    &the_ctx,
+                    &suppression,
+                    100,
+                    0,
+                    &pool_divergence,
+                    &fot_registry,
+                    Some(Arc::clone(&bot_state)),
+                    Some(Arc::clone(&warm)),
+                );
+                let first_batches = recorder.storage_batches();
+                let first_members = recorder.storage_members();
+                let _second = dispatch_profitable_results(
+                    cands,
+                    &the_ctx,
+                    &suppression,
+                    100,
+                    0,
+                    &pool_divergence,
+                    &fot_registry,
+                    Some(Arc::clone(&bot_state)),
+                    Some(Arc::clone(&warm)),
+                );
+                let second_batches = recorder.storage_batches();
+                let moved_run = dispatch_profitable_results(
+                    moved,
+                    &the_ctx,
+                    &suppression,
+                    101,
+                    0,
+                    &pool_divergence,
+                    &fot_registry,
+                    Some(bot_state),
+                    Some(warm),
+                );
+                let moved_batches = recorder.storage_batches() - second_batches;
+                let moved_members = recorder.storage_members() - first_members;
+                (
+                    first,
+                    first_batches,
+                    first_members,
+                    second_batches,
+                    moved_run,
+                    moved_batches,
+                    moved_members,
+                )
             })
-            .join()
-            .expect("fan-out thread");
+        })
+        .join()
+        .expect("fan-out thread");
 
         // The batch's two candidates both route the same two V2 pools: three
-        // path words per pool plus the executor's three fixed slots.
+        // path words per pool plus the executor's three fixed slots, plus the
+        // ONE learned word under a pool the paths name (the stranger's word
+        // stays out of the batch).
         assert_eq!(
             first_batches, 1,
             "the fan-out pays exactly ONE storage batch before candidate #1"
         );
         assert_eq!(
-            first_members, 11,
-            "the batch carries the derived set: 2 pools x 3 words + 2 pool WETH balances + 3 executor slots"
+            first_members, 12,
+            "the batch carries 2 pools x 3 words + 2 pool WETH balances + 3 executor slots \
+             + the ONE learned drift word — derivation and learned set in one packet"
         );
         assert_eq!(
             second_batches, first_batches,
             "a fan-out at the SAME anchor finds the memo warm and dispatches no batch"
         );
 
+        // The anchor moves: the memo retires, and the learned set (still inside
+        // its decay window) rides the moved anchor's ONE batch too.
+        assert_eq!(
+            moved_batches, 1,
+            "the moved anchor dispatches ONE batch (never one per lane)"
+        );
+        assert_eq!(
+            moved_members, 12,
+            "the moved anchor's batch is the derivation plus the same learned hot set"
+        );
+
         // Verdict identity at the dispatch seam: prefetch changes the reads,
         // never the outcome.
-        assert_eq!(first.candidate_count, second.candidate_count);
-        assert_eq!(first.fail_count, second.fail_count);
-        assert_eq!(first.exception_count, second.exception_count);
+        assert_eq!(first.candidate_count, moved_run.candidate_count);
+        assert_eq!(first.fail_count, moved_run.fail_count);
+        assert_eq!(first.exception_count, moved_run.exception_count);
         assert_eq!(
             first.gas_profitable.len() + first.gas_unprofitable.len(),
-            second.gas_profitable.len() + second.gas_unprofitable.len()
+            moved_run.gas_profitable.len() + moved_run.gas_unprofitable.len()
         );
         assert_eq!(
             first.fail_buckets.get("empty"),
-            second.fail_buckets.get("empty")
+            moved_run.fail_buckets.get("empty")
         );
         assert_eq!(first.fail_buckets.get("empty"), 2);
     }
