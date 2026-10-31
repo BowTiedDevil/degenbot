@@ -23,7 +23,7 @@ pub use frame_replay::{
     SequenceReplayError,
 };
 pub use state_override::SimulationOverrideParams;
-pub use storage_memo::StorageMemo;
+pub use storage_memo::{StorageMemo, StorageMemoCache};
 
 /// How one settled run ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

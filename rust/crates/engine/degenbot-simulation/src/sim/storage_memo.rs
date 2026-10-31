@@ -1,4 +1,4 @@
-//! `StorageMemo` - a PER-CYCLE read memo in front of the RPC fallback.
+//! `StorageMemo` - a per-anchor read memo in front of the RPC fallback.
 
 //! SIMPIPE2 M2 (2026-09-05): the CacheDb/WarmCodeCache stack caches basic +
 //! code, but `storage_ref` always forwards to RPC BY DESIGN - the engine
@@ -14,11 +14,24 @@
 //! absorbed by the sim-local `CacheDB` overlay - the memo only ever stores
 //! values the fallback itself fetched. Semantically identical, strictly
 //! fewer RPC trips. The owner recreates the memo on every block advance.
+//!
+//! # The scope: one anchor, shared by the anchor's fan-outs
+//!
+//! A memo entry is an RPC answer tagged with ONE read anchor - the block the
+//! fallback pins its reads to ([`AlloyAsyncDb`](crate::sim::evm2::alloy_async_db)
+//! passes it as `eth_getStorageAt`'s block tag, never `latest`). Two fan-outs
+//! that pin the same anchor read the same chain state, so they can share one
+//! memo; a fan-out at a different anchor cannot. [`StorageMemoCache`] is that
+//! owner: it hands every fan-out at an anchor the SAME memo and retires it -
+//! with every value it cached - the moment the anchor moves. Retirement is
+//! unconditional, including a BACKWARD move: a reorg rewind lowers the anchor
+//! and must never be served a memo filled at the height it rewound from.
 
 use alloy::primitives::{Address, StorageValue, U256};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 #[derive(Default)]
 struct Inner {
@@ -38,8 +51,8 @@ impl StorageMemo {
         Self::default()
     }
 
-    /// Memo hit for this block (the memo is block-scoped; the owner recreates
-    /// it when the sim block advances).
+    /// Memo hit at this anchor (the memo is anchor-scoped: the owner mints a
+    /// fresh one when the read anchor moves - see [`StorageMemoCache`]).
     pub fn get(&self, address: Address, index: U256) -> Option<StorageValue> {
         let inner = self.inner.lock();
         let hit = inner.map.get(&(address, index)).copied();
@@ -65,9 +78,67 @@ impl StorageMemo {
     }
 }
 
+/// The session-scoped owner of the per-anchor [`StorageMemo`].
+///
+/// One instance lives for the engine session's life (it rides the engine-owned
+/// shared read caches, see `WarmCodeCacheInner`) and holds the memo of the
+/// CURRENT read anchor. [`Self::for_anchor`] is the only way in: same anchor,
+/// same memo (that is the cross-fan-out sharing); any other anchor, a brand new
+/// memo - the retired one keeps serving only the fan-outs that already hold it,
+/// which are still pinned at ITS anchor.
+///
+/// The anchor is the block the RPC fallback pins its reads to, so it must be
+/// the handle's `sim_block`, never the driver's clock: the two differ whenever
+/// the batch's promoted solve block lags the pump.
+///
+/// Two anti-parallel fan-outs at DIFFERENT anchors (one lagging batch while the
+/// pump has already advanced) mint a memo each and share neither - correct, and
+/// exactly the per-fan-out cost this scope started from. Sharing is what the
+/// same-anchor case buys, and an anchor is a block, so the alternating case is
+/// the lag window, not the steady state.
+#[derive(Default)]
+pub struct StorageMemoCache {
+    current: Mutex<Option<(u64, Arc<StorageMemo>)>>,
+}
+
+impl StorageMemoCache {
+    /// An empty cache: no anchor installed yet (the first `for_anchor` mints
+    /// the memo).
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The memo for `anchor`: the installed one when the anchor is unchanged,
+    /// otherwise a fresh empty memo that becomes the installed one.
+    ///
+    /// The replacement drops every value cached at the previous anchor - the
+    /// invalidation contract in one line (see the module docs).
+    pub fn for_anchor(&self, anchor: u64) -> Arc<StorageMemo> {
+        let mut current = self.current.lock();
+        if let Some((installed, memo)) = current.as_ref() {
+            if *installed == anchor {
+                return Arc::clone(memo);
+            }
+        }
+        let memo = Arc::new(StorageMemo::new());
+        *current = Some((anchor, Arc::clone(&memo)));
+        memo
+    }
+
+    /// The installed anchor (`None` before the first `for_anchor`) - the
+    /// invalidation seam's observable state.
+    #[must_use]
+    pub fn anchor(&self) -> Option<u64> {
+        self.current.lock().as_ref().map(|(anchor, _)| *anchor)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SLOT: U256 = U256::from_limbs([7, 0, 0, 0]);
 
     #[test]
     fn round_trip_and_stats() {
@@ -79,5 +150,83 @@ mod tests {
         assert_eq!(memo.get(addr, key), Some(StorageValue::from(42u64)));
         let (h, m) = memo.stats();
         assert_eq!((h, m), (1, 1));
+    }
+
+    /// The sharing contract: every fan-out at one anchor gets the SAME memo,
+    /// so the anchor's cold chain is paid once.
+    #[test]
+    fn one_anchor_shares_one_memo() {
+        let cache = StorageMemoCache::new();
+        assert_eq!(cache.anchor(), None, "no anchor installed yet");
+
+        let first_fanout = cache.for_anchor(100);
+        first_fanout.put(Address::ZERO, SLOT, StorageValue::from(42u64));
+
+        let second_fanout = cache.for_anchor(100);
+        assert!(
+            Arc::ptr_eq(&first_fanout, &second_fanout),
+            "the same anchor must hand out the same memo"
+        );
+        assert_eq!(
+            second_fanout.get(Address::ZERO, SLOT),
+            Some(StorageValue::from(42u64)),
+            "the second fan-out reads the first fan-out's cold-miss learning"
+        );
+        assert_eq!(cache.anchor(), Some(100));
+    }
+
+    /// The invalidation contract: the anchor moves -> a FRESH memo, and the
+    /// retired memo's values are unreachable from the new scope.
+    #[test]
+    fn an_anchor_move_retires_the_memo() {
+        let cache = StorageMemoCache::new();
+        let old = cache.for_anchor(100);
+        old.put(Address::ZERO, SLOT, StorageValue::from(42u64));
+
+        let moved = cache.for_anchor(101);
+        assert!(
+            !Arc::ptr_eq(&old, &moved),
+            "a moved anchor needs a new memo"
+        );
+        assert_eq!(
+            moved.get(Address::ZERO, SLOT),
+            None,
+            "the new anchor starts cold — the old anchor's values are not carried"
+        );
+        assert_eq!(cache.anchor(), Some(101));
+        // The retired memo still holds what it read — for the fan-outs already
+        // pinned at ITS anchor, never for the moved one.
+        assert_eq!(
+            old.get(Address::ZERO, SLOT),
+            Some(StorageValue::from(42u64)),
+            "the retired memo keeps only its own anchor's values"
+        );
+    }
+
+    /// A reorg rewind lowers the anchor: the memo filled at the rewound-from
+    /// height must never shadow the value the chain serves at the new one.
+    #[test]
+    fn a_backward_anchor_move_never_shadows_the_new_value() {
+        let cache = StorageMemoCache::new();
+        let rewound_from = cache.for_anchor(100);
+        rewound_from.put(Address::ZERO, SLOT, StorageValue::from(42u64));
+
+        let rewound_to = cache.for_anchor(99);
+        assert!(
+            !Arc::ptr_eq(&rewound_from, &rewound_to),
+            "a rewind is an anchor move like any other"
+        );
+        let fresh_chain_value = StorageValue::from(7u64);
+        rewound_to.put(Address::ZERO, SLOT, fresh_chain_value);
+        assert_eq!(
+            rewound_to.get(Address::ZERO, SLOT),
+            Some(fresh_chain_value),
+            "the new anchor's own answer is served, not the rewound-from value"
+        );
+        assert_eq!(
+            rewound_from.get(Address::ZERO, SLOT),
+            Some(StorageValue::from(42u64)),
+            "the retired memo is unchanged (it belongs to the abandoned height)"
+        );
     }
 }

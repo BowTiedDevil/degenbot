@@ -714,10 +714,6 @@ pub fn dispatch_profitable_results(
                 .map(|c| c.solve_block)
                 .max()
                 .unwrap_or(ctx.current_block);
-            // SIMPIPE2 M2: the fanout's own storage memo - the handle is
-            // per-fanout already, but the memo costs nothing and covers any
-            // handle re-arms inside this fanout (same-height pre-state).
-            let storage_memo = std::sync::Arc::new(degenbot_simulation::StorageMemo::new());
             // The engine fan-out (ADR-089 cutover — the revm arm retired):
             // `Evm2BlockSimHandle` + the seam drive every candidate. The
             // warm-cache owner wires at the bot level; until then this uses
@@ -732,6 +728,18 @@ pub fn dispatch_profitable_results(
                 let evm2_warm_cache = warm_cache.unwrap_or_else(
                     degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCacheInner::shared_default,
                 );
+                // SIMPIPE2 M2, cross-fan-out: the storage memo is scoped to the
+                // read anchor (`sim_block` — the block the fallback tags every
+                // RPC read with), not to this fan-out. Every dispatch at this
+                // anchor shares one memo, so a block's fan-outs pay the cold
+                // chain once; the session-owned slot retires it (and every
+                // value it cached) the moment the anchor moves, incl. a reorg
+                // rewind. The degrade path above mints a per-call cache, hence
+                // a fresh slot — the old per-fan-out scope, unchanged.
+                let storage_memo = {
+                    let cache = evm2_warm_cache.read();
+                    cache.storage_memo_for(sim_block)
+                };
                 match degenbot_simulation::sim::evm2::handle::Evm2BlockSimHandle::build(
                     ctx.provider,
                     ctx.base_fee_next,

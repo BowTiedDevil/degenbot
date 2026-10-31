@@ -44,7 +44,12 @@
 //! 7. steady state: the same frame with the production cross-block
 //!    `WarmCodeCache` in front (contract accounts + code are TTL-cached across
 //!    blocks; EOA rows and storage always forward);
-//! 8. verdict identity between the cold and zero-latency paths.
+//! 8. two fan-outs at ONE read anchor over the session's shared per-anchor
+//!    storage memo (the shape the arbitrage dispatch moved to): the second
+//!    fan-out pays no storage forwards, against the per-fan-out scope;
+//! 9. invalidation: the anchor moves -> a fresh memo, and a value that changed
+//!    at the new anchor is served rather than shadowed by the retired memo;
+//! 10. verdict identity between the cold and zero-latency paths.
 //!
 //! Usage:
 //!
@@ -78,6 +83,7 @@ use alloy::consensus::Transaction;
 use degenbot_simulation::sim::evm2::handle::EVM2_PRODUCTION_SPEC;
 use degenbot_simulation::sim::evm2::session::{Evm2CaptureMode, Evm2SimSession, Evm2SimStep};
 use degenbot_simulation::sim::evm2::warm_code_cache::{WarmCodeCache, WarmCodeCacheInner};
+use degenbot_simulation::StorageMemo;
 
 #[path = "shared/bench_corpus.rs"]
 mod bench_corpus;
@@ -119,7 +125,7 @@ fn frame_count() -> usize {
 type AccountRow = (Word, u64, B256);
 
 /// The corpus state the RPC stub serves.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct Snapshot {
     accounts: HashMap<Address, AccountRow>,
     /// Code bytes by code hash (the chain's `eth_getCode`).
@@ -584,6 +590,96 @@ fn latency_db(snapshot: &Arc<Snapshot>, latency: Duration, counters: &Arc<Counte
         latency,
         counters: Arc::clone(counters),
     }
+}
+
+/// The production memo seam (`BotStateDb::get_storage`) in front of the RPC
+/// stub: consult the anchor's memo, else forward and learn the answer. Accounts,
+/// code and block hashes forward untouched — the memo covers storage only.
+struct MemoDb {
+    cold: LatencyDb,
+    memo: Arc<StorageMemo>,
+}
+
+impl Database for MemoDb {
+    type Error = std::convert::Infallible;
+
+    fn get_account(&mut self, address: &Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.cold.get_account(address)
+    }
+
+    fn get_code_by_hash(&mut self, code_hash: &B256) -> Result<Bytecode, Self::Error> {
+        self.cold.get_code_by_hash(code_hash)
+    }
+
+    fn get_storage(&mut self, address: &Address, key: &Word) -> Result<Word, Self::Error> {
+        if let Some(value) = self.memo.get(*address, *key) {
+            return Ok(value);
+        }
+        let value = self.cold.get_storage(address, key)?;
+        self.memo.put(*address, *key, value);
+        Ok(value)
+    }
+
+    fn get_block_hash(&mut self, number: &Word) -> Result<B256, Self::Error> {
+        self.cold.get_block_hash(number)
+    }
+}
+
+/// One fan-out per frame at the read anchor `block`, sharing the session's
+/// read caches: the cross-block `WarmCodeCacheInner` AND — through its
+/// per-anchor slot — the storage memo. Each frame still builds its own
+/// `CacheDB`/warm-cache view, exactly as each dispatch builds its own handle.
+fn run_sync_series_anchored(
+    snapshot: &Arc<Snapshot>,
+    frames: &[RecoveredTxEnvelope],
+    latency: Duration,
+    block: u64,
+    session: &Arc<parking_lot::RwLock<WarmCodeCacheInner>>,
+) -> Result<Vec<SyncRun>, String> {
+    let counters = Arc::new(Counters::default());
+    let mut runs = Vec::with_capacity(frames.len());
+    for frame in frames {
+        // The session-scoped slot: same anchor, same memo (the sharing); a
+        // moved anchor, a fresh one (the invalidation).
+        let memo = {
+            let cache = session.read();
+            cache.storage_memo_for(block)
+        };
+        let cold = MemoDb {
+            cold: latency_db(snapshot, latency, &counters),
+            memo,
+        };
+        let warm = WarmCodeCache::with_owner(Arc::clone(session), block, cold);
+        let mut evm: Evm<'static, BaseEvmTypes> = policy_evm(CacheDB::new(Db::new(warm)));
+        let before = counters.snapshot();
+        let started = Instant::now();
+        let executed = evm
+            .transact(frame)
+            .map_err(|e| format!("sync frame: {e:?}"))?;
+        let result = executed.discard();
+        let wall = started.elapsed();
+        let after = counters.snapshot();
+        let counts = (after.0 - before.0, after.1 - before.1);
+        runs.push(SyncRun {
+            wall,
+            accounts: counts.0,
+            storage: counts.1,
+            round_trips: Counters::rpc_calls(counts),
+            verdict: Verdict::of(&result),
+        });
+    }
+    Ok(runs)
+}
+
+/// A copy of `snapshot` with every storage value bumped by one — the "the chain
+/// answers differently at the new anchor" stand-in (the stub's `balanceOf`
+/// returndata IS the slot value, so the settled verdict moves with it).
+fn bumped(snapshot: &Snapshot) -> Snapshot {
+    let mut copy = snapshot.clone();
+    for value in copy.storage.values_mut() {
+        *value = value.wrapping_add(Word::from(1u64));
+    }
+    copy
 }
 
 // ── The legs ─────────────────────────────────────────────────────────────
@@ -1064,8 +1160,177 @@ fn main() {
         Err(e) => println!("  FAILED: {e}"),
     }
 
+    // ── leg 8: two fan-outs at ONE anchor over the shared memo ────────────
+    println!(
+        "\n[8] two fan-outs at ONE read anchor ({}): the session's per-anchor storage memo",
+        BENCH_BLOCK + 3
+    );
+    let anchor = BENCH_BLOCK + 3;
+    // BEFORE (the per-fan-out scope the dispatch used): each fan-out pays the
+    // anchor's cold storage chain itself. The warm-code cache is shared, so the
+    // account rows are already served cross-block — only storage re-forwards.
+    let scope_inner = WarmCodeCacheInner::shared_default();
+    let mut per_fanout: Vec<SyncRun> = Vec::new();
+    for _ in 0..2 {
+        match run_sync_series_warm_cache(
+            &snapshot,
+            std::slice::from_ref(&corpus.frame),
+            latency,
+            anchor,
+            &scope_inner,
+        ) {
+            Ok(mut runs) => per_fanout.append(&mut runs),
+            Err(e) => {
+                println!("  FAILED: {e}");
+                return;
+            }
+        }
+    }
+    report_series("per-fan-out memo, fan-out 1 (before)", &per_fanout[..1]);
+    report_series("per-fan-out memo, fan-out 2 (before)", &per_fanout[1..]);
+
+    // AFTER (the cross-fan-out scope): the same anchor hands both fan-outs one
+    // memo, so fan-out 2 pays no storage forward.
+    let shared_inner = WarmCodeCacheInner::shared_default();
+    let anchored = match run_sync_series_anchored(
+        &snapshot,
+        &[corpus.frame.clone(), corpus.frame.clone()],
+        latency,
+        anchor,
+        &shared_inner,
+    ) {
+        Ok(runs) => runs,
+        Err(e) => {
+            println!("  FAILED: {e}");
+            return;
+        }
+    };
+    report_series("shared per-anchor memo, fan-out 1 (after)", &anchored[..1]);
+    report_series("shared per-anchor memo, fan-out 2 (after)", &anchored[1..]);
+    let (memo_hits, memo_misses) = {
+        let cache = shared_inner.read();
+        cache.storage_memo_for(anchor).stats()
+    };
+    println!(
+        "  anchor {anchor} memo: {memo_hits} hits / {memo_misses} misses; storage forwards per fan-out \
+         {} -> {} ({} saved on fan-out 2)",
+        per_fanout[0].storage,
+        anchored[0].storage,
+        per_fanout[1].storage.saturating_sub(anchored[1].storage),
+    );
+    assert_eq!(
+        anchored[1].storage, 0,
+        "the second fan-out at the same anchor must pay no storage forward"
+    );
+    assert_eq!(
+        anchored[0].verdict, anchored[1].verdict,
+        "the memo scope changed the settled verdict between fan-outs"
+    );
+    assert_eq!(
+        per_fanout[1].verdict, anchored[1].verdict,
+        "the memo scope changed the settled verdict across scopes"
+    );
+    println!(
+        "  verdict identity across memo scopes: {:?}",
+        anchored[1].verdict
+    );
+
+    // ── leg 9: the anchor moves -> a fresh memo, no stale reads ───────────
+    println!(
+        "\n[9] invalidation: the anchor moves ({} -> {}), the retired memo is dropped",
+        anchor,
+        anchor + 1
+    );
+    let chain_moved = Arc::new(bumped(&snapshot));
+    let moved_inner = WarmCodeCacheInner::shared_default();
+    let old_anchor_runs = match run_sync_series_anchored(
+        &snapshot,
+        std::slice::from_ref(&corpus.frame),
+        latency,
+        anchor,
+        &moved_inner,
+    ) {
+        Ok(runs) => runs,
+        Err(e) => {
+            println!("  FAILED: {e}");
+            return;
+        }
+    };
+    let old_memo = {
+        let cache = moved_inner.read();
+        cache.storage_memo_for(anchor)
+    };
+    // The retired memo's successor, captured BEFORE it is filled: the anchor
+    // moved, so the slot must hand out an EMPTY memo (nothing carried over).
+    let moved_memo_before = {
+        let cache = moved_inner.read();
+        cache.storage_memo_for(anchor + 1)
+    };
+    assert!(
+        !Arc::ptr_eq(&old_memo, &moved_memo_before),
+        "the moved anchor must mint a fresh memo"
+    );
+    assert_eq!(
+        moved_memo_before.stats(),
+        (0, 0),
+        "the moved anchor's memo starts empty — the retired entries are dropped"
+    );
+    let moved = match run_sync_series_anchored(
+        &chain_moved,
+        std::slice::from_ref(&corpus.frame),
+        latency,
+        anchor + 1,
+        &moved_inner,
+    ) {
+        Ok(runs) => runs,
+        Err(e) => {
+            println!("  FAILED: {e}");
+            return;
+        }
+    };
+    report_series(&format!("anchor {anchor} (memo filled)"), &old_anchor_runs);
+    report_series(
+        &format!("anchor {} (fresh memo, chain bumped)", anchor + 1),
+        &moved,
+    );
+    println!(
+        "  the moved anchor minted a fresh memo (the old entries are dropped); \
+         storage re-paid = {}",
+        moved[0].storage
+    );
+    assert!(
+        moved[0].storage > 0,
+        "the moved anchor re-reads storage — the retired memo served nothing"
+    );
+    assert_ne!(
+        moved[0].verdict, old_anchor_runs[0].verdict,
+        "the bumped chain is observable — a reused memo would have shadowed it"
+    );
+    // The end-to-end no-shadow check: the fresh memo's run settles exactly as a
+    // memo-less cold run over the same (changed) chain does.
+    let reference = match run_sync_series(
+        &chain_moved,
+        std::slice::from_ref(&corpus.frame),
+        latency,
+        false,
+    ) {
+        Ok(runs) => runs,
+        Err(e) => {
+            println!("  FAILED: {e}");
+            return;
+        }
+    };
+    assert_eq!(
+        moved[0].verdict, reference[0].verdict,
+        "the moved anchor's memo changed the settled verdict (a stale shadow)"
+    );
+    println!(
+        "  no stale shadow: the moved anchor settles like a memo-less cold run ({:?})",
+        reference[0].verdict
+    );
+
     // ── verdict identity: the cold path must not change the settled result ─
-    println!("\n[8] verdict identity");
+    println!("\n[10] verdict identity");
     let mut ok = true;
     if let (Ok(a), Ok(b)) = (
         run_sync_series(

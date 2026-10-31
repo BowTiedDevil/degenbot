@@ -28,6 +28,7 @@ use ::evm2::evm::{AccountInfo, Database};
 use ::evm2::interpreter::Word;
 
 use crate::sim::sim_metrics;
+use crate::sim::storage_memo::{StorageMemo, StorageMemoCache};
 
 /// The default per-entry TTL in blocks — the same safety-net value as the
 /// revm-side original (≈ 1 day of mainnet blocks). A safety net, not the
@@ -50,6 +51,13 @@ pub struct WarmCodeCacheInner {
     /// `block - loaded_block > ttl_blocks` (strictly greater — an entry
     /// loaded THIS block is always fresh).
     ttl_blocks: u64,
+    /// The session's per-anchor storage memo (the MUTABLE row this layer
+    /// deliberately never caches cross-block): a block's sim fan-outs share
+    /// the memo of the block they pin their RPC reads to, and the anchor
+    /// moving retires it. Owned here because this value is the engine's
+    /// session-scoped shared-read-cache handle — the same one every handle
+    /// build receives.
+    storage_memo: StorageMemoCache,
 }
 
 impl WarmCodeCacheInner {
@@ -60,6 +68,7 @@ impl WarmCodeCacheInner {
             accounts: AddressHashMap::default(),
             bytecode: B256HashMap::default(),
             ttl_blocks,
+            storage_memo: StorageMemoCache::new(),
         }
     }
 
@@ -79,6 +88,15 @@ impl WarmCodeCacheInner {
     /// Is an entry loaded at `loaded_block` still fresh at `block`?
     fn is_fresh(&self, loaded_block: u64, block: u64) -> bool {
         block.saturating_sub(loaded_block) <= self.ttl_blocks
+    }
+
+    /// The storage memo for the read anchor `anchor` — the SAME memo for every
+    /// fan-out at that anchor, a fresh one as soon as the anchor moves (see
+    /// [`StorageMemoCache`]). Takes `&self`: callers hold this inner behind the
+    /// engine's `RwLock` read guard.
+    #[must_use]
+    pub fn storage_memo_for(&self, anchor: u64) -> Arc<StorageMemo> {
+        self.storage_memo.for_anchor(anchor)
     }
 }
 

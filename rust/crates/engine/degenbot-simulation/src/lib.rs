@@ -71,5 +71,5 @@ pub use sim::evm2::state_override::apply_simulation_overrides;
 pub use sim::evm2::warm_code_cache::{WarmCodeCache, WarmCodeCacheInner};
 pub use sim::{
     divergence_probe, BaseFeeSource, FrameRpcCounter, ReplayFrameError, ReplayableTx, RunVerdict,
-    ScratchBlock, SequenceReplayError, SimulationOverrideParams, StorageMemo,
+    ScratchBlock, SequenceReplayError, SimulationOverrideParams, StorageMemo, StorageMemoCache,
 };

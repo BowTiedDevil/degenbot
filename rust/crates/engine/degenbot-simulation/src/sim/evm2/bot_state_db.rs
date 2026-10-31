@@ -206,6 +206,43 @@ mod tests {
         result: Option<AccountInfo>,
     }
 
+    /// A counting fallback whose storage answer the test scripts (the memo
+    /// seam's forward counter).
+    struct CountingDb {
+        storage_value: Word,
+        storage_calls: u64,
+    }
+
+    impl CountingDb {
+        fn new(storage_value: u64) -> Self {
+            Self {
+                storage_value: Word::from(storage_value),
+                storage_calls: 0,
+            }
+        }
+    }
+
+    impl Database for CountingDb {
+        type Error = Infallible;
+
+        fn get_account(&mut self, _address: &Address) -> Result<Option<AccountInfo>, Self::Error> {
+            Ok(Some(code_info()))
+        }
+
+        fn get_code_by_hash(&mut self, _code_hash: &B256) -> Result<Bytecode, Self::Error> {
+            Ok(Bytecode::default())
+        }
+
+        fn get_storage(&mut self, _address: &Address, _key: &Word) -> Result<Word, Self::Error> {
+            self.storage_calls += 1;
+            Ok(self.storage_value)
+        }
+
+        fn get_block_hash(&mut self, _number: &Word) -> Result<B256, Self::Error> {
+            Ok(B256::ZERO)
+        }
+    }
+
     impl Database for ScriptedDb {
         type Error = Infallible;
         fn get_account(&mut self, _address: &Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -272,5 +309,60 @@ mod tests {
         let anchor = SimAnchorState::snapshot(&core);
         let mut db = BotStateDb::new(&anchor, ScriptedDb { result: None });
         assert!(db.get_account(&EOA).unwrap().is_none());
+    }
+
+    /// A block's fan-outs share the anchor's memo: the second one pays no
+    /// storage forward and reads the same value.
+    #[test]
+    fn one_anchors_fan_outs_share_the_storage_memo() {
+        let core = bot_state_with_pool();
+        let anchor = SimAnchorState::snapshot(&core);
+        let cache = crate::sim::StorageMemoCache::new();
+        let key = Word::from(8u64);
+
+        let mut first =
+            BotStateDb::new(&anchor, CountingDb::new(42)).with_storage_memo(cache.for_anchor(100));
+        assert_eq!(first.get_storage(&POOL, &key).unwrap(), Word::from(42u64));
+        assert_eq!(first.fallback.storage_calls, 1, "the cold fan-out forwards");
+
+        let mut second =
+            BotStateDb::new(&anchor, CountingDb::new(42)).with_storage_memo(cache.for_anchor(100));
+        assert_eq!(
+            second.get_storage(&POOL, &key).unwrap(),
+            Word::from(42u64),
+            "the shared memo serves the anchor's own earlier answer"
+        );
+        assert_eq!(
+            second.fallback.storage_calls, 0,
+            "the second fan-out at the same anchor pays no storage forward"
+        );
+    }
+
+    /// The anchor moving retires the memo: the value the chain serves at the
+    /// NEW anchor is never shadowed by the old memo's.
+    #[test]
+    fn an_anchor_move_starts_a_fresh_storage_memo() {
+        let core = bot_state_with_pool();
+        let anchor = SimAnchorState::snapshot(&core);
+        let cache = crate::sim::StorageMemoCache::new();
+        let key = Word::from(8u64);
+
+        let mut before =
+            BotStateDb::new(&anchor, CountingDb::new(42)).with_storage_memo(cache.for_anchor(100));
+        assert_eq!(before.get_storage(&POOL, &key).unwrap(), Word::from(42u64));
+
+        // The chain answers differently once the anchor moves (a reorg
+        // replacement, or simply the next block).
+        let mut after =
+            BotStateDb::new(&anchor, CountingDb::new(7)).with_storage_memo(cache.for_anchor(101));
+        assert_eq!(
+            after.get_storage(&POOL, &key).unwrap(),
+            Word::from(7u64),
+            "the moved anchor's own answer is served, not the retired memo's"
+        );
+        assert_eq!(
+            after.fallback.storage_calls, 1,
+            "the fresh memo re-fetches at the new anchor"
+        );
     }
 }
