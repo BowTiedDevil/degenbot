@@ -97,21 +97,31 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64 (manylinux_2_28 for broader compatibility)
+          # Linux x86_64. manylinux_2_34, not 2_28: the shipped extension links
+          # the evm2 JIT's LLVM 23, and the prebuilt LLVM 23 tarball needs
+          # glibc >= 2.34 (its binaries, and its static archives' references to
+          # `__libc_single_threaded`). Measured evidence, and the alternative to
+          # the tarball: docs/llvm-release-ci.md.
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            manylinux: 2_28
+            manylinux: '2_34'
             args: ""
-          # Linux ARM64 (manylinux_2_28)
-          - os: ubuntu-latest
+          # Linux ARM64 on a native arm runner, so the manylinux container runs
+          # without QEMU user-mode emulation — linking the LLVM archives is
+          # minutes of linker work that emulation would multiply.
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            manylinux: 2_28
+            manylinux: '2_34'
+            # maturin-action carries no 2_34 mapping for aarch64, so the image
+            # is named explicitly.
+            container: quay.io/pypa/manylinux_2_34_aarch64
             args: ""
-          # macOS universal2 (single wheel for both Intel and Apple Silicon)
+          # macOS universal2 (single wheel for both Intel and Apple Silicon).
+          # Needs the platform decision in docs/llvm-release-ci.md.
           - os: macos-14
             target: universal2-apple-darwin
             args: "--target universal2-apple-darwin"
-          # Windows x86_64
+          # Windows x86_64. Needs the platform decision in docs/llvm-release-ci.md.
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             args: ""
@@ -121,23 +131,41 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref_name }}
 
-      - name: Set up QEMU
-        if: runner.os == 'Linux' && matrix.target != 'x86_64-unknown-linux-gnu'
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
-        with:
-          platforms: all
+      - name: LLVM 23 (non-Linux platforms)
+        # A wheel that links the JIT cannot be built here yet: macOS universal2
+        # needs LLVM 23 for both slices and no x86_64 macOS build is published,
+        # and the JIT's compiled-artifact loader is ELF-only, so a Windows wheel
+        # would carry a JIT that cannot load. Failing here names the reason
+        # instead of leaving an llvm-sys discovery panic an hour into the job.
+        # The decision and its options: docs/llvm-release-ci.md.
+        if: runner.os != 'Linux'
+        run: |
+          echo "::error::the shipped extension links the evm2 JIT's LLVM 23 and this platform has no provisioned toolchain — land the platform decision in docs/llvm-release-ci.md" >&2
+          exit 1
 
       - name: Build wheels with maturin
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
+          # Only the aarch64 entry names an image; an empty value means the
+          # action's own default for the target and manylinux tag.
+          container: ${{ matrix.container }}
           # `--features pyo3/extension-module` explicitly selects only extension
           # mode for the shipped wheel; the binding's `dev-features` alias is
           # never selected here. Its hotpath macros
           # expand to no-op `lib_off` stubs, with zero runtime penalty. See
           # rust/crates/engine/degenbot-bot/src/profiling.rs.
           args: --release --out dist --features pyo3/extension-module ${{ matrix.args }}
+          # `evm2-jit-llvm` links llvm-sys 231, so the manylinux container needs
+          # an LLVM 23 toolchain before maturin runs. The before-script is
+          # spliced into the same shell as the maturin invocation, so its
+          # exports reach the build. What the script provisions, and why the
+          # prebuilt tarball needs a glibc 2.34 container: docs/llvm-release-ci.md.
+          before-script-linux: |
+            set -eo pipefail
+            eval "$(bash scripts/provision-llvm23.sh --system-deps)"
+            bash scripts/provision-llvm23.sh --check
           sccache: 'true'
           # Pin the native (non-manylinux) legs to the same Rust as ci.yml's
           # dtolnay jobs. A floating stable toolchain would make release output
@@ -426,6 +454,32 @@ jobs:
             printf '%s\n' "$audit"
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Provide the LLVM 23 toolchain
+        # `cargo publish --dry-run` verifies a package by building it, and the
+        # umbrella `degenbot` crate's default feature set is `jit` — so this
+        # job's verify links the evm2 JIT's LLVM 23 exactly like the wheels do.
+        # Resolution mirrors the audit tooling above: the tagged tree supplies
+        # the code, this workflow supplies the machinery, so a tag that predates
+        # the script still resumes from main's copy.
+        run: |
+          tooling=scripts/provision-llvm23.sh
+          if git cat-file -e "HEAD:$tooling" 2>/dev/null; then
+            echo "llvm tooling: the tagged tree's copy"
+          elif git cat-file -e "origin/main:$tooling" 2>/dev/null; then
+            git show "origin/main:$tooling" > "$tooling"
+            chmod +x "$tooling"
+            echo "llvm tooling: main's copy (the tag predates it)"
+          else
+            echo "::error::neither the tagged tree nor main carries $tooling — merge the LLVM 23 provisioning before resuming a tag" >&2
+            exit 1
+          fi
+          bash -n "$tooling"
+          bash "$tooling" --system-deps --github-env
+          # $GITHUB_ENV only reaches LATER steps, so this step re-exports the
+          # (already provisioned, so cheap) prefix to assert discovery here.
+          eval "$(bash "$tooling")"
+          bash "$tooling" --check
 
       - name: Pre-publish verification (verify exactly what will be uploaded)
         # Release policy: never publish without verify (ADR-020). The verify is

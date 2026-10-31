@@ -176,6 +176,27 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
+      # The evm2 JIT links LLVM 23 (llvm-sys) and the umbrella crate's default
+      # features carry `jit`, so this job's default-feature compiles need a
+      # toolchain the runner image does not ship. scripts/provision-llvm23.sh is
+      # the one provisioning primitive (release.yml shares it); the cache key
+      # rides the script's digest because the pinned LLVM version lives there.
+      - name: Cache LLVM 23 (evm2 JIT toolchain)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/llvm23
+          key: ${{ runner.os }}-${{ runner.arch }}-llvm23-${{ hashFiles('scripts/provision-llvm23.sh') }}
+
+      - name: Provision LLVM 23 (evm2 JIT link)
+        env:
+          LLVM23_ROOT: ${{ runner.temp }}/llvm23
+        run: |
+          bash scripts/provision-llvm23.sh --system-deps --github-env
+          # $GITHUB_ENV only reaches LATER steps, so this step re-exports the
+          # (already provisioned, so cheap) prefix to assert discovery here.
+          eval "$(bash scripts/provision-llvm23.sh)"
+          bash scripts/provision-llvm23.sh --check
+
       - name: Compile workspace at MSRV
         run: just check-msrv
 
@@ -211,6 +232,27 @@ jobs:
 
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      # The evm2 JIT links LLVM 23 (llvm-sys) and the umbrella crate's default
+      # features carry `jit`, so this job's default-feature compiles need a
+      # toolchain the runner image does not ship. scripts/provision-llvm23.sh is
+      # the one provisioning primitive (release.yml shares it); the cache key
+      # rides the script's digest because the pinned LLVM version lives there.
+      - name: Cache LLVM 23 (evm2 JIT toolchain)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/llvm23
+          key: ${{ runner.os }}-${{ runner.arch }}-llvm23-${{ hashFiles('scripts/provision-llvm23.sh') }}
+
+      - name: Provision LLVM 23 (evm2 JIT link)
+        env:
+          LLVM23_ROOT: ${{ runner.temp }}/llvm23
+        run: |
+          bash scripts/provision-llvm23.sh --system-deps --github-env
+          # $GITHUB_ENV only reaches LATER steps, so this step re-exports the
+          # (already provisioned, so cheap) prefix to assert discovery here.
+          eval "$(bash scripts/provision-llvm23.sh)"
+          bash scripts/provision-llvm23.sh --check
 
       # The engine impl-block gate shells out to ripgrep. ubuntu-latest no
       # longer preinstalls it (a missing rg made the gate misreport a tool
@@ -468,6 +510,27 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
+      # The evm2 JIT links LLVM 23 (llvm-sys) and the umbrella crate's default
+      # features carry `jit`, so this job's default-feature compiles need a
+      # toolchain the runner image does not ship. scripts/provision-llvm23.sh is
+      # the one provisioning primitive (release.yml shares it); the cache key
+      # rides the script's digest because the pinned LLVM version lives there.
+      - name: Cache LLVM 23 (evm2 JIT toolchain)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/llvm23
+          key: ${{ runner.os }}-${{ runner.arch }}-llvm23-${{ hashFiles('scripts/provision-llvm23.sh') }}
+
+      - name: Provision LLVM 23 (evm2 JIT link)
+        env:
+          LLVM23_ROOT: ${{ runner.temp }}/llvm23
+        run: |
+          bash scripts/provision-llvm23.sh --system-deps --github-env
+          # $GITHUB_ENV only reaches LATER steps, so this step re-exports the
+          # (already provisioned, so cheap) prefix to assert discovery here.
+          eval "$(bash scripts/provision-llvm23.sh)"
+          bash scripts/provision-llvm23.sh --check
+
       - name: Bootstrap development environment
         run: just bootstrap
 
@@ -539,6 +602,27 @@ jobs:
 
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      # The evm2 JIT links LLVM 23 (llvm-sys) and the umbrella crate's default
+      # features carry `jit`, so this job's default-feature compiles need a
+      # toolchain the runner image does not ship. scripts/provision-llvm23.sh is
+      # the one provisioning primitive (release.yml shares it); the cache key
+      # rides the script's digest because the pinned LLVM version lives there.
+      - name: Cache LLVM 23 (evm2 JIT toolchain)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/llvm23
+          key: ${{ runner.os }}-${{ runner.arch }}-llvm23-${{ hashFiles('scripts/provision-llvm23.sh') }}
+
+      - name: Provision LLVM 23 (evm2 JIT link)
+        env:
+          LLVM23_ROOT: ${{ runner.temp }}/llvm23
+        run: |
+          bash scripts/provision-llvm23.sh --system-deps --github-env
+          # $GITHUB_ENV only reaches LATER steps, so this step re-exports the
+          # (already provisioned, so cheap) prefix to assert discovery here.
+          eval "$(bash scripts/provision-llvm23.sh)"
+          bash scripts/provision-llvm23.sh --check
 
       - name: Sync the uv environment (no extension build)
         run: uv sync --locked --dev --no-install-project

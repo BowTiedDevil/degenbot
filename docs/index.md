@@ -26,7 +26,7 @@ Start with {doc}`getting-started` — or open {doc}`adr/README` if you want the 
 
 **Command line** — the `degenbot` CLI: {doc}`cli/pool` (pool inspection & management), {doc}`cli/database` (schema, migrations, cutover), {doc}`cli/aave` (Aave V3 tooling).
 
-**Operations** — {doc}`logging` (log registry, Python-logging forwarding), {doc}`failure-policy` (reaction taxonomy for runtime failures), {doc}`execution-strategy` (strategy configuration), {doc}`telemetry-latency-playbook` (pump/solve latency from Jaeger & Prometheus), {doc}`releases/runbook` (cutting, resuming, and verifying a release).
+**Operations** — {doc}`logging` (log registry, Python-logging forwarding), {doc}`failure-policy` (reaction taxonomy for runtime failures), {doc}`execution-strategy` (strategy configuration), {doc}`telemetry-latency-playbook` (pump/solve latency from Jaeger & Prometheus), {doc}`releases/runbook` (cutting, resuming, and verifying a release), {doc}`llvm-release-ci` (the LLVM 23 toolchain the shipped extension and the umbrella crate link).
 
 **Aave V3 integration** — {doc}`aave/README` is the overview; {doc}`aave/flows/position_manager` and {doc}`aave/transformations/index` are good first entries into the per-flow behavior notes.
 
@@ -74,6 +74,7 @@ logging
 failure-policy
 execution-strategy
 telemetry-latency-playbook
+llvm-release-ci
 grafana/ALERTS
 aave/README
 aave/flows/*

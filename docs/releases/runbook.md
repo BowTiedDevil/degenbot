@@ -47,6 +47,11 @@ The audit line before tagging is the cheap guard against re-releasing a version 
 registry already holds: members it does *not* print are live, and live members cannot
 be uploaded again.
 
+The shipped extension and the umbrella crate link the evm2 JIT's LLVM 23, so
+every compiling job here needs a discoverable LLVM 23 toolchain — see
+`docs/llvm-release-ci.md` before a tag whenever the compile graph, the wheel
+platforms, or `llvm-sys` moved.
+
 If the release carries a Rust schema change, do the schema ritual first
 (`RUST_SCHEMA_VERSION` → `RUST_MIGRATIONS` → fixture matrix; see the `bump-version`
 section of the `justfile`).
