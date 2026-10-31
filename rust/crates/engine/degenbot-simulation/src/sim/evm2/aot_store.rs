@@ -40,6 +40,28 @@ const MANIFEST_SUFFIX: &str = ".manifest.json";
 /// a future on-disk change degrades to recompilation instead of a misread.
 const MANIFEST_FORMAT_VERSION: u32 = 1;
 
+/// The subdirectory of `persistence.state_dir` holding persisted artifacts.
+pub const ARTIFACT_DIR_NAME: &str = "aot-artifacts";
+
+/// The durable artifact directory: `<persistence.state_dir>/aot-artifacts`,
+/// the store the production JIT holder opens and the prep lane fills.
+///
+/// The configured root expands exactly as every other state-rooted path does
+/// (`degenbot-runs`' rule): the built-in default rebases onto an absolute
+/// `$XDG_STATE_HOME`, an operator-supplied value expands its leading `~`
+/// against `HOME`.
+#[must_use]
+pub fn default_artifact_dir() -> PathBuf {
+    let configured = &degenbot_config::holder::config().persistence.state_dir;
+    let raw = configured.to_string_lossy();
+    let expanded = if *configured == degenbot_config::BotConfig::default().persistence.state_dir {
+        degenbot_config::expand_state_path(&raw)
+    } else {
+        degenbot_config::expand_tilde_path(&raw)
+    };
+    expanded.join(ARTIFACT_DIR_NAME)
+}
+
 /// An [`ArtifactStore`] over a stable on-disk directory (see the module doc).
 #[derive(Clone, Debug)]
 pub struct DurableArtifactStore {

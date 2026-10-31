@@ -365,6 +365,14 @@ test-fork: dev
 bench-sim-modes *ARGS:
     cd rust && cargo run --locked --release -p degenbot-simulation --example sim_mode_bench --features evm2-jit -- {{ ARGS }}
 
+# The production executor's AOT prep lane: compile
+# `contracts/cmd_executor_runtime_bytecode.txt` into the durable artifact store
+# the JIT holder opens at `<persistence.state_dir>/aot-artifacts`, proving the
+# artifact loads back as `ProgramKind::Aot`. Idempotent; an alternate artifact
+# path may be passed as ARGS.
+aot-prepare-executor *ARGS:
+    cd rust && cargo run --locked --release -p degenbot-simulation --example aot_prepare_executor --features evm2-jit -- {{ ARGS }}
+
 # Rank the slowest tests from the last `just test-rust-nextest` JUnit report.
 test-timing top='30':
     #!/usr/bin/env bash

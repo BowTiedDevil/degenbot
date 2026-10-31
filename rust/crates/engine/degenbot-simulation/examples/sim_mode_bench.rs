@@ -28,11 +28,12 @@
 //!   the full compile cost; the parity-gate-friendly mode).
 //! - `jit-pool`  — the runner with `blocking: false`: frames interpret
 //!   until the worker pool delivers the compiled program, then upgrade.
-//! - `aot`       — the runner over a backend whose store is pre-populated
-//!   via `prepare_aot_sync` for every contract the corpus deployed; the
-//!   first timed iteration already runs compiled code. The prep wall time
-//!   is reported separately (the build-time cost a production AOT lane
-//!   would absorb once).
+//! - `aot`       — the runner over a backend backed by the DURABLE artifact
+//!   store (a scratch path here, the store the production JIT holder opens
+//!   in place of temp dirs), pre-populated via `prepare_aot_sync` for every
+//!   contract the corpus deployed; the first timed iteration already runs
+//!   compiled code. The prep wall time is reported separately (the
+//!   build-time cost a production AOT lane would absorb once).
 //!
 //! Every mode asserts a run-to-run identical verdict (status, gas, output
 //! hash) and the report folds a cross-mode verdict identity check — a
@@ -48,6 +49,7 @@
 //!
 //! `SIM_BENCH_ITERS` sets the iteration count (default 100).
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -58,10 +60,9 @@ use ::evm2::BaseEvmTypes;
 use ::evm2::Evm;
 
 use ::evm2_jit::evm2_evm::JitInterpreterRunner;
-use ::evm2_jit::runtime::{
-    AotRequest, JitBackend, ProgramKind, RuntimeArtifactStore, RuntimeConfig,
-};
+use ::evm2_jit::runtime::{AotRequest, JitBackend, ProgramKind, RuntimeConfig};
 
+use degenbot_simulation::sim::evm2::aot_store::DurableArtifactStore;
 use degenbot_simulation::sim::evm2::handle::EVM2_PRODUCTION_SPEC;
 
 #[path = "shared/bench_corpus.rs"]
@@ -112,10 +113,36 @@ struct ModeReport {
     aot_prep_ms: Option<u128>,
 }
 
+/// A unique scratch directory removed on drop — the `aot` mode's durable
+/// store root (the production store's shape, at a path a benchmark run may
+/// throw away).
+struct ScratchDir(PathBuf);
+
+impl ScratchDir {
+    fn new(label: &str) -> Self {
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(std::env::temp_dir().join(format!(
+            "degenbot-sim-bench-{}-{sequence}-{label}",
+            std::process::id()
+        )))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// The per-mode backend: none for the interpreter; blocking for the
-/// synchronous mode; the worker pool for `jit-pool`; the pool plus a
-/// (temp-dir) artifact store for `aot`.
-fn make_backend(mode: Mode) -> Option<JitBackend> {
+/// synchronous mode; the worker pool for `jit-pool`; the pool plus the
+/// durable artifact store for `aot`.
+fn make_backend(mode: Mode, store_dir: &Path) -> Option<JitBackend> {
     let config = |blocking: bool| RuntimeConfig {
         enabled: true,
         blocking,
@@ -128,7 +155,8 @@ fn make_backend(mode: Mode) -> Option<JitBackend> {
         Mode::Aot => Some(
             JitBackend::new(RuntimeConfig {
                 store: Some(Arc::new(
-                    RuntimeArtifactStore::new().expect("artifact store"),
+                    DurableArtifactStore::new(store_dir.join("aot-artifacts"))
+                        .expect("artifact store"),
                 )),
                 ..config(false)
             })
@@ -243,10 +271,10 @@ fn post_upgrade_measure(
 
 /// Run one mode end to end: fresh EVM, corpus build (untimed), optional AOT
 /// prep (timed, reported separately), then the timed discard loop.
-fn run_mode(mode: Mode, iters: usize) -> Result<ModeReport, String> {
+fn run_mode(mode: Mode, iters: usize, scratch: &ScratchDir) -> Result<ModeReport, String> {
     let mut evm = bench_evm(false);
     let corpus = build_corpus(&mut evm)?;
-    let backend = make_backend(mode);
+    let backend = make_backend(mode, scratch.path());
     let mut aot_prep_ms = None;
     if let Some(backend) = &backend {
         if mode == Mode::Aot {
@@ -328,9 +356,10 @@ fn main() {
         "compiled",
         "aot prep ms"
     );
+    let scratch = ScratchDir::new("modes");
     let mut reports = Vec::new();
     for mode in modes {
-        match run_mode(mode, iters) {
+        match run_mode(mode, iters, &scratch) {
             Ok(report) => {
                 println!(
                     "{:<10} {:>12} {:>12} {:>12} {:>12} {:>12} {:>8} {:>8} {:>8} {:>12}",

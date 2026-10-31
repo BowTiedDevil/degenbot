@@ -12,9 +12,16 @@
 //! hash — so the injected account's `code_hash` must be exactly
 //! `keccak256(injected bytecode)`, the hash an AOT artifact is keyed by under
 //! [`EVM2_PRODUCTION_SPEC`].
+//!
+//! The AOT preload leg is that key end to end: an artifact prepared into a
+//! [`DurableArtifactStore`] is preloaded by a fresh backend at startup, so the
+//! first executed frame takes the compiled path (a lookup hit, zero
+//! compilations dispatched) and still returns the runner-less verdict.
 
 #![expect(clippy::expect_used)]
 
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use ::evm2::bytecode::Bytecode;
@@ -25,9 +32,10 @@ use alloy::consensus::TxEip1559;
 use alloy::primitives::{address, keccak256, Address, Bytes, TxKind, KECCAK256_EMPTY, U256};
 
 use ::evm2_jit::evm2_evm::JitInterpreterRunner;
-use ::evm2_jit::runtime::{JitBackend, RuntimeCacheKey, RuntimeConfig};
+use ::evm2_jit::runtime::{AotRequest, JitBackend, ProgramKind, RuntimeCacheKey, RuntimeConfig};
 
 use degenbot_executor::WarmupSlots;
+use degenbot_simulation::sim::evm2::aot_store::DurableArtifactStore;
 use degenbot_simulation::sim::evm2::build_block_evm2;
 use degenbot_simulation::sim::evm2::handle::EVM2_PRODUCTION_SPEC;
 use degenbot_simulation::sim::evm2::session::{Evm2CaptureMode, Evm2SimSession, Evm2SimStep};
@@ -220,26 +228,29 @@ fn overridden_executor_is_keyed_by_keccak_of_its_injected_bytecode() {
     assert_eq!(aot_key.code_hash, info.code_hash);
 }
 
-#[test]
-fn overridden_executor_executes_through_the_jit_runner() {
+/// Runs the override-injected executor frame (its runtime returns `0x2A`)
+/// through the production session shape, over `backend` when given.
+fn run_injected_executor(
+    backend: Option<&JitBackend>,
+) -> degenbot_simulation::sim::evm2::session::Evm2SimSequence {
     let mut db = InMemoryDB::default();
     apply_simulation_overrides(&mut db, &override_params());
     let mut evm = build_block_evm2(db, BASE_FEE_GWEI, BLOCK, TIMESTAMP);
-    let backend = JitBackend::new(RuntimeConfig {
-        enabled: true,
-        blocking: true,
-        ..Default::default()
-    })
-    .expect("jit backend init");
-    let mut session =
-        Evm2SimSession::new(&mut evm).with_jit(Some(Arc::new(JitInterpreterRunner::new(backend))));
-    let sequence = session
+    let mut session = Evm2SimSession::new(&mut evm);
+    if let Some(backend) = backend {
+        session = session.with_jit(Some(Arc::new(JitInterpreterRunner::new(backend.clone()))));
+    }
+    session
         .run_sequence(
             &[Evm2SimStep::Transact(envelope_to(EXECUTOR, &[]))],
             Evm2CaptureMode::Seam,
         )
-        .expect("the sequence settles");
+        .expect("the sequence settles")
+}
 
+fn assert_executor_returned_42(
+    sequence: &degenbot_simulation::sim::evm2::session::Evm2SimSequence,
+) {
     let call = &sequence.calls[0];
     assert_eq!(
         call.verdict,
@@ -250,5 +261,126 @@ fn overridden_executor_executes_through_the_jit_runner() {
         call.output,
         Bytes::copy_from_slice(&U256::from(42u8).to_be_bytes::<32>()),
         "the executed code is the override-injected runtime"
+    );
+}
+
+#[test]
+fn overridden_executor_executes_through_the_jit_runner() {
+    let backend = JitBackend::new(RuntimeConfig {
+        enabled: true,
+        blocking: true,
+        ..Default::default()
+    })
+    .expect("jit backend init");
+
+    assert_executor_returned_42(&run_injected_executor(Some(&backend)));
+}
+
+/// A unique scratch directory removed on drop — the durable store root.
+struct ScratchDir(PathBuf);
+
+impl ScratchDir {
+    fn new(label: &str) -> Self {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        Self(std::env::temp_dir().join(format!(
+            "degenbot-jit-spine-{}-{sequence}-{label}",
+            std::process::id()
+        )))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn preloaded_executor_artifact_runs_the_first_frame_compiled() {
+    let scratch = ScratchDir::new("executor-aot");
+    let code_hash = keccak256(EXECUTOR_CODE);
+
+    // The prep lane: compile the injected executor's runtime into a durable
+    // store, keyed by the hash the override gives the injected account.
+    {
+        let store =
+            Arc::new(DurableArtifactStore::new(scratch.path()).expect("the scratch store opens"));
+        let prep = JitBackend::new(RuntimeConfig {
+            enabled: true,
+            store: Some(store),
+            ..Default::default()
+        })
+        .expect("prep backend init");
+        prep.prepare_aot_sync(AotRequest {
+            code_hash,
+            code: Bytes::copy_from_slice(EXECUTOR_CODE),
+            spec_id: EVM2_PRODUCTION_SPEC,
+        })
+        .expect("the executor artifact prepares");
+        assert_eq!(
+            prep.get_compiled(code_hash, EVM2_PRODUCTION_SPEC)
+                .expect("the prepared program is resident")
+                .kind,
+            ProgramKind::Aot,
+            "prep persists an AOT artifact"
+        );
+    }
+
+    // The production shape: a fresh backend over the same durable directory
+    // preloads the artifact at startup — no execution yet.
+    let store = Arc::new(DurableArtifactStore::new(scratch.path()).expect("the store reopens"));
+    let backend = JitBackend::new(RuntimeConfig {
+        enabled: true,
+        blocking: true,
+        store: Some(store),
+        ..Default::default()
+    })
+    .expect("jit backend init");
+    assert_eq!(
+        backend.stats().resident_entries,
+        1,
+        "startup preload seeds the resident map"
+    );
+    assert_eq!(
+        backend
+            .get_compiled(code_hash, EVM2_PRODUCTION_SPEC)
+            .expect("the preloaded artifact is resident")
+            .kind,
+        ProgramKind::Aot
+    );
+
+    let before = backend.stats();
+    let jitted = run_injected_executor(Some(&backend));
+    let after = backend.stats();
+
+    assert_eq!(
+        after.lookup_hits,
+        before.lookup_hits + 1,
+        "the frame's lookup hit the preloaded program: {before:?} -> {after:?}"
+    );
+    assert_eq!(
+        after.lookup_misses, before.lookup_misses,
+        "no lookup fell back to the interpreter (or a compile wait)"
+    );
+    assert_eq!(
+        after.compilations_dispatched, before.compilations_dispatched,
+        "the first frame dispatched zero compilations"
+    );
+    assert_executor_returned_42(&jitted);
+
+    // Verdict identity against the runner-less baseline.
+    let plain = run_injected_executor(None);
+    assert_eq!(jitted.calls.len(), plain.calls.len(), "step count");
+    assert_eq!(jitted.calls[0].verdict, plain.calls[0].verdict, "verdict");
+    assert_eq!(jitted.calls[0].gas_used, plain.calls[0].gas_used, "gas");
+    assert_eq!(jitted.calls[0].output, plain.calls[0].output, "output");
+    assert_eq!(
+        jitted.storage_writes, plain.storage_writes,
+        "sequence writes"
     );
 }

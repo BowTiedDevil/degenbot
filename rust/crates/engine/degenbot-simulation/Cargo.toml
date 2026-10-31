@@ -132,6 +132,15 @@ name = "sim_mode_bench"
 path = "examples/sim_mode_bench.rs"
 required-features = ["evm2-jit"]
 
+# The production executor's AOT prep lane: compiles
+# `contracts/cmd_executor_runtime_bytecode.txt` into the durable artifact store
+# the process-shared JIT holder opens, and proves the artifact loads back as
+# `ProgramKind::Aot`.
+[[example]]
+name = "aot_prepare_executor"
+path = "examples/aot_prepare_executor.rs"
+required-features = ["evm2-jit"]
+
 # The JIT-composition probe: does the production capture (slots + swaps)
 # survive off the Inspector hook, so compiled execution can carry it?
 [[example]]
