@@ -10,8 +10,13 @@
 //! implements revm's shared `DatabaseRef` (revm's `CacheDB` wraps a shared
 //! ref); evm2's `CacheDB` composes over the mutable `Database` trait
 //! (objectified as `DynDatabase`), so this port implements `Database` — the
-//! `RwLock` already provided the interior mutability. The original's metrics
-//! hooks are cutover scope, not pilot scope.
+//! `RwLock` already provided the interior mutability.
+//!
+//! The lab counters (`sim::sim_metrics`) live on this seam for the same reason
+//! they lived on the original's: every call reaching the fallback is BY
+//! DEFINITION a `CacheDB` miss, so the forward is the cold fetch. A fresh
+//! entry served here is the cross-block reuse signal, and the latency split
+//! separates an in-process serve from an RPC-reached one.
 
 use alloy::primitives::map::{AddressHashMap, B256HashMap};
 use alloy::primitives::{Address, B256, KECCAK256_EMPTY};
@@ -21,6 +26,8 @@ use std::sync::Arc;
 use ::evm2::bytecode::Bytecode;
 use ::evm2::evm::{AccountInfo, Database};
 use ::evm2::interpreter::Word;
+
+use crate::sim::sim_metrics;
 
 /// The default per-entry TTL in blocks — the same safety-net value as the
 /// revm-side original (≈ 1 day of mainnet blocks). A safety net, not the
@@ -124,11 +131,16 @@ where
             let guard = self.cache.read();
             if let Some((loaded_block, info)) = guard.accounts.get(address) {
                 if guard.is_fresh(*loaded_block, self.block) {
+                    // Lab: the cross-block warm cache served a `CacheDB` miss
+                    // (reuse signal — no underlying call happened).
+                    sim_metrics::record_basic_warm_hit();
                     return Ok(info.clone());
                 }
             }
         }
-        let info = self.db.get_account(address)?;
+        let (info, dur) = sim_metrics::timed(|| self.db.get_account(address));
+        sim_metrics::record_basic(dur);
+        let info = info?;
         let is_contract = info
             .as_ref()
             .is_some_and(|i| i.code_hash != KECCAK256_EMPTY);
@@ -151,7 +163,9 @@ where
                 }
             }
         }
-        let code = self.db.get_code_by_hash(code_hash)?;
+        let (code, dur) = sim_metrics::timed(|| self.db.get_code_by_hash(code_hash));
+        sim_metrics::record_code(dur);
+        let code = code?;
         let mut guard = self.cache.write();
         guard
             .bytecode
@@ -161,11 +175,16 @@ where
 
     /// Forward — storage is the mutable-per-block row, NEVER cached.
     fn get_storage(&mut self, address: &Address, key: &Word) -> Result<Word, Self::Error> {
-        self.db.get_storage(address, key)
+        // Lab: storage ALWAYS forwards — the latency split sizes the
+        // in-process-served (memo/anchor) vs RPC-reached shares.
+        let (value, dur) = sim_metrics::timed(|| self.db.get_storage(address, key));
+        sim_metrics::record_storage(dur);
+        value
     }
 
     /// Forward — block hashes are per-chain, NEVER cached.
     fn get_block_hash(&mut self, number: &Word) -> Result<B256, Self::Error> {
+        sim_metrics::record_block_hash();
         self.db.get_block_hash(number)
     }
 }

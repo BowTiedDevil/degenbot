@@ -99,6 +99,40 @@ impl<'a> Evm2BlockSimHandle<'a> {
         verify_divergence: bool,
         jit: Option<std::sync::Arc<dyn ::evm2::evm::InterpreterRunner<BaseEvmTypes>>>,
     ) -> Option<Self> {
+        // Lab: build cost (the amortization target — the build re-arms per
+        // dispatch; the fan-out line reports builds/build_ms).
+        let (built, build_dur) = crate::sim::sim_metrics::timed(|| {
+            Self::build_inner(
+                provider,
+                base_fee_next,
+                current_block,
+                block_timestamp,
+                override_params,
+                oracle,
+                warm_cache,
+                storage_memo,
+                verify_divergence,
+                jit,
+            )
+        });
+        crate::sim::sim_metrics::record_handle_build(build_dur);
+        built
+    }
+
+    /// The verbatim pre-lab build body (extracted for the build timer).
+    #[expect(clippy::too_many_arguments)] // mirrors `build` above
+    fn build_inner(
+        provider: &'a AlloyProvider,
+        base_fee_next: u128,
+        current_block: u64,
+        block_timestamp: u64,
+        override_params: &SimulationOverrideParams,
+        oracle: &'a dyn SimAnchorOracle,
+        warm_cache: &Arc<RwLock<WarmCodeCacheInner>>,
+        storage_memo: Option<&Arc<crate::sim::StorageMemo>>,
+        verify_divergence: bool,
+        jit: Option<std::sync::Arc<dyn ::evm2::evm::InterpreterRunner<BaseEvmTypes>>>,
+    ) -> Option<Self> {
         let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(provider, current_block))?;
         let bot_state_db = BotStateDb::new(oracle, blocking)
             .with_storage_memo_opt(storage_memo)

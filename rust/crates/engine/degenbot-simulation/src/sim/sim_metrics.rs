@@ -1,18 +1,21 @@
 //! SIMPIPE T1 lab instrumentation — cold-fetch + handle-build counters.
 //!
 //! Counting seams:
-//! - [`WarmCodeCache`](super::warm_code_cache::WarmCodeCache) forwards — every
-//!   call reaching the underlying `Db` is BY DEFINITION a `CacheDB` miss
-//!   (REVM consults the overlay only after its maps miss). `basic`/`code`
-//!   may still be served from the cross-block warm cache (TTL hit = no
-//!   underlying call = warm), while `storage`/`block_hash` always forward.
+//! - [`WarmCodeCache`](super::evm2::warm_code_cache::WarmCodeCache) forwards —
+//!   every call reaching the underlying `Db` is BY DEFINITION a `CacheDB` miss
+//!   (the engine consults the overlay only after its maps miss).
+//!   `basic`/`code` may still be served from the cross-block warm cache (TTL
+//!   hit = no underlying call = warm), while `storage`/`block_hash` always
+//!   forward. Both the production per-block stack and a frame-replay scratch
+//!   stack put this layer directly under their `CacheDB`, so one seam covers
+//!   every sim path.
 //! - Each forwarded call is split FAST (<100 µs — served by the in-process
 //!   layer, state/anchor-adjacent) vs SLOW (>=100 µs — reached the RPC
 //!   transport). The SLOW totals are the latency the M1 pooled-handle
 //!   parallel-workers pipeline buys back; the FAST share sizes any prefetch
 //!   headroom (direction 1).
-//! - [`BlockSimHandle::build`](super::simulator::BlockSimHandle::build) —
-//!   count + duration (the amortization target: today the build re-arms per
+//! - [`Evm2BlockSimHandle::build`](super::evm2::handle::Evm2BlockSimHandle::build)
+//!   — count + duration (the amortization target: today the build re-arms per
 //!   1-candidate dispatch).
 //!
 //! Transport: plain atomics + a per-fan-out DELTA log line (emitted by
