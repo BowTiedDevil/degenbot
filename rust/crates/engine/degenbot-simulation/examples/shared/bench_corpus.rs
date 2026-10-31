@@ -357,7 +357,7 @@ fn encode_workload(
     d: &Deployments,
     reserves: &Reserves,
     nonce: u64,
-) -> Result<RecoveredTxEnvelope, String> {
+) -> Result<(RecoveredTxEnvelope, PathInfo), String> {
     let (t0, t1) = if d.weth.address < d.token.address {
         (d.weth.address, d.token.address)
     } else {
@@ -387,7 +387,7 @@ fn encode_workload(
             d.weth.address,
         ),
         &EncodeRequest::new(
-            path,
+            path.clone(),
             optimal_input,
             vec![hop1_out, hop2_out],
             vec![optimal_input, hop1_out],
@@ -397,25 +397,35 @@ fn encode_workload(
     .ok_or_else(|| "encode_cmd_stream returned None".to_string())?;
     let data =
         degenbot_executor::composers::encode_execute_call(Address::ZERO, &cmd, U256::ZERO).data;
-    Ok(envelope(
-        DEPLOYER,
-        TxKind::Call(d.executor.address),
-        Bytes::from(data),
-        EXECUTE_GAS,
-        nonce,
+    Ok((
+        envelope(
+            DEPLOYER,
+            TxKind::Call(d.executor.address),
+            Bytes::from(data),
+            EXECUTE_GAS,
+            nonce,
+        ),
+        path,
     ))
 }
 
 /// Build the corpus: deploy, seed, encode — all committed, all untimed.
-pub fn build_corpus(evm: &mut Evm<'_, BaseEvmTypes>) -> Result<Corpus, String> {
+///
+/// Returns the corpus AND the frame's [`PathInfo`] — the hops the frame
+/// executes, which is also the input a path-derived slot prefetch consumes
+/// ([`degenbot_simulation::sim::prefetch`]).
+pub fn build_corpus(evm: &mut Evm<'_, BaseEvmTypes>) -> Result<(Corpus, PathInfo), String> {
     let mut nonce = 0u64;
     let deployments = deploy_contracts(evm, &mut nonce)?;
     let reserves = seed_and_fund(evm, &deployments, &mut nonce)?;
-    let frame = encode_workload(&deployments, &reserves, nonce)?;
-    Ok(Corpus {
-        contracts: deployments.identities(),
-        frame,
-    })
+    let (frame, path) = encode_workload(&deployments, &reserves, nonce)?;
+    Ok((
+        Corpus {
+            contracts: deployments.identities(),
+            frame,
+        },
+        path,
+    ))
 }
 
 /// A fresh production-policy EVM over a funded deployer account. Mirrors

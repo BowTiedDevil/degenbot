@@ -312,7 +312,7 @@ fn post_upgrade_measure(
 /// prep (timed, reported separately), then the timed discard loop.
 fn run_mode(mode: Mode, iters: usize, scratch: &ScratchDir) -> Result<ModeReport, String> {
     let mut evm = bench_evm(false);
-    let corpus = build_corpus(&mut evm)?;
+    let (corpus, _path) = build_corpus(&mut evm)?;
     if mode.is_replay() {
         return run_replay_mode(mode, iters, &corpus, &mut evm);
     }

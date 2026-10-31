@@ -13,6 +13,7 @@ pub mod divergence_probe;
 pub mod evm2;
 pub mod frame_replay;
 pub mod journal_pools;
+pub mod prefetch;
 pub mod sim_metrics;
 pub mod state_override;
 pub mod storage_memo;
@@ -21,6 +22,10 @@ pub use capture::{CapturedSwap, SwapFamily};
 pub use frame_replay::{
     BaseFeeSource, FrameRpcCounter, PredStatus, ReplayFrameError, ReplayableTx, ScratchBlock,
     SequenceReplayError,
+};
+pub use prefetch::{
+    path_prefetch_slots, prefetch_into_memo, prefetch_paths_into_memo, FamilySlotLayout,
+    PrefetchFacts, PrefetchReport, PrefetchSkip, V2SlotIndices, V3SlotIndices,
 };
 pub use state_override::SimulationOverrideParams;
 pub use storage_memo::{StorageMemo, StorageMemoCache};

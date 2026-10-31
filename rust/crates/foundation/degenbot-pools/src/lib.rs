@@ -121,7 +121,7 @@ pub use state::v3_storage_slots::{
     compute_v3_tick_bitmap_word, compute_v3_tick_bitmap_word_from_raw, decode_v3_slot0,
     encode_v3_liquidity_slot, encode_v3_slot0, encode_v3_slot0_fresh, encode_v3_tick_info_slot,
     sign_extend_int16, sign_extend_int24, v3_tick_bitmap_word_slot, v3_tick_mapping_slot,
-    V3Slot0Parts,
+    V3Slot0Parts, V3_LIQUIDITY_SLOT, V3_SLOT0_SLOT,
 };
 
 /// Re-export the V4 storage-slot encoders at the crate root (Tier-3b seeding).
@@ -216,7 +216,7 @@ pub use state::state_history::{
 pub use state::slot_layout::{
     concentrated_liquidity_liquidity_tracked_word, concentrated_liquidity_slot0_tracked_word,
     decode_tick_word, decode_v2_reserves_word, pack_v2_reserves_word, tick_mapping_slot_at_base,
-    tick_word_of, V2ReservesParts, V2_RESERVES_SLOT,
+    tick_word_of, V2ReservesParts, V2_RESERVES_SLOT, V2_TOKEN0_SLOT, V2_TOKEN1_SLOT,
 };
 
 /// The integer tick-range hop/sequence the concentrated-liquidity solve walks,

@@ -33,6 +33,14 @@ const MASK_160: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0xffff_ffff, 0]);
 // V2 pair — `reserves` slot 8
 // ─────────────────────────────────────────────────────────────────────────
 
+/// The V2 pair's `address public token0` slot (`factory` sits at 5, the two
+/// token identities at 6 and 7, the packed reserves word at 8 — verified
+/// against a live canonical mainnet pair).
+pub const V2_TOKEN0_SLOT: u64 = 6;
+
+/// The V2 pair's `address public token1` slot (see [`V2_TOKEN0_SLOT`]).
+pub const V2_TOKEN1_SLOT: u64 = 7;
+
 /// The V2 pair's packed `reserves` slot:
 /// `uint112 reserve0 | uint112 reserve1 | uint32 blockTimestampLast`.
 pub const V2_RESERVES_SLOT: u64 = 8;

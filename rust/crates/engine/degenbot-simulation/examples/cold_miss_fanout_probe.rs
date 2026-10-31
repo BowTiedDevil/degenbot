@@ -80,9 +80,13 @@ use ::evm2::interpreter::Word;
 use ::evm2::{BaseEvmTypes, Evm, EvmFeatures, ExecutionConfig, Precompiles, Version};
 use alloy::consensus::Transaction;
 
+use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm2::handle::EVM2_PRODUCTION_SPEC;
 use degenbot_simulation::sim::evm2::session::{Evm2CaptureMode, Evm2SimSession, Evm2SimStep};
 use degenbot_simulation::sim::evm2::warm_code_cache::{WarmCodeCache, WarmCodeCacheInner};
+use degenbot_simulation::sim::prefetch::{
+    path_prefetch_slots, prefetch_paths_into_memo, FamilySlotLayout, PrefetchFacts, V2SlotIndices,
+};
 use degenbot_simulation::StorageMemo;
 
 #[path = "shared/bench_corpus.rs"]
@@ -196,6 +200,111 @@ impl Snapshot {
             .get(&(address, key))
             .copied()
             .unwrap_or(Word::ZERO)
+    }
+}
+
+// ── The prefetch lane's chain: a snapshot-backed batch transport ──────────
+
+/// One dispatched packet's members, as `(method, params)`.
+type PrefetchPacket = Vec<(String, String)>;
+
+/// The modeled node behind the prefetch lane: answers `eth_getStorageAt` from
+/// the corpus snapshot at the pinned block, charging one modeled round trip per
+/// dispatched packet (a batch is ONE) and recording each packet's member count
+/// and pinned block tag.
+#[derive(Clone)]
+struct StorageTransport {
+    snapshot: Arc<Snapshot>,
+    latency: Duration,
+    packets: Arc<Mutex<Vec<PrefetchPacket>>>,
+}
+
+impl StorageTransport {
+    fn new(snapshot: Arc<Snapshot>, latency: Duration) -> Self {
+        Self {
+            snapshot,
+            latency,
+            packets: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn packets(&self) -> Vec<PrefetchPacket> {
+        self.packets.lock().expect("packet recorder").clone()
+    }
+
+    fn provider(&self) -> AlloyProvider {
+        let client = alloy::rpc::client::RpcClient::new(self.clone(), true);
+        let root: alloy::providers::RootProvider = alloy::providers::RootProvider::new(client);
+        AlloyProvider::from_provider(Arc::new(root))
+    }
+}
+
+impl tower::Service<alloy::rpc::json_rpc::RequestPacket> for StorageTransport {
+    type Response = alloy::rpc::json_rpc::ResponsePacket;
+    type Error = alloy::transports::TransportError;
+    type Future = alloy::transports::TransportFut<'static>;
+
+    fn poll_ready(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: alloy::rpc::json_rpc::RequestPacket) -> Self::Future {
+        use alloy::rpc::json_rpc::{
+            RequestPacket, Response, ResponsePacket, ResponsePayload, SerializedRequest,
+        };
+        let transport = self.clone();
+        Box::pin(async move {
+            let members = |req: &SerializedRequest| -> (String, String) {
+                (
+                    req.method().to_string(),
+                    req.params()
+                        .map_or_else(String::new, |p| p.get().to_string()),
+                )
+            };
+            let answer = |req: &SerializedRequest| -> Response {
+                let params: serde_json::Value = serde_json::from_str(
+                    req.params().expect("a storage read carries params").get(),
+                )
+                .expect("params are JSON");
+                let address = params[0].as_str().expect("the address param");
+                let slot = params[1].as_str().expect("the slot param");
+                let address = address
+                    .parse::<Address>()
+                    .expect("the node decodes the address it was asked for");
+                let slot = U256::from_str_radix(slot.trim_start_matches("0x"), 16)
+                    .expect("the slot is a hex quantity");
+                let value = transport.snapshot.slot(address, slot);
+                let result = serde_json::Value::String(format!("0x{value:064x}"));
+                Response {
+                    id: req.id().clone(),
+                    payload: ResponsePayload::Success(
+                        serde_json::value::to_raw_value(&result).expect("a JSON string"),
+                    ),
+                }
+            };
+            std::thread::sleep(transport.latency);
+            Ok(match req {
+                RequestPacket::Single(one) => {
+                    transport
+                        .packets
+                        .lock()
+                        .expect("packet recorder")
+                        .push(vec![members(&one)]);
+                    ResponsePacket::Single(answer(&one))
+                }
+                RequestPacket::Batch(many) => {
+                    transport
+                        .packets
+                        .lock()
+                        .expect("packet recorder")
+                        .push(many.iter().map(members).collect());
+                    ResponsePacket::Batch(many.iter().map(answer).collect())
+                }
+            })
+        })
     }
 }
 
@@ -889,8 +998,8 @@ fn main() {
 
     // ── setup: the corpus, plus a DISJOINT view corpus ────────────────────
     let mut setup = bench_evm(false);
-    let corpus = match build_corpus(&mut setup) {
-        Ok(corpus) => corpus,
+    let (corpus, corpus_path) = match build_corpus(&mut setup) {
+        Ok(built) => built,
         Err(e) => {
             println!("corpus build failed: {e}");
             return;
@@ -1329,8 +1438,346 @@ fn main() {
         reference[0].verdict
     );
 
+    // ── leg 10: path-derived slot prefetch into the per-anchor memo ───────
+    println!(
+        "\n[10] path-derived slot prefetch: ONE batch read at the anchor, seeded before candidate #1"
+    );
+    let Some(weth) = corpus.contracts.get(3).map(|c| c.address) else {
+        println!("  FAILED: corpus contract order changed");
+        return;
+    };
+    // The corpus's PoolManager stub stores no ERC6909 balances, so those two
+    // executor slots are not named here (a production session always names it);
+    // the frame never reads them either way.
+    let facts = PrefetchFacts {
+        weth_address: weth,
+        pool_manager_address: None,
+        warmup: degenbot_executor::compute_simulation_warmup_slots(executor, weth),
+    };
+    // The corpus's pools are the harness `Pair` stub, whose layout is
+    // token0@0 / token1@1 / reserves@2 — the canonical Uniswap pair (6/7/8) is
+    // measured separately below.
+    let harness_layout = FamilySlotLayout {
+        v2: V2SlotIndices {
+            token0: 0,
+            token1: 1,
+            reserves: 2,
+        },
+        ..FamilySlotLayout::PRODUCTION
+    };
+    let paths = || std::iter::once(&corpus_path);
+    let derived = path_prefetch_slots(paths(), &harness_layout, &facts);
+    for (address, slot) in &derived {
+        println!("    derived slot {}[{slot:#x}]", short(*address));
+    }
+
+    let transport = StorageTransport::new(Arc::clone(&snapshot), latency);
+    let provider = transport.provider();
+    let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+    else {
+        println!("  FAILED: multi-thread runtime");
+        return;
+    };
+    let prefetch_anchor = BENCH_BLOCK + 5;
+    let prefetch_inner = WarmCodeCacheInner::shared_default();
+    let memo = {
+        let cache = prefetch_inner.read();
+        cache.storage_memo_for(prefetch_anchor)
+    };
+    let report = {
+        let _guard = runtime.enter();
+        prefetch_paths_into_memo(
+            &provider,
+            prefetch_anchor,
+            paths(),
+            &harness_layout,
+            &facts,
+            &memo,
+        )
+    };
+    let packets = transport.packets();
+    println!(
+        "  derived {} slots from the corpus path (+executor fixed slots); prefetch: {} packet(s), {} member(s), {} seeded, skip {:?}",
+        derived.len(),
+        packets.len(),
+        packets.first().map_or(0, Vec::len),
+        report.seeded,
+        report.skipped
+    );
+    assert!(
+        report.skipped.is_none(),
+        "the prefetch degraded: {:?}",
+        report.skipped
+    );
+    assert_eq!(report.seeded, derived.len(), "every derived slot is seeded");
+    assert_eq!(
+        packets.len(),
+        1,
+        "the prefetch is ONE dispatched batch round trip"
+    );
+    assert_eq!(
+        packets[0].len(),
+        derived.len(),
+        "one member per derived slot"
+    );
+    assert!(
+        packets[0]
+            .iter()
+            .all(|(method, _)| method == "eth_getStorageAt"),
+        "the batch carries only storage reads"
+    );
+    assert!(
+        packets[0]
+            .iter()
+            .all(|(_, params)| params.contains(&format!("{prefetch_anchor:#x}"))),
+        "every member pins the fan-out's anchor"
+    );
+
+    // BEFORE: candidate #1's own cold chain (fresh CacheDB, no memo) — the
+    // steady-state cost this lane attacks.
+    let before = match run_sync_series(
+        &snapshot,
+        std::slice::from_ref(&corpus.frame),
+        latency,
+        true,
+    ) {
+        Ok(runs) => runs,
+        Err(e) => {
+            println!("  FAILED: {e}");
+            return;
+        }
+    };
+    // AFTER: the same fan-out with the anchor's memo prefetched, then the next
+    // fan-out at the same anchor.
+    let after_first = match run_sync_series_anchored(
+        &snapshot,
+        std::slice::from_ref(&corpus.frame),
+        latency,
+        prefetch_anchor,
+        &prefetch_inner,
+    ) {
+        Ok(runs) => runs,
+        Err(e) => {
+            println!("  FAILED: {e}");
+            return;
+        }
+    };
+    let stats_after_first = {
+        let cache = prefetch_inner.read();
+        cache.storage_memo_for(prefetch_anchor).stats()
+    };
+    let after_second = match run_sync_series_anchored(
+        &snapshot,
+        std::slice::from_ref(&corpus.frame),
+        latency,
+        prefetch_anchor,
+        &prefetch_inner,
+    ) {
+        Ok(runs) => runs,
+        Err(e) => {
+            println!("  FAILED: {e}");
+            return;
+        }
+    };
+    let (covered, uncovered) = stats_after_first;
+    report_series("fan-out 1 (no prefetch)", &before);
+    report_series("fan-out 1 (prefetched)", &after_first);
+    report_series("fan-out 2 at the same anchor (prefetched)", &after_second);
+    println!(
+        "  storage forwards per fan-out: {} -> {} ({} of {} slots covered up front, {} left to the chain)",
+        before[0].storage, after_first[0].storage, covered, covered + uncovered, uncovered
+    );
+    assert!(
+        after_first[0].storage < before[0].storage,
+        "the prefetch must cut candidate #1's storage forwards"
+    );
+    assert_eq!(
+        after_first[0].storage, uncovered,
+        "every uncovered slot is exactly one forwarded read"
+    );
+    assert_eq!(
+        covered + uncovered,
+        before[0].storage,
+        "the covered set is the un-prefetched cold set's prefix"
+    );
+    assert_eq!(
+        after_second[0].storage, 0,
+        "the anchor's second fan-out pays no storage forward"
+    );
+    assert_eq!(
+        before[0].verdict, after_first[0].verdict,
+        "the prefetch changed the settled verdict"
+    );
+    assert_eq!(
+        after_first[0].verdict, after_second[0].verdict,
+        "the prefetch changed the settled verdict between fan-outs"
+    );
+    println!(
+        "  verdict identity prefetch == no-prefetch: {:?}",
+        after_first[0].verdict
+    );
+
+    // The PRODUCTION layout on this stub corpus: the canonical V2 indices
+    // (6/7/8) miss the stub Pair's words; only the executor's WETH balanceOf
+    // slot lands. Reported, plus the relational claim that the production table
+    // covers less of a stubbed corpus.
+    let production_anchor = BENCH_BLOCK + 6;
+    let production_inner = WarmCodeCacheInner::shared_default();
+    let production_memo = {
+        let cache = production_inner.read();
+        cache.storage_memo_for(production_anchor)
+    };
+    let production_derived = path_prefetch_slots(paths(), &FamilySlotLayout::PRODUCTION, &facts);
+    let production_report = {
+        let _guard = runtime.enter();
+        prefetch_paths_into_memo(
+            &provider,
+            production_anchor,
+            paths(),
+            &FamilySlotLayout::PRODUCTION,
+            &facts,
+            &production_memo,
+        )
+    };
+    let production_run = match run_sync_series_anchored(
+        &snapshot,
+        std::slice::from_ref(&corpus.frame),
+        latency,
+        production_anchor,
+        &production_inner,
+    ) {
+        Ok(runs) => runs,
+        Err(e) => {
+            println!("  FAILED: {e}");
+            return;
+        }
+    };
+    let production_stats = {
+        let cache = production_inner.read();
+        cache.storage_memo_for(production_anchor).stats()
+    };
+    println!(
+        "  production layout (V2 6/7/8) on the stub corpus: {} derived / {} seeded, {} hit -> forwards {} (the stub Pair layout is 0/1/2)",
+        production_derived.len(),
+        production_report.seeded,
+        production_stats.0,
+        production_run[0].storage
+    );
+    assert_eq!(
+        production_run[0].storage + production_stats.0,
+        before[0].storage,
+        "the production-layout run's covered set plus its forwards is the cold set"
+    );
+    assert!(
+        production_stats.0 < covered,
+        "the canonical V2 indices cover less of the stub corpus than the stub's own layout"
+    );
+    assert_eq!(
+        production_run[0].verdict, before[0].verdict,
+        "a sparser prefetch changed the settled verdict"
+    );
+
+    // ── stale anchor: a prefetch at N never serves a fan-out at N+1 ───────
+    let moved_memo = {
+        let cache = prefetch_inner.read();
+        cache.storage_memo_for(prefetch_anchor + 1)
+    };
+    assert_eq!(
+        moved_memo.stats(),
+        (0, 0),
+        "the moved anchor mints an empty memo"
+    );
+    for (address, slot) in &derived {
+        assert!(
+            !moved_memo.holds(*address, *slot),
+            "a prefetch at {prefetch_anchor} must not appear at {}",
+            prefetch_anchor + 1
+        );
+    }
+    let moved_run = match run_sync_series_anchored(
+        &snapshot,
+        std::slice::from_ref(&corpus.frame),
+        latency,
+        prefetch_anchor + 1,
+        &prefetch_inner,
+    ) {
+        Ok(runs) => runs,
+        Err(e) => {
+            println!("  FAILED: {e}");
+            return;
+        }
+    };
+    report_series(
+        &format!(
+            "anchor {} (the prefetched memo is retired)",
+            prefetch_anchor + 1
+        ),
+        &moved_run,
+    );
+    assert_eq!(
+        moved_run[0].storage, before[0].storage,
+        "the moved anchor pays the full cold chain — no seeded entry carried"
+    );
+    // The shadow check: prefetch against the settled chain at N, then run at
+    // N+1 against a BUMPED chain. A leaked entry would settle differently from
+    // a memo-less cold run over the same bumped chain.
+    let shadow_inner = WarmCodeCacheInner::shared_default();
+    let shadow_anchor = BENCH_BLOCK + 7;
+    let shadow_memo = {
+        let cache = shadow_inner.read();
+        cache.storage_memo_for(shadow_anchor)
+    };
+    let _shadow_report = {
+        let _guard = runtime.enter();
+        prefetch_paths_into_memo(
+            &provider,
+            shadow_anchor,
+            paths(),
+            &harness_layout,
+            &facts,
+            &shadow_memo,
+        )
+    };
+    let bumped_chain = Arc::new(bumped(&snapshot));
+    let shadow_run = match run_sync_series_anchored(
+        &bumped_chain,
+        std::slice::from_ref(&corpus.frame),
+        latency,
+        shadow_anchor + 1,
+        &shadow_inner,
+    ) {
+        Ok(runs) => runs,
+        Err(e) => {
+            println!("  FAILED: {e}");
+            return;
+        }
+    };
+    let bumped_reference = match run_sync_series(
+        &bumped_chain,
+        std::slice::from_ref(&corpus.frame),
+        latency,
+        true,
+    ) {
+        Ok(runs) => runs,
+        Err(e) => {
+            println!("  FAILED: {e}");
+            return;
+        }
+    };
+    assert_eq!(
+        shadow_run[0].verdict, bumped_reference[0].verdict,
+        "the retired memo shadowed the moved anchor's value"
+    );
+    println!(
+        "  no stale shadow: the anchor move settles like a memo-less cold run ({:?})",
+        bumped_reference[0].verdict
+    );
+
     // ── verdict identity: the cold path must not change the settled result ─
-    println!("\n[10] verdict identity");
+    println!("\n[11] verdict identity");
     let mut ok = true;
     if let (Ok(a), Ok(b)) = (
         run_sync_series(

@@ -740,6 +740,42 @@ pub fn dispatch_profitable_results(
                     let cache = evm2_warm_cache.read();
                     cache.storage_memo_for(sim_block)
                 };
+                // Path-derived prefetch: the candidates name their pools before
+                // the sim runs, so the slots the frame is guaranteed to read
+                // (V2 token identities + reserves, V3 slot0/liquidity, V4 pool
+                // state words, the executor's fixed slots) are computable HERE
+                // and readable in ONE batch round trip at the fallback's own
+                // anchor. Seeded into the anchor's memo BEFORE the first
+                // candidate, the frame's serial cold chain finds the entries
+                // memoized instead of paying one round trip per slot.
+                //
+                // The lane never fails the fan-out: no ambient runtime or a
+                // failed batch leaves the memo as it was, and the frame runs the
+                // un-prefetched path (see `sim::prefetch`'s degrade contract).
+                // A warm memo — every derived entry already known — dispatches
+                // nothing, so the anchor's second fan-out pays no batch.
+                let prefetch = degenbot_simulation::sim::prefetch::prefetch_paths_into_memo(
+                    ctx.provider,
+                    sim_block,
+                    candidates.iter().map(|c| &c.path_info),
+                    &degenbot_simulation::sim::prefetch::FamilySlotLayout::PRODUCTION,
+                    &degenbot_simulation::sim::prefetch::PrefetchFacts {
+                        weth_address: ctx.weth_address,
+                        pool_manager_address: Some(ctx.pool_manager_address),
+                        warmup: ctx.warmup,
+                    },
+                    &storage_memo,
+                );
+                diag!(
+                    domain = sim,
+                    current_block,
+                    anchor = sim_block,
+                    derived = prefetch.derived,
+                    requested = prefetch.requested,
+                    seeded = prefetch.seeded,
+                    skipped = ?prefetch.skipped,
+                    "storage prefetch"
+                );
                 match degenbot_simulation::sim::evm2::handle::Evm2BlockSimHandle::build(
                     ctx.provider,
                     ctx.base_fee_next,
@@ -1503,6 +1539,219 @@ mod tests {
                 })
             }
         }
+    }
+
+    /// A scripted transport that serves empty accounts/storage (like
+    /// [`empty_transport`]) AND records the storage **batch** packets it is
+    /// dispatched — the prefetch lane's observable wire signature. The sim's own
+    /// slot reads arrive as single requests, so a batch of `eth_getStorageAt`
+    /// members is the lane and nothing else.
+    #[expect(clippy::expect_used)] // test-only scripted transport
+    mod prefetch_transport {
+        use super::*;
+        use alloy::providers::RootProvider;
+        use alloy::rpc::client::RpcClient;
+        use alloy::rpc::json_rpc::{
+            ErrorPayload, RequestPacket, Response, ResponsePacket, ResponsePayload,
+            SerializedRequest,
+        };
+        use alloy::transports::{TransportError, TransportFut};
+        use serde_json::value::{to_raw_value, RawValue};
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        /// The lane's wire signature: dispatched storage-batch packets and the
+        /// total members they carried.
+        #[derive(Clone, Default)]
+        pub struct Recorder {
+            pub storage_batches: Arc<AtomicU64>,
+            pub storage_members: Arc<AtomicU64>,
+        }
+
+        impl Recorder {
+            pub fn storage_batches(&self) -> u64 {
+                self.storage_batches.load(Ordering::Relaxed)
+            }
+
+            pub fn storage_members(&self) -> u64 {
+                self.storage_members.load(Ordering::Relaxed)
+            }
+        }
+
+        #[derive(Clone)]
+        struct RecordingTransport {
+            recorder: Recorder,
+        }
+
+        pub fn provider(recorder: &Recorder) -> AlloyProvider {
+            let client = RpcClient::new(
+                RecordingTransport {
+                    recorder: recorder.clone(),
+                },
+                true,
+            );
+            let root: RootProvider = RootProvider::new(client);
+            AlloyProvider::from_provider(
+                Arc::new(root) as Arc<dyn alloy::providers::Provider<alloy::network::Ethereum>>
+            )
+        }
+
+        fn success(value: &str) -> ResponsePayload {
+            let raw: Box<RawValue> =
+                to_raw_value(&serde_json::Value::String(value.into())).expect("valid JSON string");
+            ResponsePayload::Success(raw)
+        }
+
+        impl tower::Service<RequestPacket> for RecordingTransport {
+            type Response = ResponsePacket;
+            type Error = TransportError;
+            type Future = TransportFut<'static>;
+
+            fn poll_ready(
+                &mut self,
+                _cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Result<(), Self::Error>> {
+                std::task::Poll::Ready(Ok(()))
+            }
+
+            fn call(&mut self, req: RequestPacket) -> Self::Future {
+                let recorder = self.recorder.clone();
+                Box::pin(async move {
+                    let respond = |req: &SerializedRequest| -> Response {
+                        let payload = match req.method() {
+                            "eth_getBalance" | "eth_getTransactionCount" => success("0x0"),
+                            "eth_getCode" => success("0x"),
+                            "eth_getStorageAt" => success(&format!("0x{:064x}", 0)),
+                            other => {
+                                return Response {
+                                    id: req.id().clone(),
+                                    payload: ResponsePayload::Failure(ErrorPayload {
+                                        code: -32601,
+                                        message: format!("method not found: {other}").into(),
+                                        data: None,
+                                    }),
+                                };
+                            }
+                        };
+                        Response {
+                            id: req.id().clone(),
+                            payload,
+                        }
+                    };
+                    Ok(match req {
+                        RequestPacket::Single(r) => ResponsePacket::Single(respond(&r)),
+                        RequestPacket::Batch(rs) => {
+                            if rs.iter().all(|r| r.method() == "eth_getStorageAt") {
+                                recorder.storage_batches.fetch_add(1, Ordering::Relaxed);
+                                recorder
+                                    .storage_members
+                                    .fetch_add(rs.len() as u64, Ordering::Relaxed);
+                            }
+                            ResponsePacket::Batch(rs.iter().map(respond).collect())
+                        }
+                    })
+                })
+            }
+        }
+    }
+
+    /// The fan-out's prefetch lane, observed on the wire: ONE storage batch at
+    /// the fan-out's anchor carrying the batch's derivable slot set, and no
+    /// second batch when the next fan-out at the SAME anchor finds the memo
+    /// warm. The two fan-outs' outcomes are identical — the lane changes the
+    /// reads, never the verdict.
+    #[expect(clippy::expect_used)] // test-only: runtime build + thread join
+    #[test]
+    fn the_fanout_prefetches_the_anchors_slot_set_once() {
+        use prefetch_transport::Recorder;
+
+        let recorder = Recorder::default();
+        let provider = prefetch_transport::provider(&recorder);
+        let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+        let pool_divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
+        let fot_registry = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
+        let bot_state = Arc::new(StateLock::new(BotState::new()));
+        let warm = degenbot_simulation::WarmCodeCacheInner::shared_default();
+
+        let cands = vec![
+            candidate(70, 1_000_000_000_000_000_000u128, 1_000),
+            candidate(71, 1_000_000_000_000_000_000u128, 1_000),
+        ];
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("multi-thread runtime");
+        let (first, first_batches, first_members, second, second_batches) =
+            std::thread::spawn(move || {
+                rt.block_on(async {
+                    let mut the_ctx = ctx(&provider);
+                    the_ctx.runtime_bytecode = Bytes::from_static(&[0xfe]); // INVALID
+                    let first = dispatch_profitable_results(
+                        cands.clone(),
+                        &the_ctx,
+                        &suppression,
+                        100,
+                        0,
+                        &pool_divergence,
+                        &fot_registry,
+                        Some(Arc::clone(&bot_state)),
+                        Some(Arc::clone(&warm)),
+                    );
+                    let first_batches = recorder.storage_batches();
+                    let first_members = recorder.storage_members();
+                    let second = dispatch_profitable_results(
+                        cands,
+                        &the_ctx,
+                        &suppression,
+                        100,
+                        0,
+                        &pool_divergence,
+                        &fot_registry,
+                        Some(bot_state),
+                        Some(warm),
+                    );
+                    (
+                        first,
+                        first_batches,
+                        first_members,
+                        second,
+                        recorder.storage_batches(),
+                    )
+                })
+            })
+            .join()
+            .expect("fan-out thread");
+
+        // The batch's two candidates both route the same two V2 pools: three
+        // path words per pool plus the executor's three fixed slots.
+        assert_eq!(
+            first_batches, 1,
+            "the fan-out pays exactly ONE storage batch before candidate #1"
+        );
+        assert_eq!(
+            first_members, 11,
+            "the batch carries the derived set: 2 pools x 3 words + 2 pool WETH balances + 3 executor slots"
+        );
+        assert_eq!(
+            second_batches, first_batches,
+            "a fan-out at the SAME anchor finds the memo warm and dispatches no batch"
+        );
+
+        // Verdict identity at the dispatch seam: prefetch changes the reads,
+        // never the outcome.
+        assert_eq!(first.candidate_count, second.candidate_count);
+        assert_eq!(first.fail_count, second.fail_count);
+        assert_eq!(first.exception_count, second.exception_count);
+        assert_eq!(
+            first.gas_profitable.len() + first.gas_unprofitable.len(),
+            second.gas_profitable.len() + second.gas_unprofitable.len()
+        );
+        assert_eq!(
+            first.fail_buckets.get("empty"),
+            second.fail_buckets.get("empty")
+        );
+        assert_eq!(first.fail_buckets.get("empty"), 2);
     }
 
     /// The end-to-end engine parity run (ADR-089): the full dispatch fan-out

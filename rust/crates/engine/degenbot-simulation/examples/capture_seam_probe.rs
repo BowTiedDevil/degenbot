@@ -67,7 +67,7 @@ fn swap_lines(swaps: &[CapturedSwap]) -> Vec<String> {
 /// Reference configuration: the production inspector on the interpreter.
 fn run_inspector_config() -> Result<ConfigReport, String> {
     let mut evm = bench_evm(true);
-    let corpus = build_corpus(&mut evm)?;
+    let (corpus, _path) = build_corpus(&mut evm)?;
     // The corpus build runs through the inspector too — flush its capture
     // so the reference holds only the timed runs' sets.
     let inspector = evm
@@ -132,7 +132,7 @@ fn run_inspector_config() -> Result<ConfigReport, String> {
 /// swaps from result logs. `jit` installs the blocking runner.
 fn run_seam_config(name: &'static str, jit: bool) -> Result<ConfigReport, String> {
     let mut evm = bench_evm(false);
-    let corpus = build_corpus(&mut evm)?;
+    let (corpus, _path) = build_corpus(&mut evm)?;
     if corpus.contracts.is_empty() {
         return Err("corpus deploys no contracts".to_string());
     }

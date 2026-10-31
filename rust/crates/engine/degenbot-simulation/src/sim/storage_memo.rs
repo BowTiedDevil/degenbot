@@ -68,6 +68,27 @@ impl StorageMemo {
         self.inner.lock().map.insert((address, index), value);
     }
 
+    /// Seed an entry with a value the caller read AT this memo's anchor — the
+    /// prefetch lane's intake (see [`crate::sim::prefetch`]).
+    ///
+    /// The anchoring contract is the caller's to keep: a seeded entry is
+    /// indistinguishable from one the fallback learned here, so it must be the
+    /// node's answer at the anchor this memo is installed for. A value read at
+    /// any other height belongs in that height's memo (the owner mints one per
+    /// anchor), never in this one.
+    pub fn seed(&self, address: Address, index: U256, value: StorageValue) {
+        self.put(address, index, value);
+    }
+
+    /// Whether this memo already holds `(address, index)` — the prefetch's
+    /// skip-if-known gate. A pure predicate: it moves neither counter, so a
+    /// prefetch that defers to a warm memo leaves the hit/miss profile exactly
+    /// as the run itself shaped it.
+    #[must_use]
+    pub fn holds(&self, address: Address, index: U256) -> bool {
+        self.inner.lock().map.contains_key(&(address, index))
+    }
+
     /// `(hits, misses)` - the lab counters for the probe logs.
     #[must_use]
     pub fn stats(&self) -> (u64, u64) {
@@ -201,6 +222,35 @@ mod tests {
             Some(StorageValue::from(42u64)),
             "the retired memo keeps only its own anchor's values"
         );
+    }
+
+    /// A seeded entry — the prefetch lane's intake — serves the read exactly as
+    /// a fallback-learned entry does: no forward, one hit.
+    #[test]
+    fn a_seeded_entry_serves_the_read() {
+        let memo = StorageMemo::new();
+        assert!(!memo.holds(Address::ZERO, SLOT));
+        memo.seed(Address::ZERO, SLOT, StorageValue::from(42u64));
+        assert!(
+            memo.holds(Address::ZERO, SLOT),
+            "the seed installs the entry"
+        );
+        assert_eq!(
+            memo.get(Address::ZERO, SLOT),
+            Some(StorageValue::from(42u64))
+        );
+        assert_eq!(memo.stats(), (1, 0), "a served seed is a hit, never a miss");
+    }
+
+    /// `holds` is a pure predicate: the prefetch's skip-if-known gate must not
+    /// perturb the hit/miss profile the run itself shapes.
+    #[test]
+    fn holds_does_not_move_the_counters() {
+        let memo = StorageMemo::new();
+        memo.seed(Address::ZERO, SLOT, StorageValue::from(7u64));
+        assert!(memo.holds(Address::ZERO, SLOT));
+        assert!(!memo.holds(Address::ZERO, U256::from(99u64)));
+        assert_eq!(memo.stats(), (0, 0), "the gate is a predicate, not a read");
     }
 
     /// A reorg rewind lowers the anchor: the memo filled at the rewound-from

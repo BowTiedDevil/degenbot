@@ -7,7 +7,7 @@
 use alloy::consensus::{Header as ConsensusHeader, TxEnvelope};
 use alloy::eips::{BlockId, BlockNumberOrTag};
 use alloy::network::Ethereum;
-use alloy::primitives::{Address, Bytes, B256, U256, U64};
+use alloy::primitives::{Address, Bytes, StorageValue, B256, U256, U64};
 use alloy::providers::{ParamsWithBlock, Provider, ProviderBuilder};
 use alloy::rpc::client::{BatchRequest, ClientBuilder};
 use alloy::rpc::json_rpc::{RequestPacket, ResponsePacket};
@@ -1341,6 +1341,263 @@ mod account_read_batch_tests {
     }
 }
 
+/// Tests for the one-round-trip batched storage read
+/// ([`AlloyProvider::get_storage_batch_at`]): the batch shape, its
+/// byte-identical parameter parity with the serial reads, its per-member
+/// decode, its failure classification, and the empty-input short circuit.
+#[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
+mod storage_batch_tests {
+    use super::*;
+    use alloy::providers::RootProvider;
+    use alloy::rpc::json_rpc::{Response, ResponsePayload, SerializedRequest};
+    use alloy::transports::{TransportError, TransportErrorKind, TransportFut};
+    use serde_json::value::to_raw_value;
+    use std::sync::Mutex;
+    use std::task::{Context, Poll};
+
+    /// One dispatched packet, recorded as its `(method, params)` members —
+    /// one entry per `call`, so a JSON-RPC batch is ONE entry.
+    type Packet = Vec<(String, String)>;
+
+    /// The stub transport's answer for a slot: the slot's own value plus one,
+    /// so distinct slots answer distinctly and a misordered batch is visible.
+    fn answer_for(slot: &str) -> String {
+        let parsed = U256::from_str_radix(slot.trim_start_matches("0x"), 16)
+            .expect("the stub's answer derives from the requested slot");
+        format!("0x{:064x}", parsed + U256::ONE)
+    }
+
+    /// A storage-serving transport that records every packet it is dispatched
+    /// (`fail` answers with a transport error instead).
+    #[derive(Debug, Clone)]
+    struct StorageStub {
+        packets: Arc<Mutex<Vec<Packet>>>,
+        fail: bool,
+    }
+
+    impl StorageStub {
+        fn new() -> Self {
+            Self {
+                packets: Arc::new(Mutex::new(Vec::new())),
+                fail: false,
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                fail: true,
+                ..Self::new()
+            }
+        }
+
+        fn packets(&self) -> Vec<Packet> {
+            self.packets.lock().unwrap().clone()
+        }
+
+        fn clear(&self) {
+            self.packets.lock().unwrap().clear();
+        }
+
+        fn provider(&self) -> AlloyProvider {
+            let client = ClientBuilder::default().transport(self.clone(), true);
+            let root: RootProvider = RootProvider::new(client);
+            AlloyProvider::from_provider(Arc::new(root))
+        }
+    }
+
+    /// A dispatched request's identity in wire form.
+    fn member(req: &SerializedRequest) -> (String, String) {
+        (
+            req.method().to_string(),
+            req.params()
+                .map_or_else(String::new, |p| p.get().to_string()),
+        )
+    }
+
+    /// The stub's answer for one request: the slot's derived value.
+    fn answer(req: &SerializedRequest) -> Response {
+        assert_eq!(
+            req.method(),
+            "eth_getStorageAt",
+            "a storage prefetch must issue only eth_getStorageAt"
+        );
+        let params: serde_json::Value =
+            serde_json::from_str(req.params().expect("a storage read carries params").get())
+                .expect("params are JSON");
+        let slot = params[1]
+            .as_str()
+            .expect("the member's second param is the slot");
+        let result = serde_json::Value::String(answer_for(slot));
+        Response {
+            id: req.id().clone(),
+            payload: ResponsePayload::Success(to_raw_value(&result).unwrap()),
+        }
+    }
+
+    impl tower::Service<RequestPacket> for StorageStub {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            let stub = self.clone();
+            Box::pin(async move {
+                let recorded: Packet = match &req {
+                    RequestPacket::Single(one) => vec![member(one)],
+                    RequestPacket::Batch(many) => many.iter().map(member).collect(),
+                };
+                stub.packets.lock().unwrap().push(recorded);
+                if stub.fail {
+                    return Err(TransportErrorKind::custom_str("stub transport down"));
+                }
+                Ok(match req {
+                    RequestPacket::Single(one) => ResponsePacket::Single(answer(&one)),
+                    RequestPacket::Batch(many) => {
+                        ResponsePacket::Batch(many.iter().map(answer).collect())
+                    }
+                })
+            })
+        }
+    }
+
+    /// The batched read answers the serial reads' values from ONE dispatched
+    /// packet whose members are byte-identical (method + params, block tag
+    /// included) to the serial path's requests.
+    #[tokio::test]
+    async fn get_storage_batch_at_is_one_batch_round_trip_identical_to_serial_reads() {
+        let stub = StorageStub::new();
+        let provider = stub.provider();
+        let address = Address::from([0x11; 20]);
+        let block = 0x1234;
+        let slots = [
+            (address, U256::from(6u64)),
+            (address, U256::from(7u64)),
+            (address, U256::from(8u64)),
+        ];
+
+        let mut serial = Vec::new();
+        for (address, slot) in slots {
+            serial.push(
+                provider
+                    .get_storage_at(&address, slot, Some(block))
+                    .await
+                    .unwrap(),
+            );
+        }
+        let serial_packets = stub.packets();
+        assert_eq!(
+            serial_packets.len(),
+            3,
+            "the serial path is three round trips"
+        );
+        stub.clear();
+
+        let batched = provider.get_storage_batch_at(&slots, block).await.unwrap();
+        assert_eq!(
+            batched,
+            serial
+                .into_iter()
+                .map(|word| StorageValue::from_be_slice(word.as_slice()))
+                .collect::<Vec<_>>(),
+            "the batch must answer with the serial reads' values"
+        );
+
+        let packets = stub.packets();
+        assert_eq!(
+            packets.len(),
+            1,
+            "one storage prefetch = ONE dispatched batch packet"
+        );
+        let batch = &packets[0];
+        assert_eq!(batch.len(), 3, "the batch carries one member per slot");
+        let serial_members: Packet = serial_packets.into_iter().flatten().collect();
+        assert_eq!(
+            *batch, serial_members,
+            "every batch member must be byte-identical (method + params) to its serial read"
+        );
+        assert!(
+            batch
+                .iter()
+                .all(|(_, params)| params.contains(&format!("{block:#x}"))),
+            "every member pins the same block tag: {batch:?}"
+        );
+    }
+
+    /// Each member's wire form decodes exactly as the serial read's does, and
+    /// the answers come back in the input order.
+    #[tokio::test]
+    async fn get_storage_batch_at_decodes_each_member_wire_form() {
+        let stub = StorageStub::new();
+        let provider = stub.provider();
+        let first = Address::from([0x22; 20]);
+        let second = Address::from([0x33; 20]);
+        let slots = [
+            (first, U256::from(0u64)),
+            (second, U256::from(4u64)),
+            (first, U256::from(8u64)),
+        ];
+
+        let values = provider.get_storage_batch_at(&slots, 7).await.unwrap();
+        assert_eq!(
+            values,
+            vec![
+                StorageValue::from(1u64),
+                StorageValue::from(5u64),
+                StorageValue::from(9u64),
+            ],
+            "each member's own slot determines its value, in input order"
+        );
+        assert_eq!(stub.packets().len(), 1);
+    }
+
+    /// The batch's own transport failure classifies as the same
+    /// [`ProviderError`] variant the serial read produced.
+    #[tokio::test]
+    async fn get_storage_batch_at_classifies_failures_like_the_serial_path() {
+        let stub = StorageStub::failing();
+        let provider = stub.provider();
+        let address = Address::from([0x44; 20]);
+
+        let serial = provider
+            .get_storage_at(&address, U256::from(8u64), Some(7))
+            .await
+            .unwrap_err();
+        let batched = provider
+            .get_storage_batch_at(&[(address, U256::from(8u64))], 7)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(serial, ProviderError::RpcError { code: -1, .. }),
+            "serial baseline: {serial}"
+        );
+        assert!(
+            matches!(batched, ProviderError::RpcError { code: -1, .. }),
+            "batched: {batched}"
+        );
+    }
+
+    /// An empty slot set dispatches nothing — no empty-batch RPC.
+    #[tokio::test]
+    async fn get_storage_batch_at_empty_dispatches_nothing() {
+        let stub = StorageStub::new();
+        let provider = stub.provider();
+        assert!(provider
+            .get_storage_batch_at(&[], 7)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(
+            stub.packets().is_empty(),
+            "an empty prefetch must not reach the transport"
+        );
+    }
+}
+
 /// High-performance Ethereum RPC provider.
 pub struct AlloyProvider {
     inner: Arc<dyn Provider<Ethereum>>,
@@ -1402,6 +1659,11 @@ pub const SIM_MAX_ATTEMPTS: u32 = 2;
 /// one context for the whole batch, since one round trip has one failure.
 const GET_ACCOUNT_CONTEXT: &str =
     "Failed to read account (batched eth_getBalance/eth_getTransactionCount/eth_getCode)";
+
+/// The failure context of the batched storage read
+/// ([`AlloyProvider::get_storage_batch_at`]): one context for the whole batch,
+/// since one round trip has one failure.
+const GET_STORAGE_CONTEXT: &str = "Failed to read storage (batched eth_getStorageAt)";
 
 /// One account's cold-read triple — balance, nonce, and code — read at one
 /// pinned block.
@@ -1978,6 +2240,67 @@ impl AlloyProvider {
 
             // Direct conversion: U256's 32-byte big-endian form is a B256.
             Ok(B256::from(result.to_be_bytes::<32>()))
+        })
+        .await
+    }
+
+    /// Many storage slots at ONE pinned block, in ONE JSON-RPC batch round
+    /// trip.
+    ///
+    /// Every read a path's upfront slot set needs (`eth_getStorageAt` over the
+    /// `(address, slot)` pairs) shares the same block tag and answer shape as
+    /// the serial [`Self::get_storage_at`], so a prefetch pays one round trip
+    /// instead of one per slot. The members' parameters are byte-identical to
+    /// the serial call's — `(address, position)` plus the pinned block tag —
+    /// so an entry read here is the same answer the fallback would serve.
+    ///
+    /// Values are returned in the input order. An empty `slots` slice
+    /// dispatches nothing (no empty-batch RPC).
+    ///
+    /// Retry/timeout policy is the provider's own ([`Self::retry_with_backoff`]):
+    /// a retryable failure re-issues the whole batch, so the batch is one
+    /// "call" for the retry budget.
+    ///
+    /// # Errors
+    ///
+    /// The [`ProviderError`] classified from the batch's first failing member.
+    pub async fn get_storage_batch_at(
+        &self,
+        slots: &[(Address, U256)],
+        block: u64,
+    ) -> ProviderResult<Vec<StorageValue>> {
+        if slots.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.retry_with_backoff(|| async {
+            let mut batch = BatchRequest::new(self.inner.client());
+            let mut waiters = Vec::with_capacity(slots.len());
+            for (address, position) in slots {
+                // One `ParamsWithBlock` shape per member: the block tag
+                // cannot differ across the batch by construction, and the
+                // serialized params match `get_storage_at(..).block_id(..)`.
+                let params = ParamsWithBlock::new((*address, *position), BlockId::number(block));
+                let waiter = batch
+                    .add_call::<_, StorageValue>("eth_getStorageAt", &params)
+                    .map_err(|e| e.into_provider_error(GET_STORAGE_CONTEXT))?;
+                waiters.push(waiter);
+            }
+            // Awaiting the batch is what dispatches it (see `get_account_at`:
+            // the waiters are dropped rather than read on a transport failure,
+            // so one classified error never becomes N unclassifiable ones).
+            batch
+                .send()
+                .await
+                .map_err(|e| e.into_provider_error(GET_STORAGE_CONTEXT))?;
+            let mut values = Vec::with_capacity(waiters.len());
+            for waiter in waiters {
+                values.push(
+                    waiter
+                        .await
+                        .map_err(|e| e.into_provider_error(GET_STORAGE_CONTEXT))?,
+                );
+            }
+            Ok(values)
         })
         .await
     }
