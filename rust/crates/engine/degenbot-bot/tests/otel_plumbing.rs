@@ -325,6 +325,9 @@ fn pipeline_instruments_render_expected_families() {
     let p = PipelineInstruments::new(&meter);
 
     p.observe_header_to_publish(0.25);
+    p.observe_header_to_solved(0.4);
+    p.add_storage_prefetch(6, 2, 5, 5, None);
+    p.add_storage_prefetch(0, 0, 0, 0, Some("no_runtime"));
     p.count_block();
     p.count_log_received();
     p.count_log_applied();
@@ -334,6 +337,13 @@ fn pipeline_instruments_render_expected_families() {
     let text = metrics::render(&registry);
     for family in [
         "degenbot_epoch_header_to_publish_seconds_bucket",
+        "degenbot_block_header_to_solved_seconds_bucket",
+        "degenbot_prefetch_batches_total",
+        "degenbot_prefetch_derived_total",
+        "degenbot_prefetch_learned_total",
+        "degenbot_prefetch_requested_total",
+        "degenbot_prefetch_seeded_total",
+        "degenbot_prefetch_skipped_total",
         "degenbot_blocks_observed_total",
         "degenbot_logs_received_total",
         "degenbot_logs_applied_total",
@@ -367,7 +377,8 @@ fn solver_instruments_render_with_verdict_labels() {
     p.observe_solve_duration(0.012, "detached");
     p.count_solves_executed();
     p.set_registered_paths(42);
-    p.count_candidates_found(7);
+    p.count_candidates_found("fanout", 7);
+    p.count_candidates_found("inline", 30);
     p.observe_simulate_duration(0.003);
     p.count_simulate_verdict("profitable");
     p.count_simulate_verdict("profitable");
@@ -385,6 +396,16 @@ fn solver_instruments_render_with_verdict_labels() {
         assert!(
             text.contains(family),
             "expected family {family} in prometheus text, got:\n{text}"
+        );
+    }
+    for (arm, expected) in [("fanout", "7"), ("inline", "30")] {
+        let series = text.lines().find(|l| {
+            l.starts_with("degenbot_candidates_found_total")
+                && l.contains(&format!("arm=\"{arm}\""))
+        });
+        assert!(
+            series.is_some_and(|series| series.ends_with(expected)),
+            "expected {expected} candidates on arm {arm}, got: {series:?}"
         );
     }
     let profitable = text

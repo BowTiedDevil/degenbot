@@ -237,6 +237,18 @@ impl PrefetchReport {
     }
 }
 
+impl PrefetchSkip {
+    /// The closed label the skip-reason counter carries (the census's
+    /// `degenbot.prefetch.skipped{reason}` value set).
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::NoRuntime => "no_runtime",
+            Self::RpcFailed => "rpc_failed",
+        }
+    }
+}
+
 /// The distinct `(address, slot)` pairs a prefetch can compute from the paths
 /// BEFORE the simulation runs, in first-touch order (deterministic for a given
 /// batch).

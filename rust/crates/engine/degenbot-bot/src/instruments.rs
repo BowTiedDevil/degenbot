@@ -37,14 +37,23 @@ const LATENCY_BUCKETS_SECONDS: &[f64] = &[
 pub struct PipelineInstruments {
     /// Header accepted → Published-stage dispatch (the epoch race; ADR-041
     /// §3 item 1 — submission/delivery subscribe at the Published edge, so the
-    /// race ends there, not at solve). Succeeds the drain-era
-    /// `block.header_to_solved` stamp retired with the stage machine.
+    /// race ends there, not at solve; the block-to-solve leg is its own
+    /// family below).
     ///
     /// PROMETHEUS NAME COUPLING: renders as
     /// `degenbot_epoch_header_to_publish_seconds`; the Grafana headline stat
     /// and the `DegenbotEpochRaceSlow` alert query that string verbatim —
     /// rename here and the consumers together.
     header_to_publish: Histogram<f64>,
+    /// Header accepted → the block's solve cycle finished (the block-to-solve
+    /// leg: header receipt to the settle/drain solve's completion, which the
+    /// epoch race above does NOT cover — it ends at Published dispatch).
+    ///
+    /// PROMETHEUS NAME COUPLING: renders as
+    /// `degenbot_block_header_to_solved_seconds`, the string
+    /// `scripts/soak_percentiles.py` reads verbatim — rename here and the
+    /// soak scraper together.
+    header_to_solved: Histogram<f64>,
     /// ADR-041 I3: stale-epoch work items dropped loudly by the
     /// rewind-generation fail-fast (`reorg_flying_stale`). Sustained
     /// non-zero = the stage cycle chronically spills into the next epoch.
@@ -166,7 +175,11 @@ pub struct PipelineInstruments {
     /// `degenbot_fleet_profile{profile=...,binding=...}`; the ops
     /// alerting reads `binding="serial"` (the production alert).
     fleet_profile: Gauge<f64>,
-    /// Candidates entering the simulate fan-out (per-batch sizes summed).
+    /// Candidates entering a simulation arm, by `arm` (the closed
+    /// `fanout` | `inline` set). The fan-out arm adds batch sizes at
+    /// `dispatch_profitable_results`; the inline arm adds one per candidate
+    /// at the inline-sim seam, so the total candidate rate no longer
+    /// under-reports by the inline arm's share.
     candidates_found: Counter<u64>,
     /// Solver concentrated-liquidity-hop self-corrections (input/forward clamp + output align).
     clamps_applied: Counter<u64>,
@@ -193,6 +206,21 @@ pub struct PipelineInstruments {
     /// Executable code bytes held by the JIT engine (LLVM's live code
     /// sections); the resident-set companion for the compiled-code footprint.
     jit_code_bytes: Gauge<f64>,
+    /// Storage-prefetch lane reports (the `degenbot.jit.*` pattern): one
+    /// increment per fan-out that dispatches the path-derived +
+    /// capture-learned plan. `derived`/`learned` are the plan's attribution,
+    /// `requested` the batch members the memo did not already hold, `seeded`
+    /// the entries the batch wrote.
+    prefetch_batches: Counter<u64>,
+    prefetch_derived: Counter<u64>,
+    prefetch_learned: Counter<u64>,
+    prefetch_requested: Counter<u64>,
+    prefetch_seeded: Counter<u64>,
+    /// Prefetch lanes that backed off, by closed degrade `reason`
+    /// (`no_runtime` | `rpc_failed`). Before this family the only trace of a
+    /// degraded lane was the debug-level `storage prefetch` diag — invisible
+    /// at the default level, so a cold lane and a broken lane looked alike.
+    prefetch_skipped: Counter<u64>,
     /// Simulation outcomes, labeled by verdict string.
     simulate_verdicts: Counter<u64>,
     /// Per-candidate gross profit (wei) at submit entry.
@@ -333,6 +361,12 @@ impl PipelineInstruments {
                 .with_description(
                     "Header accepted to Published-stage dispatch (the epoch race; ADR-041)",
                 )
+                .build(),
+            header_to_solved: meter
+                .f64_histogram("degenbot.block.header_to_solved")
+                .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
+                .with_description("Header accepted to the block's solve cycle completing")
                 .build(),
             epoch_stale_drops: meter
                 .u64_counter("degenbot.epoch.stale_drops")
@@ -552,7 +586,7 @@ impl PipelineInstruments {
                 .build(),
             candidates_found: meter
                 .u64_counter("degenbot.candidates.found")
-                .with_description("Candidates entering the simulate fan-out")
+                .with_description("Candidates entering a simulation arm by arm")
                 .build(),
             clamps_applied: meter
                 .u64_counter("degenbot.solver.clamps")
@@ -598,6 +632,30 @@ impl PipelineInstruments {
             jit_code_bytes: meter
                 .f64_gauge("degenbot.jit.code_bytes")
                 .with_description("Executable code bytes held by the JIT engine")
+                .build(),
+            prefetch_batches: meter
+                .u64_counter("degenbot.prefetch.batches")
+                .with_description("Storage-prefetch lane reports (one per fan-out dispatch)")
+                .build(),
+            prefetch_derived: meter
+                .u64_counter("degenbot.prefetch.derived")
+                .with_description("Path-derived storage pairs the prefetch plan produced")
+                .build(),
+            prefetch_learned: meter
+                .u64_counter("degenbot.prefetch.learned")
+                .with_description("Capture-learned storage pairs added beyond the derivation")
+                .build(),
+            prefetch_requested: meter
+                .u64_counter("degenbot.prefetch.requested")
+                .with_description("Prefetch batch members the memo did not already hold")
+                .build(),
+            prefetch_seeded: meter
+                .u64_counter("degenbot.prefetch.seeded")
+                .with_description("Prefetch entries actually seeded into the anchor's memo")
+                .build(),
+            prefetch_skipped: meter
+                .u64_counter("degenbot.prefetch.skipped")
+                .with_description("Prefetch lanes that backed off by closed degrade reason")
                 .build(),
             simulate_verdicts: meter
                 .u64_counter("degenbot.simulate.verdicts")
@@ -805,6 +863,14 @@ impl PipelineInstruments {
         instruments.walk_memo_hits.add(0, &[]);
         instruments.walk_memo_cache_plays.add(0, &[]);
         instruments.walk_memo_negatives_played.add(0, &[]);
+        // Same cold-start contract for the prefetch lane: a lane that has not
+        // dispatched yet scrapes explicit zeros, so a later non-zero is a diff
+        // rather than the first appearance of a family.
+        instruments.prefetch_batches.add(0, &[]);
+        instruments.prefetch_derived.add(0, &[]);
+        instruments.prefetch_learned.add(0, &[]);
+        instruments.prefetch_requested.add(0, &[]);
+        instruments.prefetch_seeded.add(0, &[]);
         instruments
     }
 
@@ -813,6 +879,12 @@ impl PipelineInstruments {
     /// `degenbot_epoch_header_to_publish_seconds` — see the field note.
     pub fn observe_header_to_publish(&self, secs: f64) {
         self.header_to_publish.record(secs, &[]);
+    }
+
+    /// Header accepted → the block's solve cycle completed (the block-to-solve
+    /// leg; see the field note for the Prometheus name coupling).
+    pub fn observe_header_to_solved(&self, secs: f64) {
+        self.header_to_solved.record(secs, &[]);
     }
 
     /// Streaming-stage wait: first relevant log → quiesce/tombstone.
@@ -1081,9 +1153,30 @@ impl PipelineInstruments {
         );
     }
 
-    /// A batch of `n` candidates entered the simulate fan-out.
-    pub fn count_candidates_found(&self, n: u64) {
-        self.candidates_found.add(n, &[]);
+    /// `n` candidates entered the simulation arm `arm` (`fanout` | `inline`).
+    pub fn count_candidates_found(&self, arm: &'static str, n: u64) {
+        self.candidates_found.add(n, &[KeyValue::new("arm", arm)]);
+    }
+
+    /// One storage-prefetch lane report: the plan's attribution plus the
+    /// batch's member/seeded counts, and the degrade reason when it backed off.
+    pub fn add_storage_prefetch(
+        &self,
+        derived: u64,
+        learned: u64,
+        requested: u64,
+        seeded: u64,
+        skipped: Option<&'static str>,
+    ) {
+        self.prefetch_batches.add(1, &[]);
+        self.prefetch_derived.add(derived, &[]);
+        self.prefetch_learned.add(learned, &[]);
+        self.prefetch_requested.add(requested, &[]);
+        self.prefetch_seeded.add(seeded, &[]);
+        if let Some(reason) = skipped {
+            self.prefetch_skipped
+                .add(1, &[KeyValue::new("reason", reason)]);
+        }
     }
     /// Count one solver concentrated-liquidity-hop correction (input/forward clamp or output align).
     pub fn count_clamp(&self) {
@@ -1391,6 +1484,7 @@ impl PipelineInstruments {
     fn apply(&self, event: CensusEvent) {
         match event {
             CensusEvent::HeaderPublished { secs } => self.observe_header_to_publish(secs),
+            CensusEvent::BlockSolved { secs } => self.observe_header_to_solved(secs),
             CensusEvent::StreamingStageWait { secs } => self.observe_streaming_age(secs),
             CensusEvent::StaleEpochDrop => self.count_stale_drop(),
             CensusEvent::FirstLogDelivered { secs } => self.observe_header_to_first_log(secs),
@@ -1463,7 +1557,7 @@ impl PipelineInstruments {
                     oversubscribed,
                 });
             }
-            CensusEvent::CandidatesFanOut { n } => self.count_candidates_found(n),
+            CensusEvent::CandidatesEntered { n, arm } => self.count_candidates_found(arm, n),
             CensusEvent::SolverClampApplied => self.count_clamp(),
             CensusEvent::EngineError { kind } => self.count_error(kind),
             CensusEvent::PathSimulated { secs } => self.observe_simulate_duration(secs),
@@ -1472,6 +1566,13 @@ impl PipelineInstruments {
                 success,
                 secs,
             } => self.observe_jit_compilation(kind, success, secs),
+            CensusEvent::StoragePrefetch {
+                derived,
+                learned,
+                requested,
+                seeded,
+                skipped,
+            } => self.add_storage_prefetch(derived, learned, requested, seeded, skipped),
             CensusEvent::JitBackendSample {
                 lookup_hits,
                 lookup_misses,
@@ -1998,14 +2099,13 @@ mod kind_tests {
     }
 
     /// The epoch race (ADR-041): `degenbot.epoch.header_to_publish` renders
-    /// via the Prometheus exposition, the I3 stale-drop counter and the
-    /// Streaming-age projection are scrapeable, and the retired drain-era
-    /// `degenbot.block.header_to_solved` family is GONE (hard cutover — a
-    /// lingering family would keep dashboards pointed at the solve endpoint
-    /// instead of the Published edge).
+    /// via the Prometheus exposition, and the I3 stale-drop counter and the
+    /// Streaming-age projection are scrapeable. The race ends at the Published
+    /// edge; the block-to-solve leg rides its own family
+    /// (`degenbot.block.header_to_solved`, pinned by `otel_plumbing`).
     #[test]
     #[expect(clippy::expect_used)]
-    fn epoch_race_renders_and_retired_family_gone() {
+    fn epoch_race_renders() {
         let (provider, registry) =
             crate::metrics::build_prometheus_provider().expect("prometheus provider build");
         let instruments = PipelineInstruments::new(&provider.meter("test_race"));
@@ -2023,10 +2123,6 @@ mod kind_tests {
                 "epoch-race family missing from exposition: {family}"
             );
         }
-        assert!(
-            !text.contains("header_to_solved"),
-            "retired drain-era race family still present in exposition"
-        );
         drop(provider);
     }
 

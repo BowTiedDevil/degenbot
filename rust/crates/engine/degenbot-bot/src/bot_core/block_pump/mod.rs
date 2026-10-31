@@ -156,6 +156,54 @@ struct PreSolveGapTrack {
     logs: u64,
 }
 
+/// Header-receipt anchors by block, for the header→solved leg.
+///
+/// The drained-settle solve resolves to the LOG-DRIVEN open block, which can
+/// trail the newest accepted header when a window straddles the next header
+/// (`SolveAnchor`'s rule). Keying the anchor by block keeps the leg measuring
+/// that block's own header receipt; the newest-header instant would attribute
+/// a straddling window's solve to a header it never waited on.
+struct HeaderReceipts {
+    entries: Vec<(u64, std::time::Instant)>,
+}
+
+impl HeaderReceipts {
+    /// How many headers a window can straddle. A resolution prunes everything
+    /// below its block, so only a stalled drain (never resolving) can reach it.
+    const CAPACITY: usize = 8;
+
+    fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    /// Record a header's receipt instant; the newest entry for a block wins.
+    fn record(&mut self, block: u64, at: std::time::Instant) {
+        self.entries.retain(|(n, _)| *n != block);
+        self.entries.push((block, at));
+        if self.entries.len() > Self::CAPACITY {
+            self.entries.remove(0);
+        }
+    }
+
+    /// The receipt instant for `block`'s header, pruning the entries below it.
+    /// `None` when no live header for `block` was seen on this pump (a
+    /// state-head-floored anchor, a rewind, or a backfill): the leg has no
+    /// anchor then, and the sample is skipped rather than misattributed. The
+    /// equal-block entry survives so a window's early slice and its tail solve
+    /// both measure against the same header.
+    fn resolve(&mut self, block: u64) -> Option<std::time::Instant> {
+        let resolved = self
+            .entries
+            .iter()
+            .find(|(n, _)| *n == block)
+            .map(|(_, at)| *at);
+        self.entries.retain(|(n, _)| *n >= block);
+        resolved
+    }
+}
+
 /// The unified pump that drives `Bot`'s drain sink.
 ///
 /// Supports a two-phase lifecycle:

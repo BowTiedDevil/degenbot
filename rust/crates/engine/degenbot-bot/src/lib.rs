@@ -72,6 +72,8 @@ pub mod instruments {
     impl PipelineInstruments {
         /// no-op (ADR-041 epoch race)
         pub fn observe_header_to_publish(&self, _secs: f64) {}
+        /// no-op (header receipt → solve completion)
+        pub fn observe_header_to_solved(&self, _secs: f64) {}
         /// no-op (ADR-041 streaming stage wait)
         pub fn observe_streaming_age(&self, _secs: f64) {}
         /// no-op (ADR-041 I3 stale drops)
@@ -184,7 +186,17 @@ pub mod instruments {
         /// no-op
         pub fn set_intake_backlog(&self, _role: &str, _depth: u64) {}
         /// no-op
-        pub fn count_candidates_found(&self, _n: u64) {}
+        pub fn count_candidates_found(&self, _arm: &'static str, _n: u64) {}
+        /// no-op (storage-prefetch lane report)
+        pub fn add_storage_prefetch(
+            &self,
+            _derived: u64,
+            _learned: u64,
+            _requested: u64,
+            _seeded: u64,
+            _skipped: Option<&'static str>,
+        ) {
+        }
         /// no-op
         pub fn observe_simulate_duration(&self, _secs: f64) {}
         /// no-op

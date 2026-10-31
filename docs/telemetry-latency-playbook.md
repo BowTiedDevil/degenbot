@@ -258,14 +258,18 @@ freshness against current source.
 
 Key Prometheus families (`instruments.rs`): `degenbot_solve_duration_seconds`,
 `degenbot_epoch_header_to_publish_seconds` (the epoch race — header accept →
-Published dispatch; the drain-era `degenbot_header_to_solved` family is
-RETIRED with the stage machine), `degenbot_stage_streaming_age_seconds`,
+Published dispatch), `degenbot_block_header_to_solved_seconds` (the
+block-to-solve leg — header accept → the settle/drain solve completing; the
+one `scripts/soak_percentiles.py` reads), `degenbot_stage_streaming_age_seconds`,
 `degenbot_epoch_stale_drops_total`, `degenbot_stage_publish_cycle_seconds` /
 `degenbot_stage_rewind_total` / `_duration_seconds` (the DispatchOwner
 `degenbot_drain_queue_wait_seconds` / `_depth` families are RETIRED, SZJUKL),
 `degenbot_log_decode_seconds`, `degenbot_state_apply_seconds`,
-`degenbot_state_head_lag_blocks`, `degenbot_candidates_found_total`,
-`degenbot_submit_latency_seconds`. Alert rules + thresholds:
+`degenbot_state_head_lag_blocks`,
+`degenbot_candidates_found_total{arm}` (`fanout` = the dispatch batch arms,
+`inline` = the streaming inline-sim arm), `degenbot_prefetch_*` (the
+storage-prefetch lane: batches/derived/learned/requested/seeded, plus
+`degenbot_prefetch_skipped_total{reason}`), `degenbot_submit_latency_seconds`. Alert rules + thresholds:
 [`ALERTS.md`](grafana/ALERTS.md).
 
 ## Open follow-ups (priority order)

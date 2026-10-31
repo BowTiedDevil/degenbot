@@ -1139,6 +1139,35 @@ mod candidate2_seam_pins {
     }
 }
 
+/// The header→solved anchors are keyed by block, not "the newest header": a
+/// window that straddles the next header drains the log-driven open block
+/// while the newer header's receipt is the latest one, and the leg must
+/// measure the block's OWN anchor (the newest-header instant would attribute
+/// the solve to a header it never waited on).
+#[test]
+fn header_receipts_resolve_the_drained_blocks_own_header() {
+    let mut receipts = HeaderReceipts::new();
+    let anchor = std::time::Instant::now();
+    receipts.record(101, anchor);
+    receipts.record(102, anchor);
+    assert_eq!(
+        receipts.resolve(101),
+        Some(anchor),
+        "the drain's own header anchor, not the newest header's"
+    );
+    // A window's early slice and its tail solve resolve the same block twice.
+    assert_eq!(receipts.resolve(101), Some(anchor));
+    // A state-head-floored or rewound anchor has no live header: no sample
+    // rather than a misattributed one.
+    assert_eq!(receipts.resolve(100), None);
+    // Bounded even when nothing resolves (a stalled drain keeps recording).
+    for offset in 0..12 {
+        receipts.record(200 + offset, anchor);
+    }
+    assert_eq!(receipts.entries.len(), HeaderReceipts::CAPACITY);
+    assert_eq!(receipts.resolve(211), Some(anchor));
+}
+
 mod backfill;
 mod quiesce;
 mod reorg;

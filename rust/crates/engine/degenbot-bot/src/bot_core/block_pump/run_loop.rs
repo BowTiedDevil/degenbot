@@ -1,8 +1,8 @@
 use super::{
     feed_executor_throttle_sample, op_error, op_info, op_warn, stream, us_to_secs, wall_ms,
     BlockMetadata, BlockPump, CompletenessDecision, Duration, Epoch, GateOutcome, HashSet,
-    Instrument, LogDecision, Ordering, PreSolveGapTrack, StageDecision, StageMachine, StreamExt,
-    WsEvent, B256, BACKFILL_TIMEOUT_SECS, RELEVANT_TOPICS,
+    HeaderReceipts, Instrument, LogDecision, Ordering, PreSolveGapTrack, StageDecision,
+    StageMachine, StreamExt, WsEvent, B256, BACKFILL_TIMEOUT_SECS, RELEVANT_TOPICS,
 };
 // The `hotpath`-gated cooperative timed-exit block below is the only user of
 // `Arc` in this submodule (`Arc::clone(&self.shutdown)`). The pre-split monolith
@@ -354,6 +354,9 @@ impl BlockPump {
             last_log: None,
             logs: 0,
         };
+        // Header receipts by block — the header→solved leg's anchors, keyed so
+        // a window that straddles the next header still measures its own.
+        let mut header_receipts = HeaderReceipts::new();
 
         // per-block intra-block silence-gap tracker: the max gap
         // between consecutive relevant logs feeds the FSM's adaptive
@@ -755,12 +758,14 @@ impl BlockPump {
                     block_span = crate::telemetry::subscriber_backed_span(&new_block_span);
                     // Pre-solve gap marks: this header is the clock anchor
                     // for the new block's gap decomposition.
+                    let header_at = std::time::Instant::now();
                     pregap = PreSolveGapTrack {
-                        header_at: std::time::Instant::now(),
+                        header_at,
                         first_log: None,
                         last_log: None,
                         logs: 0,
                     };
+                    header_receipts.record(number, header_at);
                     // restart the silence-gap tracker for the new
                     // block window.
                     last_relevant_log_at = None;
@@ -1510,7 +1515,7 @@ impl BlockPump {
                     && slice_first_dirty.is_some_and(|first| {
                         first.elapsed() >= Duration::from_millis(self.early_slice_ms)
                     });
-                self.boundary_drain_dispatch(&fsm, block_span.as_ref(), now_ms());
+                self.boundary_drain_dispatch(&fsm, block_span.as_ref(), &mut header_receipts);
                 if slice_due {
                     // The bounded slice took its one shot this window.
                     slice_done = true;

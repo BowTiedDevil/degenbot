@@ -27,6 +27,10 @@ pub enum CensusEvent {
     /// The epoch race closed: header accepted → Published-stage dispatch
     /// (ADR-041 §3 item 1 — submission/delivery subscribe at this edge).
     HeaderPublished { secs: f64 },
+    /// The block's solve cycle finished: header accepted → the settle/drain
+    /// solve's completion (the block-to-solve gap the soak percentiles read;
+    /// distinct from the epoch race above, which ends at Published dispatch).
+    BlockSolved { secs: f64 },
     /// The Streaming stage's wait: first relevant log → quiesce/tombstone.
     StreamingStageWait { secs: f64 },
     /// One stale-epoch work item dropped by the rewind-generation fail-fast
@@ -130,8 +134,11 @@ pub enum CensusEvent {
         binding: crate::arb_engine::FleetBinding,
         oversubscribed: bool,
     },
-    /// A batch of `n` candidates entered the simulate fan-out.
-    CandidatesFanOut { n: u64 },
+    /// `n` candidates entered a simulation arm: `arm` is the closed
+    /// `fanout` | `inline` set naming the arm the batch landed on (the fan-out
+    /// adds its pre-filter batch size; the inline/streaming arm adds one per
+    /// candidate at the inline-sim seam).
+    CandidatesEntered { n: u64, arm: &'static str },
     /// One solver concentrated-liquidity-hop correction (input/forward clamp
     /// or output align).
     SolverClampApplied,
@@ -244,6 +251,18 @@ pub enum CensusEvent {
         cache_plays: u64,
         negatives_played: u64,
         negative_entries: u64,
+    },
+    /// One storage-prefetch lane report: the plan's attribution (`derived`
+    /// path-derived pairs + `learned` capture-learned complement), the batch's
+    /// member count (`requested` — the slots the memo did not already hold),
+    /// the entries actually seeded, and the closed degrade reason when the lane
+    /// backed off (`no_runtime` | `rpc_failed`).
+    StoragePrefetch {
+        derived: u64,
+        learned: u64,
+        requested: u64,
+        seeded: u64,
+        skipped: Option<&'static str>,
     },
     /// One JIT/AOT compilation attempt completed: its kind (`jit` | `aot`),
     /// whether it succeeded, and its wall time. Emitted by the backend's own

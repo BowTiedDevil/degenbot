@@ -92,7 +92,7 @@ impl BlockPump {
                 // metadata — NO Published row (no `on_publish`): the
                 // backfill applies state without dispatching result batches
                 // (the `Backfilled` phase invariant.
-                self.drive_solve(fsm, fsm.context_for(block, BlockMetadata::default()));
+                self.drive_solve(fsm, fsm.context_for(block, BlockMetadata::default()), None);
                 any_processed = true;
             }
         }

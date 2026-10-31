@@ -527,8 +527,9 @@ pub fn dispatch_profitable_results(
     let pre_filter_count = candidates.len();
     // T3: candidates entering the fan-out (pre-filter sizes summed; the
     // per-stage drop counts live on `DispatchOutcome` for the logs).
-    degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::CandidatesFanOut {
+    degenbot_bot::instruments::record(degenbot_bot::instruments::CensusEvent::CandidatesEntered {
         n: u64::try_from(pre_filter_count).unwrap_or(u64::MAX),
+        arm: "fanout",
     });
 
     // 1. Pre-filter — suppression (L2486–L2490). Lock the suppression arc
@@ -791,6 +792,21 @@ pub fn dispatch_profitable_results(
                     seeded = prefetch.seeded,
                     skipped = ?prefetch.skipped,
                     "storage prefetch"
+                );
+                // The diag above is debug-level and invisible at the default
+                // log level; the same report lands on the metrics surface so a
+                // cold lane, a warm lane and a degraded lane are distinguishable
+                // from a scrape.
+                degenbot_bot::instruments::record(
+                    degenbot_bot::instruments::CensusEvent::StoragePrefetch {
+                        derived: u64::try_from(prefetch.derived).unwrap_or(u64::MAX),
+                        learned: u64::try_from(prefetch.learned).unwrap_or(u64::MAX),
+                        requested: u64::try_from(prefetch.requested).unwrap_or(u64::MAX),
+                        seeded: u64::try_from(prefetch.seeded).unwrap_or(u64::MAX),
+                        skipped: prefetch
+                            .skipped
+                            .map(degenbot_simulation::sim::prefetch::PrefetchSkip::label),
+                    },
                 );
                 match degenbot_simulation::sim::evm2::handle::Evm2BlockSimHandle::build(
                     ctx.provider,

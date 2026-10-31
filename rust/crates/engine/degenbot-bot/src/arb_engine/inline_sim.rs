@@ -282,6 +282,13 @@ pub(crate) fn run_inline_sim(
         simulate.error_reason = tracing::field::Empty,
     );
     let _enter = span.enter();
+    // Candidate census for the inline arm: this seam is the ONE assembly every
+    // clamp-admitted candidate's inline sim rides, so the count lands here
+    // (`arm="inline"`) beside the fan-out's `arm="fanout"` batch sizes.
+    crate::instruments::record(crate::instruments::CensusEvent::CandidatesEntered {
+        n: 1,
+        arm: "inline",
+    });
     let payload = sim.simulate_path(request);
     if payload.as_ref().is_some_and(|p| p.failure.is_none()) {
         span.record("simulate.verdict", "profitable");

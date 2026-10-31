@@ -886,7 +886,7 @@
                     "query": {
                       "kind": "prometheus",
                       "spec": {
-                        "expr": "rate(degenbot_candidates_found_total[1m])",
+                        "expr": "sum(rate(degenbot_candidates_found_total[1m]))",
                         "legendFormat": "candidates/min"
                       }
                     },
@@ -2658,7 +2658,7 @@
         "spec": {
           "id": 5,
           "title": "Header \u2192 published (p95 5m)",
-          "description": "The epoch race (ADR-041 \u00a73.1): header accept \u2192 Published-stage dispatch, the edge where submission/delivery subscribe. Succeeds the retired drain-era \"Block-to-solve\" stat \u2014 solve is no longer the race endpoint (degenbot_block_header_to_solved family retired with the stage machine; hard cutover).",
+          "description": "The epoch race (ADR-041 \u00a73.1): header accept \u2192 Published-stage dispatch, the edge where submission/delivery subscribe. The block-to-solve leg rides its own family: degenbot_block_header_to_solved_seconds (header accept \u2192 the settle/drain solve completing).",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -3059,7 +3059,7 @@
                     "query": {
                       "kind": "prometheus",
                       "spec": {
-                        "expr": "rate(degenbot_candidates_found_total[5m])",
+                        "expr": "sum(rate(degenbot_candidates_found_total[5m]))",
                         "legendFormat": "candidates/s"
                       }
                     },

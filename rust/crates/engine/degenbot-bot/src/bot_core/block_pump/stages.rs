@@ -1,6 +1,6 @@
 use super::{
-    ms_to_secs, op_error, op_warn, wall_ms, BlockPump, Epoch, Finalize, Publish, Resolve, Solve,
-    StageDecision, StageMachine, BACKFILL_TIMEOUT_SECS,
+    ms_to_secs, op_error, op_warn, wall_ms, BlockPump, Epoch, Finalize, HeaderReceipts, Publish,
+    Resolve, Solve, StageDecision, StageMachine, BACKFILL_TIMEOUT_SECS,
 };
 
 impl BlockPump {
@@ -18,7 +18,11 @@ impl BlockPump {
         &self,
         fsm: &StageMachine,
         block_span: Option<&tracing::Span>,
-        _now_ms: u64, // the retired header→solved stamp consumed it; the epoch race is stamped in drive_publish
+        // Header-receipt anchors for the block-to-solve measure, resolved
+        // against the block `drain_decision` anchors (the log-driven open
+        // block, which can trail the newest header). The backfill solve passes
+        // no receipts: a historical block has no live window to measure.
+        header_receipts: &mut HeaderReceipts,
     ) {
         let _solve_ctx = block_span.map(tracing::Span::enter);
         let state_head = self
@@ -29,7 +33,11 @@ impl BlockPump {
         let StageDecision::Drain { block, metadata } = fsm.drain_decision(state_head) else {
             unreachable!("drain_decision always drains when called");
         };
-        self.drive_solve(fsm, fsm.context_for(block, metadata));
+        self.drive_solve(
+            fsm,
+            fsm.context_for(block, metadata),
+            header_receipts.resolve(block),
+        );
     }
 
     /// The I3 stale-epoch drop (review Q2 edge) — the
@@ -69,7 +77,12 @@ impl BlockPump {
     /// on success. Ignores `StageError`s the engine cannot produce
     /// (its hooks are infallible; a hard failure logs loud, never silently
     /// skips — ADR-021 posture).
-    pub(super) fn drive_solve(&self, fsm: &StageMachine, ctx: degenbot_substrate::BlockContext) {
+    pub(super) fn drive_solve(
+        &self,
+        fsm: &StageMachine,
+        ctx: degenbot_substrate::BlockContext,
+        header_at: Option<std::time::Instant>,
+    ) {
         if self.reorg_flying_stale(fsm, &ctx) {
             return;
         }
@@ -100,6 +113,13 @@ impl BlockPump {
         };
         match self.engine.on_solve(&Solve { ctx, paths }) {
             Ok(outcome) => {
+                // The block-to-solve leg: header receipt → this solve's
+                // completion, measured on the live window's monotonic anchor.
+                if let Some(header_at) = header_at {
+                    crate::instruments::record(crate::instruments::CensusEvent::BlockSolved {
+                        secs: header_at.elapsed().as_secs_f64(),
+                    });
+                }
                 // the engine owns `last_solved_block`. The cursor
                 // fact now crosses the seam ON the outcome (the Solved row
                 // knows its anchor epoch), so the driver derives the cursor
