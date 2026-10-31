@@ -154,6 +154,13 @@ name = "jit_spine"
 path = "tests/jit_spine.rs"
 required-features = ["evm2-jit"]
 
+# The frame-replay path's compiled-path gate: program residency survives
+# across replays (needs the runner type).
+[[test]]
+name = "frame_replay_jit"
+path = "tests/frame_replay_jit.rs"
+required-features = ["evm2-jit"]
+
 [features]
 default = []
 # The evm2 pilot engine (src/sim/evm2). Opt-in parallel implementation;

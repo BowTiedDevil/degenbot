@@ -40,7 +40,20 @@ pub const DEPLOYER: Address = Address::new([
 ]);
 
 const SETUP_GAS: u64 = 30_000_000;
-const EXECUTE_GAS: u64 = 30_000_000;
+
+/// The replayed frame's gas limit — a production pending-tx shape. EIP-7825
+/// caps a transaction's gas limit at 2^24 under Osaka (the production spec)
+/// and the frame-replay EVM enforces the cap; only the bench EVM lifts it,
+/// for the oversized setup deploys above.
+const EXECUTE_GAS: u64 = 16_000_000;
+
+/// The corpus block's base fee — also the replayed frame's
+/// `max_fee_per_gas`, so the frame-replay path's projected-base-fee check
+/// settles without the disabled-check fallback.
+pub const BENCH_BASE_FEE: u128 = 1_000_000_000;
+
+/// The corpus block number; the frame-replay block pin is its successor.
+pub const BENCH_BLOCK: u64 = 100;
 
 /// A deployed contract's live code identity — the `(code_hash, code)` pair
 /// the JIT lookup keys on, captured from the creation's output.
@@ -422,8 +435,8 @@ pub fn bench_evm(inspect: bool) -> Evm<'static, BaseEvmTypes> {
         ::evm2::evm::AccountInfo::default().with_balance(U256::from(u128::MAX)),
     );
     let block_env = BlockEnvExt {
-        basefee: U256::from(1_000_000_000u64),
-        number: U256::from(100u64),
+        basefee: U256::from(BENCH_BASE_FEE),
+        number: U256::from(BENCH_BLOCK),
         ..Default::default()
     };
     let mut version = Version::new(EVM2_PRODUCTION_SPEC);

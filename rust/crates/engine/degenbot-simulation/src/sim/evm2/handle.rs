@@ -8,7 +8,8 @@
 //! the pump's primitives, the nonce check disabled (each bundle call is
 //! `eth_call`-shaped — parity with the node's lenient simulate), and the
 //! composite capture inspector baked in. The frame-replay scratch stacks a
-//! fresh counted instance of the same layers, lazily, once.
+//! fresh counted instance of the same layers, lazily, once, and carries this
+//! handle's interpreter runner into every frame EVM it builds.
 //!
 //! The engine spec is `SpecId::OSAKA` — the same fork revm's mainnet
 //! production default pins (`SpecId::default` there is OSAKA too).
@@ -73,8 +74,9 @@ pub struct Evm2BlockSimHandle<'a> {
     /// [`Self::scratch_evm`] call (same lifetime contract as the revm
     /// handle's).
     scratch: Option<Evm2ScratchEvm<Evm2ScratchDb<'a>>>,
-    /// The process-shared interpreter runner (the JIT spine), threaded
-    /// into every session this handle opens.
+    /// The process-shared interpreter runner (the JIT spine), threaded into
+    /// every session this handle opens and every frame EVM its scratch
+    /// builds.
     jit: Option<std::sync::Arc<dyn ::evm2::evm::InterpreterRunner<BaseEvmTypes>>>,
 }
 
@@ -151,7 +153,9 @@ impl<'a> Evm2BlockSimHandle<'a> {
     /// instance of the layered DB with the counting bridge in the cold
     /// path (the revm handle's `scratch_evm` contract, same lazy-once
     /// lifetime). State overrides are NOT applied — a foreign frame runs
-    /// against chain state.
+    /// against chain state. The scratch carries this handle's interpreter
+    /// runner, so a frame whose program the JIT backend holds replays
+    /// compiled wherever the process has one.
     ///
     /// Returns `None` when no ambient multi-threaded runtime exists for
     /// the fresh blocking adapter.
@@ -181,6 +185,7 @@ impl<'a> Evm2BlockSimHandle<'a> {
                             },
                             counter,
                         )
+                        .with_jit(self.jit.clone())
                     },
                 );
         }

@@ -23,6 +23,18 @@
 //!   restarts the WHOLE sequence with the check disabled (validation-only
 //!   — execution semantics are unchanged, and re-reads hit the ext's warmed
 //!   caches, so cold-read accounting is preserved).
+//!
+//! # Program residency
+//!
+//! The scratch installs the handle's process-shared interpreter runner on
+//! every frame EVM it builds ([`Evm2ScratchEvm::with_jit`]), so a frame whose
+//! program the JIT backend holds runs compiled. Residency belongs to the
+//! backend, which is process-lifetime: a frame that misses compiles (or
+//! interprets, in the production pool's deferred mode) and leaves the program
+//! resident for the next replay — a scratch never owns programs, so replaying
+//! a frame N times costs one compilation, not N. A scratch built without a
+//! runner is the stock interpreter; the runner is fail-soft (a lookup miss
+//! interprets), so the runner's presence can never change a verdict.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -145,6 +157,11 @@ pub struct Evm2SequenceOutcome {
     pub frame: Evm2ReplayOutcome,
 }
 
+/// The process-shared interpreter runner (the JIT spine's handle field) the
+/// scratch installs on each frame EVM it builds. `None` = the stock
+/// interpreter.
+pub type FrameInterpreterRunner = Arc<dyn ::evm2::evm::InterpreterRunner<BaseEvmTypes>>;
+
 /// A scratch engine over a layered DB: replays ONE frame at a time (see the
 /// revm-side module doc for the contract this mirrors).
 #[derive(Debug)]
@@ -152,6 +169,9 @@ pub struct Evm2ScratchEvm<Ext> {
     ext: Ext,
     block: ScratchBlock,
     counter: Arc<FrameRpcCounter>,
+    /// The runner installed on every frame EVM this scratch builds
+    /// (`None` = the stock interpreter).
+    jit: Option<FrameInterpreterRunner>,
 }
 
 impl<Ext: Database> Evm2ScratchEvm<Ext> {
@@ -169,7 +189,18 @@ impl<Ext: Database> Evm2ScratchEvm<Ext> {
             ext,
             block,
             counter,
+            jit: None,
         }
+    }
+
+    /// Install the process-shared interpreter runner — every frame EVM this
+    /// scratch builds (replays and sequence predecessors alike) executes the
+    /// backend's resident program for the frame's code, interpreting only
+    /// where none is resident.
+    #[must_use]
+    pub fn with_jit(mut self, runner: Option<FrameInterpreterRunner>) -> Self {
+        self.jit = runner;
+        self
     }
 
     /// The layered ext this scratch serves frames over (mutable — drive
@@ -195,7 +226,8 @@ impl<Ext: Database> Evm2ScratchEvm<Ext> {
     pub fn replay(&mut self, tx: &ReplayableTx) -> Result<Evm2ReplayOutcome, ReplayFrameError> {
         let started = Instant::now();
         let reads_before = self.counter.reads();
-        let (settled, base_fee_source) = run_frame_with_fallback(&mut self.ext, &self.block, tx)?;
+        let (settled, base_fee_source) =
+            run_frame_with_fallback(&mut self.ext, &self.block, tx, self.jit.as_ref())?;
         Ok(outcome(
             settled,
             self.counter.reads().saturating_sub(reads_before),
@@ -225,7 +257,12 @@ impl<Ext: Database> Evm2ScratchEvm<Ext> {
         // the whole sequence with the check disabled (see the module doc).
         let mut disable_base_fee = false;
         'restart: loop {
-            let mut evm = build_frame_evm(Db::new(&mut self.ext), &self.block, disable_base_fee);
+            let mut evm = build_frame_evm(
+                Db::new(&mut self.ext),
+                &self.block,
+                disable_base_fee,
+                self.jit.as_ref(),
+            );
             let mut predecessors = Vec::with_capacity(prefix.len());
             let mut predecessor_gas = Vec::with_capacity(prefix.len());
             for predecessor in prefix {
@@ -343,13 +380,14 @@ fn build_frame_evm<'a>(
     db: impl DynDatabase + 'a,
     block: &ScratchBlock,
     disable_base_fee: bool,
+    jit: Option<&FrameInterpreterRunner>,
 ) -> Evm<'a, BaseEvmTypes> {
     let mut version = Version::new(FRAME_SPEC);
     version.features.remove(EvmFeatures::BALANCE_CHECK);
     if disable_base_fee {
         version.features.remove(EvmFeatures::BASE_FEE_CHECK);
     }
-    Evm::new_with_execution_config(
+    let mut evm = Evm::new_with_execution_config(
         ExecutionConfig::for_spec_and_version(FRAME_SPEC, version),
         FRAME_SPEC,
         BlockEnvExt {
@@ -361,7 +399,11 @@ fn build_frame_evm<'a>(
         ethereum_tx_registry(FRAME_SPEC),
         db,
         Precompiles::base(FRAME_SPEC),
-    )
+    );
+    if let Some(runner) = jit {
+        evm.set_shared_interpreter_runner(Arc::clone(runner));
+    }
+    evm
 }
 
 /// The EIP-1559 envelope for a [`ReplayableTx`] (the revm side's `tx_env`
@@ -475,8 +517,9 @@ fn run_frame<Ext: Database>(
     block: &ScratchBlock,
     tx: &ReplayableTx,
     disable_base_fee: bool,
+    jit: Option<&FrameInterpreterRunner>,
 ) -> Result<Settled, FrameAbort> {
-    let mut evm = build_frame_evm(Db::new(ext), block, disable_base_fee);
+    let mut evm = build_frame_evm(Db::new(ext), block, disable_base_fee, jit);
     settle(evm.transact(&envelope(tx)), false)
 }
 
@@ -487,10 +530,11 @@ fn run_frame_with_fallback<Ext: Database>(
     ext: &mut Ext,
     block: &ScratchBlock,
     tx: &ReplayableTx,
+    jit: Option<&FrameInterpreterRunner>,
 ) -> Result<(Settled, BaseFeeSource), ReplayFrameError> {
-    match run_frame(ext, block, tx, false) {
+    match run_frame(ext, block, tx, false, jit) {
         Ok(settled) => Ok((settled, BaseFeeSource::Projected)),
-        Err(FrameAbort::BaseFeeRejected) => match run_frame(ext, block, tx, true) {
+        Err(FrameAbort::BaseFeeRejected) => match run_frame(ext, block, tx, true, jit) {
             Ok(settled) => Ok((settled, BaseFeeSource::DisabledFallback)),
             Err(FrameAbort::BaseFeeRejected) => Err(ReplayFrameError::Mispriced {
                 raw: "base-fee projection rejected (fallback also failed)".into(),
