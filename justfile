@@ -134,10 +134,11 @@ test-standalone:
 # net-gated suites (`test-fork`, `record-golden`, `verify-deployments`).
 
 # Default gate: workspace lint (fails fast) + the retirement-tripwire ratchet +
-# standalone smoke + cargo workspace + full pytest. The ratchet is a ~1s source scan
-# (ADR-087 D4), so it rides here as well as at pre-push: a tripwire introduced while
-# iterating fails at `just test`, not only at the push that follows.
-test: lint-rust-check lint-tripwire-ratchet test-rust-nextest test-python check-consumer-probes
+# standalone smoke + cargo workspace + the release-profile leg + full pytest. The
+# ratchet is a ~1s source scan (ADR-087 D4), so it rides here as well as at
+# pre-push: a tripwire introduced while iterating fails at `just test`, not only
+# at the push that follows.
+test: lint-rust-check lint-tripwire-ratchet test-rust-nextest test-rust-nextest-release test-python check-consumer-probes
 
 # Run the pre-push gates before `git push`. prek.toml's
 # `stages = ["pre-push"]` entries are the single owner of the gate list (the
@@ -182,6 +183,11 @@ test-rust: check-toolchain test-standalone
     # the assertion-free green exit of a zero-match filter can not hide a lost
     # corpus.
     cargo test --locked --manifest-path rust/Cargo.toml --workspace --features degenbot-pools/capture-fixtures,degenbot-pools/cache-lab,degenbot-bot/executor-ab-probe,degenbot-simulation/test-harness
+    # The release profile is the one that ships (debug_assertions off). CI's rust
+    # job and the push hook's `rust-test` entry call `test-rust`, not `test`, so
+    # the release leg rides here as well: wiring only the aggregator would leave
+    # the shipped-profile check out of every CI run and every push.
+    just test-rust-nextest-release
 
 # Reproduce CI's test-binary build exactly (ci.yml sets these two globally):
 # a crate-private fn's LAYOUT can depend on profile flags -- the ADR-071 D3
@@ -300,6 +306,40 @@ test-rust-nextest *args: check-toolchain
         feature_flag="--features $fixed_features"
     fi
     cargo nextest run --locked --manifest-path rust/Cargo.toml $selection --profile ci --no-fail-fast $feature_flag "$@"
+
+# Release-profile leg: the shipped artifacts (the `degenbot_rs` cdylib, every
+# pure-Rust release binary) are built with `debug_assertions` OFF, so a side
+# effect parked inside a `debug_assert!` *vanishes* there. `PoolTable::allocate`
+# shipped its map insert exactly that way (4afecc9cf): every dev-profile test
+# passed while the release profile left the pool table empty. This leg runs the
+# state-layer suites under the release profile, so that class of bug fails the
+# default gate instead of shipping.
+#
+# Scope (audit-driven, re-run it before widening): `degenbot-substrate` is the
+# incident crate (PoolTable, BotState) and `degenbot-simulation` is the state/
+# seam layer that reads it. A workspace scan of all 62 `debug_assert` sites
+# found no side-effecting call in an assertion expression and no behavior-
+# changing `#[cfg(debug_assertions)]` block anywhere else, so a wider release
+# build would buy no coverage — only compile time.
+#
+# `--release` is the whole point (debug-assertions off, overflow-checks off,
+# opt-level 3). The gated feature list narrows to what the selected packages own
+# — `test-rust-nextest`'s rule: a feature naming an unselected package is a
+# cargo error, and dropping `degenbot-simulation/test-harness` would leave the
+# harness modules behind required-features. The `release-ci` nextest profile
+# keeps this run's JUnit report under `<target>/nextest/release-ci/`, so
+# `just test-timing` still ranks the whole-workspace dev run.
+#
+# Release profile, state layer only — a release-only regression fails here.
+test-rust-nextest-release: check-toolchain
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    cargo nextest run --locked --manifest-path rust/Cargo.toml --release \
+        -p degenbot-substrate -p degenbot-simulation \
+        --profile release-ci --no-fail-fast \
+        --features degenbot-simulation/test-harness
 
 # Run the fork/RPC-gated suites — the legs every offline gate (test, pre-push,
 # CI) deliberately deselects:
