@@ -191,10 +191,13 @@ fn a_sequence_accumulates_across_steps_and_settles_once() {
     with_session!(&mut ext, evm, session);
 
     let sequence = session
-        .run_sequence(&[
-            Evm2SimStep::Transact(dual_tx(&[])),
-            Evm2SimStep::Transact(dual_tx(&[0x00])),
-        ])
+        .run_sequence(
+            &[
+                Evm2SimStep::Transact(dual_tx(&[])),
+                Evm2SimStep::Transact(dual_tx(&[0x00])),
+            ],
+            degenbot_simulation::sim::evm2::session::Evm2CaptureMode::Seam,
+        )
         .expect("the sequence settles");
 
     assert_eq!(sequence.calls.len(), 2, "every step's result is returned");
@@ -243,10 +246,13 @@ fn a_refused_step_reports_its_index_and_still_settles() {
         )
     };
     let err = session
-        .run_sequence(&[
-            Evm2SimStep::Transact(dual_tx(&[])),
-            Evm2SimStep::Transact(refused_envelope),
-        ])
+        .run_sequence(
+            &[
+                Evm2SimStep::Transact(dual_tx(&[])),
+                Evm2SimStep::Transact(refused_envelope),
+            ],
+            degenbot_simulation::sim::evm2::session::Evm2CaptureMode::Seam,
+        )
         .expect_err("a refused step fails the sequence");
     assert_eq!(
         err.step_index(),
@@ -273,7 +279,10 @@ fn an_inspect_step_drives_the_capture() {
     with_session!(&mut ext, evm, session);
 
     let sequence = session
-        .run_sequence(&[Evm2SimStep::Inspect(dual_tx(&[0x00]))])
+        .run_sequence(
+            &[Evm2SimStep::Inspect(dual_tx(&[0x00]))],
+            degenbot_simulation::sim::evm2::session::Evm2CaptureMode::Inspector,
+        )
         .expect("the inspect step settles");
 
     assert!(

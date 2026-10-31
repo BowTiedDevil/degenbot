@@ -620,6 +620,7 @@ impl InlineSimulator for InlineSimHook {
                             &warm_cache,
                             Some(&storage_memo),
                             verify_divergence,
+                            degenbot_simulation::sim::evm2::jit::shared_runner(),
                         ) {
                             let mut buckets = FailBuckets::new();
                             // SIMSPANDUP: the sim body rides the CALLER-HELD

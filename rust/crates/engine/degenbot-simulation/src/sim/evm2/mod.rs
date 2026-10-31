@@ -21,6 +21,7 @@ pub mod bot_state_db;
 pub mod frame_replay;
 pub mod handle;
 pub mod inspectors;
+pub mod jit;
 pub mod session;
 pub mod state_override;
 pub mod warm_code_cache;

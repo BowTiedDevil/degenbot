@@ -620,6 +620,8 @@ crate::config_schema! {
     simulation SimulationConfig {
         sim_execute_gas [opt u64] = None, env = "DEGENBOT_SIM_EXECUTE_GAS", def = "(unset; EIP-7825 TX_GAS_LIMIT_CAP)",
             doc = "Override the execute() gas limit (decimal u64; garbage/0 falls back at the site while migrating).";
+        sim_jit [bool] = false, env = "DEGENBOT_SIM_JIT", def = "false",
+            doc = "Install the evm2 JIT interpreter runner on the sim engine's sequence EVMs (blocking compile mode; any lookup miss falls back to the interpreter). Requires the evm2-jit build; without it the key is inert. Off by default until the fork-lane soak measures the production delta.";
         inject_executor_code [bool] = false, env = "DEGENBOT_INJECT_EXECUTOR_CODE", def = "false",
             doc = "Simulate against executor bytecode injected into the evm overlay instead of a deployed contract. Injection mode also gates live submission off for safety; `1` opts in (dry-run/dev posture).";
         sim_exit_on_fail [bool] = false, env = "DEGENBOT_SIM_EXIT_ON_FAIL", def = "false",

@@ -426,10 +426,13 @@ fn a_run_is_invisible_to_the_next_run_and_to_frames() {
     //    journal without committing.
     {
         let sequence = session
-            .run_sequence(&[
-                Evm2SimStep::Transact(dual_write(7)),
-                Evm2SimStep::Transact(dual_read(8)),
-            ])
+            .run_sequence(
+                &[
+                    Evm2SimStep::Transact(dual_write(7)),
+                    Evm2SimStep::Transact(dual_read(8)),
+                ],
+                degenbot_simulation::sim::evm2::session::Evm2CaptureMode::Seam,
+            )
             .expect("the sequence settles");
         assert_eq!(
             sequence.calls.len(),
@@ -949,6 +952,7 @@ async fn live_scratch_evm_replays_a_plain_transfer_and_warms() {
         &warm_cache,
         None,
         false,
+        None,
     )
     .expect("live handle builds");
     let scratch = handle.scratch_evm().expect("scratch evm stacks");
@@ -1095,6 +1099,7 @@ async fn live_v2_router_swap_replay_matches_chain_post_state() {
         &warm_cache,
         None,
         false,
+        None,
     )
     .expect("live handle builds");
     let scratch = handle.scratch_evm().expect("scratch evm stacks");

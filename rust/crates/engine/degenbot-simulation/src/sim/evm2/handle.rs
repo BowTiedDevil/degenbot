@@ -73,6 +73,9 @@ pub struct Evm2BlockSimHandle<'a> {
     /// [`Self::scratch_evm`] call (same lifetime contract as the revm
     /// handle's).
     scratch: Option<Evm2ScratchEvm<Evm2ScratchDb<'a>>>,
+    /// The process-shared interpreter runner (the JIT spine), threaded
+    /// into every session this handle opens.
+    jit: Option<std::sync::Arc<dyn ::evm2::evm::InterpreterRunner<BaseEvmTypes>>>,
 }
 
 impl<'a> Evm2BlockSimHandle<'a> {
@@ -92,6 +95,7 @@ impl<'a> Evm2BlockSimHandle<'a> {
         warm_cache: &Arc<RwLock<WarmCodeCacheInner>>,
         storage_memo: Option<&Arc<crate::sim::StorageMemo>>,
         verify_divergence: bool,
+        jit: Option<std::sync::Arc<dyn ::evm2::evm::InterpreterRunner<BaseEvmTypes>>>,
     ) -> Option<Self> {
         let blocking = BlockingAsyncDb::new(AlloyAsyncDb::new(provider, current_block))?;
         let bot_state_db = BotStateDb::new(oracle, blocking)
@@ -128,6 +132,7 @@ impl<'a> Evm2BlockSimHandle<'a> {
             current_block,
             block_timestamp,
             oracle,
+            jit,
             warm_cache: Arc::clone(warm_cache),
             storage_memo: storage_memo.cloned(),
             verify_divergence,
@@ -139,7 +144,7 @@ impl<'a> Evm2BlockSimHandle<'a> {
     /// engine's one door to it (the revm handle's `session` contract).
     #[must_use]
     pub fn session(&mut self) -> Evm2SimSession<'_, 'a> {
-        Evm2SimSession::with_block_env(&mut self.evm, self.block_env)
+        Evm2SimSession::with_block_env(&mut self.evm, self.block_env).with_jit(self.jit.clone())
     }
 
     /// The frame-replay seam: a scratch engine over a FRESHLY STACKED

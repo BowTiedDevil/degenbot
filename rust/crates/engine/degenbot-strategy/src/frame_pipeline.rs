@@ -582,6 +582,7 @@ pub async fn build_block_handle<'a>(
         warm_cache,
         None,
         false,
+        degenbot_simulation::sim::evm2::jit::shared_runner(),
     )
 }
 

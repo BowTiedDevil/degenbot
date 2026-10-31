@@ -1189,7 +1189,10 @@ fn simulate_path_on_evm_seam(
             &erc6909_call,
         )),
     ];
-    let sequence = match session.run_sequence(&steps) {
+    let sequence = match session.run_sequence(
+        &steps,
+        degenbot_simulation::sim::evm2::session::Evm2CaptureMode::Seam,
+    ) {
         Ok(sequence) => sequence,
         Err(err) => {
             fail_buckets.record(
@@ -1271,11 +1274,39 @@ fn simulate_path_on_evm_seam(
                 path.expected_outputs_vec(),
             );
         } else {
-            fail_buckets.record(
+            // Seam-mode attribution (no call trace): synthesize the frame
+            // from the failing CALL's own envelope — the bundle's top
+            // level. Honest for top-level reverts (the common
+            // INVALID/REVERT executor case); inner pool-level attribution
+            // is diagnostic-mode forensics.
+            let (target, selector) = match &steps[fail_idx] {
+                Evm2SimStep::Transact(env) | Evm2SimStep::Inspect(env) => {
+                    use alloy::consensus::transaction::Transaction as _;
+                    let input = env.input();
+                    let mut selector = [0u8; 4];
+                    let n = input.len().min(4);
+                    selector[..n].copy_from_slice(&input[..n]);
+                    (env.to().unwrap_or(ctx.executor_address), selector)
+                }
+            };
+            fail_buckets.record_revert(
                 path.path_id,
                 &bucket,
                 Some(fail_idx),
-                revert_data,
+                RevertingFrame {
+                    depth: 1,
+                    target,
+                    selector,
+                    revert_data: revert_data.clone(),
+                    label: bucket.clone(),
+                    outcome_kind: match results[fail_idx].verdict {
+                        degenbot_simulation::sim::RunVerdict::Reverted => "revert",
+                        degenbot_simulation::sim::RunVerdict::Success => "success-unexpected",
+                        degenbot_simulation::sim::RunVerdict::Halted => "halt",
+                    },
+                    gas_used: results[fail_idx].gas_used,
+                },
+                captured_swaps.clone(),
                 path.optimal_input,
                 path.expected_outputs_vec(),
             );
