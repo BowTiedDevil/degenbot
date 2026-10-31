@@ -188,6 +188,14 @@ pub mod instruments {
         /// no-op
         pub fn observe_simulate_duration(&self, _secs: f64) {}
         /// no-op
+        pub fn add_jit_lookups(&self, _hits: u64, _misses: u64) {}
+        /// no-op
+        pub fn observe_jit_compilation(&self, _kind: &'static str, _success: bool, _secs: f64) {}
+        /// no-op
+        pub fn set_jit_resident_programs(&self, _count: u64) {}
+        /// no-op
+        pub fn set_jit_code_bytes(&self, _bytes: u64) {}
+        /// no-op
         pub fn count_simulate_verdict(&self, _verdict: &str) {}
         /// no-op
         pub fn observe_dispatch_profits(&self, _gross_wei: f64, _net_wei: f64) {}

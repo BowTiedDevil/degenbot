@@ -245,4 +245,22 @@ pub enum CensusEvent {
         negatives_played: u64,
         negative_entries: u64,
     },
+    /// One JIT/AOT compilation attempt completed: its kind (`jit` | `aot`),
+    /// whether it succeeded, and its wall time. Emitted by the backend's own
+    /// completion callback, so it is exact per attempt rather than sampled.
+    JitCompilation {
+        kind: &'static str,
+        success: bool,
+        secs: f64,
+    },
+    /// The JIT backend's lookup counters since the previous sample, plus its
+    /// live gauges (a DELTA event, like `CgroupThrottleDelta`: the holder
+    /// samples its own cumulative snapshot and the census only ever adds
+    /// deltas, so the emit cadence cannot skew the totals).
+    JitBackendSample {
+        lookup_hits: u64,
+        lookup_misses: u64,
+        resident_programs: u64,
+        code_bytes: u64,
+    },
 }

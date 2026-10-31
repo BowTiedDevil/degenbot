@@ -26,8 +26,10 @@
 //! - `jit-block` — `JitInterpreterRunner`, `blocking: true`: the first
 //!   execution of each contract compiles synchronously (iteration 0 absorbs
 //!   the full compile cost; the parity-gate-friendly mode).
-//! - `jit-pool`  — the runner with `blocking: false`: frames interpret
-//!   until the worker pool delivers the compiled program, then upgrade.
+//! - `jit-pool`  — the runner with `blocking: false` and the PRODUCTION
+//!   tuning (`jit::production_tuning`, sized from
+//!   `simulation.pipeline_concurrency`): frames interpret until the worker
+//!   pool delivers the compiled program, then upgrade.
 //! - `aot`       — the runner over a backend backed by the DURABLE artifact
 //!   store (a scratch path here, the store the production JIT holder opens
 //!   in place of temp dirs), pre-populated via `prepare_aot_sync` for every
@@ -60,10 +62,11 @@ use ::evm2::BaseEvmTypes;
 use ::evm2::Evm;
 
 use ::evm2_jit::evm2_evm::JitInterpreterRunner;
-use ::evm2_jit::runtime::{AotRequest, JitBackend, ProgramKind, RuntimeConfig};
+use ::evm2_jit::runtime::{AotRequest, JitBackend, ProgramKind, RuntimeConfig, RuntimeTuning};
 
 use degenbot_simulation::sim::evm2::aot_store::DurableArtifactStore;
 use degenbot_simulation::sim::evm2::handle::EVM2_PRODUCTION_SPEC;
+use degenbot_simulation::sim::evm2::jit::production_tuning;
 
 #[path = "shared/bench_corpus.rs"]
 mod bench_corpus;
@@ -143,22 +146,31 @@ impl Drop for ScratchDir {
 /// synchronous mode; the worker pool for `jit-pool`; the pool plus the
 /// durable artifact store for `aot`.
 fn make_backend(mode: Mode, store_dir: &Path) -> Option<JitBackend> {
-    let config = |blocking: bool| RuntimeConfig {
+    let config = |blocking: bool, tuning: RuntimeTuning| RuntimeConfig {
         enabled: true,
         blocking,
+        tuning,
         ..Default::default()
     };
     match mode {
         Mode::Interp => None,
-        Mode::JitBlock => Some(JitBackend::new(config(true)).expect("jit backend init")),
-        Mode::JitPool => Some(JitBackend::new(config(false)).expect("jit backend init")),
+        Mode::JitBlock => {
+            Some(JitBackend::new(config(true, RuntimeTuning::default())).expect("jit backend init"))
+        }
+        // The production pool configuration: the fleet-sized tuning the bot
+        // runs, so this row measures `jit.rs`'s choices, not upstream defaults.
+        Mode::JitPool => {
+            Some(JitBackend::new(config(false, production_tuning())).expect("jit backend init"))
+        }
+        // AOT mode pre-compiles explicitly (`prepare_aot_sync`), so its pool
+        // only serves misses the corpus cannot produce; upstream defaults.
         Mode::Aot => Some(
             JitBackend::new(RuntimeConfig {
                 store: Some(Arc::new(
                     DurableArtifactStore::new(store_dir.join("aot-artifacts"))
                         .expect("artifact store"),
                 )),
-                ..config(false)
+                ..config(false, RuntimeTuning::default())
             })
             .expect("jit backend init"),
         ),
@@ -395,7 +407,7 @@ fn main() {
         }
         println!("verdict identity across modes: OK ({base:?})");
         println!(
-            "* hits/misses count the blocking lookup path only; async modes record events, not counters."
+            "* hits/misses are the backend's own accounting: the blocking path counts them on the\n  synchronous lookup, the pool counts each observed lookup event (miss until the compiled\n  program lands, hit after). jit-pool's timed loop ends before its upgrade here, so its\n  post-upgrade frames are measured with untracked lookups and its hit column stays 0."
         );
     }
 }

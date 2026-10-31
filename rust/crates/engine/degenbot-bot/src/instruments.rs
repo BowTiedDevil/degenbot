@@ -179,6 +179,20 @@ pub struct PipelineInstruments {
     cgroup_throttle_time: Counter<f64>,
     /// Per-path EVM simulation duration.
     simulate_duration: Histogram<f64>,
+    /// JIT backend compiled-code lookups, by `outcome` (`hit` | `miss`). A
+    /// miss is the interpreter serving the frame (fail-soft by contract), so
+    /// this measures the upgrade rate, never a verdict change.
+    jit_lookup: Counter<u64>,
+    /// JIT/AOT compilation attempts, by `kind` (`jit` | `aot`) and `outcome`
+    /// (`succeeded` | `failed`).
+    jit_compilations: Counter<u64>,
+    /// Wall time of one compilation attempt, by `kind` and `outcome`.
+    jit_compile_duration: Histogram<f64>,
+    /// Resident compiled programs in the JIT backend's map.
+    jit_resident_programs: Gauge<f64>,
+    /// Executable code bytes held by the JIT engine (LLVM's live code
+    /// sections); the resident-set companion for the compiled-code footprint.
+    jit_code_bytes: Gauge<f64>,
     /// Simulation outcomes, labeled by verdict string.
     simulate_verdicts: Counter<u64>,
     /// Per-candidate gross profit (wei) at submit entry.
@@ -562,6 +576,28 @@ impl PipelineInstruments {
                 .with_unit("s")
                 .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
                 .with_description("Per-path EVM simulation duration")
+                .build(),
+            jit_lookup: meter
+                .u64_counter("degenbot.jit.lookup")
+                .with_description("JIT backend compiled-code lookups by outcome")
+                .build(),
+            jit_compilations: meter
+                .u64_counter("degenbot.jit.compilations")
+                .with_description("JIT/AOT compilation attempts by kind and outcome")
+                .build(),
+            jit_compile_duration: meter
+                .f64_histogram("degenbot.jit.compile_duration")
+                .with_unit("s")
+                .with_boundaries(LATENCY_BUCKETS_SECONDS.to_vec())
+                .with_description("JIT/AOT compilation wall time")
+                .build(),
+            jit_resident_programs: meter
+                .f64_gauge("degenbot.jit.resident_programs")
+                .with_description("Resident compiled programs in the JIT backend")
+                .build(),
+            jit_code_bytes: meter
+                .f64_gauge("degenbot.jit.code_bytes")
+                .with_description("Executable code bytes held by the JIT engine")
                 .build(),
             simulate_verdicts: meter
                 .u64_counter("degenbot.simulate.verdicts")
@@ -1064,6 +1100,43 @@ impl PipelineInstruments {
         self.simulate_duration.record(secs, &[]);
     }
 
+    /// `hits` compiled-code lookups plus `misses` interpreted ones (the
+    /// backend's cumulative counters, reported as deltas).
+    pub fn add_jit_lookups(&self, hits: u64, misses: u64) {
+        if hits > 0 {
+            self.jit_lookup
+                .add(hits, &[KeyValue::new("outcome", "hit")]);
+        }
+        if misses > 0 {
+            self.jit_lookup
+                .add(misses, &[KeyValue::new("outcome", "miss")]);
+        }
+    }
+
+    /// One compilation attempt completed; `kind` is the closed
+    /// `jit` | `aot` set.
+    pub fn observe_jit_compilation(&self, kind: &'static str, success: bool, secs: f64) {
+        let outcome = if success { "succeeded" } else { "failed" };
+        let labels = [
+            KeyValue::new("kind", kind),
+            KeyValue::new("outcome", outcome),
+        ];
+        self.jit_compilations.add(1, &labels);
+        self.jit_compile_duration.record(secs, &labels);
+    }
+
+    /// Resident compiled programs in the backend (gauge).
+    pub fn set_jit_resident_programs(&self, count: u64) {
+        self.jit_resident_programs
+            .record(f64::from(u32::try_from(count).unwrap_or(u32::MAX)), &[]);
+    }
+
+    /// Executable JIT code bytes (gauge).
+    pub fn set_jit_code_bytes(&self, bytes: u64) {
+        self.jit_code_bytes
+            .record(f64::from(u32::try_from(bytes).unwrap_or(u32::MAX)), &[]);
+    }
+
     /// One simulation outcome; `verdict` is a small closed set
     /// (`profitable`, `not_profitable`, `error`, ...).
     pub fn count_simulate_verdict(&self, verdict: &str) {
@@ -1394,6 +1467,21 @@ impl PipelineInstruments {
             CensusEvent::SolverClampApplied => self.count_clamp(),
             CensusEvent::EngineError { kind } => self.count_error(kind),
             CensusEvent::PathSimulated { secs } => self.observe_simulate_duration(secs),
+            CensusEvent::JitCompilation {
+                kind,
+                success,
+                secs,
+            } => self.observe_jit_compilation(kind, success, secs),
+            CensusEvent::JitBackendSample {
+                lookup_hits,
+                lookup_misses,
+                resident_programs,
+                code_bytes,
+            } => {
+                self.add_jit_lookups(lookup_hits, lookup_misses);
+                self.set_jit_resident_programs(resident_programs);
+                self.set_jit_code_bytes(code_bytes);
+            }
             CensusEvent::SimulateVerdict { verdict } => self.count_simulate_verdict(verdict),
             CensusEvent::CandidateEconomics { gross_wei, net_wei } => {
                 self.observe_dispatch_profits(gross_wei, net_wei);
@@ -2005,6 +2093,46 @@ mod kind_tests {
                 "missing bucket boundary le={bound} in rendered histogram"
             );
         }
+    }
+
+    /// The JIT backend's compile telemetry renders: the lookup split by
+    /// outcome, the compilation counts and wall time by kind/outcome, and the
+    /// live code-byte/resident-program gauges — the soak's evidence that the
+    /// pool is upgrading frames and how long a compile costs.
+    #[test]
+    fn jit_compile_telemetry_is_scrapeable() {
+        let (provider, registry) =
+            crate::metrics::build_prometheus_provider().expect("prometheus provider build");
+        let instruments = PipelineInstruments::new(&provider.meter("test_jit"));
+        instruments.add_jit_lookups(41, 7);
+        instruments.observe_jit_compilation("jit", true, 0.412);
+        instruments.observe_jit_compilation("jit", false, 0.5);
+        instruments.set_jit_resident_programs(3);
+        instruments.set_jit_code_bytes(196_608);
+        let text = crate::metrics::render(&registry);
+        for family in [
+            "degenbot_jit_lookup_total",
+            "degenbot_jit_compilations_total",
+            "degenbot_jit_compile_duration_seconds_bucket",
+            "degenbot_jit_resident_programs",
+            "degenbot_jit_code_bytes",
+        ] {
+            assert!(
+                text.contains(family),
+                "jit family missing from exposition: {family}"
+            );
+        }
+        let hits = text
+            .lines()
+            .find(|l| l.starts_with("degenbot_jit_lookup_total") && l.contains("\"hit\""))
+            .expect("hit series missing");
+        assert!(hits.ends_with("41"), "{hits} != 41");
+        let failed = text
+            .lines()
+            .find(|l| l.starts_with("degenbot_jit_compilations_total") && l.contains("\"failed\""))
+            .expect("failed-compilation series missing");
+        assert!(failed.ends_with('1'), "{failed} != 1");
+        drop(provider);
     }
 
     /// Acceptance: `degenbot.cgroup.throttled` is SCRAPEABLE as a monotonic
