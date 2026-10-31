@@ -357,6 +357,14 @@ test-fork: dev
     fi
     echo "✓ fork lane complete."
 
+# The ADR-089 phase-6 offline engine benchmark: one executor
+# corpus (real cmd_executor bytecode + V2 stub pairs), four engine modes
+# (interp / jit-block / jit-pool / aot), first-run + steady-state latency and
+# JIT compile telemetry, with a cross-mode verdict-identity gate. Offline by
+# construction; the decision instrument for the AOT/worker-pool tasks.
+bench-sim-modes *ARGS:
+    cd rust && cargo run --locked --release -p degenbot-simulation --example sim_mode_bench --features evm2-jit -- {{ ARGS }}
+
 # Rank the slowest tests from the last `just test-rust-nextest` JUnit report.
 test-timing top='30':
     #!/usr/bin/env bash

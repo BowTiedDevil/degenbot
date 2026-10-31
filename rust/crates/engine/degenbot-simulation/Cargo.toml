@@ -125,6 +125,13 @@ tokio = { version = "^1.54", features = ["rt"] }
 # feature (tracks main HEAD with evm2).
 evm2-jit-build = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", optional = true }
 
+# The phase-6 offline engine benchmark: all four modes need
+# the JIT runner, so the example builds only with the `evm2-jit` feature.
+[[example]]
+name = "sim_mode_bench"
+path = "examples/sim_mode_bench.rs"
+required-features = ["evm2-jit"]
+
 [features]
 default = []
 # The evm2 pilot engine (src/sim/evm2). Opt-in parallel implementation;
