@@ -13,6 +13,12 @@
 //! eager-load code (so `get_code_by_hash` is unreachable, the same invariant
 //! the revm side relies on), and an account with zero balance, zero nonce,
 //! and no code reads as non-existent.
+//!
+//! The account read is ONE JSON-RPC batch round trip
+//! ([`AlloyProvider::get_account_at`]): `eth_getBalance`,
+//! `eth_getTransactionCount`, and `eth_getCode` at the identical pinned block
+//! tag, answered together. Three serial round trips per cold account miss was
+//! the measured cold-frame cost (the `cold_miss_fanout_probe` model).
 
 use alloy::primitives::{Address, B256};
 use degenbot_rpc::provider::AlloyProvider;
@@ -58,13 +64,11 @@ impl AsyncDatabase for AlloyAsyncDb<'_> {
     type Error = AlloyAsyncDbError;
 
     /// Balance + nonce + code at the pinned block, eager-loaded like
-    /// `AlloyDB::basic_ref`. The all-empty account reads as non-existent.
+    /// `AlloyDB::basic_ref` — one JSON-RPC batch round trip. The all-empty
+    /// account reads as non-existent.
     async fn get_account(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        let block = Some(self.block);
-        let balance = self.provider.get_balance(&address, block).await?;
-        let nonce = self.provider.get_transaction_count(&address, block).await?;
-        let code = self.provider.get_code(&address, block).await?;
-        if balance.is_zero() && nonce == 0 && code.is_empty() {
+        let read = self.provider.get_account_at(&address, self.block).await?;
+        if read.balance.is_zero() && read.nonce == 0 && read.code.is_empty() {
             return Ok(None);
         }
         // `new_raw` (never `new_legacy`): foreign code may be an EIP-7702
@@ -73,9 +77,9 @@ impl AsyncDatabase for AlloyAsyncDb<'_> {
         // (`RejectCallerWithCode`) and decodes wrong downstream.
         Ok(Some(
             AccountInfo::default()
-                .with_balance(balance)
-                .with_nonce(nonce)
-                .with_code(Bytecode::new_raw(code)),
+                .with_balance(read.balance)
+                .with_nonce(read.nonce)
+                .with_code(Bytecode::new_raw(read.code)),
         ))
     }
 
@@ -104,5 +108,156 @@ impl AsyncDatabase for AlloyAsyncDb<'_> {
         let block = self.provider.get_block(number).await?;
         let block = block.ok_or(AlloyAsyncDbError::BlockNotFound(number))?;
         Ok(block.header.hash)
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use alloy::primitives::{Bytes, U256};
+    use alloy::providers::RootProvider;
+    use alloy::rpc::client::ClientBuilder;
+    use alloy::rpc::json_rpc::{
+        RequestPacket, Response, ResponsePacket, ResponsePayload, SerializedRequest,
+    };
+    use alloy::transports::{TransportError, TransportFut};
+    use serde_json::json;
+    use serde_json::value::to_raw_value;
+    use std::sync::{Arc, Mutex};
+    use std::task::{Context, Poll};
+
+    /// The account the stub serves: 1 ETH, nonce 42, two code bytes.
+    const BALANCE: &str = "0xde0b6b3a7640000";
+    const NONCE: &str = "0x2a";
+    const CODE: &str = "0x60016001";
+
+    /// A chain stub that records every dispatched packet — one entry per
+    /// `call`, so a JSON-RPC batch is ONE entry (the round-trip count).
+    #[derive(Debug, Clone)]
+    struct ChainStub {
+        packets: Arc<Mutex<Vec<Vec<String>>>>,
+        empty: bool,
+    }
+
+    impl ChainStub {
+        fn serving() -> Self {
+            Self {
+                packets: Arc::new(Mutex::new(Vec::new())),
+                empty: false,
+            }
+        }
+
+        fn empty_account() -> Self {
+            Self {
+                packets: Arc::new(Mutex::new(Vec::new())),
+                empty: true,
+            }
+        }
+
+        fn packets(&self) -> Vec<Vec<String>> {
+            self.packets.lock().unwrap().clone()
+        }
+
+        fn provider(&self) -> AlloyProvider {
+            let client = ClientBuilder::default().transport(self.clone(), true);
+            let root: RootProvider = RootProvider::new(client);
+            AlloyProvider::from_provider(Arc::new(root))
+        }
+
+        fn answer(&self, req: &SerializedRequest) -> Response {
+            let result = match (req.method(), self.empty) {
+                (_, true) => match req.method() {
+                    "eth_getCode" => json!("0x"),
+                    _ => json!("0x0"),
+                },
+                ("eth_getBalance", false) => json!(BALANCE),
+                ("eth_getTransactionCount", false) => json!(NONCE),
+                ("eth_getCode", false) => json!(CODE),
+                (other, false) => panic!("an account read must not issue {other}"),
+            };
+            Response {
+                id: req.id().clone(),
+                payload: ResponsePayload::Success(to_raw_value(&result).unwrap()),
+            }
+        }
+    }
+
+    impl tower::Service<RequestPacket> for ChainStub {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            let stub = self.clone();
+            Box::pin(async move {
+                let recorded: Vec<String> = match &req {
+                    RequestPacket::Single(one) => vec![one.method().to_string()],
+                    RequestPacket::Batch(many) => {
+                        many.iter().map(|one| one.method().to_string()).collect()
+                    }
+                };
+                stub.packets.lock().unwrap().push(recorded);
+                Ok::<ResponsePacket, TransportError>(match req {
+                    RequestPacket::Single(one) => ResponsePacket::Single(stub.answer(&one)),
+                    RequestPacket::Batch(many) => {
+                        ResponsePacket::Batch(many.iter().map(|one| stub.answer(one)).collect())
+                    }
+                })
+            })
+        }
+    }
+
+    /// One account read is ONE dispatched batch packet (three members, never
+    /// three requests) and hydrates exactly what the serial reads return.
+    #[tokio::test]
+    async fn get_account_is_one_batch_round_trip() {
+        let stub = ChainStub::serving();
+        let provider = stub.provider();
+        let address = Address::from([0x11; 20]);
+        let mut db = AlloyAsyncDb::new(&provider, 0x1234);
+
+        let info = db.get_account(address).await.unwrap().unwrap();
+        assert_eq!(info.balance, U256::from(1_000_000_000_000_000_000_u64));
+        assert_eq!(info.nonce, 42);
+        assert_eq!(
+            info.code
+                .expect("the read eager-loads code")
+                .original_bytes(),
+            Bytes::from_static(&[0x60, 0x01, 0x60, 0x01])
+        );
+
+        let packets = stub.packets();
+        assert_eq!(
+            packets.len(),
+            1,
+            "one account read dispatches ONE packet, got {packets:?}"
+        );
+        assert_eq!(
+            packets[0],
+            vec![
+                "eth_getBalance".to_string(),
+                "eth_getTransactionCount".to_string(),
+                "eth_getCode".to_string(),
+            ],
+            "the one packet is the three-read batch, in hydration order"
+        );
+    }
+
+    /// The all-empty rule survives the batch: a zero balance, zero nonce, and
+    /// empty code read as non-existent — still one round trip.
+    #[tokio::test]
+    async fn all_empty_account_in_one_batch_reads_as_none() {
+        let stub = ChainStub::empty_account();
+        let provider = stub.provider();
+        let address = Address::from([0x22; 20]);
+        let mut db = AlloyAsyncDb::new(&provider, 7);
+
+        assert!(db.get_account(address).await.unwrap().is_none());
+        assert_eq!(stub.packets().len(), 1);
     }
 }

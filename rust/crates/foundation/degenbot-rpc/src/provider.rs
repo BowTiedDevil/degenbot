@@ -7,9 +7,9 @@
 use alloy::consensus::{Header as ConsensusHeader, TxEnvelope};
 use alloy::eips::{BlockId, BlockNumberOrTag};
 use alloy::network::Ethereum;
-use alloy::primitives::{Address, Bytes, B256, U256};
-use alloy::providers::{Provider, ProviderBuilder};
-use alloy::rpc::client::ClientBuilder;
+use alloy::primitives::{Address, Bytes, B256, U256, U64};
+use alloy::providers::{ParamsWithBlock, Provider, ProviderBuilder};
+use alloy::rpc::client::{BatchRequest, ClientBuilder};
 use alloy::rpc::json_rpc::{RequestPacket, ResponsePacket};
 use alloy::rpc::types::eth::{
     simulate::{SimulatePayload, SimulatedBlock},
@@ -1133,6 +1133,214 @@ mod round_trip_layer_tests {
     }
 }
 
+/// Tests for the one-round-trip account read ([`AlloyProvider::get_account_at`]):
+/// the batch shape, its byte-identical parameter parity with the serial reads,
+/// and its failure classification.
+#[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::panic)]
+mod account_read_batch_tests {
+    use super::*;
+    use alloy::providers::RootProvider;
+    use alloy::rpc::json_rpc::{Response, ResponsePayload, SerializedRequest};
+    use alloy::transports::{TransportError, TransportErrorKind, TransportFut};
+    use serde_json::json;
+    use serde_json::value::to_raw_value;
+    use std::sync::Mutex;
+    use std::task::{Context, Poll};
+
+    /// One dispatched packet, recorded as its `(method, params)` members —
+    /// one entry per `call`, so a JSON-RPC batch is ONE entry.
+    type Packet = Vec<(String, String)>;
+
+    /// The stub account the transport serves: 1 ETH, nonce 42, two code bytes.
+    const BALANCE: &str = "0xde0b6b3a7640000";
+    const NONCE: &str = "0x2a";
+    const CODE: &str = "0x60016001";
+
+    /// An account-serving transport that records every packet it is dispatched
+    /// (`fail` answers with a transport error instead).
+    #[derive(Debug, Clone)]
+    struct AccountStub {
+        packets: Arc<Mutex<Vec<Packet>>>,
+        fail: bool,
+    }
+
+    impl AccountStub {
+        fn new() -> Self {
+            Self {
+                packets: Arc::new(Mutex::new(Vec::new())),
+                fail: false,
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                fail: true,
+                ..Self::new()
+            }
+        }
+
+        fn packets(&self) -> Vec<Packet> {
+            self.packets.lock().unwrap().clone()
+        }
+
+        fn clear(&self) {
+            self.packets.lock().unwrap().clear();
+        }
+
+        fn provider(&self) -> AlloyProvider {
+            let client = ClientBuilder::default().transport(self.clone(), true);
+            let root: RootProvider = RootProvider::new(client);
+            AlloyProvider::from_provider(Arc::new(root))
+        }
+    }
+
+    /// A dispatched request's identity in wire form.
+    fn member(req: &SerializedRequest) -> (String, String) {
+        (
+            req.method().to_string(),
+            req.params()
+                .map_or_else(String::new, |p| p.get().to_string()),
+        )
+    }
+
+    /// The stub's answer for one request: the account row, by method.
+    fn answer(req: &SerializedRequest) -> Response {
+        let result = match req.method() {
+            "eth_getBalance" => json!(BALANCE),
+            "eth_getTransactionCount" => json!(NONCE),
+            "eth_getCode" => json!(CODE),
+            other => panic!("an account read must not issue {other}"),
+        };
+        Response {
+            id: req.id().clone(),
+            payload: ResponsePayload::Success(to_raw_value(&result).unwrap()),
+        }
+    }
+
+    impl tower::Service<RequestPacket> for AccountStub {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            let stub = self.clone();
+            Box::pin(async move {
+                let recorded: Packet = match &req {
+                    RequestPacket::Single(one) => vec![member(one)],
+                    RequestPacket::Batch(many) => many.iter().map(member).collect(),
+                };
+                stub.packets.lock().unwrap().push(recorded);
+                if stub.fail {
+                    return Err(TransportErrorKind::custom_str("stub transport down"));
+                }
+                Ok(match req {
+                    RequestPacket::Single(one) => ResponsePacket::Single(answer(&one)),
+                    RequestPacket::Batch(many) => {
+                        ResponsePacket::Batch(many.iter().map(answer).collect())
+                    }
+                })
+            })
+        }
+    }
+
+    /// The batched read answers with the serial reads' values from ONE
+    /// dispatched packet whose members are byte-identical (method + params,
+    /// block tag included) to the serial path's three requests.
+    #[tokio::test]
+    async fn get_account_at_is_one_batch_round_trip_identical_to_serial_reads() {
+        let stub = AccountStub::new();
+        let provider = stub.provider();
+        let address = Address::from([0x11; 20]);
+        let block = 0x1234;
+
+        let serial_balance = provider.get_balance(&address, Some(block)).await.unwrap();
+        let serial_nonce = provider
+            .get_transaction_count(&address, Some(block))
+            .await
+            .unwrap();
+        let serial_code = provider.get_code(&address, Some(block)).await.unwrap();
+        let serial_packets = stub.packets();
+        assert_eq!(
+            serial_packets.len(),
+            3,
+            "the serial path is three round trips"
+        );
+        stub.clear();
+
+        let read = provider.get_account_at(&address, block).await.unwrap();
+        assert_eq!(
+            read,
+            AccountRead {
+                balance: serial_balance,
+                nonce: serial_nonce,
+                code: serial_code,
+            },
+            "the batch must answer with the serial reads' values"
+        );
+
+        let packets = stub.packets();
+        assert_eq!(
+            packets.len(),
+            1,
+            "one account read = ONE dispatched batch packet, not three requests"
+        );
+        let batch = &packets[0];
+        assert_eq!(batch.len(), 3, "the batch carries three members");
+        let serial_members: Packet = serial_packets.into_iter().flatten().collect();
+        assert_eq!(
+            *batch, serial_members,
+            "every batch member must be byte-identical (method + params) to its serial read"
+        );
+        assert!(
+            batch
+                .iter()
+                .all(|(_, params)| params.contains(&format!("{block:#x}"))),
+            "every member pins the same block tag: {batch:?}"
+        );
+    }
+
+    /// The batch decodes each member's wire form exactly as the serial reads
+    /// do: a 32-byte balance quantity, a `U64` nonce, and hex code data.
+    #[tokio::test]
+    async fn get_account_at_decodes_each_member_wire_form() {
+        let stub = AccountStub::new();
+        let provider = stub.provider();
+        let address = Address::from([0x22; 20]);
+
+        let read = provider.get_account_at(&address, 7).await.unwrap();
+        assert_eq!(read.nonce, 42);
+        assert_eq!(read.balance, U256::from(1_000_000_000_000_000_000_u64));
+        assert_eq!(read.code, Bytes::from_static(&[0x60, 0x01, 0x60, 0x01]));
+        assert_eq!(stub.packets().len(), 1);
+    }
+
+    /// The batch's own transport failure classifies as the same
+    /// [`ProviderError`] variant the serial read produced for the same
+    /// transport.
+    #[tokio::test]
+    async fn get_account_at_classifies_failures_like_the_serial_path() {
+        let stub = AccountStub::failing();
+        let provider = stub.provider();
+        let address = Address::from([0x33; 20]);
+
+        let serial = provider.get_balance(&address, Some(7)).await.unwrap_err();
+        let batched = provider.get_account_at(&address, 7).await.unwrap_err();
+        assert!(
+            matches!(serial, ProviderError::RpcError { code: -1, .. }),
+            "serial baseline: {serial}"
+        );
+        assert!(
+            matches!(batched, ProviderError::RpcError { code: -1, .. }),
+            "batched: {batched}"
+        );
+    }
+}
+
 /// High-performance Ethereum RPC provider.
 pub struct AlloyProvider {
     inner: Arc<dyn Provider<Ethereum>>,
@@ -1189,6 +1397,23 @@ impl Clone for AlloyProvider {
 /// budget's duration.
 pub const SIM_CALL_TIMEOUT: Duration = Duration::from_secs(2);
 pub const SIM_MAX_ATTEMPTS: u32 = 2;
+
+/// The failure context of the batched account read ([`AlloyProvider::get_account_at`]):
+/// one context for the whole batch, since one round trip has one failure.
+const GET_ACCOUNT_CONTEXT: &str =
+    "Failed to read account (batched eth_getBalance/eth_getTransactionCount/eth_getCode)";
+
+/// One account's cold-read triple — balance, nonce, and code — read at one
+/// pinned block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountRead {
+    /// Native-token balance (wei).
+    pub balance: U256,
+    /// Transaction count (the account's nonce).
+    pub nonce: u64,
+    /// Deployed code bytes (`eth_getCode`; empty for an EOA).
+    pub code: Bytes,
+}
 
 impl AlloyProvider {
     /// A clone of this provider bounded for the in-process simulation path
@@ -1805,6 +2030,72 @@ impl AlloyProvider {
             .map_err(|e| e.into_provider_error("Failed to get transaction count"))?;
 
             Ok(result)
+        })
+        .await
+    }
+
+    /// Balance + nonce + code at ONE pinned block, in ONE JSON-RPC batch round
+    /// trip.
+    ///
+    /// The three reads an account hydration needs (`eth_getBalance`,
+    /// `eth_getTransactionCount`, `eth_getCode`) share one `[address, block]`
+    /// parameter pair — [`ParamsWithBlock`], the same shape a serial
+    /// `get_balance(..).block_id(..)` call serializes — so every member pins
+    /// the identical block tag and the caller pays one round trip instead of
+    /// three.
+    ///
+    /// Retry/timeout policy is the provider's own ([`Self::retry_with_backoff`]):
+    /// a retryable failure re-issues the whole batch, so the batch is one
+    /// "call" for the retry budget exactly as each serial read was.
+    ///
+    /// # Errors
+    ///
+    /// The [`ProviderError`] classified from the batch's first failing member —
+    /// the same variant classification the three serial reads produce (retry
+    /// classification included, since it is the same
+    /// [`IntoProviderError`] mapping).
+    pub async fn get_account_at(
+        &self,
+        address: &Address,
+        block: u64,
+    ) -> ProviderResult<AccountRead> {
+        let address = *address;
+        self.retry_with_backoff(|| async {
+            // One `ParamsWithBlock` for every member: the block tag cannot
+            // differ across the three reads by construction.
+            let params = ParamsWithBlock::new(address, BlockId::number(block));
+            let mut batch = BatchRequest::new(self.inner.client());
+            let balance = batch
+                .add_call::<_, U256>("eth_getBalance", &params)
+                .map_err(|e| e.into_provider_error(GET_ACCOUNT_CONTEXT))?;
+            let nonce = batch
+                .add_call::<_, U64>("eth_getTransactionCount", &params)
+                .map_err(|e| e.into_provider_error(GET_ACCOUNT_CONTEXT))?;
+            let code = batch
+                .add_call::<_, Bytes>("eth_getCode", &params)
+                .map_err(|e| e.into_provider_error(GET_ACCOUNT_CONTEXT))?;
+            // Awaiting the batch is what dispatches it. Its own failure is
+            // reported here, and the waiters are dropped rather than read:
+            // a dropped response channel would turn one classified transport
+            // error into an unclassifiable oneshot error per member.
+            batch
+                .send()
+                .await
+                .map_err(|e| e.into_provider_error(GET_ACCOUNT_CONTEXT))?;
+            let balance = balance
+                .await
+                .map_err(|e| e.into_provider_error(GET_ACCOUNT_CONTEXT))?;
+            let nonce = nonce
+                .await
+                .map_err(|e| e.into_provider_error(GET_ACCOUNT_CONTEXT))?;
+            let code = code
+                .await
+                .map_err(|e| e.into_provider_error(GET_ACCOUNT_CONTEXT))?;
+            Ok(AccountRead {
+                balance,
+                nonce: nonce.to::<u64>(),
+                code,
+            })
         })
         .await
     }

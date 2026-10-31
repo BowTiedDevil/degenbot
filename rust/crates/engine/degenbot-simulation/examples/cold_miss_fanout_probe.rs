@@ -20,9 +20,9 @@
 //! corpus's settled state from a snapshot and charge `COLD_MISS_LATENCY_US`
 //! (default 200 us) per modeled RPC round trip, so the measurement is a pure
 //! function of the cold-read count — no network, no jitter. An account miss is
-//! charged THREE round trips because the production adapter
-//! (`AlloyAsyncDb::get_account`) issues `eth_getBalance` +
-//! `eth_getTransactionCount` + `eth_getCode` sequentially.
+//! charged ONE round trip: the production adapter (`AlloyAsyncDb::get_account`)
+//! issues `eth_getBalance` + `eth_getTransactionCount` + `eth_getCode` as one
+//! JSON-RPC batch (`AlloyProvider::get_account_at`).
 //!
 //! # Legs
 //!
@@ -41,12 +41,10 @@
 //!    chain;
 //! 6. the fiber overhead alone (the fan-out re-driven with every answer
 //!    already cached), for N and for one frame;
-//! 7. the batched-account lever: the same measurements with the account read
-//!    modeled as ONE JSON-RPC batch instead of three serial calls;
-//! 8. steady state: the same frame with the production cross-block
+//! 7. steady state: the same frame with the production cross-block
 //!    `WarmCodeCache` in front (contract accounts + code are TTL-cached across
 //!    blocks; EOA rows and storage always forward);
-//! 9. verdict identity between the cold and zero-latency paths.
+//! 8. verdict identity between the cold and zero-latency paths.
 //!
 //! Usage:
 //!
@@ -197,8 +195,8 @@ impl Snapshot {
 
 // ── The accounting ────────────────────────────────────────────────────────
 
-/// Cold-path accounting: forwarded account reads (3 RPC round trips each) and
-/// storage reads (1 round trip each).
+/// Cold-path accounting: forwarded account reads (1 batched RPC round trip
+/// each) and storage reads (1 round trip each).
 #[derive(Debug, Default)]
 struct Counters {
     account_reads: AtomicU64,
@@ -217,7 +215,7 @@ impl Counters {
     }
 
     fn rpc_calls(counts: (u64, u64)) -> u64 {
-        3 * counts.0 + counts.1
+        counts.0 + counts.1
     }
 
     fn record_account(&self, address: Address) {
@@ -245,28 +243,19 @@ impl Counters {
 // ── The blocking stand-in (production's `BlockingAsyncDb` shape) ──────────
 
 /// A blocking cold path: every forwarded read sleeps one modeled round trip
-/// (three for an account, the production adapter's serial triple).
+/// (the production adapter reads the account triple in one JSON-RPC batch).
 struct LatencyDb {
     snapshot: Arc<Snapshot>,
     latency: Duration,
     counters: Arc<Counters>,
-    /// Model the account read as ONE batched round trip
-    /// (`eth_getBalance`+`eth_getTransactionCount`+`eth_getCode` in one
-    /// JSON-RPC batch) instead of the production adapter's three serial calls.
-    batched_account: bool,
 }
 
 impl Database for LatencyDb {
     type Error = std::convert::Infallible;
 
     fn get_account(&mut self, address: &Address) -> Result<Option<AccountInfo>, Self::Error> {
-        if self.batched_account {
-            self.counters.record_account(*address);
-            std::thread::sleep(self.latency);
-        } else {
-            self.counters.record_account(*address);
-            std::thread::sleep(self.latency.saturating_mul(3));
-        }
+        self.counters.record_account(*address);
+        std::thread::sleep(self.latency);
         Ok(self.snapshot.info(*address))
     }
 
@@ -594,7 +583,6 @@ fn latency_db(snapshot: &Arc<Snapshot>, latency: Duration, counters: &Arc<Counte
         snapshot: Arc::clone(snapshot),
         latency,
         counters: Arc::clone(counters),
-        batched_account: false,
     }
 }
 
@@ -606,8 +594,8 @@ struct SyncRun {
     wall: Duration,
     accounts: u64,
     storage: u64,
-    /// Modeled RPC round trips (3 per account read unless the account read is
-    /// batched).
+    /// Modeled RPC round trips (one per account read — the batched triple —
+    /// plus one per storage read).
     round_trips: u64,
     verdict: Verdict,
 }
@@ -621,23 +609,11 @@ fn run_sync_series(
     latency: Duration,
     fresh_per_frame: bool,
 ) -> Result<Vec<SyncRun>, String> {
-    run_sync_series_with(snapshot, frames, latency, fresh_per_frame, false)
-}
-
-/// [`run_sync_series`] with the account read modeled as one batched round trip.
-fn run_sync_series_with(
-    snapshot: &Arc<Snapshot>,
-    frames: &[RecoveredTxEnvelope],
-    latency: Duration,
-    fresh_per_frame: bool,
-    batched_account: bool,
-) -> Result<Vec<SyncRun>, String> {
     let counters = Arc::new(Counters::default());
     let build = || {
-        policy_evm(CacheDB::new(Db::new(LatencyDb {
-            batched_account,
-            ..latency_db(snapshot, latency, &counters)
-        })))
+        policy_evm(CacheDB::new(Db::new(latency_db(
+            snapshot, latency, &counters,
+        ))))
     };
     let mut evm: Evm<'static, BaseEvmTypes> = build();
     let mut runs = Vec::with_capacity(frames.len());
@@ -658,11 +634,7 @@ fn run_sync_series_with(
             wall,
             accounts: counts.0,
             storage: counts.1,
-            round_trips: if batched_account {
-                counts.0 + counts.1
-            } else {
-                Counters::rpc_calls(counts)
-            },
+            round_trips: Counters::rpc_calls(counts),
             verdict: Verdict::of(&result),
         });
     }
@@ -1055,25 +1027,8 @@ fn main() {
         }
     }
 
-    // ── leg 7: the account triple as ONE batched round trip ───────────────
-    println!("\n[7] lever check: the account read as one batched round trip (vs 3 serial)");
-    if let Ok(runs) = run_sync_series_with(
-        &snapshot,
-        std::slice::from_ref(&corpus.frame),
-        latency,
-        false,
-        true,
-    ) {
-        report_series("one executor frame, batched account read", &runs);
-    }
-    if let Ok(runs) = run_sync_series_with(&snapshot, &candidates, latency, false, true) {
-        let total: Duration = runs.iter().map(|r| r.wall).sum();
-        report_series("per-candidate loop, batched account read", &runs);
-        println!("  loop total {} us", us(total));
-    }
-
-    // ── leg 8: steady state with the cross-block warm cache in front ──────
-    println!("\n[8] steady state: the production cross-block WarmCodeCache in front");
+    // ── leg 7: steady state with the cross-block warm cache in front ──────
+    println!("\n[7] steady state: the production cross-block WarmCodeCache in front");
     let warm_inner = WarmCodeCacheInner::shared_default();
     for block in [BENCH_BLOCK, BENCH_BLOCK + 1] {
         match run_sync_series_warm_cache(
@@ -1110,7 +1065,7 @@ fn main() {
     }
 
     // ── verdict identity: the cold path must not change the settled result ─
-    println!("\n[9] verdict identity");
+    println!("\n[8] verdict identity");
     let mut ok = true;
     if let (Ok(a), Ok(b)) = (
         run_sync_series(
