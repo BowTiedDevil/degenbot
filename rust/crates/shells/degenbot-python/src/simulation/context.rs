@@ -8,6 +8,11 @@
 //! `block_priority_fees`) are call-args, not fields here — they are stitched
 //! into a borrowed `SimulateContext<'_>` at call time.
 //!
+//! The runtime bytecode's provenance is the engine's
+//! (`degenbot_arbitrage::executor_runtime`): this seam carries the two operator
+//! values that can move the artifact's path and nothing else — no resolution,
+//! no file read, no hex validation in the driver shell.
+//!
 //! Holds an `Arc<AlloyProvider>` — cloned at construction via
 //! [`PyAsyncAlloyProvider::provider_arc`] — so a caller can move an owned
 //! handle into an async block + construct the `SimulateContext` borrowing it
@@ -26,17 +31,18 @@ use crate::prelude::*;
 use crate::provider::AlloyProvider;
 use crate::rpc::async_provider::PyAsyncAlloyProvider;
 use alloy::primitives::Bytes;
+use degenbot_arbitrage::executor_runtime::load_executor_runtime;
 use degenbot_core::op_info;
 use degenbot_executor::{compute_simulation_warmup_slots, WarmupSlots};
-use pyo3::exceptions::PyValueError;
-use pyo3::types::PyBytes;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use std::path::Path;
 use std::sync::Arc;
 
 /// The session-static simulation config bag.
 ///
 /// Construct once per session from a `&PyAsyncAlloyProvider` + the addresses +
-/// the inject flag + the executor runtime bytecode. Read each block alongside
-/// the per-block args.
+/// the inject flag + the executor-runtime artifact's location. Read each block
+/// alongside the per-block args.
 #[pyclass(name = "SimulateContext", module = "degenbot._ffi.simulation")]
 // Every field is stitched into the borrowed `SimulateContext<'_>` the sim
 // fan-out consumes.
@@ -75,19 +81,31 @@ impl PySimulateContext {
     ///     `pool_manager_address`: Uniswap V4 `PoolManager` address (hex).
     ///     `multicall3_address`: Multicall3 contract address (hex).
     ///     `inject_code`: whether to inject the executor runtime bytecode
-    ///         (the `INJECT_EXECUTOR_CODE` flag).
-    ///     `executor_runtime_bytecode`: the executor runtime bytecode bytes
-    ///         (the file-load stays Python; the bytes cross here).
+    ///         (the `simulation.inject_executor_code` stance).
     ///     `injected_address`: the fresh address to inject the executor at
     ///         (hex); required when `inject_code` is `True`.
+    ///     `executor_runtime_path`: the operator's explicit artifact path (the
+    ///         `EXECUTOR_RUNTIME` key). `None` hands resolution to the engine.
+    ///     `contracts_dir`: the declared `dispatch.contracts_dir` key — the
+    ///         directory holding `cmd_executor_runtime_bytecode.txt`. `None`
+    ///         (or an empty path) falls through to the engine's source-layout
+    ///         candidate.
+    ///
+    /// The artifact itself — resolution precedence, the read, the `0x`-hex
+    /// validation — is the engine's (`degenbot_arbitrage::executor_runtime`);
+    /// this seam only carries the two operator values that move its path.
     ///
     /// # Errors
     /// `ValueError`: if any address string is not a valid EIP-55 address, or
     ///         `inject_code` is `True` and `injected_address` is `None`.
+    /// `RuntimeError`: if the engine cannot resolve, read, or decode the
+    ///         executor-runtime artifact (the message names the file and the
+    ///         knob that would fix it).
     #[new]
     #[pyo3(signature = (
         provider, executor_owner, executor_address, weth_address, pool_manager_address,
-        multicall3_address, inject_code, executor_runtime_bytecode, injected_address=None,
+        multicall3_address, inject_code, injected_address=None, executor_runtime_path=None,
+        contracts_dir=None,
     ))]
     #[expect(clippy::too_many_arguments)]
     fn new(
@@ -98,8 +116,9 @@ impl PySimulateContext {
         pool_manager_address: &str,
         multicall3_address: &str,
         inject_code: bool,
-        executor_runtime_bytecode: &Bound<'_, PyBytes>,
         injected_address: Option<&str>,
+        executor_runtime_path: Option<&str>,
+        contracts_dir: Option<&str>,
     ) -> PyResult<Self> {
         let provider = provider.provider_arc();
         let owner = parse_address(executor_owner)
@@ -130,6 +149,20 @@ impl PySimulateContext {
         let warmup_injected = injected.unwrap_or(owner);
         let warmup = compute_simulation_warmup_slots(warmup_injected, weth);
 
+        // The engine resolves + loads the artifact: one precedence chain and
+        // one validated read for every consumer (this seam, the native paths).
+        let runtime = load_executor_runtime(
+            executor_runtime_path.map(Path::new),
+            contracts_dir.map(Path::new),
+        )
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        op_info!(
+            domain = sim,
+            bytes = runtime.bytecode.len(),
+            path = %runtime.path.display(),
+            "executor runtime bytecode loaded"
+        );
+
         Ok(Self {
             provider,
             executor_owner: owner,
@@ -139,7 +172,7 @@ impl PySimulateContext {
             multicall3_address: multicall,
             inject_code,
             injected_address: injected,
-            runtime_bytecode: Bytes::from(executor_runtime_bytecode.as_bytes().to_vec()),
+            runtime_bytecode: runtime.bytecode,
             warmup,
         })
     }

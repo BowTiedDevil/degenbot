@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING
 from degenbot import Bot
 from degenbot.dispatch import SimulateContext
 from degenbot.provider import AlloyProvider, AsyncAlloyProvider
-from degenbot.runner._dispatch import _load_executor_runtime_bytecode
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.identity import (
     MULTICALL3_ADDRESS,
@@ -96,11 +95,13 @@ def build_sim_ctx(
 ) -> SimulateContext | None:
     """Build the session's sim context (``None`` for non-Alloy providers).
 
-    One SimulateContext per session, held alongside the dispatcher. The
-    runtime-bytecode file-load stays Python (``stays-python``); the bytes cross
-    here. The AsyncAlloyProvider handle is taken from the session's provider so
-    the dispatch path shares one provider with the rest of the pipeline.
-    Inline-sim wiring rides the same call.
+    One SimulateContext per session, held alongside the dispatcher. The engine
+    owns the executor-runtime artifact (resolution precedence, the read, the
+    ``0x``-hex validation), so this boundary carries only the two operator
+    values that can move its path: the explicit override and the declared
+    ``dispatch.contracts_dir`` key. The AsyncAlloyProvider handle is taken from
+    the session's provider so the dispatch path shares one provider with the
+    rest of the pipeline. Inline-sim wiring rides the same call.
 
     Args:
         cfg: The session's typed config.
@@ -118,7 +119,6 @@ def build_sim_ctx(
         # production sessions are Alloy-backed + build it eagerly here;
         # dispatch raises a clear error if reached without one.
         return None
-    runtime_code = _load_executor_runtime_bytecode(cfg)
     sim_ctx = SimulateContext(
         provider=async_alloy,
         executor_owner=cfg.executor_owner,
@@ -127,8 +127,14 @@ def build_sim_ctx(
         pool_manager_address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
         multicall3_address=MULTICALL3_ADDRESS,
         inject_code=cfg.inject_executor_code,
-        executor_runtime_bytecode=bytes.fromhex(runtime_code[2:]),
         injected_address=cfg.injected_address if cfg.inject_executor_code else None,
+        # The operator's explicit artifact path, passed through untouched: the
+        # engine resolves the artifact and loads its bytes. `cfg.contracts_dir`
+        # is the declared key's own value, carried as data for the same reason.
+        executor_runtime_path=(
+            str(cfg.executor_runtime) if cfg.executor_runtime is not None else None
+        ),
+        contracts_dir=cfg.contracts_dir or None,
     )
     # The inline-sim stance (`DEGENBOT_SOLVE_INLINE_SIM`) needs the ENGINE hook
     # installed from this session's sim config — without it stance=1 carries no

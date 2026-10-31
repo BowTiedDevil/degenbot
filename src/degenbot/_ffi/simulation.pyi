@@ -334,8 +334,8 @@ class SimulateContext:
     The session-static simulation config bag.
 
     Construct once per session from a `&PyAsyncAlloyProvider` + the addresses +
-    the inject flag + the executor runtime bytecode. Read each block alongside
-    the per-block args.
+    the inject flag + the executor-runtime artifact's location. Read each block
+    alongside the per-block args.
     """
     def __new__(
         cls,
@@ -347,8 +347,9 @@ class SimulateContext:
         pool_manager_address: str,
         multicall3_address: str,
         inject_code: bool,
-        executor_runtime_bytecode: bytes,
         injected_address: str | None = None,
+        executor_runtime_path: str | None = None,
+        contracts_dir: str | None = None,
     ) -> SimulateContext:
         """
         Build a session-long simulation context.
@@ -366,15 +367,26 @@ class SimulateContext:
             `pool_manager_address`: Uniswap V4 `PoolManager` address (hex).
             `multicall3_address`: Multicall3 contract address (hex).
             `inject_code`: whether to inject the executor runtime bytecode
-                (the `INJECT_EXECUTOR_CODE` flag).
-            `executor_runtime_bytecode`: the executor runtime bytecode bytes
-                (the file-load stays Python; the bytes cross here).
+                (the `simulation.inject_executor_code` stance).
             `injected_address`: the fresh address to inject the executor at
                 (hex); required when `inject_code` is `True`.
+            `executor_runtime_path`: the operator's explicit artifact path (the
+                `EXECUTOR_RUNTIME` key). `None` hands resolution to the engine.
+            `contracts_dir`: the declared `dispatch.contracts_dir` key — the
+                directory holding `cmd_executor_runtime_bytecode.txt`. `None`
+                (or an empty path) falls through to the engine's source-layout
+                candidate.
+
+        The artifact itself — resolution precedence, the read, the `0x`-hex
+        validation — is the engine's (`degenbot_arbitrage::executor_runtime`);
+        this seam only carries the two operator values that move its path.
 
         # Errors
         `ValueError`: if any address string is not a valid EIP-55 address, or
                 `inject_code` is `True` and `injected_address` is `None`.
+        `RuntimeError`: if the engine cannot resolve, read, or decode the
+                executor-runtime artifact (the message names the file and the
+                knob that would fix it).
         """
     @property
     def executor_address(self, /) -> str:

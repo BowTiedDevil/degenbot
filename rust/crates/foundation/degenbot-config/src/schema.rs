@@ -93,7 +93,6 @@ pub const SHELL_OWNED_KEYS: &[&str] = &[
     "diagnostics.procmem_csv",
     "diagnostics.procmem_secs",
     "diagnostics.tracemalloc_secs",
-    "dispatch.contracts_dir",
     "nodes.anvil_fork_compute_units_per_second",
     "pathfinding.discovery_batch_size",
     "pathfinding.reg_progress_secs",
@@ -661,7 +660,7 @@ crate::config_schema! {
         min_profit_margin_bps [u64] = 0, env = "DEGENBOT_MIN_PROFIT_MARGIN_BPS", def = "0",
             doc = "Driver-side profit floor in basis points (1/100 of a percent) applied at the simulation seam before a candidate is dispatched. A floor is a magnitude, so the key is unsigned end to end: a negative value is refused by the layer that supplied it, not clamped into a silent second default. This is NOT solve.min_profit_wei, which is the core's own floor: the two arms of the simulation seam are measured against their own floors, so naming one does not size the other.";
         contracts_dir [opt path] = None, env = "DEGENBOT_CONTRACTS_DIR", def = "(unset)",
-            doc = "Owner: the driver shell's deployment policy. Directory holding the executor runtime bytecode file the sim injects; unset falls through to the source-layout candidate the driver computes, and a wheel install must set it (or pass the file path explicitly).";
+            doc = "Owner: the engine's executor-runtime artifact resolution (`degenbot-arbitrage`'s loader). Directory holding the injected executor runtime bytecode file (`cmd_executor_runtime_bytecode.txt`); the engine reads it and validates the 0x-hex body. Resolution order is the explicit artifact path, then this key, then the source-layout candidate a checkout carries — so unset works in a checkout, while a wheel install, which ships no contracts directory, sets this key or the explicit path. A driver shell only passes the value across its boundary; it resolves nothing.";
     }
 
     // The per-arm facet namespaces: the typed config home each strategy's own
@@ -1420,7 +1419,7 @@ mod tests {
         }
         assert_eq!(
             SHELL_OWNED_KEYS.len(),
-            10,
+            9,
             "the shell-owned census changed: give the new key a core implementation, or add it here on review"
         );
     }

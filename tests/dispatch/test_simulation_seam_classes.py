@@ -53,7 +53,6 @@ class TestPySimulateContext:
             pool_manager_address=POOL_MANAGER,
             multicall3_address=MULTICALL3,
             inject_code=False,
-            executor_runtime_bytecode=b"\xde\xad\xbe\xef",
         )
         assert isinstance(ctx, SimulateContext)
         assert ctx.rpc_url == _RPC_URL
@@ -69,7 +68,6 @@ class TestPySimulateContext:
                 pool_manager_address=POOL_MANAGER,
                 multicall3_address=MULTICALL3,
                 inject_code=True,
-                executor_runtime_bytecode=b"\xde\xad\xbe\xef",
             )
 
     def test_inject_code_true_with_injected_address_constructs(self) -> None:
@@ -82,7 +80,6 @@ class TestPySimulateContext:
             pool_manager_address=POOL_MANAGER,
             multicall3_address=MULTICALL3,
             inject_code=True,
-            executor_runtime_bytecode=b"\xde\xad\xbe\xef",
             injected_address=EXECUTOR,
         )
         assert isinstance(ctx, SimulateContext)

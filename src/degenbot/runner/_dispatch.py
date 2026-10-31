@@ -5,7 +5,7 @@ The production path is the Rust core's batch executor
 and a drain task renders). This module owns the submit side of one drained
 batch: the raw engine-result record the assembly seam extracts, the
 ``[dispatch]`` line render over the typed submit records, the silent-veto smoke
-FSM, the relay broadcast fan-out, and the executor-runtime bytecode resolution.
+FSM, and the relay broadcast fan-out.
 
 The render view (:class:`~degenbot.runner._render.MergedOutcome`) and the
 display policy (:class:`~degenbot.runner._render.DisplayPolicy`) live in
@@ -18,7 +18,6 @@ runs in the Rust core.
 
 from __future__ import annotations
 
-import pathlib
 import time
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -29,7 +28,6 @@ from degenbot.logging import logger as bot_logger
 
 if TYPE_CHECKING:
     from degenbot.runner._render import DisplayPolicy, MergedOutcome
-    from degenbot.runner.config import ArbitrageConfig
 
 # Cached relay submit providers (broadcast fan-out). Built lazily on the
 # first gate-clearing candidate; reused so streaming batches never re-dial
@@ -54,77 +52,6 @@ class RawEngineResult:
     consumed_inputs: tuple[int, ...]
     solve_block: int
     state_nonces: tuple[int, ...]
-
-
-# The executor runtime bytecode file (one canonical filename in any
-# contracts directory).
-_EXECUTOR_RUNTIME_FILE = "cmd_executor_runtime_bytecode.txt"
-
-
-def _resolve_executor_runtime_path(cfg: ArbitrageConfig) -> pathlib.Path:
-    """Resolve the executor-runtime bytecode path — explicit, NO filesystem walk.
-
-    Resolution order (first hit wins):
-    1. ``cfg.executor_runtime`` — the operator's explicit path.
-    2. The declared ``dispatch.contracts_dir`` key.
-    3. Exactly one computed candidate for the source layout: the repo root
-       reached by a fixed-depth hop from this module
-       (``<root>/src/degenbot/runner/dispatch.py`` -> ``<root>``), then
-       ``contracts/<file>``. A wheel install has no such candidate — the
-       operator must pass ``executor_runtime`` explicitly.
-
-    Args:
-        cfg: The session's typed config.
-
-    Returns:
-        The resolved bytecode-file path (existence is not checked here).
-
-    """
-    if cfg.executor_runtime is not None:
-        return pathlib.Path(cfg.executor_runtime)
-    contracts_dir = cfg.contracts_dir
-    if contracts_dir:
-        return pathlib.Path(contracts_dir) / _EXECUTOR_RUNTIME_FILE
-    root = pathlib.Path(__file__).resolve().parents[3]
-    return root / "contracts" / _EXECUTOR_RUNTIME_FILE
-
-
-def _load_executor_runtime_bytecode(cfg: ArbitrageConfig) -> str:
-    """Load the patched runtime bytecode (0x-prefixed hex text).
-
-    The bytecode has all 5 immutable slots baked in: OWNER_ADDR, WETH_ADDR,
-    POOL_MANAGER_ADDR, and 2 precomputed delta slots (WETH, NATIVE).
-    See contracts/recompile.py for the full layout.
-
-    Args:
-        cfg: The session's typed config.
-
-    Returns:
-        The 0x-prefixed hex runtime bytecode text.
-
-    Raises:
-        RuntimeError: If the bytecode file does not exist.
-        ValueError: If the file's contents are not 0x-prefixed hex text.
-
-    """
-    bytecode_path = _resolve_executor_runtime_path(cfg)
-    if not bytecode_path.exists():
-        msg = (
-            f"executor runtime bytecode not found at {bytecode_path}. "
-            "Set ArbitrageConfig.executor_runtime to the file path, or set "
-            "DEGENBOT_CONTRACTS_DIR (dispatch.contracts_dir) to the directory containing "
-            f"{_EXECUTOR_RUNTIME_FILE} (wheel installs: pass executor_runtime explicitly)."
-        )
-        raise RuntimeError(msg)
-    code = bytecode_path.read_text(encoding="utf-8").strip()
-    if not code.startswith("0x"):
-        msg = f"Runtime bytecode file must start with 0x, got: {code[:20]}..."
-        raise ValueError(msg)
-    bot_logger.info(
-        f"[inject] Loaded executor runtime bytecode: "
-        f"{len(code) // 2 - 1} bytes from {bytecode_path}",
-    )
-    return code
 
 
 #: Silent-veto smoke detector: a live-armed session whose candidates clear

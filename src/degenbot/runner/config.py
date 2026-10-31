@@ -208,9 +208,11 @@ class ArbitrageConfig:
     # The incident probes the cockpit arms at start(). Required, because the
     # declared `diagnostics.*` keys are the only place their defaults live.
     diag: DiagConfig
-    # Explicit executor-runtime bytecode path (file containing 0x-prefixed hex).
-    # None -> the `dispatch.contracts_dir` key -> one computed source-layout
-    # candidate (NO filesystem walk). Wheel installs: pass this explicitly.
+    # The operator's explicit executor-runtime artifact path (a file holding the
+    # 0x-prefixed hex bytecode). The engine resolves and loads it — this value
+    # wins over the `dispatch.contracts_dir` key and over the source-layout
+    # candidate a checkout carries, and it is the one knob a wheel install,
+    # which ships no contracts directory, must set (or set contracts_dir).
     executor_runtime: str | Path | None = None
 
     @classmethod

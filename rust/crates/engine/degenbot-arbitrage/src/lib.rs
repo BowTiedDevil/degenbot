@@ -37,6 +37,11 @@
 /// execute-wrap) — the settlement-arbitrage bundle's read + execute calldata.
 pub mod calldata;
 
+/// The executor-runtime bytecode artifact: the engine's resolution precedence
+/// + the validated `0x`-hex read. Every consumer that injects executor code
+/// takes its bytes from here, so the pure-Rust path needs no driver shell.
+pub mod executor_runtime;
+
 /// The dispatch fan-out + categorization policy (`dispatch_profitable_results`)
 /// + the candidate/outcome types + the thin-margin pre-filter.
 pub mod dispatch;
@@ -72,6 +77,12 @@ pub use dispatch::{
     candidate_is_stale, dispatch_profitable_results, filter_thin_margin_results, is_gas_profitable,
     DispatchCandidate, DispatchOutcome, SolveStep, BPS_DENOM, MAX_SIMULATE_CONCURRENT,
     MIN_PROFIT_NET,
+};
+/// The executor-runtime artifact loader — the engine's one resolution + read
+/// path for the bytecode the sim injects.
+pub use executor_runtime::{
+    load_executor_runtime, resolve_executor_runtime_path, ExecutorRuntime, ExecutorRuntimeError,
+    EXECUTOR_RUNTIME_FILE,
 };
 pub use fot_registry::{
     fot_suspected_token, fot_suspected_token_from_reverting_frame,

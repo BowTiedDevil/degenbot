@@ -42,7 +42,6 @@ def _ctx() -> SimulateContext:
         pool_manager_address="0x000000000004444C5DC75cB358380d2e3dE08a90",
         multicall3_address="0xcA11bde05977b3631167028862bE2a173976CA11",
         inject_code=False,
-        executor_runtime_bytecode=b"\xde\xad\xbe\xef",
     )
 
 
