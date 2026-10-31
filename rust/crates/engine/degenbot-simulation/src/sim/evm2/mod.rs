@@ -16,6 +16,8 @@
 //! run leaves no writes in the shared read cache.
 
 pub mod alloy_async_db;
+#[cfg(feature = "evm2-jit")]
+pub mod aot_store;
 pub mod blocking_async_db;
 pub mod bot_state_db;
 pub mod frame_replay;
@@ -27,13 +29,17 @@ pub mod state_override;
 pub mod warm_code_cache;
 
 #[cfg(test)]
-
 /// Build a pilot EVM armed with the JIT interpreter runner (`evm2-jit`
 /// feature). Fail-soft by construction: a frame without a compiled program
 /// falls back to the interpreter, so uncovered bytecode interprets instead
 /// of diverging. `blocking` compiles synchronously — the parity gate sees
 /// the compiled path on first execution instead of racing the worker pool.
+///
+/// # Panics
+///
+/// Panics when the LLVM backend cannot initialize.
 #[cfg(feature = "evm2-jit")]
+#[expect(clippy::expect_used)] // backend init failure is a build-environment contract, not a call-site error
 pub fn build_pilot_evm_jit<'a>(
     db: impl ::evm2::evm::DynDatabase + 'a,
 ) -> (Evm<'a, BaseEvmTypes>, ::evm2_jit::runtime::JitBackend) {
