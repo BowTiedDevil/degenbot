@@ -14,13 +14,31 @@ preload); the engine-owned executor-bytecode loader (the Python loader
 retired); the worker pool with fleet-sized tuning and compile telemetry on
 the existing metrics surface; registration warmup through the inverted
 code_warmup port; and frame-replay residency (~2.9x on the replay legs).
-The JIT is off by default (`simulation.sim_jit`) pending the fork-lane
-soak; the concurrency trio (coroutine fan-out, speculative detach, BAL
+The JIT ships ON by default (`simulation.sim_jit`, flipped 2026-10-31 —
+below); the concurrency trio (coroutine fan-out, speculative detach, BAL
 prefetch) is the remaining open work. The revm dependency remains
 lib-level for the `oracle`/`harness`/`capture` lab modules (the Tier-3
 truth source until their deliberate migration decision).
 
 Accepted (2026-10-30).
+
+**The default flip (2026-10-31).** The JIT program (phases 1–6) was complete
+but inert: no production build carried `evm2-jit`, so `shared_runner()`
+answered `None` in every shipped artifact. Both consumers now carry the
+feature and the key that arms it defaults to on — the binding's `simulation`
+feature forwards `degenbot-simulation/evm2-jit` (every default and release
+extension build), the umbrella's narrowly-named `jit` feature forwards the
+same and the umbrella's `default` selects it (the pure-Rust bot gets the same
+engine the Python driver gets, not an interpreter-only build with the JIT
+buried), and `simulation.sim_jit`'s schema default flips false → true. The
+escape hatch is unchanged and is the whole point of the fail-soft: with
+`DEGENBOT_SIM_JIT=false` (or a build without the feature — `cargo add
+degenbot --no-default-features`) there is no runner, every frame interprets,
+and no verdict moves, because a lookup miss interprets anyway. What changes
+is that the build-side cost is no longer a diagnostic: every production build
+now links **LLVM 23** (the devcontainer's `llvm-config-23`), which makes an
+equivalent LLVM toolchain on the release builder a hard requirement for the
+next release rather than an optional extra.
 
 ## Context
 

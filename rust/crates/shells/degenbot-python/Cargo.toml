@@ -131,7 +131,11 @@ experimental-inspect = ["pyo3/experimental-inspect"]
 bot = ["dep:degenbot-bot", "dep:degenbot-substrate", "dep:degenbot-ingestion", "dep:degenbot-workers", "rpc", "decoders", "uniswap", "db"]
 price = ["dep:degenbot-price", "rpc"]
 submission = ["dep:degenbot-submission", "dep:degenbot-strategy", "rpc"]
-simulation = ["dep:degenbot-simulation", "dep:degenbot-arbitrage", "dep:degenbot-batch-executor", "dep:degenbot-workers", "dep:evm2", "rpc", "executor", "submission"]
+# The shipped extension carries the JIT (ADR-089: the engine ships on, so its
+# runner does too): `degenbot-simulation/evm2-jit` is a hard build requirement of
+# every `simulation` build, which is every default and release park. The link
+# cost is LLVM 23 (`llvm-config-23`, the devcontainer's toolchain).
+simulation = ["dep:degenbot-simulation", "degenbot-simulation/evm2-jit", "dep:degenbot-arbitrage", "dep:degenbot-batch-executor", "dep:degenbot-workers", "dep:evm2", "rpc", "executor", "submission"]
 executor = ["dep:degenbot-executor"]
 execution = ["dep:degenbot-execution", "executor"]
 fork = ["dep:degenbot-fork"]

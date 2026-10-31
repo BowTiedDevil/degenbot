@@ -67,6 +67,22 @@ degenbot-workers.workspace = true
 degenbot-eventhub.workspace = true
 
 [features]
+# The pure-Rust consumer's default: the JIT ships ON (ADR-089). Mirrors the
+# binding crate — `cargo add degenbot` gets the same engine the Python driver
+# gets, not an interpreter-only build with the JIT buried behind an opt-in.
+# The build cost is real and deliberate: LLVM 23 (`llvm-config-23`) links into
+# every umbrella build, so the interpreter-only build is the ESCAPE HATCH
+# (`--no-default-features` + `simulation.sim_jit = false`), never the silent
+# default.
+default = ["jit"]
+
+# The evm2 JIT runner passthrough (ADR-089 phase 6): forwards
+# `degenbot-simulation/evm2-jit`, whose holder arms itself from
+# `simulation.sim_jit` (on by default; `DEGENBOT_SIM_JIT=false` runs the
+# interpreter). Without this forward the umbrella's `shared_runner()` is a
+# compile-time `None`, so a standalone Rust bot could never reach the JIT.
+jit = ["degenbot-simulation/evm2-jit"]
+
 # OTel observability passthrough (Gap G6): forward
 # `degenbot-bot/otel` so a `cargo add degenbot, features = ["otel"]`
 # consumer reaches `degenbot::bot::{otel, metrics, instruments}`. Those
