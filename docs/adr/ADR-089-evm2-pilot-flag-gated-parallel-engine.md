@@ -5,11 +5,20 @@
 **Implemented (2026-10-30, phase 5 cutover `5bc38246e`).** Phases 0–5
 landed: the evm2 engine is the only engine on production paths; the revm
 engine, the pilot scaffolding, and every feature flag retired per ADR-087.
-Phase 6 (the performance roadmap below) is the open work; the JIT stays in
-fail-soft `blocking` mode until its worker-pool productionization, and the
-revm dependency remains lib-level for the `oracle`/`harness`/`capture` lab
-modules (the Tier-3 truth source until their deliberate migration
-decision).
+Phase 6 is largely landed (2026-10-30, `a1f3f7c50`..`c4103ce8d`): the
+offline benchmark harness; the JIT spine (process-shared runner on the
+sequence EVMs; production capture moved to the state-layer seam after the
+inspector-XOR-runner finding, proven by the capture-seam probe); the AOT
+executor (durable artifact store, `aot-prepare-executor` lane, holder
+preload); the engine-owned executor-bytecode loader (the Python loader
+retired); the worker pool with fleet-sized tuning and compile telemetry on
+the existing metrics surface; registration warmup through the inverted
+code_warmup port; and frame-replay residency (~2.9x on the replay legs).
+The JIT is off by default (`simulation.sim_jit`) pending the fork-lane
+soak; the concurrency trio (coroutine fan-out, speculative detach, BAL
+prefetch) is the remaining open work. The revm dependency remains
+lib-level for the `oracle`/`harness`/`capture` lab modules (the Tier-3
+truth source until their deliberate migration decision).
 
 Accepted (2026-10-30).
 
