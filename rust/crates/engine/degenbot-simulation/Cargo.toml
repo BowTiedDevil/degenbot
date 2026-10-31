@@ -141,6 +141,14 @@ name = "aot_prepare_executor"
 path = "examples/aot_prepare_executor.rs"
 required-features = ["evm2-jit"]
 
+# The cold-miss cost probe (the coroutine fan-out investigation): a latency-
+# injecting RPC stand-in measures where cold storage misses cost wall time and
+# whether N fibers overlap them. Needs no JIT, so it carries no
+# `required-features`.
+[[example]]
+name = "cold_miss_fanout_probe"
+path = "examples/cold_miss_fanout_probe.rs"
+
 # The JIT-composition probe: does the production capture (slots + swaps)
 # survive off the Inspector hook, so compiled execution can carry it?
 [[example]]
