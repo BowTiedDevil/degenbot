@@ -87,6 +87,16 @@ tokio = { version = "^1.54", features = ["rt-multi-thread", "time", "macros", "s
 toml = "1.1.8"
 degenbot-eventhub.workspace = true
 
+# The JIT's forward is TARGET-SCOPED, not a feature list above: features on a
+# platform-specific dependency declaration are additive and unify into the same
+# package, so `dep:degenbot-simulation` stays the one switch. On Linux the pair
+# of declarations merges into `evm2-jit`; on macOS/Windows only the base
+# declaration is in the graph, so no evm2-jit, evm2-jit-llvm, or llvm-sys node
+# exists and the wheel is interpreter-only (fail-soft: the `simulation.sim_jit`
+# key stays default-true and simply finds no runner).
+[target.'cfg(target_os = "linux")'.dependencies]
+degenbot-simulation = { workspace = true, optional = true, features = ["evm2-jit"] }
+
 [features]
 # Per-domain binding-layer features. Each gates its optional
 # optional core-crate dependency + the corresponding binding module/mod registrations, mirroring
@@ -131,11 +141,12 @@ experimental-inspect = ["pyo3/experimental-inspect"]
 bot = ["dep:degenbot-bot", "dep:degenbot-substrate", "dep:degenbot-ingestion", "dep:degenbot-workers", "rpc", "decoders", "uniswap", "db"]
 price = ["dep:degenbot-price", "rpc"]
 submission = ["dep:degenbot-submission", "dep:degenbot-strategy", "rpc"]
-# The shipped extension carries the JIT (ADR-089: the engine ships on, so its
-# runner does too): `degenbot-simulation/evm2-jit` is a hard build requirement of
-# every `simulation` build, which is every default and release park. The link
-# cost is LLVM 23 (`llvm-config-23`, the devcontainer's toolchain).
-simulation = ["dep:degenbot-simulation", "degenbot-simulation/evm2-jit", "dep:degenbot-arbitrage", "dep:degenbot-batch-executor", "dep:degenbot-workers", "dep:evm2", "rpc", "executor", "submission"]
+# The shipped extension carries the JIT on Linux (ADR-089: the engine ships on,
+# so its runner does too). The forward is target-scoped rather than named here:
+# see [target.'cfg(target_os = "linux")'.dependencies] below. On Linux every
+# `simulation` build links LLVM 23 (`llvm-config-23`, the devcontainer's
+# toolchain); elsewhere it links no LLVM and runs the interpreter.
+simulation = ["dep:degenbot-simulation", "dep:degenbot-arbitrage", "dep:degenbot-batch-executor", "dep:degenbot-workers", "dep:evm2", "rpc", "executor", "submission"]
 executor = ["dep:degenbot-executor"]
 execution = ["dep:degenbot-execution", "executor"]
 fork = ["dep:degenbot-fork"]

@@ -66,22 +66,22 @@ degenbot-uniswap.workspace = true
 degenbot-workers.workspace = true
 degenbot-eventhub.workspace = true
 
-[features]
-# The pure-Rust consumer's default: the JIT ships ON (ADR-089). Mirrors the
-# binding crate — `cargo add degenbot` gets the same engine the Python driver
-# gets, not an interpreter-only build with the JIT buried behind an opt-in.
-# The build cost is real and deliberate: LLVM 23 (`llvm-config-23`) links into
-# every umbrella build, so the interpreter-only build is the ESCAPE HATCH
-# (`--no-default-features` + `simulation.sim_jit = false`), never the silent
-# default.
-default = ["jit"]
+# The JIT's carriage is TARGET-SCOPED, not a feature: features on a
+# platform-specific dependency declaration are additive and unify into the same
+# package, so `degenbot-simulation` carries `evm2-jit` on Linux and nothing else
+# on macOS/Windows. `cargo add degenbot` therefore gets the same engine the
+# Python driver gets on Linux (ADR-089: the engine ships on, at the cost of the
+# LLVM 23 link), and a non-Linux build links no LLVM. The runner arms itself from
+# `simulation.sim_jit` (default true; `DEGENBOT_SIM_JIT=false` runs the
+# interpreter); where no runner was compiled in, `shared_runner()` is a
+# compile-time `None` and every frame interprets — the fail-soft contract.
+[target.'cfg(target_os = "linux")'.dependencies]
+degenbot-simulation = { workspace = true, features = ["evm2-jit"] }
 
-# The evm2 JIT runner passthrough (ADR-089 phase 6): forwards
-# `degenbot-simulation/evm2-jit`, whose holder arms itself from
-# `simulation.sim_jit` (on by default; `DEGENBOT_SIM_JIT=false` runs the
-# interpreter). Without this forward the umbrella's `shared_runner()` is a
-# compile-time `None`, so a standalone Rust bot could never reach the JIT.
-jit = ["degenbot-simulation/evm2-jit"]
+[features]
+# No feature is on by default: the JIT arrives through the target scope above,
+# and every remaining feature here is an opt-in passthrough.
+default = []
 
 # OTel observability passthrough (Gap G6): forward
 # `degenbot-bot/otel` so a `cargo add degenbot, features = ["otel"]`

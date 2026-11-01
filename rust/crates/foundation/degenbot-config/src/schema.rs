@@ -620,7 +620,7 @@ crate::config_schema! {
         sim_execute_gas [opt u64] = None, env = "DEGENBOT_SIM_EXECUTE_GAS", def = "(unset; EIP-7825 TX_GAS_LIMIT_CAP)",
             doc = "Override the execute() gas limit (decimal u64; garbage/0 falls back at the site while migrating).";
         sim_jit [bool] = true, env = "DEGENBOT_SIM_JIT", def = "true",
-            doc = "Install the evm2 JIT interpreter runner on the sim engine's sequence EVMs (worker-pool compile mode: a lookup miss interprets and the compiled program takes a later frame). On by default — every production build carries evm2-jit (ADR-089). `DEGENBOT_SIM_JIT=false` is the escape hatch back to the interpreter; the key is inert in a build without evm2-jit.";
+            doc = "Install the evm2 JIT interpreter runner on the sim engine's sequence EVMs (worker-pool compile mode: a lookup miss interprets and the compiled program takes a later frame). On by default, and it engages on Linux builds only: both consumers' evm2-jit forward is target-scoped to Linux (ADR-089), so a macOS/Windows build has no runner to install and the key is inert there — no verdict moves. `DEGENBOT_SIM_JIT=false` is the escape hatch back to the interpreter.";
         inject_executor_code [bool] = false, env = "DEGENBOT_INJECT_EXECUTOR_CODE", def = "false",
             doc = "Simulate against executor bytecode injected into the evm overlay instead of a deployed contract. Injection mode also gates live submission off for safety; `1` opts in (dry-run/dev posture).";
         sim_exit_on_fail [bool] = false, env = "DEGENBOT_SIM_EXIT_ON_FAIL", def = "false",

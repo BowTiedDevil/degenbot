@@ -40,6 +40,18 @@ now links **LLVM 23** (the devcontainer's `llvm-config-23`), which makes an
 equivalent LLVM toolchain on the release builder a hard requirement for the
 next release rather than an optional extra.
 
+**The Linux-only shipment (2026-10-31).** That build-side cost is now paid only
+where the JIT can run. Both consumers' `evm2-jit` forward moved out of their
+feature lists and into `[target.'cfg(target_os = "linux")'.dependencies]`, so a
+Linux build still gets the runner by default, while macOS/Windows builds have no
+`evm2-jit`, `evm2-jit-llvm`, or `llvm-sys` node and ship the interpreter — the
+fail-soft makes that the same engine uncompiled (`simulation.sim_jit` keeps its
+default-true and finds no runner; no verdict moves). The umbrella's `jit`
+feature and its `default` entry are gone with it, and LLVM 23 stays a hard
+requirement of every Linux builder, release CI included. The rationale (the
+JIT's compiled-artifact loader is ELF-only; no x86_64 macOS LLVM 23 exists) and
+the release consequences: `docs/llvm-release-ci.md`.
+
 ## Context
 
 revm is the sole simulation executor (ADR-019): the per-block `BlockSimHandle`

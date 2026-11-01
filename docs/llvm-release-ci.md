@@ -1,18 +1,31 @@
 # LLVM 23 on the release builders
 
-The shipped Python extension links the evm2 JIT, and the JIT links LLVM 23. That
-makes an LLVM 23 toolchain a **hard requirement of every job that compiles the
-workspace or the extension** — release CI included. This page is the operator
-side of that requirement: where it lands, the change that provisions it, the
-measurements behind the choices, and what is still a decision.
+The shipped Python extension links the evm2 JIT on Linux, and the JIT links
+LLVM 23. Both consumers' `evm2-jit` forward is target-scoped to Linux (the
+decision below), so an LLVM 23 toolchain is a **hard requirement of every Linux
+job that compiles the workspace or the extension** — release CI included — and of
+none on macOS/Windows, whose builds link no LLVM at all. This page is the
+operator side of that requirement: where it lands, the change that provisions it,
+and the measurements behind the choices.
 
 ## The requirement, exactly
 
-`degenbot-simulation` forwards `degenbot-simulation/evm2-jit` from both
-consumers: the binding's `simulation` feature (in `default`) and the umbrella
-`degenbot` crate's `jit` feature (in `default`). `evm2-jit` enables
-`evm2-jit-llvm`, which depends on `llvm-sys` — locked at **231.0.2**, i.e. LLVM
-23.1 (`rust/Cargo.lock`).
+`degenbot-simulation`'s `evm2-jit` feature turns on `evm2-jit-llvm`, which
+depends on `llvm-sys` — locked at **231.0.2**, i.e. LLVM 23.1
+(`rust/Cargo.lock`). Both consumers enable it from a **target-scoped dependency
+declaration**, not from a feature list:
+
+```toml
+# rust/crates/shells/degenbot-python/Cargo.toml (the binding; the umbrella's
+# copy drops `optional` because its edge is non-optional)
+[target.'cfg(target_os = "linux")'.dependencies]
+degenbot-simulation = { workspace = true, optional = true, features = ["evm2-jit"] }
+```
+
+Features on a platform-specific declaration are additive and unify into the same
+package, so on a Linux build the pair merges into `evm2-jit` whenever `simulation`
+is on (always, in `default`), and on macOS/Windows no `evm2-jit`,
+`evm2-jit-llvm`, or `llvm-sys` node exists in the graph at all.
 
 `llvm-sys`'s build script discovers a toolchain in exactly two places:
 
@@ -33,12 +46,12 @@ The devcontainer satisfies this through Fedora 45's `llvm-devel`
 | `release.yml` job | Compiles LLVM-linked code | Provisioned by this change |
 | --- | --- | --- |
 | `validate-branch` | no | — |
-| `ci` (`uses: ./ci.yml`) | **yes** — `just lint-rust-check`, `test-rust`, `build-rust-extension` all build default features, i.e. the umbrella's `jit` | **no — see "Not applied" below** |
+| `ci` (`uses: ./ci.yml`) | **yes** — `just lint-rust-check`, `test-rust`, `build-rust-extension` all build default features on Linux runners, where the target scope pulls `evm2-jit` into both consumers | **no — see "Not applied" below** |
 | `build-wheels` (Linux x86_64, Linux aarch64) | yes — inside the manylinux container | yes |
-| `build-wheels` (macOS universal2, Windows MSVC) | yes — on the runner | **no — blocked, decision below** |
+| `build-wheels` (macOS universal2, Windows MSVC) | **no** — the target scope leaves them JIT-less | — |
 | `build-sdist` | no — packages sources only | — |
 | `test-wheels` | no — installs the already-linked wheel | — |
-| `publish-crates-io` | **yes** — `cargo publish --dry-run --workspace` verifies each package by building it, and the umbrella `degenbot` package builds with `jit` in its defaults | yes |
+| `publish-crates-io` | **yes** — `cargo publish --dry-run --workspace` verifies each package by building it, and on a Linux runner the umbrella `degenbot` package builds with the target-scoped JIT | yes |
 | `publish-to-pypi` / `publish-to-test-pypi` / `github-release` | no | — |
 
 Two of those are easy to miss and both would have failed the next release before
@@ -117,13 +130,14 @@ Four behaviours are load-bearing:
     bash scripts/provision-llvm23.sh --check
   ```
 
-- `publish-crates-io` gains a provisioning step before the verify. It resolves
-  the script the same way that job already resolves the audit tooling (tagged
-  tree, else `origin/main`), so a resume of a tag that predates this change still
-  works.
-- The macOS and Windows legs gain a **fail-loud step** that names the missing
-  decision instead of leaving an `llvm-sys` discovery panic an hour into the job.
-  It is one line to delete when the platform decision lands.
+- `publish-crates-io` gains a provisioning step before the verify. The job runs
+  on a Linux runner, so the target scope puts the JIT in the verify build exactly
+  as it does in the Linux wheels. It resolves the script the same way that job
+  already resolves the audit tooling (tagged tree, else `origin/main`), so a
+  resume of a tag that predates this change still works.
+- The macOS and Windows legs carry **no LLVM provisioning and build no LLVM**:
+  with the forward target-scoped to Linux (decision below), their wheels are
+  interpreter-only.
 
 ### Not applied: the `ci.yml` gate
 
@@ -181,7 +195,7 @@ PATH, and the same tree built and linked:
 | --- | --- |
 | `just build-rust-extension` | `Finished dev profile … in 14.13s` (warm; 58.69s cold) |
 | `just check-rust-extension-release` | `Finished release profile [optimized] … in 27.79s` |
-| `just check-rust-consumer` | `Finished dev profile … in 6.03s` — the umbrella `degenbot` with `jit` in its defaults, i.e. the shape the crates.io verify builds |
+| `just check-rust-consumer` | `Finished dev profile … in 6.03s` — the umbrella `degenbot` with the Linux target-scoped JIT, i.e. the shape the crates.io verify builds |
 
 `--check` reports `discovered /tmp/…/bin/llvm-config (LLVM 23.1.4)`, and stdout
 carries the two `export` lines and nothing else, so `eval "$(…)"` cannot trip
@@ -201,9 +215,10 @@ floor. EL repos carry no LLVM 23 (`llvm-toolset` is 17.x). pypa publishes no
 prebuilt LLVM 23 can live under. A source build is 45–90+ minutes of the
 120-minute job budget on a 4-core runner, versus a ~2-minute download.
 
-## The open decision: macOS and Windows wheels
+## The decision: the JIT ships on Linux only — DECIDED 2026-10-31
 
-Both legs compile the JIT today, and neither can be provisioned as things stand:
+Both legs compiled the JIT before the decision, and neither can be provisioned as
+things stand:
 
 - **macOS universal2** needs LLVM 23 for *both* slices. The LLVM project publishes
   `LLVM-23.1.4-macOS-ARM64.tar.xz` and no x86_64 macOS build at all, and
@@ -215,24 +230,32 @@ Both legs compile the JIT today, and neither can be provisioned as things stand:
   "elf"]` in `evm2-jit-llvm/Cargo.toml`), so a Windows wheel would carry a JIT
   that cannot load a program.
 
-Three ways forward, in ascending cost:
+**The operator decided on 2026-10-31: the JIT ships on Linux only.** The carrier
+is the target-scoped forward in both consumers ("The requirement, exactly"
+above); the runner code needs no separate `cfg` because it is already gated on
+the `evm2-jit` feature — the interpreter is the feature-off path, unchanged.
 
-1. **Ship the JIT on Linux only.** Make the JIT forward target-conditional in
-   `degenbot-simulation` (the `evm2-jit` dependency under
-   `[target.'cfg(target_os = "linux")'.dependencies]`, the runner code and
-   `shared_runner()` cfg-gated to the same predicate), so `default` builds on
-   macOS/Windows link no LLVM and the wheels ship interpreter-only there. The
-   schema key keeps its default (`sim_jit = true`) and the fail-soft semantics
-   already handle a build with no runner: every frame interprets, no verdict
-   moves.
-2. **macOS: drop universal2** for per-arch wheels, and build an x86_64 LLVM 23
+What that means for the wheels, all landed in the same change:
+
+- **Linux (x86_64, aarch64)** — unchanged: the target scope pulls `evm2-jit` in,
+  the manylinux container provisions LLVM 23, and the wheel carries the JIT.
+- **macOS universal2 / Windows MSVC** — no `evm2-jit`, `evm2-jit-llvm`, or
+  `llvm-sys` node, no LLVM provisioning, interpreter-only wheels. The schema key
+  keeps its default (`sim_jit = true`) and the fail-soft semantics already handle
+  a build with no runner: every frame interprets, no verdict moves.
+- The release matrix no longer carries a fail-loud placeholder for the question:
+  there is nothing left to fail on.
+
+Rejected, in ascending cost, for the record:
+
+1. **macOS: drop universal2** for per-arch wheels, and build an x86_64 LLVM 23
    from source for the Intel slice (or drop Intel). Cheapest is arm64-only, at
    the cost of Intel users on the previous wheel.
-3. **Build LLVM 23 from source on both platforms** and cache it. Correct, and
+2. **Build LLVM 23 from source on both platforms** and cache it. Correct, and
    hours per cold build.
 
-Option 1 is the one that matches the JIT's actual reach today (ELF, Linux-tested);
-the other two buy a JIT on platforms where its loader cannot run.
+Both bought a JIT on platforms where its compiled-artifact loader (ELF-only)
+cannot run a program; the Linux-only ship matches the JIT's actual reach.
 
 ## Operator steps
 
@@ -240,14 +263,15 @@ the other two buy a JIT on platforms where its loader cannot run.
    tree (no partial staging — the pre-commit formatter owns the diff).
 2. **Land the `ci.yml` provisioning** (snippet above). The release's first job
    calls it; without it the pipeline stops at the CI gate.
-3. **Decide the macOS/Windows question** (above) before the next `v*` tag. Until
-   then those two legs fail fast with the pointer to this page.
+3. **The macOS/Windows question is decided** (above): those legs build JIT-less,
+   so no operator action and no provisioning is owed for them.
 4. **No new secrets or permissions.** Provisioning is a shell step over public
    release assets; no action pins change, and `permissions: contents: read`
    still suffices.
 5. **Tag after the merge.** `workflow_dispatch` resume of an *older* tag keeps
    working for the crates leg (it takes the script from `origin/main`) but not
    for the wheel legs, whose tree predates the script.
-6. **Watch on the first run**: wheel size (statically linked LLVM), the
-   `build-wheels` job duration (download ~2 min + a many-minute static link), and
-   runner disk (the subset extraction is ~0.6 GiB; the tarball itself ~1.9 GiB).
+6. **Watch on the first run**: Linux wheel size (statically linked LLVM), the
+   Linux `build-wheels` job duration (download ~2 min + a many-minute static
+   link), and runner disk (the subset extraction is ~0.6 GiB; the tarball itself
+   ~1.9 GiB).

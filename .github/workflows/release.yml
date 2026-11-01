@@ -117,11 +117,16 @@ jobs:
             container: quay.io/pypa/manylinux_2_34_aarch64
             args: ""
           # macOS universal2 (single wheel for both Intel and Apple Silicon).
-          # Needs the platform decision in docs/llvm-release-ci.md.
+          # JIT-less by construction: the JIT's forward is target-scoped to
+          # Linux, so this build links no LLVM, and no x86_64 macOS LLVM 23 exists
+          # to link against anyway. The interpreter fail-soft makes it the same
+          # engine, uncompiled. docs/llvm-release-ci.md.
           - os: macos-14
             target: universal2-apple-darwin
             args: "--target universal2-apple-darwin"
-          # Windows x86_64. Needs the platform decision in docs/llvm-release-ci.md.
+          # Windows x86_64. JIT-less for the same reason, and independently so:
+          # the JIT's compiled-artifact loader is ELF-only, so a Windows wheel
+          # could not load a compiled program even if one were built.
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             args: ""
@@ -130,18 +135,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.tag || github.ref_name }}
-
-      - name: LLVM 23 (non-Linux platforms)
-        # A wheel that links the JIT cannot be built here yet: macOS universal2
-        # needs LLVM 23 for both slices and no x86_64 macOS build is published,
-        # and the JIT's compiled-artifact loader is ELF-only, so a Windows wheel
-        # would carry a JIT that cannot load. Failing here names the reason
-        # instead of leaving an llvm-sys discovery panic an hour into the job.
-        # The decision and its options: docs/llvm-release-ci.md.
-        if: runner.os != 'Linux'
-        run: |
-          echo "::error::the shipped extension links the evm2 JIT's LLVM 23 and this platform has no provisioned toolchain — land the platform decision in docs/llvm-release-ci.md" >&2
-          exit 1
 
       - name: Build wheels with maturin
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
@@ -456,12 +449,12 @@ jobs:
           } >>"$GITHUB_STEP_SUMMARY"
 
       - name: Provide the LLVM 23 toolchain
-        # `cargo publish --dry-run` verifies a package by building it, and the
-        # umbrella `degenbot` crate's default feature set is `jit` — so this
-        # job's verify links the evm2 JIT's LLVM 23 exactly like the wheels do.
-        # Resolution mirrors the audit tooling above: the tagged tree supplies
-        # the code, this workflow supplies the machinery, so a tag that predates
-        # the script still resumes from main's copy.
+        # `cargo publish --dry-run` verifies a package by building it, and this
+        # job runs on Linux, where the target-scoped forward pulls evm2-jit into
+        # both consumers — so the verify links the evm2 JIT's LLVM 23 exactly
+        # like the wheels do. Resolution mirrors the audit tooling above: the
+        # tagged tree supplies the code, this workflow supplies the machinery, so
+        # a tag that predates the script still resumes from main's copy.
         run: |
           tooling=scripts/provision-llvm23.sh
           if git cat-file -e "HEAD:$tooling" 2>/dev/null; then
