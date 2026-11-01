@@ -96,6 +96,10 @@ Four behaviours are load-bearing:
 
 - `build-wheels` matrix: `manylinux: 2_28` → **`2_34`** for both Linux entries,
   because the prebuilt cannot run or link on glibc 2.28 (measurements below).
+  **Ratified by the operator 2026-10-31**: the glibc-2.34 install floor ships;
+  if a real user on an older distro appears, the dual-wheel fallback (a
+  JIT-less `2_28` wheel — the interpreter fail-soft makes it functional) is the
+  response, not a revert.
 - The aarch64 entry moves to the **`ubuntu-24.04-arm`** runner (the platform
   `test-wheels` already uses) so the manylinux container runs natively; linking
   the LLVM archives is minutes of linker work that QEMU emulation would multiply.
