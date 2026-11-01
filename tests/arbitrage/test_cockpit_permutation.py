@@ -48,6 +48,9 @@ class _FakePipeline:
     def emit_registration_progress(self, *, force: bool = False) -> None:
         pass
 
+    def emit_stage_profile(self) -> None:
+        pass
+
 
 class TestPermutation:
     async def test_build_paths_reads_permutation_from_param(self) -> None:

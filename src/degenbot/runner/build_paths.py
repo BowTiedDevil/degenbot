@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import Counter, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from degenbot.arbitrage import RegistrationLifecycle, RetryPolicy
@@ -142,6 +142,30 @@ def _pool_types_from_filter(perms: set[str] | None) -> list[PoolKind]:
 #: path-cap stop holds only a handful of in-flight units.
 REG_INTAKE_WINDOW = 32
 
+#: The registration unit's stages, in execution order — the stage profile's
+#: columns. A unit's outcome carries one nanosecond delta per stage it RAN,
+#: truncated at the stage that answered it: ``len(stage_ns)`` is how far the
+#: unit got, and ``UNIT_STAGES[len(stage_ns) - 1]`` names its answering stage.
+UNIT_STAGES: tuple[str, ...] = ("memo", "build", "eligibility", "verify", "register")
+
+#: The skip classes, indexed by the answering stage — the memo, build, and
+#: eligibility stages are the only ones that can return a skip.
+_SKIP_STAGE_CLASSES: tuple[str, ...] = ("memo-skip", "build-skip", "eligibility-skip")
+
+#: Every class the stage profile splits on, in render order: the classes the
+#: crawl is measured by, plus the terminal kinds that would otherwise go
+#: uncounted and the skips whose stage split the profile never saw.
+UNIT_OUTCOME_CLASSES: tuple[str, ...] = (
+    "registered",
+    "memo-skip",
+    "build-skip",
+    "eligibility-skip",
+    "engine-reject",
+    "register-fail",
+    "cap-skip",
+    "unattributed-skip",
+)
+
 
 @dataclass
 class RegistrationUnitOutcome:
@@ -179,6 +203,178 @@ class RegistrationUnitOutcome:
     # object at the skip site; the seat keeps no counters, so the text rides
     #: the outcome).
     detail: str | None = None
+    #: The unit's per-stage wall time (ns), in :data:`UNIT_STAGES` order and
+    #: truncated at the stage that ANSWERED the unit (a memo refusal carries one
+    #: entry, a registered path carries all five). Aggregate accounting only:
+    #: the driver folds it into :class:`UnitStageProfile` and nothing is logged
+    #: per unit. ``None`` means the outcome's producer measured nothing.
+    stage_ns: tuple[int, ...] | None = None
+
+
+class UnitStageClock:
+    """One unit's stage stopwatch — one monotonic-clock read per stage.
+
+    The seat owns a clock per unit and laps it as the unit passes its stages
+    (memo → build → eligibility → verify → register). The banked deltas ride the
+    returned outcome and the driver folds them into :class:`UnitStageProfile`,
+    so no seat touches shared state and no unit is ever logged.
+    """
+
+    __slots__ = ("_last_ns", "_stage_ns")
+
+    def __init__(self) -> None:
+        """Start the unit's clock at its entry preamble."""
+        self._last_ns = time.perf_counter_ns()
+        self._stage_ns: list[int] = []
+
+    def lap(self) -> None:
+        """Close the stage now running into the unit's per-stage split."""
+        now_ns = time.perf_counter_ns()
+        self._stage_ns.append(now_ns - self._last_ns)
+        self._last_ns = now_ns
+
+    def finish(self) -> tuple[int, ...]:
+        """Return the stages the unit ran, with each one's wall time in ns.
+
+        Returns:
+            One entry per stage the unit ran, in :data:`UNIT_STAGES` order.
+
+        """
+        return tuple(self._stage_ns)
+
+
+def unit_outcome_class(outcome: RegistrationUnitOutcome) -> str:
+    """Name the stage-profile class an outcome folds under.
+
+    A skip is attributed to the stage that answered it (its ``stage_ns`` is
+    front-truncated there), which is what lets the profile answer "where does a
+    refused unit's wall time go" per refusal site. Every other class is the unit
+    kind's own.
+
+    Args:
+        outcome: The unit outcome the driver is folding.
+
+    Returns:
+        The class name, one of :data:`UNIT_OUTCOME_CLASSES`.
+
+    Raises:
+        DegenbotValueError: On a unit kind the profile has no class for — wire
+            drift, never a guessed class. (A kind the core never exported
+            fails the enum mint first, as a `ValueError`.)
+
+    """
+    kind = RegistrationUnitKind(outcome.kind)
+    if kind == RegistrationUnitKind.SKIP:
+        stage_ns = outcome.stage_ns
+        if stage_ns is not None and 0 < len(stage_ns) <= len(_SKIP_STAGE_CLASSES):
+            return _SKIP_STAGE_CLASSES[len(stage_ns) - 1]
+        # A skip whose split never reached the driver (a caller-built
+        # outcome): counted, so the classes still add up to the unit count.
+        return "unattributed-skip"
+    match kind:
+        case RegistrationUnitKind.REGISTERED:
+            return "registered"
+        case RegistrationUnitKind.REJECT:
+            return "engine-reject"
+        case RegistrationUnitKind.REGISTER_FAIL:
+            return "register-fail"
+        case RegistrationUnitKind.CAP:
+            return "cap-skip"
+        case _:
+            msg = (
+                f"Unrecognized unit kind {kind!r}: the stage profile splits "
+                "registered, memo-skip, build-skip, eligibility-skip, "
+                "engine-reject, register-fail, and cap-skip — wire drift."
+            )
+            raise DegenbotValueError(message=msg)
+
+
+def _stage_split(buckets: list[int], total_ns: int) -> str:
+    """Spell one profile row: per stage, milliseconds and share of the row.
+
+    Args:
+        buckets: Per-stage wall time in ns, in :data:`UNIT_STAGES` order.
+        total_ns: The row's total wall time in ns (0 for an unmeasured row).
+
+    Returns:
+        The row's per-stage split.
+
+    """
+    return " ".join(
+        f"{stage}={delta / 1_000_000:,.1f}ms({100.0 * delta / total_ns if total_ns else 0.0:.1f}%)"
+        for stage, delta in zip(UNIT_STAGES, buckets, strict=True)
+    )
+
+
+@dataclass
+class UnitStageProfile:
+    """Aggregate unit-stage wall time, split by outcome class.
+
+    The per-unit half of the profile lives on the outcome (a seat times only its
+    own unit); this is the fold the driver's single loop owns — one counter bump
+    and one add per stage, negligible beside the work it measures. The render is
+    the crawl's trim diagnostic: per stage and per class, total milliseconds and
+    share of unit time, which is what says where a unit's wall time goes and
+    which stage owns a refused unit's cost.
+    """
+
+    #: Units folded, per outcome class.
+    units: Counter[str] = field(default_factory=Counter)
+    #: Per-class per-stage wall time in ns, in :data:`UNIT_STAGES` order.
+    stage_ns: dict[str, list[int]] = field(default_factory=dict)
+
+    def absorb(self, outcome: RegistrationUnitOutcome) -> None:
+        """Fold one unit's stage split under its outcome class.
+
+        Args:
+            outcome: The unit outcome the driver is folding; its ``stage_ns``
+                is ``None`` when its producer measured nothing.
+
+        """
+        outcome_class = unit_outcome_class(outcome)
+        self.units[outcome_class] += 1
+        buckets = self.stage_ns.setdefault(outcome_class, [0] * len(UNIT_STAGES))
+        stage_ns = outcome.stage_ns
+        if stage_ns is None:
+            return
+        for index in range(min(len(UNIT_STAGES), len(stage_ns))):
+            buckets[index] += stage_ns[index]
+
+    def summary_lines(self) -> list[str]:
+        """Render the profile as the crawl's trim block.
+
+        Returns:
+            The block's lines: the totals, the all-units stage split, then one
+            line per class that saw a unit.
+
+        """
+        total_units = sum(self.units.values())
+        overall = [0] * len(UNIT_STAGES)
+        for buckets in self.stage_ns.values():
+            for index, delta in enumerate(buckets):
+                overall[index] += delta
+        total_ns = sum(overall)
+        lines = [
+            (
+                f"[build_paths] Unit-stage profile (cumulative): {total_units} units, "
+                f"{total_ns / 1_000_000:,.1f}ms of unit time"
+            ),
+            f"[build_paths]   all units: {_stage_split(overall, total_ns)}",
+        ]
+        for outcome_class in UNIT_OUTCOME_CLASSES:
+            units = self.units.get(outcome_class, 0)
+            if not units:
+                continue
+            buckets = self.stage_ns.get(outcome_class) or [0] * len(UNIT_STAGES)
+            class_ns = sum(buckets)
+            share = 100.0 * class_ns / total_ns if total_ns else 0.0
+            lines.append(
+                f"[build_paths]   {outcome_class}: {units} units, "
+                f"{class_ns / 1_000_000:,.1f}ms "
+                f"({share:.1f}% of unit time, {class_ns / units / 1_000:,.0f}us/unit)"
+                f" — {_stage_split(buckets, class_ns)}"
+            )
+        return lines
 
 
 def resolve_directions(
@@ -400,6 +596,11 @@ class PathRegistrationPipeline:
         # count.
         self.units_folded = 0
         self.uncounted_skip_count = 0
+        # Aggregate unit-stage wall time, split by outcome class. The seats time
+        # only their OWN unit and return the split on the outcome; this profile
+        # is folded at the single-loop mutation point (`absorb_outcome`) and
+        # rendered at trim, so the instrumentation carries no seat-side state.
+        self._stage_profile = UnitStageProfile()
         # The registration outcome ledger owns the four memos that used to
         # live here ad-hoc — the registered-path dup fast-path, the verify-once
         # pool fact, the unregistrable-pool stable refusals, and the
@@ -442,7 +643,41 @@ class PathRegistrationPipeline:
         on the shared tokio runtime under the seat-claims at-most-once table,
         and the engine FFI owns the path dedup + cap. Counters are NEVER
         mutated here (concurrent seats): the returned outcome travels back to
-        the single-loop driver, which folds it into the summary.
+        the single-loop driver, which folds it into the summary. The outcome
+        also carries the unit's per-stage wall time (see ``stage_ns``), folded
+        by the same driver into the aggregate :class:`UnitStageProfile`.
+
+        The loud-abort exceptions (:class:`VerificationMismatchError` /
+        :class:`VerificationRpcError` / :class:`DirectionResolutionError`)
+        propagate out of the stages untouched — a mismatch, RPC failure, or
+        direction invariant violation still shuts the crawl down loudly.
+
+        Returns:
+            The unit outcome (registered / skip / reject / cap).
+
+        """
+        clock = UnitStageClock()
+        outcome = self._registration_stages(path_steps, directions, clock)
+        outcome.stage_ns = clock.finish()
+        return outcome
+
+    def _registration_stages(
+        self,
+        path_steps: Any,
+        directions: list[bool] | None,
+        clock: UnitStageClock,
+    ) -> RegistrationUnitOutcome:
+        """Run one unit's stages, lapping the stage clock after each.
+
+        The lap order IS the reported split, and it stops at the stage that
+        answered the unit, so the outcome's ``stage_ns`` is front-truncated at
+        its answering stage (one entry for a memo refusal, all five for a
+        registered path).
+
+        Args:
+            path_steps: The discovered path's steps.
+            directions: Operator-pinned per-hop directions, or ``None``.
+            clock: The unit's stage clock, lapped after every stage it runs.
 
         Returns:
             The unit outcome (registered / skip / reject / cap).
@@ -459,11 +694,15 @@ class PathRegistrationPipeline:
         steps = list(path_steps)
         pool_kinds = self._hop_pool_kinds(steps)
 
+        # The memo stage absorbs the unit's entry preamble (the step list and
+        # its typed hop kinds): O(hops) work, and it precedes the first build.
         memoized = self._memoized_unregistrable_outcome(steps, pool_kinds)
+        clock.lap()
         if memoized is not None:
             return memoized
 
         built = self.build_hop_pools(steps, pool_kinds)
+        clock.lap()
         if isinstance(built, RegistrationUnitOutcome):
             return built
         pools = built
@@ -479,11 +718,13 @@ class PathRegistrationPipeline:
         # registration-stage exception is the counted engine-reject path.
         try:
             plan = self._evaluate_registration_eligibility(pools, directions, v4_hops)
+            clock.lap()
             if isinstance(plan, RegistrationUnitOutcome):
                 return plan
             engine_hops, hop_sig = plan
 
             self._run_verify_lifecycles(pools, pool_kinds, reg)
+            clock.lap()
 
             outcome = self._register_path_outcome(reg, engine_hops, hop_sig, v4_hops)
             if outcome.kind == "registered":
@@ -491,6 +732,7 @@ class PathRegistrationPipeline:
                 # dup) enters the memo; stable negatives entered theirs at
                 # their own sites, and a failed verify stays retriable.
                 self._ledger.memoize_registered_path(hop_sig)
+            clock.lap()
         except (
             VerificationMismatchError,
             VerificationRpcError,
@@ -498,6 +740,9 @@ class PathRegistrationPipeline:
         ):
             raise
         except Exception as exc:
+            # The stage that raised owns the aborted unit's time: this lap lands
+            # exactly when the failure preceded that stage's own lap above.
+            clock.lap()
             tag = f"{type(exc).__name__}: {exc}"
             bot_logger.info(
                 f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}",
@@ -1012,6 +1257,17 @@ class PathRegistrationPipeline:
             f"{{skip_reasons: {breakdown}}}",
         )
 
+    def emit_stage_profile(self) -> None:
+        """Log the aggregate unit-stage profile — the crawl's trim diagnostic.
+
+        One block: the total unit time, the all-units stage split, then one line
+        per outcome class. The per-class rows answer which stage owns a refused
+        unit's cost; the class totals answer how much of the crawl's wall time
+        refusal spends at all.
+        """
+        for line in self._stage_profile.summary_lines():
+            bot_logger.info(line)
+
     async def run_registration(self, *, producer: AsyncIterable[object]) -> None:
         """Run the crawl: submit each discovered path as ONE fleet unit.
 
@@ -1268,6 +1524,10 @@ class PathRegistrationPipeline:
         for reason, count in delta.skip_reasons:
             self._skip_reasons[reason] += count
 
+        # The stage profile's own fold: aggregate wall time by outcome class,
+        # the seats' per-unit timing landing here and nowhere else.
+        self._stage_profile.absorb(outcome)
+
         # Driver-side observation policy (the counters above are the fold's).
         if outcome.kind == RegistrationUnitKind.SKIP:
             if outcome.tag is not None:
@@ -1394,9 +1654,17 @@ async def build_paths(
     # crawl breaks on the path cap (or aborts on a fatal receipt) so the Rust
     # batch iterator is dropped (releasing a mid-DFS search) instead of
     # leaving the search running.
+    # A crawl that unwinds (SIGINT, a fatal unit receipt) never reaches the
+    # Summary lines below, and the abort case is exactly when the stage profile
+    # is worth reading — so an aborted crawl emits it on the way out. No
+    # `except` clause here: the exception must keep unwinding.
+    completed = False
     try:
         await pipeline.run_registration(producer=discovery_producer)
+        completed = True
     finally:
+        if not completed:
+            pipeline.emit_stage_profile()
         aclose = getattr(discovery_producer, "aclose", None)
         if aclose is not None:
             await aclose()
@@ -1433,6 +1701,7 @@ async def build_paths(
         f"{pipeline.other_exc_count} other-Exception, "
         f"{engine_registry.engine.path_count()} engine paths",
     )
+    pipeline.emit_stage_profile()
 
     # Orphan sweep: release Tracked pools whose path was skipped.
     engine_registry.engine.release_all_v3_v4_quarantined()

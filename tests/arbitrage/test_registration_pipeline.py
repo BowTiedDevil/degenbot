@@ -43,9 +43,15 @@ from degenbot.pathfinding import PoolKind
 from degenbot.runner._registration_ledger import RegistrationOutcome
 from degenbot.runner.build_paths import (
     REG_INTAKE_WINDOW,
+    UNIT_STAGES,
+    BuildPathsOptions,
     PathRegistrationPipeline,
     RegistrationUnitOutcome,
+    UnitStageProfile,
+    build_paths,
+    unit_outcome_class,
 )
+from tests.fakes.engine import FakeEngineRegistry
 from tests.fakes.tokens import FakeToken
 from tests.helpers.seam import FleetIntakeFaultedError
 
@@ -223,6 +229,27 @@ async def _producer(paths: list[object]) -> AsyncIterator[object]:
         yield path
 
 
+class _AbortingPipeline:
+    """Pipeline double whose crawl unwinds, like a SIGINT'd boot."""
+
+    def __init__(self) -> None:
+        self.pool_type_per_depth: object = None
+        self.pool_types: list[object] = []
+        self.emitted: list[str] = []
+
+    def discovery_sweep(self) -> object:
+        return iter(())
+
+    async def run_registration(self, *, producer: object) -> None:
+        raise KeyboardInterrupt
+
+    def emit_registration_progress(self, *, force: bool = False) -> None:
+        self.emitted.append("progress")
+
+    def emit_stage_profile(self) -> None:
+        self.emitted.append("stages")
+
+
 async def test_crawl_submits_one_unit_per_path_and_resolves_fifo(tmp_path: Path) -> None:
     """Every discovered path = one intake unit; receipts resolve in order."""
     order: list[str] = []
@@ -351,6 +378,141 @@ def test_absorb_outcome_counter_parity(tmp_path: Path) -> None:
     # The cap fold stops the crawl.
     pipeline.absorb_outcome(RegistrationUnitOutcome(kind="cap", tag="path-cap"))
     assert pipeline.capped
+
+
+def test_unit_stage_split_is_front_truncated_at_the_answering_stage(tmp_path: Path) -> None:
+    """Each unit's split stops at the stage that answered it.
+
+    The profile answers "where does a refused unit's wall time go" only if a
+    skip is attributed to the stage that refused it: the memo answers with one
+    entry, the build with two, the eligibility gate with three, and a
+    registered path with all five.
+    """
+    registry = _RecordingRegistry()
+    pipeline = _pipeline_over_registry(tmp_path / "unused.db", registry)
+
+    registered = pipeline._registration_unit(_closed_v3_cycle_steps())
+    assert registered.kind == "registered"
+    assert registered.stage_ns is not None
+    assert len(registered.stage_ns) == len(UNIT_STAGES)
+    assert all(delta >= 0 for delta in registered.stage_ns)
+    assert unit_outcome_class(registered) == "registered"
+
+    # The dup answers at the eligibility gate's registered-path fast-path: the
+    # verify and register stages never run.
+    dup = pipeline._registration_unit(_closed_v3_cycle_steps())
+    assert dup.kind == "registered"
+    assert dup.created is False
+    assert dup.stage_ns is not None
+    assert len(dup.stage_ns) == 3
+
+    # A pinned direction the path cannot honour is the gate's own skip.
+    mismatch = pipeline._registration_unit(_closed_v3_cycle_steps(), directions=[True])
+    assert mismatch.kind == "skip"
+    assert mismatch.stage_ns is not None
+    assert len(mismatch.stage_ns) == 3
+    assert unit_outcome_class(mismatch) == "eligibility-skip"
+
+
+def test_refused_unit_split_names_the_refusal_stage(tmp_path: Path) -> None:
+    """A build refusal and its memo replay are distinct profile classes."""
+    build_calls: list[object] = []
+
+    def _build_managed_pool(address: object, request: object) -> None:
+        build_calls.append(getattr(request, "pool_id", None))
+        hooked: HookedPoolRejectedError = HookedPoolRejectedError
+        raise hooked
+
+    bot = _ConstrBot(build_managed_pool=_build_managed_pool, build_pool=lambda *a, **k: None)
+    pipeline, _ = _pipeline_with_bot(tmp_path / "unused.db", bot)
+    steps = [
+        _OpaqueStep(type=PoolKind.V4, address=None, hash=bytes([0xDE]) * 32),
+        _OpaqueStep(type=PoolKind.V4, address=None, hash=bytes([0xBE]) * 32),
+    ]
+
+    refused = pipeline._registration_unit(steps)
+    assert refused.stage_ns is not None
+    assert len(refused.stage_ns) == 2, "the build stage answered the refusal"
+    assert unit_outcome_class(refused) == "build-skip"
+    pipeline.absorb_outcome(refused)
+
+    replay = pipeline._registration_unit(steps)
+    assert replay.stage_ns is not None
+    assert len(replay.stage_ns) == 1, "the unregistrable-pool memo answered it"
+    assert unit_outcome_class(replay) == "memo-skip"
+    pipeline.absorb_outcome(replay)
+
+    profile = pipeline._stage_profile
+    assert profile.units["build-skip"] == 1
+    assert profile.units["memo-skip"] == 1
+    assert len(build_calls) == 1, "the replay never reached a build"
+
+
+def test_stage_profile_splits_unit_time_by_class_and_renders_every_row() -> None:
+    """The profile sums wall time per stage per class and renders each row."""
+    profile = UnitStageProfile()
+    profile.absorb(RegistrationUnitOutcome(kind="registered", stage_ns=(100, 200, 300, 400, 500)))
+    profile.absorb(RegistrationUnitOutcome(kind="skip", stage_ns=(10, 20)))
+    profile.absorb(RegistrationUnitOutcome(kind="reject", stage_ns=(1, 2, 3, 4, 5)))
+    # A caller-built outcome carries no split: counted, but unmeasured.
+    profile.absorb(RegistrationUnitOutcome(kind="cap"))
+
+    assert profile.units["registered"] == 1
+    assert profile.units["build-skip"] == 1
+    assert profile.units["engine-reject"] == 1
+    assert profile.units["cap-skip"] == 1
+    assert profile.stage_ns["registered"] == [100, 200, 300, 400, 500]
+    assert profile.stage_ns["build-skip"] == [10, 20, 0, 0, 0]
+    assert profile.stage_ns["cap-skip"] == [0, 0, 0, 0, 0]
+
+    lines = profile.summary_lines()
+    assert "4 units" in lines[0]
+    assert lines[1].startswith("[build_paths]   all units: memo=")
+    assert "register=0.0ms(" in lines[1], "the all-units row spans every stage"
+    rendered = "\n".join(lines)
+    assert "registered: 1 units" in rendered
+    for outcome_class in ("registered", "build-skip", "engine-reject", "cap-skip"):
+        assert f"  {outcome_class}: 1 units" in rendered
+    assert "memo-skip" not in rendered, "a class with no unit renders nothing"
+
+
+def test_emit_stage_profile_logs_the_block(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The trim block is a log line per class, through the bot logger."""
+    registry = _RecordingRegistry()
+    pipeline = _pipeline_over_registry(tmp_path / "unused.db", registry)
+    pipeline.absorb_outcome(pipeline._registration_unit(_closed_v3_cycle_steps()))
+
+    with caplog.at_level("INFO", logger="degenbot"):
+        pipeline.emit_stage_profile()
+
+    messages = [record.message for record in caplog.records]
+    block = [message for message in messages if "Unit-stage" in message]
+    assert block, "the trim block reaches the bot logger"
+    assert all(message.startswith("[build_paths]") for message in block)
+    assert any("registered: 1 units" in message for message in messages)
+
+
+async def test_an_aborted_crawl_still_reports_its_stage_profile() -> None:
+    """A crawl that unwinds (SIGINT, a fatal receipt) emits its split anyway.
+
+    The crawl's natural trim emits the profile beside the Summary; an abort
+    never reaches those lines, so the emission rides the unwind.
+    """
+    pipe = _AbortingPipeline()
+    with pytest.raises(KeyboardInterrupt):
+        await build_paths(
+            bot=object(),  # type: ignore[arg-type]
+            engine_registry=FakeEngineRegistry(),  # type: ignore[arg-type]
+            options=BuildPathsOptions(
+                max_registered_paths=0,
+                discovery_batch_size=1000,
+                context=object(),  # type: ignore[arg-type]
+                pipeline=pipe,  # type: ignore[arg-type]
+            ),
+        )
+    assert pipe.emitted == ["stages"], "the aborted crawl reports the split once"
 
 
 def test_legacy_stance_pipeline_construction_refuses(tmp_path: Path) -> None:
