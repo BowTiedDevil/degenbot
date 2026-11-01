@@ -149,6 +149,19 @@ create_exception!(
     "A pool build read chain data successfully but the returned values do not decode into a valid pool shape (e.g. a token reporting more than 18 decimals, a value that does not fit its field). Permanent for the observed state: re-reading the same data decodes the same way, so the pool is inadmissible rather than momentarily unreachable."
 );
 
+// The tick-map intake arm's STABLE sub-case. A tracked pool whose DB snapshot
+// rows and chain word bits disagree is refused at intake; the snapshot does not
+// change under a crawl, so re-building the pool answers the same way. It rides
+// the admission parent (like the two I/O arms) so one `except
+// PoolRegistrationError:` still covers the whole build/admission taxonomy, and
+// `build_paths` memoizes the pool instead of re-paying the build.
+create_exception!(
+    degenbot._ffi,
+    TickMapIntakeInconsistentError,
+    crate::bot::engine::PoolRegistrationError,
+    "A tracked pool was refused at intake: the database snapshot's tick rows and the chain word bits disagree. Stable for the session — the snapshot does not change under the crawl — so the refusal memoizes as a pool fact instead of being retried."
+);
+
 // ADR-037: hooked V4 pools are admitted but their simulations use
 // standard concentrated liquidity math that hooks may invalidate — ported from the archived
 // Python `PossibleInaccurateResult` (archive/main-20260721

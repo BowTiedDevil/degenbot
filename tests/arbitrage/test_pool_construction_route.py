@@ -24,7 +24,9 @@ import pytest
 
 from degenbot.exceptions import (
     DynamicFeePoolRejectedError,
+    HighFeePoolRejectedError,
     HookedPoolRejectedError,
+    TickMapIntakeInconsistentError,
     UnsupportedPoolFamilyError,
 )
 from degenbot.pathfinding import PoolKind
@@ -170,6 +172,74 @@ class TestRouteFailureClassification:
         outcome = pipeline.build_hop_pools([_v4_step()], [PoolKind.V4])
         assert outcome is not None
         assert outcome.tag == "v4-dynamic-fee-rejected"
+
+    def test_v4_encoder_limit_refusal_is_a_stable_build_skip(self, tmp_path: Path) -> None:
+        """A fee above the executor's 2-byte encoding limit is deterministic per
+        pool key: a counted build skip that memoizes the pool, so a re-sighting
+        answers from the memo instead of re-paying the build."""
+        bot = _RouteRecordingBot(
+            database_path=tmp_path / "unused.db",
+            exc=HighFeePoolRejectedError(
+                "V4 pool fee (fee=8388608) exceeds the cmd_executor's 2-byte "
+                "encoding limit (65535) — excluded from arbitrage"
+            ),
+        )
+        pipeline = _make_pipeline(bot)
+        step = _v4_step()
+        outcome = pipeline.build_hop_pools([step], [PoolKind.V4])
+        assert outcome is not None
+        assert outcome.tag == "build-v4-refused"
+        assert outcome.counts_as_skip is True
+        assert (
+            pipeline._ledger.unregistrable_record(pipeline._ledger.pool_memo_key(step, PoolKind.V4))
+            is not None
+        ), "the encoder-limit refusal is a pool fact"
+
+    def test_snapshot_intake_disagreement_is_a_stable_build_skip(self, tmp_path: Path) -> None:
+        """The tracked tick map's intake disagreement is stable for the
+        session's snapshot: its own typed refusal, a counted build skip, and a
+        memoized pool."""
+        bot = _RouteRecordingBot(
+            database_path=tmp_path / "unused.db",
+            exc=TickMapIntakeInconsistentError(
+                "Tracked tick map rejected at intake: Tracked tick map inconsistent "
+                "at intake: word 77 bit 200 (tick 199120) — bitmap_bit = true, "
+                "row_gross_positive = false"
+            ),
+        )
+        pipeline = _make_pipeline(bot)
+        step = _step()
+        outcome = pipeline.build_hop_pools([step], [PoolKind.V3])
+        assert outcome is not None
+        assert outcome.kind == "skip"
+        assert outcome.tag == "build-v3-refused"
+        assert outcome.counts_as_skip is True
+        assert (
+            pipeline._ledger.unregistrable_record(pipeline._ledger.pool_memo_key(step, PoolKind.V3))
+            is not None
+        ), "the snapshot disagreement memoizes the pool"
+
+    def test_a_plain_tick_map_value_error_stays_transient(self, tmp_path: Path) -> None:
+        """Classification rides the TYPE, never the message: the same intake text
+        arriving as the untyped assembly failure is a retryable blip and must
+        stay unmemoized."""
+        bot = _RouteRecordingBot(
+            database_path=tmp_path / "unused.db",
+            exc=ValueError(
+                "Tracked tick map rejected at intake: Tracked tick map inconsistent "
+                "at intake: word 77 bit 200 (tick 199120)"
+            ),
+        )
+        pipeline = _make_pipeline(bot)
+        step = _step()
+        outcome = pipeline.build_hop_pools([step], [PoolKind.V3])
+        assert outcome is not None
+        assert outcome.tag == "build-v3-refused"
+        assert outcome.counts_as_skip is True
+        assert (
+            pipeline._ledger.unregistrable_record(pipeline._ledger.pool_memo_key(step, PoolKind.V3))
+            is None
+        ), "an untyped assembly failure is never memoized"
 
 
 class TestRoutePolicyFlows:

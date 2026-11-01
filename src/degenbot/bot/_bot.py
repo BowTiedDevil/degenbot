@@ -38,6 +38,7 @@ from degenbot.config import resolve_chain_id, resolve_database_path
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
 from degenbot.discovery import PoolRef
 from degenbot.discovery import pools_for_tokens as _pools_for_tokens
+from degenbot.exceptions import PoolRegistrationError
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.provider import (
@@ -726,6 +727,10 @@ class Bot(AccountQueryMixin):
             A `UniswapV4Pool` companion wrapping the Rust-registered pool.
 
         Raises:
+            PoolRegistrationError: On a typed registration refusal (the V4
+                admission facts — dynamic fee, fee above the encoder limit,
+                out-of-spec fields — and the build's I/O arms). Propagated
+                unchanged so the caller classifies by type.
             DegenbotValueError: If neither the DB two-step nor the request
                 overrides complete the identity.
 
@@ -787,6 +792,13 @@ class Bot(AccountQueryMixin):
         )
         try:
             outcome = self._py_bot.construct_pool(construction_request)
+        except PoolRegistrationError:
+            # A typed registration refusal crosses UNCHANGED. The crawl
+            # classifies a build refusal by TYPE (stable pool fact vs
+            # transient blip) and memoizes the stable ones, so flattening
+            # these into `DegenbotValueError` here would erase the admission
+            # facts and make every re-sighting re-pay the build.
+            raise
         except ValueError as exc:
             # The core raises the typed `MissingIdentity` (mapped to
             # PyValueError) when neither the DB two-step nor the overrides

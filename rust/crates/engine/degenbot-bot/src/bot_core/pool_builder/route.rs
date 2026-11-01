@@ -46,7 +46,7 @@ use degenbot_rpc::abi::{ContractRead, IPoolIdentity};
 use super::builder::{self, PoolBuilderError, V4BuildResult, V4PoolBuildOverrides};
 use super::tick_source;
 use crate::bot_core::construction_io::ConstructionIo;
-use crate::bot_core::registration_ledger::BuildFailure;
+use crate::bot_core::registration_ledger::{tick_assembly_failure, BuildFailure};
 use crate::bot_core::Bot;
 use degenbot_core::op_warn;
 use degenbot_pools::RegisteredPoolFamily;
@@ -487,7 +487,7 @@ fn classify_builder_error(err: PoolBuilderError, address: Address) -> Constructi
             ConstructionRefusal::Skipped(BuildFailure::MissingIdentity(message))
         }
         PoolBuilderError::TickAssembly(inner) => {
-            ConstructionRefusal::Skipped(BuildFailure::TickAssembly(inner.to_string()))
+            ConstructionRefusal::Skipped(tick_assembly_failure(&inner))
         }
     }
 }

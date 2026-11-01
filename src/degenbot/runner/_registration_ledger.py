@@ -61,6 +61,7 @@ from degenbot.exceptions import (
     DynamicFeePoolRejectedError,
     HighFeePoolRejectedError,
     HookedPoolRejectedError,
+    TickMapIntakeInconsistentError,
 )
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.pathfinding import PoolKind
@@ -169,6 +170,7 @@ _FAILURE_KINDS: tuple[tuple[type[BaseException], str], ...] = (
     (HookedPoolRejectedError, "hooked-pool"),
     (DynamicFeePoolRejectedError, "dynamic-fee"),
     (HighFeePoolRejectedError, "high-fee"),
+    (TickMapIntakeInconsistentError, "tick-map-inconsistent"),
 )
 
 
@@ -276,9 +278,13 @@ class RegistrationLedger:
 
         ``HookedPoolRejectedError`` / ``DynamicFeePoolRejectedError`` are the
         V4 admission refusals; ``HighFeePoolRejectedError`` is a stable pool
-        fact for every family. Any other exception is transient (retryable)
-        even when its class name happens to match a stable refusal's. The
-        detail text rides the record for logging and never becomes a label.
+        fact for every family (the encoder limit is deterministic per pool
+        key); ``TickMapIntakeInconsistentError`` is the tracked-pool intake
+        disagreement, stable for the session's snapshot. Any other exception
+        is transient (retryable) even when its class name or message happens
+        to match a stable refusal's — a plain ``ValueError`` carrying the
+        intake text is one of the retryable assembly failures. The detail
+        text rides the record for logging and never becomes a label.
         An unrecognized family is never classified as some other family: the
         kind leaves through the closed-set gate first, which raises
         `DegenbotValueError` naming the raw value and the known set.

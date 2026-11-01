@@ -36,8 +36,8 @@ use degenbot_pools::RegisteredPoolFamily;
 use crate::bot::engine::{
     DynamicFeePoolRejectedError, HighFeePoolRejectedError, HookedPoolRejectedError,
     PathRegistryFullError, PoolAlreadyRegisteredError, PoolBuildDecodeError, PoolBuildRpcError,
-    SpecViolationError, UnsupportedPoolFamilyError, VerificationMismatchError,
-    VerificationRpcError,
+    SpecViolationError, TickMapIntakeInconsistentError, UnsupportedPoolFamilyError,
+    VerificationMismatchError, VerificationRpcError,
 };
 
 // --- Driver lifecycle (`EngineDriver` seam) ---
@@ -169,6 +169,9 @@ fn map_build_failure(failure: BuildFailure) -> PyErr {
         BuildFailure::TickAssembly(detail) => {
             PyValueError::new_err(format!("Tracked tick map rejected at intake: {detail}"))
         }
+        BuildFailure::TickMapInconsistent(detail) => TickMapIntakeInconsistentError::new_err(
+            format!("Tracked tick map rejected at intake: {detail}"),
+        ),
         BuildFailure::Transient(detail) => PyRuntimeError::new_err(detail),
     }
 }

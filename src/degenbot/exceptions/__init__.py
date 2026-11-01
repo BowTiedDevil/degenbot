@@ -23,6 +23,7 @@ from degenbot._ffi import (
     PoolBuildRpcError,
     PoolRegistrationError,
     SpecViolationError,
+    TickMapIntakeInconsistentError,
     UnsupportedPoolFamilyError,
 )
 from degenbot.exceptions.arbitrage import (
@@ -132,6 +133,7 @@ __all__ = (
     "RpcError",
     "SpecViolationError",
     "StaleRateResult",
+    "TickMapIntakeInconsistentError",
     "TokenDenylistedError",
     "TransactionNotFound",
     "UnknownPool",

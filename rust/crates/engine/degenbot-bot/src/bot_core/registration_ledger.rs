@@ -41,6 +41,7 @@ use degenbot_pools::RegisterV2PoolError;
 use degenbot_pools::RegisterV3PoolError;
 use degenbot_pools::RegisteredPoolFamily;
 use degenbot_pools::SpecRefusal;
+use degenbot_substrate::tick_assembly::TickMapAssemblyError;
 use degenbot_substrate::RegistrationVerdict;
 
 pub use degenbot_pools::{BuildFailure, RegisterRefusal};
@@ -600,7 +601,7 @@ impl RefusalKind {
             PoolBuilderError::TickAssembly(inner) => Self::BuildRefused {
                 family,
                 phase,
-                failure: BuildFailure::TickAssembly(inner.to_string()),
+                failure: tick_assembly_failure(inner),
             },
         }
     }
@@ -772,6 +773,7 @@ impl RefusalKind {
                 | BuildFailure::Db(detail)
                 | BuildFailure::MissingIdentity(detail)
                 | BuildFailure::TickAssembly(detail)
+                | BuildFailure::TickMapInconsistent(detail)
                 | BuildFailure::Transient(detail) => Some(detail),
                 BuildFailure::HookedPool | BuildFailure::DynamicFee | BuildFailure::HighFee => None,
                 // A spec refusal is the one build arm whose facts are not text:
@@ -1097,6 +1099,28 @@ impl std::str::FromStr for PreBuildIdentity {
     }
 }
 
+/// The build-failure class one tick-map assembly error belongs to.
+///
+/// ONE home for the sub-case split, so both the write door's mapper and the
+/// construction route's mapper derive the same class from the same typed error.
+/// [`TickMapAssemblyError::InconsistentTickMap`] is the intake disagreement
+/// between the DB snapshot's tick rows and the chain word bits: the snapshot
+/// does not change under a crawl, so re-building the pool answers the same way
+/// ([`BuildFailure::TickMapInconsistent`], stable). The I/O arms and the
+/// unwired-transport arm stay [`BuildFailure::TickAssembly`] — retryable, never
+/// memoized.
+#[must_use]
+pub fn tick_assembly_failure(err: &TickMapAssemblyError) -> BuildFailure {
+    match err {
+        TickMapAssemblyError::InconsistentTickMap { .. } => {
+            BuildFailure::TickMapInconsistent(err.to_string())
+        }
+        TickMapAssemblyError::Db(_)
+        | TickMapAssemblyError::Chain(_)
+        | TickMapAssemblyError::ChainUnavailable => BuildFailure::TickAssembly(err.to_string()),
+    }
+}
+
 /// The four registration memos plus the typed build-refusal classification.
 #[derive(Debug, Default)]
 pub struct RegistrationLedger {
@@ -1161,7 +1185,11 @@ impl RegistrationLedger {
                 counts_as_skip: false,
                 detail,
             },
-            BuildFailure::HighFee => BuildRefusal {
+            // The two stable skip classes: a fee above the encoder limit (a
+            // pool-key fact) and a snapshot/chain tick disagreement (a
+            // session-snapshot fact). Both memoize under the ordinary
+            // build-skip tag.
+            BuildFailure::HighFee | BuildFailure::TickMapInconsistent(_) => BuildRefusal {
                 outcome: RegistrationOutcome::build_refused_for(pool_kind),
                 stable: true,
                 counts_as_skip: true,
@@ -2636,13 +2664,9 @@ mod tests {
                 |failure| matches!(failure, BuildFailure::TickAssembly(_)),
             ),
             (
-                PoolBuilderError::TickAssembly(TickMapAssemblyError::InconsistentTickMap {
-                    word: 0,
-                    bit: 1,
-                    tick: 60,
-                    bitmap_bit: false,
-                    row_gross_positive: true,
-                }),
+                PoolBuilderError::TickAssembly(TickMapAssemblyError::Db(DbError::Decode(
+                    "bad row".to_owned(),
+                ))),
                 |failure| matches!(failure, BuildFailure::TickAssembly(_)),
             ),
         ];
@@ -2656,6 +2680,42 @@ mod tests {
                 "a builder I/O failure stays retryable: {err:?}"
             );
         }
+    }
+
+    #[test]
+    #[expect(clippy::expect_used)] // the mapper's carried failure payload is asserted present
+    fn the_snapshot_intake_disagreement_is_a_stable_build_skip() {
+        let build = RegistrationPhase::Build;
+        let inconsistent =
+            PoolBuilderError::TickAssembly(TickMapAssemblyError::InconsistentTickMap {
+                word: 0,
+                bit: 1,
+                tick: 60,
+                bitmap_bit: false,
+                row_gross_positive: true,
+            });
+        let kind =
+            RefusalKind::from_builder_error(&inconsistent, Some(RegisteredPoolFamily::V3), build);
+        assert_tags(&kind, Some(RegisteredPoolFamily::V3), build);
+        let failure = build_failure(&kind).expect("a builder failure is carried");
+        assert!(
+            matches!(failure, BuildFailure::TickMapInconsistent(_)),
+            "the intake disagreement keeps its own type: {inconsistent:?}"
+        );
+        let refusal = RegistrationLedger::classify_build_refusal(failure, PoolKind::V3, None);
+        assert!(
+            refusal.stable,
+            "the snapshot disagreement is a session-stable refusal"
+        );
+        assert_eq!(
+            refusal.outcome,
+            RegistrationOutcome::BuildV3Refused,
+            "it keeps the ordinary build-skip tag"
+        );
+        assert!(
+            refusal.counts_as_skip,
+            "it is an ordinary counted build skip"
+        );
     }
 
     #[test]
@@ -2824,6 +2884,10 @@ mod tests {
                 false,
             ),
             (BuildFailure::TickAssembly("desync".to_owned()), false),
+            (
+                BuildFailure::TickMapInconsistent("word/bit".to_owned()),
+                true,
+            ),
             (BuildFailure::Transient("blip".to_owned()), false),
         ] {
             let kind = RefusalKind::from_construction_refusal(

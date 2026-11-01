@@ -334,10 +334,13 @@ pub fn classify_build_refusal(
         "hooked-pool" => BuildFailure::HookedPool,
         "dynamic-fee" => BuildFailure::DynamicFee,
         "high-fee" => BuildFailure::HighFee,
+        "tick-map-inconsistent" => {
+            BuildFailure::TickMapInconsistent(detail.clone().unwrap_or_default())
+        }
         "transient" => BuildFailure::Transient(detail.clone().unwrap_or_default()),
         other => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "unknown build-failure kind {other:?}: expected hooked-pool, dynamic-fee, high-fee, or transient"
+                "unknown build-failure kind {other:?}: expected hooked-pool, dynamic-fee, high-fee, tick-map-inconsistent, or transient"
             )));
         }
     };

@@ -162,6 +162,11 @@ class SwapRefused(Exception):
     The swap-simulation seam refused the read (ADR-037). Typed attributes: `kind` is a `SwapRefusalKind` member; `word` is the bitmap word the walk stalled on for the fetch arms, `None` elsewhere; `amount` is the signed request the read could not meet (negative = exact input, positive = exact output), `None` on the fetch arms, which never got to answer for an amount.
     """
 
+class TickMapIntakeInconsistentError(PoolRegistrationError):
+    """
+    A tracked pool was refused at intake: the database snapshot's tick rows and the chain word bits disagree. Stable for the session — the snapshot does not change under the crawl — so the refusal memoizes as a pool fact instead of being retried.
+    """
+
 class UnconfiguredStrategyError(StrategyHostError):
     """
     The named strategy is registered but unconfigured: no config facet with its required keys was booted, so it cannot be enabled.
@@ -5329,6 +5334,7 @@ __all__ = [
     "SwapReadFamily",
     "SwapRefusalKind",
     "SwapRefused",
+    "TickMapIntakeInconsistentError",
     "UnconfiguredStrategyError",
     "UnknownStrategyError",
     "UnregistrablePoolRecord",

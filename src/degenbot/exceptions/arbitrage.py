@@ -3,7 +3,7 @@
 from fractions import Fraction
 from typing import Any
 
-# The five Rust-raised admission/registration errors are re-exported via the
+# The Rust-raised admission/registration errors are re-exported via the
 # package home (``degenbot.exceptions``), which bridges them from ``_ffi``.
 # Sourcing them from the package keeps ``from degenbot.exceptions.arbitrage
 # import HookedPoolRejectedError`` working without this leaf reaching into
@@ -15,6 +15,7 @@ from degenbot.exceptions import (  # ruff:ignore[unused-import]
     PoolAlreadyRegisteredError,
     PoolRegistrationError,
     SpecViolationError,
+    TickMapIntakeInconsistentError,
 )
 from degenbot.exceptions.base import DegenbotError
 

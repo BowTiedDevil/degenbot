@@ -784,6 +784,13 @@ mod _ffi {
                 "PoolBuildDecodeError",
                 py.get_type::<crate::bot::engine::PoolBuildDecodeError>(),
             )?;
+            // The tick-map intake arm's stable sub-case: a snapshot/chain
+            // disagreement that re-building cannot change, so `build_paths`
+            // memoizes the pool by type rather than re-paying the build.
+            m.add(
+                "TickMapIntakeInconsistentError",
+                py.get_type::<crate::bot::engine::TickMapIntakeInconsistentError>(),
+            )?;
             // PRG-4: the registered-path cap refusal — a BENIGN stop signal
             // the crawl catches instead of a Python counter unwind.
             m.add(

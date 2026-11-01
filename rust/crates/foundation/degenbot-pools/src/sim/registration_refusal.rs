@@ -265,8 +265,15 @@ pub enum BuildFailure {
     Db(String),
     /// An incomplete V4 identity — an intake rejection.
     MissingIdentity(String),
-    /// A tracked tick map the intake reconciliation rejected.
+    /// A tracked tick map the intake reconciliation rejected for a retryable
+    /// reason (a DB read or chain word fetch failed, or no transport is
+    /// wired): re-offering the pool can answer differently.
     TickAssembly(String),
+    /// A tracked tick map whose snapshot rows and chain word bits disagree at
+    /// intake. The disagreement belongs to the session's DB snapshot — its rows
+    /// do not change under the crawl — so re-building the pool answers the same
+    /// way: a stable refusal, memoized as a pool fact.
+    TickMapInconsistent(String),
     /// Any other failure: transient, never memoized.
     Transient(String),
 }

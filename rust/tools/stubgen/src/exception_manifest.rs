@@ -135,6 +135,13 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
     ExceptionIsland {
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
+        name: "TickMapIntakeInconsistentError",
+        base: "PoolRegistrationError",
+        message: "A tracked pool was refused at intake: the database snapshot's tick rows and the chain word bits disagree. Stable for the session — the snapshot does not change under the crawl — so the refusal memoizes as a pool fact instead of being retried.",
+    },
+    ExceptionIsland {
+        python_module: "degenbot._ffi",
+        rust_path: "bot::engine::errors",
         name: "PossibleInaccurateResult",
         base: "ValueError",
         message: "The simulated swap crosses a pool whose amount-modifying hook may have invalidated the result; the attached amounts are the standard-math approximation.",
@@ -630,7 +637,7 @@ mod tests {
         }
         assert_eq!(
             EXCEPTION_ISLANDS.len(),
-            21,
+            22,
             "one entry per create_exception! island"
         );
     }
