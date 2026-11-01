@@ -24,10 +24,26 @@ use degenbot_rpc::abi::ContractRead;
 use super::handle::ConstructionIo;
 use super::RpcConstruction;
 
-/// A construction read: the handle's generic `eth_call`, unpaced.
+/// A construction read: the handle's generic `eth_call`, unpaced, served from
+/// the session's block-scoped memo when the same question was answered at the
+/// same block.
 impl ContractRead for ConstructionIo {
     async fn call(&self, to: Address, data: Bytes, block: Option<u64>) -> ProviderResult<Bytes> {
-        self.rpc.call(to, data, block).await
+        // An unpinned read has no resolved block to key on (the node picks the
+        // head at execution time), so it never enters the memo and is never
+        // served from it — the memo's validity contract.
+        let Some(block) = block else {
+            return self.rpc.call(to, data, None).await;
+        };
+        if let Some(answered) = self.read_memo().get(block, to, &data) {
+            return Ok(answered);
+        }
+        let answered = self.rpc.call(to, data.clone(), Some(block)).await?;
+        // Only a successful answer is recorded: a failure is not an answer
+        // about the chain at that block, and the caller's retry must reach the
+        // chain again.
+        self.read_memo().insert(block, to, &data, &answered);
+        Ok(answered)
     }
 }
 

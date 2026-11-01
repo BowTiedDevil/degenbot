@@ -13,7 +13,7 @@ use degenbot_rpc::provider::EthBlock;
 
 use super::block_selector::BlockSelector;
 use super::tick_pace::TickFetchPace;
-use super::{DbConstruction, RpcConstruction};
+use super::{DbConstruction, ReadMemo, RpcConstruction};
 
 /// The composite construction-I/O handle, held by `Bot` (ADR-003).
 ///
@@ -32,6 +32,10 @@ pub struct ConstructionIo {
     /// here so every construction path paces the same way (see
     /// [`TickFetchPace`]).
     tick_fetch_pace: TickFetchPace,
+    /// The block-scoped memory of construction reads (see [`ReadMemo`]). Shared
+    /// through an `Arc`, so the per-pool handles a build attaches read through
+    /// the session's ONE memory rather than starting their own.
+    read_memo: Arc<ReadMemo>,
 }
 
 impl ConstructionIo {
@@ -51,7 +55,23 @@ impl ConstructionIo {
             tick_fetch_pace: TickFetchPace::from_config(
                 &degenbot_config::holder::config().builders,
             ),
+            read_memo: Arc::new(ReadMemo::new()),
         }
+    }
+
+    /// Share an existing read memo instead of starting a fresh one — how a
+    /// handle derived from a session (the per-pool tick-word source) reads
+    /// through the session's memory.
+    #[must_use]
+    pub fn with_read_memo(mut self, memo: Arc<ReadMemo>) -> Self {
+        self.read_memo = memo;
+        self
+    }
+
+    /// The handle's read memo.
+    #[must_use]
+    pub fn read_memo(&self) -> &Arc<ReadMemo> {
+        &self.read_memo
     }
 
     /// Override the pace — the construction-time test knob.

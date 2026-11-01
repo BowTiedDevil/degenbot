@@ -41,6 +41,17 @@
 //! degrade-to-empty, classification) lives with the builder that owns it — so
 //! a builder reaches one call surface and no driver re-implements a read.
 //!
+//! # The read memo
+//!
+//! Construction reads repeat — many units ask the same pool the same question
+//! at the same block — and the crawl is latency-bound, so a repeat is a chain
+//! round-trip paid for nothing. The handle owns a [`ReadMemo`]: answers keyed
+//! by `(to, calldata, block)`, served only to a read naming the block they were
+//! recorded at. A block move is a miss; an unpinned (`latest`) read never
+//! enters the memo. The handle shares it by `Arc`, so a handle derived from a
+//! session (the per-pool tick-word source) reads through the session's one
+//! memory.
+//!
 //! # Async shape
 //!
 //! The traits are `async fn` — `degenbot-rpc`'s `AlloyProvider` is already
@@ -66,11 +77,13 @@ use degenbot_rpc::provider::EthBlock;
 pub mod adapters;
 pub mod block_selector;
 pub mod contract_read;
+pub mod read_memo;
 pub mod tick_pace;
 pub use self::adapters::{AlloyRpcConstruction, DegenbotDbConstruction, NoDb};
 pub use self::block_selector::{BlockSelector, BlockSelectorError};
 pub use self::contract_read::PacedRead;
 pub use self::handle::ConstructionIo;
+pub use self::read_memo::ReadMemo;
 pub use self::tick_pace::TickFetchPace;
 
 /// The 12 construction-time DB reads/writes — one trait per concern.

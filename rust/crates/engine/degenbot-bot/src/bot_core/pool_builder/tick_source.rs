@@ -40,7 +40,7 @@ use crate::bot_core::construction_io::{ConstructionIo, NoDb, PacedRead};
 pub fn attached(io: &ConstructionIo) -> Arc<dyn TickWordSource> {
     let rpc = Arc::clone(&io.rpc);
     Arc::new(TransportTickWordSource::from_transport(
-        ConstructionIo::new(Arc::new(NoDb), rpc),
+        ConstructionIo::new(Arc::new(NoDb), rpc).with_read_memo(Arc::clone(io.read_memo())),
     ))
 }
 

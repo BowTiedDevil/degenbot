@@ -170,7 +170,7 @@ pub use build_register::{CalcTokensInError, CalcTokensOutError};
 /// and the read traits the construction door's dispatch runs over.
 pub use construction_io::{
     AlloyRpcConstruction, BlockSelector, BlockSelectorError, ConstructionIo, DbConstruction,
-    DegenbotDbConstruction, NoDb, PacedRead, RpcConstruction, TickFetchPace,
+    DegenbotDbConstruction, NoDb, PacedRead, ReadMemo, RpcConstruction, TickFetchPace,
 };
 
 /// The `Bot` facade's snapshot + block-stream error vocabulary.

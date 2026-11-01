@@ -17,6 +17,7 @@ use degenbot_db::rows::{
 use super::adapters::{AlloyRpcConstruction, DegenbotDbConstruction, NoDb};
 use super::block_selector::BlockSelector;
 use super::handle::ConstructionIo;
+use super::read_memo::ReadMemo;
 use super::{DbConstruction, RpcConstruction};
 
 /// A fake `DbConstruction` that returns canned rows — proves the composite
@@ -371,4 +372,222 @@ async fn alloy_rpc_construction_reads_block_number_and_timestamp_offline() {
         .unwrap()
         .expect("block 100 is recorded");
     assert_eq!(ts, 1_700_000_000);
+}
+
+// ───────────────────── the block-scoped read memo ─────────────────────
+
+/// A fake `RpcConstruction` that counts `eth_call` reads and answers with the
+/// block it was asked at (32 bytes of that block's low byte), so a memo hit is
+/// both a call-count and a *value* check.
+struct CountingRpc {
+    calls: std::sync::atomic::AtomicUsize,
+    block_number: u64,
+}
+
+impl CountingRpc {
+    fn new(block_number: u64) -> Arc<Self> {
+        Arc::new(Self {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            block_number,
+        })
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl RpcConstruction for CountingRpc {
+    async fn get_block_number(&self) -> Result<u64, ProviderError> {
+        Ok(self.block_number)
+    }
+
+    async fn get_block(
+        &self,
+        _block_number: u64,
+    ) -> Result<Option<degenbot_rpc::provider::EthBlock>, ProviderError> {
+        Ok(None)
+    }
+
+    async fn get_block_timestamp(&self, _block_number: u64) -> Result<Option<u64>, ProviderError> {
+        Ok(None)
+    }
+
+    async fn get_code(
+        &self,
+        _address: Address,
+        _block_number: Option<u64>,
+    ) -> Result<Bytes, ProviderError> {
+        Ok(Bytes::new())
+    }
+
+    async fn get_balance(
+        &self,
+        _address: Address,
+        _block_number: Option<u64>,
+    ) -> Result<U256, ProviderError> {
+        Ok(U256::ZERO)
+    }
+
+    async fn call(
+        &self,
+        _to: Address,
+        _data: Bytes,
+        block_number: Option<u64>,
+    ) -> Result<Bytes, ProviderError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // The return encodes the block, so a stale cross-block hit would show
+        // up as an unexpected value, not just an unexpected call count.
+        #[expect(clippy::cast_possible_truncation)]
+        let stamp = block_number.unwrap_or(0) as u8;
+        Ok(Bytes::from(vec![stamp; 32]))
+    }
+}
+
+/// The pool address the read-memo tests read from.
+const MEMO_TO: Address = alloy::primitives::address!("00000000000000000000000000000000000000A1");
+
+/// The calldata the read-memo tests read with (`tickBitmap(int16)` word 0).
+fn memo_calldata() -> Bytes {
+    use alloy::sol_types::SolCall;
+    Bytes::from(degenbot_rpc::abi::IUniswapV3Pool::tickBitmapCall { wordPosition: 0 }.abi_encode())
+}
+
+/// Two construction callers asking the same question at the same block share
+/// one chain round-trip — the crawl's repeat read.
+#[tokio::test]
+async fn a_pinned_read_at_one_block_reaches_the_chain_once() {
+    use degenbot_rpc::abi::ContractRead;
+
+    let rpc = CountingRpc::new(0);
+    let io = ConstructionIo::new(Arc::new(NoDb), rpc.clone());
+    let data = memo_calldata();
+    let first = io.call(MEMO_TO, data.clone(), Some(100)).await.unwrap();
+    let second = io.call(MEMO_TO, data, Some(100)).await.unwrap();
+    assert_eq!(first, second, "the memo serves the recorded return");
+    assert_eq!(rpc.calls(), 1, "one block, one read: the repeat is a hit");
+}
+
+/// A block move is a MISS: the memo never serves a return recorded at another
+/// block.
+#[tokio::test]
+async fn a_block_boundary_is_a_miss_not_a_stale_hit() {
+    use degenbot_rpc::abi::ContractRead;
+
+    let rpc = CountingRpc::new(0);
+    let io = ConstructionIo::new(Arc::new(NoDb), rpc.clone());
+    let data = memo_calldata();
+    let at_100 = io.call(MEMO_TO, data.clone(), Some(100)).await.unwrap();
+    let at_101 = io.call(MEMO_TO, data, Some(101)).await.unwrap();
+    assert_ne!(at_100, at_101, "the block moved, so the read went to chain");
+    assert_eq!(rpc.calls(), 2);
+}
+
+/// An unpinned (`latest`) read has no block to key on — the node resolves the
+/// head at execution time — so it is never recorded and never served.
+#[tokio::test]
+async fn an_unpinned_read_never_enters_the_memo() {
+    use degenbot_rpc::abi::ContractRead;
+
+    let rpc = CountingRpc::new(7);
+    let io = ConstructionIo::new(Arc::new(NoDb), rpc.clone());
+    let data = memo_calldata();
+    io.call(MEMO_TO, data.clone(), None).await.unwrap();
+    io.call(MEMO_TO, data, None).await.unwrap();
+    assert_eq!(rpc.calls(), 2, "an unpinned read is always a chain read");
+    assert!(
+        io.read_memo().is_empty(),
+        "nothing recorded without a block"
+    );
+}
+
+/// Two units in flight at neighbouring blocks each keep their own entry, and
+/// neither is served the other's answer.
+#[tokio::test]
+async fn neighbouring_blocks_keep_their_own_entries() {
+    use degenbot_rpc::abi::ContractRead;
+
+    let rpc = CountingRpc::new(0);
+    let io = ConstructionIo::new(Arc::new(NoDb), rpc.clone());
+    let data = memo_calldata();
+    let first = io.call(MEMO_TO, data.clone(), Some(100)).await.unwrap();
+    io.call(MEMO_TO, data.clone(), Some(101)).await.unwrap();
+    let again = io.call(MEMO_TO, data, Some(100)).await.unwrap();
+    assert_eq!(first, again, "block 100's entry survived block 101's reads");
+    assert_eq!(rpc.calls(), 2);
+}
+
+/// The memo is bounded: an epoch past the entry cap drops the memory instead of
+/// growing without limit, and the reads still answer correctly.
+#[tokio::test]
+async fn the_memo_stays_bounded_and_still_answers() {
+    use degenbot_rpc::abi::ContractRead;
+
+    let rpc = CountingRpc::new(0);
+    let io = ConstructionIo::new(Arc::new(NoDb), rpc.clone())
+        .with_read_memo(Arc::new(ReadMemo::with_bounds(1, 4)));
+    let mut values = Vec::new();
+    for index in 0u8..8 {
+        values.push(
+            io.call(MEMO_TO, Bytes::from(vec![0, 0, 0, index]), Some(100))
+                .await
+                .unwrap(),
+        );
+    }
+    assert_eq!(values.len(), 8);
+    assert!(
+        io.read_memo().len() <= 4,
+        "the entry cap bounds the memo, got {}",
+        io.read_memo().len()
+    );
+}
+
+/// A handle sharing the session memo (how the per-pool tick-word source is
+/// attached) reads through the SAME memory as the session handle.
+#[tokio::test]
+async fn a_handle_sharing_the_memo_reads_through_to_the_same_entries() {
+    use degenbot_rpc::abi::ContractRead;
+
+    let rpc = CountingRpc::new(0);
+    let session = ConstructionIo::new(Arc::new(NoDb), rpc.clone());
+    let attached = ConstructionIo::new(Arc::new(NoDb), rpc.clone())
+        .with_read_memo(Arc::clone(session.read_memo()));
+    let data = memo_calldata();
+    session
+        .call(MEMO_TO, data.clone(), Some(100))
+        .await
+        .unwrap();
+    attached.call(MEMO_TO, data, Some(100)).await.unwrap();
+    assert_eq!(rpc.calls(), 1, "the second handle hit the session's entry");
+}
+
+/// The core's tick-word source is attached per pool but reads through the
+/// session's one memo: the word the source backfills is already answered when
+/// the session asks the same question at the same block.
+#[test]
+fn an_attached_word_source_reads_through_the_session_memo() {
+    use degenbot_rpc::abi::ContractRead;
+
+    let rpc = CountingRpc::new(0);
+    let io = ConstructionIo::new(Arc::new(NoDb), rpc.clone());
+    let source = crate::bot_core::pool_builder::tick_source::attached(&io);
+    let key = degenbot_pools::TickWordKey::V3 {
+        address: MEMO_TO,
+        tick_spacing: 1,
+    };
+    // Block 0 answers with an all-zero bitmap: a known-empty word, one read.
+    assert!(source
+        .fetch_tick_word(&key, 0, 0)
+        .expect("the source reads through the construction io seam")
+        .is_none());
+    assert_eq!(rpc.calls(), 1);
+
+    // The session asks the same word at the same block: served from the memo
+    // the attached source recorded into.
+    let data = memo_calldata();
+    degenbot_core::runtime::get_runtime()
+        .block_on(async { io.call(MEMO_TO, data, Some(0)).await })
+        .expect("the memo answers");
+    assert_eq!(rpc.calls(), 1, "the attached source shares the memo");
 }
