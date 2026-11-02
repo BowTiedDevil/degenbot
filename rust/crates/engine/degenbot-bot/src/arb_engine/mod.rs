@@ -104,6 +104,7 @@ mod inline_sim;
 mod lifecycle;
 mod path_info;
 mod path_lifecycle;
+pub mod pump_session;
 // The engine-session end DETECTION facts: the cause vocabulary, the heartbeat
 // stall watchdog, and the once-only delivery channel shared by both drivers.
 mod session_end;
