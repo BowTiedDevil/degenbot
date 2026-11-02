@@ -117,7 +117,7 @@ class TestBuildManagedPoolRefusalIdentity:
 
     def test_typed_admission_refusal_is_not_flattened(self) -> None:
         exc = HighFeePoolRejectedError(
-            "V4 pool fee (fee=8388608) exceeds the cmd_executor's 2-byte encoding "
+            "V4 pool fee (fee=320000) exceeds the cmd_executor's 2-byte encoding "
             "limit (65535) — excluded from arbitrage"
         )
         with pytest.raises(HighFeePoolRejectedError) as raised:

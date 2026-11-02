@@ -943,7 +943,7 @@ fn in_process_sim_standalone_slice() {
         pool_id: [0xAA; 32],
         currency0: TOKEN1,
         currency1: POOL_C,
-        fee: 0x10_0000,
+        fee: 0x80_0000,
         tick_spacing: 1,
         hook_address: Address::ZERO,
     };

@@ -31,7 +31,7 @@ _LIQUIDITY = 10_000_000_000_000
 _FEE = 3000
 _TICK_SPACING = 60
 _V4_POOL_MANAGER = "0x000000000004444c5dc75cB358380D2e3dE08A90"
-# No-fee Dynamic-fee flag is 0x100000; a static non-zero LP fee is encoded
+# Dynamic-fee flag is 0x800000; a static non-zero LP fee is encoded
 # directly in the upper bits of the pool-id-derived hook flags. The factories
 # pass ``hook_flags`` via ``hook_address``; ZERO_ADDRESS ⇒ static fee mode.
 _LP_FEE = _FEE

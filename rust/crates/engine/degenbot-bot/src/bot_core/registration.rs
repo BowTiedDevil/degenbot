@@ -764,7 +764,7 @@ impl Bot {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, clippy::expect_used)]
+    #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
     use alloy::primitives::aliases::U112;
     use degenbot_pools::{V4PoolKey, V4_DYNAMIC_FEE_FLAG};
@@ -1126,6 +1126,77 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// A REAL dynamic-fee pool (`fee == 0x0080_0000`, the upstream sentinel)
+    /// is refused on the `DynamicFee` arm, so its census lands in
+    /// `v4_dynamic_fee_rejected` (an uncounted admission skip). The
+    /// encoder-limit arm keeps its own counted `build-v4-refused` census — the
+    /// taxonomy is unchanged in kind, only which fee values reach which arm.
+    #[test]
+    fn real_dynamic_fee_pool_folds_into_the_dynamic_fee_census_arm() {
+        use crate::bot_core::registration_ledger::{
+            OutcomeLabel, PipelineReport, RegistrationLedger, RegistrationOutcome,
+            RegistrationUnitOutcome,
+        };
+
+        // The literal sentinel (never the constant) so this test cannot pass
+        // by the constant moving with it.
+        let err = Bot::new(8453)
+            .register(PoolRegistration::V4(Box::new(v4_params(
+                Address::from([0x52u8; 20]),
+                [0xE1u8; 32],
+                0x0080_0000,
+                Address::ZERO,
+            ))))
+            .expect_err("the real dynamic-fee sentinel is admission-refused");
+        let RefusalKind::RegisterRefused {
+            reason: RegisterRefusal::Admission { failure, fee, .. },
+            ..
+        } = err
+        else {
+            panic!("expected the V4 admission refusal, got {err:?}");
+        };
+        assert_eq!(failure, BuildFailure::DynamicFee);
+        assert_eq!(fee, Some(0x0080_0000), "the refusal carries the real fee");
+
+        let refusal = RegistrationLedger::classify_build_refusal(
+            &failure,
+            degenbot_pathfinding::graph::PoolKind::V4,
+            None,
+        );
+        assert_eq!(refusal.outcome, RegistrationOutcome::V4DynamicFeeRejected);
+        assert!(refusal.stable, "an immutable pool fact is stable");
+        assert!(
+            !refusal.counts_as_skip,
+            "admission refusals carry their own counter"
+        );
+
+        let mut report = PipelineReport::default();
+        report.absorb(&RegistrationUnitOutcome::Skip {
+            label: OutcomeLabel::Vocabulary(refusal.outcome),
+            counts_as_skip: refusal.counts_as_skip,
+            detail: refusal.detail,
+        });
+        assert_eq!(report.v4_dynamic_fee_rejected, 1);
+        assert_eq!(report.uncounted_skip_count, 1);
+        assert_eq!(report.skip_count, 0, "not the encoder-limit build-skip arm");
+
+        // The encoder-limit arm is untouched: a static high fee still folds as
+        // a COUNTED build skip under its own tag.
+        let high = RegistrationLedger::classify_build_refusal(
+            &BuildFailure::HighFee,
+            degenbot_pathfinding::graph::PoolKind::V4,
+            None,
+        );
+        report.absorb(&RegistrationUnitOutcome::Skip {
+            label: OutcomeLabel::Vocabulary(high.outcome),
+            counts_as_skip: high.counts_as_skip,
+            detail: high.detail,
+        });
+        assert_eq!(report.skip_count, 1);
+        assert_eq!(report.skip_reasons["build-v4-refused"], 1);
+        assert_eq!(report.v4_dynamic_fee_rejected, 1, "the arms stay distinct");
     }
 
     /// The registered V4 echo shapes the identity from the core's

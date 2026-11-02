@@ -1583,7 +1583,7 @@ class Bot:
 
         Returns the auto-assigned pool ID. The dynamic-fee admission floor
         lives in `BotState::register_v4_pool`: pools with
-        dynamic fees (`fee == 0x100000`) or static fees exceeding the
+        dynamic fees (`fee == 0x0080_0000`) or static fees exceeding the
         executor's 2-byte encoding limit (`fee > 65535`) are rejected here,
         surfacing as typed Python exceptions
         (`DynamicFeePoolRejectedError` / `HighFeePoolRejectedError`) so Python
@@ -1604,7 +1604,7 @@ class Bot:
         mismatch). Mirrors the V3 closure.
 
         Raises:
-            `DynamicFeePoolRejectedError`: If `fee == 0x100000`.
+            `DynamicFeePoolRejectedError`: If `fee == 0x0080_0000`.
             `HighFeePoolRejectedError`: If `fee > 65535` (executor can't encode).
             `ValueError`: If `addresses/pool_id` are malformed or already
                 registered.

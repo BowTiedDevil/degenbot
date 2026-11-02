@@ -65,10 +65,17 @@ pub fn has_amount_modifying_hook(hooks: Address) -> bool {
     flags & AMOUNT_MODIFYING_HOOK_MASK != 0
 }
 
-/// V4 dynamic-fee flag. Pools with `fee == 0x0010_0000` have swap fees that
-/// change between blocks; the solver assumes a fixed fee, so these are
-/// excluded at registration.
-pub const V4_DYNAMIC_FEE_FLAG: u32 = 0x0010_0000;
+/// V4 dynamic-fee flag. A pool whose `fee` is EXACTLY `0x0080_0000` has a
+/// swap fee that changes between blocks; the solver assumes a fixed fee, so
+/// these are excluded at registration.
+///
+/// Upstream: Uniswap v4-core `LPFeeLibrary.sol:15`
+/// (`uint24 constant DYNAMIC_FEE_FLAG = 0x800000`) and `isDynamicFee`, which
+/// tests exact EQUALITY (`self == DYNAMIC_FEE_FLAG`) — the flag is a sentinel
+/// value, never a mask. Two facts follow: a static fee sharing the high bit
+/// (e.g. `0x800001`) is NOT dynamic, and no static pool can hold the sentinel
+/// (`MAX_LP_FEE = 1_000_000 < 0x800000`).
+pub const V4_DYNAMIC_FEE_FLAG: u32 = 0x0080_0000;
 
 // ---------------------------------------------------------------------------
 // V4 pool key
@@ -259,7 +266,7 @@ pub enum RegisterV4PoolError {
     /// are admitted with a simulation caveat); kept so the `PyO3` error
     /// mapping stays stable.
     HookedPool { hook_flags: u16 },
-    /// Pool uses a dynamic fee (`fee == 0x100000`).
+    /// Pool uses a dynamic fee (`fee == 0x0080_0000`).
     DynamicFee { fee: u32 },
     /// Pool's static `fee` exceeds the `cmd_executor`'s 2-byte encoding limit
     /// (`fee >= degenbot_executor::encoders::V4_FEE_ENCODER_MAX`, i.e.
@@ -1146,6 +1153,21 @@ mod apply_inherent_tests {
     // struct's own fields (read-after-restore). `V3RestoreResult` stays
     // internal to the impl and never escapes. Byte-identical to the V3 impl.
     // ------------------------------------------------------------------
+}
+
+/// The dynamic-fee sentinel's value (upstream `LPFeeLibrary.DYNAMIC_FEE_FLAG`).
+#[cfg(test)]
+mod dynamic_fee_flag_tests {
+    use super::V4_DYNAMIC_FEE_FLAG;
+
+    #[test]
+    fn dynamic_fee_flag_is_the_upstream_sentinel() {
+        assert_eq!(
+            V4_DYNAMIC_FEE_FLAG, 0x0080_0000,
+            "v4-core LPFeeLibrary.DYNAMIC_FEE_FLAG = 0x800000"
+        );
+        assert_eq!(V4_DYNAMIC_FEE_FLAG, 1 << 23, "0x800000 is bit 23");
+    }
 }
 
 /// The V4 adapter's fixture seam for the merged concentrated liquidity state test suites

@@ -150,7 +150,7 @@ Tick update logic (`update_tick_liquidity` and `apply_liquidity_to_tick_range`) 
 Mirrors V3BlockEngine exactly but identifies pools by `(pool_manager: Address, pool_id: [u8; 32])` instead of contract address. Two registration-time filters reject unusable pools:
 
 - **Hook filtering**: `(hook_flags & AMOUNT_MODIFYING_HOOK_MASK) != 0` where `0xCC = BEFORE_SWAP | AFTER_SWAP | BEFORE_SWAP_RETURNS_DELTA | AFTER_SWAP_RETURNS_DELTA`. Hooked pools can modify swap amounts, violating the solver's V3-math assumption.
-- **Dynamic fee exclusion**: `fee == 0x100000` indicates swap-dependent fees that the fixed-fee solver cannot handle.
+- **Dynamic fee exclusion**: `fee == 0x800000` (exact equality against the v4-core `LPFeeLibrary.DYNAMIC_FEE_FLAG` sentinel) indicates swap-dependent fees that the fixed-fee solver cannot handle.
 
 V4 `ModifyLiquidity` events replace V3's separate Mint/Burn with a signed `liquidity_delta` (I256). Both V3 and V4 engines delegate tick mutations to the shared `update_tick_liquidity` (single tick) and `apply_liquidity_to_tick_range` (range with zero-gross cleanup) helpers in `tick_bitmap.rs`.
 

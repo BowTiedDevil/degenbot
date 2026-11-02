@@ -180,7 +180,7 @@ class TestRouteFailureClassification:
         bot = _RouteRecordingBot(
             database_path=tmp_path / "unused.db",
             exc=HighFeePoolRejectedError(
-                "V4 pool fee (fee=8388608) exceeds the cmd_executor's 2-byte "
+                "V4 pool fee (fee=320000) exceeds the cmd_executor's 2-byte "
                 "encoding limit (65535) — excluded from arbitrage"
             ),
         )

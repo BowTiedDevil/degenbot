@@ -819,6 +819,7 @@ fn unregister_v2_pool_returns_true_then_re_register_allocates_fresh_id() {
 fn admission_refusal_records_a_consultable_gate_verdict() {
     use crate::{
         registration_gate::AdmissionVerdict, RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey,
+        V4_DYNAMIC_FEE_FLAG,
     };
     use hashbrown::HashMap;
 
@@ -845,12 +846,14 @@ fn admission_refusal_records_a_consultable_gate_verdict() {
 
     // Dynamic-fee refusal records a consultable verdict.
     assert!(matches! {
-        core.register_v4_pool(&base(0x100_000)),
+        core.register_v4_pool(&base(V4_DYNAMIC_FEE_FLAG)),
         Err(RegisterV4PoolError::DynamicFee { .. }),
     });
     assert_eq!(
         core.concentrated_liquidity().admission_verdict(pm, &pid),
-        Some(AdmissionVerdict::DynamicFee { fee: 0x100_000 })
+        Some(AdmissionVerdict::DynamicFee {
+            fee: V4_DYNAMIC_FEE_FLAG
+        })
     );
 
     // Fee-encoder-limit refusal records its verdict on a fresh pool.
@@ -882,6 +885,55 @@ fn admission_refusal_records_a_consultable_gate_verdict() {
     );
     assert!(core.try_registered(pm, &pid3).is_some());
     let _: u64 = admitted;
+}
+
+#[test]
+fn register_v4_pool_dynamic_fee_arm_catches_the_exact_sentinel() {
+    // Upstream `LPFeeLibrary.isDynamicFee` tests exact EQUALITY against the
+    // `0x800000` sentinel. A real dynamic-fee pool carries exactly that value
+    // — no static pool can hold it (`MAX_LP_FEE = 1_000_000 < 0x800000`) — so
+    // this literal is the only value the dynamic-fee arm may catch.
+    use crate::RegisterV4PoolError;
+
+    let mut core = BotState::new();
+    let mut params = make_v4_params_in_spec();
+    params.pool_id = [0xd1u8; 32];
+    params.pool_key.fee = 0x0080_0000;
+    assert!(
+        matches! {
+            core.register_v4_pool(&params),
+            Err(RegisterV4PoolError::DynamicFee { fee: 0x0080_0000 }),
+        },
+        "the real dynamic-fee sentinel (0x800000) must reach the DynamicFee arm"
+    );
+
+    // Exact equality, never a mask: a fee sharing the sentinel's high bit is
+    // not dynamic, so it falls to the encoder-limit arm.
+    let mut core = BotState::new();
+    let mut params = make_v4_params_in_spec();
+    params.pool_id = [0xd2u8; 32];
+    params.pool_key.fee = 0x0080_0001;
+    assert!(
+        matches! {
+            core.register_v4_pool(&params),
+            Err(RegisterV4PoolError::FeeExceedsEncoderLimit { fee }) if fee == 0x0080_0001,
+        },
+        "the high bit alone is not the sentinel — no mask semantics"
+    );
+
+    // The static-fee maximum (`MAX_LP_FEE = 0xF4240 = 1_000_000`) is a static
+    // fee the encoder-limit arm refuses — it must never be flagged dynamic.
+    let mut core = BotState::new();
+    let mut params = make_v4_params_in_spec();
+    params.pool_id = [0xd3u8; 32];
+    params.pool_key.fee = 0x000F_4240;
+    assert!(
+        matches! {
+            core.register_v4_pool(&params),
+            Err(RegisterV4PoolError::FeeExceedsEncoderLimit { fee }) if fee == 1_000_000,
+        },
+        "the static max fee is the encoder-limit refusal, never the dynamic-fee one"
+    );
 }
 
 #[test]

@@ -364,7 +364,7 @@ class TestV4SeamAdmission:
     ) -> None:
         """V4 `fee >= 1 << 24` (`V4_FEE_MAX`) is rejected as `SpecViolationError`,
         NOT as `DynamicFeePoolRejectedError` — the `0x800000` high bit is the
-        dynamic-fee flag (handled as a separate, more-specific rejection);
+        dynamic-fee sentinel (handled as a separate, more-specific rejection);
         `fee >= 1 << 24` is a different and more primitive kind of out-of-spec."""
         bot = Bot(chain_id=1)
         kw = self._in_spec_kwargs("0x" + "e2" * 32)
@@ -372,6 +372,22 @@ class TestV4SeamAdmission:
         with pytest.raises(SpecViolationError) as exc_info:
             bot.register_v4_pool(**kw)
         assert "fee" in str(exc_info.value)
+
+    def test_dynamic_fee_pool_raises_dynamic_fee_pool_rejected_error(self) -> None:
+        """The REAL dynamic-fee sentinel (``fee == 0x800000``, v4-core
+        ``LPFeeLibrary.DYNAMIC_FEE_FLAG``) is refused as
+        ``DynamicFeePoolRejectedError``, never ``HighFeePoolRejectedError``.
+
+        ``0x800000`` is also ``> u16::MAX``, so the encoder-limit arm would
+        catch it if the dynamic-fee arm did not fire first: this pins the arm
+        order on the only value a real dynamic-fee pool can carry.
+        """
+        bot = Bot(chain_id=1)
+        kw = self._in_spec_kwargs("0x" + "e4" * 32)
+        kw["fee"] = 0x800000
+        with pytest.raises(DynamicFeePoolRejectedError) as exc_info:
+            bot.register_v4_pool(**kw)
+        assert "0x800000" in str(exc_info.value)
 
     def test_hooked_pool_admitted_with_reserved_typed_error(self) -> None:
         """Amount-modifying-hook V4 pools are admitted at registration

@@ -1714,7 +1714,7 @@ mod tests {
             BuildFailure::HookedPool
         );
         assert_eq!(
-            BuildFailure::from(RegisterV4PoolError::DynamicFee { fee: 0x10_0000 }),
+            BuildFailure::from(RegisterV4PoolError::DynamicFee { fee: 0x0080_0000 }),
             BuildFailure::DynamicFee
         );
         assert_eq!(

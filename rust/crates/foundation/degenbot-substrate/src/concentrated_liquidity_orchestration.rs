@@ -1592,7 +1592,7 @@ impl ConcentratedLiquidityOrchestration {
     /// before the dynamic-fee / high-fee / already-registered rejections — so
     /// an impossible-concentrated-liquidity-config rejection surfaces the primitive at fault.
     ///
-    /// Returns `Err` if the pool uses a dynamic fee (`fee == 0x100000`),
+    /// Returns `Err` if the pool uses a dynamic fee (`fee == 0x0080_0000`),
     /// has a static fee exceeding the executor's `u16` encoding field
     /// (`fee >= degenbot_executor::encoders::V4_FEE_ENCODER_MAX`), or a pool
     /// with the same `(pool_manager, pool_id)` is already registered.
@@ -1609,6 +1609,9 @@ impl ConcentratedLiquidityOrchestration {
         sb::validate_tick_spacing(params.pool_key.tick_spacing)
             .map_err(RegisterV4PoolError::SpecViolation)?;
 
+        // v4-core `LPFeeLibrary.isDynamicFee` tests exact equality on the
+        // `0x800000` sentinel — never a mask, so a static fee merely sharing
+        // the high bit falls through to the encoder-limit arm below.
         if params.pool_key.fee == V4_DYNAMIC_FEE_FLAG {
             self.registration_gate.record(
                 params.pool_manager,

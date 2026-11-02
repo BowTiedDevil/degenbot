@@ -28,7 +28,7 @@ use hashbrown::HashMap;
 /// ones (already-registered, spec violation) which are never pool facts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdmissionVerdict {
-    /// Pool uses a dynamic fee (`fee == 0x100000`) — can never carry a
+    /// Pool uses a dynamic fee (`fee == 0x0080_0000`) — can never carry a
     /// static fee, so the fact is immutable.
     DynamicFee { fee: u32 },
     /// Pool's static fee exceeds the `cmd_executor`'s 2-byte encoding
@@ -95,10 +95,10 @@ mod tests {
 
         let pm = Address::from([0x44u8; 20]);
         let pid: V4PoolId = [0xeeu8; 32];
-        gate.record(pm, pid, AdmissionVerdict::DynamicFee { fee: 0x100_000 });
+        gate.record(pm, pid, AdmissionVerdict::DynamicFee { fee: 0x0080_0000 });
 
         let v = gate.verdict(pm, pid).expect("recorded verdict answers");
-        assert_eq!(v, AdmissionVerdict::DynamicFee { fee: 0x100_000 });
+        assert_eq!(v, AdmissionVerdict::DynamicFee { fee: 0x0080_0000 });
         assert_eq!(v.kind(), "dynamic-fee");
         assert_eq!(gate.len(), 1);
 

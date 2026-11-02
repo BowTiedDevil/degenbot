@@ -153,7 +153,8 @@ class UniswapV4Pool(
     here); tests use ``make_v4_pool``.
 
     Hook admission floor: pools with amount-modifying hooks (`hook_flags & 0xCC
-    != 0`) or dynamic fees (`fee == 0x100000`) are rejected in Rust
+    != 0`) or dynamic fees (`fee == 0x800000`, the exact v4-core
+    `LPFeeLibrary.DYNAMIC_FEE_FLAG` sentinel) are rejected in Rust
     (`BotState::register_v4_pool`), surfaced at `Bot.register_v4_pool` as
     typed exceptions — so this companion never holds a hooked/dynamic-fee pool.
     """

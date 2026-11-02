@@ -34,7 +34,7 @@ The ``PoolAlreadyRegisteredError`` upgrade replaces the previous
 the three admission outcomes:
 
 - ``HookedPoolRejectedError`` — amount-modifying hook (``hook_flags & 0xCC``)
-- ``DynamicFeePoolRejectedError`` — dynamic fee (``fee == 0x100000``)
+- ``DynamicFeePoolRejectedError`` — dynamic fee (``fee == 0x800000``)
 - a ``PoolAlreadyRegisteredError`` — duplicate ``(pool_manager, pool_id)``
   registration (now a typed admission category, not a plain
   ``ValueError``).
