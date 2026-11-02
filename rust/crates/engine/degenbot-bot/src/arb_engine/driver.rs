@@ -62,6 +62,7 @@
 //! - **Main loop.** No `run_until_stopped` convenience: the consumer owns its
 //!   consume/dispatch loop (ADR-050 D9).
 
+use crate::arb_engine::crawl::controller::CrawlHandle;
 use crate::arb_engine::lifecycle::PathRegistrationError;
 use crate::arb_engine::pump_session::{self, PhaseAdvance, PumpEvent};
 use crate::arb_engine::{
@@ -331,6 +332,73 @@ impl SubscribeFault {
     }
 }
 
+/// The crawl as the driver's teardown holds it.
+///
+/// The controller never spawns its own run (see `crawl::controller`, "Who
+/// spawns the run"), so the `JoinHandle` belongs to whoever spawned it — the
+/// boot wiring — and is handed over together with the narrowed
+/// [`CrawlHandle`] a `StopPlan` carries. The pair stays beside the pump's own
+/// handle so ONE [`EngineDriver::stop`] tears down both loops under one grace
+/// window.
+pub(crate) struct CrawlTeardown {
+    /// The narrowed teardown edge: latch the stop, read the two facts.
+    pub(crate) handle: CrawlHandle,
+    /// The run future's handle — the join fact's only reporter.
+    pub(crate) run: tokio::task::JoinHandle<()>,
+}
+
+impl CrawlTeardown {
+    /// The narrowed edge a
+    /// [`StopPlan`](crate::arb_engine::pump_session::StopPlan) carries — never
+    /// the controller.
+    fn edge(&self) -> CrawlHandle {
+        self.handle.clone()
+    }
+
+    /// Join the crawl's run future under `grace`, escalating to `abort()`.
+    ///
+    /// The caller has already latched the crawl's stop (the plan's edge), so a
+    /// healthy run stops submitting, drains its window, and resolves on its
+    /// own; its resolution guard then lands the join fact and the terminal
+    /// pose. The abort is the escalation for a run parked where the latch
+    /// cannot reach it: it drops the run future, which still passes through the
+    /// same guard.
+    fn join(self, grace: Duration) {
+        let mut run = self.run;
+        // The timeout future is built INSIDE the async block: `Sleep` captures
+        // the timer handle at construction, so it must not be constructed
+        // outside the runtime context.
+        let cooperative = degenbot_core::runtime::get_runtime()
+            .block_on(async { tokio::time::timeout(grace, &mut run).await });
+        match cooperative {
+            Ok(Ok(())) => {
+                op_info!(
+                    domain = pump,
+                    grace_ms = pump_stop_grace_ms(),
+                    "EngineDriver: crawl run resolved within the grace window"
+                );
+            }
+            Ok(Err(join_err)) => {
+                op_error!(
+                    domain = pump,
+                    grace_ms = pump_stop_grace_ms(),
+                    error = %join_err,
+                    "EngineDriver: crawl run ended with a join error before the grace expired"
+                );
+            }
+            Err(_) => {
+                run.abort();
+                let _ = degenbot_core::runtime::get_runtime().block_on(run);
+                op_info!(
+                    domain = pump,
+                    grace_ms = pump_stop_grace_ms(),
+                    "EngineDriver: crawl run did not resolve within grace — aborted (fallback)"
+                );
+            }
+        }
+    }
+}
+
 /// The pending pump session between `subscribe()` and `resume()`.
 pub(crate) struct DriverSubscribeState {
     /// The subscribed pump (owns the WS transport + the live stream).
@@ -356,6 +424,10 @@ pub struct EngineDriver {
     shutdown: Arc<AtomicBool>,
     /// The spawned live-loop handle (`None` until `resume`).
     pump_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The crawl's teardown pair (`None` until the boot wiring installs a
+    /// crawl): the narrowed edge a `StopPlan` carries and the run future's
+    /// handle, which only the spawning caller can hold.
+    crawl: Mutex<Option<CrawlTeardown>>,
     /// The pump-completion broadcast sender. Created in `from_stages`; the
     /// sender is MOVED into the spawned pump task by `resume` (or dropped by
     /// `stop` when the pump never armed), so the channel closes — resolving
@@ -513,6 +585,7 @@ impl EngineDriver {
             reorg_coordinator,
             shutdown: Arc::new(AtomicBool::new(false)),
             pump_handle: Mutex::new(None),
+            crawl: Mutex::new(None),
             pump_finished_tx: Mutex::new(Some(pump_finished_tx)),
             pump_finished_rx,
             subscribe_state: Mutex::new(None),
@@ -1016,6 +1089,16 @@ impl EngineDriver {
     /// closes the delivery channels so a pending receiver observes
     /// end-of-stream exactly once.
     ///
+    /// The crawl is torn down with the live loop. The teardown plan is produced
+    /// SYNCHRONOUSLY ([`pump_session::on_stop`]) from the pose the table landed
+    /// the session from and the crawl edge this driver holds — nothing
+    /// awaitable, and no lock held across an await — and its edge is latched
+    /// before the pump join, so both loops unwind at once. The crawl's run
+    /// future is then joined under the SAME [`PUMP_STOP_GRACE`] window (the
+    /// controller never spawns its own run, so the driver holds that
+    /// `JoinHandle`), escalating to `abort()` only if the latch cannot reach
+    /// it.
+    ///
     /// # Errors
     ///
     /// Currently never returns `Err`; the typed result keeps the surface
@@ -1029,7 +1112,24 @@ impl EngineDriver {
             // owns it, and this one has nothing left to join.
             return Ok(());
         }
+        // The crawl's teardown pair, taken once: the plan carries the narrowed
+        // edge (never the controller) and the run future's `JoinHandle` stays
+        // here beside the pump's own.
+        let crawl = self.crawl.lock().take();
+        // The plan, produced SYNCHRONOUSLY from the pose the table landed the
+        // session FROM — the same answer the projection just published, with no
+        // await and no lock held across one.
+        let (next, plan) =
+            pump_session::on_stop(teardown.from, crawl.as_ref().map(CrawlTeardown::edge));
+        debug_assert_eq!(
+            next, teardown.to,
+            "the plan and the projection are one table answer"
+        );
         self.shutdown.store(true, Ordering::Relaxed);
+        // Latch the crawl's stop BEFORE the pump join, so both loops unwind at
+        // once: the crawl stops submitting and drains its window while the pump
+        // walks its own tick.
+        plan.stop_crawl();
         // Drop any un-armed sender (the pump never resumed): without this a
         // pre-finish waiter would hang after a stop-before-resume.
         drop(self.pump_finished_tx.lock().take());
@@ -1088,6 +1188,12 @@ impl EngineDriver {
                 "EngineDriver: BlockPump not running (no pump handle to stop)"
             );
         }
+        // The crawl's run future, under the same grace window and in the same
+        // shape: it was asked to stop above, so its window drains and the run
+        // resolves on its own — abort is the escalation, not the mechanism.
+        if let Some(crawl) = crawl {
+            crawl.join(PUMP_STOP_GRACE);
+        }
         // Final WalkMemo stats drain: the pump is down
         // and no further cycle can advance an epoch, so drain the LAST
         // epoch's counters here — no boundary will. Inert unless the memo
@@ -1096,7 +1202,7 @@ impl EngineDriver {
         self.stages.drain_walk_memo_final();
         *self.subscribe_state.lock() = None;
         self.stages.close_delivery_channels();
-        if teardown.to == PumpPhase::Stopping {
+        if next == PumpPhase::Stopping {
             self.advance("stop", None, PumpEvent::StopCompleted)?;
         }
         Ok(())
@@ -1440,11 +1546,23 @@ impl Drop for EngineDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::arb_engine::crawl::controller::{
+        CrawlConfig, CrawlController, CrawlHandle, CrawlHost, CrawlState, CrawlUnitFuture,
+        CrawlUnitSeat, RunPhase,
+    };
+    use crate::arb_engine::crawl::discovery::{CrawlDiscoveryError, DiscoverySource, Edition};
+    use crate::arb_engine::crawl::policy::CrawlPathPolicy;
     use crate::arb_engine::pump_session::PumpDecline;
+    use crate::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
+    use crate::bot_core::ConstructionRoute;
+    use alloy::primitives::{address, Bytes, U256};
+    use degenbot_db::PathGraphData;
     use degenbot_decoders::v4_swap_decoder::V4PoolId;
     use degenbot_eventhub::OverflowPolicy;
+    use degenbot_pathfinding::PoolKind;
     use degenbot_pools::PoolTickCoverage;
     use futures_util::StreamExt;
+    use hashbrown::HashSet;
 
     /// Build an offline driver over a fresh `Bot` + `EngineStages`.
     fn driver_for_test() -> EngineDriver {
@@ -1661,6 +1779,298 @@ mod tests {
         assert!(
             driver.take_result_receiver().is_some(),
             "the receiver is still takeable after the refusal"
+        );
+    }
+
+    // ── the crawl teardown edge ─────────────────────────────────────────
+
+    /// The block the crawl fixture's construction stub names.
+    const CRAWL_BLOCK: u64 = 18_000_000;
+
+    /// The fixture's boundary token (the path start and end).
+    const CRAWL_WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+
+    /// The fixture's profit token.
+    const CRAWL_USDC: Address = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+
+    /// The `PoolManager` the fixture's V4 edges name.
+    const CRAWL_V4_PM: Address = address!("3333333333333333333333333333333333333333");
+
+    /// The `V4` graph-id offset the database read applies.
+    const CRAWL_V4_OFFSET: u64 = 1 << 32;
+
+    /// The fixture graph's two token ids.
+    const CRAWL_TOKEN_A: u64 = 1;
+    const CRAWL_TOKEN_B: u64 = 2;
+
+    /// A construction stub the fixture's units never reach: every candidate hop
+    /// is a V4 hop with no decodable pool hash, so the unit answers the bounded
+    /// `V4NoHash` skip at the build stage and spends no read.
+    struct UnreachedRpc;
+
+    #[async_trait::async_trait]
+    impl RpcConstruction for UnreachedRpc {
+        async fn get_block_number(&self) -> Result<u64, degenbot_core::errors::ProviderError> {
+            Ok(CRAWL_BLOCK)
+        }
+
+        async fn get_block(
+            &self,
+            _block_number: u64,
+        ) -> Result<Option<degenbot_rpc::provider::EthBlock>, degenbot_core::errors::ProviderError>
+        {
+            Ok(None)
+        }
+
+        async fn get_block_timestamp(
+            &self,
+            _block_number: u64,
+        ) -> Result<Option<u64>, degenbot_core::errors::ProviderError> {
+            Ok(None)
+        }
+
+        async fn get_code(
+            &self,
+            _address: Address,
+            _block_number: Option<u64>,
+        ) -> Result<Bytes, degenbot_core::errors::ProviderError> {
+            Ok(Bytes::new())
+        }
+
+        async fn get_balance(
+            &self,
+            _address: Address,
+            _block_number: Option<u64>,
+        ) -> Result<U256, degenbot_core::errors::ProviderError> {
+            Ok(U256::ZERO)
+        }
+
+        async fn call(
+            &self,
+            _to: Address,
+            _data: Bytes,
+            _block_number: Option<u64>,
+        ) -> Result<Bytes, degenbot_core::errors::ProviderError> {
+            panic!("the crawl fixture's candidates are cheap skips: no construction read is made")
+        }
+    }
+
+    /// A scripted discovery source: the fixture graph and a stable edition.
+    struct SkipSource {
+        data: PathGraphData,
+    }
+
+    impl DiscoverySource for SkipSource {
+        fn edition(&self) -> Result<Edition, CrawlDiscoveryError> {
+            Ok(Edition::default())
+        }
+
+        fn resolve_token_ids(
+            &self,
+            _addresses: &[Address],
+        ) -> Result<HashMap<Address, u64>, CrawlDiscoveryError> {
+            Ok(HashMap::from_iter([
+                (CRAWL_WETH, CRAWL_TOKEN_A),
+                (CRAWL_USDC, CRAWL_TOKEN_B),
+            ]))
+        }
+
+        fn candidate_tokens(
+            &self,
+            _kinds: &[PoolKind],
+        ) -> Result<HashSet<u64>, CrawlDiscoveryError> {
+            Ok(HashSet::from_iter([CRAWL_TOKEN_A, CRAWL_TOKEN_B]))
+        }
+
+        fn graph_data(&self, _kinds: &[PoolKind]) -> Result<PathGraphData, CrawlDiscoveryError> {
+            Ok(self.data.clone())
+        }
+    }
+
+    /// Two parallel V4 pools between the fixture's two tokens, neither with a
+    /// decodable hash: every cycle is a real candidate that answers the cheap
+    /// `V4NoHash` skip, so a unit resolves without a read.
+    fn crawl_graph() -> PathGraphData {
+        let mut data = PathGraphData::default();
+        for slot in 1..=2 {
+            let graph_id = CRAWL_V4_OFFSET + slot;
+            data.edges
+                .push((CRAWL_TOKEN_A, CRAWL_TOKEN_B, graph_id, PoolKind::V4));
+            data.v4_lookups
+                .insert(graph_id, (CRAWL_V4_PM, "0xnot-a-pool-hash".to_owned()));
+        }
+        data
+    }
+
+    /// The fixture crawl's configuration: one-unit window, two-hop cycles.
+    fn crawl_config_for_test() -> CrawlConfig {
+        CrawlConfig {
+            chain_id: 1,
+            database_path: std::path::PathBuf::from("/nonexistent/stop-edge.sqlite"),
+            route: ConstructionRoute::generic_only(),
+            pool_kinds: vec![PoolKind::V4],
+            pool_type_per_depth: None,
+            start_tokens: vec![CRAWL_WETH],
+            end_tokens: vec![CRAWL_WETH],
+            min_depth: 2,
+            max_depth: Some(2),
+            discovery_batch_size: 1,
+            intake_window: 1,
+            path_cap: None,
+            retry: RetryPolicy {
+                max_attempts: 1,
+                base_delay: 0.0,
+                max_delay: 0.0,
+                jitter: 0.0,
+            },
+            policy: CrawlPathPolicy::default(),
+            profit_token: CRAWL_USDC,
+            snapshot_block: None,
+            state_block: Some(CRAWL_BLOCK),
+        }
+    }
+
+    /// A seat that resolves each unit after `delay`, recording the crawl's pose
+    /// and join fact at that moment — the window a latched stop has to leave
+    /// draining, observed from inside the crawl.
+    struct DriftingSeat {
+        controller: Arc<std::sync::OnceLock<Arc<CrawlController>>>,
+        observed: Arc<Mutex<Option<(CrawlState, bool)>>>,
+        delay: Duration,
+    }
+
+    impl CrawlUnitSeat for DriftingSeat {
+        fn dispatch(&self, future: CrawlUnitFuture) -> Result<(), String> {
+            let holder = Arc::clone(&self.controller);
+            let observed = Arc::clone(&self.observed);
+            let delay = self.delay;
+            tokio::spawn(async move {
+                tokio::time::sleep(delay).await;
+                if let Some(controller) = holder.get() {
+                    *observed.lock() = Some((controller.state(), controller.is_finished()));
+                }
+                future.await;
+            });
+            Ok(())
+        }
+    }
+
+    struct CrawlFixture {
+        controller: Arc<CrawlController>,
+        run: tokio::task::JoinHandle<()>,
+        observed: Arc<Mutex<Option<(CrawlState, bool)>>>,
+    }
+
+    /// Boot a crawl whose run future is LIVE and takes `delay` to drain its
+    /// window, handing back the `JoinHandle` the controller deliberately never
+    /// spawns for itself.
+    fn live_crawl_for_test(driver: &Arc<EngineDriver>, delay: Duration) -> CrawlFixture {
+        let observed = Arc::new(Mutex::new(None));
+        let holder = Arc::new(std::sync::OnceLock::new());
+        let seat = Arc::new(DriftingSeat {
+            controller: Arc::clone(&holder),
+            observed: Arc::clone(&observed),
+            delay,
+        });
+        let io = Arc::new(ConstructionIo::new(Arc::new(NoDb), Arc::new(UnreachedRpc)));
+        let host = CrawlHost::from_driver(driver, io, None);
+        let controller = CrawlController::attach_with(
+            host,
+            crawl_config_for_test(),
+            Arc::new(SkipSource {
+                data: crawl_graph(),
+            }),
+            seat,
+        )
+        .expect("the fixture configuration is valid");
+        assert!(
+            holder.set(Arc::clone(&controller)).is_ok(),
+            "the seat's controller holder is set once"
+        );
+        let runner = Arc::clone(&controller);
+        let runtime = degenbot_core::runtime::get_runtime();
+        let run = runtime.spawn(async move {
+            let _ = runner.run().await;
+        });
+        // `Live` is the run's own arming edge, taken before the sweep prepares,
+        // so waiting on it means the stop below always meets a run to latch.
+        runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while controller.run_phase() != RunPhase::Live {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .expect("the run arms before it prepares its sweep");
+        });
+        CrawlFixture {
+            controller,
+            run,
+            observed,
+        }
+    }
+
+    #[test]
+    fn a_stop_with_no_crawl_plans_an_empty_edge_and_tears_down_as_before() {
+        let driver = driver_for_test();
+        assert!(
+            driver.crawl.lock().is_none(),
+            "no crawl is installed until the boot wiring installs one"
+        );
+        let started = std::time::Instant::now();
+        driver.stop().expect("stop with no crawl");
+        assert!(
+            started.elapsed() < PUMP_STOP_GRACE,
+            "an empty crawl edge owes no wait; took {:?}",
+            started.elapsed()
+        );
+        assert_eq!(driver.current_phase(), PumpPhase::Stopped);
+        assert!(!driver.pump_handle_armed());
+    }
+
+    #[test]
+    fn a_stop_latches_the_crawl_and_joins_its_run_within_the_grace() {
+        let driver = Arc::new(driver_for_test());
+        let fixture = live_crawl_for_test(&driver, Duration::from_millis(500));
+        assert_eq!(
+            fixture.controller.state(),
+            CrawlState::Running {
+                last_complete: None
+            },
+            "the fixture's run is live and its window is not yet drained"
+        );
+        // Install the pair exactly as the boot wiring will: the narrowed edge
+        // and the run future's handle, together.
+        *driver.crawl.lock() = Some(CrawlTeardown {
+            handle: CrawlHandle::new(Arc::clone(&fixture.controller)),
+            run: fixture.run,
+        });
+
+        let started = std::time::Instant::now();
+        driver.stop().expect("stop with a live crawl");
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < PUMP_STOP_GRACE,
+            "the crawl's run is joined inside the grace window, not aborted; took {elapsed:?}"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(300),
+            "the stop really waited for the unit in flight; took {elapsed:?}"
+        );
+        assert_eq!(driver.current_phase(), PumpPhase::Stopped);
+        assert!(driver.crawl.lock().is_none(), "the teardown took the pair");
+        assert_eq!(
+            fixture.controller.state(),
+            CrawlState::Stopped,
+            "the stop latched `Stopping`, and only the run's resolution reached `Stopped`"
+        );
+        assert_eq!(fixture.controller.run_phase(), RunPhase::Finished);
+        assert!(fixture.controller.receipts_ended());
+        assert_eq!(
+            *fixture.observed.lock(),
+            Some((CrawlState::Stopping, false)),
+            "the unit in flight saw the latched stop and the still-unresolved join, so no receipt was truncated"
         );
     }
 

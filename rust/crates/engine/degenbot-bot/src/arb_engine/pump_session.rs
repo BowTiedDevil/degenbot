@@ -18,6 +18,8 @@
 
 use std::fmt;
 
+use crate::arb_engine::crawl::controller::CrawlHandle;
+
 /// Where a pump session is. A `Copy` projection: readers see this, never a
 /// handle into the session.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -196,6 +198,28 @@ pub enum PumpDecline {
     },
 }
 
+/// Where `Stop` lands a session — total over every pose, and the teardown
+/// table's whole row.
+///
+/// A session with nothing to tear down lands [`PumpPhase::Stopped`] at once;
+/// one holding something to tear down lands [`PumpPhase::Stopping`] and owes
+/// one `StopCompleted` when the teardown returns. Factored out of
+/// [`transition`] so [`on_stop`] can produce a teardown plan infallibly: `Stop`
+/// is the one event that never declines.
+#[must_use]
+pub const fn stop_pose(pose: PumpPhase) -> PumpPhase {
+    match pose {
+        PumpPhase::Detached | PumpPhase::Ended | PumpPhase::Abandoned | PumpPhase::Stopped => {
+            PumpPhase::Stopped
+        }
+        PumpPhase::Connecting
+        | PumpPhase::Subscribed
+        | PumpPhase::Resuming
+        | PumpPhase::Running
+        | PumpPhase::Stopping => PumpPhase::Stopping,
+    }
+}
+
 /// The whole legality table: (pose, event) -> next pose, or a typed decline.
 ///
 /// Total over every pair — no combination is undefined and none is a silent
@@ -219,10 +243,7 @@ pub fn transition(pose: PumpPhase, event: PumpEvent) -> Result<PumpPhase, PumpDe
 
     // Teardown is total. It declines nothing and never leaves a terminal pose.
     if matches!(event, E::Stop) {
-        return Ok(match pose {
-            P::Detached | P::Ended | P::Abandoned | P::Stopped => P::Stopped,
-            P::Connecting | P::Subscribed | P::Resuming | P::Running | P::Stopping => P::Stopping,
-        });
+        return Ok(stop_pose(pose));
     }
 
     // `Stopped` is absorbing: it refuses everything else, loudly and by name.
@@ -301,6 +322,57 @@ pub(crate) struct PhaseAdvance {
     pub(crate) from: PumpPhase,
     /// The pose the table landed on.
     pub(crate) to: PumpPhase,
+}
+
+/// The teardown plan a `Stop` produces: the crawl's edge, and nothing else.
+///
+/// A plan is a VALUE. [`on_stop`] produces it synchronously, so a teardown
+/// decision never awaits and never holds a lock across an await — an awaitable
+/// cannot live in a plan for that reason. The edge is the NARROWED
+/// [`CrawlHandle`], never an `Arc<CrawlController>`: a plan may latch the
+/// crawl's stop and read its two facts, and cannot start a crawl, fold a
+/// receipt, or reach the controller's interior.
+///
+/// The run future's `JoinHandle` is deliberately absent: the controller never
+/// spawns its own run, so that handle belongs to whoever spawned it, and that
+/// caller joins it under its own grace window (the driver's `stop`).
+#[derive(Clone)]
+pub struct StopPlan {
+    /// The crawl's teardown edge, when the session has a crawl to tear down.
+    crawl: Option<CrawlHandle>,
+}
+
+impl StopPlan {
+    /// The crawl's teardown edge, when the session booted a crawl.
+    #[must_use]
+    pub fn crawl(&self) -> Option<&CrawlHandle> {
+        self.crawl.as_ref()
+    }
+
+    /// Latch the crawl's stop — total, idempotent, and never blocking.
+    ///
+    /// With a live run this lands `Stopping` and leaves the submission window
+    /// draining: no submitted unit is cancelled and no receipt is truncated,
+    /// because only the run future's own resolution reaches `Stopped`. The
+    /// caller holding the `JoinHandle` still owes the bounded join — the pose
+    /// is not the join fact.
+    pub fn stop_crawl(&self) {
+        if let Some(crawl) = &self.crawl {
+            crawl.stop();
+        }
+    }
+}
+
+/// The session's teardown answer: the pose the table lands, and the plan.
+///
+/// SYNCHRONOUS BY CONTRACT. The landing is the table's own `Stop` row
+/// ([`stop_pose`]) and the edge is the crawl handle the session holds; neither
+/// needs an await, so `on_stop` returns `(next, StopPlan)` with no lock held
+/// across one. The caller publishes `next` through the projection's locked
+/// read-decide-write and then consumes the plan's edge.
+#[must_use]
+pub fn on_stop(pose: PumpPhase, crawl: Option<CrawlHandle>) -> (PumpPhase, StopPlan) {
+    (stop_pose(pose), StopPlan { crawl })
 }
 
 #[cfg(test)]
@@ -520,6 +592,25 @@ mod tests {
         }
         assert_eq!(transition(P::Stopping, E::Stop), Ok(P::Stopping));
         assert_eq!(transition(P::Stopping, E::StopCompleted), Ok(P::Stopped));
+    }
+
+    #[test]
+    fn on_stop_answers_synchronously_and_the_table_owns_the_landing() {
+        // `on_stop` is plain sync: this is a non-async test with no runtime in
+        // scope, so the plan cannot be awaiting, parking on a runtime, or
+        // holding a lock across an await — it returns immediately, by
+        // construction as well as by signature. And the landing is the table's
+        // own `Stop` row, not a second opinion about teardown.
+        for pose in ALL_POSES {
+            let (next, plan) = on_stop(pose, None);
+            assert_eq!(next, stop_pose(pose), "on_stop({pose})");
+            assert_eq!(
+                next,
+                transition(pose, E::Stop).expect("stop never declines"),
+                "the plan's landing is the table's landing for {pose}"
+            );
+            assert!(plan.crawl().is_none(), "no crawl attached, no edge");
+        }
     }
 
     #[test]
