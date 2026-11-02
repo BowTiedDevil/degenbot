@@ -169,9 +169,8 @@ pub struct PhaseError {
     pub method: &'static str,
     /// The pump-protocol phase at call time.
     pub current: PumpPhase,
-    /// The phase boundary the method required, or `None` when the method admits
-    /// more than one predecessor (`subscribe` is legal from `Detached` and, as
-    /// the recovery edge, from `Abandoned`).
+    /// The phase boundary the method required, or `None` when the method
+    /// imposes none (`stop` admits every pose).
     pub required: Option<PumpPhase>,
     /// The decline's own message — the table's error text, which the Python
     /// shells surface verbatim in a `RuntimeError`.
@@ -203,9 +202,10 @@ pub enum DriverError {
     Subscribe(String),
     /// The `S+1..W` resume backfill failed. The resume aborted with the
     /// snapshot→WS gap **UNAPPLIED** — the session landed `Abandoned` and no
-    /// live loop was started, so the caller recovers (a fresh `subscribe`)
-    /// instead of running over stale pool state. The detail names the
-    /// offending block range.
+    /// live loop was started, so the caller stops the session and starts a new
+    /// one (a re-subscribe is refused: `Abandoned` is terminal) instead of
+    /// running over stale pool state. The detail names the offending block
+    /// range.
     Backfill(String),
     /// Typed path-registration refusal (propagated verbatim, ADR-050 D4).
     Registration(PathRegistrationError),
@@ -761,7 +761,8 @@ impl EngineDriver {
     ///
     /// # Errors
     ///
-    /// - [`DriverError::Phase`] when the phase is past the subscribe window.
+    /// - [`DriverError::Phase`] when the phase is not `Detached` — including the
+    ///   terminal `Abandoned`, whose one exit is `stop`.
     /// - [`DriverError::SessionState`] when the pump is already started or a
     ///   subscribe state is already pending, or the driver is stopped.
     /// - [`DriverError::Subscribe`] when the WS handshake fails.
@@ -775,7 +776,11 @@ impl EngineDriver {
         // publish: a refused request must leave the pose where it found it, and
         // `Connecting` is legal for neither `subscribe` nor `resume` —
         // publishing it for a request that never dials would wedge the session.
-        self.check("subscribe", None, PumpEvent::SubscribeRequested)?;
+        self.check(
+            "subscribe",
+            Some(PumpPhase::Detached),
+            PumpEvent::SubscribeRequested,
+        )?;
         if self.pump_handle.lock().is_some() {
             return Err(DriverError::SessionState(
                 "Cannot subscribe: pump is already started. Call stop() first.".to_string(),
@@ -789,7 +794,7 @@ impl EngineDriver {
         let leg = PhaseLeg::enter(
             self,
             "subscribe",
-            None,
+            Some(PumpPhase::Detached),
             PumpEvent::SubscribeRequested,
             PumpEvent::SubscribeAbandoned,
         )?;
@@ -892,9 +897,13 @@ impl EngineDriver {
     /// arms a [`PhaseLeg`], whose `Drop` publishes the table's `ResumeAbandoned`
     /// edge — so a future dropped mid-window lands `Abandoned` (the pump and its
     /// WS session died with it) instead of standing in `Resuming` with nothing
-    /// left to resume. `Abandoned`'s recovery edge is a fresh `subscribe()`; its
-    /// only other exit is `stop()`. A cancel after the `ResumeSpawned` landing is
-    /// NOT "not resumed": the live loop is armed and its handle stored.
+    /// left to resume. `Abandoned` is terminal: `stop()` is its one exit, and a
+    /// re-subscribe is refused by name
+    /// ([`pump_session::PumpDecline::SubscribeAfterAbandonment`]) — recovery
+    /// from a cancelled resume is a new session, because the backfill buffer
+    /// stages events without dedup and a retry would double-apply them at
+    /// registration. A cancel after the `ResumeSpawned` landing is NOT "not
+    /// resumed": the live loop is armed and its handle stored.
     ///
     /// **A backfill failure is an abort, not a degraded start**: the `S+1..W`
     /// gap would be unapplied, so the `Err` is returned typed
@@ -1431,6 +1440,7 @@ impl Drop for EngineDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::arb_engine::pump_session::PumpDecline;
     use degenbot_decoders::v4_swap_decoder::V4PoolId;
     use degenbot_eventhub::OverflowPolicy;
     use degenbot_pools::PoolTickCoverage;
@@ -1977,14 +1987,17 @@ mod tests {
         assert!(matches!(resumed, DriverError::Phase(_)), "got {resumed:?}");
     }
 
-    /// **The cancelled-resume wedge.** `resume` takes the pending subscribe
-    /// state (dropping the pump and its WS session with the future) while the
-    /// backfill is in flight, so a cancel that left the pose on `Subscribed`
-    /// would refuse both doors. The in-flight pose (`Resuming`) plus the
-    /// `PhaseLeg` abandonment guard land it on `Abandoned`, whose recovery edge
-    /// is a fresh `subscribe`.
+    /// **The cancelled-resume wedge, and the terminal landing.** `resume` takes
+    /// the pending subscribe state (dropping the pump and its WS session with
+    /// the future) while the backfill is in flight, so a cancel that left the
+    /// pose on `Subscribed` would refuse both doors. The in-flight pose
+    /// (`Resuming`) plus the `PhaseLeg` abandonment guard land it on
+    /// `Abandoned` — which is TERMINAL: a follow-up `subscribe` is the table's
+    /// typed decline (the backfill buffer stages events without dedup, so a
+    /// re-subscribe could double-apply liquidity events at registration), and
+    /// `stop` is the one exit that remains.
     #[test]
-    fn a_cancelled_resume_lands_abandoned_and_is_resubscribable() {
+    fn a_cancelled_resume_lands_abandoned_and_is_terminal() {
         let driver = Arc::new(driver_for_test());
         let runtime = degenbot_core::runtime::get_runtime();
         let _result_rx = driver.take_result_receiver();
@@ -2037,17 +2050,37 @@ mod tests {
         );
         assert!(!driver.pump_handle_armed());
 
-        // `Abandoned`'s only forward door is a fresh subscribe: it is admitted by
-        // the table and fails at the dial (reported), not as a phase decline.
-        driver.set_subscribe_fault_for_test(SubscribeFault::Handshake);
+        // The re-subscribe edge is gone: the table refuses it by name, before
+        // the WS step is reached.
         let err = runtime
             .block_on(driver.subscribe("ws://127.0.0.1:1"))
             .unwrap_err();
-        assert!(
-            matches!(err, DriverError::Subscribe(_)),
-            "subscribe from abandoned must reach the WS step, got {err:?}"
+        let decline = PumpDecline::SubscribeAfterAbandonment;
+        match &err {
+            DriverError::Phase(phase) => {
+                assert_eq!(phase.method, "subscribe");
+                assert_eq!(phase.current, PumpPhase::Abandoned);
+                assert_eq!(phase.required, Some(PumpPhase::Detached));
+                assert_eq!(
+                    phase.detail,
+                    decline.to_string(),
+                    "the decline's own message reaches the caller"
+                );
+            }
+            other => panic!(
+                "a re-subscribe after abandonment must be the table's typed decline, got {other:?}"
+            ),
+        }
+        assert_eq!(
+            driver.current_phase(),
+            PumpPhase::Abandoned,
+            "a declined subscribe leaves the pose it found"
         );
-        assert_eq!(driver.current_phase(), PumpPhase::Detached);
+
+        // `stop` — the one remaining exit — is still legal from `Abandoned`.
+        driver.stop().expect("stop is total and the only exit");
+        assert_eq!(driver.current_phase(), PumpPhase::Stopped);
+        assert!(driver.is_stopped());
     }
 
     /// **The backfill-failure abort.** `resume` owns the `S+1..W` backfill; a
@@ -2121,7 +2154,7 @@ mod tests {
             let _leg = PhaseLeg::enter(
                 &driver,
                 "subscribe",
-                None,
+                Some(PumpPhase::Detached),
                 PumpEvent::SubscribeRequested,
                 PumpEvent::SubscribeAbandoned,
             )
@@ -2137,7 +2170,7 @@ mod tests {
         let leg = PhaseLeg::enter(
             &driver,
             "subscribe",
-            None,
+            Some(PumpPhase::Detached),
             PumpEvent::SubscribeRequested,
             PumpEvent::SubscribeAbandoned,
         )

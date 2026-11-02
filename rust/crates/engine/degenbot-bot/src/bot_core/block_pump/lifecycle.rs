@@ -104,8 +104,9 @@ impl BlockPump {
     ///
     /// Returns the backfill's `eth_getLogs` failure message (naming the
     /// offending block range) when the `S+1..W` gap could not be closed. The
-    /// caller recovers with a fresh `subscribe()`; the pump's own session
-    /// machine (above this layer) owns the `Abandoned` landing.
+    /// pump's own session machine (above this layer) owns the `Abandoned`
+    /// landing, which is terminal: the caller stops the session and starts a
+    /// new one rather than re-subscribing.
     #[cfg_attr(not(test), expect(dead_code))]
     pub async fn resume_from_subscribe(
         &mut self,

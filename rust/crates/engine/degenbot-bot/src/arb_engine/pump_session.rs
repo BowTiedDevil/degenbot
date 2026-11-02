@@ -37,8 +37,14 @@ pub enum PumpPhase {
     /// The live loop returned without a `Stop` — stream end, panic, or abort.
     Ended,
     /// A resume did not commit — cancelled mid-flight, or its `S+1..W` backfill
-    /// failed. Either way the WS session is gone and no live loop runs; the
-    /// only way forward is a fresh `subscribe`.
+    /// failed. Either way the WS session is gone and no live loop runs.
+    ///
+    /// Terminal for recovery: `stop` is its one exit. The re-subscribe edge is
+    /// refused ([`PumpDecline::SubscribeAfterAbandonment`]) because the
+    /// backfill buffer stages events without dedup — a retry over a partially
+    /// staged attempt would double-apply liquidity events at registration.
+    /// Recovery is a new session. (Not [`PumpPhase::is_terminal`]: teardown
+    /// has not begun, so `stop` from here still owes its own work.)
     Abandoned,
     /// `Stop` latched; teardown is in progress.
     Stopping,
@@ -149,13 +155,20 @@ impl PumpEvent {
 /// Why a session move was refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PumpDecline {
-    /// `subscribe` is legal only from [`PumpPhase::Detached`], or from
-    /// [`PumpPhase::Abandoned`] where it is the recovery edge.
+    /// `subscribe` is legal only from [`PumpPhase::Detached`].
     #[error("cannot subscribe from {current}; subscribe requires detached")]
     SubscribeRequiresDetached {
         /// The pose the request arrived in.
         current: PumpPhase,
     },
+    /// `subscribe` arrived at a session whose resume was abandoned.
+    ///
+    /// [`PumpPhase::Abandoned`] is terminal, so `stop` is its one exit: a
+    /// re-subscribe could double-apply the partially staged backfill buffer.
+    #[error(
+        "cannot subscribe: the session was abandoned and only stop is legal; restart the session to recover (a re-subscribe could double-apply its staged backfill)"
+    )]
+    SubscribeAfterAbandonment,
     /// `resume` is legal only from [`PumpPhase::Subscribed`].
     #[error("cannot resume from {current}; resume requires subscribed")]
     ResumeRequiresSubscribed {
@@ -192,8 +205,9 @@ pub enum PumpDecline {
 /// # Errors
 ///
 /// [`PumpDecline::SubscribeRequiresDetached`] when `subscribe` arrives at a
-/// session that is already past `Detached` and not recovering from
-/// [`PumpPhase::Abandoned`]; [`PumpDecline::ResumeRequiresSubscribed`] when
+/// session that is already past `Detached`;
+/// [`PumpDecline::SubscribeAfterAbandonment`] when it arrives at an
+/// [`PumpPhase::Abandoned`] one; [`PumpDecline::ResumeRequiresSubscribed`] when
 /// `resume` arrives without a resumable session;
 /// [`PumpDecline::ResumeAfterAbandonment`] when a resume is attempted after a
 /// cancelled one; [`PumpDecline::EventOutOfOrder`] for an event the pose does
@@ -221,10 +235,9 @@ pub fn transition(pose: PumpPhase, event: PumpEvent) -> Result<PumpPhase, PumpDe
     }
 
     match (pose, event) {
-        // subscribe: the one door in. `Abandoned` is the recovery edge — the
-        // only way forward after a cancelled resume, since its WS session is
-        // gone.
-        (P::Detached | P::Abandoned, E::SubscribeRequested) => Ok(P::Connecting),
+        // subscribe: the one door in, and only from a clean start. `Abandoned`
+        // does not reopen it — see its own row below.
+        (P::Detached, E::SubscribeRequested) => Ok(P::Connecting),
 
         // handshake outcome
         (P::Connecting, E::Subscribed) => Ok(P::Subscribed),
@@ -254,6 +267,12 @@ pub fn transition(pose: PumpPhase, event: PumpEvent) -> Result<PumpPhase, PumpDe
         // A cancelled resume cannot be retried: the pump and its WS session
         // were dropped with the future.
         (P::Abandoned, E::ResumeRequested) => Err(PumpDecline::ResumeAfterAbandonment),
+
+        // Nor re-subscribed: `Abandoned` is terminal. The backfill buffer stages
+        // events without dedup, so a second attempt over a partially staged one
+        // would double-apply liquidity events at registration; recovery is a
+        // new session.
+        (P::Abandoned, E::SubscribeRequested) => Err(PumpDecline::SubscribeAfterAbandonment),
 
         // `subscribe` from a live session is not a recovery, it is a mistake.
         (_, E::SubscribeRequested) => Err(PumpDecline::SubscribeRequiresDetached { current: pose }),
@@ -329,20 +348,27 @@ mod tests {
                 }
             }
         }
-        // 9 poses admit `Stop`, plus the ten named edges of the graph.
-        assert_eq!(allowed, 19, "the graph's allowed edge count changed");
+        // 9 poses admit `Stop`, plus the nine named edges of the graph
+        // (`Abandoned` keeps only its exit, so its subscribe is not one).
+        assert_eq!(allowed, 18, "the graph's allowed edge count changed");
     }
 
     #[test]
-    fn subscribe_is_legal_from_detached_and_from_abandoned_only() {
+    fn subscribe_is_legal_only_from_detached() {
         for pose in ALL_POSES {
-            let allowed = matches!(pose, P::Detached | P::Abandoned);
+            let allowed = pose == P::Detached;
             assert_eq!(
                 transition(pose, E::SubscribeRequested).ok(),
                 allowed.then_some(P::Connecting),
                 "subscribe from {pose}"
             );
         }
+        // `Abandoned` used to be the recovery edge; it declines by its own name
+        // now, distinct from "already past detached".
+        assert_eq!(
+            transition(P::Abandoned, E::SubscribeRequested),
+            Err(PumpDecline::SubscribeAfterAbandonment)
+        );
     }
 
     #[test]
@@ -421,12 +447,26 @@ mod tests {
     }
 
     #[test]
-    fn abandoned_has_exactly_two_exits() {
+    fn abandoned_has_exactly_one_exit() {
+        // Terminal by operator decision: recovery is a new session, never a
+        // re-subscribe (the backfill buffer stages events without dedup, so a
+        // retry over a partially staged attempt would double-apply liquidity
+        // events at registration).
         let exits: Vec<PumpPhase> = ALL_EVENTS
             .iter()
             .filter_map(|e| transition(P::Abandoned, *e).ok())
             .collect();
-        assert_eq!(exits, vec![P::Connecting, P::Stopped]);
+        assert_eq!(exits, vec![P::Stopped]);
+
+        // Both forward doors decline by name: teardown is the only way out.
+        assert_eq!(
+            transition(P::Abandoned, E::SubscribeRequested),
+            Err(PumpDecline::SubscribeAfterAbandonment)
+        );
+        assert_eq!(
+            transition(P::Abandoned, E::ResumeRequested),
+            Err(PumpDecline::ResumeAfterAbandonment)
+        );
     }
 
     #[test]
