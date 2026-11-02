@@ -32,6 +32,7 @@ use tokio::sync::mpsc;
 use super::{
     transition, CrawlAbort, CrawlConfig, CrawlController, CrawlEvent, CrawlHandle, CrawlHost,
     CrawlRequestError, CrawlState, CrawlStateError, CrawlUnitFuture, CrawlUnitSeat, RunPhase,
+    SeatHold, SnapshotArm,
 };
 use crate::arb_engine::crawl::discovery::{
     CrawlDiscoveryError, DiscoveredPath, DiscoverySource, Edition,
@@ -365,6 +366,8 @@ fn config(window: usize, batch: usize) -> CrawlConfig {
             jitter: 0.0,
         },
         policy: CrawlPathPolicy::default(),
+        oracle: None,
+        policy_batch_size: 1,
         profit_token: USDC,
         snapshot_block: None,
         state_block: Some(BLOCK),
@@ -383,6 +386,22 @@ fn harness(
     Arc<FixtureSource>,
     mpsc::UnboundedReceiver<CrawlReceipt>,
 ) {
+    harness_with_arm(rpc, data, config, seat, None)
+}
+
+/// The same seam with a tick-map arm attached — the head-construction read a
+/// snapshot handle feeds.
+fn harness_with_arm(
+    rpc: FakeRpc,
+    data: PathGraphData,
+    config: CrawlConfig,
+    seat: Arc<dyn CrawlUnitSeat>,
+    snapshot: Option<Arc<dyn SnapshotArm>>,
+) -> (
+    Arc<CrawlController>,
+    Arc<FixtureSource>,
+    mpsc::UnboundedReceiver<CrawlReceipt>,
+) {
     let source = FixtureSource::new(data);
     let io = Arc::new(ConstructionIo::new(Arc::new(NoDb), Arc::new(rpc)));
     let bot = Arc::new(Bot::new(CHAIN_ID));
@@ -395,7 +414,7 @@ fn harness(
         bot,
         driver,
         io,
-        db: None,
+        snapshot,
     };
     let controller = CrawlController::attach_with(host, config, source.clone(), seat).unwrap();
     let (tx, rx) = mpsc::unbounded_channel();
@@ -972,6 +991,296 @@ async fn a_fatal_unit_aborts_the_crawl_loudly_after_the_drain() {
     assert!(fixture.controller.receipts_ended());
 }
 
+// ── the window's completion clause ──────────────────────────────────
+
+/// A seat that accepts a unit and drops its future unpolled.
+///
+/// The S2 intake fault's exact shape: a lane death drains the held work, which
+/// runs ZERO times, so the unit's future is dropped without ever sending its
+/// outcome. Any seat thread that dies between accept and run looks the same.
+struct DroppedSeat;
+
+impl CrawlUnitSeat for DroppedSeat {
+    fn dispatch(&self, _future: CrawlUnitFuture) -> Result<(), String> {
+        // Taking the future by value and never polling it IS the loss.
+        Ok(())
+    }
+}
+
+/// A lost unit must END the run, not park it.
+///
+/// The consumer of a run is parked on its receipt stream: a window that waits
+/// forever for a receipt nobody can send hangs the consumer with it, and the
+/// boot behind it. The loud path exists ([`CrawlRequestError::UnitLost`]) — it
+/// has to be reachable from the loop, which means the drive's own sender must be
+/// gone before the window waits.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_unit_dropped_by_its_seat_ends_the_run_loudly() {
+    // Two candidate paths, a window wider than both: the sweep exhausts and the
+    // LOST units are the drain's, which is where the channel's end answers.
+    let (controller, _source, mut rx) = harness(
+        FakeRpc::new(),
+        skip_graph(2),
+        config(4, 1),
+        Arc::new(DroppedSeat),
+    );
+
+    let run = tokio::time::timeout(Duration::from_secs(5), controller.run())
+        .await
+        .expect("a dropped unit must resolve the run — never park it");
+    match run {
+        Err(CrawlRequestError::UnitLost { outstanding }) => {
+            assert!(outstanding >= 1, "the loss names what never arrived");
+        }
+        other => panic!("expected the loud lost-unit error, got {other:?}"),
+    }
+    assert_eq!(controller.run_phase(), RunPhase::Finished);
+    assert!(
+        controller.receipts_ended(),
+        "the consumer's stream ends with the run, however the run ended"
+    );
+    assert!(
+        rx.recv().await.is_none(),
+        "the consumer observes end-of-stream instead of waiting forever"
+    );
+}
+
+/// A seat that keeps every unit's future alive and never polls it.
+///
+/// A parked unit: a fleet seat thread stuck inside the unit, a build flight's
+/// peer whose leader vanished, a chain read that never answers. The unit's
+/// sender stays alive, so the channel never ends and only the idle deadline can
+/// free the run.
+#[derive(Default)]
+struct ParkingSeat {
+    parked: Mutex<Vec<CrawlUnitFuture>>,
+}
+
+impl CrawlUnitSeat for ParkingSeat {
+    fn dispatch(&self, future: CrawlUnitFuture) -> Result<(), String> {
+        self.parked.lock().push(future);
+        Ok(())
+    }
+}
+
+/// A parked unit is named at the deadline, and the run resolves.
+///
+/// This is the shape the live boot showed: receipts stop, nothing errors, and
+/// the run never resolves — so the consumer's `async for` parks forever and the
+/// boot never reaches the trim. A silent window is a parked window.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_parked_unit_is_named_at_the_idle_deadline() {
+    let seat = Arc::new(ParkingSeat::default());
+    let (controller, _source, mut rx) =
+        harness(FakeRpc::new(), skip_graph(2), config(1, 1), seat.clone());
+    controller.set_unit_idle_deadline_for_test(Duration::from_millis(50));
+
+    let run = tokio::time::timeout(Duration::from_secs(5), controller.run())
+        .await
+        .expect("a parked unit must resolve the run at the deadline, never park its consumer");
+    match run {
+        Err(CrawlRequestError::UnitStalled { stalled, waited_ms }) => {
+            assert_eq!(stalled, vec![1], "the report names the parked submission");
+            assert_eq!(waited_ms, 50);
+        }
+        other => panic!("expected the loud stalled-window error, got {other:?}"),
+    }
+    assert_eq!(
+        seat.parked.lock().len(),
+        1,
+        "the unit really was held alive, not dropped"
+    );
+    assert_eq!(controller.run_phase(), RunPhase::Finished);
+    assert!(
+        controller.receipts_ended(),
+        "the consumer's stream ends with the run"
+    );
+    assert!(
+        rx.recv().await.is_none(),
+        "the consumer observes end-of-stream, so its async-for cannot hang"
+    );
+}
+
+/// A seat whose intake is HELD: it accepts every unit's future and parks it
+/// unpolled while the hold flag is up, then runs them all on the lift.
+///
+/// This is the fleet intake under a posture cordon, at the seam the controller
+/// sees: `dispatch` accepts (never refuses, never drops — the never-drop
+/// ledger), nothing runs, and [`CrawlUnitSeat::hold`] reports why. The cordon's
+/// lift is the throttle feed's clean-window exit, which runs the whole held
+/// backlog.
+struct HoldingSeat {
+    metrics: Arc<Metrics>,
+    holding: AtomicBool,
+    held: Mutex<Vec<CrawlUnitFuture>>,
+}
+
+impl HoldingSeat {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            metrics: Arc::new(Metrics::default()),
+            holding: AtomicBool::new(true),
+            held: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn metrics(&self) -> &Metrics {
+        &self.metrics
+    }
+
+    /// The lift: everything the hold parked runs now.
+    fn lift(&self) {
+        self.holding.store(false, Ordering::SeqCst);
+        let lifted: Vec<CrawlUnitFuture> = std::mem::take(&mut *self.held.lock());
+        for future in lifted {
+            run_async(future, Arc::clone(&self.metrics));
+        }
+    }
+
+    /// How many units the hold still parks (the "held, never dropped" count).
+    fn parked(&self) -> usize {
+        self.held.lock().len()
+    }
+}
+
+impl CrawlUnitSeat for HoldingSeat {
+    fn dispatch(&self, future: CrawlUnitFuture) -> Result<(), String> {
+        self.metrics.dispatched.fetch_add(1, Ordering::SeqCst);
+        self.metrics.outstanding.fetch_add(1, Ordering::SeqCst);
+        if self.holding.load(Ordering::SeqCst) {
+            // Held: accepted, queued, and run ZERO times until the lift.
+            self.held.lock().push(future);
+        } else {
+            run_async(future, Arc::clone(&self.metrics));
+        }
+        Ok(())
+    }
+
+    fn hold(&self) -> Option<SeatHold> {
+        self.holding
+            .load(Ordering::SeqCst)
+            .then_some(SeatHold::Posture)
+    }
+}
+
+/// Run one unit's future on the ambient runtime, counting it out when it lands.
+fn run_async(future: CrawlUnitFuture, metrics: Arc<Metrics>) {
+    tokio::spawn(async move {
+        future.await;
+        metrics.outstanding.fetch_sub(1, Ordering::SeqCst);
+    });
+}
+
+/// The live boot's stall, at the seam that broke: a HELD window is not a parked
+/// one.
+///
+/// The boot's shape (verified): the crawl filled its first window, the fleet
+/// posture cordoned the registration intake, every submitted unit waited in the
+/// unbounded backlog, and NOT ONE receipt arrived for a minute — because not one
+/// unit had run. Nothing was stuck and nothing was lost; the cordon's
+/// clean-window exit released the whole backlog at once. A window that charges
+/// that hold to the park deadline aborts a crawl that is working, so the hold
+/// must be waited through — and deliver on the lift.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_held_window_outlives_the_park_deadline_and_delivers_on_the_lift() {
+    let seat = HoldingSeat::new();
+    let (controller, _source, mut rx) = harness(
+        FakeRpc::new(),
+        skip_graph(2),
+        config(2, 1),
+        Arc::clone(&seat) as Arc<dyn CrawlUnitSeat>,
+    );
+    // The park deadline is a fifth of the hold, so several deadlines pass while
+    // the units are held: a window that mistook the hold for silence fires here.
+    controller.set_unit_idle_deadline_for_test(Duration::from_millis(40));
+    controller.set_held_window_budget_for_test(Duration::from_secs(10));
+    let lifter = Arc::clone(&seat);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        lifter.lift();
+    });
+
+    let run = tokio::time::timeout(Duration::from_secs(10), controller.run())
+        .await
+        .expect("a held window must resolve: the hold lifts and the units deliver");
+    run.expect("the held window delivered, so the run completes");
+    // Two parallel pools, so the sweep's ordered cycles are the two (i, j) pairs
+    // with i != j — both of them land in the first window, which is the whole
+    // point: the window is full, held, and delivers on the lift.
+    assert_eq!(
+        controller.summary().report.units_folded,
+        2,
+        "every held unit ran on the lift and folded exactly once"
+    );
+    let folded = receipts(&mut rx);
+    assert_eq!(folded.len(), 2, "the consumer saw every receipt");
+    assert_eq!(
+        seat.parked(),
+        0,
+        "the lift released everything the hold parked"
+    );
+    assert_eq!(
+        seat.metrics().outstanding.load(Ordering::SeqCst),
+        0,
+        "every unit resolved"
+    );
+    assert_eq!(controller.run_phase(), RunPhase::Finished);
+    assert!(controller.receipts_ended());
+}
+
+/// A hold that never lifts is NAMED at the hold budget, not waited on forever.
+///
+/// The cordon's exit needs a clean throttle window, and a host under sustained
+/// cgroup throttling never produces one — so the hold can outlast any sane
+/// bound. The window then reports the posture (the operator's lever) instead of
+/// a park it cannot diagnose, and the run still resolves: no hang, and no
+/// mistyped cause.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_hold_that_never_lifts_is_named_at_the_hold_budget() {
+    let seat = HoldingSeat::new();
+    let (controller, _source, mut rx) = harness(
+        FakeRpc::new(),
+        skip_graph(2),
+        config(2, 2),
+        Arc::clone(&seat) as Arc<dyn CrawlUnitSeat>,
+    );
+    controller.set_unit_idle_deadline_for_test(Duration::from_millis(10));
+    controller.set_held_window_budget_for_test(Duration::from_millis(120));
+
+    let run = tokio::time::timeout(Duration::from_secs(10), controller.run())
+        .await
+        .expect("a never-lifting hold must resolve the run at its budget, never park it");
+    match run {
+        Err(CrawlRequestError::IntakeHeld {
+            stalled,
+            held_ms,
+            hold,
+        }) => {
+            assert_eq!(hold, SeatHold::Posture, "the report names the posture");
+            assert_eq!(stalled, vec![1, 2], "every held submission is named");
+            assert!(
+                held_ms >= 120,
+                "the budget was the bound that ended the wait, got {held_ms}ms"
+            );
+        }
+        other => panic!("expected the held-window error, got {other:?}"),
+    }
+    assert_eq!(
+        seat.parked(),
+        2,
+        "the units were HELD — queued at the seat, never dropped"
+    );
+    assert_eq!(controller.run_phase(), RunPhase::Finished);
+    assert!(
+        controller.receipts_ended(),
+        "the consumer's stream ends with the run, however the run ended"
+    );
+    assert!(
+        rx.recv().await.is_none(),
+        "the consumer observes end-of-stream instead of waiting forever"
+    );
+}
+
 // ── the operator surface ────────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1031,6 +1340,43 @@ async fn enqueue_is_admitted_post_cap_and_folds_its_receipt() {
         fixture.controller.summary().report.units_folded,
         2,
         "the folded cap receipt plus the operator path — one fold point"
+    );
+}
+
+/// The operator surface is bounded too: an enqueued unit that parks answers the
+/// caller at the idle deadline instead of parking the Python await that made it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_enqueue_whose_unit_parks_is_named_at_the_deadline() {
+    let seat = Arc::new(ParkingSeat::default());
+    let (controller, _source, _rx) =
+        harness(FakeRpc::new(), skip_graph(2), config(2, 2), seat.clone());
+    controller.set_unit_idle_deadline_for_test(Duration::from_millis(50));
+
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(5),
+        controller.enqueue_path(
+            DiscoveredPath {
+                hops: vec![DiscoveredHop::V4 {
+                    pool_manager: V4_PM,
+                    pool_hash: None,
+                }],
+            },
+            None,
+        ),
+    )
+    .await
+    .expect("the operator call must resolve: a parked unit is named, never awaited forever");
+    match outcome {
+        Err(CrawlRequestError::UnitStalled { stalled, waited_ms }) => {
+            assert_eq!(stalled, vec![1], "the report names the parked submission");
+            assert_eq!(waited_ms, 50);
+        }
+        other => panic!("expected the loud stalled-window error, got {other:?}"),
+    }
+    assert_eq!(
+        seat.parked.lock().len(),
+        1,
+        "the unit really was held alive, not dropped"
     );
 }
 
@@ -1181,4 +1527,139 @@ async fn a_vanished_receipt_consumer_does_not_fail_the_crawl() {
         "every unit still folded into the summary"
     );
     assert!(controller.receipts_ended());
+}
+
+// ── the snapshot arm ────────────────────────────────────────────────────────
+
+/// The arm a process with a closable snapshot read transaction owns: ONE slot,
+/// emptied when the transaction commits, asked once per unit.
+struct SlotArm {
+    slot: Mutex<Option<Arc<NeverReadDb>>>,
+    asks: AtomicUsize,
+}
+
+impl SnapshotArm for SlotArm {
+    fn acquire(&self) -> Option<Arc<dyn degenbot_db::snapshot::TickMapDb>> {
+        self.asks.fetch_add(1, Ordering::SeqCst);
+        self.slot
+            .lock()
+            .clone()
+            .map(|db| db as Arc<dyn degenbot_db::snapshot::TickMapDb>)
+    }
+}
+
+/// A tick-map handle the fixture never reads: what is measured here is the ASK,
+/// not the data. Every read answers "no rows", so a unit that does hold it takes
+/// the same no-data path a cold DB does.
+struct NeverReadDb;
+
+impl degenbot_db::snapshot::TickMapDb for NeverReadDb {
+    fn fetch_liquidity_map(
+        &self,
+        _pool_address: Address,
+    ) -> Result<Option<degenbot_db::snapshot::LiquidityMap>, DbError> {
+        Ok(None)
+    }
+    fn fetch_liquidity_map_v4(
+        &self,
+        _pool_manager: Address,
+        _pool_id_hash: alloy::primitives::B256,
+    ) -> Result<Option<degenbot_db::snapshot::LiquidityMap>, DbError> {
+        Ok(None)
+    }
+    fn fetch_newest_update_block(
+        &self,
+        _chain: i64,
+        _family: degenbot_db::read::ExchangeFamily,
+    ) -> Result<Option<i64>, DbError> {
+        Ok(None)
+    }
+    fn fetch_liquidity_update_block(&self, _pool_address: Address) -> Result<Option<i64>, DbError> {
+        Ok(None)
+    }
+    fn fetch_liquidity_update_block_v4(
+        &self,
+        _pool_manager: Address,
+        _pool_id_hash: alloy::primitives::B256,
+    ) -> Result<Option<i64>, DbError> {
+        Ok(None)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_snapshot_handle_is_acquired_per_unit_and_dropped_when_the_run_ends() {
+    // The process holds the ONE long-lived handle; the crawl asks the arm per
+    // unit and keeps nothing between units. That is the contract the close's
+    // sole-holder canary reads: a crawl-scoped clone would outlive the run.
+    let handle = Arc::new(NeverReadDb);
+    let arm = Arc::new(SlotArm {
+        slot: Mutex::new(Some(Arc::clone(&handle))),
+        asks: AtomicUsize::new(0),
+    });
+    // The slot's handle plus this test's own: every other reference is a unit's.
+    let holders = Arc::strong_count(&handle);
+    let (controller, source, mut rx) = harness_with_arm(
+        FakeRpc::new(),
+        skip_graph(5),
+        config(2, 1),
+        TokioSeat::new(Duration::from_millis(5), None),
+        Some(Arc::clone(&arm) as Arc<dyn SnapshotArm>),
+    );
+    controller.run().await.unwrap();
+
+    let units = controller.summary().report.units_folded;
+    assert_eq!(units, 20, "the fixture's cycle count");
+    assert_eq!(
+        arm.asks.load(Ordering::SeqCst),
+        units,
+        "the arm is asked once per unit — per USE, never once at boot"
+    );
+    assert_eq!(
+        Arc::strong_count(&handle),
+        holders,
+        "no unit retained a handle: the slot is the handle's only other holder"
+    );
+
+    // The close: the owner empties the slot, and every later ask is the no-DB
+    // arm. The operator surface keeps working — it registers without the DB seed.
+    assert_eq!(
+        receipts(&mut rx).len(),
+        20,
+        "the run's own receipts, drained before the close"
+    );
+    *arm.slot.lock() = None;
+    assert_eq!(
+        Arc::strong_count(&handle),
+        1,
+        "the close leaves only this test's own reference"
+    );
+    // A changed graph edition re-arms the sweep latch the natural run set: the
+    // post-close operator trigger must be admitted, not answered "already done".
+    let latched = controller
+        .last_complete()
+        .expect("the run latched its edition");
+    source.set_edition(Some(GraphEdition {
+        v4_count: 9,
+        v4_max_id: 9,
+        ..latched
+    }));
+    let sweeps = source.sweeps();
+    let asked_before = arm.asks.load(Ordering::SeqCst);
+    let bound = controller.trigger_discovery(Some(4)).await.unwrap();
+    assert!(bound > 0, "the post-close sweep still submits units");
+    assert_eq!(source.sweeps(), sweeps + 1);
+    assert!(
+        arm.asks.load(Ordering::SeqCst) > asked_before,
+        "the post-close units asked the arm again and got the no-DB arm"
+    );
+    assert_eq!(
+        Arc::strong_count(&handle),
+        1,
+        "a post-close unit acquired no handle at all"
+    );
+    assert_eq!(
+        controller.summary().report.units_folded,
+        units + bound,
+        "every post-close unit resolved and folded — without the DB seed"
+    );
 }

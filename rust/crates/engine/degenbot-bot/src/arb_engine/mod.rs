@@ -69,7 +69,10 @@ mod boot_stamp;
 // engine-side anchor fold; see the module's own doc header).
 pub(crate) mod block_cursor;
 
-pub mod crawl;
+// The Rust-owned registration crawl. The tree is crate-private: its operator
+// surface is re-exported at the crate-root `crawl` door (ADR-084 D2 — a driver
+// names the door, never a module beneath it).
+pub(crate) mod crawl;
 // Sub-modules — each contains `impl ArbitrageEngine` or `impl PyArbitrageEngine` blocks.
 mod delivery_lifecycle;
 mod delivery_policy;
@@ -177,7 +180,7 @@ mod tests;
 pub use diagnostic::{
     compute_field_diffs, DiagnosticHop, DiagnosticPathState, DiagnosticPoolState, FieldDiff,
 };
-pub use driver::{DriverError, EngineChannelHandles, EngineDriver, PhaseError};
+pub use driver::{CrawlBoot, DriverError, EngineChannelHandles, EngineDriver, PhaseError};
 pub use engine_stages::EngineStages;
 pub use fleet_status::{
     fleet_profile_summary, fleet_runtime_status, FleetBinding, FleetProfileSummary,

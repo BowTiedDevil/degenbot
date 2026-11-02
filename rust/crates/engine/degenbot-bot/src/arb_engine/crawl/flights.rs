@@ -168,6 +168,7 @@ impl BuildFlights {
     }
 
     /// How many flights are live (test/diagnostic witness).
+    #[cfg(test)]
     #[must_use]
     pub fn live_count(&self) -> usize {
         self.slots.lock().len()

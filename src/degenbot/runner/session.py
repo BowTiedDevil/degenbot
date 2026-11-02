@@ -388,9 +388,9 @@ class Session:
     #: The concurrent sim fan-out + single ordered submitter, attached by
     #: :meth:`build_pipeline` when the run ritual attaches the consumer.
     sim_submit_pipeline: BatchExecutor | None = None
-    #: The operator add-a-path surface (attached by the run ritual when the real
-    #: ``build_paths`` runs), kept reachable for the session's lifetime; ``None``
-    #: for injected/fake runs.
+    #: The operator add-a-path surface: the engine's booted crawl session, parked
+    #: on ``registration_context`` by ``build_paths`` (the trim-proof identity);
+    #: ``None`` for injected/fake runs and before the crawl is booted.
     registration_pipeline: Any = None
     #: The registration-owned construction context (written by the run ritual
     #: for the real builder; ``None`` for injected builders).
@@ -613,10 +613,14 @@ class Session:
 
         """
         self.phase = self.phase.on_query("enqueue_path")
-        if self.registration_pipeline is None:
-            msg = "no live registration pipeline; add-path unavailable (injected/fake run)"
+        session = self._crawl_session()
+        if session is None:
+            msg = (
+                "no live crawl session; add-path unavailable "
+                "(injected/fake run, or the crawl is not booted)"
+            )
             raise RuntimeError(msg)
-        await self.registration_pipeline.enqueue_path(path_steps, directions=directions)
+        await session.enqueue_path(path_steps, directions)
 
     async def trigger_discovery(self, *, bound: int | None = None) -> int:
         """Trigger a bounded one-shot discovery sweep (on-demand trigger).
@@ -635,13 +639,30 @@ class Session:
 
         """
         self.phase = self.phase.on_query("trigger_discovery")
-        if self.registration_pipeline is None:
-            msg = "no live registration pipeline; on-demand discovery unavailable"
+        session = self._crawl_session()
+        if session is None:
+            msg = "no live crawl session; on-demand discovery unavailable"
             raise RuntimeError(msg)
         return cast(
             "int",
-            await self.registration_pipeline.trigger_discovery(bound=bound),
+            await session.trigger_discovery(bound),
         )
+
+    def _crawl_session(self) -> Any:
+        """Resolve the engine's booted crawl session, or ``None`` when there is none.
+
+        The identity is the trim-proof one: ``build_paths`` parks the session on
+        the registration-owned construction context, which the main-loop trim
+        never severs.
+
+        Returns:
+            The live ``CrawlSession``, or ``None``.
+
+        """
+        if self.registration_pipeline is not None:
+            return self.registration_pipeline
+        context = self.registration_context
+        return None if context is None else context.session
 
     # ── Run-phase duties ────────────────────────────────────────────
     async def build_pipeline(self) -> BatchExecutor:

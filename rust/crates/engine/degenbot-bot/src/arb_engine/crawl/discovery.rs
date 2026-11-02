@@ -137,18 +137,6 @@ impl DbDiscoverySource {
         let (db, _schema) = DegenbotDb::open(path)?;
         Ok(Self { db, chain_id })
     }
-
-    /// Wrap an already-open handle (a caller that owns the connection).
-    #[must_use]
-    pub const fn from_database(db: DegenbotDb, chain_id: i64) -> Self {
-        Self { db, chain_id }
-    }
-
-    /// The chain this source reads.
-    #[must_use]
-    pub const fn chain_id(&self) -> i64 {
-        self.chain_id
-    }
 }
 
 impl DiscoverySource for DbDiscoverySource {
@@ -384,16 +372,11 @@ impl DiscoverySweep {
         })
     }
 
-    /// How many traversals the plan holds (the search breadth of this sweep).
-    #[must_use]
-    pub fn traversal_count(&self) -> usize {
-        self.plan.len() + usize::from(self.finder.is_some())
-    }
-
     /// Whether the sweep has no candidate left.
     ///
     /// A sweep that was abandoned early reports `false` — "exhausted" is the
     /// natural-completion fact, and only natural completion may latch.
+    #[cfg(test)]
     #[must_use]
     pub const fn is_exhausted(&self) -> bool {
         self.exhausted

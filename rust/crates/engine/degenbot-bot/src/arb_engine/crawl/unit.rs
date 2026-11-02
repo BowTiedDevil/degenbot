@@ -59,12 +59,14 @@ use degenbot_substrate::state_lock::LockSite;
 use degenbot_substrate::PoolLookup;
 use degenbot_uniswap::dex_identity::DexVariant;
 
+use std::sync::Arc;
+
 use crate::arb_engine::crawl::flights::{
     BuildFlights, FlightEnter, FlightKey, FlightOutcome, FlightTarget,
 };
 use crate::arb_engine::crawl::policy::{
-    registered_hop_facts, CrawlPathPolicy, PathCompositionView, PathPolicyVerdict,
-    RegisteredHopFacts,
+    oracle_verdict, registered_hop_facts, BatchPolicyOracle, CrawlPathPolicy, PathCompositionView,
+    PathPolicyVerdict, PolicyCandidate, RegisteredHopFacts,
 };
 use crate::arb_engine::crawl::receipt::{CrawlReceipt, StageSplit};
 use crate::arb_engine::driver::EngineDriver;
@@ -198,7 +200,8 @@ impl CrawlLedger {
     }
 
     /// How many pools hold a completed verify-lifecycle fact — the witness the
-    /// Python pipeline reports from the same memo.
+    /// fixtures report from the same memo.
+    #[cfg(test)]
     #[must_use]
     pub fn verified_pool_count(&self) -> usize {
         self.with(|ledger| ledger.verified_pool_count())
@@ -215,6 +218,9 @@ pub struct CrawlUnitSettings {
     pub route: ConstructionRoute,
     /// The path-composition policy as data.
     pub policy: CrawlPathPolicy,
+    /// A foreign policy consulted in place of `policy` when the shell installed
+    /// one (the bulk-verdict escape: a policy the core cannot evaluate as data).
+    pub oracle: Option<Arc<dyn BatchPolicyOracle>>,
     /// The verify retry policy (a VALUE — the crawl invents no retry loop).
     pub retry: RetryPolicy,
     /// The cycle's profit token: the direction resolver's start and end, and the
@@ -250,6 +256,13 @@ pub enum CrawlAbort {
         /// What was expected and what the state answered.
         detail: String,
     },
+    /// The installed foreign policy oracle failed (a shell exception, or a
+    /// verdict count that does not answer the batch). Loud by design: an
+    /// unattributable verdict is never a skip.
+    Policy {
+        /// The oracle's failure, rendered.
+        detail: String,
+    },
 }
 
 impl fmt::Display for CrawlAbort {
@@ -259,6 +272,7 @@ impl fmt::Display for CrawlAbort {
             Self::Direction(err) => write!(f, "direction resolution failed: {err}"),
             Self::Verify(kind) => write!(f, "verify lifecycle failed: {kind}"),
             Self::Invariant { detail } => write!(f, "crawl invariant violated: {detail}"),
+            Self::Policy { detail } => write!(f, "the policy oracle failed: {detail}"),
         }
     }
 }
@@ -568,7 +582,7 @@ fn eligibility_stage(
     }
 
     let (verdict, policy_detail) = match &candidate_sig {
-        Some(sig) => match host.policy_verdict(sig) {
+        Some(sig) => match host.policy_verdict(unit.seq, sig)? {
             Some(answer) => answer,
             None => {
                 return Ok(Some(run.clock.answer(
@@ -849,14 +863,43 @@ impl CrawlUnitHost<'_> {
 
     /// The policy verdict for one candidate signature, or `None` when a built hop
     /// has no composition facts in state.
-    fn policy_verdict(&self, hop_sig: &[(u64, bool)]) -> Option<(PolicyVerdict, Option<String>)> {
-        let view = self.composition_view(hop_sig)?;
-        match self.settings.policy.evaluate(&view) {
-            PathPolicyVerdict::Admit => Some((PolicyVerdict::Admitted, None)),
-            PathPolicyVerdict::Deny { refusal } => {
-                Some((PolicyVerdict::Denied, Some(format!("{refusal:?}"))))
+    ///
+    /// The configured policy is consulted as DATA
+    /// ([`CrawlPathPolicy::evaluate`]) unless the shell installed a foreign
+    /// oracle, which then answers in its place — one candidate per consult,
+    /// keyed by the unit's submission sequence.
+    ///
+    /// # Errors
+    ///
+    /// [`CrawlAbort::Policy`] when the installed oracle fails or answers an
+    /// unattributable verdict list.
+    fn policy_verdict(
+        &self,
+        seq: u64,
+        hop_sig: &[(u64, bool)],
+    ) -> Result<Option<(PolicyVerdict, Option<String>)>, CrawlAbort> {
+        let Some(view) = self.composition_view(hop_sig) else {
+            return Ok(None);
+        };
+        let verdict = match &self.settings.oracle {
+            Some(oracle) => {
+                let candidate = PolicyCandidate {
+                    seq,
+                    hop_sig: hop_sig.to_vec(),
+                    view,
+                };
+                oracle_verdict(oracle.as_ref(), &candidate).map_err(|err| CrawlAbort::Policy {
+                    detail: err.to_string(),
+                })?
             }
-        }
+            None => self.settings.policy.evaluate(&view),
+        };
+        Ok(Some(match verdict {
+            PathPolicyVerdict::Admit => (PolicyVerdict::Admitted, None),
+            PathPolicyVerdict::Deny { refusal } => {
+                (PolicyVerdict::Denied, Some(format!("{refusal:?}")))
+            }
+        }))
     }
 
     /// One pool's verify choreography, at most once per session.

@@ -127,12 +127,16 @@ pub struct PyBot {
     /// `PyO3` functions clone this Arc to feed `&dyn TickMapDb` to the tick-map
     /// assembly helper's Db arm (`bot_core::tick_assembly`).
     ///
+    /// The slot is shared (`Arc<Mutex<…>>`) because a consumer that runs its own
+    /// loop asks it per use instead of taking a handle at boot — see
+    /// [`Self::db_slot`].
+    ///
     /// One connection, opened by `load_snapshot_from_db` with a held deferred
     /// read transaction + **retained**. The snapshot load + the per-pool Db
     /// probe share the SAME `Mutex<Connection>` + its open tx — every read
     /// shares one frozen DB snapshot across `build_paths` (WAL MVCC).
     /// `close_snapshot_tx()` commits the tx at end of `build_paths`.
-    db: parking_lot::Mutex<Option<Arc<degenbot_db::snapshot_db::SnapshotDb>>>,
+    db: Arc<parking_lot::Mutex<Option<Arc<degenbot_db::snapshot_db::SnapshotDb>>>>,
     /// PRG-1: the engine-internal single-flight build table —
     /// claims collapsed into the Rust build path (was the `PoolBuildClaims`
     /// FFI peer + the Python `(family, key)` claim driver).
@@ -161,6 +165,20 @@ impl PyBot {
     #[must_use]
     pub(crate) fn db_handle(&self) -> Option<Arc<degenbot_db::snapshot_db::SnapshotDb>> {
         self.db.lock().clone()
+    }
+
+    /// The snapshot SLOT itself — the handle source a consumer that runs its own
+    /// loop asks per use (the crawl's tick-map arm).
+    ///
+    /// `db_handle()` answers one clone for one call; this answers the slot, so
+    /// the consumer never holds a handle between uses: the close's sole-holder
+    /// canary stays quiet, and every ask after `close_snapshot_tx()` empties the
+    /// slot answers `None` (the no-DB arm).
+    #[must_use]
+    pub(crate) fn db_slot(
+        &self,
+    ) -> Arc<parking_lot::Mutex<Option<Arc<degenbot_db::snapshot_db::SnapshotDb>>>> {
+        Arc::clone(&self.db)
     }
 
     // ===================== PRG-1 build-flight seam ==================
@@ -616,7 +634,7 @@ impl PyBot {
         Self {
             bot: Arc::new(Bot::new(chain_id)),
             pump: parking_lot::Mutex::new(None),
-            db: parking_lot::Mutex::new(None),
+            db: Arc::new(parking_lot::Mutex::new(None)),
             flights: build_flights::BuildFlights::default(),
         }
     }

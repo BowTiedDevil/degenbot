@@ -9,8 +9,8 @@ table already owns.
 
 The host is the :class:`~degenbot.runner.session.Session` that owns the run's
 state: the ritual reads its collaborators and writes the run-phase handles
-(the consumer/registration task refs, the registration-owned construction
-context, and the pipeline attachments) through the session's mutators. Ritual
+(the consumer/registration task refs and the registration-owned construction
+context) through the session's mutators. Ritual
 states are private; diagnostics read facts, never states.
 """
 
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from degenbot.logging import logger as bot_logger
 from degenbot.runner._consume import consume_result_batches
@@ -26,7 +26,6 @@ from degenbot.runner._session_watch import SessionEndVerdict
 from degenbot.runner.build_paths import (
     BuildPathsOptions,
     ConstructionContext,
-    PathRegistrationPipeline,
     build_paths,
 )
 
@@ -195,13 +194,12 @@ class RunRitual:
         if not session.settlement_active:
             self._state = _RitualState.MAIN_LOOP
             return
-        registration_context, pipeline = self._build_registration_surface()
+        registration_context = self._build_registration_surface()
         task = actors.scheduler(
             self._run_registration_background(
                 path_builder=actors.path_builder or build_paths,
                 registration_context=registration_context,
                 retry_policy=session.cfg.verification_retry_policy,
-                pipeline=pipeline,
             )
         )
         # The scheduler seam carries no name, so the ritual restores the
@@ -260,43 +258,31 @@ class RunRitual:
 
     # ── The registration hand-off ─────────────────────────────────────
 
-    def _build_registration_surface(self) -> tuple[ConstructionContext | None, Any]:
-        """Build the construction context + pipeline for the REAL builder only.
+    def _build_registration_surface(self) -> ConstructionContext | None:
+        """Build the construction context for the REAL builder only.
 
         For the real ``build_paths``, the construction context is built ONCE
         here so the registration task owns it — a separate identity from the
         main-loop state that the trim (``release_python_state()`` + a dropped
-        bot ref) never severs. The long-lived :class:`PathRegistrationPipeline`
-        attaches to the session so the operator add-a-path surface
+        bot ref) never severs. ``build_paths`` boots the engine's crawl and
+        parks the session ON this context, so the operator add-a-path surface
         (``enqueue_path`` / ``trigger_discovery``) stays reachable for the
-        session's lifetime — including after the trim (the pipeline's retained
-        context keeps constructing through the Rust ``PoolBuilder``).
+        session's lifetime — including after the trim.
         Injected builders (tests) skip context construction (fakes lack the
         builder surface) and receive ``context=None``.
 
         Returns:
-            The ``(construction context, registration pipeline)`` pair, or
-            ``(None, None)`` for an injected builder.
+            The construction context, or ``None`` for an injected builder.
 
         """
         session = self._session
         actors = session.actors
         assert actors is not None, "the run ritual drives a started session"
         if actors.path_builder is not build_paths:
-            return None, None
+            return None
         bot = actors.bot
         assert bot is not None, "registration has not trimmed the bot yet"
-        registration_context = ConstructionContext.for_bot(bot)
-        pipeline = PathRegistrationPipeline(
-            context=registration_context,
-            engine_registry=actors.engine_registry,
-            retry_policy=session.cfg.verification_retry_policy,
-            max_paths=session.cfg.max_registered_paths,
-            discovery_batch_size=session.cfg.discovery_batch_size,
-            progress_interval_secs=session.cfg.reg_progress_secs,
-        )
-        session.attach_registration_pipeline(pipeline)
-        return registration_context, pipeline
+        return ConstructionContext.for_bot(bot)
 
     async def _run_registration_background(
         self,
@@ -304,7 +290,6 @@ class RunRitual:
         path_builder: Callable[..., Awaitable[None]],
         registration_context: ConstructionContext | None,
         retry_policy: RetryPolicy | None,
-        pipeline: Any = None,
     ) -> None:
         """Run ``build_paths`` + the post-completion trim as the scheduled hand-off.
 
@@ -321,8 +306,6 @@ class RunRitual:
             path_builder: The registration builder to drive.
             registration_context: The registration-owned construction context.
             retry_policy: The verification retry policy.
-            pipeline: The registration pipeline (the builder's operator
-                surface).
 
         Raises:
             asyncio.CancelledError: Re-raised after the partial trim when
@@ -347,7 +330,6 @@ class RunRitual:
                     discovery_batch_size=session.cfg.discovery_batch_size,
                     retry_policy=retry_policy,
                     context=registration_context,
-                    pipeline=pipeline,
                     permutation_filter=session.cfg.permutation_filter,
                 ),
             )

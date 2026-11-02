@@ -142,7 +142,7 @@ pub fn resolve_directions(
 }
 
 /// Build a `degenbot.exceptions.arbitrage.DirectionResolutionError(message=..)`.
-fn direction_resolution_error(py: Python<'_>, message: String) -> PyErr {
+pub(crate) fn direction_resolution_error(py: Python<'_>, message: String) -> PyErr {
     let exc_type = py
         .import("degenbot.exceptions.arbitrage")
         .and_then(|module| module.getattr("DirectionResolutionError"));
@@ -162,7 +162,10 @@ fn direction_resolution_error(py: Python<'_>, message: String) -> PyErr {
     }
 }
 
-fn extract_pool_kind<'py>(py: Python<'py>, kind: &Bound<'py, PyAny>) -> PyResult<PoolKind> {
+pub(crate) fn extract_pool_kind<'py>(
+    py: Python<'py>,
+    kind: &Bound<'py, PyAny>,
+) -> PyResult<PoolKind> {
     if let Ok(kind) = kind.extract::<PoolKind>() {
         return Ok(kind);
     }

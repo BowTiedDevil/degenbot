@@ -62,7 +62,10 @@
 //! - **Main loop.** No `run_until_stopped` convenience: the consumer owns its
 //!   consume/dispatch loop (ADR-050 D9).
 
-use crate::arb_engine::crawl::controller::CrawlHandle;
+use crate::arb_engine::crawl::controller::{
+    CrawlConfig, CrawlConfigError, CrawlController, CrawlHandle, CrawlHost, SnapshotArm,
+};
+use crate::arb_engine::crawl::receipt::CrawlReceipt;
 use crate::arb_engine::lifecycle::PathRegistrationError;
 use crate::arb_engine::pump_session::{self, PhaseAdvance, PumpEvent};
 use crate::arb_engine::{
@@ -396,6 +399,64 @@ impl CrawlTeardown {
                 );
             }
         }
+    }
+}
+
+/// Everything a crawl boot needs beside the configuration.
+///
+/// The configuration is a value; the two remaining inputs are HANDLES the boot
+/// wiring owns: the receipt stream's sink (attached before the run arms, so no
+/// receipt races past an unattached channel) and the tick-map arm a
+/// head-stamped V3/V4 construction reads. A standalone consumer supplies
+/// neither and reads the summary off the controller instead.
+pub struct CrawlBoot {
+    /// The resolved crawl configuration.
+    pub config: CrawlConfig,
+    /// The receipt consumer's sink, or `None` for a summary-only consumer.
+    pub receipts: Option<tokio::sync::mpsc::UnboundedSender<CrawlReceipt>>,
+    /// The snapshot tick-map arm — a handle SOURCE the crawl asks once per unit
+    /// (`None` = construction reads no tick maps). A boot with a fixed handle
+    /// says [`Self::with_db`]; a boot whose handle can be withdrawn mid-run
+    /// (the process closes its snapshot read transaction) supplies the owner's
+    /// own arm and gets the no-DB arm after the close.
+    pub snapshot: Option<Arc<dyn SnapshotArm>>,
+}
+
+impl CrawlBoot {
+    /// A boot over one configuration, with no receipt consumer and no tick-map
+    /// arm.
+    #[must_use]
+    pub fn new(config: CrawlConfig) -> Self {
+        Self {
+            config,
+            receipts: None,
+            snapshot: None,
+        }
+    }
+
+    /// Attach the receipt consumer's sink.
+    #[must_use]
+    pub fn with_receipts(
+        mut self,
+        receipts: tokio::sync::mpsc::UnboundedSender<CrawlReceipt>,
+    ) -> Self {
+        self.receipts = Some(receipts);
+        self
+    }
+
+    /// Attach a FIXED snapshot handle: every unit's ask clones it.
+    #[must_use]
+    pub fn with_db(mut self, db: Option<Arc<dyn degenbot_db::snapshot::TickMapDb>>) -> Self {
+        self.snapshot = db.map(|db| Arc::new(Some(db)) as Arc<dyn SnapshotArm>);
+        self
+    }
+
+    /// Attach a live arm, whose handle the owner may withdraw while the crawl
+    /// runs — the process's own snapshot slot rather than a clone held here.
+    #[must_use]
+    pub fn with_snapshot_arm(mut self, arm: Arc<dyn SnapshotArm>) -> Self {
+        self.snapshot = Some(arm);
+        self
     }
 }
 
@@ -1089,6 +1150,84 @@ impl EngineDriver {
     /// closes the delivery channels so a pending receiver observes
     /// end-of-stream exactly once.
     ///
+    /// Configure a crawl over this driver's `Bot` and boot it.
+    ///
+    /// The DRIVER boots the crawl: it composes the host from the driver's own
+    /// `Bot` (whose `ConstructionIo` the shell attached at boot time), attaches
+    /// the receipt stream's sink, spawns [`CrawlController::run`], and keeps the
+    /// run future's `JoinHandle` beside the pump's so ONE [`EngineDriver::stop`]
+    /// tears both loops down under one grace window. The caller keeps the
+    /// controller — the operator surface and the summary render — and nothing
+    /// else, which is what makes the caller-holds-the-controller /
+    /// driver-holds-the-join contract real.
+    ///
+    /// The receipt stream is attached BEFORE the run arms, so not one receipt
+    /// can race past an unattached channel: a consumer that wants the stream
+    /// passes its sink here rather than attaching after [`Self::begin_crawl`]
+    /// returns.
+    ///
+    /// # Errors
+    ///
+    /// [`CrawlConfigError`] — an invalid configuration, a `Bot` with no
+    /// construction I/O attached, a crawl already installed on this driver, or a
+    /// receipt sink the channel refused.
+    pub fn begin_crawl(
+        self: &Arc<Self>,
+        config: CrawlConfig,
+    ) -> Result<Arc<CrawlController>, CrawlConfigError> {
+        self.begin_crawl_with(CrawlBoot::new(config))
+    }
+
+    /// Boot a crawl with the boot's receipt sink and tick-map arm attached.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::begin_crawl`].
+    pub fn begin_crawl_with(
+        self: &Arc<Self>,
+        boot: CrawlBoot,
+    ) -> Result<Arc<CrawlController>, CrawlConfigError> {
+        // One crawl per driver. The slot is taken for the whole boot so a
+        // concurrent second boot cannot race the first into the same slot, and
+        // `stop` waits on the same lock rather than tearing a half-booted crawl.
+        let mut slot = self.crawl.lock();
+        if slot.is_some() {
+            return Err(CrawlConfigError::CrawlAlreadyBegun);
+        }
+        let CrawlBoot {
+            config,
+            receipts,
+            snapshot,
+        } = boot;
+        let io = self
+            .bot
+            .construction_io_arc()
+            .ok_or(CrawlConfigError::MissingConstructionIo)?;
+        let host = CrawlHost::from_driver(self, io, snapshot);
+        let controller = CrawlController::attach(host, config)?;
+        if let Some(tx) = receipts {
+            controller.attach_receipts(tx)?;
+        }
+        let runner = Arc::clone(&controller);
+        let run = degenbot_core::runtime::get_runtime().spawn(async move {
+            // The run's own answer is recorded on the controller (readable after
+            // end-of-stream); the join handle reports only a panic.
+            let _ = runner.run().await;
+        });
+        *slot = Some(CrawlTeardown {
+            handle: CrawlHandle::new(Arc::clone(&controller)),
+            run,
+        });
+        Ok(controller)
+    }
+
+    /// The crawl's teardown pair, for a caller that must read the run's join
+    /// fact without stopping it.
+    #[must_use]
+    pub fn crawl_handle(&self) -> Option<CrawlHandle> {
+        self.crawl.lock().as_ref().map(CrawlTeardown::edge)
+    }
+
     /// The crawl is torn down with the live loop. The teardown plan is produced
     /// SYNCHRONOUSLY ([`pump_session::on_stop`]) from the pose the table landed
     /// the session from and the crawl edge this driver holds — nothing
@@ -1924,6 +2063,8 @@ mod tests {
                 jitter: 0.0,
             },
             policy: CrawlPathPolicy::default(),
+            oracle: None,
+            policy_batch_size: 1,
             profit_token: CRAWL_USDC,
             snapshot_block: None,
             state_block: Some(CRAWL_BLOCK),
@@ -2093,6 +2234,102 @@ mod tests {
             .block_on(driver.subscribe("ws://127.0.0.1:1"))
             .unwrap_err();
         assert!(matches!(err, DriverError::SessionState(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn begin_crawl_refuses_a_bot_without_construction_io() {
+        let driver = Arc::new(driver_for_test());
+        let error = driver
+            .begin_crawl(crawl_config_for_test())
+            .err()
+            .expect("a driver with no ConstructionIo cannot boot a crawl");
+        assert!(
+            matches!(error, CrawlConfigError::MissingConstructionIo),
+            "got {error:?}"
+        );
+        assert!(
+            driver.crawl_handle().is_none(),
+            "a refused boot installs nothing"
+        );
+    }
+
+    #[test]
+    fn begin_crawl_boots_the_run_and_the_driver_holds_its_join() {
+        let bot = Arc::new(Bot::new(1));
+        bot.set_construction_io(ConstructionIo::new(Arc::new(NoDb), Arc::new(UnreachedRpc)));
+        let stages = Arc::new(EngineStages::with_core(bot.state_arc(), bot.active_delta()));
+        let driver = Arc::new(EngineDriver::from_stages(Arc::clone(&bot), stages));
+
+        // A crawl over an EMPTY database: the sweep resolves its graph with no
+        // boundary rows, so the run finishes on its own — the boot wiring is
+        // what this test pins, not discovery.
+        let path = std::env::temp_dir().join(format!(
+            "degenbot-crawl-boot-{}-{:?}.sqlite",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mut config = crawl_config_for_test();
+        config.database_path = path.clone();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let controller = driver
+            .begin_crawl_with(CrawlBoot::new(config).with_receipts(tx))
+            .expect("the driver boots the crawl");
+
+        // The join fact is the DRIVER's: the controller never spawned its own
+        // future, so a consumer joins through the handle the driver kept.
+        let handle = driver.crawl_handle().expect("the boot installed the edge");
+        let runtime = degenbot_core::runtime::get_runtime();
+        runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while !controller.is_finished() {
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+            })
+            .await
+            .expect("the run resolves");
+        });
+        assert!(
+            handle.is_finished(),
+            "the driver's join reports the run's end"
+        );
+        // The run left its OWN answer, which is what a stream-owning consumer
+        // reads instead of the join: this crawl is over an empty database, so
+        // discovery refuses the absent boundary token loudly.
+        let outcome = controller
+            .run_outcome()
+            .expect("the run records how it resolved");
+        assert!(
+            outcome
+                .detail()
+                .is_some_and(|detail| detail.contains("absent from the chain 1 token table")),
+            "got {outcome:?}"
+        );
+        assert!(
+            !outcome.is_clean(),
+            "a refused discovery is not a clean run"
+        );
+        assert!(
+            runtime.block_on(async { rx.recv().await }).is_none(),
+            "the resolution edge ends the receipt stream"
+        );
+
+        // A second boot is refused: one crawl per driver.
+        let error = driver
+            .begin_crawl(crawl_config_for_test())
+            .err()
+            .expect("a driver holds one crawl");
+        assert!(
+            matches!(error, CrawlConfigError::CrawlAlreadyBegun),
+            "got {error:?}"
+        );
+
+        driver.stop().expect("the shared stop tears the crawl down");
+        assert!(
+            driver.crawl_handle().is_none(),
+            "the teardown took the pair"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

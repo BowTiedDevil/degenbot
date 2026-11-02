@@ -22,7 +22,6 @@ import asyncio
 import contextlib
 import gc
 import threading
-import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -38,10 +37,9 @@ from degenbot.pathfinding import (
     find_paths_async_rust,
     find_paths_rust,
 )
-from degenbot.runner.build_paths import PathRegistrationPipeline
+from degenbot.runner.build_paths import crawl_config
 from degenbot.types.chain import ChainId
 from tests.deadlock_guard import DEADLOCK_GUARD_S
-from tests.fakes.runner_pipelines import FakeFleetHostedBot, FakePipelineContext
 from tests.helpers import verdict_probe as probe
 from tests.helpers.database import seed_v2_topology
 
@@ -522,24 +520,58 @@ def test_typed_config_is_positive_clamped() -> None:
     assert _run_ffi_getter({"DEGENBOT_DISCOVERY_BATCH_SIZE": "0"}) == 1
 
 
-def _make_pipeline(database_path: pathlib.Path) -> PathRegistrationPipeline:
-    ctx = FakePipelineContext(bot=FakeFleetHostedBot(), database_path=database_path)
-    return PathRegistrationPipeline(
-        context=ctx,
-        engine_registry=None,
-        max_paths=0,  # type: ignore[arg-type]
-        discovery_batch_size=1000,
+class _Context:
+    """The construction-context slice the configuration resolution reads."""
+
+    chain_id = 1
+    construction_route = None
+
+    def __init__(self, database_path: pathlib.Path) -> None:
+        self.database_path = database_path
+        self.construction_route = _Route()
+
+
+class _Route:
+    factories: tuple[str, ...] = ()
+    generic = True
+
+
+class _Registry:
+    """The registry slice the configuration resolution reads."""
+
+    verify_snapshot_block = None
+    path_predicate = None
+
+
+def test_crawl_config_carries_the_typed_batch_size(tmp_path: pathlib.Path) -> None:
+    """The engine's configuration carries the resolved discovery batch size."""
+    config = crawl_config(
+        context=_Context(tmp_path / "unused.db"),
+        engine_registry=_Registry(),
+        max_paths=0,
+        discovery_batch_size=42,
+        retry_policy=None,
+        pool_types=[PoolKind.V2],
+        pool_type_per_depth=None,
     )
+    assert config["discovery_batch_size"] == 42
+    assert config["min_depth"] == 2
+    assert config["max_depth"] == 3
+    assert config["path_cap"] is None
+    assert config["pool_kinds"] == [PoolKind.V2]
+    assert config["intake_window"] == 32
 
 
-def test_discovery_sweep_passes_typed_batch_size(tmp_path: pathlib.Path) -> None:
-    """discovery_sweep forwards the pipeline's resolved batch size."""
-    captured: dict[str, object] = {}
-
-    def fake_find_paths_async(**kwargs: object) -> None:
-        captured.update(kwargs)
-
-    pipeline = _make_pipeline(tmp_path / "unused.db")
-    pipeline.discovery_batch_size = 42
-    pipeline.discovery_sweep(find_paths_async=fake_find_paths_async)  # type: ignore[arg-type]
-    assert captured["batch_size"] == 42
+def test_crawl_config_clamps_a_zero_batch(tmp_path: pathlib.Path) -> None:
+    """A zero batch never reaches the engine: it is clamped at the boundary."""
+    config = crawl_config(
+        context=_Context(tmp_path / "unused.db"),
+        engine_registry=_Registry(),
+        max_paths=25,
+        discovery_batch_size=0,
+        retry_policy=None,
+        pool_types=[PoolKind.V2],
+        pool_type_per_depth=None,
+    )
+    assert config["discovery_batch_size"] == 1
+    assert config["path_cap"] == 25

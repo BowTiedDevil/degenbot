@@ -15,6 +15,7 @@
 //! - Mirrors `polars-python/src/expr/`'s 17-file `PyExpr` split and the
 //!   existing `crates/engine/degenbot-bot/src/arb_engine/` core split.
 
+mod crawl;
 mod errors;
 mod identity;
 mod path_info;
@@ -28,6 +29,7 @@ mod verify;
 
 pub(crate) use strategy::session_phase_next;
 
+pub use crawl::{PyCrawlReceiptStream, PyCrawlSession};
 pub use errors::*;
 pub use result_channel::BlockStream;
 

@@ -207,23 +207,6 @@ except RuntimeError as exc:
 else:
     raise AssertionError("the legacy stance must refuse the fleet intake")
 
-from degenbot.runner.build_paths import PathRegistrationPipeline
-from tests.fakes.runner_pipelines import FakePipelineContext
-
-ctx = FakePipelineContext(
-    bot=bot,
-    # Subprocess: no pytest tmp_path fixture, so mkdtemp keeps the repo cwd clean.
-    database_path=Path(tempfile.mkdtemp(prefix="degenbot-legacy-stance-")) / "unused.db",
-)
-try:
-    PathRegistrationPipeline(
-        context=ctx, engine_registry=None, max_paths=0, discovery_batch_size=1000
-    )
-except RuntimeError as exc:
-    assert "fleet-hosted only" in str(exc), exc
-else:
-    raise AssertionError("PRG-5: a pipeline over a legacy bot must refuse")
-
 print("LEGACY-OK")
 """
 
@@ -235,22 +218,6 @@ def test_legacy_stance_keeps_the_incumbent_pool() -> None:
     # in-process engine construction, so the skip condition (and the
     # pass/skip wobble under pytest-randomly/xdist) is gone: the test is
     # deterministic on every host and every ordering.
-    proc = subprocess.run(
-        [sys.executable, "-c", _LEGACY_CHILD],
-        capture_output=True,
-        text=True,
-        cwd=str(Path(__file__).parents[2]),
-        timeout=120,
-        check=False,
-    )
-    assert "LEGACY-OK" in proc.stdout, f"stdout={proc.stdout!r} stderr_tail={proc.stderr[-1500:]!r}"
-
-
-def test_legacy_stance_pipeline_construction_refuses() -> None:
-    """PRG-5 hard cutover: a pipeline over a legacy-stance bot refuses."""
-    # The subprocess child asserts BOTH legacy arms (the intake refusal
-    # and the pipeline construction refusal): one fresh process, both
-    # contracts, deterministic under every test ordering.
     proc = subprocess.run(
         [sys.executable, "-c", _LEGACY_CHILD],
         capture_output=True,

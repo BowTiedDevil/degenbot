@@ -1,29 +1,15 @@
-"""Pipeline-side skip recording for path registration.
+"""Driver-side skip recording for path registration.
 
-The reason-tagged skip breakdown ([build_paths] Progress lines) records every
-candidate skip; PRG-2 additionally lands each skip in the Rust
-`degenbot.registration.skips` meter family through the FFI. The former
-SkipGate fatal memo retired: immutable V4 admission verdicts are refused
-pre-RPC by the core registration gate (bot_core/registration_gate.rs), and
-raced duplicate builds self-heal in the engine single-flight path (PRG-1).
+The reason-tagged skip breakdown (``[build_paths] Progress`` lines) is folded by
+the ENGINE now (the crawl's summary); what stays Python-side is the OBSERVATION
+POLICY: each skip reason lands in the Rust ``degenbot.registration.skips`` meter
+family through the FFI, and the first few occurrences of a reason carry their
+detail into the debug log. This suite pins that policy against a recording fake.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from degenbot.runner.build_paths import PathRegistrationPipeline
-from tests.fakes.runner_pipelines import FakeFleetHostedBot, FakePipelineContext
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-
-def make_pipeline(database_path: Path, py_bot: object | None = None) -> PathRegistrationPipeline:
-    ctx = FakePipelineContext(bot=FakeFleetHostedBot(_py_bot=py_bot), database_path=database_path)
-    return PathRegistrationPipeline(
-        context=ctx, engine_registry=None, max_paths=0, discovery_batch_size=1000
-    )
+from degenbot.runner.build_paths import _observe_skip
 
 
 class _RecordingPyBot:
@@ -34,29 +20,23 @@ class _RecordingPyBot:
         self.reasons.append(reason)
 
 
-def test_record_skip_counts_the_reason(tmp_path: Path) -> None:
-    p = make_pipeline(tmp_path / "unused.db")
-    p.record_skip("build-v3:ConnectionError")
-    p.record_skip("build-v3:ConnectionError")
-    p.record_skip("dup")
-    assert p._skip_reasons["build-v3:ConnectionError"] == 2
-    assert p._skip_reasons["dup"] == 1
+class _MeteredBot:
+    """A bot handle whose ``_py_bot`` is the skip meter."""
+
+    def __init__(self, py_bot: object | None) -> None:
+        self._py_bot = py_bot
 
 
-def test_record_skip_forwards_to_the_rust_meter(tmp_path: Path) -> None:
+def test_each_skip_reason_reaches_the_rust_meter() -> None:
     meter = _RecordingPyBot()
-    p = make_pipeline(tmp_path / "unused.db", py_bot=meter)
-    p.record_skip("v4-dynamic-fee-rejected")
-    p.record_skip("path-cap")
+    bot = _MeteredBot(meter)
+    _observe_skip(bot, "v4-dynamic-fee-rejected")
+    _observe_skip(bot, "path-cap")
     assert meter.reasons == ["v4-dynamic-fee-rejected", "path-cap"]
 
 
-def test_record_skip_without_a_bot_only_counts(tmp_path: Path) -> None:
-    # Construction contexts without a live core (pipeline tests) must not
-    # attempt the meter record.
-    ctx = FakePipelineContext(bot=FakeFleetHostedBot(), database_path=tmp_path / "unused.db")
-    p = PathRegistrationPipeline(
-        context=ctx, engine_registry=None, max_paths=0, discovery_batch_size=1000
-    )
-    p.record_skip("v4-no-hash")
-    assert p._skip_reasons["v4-no-hash"] == 1
+def test_a_bot_without_a_meter_is_silent() -> None:
+    # A construction context without a live core (unit tests, a bare handle)
+    # must not attempt the meter record.
+    _observe_skip(_MeteredBot(None), "v4-no-hash")
+    _observe_skip(object(), "v4-no-hash")

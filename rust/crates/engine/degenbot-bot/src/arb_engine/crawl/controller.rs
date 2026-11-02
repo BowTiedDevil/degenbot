@@ -105,9 +105,11 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use alloy::primitives::Address;
 use degenbot_core::channel_lifecycle::{ChannelDecline, ChannelPhase, DeliveryChannel};
+use degenbot_core::op_warn;
 use degenbot_db::snapshot::TickMapDb;
 use degenbot_pathfinding::PoolKind;
 use parking_lot::Mutex;
@@ -118,7 +120,7 @@ use crate::arb_engine::crawl::discovery::{
     DiscoverySweep, Edition,
 };
 use crate::arb_engine::crawl::flights::BuildFlights;
-use crate::arb_engine::crawl::policy::CrawlPathPolicy;
+use crate::arb_engine::crawl::policy::{BatchPolicyOracle, CrawlPathPolicy};
 use crate::arb_engine::crawl::profile::CrawlSummary;
 use crate::arb_engine::crawl::receipt::CrawlReceipt;
 use crate::arb_engine::crawl::unit::{
@@ -457,6 +459,16 @@ pub struct CrawlConfig {
     pub retry: RetryPolicy,
     /// The path-composition policy as data.
     pub policy: CrawlPathPolicy,
+    /// A foreign policy the core cannot evaluate as data, consulted in place of
+    /// [`CrawlPathPolicy::evaluate`]. A policy that IS expressible as data
+    /// supplies [`CrawlPathPolicy`] and leaves this `None` (production's shape:
+    /// the no-op policy is the default value).
+    pub oracle: Option<Arc<dyn BatchPolicyOracle>>,
+    /// How many candidates one oracle consult covers. The v1 crawl's
+    /// eligibility stage consults a candidate at a time (a composition view
+    /// exists only once the hops are built), so this bounds the batch and keeps
+    /// a batch from outgrowing the submission window.
+    pub policy_batch_size: usize,
     /// The cycle's profit token: the direction resolver's start and end.
     pub profit_token: Address,
     /// The verify lifecycle's snapshot block (`None` = the lifecycle's own).
@@ -489,6 +501,7 @@ impl CrawlConfig {
         CrawlUnitSettings {
             route: self.route.clone(),
             policy: self.policy.clone(),
+            oracle: self.oracle.clone(),
             retry: self.retry,
             profit_token: self.profit_token,
             snapshot_block: self.snapshot_block,
@@ -518,6 +531,17 @@ impl CrawlConfig {
         if self.discovery_batch_size == 0 {
             return Err(CrawlConfigError::ZeroDiscoveryBatch);
         }
+        if self.policy_batch_size == 0 {
+            return Err(CrawlConfigError::ZeroPolicyBatch);
+        }
+        // A policy batch wider than the submission window could never be
+        // filled: the window is what bounds outstanding units.
+        if self.policy_batch_size > self.intake_window {
+            return Err(CrawlConfigError::PolicyBatchExceedsWindow {
+                batch: self.policy_batch_size,
+                window: self.intake_window,
+            });
+        }
         let _ = chain_id_i64(self.chain_id)?;
         Ok(())
     }
@@ -541,6 +565,30 @@ pub enum CrawlConfigError {
     /// A zero batch never pulls a candidate.
     #[error("the crawl's discovery batch size must be at least 1")]
     ZeroDiscoveryBatch,
+    /// A zero policy batch could never consult an oracle.
+    #[error("the crawl's policy batch size must be at least 1")]
+    ZeroPolicyBatch,
+    /// A policy batch wider than the submission window could never fill.
+    #[error(
+        "the crawl's policy batch size ({batch}) must not exceed its intake window ({window})"
+    )]
+    PolicyBatchExceedsWindow {
+        /// The configured policy batch size.
+        batch: usize,
+        /// The configured intake window.
+        window: usize,
+    },
+    /// The driver's `Bot` carries no construction I/O, so no crawl can be
+    /// booted over it (the Python path attaches one at `Bot.__init__`).
+    #[error("the engine has no ConstructionIo attached, so no crawl can be booted")]
+    MissingConstructionIo,
+    /// A crawl is already installed on this driver: one boot per driver.
+    #[error("a crawl is already installed on this engine driver")]
+    CrawlAlreadyBegun,
+    /// The receipt stream's sink could not be attached (the channel is already
+    /// attached or already closed).
+    #[error(transparent)]
+    Receipts(#[from] ChannelDecline),
     /// The chain id does not fit the database's signed id column.
     #[error("chain id {chain_id} is out of range for the database reads")]
     ChainIdOutOfRange {
@@ -557,6 +605,36 @@ fn chain_id_i64(chain_id: u64) -> Result<i64, CrawlConfigError> {
     i64::try_from(chain_id).map_err(|_| CrawlConfigError::ChainIdOutOfRange { chain_id })
 }
 
+// ── the snapshot arm ────────────────────────────────────────────────────────
+
+/// The tick-map arm: a handle SOURCE, asked once per unit.
+///
+/// A head-stamped V3/V4 construction seeds its tick map from ONE long-lived
+/// snapshot handle — the process holds it, arms it at the snapshot load, and
+/// commits the read transaction when registration finishes. The crawl is a
+/// second caller of that handle, never a second owner: it asks this arm for a
+/// handle at the moment a unit runs and drops it when the unit resolves, exactly
+/// as the retired Python pipeline asked `PyBot::db_handle()` per use. A crawl
+/// that instead held its own clone for the run's life would pin the read
+/// transaction past the close (the close's own canary names that clone), and it
+/// could never observe the close: every unit would keep reading a stale DB view.
+///
+/// With a source in place the close is the arm's own edge — once the owner
+/// withdraws the handle, every later ask answers `None` and construction takes
+/// the no-DB arm (chain reads).
+pub trait SnapshotArm: Send + Sync {
+    /// The handle for one use, or `None` when the arm is closed.
+    fn acquire(&self) -> Option<Arc<dyn TickMapDb>>;
+}
+
+/// A fixed handle: the standalone consumer's arm. Every ask clones it, so the
+/// consumer's own handle stays the one it owns.
+impl SnapshotArm for Option<Arc<dyn TickMapDb>> {
+    fn acquire(&self) -> Option<Arc<dyn TickMapDb>> {
+        self.clone()
+    }
+}
+
 // ── the host ────────────────────────────────────────────────────────────────
 
 /// Everything the controller drives, held as shared handles so a unit's future
@@ -564,7 +642,8 @@ fn chain_id_i64(chain_id: u64) -> Result<i64, CrawlConfigError> {
 ///
 /// The driver owns the registry and the verify claim table, the bot owns
 /// construction state, the I/O holds the RPC/DB construction seams, and the
-/// snapshot handle is the tick-map arm a head construction reads.
+/// snapshot arm is where a head construction asks for the tick-map handle it
+/// reads.
 pub struct CrawlHost {
     /// The shared per-chain orchestrator.
     pub bot: Arc<Bot>,
@@ -572,8 +651,8 @@ pub struct CrawlHost {
     pub driver: Arc<EngineDriver>,
     /// The construction-I/O handle.
     pub io: Arc<ConstructionIo>,
-    /// The snapshot DB handle (`None` = construction reads no tick maps).
-    pub db: Option<Arc<dyn TickMapDb>>,
+    /// The tick-map arm (`None` = construction reads no tick maps).
+    pub snapshot: Option<Arc<dyn SnapshotArm>>,
 }
 
 impl CrawlHost {
@@ -582,14 +661,20 @@ impl CrawlHost {
     pub fn from_driver(
         driver: &Arc<EngineDriver>,
         io: Arc<ConstructionIo>,
-        db: Option<Arc<dyn TickMapDb>>,
+        snapshot: Option<Arc<dyn SnapshotArm>>,
     ) -> Self {
         Self {
             bot: Arc::clone(driver.bot()),
             driver: Arc::clone(driver),
             io,
-            db,
+            snapshot,
         }
+    }
+
+    /// One unit's tick-map handle: a fresh ask of the arm, owned by that unit's
+    /// future alone.
+    fn acquire_db(&self) -> Option<Arc<dyn TickMapDb>> {
+        self.snapshot.as_ref().and_then(|arm| arm.acquire())
     }
 }
 
@@ -641,6 +726,42 @@ pub trait CrawlUnitSeat: Send + Sync {
     /// The seat's own refusal to accept work (a fleet boot refusal), rendered
     /// into the crawl's error vocabulary by the controller.
     fn dispatch(&self, future: CrawlUnitFuture) -> Result<(), String>;
+
+    /// Whether the seat is HOLDING submitted work right now, and why.
+    ///
+    /// The default — no hold — is the inline seat's answer: whatever it accepted
+    /// is running or done. The fleet seat answers the process posture, whose
+    /// cordon queues `PoolStateUpdater` units in the intake backlog without
+    /// running them; they are never dropped, and the cordon's clean-window
+    /// hysteresis releases them together.
+    ///
+    /// The window needs the distinction: a held unit is not a parked one, so a
+    /// self-healing hold must not be charged to the park deadline. See
+    /// [`CrawlController::await_unit`].
+    fn hold(&self) -> Option<SeatHold> {
+        None
+    }
+}
+
+/// Why a seat is holding submitted work instead of running it.
+///
+/// A hold is not silence and not a loss: the units are queued AT the seat and
+/// run when the hold's own recovery edge arrives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeatHold {
+    /// The fleet posture cordoned the seat's role. `PoolStateUpdater` is
+    /// `CordonClass::Deferrable`, so a `Cordoned` posture holds its intake in the
+    /// unbounded host backlog (never dropped, never refused) until the
+    /// clean-window hysteresis lifts the cordon.
+    Posture,
+}
+
+impl std::fmt::Display for SeatHold {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Posture => f.write_str("the cordoned fleet posture"),
+        }
+    }
 }
 
 /// The production seat: the process's pooled registration intake.
@@ -660,6 +781,23 @@ impl CrawlUnitSeat for FleetSeat {
             degenbot_core::runtime::bridged_block_on(future);
         }));
         Ok(())
+    }
+
+    /// The one hold a fleet intake can report: the shared posture owner has the
+    /// seat's role cordoned, so admission spills every unit into the host's
+    /// unbounded backlog and runs none of them until the cordon lifts.
+    ///
+    /// The LANE-DEATH hold is deliberately not reported: it is sticky (only a
+    /// fresh process lifts it), and the faulted host resolves the work it held
+    /// terminally instead of running it — that is the lost-unit arm's business,
+    /// not a hold the window may wait on.
+    fn hold(&self) -> Option<SeatHold> {
+        let posture = degenbot_workers::posture::process_owner();
+        if posture.lane_death_held() {
+            return None;
+        }
+        let role = degenbot_workers::role::WorkerRole::PoolStateUpdater;
+        (!posture.admits_lease(role.cordon_class())).then_some(SeatHold::Posture)
     }
 }
 
@@ -716,6 +854,41 @@ pub enum CrawlRequestError {
         /// How many submitted units were still outstanding.
         outstanding: usize,
     },
+    /// Submitted units delivered NOTHING for the window's idle deadline: they
+    /// are parked, not merely slow (a seat thread stuck inside a unit, a build
+    /// flight's peer whose leader vanished, a chain read that never answers).
+    /// The run resolves and names them rather than parking its consumer forever.
+    #[error(
+        "the crawl's window stalled: no receipt for {waited_ms}ms with {} submitted unit(s) outstanding (seqs {stalled:?})",
+        stalled.len()
+    )]
+    UnitStalled {
+        /// The submission sequences still outstanding, oldest first.
+        stalled: Vec<u64>,
+        /// How long the window waited in silence.
+        waited_ms: u64,
+    },
+    /// The seat reported a HOLD for the whole hold budget
+    /// ([`HELD_WINDOW_BUDGET`]): a cordoned fleet posture queues this role's
+    /// units in the intake backlog and runs them when the clean-window
+    /// hysteresis lifts the cordon, and this window outlasted every bound the
+    /// run will wait.
+    ///
+    /// Named apart from [`Self::UnitStalled`] because the cause — and the
+    /// operator's lever — is the posture, not a parked seat: nothing is stuck,
+    /// the cordon simply never lifted.
+    #[error(
+        "the crawl's window is held by {hold} for {held_ms}ms with {} submitted unit(s) outstanding (seqs {stalled:?})",
+        stalled.len()
+    )]
+    IntakeHeld {
+        /// The submission sequences still outstanding, oldest first.
+        stalled: Vec<u64>,
+        /// How long the hold outlasted the run's budget.
+        held_ms: u64,
+        /// The seat's own hold reason.
+        hold: SeatHold,
+    },
 }
 
 // ── the run's own machine ───────────────────────────────────────────────────
@@ -759,6 +932,60 @@ pub struct CrawlController {
     receipts: Mutex<DeliveryChannel<CrawlReceipt>>,
     sweep_lease: tokio::sync::Mutex<()>,
     seq: AtomicU64,
+    /// How the last run future resolved, for a caller that owns the receipt
+    /// stream rather than the `JoinHandle`. Written by [`CrawlController::run`]
+    /// on its own resolution path, before the resolution guard closes the
+    /// stream, so a consumer woken by end-of-stream already sees it.
+    outcome: Mutex<Option<RunOutcome>>,
+    /// The window's idle deadline — [`UNIT_IDLE_DEADLINE`] in production.
+    ///
+    /// A test's seam over the constant. It is a field and not a `cfg(test)`
+    /// branch on the call site because a suite cannot spend a minute proving a
+    /// parked unit is named; production never writes it, so the lock is taken
+    /// once per window wait and always reads the constant back.
+    unit_idle_deadline: Mutex<Duration>,
+    /// How long a reported hold may keep the window waiting —
+    /// [`HELD_WINDOW_BUDGET`] in production.
+    ///
+    /// The same test-seam shape as [`Self::unit_idle_deadline`], for the same
+    /// reason: a suite cannot spend minutes proving a never-lifting cordon is
+    /// named.
+    held_window_budget: Mutex<Duration>,
+}
+
+/// How a crawl run resolved.
+///
+/// The run future's `Result` is not `Clone` and the driver's `JoinHandle` only
+/// reports panics, so the run leaves its own answer here: the FFI (and any
+/// consumer that owns the stream instead of the join) reads it after
+/// end-of-stream. A panic records nothing — the join error is the driver's to
+/// classify.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunOutcome {
+    /// Every submitted unit resolved and the sweep ended on its own terms.
+    Completed,
+    /// The crawl aborted loudly: the receipt fold's fatal unit.
+    Aborted(String),
+    /// The run itself failed (a discovery read, a seat refusal, a lost unit, a
+    /// bad configuration at run time).
+    Failed(String),
+}
+
+impl RunOutcome {
+    /// Whether the run ended without an abort or a failure.
+    #[must_use]
+    pub const fn is_clean(&self) -> bool {
+        matches!(self, Self::Completed)
+    }
+
+    /// The failure text, when the run did not end cleanly.
+    #[must_use]
+    pub fn detail(&self) -> Option<&str> {
+        match self {
+            Self::Completed => None,
+            Self::Aborted(detail) | Self::Failed(detail) => Some(detail),
+        }
+    }
 }
 
 impl CrawlController {
@@ -807,6 +1034,9 @@ impl CrawlController {
             receipts: Mutex::new(DeliveryChannel::detached()),
             sweep_lease: tokio::sync::Mutex::new(()),
             seq: AtomicU64::new(0),
+            outcome: Mutex::new(None),
+            unit_idle_deadline: Mutex::new(UNIT_IDLE_DEADLINE),
+            held_window_budget: Mutex::new(HELD_WINDOW_BUDGET),
         }))
     }
 
@@ -856,6 +1086,97 @@ impl CrawlController {
     #[must_use]
     pub fn is_finished(&self) -> bool {
         self.run_phase() == RunPhase::Finished
+    }
+
+    /// The window's idle deadline (see [`UNIT_IDLE_DEADLINE`]).
+    fn unit_idle_deadline(&self) -> Duration {
+        *self.unit_idle_deadline.lock()
+    }
+
+    /// Shorten the window's idle deadline — a test's seam over
+    /// [`UNIT_IDLE_DEADLINE`], set before the run it bounds.
+    #[cfg(test)]
+    pub(crate) fn set_unit_idle_deadline_for_test(&self, deadline: Duration) {
+        *self.unit_idle_deadline.lock() = deadline;
+    }
+
+    /// The window's hold budget (see [`HELD_WINDOW_BUDGET`]).
+    fn held_window_budget(&self) -> Duration {
+        *self.held_window_budget.lock()
+    }
+
+    /// Shorten the window's hold budget — a test's seam over
+    /// [`HELD_WINDOW_BUDGET`], set before the run it bounds.
+    #[cfg(test)]
+    pub(crate) fn set_held_window_budget_for_test(&self, budget: Duration) {
+        *self.held_window_budget.lock() = budget;
+    }
+
+    /// The window's wait for ONE unit outcome, under two clocks.
+    ///
+    /// [`UNIT_IDLE_DEADLINE`] measures SILENCE: a seat that parks a unit, a build
+    /// flight whose leader vanished, a chain read that never answers. It must NOT
+    /// measure a HOLD. The fleet seat reports one ([`CrawlUnitSeat::hold`]) when a
+    /// cordoned posture queues this role's units in the intake backlog, and those
+    /// units are neither stuck nor lost — the cordon's clean-window hysteresis
+    /// releases the whole backlog at once. A live boot is the evidence: its first
+    /// window filled before the cordon entered, the cordon then outlived the
+    /// minute deadline, and the park arm aborted a crawl that was merely waiting
+    /// (zero receipts, and every one of them on the lift).
+    ///
+    /// So a reported hold re-arms the wait ([`HOLD_RECHECK`]) under its OWN budget
+    /// ([`HELD_WINDOW_BUDGET`]) instead of firing the park arm, and the park arm
+    /// stays exactly as it was for a seat that reports no hold. The hold is loud
+    /// (one warning per wait), and a hold that outlasts its budget is named
+    /// ([`WaitFailure::Held`]) rather than waited on forever: a run never hangs, and
+    /// never aborts a crawl it did not diagnose.
+    async fn await_unit(
+        &self,
+        rx: &mut mpsc::UnboundedReceiver<UnitOutcome>,
+    ) -> Result<Option<UnitOutcome>, WaitFailure> {
+        let idle = self.unit_idle_deadline();
+        let budget = self.held_window_budget();
+        let mut holding_since: Option<Instant> = None;
+        let mut announced = false;
+        loop {
+            let (bound, held_now) = if let Some(hold) = self.seat.hold() {
+                let since = *holding_since.get_or_insert_with(Instant::now);
+                let held_for = since.elapsed();
+                if held_for >= budget {
+                    return Err(WaitFailure::Held {
+                        held: held_for,
+                        hold,
+                    });
+                }
+                if !announced {
+                    announced = true;
+                    op_warn!(
+                        domain = pump,
+                        hold = %hold,
+                        budget_ms = millis(budget),
+                        "the crawl's window is HELD, not parked — the seat holds every submitted unit; waiting for the hold to lift"
+                    );
+                }
+                (budget.saturating_sub(held_for).min(HOLD_RECHECK), true)
+            } else {
+                // No hold to re-arm against. A hold that onsets during the wait
+                // is caught at the expiry below, so this arm never charges a
+                // cordon to the deadline.
+                holding_since = None;
+                announced = false;
+                (idle, false)
+            };
+            match tokio::time::timeout(bound, rx.recv()).await {
+                Ok(received) => return Ok(received),
+                Err(_elapsed) => {
+                    // The wait expired. Silence only names a park when the seat
+                    // answers "no hold" at the expiry too.
+                    if !held_now && self.seat.hold().is_none() {
+                        return Err(WaitFailure::Stalled { waited: idle });
+                    }
+                }
+            }
+        }
     }
 
     /// The crawl's cumulative measurement — counters and stage profile.
@@ -926,7 +1247,23 @@ impl CrawlController {
         let _resolution = RunResolution { controller: self };
         let window = self.config.intake_window;
         // The count is the sweep's business; the run's answer is its outcome.
-        self.drive(None, window).await.map(|_submitted| ())
+        let result = self.drive(None, window).await.map(|_submitted| ());
+        // Record BEFORE the resolution guard drops: the guard closes the
+        // receipt stream, and a consumer woken by end-of-stream must already be
+        // able to read how the run ended.
+        *self.outcome.lock() = Some(match &result {
+            Ok(()) => RunOutcome::Completed,
+            Err(CrawlRequestError::Abort(abort)) => RunOutcome::Aborted(abort.to_string()),
+            Err(error) => RunOutcome::Failed(error.to_string()),
+        });
+        result
+    }
+
+    /// How the last run resolved; `None` while no run has resolved (or when the
+    /// run future was cancelled or panicked mid-flight).
+    #[must_use]
+    pub fn run_outcome(&self) -> Option<RunOutcome> {
+        self.outcome.lock().clone()
     }
 
     /// Trigger ONE bounded discovery sweep (the operator surface).
@@ -974,7 +1311,9 @@ impl CrawlController {
     /// # Errors
     ///
     /// [`CrawlRequestError`] — a stopped crawl, a seat refusal, a fatal unit
-    /// abort, or a lost unit.
+    /// abort, a lost unit, one parked past the idle deadline
+    /// ([`UNIT_IDLE_DEADLINE`]), or one a posture hold kept past
+    /// [`HELD_WINDOW_BUDGET`].
     pub async fn enqueue_path(
         &self,
         path: DiscoveredPath,
@@ -992,8 +1331,27 @@ impl CrawlController {
         // Drop the controller's own sender so the channel's end is the unit's
         // own drop — a seat that never ran the future shows up as `UnitLost`.
         drop(tx);
-        let Some((_, outcome)) = rx.recv().await else {
-            return Err(CrawlRequestError::UnitLost { outstanding: 1 });
+        // Bounded like the loop's window wait — and under the same two clocks:
+        // the caller is a Python await on the far side of the FFI, so a parked
+        // unit must answer the operator loudly instead of parking that call (and
+        // the thread behind it) for good, while a HELD one must not be mistaken
+        // for a parked one.
+        let (_, outcome) = match self.await_unit(&mut rx).await {
+            Ok(Some(outcome)) => outcome,
+            Ok(None) => return Err(CrawlRequestError::UnitLost { outstanding: 1 }),
+            Err(WaitFailure::Stalled { waited }) => {
+                return Err(CrawlRequestError::UnitStalled {
+                    stalled: vec![seq],
+                    waited_ms: millis(waited),
+                });
+            }
+            Err(WaitFailure::Held { held, hold }) => {
+                return Err(CrawlRequestError::IntakeHeld {
+                    stalled: vec![seq],
+                    held_ms: millis(held),
+                    hold,
+                });
+            }
         };
         match outcome {
             Ok(receipt) => {
@@ -1100,6 +1458,14 @@ impl CrawlController {
             }
         }
 
+        // The drive's own sender goes BEFORE the drain: a unit's own drop is
+        // then the channel's end, so a seat that never ran a future (a lane
+        // death's fault drain, a seat thread that died mid-unit) reaches the
+        // loud `UnitLost` arm instead of the drain awaiting a receipt nobody
+        // can send. While submission is live a sender must exist, so the same
+        // silence mid-sweep is the idle deadline's to name.
+        drop(tx);
+
         // The completion clause: every submitted unit resolves before the call
         // returns, so no unit (and no handle it cloned) outlives the crawl.
         fold.drain().await?;
@@ -1141,7 +1507,10 @@ impl CrawlController {
             bot: Arc::clone(&self.host.bot),
             driver: Arc::clone(&self.host.driver),
             io: Arc::clone(&self.host.io),
-            db: self.host.db.clone(),
+            // Per use, never held for the crawl's life: the owner's close must
+            // find its own handle alone, and a unit submitted after the close
+            // reads no tick maps.
+            db: self.host.acquire_db(),
             ledger: Arc::clone(&self.ledger),
             flights: Arc::clone(&self.flights),
             settings: Arc::clone(&self.settings),
@@ -1150,6 +1519,11 @@ impl CrawlController {
         let seq = unit.seq;
         let future: CrawlUnitFuture = Box::pin(async move {
             let receipt = run_crawl_unit(&host.borrow(), &unit).await;
+            // The host drops BEFORE the outcome is published: its per-use tick-map
+            // handle is the only handle a unit holds, so a caller that has seen
+            // every receipt knows no unit retains one — the completion clause the
+            // owner's close (the sole-holder canary) reads.
+            drop(host);
             let _ = tx.send((seq, receipt));
         });
         self.seat
@@ -1222,6 +1596,76 @@ impl CrawlController {
     }
 }
 
+/// How long the window tolerates a silent unit before the crawl names it and
+/// resolves.
+///
+/// The completion clause has to END. A run's consumer is parked on the receipt
+/// stream, and that stream ends only when the run future resolves, so a single
+/// unit that never answers — a seat thread that died after accepting the future
+/// (the S2 intake fault drains held work and runs it zero times), a build
+/// flight's peer whose leader vanished, a chain read that never returns — would
+/// otherwise hold the run, the crawl, and the boot behind it open forever with
+/// no error and no log line.
+///
+/// The bound is per receipt, not per window: a slow-but-progressing window
+/// resets it with every arrival, so it only ever measures SILENCE. Every unit
+/// that completes does so in microseconds (the whole 1M-path boot averaged
+/// 257µs/unit), so a minute of no receipt at all is a parked window, not slow
+/// work — and the crawl says which submissions never landed instead of parking
+/// with them.
+const UNIT_IDLE_DEADLINE: Duration = Duration::from_secs(60);
+
+/// How long a SEAT-REPORTED hold may keep the window waiting before the run
+/// names it.
+///
+/// The idle deadline above measures silence; a hold is not silence. The fleet
+/// seat holds this role's units whenever the posture cordon is up, and the
+/// cordon's release edge is the throttle feed's clean-window hysteresis — ten
+/// seconds by default, but there is no FLOOR on it: a host under sustained
+/// cgroup throttling never produces the clean sample the exit needs, and the
+/// hold then lasts as long as the pressure does. A live boot proved the shape:
+/// the crawl's first window filled inside a cordon, the cordon outlived the
+/// minute deadline, and the run aborted a crawl whose units were queued and
+/// healthy — not one had run, and not one was lost.
+///
+/// So a held window waits, loudly, under its own budget. Five minutes is
+/// generous against a ten-second exit hysteresis while still ending: a cordon
+/// that outlasts it is a posture problem the run must report
+/// ([`CrawlRequestError::IntakeHeld`]) rather than a window it keeps.
+const HELD_WINDOW_BUDGET: Duration = Duration::from_secs(300);
+
+/// How often a held window re-reads the seat's hold.
+///
+/// A hold has no channel to wake a waiter on (the seat reports it by asking, not
+/// by sending), so the held wait is a bounded tick — the seat host's own
+/// backstop-timer idiom — and never a busy-spin: one short critical section per
+/// tick, and a receipt still wins the race the instant it lands.
+const HOLD_RECHECK: Duration = Duration::from_secs(1);
+
+/// A duration in whole milliseconds, saturated — the `*_ms` field of every
+/// window error.
+fn millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Why a window wait was NAMED instead of landing an outcome
+/// ([`CrawlController::await_unit`]).
+enum WaitFailure {
+    /// Live senders, no receipt, no hold at the expiry: the seat parks the unit.
+    Stalled {
+        /// How long the wait ran in silence ([`UNIT_IDLE_DEADLINE`]).
+        waited: Duration,
+    },
+    /// The seat held the units for the whole hold budget
+    /// ([`HELD_WINDOW_BUDGET`]): a cordon that never lifted.
+    Held {
+        /// How long the hold outlasted the budget.
+        held: Duration,
+        /// The seat's own reason.
+        hold: SeatHold,
+    },
+}
+
 // ── the FIFO window ─────────────────────────────────────────────────────────
 
 /// The submission window: the order this call submitted in, the receipts that
@@ -1255,6 +1699,11 @@ impl<'a> Fold<'a> {
         self.order.len()
     }
 
+    /// The unresolved submission sequences, oldest first (the stalled report).
+    fn outstanding(&self) -> Vec<u64> {
+        self.order.iter().copied().collect()
+    }
+
     /// Take the loud abort, if one fired.
     fn take_fatal(&mut self) -> Option<CrawlAbort> {
         self.fatal.take()
@@ -1274,6 +1723,12 @@ impl<'a> Fold<'a> {
     }
 
     /// Await one receipt, then fold everything it unblocks.
+    ///
+    /// Under the window's two clocks ([`CrawlController::await_unit`]): the idle
+    /// deadline names a parked seat, the hold budget names a cordon that never
+    /// lifted, and a hold in between is waited through. Either way the run
+    /// resolves and names its outstanding submissions instead of parking its
+    /// consumer with them.
     async fn resolve_oldest(&mut self) -> Result<(), CrawlRequestError> {
         // An inline seat may already have delivered: fold it before awaiting,
         // or the wait would block on a receipt already in hand.
@@ -1281,21 +1736,36 @@ impl<'a> Fold<'a> {
         if self.inflight() == 0 {
             return Ok(());
         }
-        match self.rx.recv().await {
-            Some(item) => {
+        match self.controller.await_unit(&mut self.rx).await {
+            Ok(Some(item)) => {
                 self.buffered.insert(item.0, item.1);
                 self.flush();
                 Ok(())
             }
             // Every sender dropped with units still unresolved: a seat lost a
             // unit's future (a panic). At-most-once still holds; say so loudly.
-            None => Err(CrawlRequestError::UnitLost {
+            Ok(None) => Err(CrawlRequestError::UnitLost {
                 outstanding: self.inflight(),
+            }),
+            // Live senders, no receipt, no hold: a parked unit. Name every
+            // submission that never landed — a run never parks on one unit's
+            // silence.
+            Err(WaitFailure::Stalled { waited }) => Err(CrawlRequestError::UnitStalled {
+                stalled: self.outstanding(),
+                waited_ms: millis(waited),
+            }),
+            // A hold that outlived the run's patience: nothing is stuck, and the
+            // report says which lever (the posture) to pull.
+            Err(WaitFailure::Held { held, hold }) => Err(CrawlRequestError::IntakeHeld {
+                stalled: self.outstanding(),
+                held_ms: millis(held),
+                hold,
             }),
         }
     }
 
-    /// Drain the window: no submitted unit outlives the call.
+    /// Drain the window: no submitted unit outlives the call, and none parks
+    /// it (each wait is the idle deadline's).
     async fn drain(&mut self) -> Result<(), CrawlRequestError> {
         while self.inflight() > 0 {
             self.resolve_oldest().await?;

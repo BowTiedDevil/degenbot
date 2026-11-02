@@ -297,6 +297,32 @@ pub mod arb_engine;
 pub mod fleet_intake {
     pub use crate::arb_engine::fleet_intake::*;
 }
+
+/// The Rust-owned registration crawl: ONE door in front of the crate-private
+/// `arb_engine::crawl` tree (ADR-084 D2).
+///
+/// The engine owns the loop, the fold, and the receipts; a driver names this
+/// door to boot a crawl ([`EngineDriver::begin_crawl`]), to read its
+/// measurement ([`CrawlSummary`], [`CrawlReceipt`]), and to supply the two
+/// foreign inputs the core cannot evaluate as data — the path-composition
+/// policy's [`BatchPolicyOracle`] and the tick-map [`SnapshotArm`].
+///
+/// [`EngineDriver::begin_crawl`]: crate::arb_engine::EngineDriver::begin_crawl
+pub mod crawl {
+    pub use crate::arb_engine::crawl::controller::{
+        CrawlConfig, CrawlConfigError, CrawlController, CrawlRequestError, RunOutcome, SeatHold,
+        SnapshotArm,
+    };
+    pub use crate::arb_engine::crawl::discovery::DiscoveredPath;
+    pub use crate::arb_engine::crawl::policy::{
+        BatchPolicyOracle, CrawlPathPolicy, DuplicatePoolPolicy, HopBounds, LiquidityFloor,
+        LiquidityProxy, OracleError, PathPolicyVerdict, PolicyCandidate, PolicyRefusal,
+        TokenFilter,
+    };
+    pub use crate::arb_engine::crawl::profile::CrawlSummary;
+    pub use crate::arb_engine::crawl::receipt::{CrawlReceipt, UnitStage};
+    pub use crate::arb_engine::crawl::unit::{CrawlAbort, DiscoveredHop};
+}
 pub use degenbot_substrate::connector_index;
 pub mod failure_policy;
 pub mod hosted_sources;

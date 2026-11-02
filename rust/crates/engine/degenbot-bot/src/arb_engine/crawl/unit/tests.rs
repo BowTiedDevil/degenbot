@@ -411,6 +411,7 @@ impl Harness {
             settings: CrawlUnitSettings {
                 route: ConstructionRoute::generic_only(),
                 policy: CrawlPathPolicy::default(),
+                oracle: None,
                 retry: RetryPolicy {
                     max_attempts: 1,
                     base_delay: 0.0,

@@ -243,6 +243,23 @@ class ArbitrageEngine:
         on top of the snapshot-seeded tick data. V4 analogue of
         [`apply_buffer_v3`][Self::apply_buffer_v3].
         """
+    def begin_crawl(self, /, config: Any, bot: Bot | None = None) -> CrawlSession:
+        """
+        Configure and boot the engine's crawl.
+
+        The engine driver boots the run and holds its join handle; the returned
+        session holds the controller for the process's life, so the operator
+        surface keeps working after the main-loop trim. `bot` supplies the
+        snapshot slot a head-stamped V3/V4 construction asks for its tick-map
+        handle — per use, so the trim's `close_snapshot_tx()` stays the sole
+        holder of the handle and later units read the chain instead.
+
+        # Errors
+
+        `ValueError` for a configuration the crawl cannot honour (the core's own
+        validation message) and `RuntimeError` when the engine has no construction
+        I/O or a crawl is already installed.
+        """
     def debug_buffer_v3_liquidity_update(
         self,
         /,
@@ -2837,6 +2854,103 @@ class ConstructionOutcome:
         """
 
 @final
+class CrawlReceiptStream:
+    """
+    The receipt stream: an async iterator of receipt dicts.
+    """
+    def __aiter__(self, /) -> CrawlReceiptStream: ...
+    def __anext__(self, /) -> Any:
+        """
+        Await the next receipt; raises `StopAsyncIteration` when the stream ends
+        (the crawl's run future resolved).
+        """
+
+@final
+class CrawlSession:
+    """
+    The crawl's process-lifetime session handle.
+
+    Held for the process's life by whatever booted the crawl: the controller
+    behind it is the operator surface's only door, and the receipt stream is the
+    render's.
+    """
+    def enqueue_path(
+        self, /, path: Any, directions: SupportsGetItem[int, bool] | None = None
+    ) -> Any:
+        """
+        Add ONE specific path at any time (the operator surface).
+
+        The path is a sequence of `PathStep`-shaped hops (`address`, `type`,
+        `hash`); `directions` pins the per-hop `zero_for_one` values.
+
+        Returns the unit's submission sequence.
+
+        # Errors
+
+        A typed crawl-state refusal after a stop, a discovery failure, or the
+        unit's loud abort.
+        """
+    def is_finished(self, /) -> bool:
+        """
+        Whether the run future has resolved (the join fact).
+        """
+    def progress_line(self, /) -> str:
+        """
+        The counters line the crawl has always logged (`[build_paths] Progress:
+        ...`), rendered from the engine's fold.
+        """
+    def receipts(self, /) -> CrawlReceiptStream:
+        """
+        The receipt stream — the crawl's observation, taken once.
+
+        The stream ends when the run future resolves, however it resolved: a
+        consumer that drains it has already reached the resolution edge, and
+        [`Self::run_outcome`] then says how the run ended.
+
+        # Errors
+
+        `RuntimeError` when the stream was already taken (one consumer).
+        """
+    def run_outcome(self, /) -> tuple[str, str | None] | None:
+        """
+        How the last run resolved, as `(kind, detail)`: `kind` is `completed`,
+        `aborted`, or `failed`, and `detail` is `None` only for `completed`.
+
+        `None` means no run has resolved yet (or it was cancelled mid-flight —
+        the driver's join reports that one).
+        """
+    def stage_profile_lines(self, /) -> list[str]:
+        """
+        The stage-profile block (`[build_paths] Unit-stage profile ...`),
+        rendered from the engine's fold.
+        """
+    def state(self, /) -> str:
+        """
+        The crawl's pose: `idle`, `running`, `capped`, `stopping`, or `stopped`.
+        """
+    def stop(self, /) -> None:
+        """
+        Latch the crawl stopped: no new work enters, the window drains, and the
+        run resolves on its own. Total, idempotent, never blocking.
+        """
+    def summary(self, /) -> dict:
+        """
+        The summary counters, as a dict — the engine's fold, never a Python
+        re-count.
+        """
+    def trigger_discovery(self, /, bound: SupportsIndex | None = None) -> Any:
+        """
+        Trigger ONE bounded discovery sweep (the operator surface).
+
+        Returns the number of candidates the sweep processed (`0` when the
+        structural edition is unchanged since the last natural completion).
+
+        # Errors
+
+        A typed crawl-state refusal, a discovery failure, or a unit's loud abort.
+        """
+
+@final
 class CurveView:
     """
     The Curve balance-vector arm of `Pool`, exposed to Python.
@@ -5293,6 +5407,8 @@ __all__ = [
     "ConfigSectionValues",
     "ConfigValues",
     "ConstructionOutcome",
+    "CrawlReceiptStream",
+    "CrawlSession",
     "CurveView",
     "DynamicFeePoolRejectedError",
     "Erc20Token",

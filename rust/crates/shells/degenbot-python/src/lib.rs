@@ -390,7 +390,9 @@ mod _ffi {
     // of authoring the legal-state matrix.
     #[cfg(feature = "bot")]
     #[pymodule_export]
-    use crate::bot::engine::{session_phase_next, BlockStream, PyArbEngine};
+    use crate::bot::engine::{
+        session_phase_next, BlockStream, PyArbEngine, PyCrawlReceiptStream, PyCrawlSession,
+    };
 
     // Bot — Rust-owned state (feature = "bot"). `PyIntakeReceipt` and
     // `PyConcentratedLiquidityView` keep the (missing) gate they had in the

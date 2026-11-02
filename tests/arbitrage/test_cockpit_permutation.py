@@ -1,7 +1,8 @@
-"""Permutation flows from config into ``build_paths``.
+"""Permutation flows from config into the engine's crawl configuration.
 
-The config is the single path: ``build_paths`` takes the filter from its
-(config-derived) parameter.
+The config is the single path: ``build_paths`` resolves the filter from its
+(config-derived) parameter, and the resolved values enter the engine's crawl
+configuration as data.
 """
 
 from __future__ import annotations
@@ -10,82 +11,64 @@ from typing import Any
 
 from degenbot.pathfinding import PoolKind
 from degenbot.runner.build_paths import (
-    BuildPathsOptions,
     _parse_permutation_filter,
     _pool_types_from_filter,
-    build_paths,
+    crawl_config,
 )
-from tests.fakes.engine import FakeEngine as _FakeEngine
-from tests.fakes.engine import FakeEngineRegistry as _FakeEngineRegistry
 
 
-class _FakePipeline:
+class _Context:
+    """The construction-context slice the configuration resolution reads."""
+
+    chain_id = 1
+
+    class construction_route:
+        factories = ()
+        generic = True
+
     def __init__(self) -> None:
-        self.pool_type_per_depth: Any = None
-        self.pool_types: Any = None
-        self.path_count = 0
-        self.skip_count = 0
-        self.token_filter_count = 0
-        self.engine_reject_count = 0
-        self.other_exc_count = 0
-        self.v4_hook_rejected = 0
-        self.v4_dynamic_fee_rejected = 0
-        self.dup_count = 0
-        self.direction_fail_count = 0
-        self.register_fail_count = 0
-        self.v4_pool_count = 0
-        # PRG-5: the benign path-cap stop witness (read by build_paths).
-        self.capped = False
+        import pathlib  # ruff:ignore[import-outside-top-level] -- a fixed fixture path
 
-    def discovery_sweep(self) -> object:
-        # The fake run_registration ignores the producer; an empty iterator
-        # stands in for the (infinite in production) discovery sweep.
-        return iter(())
+        self.database_path = pathlib.Path("/nonexistent/permutation.sqlite")
 
-    async def run_registration(self, *, producer: Any) -> None:
-        pass
 
-    def emit_registration_progress(self, *, force: bool = False) -> None:
-        pass
+class _Registry:
+    verify_snapshot_block = None
+    path_predicate = None
 
-    def emit_stage_profile(self) -> None:
-        pass
+
+def _config(perms: set[str] | None) -> dict[str, Any]:
+    depth = _parse_permutation_filter(perms)
+    return crawl_config(
+        context=_Context(),
+        engine_registry=_Registry(),
+        max_paths=0,
+        discovery_batch_size=1000,
+        retry_policy=None,
+        pool_types=_pool_types_from_filter(perms),
+        pool_type_per_depth=depth,
+    )
 
 
 class TestPermutation:
-    async def test_build_paths_reads_permutation_from_param(self) -> None:
-        pipe = _FakePipeline()
-        await build_paths(
-            bot=object(),  # type: ignore[arg-type]
-            engine_registry=_FakeEngineRegistry(),  # type: ignore[arg-type]
-            options=BuildPathsOptions(
-                max_registered_paths=0,
-                discovery_batch_size=1000,
-                context=object(),  # type: ignore[arg-type]
-                pipeline=pipe,  # type: ignore[arg-type]
-                retry_policy=None,
-                permutation_filter=frozenset({"V3-V4-V3"}),
-            ),
-        )
-        assert pipe.pool_type_per_depth == [
+    def test_the_filter_resolves_per_depth(self) -> None:
+        assert _parse_permutation_filter({"V3-V4-V3"}) == [
             {PoolKind.V3},
             {PoolKind.V4},
             {PoolKind.V3},
         ]
-        assert set(pipe.pool_types) == {PoolKind.V3, PoolKind.V4}
+        assert set(_pool_types_from_filter({"V3-V4-V3"})) == {PoolKind.V3, PoolKind.V4}
 
-    async def test_build_paths_without_filter_uses_all_types(self) -> None:
-        pipe = _FakePipeline()
-        await build_paths(
-            bot=object(),  # type: ignore[arg-type]
-            engine_registry=_FakeEngineRegistry(),  # type: ignore[arg-type]
-            options=BuildPathsOptions(
-                max_registered_paths=0,
-                discovery_batch_size=1000,
-                context=object(),  # type: ignore[arg-type]
-                pipeline=pipe,  # type: ignore[arg-type]
-                retry_policy=None,
-            ),
-        )
-        assert pipe.pool_type_per_depth is None
-        assert set(pipe.pool_types) == {PoolKind.V2, PoolKind.V3, PoolKind.V4}
+    def test_the_config_carries_the_filter_as_data(self) -> None:
+        config = _config({"V3-V4-V3"})
+        assert config["pool_type_per_depth"] == [
+            [PoolKind.V3],
+            [PoolKind.V4],
+            [PoolKind.V3],
+        ]
+        assert set(config["pool_kinds"]) == {PoolKind.V3, PoolKind.V4}
+
+    def test_without_a_filter_every_family_is_allowed(self) -> None:
+        config = _config(None)
+        assert config["pool_type_per_depth"] is None
+        assert set(config["pool_kinds"]) == {PoolKind.V2, PoolKind.V3, PoolKind.V4}

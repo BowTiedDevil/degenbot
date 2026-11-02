@@ -105,6 +105,9 @@ pub enum PolicyRefusal {
     TokenDenylisted { token: Address, why: DenyWhy },
     /// `DuplicatePoolError`.
     DuplicatePool { pool: PoolIdentityTag },
+    /// A foreign policy's own refusal (the bulk-verdict escape): the shell's
+    /// predicate denied the path, rendered. Never produced by the data policy.
+    Oracle { detail: String },
     /// `InsufficientLiquidityError`.
     InsufficientLiquidity {
         pool_id: u64,
@@ -453,6 +456,84 @@ impl CrawlPathPolicy {
 
 fn deny(refusal: PolicyRefusal) -> PathPolicyVerdict {
     PathPolicyVerdict::Deny { refusal }
+}
+
+// ── the bulk-verdict escape ─────────────────────────────────────────────────
+
+/// One candidate as a foreign (shell-implemented) policy sees it.
+///
+/// The candidate's identity is its hop signature — the same value the ledger's
+/// memos key on — beside the composition view a data policy reads. A foreign
+/// policy answers a verdict per candidate; it never sees a unit's interior, a
+/// receipt, or the registry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PolicyCandidate {
+    /// The submission sequence, i.e. discovery order — the receipt stream's
+    /// spine, so a batched answer lands on the candidate it belongs to.
+    pub seq: u64,
+    /// The candidate's hop signature `(pool_id, zero_for_one)` per hop.
+    pub hop_sig: Vec<(u64, bool)>,
+    /// The composition view the core would have evaluated as data.
+    pub view: PathCompositionView,
+}
+
+/// A foreign policy the core cannot evaluate as data.
+///
+/// The crawl consults it only for candidates that already passed the
+/// direction/memo read, and only when the configuration carries one: a policy
+/// expressible as a [`CrawlPathPolicy`] is data and never crosses the seam.
+/// The trait is core-side and pyo3-free; the shell installs its
+/// implementation (`EngineStages::set_inline_simulator` is the precedent).
+///
+/// A verdict list that does not answer exactly one entry per candidate is an
+/// error, never a guess: the crawl refuses to attribute a verdict to the wrong
+/// path.
+pub trait BatchPolicyOracle: Send + Sync + std::fmt::Debug {
+    /// One verdict per candidate, in the batch's order.
+    ///
+    /// # Errors
+    ///
+    /// [`OracleError`] when the foreign policy fails or answers the wrong
+    /// number of verdicts. The crawl treats it as a loud abort — the same
+    /// class as a fatal verify, never a counted skip.
+    fn verdicts(&self, batch: &[PolicyCandidate]) -> Result<Vec<PathPolicyVerdict>, OracleError>;
+}
+
+/// Why a foreign policy could not answer.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum OracleError {
+    /// The oracle answered a different number of verdicts than it was asked
+    /// for.
+    #[error("the policy oracle answered {answered} verdicts for {asked} candidates")]
+    LengthMismatch {
+        /// Candidates the crawl asked about.
+        asked: usize,
+        /// Verdicts the oracle answered.
+        answered: usize,
+    },
+    /// The foreign policy raised (a Python exception, rendered).
+    #[error("the policy oracle failed: {detail}")]
+    Refused {
+        /// The failure, rendered by the shell.
+        detail: String,
+    },
+}
+
+/// Answer one candidate through a foreign oracle.
+///
+/// # Errors
+///
+/// [`OracleError`] — the oracle failed, or answered any number of verdicts
+/// other than one.
+pub fn oracle_verdict(
+    oracle: &dyn BatchPolicyOracle,
+    candidate: &PolicyCandidate,
+) -> Result<PathPolicyVerdict, OracleError> {
+    let mut verdicts = oracle.verdicts(std::slice::from_ref(candidate))?;
+    match verdicts.len() {
+        1 => Ok(verdicts.remove(0)),
+        answered => Err(OracleError::LengthMismatch { asked: 1, answered }),
+    }
 }
 
 #[cfg(test)]

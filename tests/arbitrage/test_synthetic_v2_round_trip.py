@@ -22,8 +22,7 @@ import pytest
 
 from degenbot.arbitrage.engine_registry import ArbitrageEngine, EngineRegistry
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.pathfinding import PathfindingRequest, PoolKind, find_paths_async
-from degenbot.runner.build_paths import resolve_directions
+from degenbot.pathfinding import PathfindingRequest, PoolKind, find_paths_async, resolve_directions
 from degenbot.types.chain import ChainId
 from tests.helpers.database import seed_v2_topology
 from tests.helpers.erc20_factory import make_erc20
@@ -176,7 +175,11 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
     path_ids: list[int] = []
     for cycle in cycles:
         pools = [pools_by_address[step.address] for step in cycle]
-        zfo_list = resolve_directions(pools, WETH_ADDR)
+        zfo_list = resolve_directions(
+            [(pool.token0.address, pool.token1.address, str(pool)) for pool in pools],
+            WETH_ADDR,
+            WETH_ADDR,
+        )
         assert zfo_list is not None, "cycle does not close on WETH"
         path_id, _created = registry.register_path(list(zip(pools, zfo_list, strict=True)))
         path_ids.append(path_id)

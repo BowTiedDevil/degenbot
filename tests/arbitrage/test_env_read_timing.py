@@ -17,20 +17,19 @@ declared.
 from __future__ import annotations
 
 import os
+import pathlib
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from degenbot.runner.build_paths import PathRegistrationPipeline
+from degenbot.runner.build_paths import BuildPathsOptions, crawl_config
 from degenbot.runner.config import (
+    _RETIRED_SHELL_KNOBS,
     ArbitrageConfig,
     RpcCascadeOverrides,
-    _RETIRED_SHELL_KNOBS,
 )
-from tests.fakes.engine import FakeEngine, FakeEngineRegistry
-from tests.fakes.runner_pipelines import FakeFleetHostedBot, FakePipelineContext
 from tests.helpers import verdict_probe as probe
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -103,52 +102,56 @@ def test_the_debug_knob_is_read_when_the_base_level_is_applied() -> None:
 # ── DEGENBOT_MAX_PATHS: the registered-path cap ──────────────────────────
 
 
-def test_the_pipeline_refuses_to_invent_its_own_path_cap(tmp_path: Path) -> None:
-    """No cap argument, no pipeline: there is nothing left to inherit."""
+def test_the_config_requires_a_resolved_path_cap() -> None:
+    """No cap argument, no options: there is nothing left to inherit."""
     with pytest.raises(TypeError):
-        PathRegistrationPipeline(
-            context=FakePipelineContext(
-                bot=FakeFleetHostedBot(), database_path=tmp_path / "unused.db"
-            ),
-            engine_registry=None,
-        )
+        BuildPathsOptions(discovery_batch_size=1000)
 
 
-class _CapEngine:
-    """Records the cap the pipeline installs, so the test reads it back."""
+class _Context:
+    """The construction-context slice the configuration resolution reads."""
 
-    def __init__(self) -> None:
-        self.path_cap = None
+    chain_id = 1
 
-    def set_path_cap(self, cap) -> None:
-        self.path_cap = cap
+    class construction_route:
+        factories = ()
+        generic = True
 
-
-def test_the_cap_the_caller_resolved_is_the_cap_the_engine_gets(tmp_path: Path) -> None:
-    """One cap, one owner: the config resolves it and the pipeline installs it."""
-    cfg = probe.build_config(env={"DEGENBOT_MAX_PATHS": "1234"})
-    engine = _CapEngine()
-    PathRegistrationPipeline(
-        context=FakePipelineContext(bot=FakeFleetHostedBot(), database_path=tmp_path / "unused.db"),
-        engine_registry=FakeEngineRegistry(engine),
-        max_paths=cfg.max_registered_paths,
-        discovery_batch_size=cfg.discovery_batch_size,
-    )
-
-    assert cfg.max_registered_paths == 1234
-    assert engine.path_cap == 1234
+    def __init__(self, database_path: pathlib.Path) -> None:
+        self.database_path = database_path
 
 
-def test_an_explicitly_uncapped_pipeline_tells_the_engine_uncapped(tmp_path: Path) -> None:
-    """``0`` is the config's uncapped spelling; the engine's is ``None``."""
-    engine = FakeEngine()
-    PathRegistrationPipeline(
-        context=FakePipelineContext(bot=FakeFleetHostedBot(), database_path=tmp_path / "unused.db"),
-        engine_registry=FakeEngineRegistry(engine),
-        max_paths=0,
+class _Registry:
+    verify_snapshot_block = None
+    path_predicate = None
+
+
+def _resolved_cap(max_paths: int, database_path: pathlib.Path):
+    return crawl_config(
+        context=_Context(database_path),
+        engine_registry=_Registry(),
+        max_paths=max_paths,
         discovery_batch_size=1000,
-    )
-    assert engine.path_cap is None
+        retry_policy=None,
+        pool_types=[],
+        pool_type_per_depth=None,
+    )["path_cap"]
+
+
+def test_the_cap_the_caller_resolved_is_the_cap_the_engine_gets(
+    tmp_path: pathlib.Path,
+) -> None:
+    """One cap, one owner: the config resolves it and the crawl is configured with it."""
+    cfg = probe.build_config(env={"DEGENBOT_MAX_PATHS": "1234"})
+    assert cfg.max_registered_paths == 1234
+    assert _resolved_cap(cfg.max_registered_paths, tmp_path / "unused.db") == 1234
+
+
+def test_an_explicitly_uncapped_crawl_tells_the_engine_uncapped(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``0`` is the config's uncapped spelling; the engine's is ``None``."""
+    assert _resolved_cap(0, tmp_path / "unused.db") is None
 
 
 # ── The retired crawl-shell knobs ────────────────────────────────────────
