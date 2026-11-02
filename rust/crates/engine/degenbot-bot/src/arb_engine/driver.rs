@@ -395,7 +395,9 @@ impl EngineDriver {
         channels: EngineChannelHandles,
     ) -> Self {
         stages.set_result_channel(channels.result);
-        stages.set_block_channel(channels.block);
+        // The stage surface's block-clock pipe is fresh here and this is its one
+        // wiring site, so a decline is unreachable.
+        let _ = stages.set_block_channel(channels.block);
         install_session_path_owner(&bot, &stages);
         let (pump_finished_tx, pump_finished_rx) = watch::channel(false);
         let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));

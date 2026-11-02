@@ -178,11 +178,19 @@ impl EngineStages {
     /// channel pair; the Python-facing receiver lives on `PumpState`).
     /// The pipe mutex is a non-poisoning `parking_lot` — a nanosecond send,
     /// never queued behind solver work (B2).
+    ///
+    /// # Errors
+    ///
+    /// [`degenbot_core::channel_lifecycle::ChannelDecline::AlreadyAttached`]
+    /// when a sender is already attached, and
+    /// [`degenbot_core::channel_lifecycle::ChannelDecline::AttachedAfterClose`]
+    /// after `close_delivery_channels` — a closed pipe's receiver has already
+    /// observed end-of-stream.
     pub fn set_block_channel(
         &self,
         tx: tokio::sync::mpsc::UnboundedSender<crate::bot_core::BlockNotification>,
-    ) {
-        self.block_clock.lock().set_channel(tx);
+    ) -> Result<(), degenbot_core::channel_lifecycle::ChannelDecline> {
+        self.block_clock.lock().attach(tx)
     }
     /// Apply an operator [`EngineRetune`] to the live engine — the engine's
     /// twin of the fleet's centralized posture feeder + wake (43121b9). This

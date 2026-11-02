@@ -35,9 +35,13 @@
 //!   identity, the refusal vocabulary a read answers with, and the observer
 //!   trait a lending integration implements. It sits here because the engine and
 //!   the lending integrations already share this layer and no other one.
+//! - [`channel_lifecycle`] — the one-way delivery channel's phase. The phase IS
+//!   the sender, so "never attached" and "closed" cannot collapse into one
+//!   `None`; `SendOutcome` names which way a send did not deliver.
 
 pub mod address_utils;
 pub mod block_clock_pipe;
+pub mod channel_lifecycle;
 pub mod cpu_budget;
 pub mod eip_1559;
 pub mod errors;

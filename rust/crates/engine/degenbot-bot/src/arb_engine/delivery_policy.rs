@@ -23,6 +23,7 @@ use super::{ArbitrageEngine, BlockMetadata, ResultBatch};
 use crate::arb_engine::inline_sim::SimulatedPathResult;
 use ::degenbot_pools::solve::SolvePathResult;
 use alloy::primitives::U256;
+use degenbot_core::channel_lifecycle::ChannelDecline;
 use degenbot_core::op_warn;
 use hashbrown::HashMap;
 use tokio::sync::mpsc;
@@ -83,8 +84,17 @@ impl Default for DeliveryPolicy {
 impl DeliveryPolicy {
     /// Set the sender for the result batch channel. Delegates to the
     /// embedded [`DeliveryLifecycle`].
-    pub fn set_result_channel(&mut self, tx: mpsc::UnboundedSender<ResultBatch>) {
-        self.lifecycle.set_result_channel(tx);
+    /// Attach the result-batch channel sender.
+    ///
+    /// # Errors
+    ///
+    /// [`ChannelDecline::AlreadyAttached`] when one is already attached, and
+    /// [`ChannelDecline::AttachedAfterClose`] after [`DeliveryLifecycle::close`].
+    pub fn set_result_channel(
+        &mut self,
+        tx: mpsc::UnboundedSender<ResultBatch>,
+    ) -> Result<(), ChannelDecline> {
+        self.lifecycle.attach(tx)
     }
     /// Forward a `newHeads` block tick onto the block-notification channel
     /// . A no-op when no block channel is attached (no-pyo3
@@ -295,7 +305,9 @@ pub(crate) fn set_result_channel(
     engine: &mut ArbitrageEngine,
     tx: mpsc::UnboundedSender<ResultBatch>,
 ) {
-    engine.delivery.set_result_channel(tx);
+    // Test seam: the wiring is attach-once, so a decline here is a caller bug
+    // the test that made it will surface on its own assertions.
+    let _ = engine.delivery.set_result_channel(tx);
 }
 /// Set the profit thresholds for the result batch channel (machine-direct
 /// free-function route).
@@ -399,7 +411,7 @@ mod tests {
     fn diff_and_send_consumes_solve_output_independent_of_engine() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let mut policy = DeliveryPolicy::default();
-        policy.set_result_channel(tx);
+        let _ = policy.set_result_channel(tx);
         let mut results: HashMap<u64, SolvePathResult> = HashMap::new();
         results.insert(1, solve_result(500));
         results.insert(2, solve_result(0)); // below threshold (min=0 is strict `>`)
@@ -459,7 +471,7 @@ mod tests {
     fn diff_and_send_with_zero_anchor_defers_candidates_and_does_not_commit() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let mut policy = DeliveryPolicy::default();
-        policy.set_result_channel(tx);
+        let _ = policy.set_result_channel(tx);
         let mut results: HashMap<u64, SolvePathResult> = HashMap::new();
         results.insert(1, solve_result(500)); // above threshold, would be fresh if anchored
                                               // results_block == 0 (cold start, no solve yet): batch is EMPTY.
