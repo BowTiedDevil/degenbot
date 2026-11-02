@@ -26,10 +26,10 @@
 //!    first complete block `W`, and pokes the verify config. It **stops before
 //!    `resume()`** so the consumer can attach its result receiver while no
 //!    batches can flow.
-//! 2. `resume()` gates on `PumpPhase::SnapshotLoaded`, **owns the
+//! 2. `resume()` gates on `PumpPhase::Subscribed`, **owns the
 //!    `S+1..W` auto-backfill** (awaiting `BlockPump::backfill_with_drain`
 //!    synchronously), then spawns the live pump loop and advances to
-//!    `PumpPhase::Resumed`. Consumers never call `backfill_from_snapshot`.
+//!    `PumpPhase::Running`. Consumers never call `backfill_from_snapshot`.
 //! 3. `stop()` sets the shutdown flag, waits up to `PUMP_STOP_GRACE` for the
 //!    pump to exit **cooperatively** (its own 500 ms tick polls the flag), and
 //!    only escalates to `abort()` + join if the grace expires; it then clears
@@ -61,6 +61,7 @@
 //!   consume/dispatch loop (ADR-050 D9).
 
 use crate::arb_engine::lifecycle::PathRegistrationError;
+use crate::arb_engine::pump_session::{self, PumpEvent};
 use crate::arb_engine::{
     BlockNotification, EngineRetune, EngineStages, InlineSimulator, PumpPhase, ResultBatch,
 };
@@ -445,8 +446,11 @@ impl EngineDriver {
     }
 
     /// Advance the engine phase with no ordering check (callers validate).
-    pub fn set_phase(&self, phase: PumpPhase) {
-        self.stages.set_phase(phase);
+    /// Force the session's pose. Test-only: production reaches a pose by
+    /// driving a transition, never by writing one.
+    #[cfg(test)]
+    pub(crate) fn set_pose_for_test(&self, phase: PumpPhase) {
+        self.stages.publish_phase(phase);
     }
 
     /// `true` once `stop()` has latched the driver terminally stopped.
@@ -605,14 +609,15 @@ impl EngineDriver {
             ));
         }
         let phase = self.stages.current_phase();
-        if let Err(detail) = phase.allow_subscribe("subscribe") {
+        if let Err(decline) = pump_session::transition(phase, PumpEvent::SubscribeRequested) {
             return Err(DriverError::Phase(PhaseError {
                 method: "subscribe",
                 current: phase,
                 required: None,
-                detail,
+                detail: decline.to_string(),
             }));
         }
+        self.stages.publish_phase(PumpPhase::Connecting);
         if self.pump_handle.lock().is_some() {
             return Err(DriverError::SessionState(
                 "Cannot subscribe: pump is already started. Call stop() first.".to_string(),
@@ -623,15 +628,6 @@ impl EngineDriver {
                 "Cannot subscribe: already subscribed. Call resume() first.".to_string(),
             ));
         }
-        // Read S BEFORE subscribe so `after_subscribe` reflects whether the
-        // core already holds a snapshot (the construction-time-load path,
-        // per the regression fix above).
-        let core_has_snapshot = self
-            .bot
-            .state_arc()
-            .read_at(LockSite::Pump)
-            .snapshot_seed_block()
-            .is_some();
         let stage_handlers: Arc<dyn StageHandlers> = self.stages.clone();
         let control: Arc<dyn PumpControl> = self.stages.clone();
         let (pump, state) = BlockPump::subscribe(
@@ -659,8 +655,7 @@ impl EngineDriver {
             first_block,
             combined_stream,
         });
-        self.stages
-            .set_phase(PumpPhase::after_subscribe(phase, core_has_snapshot));
+        self.stages.publish_phase(PumpPhase::Subscribed);
         Ok(first_block)
     }
 
@@ -707,18 +702,13 @@ impl EngineDriver {
             ));
         }
         let phase = self.stages.current_phase();
-        if let Err(detail) = phase.require(PumpPhase::SnapshotLoaded, "resume") {
+        if let Err(decline) = pump_session::transition(phase, PumpEvent::ResumeRequested) {
             return Err(DriverError::Phase(PhaseError {
                 method: "resume",
                 current: phase,
-                required: Some(PumpPhase::SnapshotLoaded),
-                detail,
+                required: Some(PumpPhase::Subscribed),
+                detail: decline.to_string(),
             }));
-        }
-        if phase == PumpPhase::Resumed {
-            return Err(DriverError::SessionState(
-                "Cannot resume: engine is already in Resumed phase.".to_string(),
-            ));
         }
         // Consumer-before-resume gate. The result channel is unbounded, so a
         // pump with no receiver attached accumulates batches no one drains.
@@ -762,7 +752,7 @@ impl EngineDriver {
             pump.run_with_stream(combined, first_block).await;
         });
         *self.pump_handle.lock() = Some(handle);
-        self.stages.set_phase(PumpPhase::Resumed);
+        self.stages.publish_phase(PumpPhase::Running);
         Ok(())
     }
 
@@ -1207,7 +1197,7 @@ mod tests {
     #[test]
     fn new_driver_starts_in_created_phase() {
         let driver = driver_for_test();
-        assert_eq!(driver.current_phase(), PumpPhase::Created);
+        assert_eq!(driver.current_phase(), PumpPhase::Detached);
         assert!(!driver.is_stopped());
         assert!(!driver.pump_handle_armed());
     }
@@ -1322,8 +1312,8 @@ mod tests {
         match err {
             DriverError::Phase(p) => {
                 assert_eq!(p.method, "resume");
-                assert_eq!(p.current, PumpPhase::Created);
-                assert_eq!(p.required, Some(PumpPhase::SnapshotLoaded));
+                assert_eq!(p.current, PumpPhase::Detached);
+                assert_eq!(p.required, Some(PumpPhase::Subscribed));
             }
             other => assert!(
                 !matches!(other, DriverError::Phase(_)),
@@ -1335,7 +1325,7 @@ mod tests {
     #[test]
     fn subscribe_after_resume_phase_is_rejected_before_any_ws_connect() {
         let driver = driver_for_test();
-        driver.set_phase(PumpPhase::Resumed);
+        driver.set_pose_for_test(PumpPhase::Running);
         let err = degenbot_core::runtime::get_runtime()
             .block_on(driver.subscribe("ws://127.0.0.1:1"))
             .unwrap_err();
@@ -1346,7 +1336,7 @@ mod tests {
     fn resume_without_pending_subscribe_state_is_rejected() {
         let driver = driver_for_test();
         let _result_rx = driver.take_result_receiver();
-        driver.set_phase(PumpPhase::SnapshotLoaded);
+        driver.set_pose_for_test(PumpPhase::Subscribed);
         let err = degenbot_core::runtime::get_runtime()
             .block_on(driver.resume())
             .unwrap_err();
@@ -1372,7 +1362,7 @@ mod tests {
             first_block: 100,
             combined_stream: futures_util::stream::empty().boxed(),
         });
-        driver.set_phase(PumpPhase::SnapshotLoaded);
+        driver.set_pose_for_test(PumpPhase::Subscribed);
 
         let err = degenbot_core::runtime::get_runtime()
             .block_on(driver.resume())
@@ -1512,7 +1502,7 @@ mod tests {
             first_block: 100,
             combined_stream: futures_util::stream::pending::<WsEvent>().boxed(),
         });
-        driver.set_phase(PumpPhase::SnapshotLoaded);
+        driver.set_pose_for_test(PumpPhase::Subscribed);
         degenbot_core::runtime::get_runtime()
             .block_on(driver.resume())
             .expect("resume with a pending subscribe state");
@@ -1638,17 +1628,18 @@ mod tests {
             first_block: 100,
             combined_stream: futures_util::stream::empty().boxed(),
         });
-        driver.set_phase(PumpPhase::SnapshotLoaded);
+        driver.set_pose_for_test(PumpPhase::Subscribed);
         degenbot_core::runtime::get_runtime()
             .block_on(driver.resume())
             .expect("resume with a pending subscribe state");
-        assert_eq!(driver.current_phase(), PumpPhase::Resumed);
+        assert_eq!(driver.current_phase(), PumpPhase::Running);
         assert!(driver.pump_handle_armed());
-        // A second resume is an already-resumed session-state error.
+        // A second resume is an ordering decline: the session is already
+        // running, so there is nothing left to resume.
         let err = degenbot_core::runtime::get_runtime()
             .block_on(driver.resume())
             .unwrap_err();
-        assert!(matches!(err, DriverError::SessionState(_)), "got {err:?}");
+        assert!(matches!(err, DriverError::Phase(_)), "got {err:?}");
         driver.stop().expect("stop");
         assert!(!driver.pump_handle_armed());
     }

@@ -15,7 +15,7 @@ use crate::arb_engine::test_harness::{
     finalize_for_test, has_logs_this_block, hop_projection_count, last_solved_block,
     merge_detached_for_test, process_updates, run_test_cycle,
 };
-use crate::arb_engine::{ArbitrageEngine, BlockMetadata, PumpPhase};
+use crate::arb_engine::{ArbitrageEngine, BlockMetadata};
 use ::degenbot_pools::solve::{
     HopType, PoolHop, ResolvedHop, ResolvedMixedPath, SolidlyHopState, SolvePathResult, INT128_MAX,
 };

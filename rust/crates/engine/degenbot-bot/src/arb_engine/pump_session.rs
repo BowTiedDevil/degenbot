@@ -20,9 +20,10 @@ use std::fmt;
 
 /// Where a pump session is. A `Copy` projection: readers see this, never a
 /// handle into the session.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum PumpPose {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum PumpPhase {
     /// No WS connection and nothing pending.
+    #[default]
     Detached,
     /// The subscribe handshake is in flight.
     Connecting,
@@ -44,7 +45,7 @@ pub enum PumpPose {
     Stopped,
 }
 
-impl PumpPose {
+impl PumpPhase {
     /// The lower-case name, for the FFI's name translator and for error text.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -85,7 +86,7 @@ impl PumpPose {
     }
 }
 
-impl fmt::Display for PumpPose {
+impl fmt::Display for PumpPhase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
@@ -146,18 +147,18 @@ impl PumpEvent {
 /// Why a session move was refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PumpDecline {
-    /// `subscribe` is legal only from [`PumpPose::Detached`], or from
-    /// [`PumpPose::Abandoned`] where it is the recovery edge.
+    /// `subscribe` is legal only from [`PumpPhase::Detached`], or from
+    /// [`PumpPhase::Abandoned`] where it is the recovery edge.
     #[error("cannot subscribe from {current}; subscribe requires detached")]
     SubscribeRequiresDetached {
         /// The pose the request arrived in.
-        current: PumpPose,
+        current: PumpPhase,
     },
-    /// `resume` is legal only from [`PumpPose::Subscribed`].
+    /// `resume` is legal only from [`PumpPhase::Subscribed`].
     #[error("cannot resume from {current}; resume requires subscribed")]
     ResumeRequiresSubscribed {
         /// The pose the request arrived in.
-        current: PumpPose,
+        current: PumpPhase,
     },
     /// A resume was abandoned and the WS session is gone.
     #[error("the previous resume was abandoned; subscribe again before resuming")]
@@ -166,7 +167,7 @@ pub enum PumpDecline {
     #[error("cannot apply {event} from {current}")]
     EventOutOfOrder {
         /// The pose the event arrived in.
-        current: PumpPose,
+        current: PumpPhase,
         /// The event that does not apply.
         event: PumpEvent,
     },
@@ -174,13 +175,13 @@ pub enum PumpDecline {
     #[error("cannot apply {event}: the session is {current}")]
     Stopped {
         /// The terminal pose.
-        current: PumpPose,
+        current: PumpPhase,
         /// The event that was refused.
         event: PumpEvent,
     },
 }
 
-/// Why the live loop ended — carried by [`PumpPose::Ended`] so a stopped
+/// Why the live loop ended — carried by [`PumpPhase::Ended`] so a stopped
 /// session can be told from one that died on its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PumpExitCause {
@@ -204,15 +205,15 @@ pub enum PumpExitCause {
 ///
 /// [`PumpDecline::SubscribeRequiresDetached`] when `subscribe` arrives at a
 /// session that is already past `Detached` and not recovering from
-/// [`PumpPose::Abandoned`]; [`PumpDecline::ResumeRequiresSubscribed`] when
+/// [`PumpPhase::Abandoned`]; [`PumpDecline::ResumeRequiresSubscribed`] when
 /// `resume` arrives without a resumable session;
 /// [`PumpDecline::ResumeAfterAbandonment`] when a resume is attempted after a
 /// cancelled one; [`PumpDecline::EventOutOfOrder`] for an event the pose does
 /// not expect; and [`PumpDecline::Stopped`] against a session that is tearing
 /// down or already stopped.
-pub fn transition(pose: PumpPose, event: PumpEvent) -> Result<PumpPose, PumpDecline> {
+pub fn transition(pose: PumpPhase, event: PumpEvent) -> Result<PumpPhase, PumpDecline> {
     use PumpEvent as E;
-    use PumpPose as P;
+    use PumpPhase as P;
 
     // Teardown is total. It declines nothing and never leaves a terminal pose.
     if matches!(event, E::Stop) {
@@ -281,9 +282,9 @@ pub fn transition(pose: PumpPose, event: PumpEvent) -> Result<PumpPose, PumpDecl
 mod tests {
     use super::*;
     use PumpEvent as E;
-    use PumpPose as P;
+    use PumpPhase as P;
 
-    const ALL_POSES: [PumpPose; 9] = [
+    const ALL_POSES: [PumpPhase; 9] = [
         P::Detached,
         P::Connecting,
         P::Subscribed,
@@ -414,7 +415,7 @@ mod tests {
 
     #[test]
     fn abandoned_has_exactly_two_exits() {
-        let exits: Vec<PumpPose> = ALL_EVENTS
+        let exits: Vec<PumpPhase> = ALL_EVENTS
             .iter()
             .filter_map(|e| transition(P::Abandoned, *e).ok())
             .collect();

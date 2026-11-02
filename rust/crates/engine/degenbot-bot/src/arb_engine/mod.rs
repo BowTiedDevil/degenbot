@@ -191,167 +191,15 @@ pub use inline_sim::{
 /// Path registration's rejection vocabulary — the typed refusal the drivers
 /// map onto their own error surfaces.
 pub use lifecycle::PathRegistrationError;
-pub use retune::EngineRetune;
 /// The engine-session end DETECTION facts: the typed cause vocabulary, the
 /// heartbeat stall watchdog, and the once-only delivery channel the drivers
 /// rank into their own end-state verdicts.
+pub use pump_session::{transition, PumpDecline, PumpEvent, PumpExitCause, PumpPhase};
+pub use retune::EngineRetune;
 pub use session_end::{
     Heartbeat, SessionEndCause, SessionEndDetection, SessionEndFacts, SessionEndPublisher,
 };
 // ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-// Engine phase state machine
-// ---------------------------------------------------------------------------
-/// The engine session's pump-protocol phase: the ordering machine for
-/// `subscribe()`, `load_snapshot()`, `backfill()`, and `resume()`.
-///
-/// This is a protocol-phase machine, NOT the operator-facing lifecycle. The
-/// one operator lifecycle (`Registered -> Enabled -> Running -> Stopped |
-/// Halted | Disabled`) is owned by [`crate::strategy_host::StrategyHost`];
-/// an engine's pump phase is a private protocol sub-state a consumer reads
-/// through [`driver::EngineDriver::current_phase`] and its sibling accessors,
-/// never a peer authority answering "may this strategy run?".
-///
-/// Transitions:
-/// ```text
-/// Created ──subscribe()──► Subscribed ──load_snapshot()──► SnapshotLoaded
-///                                                        ──backfill()──► Backfilled
-///                                                        ──resume()──► Resumed
-///
-/// Construction-time-load path: snapshot loaded at `Bot`
-/// construction BEFORE subscribe. The snapshot lives in the shared core
-/// `BotState` and never advances the engine phase, so `subscribe()` uses
-/// `PumpPhase::after_subscribe(current, core_has_snapshot)` to reflect
-/// reality — landing at `SnapshotLoaded` (not `Subscribed`) so `resume()`
-/// (which requires `>= SnapshotLoaded`) is reachable:
-/// Created ──load_snapshot_from_db()──[core has snapshot]──► subscribe()
-///        ──► SnapshotLoaded ──resume()──► Resumed
-/// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(u8)]
-pub enum PumpPhase {
-    /// Engine just created, no connections.
-    Created = 0,
-    /// WS `subscribe()` completed, first block observed.
-    Subscribed = 1,
-    /// Snapshot data loaded into Rust (at least one of V3/V4).
-    SnapshotLoaded = 2,
-    /// Backfill from snapshot block to first WS block completed.
-    Backfilled = 3,
-    /// Pump processing live blocks.
-    Resumed = 4,
-}
-impl PumpPhase {
-    /// Reconstruct a phase from its `u8` discriminant (the inverse of the
-    /// `#[repr(u8)]` representation). Used by `PumpState` (ADR-006 D4) to read
-    /// the phase atomically across PyBot/PyArbitrageEngine wrappers.
-    /// Unknown discriminants fall back to `Created` (the safest default — any
-    /// phase-gated method will re-validate via `require`/`require_before`).
-    #[must_use]
-    pub fn from_u8(v: u8) -> Self {
-        match v {
-            1 => Self::Subscribed,
-            2 => Self::SnapshotLoaded,
-            3 => Self::Backfilled,
-            4 => Self::Resumed,
-            _ => Self::Created,
-        }
-    }
-    /// Check that the current phase allows the given required phase.
-    /// Returns `Err` with a descriptive message if the transition is invalid.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(String)` describing the invalid transition when the
-    /// engine's phase is below `required`.
-    pub fn require(self, required: Self, method_name: &str) -> Result<(), String> {
-        if self >= required {
-            Ok(())
-        } else {
-            Err(format!(
-                "Cannot call {method_name}: engine is in phase {self:?}, but requires {required:?}"
-            ))
-        }
-    }
-    /// Require that the engine has not yet reached the given phase.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(String)` describing the invalid transition when the
-    /// engine has already reached `phase`.
-    pub fn require_before(self, phase: Self, method_name: &str) -> Result<(), String> {
-        if self < phase {
-            Ok(())
-        } else {
-            Err(format!(
-                "Cannot call {method_name}: engine is already in phase {self:?} (requires before {phase:?})"
-            ))
-        }
-    }
-    /// Phase gate for `subscribe()`. Accepts `Created` (the legacy path:
-    /// subscribe first, then load snapshot) OR `SnapshotLoaded` (the
-    /// construction-time-load path: snapshot loaded at `Bot` construction,
-    /// then subscribe). Rejects `Subscribed`/`Backfilled`/`Resumed`.
-    ///
-    /// The numeric ordering cannot express this with `require`/`require_before`
-    /// alone (SnapshotLoaded=2 > Subscribed=1), so this is an explicit match.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(String)` when the phase is past the subscribe-allowed
-    /// window.
-    pub fn allow_subscribe(self, method_name: &str) -> Result<(), String> {
-        match self {
-            Self::Created | Self::SnapshotLoaded => Ok(()),
-            other => Err(format!(
-                "Cannot call {method_name}: engine is in phase {other:?}, but subscribe requires Created or SnapshotLoaded"
-            )),
-        }
-    }
-    /// Compute the phase AFTER `subscribe()` completes (regression
-    /// fix for the construction-time-load path).
-    ///
-    /// `PumpState::subscribe` used to unconditionally `set_phase(Subscribed)`,
-    /// which is correct for the legacy path (`Created → subscribe →
-    /// Subscribed → load_*_snapshot_from_py → SnapshotLoaded → resume`) but
-    /// crashes the construction-time-load path: the snapshot
-    /// is loaded into the shared core `BotState` at `Bot` construction —
-    /// BEFORE subscribe — and never advances the engine phase. After
-    /// subscribe, the phase was `Subscribed` (1), and `resume()`'s
-    /// `require(SnapshotLoaded)` guard (needs `>= 2`) crashed the production
-    /// settlement-arbitrage bot:
-    ///
-    /// ```text
-    /// RuntimeError: Cannot call resume: engine is in phase Subscribed,
-    ///               but requires SnapshotLoaded
-    /// ```
-    ///
-    /// This helper reflects reality: if the engine phase is ALREADY at
-    /// `SnapshotLoaded` (the legacy pre-subscribe load via
-    /// `load_*_snapshot_from_py`) OR the core has a snapshot loaded
-    /// (`core_has_snapshot` — the construction-time-load path), the phase
-    /// after subscribe is `SnapshotLoaded`. Otherwise `Subscribed` (the
-    /// legacy path that loads the snapshot AFTER subscribe).
-    ///
-    /// `allow_subscribe` guarantees `current ∈ {Created, SnapshotLoaded}` at
-    /// call time (subscribe rejects `Subscribed`/`Backfilled`/`Resumed`), but
-    /// the `SnapshotLoaded` arm is preserved for completeness so a future
-    /// caller that reaches `after_subscribe` with a higher phase does not
-    /// regress.
-    #[must_use]
-    pub fn after_subscribe(current: Self, core_has_snapshot: bool) -> Self {
-        match current {
-            // Already at or past SnapshotLoaded — subscribe must NOT regress
-            // the phase (the legacy pre-subscribe load + any future path).
-            Self::SnapshotLoaded | Self::Backfilled | Self::Resumed => current,
-            // Created — advance based on whether the core already has a
-            // snapshot (construction-time-load path) or not (legacy path).
-            Self::Created if core_has_snapshot => Self::SnapshotLoaded,
-            Self::Created | Self::Subscribed => Self::Subscribed,
-        }
-    }
-}
 // ---------------------------------------------------------------------------
 // Snapshot types
 // ---------------------------------------------------------------------------
@@ -460,15 +308,6 @@ pub(crate) struct ArbitrageEngine {
     /// through the white-box probe accessor.
     #[cfg_attr(not(test), expect(dead_code))]
     fleet_boot_stamp: BootStamp,
-    /// Engine lifecycle phase (core-owned). Enforces ordering
-    /// `Created → Subscribed → SnapshotLoaded → Backfilled → Resumed`.
-    /// Previously the `AtomicU8` lived on the pyo3 `PumpState` wrapper;
-    /// moving it to the core engine lets a standalone Rust consumer observe +
-    /// guard the lifecycle with no Python in the build. Read/written via
-    /// [`Self::current_phase`] / [`Self::set_phase`]; the engine sits behind
-    /// `Arc<Mutex<..>>` so the atomic read is lock-free across the pyo3
-    /// wrappers and the pump task.
-    phase: std::sync::atomic::AtomicU8,
     /// Does the core hold a configured `max_age` for the V3/V4
     /// buffered-event expiry? With the cockpit default (`max_age=None`)
     /// `expire` is a provable no-op, so the stage cycle must not take a core
@@ -599,7 +438,6 @@ impl ArbitrageEngine {
             },
             delivery: DeliveryPolicy::default(),
             fleet_boot_stamp,
-            phase: std::sync::atomic::AtomicU8::new(PumpPhase::Created as u8),
             event_buffer_expiry_enabled: false,
         };
         // apply the config-derived retune ONCE at construction
@@ -660,46 +498,6 @@ impl ArbitrageEngine {
     pub fn path_pools(&self) -> &HashMap<u64, std::sync::Arc<MixedPath>> {
         self.registry.path_pools()
     }
-    /// Read the current engine lifecycle phase (core-owned source of truth).
-    /// Atomic + lock-free (the engine is behind `Arc<Mutex<..>>` across the
-    /// pyo3 wrappers and the pump). Reconstructs from the `u8` discriminant;
-    /// an unknown discriminant falls back to `Created` (the safest default —
-    /// any phase-gated method re-validates via `require`/`require_before`).
-    #[must_use]
-    pub fn current_phase(&self) -> PumpPhase {
-        PumpPhase::from_u8(self.phase.load(std::sync::atomic::Ordering::Relaxed))
-    }
-    /// Advance to `phase` with NO ordering check — the caller validates against
-    /// the gated helpers [`Self::require_phase`] / [`Self::require_phase_before`]
-    /// (or `PumpPhase::allow_subscribe` / `after_subscribe`). Core-owned
-    /// source of truth.
-    pub fn set_phase(&self, phase: PumpPhase) {
-        self.phase
-            .store(phase as u8, std::sync::atomic::Ordering::Relaxed);
-    }
-    /// Gate a lifecycle-ordered method: succeed only when the current phase is
-    /// at or past `required`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(String)` describing the invalid transition when the phase
-    /// is below `required`.
-    #[cfg_attr(not(test), expect(dead_code))]
-    pub fn require_phase(&self, required: PumpPhase, method_name: &str) -> Result<(), String> {
-        self.current_phase().require(required, method_name)
-    }
-    /// Gate a lifecycle-ordered method: succeed only when the current phase is
-    /// strictly BEFORE `phase`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(String)` when the engine has already reached `phase`.
-    #[cfg_attr(not(test), expect(dead_code))]
-    pub fn require_phase_before(&self, phase: PumpPhase, method_name: &str) -> Result<(), String> {
-        self.current_phase().require_before(phase, method_name)
-    }
-    // Test-only registration helpers (ADR-006 D3).
-    //
     // Production code never registers pools via the engine — pool construction
     // is a `BotState` concern, and the engine discovers pools at `register_path`
     // time by resolving `pool_id`s against the associated `BotState`. These

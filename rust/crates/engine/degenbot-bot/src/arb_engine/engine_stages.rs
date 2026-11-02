@@ -38,6 +38,24 @@ use super::walk_telemetry;
 use super::ArbitrageEngine;
 use super::EngineRetune;
 use super::PumpPhase;
+
+/// The pump session's phase projection, with exactly one writer.
+///
+/// A `Copy` value behind a lock: readers never hold a handle into the session,
+/// and there is no setter — [`EngineStages::publish_phase`] is crate-private
+/// and is the only thing that writes it.
+#[derive(Default)]
+struct PhaseCell(Mutex<PumpPhase>);
+
+impl PhaseCell {
+    fn read(&self) -> PumpPhase {
+        *self.0.lock()
+    }
+
+    fn write(&self, phase: PumpPhase) {
+        *self.0.lock() = phase;
+    }
+}
 use crate::bot_core::stage_handlers::StageHandlers;
 use crate::bot_core::stage_handlers::{
     AffectedPaths, Finalize, FinalizeOutcome, Gate, GateOutcome, Publish, PublishOutcome,
@@ -102,6 +120,8 @@ pub struct EngineStages {
     /// Header ticks never touch the engine (a chain fact, not engine
     /// business — B2/ADR-027 lineage; the pipe moved here from the
     /// dissolved coordinator).
+    /// The pump session's phase, as observed by stages-only consumers.
+    phase: PhaseCell,
     block_clock: Mutex<BlockClockPipe>,
 }
 impl EngineStages {
@@ -171,6 +191,7 @@ impl EngineStages {
         Self {
             engine,
             delta,
+            phase: PhaseCell::default(),
             block_clock: Mutex::new(BlockClockPipe::default()),
         }
     }
@@ -228,13 +249,14 @@ impl EngineStages {
     /// [`crate::strategy_host::StrategyHost`] FSM, not here.
     #[must_use]
     pub fn current_phase(&self) -> PumpPhase {
-        self.engine.lock().current_phase()
+        self.phase.read()
     }
 
-    /// Advance to `phase` with NO ordering check (callers validate via the
-    /// `PumpPhase` gates).
-    pub fn set_phase(&self, phase: PumpPhase) {
-        self.engine.lock().set_phase(phase);
+    /// Publish the session's phase after a transition. The ONE writer: the
+    /// session machine owns the state, and this is its read-only projection
+    /// for consumers that hold the stages surface but not the driver.
+    pub(crate) fn publish_phase(&self, phase: PumpPhase) {
+        self.phase.write(phase);
     }
 
     /// The packed streaming-delivery construction stance (smoke-boot probe).
