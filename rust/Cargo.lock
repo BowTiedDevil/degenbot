@@ -3532,9 +3532,9 @@ dependencies = [
 
 [[package]]
 name = "hotpath"
-version = "0.30.0"
+version = "0.30.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "618bdbbe0aa401002251afd661e4b46cae48b22a132c656373c1738d250c1946"
+checksum = "b39e941010d86063ff233bf8325269bf68097fb24ba67000fbddc0a410e8056e"
 dependencies = [
  "arc-swap",
  "cfg-if",
@@ -3560,15 +3560,15 @@ dependencies = [
 
 [[package]]
 name = "hotpath-drain"
-version = "0.30.0"
+version = "0.30.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1732059b5a68195c48a0b279f6efda01472e6a7ecaa4d9f12ec2ea72be77e9f6"
+checksum = "738324f75aec847dea984f6806402f4f1bdfab437b4700fc8c3ebcad2dff6424"
 
 [[package]]
 name = "hotpath-macros"
-version = "0.30.0"
+version = "0.30.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e465e7b1e71edfb58f3bf40dbf1441dbef2b2907f302835574a634f85402176"
+checksum = "5d92fdfec803932e5764ea93c201cf7c6c2d8cff1871da44f64f5094c9c3ef8a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5696,9 +5696,9 @@ checksum = "48fd7bd8a6377e15ad9d42a8ec25371b94ddc67abe7c8b9127bec79bebaaae18"
 
 [[package]]
 name = "rusqlite"
-version = "0.41.0"
+version = "0.41.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c026b4444579e8d754556c6c75d040d69c4a44283cdb648ab8a8d5965c2cfa8"
+checksum = "da9bba6f3506135e120a6586df05be18b48d18896600646a4bec8f993d91a594"
 dependencies = [
  "bitflags 2.13.2",
  "fallible-iterator",
