@@ -1934,7 +1934,7 @@ pub struct V4PoolBuildIdentity {
     pub currency0: Address,
     /// `pool_key.currency1`.
     pub currency1: Address,
-    /// `pool_key.fee` (`0x100000` = dynamic-fee flag, rejected at admission).
+    /// `pool_key.fee` (`0x0080_0000` = dynamic-fee flag, rejected at admission).
     pub fee: u32,
     /// `pool_key.tick_spacing`.
     pub tick_spacing: i32,

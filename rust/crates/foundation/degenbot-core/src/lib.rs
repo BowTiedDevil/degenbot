@@ -35,13 +35,9 @@
 //!   identity, the refusal vocabulary a read answers with, and the observer
 //!   trait a lending integration implements. It sits here because the engine and
 //!   the lending integrations already share this layer and no other one.
-//! - [`code_warmup`] — the registration → JIT warmup port: the queue a fresh
-//!   pool's runtime bytecode rides from the registration path (which cannot
-//!   name the engine) to the engine's JIT drain.
 
 pub mod address_utils;
 pub mod block_clock_pipe;
-pub mod code_warmup;
 pub mod cpu_budget;
 pub mod eip_1559;
 pub mod errors;

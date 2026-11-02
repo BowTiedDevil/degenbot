@@ -24,30 +24,6 @@
 //! JIT-parity gate's configuration, because it makes the first frame wait on
 //! LLVM, which no per-block latency budget can afford.
 //!
-//! # Registration warmup
-//!
-//! A pool's runtime bytecode is immutable, so the worker pool is warmed at
-//! registration rather than at first frame: the registration path (in
-//! `degenbot-bot`, which the engine depends on and which therefore cannot name
-//! this holder) queues the pool's bytecode in
-//! `degenbot_core::code_warmup`, and [`warm_registrations`] — called by
-//! [`shared_runner`], i.e. once per per-block handle build — hands every
-//! eligible queued program to `JitBackend::compile_jit`. A pool registered
-//! between two blocks is therefore compiled, or in flight, before the next
-//! block's first frame runs; a pool registered while a boot is still assembling
-//! its set is dispatched with the first block that builds a handle.
-//!
-//! (The construction route is the registration path that HAS the bytecode; a
-//! registration from a persisted row carries none, so those pools warm on first
-//! touch exactly as before.)
-//!
-//! Eligibility is `armed::runtime_tuning`'s `should_compile`: the bytecode
-//! cap (`jit_max_bytecode_len`, 24 KiB — above the injected executor runtime,
-//! the hottest contract) keeps the tracked pool set compilable while a larger
-//! one-off interprets instead of paying a multi-second compile. The drain
-//! applies the cap itself rather than relying on the backend's admission path,
-//! so an ineligible program never enters the pool's channel.
-//!
 //! # Tuning
 //!
 //! [`production_tuning`] sizes the pool from the fleet's declared fan-out
@@ -96,15 +72,13 @@ use ::evm2::BaseEvmTypes;
 /// The process-shared interpreter runner for production sequence EVMs, or
 /// `None` when the JIT is unavailable or unconfigured. Initialized once from
 /// the resolved config: `simulation.sim_jit` arms it (worker-pool compile
-/// mode). Every call drains the queued registration warmups (see
-/// [`warm_registrations`]) and reports the backend's counters into the metrics
-/// census as a side effect.
+/// mode). Every call reports the backend's counters into the metrics census as
+/// a side effect.
 #[must_use]
 pub fn shared_runner() -> Option<Arc<dyn InterpreterRunner<BaseEvmTypes>>> {
     #[cfg(feature = "evm2-jit")]
     {
         let holder = armed::holder()?;
-        armed::drain_registration_warmups(holder);
         armed::sample_into_census(holder);
         Some(Arc::clone(&holder.runner))
     }
@@ -112,23 +86,6 @@ pub fn shared_runner() -> Option<Arc<dyn InterpreterRunner<BaseEvmTypes>>> {
     {
         None
     }
-}
-
-/// Hands every queued registration warmup to the armed backend's worker pool,
-/// returning how many the tuning admitted. `0` when the JIT is not armed in
-/// this process (feature off or `simulation.sim_jit` off) — the same key
-/// [`shared_runner`] answers `None` on.
-///
-/// The registration path pushes a fresh pool's runtime bytecode into
-/// `degenbot_core::code_warmup` (the engine is unreachable from registration
-/// code, and the port is the inversion); this is the drain, and
-/// [`shared_runner`] already calls it, so a host that holds a runner gained
-/// through that path needs nothing more. A drain that admits nothing is free:
-/// the queue is empty on every block where no pool registered.
-#[cfg(feature = "evm2-jit")]
-#[must_use]
-pub fn warm_registrations() -> usize {
-    armed::holder().map_or(0, |holder| armed::drain_registration_warmups(holder))
 }
 
 /// The armed backend's cumulative compile/lookup telemetry, or `None` when the
@@ -170,8 +127,8 @@ mod armed {
     use ::evm2::evm::InterpreterRunner;
     use ::evm2::BaseEvmTypes;
     use ::evm2_jit::runtime::{
-        ArtifactStore, CompilationEvent, CompilationKind, JitBackend, LookupRequest,
-        RuntimeCacheKey, RuntimeConfig, RuntimeStatsSnapshot, RuntimeTuning,
+        ArtifactStore, CompilationEvent, CompilationKind, JitBackend, RuntimeConfig,
+        RuntimeStatsSnapshot, RuntimeTuning,
     };
     use degenbot_bot::instruments::{record, CensusEvent};
 
@@ -317,51 +274,6 @@ mod armed {
         }
     }
 
-    /// Hands the queued registration warmups to `holder`'s backend, returning
-    /// how many the tuning admitted.
-    ///
-    /// Each entry becomes one `compile_jit` request keyed by the production
-    /// cache key — the queued keccak-256 hash and [`EVM2_PRODUCTION_SPEC`] —
-    /// which the worker pool compiles asynchronously; the pool's own admission
-    /// path then dedups a program that is resident or already in flight, so a
-    /// re-submission (a re-registration, or a shared pool implementation) costs
-    /// a channel send, never a second compile.
-    ///
-    /// `should_compile` is applied here, before the channel: the bytecode cap
-    /// is the size discipline that keeps a one-off contract from queueing a
-    /// multi-second compile behind the tracked set.
-    ///
-    /// [`EVM2_PRODUCTION_SPEC`]: crate::sim::evm2::handle::EVM2_PRODUCTION_SPEC
-    pub(super) fn drain_registration_warmups(holder: &Holder) -> usize {
-        let pending = degenbot_core::code_warmup::drain();
-        if pending.is_empty() {
-            return 0;
-        }
-        let tuning = runtime_tuning(sim_fanout_width());
-        let mut dispatched = 0_usize;
-        for entry in pending {
-            if !tuning.should_compile(&entry.code) {
-                continue;
-            }
-            holder.backend.compile_jit(LookupRequest {
-                key: RuntimeCacheKey {
-                    code_hash: entry.code_hash,
-                    spec_id: crate::sim::evm2::handle::EVM2_PRODUCTION_SPEC,
-                },
-                code: entry.code,
-            });
-            dispatched += 1;
-        }
-        if dispatched > 0 {
-            degenbot_core::op_debug!(
-                domain = sim,
-                programs = dispatched,
-                "registration warmups dispatched to the JIT pool",
-            );
-        }
-        dispatched
-    }
-
     /// Opens the durable AOT artifact store the prep lane
     /// (`aot-prepare-executor`) fills.
     ///
@@ -442,7 +354,6 @@ mod tests {
     use std::ffi::OsStr;
     use std::path::Component;
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
 
     use ::evm2_jit::eyre;
     use ::evm2_jit::runtime::{
@@ -607,86 +518,6 @@ mod tests {
             super::armed::backend_config(None).tuning.jit_hot_threshold,
             configured,
             "the armed backend is tuned from simulation.pipeline_concurrency"
-        );
-    }
-
-    /// Registration warmup, end to end: a freshly registered pool's bytecode
-    /// rides `degenbot_core::code_warmup` into the worker pool, and the frame
-    /// the pool's first sim executes takes the compiled path — without ever
-    /// having missed.
-    ///
-    /// The contrast is the size discipline: the SAME drain drops an over-cap
-    /// program, so the test cannot pass on a drain that submits blindly.
-    #[test]
-    fn registration_warmups_reach_the_worker_pool() {
-        let holder = super::armed::holder_with_store(None).expect("the store-less backend starts");
-
-        // The queue is process-wide; a sibling test may have left entries.
-        let _ = degenbot_core::code_warmup::drain();
-
-        // A one-opcode program (compilable, and fast enough that the bounded
-        // wait below costs one translation) and a program one byte past the
-        // tuning's cap.
-        let warm = Bytes::from_static(&[0x00]);
-        let tuning = super::armed::runtime_tuning(super::armed::sim_fanout_width());
-        let oversized = vec![0x5b_u8; tuning.jit_max_bytecode_len + 1];
-        assert!(
-            degenbot_core::code_warmup::submit(&warm),
-            "a pool's runtime bytecode queues"
-        );
-        assert!(
-            degenbot_core::code_warmup::submit(&oversized),
-            "the port itself carries any non-empty program; eligibility is the drain's"
-        );
-
-        assert_eq!(
-            super::armed::drain_registration_warmups(&holder),
-            1,
-            "the drain dispatches only what `should_compile` admits"
-        );
-        assert_eq!(
-            degenbot_core::code_warmup::pending_len(),
-            0,
-            "the drain leaves the queue empty, oversized entry included"
-        );
-
-        let warm_key = RuntimeCacheKey {
-            code_hash: keccak256(&warm),
-            spec_id: EVM2_PRODUCTION_SPEC,
-        };
-        let deadline = Instant::now() + Duration::from_secs(120);
-        while holder
-            .backend
-            .get_compiled(warm_key.code_hash, warm_key.spec_id)
-            .is_none()
-        {
-            assert!(
-                Instant::now() < deadline,
-                "the dispatched registration warmup compiles within the bounded wait"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        assert!(
-            holder
-                .backend
-                .get_compiled(keccak256(&oversized), EVM2_PRODUCTION_SPEC)
-                .is_none(),
-            "an over-cap program is never compiled, however long the wait"
-        );
-
-        // The compiled path a frame takes: the interpreter runner's lookup
-        // answers with the program the warmup produced.
-        let decision = holder.backend.lookup(LookupRequest {
-            key: warm_key,
-            code: warm,
-        });
-        assert!(
-            matches!(decision, LookupDecision::Compiled(_)),
-            "the warmed pool's first frame finds a compiled program; got {decision:?}"
-        );
-        assert!(
-            holder.backend.stats().compilations_succeeded >= 1,
-            "the backend reports the compile the drain dispatched"
         );
     }
 

@@ -17,11 +17,6 @@
 //!    already-registered pool without any I/O, a fresh build registers once,
 //!    and a concurrent `AlreadyRegistered` folds back to the winner's pool
 //!    id (a race artifact, never a pool fact).
-//! 4. **Registration warmup** — a fresh registration hands the pool's runtime
-//!    bytecode to the process-shared JIT pool (`degenbot_core::code_warmup`),
-//!    so the pool's first sim finds a compiled program or one in flight
-//!    instead of paying the cold compile inside a block's budget. The GET
-//!    half is deliberately excluded: it must stay I/O-free.
 //!
 //! Failure classification runs on the registration ledger's
 //! [`BuildFailure`] taxonomy. One arm is deliberately LOUD (ADR-055 D4, the
@@ -181,29 +176,6 @@ impl std::fmt::Debug for RequestedPool<'_> {
     }
 }
 
-impl RequestedPool<'_> {
-    /// The address whose RUNTIME bytecode the registered pool's frames execute
-    /// — the registration warmup's key.
-    ///
-    /// `None` for the V4 family, and deliberately: a V4 pool is an entry in the
-    /// shared `PoolManager` singleton, so its frames execute that contract's
-    /// code, which is identical for every V4 pool and far above the JIT
-    /// tuning's bytecode cap. Warming it once per pool would buy nothing and
-    /// cost one `eth_getCode` per registration.
-    #[must_use]
-    pub fn runtime_code_address(&self) -> Option<Address> {
-        match self {
-            Self::V2 { address }
-            | Self::V3 { address }
-            | Self::AerodromeV2 { address }
-            | Self::Curve { address, .. }
-            | Self::BalancerWeighted { address, .. }
-            | Self::BalancerStable { address, .. } => Some(*address),
-            Self::V4 { .. } => None,
-        }
-    }
-}
-
 /// The V3-only construction inputs — read by the V3 arm alone, so every other
 /// [`RequestedPool`] variant pairs with [`Default`] (the Python driver threads
 /// a lazy tick-word fetcher and a fork slot-layout hint; the pure Rust consumer
@@ -347,56 +319,7 @@ pub(crate) async fn construct_pool(
         }
     };
 
-    // A FRESH build is the registration lifecycle event the warmup hangs on (a
-    // GET answer re-registers nothing, and must stay I/O-free).
-    if constructed.built.is_some() {
-        if let Some(address) = request.runtime_code_address() {
-            warm_registration_code(io, address, block).await;
-        }
-    }
-
     Ok(constructed)
-}
-
-/// Hands a freshly registered pool's runtime bytecode to the process-shared JIT
-/// pool, so the pool's first sim finds a compiled program (or one in flight)
-/// rather than paying the cold compile inside a block's latency budget.
-///
-/// `simulation.sim_jit` is the gate: with the key off no JIT backend exists in
-/// this process, so the `eth_getCode` this costs would buy nothing. The fetch
-/// is best-effort — the pool IS registered, so a provider failure here costs a
-/// warmup (the first frame compiles on demand, exactly as without this path),
-/// never the registration.
-///
-/// The bytecode is immutable per pool, so one fetch per fresh registration is
-/// the whole cost; the engine applies its tuning's `should_compile` to the
-/// queued program (an over-cap one interprets rather than compiling).
-async fn warm_registration_code(io: &ConstructionIo, address: Address, block: Option<u64>) {
-    if !degenbot_config::holder::config().simulation.sim_jit {
-        return;
-    }
-    queue_pool_bytecode(io, address, block).await;
-}
-
-/// The ungated half of [`warm_registration_code`]: fetch the pool's runtime
-/// bytecode and queue it for the engine's drain.
-///
-/// Split from the `simulation.sim_jit` gate so the fetch-and-queue behaviour is
-/// testable without re-governing the process-wide config.
-pub(super) async fn queue_pool_bytecode(io: &ConstructionIo, address: Address, block: Option<u64>) {
-    match io.get_code(address, block).await {
-        Ok(code) => {
-            let _ = degenbot_core::code_warmup::submit(&code);
-        }
-        Err(error) => {
-            op_warn!(
-                domain = sim,
-                %address,
-                %error,
-                "the registered pool's runtime bytecode did not fetch; the JIT warms on first touch",
-            );
-        }
-    }
 }
 
 /// The address-keyed GET half of get-or-register, family-guarded: an address

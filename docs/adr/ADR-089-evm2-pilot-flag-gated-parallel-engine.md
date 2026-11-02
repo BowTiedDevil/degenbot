@@ -52,6 +52,22 @@ requirement of every Linux builder, release CI included. The rationale (the
 JIT's compiled-artifact loader is ELF-only; no x86_64 macOS LLVM 23 exists) and
 the release consequences: `docs/llvm-release-ci.md`.
 
+**The registration-warmup retirement (2026-11-02).** The inverted
+`code_warmup` port (a fresh registration queued its pool's runtime bytecode and
+the per-block handle build handed it to the worker pool) is deleted, and the
+worker pool is now warmed only by the lazy path: a lookup miss interprets the
+frame, the fan-out width's worth of hotness promotes the program, and the next
+frame executes compiled code. The measurement that decided it: a dry-run boot's
+crawl queued 13 distinct registration programs and compiled all 13 (0.07–1.09 s
+each), and none of them was ever looked up — the four programs that served
+every steady-state lookup were pools whose bytecode was never queued (they
+reach the engine from persisted rows, which carry no code), so they compiled on
+first miss and hit from then on. Paying an `eth_getCode` plus a cold LLVM
+compile per fresh registration bought nothing a crawl's own registrations are
+ever simulated for; the lazy path already covers the contracts a block actually
+executes. The fail-soft contract is unchanged: with `simulation.sim_jit` off
+(or a build without the JIT) every frame interprets, and no verdict moves.
+
 ## Context
 
 revm is the sole simulation executor (ADR-019): the per-block `BlockSimHandle`
