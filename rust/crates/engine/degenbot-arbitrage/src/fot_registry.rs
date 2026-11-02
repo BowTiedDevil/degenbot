@@ -24,7 +24,7 @@
 //! `lookup::split('(').next()`) returns the bare base name: `"IIA"` /
 //! `"CurrencyNotSettled"`. The membership check is therefore a direct `==`
 //! rather than a prefix/contains test. The spike confirms no other labels
-//! (e.g. `PoolNotInitialized`, `LockFailure`) co-occur with FoT-class
+//! (e.g. `PoolNotInitialized`, `PriceLimitOutOfBounds`) co-occur with FoT-class
 //! failures on mainnet before this leaf is promoted to production.
 //!
 //! # Non-goal — below-threshold / no-profit results

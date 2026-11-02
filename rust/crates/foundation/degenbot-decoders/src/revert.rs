@@ -31,37 +31,43 @@ pub const PANIC_SELECTOR: &str = "4e487b71";
 /// Selector (8 lowercase hex chars) → full custom-error signature for the V4
 /// `PoolManager` revert selectors. The label drops the params (everything
 /// before the first `(`), so `InsufficientProfit(1,2)` and
-/// `InsufficientProfit(3,4)` tally together. Ported from the Python
-/// `_V4_REVERT_SELECTORS`, which has since been retired with the rest of the
-/// porting oracle.
+/// `InsufficientProfit(3,4)` tally together. Each signature is the canonical
+/// one declared by `v4-core/src/libraries/Pool.sol`, so a row's selector is
+/// exactly `keccak256(signature)[..4]` — the invariant
+/// `tests::every_selector_hashes_from_its_stated_signature` pins. Ported from
+/// the Python `_V4_REVERT_SELECTORS`, which has since been retired with the
+/// rest of the porting oracle.
 pub const V4_REVERT_SELECTORS: &[(&str, &str)] = &[
     ("5212cba1", "CurrencyNotSettled()"),
     ("486aa307", "PoolNotInitialized()"),
     ("1e048e1d", "InvalidHookResponse()"),
-    ("a3603d66", "SwapQuantityCannotBeZero()"),
-    ("38606b01", "PriceLimitAlreadyExceeded()"),
-    ("30d6072a", "PriceLimitOutOfBounds()"),
-    ("a40afa38", "LockFailure()"),
+    ("7c9c6e8f", "PriceLimitAlreadyExceeded(uint160,uint160)"),
+    ("9e4d7cc7", "PriceLimitOutOfBounds(uint160)"),
     ("5090d6c6", "AlreadyUnlocked()"),
     ("54e3ca0d", "ManagerLocked()"),
 ];
 
 /// Selector → full custom-error signature for the `cmd_executor` revert
-/// selectors (legacy bare-assert labels + Vyper 0.5.0a3+ custom errors). Ported
-/// from the Python `_EXECUTOR_REVERT_SELECTORS`, which has since been retired
-/// with the rest of the porting oracle.
+/// selectors (legacy bare-assert labels + Vyper 0.5.0a3+ custom errors). The
+/// custom-error rows state the canonical ABI signature from
+/// `executor/contracts/cmd_executor.vy`, so their selectors hash from it; the
+/// two legacy rows carry a bare reason string that predates the
+/// `Error(string)` envelope and has no ABI preimage (cited in
+/// `tests::LEGACY_NON_ABI_SELECTORS`). Ported from the Python
+/// `_EXECUTOR_REVERT_SELECTORS`, which has since been retired with the rest of
+/// the porting oracle.
 pub const EXECUTOR_REVERT_SELECTORS: &[(&str, &str)] = &[
-    // Legacy (bare assert)
+    // Legacy (bare assert — pre-Vyper-0.5.0a3 reason string, no ABI preimage)
     ("4b9dfc58", "!OWNER"),
     ("49494100", "IIA(insufficient-input-amount)"),
     // Custom errors (Vyper 0.5.0a3+)
-    ("8e4a23d6", "Unauthorized(caller)"),
-    ("b028a63a", "InvalidCallback(caller)"),
-    ("cf479181", "InsufficientBalance(amount,available)"),
-    ("4e88422a", "InsufficientProfit(actual,expected)"),
-    ("83276224", "InvalidCommand(opcode)"),
-    ("60ef0bb0", "BipsTooHigh(bips)"),
-    ("a61be9f0", "InvalidMsgValue(value)"),
+    ("8e4a23d6", "Unauthorized(address)"),
+    ("b028a63a", "InvalidCallback(address)"),
+    ("cf479181", "InsufficientBalance(uint256,uint256)"),
+    ("4e88422a", "InsufficientProfit(uint256,uint256)"),
+    ("83276224", "InvalidCommand(uint256)"),
+    ("60ef0bb0", "BipsTooHigh(uint256)"),
+    ("a61be9f0", "InvalidMsgValue(uint256)"),
     ("e5b6bf32", "NotPlainEthTransfer()"),
 ];
 
@@ -292,7 +298,11 @@ mod tests {
             // V4 selectors (params dropped)
             ("5212cba1".to_string(), "CurrencyNotSettled"),
             (format!("486aa307{}", z(32)), "PoolNotInitialized"),
-            ("a40afa38deadbeef".to_string(), "LockFailure"),
+            (
+                format!("7c9c6e8f{}{}", z(31) + "ff", z(32)),
+                "PriceLimitAlreadyExceeded",
+            ),
+            (format!("9e4d7cc7{}", z(31) + "01"), "PriceLimitOutOfBounds"),
             ("54e3ca0d".to_string(), "ManagerLocked"),
             // cmd_executor selectors
             (format!("49494100{}", z(32)), "IIA"),
@@ -341,6 +351,79 @@ mod tests {
                 classify_revert(&bytes),
                 "label() must agree with classify_revert for {hex_str}"
             );
+        }
+    }
+
+    // ── selector-table integrity ────────────────────────────────────────
+    //
+    // A transposed digit in a selector column silently reclassifies every
+    // revert of that error as `unknown:0x...`, so each row is checked against
+    // `keccak256` of the signature it states.
+
+    /// Rows whose reason string predates Vyper's `Error(string)` envelope: no
+    /// ABI preimage exists, so the selector was recorded from observed revert
+    /// data. Every other row must hash from its stated signature; citing a row
+    /// here is the only exemption, and a cited selector must still be a row.
+    const LEGACY_NON_ABI_SELECTORS: &[&str] = &["4b9dfc58", "49494100"];
+
+    const TABLES: &[(&str, &[(&str, &str)])] = &[
+        ("V4", V4_REVERT_SELECTORS),
+        ("executor", EXECUTOR_REVERT_SELECTORS),
+    ];
+
+    /// `keccak256(preimage)[..4]` in the tables' 8-lowercase-hex form.
+    fn selector_of(preimage: &str) -> String {
+        hex::encode(&alloy::primitives::keccak256(preimage.as_bytes())[..4])
+    }
+
+    #[test]
+    fn every_selector_hashes_from_its_stated_signature() {
+        for (table_name, table) in TABLES {
+            for (selector, signature) in *table {
+                if LEGACY_NON_ABI_SELECTORS.contains(selector) {
+                    continue;
+                }
+                assert_eq!(
+                    selector_of(signature),
+                    *selector,
+                    "{table_name} row {signature:?}: selector {selector} is not \
+                     keccak256(signature)[..4] — it can never match a real revert"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_selector_citations_name_table_rows() {
+        for cited in LEGACY_NON_ABI_SELECTORS {
+            assert!(
+                EXECUTOR_REVERT_SELECTORS
+                    .iter()
+                    .any(|(selector, _)| selector == cited),
+                "cited non-ABI selector {cited} is not an executor table row"
+            );
+        }
+    }
+
+    #[test]
+    fn selector_tables_are_well_formed() {
+        let mut seen: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+        for (table_name, table) in TABLES {
+            for (selector, signature) in *table {
+                assert!(
+                    selector.len() == 8
+                        && selector
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                    "{table_name} row {signature:?}: {selector:?} is not 8 lowercase hex chars"
+                );
+                let displaced = seen.insert(*selector, *signature);
+                assert!(
+                    displaced.is_none(),
+                    "{table_name} row {signature:?}: selector {selector} already maps to \
+                     {displaced:?} — the later row is unreachable"
+                );
+            }
         }
     }
 
