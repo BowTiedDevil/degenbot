@@ -7,8 +7,18 @@
 //! summary counters the crawl is reported by. `unit` is the per-candidate
 //! pipeline itself (memo → build → eligibility → verify → register, one
 //! receipt), and `flights` the single-flight build table that keeps concurrent
-//! seats from paying for the same construction twice.
+//! seats from paying for the same construction twice. `discovery` is where
+//! candidates come from (the DB graph reads, the traversal plan, the lazy DFS
+//! sweep) and `controller` the crawl's own machine: the windowed submission
+//! loop, the FIFO fold, the two latches, and the operator surface.
+//!
+//! The data flow is one line: `discovery` yields a `DiscoveredPath`, the
+//! controller wraps it in a `CrawlUnit`, a fleet seat runs `unit::run_crawl_unit`
+//! and answers a `CrawlReceipt`, and the controller folds that receipt into the
+//! `profile::CrawlSummary` it reports.
 
+pub mod controller;
+pub mod discovery;
 pub mod flights;
 pub mod policy;
 pub mod profile;
