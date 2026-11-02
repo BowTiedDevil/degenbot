@@ -320,13 +320,13 @@ mod tests {
         let cache = crate::sim::StorageMemoCache::new();
         let key = Word::from(8u64);
 
-        let mut first =
-            BotStateDb::new(&anchor, CountingDb::new(42)).with_storage_memo(cache.for_anchor(100));
+        let mut first = BotStateDb::new(&anchor, CountingDb::new(42))
+            .with_storage_memo(cache.for_anchor(crate::sim::ReadAnchor::at(100)));
         assert_eq!(first.get_storage(&POOL, &key).unwrap(), Word::from(42u64));
         assert_eq!(first.fallback.storage_calls, 1, "the cold fan-out forwards");
 
-        let mut second =
-            BotStateDb::new(&anchor, CountingDb::new(42)).with_storage_memo(cache.for_anchor(100));
+        let mut second = BotStateDb::new(&anchor, CountingDb::new(42))
+            .with_storage_memo(cache.for_anchor(crate::sim::ReadAnchor::at(100)));
         assert_eq!(
             second.get_storage(&POOL, &key).unwrap(),
             Word::from(42u64),
@@ -347,14 +347,14 @@ mod tests {
         let cache = crate::sim::StorageMemoCache::new();
         let key = Word::from(8u64);
 
-        let mut before =
-            BotStateDb::new(&anchor, CountingDb::new(42)).with_storage_memo(cache.for_anchor(100));
+        let mut before = BotStateDb::new(&anchor, CountingDb::new(42))
+            .with_storage_memo(cache.for_anchor(crate::sim::ReadAnchor::at(100)));
         assert_eq!(before.get_storage(&POOL, &key).unwrap(), Word::from(42u64));
 
         // The chain answers differently once the anchor moves (a reorg
         // replacement, or simply the next block).
-        let mut after =
-            BotStateDb::new(&anchor, CountingDb::new(7)).with_storage_memo(cache.for_anchor(101));
+        let mut after = BotStateDb::new(&anchor, CountingDb::new(7))
+            .with_storage_memo(cache.for_anchor(crate::sim::ReadAnchor::at(101)));
         assert_eq!(
             after.get_storage(&POOL, &key).unwrap(),
             Word::from(7u64),

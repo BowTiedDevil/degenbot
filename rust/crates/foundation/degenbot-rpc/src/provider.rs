@@ -2043,6 +2043,44 @@ impl AlloyProvider {
         .await
     }
 
+    /// The hash of the canonical block at `block_number` — that block's
+    /// IDENTITY, in ONE `eth_getBlockByNumber` round trip.
+    ///
+    /// `fullTransactions = false` plus a decode target carrying only `hash`, so
+    /// a caller that needs the block's identity (the sim fan-out's read anchor,
+    /// whose hash fences the per-anchor storage memo against a same-height
+    /// reorg) pays one identity read rather than the block's body.
+    /// `Ok(None)` means the node has no block at that number.
+    ///
+    /// Retry/timeout policy is the provider's own
+    /// ([`Self::retry_with_backoff`]): a retryable failure re-issues the read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError::RpcError`] if the RPC call fails.
+    pub async fn get_block_hash_at(&self, block_number: u64) -> ProviderResult<Option<B256>> {
+        /// The one field this read wants out of a block body.
+        #[derive(Debug, serde::Deserialize)]
+        struct HeaderHash {
+            hash: Option<B256>,
+        }
+
+        self.retry_with_backoff(|| async {
+            let header: Option<HeaderHash> = self
+                .inner
+                .client()
+                .request(
+                    "eth_getBlockByNumber",
+                    (BlockNumberOrTag::Number(block_number), false),
+                )
+                .await
+                .map_err(|e| e.into_provider_error("Failed to get block hash"))?;
+
+            Ok(header.and_then(|header| header.hash))
+        })
+        .await
+    }
+
     /// Retry an async operation with exponential backoff.
     ///
     /// Uses exponential backoff with jitter to avoid thundering herd problems.

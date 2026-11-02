@@ -29,7 +29,7 @@ use ::evm2::interpreter::Word;
 
 use crate::sim::hot_slots::HotSlotStore;
 use crate::sim::sim_metrics;
-use crate::sim::storage_memo::{StorageMemo, StorageMemoCache};
+use crate::sim::storage_memo::{ReadAnchor, StorageMemo, StorageMemoCache};
 
 /// The default per-entry TTL in blocks — the same safety-net value as the
 /// revm-side original (≈ 1 day of mainnet blocks). A safety net, not the
@@ -99,11 +99,12 @@ impl WarmCodeCacheInner {
     }
 
     /// The storage memo for the read anchor `anchor` — the SAME memo for every
-    /// fan-out at that anchor, a fresh one as soon as the anchor moves (see
+    /// fan-out at that anchor, a fresh one as soon as the anchor moves, changes
+    /// its block (a same-height reorg), or loses its hash (see
     /// [`StorageMemoCache`]). Takes `&self`: callers hold this inner behind the
     /// engine's `RwLock` read guard.
     #[must_use]
-    pub fn storage_memo_for(&self, anchor: u64) -> Arc<StorageMemo> {
+    pub fn storage_memo_for(&self, anchor: ReadAnchor) -> Arc<StorageMemo> {
         self.storage_memo.for_anchor(anchor)
     }
 

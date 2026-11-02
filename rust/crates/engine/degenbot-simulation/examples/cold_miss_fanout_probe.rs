@@ -89,6 +89,7 @@ use degenbot_simulation::sim::prefetch::{
     path_prefetch_slots, prefetch_paths_into_memo, prewarm_plan, FamilySlotLayout, PrefetchFacts,
     V2SlotIndices,
 };
+use degenbot_simulation::sim::storage_memo::ReadAnchor;
 use degenbot_simulation::{HotSlotStore, StorageMemo};
 
 #[path = "shared/bench_corpus.rs"]
@@ -760,7 +761,7 @@ fn run_sync_series_anchored(
         // moved anchor, a fresh one (the invalidation).
         let memo = {
             let cache = session.read();
-            cache.storage_memo_for(block)
+            cache.storage_memo_for(ReadAnchor::at(block))
         };
         let cold = MemoDb {
             cold: latency_db(snapshot, latency, &counters),
@@ -1326,7 +1327,7 @@ fn main() {
     report_series("shared per-anchor memo, fan-out 2 (after)", &anchored[1..]);
     let (memo_hits, memo_misses) = {
         let cache = shared_inner.read();
-        cache.storage_memo_for(anchor).stats()
+        cache.storage_memo_for(ReadAnchor::at(anchor)).stats()
     };
     println!(
         "  anchor {anchor} memo: {memo_hits} hits / {memo_misses} misses; storage forwards per fan-out \
@@ -1375,13 +1376,13 @@ fn main() {
     };
     let old_memo = {
         let cache = moved_inner.read();
-        cache.storage_memo_for(anchor)
+        cache.storage_memo_for(ReadAnchor::at(anchor))
     };
     // The retired memo's successor, captured BEFORE it is filled: the anchor
     // moved, so the slot must hand out an EMPTY memo (nothing carried over).
     let moved_memo_before = {
         let cache = moved_inner.read();
-        cache.storage_memo_for(anchor + 1)
+        cache.storage_memo_for(ReadAnchor::at(anchor + 1))
     };
     assert!(
         !Arc::ptr_eq(&old_memo, &moved_memo_before),
@@ -1493,7 +1494,7 @@ fn main() {
     let prefetch_inner = WarmCodeCacheInner::shared_default();
     let memo = {
         let cache = prefetch_inner.read();
-        cache.storage_memo_for(prefetch_anchor)
+        cache.storage_memo_for(ReadAnchor::at(prefetch_anchor))
     };
     let report = {
         let _guard = runtime.enter();
@@ -1576,7 +1577,9 @@ fn main() {
     };
     let stats_after_first = {
         let cache = prefetch_inner.read();
-        cache.storage_memo_for(prefetch_anchor).stats()
+        cache
+            .storage_memo_for(ReadAnchor::at(prefetch_anchor))
+            .stats()
     };
     let after_second = match run_sync_series_anchored(
         &snapshot,
@@ -1637,7 +1640,7 @@ fn main() {
     let production_inner = WarmCodeCacheInner::shared_default();
     let production_memo = {
         let cache = production_inner.read();
-        cache.storage_memo_for(production_anchor)
+        cache.storage_memo_for(ReadAnchor::at(production_anchor))
     };
     let production_derived = path_prefetch_slots(paths(), &FamilySlotLayout::PRODUCTION, &facts);
     let production_report = {
@@ -1667,7 +1670,9 @@ fn main() {
     };
     let production_stats = {
         let cache = production_inner.read();
-        cache.storage_memo_for(production_anchor).stats()
+        cache
+            .storage_memo_for(ReadAnchor::at(production_anchor))
+            .stats()
     };
     println!(
         "  production layout (V2 6/7/8) on the stub corpus: {} derived / {} seeded, {} hit -> forwards {} (the stub Pair layout is 0/1/2)",
@@ -1693,7 +1698,7 @@ fn main() {
     // ── stale anchor: a prefetch at N never serves a fan-out at N+1 ───────
     let moved_memo = {
         let cache = prefetch_inner.read();
-        cache.storage_memo_for(prefetch_anchor + 1)
+        cache.storage_memo_for(ReadAnchor::at(prefetch_anchor + 1))
     };
     assert_eq!(
         moved_memo.stats(),
@@ -1738,7 +1743,7 @@ fn main() {
     let shadow_anchor = BENCH_BLOCK + 7;
     let shadow_memo = {
         let cache = shadow_inner.read();
-        cache.storage_memo_for(shadow_anchor)
+        cache.storage_memo_for(ReadAnchor::at(shadow_anchor))
     };
     let _shadow_report = {
         let _guard = runtime.enter();
@@ -1847,7 +1852,7 @@ fn main() {
 
     let learned_memo = {
         let cache = learned_inner.read();
-        cache.storage_memo_for(learned_anchor)
+        cache.storage_memo_for(ReadAnchor::at(learned_anchor))
     };
     let packets_before = transport.packets().len();
     let learned_report = {
@@ -1936,7 +1941,7 @@ fn main() {
     );
     let stale_memo = {
         let cache = learned_inner.read();
-        cache.storage_memo_for(stale_anchor)
+        cache.storage_memo_for(ReadAnchor::at(stale_anchor))
     };
     let stale_report = {
         let _guard = runtime.enter();

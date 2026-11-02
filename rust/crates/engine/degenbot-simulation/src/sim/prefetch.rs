@@ -86,7 +86,7 @@ use degenbot_pools::{
 use degenbot_rpc::provider::AlloyProvider;
 
 use super::hot_slots::HotSlotStore;
-use super::storage_memo::StorageMemo;
+use super::storage_memo::{ReadAnchor, StorageMemo};
 
 /// The most slots one prefetch batch may carry. A batch is ONE round trip, so
 /// this is a transport-payload bound, not a latency bound: the widest fan-out
@@ -569,6 +569,45 @@ fn block_on_ambient<T>(future: impl Future<Output = T>) -> Option<T> {
     Some(tokio::task::block_in_place(|| handle.block_on(future)))
 }
 
+/// Resolve the read anchor at `block`: its canonical hash, in ONE
+/// [`AlloyProvider::get_block_hash_at`] round trip.
+///
+/// [`ReadAnchor`] keys the per-anchor memo, and the number alone cannot fence
+/// it: a same-height reorg replaces the block without moving the height, so the
+/// hash is what mints a fresh memo instead of serving the abandoned block's
+/// words. One identity read per fan-out against the cold storage chain the memo
+/// saves on that anchor's later fan-outs.
+///
+/// Degrades like the lane around it: no ambient runtime, no block at `block`,
+/// or an RPC failure answers the number-only anchor ([`ReadAnchor::at`]) — the
+/// fence weakens to the pre-hash scope, the fan-out never fails.
+#[must_use]
+pub fn resolve_read_anchor(provider: &AlloyProvider, block: u64) -> ReadAnchor {
+    let Some(read) = block_on_ambient(provider.get_block_hash_at(block)) else {
+        return ReadAnchor::at(block);
+    };
+
+    match read {
+        Ok(Some(hash)) => ReadAnchor::identified(block, hash),
+        Ok(None) => {
+            diag!(
+                domain = sim,
+                anchor = block,
+                "read anchor unfenced: the node has no block at this anchor"
+            );
+            ReadAnchor::at(block)
+        }
+        Err(error) => {
+            diag!(
+                domain = sim,
+                anchor = block,
+                "read anchor unfenced: {error}"
+            );
+            ReadAnchor::at(block)
+        }
+    }
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -587,7 +626,7 @@ mod tests {
 
     use crate::sim::evm2::bot_state_db::BotStateDb;
     use crate::sim::hot_slots::HOT_SLOT_DECAY_BLOCKS;
-    use crate::sim::StorageMemoCache;
+    use crate::sim::{ReadAnchor, StorageMemoCache};
 
     use ::evm2::bytecode::Bytecode;
     use ::evm2::evm::{AccountInfo, Database};
@@ -970,6 +1009,21 @@ mod tests {
         (values, forwards.load(Ordering::Relaxed))
     }
 
+    /// A fan-out with no ambient runtime cannot identify its anchor, so the key
+    /// degrades to the number-only fence: the run continues on the pre-hash
+    /// scope rather than failing on a read it cannot make.
+    #[test]
+    fn an_anchor_without_an_ambient_runtime_is_unfenced() {
+        let stub = ChainStub::new();
+        let provider = stub.provider();
+
+        assert_eq!(resolve_read_anchor(&provider, 7), ReadAnchor::at(7));
+        assert!(
+            stub.packets().is_empty(),
+            "no identity read is even attempted"
+        );
+    }
+
     /// The lane's contract in one test: one batch round trip seeds the anchor's
     /// memo, every derived read finds its entry, and the served values are
     /// identical to the un-prefetched path's (verdict identity at the value
@@ -980,7 +1034,7 @@ mod tests {
         let provider = stub.provider();
         let cache = StorageMemoCache::new();
         let anchor = 100u64;
-        let memo = cache.for_anchor(anchor);
+        let memo = cache.for_anchor(ReadAnchor::at(anchor));
         let paths = [path(vec![v2_hop(POOL_1), v3_hop(POOL_3)])];
         let slots = path_prefetch_slots(&paths, &FamilySlotLayout::PRODUCTION, &executor_facts());
 
@@ -1018,7 +1072,8 @@ mod tests {
 
         // The un-prefetched run: same reads, one forward each.
         let cold = StorageMemoCache::new();
-        let (forwarded_values, forwards) = read_through_memo(&slots, &cold.for_anchor(anchor));
+        let (forwarded_values, forwards) =
+            read_through_memo(&slots, &cold.for_anchor(ReadAnchor::at(anchor)));
         assert_eq!(
             usize::try_from(forwards).unwrap(),
             slots.len(),
@@ -1033,7 +1088,7 @@ mod tests {
             prefetched_values, forwarded_values,
             "prefetch ≡ no-prefetch: the served values are the chain's own"
         );
-        assert_eq!(cache.anchor(), Some(anchor));
+        assert_eq!(cache.anchor(), Some(ReadAnchor::at(anchor)));
     }
 
     /// A warm memo dispatches no second batch: the same anchor's later fan-out
@@ -1053,7 +1108,7 @@ mod tests {
             &FamilySlotLayout::PRODUCTION,
             &facts,
             &hot,
-            &cache.for_anchor(7),
+            &cache.for_anchor(ReadAnchor::at(7)),
         );
         assert_eq!(first.seeded, first.derived);
         let second = prefetch_paths_into_memo(
@@ -1063,7 +1118,7 @@ mod tests {
             &FamilySlotLayout::PRODUCTION,
             &facts,
             &hot,
-            &cache.for_anchor(7),
+            &cache.for_anchor(ReadAnchor::at(7)),
         );
         assert_eq!(
             second,
@@ -1141,7 +1196,7 @@ mod tests {
         let facts = executor_facts();
         let slots = path_prefetch_slots(&paths, &FamilySlotLayout::PRODUCTION, &facts);
 
-        let seeded = cache.for_anchor(100);
+        let seeded = cache.for_anchor(ReadAnchor::at(100));
         let report = prefetch_paths_into_memo(
             &provider,
             100,
@@ -1154,7 +1209,7 @@ mod tests {
         assert_eq!(report.seeded, slots.len());
 
         // The anchor moves: the successor memo starts empty — no carried value.
-        let moved = cache.for_anchor(101);
+        let moved = cache.for_anchor(ReadAnchor::at(101));
         assert!(
             !std::sync::Arc::ptr_eq(&seeded, &moved),
             "the moved anchor mints a fresh memo"
@@ -1283,7 +1338,7 @@ mod tests {
         let provider = stub.provider();
         let cache = StorageMemoCache::new();
         let anchor = 101u64;
-        let memo = cache.for_anchor(anchor);
+        let memo = cache.for_anchor(ReadAnchor::at(anchor));
         let paths = [path(vec![v2_hop(POOL_1)])];
         let facts = executor_facts();
         let derived = path_prefetch_slots(&paths, &FamilySlotLayout::PRODUCTION, &facts);
@@ -1339,7 +1394,8 @@ mod tests {
         // Verdict identity at the value seam: the learned entries serve the
         // chain's own answers, exactly as a cold run reads them.
         let cold = StorageMemoCache::new();
-        let (cold_values, cold_forwards) = read_through_memo(&plan.slots, &cold.for_anchor(anchor));
+        let (cold_values, cold_forwards) =
+            read_through_memo(&plan.slots, &cold.for_anchor(ReadAnchor::at(anchor)));
         assert_eq!(
             usize::try_from(cold_forwards).unwrap(),
             plan.slots.len(),
@@ -1371,11 +1427,11 @@ mod tests {
         hot.record(100, TOKEN, U256::from(0x99u64));
 
         // The retired anchor's memo: nothing seeded for it.
-        let stale = cache.for_anchor(100);
+        let stale = cache.for_anchor(ReadAnchor::at(100));
         assert_eq!(stale.stats(), (0, 0));
 
         let anchor = 101u64;
-        let memo = cache.for_anchor(anchor);
+        let memo = cache.for_anchor(ReadAnchor::at(anchor));
         let plan = prewarm_plan(&paths, &FamilySlotLayout::PRODUCTION, &facts, &hot, anchor);
         assert_eq!(
             plan.learned, 1,

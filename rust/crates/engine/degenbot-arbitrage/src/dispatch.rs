@@ -737,13 +737,25 @@ pub fn dispatch_profitable_results(
                 // value it cached) the moment the anchor moves, incl. a reorg
                 // rewind. The degrade path above mints a per-call cache, hence
                 // a fresh slot — the old per-fan-out scope, unchanged.
+                //
+                // The anchor is a BLOCK, not a height: its hash rides the key
+                // (`ReadAnchor`), so a same-height reorg — the anchor number
+                // unchanged, the canonical block replaced — mints a fresh memo
+                // instead of serving the abandoned block's words. The identity
+                // is resolved HERE, one `eth_getBlockByNumber` per fan-out
+                // against the cold storage chain the memo saves on this
+                // anchor's later fan-outs, and BEFORE any guard is taken
+                // (never across provider I/O). A failed read degrades to the
+                // number-only anchor — the pre-fence scope, never a wrong one.
+                let read_anchor =
+                    degenbot_simulation::sim::resolve_read_anchor(ctx.provider, sim_block);
                 // The per-anchor memo AND the session's cross-block hot-slot
                 // store are both session-scoped (the warm-cache owner); taken
                 // together under one short read guard so neither rides it
                 // across provider I/O.
                 let (storage_memo, hot_slots) = {
                     let cache = evm2_warm_cache.read();
-                    (cache.storage_memo_for(sim_block), cache.hot_slots())
+                    (cache.storage_memo_for(read_anchor), cache.hot_slots())
                 };
                 // Path-derived prefetch: the candidates name their pools before
                 // the sim runs, so the slots the frame is guaranteed to read
@@ -786,6 +798,7 @@ pub fn dispatch_profitable_results(
                     domain = sim,
                     current_block,
                     anchor = sim_block,
+                    anchor_fenced = read_anchor.hash.is_some(),
                     derived = prefetch.derived,
                     learned = prefetch.learned,
                     requested = prefetch.requested,
@@ -1581,6 +1594,7 @@ mod tests {
     #[expect(clippy::expect_used)] // test-only scripted transport
     mod prefetch_transport {
         use super::*;
+        use alloy::primitives::B256;
         use alloy::providers::RootProvider;
         use alloy::rpc::client::RpcClient;
         use alloy::rpc::json_rpc::{
@@ -1592,11 +1606,14 @@ mod tests {
         use std::sync::atomic::{AtomicU64, Ordering};
 
         /// The lane's wire signature: dispatched storage-batch packets and the
-        /// total members they carried.
+        /// total members they carried, plus the chain's current canonical block
+        /// hash and the identity reads that observed it.
         #[derive(Clone, Default)]
         pub struct Recorder {
             pub storage_batches: Arc<AtomicU64>,
             pub storage_members: Arc<AtomicU64>,
+            block_reads: Arc<AtomicU64>,
+            head_hash: Arc<Mutex<B256>>,
         }
 
         impl Recorder {
@@ -1606,6 +1623,22 @@ mod tests {
 
             pub fn storage_members(&self) -> u64 {
                 self.storage_members.load(Ordering::Relaxed)
+            }
+
+            /// The anchor-identity reads the fan-outs dispatched
+            /// (`eth_getBlockByNumber`).
+            pub fn block_reads(&self) -> u64 {
+                self.block_reads.load(Ordering::Relaxed)
+            }
+
+            /// Rewrite history at the current height: the same block number, a
+            /// different canonical block.
+            pub fn reorg_at_same_height(&self, hash: B256) {
+                *self.head_hash.lock().expect("recorder mutex") = hash;
+            }
+
+            fn head_hash(&self) -> B256 {
+                *self.head_hash.lock().expect("recorder mutex")
             }
         }
 
@@ -1633,6 +1666,11 @@ mod tests {
             ResponsePayload::Success(raw)
         }
 
+        fn success_json(value: &serde_json::Value) -> ResponsePayload {
+            let raw: Box<RawValue> = to_raw_value(value).expect("valid JSON value");
+            ResponsePayload::Success(raw)
+        }
+
         impl tower::Service<RequestPacket> for RecordingTransport {
             type Response = ResponsePacket;
             type Error = TransportError;
@@ -1653,6 +1691,14 @@ mod tests {
                             "eth_getBalance" | "eth_getTransactionCount" => success("0x0"),
                             "eth_getCode" => success("0x"),
                             "eth_getStorageAt" => success(&format!("0x{:064x}", 0)),
+                            // The anchor's IDENTITY: this chain's current
+                            // canonical block hash (the reorg test switches it).
+                            "eth_getBlockByNumber" => {
+                                recorder.block_reads.fetch_add(1, Ordering::Relaxed);
+                                success_json(&serde_json::json!({
+                                    "hash": recorder.head_hash()
+                                }))
+                            }
                             other => {
                                 return Response {
                                     id: req.id().clone(),
@@ -1847,6 +1893,125 @@ mod tests {
             moved_run.fail_buckets.get("empty")
         );
         assert_eq!(first.fail_buckets.get("empty"), 2);
+    }
+
+    /// The reorg fence, observed on the wire: a same-height reorg — the anchor
+    /// number unchanged, the block hash replaced — retires the anchor's memo,
+    /// so the fan-out reading the replacement pays its own cold chain instead of
+    /// being served the abandoned block's words. Between two fan-outs at one
+    /// block (number AND hash) the memo still shares exactly as before.
+    #[expect(clippy::expect_used)] // test-only: runtime build + thread join
+    #[test]
+    fn a_same_height_reorg_retires_the_anchors_storage_memo() {
+        use alloy::primitives::B256;
+        use prefetch_transport::Recorder;
+
+        let recorder = Recorder::default();
+        // The block every fan-out pins: one height, one canonical hash.
+        recorder.reorg_at_same_height(B256::new([0xa1; 32]));
+        let provider = prefetch_transport::provider(&recorder);
+        let suppression = Arc::new(Mutex::new(PathSuppression::new()));
+        let pool_divergence = Arc::new(Mutex::new(crate::PoolDivergence::new()));
+        let fot_registry = Arc::new(Mutex::new(crate::FeeOnTransferRegistry::new()));
+        let bot_state = Arc::new(StateLock::new(BotState::new()));
+        let warm = degenbot_simulation::WarmCodeCacheInner::shared_default();
+
+        let cands = vec![
+            candidate(80, 1_000_000_000_000_000_000u128, 1_000),
+            candidate(81, 1_000_000_000_000_000_000u128, 1_000),
+        ];
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("multi-thread runtime");
+
+        let (first_members, shared_batches, reorg_batches, reorg_members, reads, reorg_run) =
+            std::thread::spawn(move || {
+                rt.block_on(async {
+                    let mut the_ctx = ctx(&provider);
+                    the_ctx.runtime_bytecode = Bytes::from_static(&[0xfe]); // INVALID
+
+                    let _first = dispatch_profitable_results(
+                        cands.clone(),
+                        &the_ctx,
+                        &suppression,
+                        100,
+                        0,
+                        &pool_divergence,
+                        &fot_registry,
+                        Some(Arc::clone(&bot_state)),
+                        Some(Arc::clone(&warm)),
+                    );
+                    let first_members = recorder.storage_members();
+                    let first_batches = recorder.storage_batches();
+
+                    // Same height, same block: the installed memo serves, so the
+                    // fan-out dispatches no batch at all.
+                    let _second = dispatch_profitable_results(
+                        cands.clone(),
+                        &the_ctx,
+                        &suppression,
+                        100,
+                        0,
+                        &pool_divergence,
+                        &fot_registry,
+                        Some(Arc::clone(&bot_state)),
+                        Some(Arc::clone(&warm)),
+                    );
+                    let shared_batches = recorder.storage_batches() - first_batches;
+
+                    // Same height, DIFFERENT block: a reorg the anchor number
+                    // alone cannot see.
+                    recorder.reorg_at_same_height(B256::new([0xb2; 32]));
+                    let reorg_run = dispatch_profitable_results(
+                        cands,
+                        &the_ctx,
+                        &suppression,
+                        100,
+                        0,
+                        &pool_divergence,
+                        &fot_registry,
+                        Some(bot_state),
+                        Some(warm),
+                    );
+                    let reorg_batches = recorder.storage_batches() - first_batches - shared_batches;
+                    let reorg_members = recorder.storage_members() - first_members;
+
+                    (
+                        first_members,
+                        shared_batches,
+                        reorg_batches,
+                        reorg_members,
+                        recorder.block_reads(),
+                        reorg_run,
+                    )
+                })
+            })
+            .join()
+            .expect("fan-out thread");
+
+        assert_eq!(
+            shared_batches, 0,
+            "same number + same hash shares the memo: the second fan-out dispatches no batch"
+        );
+        assert_eq!(
+            reorg_batches, 1,
+            "the replacement block is a different anchor — the memo retires and the \
+             fan-out pays its own cold chain"
+        );
+        assert_eq!(
+            reorg_members, first_members,
+            "the replacement's batch carries the same derived + learned set the abandoned \
+             block's did"
+        );
+        assert_eq!(reads, 3, "one anchor-identity read per fan-out, never more");
+
+        // Verdict identity across the fence: the fence changes which memo serves
+        // the reads, never the fan-out's outcome.
+        assert_eq!(reorg_run.candidate_count, 2);
+        assert_eq!(reorg_run.fail_buckets.get("empty"), 2);
     }
 
     /// The end-to-end engine parity run (ADR-089): the full dispatch fan-out

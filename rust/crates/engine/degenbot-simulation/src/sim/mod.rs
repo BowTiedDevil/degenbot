@@ -30,11 +30,11 @@ pub use hot_slots::{
 };
 pub use prefetch::{
     path_prefetch_addresses, path_prefetch_slots, prefetch_into_memo, prefetch_paths_into_memo,
-    prewarm_plan, FamilySlotLayout, PrefetchFacts, PrefetchReport, PrefetchSkip, PrewarmPlan,
-    V2SlotIndices, V3SlotIndices,
+    prewarm_plan, resolve_read_anchor, FamilySlotLayout, PrefetchFacts, PrefetchReport,
+    PrefetchSkip, PrewarmPlan, V2SlotIndices, V3SlotIndices,
 };
 pub use state_override::SimulationOverrideParams;
-pub use storage_memo::{StorageMemo, StorageMemoCache};
+pub use storage_memo::{ReadAnchor, StorageMemo, StorageMemoCache};
 
 /// How one settled run ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
