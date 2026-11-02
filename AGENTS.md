@@ -61,6 +61,17 @@ Workers arriving by dispatch follow `/skill:dispatched-agent` before touching an
 
 Commit with the whole tree staged (`git add -A` before `git commit`): partial staging makes the pre-commit stash dance conflict with hook-side formatting changes and the commit aborts. Run `cargo fmt` only through the justfile (`just fmt-check`) — the pre-commit formatter is the authority. The drift-gate and negative-probe idioms govern every machine-emitted artifact (see GLOSSARY.md).
 
+**Two lanes: never `git add -A`.** The whole-tree rule exists so a single lane's
+commit has no unstaged half for prek's stash dance to fight. With two agents
+holding work it inverts: `git add -A` sweeps the other lane's files into your
+commit. Stage only your own paths (`git add <paths>`). This is safe because
+prek's pre-commit tier is staged-scoped — `rust-fmt-staged` runs
+`skip_children=true` precisely so an unstaged sibling module cannot fail a
+commit that does not contain it. Caveat: `comment-hygiene` is deliberately
+working-tree bound (`pass_filenames = false`, so a brand-new untracked file is
+examined the moment it is written), so one lane's uncommitted violation *can*
+still block another lane's commit. Coordinate a clean window.
+
 ## Rust toolchain policy
 
 `rust-toolchain.toml` pins development and release builds (1.98.1 with `clippy` and `rustfmt`); the workspace MSRV is Rust 1.97, checked by CI's `MSRV (Rust 1.97)` job (`just check-msrv` locally). Do not raise the MSRV without an explicit dependency-compatibility decision and an update to this policy. Gates certify tiers, not a toolchain identity (`scripts/toolchain_tier.sh`): a compliant toolchain never fails a gate on lint/format vintage; the strict layer (clippy `--deny warnings`, exact fmt) is CI's verdict.
