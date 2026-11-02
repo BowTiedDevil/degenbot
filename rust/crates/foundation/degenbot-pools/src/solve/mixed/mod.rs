@@ -21,7 +21,9 @@ use crate::solve::concentrated_liquidity::{
     ConcentratedLiquidityWordProfile, IntTickRangeCrossing, IntV3TickRangeSequence,
     PreparedConcentratedLiquidityHop,
 };
-use crate::{BalanceVectorVariant, ConcentratedLiquidityVariant, Identity, ReservePairVariant};
+use crate::{
+    BalanceVectorVariant, Caveats, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
+};
 use degenbot_math::v2::IntHopState;
 
 // ---------------------------------------------------------------------------
@@ -350,6 +352,13 @@ pub struct ResolvedMixedPath {
     /// backfill/dispatch race, live path 10956) — solving with a future price
     /// is never legitimate and is caught BEFORE the publish-point verifier.
     pub max_update_block: u64,
+    /// The path-level trust flags, captured per hop at admission (resolve time)
+    /// and unioned: a path is APPROXIMATE when ANY hop's registration-time tick
+    /// coverage is Sparse, exactly as the per-pool swap read flags its own
+    /// sparse coverage. Empty means every hop is exact. The solve copies this
+    /// onto [`SolvePathResult::caveats`], so the signal reaches dispatch and
+    /// telemetry with the result instead of dying at the projection.
+    pub caveats: Caveats,
 }
 
 /// Result from solving a single arbitrage path.
@@ -426,6 +435,12 @@ pub struct SolvePathResult {
     /// `[sim-diag]` JSON so solver-state vs sim-state can be compared
     /// directly on `no-profit` / revert failures.
     pub solver_pool_states: Vec<String>,
+    /// Trust flags for this result (see [`Caveats`]): a NON-EMPTY set means the
+    /// amounts are approximate. Copied from [`ResolvedMixedPath::caveats`] at
+    /// solve time, so a result computed over a Sparse pool carries
+    /// [`Caveats::SPARSE_COVERAGE`] — the operator contract that sparse pools'
+    /// solve results are approximate (correctness is not guaranteed for them).
+    pub caveats: Caveats,
 }
 
 // ---------------------------------------------------------------------------

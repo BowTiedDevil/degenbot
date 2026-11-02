@@ -464,6 +464,23 @@ impl PoolEntry {
         }
     }
 
+    /// The pool's registration-time tick coverage — `Some` only for the
+    /// concentrated-liquidity families, the only ones that carry a tick map. The
+    /// fact is a registration input and is never mutated afterwards, so a
+    /// resolve-time read is always current and safe to memoize beside.
+    #[must_use]
+    pub const fn tick_coverage(&self) -> Option<PoolTickCoverage> {
+        match self {
+            PoolEntry::V3(p) => Some(p.1.coverage),
+            PoolEntry::V4(p) => Some(p.1.coverage),
+            PoolEntry::V2(..)
+            | PoolEntry::Curve(..)
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
+        }
+    }
+
     /// Project to `&dyn ReorgPoolState` (ADR-016). One match over all 7
     /// variants — used by `BotState`'s unified reorg dispatchers
     /// (`restore_pool_before_block` / `discard_pool_before_block` /

@@ -556,6 +556,7 @@ mod inline_sim_tests {
             consumed_inputs: vec![U256::from(1_000_000_000u64), U256::from(900_000_000u64)],
             state_nonces: vec![0, 0],
             solver_pool_states: Vec::new(),
+            ..Default::default()
         }
     }
     #[test]

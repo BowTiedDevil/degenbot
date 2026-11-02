@@ -322,6 +322,7 @@ mod dispatch_binning_properties {
                     valid: true,
                     state_nonces: Vec::new(),
                     max_update_block: 0,
+                    ..Default::default()
                 })
             })
             .collect()

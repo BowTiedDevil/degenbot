@@ -879,6 +879,7 @@ fn clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_
         consumed_inputs: vec![x0, committed_forward],
         state_nonces: vec![0, 0],
         solver_pool_states: Vec::new(),
+        ..Default::default()
     };
     engine
         .cycle
@@ -1016,6 +1017,7 @@ fn clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input() {
         consumed_inputs: vec![huge, huge],
         state_nonces: vec![0, 0],
         solver_pool_states: Vec::new(),
+        ..Default::default()
     };
     engine
         .cycle
@@ -1181,6 +1183,7 @@ fn clamp_concentrated_liquidity_hop_capacity_aligns_v4_first_hop0_outputs() {
         consumed_inputs: vec![huge, huge],
         state_nonces: vec![0, 0],
         solver_pool_states: Vec::new(),
+        ..Default::default()
     };
     engine
         .cycle
@@ -1301,6 +1304,7 @@ fn clamp_concentrated_liquidity_hop_capacity_noop_within_capacity() {
         consumed_inputs: vec![small, small],
         state_nonces: vec![0, 0],
         solver_pool_states: Vec::new(),
+        ..Default::default()
     };
     engine
         .cycle

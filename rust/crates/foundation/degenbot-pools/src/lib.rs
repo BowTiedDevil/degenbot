@@ -139,6 +139,12 @@ pub use sim::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
 
 pub use sim::rate_provider::{BalancerRateProvider, RateProviderError, StaticRateProvider};
 
+/// The trust-flag vocabulary every simulated and solved outcome carries
+/// (ADR-037 D4): one additive flag set for both channels, so "approximate"
+/// means the same thing on a per-pool swap read and on a multi-hop solve
+/// result.
+pub use sim::caveats::Caveats;
+
 pub use state::spec_bounds::{
     narrow_v2_reserve, validate_v2_reserve, SpecValue, SpecViolation, MAX_TICK_SPACING,
     UINT112_MAX, V3_FEE_MAX, V4_FEE_MAX,

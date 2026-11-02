@@ -123,6 +123,7 @@ pub(in crate::arb_engine) fn load_corpus() -> Vec<Arc<::degenbot_pools::solve::R
             valid: true,
             state_nonces: Vec::new(),
             max_update_block: 0,
+            ..Default::default()
         }));
     }
     assert!(!items.is_empty(), "fixture must load at least one path");

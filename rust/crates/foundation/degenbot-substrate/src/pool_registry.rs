@@ -15,7 +15,7 @@
 
 use alloy::primitives::Address;
 
-use super::{BotState, PoolEntry, PoolEntrySlice, TokenEntry};
+use super::{BotState, PoolEntry, PoolEntrySlice, PoolTickCoverage, TokenEntry};
 
 impl BotState {
     /// The registered entry for `pool_id` — the family-agnostic borrow every
@@ -69,6 +69,18 @@ impl BotState {
     #[must_use]
     pub fn pool_state_nonce(&self, pool_id: u64) -> u64 {
         self.pools.get(pool_id).map_or(0, PoolEntry::state_nonce)
+    }
+
+    /// The pool's registration-time tick coverage — `Some` only for the
+    /// concentrated-liquidity families, the only ones that carry a tick map.
+    ///
+    /// Coverage is a registration input (a `Tracked` snapshot came with complete
+    /// tick data; a `Sparse` one did not) and is never mutated afterwards, so a
+    /// per-hop read here is always current — the resolve loop needs no staleness
+    /// bookkeeping for it.
+    #[must_use]
+    pub fn pool_tick_coverage(&self, pool_id: u64) -> Option<PoolTickCoverage> {
+        self.pools.get(pool_id).and_then(PoolEntry::tick_coverage)
     }
 
     /// The `update_block` of the pool at `pool_id` — the block its reserves /

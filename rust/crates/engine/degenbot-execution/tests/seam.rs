@@ -87,6 +87,7 @@ fn solve_result_projection_carries_amounts_and_hop_count() {
         consumed_inputs: vec![U256::from(10u64), U256::from(20u64)],
         state_nonces: vec![],
         solver_pool_states: vec![],
+        ..Default::default()
     };
 
     // Project via a path of two V2 hops so hop_count + descriptors populate.

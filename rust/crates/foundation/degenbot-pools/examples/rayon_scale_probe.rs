@@ -191,6 +191,7 @@ fn reconstruct(doc: &Value) -> Result<(u64, Arc<ResolvedMixedPath>, Option<u128>
             valid: true,
             state_nonces: Vec::new(),
             max_update_block: 0,
+            ..Default::default()
         }),
         golden,
     ))

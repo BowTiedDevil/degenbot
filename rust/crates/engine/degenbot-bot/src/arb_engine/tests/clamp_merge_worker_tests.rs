@@ -152,6 +152,7 @@ fn worker_clamp_matches_engine_clamp_bit_for_bit() {
             consumed_inputs: vec![committed, committed],
             state_nonces: vec![],
             solver_pool_states: Vec::new(),
+            ..Default::default()
         }
     };
     let (mut r_engine, mut r_worker) = (mk(), mk());
@@ -193,6 +194,7 @@ fn merge_stores_payload_and_drops_it_without_one() {
         consumed_inputs: vec![U256::from(1u64)],
         state_nonces: vec![0],
         solver_pool_states: Vec::new(),
+        ..Default::default()
     };
     let payload = SimulatedPathResult {
         path_id,
@@ -259,6 +261,7 @@ fn merge_reports_worker_twins_and_never_reclips() {
             consumed_inputs: vec![committed, committed],
             state_nonces: vec![],
             solver_pool_states: Vec::new(),
+            ..Default::default()
         }
     };
     // Worker arm: clamp once (the worker report = committed truth), then
@@ -354,6 +357,7 @@ fn merge_payload_store_emits_no_bundle_simulate_span() {
         consumed_inputs: vec![U256::from(1u64)],
         state_nonces: vec![0],
         solver_pool_states: Vec::new(),
+        ..Default::default()
     };
     let payload = crate::arb_engine::inline_sim::SimulatedPathResult {
         path_id,
@@ -464,6 +468,7 @@ fn inline_sim_payload_emits_worker_sim_span_with_verdict() {
         consumed_inputs: vec![U256::from(1u64)],
         state_nonces: vec![0],
         solver_pool_states: Vec::new(),
+        ..Default::default()
     };
     tracing::subscriber::with_default(subscriber, || {
         let solve = tracing::info_span!("degenbot.arb.solve", block.number = 7u64);

@@ -38,8 +38,8 @@ use ::degenbot_pools::families::reserve_pair;
 use ::degenbot_pools::families::{balancer_stable, balancer_weighted};
 use ::degenbot_pools::simulate_swap;
 use ::degenbot_pools::PoolEntry;
+use ::degenbot_pools::V3SwapOutcome;
 use ::degenbot_pools::{Observe, Observed, ReadOutcome, SwapReadRequest};
-use ::degenbot_pools::{PoolTickCoverage, V3SwapOutcome};
 
 use super::BotState;
 
@@ -62,41 +62,14 @@ pub struct SwapRequest {
     pub sqrt_price_limit: Option<U256>,
 }
 
-/// Additive trust flags carried on every [`SwapOutcome`] variant.
+/// The trust-flag vocabulary carried on every [`SwapOutcome`] variant.
 ///
-/// An EMPTY set means "this number is exact". The set is deliberately
-/// `#[non_exhaustive]`: new inaccuracy sources become new flags, never a
-/// signature change. (A `HOOKED_POOL` flag is reserved by ADR-037;
-/// admission currently rejects hooked pools.)
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct Caveats(u8);
-
-impl Caveats {
-    /// Sparse tick coverage: the walk may have traversed unfetched regions.
-    pub const SPARSE_COVERAGE: Self = Self(1 << 0);
-    /// The pool carries an amount-modifying V4 hook — standard concentrated liquidity math may
-    /// mis-price the swap. (Reachable since hooked pools were admitted.)
-    pub const HOOKED_POOL: Self = Self(1 << 1);
-
-    /// No caveats — the outcome is trustworthy.
-    #[must_use]
-    pub const fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-
-    /// Whether `self` carries all flags in `other`.
-    #[must_use]
-    pub const fn contains(self, other: Self) -> bool {
-        self.0 & other.0 == other.0
-    }
-
-    /// Union of two flag sets.
-    #[must_use]
-    pub const fn union(self, other: Self) -> Self {
-        Self(self.0 | other.0)
-    }
-}
+/// The type itself lives in `degenbot-pools` (`sim::caveats`), the crate that
+/// owns both outcomes it flags — the stateless swap outcomes assembled here and
+/// the multi-hop solve results assembled by the solve tree — so an approximate
+/// swap read and an approximate solve result share ONE vocabulary. Re-exported
+/// here so `degenbot_substrate::swap_simulation::Caveats` keeps its public path.
+pub use ::degenbot_pools::Caveats;
 
 /// Thin payload for constant-product families (V2, Curve, Balancer,
 /// Aerodrome). Amounts are signed user-perspective deltas.
@@ -254,17 +227,6 @@ pub enum OverrideOutcome {
     /// Concentrated-liquidity family result: the raw engine outcome, whose
     /// end state (price / liquidity / tick) is already complete.
     ConcentratedLiquidity(V3SwapOutcome),
-}
-
-/// Trust flags implied by a pool's registration-time tick coverage.
-#[must_use]
-pub(crate) fn caveats_for_coverage(coverage: PoolTickCoverage) -> Caveats {
-    match coverage {
-        // Tracked snapshots provided complete tick data — solver results are
-        // trustworthy (glossary). Sparse results may be inaccurate.
-        PoolTickCoverage::Tracked => Caveats::default(),
-        PoolTickCoverage::Sparse => Caveats::SPARSE_COVERAGE,
-    }
 }
 
 /// Convert an unsigned engine amount into the user-perspective delta.
@@ -925,8 +887,8 @@ impl BotState {
     /// The ONE registered-state concentrated liquidity swap-read row: classify the entry (the
     /// registry seam), then everything design-specific happens behind the
     /// family read module's [`concentrated_liquidity::read_swap`] door. Caveats assembly (the
-    /// outcome-shape adapter) stays here because [`Caveats`] is this crate's
-    /// type; the door supplies every per-design fact the caveats need
+    /// outcome-shape adapter) stays here because the outcome shapes are this
+    /// crate's types; the door supplies every per-design fact the caveats need
     /// (coverage via [`concentrated_liquidity::observe`], V4 hooks included).
     #[expect(
         clippy::too_many_lines,
@@ -1045,7 +1007,7 @@ impl BotState {
                 outcome,
                 fetched_words,
             } => {
-                let caveats = caveats_for_coverage(coverage).union(extra_caveats);
+                let caveats = Caveats::for_coverage(coverage).union(extra_caveats);
                 let payload = concentrated_liquidity_payload(
                     &outcome,
                     request.zero_for_one,
@@ -1083,6 +1045,7 @@ mod tests {
     #![expect(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+    use ::degenbot_pools::PoolTickCoverage;
     use hashbrown::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -1181,23 +1144,6 @@ mod tests {
     // (The ADR-037 sign-convention table moved WITH the family:
     // degenbot_pools::families::concentrated_liquidity::{v3,v4} pin the
     // per-design mapping rows.)
-
-    // ---------------------------------------------------------------------
-    // Caveats: empty-means-exact, additive union.
-    #[test]
-    fn caveats_bit_semantics() {
-        assert!(Caveats::default().is_empty());
-        let sparse = Caveats::SPARSE_COVERAGE;
-        assert!(!sparse.is_empty());
-        assert!(sparse.contains(Caveats::SPARSE_COVERAGE));
-        assert_eq!(sparse.union(sparse), sparse);
-    }
-
-    #[test]
-    fn coverage_to_caveats() {
-        assert!(caveats_for_coverage(PoolTickCoverage::Tracked).is_empty());
-        assert!(caveats_for_coverage(PoolTickCoverage::Sparse).contains(Caveats::SPARSE_COVERAGE));
-    }
 
     // ---------------------------------------------------------------------
     // concentrated liquidity payload: user-perspective signs from unsigned engine amounts.

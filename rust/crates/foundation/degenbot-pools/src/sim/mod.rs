@@ -3,6 +3,8 @@
 //! implementations live one layer up (the `std::io::Read` precedent), and the
 //! registration-refusal vocabulary (ADR-084 W5b).
 
+pub mod caveats;
+
 pub mod curve_data_provider;
 
 pub mod curve_dy_io;

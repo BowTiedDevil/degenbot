@@ -313,6 +313,7 @@ mod tests {
             consumed_inputs: vec![U256::from(optimal_input), U256::from(optimal_input)],
             state_nonces: vec![1, 2],
             solver_pool_states: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -335,6 +336,7 @@ mod tests {
             consumed_inputs: vec![U256::from(1_u64)],
             state_nonces: vec![7],
             solver_pool_states: Vec::new(),
+            ..Default::default()
         };
         let row = raw_row(1, &huge, 100);
         assert_eq!(row.optimal_input, u128::MAX);

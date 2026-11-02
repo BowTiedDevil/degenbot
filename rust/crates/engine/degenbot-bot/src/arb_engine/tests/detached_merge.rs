@@ -374,6 +374,7 @@ fn detached_merge_event_parents_under_the_carried_solve_span() {
                         consumed_inputs: Vec::new(),
                         state_nonces: Vec::new(),
                         solver_pool_states: Vec::new(),
+                        ..Default::default()
                     },
                     solve_span: tracing::Span::current(),
                 },

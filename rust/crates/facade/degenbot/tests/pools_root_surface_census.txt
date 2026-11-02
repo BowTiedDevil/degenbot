@@ -32,6 +32,16 @@
 # the door therefore grows this surface by one name per new door item, and the
 # pin is bumped in the same change.
 #
+# The 1017 -> 1027 review is the trust-flag vocabulary's move DOWN a layer:
+# `Caveats` (ADR-037 D4's additive flag set) leaves `degenbot-substrate`'s
+# swap-simulation module for `sim::caveats`, the crate that owns both outcome
+# shapes it flags — the stateless swap outcomes and the solve results — so a
+# sparse-coverage solve result can carry the same vocabulary as a sparse-
+# coverage swap read. Substrate re-exports the type, so its public module path
+# is unchanged; the 10 names are the relocated type (struct + two consts + four
+# accessors), its module, the root re-export, and `PoolEntry::tick_coverage`
+# (the resolve loop's per-hop registration-coverage read).
+#
 # Regenerate: rg -n '^pub mod' rust/crates/foundation/degenbot-pools/src/lib.rs
 # plus the name count from `count_pub_items` in the gate.
 #

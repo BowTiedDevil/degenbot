@@ -8,6 +8,13 @@
 //! `degenbot-bot` and never reached by `PyO3`. ADR-015 placement is unchanged —
 //! the projection stays in degenbot-bot; only its internals moved here.
 //!
+//! `resolve_hops` also captures each projected hop's path-level trust flags
+//! ([`Caveats`]): a hop registered with Sparse tick coverage makes the whole
+//! path approximate, and the flag rides [`ResolvedMixedPath`] into the solve
+//! result so dispatch and telemetry see it. Nothing is refused for it — sparse
+//! pools are admitted, their results merely carry the caveat (ADR-037's
+//! hooked-pool precedent, minus the exclusion).
+//!
 //! `resolve_hops` collects EVERY failing hop — it does not stop at
 //! the first `Err`. Prior successful hops still project; each failure is
 //! returned as a `HopDeficit` so the path state machine can track every
@@ -35,6 +42,7 @@ use hashbrown::HashMap;
 use std::sync::Arc;
 
 use degenbot_pools::solve::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
+use degenbot_pools::Caveats;
 
 use super::BotState;
 
@@ -418,6 +426,7 @@ pub fn resolve_hops(
     resolved.hops.clear();
     resolved.valid = false;
     resolved.state_nonces.clear();
+    resolved.caveats = Caveats::default();
 
     // a path with <2 hops is rejected loudly at `register_path`,
     // so reaching here is a programming error. Return no deficits rather than
@@ -498,6 +507,16 @@ pub fn resolve_hops(
             Ok((hop, nonce)) => {
                 resolved.hops.push(hop);
                 resolved.state_nonces.push(nonce);
+                // Trust flags ride the path: a hop whose registration coverage is
+                // Sparse makes the WHOLE path approximate (union — one sparse hop
+                // is enough), the path-admission analogue of the hooked-pool
+                // refusal sitting in the family rows beside it. The probe is per
+                // hop at admission because coverage is a registration-time fact
+                // of the POOL, not of the projected sequence — so it needs no
+                // cache entry and cannot go stale behind the projection memo.
+                if let Some(coverage) = core.pool_tick_coverage(pool_ref.pool_key) {
+                    resolved.caveats = resolved.caveats.union(Caveats::for_coverage(coverage));
+                }
             }
             Err(reason) => {
                 log_invalidation(pool_ref, hop_index, reason);
@@ -543,7 +562,19 @@ mod tests {
         }
     }
 
+    fn ref_v4(pool_key: u64) -> MixedPoolRef {
+        MixedPoolRef {
+            hop_type: HopType::V4,
+            pool_key,
+            zero_for_one: true,
+        }
+    }
+
     fn register_v3(core: &mut BotState, addr: [u8; 20]) -> u64 {
+        register_v3_with(core, addr, PoolTickCoverage::Tracked)
+    }
+
+    fn register_v3_with(core: &mut BotState, addr: [u8; 20], coverage: PoolTickCoverage) -> u64 {
         let mut t = HashMap::new();
         t.insert(
             120,
@@ -574,7 +605,7 @@ mod tests {
             tick_data: t,
             update_block: 42,
             tick_data_block: None,
-            coverage: PoolTickCoverage::Tracked,
+            coverage,
             fetcher: None,
             ..Default::default()
         })
@@ -609,6 +640,104 @@ mod tests {
             },
             (CachedProjection::Invalid(_), _) => panic!("expected a cached hop, got invalid"),
         }
+    }
+
+    /// A path is APPROXIMATE when ANY hop is sparse (the path-level union),
+    /// and a fully-Tracked path carries no caveat. Nothing is refused: sparse
+    /// pools are admitted, their solve results merely carry the signal
+    /// (ADR-037's hooked-pool precedent, minus the exclusion).
+    #[test]
+    fn sparse_hop_marks_the_whole_path_approximate() {
+        let mut core = BotState::new();
+        let a = register_v3(&mut core, [0xe1u8; 20]);
+        let b = register_v3(&mut core, [0xe2u8; 20]);
+        let sparse = register_v3_with(&mut core, [0xe3u8; 20], PoolTickCoverage::Sparse);
+        let cache = HopProjectionCache::new();
+
+        let mut exact = ResolvedMixedPath::default();
+        assert!(
+            resolve_hops(
+                &core,
+                &[ref_v3(a), ref_v3(b)],
+                &mut exact,
+                &cache,
+                None,
+                true
+            )
+            .is_empty(),
+            "two Tracked hops project"
+        );
+        assert!(
+            exact.caveats.is_empty(),
+            "a fully-Tracked path carries no caveat"
+        );
+
+        let mut approximate = ResolvedMixedPath::default();
+        assert!(
+            resolve_hops(
+                &core,
+                &[ref_v3(a), ref_v3(sparse)],
+                &mut approximate,
+                &cache,
+                None,
+                true
+            )
+            .is_empty(),
+            "the sparse hop still projects — sparse pools are ADMITTED"
+        );
+        assert!(
+            approximate.caveats.contains(Caveats::SPARSE_COVERAGE),
+            "one Sparse hop makes the whole path approximate"
+        );
+    }
+
+    /// A V4 hop's coverage participates in the same union: the flag follows the
+    /// POOL's registration fact, not the settlement host (a `PoolManager`-hosted
+    /// pool carries its own `coverage`, exactly as a V3 pool does).
+    #[test]
+    fn sparse_v4_hop_marks_the_path_approximate_too() {
+        let mut core = BotState::new();
+        let tracked_v4 = register_v4_at(&mut core, U256::from(1u64) << 96);
+        let sparse_v4 = register_v4_with(
+            &mut core,
+            U256::from(1u64) << 96,
+            PoolTickCoverage::Sparse,
+            [0xc5u8; 32],
+        );
+        let cache = HopProjectionCache::new();
+
+        let mut exact = ResolvedMixedPath::default();
+        assert!(
+            resolve_hops(
+                &core,
+                &[ref_v4(tracked_v4), ref_v4(tracked_v4)],
+                &mut exact,
+                &cache,
+                None,
+                true
+            )
+            .is_empty(),
+            "tracked V4 hops project"
+        );
+        assert!(exact.caveats.is_empty());
+
+        let mut approximate = ResolvedMixedPath::default();
+        assert!(
+            resolve_hops(
+                &core,
+                &[ref_v4(tracked_v4), ref_v4(sparse_v4)],
+                &mut approximate,
+                &cache,
+                None,
+                true
+            )
+            .is_empty(),
+            "a sparse V4 hop projects"
+        );
+        assert!(
+            approximate.caveats.contains(Caveats::SPARSE_COVERAGE),
+            "a PoolManager-hosted sparse pool approximates the path"
+        );
     }
 
     /// ADR-040: a quarantined pool is INVISIBLE to solve resolution.
@@ -823,6 +952,20 @@ mod tests {
     /// Register a hookless V4 pool at 1.0 (2^96 scaled) with the same wide
     /// tick spread as the V3 fixture.
     fn register_v4_at(core: &mut BotState, sqrt_price_x96: U256) -> u64 {
+        register_v4_with(
+            core,
+            sqrt_price_x96,
+            PoolTickCoverage::Tracked,
+            [0xc4u8; 32],
+        )
+    }
+
+    fn register_v4_with(
+        core: &mut BotState,
+        sqrt_price_x96: U256,
+        coverage: PoolTickCoverage,
+        pool_id: [u8; 32],
+    ) -> u64 {
         let mut t = HashMap::new();
         t.insert(
             6_000,
@@ -842,7 +985,7 @@ mod tests {
         );
         core.register_v4_pool(&RegisterV4PoolParams {
             pool_manager: Address::from([0x44u8; 20]),
-            pool_id: [0xc4u8; 32],
+            pool_id,
             pool_key: V4PoolKey {
                 currency0: Address::from([0x30u8; 20]),
                 currency1: Address::from([0x31u8; 20]),
@@ -859,7 +1002,7 @@ mod tests {
             tick_data: t,
             update_block: 42,
             tick_data_block: None,
-            coverage: PoolTickCoverage::Tracked,
+            coverage,
             fetcher: None,
             known_bitmap_words: Vec::new(),
         })

@@ -1208,7 +1208,11 @@ _Avoid_: "calc mixin" for the swap verbs; calling the Rust swap-simulation owner
 
 **Caveats**:
 The additive flag set on an outcome, whose empty value means the number is exact.
-Variants name why a number may be approximate (sparse tick coverage, hooked pool).
+Variants name why a number may be approximate (sparse tick coverage, hooked pool). ONE
+vocabulary for both channels: a per-pool swap read carries its own pool's flags, and a
+solve result carries the path-level union of its hops' coverage flags — a path is
+approximate when ANY hop is sparse (a V4 `PoolManager`-hosted pool participates exactly as
+a V3 pool does).
 
 ## ERC6909 capture
 

@@ -34,6 +34,7 @@ pub fn path(hops: Vec<ResolvedHop>) -> ResolvedMixedPath {
         valid: true,
         state_nonces: nonces,
         max_update_block: 0,
+        ..Default::default()
     }
 }
 

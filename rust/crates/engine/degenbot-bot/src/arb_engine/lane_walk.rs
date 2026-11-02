@@ -548,6 +548,7 @@ mod solve_path_span_tests {
             valid: true,
             state_nonces: Vec::new(),
             max_update_block: 0,
+            ..Default::default()
         };
         tracing::subscriber::with_default(subscriber, || {
             let solve = tracing::info_span!("degenbot.arb.solve", block.number = 7u64);

@@ -40,6 +40,7 @@ fn main() {
         valid: true,
         state_nonces: vec![1, 1],
         max_update_block: 0,
+        ..Default::default()
     };
 
     let outcome = solve_path_with_min_profit(

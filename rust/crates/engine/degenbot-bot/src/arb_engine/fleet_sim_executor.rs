@@ -556,6 +556,7 @@ mod fleet_sim_stance_tests {
                 .collect(),
             state_nonces: vec![0; hops],
             solver_pool_states: Vec::new(),
+            ..Default::default()
         }
     }
     /// Make the process's sim boot stamp exist WITHOUT racing the real

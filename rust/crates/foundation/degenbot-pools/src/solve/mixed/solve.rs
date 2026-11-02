@@ -477,6 +477,11 @@ pub fn solve_path_inner(
 
     let result = arm.result.map(|mut r| {
         r.state_nonces.clone_from(&resolved.state_nonces);
+        // Resolve-time facts ride the result (the feed the dispatch seam's
+        // staleness gate and telemetry consume): the path's trust flags are
+        // captured at admission, where the per-hop coverage is known, and the
+        // solve tree merely carries them — it never re-derives coverage.
+        r.caveats = resolved.caveats;
         // The pool-state descriptions are consumed ONLY by the
         // [solver-st] debug sites in the bot - formatting U256s for every
         // solved path every cycle is pure waste unless a debug subscriber
@@ -700,12 +705,15 @@ fn verify_best(
 
 #[cfg(test)]
 mod gate_tests {
+    #![expect(clippy::expect_used)]
+
     use super::*;
 
     use crate::families::concentrated_liquidity::solve::{
         concentrated_liquidity_hop_lines, concentrated_liquidity_to_math, solve_walkable_path_int,
     };
     use crate::solve::ResolvedMixedPath;
+    use crate::Caveats;
     use degenbot_math::v2::IntHopState;
     use degenbot_uniswap::dex_identity::DexVariant;
 
@@ -723,7 +731,46 @@ mod gate_tests {
             valid: true,
             state_nonces: vec![1, 2],
             max_update_block: 0,
+            ..Default::default()
         }
+    }
+
+    /// A V2 round trip priced to net positive at the test reserves: the second
+    /// pool returns at ~1.01:1, which clears both 0.997 fees.
+    fn profitable_round_trip() -> ResolvedMixedPath {
+        ResolvedMixedPath {
+            hops: vec![v2_hop(1_000_000, 1_000_000), v2_hop(1_000_000, 1_010_000)],
+            valid: true,
+            state_nonces: vec![1, 2],
+            max_update_block: 0,
+            ..Default::default()
+        }
+    }
+
+    /// The path's resolve-time trust flags ride the solve result: a path
+    /// admitted over a Sparse pool yields an APPROXIMATE result, a fully-Tracked
+    /// path an exact one. The solve tree never re-derives coverage — it carries
+    /// the admission-time flag the resolver captured.
+    #[test]
+    fn path_caveats_ride_the_solve_result() {
+        let mut approximate = profitable_round_trip();
+        approximate.caveats = Caveats::SPARSE_COVERAGE;
+        let result = solve_path_inner(&approximate, &GateDeps::offline(), None)
+            .result
+            .expect("the fixture path is profitable");
+        assert!(
+            result.caveats.contains(Caveats::SPARSE_COVERAGE),
+            "a sparse hop's caveat must reach the solve result"
+        );
+
+        let exact = profitable_round_trip();
+        let result = solve_path_inner(&exact, &GateDeps::offline(), None)
+            .result
+            .expect("the fixture path is profitable");
+        assert!(
+            result.caveats.is_empty(),
+            "a fully-Tracked path carries no caveat"
+        );
     }
 
     #[test]
@@ -762,6 +809,7 @@ mod gate_tests {
             valid: true,
             state_nonces: vec![1, 2],
             max_update_block: 0,
+            ..Default::default()
         };
         let r = solve_path_with_min_profit(&p, U256::ZERO, &GateDeps::offline());
         assert!(
@@ -797,6 +845,7 @@ mod gate_tests {
             valid: false, // invalid anyway; only counter behavior matters
             state_nonces: vec![],
             max_update_block: 0,
+            ..Default::default()
         };
         let r = solve_path_with_min_profit(&p, U256::ZERO, &GateDeps::offline());
         let stats = r.gate_stats;

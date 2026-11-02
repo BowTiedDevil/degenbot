@@ -559,6 +559,7 @@ mod tests {
             },
             state_nonces: vec![1],
             solver_pool_states: Vec::new(),
+            ..Default::default()
         };
         (path_id, result)
     }

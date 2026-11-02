@@ -401,6 +401,7 @@ mod tests {
             consumed_inputs: Vec::new(),
             state_nonces: Vec::new(),
             solver_pool_states: Vec::new(),
+            ..Default::default()
         }
     }
     /// Core claim: the delivery policy is a **pure consumer** of the

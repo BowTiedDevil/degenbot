@@ -1127,6 +1127,7 @@ fn profit_threshold_includes_results_above_u64_max_when_unbounded() {
             consumed_inputs: vec![U256::from(1_000u64)],
             state_nonces: vec![],
             solver_pool_states: vec![],
+            ..Default::default()
         },
     );
     // Anchor the solve at a real block: candidates are only deliverable
@@ -1169,6 +1170,7 @@ fn profit_threshold_max_bound_is_inclusive() {
             consumed_inputs: vec![U256::from(1_000u64)],
             state_nonces: vec![],
             solver_pool_states: vec![],
+            ..Default::default()
         },
     );
     // Anchor the solve at a real block (solve-anchor delivery guard — see
@@ -1203,6 +1205,7 @@ fn profit_threshold_min_bound_is_exclusive() {
             consumed_inputs: vec![U256::from(1_000u64)],
             state_nonces: vec![],
             solver_pool_states: vec![],
+            ..Default::default()
         },
     );
     compute_diff_and_send(&mut engine, &BlockMetadata::default());

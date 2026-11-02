@@ -1426,6 +1426,7 @@ pub(crate) mod solve {
                 valid: true,
                 state_nonces: vec![1],
                 max_update_block: 0,
+                ..Default::default()
             };
             let r = solve_path_with_min_profit(&p, floor, &GateDeps::offline());
             assert!(

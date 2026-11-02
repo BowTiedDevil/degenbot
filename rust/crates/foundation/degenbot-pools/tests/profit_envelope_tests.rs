@@ -1558,6 +1558,7 @@ fn solidly_stable_tangent_raises_skip_count_on_synthesized_corpus() {
             valid: true,
             state_nonces: vec![i],
             max_update_block: 0,
+            ..Default::default()
         });
     }
 
