@@ -4,8 +4,13 @@
 //! candidate's composition without holding a Python predicate. `receipt` is a
 //! unit's terminal record (identity, answering stage, outcome) and `profile`
 //! the measurement folded from those records — the stage profile and the
-//! summary counters the crawl is reported by.
+//! summary counters the crawl is reported by. `unit` is the per-candidate
+//! pipeline itself (memo → build → eligibility → verify → register, one
+//! receipt), and `flights` the single-flight build table that keeps concurrent
+//! seats from paying for the same construction twice.
 
+pub mod flights;
 pub mod policy;
 pub mod profile;
 pub mod receipt;
+pub mod unit;

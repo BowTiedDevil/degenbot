@@ -1,0 +1,82 @@
+{
+  "about": "The crawl unit's outcome table \u2014 the contract BOTH drivers assert. Each row is one scenario the Rust unit (crawl/unit/tests.rs) and the Python unit (tests/arbitrage/test_crawl_unit_parity.py, driving _registration_unit) drive over its own fixture of the same shape: the unit kind, the summary breakdown tag (null = the outcome records no breakdown entry), and the stage that answered the unit (build_paths.py's UNIT_STAGES).",
+  "rows": [
+    {
+      "case": "registered_cycle",
+      "kind": "registered",
+      "tag": null,
+      "stage": "register",
+      "about": "a fresh closed cycle: all five stages run, a new path id is created"
+    },
+    {
+      "case": "duplicate_cycle",
+      "kind": "registered",
+      "tag": null,
+      "stage": "eligibility",
+      "about": "the same cycle re-sighted: the registered-path memo's dup fast-path answers before verify"
+    },
+    {
+      "case": "memoized_build_refusal",
+      "kind": "skip",
+      "tag": "build-v3-refused",
+      "stage": "memo",
+      "about": "a hop whose stable build refusal is already a pool fact answers the unit before any build"
+    },
+    {
+      "case": "v4_admission_refusal",
+      "kind": "skip",
+      "tag": "v4-dynamic-fee-rejected",
+      "stage": "build",
+      "about": "a dynamic-fee V4 pool: a stable admission refusal that does not count as a skip"
+    },
+    {
+      "case": "v4_admission_refusal_memoized",
+      "kind": "skip",
+      "tag": "v4-dynamic-fee-rejected",
+      "stage": "memo",
+      "about": "the same dynamic-fee V4 pool re-sighted: the pool fact answers at the memo stage"
+    },
+    {
+      "case": "v4_hop_without_pool_id",
+      "kind": "skip",
+      "tag": "v4-no-hash",
+      "stage": "build",
+      "about": "a malformed V4 edge with no on-chain pool id"
+    },
+    {
+      "case": "pinned_direction_mismatch",
+      "kind": "skip",
+      "tag": "direction-mismatch",
+      "stage": "eligibility",
+      "about": "an operator pin whose hop count disagrees with the path"
+    },
+    {
+      "case": "policy_denied",
+      "kind": "reject",
+      "tag": null,
+      "stage": "eligibility",
+      "about": "the path-composition policy denies a touched token; the deny enters the rejected-path memo"
+    },
+    {
+      "case": "policy_denied_memoized",
+      "kind": "reject",
+      "tag": null,
+      "stage": "eligibility",
+      "about": "the same denied path re-sighted: the rejected-path memo answers without re-running the policy"
+    },
+    {
+      "case": "cap_stop",
+      "kind": "cap",
+      "tag": "path-cap",
+      "stage": "register",
+      "about": "the registered-path cap refuses the registration: the benign stop"
+    },
+    {
+      "case": "register_fail",
+      "kind": "register-fail",
+      "tag": "register-fail",
+      "stage": "register",
+      "about": "a structurally unroutable hop list: a transient register failure, never memoized"
+    }
+  ]
+}

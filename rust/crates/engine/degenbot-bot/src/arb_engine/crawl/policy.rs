@@ -13,7 +13,8 @@
 use std::collections::BTreeSet;
 
 use alloy::primitives::{Address, U256};
-use degenbot_pools::RegisteredPoolFamily;
+use degenbot_pools::{PoolEntry, RegisteredPoolFamily};
+use degenbot_substrate::BotState;
 
 /// The declarative path-composition policy: `PathPolicy` as a value.
 ///
@@ -173,6 +174,183 @@ pub struct HopComposition {
     pub liquidity: Option<U256>,
 }
 
+/// The state-side facts one REGISTERED pool answers — the ONE family dispatch
+/// over [`PoolEntry`] that the composition view, the verify stage's identity
+/// key, and the direction resolver all read.
+///
+/// Every field is optional per family, and a family answers only the facts its
+/// state shape has: a reserve pair has reserves and per-direction fee
+/// fractions, a concentrated-liquidity pool has active liquidity, and a V4 pool
+/// is keyed by `(PoolManager, pool_id)` rather than an address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RegisteredHopFacts {
+    /// The structural family the pool registered under.
+    pub family: RegisteredPoolFamily,
+    /// The contract-address families' address (`None` for a V4 pool).
+    pub address: Option<Address>,
+    /// A V4 pool's `(PoolManager, pool_id)` (`None` for the address-keyed
+    /// families).
+    pub v4: Option<(Address, [u8; 32])>,
+    /// The pool's token0, in on-chain order.
+    pub token0: Address,
+    /// The pool's token1, in on-chain order.
+    pub token1: Address,
+    /// A reserve pair's per-direction fee fractions as `((gamma, denom)_token0,
+    /// (gamma, denom)_token1)`. An Aerodrome pair carries ONE fee for both
+    /// directions, so it answers `None` rather than a fabricated asymmetric
+    /// pair.
+    pub fee_pair: Option<((u64, u64), (u64, u64))>,
+    /// The reserve-pair proxy (`reserve0 + reserve1`), when the family has
+    /// reserves.
+    pub reserve_sum: Option<U256>,
+    /// The active-liquidity proxy, when the family is concentrated-liquidity.
+    pub active_liquidity: Option<U256>,
+}
+
+/// Read one registered pool's state-side facts.
+///
+/// `None` when `pool_id` is not registered, or when it names a multi-token
+/// family (Curve / Balancer) whose state has no `(token0, token1)` pair. The
+/// crawl builds only pair hops, so the second arm is a caller invariant
+/// violation — never a policy answer (a policy cannot be asked about a path
+/// that does not exist).
+#[must_use]
+pub fn registered_hop_facts(state: &BotState, pool_id: u64) -> Option<RegisteredHopFacts> {
+    let entry = state.pool_entry(pool_id)?;
+    let mut facts = RegisteredHopFacts {
+        family: entry.registered_family(),
+        address: None,
+        v4: None,
+        token0: Address::ZERO,
+        token1: Address::ZERO,
+        fee_pair: None,
+        reserve_sum: None,
+        active_liquidity: None,
+    };
+    match entry {
+        PoolEntry::V2(pool) => {
+            facts.address = Some(pool.0.address);
+            facts.token0 = pool.0.token0;
+            facts.token1 = pool.0.token1;
+            facts.fee_pair = Some((pool.0.fee_token0, pool.0.fee_token1));
+            facts.reserve_sum = Some(U256::from(pool.1.reserve0) + U256::from(pool.1.reserve1));
+        }
+        PoolEntry::AerodromeV2(pool) => {
+            facts.address = Some(pool.0.address);
+            facts.token0 = pool.0.token0;
+            facts.token1 = pool.0.token1;
+            facts.reserve_sum = Some(U256::from(pool.1.reserve0) + U256::from(pool.1.reserve1));
+        }
+        PoolEntry::V3(pool) => {
+            facts.address = Some(pool.0.address);
+            facts.token0 = pool.0.token0;
+            facts.token1 = pool.0.token1;
+            facts.active_liquidity = Some(U256::from(pool.1.liquidity));
+        }
+        PoolEntry::V4(pool) => {
+            facts.v4 = Some((pool.0.pool_manager, pool.0.pool_id));
+            facts.token0 = pool.0.pool_key.currency0;
+            facts.token1 = pool.0.pool_key.currency1;
+            facts.active_liquidity = Some(U256::from(pool.1.liquidity));
+        }
+        PoolEntry::Curve(_) | PoolEntry::BalancerWeighted(_) | PoolEntry::BalancerStable(_) => {
+            return None
+        }
+    }
+    Some(facts)
+}
+
+impl RegisteredHopFacts {
+    /// The identity the direction resolver and the operator surface render for
+    /// this hop.
+    #[must_use]
+    pub fn identity_label(&self) -> String {
+        match self.v4 {
+            Some((_, pool_id)) => format!("v4:0x{}", alloy::hex::encode(pool_id)),
+            None => self.address.unwrap_or(Address::ZERO).to_string(),
+        }
+    }
+
+    /// The configured liquidity proxy's reading for this hop; `None` when the
+    /// proxy does not apply to the family (see [`LiquidityProxy`]).
+    #[must_use]
+    pub const fn liquidity(&self, proxy: LiquidityProxy) -> Option<U256> {
+        match proxy {
+            LiquidityProxy::ReserveSum => self.reserve_sum,
+            LiquidityProxy::ActiveLiquidity => self.active_liquidity,
+        }
+    }
+}
+
+impl HopComposition {
+    /// Build one hop's composition from the registered pool it names.
+    ///
+    /// `pool_id` is the engine id the hop swap goes through and
+    /// `zero_for_one` the hop's orientation, so `token_in`/`token_out` are the
+    /// direction-filtered pair (`policy.py:113`).
+    ///
+    /// `None` means the state cannot answer a composition fact: `pool_id` is
+    /// not registered, or it names a multi-token family (Curve / Balancer)
+    /// whose state has no `(token0, token1)` pair. The crawl builds only pair
+    /// hops, so the second arm is a caller invariant violation — never a
+    /// policy answer (a policy cannot be asked about a path that does not
+    /// exist).
+    #[must_use]
+    pub fn from_registered(
+        state: &BotState,
+        pool_id: u64,
+        zero_for_one: bool,
+        floor: Option<&LiquidityFloor>,
+    ) -> Option<Self> {
+        let facts = registered_hop_facts(state, pool_id)?;
+        // A V4 pool's registration identity is its on-chain pool id (one
+        // `PoolManager` hosts many pools, so the manager is not unique per
+        // pool); every other family is keyed by its address.
+        let identity = match facts.v4 {
+            Some((_, pool_id)) => PoolIdentityTag::V4(pool_id),
+            None => PoolIdentityTag::Address(facts.address?),
+        };
+        let (token_in, token_out) = if zero_for_one {
+            (facts.token0, facts.token1)
+        } else {
+            (facts.token1, facts.token0)
+        };
+        Some(Self {
+            pool_id,
+            family: facts.family,
+            identity,
+            zero_for_one,
+            token_in,
+            token_out,
+            liquidity: floor.and_then(|floor| facts.liquidity(floor.proxy)),
+        })
+    }
+}
+
+impl PathCompositionView {
+    /// Build the view for one admitted-or-candidate hop signature.
+    ///
+    /// `hop_sig` is `(pool_id, zero_for_one)` per hop, in hop order — the same
+    /// signature the ledger's memos key on, so a candidate's policy view and
+    /// its memo identity are one value. `None` propagates
+    /// [`HopComposition::from_registered`]'s answer: a hop the state cannot
+    /// describe.
+    #[must_use]
+    pub fn from_registered(
+        state: &BotState,
+        hop_sig: &[(u64, bool)],
+        floor: Option<&LiquidityFloor>,
+    ) -> Option<Self> {
+        let hops = hop_sig
+            .iter()
+            .map(|&(pool_id, zero_for_one)| {
+                HopComposition::from_registered(state, pool_id, zero_for_one, floor)
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self { hops })
+    }
+}
+
 /// The ordered, de-duplicated token addresses a path touches.
 ///
 /// Captures the first hop's `token_in` plus every hop's `token_out` (all
@@ -275,6 +453,116 @@ impl CrawlPathPolicy {
 
 fn deny(refusal: PolicyRefusal) -> PathPolicyVerdict {
     PathPolicyVerdict::Deny { refusal }
+}
+
+#[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests assert on known-valid fixtures")]
+mod registered_hop_facts_tests {
+    //! `from_registered` reads the composition from the ONE state owner: the
+    //! family dispatch, the direction-filtered pair, the identity the duplicate
+    //! guard keys on, and the liquidity proxy.
+
+    use alloy::primitives::{address, aliases::U112, Address, B256};
+    use degenbot_pools::RegisterV2PoolParams;
+    use degenbot_substrate::BotState;
+    use degenbot_uniswap::dex_identity::DexVariant;
+
+    use super::*;
+
+    const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    const USDC: Address = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    const POOL: Address = address!("B4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc");
+
+    fn state_with_v2_pool(reserve0: u64, reserve1: u64) -> (BotState, u64) {
+        let mut state = BotState::new();
+        let pool_id = state
+            .register_v2_pool(&RegisterV2PoolParams {
+                address: POOL,
+                token0: USDC,
+                token1: WETH,
+                reserve0: U112::from(reserve0),
+                reserve1: U112::from(reserve1),
+                fee_token0: (997, 1000),
+                fee_token1: (997, 1000),
+                factory: address!("5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
+                deployer: address!("5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"),
+                init_hash: B256::ZERO,
+                update_block: 1,
+                variant: DexVariant::UniswapV2,
+                stable_swap: false,
+                fee_denominator: None,
+            })
+            .expect("the fixture registers");
+        (state, pool_id)
+    }
+
+    #[test]
+    fn the_view_is_built_from_registered_state() {
+        let (state, pool_id) = state_with_v2_pool(1_000, 2_000);
+        let view = PathCompositionView::from_registered(&state, &[(pool_id, true)], None)
+            .expect("a registered pool composes");
+        let hop = &view.hops[0];
+        assert_eq!(hop.pool_id, pool_id);
+        assert_eq!(hop.family, RegisteredPoolFamily::V2);
+        assert_eq!(hop.identity, PoolIdentityTag::Address(POOL));
+        assert!(hop.zero_for_one);
+        assert_eq!((hop.token_in, hop.token_out), (USDC, WETH));
+        assert_eq!(hop.liquidity, None, "no floor configured, no proxy read");
+
+        // The other orientation swaps the pair.
+        let reversed = PathCompositionView::from_registered(&state, &[(pool_id, false)], None)
+            .expect("a registered pool composes");
+        assert_eq!(
+            (reversed.hops[0].token_in, reversed.hops[0].token_out),
+            (WETH, USDC)
+        );
+    }
+
+    #[test]
+    fn the_floor_reads_the_configured_proxy_only() {
+        let (state, pool_id) = state_with_v2_pool(1_000, 2_000);
+        let view = PathCompositionView::from_registered(
+            &state,
+            &[(pool_id, true)],
+            Some(&LiquidityFloor {
+                min: U256::from(500u64),
+                proxy: LiquidityProxy::ReserveSum,
+            }),
+        )
+        .expect("a registered pool composes");
+        assert_eq!(view.hops[0].liquidity, Some(U256::from(3_000u64)));
+        assert!(matches!(
+            CrawlPathPolicy {
+                liquidity_floor: Some(LiquidityFloor {
+                    min: U256::from(100_000u64),
+                    proxy: LiquidityProxy::ReserveSum,
+                }),
+                ..CrawlPathPolicy::default()
+            }
+            .evaluate(&view),
+            PathPolicyVerdict::Deny {
+                refusal: PolicyRefusal::InsufficientLiquidity { pool_id: id, .. }
+            } if id == pool_id
+        ));
+
+        // A concentrated-liquidity proxy does not apply to a reserve pair.
+        let view = PathCompositionView::from_registered(
+            &state,
+            &[(pool_id, true)],
+            Some(&LiquidityFloor {
+                min: U256::ZERO,
+                proxy: LiquidityProxy::ActiveLiquidity,
+            }),
+        )
+        .expect("a registered pool composes");
+        assert_eq!(view.hops[0].liquidity, None);
+    }
+
+    #[test]
+    fn an_unregistered_pool_has_no_view() {
+        let state = BotState::new();
+        assert!(PathCompositionView::from_registered(&state, &[(7, true)], None).is_none());
+    }
 }
 
 #[cfg(test)]
