@@ -94,7 +94,6 @@ pub const SHELL_OWNED_KEYS: &[&str] = &[
     "diagnostics.procmem_secs",
     "diagnostics.tracemalloc_secs",
     "nodes.anvil_fork_compute_units_per_second",
-    "pathfinding.discovery_batch_size",
     "pathfinding.reg_progress_secs",
     "simulation.exit_ignore_buckets",
     "simulation.sim_exit_on_fail",
@@ -1419,7 +1418,7 @@ mod tests {
         }
         assert_eq!(
             SHELL_OWNED_KEYS.len(),
-            9,
+            8,
             "the shell-owned census changed: give the new key a core implementation, or add it here on review"
         );
     }
