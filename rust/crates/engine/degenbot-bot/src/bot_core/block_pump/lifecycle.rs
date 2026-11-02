@@ -91,25 +91,41 @@ impl BlockPump {
     /// the live head), the backfill step is skipped — the live loop anchors
     /// on `W` directly.
     ///
+    /// A failed backfill aborts the resume: the snapshot→WS gap `S+1..W` is
+    /// then UNAPPLIED, so the live loop is never started — a pool is never
+    /// admitted over an unclosed gap.
+    ///
     /// # Panics
     ///
     /// Panics if `subscribe_state.combined_stream` is `None` (i.e., `subscribe()`
     /// was not called first).
+    ///
+    /// # Errors
+    ///
+    /// Returns the backfill's `eth_getLogs` failure message (naming the
+    /// offending block range) when the `S+1..W` gap could not be closed. The
+    /// caller recovers with a fresh `subscribe()`; the pump's own session
+    /// machine (above this layer) owns the `Abandoned` landing.
     #[cfg_attr(not(test), expect(dead_code))]
-    pub async fn resume_from_subscribe(&mut self, subscribe_state: SubscribeState) {
+    pub async fn resume_from_subscribe(
+        &mut self,
+        subscribe_state: SubscribeState,
+    ) -> Result<(), String> {
         #[expect(clippy::expect_used)] // invariant-guarded (documented)
         let combined = subscribe_state
             .combined_stream
             .expect("resume() called without WS stream — did you call subscribe() first?");
         let first_block = subscribe_state.first_block;
         let (backfill_res, combined) = self.backfill_with_drain(first_block, combined).await;
-        if let Err(e) = backfill_res {
+        if let Err(backfill) = backfill_res {
             op_error!(domain = pump, first_block,
-                %e,
-                "BlockPump: auto-backfill failed — starting live loop from gap (not closed)"
+                error = %backfill,
+                "BlockPump: auto-backfill failed — resume aborted, live loop NOT started (gap not closed)"
             );
+            return Err(backfill);
         }
         self.run_with_stream(combined, first_block).await;
+        Ok(())
     }
 
     /// run the snapshot→WS gap backfill while concurrently
@@ -153,11 +169,12 @@ impl BlockPump {
     /// and the drain-then-reinject shape means a backfill that outlives the
     /// broadcast buffer still hands every rescued event to the live loop.
     ///
-    /// **Caller's obligation**: the returned stream MUST be the one the live
-    /// loop drives. A caller that drops the returned stream (or drives the
-    /// original `combined` instead) discards the re-injected prefix — the
-    /// drained events would then be lost exactly as if the drain had never
-    /// run.
+    /// **Caller's obligation, both halves**: the returned stream MUST be the
+    /// one the live loop drives. A caller that drops the returned stream (or
+    /// drives the original `combined` instead) discards the re-injected prefix —
+    /// the drained events would then be lost exactly as if the drain had never
+    /// run. And an `Err` means the `S+1..W` gap is UNAPPLIED: the caller must
+    /// abort its resume rather than drive the stream.
     pub async fn backfill_with_drain(
         &self,
         first_block: u64,
@@ -221,8 +238,10 @@ impl BlockPump {
     /// buffered when `build_paths` drained → `VerificationMismatchError` at
     /// post-drain verify (2026-07-12 settlement-arbitrage crash).
     ///
-    /// No-op when `S` is unset (cold start), `S >= W` (catch-up snapshot), or
-    /// `S == 0`. Errors log + return (the live loop still starts from `W`).
+    /// No-op (`Ok(0)`) when `S` is unset (cold start), `S >= W` (catch-up
+    /// snapshot), or `S == 0` — those are successes, not failures. An `Err` is a
+    /// FAILED resume rather than a degraded one: `S+1..W` is unapplied, so the
+    /// caller must abort and NOT start the live loop.
     ///
     /// # Errors
     ///

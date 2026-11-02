@@ -201,6 +201,12 @@ pub enum DriverError {
     NoResultReceiver,
     /// The WS subscribe/handshake failed.
     Subscribe(String),
+    /// The `S+1..W` resume backfill failed. The resume aborted with the
+    /// snapshot→WS gap **UNAPPLIED** — the session landed `Abandoned` and no
+    /// live loop was started, so the caller recovers (a fresh `subscribe`)
+    /// instead of running over stale pool state. The detail names the
+    /// offending block range.
+    Backfill(String),
     /// Typed path-registration refusal (propagated verbatim, ADR-050 D4).
     Registration(PathRegistrationError),
     /// The registration verify lifecycle failed — the core [`RefusalKind`]
@@ -213,7 +219,7 @@ impl std::fmt::Display for DriverError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Phase(e) => write!(f, "{e}"),
-            Self::SessionState(m) | Self::Subscribe(m) => f.write_str(m),
+            Self::SessionState(m) | Self::Subscribe(m) | Self::Backfill(m) => f.write_str(m),
             Self::NoResultReceiver => f.write_str(
                 "Cannot resume: the result receiver has not been taken. Call take_result_receiver() before resume() so the unbounded result channel has a consumer attached.",
             ),
@@ -864,6 +870,9 @@ impl EngineDriver {
     ///   when the session is terminal.
     /// - [`DriverError::NoResultReceiver`] when the result receiver has not
     ///   been taken.
+    /// - [`DriverError::Backfill`] when the `S+1..W` backfill fails: the gap is
+    ///   UNAPPLIED, so the resume aborts (landing `Abandoned`) rather than
+    ///   starting a live loop over stale state.
     ///
     /// # Cancel safety
     ///
@@ -886,6 +895,11 @@ impl EngineDriver {
     /// left to resume. `Abandoned`'s recovery edge is a fresh `subscribe()`; its
     /// only other exit is `stop()`. A cancel after the `ResumeSpawned` landing is
     /// NOT "not resumed": the live loop is armed and its handle stored.
+    ///
+    /// **A backfill failure is an abort, not a degraded start**: the `S+1..W`
+    /// gap would be unapplied, so the `Err` is returned typed
+    /// ([`DriverError::Backfill`]) after the same `ResumeAbandoned` landing —
+    /// the live loop is never spawned.
     pub async fn resume(&self) -> Result<(), DriverError> {
         if self.is_stopped() {
             return Err(DriverError::SessionState(
@@ -939,14 +953,25 @@ impl EngineDriver {
         // race it. `backfill_with_drain` also re-injects live events
         // drained during the backfill ahead of the live tail.
         let (backfill_res, combined) = pump.backfill_with_drain(first_block, combined_stream).await;
-        if let Err(e) = backfill_res {
-            op_error!(
-                domain = pump,
-                first_block,
-                %e,
-                "EngineDriver: auto-backfill failed — starting live loop from gap (not closed)"
-            );
-        }
+        let combined = match backfill_res {
+            Ok(_) => combined,
+            // The gap `S+1..W` is UNAPPLIED, so a live loop from `W` would run
+            // over stale pool state: abort the resume instead. The pump and its
+            // WS session drop with this early return, exactly as they do on a
+            // cancelled resume, so the table's honest landing is the same
+            // `Resuming -> Abandoned` edge. The failure itself is the caller's,
+            // typed — the pose carries no payload.
+            Err(backfill) => {
+                op_error!(
+                    domain = pump,
+                    first_block,
+                    error = %backfill,
+                    "EngineDriver: auto-backfill failed — resume aborted, live loop NOT started (gap not closed)"
+                );
+                leg.land(PumpEvent::ResumeAbandoned)?;
+                return Err(DriverError::Backfill(backfill));
+            }
+        };
         // The landing precedes the spawn by one synchronous statement (no await
         // between the two, so cancellation cannot observe the gap). It must:
         // a live loop that ends immediately — an already-ended stream, a panic
@@ -1420,16 +1445,25 @@ mod tests {
 
     /// An alloy mock-transport provider (never hit on the no-RPC test paths).
     fn mock_provider() -> Arc<AlloyProvider> {
+        mock_provider_and_asserter().0
+    }
+
+    /// [`mock_provider`] plus the `Asserter`, so a test can queue the exact RPC
+    /// response the driver's own backfill will consume.
+    fn mock_provider_and_asserter() -> (Arc<AlloyProvider>, alloy::transports::mock::Asserter) {
         use alloy::network::Ethereum as NetEth;
         use alloy::providers::{Provider, ProviderBuilder};
         use alloy::rpc::client::ClientBuilder;
         use alloy::transports::mock::{Asserter, MockTransport};
         let asserter = Asserter::new();
-        let client = ClientBuilder::default().transport(MockTransport::new(asserter), true);
+        let client = ClientBuilder::default().transport(MockTransport::new(asserter.clone()), true);
         let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
-        Arc::new(AlloyProvider::from_provider(
-            Arc::new(dyn_provider) as Arc<dyn Provider<NetEth>>
-        ))
+        (
+            Arc::new(AlloyProvider::from_provider(
+                Arc::new(dyn_provider) as Arc<dyn Provider<NetEth>>
+            )),
+            asserter,
+        )
     }
 
     #[test]
@@ -2014,6 +2048,68 @@ mod tests {
             "subscribe from abandoned must reach the WS step, got {err:?}"
         );
         assert_eq!(driver.current_phase(), PumpPhase::Detached);
+    }
+
+    /// **The backfill-failure abort.** `resume` owns the `S+1..W` backfill; a
+    /// failed `eth_getLogs` leaves that gap UNAPPLIED, so the resume aborts
+    /// instead of starting a live loop over stale state. The failure lands
+    /// `Abandoned` — the same edge a cancelled resume publishes, because the
+    /// pump and its WS session drop with the early return — and the error
+    /// itself reaches the caller typed.
+    #[test]
+    fn a_failed_backfill_aborts_the_resume_typed_and_armed_nowhere() {
+        let driver = driver_for_test();
+        let runtime = degenbot_core::runtime::get_runtime();
+        let _result_rx = driver.take_result_receiver();
+        // S = 85 < W = 100: a real gap, so resume asks for
+        // eth_getLogs(86..=100) and the mock answers with an RPC error.
+        driver.set_snapshot_seed_block(Some(85));
+        let (provider, asserter) = mock_provider_and_asserter();
+        asserter.push_failure_msg("injected: eth_getLogs unavailable");
+        let reorg = Arc::new(ReorgCoordinator::new(Arc::clone(driver.bot())));
+        let stages_handlers: Arc<dyn StageHandlers> = driver.stages().clone();
+        let control: Arc<dyn PumpControl> = driver.stages().clone();
+        let pump = BlockPump::for_test(
+            Arc::clone(driver.bot()),
+            stages_handlers,
+            control,
+            reorg,
+            provider,
+            Arc::clone(&driver.shutdown),
+        );
+        driver.install_subscribe_state_for_test(DriverSubscribeState {
+            pump,
+            first_block: 100,
+            // A started live loop would park here forever: the prompt `Err` is
+            // itself evidence that none was started.
+            combined_stream: futures_util::stream::pending::<WsEvent>().boxed(),
+        });
+        driver.set_pose_for_test(PumpPhase::Subscribed);
+
+        let err = runtime.block_on(driver.resume()).unwrap_err();
+        match &err {
+            DriverError::Backfill(detail) => assert!(
+                detail.contains("eth_getLogs failed for blocks 86-100"),
+                "the typed error names the offending chunk: {detail}"
+            ),
+            other => assert!(
+                matches!(other, DriverError::Backfill(_)),
+                "the resume must return the typed backfill error, got {other:?}"
+            ),
+        }
+        assert_eq!(
+            driver.current_phase(),
+            PumpPhase::Abandoned,
+            "a failed backfill lands the table's Resuming -> Abandoned edge"
+        );
+        assert!(
+            !driver.pump_handle_armed(),
+            "a failed backfill must NOT start the live loop: the S+1..W gap is unapplied"
+        );
+        assert!(
+            driver.subscribe_state.lock().is_none(),
+            "the consumed subscribe state does not survive the aborted resume"
+        );
     }
 
     /// The guard's own contract: an armed leg that is dropped without landing

@@ -171,12 +171,49 @@ async fn auto_backfill_runs_inside_resume_when_s_lt_w() {
         first_timestamp: 0,
         combined_stream: Some(combined),
     };
-    pump.resume_from_subscribe(state).await;
+    pump.resume_from_subscribe(state)
+        .await
+        .expect("a successful backfill resumes into the live loop");
 
     assert_eq!(
         asserter.read_q().len(),
         0,
         "auto-backfill inside resume popped exactly one eth_getLogs response; queue must be empty"
+    );
+}
+
+/// A failed backfill must NEVER admit a pool over the unclosed `S+1..W` gap:
+/// `resume_from_subscribe` returns the `eth_getLogs` error and does NOT start
+/// the live loop. The stream here never yields, so a started loop would park
+/// forever — the prompt `Err` is the evidence that none was started.
+#[tokio::test]
+async fn a_failed_backfill_aborts_resume_and_starts_no_live_loop() {
+    let bot = Arc::new(Bot::new(1));
+    bot.state_arc()
+        .write_at(degenbot_substrate::state_lock::LockSite::Pump)
+        .set_snapshot_seed_block(Some(85));
+    let (mut pump, _sink, _shutdown, asserter) = pump_for_test_with_asserter(bot, None);
+
+    // S = 85 < W = 100: resume asks for eth_getLogs(86..=100); the mock
+    // answers with an RPC error.
+    asserter.push_failure_msg("injected: eth_getLogs unavailable");
+
+    let combined = stream::pending::<WsEvent>().boxed();
+    let state = SubscribeState {
+        first_block: 100,
+        first_timestamp: 0,
+        combined_stream: Some(combined),
+    };
+    let err = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        pump.resume_from_subscribe(state),
+    )
+    .await
+    .expect("a failed backfill aborts promptly instead of parking in a live loop")
+    .expect_err("a failed backfill is an error, never a degraded start");
+    assert!(
+        err.contains("eth_getLogs failed for blocks 86-100"),
+        "the abort names the offending chunk: {err}"
     );
 }
 
@@ -323,7 +360,9 @@ async fn auto_backfill_skipped_when_s_none_in_resume() {
         first_timestamp: 0,
         combined_stream: Some(combined),
     };
-    pump.resume_from_subscribe(state).await;
+    pump.resume_from_subscribe(state)
+        .await
+        .expect("a skipped backfill is a success, not an error");
 
     assert_eq!(
         asserter.read_q().len(),
@@ -349,7 +388,9 @@ async fn auto_backfill_skipped_when_s_ge_w_in_resume() {
         first_timestamp: 0,
         combined_stream: Some(combined),
     };
-    pump.resume_from_subscribe(state).await;
+    pump.resume_from_subscribe(state)
+        .await
+        .expect("a skipped backfill is a success, not an error");
 
     assert_eq!(
         asserter.read_q().len(),

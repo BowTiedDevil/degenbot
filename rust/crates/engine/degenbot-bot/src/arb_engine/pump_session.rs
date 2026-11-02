@@ -36,8 +36,9 @@ pub enum PumpPhase {
     Running,
     /// The live loop returned without a `Stop` — stream end, panic, or abort.
     Ended,
-    /// A resume was abandoned mid-flight. The WS session is gone; the only way
-    /// forward is a fresh `subscribe`.
+    /// A resume did not commit — cancelled mid-flight, or its `S+1..W` backfill
+    /// failed. Either way the WS session is gone and no live loop runs; the
+    /// only way forward is a fresh `subscribe`.
     Abandoned,
     /// `Stop` latched; teardown is in progress.
     Stopping,
@@ -115,7 +116,8 @@ pub enum PumpEvent {
     ResumeRequested,
     /// The live loop was spawned.
     ResumeSpawned,
-    /// The future driving the resume was dropped mid-flight.
+    /// The resume did not commit: the future driving it was dropped mid-flight,
+    /// or its `S+1..W` backfill returned `Err`.
     ResumeAbandoned,
     /// The live loop returned on its own.
     PumpExited,
@@ -231,6 +233,10 @@ pub fn transition(pose: PumpPhase, event: PumpEvent) -> Result<PumpPhase, PumpDe
         // resume
         (P::Subscribed, E::ResumeRequested) => Ok(P::Resuming),
         (P::Resuming, E::ResumeSpawned) => Ok(P::Running),
+        // Cancelled or backfill-failed: both leave the pump and its WS session
+        // gone with nothing to resume, so `Abandoned` is the honest landing.
+        // A failure's typed error travels beside the pose (the caller's
+        // `Err`), never through it — the table carries no payloads.
         (P::Resuming, E::ResumeAbandoned) => Ok(P::Abandoned),
 
         // the live loop returned without a stop
