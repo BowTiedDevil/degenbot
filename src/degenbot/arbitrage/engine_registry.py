@@ -173,9 +173,8 @@ class EngineRegistry:
         # Read it back here so the per-pool step-1 verify seed and the core
         # auto-backfill inside `resume()` (which closes the snapshot→WS gap)
         # both see it. `S` is already on `BotState` before `subscribe()` on the
-        # DB path, so the core's `after_subscribe` phase transition sees
-        # `core_has_snapshot = true` and advances the phase to
-        # `SnapshotLoaded` (required by `resume()`).
+        # DB path, so the driver-owned `resume` backfill anchors on it (the
+        # pump phase is `subscribed` there; no phase depends on the snapshot).
         snapshot_block = self.engine.snapshot_seed_block
         self._verify_snapshot_block = snapshot_block
 

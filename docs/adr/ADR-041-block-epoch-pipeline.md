@@ -148,17 +148,22 @@ the *provider* diverged, not our bookkeeping).
 ### 6. Runtime lifecycle is an orthogonal axis
 
 Pipeline stages answer "what has happened to this epoch's block". The
-process-level runtime lifecycle — **Boot → Subscribed → SnapshotLoaded →
-Resumed** — is a separate axis and never interleaves with the stage
-machine's per-epoch transitions. A resume starts a fresh stage machine at
-the snapshot-seed epoch; the sweep-back of epoch bookkeeping is what
-`SnapshotLoaded` exists to bound.
+process-level runtime lifecycle — **Detached → Connecting → Subscribed →
+Resuming → Running → (Ended | Abandoned) → Stopping → Stopped** — is a separate
+axis and never interleaves with the stage machine's per-epoch transitions. A
+resume starts a fresh stage machine at the snapshot-seed epoch; the backfill's
+span `S+1..W` is what that fresh machine's first publish waits on.
 
 `EnginePhase` is remapped in full onto this axis: its role —
 registration/snapshot/backfill ordering — is runtime-level, not per-epoch, so
-it contributes no `Solved`/`Simulated` sub-state to the stage machine. The
-existing enum (`Created → Subscribed → SnapshotLoaded → (Backfilled) →
-Resumed`) already carries exactly this shape.
+it contributes no `Solved`/`Simulated` sub-state to the stage machine.
+
+**As built (2026-11-02):** the axis is one total transition table
+(`arb_engine/pump_session.rs`, 9 poses × 10 events) projected by
+`EngineStages::advance_phase`, not a ladder. The enum this ADR sketched
+(`Created → Subscribed → SnapshotLoaded → (Backfilled) → Resumed`) is retired:
+the snapshot seed `S` is a backfill input, not a pose, and teardown is the
+table's `Stopping`/`Stopped` rather than a driver latch.
 
 ## Consequences
 

@@ -1,7 +1,7 @@
 """Integration tests for EngineRegistry.start — the two-phase Layer A facade.
 
 `start(...)` runs the pre-pump startup ritual (subscribe → backfill →
-verify config) and stops at `PumpPhase::Backfilled`, BEFORE
+verify config) and stops at `PumpPhase::Subscribed`, BEFORE
 `resume()`. This is the consumer-safety invariant: between subscribe and
 resume (including stream/backfill/verify) zero result batches are emitted,
 so the caller can attach its consumer any time before `resume()` without
@@ -42,7 +42,7 @@ def test_start_reads_the_snapshot_seed_block_from_the_engine() -> None:
 
     There is no injected ``v3_snapshot``/``v4_snapshot`` kwargs seam any more:
     the seed is already on the core ``BotState`` before ``subscribe()``, so
-    ``after_subscribe`` advances the phase to ``SnapshotLoaded``.
+    ``subscribe`` lands the pump phase on ``subscribed``.
     """
     fake = FakeEngine(backfill_target=18_000_000, snapshot_seed_block=18_000_050)
     registry = runner.EngineRegistry(bot=None, engine=fake)

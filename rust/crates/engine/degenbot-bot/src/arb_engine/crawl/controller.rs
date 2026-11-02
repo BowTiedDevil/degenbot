@@ -48,7 +48,8 @@
 //! The controller does not spawn its own future. The DRIVER spawns
 //! [`CrawlController::run`] on the runtime and owns the `JoinHandle`, because
 //! that handle is the only thing that reports a panic — and a panicked crawl run
-//! has to be classified (`PumpExitCause`) by the session that owns it. There is
+//! has to be classified by the session that owns it (the `JoinError` on its own
+//! join, beside the pump-completion end facts). There is
 //! deliberately no `take_join` and no `wait_finished`: a controller that spawned
 //! nothing has no join to hand back, and an awaitable inside a `StopPlan` would
 //! put a wait on `on_stop`, which is synchronous by contract.

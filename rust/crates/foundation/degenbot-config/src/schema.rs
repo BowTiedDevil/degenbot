@@ -636,13 +636,14 @@ crate::config_schema! {
             doc = "Owner: the Python driver shell's sim-failure trap. Comma-separated failure buckets the sim-failure tripwire does not count (e.g. `empty,short`). The trap itself is simulation.sim_exit_on_fail; this only narrows an ARMED trap, and there is no default ignore set -- an unlisted bucket stops the bot.";
     }
 
-    // Discovery delivery batching. The startup discovery sweep's
-    // async wrapper delivers paths in batches (one event-loop hop per batch)
-    // instead of one hop per path; this typed key makes the batch size
+    // Discovery delivery batching. One batch size, two readers: the core's
+    // crawl controller pulls at most this many discovery candidates per turn
+    // before reaping its intake window, and the Python shell's startup sweep
+    // delivers the same number per async batch; this typed key makes it
     // operator-settable without a code change.
     pathfinding PathfindingConfig {
         discovery_batch_size [usize] = 1000, env = "DEGENBOT_DISCOVERY_BATCH_SIZE", def = "1000",
-            doc = "Owner: the driver loop (asyncio batching; the native console registers differently). Discovery-sweep delivery batch size (paths per async batch): the worker thread collects this many paths before the async consumer yields them and gives the event loop one turn. A value <= 1 falls back to the legacy per-path delivery.";
+            doc = "Owner: the core's crawl controller. Discovery-sweep batch size: one discovery turn pulls at most this many candidates before the intake-window reap (the Python shell's startup sweep delivers the same count per async batch). The controller refuses 0 as a config error -- there is no <= 1 fallback to per-path delivery; the shell clamps to 1.";
         max_registered_paths [usize] = 100_000, env = "DEGENBOT_MAX_PATHS", def = "100000",
             doc = "Ceiling on total registered arbitrage paths, applied before discovery runs so a discovery-heavy skip-fest stops instead of registering millions. 0 means uncapped.";
         reg_progress_secs [f64] = 30.0, env = "DEGENBOT_REG_PROGRESS_SECS", def = "30.0",

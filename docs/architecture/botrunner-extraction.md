@@ -78,7 +78,7 @@ class BotRunner:
 
     async def start(self) -> "BotRunner":
         """Phase A (unchanged): build actors → fetch block → load snapshots →
-        engine_registry.start() → stops at Backfilled, pre-resume."""
+        engine_registry.start() → stops at subscribed, pre-resume."""
 
     async def build_paths(self, *, background: bool | None = None) -> None:
         """Discover + register paths via the pipeline; owns the Sub-A/B

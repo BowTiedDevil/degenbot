@@ -7,7 +7,7 @@ lifecycle/state machines, while this class exposes the verbs an operator (or
 the CLI) drives.
 
     start():              build the actors, subscribe -> backfill -> verify
-                          config (``EngineRegistry.start``, stops at Backfilled,
+                          config (``EngineRegistry.start``, stops at subscribed,
                           pre-resume)
     run():                the run ritual (:mod:`~degenbot.runner._run_ritual`)
                           drives consumer-attach -> watch-attach -> ``resume()``

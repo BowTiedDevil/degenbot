@@ -26,9 +26,9 @@ use crate::bot::errmap::map_driver_err;
 /// (`http`, optional `view`) — the one-call `EngineDriver::start` detached
 /// from the GIL.
 ///
-/// The snapshot seed `S` must already be on the shared `BotState`; the driver
-/// reads it while subscribing, so `after_subscribe` can advance the phase to
-/// `SnapshotLoaded`.
+/// The snapshot seed `S` must already be on the shared `BotState`: `resume`
+/// reads it to close the `S+1..W` gap, and no pump phase depends on its
+/// presence (`subscribe` lands the table's `Connecting -> Subscribed`).
 ///
 /// # Errors
 /// `PyRuntimeError` if the phase is wrong, the pump is already

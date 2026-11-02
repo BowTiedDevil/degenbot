@@ -181,20 +181,6 @@ pub enum PumpDecline {
     },
 }
 
-/// Why the live loop ended — carried by [`PumpPhase::Ended`] so a stopped
-/// session can be told from one that died on its own.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum PumpExitCause {
-    /// The loop observed the shutdown flag on its own tick.
-    CooperativeShutdown,
-    /// The WS stream ended.
-    StreamEnded,
-    /// `Stop` escalated to an abort.
-    Aborted,
-    /// The task unwound.
-    Panicked,
-}
-
 /// The whole legality table: (pose, event) -> next pose, or a typed decline.
 ///
 /// Total over every pair — no combination is undefined and none is a silent
@@ -275,6 +261,21 @@ pub fn transition(pose: PumpPhase, event: PumpEvent) -> Result<PumpPhase, PumpDe
             event,
         }),
     }
+}
+
+/// One published transition: the pose the session held and the pose the table
+/// landed it on.
+///
+/// [`transition`] answers legality; this is the answer of a projection that has
+/// already written the landing, so a caller can tell "I began this move" from
+/// "the session was already there" (teardown idempotence reads the pair that
+/// way).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PhaseAdvance {
+    /// The pose the event arrived in.
+    pub(crate) from: PumpPhase,
+    /// The pose the table landed on.
+    pub(crate) to: PumpPhase,
 }
 
 #[cfg(test)]

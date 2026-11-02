@@ -28,13 +28,15 @@
 //!    batches can flow.
 //! 2. `resume()` gates on `PumpPhase::Subscribed`, **owns the
 //!    `S+1..W` auto-backfill** (awaiting `BlockPump::backfill_with_drain`
-//!    synchronously), then spawns the live pump loop and advances to
-//!    `PumpPhase::Running`. Consumers never call `backfill_from_snapshot`.
-//! 3. `stop()` sets the shutdown flag, waits up to `PUMP_STOP_GRACE` for the
-//!    pump to exit **cooperatively** (its own 500 ms tick polls the flag), and
-//!    only escalates to `abort()` + join if the grace expires; it then clears
-//!    the subscribe state, closes the delivery channels, and latches the driver
-//!    terminally stopped. It is any-phase + idempotent (the `BotRunner.shutdown`
+//!    synchronously), then spawns the live pump loop and advances
+//!    `Subscribed -> Resuming -> Running`. Consumers never call
+//!    `backfill_from_snapshot`.
+//! 3. `stop()` publishes the table's teardown edge (`Stop`, then
+//!    `StopCompleted` once the teardown returns), sets the shutdown flag, waits
+//!    up to `PUMP_STOP_GRACE` for the pump to exit **cooperatively** (its own
+//!    500 ms tick polls the flag), and only escalates to `abort()` + join if the
+//!    grace expires; it then clears the subscribe state and closes the delivery
+//!    channels. It is any-phase + idempotent (the `BotRunner.shutdown`
 //!    contract).
 //!
 //! # Open questions resolved in this implementation (ADR-050)
@@ -61,7 +63,7 @@
 //!   consume/dispatch loop (ADR-050 D9).
 
 use crate::arb_engine::lifecycle::PathRegistrationError;
-use crate::arb_engine::pump_session::{self, PumpEvent};
+use crate::arb_engine::pump_session::{self, PhaseAdvance, PumpEvent};
 use crate::arb_engine::{
     BlockNotification, EngineRetune, EngineStages, InlineSimulator, PumpPhase, ResultBatch,
 };
@@ -157,21 +159,22 @@ impl EngineChannelHandles {
 
 /// A typed pump-protocol-phase violation raised at the driver boundary.
 ///
-/// `PumpPhase::require` / `allow_subscribe` return a `String` for the
-/// engine-internal callers; the driver wraps that in this typed value so a
-/// consumer matches a variant instead of a message.
+/// The pump-session table refuses a move with a typed
+/// [`PumpDecline`](crate::arb_engine::pump_session::PumpDecline); the driver
+/// wraps that in this value so a consumer matches a variant instead of parsing
+/// a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PhaseError {
     /// The rejected driver method (`"subscribe"`, `"resume"`, …).
     pub method: &'static str,
     /// The pump-protocol phase at call time.
     pub current: PumpPhase,
-    /// The phase boundary the method required (or `None` for the
-    /// subscribe-window gate, which admits either `Created` or
-    /// `SnapshotLoaded` — not a single boundary).
+    /// The phase boundary the method required, or `None` when the method admits
+    /// more than one predecessor (`subscribe` is legal from `Detached` and, as
+    /// the recovery edge, from `Abandoned`).
     pub required: Option<PumpPhase>,
-    /// The exact engine-gate message (kept so Python-facing `RuntimeError`
-    /// strings stay byte-identical).
+    /// The decline's own message — the table's error text, which the Python
+    /// shells surface verbatim in a `RuntimeError`.
     pub detail: String,
 }
 
@@ -190,16 +193,14 @@ impl std::error::Error for PhaseError {}
 pub enum DriverError {
     /// A lifecycle phase precondition failed.
     Phase(PhaseError),
-    /// A pump-session precondition failed (already started/subscribed, not
-    /// subscribed, already resumed, or the terminal stopped latch).
+    /// A pump-session precondition failed (a pump is already started or a
+    /// subscribe state is already pending, or the session is terminal).
     SessionState(String),
     /// The `resume()` consumer-before-resume gate: no result receiver was
     /// taken, so the unbounded result channel would have no consumer.
     NoResultReceiver,
     /// The WS subscribe/handshake failed.
     Subscribe(String),
-    /// A resume-time failure (currently only a missing WS stream).
-    Resume(String),
     /// Typed path-registration refusal (propagated verbatim, ADR-050 D4).
     Registration(PathRegistrationError),
     /// The registration verify lifecycle failed — the core [`RefusalKind`]
@@ -212,7 +213,7 @@ impl std::fmt::Display for DriverError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Phase(e) => write!(f, "{e}"),
-            Self::SessionState(m) | Self::Subscribe(m) | Self::Resume(m) => f.write_str(m),
+            Self::SessionState(m) | Self::Subscribe(m) => f.write_str(m),
             Self::NoResultReceiver => f.write_str(
                 "Cannot resume: the result receiver has not been taken. Call take_result_receiver() before resume() so the unbounded result channel has a consumer attached.",
             ),
@@ -227,6 +228,99 @@ impl std::error::Error for DriverError {
         match self {
             Self::Verify(e) => Some(e),
             _ => None,
+        }
+    }
+}
+
+/// One session move in flight, guarded against the future being dropped.
+///
+/// `subscribe` and `resume` publish their in-flight pose (`Connecting`,
+/// `Resuming`) BEFORE their first await, so a reader always sees that WS work is
+/// outstanding. The price of an in-flight pose is that a future dropped in that
+/// window would park the session where no other entry point is legal — so the
+/// guard carries the table's abandonment edge for that leg (`SubscribeAbandoned`,
+/// `ResumeAbandoned`) and publishes it from `Drop`. The leg's own landing
+/// (`Subscribed`, `ResumeSpawned`, or a typed failure event) defuses the guard;
+/// that pairing is the documented cancel policy: **an in-flight pose is always
+/// either landed or abandoned, never left standing**.
+struct PhaseLeg<'a> {
+    /// The projection the guard publishes into.
+    driver: &'a EngineDriver,
+    /// The rejected-method name a decline is reported under.
+    method: &'static str,
+    /// The boundary the leg's events require (see [`PhaseError::required`]).
+    required: Option<PumpPhase>,
+    /// The table's abandonment edge for this leg.
+    abandonment: PumpEvent,
+    /// Cleared by the landing; a still-armed guard publishes on drop.
+    armed: bool,
+}
+
+impl<'a> PhaseLeg<'a> {
+    /// Enter the leg: publish the in-flight pose and arm the abandonment guard.
+    ///
+    /// A refused move arms nothing, so a decline cannot steal a concurrent
+    /// leg's in-flight pose.
+    fn enter(
+        driver: &'a EngineDriver,
+        method: &'static str,
+        required: Option<PumpPhase>,
+        requested: PumpEvent,
+        abandonment: PumpEvent,
+    ) -> Result<Self, DriverError> {
+        driver.advance(method, required, requested)?;
+        Ok(Self {
+            driver,
+            method,
+            required,
+            abandonment,
+            armed: true,
+        })
+    }
+
+    /// Publish the table's landing event and defuse the guard. Consuming `self`
+    /// makes a landed leg unusable and runs the (now unarmed) `Drop`.
+    fn land(mut self, event: PumpEvent) -> Result<PhaseAdvance, DriverError> {
+        let landed = self.driver.advance(self.method, self.required, event);
+        self.armed = false;
+        landed
+    }
+}
+
+impl Drop for PhaseLeg<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            // Dropped mid-flight (a cancelled future, or an early return): the
+            // abandonment edge is the table's honest landing for a leg that
+            // never committed. A decline means the session moved on its own
+            // (teardown began), and there is nothing left to restore.
+            let _ = self
+                .driver
+                .advance(self.method, self.required, self.abandonment);
+        }
+    }
+}
+
+/// A test-only injected failure of `subscribe`'s fallible step.
+///
+/// `BlockPump::subscribe` dials a live WS endpoint, so its failure returns have
+/// no in-process double. Both shapes leave the same thing to prove: the session
+/// lands back on `Detached`, from which a retry is legal.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SubscribeFault {
+    /// The WS handshake failed (`BlockPump::subscribe` returned `Err`).
+    Handshake,
+    /// The session opened but handed back no WS stream.
+    NoStream,
+}
+
+#[cfg(test)]
+impl SubscribeFault {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::Handshake => "injected: the WS handshake failed",
+            Self::NoStream => "BlockPump::subscribe returned no WS stream",
         }
     }
 }
@@ -283,9 +377,14 @@ pub struct EngineDriver {
     /// it as named, typed `UnboundedFlagged` channels; the hub holds each
     /// channel's consumer end until the once-only `take_*_receiver` handoff.
     hub: Arc<Hub>,
-    /// The terminal stopped latch (ADR-050 D5) — `PumpPhase` cannot express
-    /// teardown, so the driver owns it.
-    stopped: AtomicBool,
+    /// Test-only injected failure for the next `subscribe` (see
+    /// [`SubscribeFault`]).
+    #[cfg(test)]
+    subscribe_fault: Mutex<Option<SubscribeFault>>,
+    /// Test-only hold inside `resume`'s in-flight window, so a test can cancel
+    /// a resume where a dropping consumer would cancel one.
+    #[cfg(test)]
+    resume_gate: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
     /// The once-only result-receiver hand-off latch. `resume()` refuses until
     /// a consumer owns the unbounded result channel's receiver; otherwise the
     /// engine would pump batches into a channel with no reader.
@@ -416,7 +515,10 @@ impl EngineDriver {
             verify_state_view: Mutex::new(None),
             verifications: PoolVerifications::new(),
             hub,
-            stopped: AtomicBool::new(false),
+            #[cfg(test)]
+            subscribe_fault: Mutex::new(None),
+            #[cfg(test)]
+            resume_gate: Mutex::new(None),
             result_receiver_taken: AtomicBool::new(false),
         }
     }
@@ -445,7 +547,6 @@ impl EngineDriver {
         self.stages.current_phase()
     }
 
-    /// Advance the engine phase with no ordering check (callers validate).
     /// Force the session's pose. Test-only: production reaches a pose by
     /// driving a transition, never by writing one.
     #[cfg(test)]
@@ -453,10 +554,66 @@ impl EngineDriver {
         self.stages.publish_phase(phase);
     }
 
-    /// `true` once `stop()` has latched the driver terminally stopped.
+    /// The table's verdict on `event` in the current pose, without publishing.
+    ///
+    /// An entry point whose refusals must leave the session untouched (the
+    /// consumer-before-resume gate, the session-state guards) asks here FIRST,
+    /// so a request from the wrong pose is the phase error it is rather than a
+    /// secondary complaint. The publishing path re-runs the same table under the
+    /// projection's lock ([`Self::advance`]), which is the authoritative check.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Phase`] carrying the decline.
+    fn check(
+        &self,
+        method: &'static str,
+        required: Option<PumpPhase>,
+        event: PumpEvent,
+    ) -> Result<PumpPhase, DriverError> {
+        let phase = self.stages.current_phase();
+        pump_session::transition(phase, event).map_err(|decline| {
+            DriverError::Phase(PhaseError {
+                method,
+                current: phase,
+                required,
+                detail: decline.to_string(),
+            })
+        })
+    }
+
+    /// Publish one table transition, returning what the table did.
+    ///
+    /// The read, the legality decision, and the write happen inside the
+    /// projection's lock ([`EngineStages::advance_phase`]), so a caller can
+    /// never act on a predecessor the cell has already left.
+    ///
+    /// # Errors
+    ///
+    /// The table's
+    /// [`PumpDecline`](crate::arb_engine::pump_session::PumpDecline), wrapped as
+    /// a [`DriverError::Phase`] whose `detail` is the decline's own message.
+    fn advance(
+        &self,
+        method: &'static str,
+        required: Option<PumpPhase>,
+        event: PumpEvent,
+    ) -> Result<PhaseAdvance, DriverError> {
+        self.stages.advance_phase(event).map_err(|decline| {
+            DriverError::Phase(PhaseError {
+                method,
+                current: self.stages.current_phase(),
+                required,
+                detail: decline.to_string(),
+            })
+        })
+    }
+
+    /// `true` once the session machine is teardown-bound: `Stopping` from
+    /// `stop()`'s first statement, `Stopped` when the teardown completes.
     #[must_use]
     pub fn is_stopped(&self) -> bool {
-        self.stopped.load(Ordering::SeqCst)
+        self.current_phase().is_terminal()
     }
 
     /// `true` when a live pump task handle is armed.
@@ -608,16 +765,11 @@ impl EngineDriver {
                 "Cannot subscribe: driver has been stopped.".to_string(),
             ));
         }
-        let phase = self.stages.current_phase();
-        if let Err(decline) = pump_session::transition(phase, PumpEvent::SubscribeRequested) {
-            return Err(DriverError::Phase(PhaseError {
-                method: "subscribe",
-                current: phase,
-                required: None,
-                detail: decline.to_string(),
-            }));
-        }
-        self.stages.publish_phase(PumpPhase::Connecting);
+        // Legality first, then the session-state guards, THEN the in-flight
+        // publish: a refused request must leave the pose where it found it, and
+        // `Connecting` is legal for neither `subscribe` nor `resume` —
+        // publishing it for a request that never dials would wedge the session.
+        self.check("subscribe", None, PumpEvent::SubscribeRequested)?;
         if self.pump_handle.lock().is_some() {
             return Err(DriverError::SessionState(
                 "Cannot subscribe: pump is already started. Call stop() first.".to_string(),
@@ -627,6 +779,46 @@ impl EngineDriver {
             return Err(DriverError::SessionState(
                 "Cannot subscribe: already subscribed. Call resume() first.".to_string(),
             ));
+        }
+        let leg = PhaseLeg::enter(
+            self,
+            "subscribe",
+            None,
+            PumpEvent::SubscribeRequested,
+            PumpEvent::SubscribeAbandoned,
+        )?;
+        let session = match self.open_ws_session(node_ws).await {
+            Ok(session) => session,
+            Err(e) => {
+                // The table's failure landing: `Connecting --SubscribeFailed-->
+                // Detached`, so the next `subscribe()` is legal again — the
+                // recovery a WS failure had before the pose was published ahead
+                // of the handshake.
+                if let Err(landing) = leg.land(PumpEvent::SubscribeFailed) {
+                    op_warn!(
+                        domain = pump,
+                        error = %landing,
+                        "EngineDriver: a failed subscribe could not restore the session to detached"
+                    );
+                }
+                return Err(e);
+            }
+        };
+        let first_block = session.first_block;
+        *self.subscribe_state.lock() = Some(session);
+        leg.land(PumpEvent::Subscribed)?;
+        Ok(first_block)
+    }
+
+    /// Open the WS session: the ONE fallible step of [`Self::subscribe`].
+    ///
+    /// Both failure shapes (a failed handshake, and a session that handed back
+    /// no WS stream) are `DriverError::Subscribe`; the caller's job is the
+    /// table landing, not the distinction.
+    async fn open_ws_session(&self, node_ws: &str) -> Result<DriverSubscribeState, DriverError> {
+        #[cfg(test)]
+        if let Some(fault) = self.subscribe_fault.lock().take() {
+            return Err(DriverError::Subscribe(fault.message().to_string()));
         }
         let stage_handlers: Arc<dyn StageHandlers> = self.stages.clone();
         let control: Arc<dyn PumpControl> = self.stages.clone();
@@ -650,13 +842,11 @@ impl EngineDriver {
                 "BlockPump::subscribe returned no WS stream".to_string(),
             ));
         };
-        *self.subscribe_state.lock() = Some(DriverSubscribeState {
+        Ok(DriverSubscribeState {
             pump,
             first_block,
             combined_stream,
-        });
-        self.stages.publish_phase(PumpPhase::Subscribed);
-        Ok(first_block)
+        })
     }
 
     /// Resume the pump.
@@ -668,55 +858,63 @@ impl EngineDriver {
     ///
     /// # Errors
     ///
-    /// - [`DriverError::Phase`] when the phase is below `SnapshotLoaded`.
-    /// - [`DriverError::SessionState`] when already `Resumed`, when no
-    ///   subscribe state is pending, or when the driver is stopped.
+    /// - [`DriverError::Phase`] unless the table admits `resume` (it requires
+    ///   `Subscribed`).
+    /// - [`DriverError::SessionState`] when no subscribe state is pending, or
+    ///   when the session is terminal.
     /// - [`DriverError::NoResultReceiver`] when the result receiver has not
     ///   been taken.
-    /// - [`DriverError::Resume`] when the pending state carries no WS stream.
     ///
     /// # Cancel safety
     ///
-    /// **Cancel-safe**: `resume` does not own the pump it starts. Once the
-    /// synchronous `backfill_with_drain` returns and the live loop is handed
-    /// to `tokio::spawn`, the spawned task OWNS the pump (`pump` is moved into
-    /// the async block); only its `JoinHandle` is stored back into
-    /// `self.pump_handle`. A dropped `resume` future therefore drops the
-    /// handle's future, not the pump task — the pump keeps running to
-    /// completion, and its completion sender (moved into the same task) still
-    /// drops on whatever terminal path, so every `wait_pump_finished` waiter
-    /// resolves exactly as if `resume` had returned normally.
+    /// **Committed from the spawn on**: `resume` does not own the pump it
+    /// starts. Once the live loop is handed to `tokio::spawn`, the spawned task
+    /// OWNS the pump (`pump` is moved into the async block); only its
+    /// `JoinHandle` is stored back into `self.pump_handle`. A dropped `resume`
+    /// future therefore drops the handle's future, not the pump task — the pump
+    /// keeps running to completion, and its completion sender (moved into the
+    /// same task) still drops on whatever terminal path, so every
+    /// `wait_pump_finished` waiter resolves exactly as if `resume` had returned
+    /// normally.
     ///
-    /// **The unsafe remainder is temporal, not structural**: if the future is
-    /// cancelled BEFORE the spawn (during the awaited `backfill_with_drain`),
-    /// the pump is never started and the pending `subscribe_state` was already
-    /// `take()`n — the driver is left in `SnapshotLoaded` with no subscribe
-    /// state, so a retry fails with [`DriverError::SessionState`] and the
-    /// caller must `subscribe()` again. Cancelling after the spawn leaves a
-    /// running pump whose handle is stored; the caller must not assume a
-    /// cancelled `resume` means "not resumed".
+    /// **Cancel-safe before it, by landing `Abandoned`**: the in-flight window is
+    /// the subscribe-state handover and the awaited `backfill_with_drain`.
+    /// `resume` publishes the table's `Resuming` at the top of that window and
+    /// arms a [`PhaseLeg`], whose `Drop` publishes the table's `ResumeAbandoned`
+    /// edge — so a future dropped mid-window lands `Abandoned` (the pump and its
+    /// WS session died with it) instead of standing in `Resuming` with nothing
+    /// left to resume. `Abandoned`'s recovery edge is a fresh `subscribe()`; its
+    /// only other exit is `stop()`. A cancel after the `ResumeSpawned` landing is
+    /// NOT "not resumed": the live loop is armed and its handle stored.
     pub async fn resume(&self) -> Result<(), DriverError> {
         if self.is_stopped() {
             return Err(DriverError::SessionState(
                 "Cannot resume: driver has been stopped.".to_string(),
             ));
         }
-        let phase = self.stages.current_phase();
-        if let Err(decline) = pump_session::transition(phase, PumpEvent::ResumeRequested) {
-            return Err(DriverError::Phase(PhaseError {
-                method: "resume",
-                current: phase,
-                required: Some(PumpPhase::Subscribed),
-                detail: decline.to_string(),
-            }));
-        }
+        self.check(
+            "resume",
+            Some(PumpPhase::Subscribed),
+            PumpEvent::ResumeRequested,
+        )?;
         // Consumer-before-resume gate. The result channel is unbounded, so a
         // pump with no receiver attached accumulates batches no one drains.
-        // This check runs before the subscribe state is consumed, so a refused
-        // resume leaves the pending state intact for a corrected retry.
+        // This check runs before the in-flight pose AND before the subscribe
+        // state is consumed, so a refused resume leaves the session exactly as
+        // it found it for a corrected retry.
         if !self.result_receiver_taken.load(Ordering::SeqCst) {
             return Err(DriverError::NoResultReceiver);
         }
+        // The in-flight pose, published BEFORE the state handover and before the
+        // backfill await: from here to the live-loop landing, a dropped future is
+        // what `ResumeAbandoned` exists for.
+        let leg = PhaseLeg::enter(
+            self,
+            "resume",
+            Some(PumpPhase::Subscribed),
+            PumpEvent::ResumeRequested,
+            PumpEvent::ResumeAbandoned,
+        )?;
         let state = self.subscribe_state.lock().take().ok_or_else(|| {
             DriverError::SessionState(
                 "Cannot resume: subscribe() has not been called. Call subscribe() first."
@@ -728,6 +926,14 @@ impl EngineDriver {
             first_block,
             combined_stream,
         } = state;
+        #[cfg(test)]
+        let resume_gate = self.resume_gate.lock().take();
+        #[cfg(test)]
+        if let Some(gate) = resume_gate {
+            // Hold the future inside the in-flight window so a test can cancel
+            // it exactly where a dropping consumer cancels one.
+            let _ = gate.await;
+        }
         // the backfill is SYNCHRONOUS with respect to `resume` so the
         // consumer's registration draining the per-pool backfill buffer cannot
         // race it. `backfill_with_drain` also re-injects live events
@@ -741,6 +947,13 @@ impl EngineDriver {
                 "EngineDriver: auto-backfill failed — starting live loop from gap (not closed)"
             );
         }
+        // The landing precedes the spawn by one synchronous statement (no await
+        // between the two, so cancellation cannot observe the gap). It must:
+        // a live loop that ends immediately — an already-ended stream, a panic
+        // on its first poll — reports `PumpExited`, and the table has no
+        // `Resuming -> Ended` edge, so landing `Running` first is what lets that
+        // exit unwind the projection instead of being refused.
+        leg.land(PumpEvent::ResumeSpawned)?;
         // Arm the completion broadcast: the sender is owned by the spawned
         // task, so wherever the pump ends — cooperative return, stream end,
         // abort, or panic — the sender drops and every `wait_pump_finished`
@@ -752,13 +965,16 @@ impl EngineDriver {
             pump.run_with_stream(combined, first_block).await;
         });
         *self.pump_handle.lock() = Some(handle);
-        self.stages.publish_phase(PumpPhase::Running);
         Ok(())
     }
 
-    /// Stop the pump and latch the driver terminally stopped (ADR-050 D6).
+    /// Stop the pump and land the session machine terminal (ADR-050 D6).
     ///
-    /// Any-phase + idempotent. Sets the shutdown flag, waits up to
+    /// Any-phase + idempotent: the table's `Stop` declines from no pose and
+    /// `Stopped` is absorbing, so a repeated or concurrent stop is a no-op. A
+    /// session holding something to tear down lands `Stopping` and owes one
+    /// `StopCompleted` (published when the teardown returns); one with nothing
+    /// to tear down lands `Stopped` directly. Sets the shutdown flag, waits up to
     /// [`PUMP_STOP_GRACE`] for the pump to exit **cooperatively** (it polls
     /// the flag on its own 500 ms tick arm), and only then escalates to
     /// `abort()` + join if the grace expires. Either way the WS subscription
@@ -771,7 +987,12 @@ impl EngineDriver {
     /// Currently never returns `Err`; the typed result keeps the surface
     /// symmetric with `subscribe`/`resume`.
     pub fn stop(&self) -> Result<(), DriverError> {
-        if self.stopped.swap(true, Ordering::SeqCst) {
+        // The table's teardown entry first: it is the machine's own answer to
+        // "has teardown begun?", which every guard (and `is_stopped`) reads.
+        let teardown = self.advance("stop", None, PumpEvent::Stop)?;
+        if teardown.from.is_terminal() {
+            // A repeated or concurrent stop: the caller that began the teardown
+            // owns it, and this one has nothing left to join.
             return Ok(());
         }
         self.shutdown.store(true, Ordering::Relaxed);
@@ -841,6 +1062,9 @@ impl EngineDriver {
         self.stages.drain_walk_memo_final();
         *self.subscribe_state.lock() = None;
         self.stages.close_delivery_channels();
+        if teardown.to == PumpPhase::Stopping {
+            self.advance("stop", None, PumpEvent::StopCompleted)?;
+        }
         Ok(())
     }
 
@@ -1133,6 +1357,20 @@ impl EngineDriver {
     pub(crate) fn install_subscribe_state_for_test(&self, state: DriverSubscribeState) {
         *self.subscribe_state.lock() = Some(state);
     }
+
+    /// Inject the next `subscribe`'s failure shape (test-only seam over the
+    /// dial, which needs a live WS endpoint).
+    #[cfg(test)]
+    pub(crate) fn set_subscribe_fault_for_test(&self, fault: SubscribeFault) {
+        *self.subscribe_fault.lock() = Some(fault);
+    }
+
+    /// Hold `resume` inside its in-flight window until the sender fires or
+    /// drops (test-only seam: the window is otherwise a live backfill await).
+    #[cfg(test)]
+    pub(crate) fn set_resume_gate_for_test(&self, gate: tokio::sync::oneshot::Receiver<()>) {
+        *self.resume_gate.lock() = Some(gate);
+    }
 }
 
 /// Soak 2026-08-22 forensics: name teardown paths that bypass
@@ -1195,7 +1433,7 @@ mod tests {
     }
 
     #[test]
-    fn new_driver_starts_in_created_phase() {
+    fn new_driver_starts_detached() {
         let driver = driver_for_test();
         assert_eq!(driver.current_phase(), PumpPhase::Detached);
         assert!(!driver.is_stopped());
@@ -1383,11 +1621,16 @@ mod tests {
     }
 
     #[test]
-    fn stop_is_idempotent_and_latches_terminal() {
+    fn stop_is_idempotent_and_lands_stopped() {
         let driver = driver_for_test();
         driver.stop().expect("first stop");
+        // Nothing was armed, so teardown had nothing to join: the table lands
+        // `Stopped` at once (a live session lands `Stopping` first and owes one
+        // `StopCompleted`).
+        assert_eq!(driver.current_phase(), PumpPhase::Stopped);
         assert!(driver.is_stopped());
         driver.stop().expect("second stop is a no-op");
+        assert_eq!(driver.current_phase(), PumpPhase::Stopped);
         let err = degenbot_core::runtime::get_runtime()
             .block_on(driver.resume())
             .unwrap_err();
@@ -1542,6 +1785,9 @@ mod tests {
                 "stop must return inside one tick window, well inside the grace; took {elapsed:?}"
             );
             assert!(!driver.pump_handle_armed());
+            // The teardown landed the table: `Running -> Stopping -> Stopped`, so
+            // the projection never claims a live loop after `stop()`.
+            assert_eq!(driver.current_phase(), PumpPhase::Stopped);
             assert!(
                 capture.describes("exited cooperatively"),
                 "the cooperative exit must be logged; INFO lines were {:?}",
@@ -1622,17 +1868,23 @@ mod tests {
             Arc::clone(&driver.shutdown),
         );
         // S stays None (cold start) so the driver's owned backfill is a no-op;
-        // the point is that `resume` drives the pump, not the consumer.
+        // the point is that `resume` drives the pump, not the consumer. The live
+        // stream NEVER yields, so the pump parks: `Running` is then the pose a
+        // reader observes, not a race against a loop that already exited.
         driver.install_subscribe_state_for_test(DriverSubscribeState {
             pump,
             first_block: 100,
-            combined_stream: futures_util::stream::empty().boxed(),
+            combined_stream: futures_util::stream::pending::<WsEvent>().boxed(),
         });
         driver.set_pose_for_test(PumpPhase::Subscribed);
         degenbot_core::runtime::get_runtime()
             .block_on(driver.resume())
             .expect("resume with a pending subscribe state");
-        assert_eq!(driver.current_phase(), PumpPhase::Running);
+        assert_eq!(
+            driver.current_phase(),
+            PumpPhase::Running,
+            "resume lands the table's `Subscribed -> Resuming -> Running` chain"
+        );
         assert!(driver.pump_handle_armed());
         // A second resume is an ordering decline: the session is already
         // running, so there is nothing left to resume.
@@ -1642,6 +1894,164 @@ mod tests {
         assert!(matches!(err, DriverError::Phase(_)), "got {err:?}");
         driver.stop().expect("stop");
         assert!(!driver.pump_handle_armed());
+    }
+
+    /// **The failed-subscribe wedge.** `subscribe` publishes `Connecting`
+    /// before its fallible step, so every failure return must publish the
+    /// table's `SubscribeFailed` landing (`Detached`) — otherwise the pose sits
+    /// in `Connecting`, where both `subscribe` and `resume` are declined and the
+    /// session is unrecoverable. Both failure shapes land the same way, and the
+    /// retry must reach the dial again (a phase decline here would mean the
+    /// wedge is back).
+    #[test]
+    fn a_failed_subscribe_lands_detached_and_is_retryable() {
+        let driver = driver_for_test();
+        let runtime = degenbot_core::runtime::get_runtime();
+
+        for fault in [SubscribeFault::Handshake, SubscribeFault::NoStream] {
+            driver.set_subscribe_fault_for_test(fault);
+            let err = runtime
+                .block_on(driver.subscribe("ws://127.0.0.1:1"))
+                .unwrap_err();
+            assert!(matches!(err, DriverError::Subscribe(_)), "got {err:?}");
+            assert_eq!(
+                driver.current_phase(),
+                PumpPhase::Detached,
+                "{fault:?} must land the session back on detached"
+            );
+            assert!(!driver.pump_handle_armed(), "no live loop was armed");
+            assert!(
+                driver.subscribe_state.lock().is_none(),
+                "no pending subscribe state survives the failure"
+            );
+        }
+
+        // The retry is legal: it reaches the dial again. (`Connecting` would
+        // decline with `DriverError::Phase` before the seam was consulted.)
+        driver.set_subscribe_fault_for_test(SubscribeFault::Handshake);
+        let retry = runtime
+            .block_on(driver.subscribe("ws://127.0.0.1:1"))
+            .unwrap_err();
+        assert!(
+            matches!(retry, DriverError::Subscribe(_)),
+            "the retry must reach the WS step, not decline from a stuck pose: {retry:?}"
+        );
+
+        // And `resume` answers honestly: nothing is subscribed, so it is a table
+        // decline, not a session wedged above the resume door.
+        let resumed = runtime.block_on(driver.resume()).unwrap_err();
+        assert!(matches!(resumed, DriverError::Phase(_)), "got {resumed:?}");
+    }
+
+    /// **The cancelled-resume wedge.** `resume` takes the pending subscribe
+    /// state (dropping the pump and its WS session with the future) while the
+    /// backfill is in flight, so a cancel that left the pose on `Subscribed`
+    /// would refuse both doors. The in-flight pose (`Resuming`) plus the
+    /// `PhaseLeg` abandonment guard land it on `Abandoned`, whose recovery edge
+    /// is a fresh `subscribe`.
+    #[test]
+    fn a_cancelled_resume_lands_abandoned_and_is_resubscribable() {
+        let driver = Arc::new(driver_for_test());
+        let runtime = degenbot_core::runtime::get_runtime();
+        let _result_rx = driver.take_result_receiver();
+        let reorg = Arc::new(ReorgCoordinator::new(Arc::clone(driver.bot())));
+        let stages_handlers: Arc<dyn StageHandlers> = driver.stages().clone();
+        let control: Arc<dyn PumpControl> = driver.stages().clone();
+        let pump = BlockPump::for_test(
+            Arc::clone(driver.bot()),
+            stages_handlers,
+            control,
+            reorg,
+            mock_provider(),
+            Arc::clone(&driver.shutdown),
+        );
+        driver.install_subscribe_state_for_test(DriverSubscribeState {
+            pump,
+            first_block: 100,
+            combined_stream: futures_util::stream::pending::<WsEvent>().boxed(),
+        });
+        driver.set_pose_for_test(PumpPhase::Subscribed);
+
+        let (release, gate) = tokio::sync::oneshot::channel::<()>();
+        driver.set_resume_gate_for_test(gate);
+        let task = {
+            let driver = Arc::clone(&driver);
+            runtime.spawn(async move { driver.resume().await })
+        };
+        runtime.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                while driver.current_phase() != PumpPhase::Resuming {
+                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .expect("resume must publish its in-flight pose before its first await");
+        });
+
+        // Cancelling the future: the pump and the taken subscribe state die
+        // with it.
+        task.abort();
+        assert!(
+            runtime.block_on(task).is_err(),
+            "the aborted resume task is cancelled"
+        );
+        drop(release);
+        assert_eq!(
+            driver.current_phase(),
+            PumpPhase::Abandoned,
+            "a cancelled resume lands the table's Resuming -> Abandoned edge"
+        );
+        assert!(!driver.pump_handle_armed());
+
+        // `Abandoned`'s only forward door is a fresh subscribe: it is admitted by
+        // the table and fails at the dial (reported), not as a phase decline.
+        driver.set_subscribe_fault_for_test(SubscribeFault::Handshake);
+        let err = runtime
+            .block_on(driver.subscribe("ws://127.0.0.1:1"))
+            .unwrap_err();
+        assert!(
+            matches!(err, DriverError::Subscribe(_)),
+            "subscribe from abandoned must reach the WS step, got {err:?}"
+        );
+        assert_eq!(driver.current_phase(), PumpPhase::Detached);
+    }
+
+    /// The guard's own contract: an armed leg that is dropped without landing
+    /// publishes its abandonment edge, and a landed one does not.
+    #[test]
+    fn a_dropped_leg_publishes_its_abandonment_edge() {
+        let driver = driver_for_test();
+        {
+            let _leg = PhaseLeg::enter(
+                &driver,
+                "subscribe",
+                None,
+                PumpEvent::SubscribeRequested,
+                PumpEvent::SubscribeAbandoned,
+            )
+            .expect("detached admits subscribe");
+            assert_eq!(driver.current_phase(), PumpPhase::Connecting);
+        }
+        assert_eq!(
+            driver.current_phase(),
+            PumpPhase::Detached,
+            "a cancelled subscribe restores detached"
+        );
+
+        let leg = PhaseLeg::enter(
+            &driver,
+            "subscribe",
+            None,
+            PumpEvent::SubscribeRequested,
+            PumpEvent::SubscribeAbandoned,
+        )
+        .expect("detached admits subscribe again");
+        leg.land(PumpEvent::Subscribed).expect("connecting lands");
+        assert_eq!(
+            driver.current_phase(),
+            PumpPhase::Subscribed,
+            "a landed leg leaves the landing in place"
+        );
     }
 
     #[test]

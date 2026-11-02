@@ -15,8 +15,8 @@
 //! DB path, or fetched via the Chain arm (RPC) for the non-DB path. The
 //! non-DB (file/memory) path sets `snapshot_seed_block` (the auto-backfill
 //! anchor `S`) directly via the `snapshot_seed_block` setter — `start()`
-//! computes `S = min(newest_block)` + sets it before `subscribe()` so
-//! `after_subscribe` advances the engine phase to `SnapshotLoaded`.
+//! computes `S = min(newest_block)` + sets it before `subscribe()`, so the
+//! driver-owned `resume` backfill anchors on it.
 //!
 //! the per-pool ingestion surface retired earlier; this retires the
 //! whole-dict ingestion surface too. This slice is now intentionally empty —

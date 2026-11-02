@@ -15,15 +15,16 @@ tasks execute.
 
 There are two orthogonal axes:
 
-1. **Runtime lifecycle** — process-level phases: Boot → Subscribed → SnapshotLoaded
-   → Resumed. It never interleaves with per-epoch work; see its table below.
+1. **Runtime lifecycle** — the pump session's pose: Detached → Connecting →
+   Subscribed → Resuming → Running (→ Ended | Abandoned) → Stopping → Stopped.
+   It never interleaves with per-epoch work; see its table below.
 2. **The block-epoch stage machine** — the per-epoch stages of one block, below.
 
-The existing `PumpPhase` enum (formerly `EnginePhase`;
-`Created`/`Subscribed`/`SnapshotLoaded`/`Backfilled`/`Resumed`) is remapped in
-full onto axis 1: its role —
-registration/snapshot/backfill ordering — is runtime-level, not per-epoch, so
-it contributes no sub-state to the `Solved`/`Simulated` stage rows.
+The `PumpPhase` table (formerly `EnginePhase`; the retired
+`Created`/`SnapshotLoaded`/`Backfilled`/`Resumed` ladder) owns axis 1 in full:
+its role — registration/snapshot/backfill ordering — is runtime-level, not
+per-epoch, so it contributes no sub-state to the `Solved`/`Simulated` stage
+rows.
 
 ## Epoch invariants
 
@@ -71,14 +72,22 @@ The pump's (`block_pump.rs`) reorg-episode and resume tracking folds into
 
 | Phase | Meaning | Stage-machine relation |
 |---|---|---|
-| **Boot** | Process init: config, telemetry, DB | No stage machine exists |
-| **Subscribed** | WS subscriptions + topic/address filters up (degenbot-ingestion) | Streams feeding; no active epoch |
-| **SnapshotLoaded** | Snapshot seed epoch `E(S)` established from the store | Fresh stage machine; gap `[S+1, W]` backfilled and owned by backfill |
-| **Resumed** | Live log flow enters Streaming | The per-epoch stage cycle runs; delivery-cutoff monotony preserved across resumes |
+| Pose | Meaning | Stage-machine relation |
+|---|---|---|
+| **Detached** | Process init: no WS session, nothing pending | No stage machine exists |
+| **Connecting** | The WS subscribe handshake is in flight | Nothing feeding yet |
+| **Subscribed** | WS subscriptions + topic/address filters up (degenbot-ingestion); the first complete block `W` is known | Streams feeding; no active epoch |
+| **Resuming** | The driver-owned `S+1..W` backfill is in flight | Fresh stage machine at the snapshot-seed epoch; the gap is the backfill's |
+| **Running** | The live loop owns the stream | The per-epoch stage cycle runs; delivery-cutoff monotony preserved across resumes |
+| **Ended** | The live loop returned without a `Stop` | The stage machine stops advancing |
+| **Stopping / Stopped** | Teardown latched / complete | Terminal |
 
-`EnginePhase` is the in-code representation of this axis, remapped here from
-any per-epoch reading; its registration/snapshot/backfill ordering role is
-runtime-level, never per-epoch stage sub-state.
+**As built**, this axis is one total transition table
+(`arb_engine/pump_session.rs`: `PumpPhase` × `PumpEvent`), and the snapshot seed
+`S` is a *backfill input*, not a pose: the ladder sketched here
+(`Boot → Subscribed → SnapshotLoaded → Resumed`) and the `EnginePhase`
+name are retired. The table's role — registration/snapshot/backfill ordering —
+is runtime-level, never per-epoch stage sub-state.
 
 ## Epoch invariants at the stage boundaries
 

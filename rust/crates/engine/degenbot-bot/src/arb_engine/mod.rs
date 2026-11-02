@@ -194,7 +194,7 @@ pub use lifecycle::PathRegistrationError;
 /// The engine-session end DETECTION facts: the typed cause vocabulary, the
 /// heartbeat stall watchdog, and the once-only delivery channel the drivers
 /// rank into their own end-state verdicts.
-pub use pump_session::{transition, PumpDecline, PumpEvent, PumpExitCause, PumpPhase};
+pub use pump_session::{transition, PumpDecline, PumpEvent, PumpPhase};
 pub use retune::EngineRetune;
 pub use session_end::{
     Heartbeat, SessionEndCause, SessionEndDetection, SessionEndFacts, SessionEndPublisher,

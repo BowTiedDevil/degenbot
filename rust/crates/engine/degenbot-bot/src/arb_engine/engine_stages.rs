@@ -33,6 +33,7 @@
 //!
 //! `latest_results` / `register_path` / the FFI surface keep their
 //! StateLock-mediated core locking — this type adds NO lock layer.
+use super::pump_session::{self, PhaseAdvance, PumpEvent};
 use super::solve_cycle::{CycleOutcome, CycleTicket};
 use super::walk_telemetry;
 use super::ArbitrageEngine;
@@ -41,9 +42,10 @@ use super::PumpPhase;
 
 /// The pump session's phase projection, with exactly one writer.
 ///
-/// A `Copy` value behind a lock: readers never hold a handle into the session,
-/// and there is no setter — [`EngineStages::publish_phase`] is crate-private
-/// and is the only thing that writes it.
+/// A `Copy` value behind a lock: readers never hold a handle into the session.
+/// The one production writer is [`EngineStages::advance_phase`], which decides
+/// legality and writes the landing inside this cell's lock; the crate-private
+/// force the driver's test seam uses is `#[cfg(test)]`-only.
 #[derive(Default)]
 struct PhaseCell(Mutex<PumpPhase>);
 
@@ -52,8 +54,20 @@ impl PhaseCell {
         *self.0.lock()
     }
 
+    /// Force a pose with no table check — the driver's test seam only.
+    #[cfg(test)]
     fn write(&self, phase: PumpPhase) {
         *self.0.lock() = phase;
+    }
+
+    /// Read, ask the table, write — under ONE lock acquisition, so two callers
+    /// cannot both decide against the same predecessor.
+    fn advance(&self, event: PumpEvent) -> Result<PhaseAdvance, pump_session::PumpDecline> {
+        let mut pose = self.0.lock();
+        let from = *pose;
+        let to = pump_session::transition(from, event)?;
+        *pose = to;
+        Ok(PhaseAdvance { from, to })
     }
 }
 use crate::bot_core::stage_handlers::StageHandlers;
@@ -65,6 +79,7 @@ use crate::bot_core::{PumpControl, Rewind, RewindOutcome};
 use degenbot_core::block_clock_pipe::{BlockClockPipe, BlockNotification};
 use degenbot_core::diag;
 use degenbot_core::op_error;
+use degenbot_core::op_warn;
 use degenbot_substrate::session_registry::PathObjectAdapter;
 use degenbot_substrate::state_lock::StateLock;
 use degenbot_substrate::BotState;
@@ -120,9 +135,9 @@ pub struct EngineStages {
     /// Header ticks never touch the engine (a chain fact, not engine
     /// business — B2/ADR-027 lineage; the pipe moved here from the
     /// dissolved coordinator).
+    block_clock: Mutex<BlockClockPipe>,
     /// The pump session's phase, as observed by stages-only consumers.
     phase: PhaseCell,
-    block_clock: Mutex<BlockClockPipe>,
 }
 impl EngineStages {
     /// Construct over a strong clone of the shared engine handle and the
@@ -252,9 +267,24 @@ impl EngineStages {
         self.phase.read()
     }
 
-    /// Publish the session's phase after a transition. The ONE writer: the
-    /// session machine owns the state, and this is its read-only projection
-    /// for consumers that hold the stages surface but not the driver.
+    /// Publish one table transition: read the pose, ask the table, write the
+    /// landing. The ONE production writer of the projection.
+    ///
+    /// # Errors
+    ///
+    /// The table's typed [`PumpDecline`](pump_session::PumpDecline); the pose is
+    /// untouched on a refusal.
+    pub(crate) fn advance_phase(
+        &self,
+        event: PumpEvent,
+    ) -> Result<PhaseAdvance, pump_session::PumpDecline> {
+        self.phase.advance(event)
+    }
+
+    /// Force the projection's pose with no ordering check. The single caller is
+    /// the driver's `#[cfg(test)]` seam, which stages a pose a test cannot reach
+    /// without a live WS session.
+    #[cfg(test)]
     pub(crate) fn publish_phase(&self, phase: PumpPhase) {
         self.phase.write(phase);
     }
@@ -846,6 +876,24 @@ impl PumpControl for EngineStages {
         });
     }
     fn on_pump_ended(&self) {
+        // The live loop returned without a `Stop`: the table's `Running ->
+        // Ended` edge, published here so `current_phase()` stops claiming a
+        // pump that is gone. A session already tearing down owes only
+        // `StopCompleted`, so the edge is refused there and the pose stays
+        // `Stopping` — the driver's `stop()` owns that landing.
+        match self.advance_phase(PumpEvent::PumpExited) {
+            Ok(advance) => diag!(
+                domain = solver,
+                from = %advance.from,
+                to = %advance.to,
+                "EngineStages: the live loop ended; the session pose follows the table"
+            ),
+            Err(decline) => op_warn!(
+                domain = solver,
+                %decline,
+                "EngineStages: the live loop ended outside a running pose; teardown owns the landing"
+            ),
+        }
         op_error!(domain = solver, "EngineStages: pump ended - closing the block-clock pipe + engine delivery channels; the Python block/result streams now end so the bot fails loudly"
         );
         self.close_delivery_channels();
@@ -991,6 +1039,66 @@ mod construction_ledger_pins {
         );
     }
 }
+// ======================================================================
+// The phase projection must unwind WITH the pump, never outlive it.
+// ======================================================================
+
+#[cfg(test)]
+#[expect(clippy::expect_used)]
+mod phase_projection_tests {
+    use super::EngineStages;
+    use crate::arb_engine::{PumpEvent, PumpPhase};
+    use std::sync::Arc;
+
+    fn stages() -> EngineStages {
+        EngineStages::new(
+            Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
+            Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
+        )
+    }
+
+    /// A live loop that returns on its own lands the table's `Running -> Ended`
+    /// edge, so `current_phase()` stops claiming a pump that is gone.
+    #[test]
+    fn pump_ended_lands_ended() {
+        let stages = stages();
+        stages.publish_phase(PumpPhase::Running);
+        crate::bot_core::PumpControl::on_pump_ended(&stages);
+        assert_eq!(stages.current_phase(), PumpPhase::Ended);
+    }
+
+    /// A session already tearing down owes the table only `StopCompleted`, so the
+    /// pump's own exit edge is refused and the pose stays `Stopping` for the
+    /// driver's `stop()` to land.
+    #[test]
+    fn pump_ended_during_teardown_leaves_stopping() {
+        let stages = stages();
+        stages.publish_phase(PumpPhase::Stopping);
+        crate::bot_core::PumpControl::on_pump_ended(&stages);
+        assert_eq!(stages.current_phase(), PumpPhase::Stopping);
+    }
+
+    /// The publish is ONE locked read-decide-write: an accepted move reports the
+    /// pair it wrote, and a declined move writes nothing.
+    #[test]
+    fn advance_reports_the_pair_and_writes_nothing_on_a_decline() {
+        let stages = stages();
+        let advance = stages
+            .advance_phase(PumpEvent::SubscribeRequested)
+            .expect("detached admits subscribe");
+        assert_eq!(
+            (advance.from, advance.to),
+            (PumpPhase::Detached, PumpPhase::Connecting)
+        );
+        assert!(stages.advance_phase(PumpEvent::SubscribeRequested).is_err());
+        assert_eq!(
+            stages.current_phase(),
+            PumpPhase::Connecting,
+            "a decline leaves the pose untouched"
+        );
+    }
+}
+
 // ======================================================================
 // Home pins for the reallocated dispatch items: each surviving home must
 // still own what the dissolution gave it. Textual include_str! keeps the

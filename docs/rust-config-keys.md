@@ -194,7 +194,7 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 
 | Env var | TOML key | Type | Default | Owner | Description |
 | --- | --- | --- | --- | --- | --- |
-| `DEGENBOT_DISCOVERY_BATCH_SIZE` | `pathfinding.discovery_batch_size` | `usize` | `1000` | `core` | Owner: the driver loop (asyncio batching; the native console registers differently). Discovery-sweep delivery batch size (paths per async batch): the worker thread collects this many paths before the async consumer yields them and gives the event loop one turn. A value <= 1 falls back to the legacy per-path delivery. |
+| `DEGENBOT_DISCOVERY_BATCH_SIZE` | `pathfinding.discovery_batch_size` | `usize` | `1000` | `core` | Owner: the core's crawl controller. Discovery-sweep batch size: one discovery turn pulls at most this many candidates before the intake-window reap (the Python shell's startup sweep delivers the same count per async batch). The controller refuses 0 as a config error -- there is no <= 1 fallback to per-path delivery; the shell clamps to 1. |
 | `DEGENBOT_MAX_PATHS` | `pathfinding.max_registered_paths` | `usize` | `100000` | `core` | Ceiling on total registered arbitrage paths, applied before discovery runs so a discovery-heavy skip-fest stops instead of registering millions. 0 means uncapped. |
 | `DEGENBOT_REG_PROGRESS_SECS` | `pathfinding.reg_progress_secs` | `f64` | `30.0` | `shell` | Owner: the driver loop's renderer. Seconds between registration-progress summaries, which fire on the interval even when the path count never crosses a discovery_batch_size boundary. 0 emits on every update. |
 ## `dispatch`

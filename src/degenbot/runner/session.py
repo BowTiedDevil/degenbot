@@ -410,7 +410,7 @@ class Session:
     async def start(self) -> Self:
         """Build the actors and run the engine's pre-resume ritual.
 
-        Stops at ``Backfilled`` — BEFORE ``resume()``. Zero result batches emit
+        Stops at ``subscribed`` — BEFORE ``resume()``. Zero result batches emit
         during this window (the pump isn't running), so ``run()`` can attach the
         consumer in the gap before ``resume()`` without a stale-backlog window.
         Idempotent via the phase alone: re-entry once Started is a no-op;
