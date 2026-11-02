@@ -68,6 +68,8 @@ mod boot_stamp;
 // engine-side block-coordinate residue (completes ADR-041 §3 item 5's
 // engine-side anchor fold; see the module's own doc header).
 pub(crate) mod block_cursor;
+
+pub mod crawl;
 // Sub-modules — each contains `impl ArbitrageEngine` or `impl PyArbitrageEngine` blocks.
 mod delivery_lifecycle;
 mod delivery_policy;
