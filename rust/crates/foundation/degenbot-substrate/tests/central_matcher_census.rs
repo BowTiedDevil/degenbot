@@ -31,7 +31,7 @@ use std::sync::OnceLock;
 /// `BotState::pool_family` reads the typed family and renders
 /// `RegisteredPoolFamily::tag`, so the only family-name spelling lives on the
 /// enum.
-const PINNED_MATCH_ENTRY_CENSUS: usize = 20;
+const PINNED_MATCH_ENTRY_CENSUS: usize = 21;
 
 /// The reintroduction marker the census counts (shared by the workspace scan
 /// and the synthetic-fixture negative probe, so the probe witnesses the same
