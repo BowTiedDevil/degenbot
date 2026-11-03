@@ -125,7 +125,7 @@ fn parse_path(
                     .map(range)
                     .collect::<Result<Vec<_>, _>>()?;
                 v2_hops.push(None);
-                concentrated_liquidity_seqs.push(Some(IntV3TickRangeSequence { ranges }));
+                concentrated_liquidity_seqs.push(IntV3TickRangeSequence::new(ranges).ok());
             }
             other => return Err(format!("unknown hop kind {other}")),
         }

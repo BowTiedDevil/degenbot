@@ -16,9 +16,11 @@ use super::entries::PreparedConcentratedLiquidityHop;
 use super::hop_sim::simulate_v3_range_swap;
 use super::tally::WalkTally;
 use super::IntV3TickRangeSequence;
+use crate::state::int_v3_hop::SwapWalkCensus;
 
 /// The forward simulation of a concentrated liquidity path at one input: per-hop outputs, the
-/// ending-range index landed in per hop, and the final output.
+/// ending-range index landed in per hop, the swap LOOP's census per hop,
+/// and the final output.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ConcentratedLiquidityPathOutcome {
     /// Output after the last hop.
@@ -27,6 +29,13 @@ pub struct ConcentratedLiquidityPathOutcome {
     pub hop_outputs: Vec<U256>,
     /// Ending-range index landed in per hop.
     pub landed: Vec<usize>,
+    /// `census[i]` = hop `i`'s swap-loop census (initialized ticks crossed,
+    /// bitmap words read) for this input — the walk's projection of the two
+    /// costs a leg decomposes into (`docs/gas-estimation.md`).
+    ///
+    /// `None` for a hop that never ran (zero input) and for a hop whose
+    /// sequence carries no range exit kinds (hand-built, no tick map).
+    pub census: Vec<Option<SwapWalkCensus>>,
 }
 
 /// A reusable, byte-exact concentrated liquidity path simulator.
@@ -81,6 +90,7 @@ impl ConcentratedLiquidityPathSim {
         let n_hops = self.hops.len();
         let mut hop_outputs = Vec::with_capacity(n_hops);
         let mut landed = Vec::with_capacity(n_hops);
+        let mut census = Vec::with_capacity(n_hops);
         let mut current = amount_in;
         // The helper has no collector; the tally is a throwaway so the
         // byte-exact forward oracle keeps one shape for every caller.
@@ -89,18 +99,23 @@ impl ConcentratedLiquidityPathSim {
             if current.is_zero() {
                 hop_outputs.push(U256::ZERO);
                 landed.push(0);
+                census.push(None);
                 continue;
             }
             let k = super::crossings::landed_ending_range_index(hop.crossings.as_slice(), current);
             let crossing = &hop.crossings[k];
             let remaining = current - crossing.crossing_gross_input;
-            let ending_output = match hop.profiles.get(k).and_then(Option::as_deref) {
-                Some(profile) => profile.swap(remaining, &mut tally).output,
-                None => {
-                    simulate_v3_range_swap(remaining, &crossing.ending_range, &mut tally).output
-                }
+            let ending = match hop.profiles.get(k).and_then(Option::as_deref) {
+                Some(profile) => profile.swap(remaining, &mut tally),
+                None => simulate_v3_range_swap(remaining, &crossing.ending_range, &mut tally),
             };
-            let out = crossing.crossing_output.saturating_add(ending_output);
+            // The fill placed less than it was handed only when the sequence's
+            // modeled span ran out first (the landing range is the last one and
+            // its exit was consumed): the swap goes further than the walk sees,
+            // so both census counts are lower bounds.
+            let bounded_tail = !remaining.is_zero() && ending.consumed_input < remaining;
+            let out = crossing.crossing_output.saturating_add(ending.output);
+            census.push(hop.int_seq.swap_census(k, ending.word_steps, bounded_tail));
             landed.push(k);
             hop_outputs.push(out);
             current = out;
@@ -109,6 +124,7 @@ impl ConcentratedLiquidityPathSim {
             final_output: hop_outputs.last().copied().unwrap_or(U256::ZERO),
             hop_outputs,
             landed,
+            census,
         }
     }
 }

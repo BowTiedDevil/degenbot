@@ -17,7 +17,7 @@ use std::sync::Arc;
 use alloy::primitives::{U160, U256};
 use hashbrown::HashMap;
 
-use crate::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use crate::state::int_v3_hop::{IntV3TickRangeHop, IntV3TickRangeSequence, RangeExitKind};
 use crate::state::tick_bitmap::{compute_tick_ranges, V3TickRangeForSolver};
 use crate::TickInfo;
 use degenbot_math::concentrated_liquidity::swap_math::{
@@ -308,7 +308,23 @@ pub(crate) fn build_int_v3_sequence<H: WalkHost>(
 
     let has_leading_current_segment = zero_for_one && host.tick_data().contains_key(&host.tick());
 
+    // A `zero_for_one` walk whose price sits exactly on the bitmap word's
+    // minimum consumes a zero-length first step at the current tick and
+    // continues in the next word down. When the current tick is initialized
+    // the leading hop below IS that step (`Tick.cross` plus the word advance);
+    // when it is not, `compute_tick_ranges` already re-inserted it as the first
+    // interior word boundary of the computed range 0 (the step-0 floor), so the
+    // advance is counted there.
+    let current_on_word_min =
+        zero_for_one && host.tick().div_euclid(tick_spacing).rem_euclid(256) == 0;
+    let leading_exit_kind = if current_on_word_min {
+        RangeExitKind::InitializedTickAtWordEdge
+    } else {
+        RangeExitKind::InitializedTick
+    };
+
     let mut int_ranges = Vec::with_capacity(use_ranges.len() + 1);
+    let mut exits: Vec<RangeExitKind> = Vec::with_capacity(use_ranges.len() + 1);
 
     // Contract-faithful leading segment (zfo + initialized current tick
     // only): the swap's first step targets sqrt(currentTick) while
@@ -328,6 +344,7 @@ pub(crate) fn build_int_v3_sequence<H: WalkHost>(
             zero_for_one,
             word_boundary_prices: Vec::new(),
         });
+        exits.push(leading_exit_kind);
     }
 
     for (i, r) in use_ranges.iter().enumerate() {
@@ -351,9 +368,10 @@ pub(crate) fn build_int_v3_sequence<H: WalkHost>(
             zero_for_one,
             word_boundary_prices: word_boundary_prices(r),
         });
+        exits.push(r.exit_kind);
     }
 
-    IntV3TickRangeSequence::new(int_ranges).ok()
+    IntV3TickRangeSequence::with_exits(int_ranges, exits).ok()
 }
 
 /// `V4PoolState::build_int_v4_sequence` — build an integer tick-range
@@ -418,7 +436,23 @@ pub(crate) fn build_int_v4_sequence<H: WalkHost>(
 
     let has_leading_current_segment = zero_for_one && host.tick_data().contains_key(&host.tick());
 
+    // A `zero_for_one` walk whose price sits exactly on the bitmap word's
+    // minimum consumes a zero-length first step at the current tick and
+    // continues in the next word down. When the current tick is initialized
+    // the leading hop below IS that step (`Tick.cross` plus the word advance);
+    // when it is not, `compute_tick_ranges` already re-inserted it as the first
+    // interior word boundary of the computed range 0 (the step-0 floor), so the
+    // advance is counted there.
+    let current_on_word_min =
+        zero_for_one && host.tick().div_euclid(tick_spacing).rem_euclid(256) == 0;
+    let leading_exit_kind = if current_on_word_min {
+        RangeExitKind::InitializedTickAtWordEdge
+    } else {
+        RangeExitKind::InitializedTick
+    };
+
     let mut int_ranges = Vec::with_capacity(use_ranges.len() + 1);
+    let mut exits: Vec<RangeExitKind> = Vec::with_capacity(use_ranges.len() + 1);
 
     // Contract-faithful leading segment (zfo + initialized current tick only),
     // fee included: the swap's first step targets sqrt(currentTick) while
@@ -438,6 +472,7 @@ pub(crate) fn build_int_v4_sequence<H: WalkHost>(
             zero_for_one,
             word_boundary_prices: Vec::new(),
         });
+        exits.push(leading_exit_kind);
     }
 
     for (i, r) in use_ranges.iter().enumerate() {
@@ -462,9 +497,10 @@ pub(crate) fn build_int_v4_sequence<H: WalkHost>(
             zero_for_one,
             word_boundary_prices: word_boundary_prices(r),
         });
+        exits.push(r.exit_kind);
     }
 
-    IntV3TickRangeSequence::new(int_ranges).ok()
+    IntV3TickRangeSequence::with_exits(int_ranges, exits).ok()
 }
 
 /// Entry sqrt price for computed range `i` of an integer V3 walk.
@@ -472,7 +508,12 @@ pub(crate) fn build_int_v4_sequence<H: WalkHost>(
 /// Range 0 enters at sqrt(currentTick) when a leading current-tick segment
 /// was modeled (the leading hop already covers [current, sqrt(currentTick)]);
 /// otherwise it enters at the pool's current sqrt price. Later ranges enter
-/// at the previous range's swap-direction boundary.
+/// at the previous range's EXIT boundary — the lower bound on a descending
+/// (`zero_for_one`) walk, the upper bound on an ascending one — which is the
+/// range's own near bound, the price `IntV3TickRangeSequence::compute_crossing`
+/// hands the ending range. Reading the other neighbour instead stores the
+/// previous range's ENTRY, so `max_gross_input_in_range` /
+/// `to_int_hop_state` on a raw range would span two ranges.
 fn int_range_entry_sqrt_price(
     i: usize,
     has_leading_current_segment: bool,
@@ -490,9 +531,9 @@ fn int_range_entry_sqrt_price(
             current_sqrt_price_x96
         }
     } else if zero_for_one {
-        use_ranges[i - 1].sqrt_price_upper
-    } else {
         use_ranges[i - 1].sqrt_price_lower
+    } else {
+        use_ranges[i - 1].sqrt_price_upper
     }
 }
 

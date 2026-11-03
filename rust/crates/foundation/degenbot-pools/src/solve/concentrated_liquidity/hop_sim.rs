@@ -52,6 +52,13 @@ pub struct V3RangeSwapResult {
     pub consumed_input: U256,
     /// Output amount from the swap.
     pub output: U256,
+    /// Interior bitmap-word boundaries this fill walked through (the range's
+    /// own exit is not one: reaching it is the next landing, charged there).
+    ///
+    /// The pool reads one `tickBitmap` word per boundary its swap loop passes,
+    /// so this is the landing range's share of the loop's word count — the
+    /// half of the gas model's census the range index alone cannot express.
+    pub word_steps: usize,
 }
 
 /// Simulate a V3 swap within a single tick range using integer arithmetic.
@@ -106,15 +113,18 @@ pub fn simulate_v3_range_swap(
     let mut sp = v3_hop.sqrt_price_x96;
     let mut total_output = U256::ZERO;
     let mut total_consumed = U256::ZERO;
+    let mut word_steps = 0usize;
+    let interior_words = v3_hop.word_boundary_prices.len();
 
     // Walk entry → [interior word boundaries] → exit, one
     // `compute_swap_step_v3` per target. The walk stops early when the
     // remaining input is exhausted before reaching a target (the partial
     // landing step) — identical to `v3_simulate_swap`'s loop.
-    for target in v3_hop
+    for (target_index, target) in v3_hop
         .word_boundary_prices
         .iter()
         .chain(std::iter::once(&exit_price))
+        .enumerate()
     {
         if remaining <= I256::ZERO {
             break;
@@ -137,10 +147,14 @@ pub fn simulate_v3_range_swap(
         if sp != *target {
             break;
         }
+        if target_index < interior_words {
+            word_steps += 1;
+        }
     }
 
     V3RangeSwapResult {
         consumed_input: total_consumed,
         output: total_output,
+        word_steps,
     }
 }

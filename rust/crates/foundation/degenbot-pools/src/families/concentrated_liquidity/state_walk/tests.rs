@@ -261,6 +261,194 @@ fn none_tick_ranges_cached_to_avoid_rewalk_on_both_adapters() {
 // rides its adapter call as the fee-combine input).
 // ------------------------------------------------------------------
 
+/// The pool's OWN swap-loop census, independent of the solver's range
+/// construction: walk `gen_ticks_iter` exactly as `v3_simulate_swap` does and
+/// count what the loop reads — one `tickBitmap` word per distinct word probed
+/// (the word the price sits in, then one per word the walk enters) and one
+/// `Tick.cross` per initialized tick the price reaches.
+fn pool_swap_loop_census<F: ClStateFixture>(
+    state: &F,
+    tick_spacing: i32,
+    fee: u32,
+    zero_for_one: bool,
+    amount_in: U256,
+) -> (usize, usize) {
+    use alloy::primitives::I256;
+    use degenbot_math::concentrated_liquidity::swap_math::compute_swap_step_v3;
+    use degenbot_math::concentrated_liquidity::tick_math::get_tick_at_sqrt_ratio_internal;
+    use std::collections::BTreeSet;
+
+    use crate::sim::tick_fetch::word_of;
+    use crate::state::tick_bitmap::gen_ticks_iter;
+
+    let mut remaining = I256::try_from(amount_in).unwrap();
+    let mut sp = WalkHost::sqrt_price_x96(state);
+    let mut tick = WalkHost::tick(state);
+    let mut liquidity = i128::try_from(WalkHost::liquidity(state)).unwrap();
+    let fee_pips = U256::from(fee);
+    let limit = if zero_for_one {
+        U256::from(MIN_SQRT_RATIO) + U256::ONE
+    } else {
+        U256::from(MAX_SQRT_RATIO) - U256::ONE
+    };
+
+    let mut words: BTreeSet<i32> = BTreeSet::new();
+    let mut crossings = 0usize;
+    let ticks = gen_ticks_iter(
+        WalkHost::tick_data(state),
+        tick,
+        tick_spacing,
+        zero_for_one,
+        30_000,
+    )
+    .unwrap();
+    for along in ticks {
+        if remaining.is_zero() || sp == limit {
+            break;
+        }
+        // `nextInitializedTickWithinOneWord` probes the price's own word going
+        // down, and the word of the NEXT tick going up (`gt` is exclusive).
+        words.insert(word_of(
+            if zero_for_one { tick } else { tick + 1 },
+            tick_spacing,
+        ));
+        let tick_next = if zero_for_one {
+            along.tick.max(-887_272)
+        } else {
+            along.tick.min(887_272)
+        };
+        let sp_next = U256::from(get_sqrt_ratio_at_tick_internal(tick_next).unwrap());
+        let target = if (zero_for_one && sp_next < limit) || (!zero_for_one && sp_next > limit) {
+            limit
+        } else {
+            sp_next
+        };
+        let step = compute_swap_step_v3(sp, target, liquidity, remaining, fee_pips).unwrap();
+        remaining -= I256::try_from(step.amount_in.saturating_add(step.fee_amount)).unwrap();
+        sp = step.sqrt_price_next;
+        if sp == sp_next {
+            if along.is_initialized {
+                crossings += 1;
+                let net = WalkHost::tick_data(state)
+                    .get(&tick_next)
+                    .map_or(0, |info| info.liquidity_net);
+                liquidity += if zero_for_one { -net } else { net };
+            }
+            tick = if zero_for_one {
+                tick_next - 1
+            } else {
+                tick_next
+            };
+        } else {
+            tick = get_tick_at_sqrt_ratio_internal(sp.to::<alloy::primitives::U160>())
+                .unwrap()
+                .as_i32();
+        }
+    }
+    (words.len(), crossings)
+}
+
+#[test]
+fn walk_census_matches_the_pool_swap_loop_on_both_adapters() {
+    fn walk_census_matches_the_pool_swap_loop<F: ClStateFixture>(tag: &str) {
+        // What: the walk's projected census (`landed` + the landing fill's word
+        // steps, read through the range exit kinds) must equal the census the
+        // pool's own swap loop produces — the initialized ticks it ran
+        // `Tick.cross` on and the distinct bitmap words it read.
+        // Why: the two axes a leg's gas decomposes into are loop facts. The
+        // range index alone is NOT the crossing count (a range may exit at a
+        // bitmap-word edge) and the landing range's whole word list is not the
+        // word count (a partial fill walks only part of it).
+        use crate::solve::concentrated_liquidity::ConcentratedLiquidityPathSim;
+
+        let tick_spacing = 1;
+        let fee = 3_000;
+        let liquidity: u128 = 1_000_000_000_000_000;
+        // Two overlapping positions straddling the price: active liquidity is
+        // `liquidity` at tick 0, and the walk loses a slice at each initialized
+        // tick it crosses so both directions have interior crossings. The ticks
+        // are deliberately NOT on bitmap-word edges (word = tick / 256 `spacing`).
+        let mut tick_data = hashbrown::HashMap::new();
+        for (tick, net) in [
+            (-700i32, 400_000_000_000_000i128),
+            (-300, 600_000_000_000_000),
+            (500, -600_000_000_000_000),
+            (1200, -400_000_000_000_000),
+        ] {
+            tick_data.insert(
+                tick,
+                TickInfo {
+                    liquidity_gross: U128::from(net.unsigned_abs()),
+                    liquidity_net: net,
+                    block: 0,
+                },
+            );
+        }
+        for (current_tick, label) in [
+            (0i32, "price on the word minimum"),
+            (37, "price inside a word"),
+        ] {
+            let mut state = F::with_position(liquidity);
+            state.replace_tick_data(tick_data.clone(), 0, tick_spacing);
+            state.set_tick(current_tick);
+            state.set_sqrt_price(U256::from(
+                get_sqrt_ratio_at_tick_internal(current_tick).unwrap(),
+            ));
+
+            for zero_for_one in [true, false] {
+                let seq = state
+                    .build_int_sequence(tick_spacing, fee, zero_for_one)
+                    .expect("the fixture's tick map builds a sequence");
+                let sim = ConcentratedLiquidityPathSim::new(&[&seq], None);
+                assert!(
+                    seq.ranges.len() > 2,
+                    "{tag} {label}: multi-range probe, got {}",
+                    seq.ranges.len()
+                );
+                // A geometric sweep from dust past the in-range reserve, so the
+                // landings cover every range (including partial fills inside a
+                // multi-word span) and the walk's bounded tail.
+                let mut tails = 0;
+                for step in 0..=28u32 {
+                    let amount = U256::from(1_000_000u64) * U256::from(4u64).pow(U256::from(step));
+                    let outcome = sim.output(amount);
+                    let census = outcome
+                        .census
+                        .first()
+                        .copied()
+                        .flatten()
+                        .expect("a state-built sequence carries exit kinds");
+                    let (words, crossings) =
+                        pool_swap_loop_census(&state, tick_spacing, fee, zero_for_one, amount);
+                    if census.bounded_tail {
+                        // The sequence stops at the last initialized tick; past
+                        // it the pool marches on and the walk cannot see it.
+                        tails += 1;
+                        assert!(
+                            census.initialized_ticks_crossed <= crossings
+                                && census.bitmap_words_walked <= words,
+                            "{tag} {label} zfo={zero_for_one} at {amount}: a bounded tail still                              only under-counts (walk {census:?} vs loop {crossings} xing / {words} words)"
+                        );
+                        continue;
+                    }
+                    assert_eq!(
+                        (census.bitmap_words_walked, census.initialized_ticks_crossed),
+                        (words, crossings),
+                        "{tag} {label} zfo={zero_for_one} at {amount} (landed {}): the walk's                          census must be the swap loop's",
+                        outcome.landed[0]
+                    );
+                }
+                assert!(
+                    tails < 29,
+                    "{tag} {label}: the sweep must reach a modeled landing"
+                );
+            }
+        }
+    }
+    walk_census_matches_the_pool_swap_loop::<V3PoolState>("V3");
+    walk_census_matches_the_pool_swap_loop::<V4PoolState>("V4");
+}
+
 #[test]
 fn single_straddling_position_builds_one_range_on_both_adapters() {
     fn single_straddling_position_builds_one_range<F: ClStateFixture>(tag: &str) {
@@ -312,4 +500,71 @@ fn int_sequence_is_not_truncated_at_twentyfour_ranges_on_both_adapters() {
     }
     int_sequence_is_not_truncated_at_twentyfour_ranges::<V3PoolState>("V3");
     int_sequence_is_not_truncated_at_twentyfour_ranges::<V4PoolState>("V4");
+}
+
+#[test]
+fn range_entry_price_is_the_previous_ranges_exit_boundary_on_both_adapters() {
+    fn range_entry_price_is_the_previous_ranges_exit_boundary<F: ClStateFixture>(tag: &str) {
+        // What: every range after range 0 enters at the price the previous
+        // range EXITS at — its own near bound (the lower bound walking down,
+        // the upper walking up), which is what `compute_crossing` hands the
+        // ending range.
+        // Why: the hop's stored `sqrt_price_x96` is the entry the per-range
+        // verbs (`max_gross_input_in_range`, `to_int_hop_state`) start from.
+        // Reading the OTHER neighbour stores the previous range's entry, so
+        // those verbs would span two ranges.
+        let mut state = F::with_position(1_000_000_000_000u128);
+        {
+            let ticks = JournalHost::tick_data_mut(&mut state);
+            ticks.clear();
+            for i in 1..=6 {
+                let net: i128 = if i % 2 == 0 {
+                    -100_000_000_000
+                } else {
+                    100_000_000_000
+                };
+                for signed in [60 * i, -60 * i] {
+                    ticks.insert(
+                        signed,
+                        TickInfo {
+                            liquidity_gross: U128::from(200_000_000_000u128),
+                            liquidity_net: net,
+                            block: 0,
+                        },
+                    );
+                }
+            }
+        }
+
+        for zero_for_one in [true, false] {
+            let seq = state
+                .build_int_sequence(60, 3_000, zero_for_one)
+                .expect("six initialized ticks either side build a sequence");
+            assert!(seq.ranges.len() > 2, "{tag}: a multi-range probe");
+            for i in 1..seq.ranges.len() {
+                let want = if zero_for_one {
+                    seq.ranges[i - 1].sqrt_price_lower_x96
+                } else {
+                    seq.ranges[i - 1].sqrt_price_upper_x96
+                };
+                assert_eq!(
+                    seq.ranges[i].sqrt_price_x96,
+                    want,
+                    "{tag}: zfo={zero_for_one} range {i} must enter at range {}'s exit boundary",
+                    i - 1
+                );
+                // The crossing table is the authority the solver reads.
+                assert_eq!(
+                    seq.compute_crossing(i)
+                        .expect("index in range")
+                        .ending_range
+                        .sqrt_price_x96,
+                    want,
+                    "{tag}: zfo={zero_for_one} range {i} disagrees with compute_crossing"
+                );
+            }
+        }
+    }
+    range_entry_price_is_the_previous_ranges_exit_boundary::<V3PoolState>("V3");
+    range_entry_price_is_the_previous_ranges_exit_boundary::<V4PoolState>("V4");
 }

@@ -590,10 +590,15 @@ mod tests {
         }
     }
 
-    /// Direct struct construction (not `IntV3TickRangeSequence::new`, which
-    /// rejects the empty range vector the empty-sequence fixture needs).
+    /// `IntV3TickRangeSequence::new` rejects the empty range vector the
+    /// empty-sequence fixture needs, so that one shape takes the dedicated
+    /// constructor.
+    #[expect(clippy::expect_used)]
     fn make_seq(ranges: Vec<IntV3TickRangeHop>) -> IntV3TickRangeSequence {
-        IntV3TickRangeSequence { ranges }
+        if ranges.is_empty() {
+            return IntV3TickRangeSequence::empty_for_fingerprint();
+        }
+        IntV3TickRangeSequence::new(ranges).expect("the fixture's ranges are homogeneous")
     }
 
     /// Base two-range fixture: every folded field carries a distinct value

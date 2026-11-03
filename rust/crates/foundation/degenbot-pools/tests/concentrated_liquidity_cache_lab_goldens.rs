@@ -49,7 +49,7 @@ fn parse_hop(v: &Value) -> Option<IntV3TickRangeSequence> {
             word_boundary_prices: wbp,
         });
     }
-    Some(IntV3TickRangeSequence { ranges })
+    IntV3TickRangeSequence::new(ranges).ok()
 }
 
 fn solve_prepared<S: ConcentratedLiquidityCacheStrategy + ?Sized>(

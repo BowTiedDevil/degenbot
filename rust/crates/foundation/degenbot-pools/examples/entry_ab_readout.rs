@@ -145,7 +145,7 @@ fn all_concentrated_liquidity_seqs_of(doc: &Value) -> Option<Vec<IntV3TickRangeS
                 .map(common::range)
                 .collect::<Result<Vec<_>, String>>()
                 .ok()?;
-            seqs.push(IntV3TickRangeSequence { ranges: rs });
+            seqs.push(IntV3TickRangeSequence::new(rs).ok()?);
         }
         Some(seqs)
     } else {

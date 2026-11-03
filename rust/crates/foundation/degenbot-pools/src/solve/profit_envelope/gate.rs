@@ -1192,13 +1192,15 @@ pub(crate) mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .map(|hop| IntV3TickRangeSequence {
-                ranges: hop
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(parse_range)
-                    .collect::<Vec<_>>(),
+            .map(|hop| {
+                IntV3TickRangeSequence::new(
+                    hop.as_array()
+                        .unwrap()
+                        .iter()
+                        .map(parse_range)
+                        .collect::<Vec<_>>(),
+                )
+                .expect("captured ranges are fee/direction homogeneous")
             })
             .collect();
         let s = &seqs[1];
@@ -1299,13 +1301,15 @@ pub(crate) mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .map(|hop| IntV3TickRangeSequence {
-                ranges: hop
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(&parse_range)
-                    .collect::<Vec<_>>(),
+            .map(|hop| {
+                IntV3TickRangeSequence::new(
+                    hop.as_array()
+                        .unwrap()
+                        .iter()
+                        .map(&parse_range)
+                        .collect::<Vec<_>>(),
+                )
+                .expect("captured ranges are fee/direction homogeneous")
             })
             .collect();
         assert_eq!(seqs.len(), 3);

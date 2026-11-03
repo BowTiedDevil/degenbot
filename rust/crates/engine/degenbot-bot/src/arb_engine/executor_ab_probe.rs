@@ -107,7 +107,8 @@ pub(in crate::arb_engine) fn load_corpus() -> Vec<Arc<::degenbot_pools::solve::R
                     ranges.push(rh);
                 }
             }
-            let seq = IntV3TickRangeSequence { ranges };
+            let seq = IntV3TickRangeSequence::new(ranges)
+                .expect("captured ranges are fee/direction homogeneous");
             let crossings = Arc::from(build_concentrated_liquidity_crossing_table(&seq));
             let profiles = Arc::from(build_concentrated_liquidity_word_profiles(&seq));
             hops.push(::degenbot_pools::solve::ResolvedHop::V3 {

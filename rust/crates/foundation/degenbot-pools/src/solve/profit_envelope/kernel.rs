@@ -2288,6 +2288,6 @@ mod tests {
                 word_boundary_prices: wbp,
             });
         }
-        Some(IntV3TickRangeSequence { ranges })
+        IntV3TickRangeSequence::new(ranges).ok()
     }
 }

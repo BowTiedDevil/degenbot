@@ -283,6 +283,69 @@ impl IntV3TickRangeHop {
 // Integer V3 Tick Range Sequence
 // ---------------------------------------------------------------------------
 
+/// What a computed range's far (exit) boundary IS in the pool's own tick map.
+///
+/// The crossing math is blind to the difference — every boundary costs one
+/// `computeSwapStep` whether or not it holds liquidity — but the pool's swap
+/// LOOP is not: an initialized boundary runs `Tick.cross` (one `ticks(tick)`
+/// `SLOAD`), a bitmap-word edge does not, and the walk enters the next bitmap
+/// word (one `tickBitmap` `SLOAD`) only when the boundary it reaches sits on
+/// the word's edge for the swap direction. Those two `SLOAD`s are the axes the
+/// gas model decomposes a leg into (`docs/gas-estimation.md`), and neither is
+/// readable from the range's prices, so the sequence records the kind every
+/// range exits at and projects the census in
+/// [`IntV3TickRangeSequence::swap_census`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RangeExitKind {
+    /// Initialized tick inside a bitmap word: `Tick.cross` runs, and the next
+    /// `nextInitializedTickWithinOneWord` search stays in the same word.
+    InitializedTick,
+    /// Initialized tick sitting on the bitmap word's edge for the swap
+    /// direction: `Tick.cross` runs AND the next search reads the next word.
+    InitializedTickAtWordEdge,
+    /// Uninitialized bitmap-word edge — the `nextInitializedTickWithinOneWord`
+    /// floor: no `cross()`, and the next search reads the next word.
+    BitmapWordEdge,
+}
+
+impl RangeExitKind {
+    /// True when the pool reads this boundary's `ticks(tick)` slot.
+    #[must_use]
+    pub fn crosses_initialized_tick(self) -> bool {
+        matches!(
+            self,
+            Self::InitializedTick | Self::InitializedTickAtWordEdge
+        )
+    }
+
+    /// True when reaching this boundary moves the swap's search into the next
+    /// bitmap word.
+    #[must_use]
+    pub fn enters_next_bitmap_word(self) -> bool {
+        !matches!(self, Self::InitializedTick)
+    }
+}
+
+/// The census a gas model needs from a swap walk: the two counts a leg's cost
+/// decomposes into (one crossed tick and one bitmap word read per unit).
+///
+/// Both counts are properties of the pool's swap LOOP, not of the swap math:
+/// they are read off the walk's range sequence
+/// ([`IntV3TickRangeSequence::swap_census`]), so they are exact whenever the
+/// swap stays inside the sequence's modeled span.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SwapWalkCensus {
+    /// Initialized ticks the loop ran `Tick.cross` on.
+    pub initialized_ticks_crossed: usize,
+    /// Bitmap words the loop read — the word the price starts in, plus one per
+    /// word boundary the price passed.
+    pub bitmap_words_walked: usize,
+    /// The swap ran out of MODELED range before it ran out of input (the
+    /// sequence stops at the last initialized tick), so the price travelled
+    /// further than the walk can see and both counts above are lower bounds.
+    pub bounded_tail: bool,
+}
+
 /// Ordered sequence of integer V3 tick ranges in the swap direction.
 ///
 /// `ranges[0]` contains the current price. `ranges[1]`, `ranges[2]`, ...
@@ -291,24 +354,81 @@ impl IntV3TickRangeHop {
 pub struct IntV3TickRangeSequence {
     /// Ordered tick ranges in the swap direction.
     pub ranges: Vec<IntV3TickRangeHop>,
+    /// [`RangeExitKind`] of each range's exit boundary, parallel to `ranges`.
+    ///
+    /// Derived state: the crossing math reads only `ranges`, so this rides
+    /// along for the swap loop's census and never enters a quote, a crossing
+    /// table, or a fingerprint. A sequence built from a pool's tick map
+    /// (`build_int_v3_sequence` / `build_int_v4_sequence`) carries the kinds
+    /// the tick map implies ([`Self::with_exits`]); a hand-built sequence has
+    /// no tick map to read, so it carries none and reports no census
+    /// ([`Self::swap_census`] answers `None`) rather than guessing.
+    exits: Vec<RangeExitKind>,
 }
 
 impl IntV3TickRangeSequence {
     /// Create a new integer tick range sequence.
     ///
+    /// Carries no range exit kinds: a hand-built sequence has no tick map, so
+    /// the swap loop's census is not derivable from it (see [`Self::with_exits`]
+    /// for the tick-map door).
+    ///
     /// # Errors
     ///
-    /// Returns a string error if ranges is empty or if fees/directions are mixed.
+    /// Returns a string error if ranges is empty or if fees/directions are
+    /// mixed.
     pub fn new(ranges: Vec<IntV3TickRangeHop>) -> Result<Self, String> {
+        Self::validate(&ranges)?;
+        Ok(Self {
+            ranges,
+            exits: Vec::new(),
+        })
+    }
+
+    /// Create a sequence whose range exit kinds are stated explicitly — the
+    /// door a walk built from a pool's tick map uses, where initialized-ness
+    /// and word-edge alignment are known rather than inferred.
+    ///
+    /// # Errors
+    ///
+    /// Same validation as [`Self::new`], plus a length mismatch between
+    /// `ranges` and `exits`.
+    pub fn with_exits(
+        ranges: Vec<IntV3TickRangeHop>,
+        exits: Vec<RangeExitKind>,
+    ) -> Result<Self, String> {
+        Self::validate(&ranges)?;
+        if exits.len() != ranges.len() {
+            return Err(format!(
+                "Tick range sequence needs one exit kind per range ({} ranges, {} kinds)",
+                ranges.len(),
+                exits.len()
+            ));
+        }
+        Ok(Self { ranges, exits })
+    }
+
+    /// An empty sequence, for the one fixture that folds an EMPTY composition
+    /// through the walk-memo fingerprint (its empty arm). Not a solvable
+    /// sequence: the walk verbs index `ranges[0]`.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn empty_for_fingerprint() -> Self {
+        Self {
+            ranges: Vec::new(),
+            exits: Vec::new(),
+        }
+    }
+
+    /// The fee/direction homogeneity every range sequence must satisfy.
+    fn validate(ranges: &[IntV3TickRangeHop]) -> Result<(), String> {
         if ranges.is_empty() {
             return Err("Empty tick range sequence".to_string());
         }
-
-        // Validate consistency: all ranges must have same fee and direction
         let gamma_numer = ranges[0].gamma_numer;
         let fee_denom = ranges[0].fee_denom;
         let zfo = ranges[0].zero_for_one;
-        for r in &ranges {
+        for r in ranges {
             if r.gamma_numer != gamma_numer || r.fee_denom != fee_denom {
                 return Err("All ranges must have the same fee".to_string());
             }
@@ -316,8 +436,64 @@ impl IntV3TickRangeSequence {
                 return Err("All ranges must have the same swap direction".to_string());
             }
         }
+        Ok(())
+    }
 
-        Ok(Self { ranges })
+    /// The swap LOOP's census for a swap that landed in range `landed` after
+    /// completing `word_steps` interior bitmap-word boundaries inside it.
+    ///
+    /// `landed` and `word_steps` are the walk's own facts (the crossing
+    /// table's landing index and the landing fill's completed word steps);
+    /// this method adds the only thing the crossing math drops — whether each
+    /// crossed boundary runs `Tick.cross` and whether it moves the bitmap word
+    /// (see [`RangeExitKind`]) — so the two counts are the pool's loop counts,
+    /// not a re-derivation from tick distance.
+    ///
+    /// `bounded_tail` states that the swap consumed the sequence's whole
+    /// modeled span with input left over; both counts are then lower bounds.
+    ///
+    /// # Known corner (±1 word)
+    ///
+    /// A `zero_for_one` pool whose price sits EXACTLY on a bitmap word's
+    /// minimum AND holds an initialized tick there gets one word counted twice:
+    /// the leading current-tick hop's exit is `InitializedTickAtWordEdge` (the
+    /// `cross()` plus the advance), and `compute_tick_ranges` separately
+    /// re-inserts that same tick as range 0's first interior word boundary (the
+    /// step-0 floor). Both describe the same zero-length step, so the census
+    /// reads one word more than the loop does. A price on a word minimum with
+    /// no liquidity at it has only the interior, and is exact.
+    ///
+    /// `None` when the sequence carries no exit kinds (hand-built, no tick
+    /// map), i.e. when this census has nothing to read.
+    #[must_use]
+    pub fn swap_census(
+        &self,
+        landed: usize,
+        word_steps: usize,
+        bounded_tail: bool,
+    ) -> Option<SwapWalkCensus> {
+        if self.exits.len() != self.ranges.len() {
+            return None;
+        }
+        let mut census = SwapWalkCensus {
+            initialized_ticks_crossed: 0,
+            // The loop's first `nextInitializedTickWithinOneWord` reads the
+            // word the price starts in.
+            bitmap_words_walked: 1,
+            bounded_tail,
+        };
+        for i in 0..landed.min(self.ranges.len()) {
+            let exit = self.exits[i];
+            if exit.crosses_initialized_tick() {
+                census.initialized_ticks_crossed += 1;
+            }
+            if exit.enters_next_bitmap_word() {
+                census.bitmap_words_walked += 1;
+            }
+            census.bitmap_words_walked += self.ranges[i].word_boundary_prices.len();
+        }
+        census.bitmap_words_walked += word_steps;
+        Some(census)
     }
 
     /// Combined effective reserves of all ranges, as a single `IntHopState`.

@@ -18,6 +18,7 @@ use alloy::primitives::{U128, U256};
 use degenbot_math::concentrated_liquidity::functions::tick_position;
 use degenbot_math::concentrated_liquidity::tick_math::{MAX_TICK, MIN_TICK};
 
+use crate::state::int_v3_hop::RangeExitKind;
 use crate::TickInfo;
 
 /// A tick along the swap path, with an initialization flag.
@@ -371,9 +372,13 @@ pub fn gen_ticks_iter<S: std::hash::BuildHasher>(
 fn collapse_walk_to_range_boundaries(
     all_walk: &[(i32, bool)],
     has_init_after: &[bool],
-) -> (Vec<i32>, Vec<Vec<i32>>) {
+) -> (Vec<i32>, Vec<Vec<i32>>, Vec<bool>) {
     let mut range_boundary_ticks: Vec<i32> = Vec::new();
     let mut range_interiors: Vec<Vec<i32>> = Vec::new();
+    // Parallel to `range_boundary_ticks`: whether the kept tick is initialized.
+    // The exit boundary of range `i` is kept tick `i + 1`, so this vector is
+    // what tells a `cross()` from a bitmap-word floor (see `RangeExitKind`).
+    let mut kept_is_initialized: Vec<bool> = Vec::new();
     let mut pending_interior: Vec<i32> = Vec::new();
     for (j, &(tick, is_init)) in all_walk.iter().enumerate() {
         // j==0 keeps the current tick (range 0's near boundary) even when it
@@ -408,8 +413,9 @@ fn collapse_walk_to_range_boundaries(
             range_interiors.push(std::mem::take(&mut pending_interior));
         }
         range_boundary_ticks.push(tick);
+        kept_is_initialized.push(is_init);
     }
-    (range_boundary_ticks, range_interiors)
+    (range_boundary_ticks, range_interiors, kept_is_initialized)
 }
 
 /// # Returns
@@ -504,7 +510,7 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
         }
     }
 
-    let (range_boundary_ticks, range_interiors) =
+    let (range_boundary_ticks, range_interiors, kept_is_initialized) =
         collapse_walk_to_range_boundaries(&all_walk, &has_init_after);
 
     if range_boundary_ticks.len() < 2 {
@@ -561,6 +567,13 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
             "sqrt_price_lower > sqrt_price_upper for ticks [{tick_lower}, {tick_upper}]"
         );
 
+        let exit_kind = range_exit_kind(
+            range_boundary_ticks[i + 1],
+            kept_is_initialized[i + 1],
+            tick_spacing,
+            zero_for_one,
+        );
+
         ranges.push(V3TickRangeForSolver {
             tick_lower,
             tick_upper,
@@ -568,6 +581,7 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
             sqrt_price_lower: U256::from(sqrt_price_lower),
             sqrt_price_upper: U256::from(sqrt_price_upper),
             interior_boundaries: range_interiors.get(i).cloned().unwrap_or_default(),
+            exit_kind,
         });
 
         // Note: we do NOT search for current_idx here. The Python code's
@@ -607,6 +621,28 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
     Some((ranges, 0))
 }
 
+/// What the boundary a range exits at IS in the pool's tick map.
+///
+/// The exit boundary is always the range's far kept tick (both directions walk
+/// the kept ticks in swap order): its initialized-ness is the `cross()` half of
+/// the gas model's census, and whether it sits on the bitmap word's edge for the
+/// swap direction is the word half. A kept uninitialized tick is a `gen_ticks`
+/// word-boundary tick, which sits on the word's edge by construction.
+fn range_exit_kind(
+    exit_tick: i32,
+    initialized: bool,
+    tick_spacing: i32,
+    zero_for_one: bool,
+) -> RangeExitKind {
+    let bit = exit_tick.div_euclid(tick_spacing).rem_euclid(256);
+    let on_word_edge = if zero_for_one { bit == 0 } else { bit == 255 };
+    match (initialized, on_word_edge) {
+        (true, true) => RangeExitKind::InitializedTickAtWordEdge,
+        (true, false) => RangeExitKind::InitializedTick,
+        (false, _) => RangeExitKind::BitmapWordEdge,
+    }
+}
+
 /// A V3 tick range for the solver.
 ///
 /// Mirrors the Python `V3TickRangeInfo` dataclass.
@@ -633,6 +669,12 @@ pub struct V3TickRangeForSolver {
     /// boundaries (the common dense case). Converted to sqrt prices by
     /// `build_int_v3_sequence` / `build_int_v4_sequence`.
     pub interior_boundaries: Vec<i32>,
+    /// What this range's EXIT boundary is in the tick map — an initialized tick
+    /// (the swap runs `Tick.cross`) or a bitmap-word edge (it does not), and
+    /// whether reaching it also moves the walk into the next bitmap word.
+    /// [`RangeExitKind`] documents why the crossing math does not care and the
+    /// gas model's census does.
+    pub exit_kind: RangeExitKind,
 }
 
 /// Update a single tick's `liquidity_gross` and `liquidity_net` in-place.

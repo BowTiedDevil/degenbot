@@ -83,7 +83,7 @@ fn parse_hop(v: &Value) -> Result<IntV3TickRangeSequence, String> {
             word_boundary_prices: wbp,
         });
     }
-    Ok(IntV3TickRangeSequence { ranges })
+    IntV3TickRangeSequence::new(ranges)
 }
 
 /// Solve through a strategy's prepared tables (production walk), merging the

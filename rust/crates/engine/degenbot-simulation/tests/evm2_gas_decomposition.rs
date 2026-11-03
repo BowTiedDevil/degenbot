@@ -71,11 +71,13 @@
 //! side's ladder bisects the amount for each word count *on the chain's own
 //! word count* — the contiguous run of the pool's bitmap-word slots in the
 //! frame's touched set — and its shared-account experiment prices two V4 legs
-//! in one frame against two frames. The white-box walk's `landed` /
-//! `word_boundary_prices` projection is printed beside the chain's counts as a
-//! cross-check, and it does not agree with them on V4 (see the word report):
-//! the coefficient is fitted on the chain's counts, and a floor that wants the
-//! word axis must carry it, not project it.
+//! in one frame against two frames. The white-box walk's own census
+//! (`SwapWalkCensus`: initialized ticks crossed, bitmap words read) is compared
+//! with the chain's touched-set counts on every swept sample, and it
+//! reproduces them (see the word report). The sample the walk cannot project is
+//! the one where its modeled span ends before the swap does: it declares
+//! `bounded_tail` and both counts are lower bounds, so the report checks them
+//! as bounds rather than equalities.
 //!
 //! # Running it
 //!
@@ -112,8 +114,9 @@ use alloy::primitives::{address, keccak256, Address, Bytes, U256};
 use degenbot_pools::{
     decode_tick_word, decode_v4_slot0, v4_liquidity_slot, v4_pool_id, v4_pool_state_base_slot,
     v4_slot0_slot, v4_tick_bitmap_word_slot, v4_tick_mapping_slot, word_of,
-    ConcentratedLiquidityPathSim, PoolTickCoverage, PreparedConcentratedLiquidityHop,
-    RegisterV4PoolParams, TickInfo, V4PoolKey, V4PoolState,
+    ConcentratedLiquidityPathOutcome, ConcentratedLiquidityPathSim, PoolTickCoverage,
+    PreparedConcentratedLiquidityHop, RegisterV4PoolParams, SwapWalkCensus, TickInfo, V4PoolKey,
+    V4PoolState,
 };
 use degenbot_rpc::provider::AlloyProvider;
 use degenbot_simulation::sim::evm2::alloy_async_db::AlloyAsyncDb;
@@ -1616,16 +1619,15 @@ async fn v4_legs(
             }
             let amount = U256::from(amount);
             let outcome = sim.output(amount);
-            let landed = outcome.landed.first().copied().unwrap_or(0);
-            let words = words_walked(&prepared, landed);
+            let census = walk_census(&outcome).expect("the V4 sequence is state-built");
             match quoter.quote(&mut chain.scratch, &leg, amount) {
                 Ok(quote) => {
                     println!(
                         "      {:>26}  {:>10}  {:>5}  {:>5}  {:>10}",
                         amount.to_string(),
                         quote.gas_used,
-                        landed,
-                        words,
+                        census.initialized_ticks_crossed,
+                        census.bitmap_words_walked,
                         quote.gas_estimate
                     );
                     samples.push(Sample {
@@ -1633,8 +1635,8 @@ async fn v4_legs(
                         group: format!("{} (black-box frame)", spec.label),
                         amount_in: amount,
                         gas: quote.gas_used,
-                        crossings: landed,
-                        words,
+                        crossings: census.initialized_ticks_crossed,
+                        words: census.bitmap_words_walked,
                         drift: 0,
                         tick_before: slot0.tick,
                         tick_after: slot0.tick,
@@ -1673,16 +1675,12 @@ async fn v4_legs(
     }
 }
 
-/// Bitmap words a swap marches, by the walk's own projection: one for the range
-/// the price starts in, plus every empty-word boundary the landed ranges carry.
-fn words_walked(prepared: &PreparedConcentratedLiquidityHop, landed: usize) -> usize {
-    1 + prepared
-        .int_seq
-        .ranges
-        .iter()
-        .take(landed + 1)
-        .map(|r| r.word_boundary_prices.len())
-        .sum::<usize>()
+/// The walk's projected census for a one-hop evaluation — the chain's two axes
+/// as the walk's own outcome states them: the initialized ticks its landing
+/// crossed and the bitmap words it read. `None` when the hop's sequence carries
+/// no range exit kinds (hand-built, no tick map).
+fn walk_census(outcome: &ConcentratedLiquidityPathOutcome) -> Option<SwapWalkCensus> {
+    outcome.census.first().copied().flatten()
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1907,7 +1905,7 @@ fn amount_for_words(
 }
 
 /// One swept V4 leg point: the frame's gas against the chain's word count and
-/// the walk's crossing count.
+/// the walk's census for the same amount.
 #[derive(Clone, Debug)]
 struct WordSample {
     group: String,
@@ -1915,10 +1913,15 @@ struct WordSample {
     gas: u64,
     /// Initialized ticks the frame crossed, from the touched tick-info slots.
     crossings: usize,
-    /// The white-box walk's landing index for the same amount (cross-check).
+    /// The white-box walk's census: initialized ticks crossed (independent of
+    /// the frame's tick-info slots) and bitmap words read.
     crossings_walk: usize,
     words_chain: usize,
     words_walk: usize,
+    /// The swap consumed the walk's whole modeled span with input left over, so
+    /// both projected counts are lower bounds (the sequence stops at the last
+    /// initialized tick and the pool marches on).
+    bounded_tail: bool,
 }
 
 /// Part 3b: one V4 pool/direction's `words → gas` ladder.
@@ -2062,7 +2065,8 @@ async fn v4_word_sweep(
         };
         let outcome = sim.output(amount);
         let landed = outcome.landed.first().copied().unwrap_or(0);
-        let walk_words = words_walked(&prepared, landed);
+        let census = walk_census(&outcome).expect("the V4 sequence is state-built");
+        let walk_words = census.bitmap_words_walked;
         let marginal = previous.map_or(f64::NAN, |(gas, words)| {
             let delta_words = probe.words.saturating_sub(words).max(1) as f64;
             (probe.gas as f64 - gas as f64) / delta_words
@@ -2074,7 +2078,7 @@ async fn v4_word_sweep(
             probe.words,
             walk_words,
             probe.crossings,
-            landed
+            census.initialized_ticks_crossed
         );
         // The walk must answer the chain's amountOut, or the walk's own axes
         // are not the pool's and only the chain-derived counts are usable.
@@ -2089,9 +2093,10 @@ async fn v4_word_sweep(
             amount_in: amount,
             gas: probe.gas,
             crossings: probe.crossings,
-            crossings_walk: landed,
+            crossings_walk: census.initialized_ticks_crossed,
             words_chain: probe.words,
-            words_walk: walk_words,
+            words_walk: census.bitmap_words_walked,
+            bounded_tail: census.bounded_tail,
         });
         previous = Some((probe.gas, probe.words));
     }
@@ -2107,18 +2112,24 @@ fn v4_word_report(samples: &[WordSample], notes: &mut Vec<String>) {
         println!("   (no V4 word samples: every candidate lacked live liquidity)");
         return;
     }
+    // The projection under test: the walk's census against the frame's touched
+    // set, sample by sample. `bounded_tail` samples are the walk's own declared
+    // lower bound (the EMPTY-HALT march past its modeled span), so they are
+    // checked as bounds rather than as equalities.
     let mismatched_words = samples
         .iter()
-        .filter(|s| s.words_walk != s.words_chain)
+        .filter(|s| !s.bounded_tail && s.words_walk != s.words_chain)
         .count();
     let mismatched_crossings = samples
         .iter()
-        .filter(|s| s.crossings_walk != s.crossings)
+        .filter(|s| !s.bounded_tail && s.crossings_walk != s.crossings)
         .count();
+    let tails = samples.iter().filter(|s| s.bounded_tail).count();
+    let modeled = samples.len() - tails;
     println!(
-        "   {} samples over {} groups; the walk's projection disagrees with the chain's touched \
-         set on {mismatched_words} words / {mismatched_crossings} crossings — the fits below use \
-         the chain's own counts",
+        "   {} samples over {} groups: the walk's census reproduces the chain's touched set on \
+         {modeled} of them ({mismatched_words} word / {mismatched_crossings} crossing \
+         disagreements); {tails} are the walk's bounded tail (lower bounds, checked as such)",
         samples.len(),
         {
             let mut groups: Vec<&String> = samples.iter().map(|s| &s.group).collect();
@@ -2127,6 +2138,23 @@ fn v4_word_report(samples: &[WordSample], notes: &mut Vec<String>) {
             groups.len()
         }
     );
+    assert_eq!(
+        (mismatched_words, mismatched_crossings),
+        (0, 0),
+        "the walk's census must BE the chain's touched set on every modeled sample"
+    );
+    for sample in samples.iter().filter(|s| s.bounded_tail) {
+        assert!(
+            sample.words_walk <= sample.words_chain
+                && sample.crossings_walk <= sample.crossings,
+            "a bounded tail reports lower bounds, not over-counts: {:?} says {} words / {}              crossings where the frame touched {} / {}",
+            sample.group,
+            sample.words_walk,
+            sample.crossings_walk,
+            sample.words_chain,
+            sample.crossings
+        );
+    }
     {
         let mut ladder_groups: Vec<&String> = samples.iter().map(|s| &s.group).collect();
         ladder_groups.sort();
@@ -2899,15 +2927,7 @@ async fn corpus_samples(
                     };
                     for amount in ladder {
                         let outcome = sim.output(amount);
-                        let landed = outcome.landed.first().copied().unwrap_or(0);
-                        let words: usize = 1 + v4
-                            .prepared
-                            .int_seq
-                            .ranges
-                            .iter()
-                            .take(landed + 1)
-                            .map(|r| r.word_boundary_prices.len())
-                            .sum::<usize>();
+                        let census = walk_census(&outcome).expect("the V4 sequence is state-built");
                         if let Ok(quote) = v4_quoter.quote(&mut chain.scratch, &leg, amount) {
                             let walk_out = outcome.final_output;
                             if walk_out != quote.amount_out {
@@ -2926,17 +2946,17 @@ async fn corpus_samples(
                                 hop.fee,
                                 amount.to_string(),
                                 quote.gas_used,
-                                landed,
+                                census.initialized_ticks_crossed,
                                 "-",
-                                words
+                                census.bitmap_words_walked
                             );
                             samples.push(Sample {
                                 family: Family::V4,
                                 group: format!("corpus:{}", hop.pool),
                                 amount_in: amount,
                                 gas: quote.gas_used,
-                                crossings: landed,
-                                words,
+                                crossings: census.initialized_ticks_crossed,
+                                words: census.bitmap_words_walked,
                                 drift: 0,
                                 tick_before: slot0.tick,
                                 tick_after: slot0.tick,

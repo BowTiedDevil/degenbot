@@ -24,6 +24,11 @@
 # `ConcentratedLiquidityPathSim` joins the concentrated-liquidity door so the
 # degenbot-simulation phantom-fidelity rig names the path-level sim at the
 # root (ADR-084 D2), its only out-of-crate consumer.
+# The 1029 -> 1038 review is the walk-census vocabulary: the V4 projection
+# fix's `RangeExitKind` / `SwapWalkCensus` (and their accessors) plus
+# `ConcentratedLiquidityPathOutcome` — the per-hop crossed-ticks /
+# bitmap-words census the gas model consumes, consumed by the gas
+# decomposition harness and the admission floor's crossing counts.
 # The count is per NAME, not per statement (the previous
 # granularity pinned 681 statements): a `pub fn`/`struct`/`enum`/`trait`/
 # `const`/`type`/`mod` declaration counts once, and a `pub use` counts one per

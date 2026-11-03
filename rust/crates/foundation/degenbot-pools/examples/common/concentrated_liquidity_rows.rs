@@ -24,7 +24,7 @@ pub fn parse_concentrated_liquidity_hops(
             return Err("empty hop".into());
         }
         let ranges = ra.iter().map(range).collect::<Result<Vec<_>, String>>()?;
-        seqs.push(IntV3TickRangeSequence { ranges });
+        seqs.push(IntV3TickRangeSequence::new(ranges)?);
     }
     Ok(seqs)
 }

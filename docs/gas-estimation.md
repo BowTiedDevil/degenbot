@@ -47,7 +47,7 @@ Measured coefficients (`gas`, from the frames described below):
 | **V2** | 30,862 | — (no tick map) | — | flat: 30,850–31,026 over 10^15…10^21 in |
 | **V3** | 118,594 | 24,824 | 7,373 | vanilla pools: `a` 116,464–125,236 |
 | **V3 fork** (1 bp, fork bytecode) | 147,897–151,109 | 33,238–46,913 | — | degenerate sweep: its swaps saturate one range |
-| **V4** (hookless, black-box quote) | 72,232 | 14,254 | **5,684** | the whole `unlock`/delta path, quoter frame |
+| **V4** (hookless, black-box quote) | 67,995 | 19,922 | **5,684** | the whole `unlock`/delta path, quoter frame (the corpus fit rests on 6 samples: the four hookless corpus legs) |
 
 Per-pool V3 fits (`gas = a + b·k`, 9 samples each, both directions, 0–8
 crossings):
@@ -197,12 +197,15 @@ scaled to each pool's in-range reserve, dead legs included).
 
 | estimate source | signed p50 | p90 | min | max | `|err|` p50 | `|err|` p90 | under-predicts |
 |---|---|---|---|---|---|---|---|
-| **(b)** census / walk counts | +7.7% | +29.8% | −93.5% | +38.7% | 10.0% | 29.8% | 41/120 |
-| **(c)** `|Δtick| / spacing` | +30.5% | +65,507% | −94.5% | +87,251% | 38.7% | 65,507% | 26/120 |
+| **(b)** census / walk counts | +6.5% | +29.8% | −93.4% | +38.7% | 10.0% | 29.8% | 40/120 |
+| **(c)** `|Δtick| / spacing` | +30.5% | +65,507% | −94.9% | +87,251% | 38.7% | 65,507% | 26/120 |
 
 Per family with (b): V2 `|err|` p50 **0.04%** (the constant is exact), V3 p50
-17.6% / p90 29.8%, V4 p50 7.8% / p90 85.8% (the V4 tail is one pool whose V4 walk
-diverges from the chain — see *Rig self-checks*).
+17.6% / p90 29.8%, V4 p50 **1.4%** / p90 85.5%. The V4 median is as tight as V2's
+now that the walk's census is the chain's (see *Rig self-checks*); the V4 p90 is
+one pool (`69354 hop1`) whose frame gas climbs to 1.32 M at the top of its own
+ladder on 1 crossing and 1 walked word — a per-amount fixed cost outside the
+two-term form, not an axis or parity error (its walk answers the chain exactly).
 
 **Why V3 sits at +16%: the intercept is a pool property, not a family constant.**
 The family fit's `a` (118,594) is the *median* pool; the cheapest corpus pool
@@ -240,7 +243,7 @@ than the 322k wasted sims/7 h that motivated the floor.
 
 | option | what it costs | measured |
 |---|---|---|
-| **(a) carry the count on the walk's outcome** | zero extra work: the active-set walk already computes the landing index (`landed`) and each landed range's `word_boundary_prices`; `V3SwapOutcome` just does not surface them | exact — it *is* the walk's crossing count; validated against the chain census on every sweep sample |
+| **(a) carry the count on the walk's outcome** | zero extra work: the walk's landing index and its landing fill's word steps both exist; the range sequence's exit kinds turn them into the two counts (`SwapWalkCensus`), which `ConcentratedLiquidityPathSim::output` now surfaces | exact — it *is* the walk's loop count; validated against the chain census on every modeled sweep sample (59/59) |
 | **(b) recompute from the in-memory tick map at admission** | O(initialised ticks between the hop's ticks) with the bitmap already in memory; needs the final tick, which the family sim returns | exact, but repeated work the walk already did |
 | **(c) `|tick_final − tick_initial| / spacing`** | free (the solver has both ticks) | **rejected** |
 
@@ -253,17 +256,17 @@ crossing, (c) over-estimates a leg by ~4×10⁹ gas — every candidate would be
 suppressed.
 
 **Verdict: (a), with (b) as the fallback.** Both counts the formula needs are
-already in the walk's hands; carrying them on the outcome is a small solve
-change and makes the floor's x-axis exact by construction. The reference
-implementation in this rig reads them exactly that way:
+already in the walk's hands, and `ConcentratedLiquidityPathSim::output` now
+carries them: each hop's `Option<SwapWalkCensus>` states
+`initialized_ticks_crossed` and `bitmap_words_walked` plus the `bounded_tail`
+caveat. The rig reads them exactly that way:
 
 ```rust
-let outcome = sim.output(amount);            // ConcentratedLiquidityPathSim
-let crossings = outcome.landed[hop];         // initialised ticks crossed
-let words = 1 + prepared.int_seq.ranges
-    .iter().take(crossings + 1)
-    .map(|r| r.word_boundary_prices.len())
-    .sum::<usize>();                         // bitmap words walked
+let outcome = sim.output(amount);                 // ConcentratedLiquidityPathSim
+let census = outcome.census[hop]                  // SwapWalkCensus
+    .expect("a state-built hop carries range exit kinds");
+let crossings = census.initialized_ticks_crossed; // == the chain's cross() count
+let words = census.bitmap_words_walked;           // == the chain's word count
 ```
 
 ## The chain's own crossing count (`QuoterV2`)
@@ -299,21 +302,31 @@ does not.
   crossing counts/census are compared (the +1 finding above).
 - **V4 legs are quoted through the black-box primitive** (`V4BlackBoxQuoter`),
   whose `gas_used` is the whole `unlock`/delta frame. Its walk answers the
-  chain's `amountOut` exactly on the pools that pass parity; the corpus's fee-82
-  pool (`69354 hop1`) **fails parity** (walk 5,932,349,875,526,935,751 vs chain
-  6,110,644,816,568,875,667), which is why its V4 estimates are the error tail —
-  the walk's crossing axis is not trustworthy there, and the rig says so rather
-  than fitting around it.
+  chain's `amountOut` exactly on every swept pool, the corpus's fee-82 pool
+  (`69354 hop1`) included: re-measured at this commit that leg is exact on all
+  five probes (`phantom_corpus_parity`: 26/26 hop parities, 0 findings). The V4
+  error tail is therefore not a parity or axis problem — it is that same pool's
+  frame gas jumping to 1.32 M at the top of its ladder (1 crossing, 1 word), a
+  per-amount cost the two-term model cannot express.
 - An `EMPTY-HALT` leg (a swap that leaves the liquidity and marches to the price
   limit) exhausts the 16 M frame cap; the rig records that as a finding rather
   than a sample, because its gas is bounded by the frame, not by the path.
-- **V4's word and crossing axes are the frame's touched slot set**, not the
-  walk's projection: one bitmap-word slot per word marched, one `ticks(tick)`
-  slot per `cross()`. The white-box walk's own projection (`landed` +
-  `word_boundary_prices`) disagrees with those counts on 58 of 66 word samples
-  (57 of 66 crossings) — in both directions, by up to an order of magnitude —
-  so the count cannot be projected from the walk as-is. The V4 coefficient above
-  is fitted on the chain's counts.
+- **V4's word and crossing axes are the frame's touched slot set**: one
+  bitmap-word slot per word marched, one `ticks(tick)` slot per `cross()`. The
+  white-box walk now reproduces both counts from its own outcome
+  (`SwapWalkCensus`, `degenbot_pools`): on 59 of the 66 swept samples its
+  `initialized_ticks_crossed` / `bitmap_words_walked` equal the frame's counts
+  exactly, in both directions. The 7 exceptions are the walk's **bounded
+  tail**: its range sequence stops at the last initialized tick, so a swap that
+  leaves the book (the `EMPTY-HALT` march — corpus pool `usdc/weth-500-s10`,
+  `zfo`) goes further than the walk can see. The outcome declares
+  `census.bounded_tail` and both counts are lower bounds there, which the rig
+  checks as bounds; the tail's true word count is only readable from the frame.
+  The projected counts were previously wrong for a different reason (the range
+  index is not the crossing count, and a landing range's whole word list is not
+  the words walked — see the census's own docs in
+  `state/int_v3_hop.rs`). The V4 coefficient above is fitted on the chain's
+  counts.
 
 ## What the admission floor should consume
 
@@ -324,14 +337,12 @@ does not.
 2. **Coefficients as data**, not constants in code: the family table above is the
    seed, and the per-pool intercept spread (96.9k–151.1k) is the reason the floor
    uses the low end.
-3. **The crossing counts come from the walk** (option (a)): add
-   `initialized_ticks_crossed` and `bitmap_words_walked` to the V3/V4 swap
-   outcomes so the floor reads them instead of recomputing (or, for a first cut,
-   `ConcentratedLiquidityPathSim::output().landed` plus the prepared hop's
-   `word_boundary_prices`). On V4 the word half of that pair must be validated
-   first: the walk's projection disagrees with the chain's `SLOAD` count on 58
-   of 66 swept samples, so the current `landed`/`word_boundary_prices` reading is
-   not the word count on V4 — fix the projection before the floor consumes it,
-   or read the count from the frame.
+3. **The crossing counts come from the walk** (option (a)): the path sim's
+   outcome carries a per-hop `SwapWalkCensus` (initialized ticks crossed, bitmap
+   words read), computed from the walk's own landing plus the range exit kinds —
+   validated against the chain's touched set on 59 of 59 modeled V4 sweep
+   samples. A `bounded_tail` census is a lower bound (the `EMPTY-HALT` march
+   leaves the walk's modeled span), so the floor must treat it as the
+   under-predicting side it already is.
 4. **Never (c).** Tick-distance is not crossing count: 273× at the median, 12,470×
    at the tail.

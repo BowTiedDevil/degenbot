@@ -160,7 +160,7 @@ fn reconstruct(doc: &Value) -> Result<(u64, Arc<ResolvedMixedPath>, Option<u128>
             return Err("empty hop".into());
         }
         let ranges = ra.iter().map(range).collect::<Result<Vec<_>, String>>()?;
-        let seq = IntV3TickRangeSequence { ranges };
+        let seq = IntV3TickRangeSequence::new(ranges)?;
         let crossings = Arc::from(build_concentrated_liquidity_crossing_table(&seq));
         let profiles = Arc::from(build_concentrated_liquidity_word_profiles(&seq));
         hops.push(ResolvedHop::V3 {

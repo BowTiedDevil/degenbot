@@ -166,10 +166,15 @@ impl ConcentratedLiquidityWordProfile {
         // 0`, so the partition point is >=1 and `j >= 0`). `j == n` means the
         // input covers the full walk to the exit.
         let j = self.consumed.partition_point(|c| c <= &amount_in) - 1;
+        // Interior word boundaries fully walked through (`j` also indexes the
+        // range's own exit as its last target, which is the next landing's
+        // business — the linear walk counts the same way).
+        let interior_words = n - 1;
         if j >= n {
             return V3RangeSwapResult {
                 consumed_input: self.consumed[n],
                 output: self.output[n],
+                word_steps: interior_words,
             };
         }
         let base_c = self.consumed[j];
@@ -179,6 +184,7 @@ impl ConcentratedLiquidityWordProfile {
             return V3RangeSwapResult {
                 consumed_input: base_c,
                 output: base_o,
+                word_steps: j.min(interior_words),
             };
         }
         tally.bump_word_steps(1);
@@ -195,6 +201,7 @@ impl ConcentratedLiquidityWordProfile {
         V3RangeSwapResult {
             consumed_input: base_c.saturating_add(c),
             output: base_o.saturating_add(step.amount_out),
+            word_steps: j.min(interior_words),
         }
     }
 }
