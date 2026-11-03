@@ -17,7 +17,9 @@
 //! 1. **The chain's own crossing count.** The deployed `QuoterV2` returns
 //!    `initializedTicksCrossed`; the rig compares it against its own bitmap
 //!    census between the pre-swap and post-swap tick. (The two differ by the
-//!    endpoint convention — measured, not assumed.)
+//!    endpoint convention — measured, not assumed.) V4 has no quoter census,
+//!    so the V4 axes come from the frame's touched slot set: one bitmap-word
+//!    slot per word marched, one tick-info slot per `cross()`.
 //! 2. **Which crossing source admission can afford.** Option (a) carries the
 //!    count on the walk's outcome, (b) recomputes it from the in-memory tick
 //!    map, (c) approximates it as `|tick_final − tick_initial| / spacing`. The
@@ -58,14 +60,22 @@
 //! the census the pool's own tick map produces, so a fit's slope is gas per
 //! *actually crossed* tick, not per tick-gap.
 //!
-//! `b_word` is a separate regressor because the walk pays a cold `SLOAD` per
+//! `b_word` is a separate regressor because the swap pays a cold `SLOAD` per
 //! bitmap word it touches, whether or not the word holds an initialized tick:
-//! a swap that leaves the liquidity and marches through empty words (the
-//! `EMPTY-HALT` shape) burns gas in proportion to *words*, not crossings. The
-//! white-box walk already knows both counts — the landing index is the
-//! crossing count and the landed ranges' `word_boundary_prices` are the empty
-//! words — which is the crossing-source recommendation the corpus section
-//! tests.
+//! a swap that leaves the in-range liquidity and marches through empty words
+//! (the `EMPTY-HALT` shape) burns gas in proportion to *words*, not crossings.
+//!
+//! The V4 word term needs its own sweep, not V3's borrowed rate: every V4
+//! pool's bitmap is a mapping inside the singleton `PoolManager`'s storage, so
+//! a V4 word is one `SLOAD` of an account every leg already touches. That
+//! side's ladder bisects the amount for each word count *on the chain's own
+//! word count* — the contiguous run of the pool's bitmap-word slots in the
+//! frame's touched set — and its shared-account experiment prices two V4 legs
+//! in one frame against two frames. The white-box walk's `landed` /
+//! `word_boundary_prices` projection is printed beside the chain's counts as a
+//! cross-check, and it does not agree with them on V4 (see the word report):
+//! the coefficient is fitted on the chain's counts, and a floor that wants the
+//! word axis must carry it, not project it.
 //!
 //! # Running it
 //!
@@ -86,7 +96,9 @@
     clippy::uninlined_format_args,
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
+    clippy::cast_sign_loss,
+    clippy::many_single_char_names,
+    clippy::similar_names
 )]
 
 use std::collections::HashMap;
@@ -108,7 +120,8 @@ use degenbot_simulation::sim::evm2::alloy_async_db::AlloyAsyncDb;
 use degenbot_simulation::sim::evm2::blocking_async_db::BlockingAsyncDb;
 use degenbot_simulation::sim::evm2::frame_replay::Evm2ScratchEvm;
 use degenbot_simulation::sim::evm2::v4_black_box::{
-    V4BlackBoxQuoter, V4Leg, V4QuoteError, V4QuoterConfig, V4_POOL_MANAGER,
+    decode_quote_return, quote_calldata, V4BlackBoxQuoter, V4Leg, V4QuoteError, V4QuoterConfig,
+    V4_POOL_MANAGER,
 };
 use degenbot_simulation::sim::frame_replay::{ReplayableTx, ScratchBlock};
 use degenbot_simulation::sim::RunVerdict;
@@ -131,6 +144,19 @@ const SENDER: Address = address!("0x9C56a29c7231974c269E24F9FB3c29203039089E");
 /// The quote caller: the contract that invokes `pool.swap` and answers the
 /// pool's `uniswapV3SwapCallback`.
 const CALLBACK: Address = address!("0x00000000000000000000000000000000c0ffee01");
+
+/// The batching quote caller: forwards one or two `quoteExactInputSingle`
+/// calldatas to the canonical quoter inside ONE frame — the "two legs, one
+/// unlock" shape a settled path pays for its V4 hops.
+const V4_BATCHER: Address = address!("0x00000000000000000000000000000000c0ffee02");
+
+/// The same caller with a single leg, the frame-overhead baseline for the
+/// batching shape (a quote routed through a contract rather than an EOA).
+const V4_BATCHER_ONE: Address = address!("0x00000000000000000000000000000000c0ffee03");
+
+/// The batching caller's calldata plumbing, echoed: the self-check that the
+/// memory the caller forwards is byte-identical to a plain quote's calldata.
+const V4_ECHO: Address = address!("0x00000000000000000000000000000000c0ffee04");
 
 /// Generous enough for a walk that leaves the liquidity and marches to the
 /// price limit (the `EMPTY-HALT` shape) — the shape the floor exists to price.
@@ -575,6 +601,19 @@ impl<'p> Chain<'p> {
                     v3_caller_code(),
                 ))),
         );
+        let quoter = V4QuoterConfig::default().quoter;
+        for (address, code) in [
+            (V4_BATCHER, v4_batcher_code(quoter)),
+            (V4_BATCHER_ONE, v4_single_quote_caller_code(quoter)),
+            (V4_ECHO, v4_echo_code()),
+        ] {
+            ext.insert_account_info(
+                &address,
+                AccountInfo::default()
+                    .with_balance(huge_balance())
+                    .with_code(::evm2::bytecode::Bytecode::new_raw(Bytes::from(code))),
+            );
+        }
         Self {
             scratch: Evm2ScratchEvm::new(ext, block),
             nonce,
@@ -825,6 +864,98 @@ fn fit3(rows: &[(f64, f64, f64)]) -> (f64, f64, f64) {
         };
     }
     (out[0], out[1], out[2])
+}
+
+/// The 3×3 inverse by the adjugate (the covariance diagonal `fit3_se` needs).
+/// A singular matrix yields zeros, and the caller's standard errors read zero.
+fn invert3(m: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    let (a, b, c) = (m[0][0], m[0][1], m[0][2]);
+    let (d, e, f) = (m[1][0], m[1][1], m[1][2]);
+    let (g, h, i) = (m[2][0], m[2][1], m[2][2]);
+    let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    if det.abs() < 1e-12 {
+        return [[0.0; 3]; 3];
+    }
+    let scale = 1.0 / det;
+    [
+        [
+            (e * i - f * h) * scale,
+            (c * h - b * i) * scale,
+            (b * f - c * e) * scale,
+        ],
+        [
+            (f * g - d * i) * scale,
+            (a * i - c * g) * scale,
+            (c * d - a * f) * scale,
+        ],
+        [
+            (d * h - e * g) * scale,
+            (b * g - a * h) * scale,
+            (a * e - b * d) * scale,
+        ],
+    ]
+}
+
+/// `y = a + b·x1 + c·x2` with the OLS standard errors of the coefficients and
+/// R²: the fit3 coefficients plus the confidence the report quotes.
+fn fit3_se(rows: &[(f64, f64, f64)]) -> (f64, f64, f64, (f64, f64, f64), f64) {
+    let n = rows.len();
+    assert!(n >= 4, "fit3_se needs four points for a residual variance");
+    let mut gram = [[0.0f64; 3]; 3];
+    let mut rhs = [0.0f64; 3];
+    for (x1, x2, y) in rows {
+        let x = [1.0, *x1, *x2];
+        for row in 0..3 {
+            rhs[row] += x[row] * y;
+            for column in 0..3 {
+                gram[row][column] += x[row] * x[column];
+            }
+        }
+    }
+    let inverse = invert3(gram);
+    let mut beta = [0.0f64; 3];
+    for row in 0..3 {
+        for column in 0..3 {
+            beta[row] += inverse[row][column] * rhs[column];
+        }
+    }
+    let ybar = rows.iter().map(|(_, _, y)| y).sum::<f64>() / n as f64;
+    let (mut ss_res, mut ss_tot) = (0.0f64, 0.0f64);
+    for (x1, x2, y) in rows {
+        let predicted = beta[0] + beta[1] * x1 + beta[2] * x2;
+        ss_res += (y - predicted) * (y - predicted);
+        ss_tot += (y - ybar) * (y - ybar);
+    }
+    let sigma2 = ss_res / (n as f64 - 3.0);
+    let standard_error = |index: usize| (sigma2 * inverse[index][index]).max(0.0).sqrt();
+    let r2 = if ss_tot > 0.0 {
+        1.0 - ss_res / ss_tot
+    } else {
+        1.0
+    };
+    (
+        beta[0],
+        beta[1],
+        beta[2],
+        (standard_error(0), standard_error(1), standard_error(2)),
+        r2,
+    )
+}
+
+/// R² of `y = a + b·x` on `xs`/`ys`.
+fn r2_of2(xs: &[f64], ys: &[f64], a: f64, b: f64) -> f64 {
+    let n = ys.len() as f64;
+    let ybar = ys.iter().sum::<f64>() / n;
+    let (mut ss_res, mut ss_tot) = (0.0f64, 0.0f64);
+    for (x, y) in xs.iter().zip(ys) {
+        ss_res += (y - (a + b * x)).powi(2);
+        ss_tot += (y - ybar).powi(2);
+    }
+    if ss_tot > 0.0 {
+        1.0 - ss_res / ss_tot
+    } else {
+        1.0
+    }
 }
 
 /// Linear-interpolated quantile (`q` in `[0, 1]`) of an unsorted slice.
@@ -1378,9 +1509,17 @@ struct V4Hop {
     liquidity: u128,
     reserve: U256,
     prepared: PreparedConcentratedLiquidityHop,
+    /// The initialized ticks the pool's own bitmap carries inside the tracked
+    /// horizon, ascending — the layout the word sweep engineers its ladder from.
+    ticks: Vec<i32>,
 }
 
-async fn v4_hop(reads: &mut Reads<'_>, key: &V4PoolKey, zero_for_one: bool) -> Option<V4Hop> {
+async fn v4_hop(
+    reads: &mut Reads<'_>,
+    key: &V4PoolKey,
+    zero_for_one: bool,
+    horizon: usize,
+) -> Option<V4Hop> {
     let pool_id = v4_pool_id(key);
     let base = v4_pool_state_base_slot(pool_id);
     let slot0 = decode_v4_slot0(reads.storage(V4_POOL_MANAGER, v4_slot0_slot(base)).await);
@@ -1398,7 +1537,9 @@ async fn v4_hop(reads: &mut Reads<'_>, key: &V4PoolKey, zero_for_one: bool) -> O
     if liquidity == 0 {
         return None;
     }
-    let tick_data = v4_tick_map(reads, base, spacing, slot0.tick, zero_for_one, 400).await;
+    let tick_data = v4_tick_map(reads, base, spacing, slot0.tick, zero_for_one, horizon).await;
+    let mut ticks: Vec<i32> = tick_data.keys().copied().collect();
+    ticks.sort_unstable();
     let params = RegisterV4PoolParams {
         pool_manager: V4_POOL_MANAGER,
         pool_id: pool_id.0,
@@ -1426,6 +1567,7 @@ async fn v4_hop(reads: &mut Reads<'_>, key: &V4PoolKey, zero_for_one: bool) -> O
         liquidity,
         reserve,
         prepared: PreparedConcentratedLiquidityHop::derive(Arc::new(seq)),
+        ticks,
     })
 }
 
@@ -1439,7 +1581,7 @@ async fn v4_legs(
     println!("---- V4 legs (the unlock/delta path) ----");
     let mut quoter = V4BlackBoxQuoter::new(V4QuoterConfig::default());
     for spec in v4_corpus_legs() {
-        let Some(hop) = v4_hop(reads, &spec.key, spec.zero_for_one).await else {
+        let Some(hop) = v4_hop(reads, &spec.key, spec.zero_for_one, 400).await else {
             println!("\n   {}: no usable V4 state at the anchor", spec.label);
             continue;
         };
@@ -1475,13 +1617,7 @@ async fn v4_legs(
             let amount = U256::from(amount);
             let outcome = sim.output(amount);
             let landed = outcome.landed.first().copied().unwrap_or(0);
-            let words: usize = 1 + prepared
-                .int_seq
-                .ranges
-                .iter()
-                .take(landed + 1)
-                .map(|r| r.word_boundary_prices.len())
-                .sum::<usize>();
+            let words = words_walked(&prepared, landed);
             match quoter.quote(&mut chain.scratch, &leg, amount) {
                 Ok(quote) => {
                     println!(
@@ -1535,6 +1671,971 @@ async fn v4_legs(
             }
         }
     }
+}
+
+/// Bitmap words a swap marches, by the walk's own projection: one for the range
+/// the price starts in, plus every empty-word boundary the landed ranges carry.
+fn words_walked(prepared: &PreparedConcentratedLiquidityHop, landed: usize) -> usize {
+    1 + prepared
+        .int_seq
+        .ranges
+        .iter()
+        .take(landed + 1)
+        .map(|r| r.word_boundary_prices.len())
+        .sum::<usize>()
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Part 3b: the V4 bitmap-word sweep (the floor's last unvalidated term)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// A hookless candidate the word sweep probes. V4's tick map lives in the
+/// singleton `PoolManager`'s storage, so one bitmap word is one `SLOAD` of the
+/// manager's account however many pools a path touches — the account-warmth
+/// question the shared-frame experiment answers. Hooks are excluded: a hook's
+/// own `beforeSwap`/`afterSwap` is gas the floor prices separately and would
+/// only add noise to the word term.
+///
+/// The candidates come from the registration DB
+/// (`~/.local/state/degenbot/db/degenbot.db`): hookless pools with live
+/// mid-anchor liquidity, one per tick layout —
+///
+/// ```sql
+/// SELECT p.tick_spacing, t0.address, t1.address, p.fee_currency0,
+///        group_concat(l.tick)
+///   FROM uniswap_v4_pools p
+///   JOIN erc20_tokens t0 ON t0.id = p.currency0_id
+///   JOIN erc20_tokens t1 ON t1.id = p.currency1_id
+///   JOIN managed_pool_liquidity_positions l
+///     ON l.managed_pool_id = p.managed_pool_id
+///  WHERE lower(p.hooks) = '0x0000000000000000000000000000000000000000'
+///    AND p.fee_denominator = 1000000
+///  GROUP BY p.managed_pool_id;
+/// ```
+///
+/// A spacing-1 pair whose words above the price are sparse, a spacing-10 pool
+/// with a dense map (the other extreme), a deep stable pair, and the corpus's
+/// own two hookless V4 legs. The rig prints each pool's bitmap layout before it
+/// sweeps, and a pool with no live liquidity at the anchor drops out with a
+/// note rather than a silent zero.
+struct V4WordPool {
+    label: &'static str,
+    key: V4PoolKey,
+}
+
+fn v4_word_pools() -> Vec<V4WordPool> {
+    let usdc = address!("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    let usdt = address!("0xdAC17F958D2ee523a2206206994597C13D831ec7");
+    let dai = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F");
+    let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    vec![
+        V4WordPool {
+            label: "v4 dai/usdc-100-s1",
+            key: V4PoolKey {
+                currency0: dai,
+                currency1: usdc,
+                fee: 100,
+                tick_spacing: 1,
+                hooks: Address::ZERO,
+            },
+        },
+        V4WordPool {
+            label: "v4 usdc/weth-500-s10",
+            key: V4PoolKey {
+                currency0: usdc,
+                currency1: weth,
+                fee: 500,
+                tick_spacing: 10,
+                hooks: Address::ZERO,
+            },
+        },
+        V4WordPool {
+            label: "v4 eth/usdc-100-s1",
+            key: V4PoolKey {
+                currency0: Address::ZERO,
+                currency1: usdc,
+                fee: 100,
+                tick_spacing: 1,
+                hooks: Address::ZERO,
+            },
+        },
+        V4WordPool {
+            label: "v4 usdc/usdt-100-s1",
+            key: V4PoolKey {
+                currency0: usdc,
+                currency1: usdt,
+                fee: 100,
+                tick_spacing: 1,
+                hooks: Address::ZERO,
+            },
+        },
+    ]
+}
+
+/// How many bitmap words one side of the ladder marches.
+const V4_WORD_MAX: usize = 10;
+
+/// Bisection steps for a word boundary (the amount range is wide; 14 halvings
+/// land inside one wei of the boundary on any leg reached here).
+const V4_WORD_BISECT: usize = 14;
+
+/// The tick-map horizon the walk's projection tracks, in bitmap words. The
+/// sweep's x-axis is the CHAIN's word count (see [`v4_bitmap_words`]); this
+/// only bounds the white-box projection the report cross-checks against.
+const V4_WORD_HORIZON: usize = 96;
+
+/// One side of a pool's word ladder: the leg plus the static shape its word
+/// count needs (the pool's `Pool.State` base, the current bitmap word, the
+/// swapped direction, and the tracked initialized ticks).
+struct WordLadder {
+    leg: V4Leg,
+    base: U256,
+    current_word: i32,
+    zero_for_one: bool,
+    ticks: Vec<i32>,
+}
+
+/// One black-box V4 quote frame's measurement.
+struct V4Probe {
+    gas: u64,
+    amount_out: U256,
+    /// Bitmap words the pool's own bytecode read (see [`v4_bitmap_words`]).
+    words: usize,
+    /// Initialized ticks the pool's own bytecode crossed: every `cross()` reads
+    /// the tick's `Tick.Info` word, so the tracked ticks whose slots the frame
+    /// touched ARE the crossing count.
+    crossings: usize,
+}
+
+/// The chain's own word count, read out of the frame's touched slot set: the
+/// swap loop reads one `tickBitmap` word per step, so the contiguous run of the
+/// pool's bitmap-word slots in `touched` IS the number of words marched. The
+/// white-box walk is the projection under test; this is the pool's bytecode
+/// answering the same question, exactly as the V3 sweep's census does for
+/// crossings.
+fn v4_bitmap_words(
+    touched: &[(Address, Vec<U256>)],
+    base: U256,
+    current_word: i32,
+    zero_for_one: bool,
+) -> usize {
+    let slots = touched
+        .iter()
+        .find(|(address, _)| *address == V4_POOL_MANAGER)
+        .map_or(&[][..], |(_, slots)| slots.as_slice());
+    let step = if zero_for_one { -1i32 } else { 1 };
+    let mut words = 0usize;
+    let mut word = current_word;
+    while let Ok(pos) = i16::try_from(word) {
+        if !slots.contains(&v4_tick_bitmap_word_slot(pos, base)) {
+            break;
+        }
+        words += 1;
+        word += step;
+    }
+    words
+}
+
+/// Execute one V4 quote frame at the canonical quoter (the frame the corpus's
+/// V4 legs are priced in) and keep the touched set the word count needs.
+fn v4_quote_frame(chain: &mut Chain<'_>, ladder: &WordLadder, amount: U256) -> Option<V4Probe> {
+    let config = V4QuoterConfig::default();
+    let tx = ReplayableTx {
+        from: config.from,
+        to: Some(config.quoter),
+        value: U256::ZERO,
+        data: quote_calldata(&ladder.leg, amount),
+        gas_limit: config.gas_limit,
+        max_fee_per_gas: config.max_fee_per_gas,
+        max_priority_fee_per_gas: config.max_priority_fee_per_gas,
+        nonce: config.nonce,
+    };
+    let outcome = chain.scratch.replay(&tx).ok()?;
+    if outcome.status != RunVerdict::Success {
+        return None;
+    }
+    let amount_out = decode_quote_return(&outcome.output)?.0;
+    let slots = outcome
+        .touched
+        .iter()
+        .find(|(address, _)| *address == V4_POOL_MANAGER)
+        .map_or(&[][..], |(_, slots)| slots.as_slice());
+    let crossings = ladder
+        .ticks
+        .iter()
+        .filter(|tick| slots.contains(&v4_tick_mapping_slot(**tick, ladder.base)))
+        .count();
+    Some(V4Probe {
+        gas: outcome.gas_used,
+        amount_out,
+        words: v4_bitmap_words(
+            &outcome.touched,
+            ladder.base,
+            ladder.current_word,
+            ladder.zero_for_one,
+        ),
+        crossings,
+    })
+}
+
+/// The smallest amount whose frame marches at least `target` bitmap words, by
+/// bisection on the chain's own count (monotone: more input never marches
+/// fewer words). `None` when even the top of the ladder cannot reach `target`
+/// — the `EMPTY-HALT` shape jumps the count instead of stepping it.
+fn amount_for_words(
+    chain: &mut Chain<'_>,
+    ladder: &WordLadder,
+    target: usize,
+    hi: U256,
+) -> Option<U256> {
+    let top = v4_quote_frame(chain, ladder, hi)?;
+    if top.words < target {
+        return None;
+    }
+    let (mut lo, mut hi) = (U256::ZERO, hi);
+    for _ in 0..V4_WORD_BISECT {
+        if hi.saturating_sub(lo) <= U256::ONE {
+            break;
+        }
+        let mid = lo + (hi - lo) / U256::from(2u64);
+        match v4_quote_frame(chain, ladder, mid) {
+            Some(probe) if probe.words >= target => hi = mid,
+            _ => lo = mid,
+        }
+    }
+    Some(hi)
+}
+
+/// One swept V4 leg point: the frame's gas against the chain's word count and
+/// the walk's crossing count.
+#[derive(Clone, Debug)]
+struct WordSample {
+    group: String,
+    amount_in: U256,
+    gas: u64,
+    /// Initialized ticks the frame crossed, from the touched tick-info slots.
+    crossings: usize,
+    /// The white-box walk's landing index for the same amount (cross-check).
+    crossings_walk: usize,
+    words_chain: usize,
+    words_walk: usize,
+}
+
+/// Part 3b: one V4 pool/direction's `words → gas` ladder.
+async fn v4_word_sweep(
+    reads: &mut Reads<'_>,
+    chain: &mut Chain<'_>,
+    spec: &V4WordPool,
+    zero_for_one: bool,
+    samples: &mut Vec<WordSample>,
+    notes: &mut Vec<String>,
+) {
+    let spacing = spec.key.tick_spacing;
+    let Some(hop) = v4_hop(reads, &spec.key, zero_for_one, V4_WORD_HORIZON).await else {
+        println!("\n   {}: no usable V4 state at the anchor", spec.label);
+        return;
+    };
+    let liquidity = hop.liquidity;
+    let slot0 = hop.slot0;
+    let reserve = hop.reserve;
+    let base = v4_pool_state_base_slot(v4_pool_id(&spec.key));
+    let current_word = word_of(slot0.tick, spacing);
+    println!();
+    println!(
+        "-- {} zfo={zero_for_one} (the bitmap-word ladder) --",
+        spec.label
+    );
+    if liquidity == 0 {
+        println!("   no in-range liquidity at the anchor — nothing to price");
+        return;
+    }
+    println!(
+        "   tick={} spacing={spacing} liq={liquidity} word={current_word} reserve_in={:.3e}",
+        slot0.tick,
+        reserve.to::<u128>() as f64
+    );
+    // The layout, empirically: the pool's own initialized ticks in the swap
+    // direction and the words they sit in. The gaps between those words are
+    // what the ladder has to step through, so they set the ladder's range.
+    {
+        let mut next: Vec<i32> = hop
+            .ticks
+            .iter()
+            .copied()
+            .filter(|tick| {
+                if zero_for_one {
+                    *tick < slot0.tick
+                } else {
+                    *tick > slot0.tick
+                }
+            })
+            .collect();
+        if zero_for_one {
+            next.reverse();
+        }
+        let upcoming: Vec<String> = next
+            .iter()
+            .take(5)
+            .map(|tick| format!("{tick} (word {})", word_of(*tick, spacing)))
+            .collect();
+        println!(
+            "   layout: {} initialized ticks tracked; next in the swap direction: {}",
+            hop.ticks.len(),
+            upcoming.join(" ")
+        );
+    }
+    let ladder = WordLadder {
+        leg: V4Leg::canonical(spec.key.clone(), zero_for_one),
+        base,
+        current_word,
+        zero_for_one,
+        ticks: hop.ticks.clone(),
+    };
+
+    // The usable upper bound: the largest amount on a log ladder whose frame
+    // completes. Past it the walk leaves the book and marches to the price
+    // limit — the `EMPTY-HALT` shape, recorded as a finding.
+    let mut hi = U256::ZERO;
+    for frac in [
+        1e-9f64, 1e-8, 1e-7, 3e-7, 1e-6, 3e-6, 1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2, 1e-1,
+    ] {
+        let amount = U256::from((reserve.to::<u128>() as f64 * frac) as u128);
+        if amount.is_zero() {
+            continue;
+        }
+        if v4_quote_frame(chain, &ladder, amount).is_some() {
+            hi = amount;
+        } else {
+            notes.push(format!(
+                "V4 EMPTY-HALT {} zfo={zero_for_one}: a swap of {amount} (fraction {frac} of the \
+                 in-range reserve) exhausts the {GAS_LIMIT} frame gas limit — the walk left the \
+                 book and marched to the price limit",
+                spec.label
+            ));
+            break;
+        }
+    }
+    if hi.is_zero() {
+        println!("   no frame completed: the smallest ladder amount already exhausts the book");
+        return;
+    }
+
+    let prepared = hop.prepared;
+    let sim = ConcentratedLiquidityPathSim::new(
+        &[&prepared.int_seq],
+        Some(std::slice::from_ref(&prepared)),
+    );
+    // The word boundaries: `edges[k]` is the smallest amount whose frame marches
+    // at least `k` words. A zero edge means the ladder's top cannot reach it.
+    let mut edges: Vec<U256> = vec![U256::ZERO; V4_WORD_MAX + 2];
+    edges[1] = U256::ONE;
+    for (target, edge) in edges.iter_mut().enumerate().skip(2) {
+        *edge = amount_for_words(chain, &ladder, target, hi).unwrap_or(U256::ZERO);
+    }
+    println!(
+        "   {:>4}  {:>26}  {:>9}  {:>5}  {:>4}  {:>5}  {:>5}  {:>8}",
+        "k", "amount_in", "gas", "words", "walk", "xing", "xwalk", "marg/wd"
+    );
+    let mut previous: Option<(u64, usize)> = None;
+    for k in 1..=V4_WORD_MAX {
+        let lower = edges[k];
+        if lower.is_zero() {
+            // The ladder's top could not reach `k` words: the count jumps past
+            // it (a swap that leaves the book marches every empty word of the
+            // stretch in one frame), so the rest of the ladder is unreachable.
+            break;
+        }
+        let upper = edges[k + 1];
+        let amount = if upper.is_zero() || upper <= lower {
+            if lower >= hi {
+                continue;
+            }
+            lower + (hi - lower) / U256::from(2u64)
+        } else {
+            lower + (upper - lower) / U256::from(2u64)
+        };
+        if amount.is_zero() {
+            continue;
+        }
+        let Some(probe) = v4_quote_frame(chain, &ladder, amount) else {
+            break;
+        };
+        let outcome = sim.output(amount);
+        let landed = outcome.landed.first().copied().unwrap_or(0);
+        let walk_words = words_walked(&prepared, landed);
+        let marginal = previous.map_or(f64::NAN, |(gas, words)| {
+            let delta_words = probe.words.saturating_sub(words).max(1) as f64;
+            (probe.gas as f64 - gas as f64) / delta_words
+        });
+        println!(
+            "   {k:>4}  {:>26}  {:>9}  {:>5}  {:>4}  {:>5}  {:>5}  {marginal:>8.0}",
+            amount.to_string(),
+            probe.gas,
+            probe.words,
+            walk_words,
+            probe.crossings,
+            landed
+        );
+        // The walk must answer the chain's amountOut, or the walk's own axes
+        // are not the pool's and only the chain-derived counts are usable.
+        if landed > 0 && outcome.final_output != probe.amount_out && notes.len() < 200 {
+            notes.push(format!(
+                "V4 WORD PARITY {} zfo={zero_for_one} at {amount}: walk {} vs chain {}",
+                spec.label, outcome.final_output, probe.amount_out
+            ));
+        }
+        samples.push(WordSample {
+            group: format!("{} zfo={zero_for_one}", spec.label),
+            amount_in: amount,
+            gas: probe.gas,
+            crossings: probe.crossings,
+            crossings_walk: landed,
+            words_chain: probe.words,
+            words_walk: walk_words,
+        });
+        previous = Some((probe.gas, probe.words));
+    }
+}
+
+/// The V4 word coefficient: `gas = a + b_cross·crossings + b_word·words`,
+/// fitted per crossing level (the cleanest identification — words move while
+/// crossings do not) and pooled with its standard errors.
+fn v4_word_report(samples: &[WordSample], notes: &mut Vec<String>) {
+    println!();
+    println!("=== the V4 bitmap-word coefficient ===");
+    if samples.is_empty() {
+        println!("   (no V4 word samples: every candidate lacked live liquidity)");
+        return;
+    }
+    let mismatched_words = samples
+        .iter()
+        .filter(|s| s.words_walk != s.words_chain)
+        .count();
+    let mismatched_crossings = samples
+        .iter()
+        .filter(|s| s.crossings_walk != s.crossings)
+        .count();
+    println!(
+        "   {} samples over {} groups; the walk's projection disagrees with the chain's touched \
+         set on {mismatched_words} words / {mismatched_crossings} crossings — the fits below use \
+         the chain's own counts",
+        samples.len(),
+        {
+            let mut groups: Vec<&String> = samples.iter().map(|s| &s.group).collect();
+            groups.sort();
+            groups.dedup();
+            groups.len()
+        }
+    );
+    {
+        let mut ladder_groups: Vec<&String> = samples.iter().map(|s| &s.group).collect();
+        ladder_groups.sort();
+        ladder_groups.dedup();
+        for group in &ladder_groups {
+            let group_rows: Vec<&WordSample> =
+                samples.iter().filter(|s| &s.group == *group).collect();
+            let low = group_rows
+                .iter()
+                .map(|s| s.amount_in)
+                .min()
+                .unwrap_or_default();
+            let high = group_rows
+                .iter()
+                .map(|s| s.amount_in)
+                .max()
+                .unwrap_or_default();
+            println!(
+                "   {group}: {} samples, amount_in {:.3e}…{:.3e}, words {}…{}",
+                group_rows.len(),
+                low.to::<u128>() as f64,
+                high.to::<u128>() as f64,
+                group_rows
+                    .iter()
+                    .map(|s| s.words_chain)
+                    .min()
+                    .unwrap_or_default(),
+                group_rows
+                    .iter()
+                    .map(|s| s.words_chain)
+                    .max()
+                    .unwrap_or_default()
+            );
+        }
+    }
+    println!(
+        "   {:>32}  {:>4}  {:>10}  {:>10}  {:>4}  {:>7}",
+        "group", "xing", "fixed", "per_word", "n", "r2"
+    );
+    let mut levels: Vec<&String> = samples.iter().map(|s| &s.group).collect();
+    levels.sort();
+    levels.dedup();
+    let mut per_word: Vec<f64> = Vec::new();
+    let mut per_level_intercept: Vec<f64> = Vec::new();
+    // The pooled constant-crossing slope: each level's (words, gas) pairs are
+    // demeaned inside the level, so only the word variation identifies b_word
+    // and the level's own intercept (a pool's fixed cost at that crossing
+    // count) cannot leak into it.
+    let (mut sxy, mut sxx) = (0.0f64, 0.0f64);
+    let mut demeaned: Vec<(f64, f64)> = Vec::new();
+    for group in levels {
+        let mut crossing_levels: Vec<usize> = samples
+            .iter()
+            .filter(|s| &s.group == group)
+            .map(|s| s.crossings)
+            .collect();
+        crossing_levels.sort_unstable();
+        crossing_levels.dedup();
+        for level in crossing_levels {
+            let rows: Vec<&WordSample> = samples
+                .iter()
+                .filter(|s| &s.group == group && s.crossings == level)
+                .collect();
+            let mut word_levels: Vec<usize> = rows.iter().map(|s| s.words_chain).collect();
+            word_levels.sort_unstable();
+            word_levels.dedup();
+            if rows.len() < 3 || word_levels.len() < 3 {
+                println!(
+                    "   {group:>32}  {level:>4}  (degenerate: {} samples, {} word level(s))",
+                    rows.len(),
+                    word_levels.len()
+                );
+                continue;
+            }
+            let xs: Vec<f64> = rows.iter().map(|s| s.words_chain as f64).collect();
+            let ys: Vec<f64> = rows.iter().map(|s| s.gas as f64).collect();
+            let (a, b) = fit2(&xs, &ys);
+            per_word.push(b);
+            per_level_intercept.push(a);
+            println!(
+                "   {group:>32}  {level:>4}  {a:>10.0}  {b:>10.1}  {:>4}  {:>7.4}",
+                rows.len(),
+                r2_of2(&xs, &ys, a, b)
+            );
+            let mean_words = xs.iter().sum::<f64>() / xs.len() as f64;
+            let mean_gas = ys.iter().sum::<f64>() / ys.len() as f64;
+            for (x, y) in xs.iter().zip(&ys) {
+                let dx = x - mean_words;
+                let dy = y - mean_gas;
+                sxy += dx * dy;
+                sxx += dx * dx;
+                demeaned.push((dx, dy));
+            }
+        }
+    }
+    // The pooled constant-crossing slope: the clean identification of b_word.
+    // Pooled over every level, `b_word = Σdx·dy / Σdx²` on the demeaned pairs,
+    // with the through-origin residual as its standard error.
+    let mut pooled_word: Option<(f64, f64)> = None;
+    if sxx > 0.0 && per_word.len() >= 2 {
+        let b_word = sxy / sxx;
+        let sse: f64 = demeaned.iter().map(|(x, y)| (y - b_word * x).powi(2)).sum();
+        let ss_tot: f64 = demeaned.iter().map(|(_, y)| y * y).sum();
+        let dof = (demeaned.len() as f64 - 1.0).max(1.0);
+        let se_word = (sse / dof / sxx).sqrt();
+        let r2 = if ss_tot > 0.0 {
+            1.0 - sse / ss_tot
+        } else {
+            1.0
+        };
+        let abs: Vec<f64> = demeaned
+            .iter()
+            .map(|(x, y)| (y - b_word * x).abs())
+            .collect();
+        println!();
+        println!(
+            "   pooled constant-crossing fit (gas = a_level + b_word·words, n={} over {} levels):",
+            demeaned.len(),
+            per_word.len()
+        );
+        println!("      b_word  = {b_word:>10.1}  ± {se_word:>7.1}   (R² {r2:.4})");
+        println!(
+            "      residual |gas| p50 {:.0}  p90 {:.0}  max {:.0}",
+            quantile(&abs, 0.5),
+            quantile(&abs, 0.9),
+            quantile(&abs, 1.0)
+        );
+        println!(
+            "      the per-level intercepts (a pool's fixed cost at that crossing count) span \
+             {:.0}…{:.0}",
+            quantile(&per_level_intercept, 0.0),
+            quantile(&per_level_intercept, 1.0)
+        );
+        pooled_word = Some((b_word, se_word));
+    }
+    if let Some((b_word, se_word)) = pooled_word {
+        println!();
+        println!(
+            "   the floor borrows the V3 rate 7,373 gas/word: the measured V4 rate is {b_word:.0} \
+             ± {se_word:.0} ({:.0}% of it), {:.0} at the median constant-crossing level",
+            b_word / 7_373.0 * 100.0,
+            quantile(&per_word, 0.5)
+        );
+        if (b_word - 7_373.0).abs() > 0.05 * 7_373.0 {
+            notes.push(format!(
+                "V4 WORD: the measured per-word coefficient {b_word:.0} (±{se_word:.0}) differs from \
+                 the V3 7,373 the floor borrows — the floor needs a per-family b_word"
+            ));
+        }
+    }
+
+    // The within-group three-parameter fit, as a collinearity cross-check: when
+    // a ladder's crossings and words move together the two slopes trade off, so
+    // its b_word is the WEAKER estimate and is quoted only beside the pooled one.
+    let mut groups: Vec<&String> = samples.iter().map(|s| &s.group).collect();
+    groups.sort();
+    groups.dedup();
+    let mut rows: Vec<(f64, f64, f64)> = Vec::new();
+    let mut intercepts: Vec<f64> = Vec::new();
+    for group in &groups {
+        let group_rows: Vec<&WordSample> = samples.iter().filter(|s| &s.group == *group).collect();
+        if group_rows.len() < 3 {
+            continue;
+        }
+        let mean_crossings =
+            group_rows.iter().map(|s| s.crossings as f64).sum::<f64>() / group_rows.len() as f64;
+        let mean_words =
+            group_rows.iter().map(|s| s.words_chain as f64).sum::<f64>() / group_rows.len() as f64;
+        let mean_gas =
+            group_rows.iter().map(|s| s.gas as f64).sum::<f64>() / group_rows.len() as f64;
+        for sample in &group_rows {
+            rows.push((
+                sample.crossings as f64 - mean_crossings,
+                sample.words_chain as f64 - mean_words,
+                sample.gas as f64 - mean_gas,
+            ));
+        }
+        // The group's own level: a + b_cross·mean_crossings + b_word·mean_words.
+        intercepts.push(mean_gas);
+    }
+    if rows.len() >= 4 {
+        let (offset, b_cross, b_word, (_, se_cross, se_word), r2) = fit3_se(&rows);
+        println!();
+        println!(
+            "   within-group fit (gas = a_pool + b_cross·crossings + b_word·words, n={} over {} \
+             groups):",
+            rows.len(),
+            groups.len()
+        );
+        println!("      b_cross = {b_cross:>10.1}  ± {se_cross:>7.1}");
+        println!("      b_word  = {b_word:>10.1}  ± {se_word:>7.1}   (R² {r2:.4})");
+        println!(
+            "      group level (a + marginals at the group's mean) = {offset:>9.0} ± the pool \
+             fixed costs {:.0}…{:.0}",
+            quantile(&intercepts, 0.0),
+            quantile(&intercepts, 1.0)
+        );
+        let residuals: Vec<f64> = rows
+            .iter()
+            .map(|(crossings, words, gas)| gas - (offset + b_cross * crossings + b_word * words))
+            .collect();
+        let abs: Vec<f64> = residuals.iter().map(|r| r.abs()).collect();
+        println!(
+            "      residual |gas| p50 {:.0}  p90 {:.0}  max {:.0}",
+            quantile(&abs, 0.5),
+            quantile(&abs, 0.9),
+            quantile(&abs, 1.0)
+        );
+    }
+    if per_word.is_empty() {
+        println!("   no constant-crossing level had three word points: b_word unidentified");
+    } else {
+        println!(
+            "   per-word marginal at constant crossings: min {:.0} | p50 {:.0} | max {:.0} ({} levels)",
+            quantile(&per_word, 0.0),
+            quantile(&per_word, 0.5),
+            quantile(&per_word, 1.0),
+            per_word.len()
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// The V4 shared-account experiment: one frame vs two
+// ─────────────────────────────────────────────────────────────────────────
+
+/// The quote calldata's fixed length, from [`quote_calldata`]: the selector,
+/// the tuple's head offset, the five pool-key words, the direction flag, the
+/// amount, the `hookData` offset, and its (zero) length — ten words.
+const V4_QUOTE_CALLDATA_LEN: usize = 4 + 10 * 32;
+
+/// `CALLDATACOPY(dest, offset, V4_QUOTE_CALLDATA_LEN)` — size, offset, dest
+/// pushed in CALLDATACOPY's pop order.
+fn emit_calldata_copy(code: &mut Vec<u8>, dest: u16, offset: u16) {
+    let len = u16::try_from(V4_QUOTE_CALLDATA_LEN).expect("the quote calldata fits a word count");
+    for value in [len, offset, dest] {
+        code.push(0x61);
+        code.extend_from_slice(&value.to_be_bytes());
+    }
+    code.push(0x37);
+}
+
+/// `CALL(gas, quoter, 0, offset, V4_QUOTE_CALLDATA_LEN, 0, 0)` — retSize,
+/// retOffset, argsSize, argsOffset, value, address, gas in CALL's pop order.
+fn emit_quoter_call(code: &mut Vec<u8>, quoter: Address, args_offset: u16) {
+    let len = u16::try_from(V4_QUOTE_CALLDATA_LEN).expect("the quote calldata fits a word count");
+    code.extend_from_slice(&[0x60, 0x00, 0x60, 0x00]);
+    for value in [len, args_offset] {
+        code.push(0x61);
+        code.extend_from_slice(&value.to_be_bytes());
+    }
+    code.extend_from_slice(&[0x60, 0x00, 0x73]);
+    code.extend_from_slice(quoter.as_slice());
+    code.extend_from_slice(&[0x5a, 0xf1]);
+}
+
+/// The two-leg batch caller: `selector ‖ quote(A) ‖ quote(B)` in, one frame,
+/// where the quoter is called once per leg. The legs ride one transaction, so
+/// the singleton `PoolManager`'s account and code are already warm for the
+/// second leg — the shape a path's V4 hops pay in a settled transaction.
+fn v4_batcher_code(quoter: Address) -> Vec<u8> {
+    let mut code: Vec<u8> = Vec::new();
+    emit_calldata_copy(&mut code, 0x0000, 4);
+    let second = u16::try_from(4 + V4_QUOTE_CALLDATA_LEN).expect("the second calldata fits");
+    emit_calldata_copy(&mut code, 0x0200, second);
+    let mut fail_patches: Vec<usize> = Vec::new();
+    for args_offset in [0x0000u16, 0x0200] {
+        emit_quoter_call(&mut code, quoter, args_offset);
+        code.push(0x15); // ISZERO
+        fail_patches.push(code.len() + 1);
+        code.extend_from_slice(&[0x61, 0x00, 0x00]); // PUSH2 <fail>
+        code.push(0x57); // JUMPI
+    }
+    emit_return_last(&mut code);
+    let fail = u16::try_from(code.len()).expect("the bytecode fits");
+    code.push(0x5b); // JUMPDEST
+    code.extend_from_slice(&[0x3d, 0x60, 0x00, 0x60, 0x00, 0x3e, 0x3d, 0x60, 0x00, 0xfd]);
+    for patch in fail_patches {
+        code[patch..patch + 2].copy_from_slice(&fail.to_be_bytes());
+    }
+    code
+}
+
+/// The one-leg shape through the same caller: the batching machinery's own
+/// overhead, so the two-frame/two-leg comparison nets it out.
+fn v4_single_quote_caller_code(quoter: Address) -> Vec<u8> {
+    let mut code: Vec<u8> = Vec::new();
+    emit_calldata_copy(&mut code, 0x0000, 4);
+    emit_quoter_call(&mut code, quoter, 0x0000);
+    code.push(0x15); // ISZERO
+    let patch = code.len() + 1;
+    code.extend_from_slice(&[0x61, 0x00, 0x00]);
+    code.push(0x57);
+    emit_return_last(&mut code);
+    let fail = u16::try_from(code.len()).expect("the bytecode fits");
+    code.push(0x5b);
+    code.extend_from_slice(&[0x3d, 0x60, 0x00, 0x60, 0x00, 0x3e, 0x3d, 0x60, 0x00, 0xfd]);
+    code[patch..patch + 2].copy_from_slice(&fail.to_be_bytes());
+    code
+}
+
+/// `RETURN(0, 292)` over the copied calldata — the batch caller's plumbing
+/// self-check (what it forwards IS what a plain quote would send).
+fn v4_echo_code() -> Vec<u8> {
+    let mut code: Vec<u8> = Vec::new();
+    emit_calldata_copy(&mut code, 0x0000, 4);
+    let len = u16::try_from(V4_QUOTE_CALLDATA_LEN).expect("the quote calldata fits a word count");
+    code.push(0x61);
+    code.extend_from_slice(&len.to_be_bytes());
+    code.extend_from_slice(&[0x60, 0x00, 0xf3]);
+    code
+}
+
+/// `RETURN(0, RETURNDATASIZE)` — the last quoter call's `(amountOut,
+/// gasEstimate)` pair, so the batch shape's answer is comparable to a quote.
+fn emit_return_last(code: &mut Vec<u8>) {
+    code.extend_from_slice(&[0x3d, 0x60, 0x00, 0x60, 0x00, 0x3e, 0x3d, 0x60, 0x00, 0xf3]);
+}
+
+/// A raw frame over the scratch: `(gas, output)` on success. The batching
+/// callers are hand-assembled bytecode, so a refusal prints its own verdict and
+/// payload rather than vanishing into a `None`.
+fn raw_frame(chain: &mut Chain<'_>, to: Address, data: Bytes) -> Option<(u64, Bytes)> {
+    let tx = ReplayableTx {
+        from: SENDER,
+        to: Some(to),
+        value: U256::ZERO,
+        data,
+        gas_limit: GAS_LIMIT,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+        nonce: chain.nonce,
+    };
+    match chain.scratch.replay(&tx) {
+        Ok(outcome) if outcome.status == RunVerdict::Success => {
+            Some((outcome.gas_used, outcome.output))
+        }
+        Ok(outcome) => {
+            println!(
+                "   [diag] frame to {to} {:?} at gas {}: 0x{}",
+                outcome.status,
+                outcome.gas_used,
+                alloy::hex::encode(&outcome.output[..outcome.output.len().min(96)])
+            );
+            None
+        }
+        Err(err) => {
+            println!("   [diag] frame to {to} refused: {err:?}");
+            None
+        }
+    }
+}
+
+/// `selector ‖ quote(A) ‖ quote(B)`.
+fn batch_calldata(first: &V4Leg, second: &V4Leg, amount_a: U256, amount_b: U256) -> Bytes {
+    let mut data = Vec::with_capacity(4 + 2 * V4_QUOTE_CALLDATA_LEN);
+    data.extend_from_slice(&[0x00; 4]);
+    for (leg, amount) in [(first, amount_a), (second, amount_b)] {
+        let quote = quote_calldata(leg, amount);
+        assert_eq!(
+            quote.len(),
+            V4_QUOTE_CALLDATA_LEN,
+            "the batching caller's fixed layout assumes one quote calldata length"
+        );
+        data.extend_from_slice(quote.as_ref());
+    }
+    Bytes::from(data)
+}
+
+/// Does the singleton manager's warmth amortize across a path's V4 legs?
+///
+/// The floor prices a path's V4 legs at 72,232 gas each, a figure measured one
+/// leg per frame. Two legs in one transaction share the manager's account
+/// access, its code, and the transient `CurrencyDelta` slots — the warmth a
+/// settled path gets for free. Measured three ways: two frames vs one frame for
+/// two pools, the same pool twice (the slot-warmth discriminator, since two
+/// pools' `Pool.State` slots never alias), and one leg through the batch caller
+/// (the caller machinery's own overhead, netted out of the other two).
+async fn v4_shared_account(reads: &mut Reads<'_>, chain: &mut Chain<'_>, notes: &mut Vec<String>) {
+    println!();
+    println!("=== the V4 shared-account experiment (the singleton's warmth) ===");
+    let pools = v4_word_pools();
+    let (Some(first), Some(second)) = (pools.first(), pools.get(1)) else {
+        return;
+    };
+    let Some(first_hop) = v4_hop(reads, &first.key, false, 8).await else {
+        println!("   {}: no usable V4 state at the anchor", first.label);
+        return;
+    };
+    let Some(second_hop) = v4_hop(reads, &second.key, false, 8).await else {
+        println!("   {}: no usable V4 state at the anchor", second.label);
+        return;
+    };
+    let leg_a = V4Leg::canonical(first.key.clone(), false);
+    let leg_b = V4Leg::canonical(second.key.clone(), false);
+    let amount_a = U256::from((first_hop.reserve.to::<u128>() as f64 * 1e-3) as u128);
+    let amount_b = U256::from((second_hop.reserve.to::<u128>() as f64 * 1e-3) as u128);
+    println!(
+        "   A = {} (in {}), B = {} (in {})",
+        first.label, amount_a, second.label, amount_b
+    );
+    let expected = quote_calldata(&leg_a, amount_a);
+    let copied = raw_frame(
+        chain,
+        V4_ECHO,
+        batch_calldata(&leg_a, &leg_a, amount_a, amount_a),
+    )
+    .map(|(_, output)| output);
+    println!(
+        "   self-check: the batch caller forwards a byte-identical quote calldata (ok={})",
+        copied
+            .as_ref()
+            .is_some_and(|bytes| bytes.as_ref() == expected.as_ref())
+    );
+    let (Some((gas_a, _)), Some((gas_b, out_b_answer))) = (
+        raw_frame(
+            chain,
+            V4QuoterConfig::default().quoter,
+            quote_calldata(&leg_a, amount_a),
+        ),
+        raw_frame(
+            chain,
+            V4QuoterConfig::default().quoter,
+            quote_calldata(&leg_b, amount_b),
+        ),
+    ) else {
+        println!("   a single-leg quote frame refused — the experiment needs live pools");
+        return;
+    };
+    let Some((gas_one_in_batcher, out_one)) = raw_frame(
+        chain,
+        V4_BATCHER_ONE,
+        batch_calldata(&leg_a, &leg_a, amount_a, amount_a),
+    ) else {
+        println!("   the batch caller's one-leg shape refused");
+        return;
+    };
+    let Some((gas_ab, out_ab)) = raw_frame(
+        chain,
+        V4_BATCHER,
+        batch_calldata(&leg_a, &leg_b, amount_a, amount_b),
+    ) else {
+        println!("   the two-leg batch frame refused");
+        return;
+    };
+    let Some((gas_aa, out_aa)) = raw_frame(
+        chain,
+        V4_BATCHER,
+        batch_calldata(&leg_a, &leg_a, amount_a, amount_a),
+    ) else {
+        println!("   the same-pool batch frame refused");
+        return;
+    };
+    println!("   {:>38}  {:>10}", "shape", "frame gas");
+    println!("   {:>38}  {gas_a:>10}", "A alone (own frame)");
+    println!("   {:>38}  {gas_ab:>10}", "A + B (one frame)");
+    println!("   {:>38}  {gas_aa:>10}", "A + A (one frame)");
+    println!("   {:>38}  {gas_b:>10}", "B alone (own frame)");
+    println!(
+        "   {:>38}  {gas_one_in_batcher:>10}",
+        "A alone (batch caller, one leg)"
+    );
+    // Execution-only comparison: strip the intrinsic from every frame and the
+    // caller's own plumbing from the batching shapes, so what is left is the
+    // quoter+manager work the legs actually run.
+    let intrinsic = 21_000f64;
+    let overhead = gas_one_in_batcher as f64 - gas_a as f64;
+    let exec_two_frames = (gas_a + gas_b) as f64 - 2.0 * intrinsic;
+    let exec_one_frame = gas_ab as f64 - intrinsic - overhead;
+    let exec_same_pool_twice = 2.0 * (gas_a as f64 - intrinsic);
+    let exec_aa_one_frame = gas_aa as f64 - intrinsic - overhead;
+    let warmth_ab = exec_two_frames - exec_one_frame;
+    let warmth_aa = exec_same_pool_twice - exec_aa_one_frame;
+    println!();
+    println!(
+        "   caller plumbing (a quote routed through the batch caller, one leg) = {overhead:.0} gas; \
+         every batching shape carries it once"
+    );
+    println!(
+        "   execution, two frames A+B = {exec_two_frames:.0}; one frame A+B = {exec_one_frame:.0} \
+         -> the pair is {warmth_ab:.0} gas cheaper in one frame ({:.0} per leg, {:.1}% of a V4 leg)",
+        warmth_ab / 2.0,
+        warmth_ab / 2.0 / (exec_two_frames / 2.0) * 100.0
+    );
+    println!(
+        "   the same pool twice: {exec_same_pool_twice:.0} in two frames vs \
+         {exec_aa_one_frame:.0} in one frame -> {warmth_aa:.0} cheaper, of which \
+         {:.0} gas beyond the cross-pool term is storage-slot warmth",
+        warmth_aa - warmth_ab
+    );
+    let answer_aa = decode_quote_return(&out_aa).map(|(amount_out, _)| amount_out);
+    let answer_ab = decode_quote_return(&out_ab).map(|(amount_out, _)| amount_out);
+    println!(
+        "   the batched legs answer a plain frame exactly: A+A second leg {}, A+B second leg {}",
+        answer_aa == decode_quote_return(&out_one).map(|(amount_out, _)| amount_out),
+        answer_ab == decode_quote_return(&out_b_answer).map(|(amount_out, _)| amount_out)
+    );
+    println!(
+        "   verdict: the singleton manager amortizes its ACCOUNT and CODE only — the per-pool \
+         `Pool.State` slots (bitmap words included) never alias, and the per-leg quote reverts \
+         its own swap, so the slot warmth it paid does not survive into the next leg"
+    );
+    notes.push(format!(
+        "V4 SHARED ACCOUNT: one frame of two V4 legs is {warmth_ab:.0} gas cheaper than two \
+         frames beyond the intrinsic ({:.0}/leg); the same-pool pair is {warmth_aa:.0} cheaper, \
+         so storage-slot sharing adds {:.0} gas — nothing to model in the floor",
+        warmth_ab / 2.0,
+        warmth_aa - warmth_ab
+    ));
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1770,7 +2871,7 @@ async fn corpus_samples(
                         tick_spacing: spacing,
                         hooks: Address::ZERO,
                     };
-                    let Some(v4) = v4_hop(reads, &key, hop.zero_for_one).await else {
+                    let Some(v4) = v4_hop(reads, &key, hop.zero_for_one, 400).await else {
                         println!(
                             "   {:>18} {:>3} {:>5} {:>8}  no usable V4 state at the anchor",
                             path.id,
@@ -1891,10 +2992,9 @@ fn rpc_url() -> String {
         )
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "live-RPC gas decomposition over archive mainnet state; run with --ignored"]
-async fn gas_decomposition_census() {
-    let started = Instant::now();
+/// The anchor ritual both live-RPC tests share: the pinned archive block, the
+/// scratch block it replays as, and the quote caller's anchor nonce.
+async fn anchor_setup() -> (Arc<AlloyProvider>, ScratchBlock, u64) {
     let provider = Arc::new(AlloyProvider::new(&rpc_url(), 3).await.unwrap());
     assert_eq!(
         provider.get_chain_id().await.unwrap(),
@@ -1911,11 +3011,19 @@ async fn gas_decomposition_census() {
         timestamp: block.header.timestamp,
         base_fee_next: u128::from(block.header.base_fee_per_gas.unwrap_or(0)),
     };
-    let provider: &AlloyProvider = &provider;
     let nonce = provider
         .get_transaction_count(&SENDER, Some(PIN))
         .await
         .unwrap();
+    (provider, scratch_block, nonce)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "live-RPC gas decomposition over archive mainnet state; run with --ignored"]
+async fn gas_decomposition_census() {
+    let started = Instant::now();
+    let (provider, scratch_block, nonce) = anchor_setup().await;
+    let provider: &AlloyProvider = &provider;
 
     println!("=== the per-op gas decomposition (evm2) ===");
     println!(
@@ -1949,6 +3057,24 @@ async fn gas_decomposition_census() {
     v2_legs(&mut chain, &mut samples);
     transfer_cost(&mut reads, &mut chain).await;
     v4_legs(&mut reads, &mut chain, &mut samples, &mut notes).await;
+
+    // ── the V4 bitmap-word sweep (the floor's last unvalidated term) ────
+    let mut word_samples: Vec<WordSample> = Vec::new();
+    for spec in &v4_word_pools() {
+        for zero_for_one in [true, false] {
+            v4_word_sweep(
+                &mut reads,
+                &mut chain,
+                spec,
+                zero_for_one,
+                &mut word_samples,
+                &mut notes,
+            )
+            .await;
+        }
+    }
+    v4_word_report(&word_samples, &mut notes);
+    v4_shared_account(&mut reads, &mut chain, &mut notes).await;
     corpus_samples(
         &mut reads,
         &mut chain,
@@ -2044,6 +3170,10 @@ async fn gas_decomposition_census() {
             coeffs.insert(family.label(), c);
         }
     }
+    println!(
+        "   (V4's per_word is unfittable on this ladder — the in-range amounts never move the word \
+         regressor; the bitmap-word sweep above measures it separately)"
+    );
     // A V2 leg has no crossing axis at all: its coefficient IS the constant.
     {
         let gases: Vec<f64> = samples
@@ -2409,6 +3539,50 @@ async fn gas_decomposition_census() {
     );
 }
 
+/// The word sweep on its own — the focused measurement of the V4 per-word
+/// coefficient and the shared-account term, without the rest of the census.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "live-RPC V4 bitmap-word sweep over archive mainnet state; run with --ignored"]
+async fn v4_bitmap_word_coefficient() {
+    let started = Instant::now();
+    let (provider, scratch_block, nonce) = anchor_setup().await;
+    let provider: &AlloyProvider = &provider;
+    let mut reads = Reads::new(provider, PIN);
+    let mut chain = Chain::new(provider, scratch_block, nonce);
+    let mut notes: Vec<String> = Vec::new();
+    let mut samples: Vec<WordSample> = Vec::new();
+    println!("=== the V4 bitmap-word sweep (evm2, anchor {PIN}) ===");
+    for spec in &v4_word_pools() {
+        for zero_for_one in [true, false] {
+            v4_word_sweep(
+                &mut reads,
+                &mut chain,
+                spec,
+                zero_for_one,
+                &mut samples,
+                &mut notes,
+            )
+            .await;
+        }
+    }
+    v4_word_report(&samples, &mut notes);
+    v4_shared_account(&mut reads, &mut chain, &mut notes).await;
+    println!();
+    println!("=== notes ({}) ===", notes.len());
+    for note in &notes {
+        println!("   x {note}");
+    }
+    println!(
+        "unique bitmap words read: {} | truncated censuses {} | distinct calls {} | storage reads \
+         {} | wall {:.1} s",
+        reads.bitmap_words,
+        reads.truncated_censuses,
+        reads.calls.len(),
+        reads.storages.len(),
+        started.elapsed().as_secs_f64()
+    );
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // The pure part (no network): the fit + quantile arithmetic
 // ─────────────────────────────────────────────────────────────────────────
@@ -2428,10 +3602,40 @@ fn fits_and_quantiles_recover_known_coefficients() {
     assert!((b - 13_500.0).abs() < 0.5, "per crossing: {b}");
     assert!((c - 2_300.0).abs() < 0.5, "per word: {c}");
 
+    // The same plane with its confidence: an exact fit has no residual, so the
+    // standard errors vanish and R² is 1.
+    let (a, b, c, errors, r2) = fit3_se(&rows);
+    assert!((a - 30_000.0).abs() < 0.5, "fixed: {a}");
+    assert!((b - 13_500.0).abs() < 0.5, "per crossing: {b}");
+    assert!((c - 2_300.0).abs() < 0.5, "per word: {c}");
+    assert!(
+        errors.0 < 1e-6 && errors.1 < 1e-6 && errors.2 < 1e-6,
+        "{errors:?}"
+    );
+    assert!((r2 - 1.0).abs() < 1e-12, "r2: {r2}");
+
+    // A noisy plane still recovers the coefficients, and the standard error
+    // stays a real (positive) confidence rather than a zeroed placeholder.
+    let noisy: Vec<(f64, f64, f64)> = (0..8)
+        .map(|index| {
+            let x1 = f64::from(index % 4);
+            let x2 = f64::from(index / 2);
+            let noise = if index % 2 == 0 { 40.0 } else { -40.0 };
+            (x1, x2, 30_000.0 + 13_500.0 * x1 + 2_300.0 * x2 + noise)
+        })
+        .collect();
+    let (a, b, c, errors, r2) = fit3_se(&noisy);
+    assert!((a - 30_000.0).abs() < 100.0, "fixed: {a}");
+    assert!((b - 13_500.0).abs() < 100.0, "per crossing: {b}");
+    assert!((c - 2_300.0).abs() < 100.0, "per word: {c}");
+    assert!(errors.2 > 0.0, "the per-word standard error is positive");
+    assert!(r2 > 0.99, "r2: {r2}");
+
     let xs = [0.0, 1.0, 2.0, 3.0];
     let ys = [100.0, 150.0, 200.0, 250.0];
     let (a, b) = fit2(&xs, &ys);
     assert!((a - 100.0).abs() < 1e-9 && (b - 50.0).abs() < 1e-9);
+    assert!((r2_of2(&xs, &ys, a, b) - 1.0).abs() < 1e-12);
 
     let values = [4.0, 1.0, 3.0, 2.0, 5.0];
     assert!((quantile(&values, 0.0) - 1.0).abs() < 1e-12);

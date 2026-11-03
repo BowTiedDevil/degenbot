@@ -11,6 +11,15 @@
 >   -E 'test(gas_decomposition_census)' --run-ignored=ignored-only --no-capture
 > ```
 >
+> The V4 bitmap-word sweep and the shared-account experiment run on their own
+> too (seconds, no corpus):
+>
+> ```sh
+> TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI=http://host:8545 \
+>   just test-rust-nextest -p degenbot-simulation \
+>   -E 'test(v4_bitmap_word_coefficient)' --run-ignored=ignored-only --no-capture
+> ```
+>
 > The rig prints its whole ledger (per-pool `k → gas` tables, the fits, the
 > error distributions). Numbers drift with the anchor; the *shape* is the
 > finding.
@@ -38,7 +47,7 @@ Measured coefficients (`gas`, from the frames described below):
 | **V2** | 30,862 | — (no tick map) | — | flat: 30,850–31,026 over 10^15…10^21 in |
 | **V3** | 118,594 | 24,824 | 7,373 | vanilla pools: `a` 116,464–125,236 |
 | **V3 fork** (1 bp, fork bytecode) | 147,897–151,109 | 33,238–46,913 | — | degenerate sweep: its swaps saturate one range |
-| **V4** (hookless, black-box quote) | 72,232 | 14,254 | — | the whole `unlock`/delta path, quoter frame |
+| **V4** (hookless, black-box quote) | 72,232 | 14,254 | **5,684** | the whole `unlock`/delta path, quoter frame |
 
 Per-pool V3 fits (`gas = a + b·k`, 9 samples each, both directions, 0–8
 crossings):
@@ -59,6 +68,53 @@ Two facts fall out of the sweep:
   costs 7,373 gas and an `EMPTY-HALT` walk crosses hundreds of them: the phantom
   corpus's 1 bp fork leg (`69150 hop1`) burns **3.16 M gas with 12 crossings and
   351 words** — a crossings-only estimator predicts 0.4 M and lets it through.
+
+### The V4 word term is its own measurement
+
+V4's bitmap lives inside the singleton `PoolManager`'s storage (every pool's
+`Pool.State` is a mapping entry), so a V4 word is one `SLOAD` of an account a
+path's every V4 leg already touches. Borrowing V3's 7,373 was therefore an
+untested assumption: the same loop shape walks the word (`swap`'s
+`nextInitializedTickWithinOneWord`), but neither the storage account nor the
+per-word work is V3's.
+The rig sweeps it: four hookless pools × both directions, amounts **bisected on
+the chain's own word count** — the contiguous run of the pool's bitmap-word
+slots in the frame's touched set (one `SLOAD` per word marched) — 66 samples
+over words 1…10, crossings read the same way (one `tickBitmap`-word slot per
+word, one `ticks(tick)` slot per `cross()`).
+
+```text
+pool (both directions)              words marched   samples
+dai/usdc-100-s1                          1…10          20
+usdc/weth-500-s10 (dense, spacing 10)    1…10          12
+eth/usdc-100-s1                          1…8           14
+usdc/usdt-100-s1                         1…10          20
+```
+
+`b_word` is identified at **constant crossings** — the ladder's own engineered
+shape: past the last initialized tick the amount barely moves while the walk
+marches empty words, so each level's `gas = a + b_word·words` fit has no
+crossing term to trade off against.
+
+```text
+per-level marginals   5,534  5,645  5,606  5,680  5,705  5,832   (6 levels)
+pooled (demeaned)     b_word = 5,684 ± 25 gas/word   (n = 40, R² 0.9992)
+                      residual |gas| p50 218  p90 568  max 921
+cross-check           3-parameter within-group fit: b_cross 16,431 ± 40,
+                      b_word 5,641 ± 74  (n = 64, R² 0.9998)
+```
+
+The `EMPTY-HALT` shape is in the ladder (the `dai/usdc-100-s1` up side): past
+its fourth crossing the amount rises only 2% (4.5482e20 → 4.6585e20) for six
+more words while gas climbs ~5.4k per word and **no further crossing** happens.
+That is the shape the floor exists to price, and its slope is the coefficient.
+
+**Measured against the borrowed 7,373:** a V4 word costs **5,684 ± 25**, i.e.
+**77%** of V3's rate — the borrow over-charges by 1,689 gas/word (23%), which is
+16.9k on a 10-word march (~23% of a zero-crossing V4 leg). The word's own
+composition is the same as V3's (a cold `SLOAD` at 2,100 plus the swap loop and
+fee accounting), but the V4 loop's per-word work is ~1,700 gas cheaper — the two
+families must not share a `b_word`.
 
 ### Cold vs warm bitmap words
 
@@ -93,6 +149,46 @@ when the floor prices a *settling* path. A V4 hop settles inside one `unlock`
 (`sync`/`take`/`settle`), which the 72,232 fixed cost already contains for the
 quoter frame; the per-transfer marginal is the same order.
 
+### The shared account: two V4 legs in one frame
+
+Every V4 leg sits on the same `PoolManager`, so a path's V4 hops could in
+principle amortize the manager's warmth. Measured — a hand-assembled batch
+caller that forwards two quote calldatas to the canonical quoter inside ONE
+frame, against the same legs quoted in two frames:
+
+```text
+shape                                        frame gas
+A alone (own frame, dai/usdc-100-s1)            103,909
+B alone (own frame, usdc/weth-500-s10)           67,030
+A alone (through the batch caller)              108,581   (its own plumbing: 4,672)
+A + B (one frame)                               150,421
+A + A (one frame)                               187,300
+```
+
+Netting the 21,000 intrinsic the second transaction pays and the caller's own
+4,672 plumbing leaves the quoter-and-manager execution:
+
+```text
+execution, two frames A+B    128,939
+execution, one frame A+B     124,749   -> 4,190 cheaper for the pair (2,095/leg, 3.2%)
+the same pool twice          165,818 vs 161,628
+                              -> the same 4,190, so storage-slot sharing adds 0
+```
+
+Only the manager's **account and code** access amortizes (the second leg's
+`CALL` into it finds a warm account: 2,600 → 100). No storage slot does: two V4
+pools index different `Pool.State` bases, and the same-pool pair proves even one
+pool re-pays its `slot0`/liquidity/bitmap `SLOAD`s in the next leg — the per-leg
+quote reverts its own swap, and the warmth it paid goes with the revert. A
+settled path (one `unlock`, nothing reverted) would keep it, but the only slot
+that aliases two V4 legs is a shared currency's transient `CurrencyDelta`
+(100 gas a touch).
+
+**For the floor: do not model it.** The amortization is ~2,100 gas per extra V4
+leg — 3% of a 72,232-gas leg, below the (b) estimate's p50 residual (15.7k) — and
+dropping it over-predicts, which is the safe direction. Charge every leg its own
+fixed cost.
+
 ## Error on the phantom corpus
 
 The corpus (`tests/fixtures/phantom_paths.tsv`, 26 hops over 14 paths at the
@@ -116,7 +212,7 @@ marginals and drops `a` to the 10th percentile of the corpus's per-pool
 intercepts:
 
 ```text
-floor variant (a = 81,947, b_cross = 24,824, b_word = 7,373)
+floor variant (a = 81,947, b_cross = 24,824, b_word = 7,373 | V4 5,684)
     signed p50 −13.9%   max +33.7%   under-predicts 93/111 legs (V3+V4)
 ```
 
@@ -125,7 +221,11 @@ Two admissible choices, both wrong in the safe direction:
 - **The low intercept** — family marginals, `a` at the p10 of the observed
   per-pool intercepts (81,947). Under-predicts 84% of the corpus's V3+V4 legs;
   the 16% it over-predicts are pools with a dearer fixed cost (fork bytecode,
-  proxy tokens) and are over-predicted by ≤34%.
+  proxy tokens) and are over-predicted by ≤34%. The marginals are **per
+  family**: `b_word` is 7,373 for a V3 leg and 5,684 for a V4 one (the corpus
+  figures above were measured with V3's rate charged to both, so they
+  over-predict a V4 leg by 1,689 gas per word walked — a few percent, and the
+  safe direction).
 - **Percentile floor** — `est = pred + q·residual`: at q10 of the (b) residual
   the estimate sits 6% below the fitted prediction and under-predicts ~90% of
   legs; at q05 it sits 9.1% below and under-predicts ~95%.
@@ -207,6 +307,13 @@ does not.
 - An `EMPTY-HALT` leg (a swap that leaves the liquidity and marches to the price
   limit) exhausts the 16 M frame cap; the rig records that as a finding rather
   than a sample, because its gas is bounded by the frame, not by the path.
+- **V4's word and crossing axes are the frame's touched slot set**, not the
+  walk's projection: one bitmap-word slot per word marched, one `ticks(tick)`
+  slot per `cross()`. The white-box walk's own projection (`landed` +
+  `word_boundary_prices`) disagrees with those counts on 58 of 66 word samples
+  (57 of 66 crossings) — in both directions, by up to an order of magnitude —
+  so the count cannot be projected from the walk as-is. The V4 coefficient above
+  is fitted on the chain's counts.
 
 ## What the admission floor should consume
 
@@ -221,6 +328,10 @@ does not.
    `initialized_ticks_crossed` and `bitmap_words_walked` to the V3/V4 swap
    outcomes so the floor reads them instead of recomputing (or, for a first cut,
    `ConcentratedLiquidityPathSim::output().landed` plus the prepared hop's
-   `word_boundary_prices`).
+   `word_boundary_prices`). On V4 the word half of that pair must be validated
+   first: the walk's projection disagrees with the chain's `SLOAD` count on 58
+   of 66 swept samples, so the current `landed`/`word_boundary_prices` reading is
+   not the word count on V4 — fix the projection before the floor consumes it,
+   or read the count from the frame.
 4. **Never (c).** Tick-distance is not crossing count: 273× at the median, 12,470×
    at the tail.
