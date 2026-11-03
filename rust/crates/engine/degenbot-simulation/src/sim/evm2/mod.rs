@@ -22,6 +22,7 @@ pub mod blocking_async_db;
 pub mod bot_state_db;
 pub mod frame_replay;
 pub mod handle;
+pub mod hook_slots;
 pub mod inspectors;
 pub mod jit;
 pub mod session;

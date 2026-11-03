@@ -86,8 +86,8 @@ use degenbot_simulation::sim::evm2::session::{Evm2CaptureMode, Evm2SimSession, E
 use degenbot_simulation::sim::evm2::warm_code_cache::{WarmCodeCache, WarmCodeCacheInner};
 use degenbot_simulation::sim::hot_slots::HOT_SLOT_DECAY_BLOCKS;
 use degenbot_simulation::sim::prefetch::{
-    path_prefetch_slots, prefetch_paths_into_memo, prewarm_plan, FamilySlotLayout, PrefetchFacts,
-    V2SlotIndices,
+    path_prefetch_slots, prefetch_paths_into_memo, prewarm_plan, FamilySlotLayout, LearnedSets,
+    PrefetchFacts, V2SlotIndices,
 };
 use degenbot_simulation::sim::storage_memo::ReadAnchor;
 use degenbot_simulation::{HotSlotStore, StorageMemo};
@@ -1504,7 +1504,10 @@ fn main() {
             paths(),
             &harness_layout,
             &facts,
-            &HotSlotStore::new(),
+            LearnedSets {
+                hot: &HotSlotStore::new(),
+                hooks: None,
+            },
             &memo,
         )
     };
@@ -1651,7 +1654,10 @@ fn main() {
             paths(),
             &FamilySlotLayout::PRODUCTION,
             &facts,
-            &HotSlotStore::new(),
+            LearnedSets {
+                hot: &HotSlotStore::new(),
+                hooks: None,
+            },
             &production_memo,
         )
     };
@@ -1753,7 +1759,10 @@ fn main() {
             paths(),
             &harness_layout,
             &facts,
-            &HotSlotStore::new(),
+            LearnedSets {
+                hot: &HotSlotStore::new(),
+                hooks: None,
+            },
             &shadow_memo,
         )
     };
@@ -1838,7 +1847,16 @@ fn main() {
         learned_anchor - 1
     );
 
-    let learned_plan = prewarm_plan(paths(), &harness_layout, &facts, &hot, learned_anchor);
+    let learned_plan = prewarm_plan(
+        paths(),
+        &harness_layout,
+        &facts,
+        LearnedSets {
+            hot: &hot,
+            hooks: None,
+        },
+        learned_anchor,
+    );
     println!(
         "  the next anchor's plan: {} derived + {} learned = {} slot(s), one batch",
         learned_plan.derived,
@@ -1863,7 +1881,10 @@ fn main() {
             paths(),
             &harness_layout,
             &facts,
-            &hot,
+            LearnedSets {
+                hot: &hot,
+                hooks: None,
+            },
             &learned_memo,
         )
     };
@@ -1934,7 +1955,16 @@ fn main() {
     let stale_chain = Arc::new(bumped(&snapshot));
     let stale_transport = StorageTransport::new(Arc::clone(&stale_chain), latency);
     let stale_provider = stale_transport.provider();
-    let stale_plan = prewarm_plan(paths(), &harness_layout, &facts, &hot, stale_anchor);
+    let stale_plan = prewarm_plan(
+        paths(),
+        &harness_layout,
+        &facts,
+        LearnedSets {
+            hot: &hot,
+            hooks: None,
+        },
+        stale_anchor,
+    );
     assert_eq!(
         stale_plan.learned, learned_plan.learned,
         "the earlier capture's prediction is still inside the decay window"
@@ -1951,7 +1981,10 @@ fn main() {
             paths(),
             &harness_layout,
             &facts,
-            &hot,
+            LearnedSets {
+                hot: &hot,
+                hooks: None,
+            },
             &stale_memo,
         )
     };
@@ -1997,7 +2030,16 @@ fn main() {
     // same store asked past the drift window prewarms nothing learned — the hot
     // set is working memory, not permanent.
     let decayed_anchor = learned_anchor + HOT_SLOT_DECAY_BLOCKS;
-    let decayed_plan = prewarm_plan(paths(), &harness_layout, &facts, &hot, decayed_anchor);
+    let decayed_plan = prewarm_plan(
+        paths(),
+        &harness_layout,
+        &facts,
+        LearnedSets {
+            hot: &hot,
+            hooks: None,
+        },
+        decayed_anchor,
+    );
     println!(
         "  decay: at anchor {decayed_anchor} (window {HOT_SLOT_DECAY_BLOCKS} blocks) the learned complement is {} slot(s), the plan {} slot(s)",
         decayed_plan.learned,

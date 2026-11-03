@@ -749,13 +749,17 @@ pub fn dispatch_profitable_results(
                 // number-only anchor — the pre-fence scope, never a wrong one.
                 let read_anchor =
                     degenbot_simulation::sim::resolve_read_anchor(ctx.provider, sim_block);
-                // The per-anchor memo AND the session's cross-block hot-slot
-                // store are both session-scoped (the warm-cache owner); taken
-                // together under one short read guard so neither rides it
-                // across provider I/O.
-                let (storage_memo, hot_slots) = {
+                // The per-anchor memo, the session's cross-block hot-slot
+                // store, and the durable per-hook slot-set store are all owned
+                // by the warm-cache owner; taken together under one short read
+                // guard so none of them rides it across provider I/O.
+                let (storage_memo, hot_slots, hook_slots) = {
                     let cache = evm2_warm_cache.read();
-                    (cache.storage_memo_for(read_anchor), cache.hot_slots())
+                    (
+                        cache.storage_memo_for(read_anchor),
+                        cache.hot_slots(),
+                        cache.hook_slots(),
+                    )
                 };
                 // Path-derived prefetch: the candidates name their pools before
                 // the sim runs, so the slots the frame is guaranteed to read
@@ -781,6 +785,14 @@ pub fn dispatch_profitable_results(
                 // The learning side is the handle's own: `session()` hands each
                 // candidate the store, so a completed capture's access list
                 // teaches the next anchor's prewarm.
+                //
+                // The learned HOOK sets ride the same batch: a hooked V4 pool's
+                // hook storage has no derivation (arbitrary bytecode owns it),
+                // so the black-box quoter learns each hook's touched-slot set
+                // once (`sim::evm2::hook_slots`) and the plan joins it at the
+                // hook's own address. A session without the store — or a hook no
+                // quote has learned yet — joins nothing, which is the cold start
+                // this lane pays down.
                 let prefetch = degenbot_simulation::sim::prefetch::prefetch_paths_into_memo(
                     ctx.provider,
                     sim_block,
@@ -791,7 +803,10 @@ pub fn dispatch_profitable_results(
                         pool_manager_address: Some(ctx.pool_manager_address),
                         warmup: ctx.warmup,
                     },
-                    &hot_slots,
+                    degenbot_simulation::sim::LearnedSets {
+                        hot: &hot_slots,
+                        hooks: hook_slots.as_deref(),
+                    },
                     &storage_memo,
                 );
                 diag!(
@@ -801,6 +816,7 @@ pub fn dispatch_profitable_results(
                     anchor_fenced = read_anchor.hash.is_some(),
                     derived = prefetch.derived,
                     learned = prefetch.learned,
+                    hook = prefetch.hook,
                     requested = prefetch.requested,
                     seeded = prefetch.seeded,
                     skipped = ?prefetch.skipped,

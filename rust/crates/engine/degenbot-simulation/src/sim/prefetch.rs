@@ -49,8 +49,19 @@
 //! lanes never pay two round trips.
 //!
 //! Still NOT covered: a slot under an address no path names (a learned slot
-//! there is unscoped speculation), and a pool that has never been captured at
-//! this session. Those forward, one round trip each.
+//! there is unscoped speculation), a pool that has never been captured at this
+//! session, and a hook no quote has learned yet. Those forward, one round trip
+//! each.
+//!
+//! # The learned hook sets
+//!
+//! A hooked V4 pool is the one hop whose read set the path cannot even bound:
+//! the hook's storage is arbitrary bytecode's business, and only the
+//! PoolManager words the same frame reads are derivable. The black-box quoter
+//! learns that set ([`HookSlotStore`]), and it joins this batch as
+//! [`LearnedSets::hooks`] — attributed at the HOOK's own address, which the
+//! pool key names. A hook's first quote therefore pays its cold reads once and
+//! every later re-quote at any anchor finds them in the one batch.
 //!
 //! # The degrade contract
 //!
@@ -75,6 +86,7 @@
 
 use std::future::Future;
 
+use crate::sim::evm2::hook_slots::HookSlotStore;
 use alloy::primitives::{Address, B256, U256};
 use degenbot_core::diag;
 use degenbot_executor::composers::{HopInfo, PathInfo};
@@ -218,8 +230,11 @@ pub struct PrefetchReport {
     /// The distinct `(address, slot)` pairs the path derivation produced.
     pub derived: usize,
     /// The capture-learned pairs the plan added beyond the derivation (the
-    /// derivation's complement, already deduped against it).
+    /// hot set's complement, already deduped against it).
     pub learned: usize,
+    /// The learned hook-slot pairs the plan added (ADR-090's per-hook sets,
+    /// already deduped against the derivation and the hot complement).
+    pub hook: usize,
     /// The subset of the plan the memo did not already hold (the batch's
     /// member count).
     pub requested: usize,
@@ -391,22 +406,77 @@ fn push_address(
     }
 }
 
+/// The learned slot sets a prewarm joins into the anchor's one batch: the
+/// session's capture-learned hot set and the durable per-hook slot sets the
+/// black-box quoter learns.
+///
+/// Both are IDENTITY-ONLY: every member is still read from the node at the
+/// fan-out's anchor, so a prediction that has drifted costs one wasted batch
+/// member, never a wrong read.
+#[derive(Clone, Copy)]
+pub struct LearnedSets<'a> {
+    /// The session's hot set: `(address, slot)` touches, decaying by block,
+    /// scoped to the addresses the batch's paths name
+    /// ([`path_prefetch_addresses`]).
+    pub hot: &'a HotSlotStore,
+    /// The per-hook slot sets, joined at the HOOK's own address. `None` = no
+    /// hook learning in this session (nothing is joined).
+    pub hooks: Option<&'a HookSlotStore>,
+}
+
 /// What one fan-out will prewarm, as ONE deduped list (one batch).
 ///
 /// The path derivation runs first ([`path_prefetch_slots`]); the capture-learned
 /// complement is whatever the [`HotSlotStore`] holds under the paths' named
-/// addresses at `anchor` that the derivation did not already produce. The
-/// complement is deduped against the derivation here, BEFORE the wire, which is
-/// what keeps the two lanes to one round trip.
+/// addresses at `anchor` that the derivation did not already produce, then the
+/// learned hook sets ([`path_hook_slots`]). Both complements are deduped against
+/// the derivation here, BEFORE the wire, which is what keeps the lanes to one
+/// round trip.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PrewarmPlan {
-    /// The batch's slots: derived first (first-touch order), then the learned
-    /// complement, capped at [`MAX_PREFETCH_SLOTS`].
+    /// The batch's slots: derived first (first-touch order), then the hot
+    /// complement, then the learned hook sets, capped at
+    /// [`MAX_PREFETCH_SLOTS`].
     pub slots: Vec<(Address, U256)>,
     /// How many of [`Self::slots`] the path derivation produced.
     pub derived: usize,
-    /// How many of [`Self::slots`] the learned complement added.
+    /// How many of [`Self::slots`] the hot complement added.
     pub learned: usize,
+    /// How many of [`Self::slots`] the learned hook sets added.
+    pub hook: usize,
+}
+
+/// The learned hook slots a batch's paths can reach: for every V4 hop whose key
+/// names a hook with a learned set, that hook's slots at the HOOK's address.
+///
+/// Attribution is the pool key's (the hop carries it). A hook's own storage is
+/// the arbitrary part one quote must learn; the PoolManager words the same
+/// frame reads are derived ([`path_prefetch_slots`]) and never joined here.
+#[must_use]
+pub fn path_hook_slots<'a>(
+    paths: impl IntoIterator<Item = &'a PathInfo>,
+    hooks: &HookSlotStore,
+) -> Vec<(Address, U256)> {
+    let mut slots: Vec<(Address, U256)> = Vec::new();
+    let mut seen: std::collections::HashSet<(Address, U256)> = std::collections::HashSet::new();
+    for path in paths {
+        for hop in &path.hops {
+            let HopInfo::V4(v4) = hop else {
+                continue;
+            };
+            if v4.hook_address.is_zero() {
+                // A pool key with no hook names no hook storage.
+                continue;
+            }
+            for slot in hooks.slots_for(v4.hook_address) {
+                let entry = (v4.hook_address, slot);
+                if slots.len() < MAX_PREFETCH_SLOTS && seen.insert(entry) {
+                    slots.push(entry);
+                }
+            }
+        }
+    }
+    slots
 }
 
 /// Derive the batch's slots, union the capture-learned complement, and hand
@@ -420,7 +490,7 @@ pub fn prewarm_plan<'a>(
     paths: impl IntoIterator<Item = &'a PathInfo>,
     layout: &FamilySlotLayout,
     facts: &PrefetchFacts,
-    hot: &HotSlotStore,
+    learned_sets: LearnedSets<'_>,
     anchor: u64,
 ) -> PrewarmPlan {
     let paths: Vec<&PathInfo> = paths.into_iter().collect();
@@ -428,7 +498,7 @@ pub fn prewarm_plan<'a>(
     let derived = slots.len();
     let mut seen: std::collections::HashSet<(Address, U256)> = slots.iter().copied().collect();
     let mut learned = 0usize;
-    for entry in hot.slots_for(
+    for entry in learned_sets.hot.slots_for(
         anchor,
         path_prefetch_addresses(paths.iter().copied(), facts),
     ) {
@@ -440,10 +510,23 @@ pub fn prewarm_plan<'a>(
             learned += 1;
         }
     }
+    let mut hook = 0usize;
+    if let Some(hooks) = learned_sets.hooks {
+        for entry in path_hook_slots(paths.iter().copied(), hooks) {
+            if slots.len() >= MAX_PREFETCH_SLOTS {
+                break;
+            }
+            if seen.insert(entry) {
+                slots.push(entry);
+                hook += 1;
+            }
+        }
+    }
     PrewarmPlan {
         slots,
         derived,
         learned,
+        hook,
     }
 }
 
@@ -465,15 +548,16 @@ pub fn prefetch_paths_into_memo<'a>(
     paths: impl IntoIterator<Item = &'a PathInfo>,
     layout: &FamilySlotLayout,
     facts: &PrefetchFacts,
-    hot: &HotSlotStore,
+    learned: LearnedSets<'_>,
     memo: &StorageMemo,
 ) -> PrefetchReport {
-    let plan = prewarm_plan(paths, layout, facts, hot, anchor);
+    let plan = prewarm_plan(paths, layout, facts, learned, anchor);
     let mut report = prefetch_into_memo(provider, anchor, &plan.slots, memo);
     // `prefetch_into_memo` saw the union, so its `derived` is the plan's size;
     // the lane's own attribution is the plan's.
     report.derived = plan.derived;
     report.learned = plan.learned;
+    report.hook = plan.hook;
     report
 }
 
@@ -507,6 +591,7 @@ pub fn prefetch_into_memo(
         return PrefetchReport {
             derived,
             learned: 0,
+            hook: 0,
             requested: 0,
             seeded: 0,
             skipped: None,
@@ -516,6 +601,7 @@ pub fn prefetch_into_memo(
         return PrefetchReport {
             derived,
             learned: 0,
+            hook: 0,
             requested: wanted.len(),
             seeded: 0,
             skipped: Some(PrefetchSkip::NoRuntime),
@@ -531,6 +617,7 @@ pub fn prefetch_into_memo(
             PrefetchReport {
                 derived,
                 learned: 0,
+                hook: 0,
                 requested: wanted.len(),
                 seeded,
                 skipped: None,
@@ -546,6 +633,7 @@ pub fn prefetch_into_memo(
             PrefetchReport {
                 derived,
                 learned: 0,
+                hook: 0,
                 requested: wanted.len(),
                 seeded: 0,
                 skipped: Some(PrefetchSkip::RpcFailed),
@@ -625,6 +713,8 @@ mod tests {
     use std::task::{Context, Poll};
 
     use crate::sim::evm2::bot_state_db::BotStateDb;
+    use crate::sim::evm2::handle::EVM2_PRODUCTION_SPEC;
+    use crate::sim::evm2::hook_slots::HookSlotStore;
     use crate::sim::hot_slots::HOT_SLOT_DECAY_BLOCKS;
     use crate::sim::{ReadAnchor, StorageMemoCache};
 
@@ -1044,7 +1134,10 @@ mod tests {
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &executor_facts(),
-            &HotSlotStore::new(),
+            LearnedSets {
+                hot: &HotSlotStore::new(),
+                hooks: None,
+            },
             &memo,
         );
         assert_eq!(
@@ -1052,6 +1145,7 @@ mod tests {
             PrefetchReport {
                 derived: slots.len(),
                 learned: 0,
+                hook: 0,
                 requested: slots.len(),
                 seeded: slots.len(),
                 skipped: None,
@@ -1107,7 +1201,10 @@ mod tests {
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
-            &hot,
+            LearnedSets {
+                hot: &hot,
+                hooks: None,
+            },
             &cache.for_anchor(ReadAnchor::at(7)),
         );
         assert_eq!(first.seeded, first.derived);
@@ -1117,7 +1214,10 @@ mod tests {
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
-            &hot,
+            LearnedSets {
+                hot: &hot,
+                hooks: None,
+            },
             &cache.for_anchor(ReadAnchor::at(7)),
         );
         assert_eq!(
@@ -1125,6 +1225,7 @@ mod tests {
             PrefetchReport {
                 derived: first.derived,
                 learned: 0,
+                hook: 0,
                 requested: 0,
                 seeded: 0,
                 skipped: None,
@@ -1151,7 +1252,10 @@ mod tests {
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
-            &HotSlotStore::new(),
+            LearnedSets {
+                hot: &HotSlotStore::new(),
+                hooks: None,
+            },
             &memo,
         );
         assert_eq!(report.skipped, Some(PrefetchSkip::RpcFailed));
@@ -1203,7 +1307,10 @@ mod tests {
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
-            &HotSlotStore::new(),
+            LearnedSets {
+                hot: &HotSlotStore::new(),
+                hooks: None,
+            },
             &seeded,
         );
         assert_eq!(report.seeded, slots.len());
@@ -1273,7 +1380,10 @@ mod tests {
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &executor_facts(),
-            &hot,
+            LearnedSets {
+                hot: &hot,
+                hooks: None,
+            },
             100,
         );
         assert_eq!(plan.learned, 0);
@@ -1288,7 +1398,16 @@ mod tests {
         hot.record(100, Address::new([0x5e; 20]), U256::from(3u64));
         let paths = [path(vec![v2_hop(POOL_1)])];
         let facts = executor_facts();
-        let plan = prewarm_plan(&paths, &FamilySlotLayout::PRODUCTION, &facts, &hot, 100);
+        let plan = prewarm_plan(
+            &paths,
+            &FamilySlotLayout::PRODUCTION,
+            &facts,
+            LearnedSets {
+                hot: &hot,
+                hooks: None,
+            },
+            100,
+        );
         assert_eq!(plan.learned, 0);
         assert_eq!(
             plan.slots,
@@ -1309,7 +1428,10 @@ mod tests {
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
-            &hot,
+            LearnedSets {
+                hot: &hot,
+                hooks: None,
+            },
             touched_at + HOT_SLOT_DECAY_BLOCKS - 1,
         );
         assert_eq!(hot_plan.learned, 1);
@@ -1317,7 +1439,10 @@ mod tests {
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
-            &hot,
+            LearnedSets {
+                hot: &hot,
+                hooks: None,
+            },
             touched_at + HOT_SLOT_DECAY_BLOCKS,
         );
         assert_eq!(
@@ -1353,7 +1478,16 @@ mod tests {
         hot.record(anchor - 1, TOKEN, token_balance);
         hot.record(anchor - 1, POOL_1, drift_slot);
 
-        let plan = prewarm_plan(&paths, &FamilySlotLayout::PRODUCTION, &facts, &hot, anchor);
+        let plan = prewarm_plan(
+            &paths,
+            &FamilySlotLayout::PRODUCTION,
+            &facts,
+            LearnedSets {
+                hot: &hot,
+                hooks: None,
+            },
+            anchor,
+        );
         assert_eq!(plan.derived, derived.len());
         assert_eq!(plan.learned, 2, "the learned complement is the two words");
         assert_eq!(plan.slots.len(), derived.len() + 2);
@@ -1369,7 +1503,10 @@ mod tests {
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
-            &hot,
+            LearnedSets {
+                hot: &hot,
+                hooks: None,
+            },
             &memo,
         );
         assert_eq!(report.derived, derived.len());
@@ -1432,7 +1569,16 @@ mod tests {
 
         let anchor = 101u64;
         let memo = cache.for_anchor(ReadAnchor::at(anchor));
-        let plan = prewarm_plan(&paths, &FamilySlotLayout::PRODUCTION, &facts, &hot, anchor);
+        let plan = prewarm_plan(
+            &paths,
+            &FamilySlotLayout::PRODUCTION,
+            &facts,
+            LearnedSets {
+                hot: &hot,
+                hooks: None,
+            },
+            anchor,
+        );
         assert_eq!(
             plan.learned, 1,
             "the N-primed prediction is still hot at N+1"
@@ -1443,7 +1589,10 @@ mod tests {
             &paths,
             &FamilySlotLayout::PRODUCTION,
             &facts,
-            &hot,
+            LearnedSets {
+                hot: &hot,
+                hooks: None,
+            },
             &memo,
         );
         assert_eq!(report.requested, plan.slots.len());
@@ -1452,9 +1601,163 @@ mod tests {
             stub.anchors().iter().all(|pinned| *pinned == tag),
             "the learned prediction's value is read at the fan-out's anchor, never the learned one"
         );
+
         assert!(
             !stale.holds(TOKEN, U256::from(0x99u64)),
             "the learning anchor's memo is not the one seeded"
         );
+    }
+
+    // ── the learned hook sets ────────────────────────────────────────────
+
+    const HOOK: Address = Address::new([0x40; 20]);
+
+    fn v4_hooked_hop(pool_id: B256, hook: Address) -> HopInfo {
+        HopInfo::V4(V4HopInfo {
+            hook_address: hook,
+            ..match v4_hop(pool_id) {
+                HopInfo::V4(hop) => hop,
+                other => unreachable!("v4_hop makes a V4 hop: {other:?}"),
+            }
+        })
+    }
+
+    /// A hook's learned set joins the plan at the HOOK's own address (the pool
+    /// key names it) — the arbitrary storage the path cannot derive, beside the
+    /// PoolManager words the same frame reads that it can.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_learned_hook_set_joins_the_one_prewarm_batch() {
+        let stub = ChainStub::new();
+        let provider = stub.provider();
+        let cache = StorageMemoCache::new();
+        let anchor = 100u64;
+        let memo = cache.for_anchor(ReadAnchor::at(anchor));
+
+        let hooks = HookSlotStore::in_memory(EVM2_PRODUCTION_SPEC);
+        let _ = hooks.record(HOOK, [U256::from(3u64), U256::from(9u64)]);
+
+        let paths = [path(vec![v4_hooked_hop(B256::with_last_byte(7), HOOK)])];
+        let facts = executor_facts();
+        let derived = path_prefetch_slots(&paths, &FamilySlotLayout::PRODUCTION, &facts);
+
+        let plan = prewarm_plan(
+            &paths,
+            &FamilySlotLayout::PRODUCTION,
+            &facts,
+            LearnedSets {
+                hot: &HotSlotStore::new(),
+                hooks: Some(&hooks),
+            },
+            anchor,
+        );
+        assert_eq!(plan.derived, derived.len());
+        assert_eq!(plan.learned, 0, "the hot set holds nothing");
+        assert_eq!(plan.hook, 2, "the hook's two learned slots");
+        assert_eq!(
+            &plan.slots[..derived.len()],
+            &derived[..],
+            "the derivation comes first, the hook set after it"
+        );
+        assert_eq!(
+            &plan.slots[derived.len()..],
+            &[(HOOK, U256::from(3u64)), (HOOK, U256::from(9u64))],
+            "the hook's slots are joined at the HOOK's address"
+        );
+
+        let report = prefetch_paths_into_memo(
+            &provider,
+            anchor,
+            &paths,
+            &FamilySlotLayout::PRODUCTION,
+            &facts,
+            LearnedSets {
+                hot: &HotSlotStore::new(),
+                hooks: Some(&hooks),
+            },
+            &memo,
+        );
+        assert_eq!(report.hook, 2);
+        assert_eq!(report.requested, plan.slots.len());
+        assert_eq!(
+            stub.packets(),
+            vec![plan.slots.len()],
+            "ONE batch carries the derivation and the learned hook set"
+        );
+        let tag = format!("{anchor:#x}");
+        assert!(
+            stub.anchors().iter().all(|pinned| *pinned == tag),
+            "the hook's members pin the fan-out's anchor, never a learning anchor"
+        );
+        assert!(
+            memo.holds(HOOK, U256::from(3u64)) && memo.holds(HOOK, U256::from(9u64)),
+            "the learned hook slots are seeded into the anchor's memo"
+        );
+    }
+
+    /// The same hook on two hops is one set of batch members: the join dedups.
+    #[test]
+    fn the_same_hook_on_two_hops_joins_once() {
+        let hooks = HookSlotStore::in_memory(EVM2_PRODUCTION_SPEC);
+        let _ = hooks.record(HOOK, [U256::from(5u64)]);
+        let paths = [
+            path(vec![v4_hooked_hop(B256::with_last_byte(1), HOOK)]),
+            path(vec![v4_hooked_hop(B256::with_last_byte(2), HOOK)]),
+        ];
+        let plan = prewarm_plan(
+            &paths,
+            &FamilySlotLayout::PRODUCTION,
+            &executor_facts(),
+            LearnedSets {
+                hot: &HotSlotStore::new(),
+                hooks: Some(&hooks),
+            },
+            100,
+        );
+        assert_eq!(plan.hook, 1);
+        assert_eq!(
+            plan.slots
+                .iter()
+                .filter(|(address, _)| *address == HOOK)
+                .count(),
+            1
+        );
+    }
+
+    /// A hook nothing has learned joins nothing, and a session without a store
+    /// (or a hookless pool) joins nothing: the lane degrades to the derivation
+    /// it always had.
+    #[test]
+    fn an_unlearned_hook_joins_nothing() {
+        let hooks = HookSlotStore::in_memory(EVM2_PRODUCTION_SPEC);
+        let paths = [path(vec![v4_hooked_hop(B256::with_last_byte(3), HOOK)])];
+        let facts = executor_facts();
+        let derived = path_prefetch_slots(&paths, &FamilySlotLayout::PRODUCTION, &facts);
+
+        let unlearned = prewarm_plan(
+            &paths,
+            &FamilySlotLayout::PRODUCTION,
+            &facts,
+            LearnedSets {
+                hot: &HotSlotStore::new(),
+                hooks: Some(&hooks),
+            },
+            100,
+        );
+        assert_eq!(unlearned.hook, 0);
+        assert_eq!(unlearned.slots, derived);
+
+        let _ = hooks.record(HOOK, [U256::from(1u64)]);
+        let no_store = prewarm_plan(
+            &paths,
+            &FamilySlotLayout::PRODUCTION,
+            &facts,
+            LearnedSets {
+                hot: &HotSlotStore::new(),
+                hooks: None,
+            },
+            100,
+        );
+        assert_eq!(no_store.hook, 0);
+        assert_eq!(no_store.slots, derived);
     }
 }

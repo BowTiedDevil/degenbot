@@ -22,6 +22,17 @@
 //! cached across anchors — the scratch's DB IS the anchor, and every value it
 //! holds was read from the node at that anchor.
 //!
+//! # Learning the hook's slot SET
+//!
+//! The one thing a quote CAN carry across anchors is which slots the hook
+//! touched: [`V4BlackBoxQuote::hook_slots`] is the frame's settled touched set
+//! at the pool key's hook address, and a quoter holding a
+//! [`HookSlotStore`](super::hook_slots::HookSlotStore) records it (union-merged,
+//! capped) so the anchor's prefetch can join those slots into its ONE batch.
+//! The VALUES are never carried: every prefetch member is read from the node at
+//! the anchor the quote runs at, so a drifted hook word costs one wasted batch
+//! member, never a wrong price.
+//!
 //! The production seam is `Evm2BlockSimHandle::scratch_evm`: its scratch is
 //! pinned to the handle's block, shares the process-wide warm code cache, and
 //! already carries the interpreter runner, so a quoter built over it prices legs
@@ -52,6 +63,7 @@
 //! let amount_out = quote.amount_out;
 //! ```
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use alloy::primitives::{address, Address, Bytes, U256};
@@ -63,6 +75,7 @@ use degenbot_pools::{
 };
 
 use super::frame_replay::Evm2ScratchEvm;
+use super::hook_slots::HookSlotStore;
 use crate::sim::frame_replay::{BaseFeeSource, ReplayFrameError, ReplayableTx};
 use crate::sim::RunVerdict;
 
@@ -156,6 +169,21 @@ pub fn leg_state_slots(pool_key: &V4PoolKey) -> [U256; 2] {
     [v4_slot0_slot(base), v4_liquidity_slot(base)]
 }
 
+/// The slots a frame touched at `hook`, ascending — the hook's own storage,
+/// and nothing else: the PoolManager's words are computable
+/// ([`leg_state_slots`]) and belong to the path derivation, while storage at
+/// any other address is some other contract's business.
+fn hook_slots_of(touched: &[(Address, Vec<U256>)], hook: Address) -> Vec<U256> {
+    if hook.is_zero() {
+        return Vec::new();
+    }
+    touched
+        .iter()
+        .filter(|(address, _)| *address == hook)
+        .flat_map(|(_, slots)| slots.iter().copied())
+        .collect()
+}
+
 /// The caller and gas policy of a quote frame. A quote is `eth_call`-shaped:
 /// the sender is a plain EOA (no funds needed — the frame replay does not
 /// check balances), and its nonce must be the anchor's nonce for that account
@@ -219,7 +247,7 @@ impl V4QuoterConfig {
 }
 
 /// One exact leg quote.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct V4BlackBoxQuote {
     /// The leg's output amount, in the output currency's base units — the
     /// answer, exact to the wei.
@@ -238,6 +266,16 @@ pub struct V4BlackBoxQuote {
     pub wall: Duration,
     /// Whether the projected base fee validated the frame.
     pub base_fee_source: BaseFeeSource,
+
+    /// The slots the frame touched at the pool key's hook address, ascending —
+    /// the hook's own storage, which has no derivation. Empty for a pool with
+    /// no hook.
+    pub hook_slots: Vec<U256>,
+
+    /// How many of [`Self::hook_slots`] the quoter's store did not already
+    /// hold (`0` when no store is attached, and on a re-quote of an
+    /// already-learned hook).
+    pub hook_slots_learned: usize,
 }
 
 /// A quote that could not be answered. A reverted/halted quoter is a
@@ -356,6 +394,8 @@ pub fn quote_exact_in<Ext: Database>(
                 rpc_reads: outcome.rpc_reads,
                 wall: outcome.wall,
                 base_fee_source: outcome.base_fee_source,
+                hook_slots: hook_slots_of(&outcome.touched, leg.pool_key.hooks),
+                hook_slots_learned: 0,
             })
         }
         RunVerdict::Reverted => Err(V4QuoteError::Reverted {
@@ -413,6 +453,9 @@ pub fn resolve_pool_manager<Ext: Database>(
 pub struct V4BlackBoxQuoter {
     config: V4QuoterConfig,
     manager: Option<Address>,
+    /// The learned hook slot sets this quoter teaches (see the module's
+    /// learning section). `None` prices without learning.
+    hook_slots: Option<Arc<HookSlotStore>>,
 }
 
 impl Default for V4BlackBoxQuoter {
@@ -428,7 +471,23 @@ impl V4BlackBoxQuoter {
         Self {
             config,
             manager: None,
+            hook_slots: None,
         }
+    }
+
+    /// Teach `store` every quote's hook-touched slot set — the learning arm of
+    /// the finalist re-quote (ADR-090): one cold quote per hook, then the
+    /// anchor's prefetch carries the set warm.
+    #[must_use]
+    pub fn with_hook_slots(mut self, store: Arc<HookSlotStore>) -> Self {
+        self.hook_slots = Some(store);
+        self
+    }
+
+    /// The store this quoter teaches, if any.
+    #[must_use]
+    pub fn hook_slots(&self) -> Option<&Arc<HookSlotStore>> {
+        self.hook_slots.as_ref()
     }
 
     /// The quoter's configuration.
@@ -468,7 +527,12 @@ impl V4BlackBoxQuoter {
                 requested: leg.pool_manager,
             });
         }
-        quote_exact_in(scratch, &self.config, leg, amount_in)
+        let mut quote = quote_exact_in(scratch, &self.config, leg, amount_in)?;
+        if let Some(store) = self.hook_slots.as_ref() {
+            let merge = store.record(leg.pool_key.hooks, quote.hook_slots.iter().copied());
+            quote.hook_slots_learned = merge.added;
+        }
+        Ok(quote)
     }
 }
 
@@ -502,6 +566,8 @@ mod tests {
     use ::evm2::evm::{AccountInfo, InMemoryDB};
     use alloy::primitives::keccak256;
 
+    use super::super::handle::EVM2_PRODUCTION_SPEC;
+    use super::super::hook_slots::HookSlotStore;
     use crate::sim::frame_replay::ScratchBlock;
 
     fn usdc_weth_key(hooks: Address) -> V4PoolKey {
@@ -703,6 +769,128 @@ mod tests {
         let leg = V4Leg::canonical(usdc_weth_key(Address::ZERO), true);
         let error = quote_exact_in(&mut scratch, &stub_config(), &leg, U256::from(1))
             .expect_err("an EOA cannot answer a quote");
+
         assert_eq!(error, V4QuoteError::MalformedReturn { len: 0 });
+    }
+
+    // ── the hook slot capture ────────────────────────────────────────────
+
+    /// A hook contract holding its own storage.
+    const STUB_HOOK: Address = address!("0000000000000000000000000000000000005678");
+
+    /// The quoter that runs the hook before answering.
+    const HOOK_CALLING_QUOTER: Address = address!("0000000000000000000000000000000000001235");
+
+    /// `PUSH1 0x03 SLOAD POP PUSH1 0x07 SLOAD POP STOP` — two reads of the
+    /// hook's own slots, and no writes at all.
+    fn hook_bytecode() -> Bytes {
+        Bytes::from(vec![0x60, 0x03, 0x54, 0x50, 0x60, 0x07, 0x54, 0x50, 0x00])
+    }
+
+    /// [`stub_bytecode`] with a `STATICCALL` into `hook` ahead of its
+    /// `(amountIn, 7)` answer — the capture's offline subject.
+    fn hook_calling_quoter_bytecode(hook: Address) -> Bytes {
+        let mut code = Vec::new();
+        code.extend_from_slice(&[0x60, 0x00, 0x35, 0x60, 0xE0, 0x1C]);
+        code.push(0x63);
+        code.extend_from_slice(&QUOTE_EXACT_INPUT_SINGLE_SELECTOR);
+        code.push(0x14);
+        code.push(0x60);
+        code.push(0x2C);
+        code.push(0x57);
+        code.push(0x73);
+        code.extend_from_slice(STUB_MANAGER.as_slice());
+        code.extend_from_slice(&[0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3]);
+        // JUMPDEST: retSize, retOffset, argsSize, argsOffset, address, gas.
+        code.extend_from_slice(&[0x5B, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00]);
+        code.push(0x73);
+        code.extend_from_slice(hook.as_slice());
+        code.extend_from_slice(&[0x5A, 0xFA, 0x50]);
+        code.extend_from_slice(&[0x60, 0xE4, 0x35]);
+        code.extend_from_slice(&[0x60, 0x00, 0x52]);
+        code.extend_from_slice(&[0x60, 0x07, 0x60, 0x20, 0x52]);
+        code.extend_from_slice(&[0x60, 0x40, 0x60, 0x00, 0xF3]);
+        Bytes::from(code)
+    }
+
+    fn hook_calling_db() -> InMemoryDB {
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            &HOOK_CALLING_QUOTER,
+            AccountInfo::default()
+                .with_code(Bytecode::new_raw(hook_calling_quoter_bytecode(STUB_HOOK))),
+        );
+        db.insert_account_info(
+            &STUB_HOOK,
+            AccountInfo::default().with_code(Bytecode::new_raw(hook_bytecode())),
+        );
+        db
+    }
+
+    /// The capture: the quote's frame reads the hook's own storage, and a
+    /// quoter holding a store learns exactly those slots — the frame's settled
+    /// touched set, attributed by the pool key's hook address. The answer is
+    /// unchanged by the capture, and a re-quote adds nothing.
+    #[test]
+    fn the_quoter_learns_the_hooks_touched_slots() {
+        let mut scratch = scratch(hook_calling_db());
+        let config = V4QuoterConfig {
+            quoter: HOOK_CALLING_QUOTER,
+            ..V4QuoterConfig::default()
+        };
+        let store = Arc::new(HookSlotStore::in_memory(EVM2_PRODUCTION_SPEC));
+        let mut quoter = V4BlackBoxQuoter::new(config).with_hook_slots(Arc::clone(&store));
+        let leg = V4Leg::canonical(usdc_weth_key(STUB_HOOK), true);
+
+        let quote = quoter.quote(&mut scratch, &leg, U256::from(1_500)).unwrap();
+        assert_eq!(quote.amount_out, U256::from(1_500));
+        assert_eq!(
+            quote.hook_slots,
+            vec![U256::from(3), U256::from(7)],
+            "the frame's reads at the hook's address, ascending"
+        );
+        assert_eq!(quote.hook_slots_learned, 2);
+        assert_eq!(
+            store.slots_for(STUB_HOOK),
+            vec![U256::from(3), U256::from(7)]
+        );
+        assert!(quoter.hook_slots().is_some());
+
+        let again = quoter.quote(&mut scratch, &leg, U256::from(2_000)).unwrap();
+        assert_eq!(again.hook_slots_learned, 0, "the set already held both");
+        assert_eq!(store.slots_for(STUB_HOOK).len(), 2);
+    }
+
+    /// A pool key with no hook names no storage set: nothing is touched at the
+    /// (zero) hook address, so nothing is learned.
+    #[test]
+    fn a_hookless_pool_learns_nothing() {
+        let mut scratch = scratch(stub_db());
+        let store = Arc::new(HookSlotStore::in_memory(EVM2_PRODUCTION_SPEC));
+        let mut quoter = V4BlackBoxQuoter::new(stub_config()).with_hook_slots(Arc::clone(&store));
+        let leg = V4Leg::canonical(usdc_weth_key(Address::ZERO), true);
+
+        let quote = quoter.quote(&mut scratch, &leg, U256::from(1_000)).unwrap();
+        assert!(quote.hook_slots.is_empty());
+        assert_eq!(quote.hook_slots_learned, 0);
+        assert_eq!(store.slot_count(), 0);
+    }
+
+    /// A quoter without a store still reports the touched set (the diagnostic
+    /// is the frame's own answer) and learns nothing.
+    #[test]
+    fn a_storeless_quoter_reports_but_does_not_learn() {
+        let mut scratch = scratch(hook_calling_db());
+        let config = V4QuoterConfig {
+            quoter: HOOK_CALLING_QUOTER,
+            ..V4QuoterConfig::default()
+        };
+        let mut quoter = V4BlackBoxQuoter::new(config);
+        let leg = V4Leg::canonical(usdc_weth_key(STUB_HOOK), true);
+
+        let quote = quoter.quote(&mut scratch, &leg, U256::from(1_500)).unwrap();
+        assert_eq!(quote.hook_slots.len(), 2);
+        assert_eq!(quote.hook_slots_learned, 0);
+        assert!(quoter.hook_slots().is_none());
     }
 }

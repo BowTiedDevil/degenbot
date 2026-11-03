@@ -27,6 +27,7 @@ use ::evm2::bytecode::Bytecode;
 use ::evm2::evm::{AccountInfo, Database};
 use ::evm2::interpreter::Word;
 
+use crate::sim::evm2::hook_slots::HookSlotStore;
 use crate::sim::hot_slots::HotSlotStore;
 use crate::sim::sim_metrics;
 use crate::sim::storage_memo::{ReadAnchor, StorageMemo, StorageMemoCache};
@@ -65,6 +66,13 @@ pub struct WarmCodeCacheInner {
     /// per-anchor memo it feeds. Owned here for the same reason the memo cache
     /// is: this value is the engine's session-scoped shared-read-cache handle.
     hot_slots: Arc<HotSlotStore>,
+
+    /// The durable per-hook slot-set store the black-box quoter learns and the
+    /// prewarm joins (ADR-090): CROSS-block and cross-RUN by design — a hook's
+    /// touched-slot set is learned once and outlives every anchor that taught
+    /// it. `None` until the engine owner installs one (a session without it
+    /// joins no hook slots; nothing else changes).
+    hook_slots: Option<Arc<HookSlotStore>>,
 }
 
 impl WarmCodeCacheInner {
@@ -77,6 +85,7 @@ impl WarmCodeCacheInner {
             ttl_blocks,
             storage_memo: StorageMemoCache::new(),
             hot_slots: Arc::new(HotSlotStore::new()),
+            hook_slots: None,
         }
     }
 
@@ -91,6 +100,17 @@ impl WarmCodeCacheInner {
     #[must_use]
     pub fn shared_with_ttl(ttl_blocks: u64) -> Arc<RwLock<Self>> {
         Arc::new(RwLock::new(Self::new(ttl_blocks)))
+    }
+
+    /// The engine-owner construction shape with the durable per-hook slot-set
+    /// store installed (ADR-090) — the store the black-box quoter learns and
+    /// the prewarm joins. A named constructor rather than a post-hoc install so
+    /// the owner never takes a lock it then holds across a call.
+    #[must_use]
+    pub fn shared_with_hook_slots(store: Arc<HookSlotStore>) -> Arc<RwLock<Self>> {
+        let mut inner = Self::new(WARM_CODE_CACHE_TTL_BLOCKS);
+        inner.hook_slots = Some(store);
+        Arc::new(RwLock::new(inner))
     }
 
     /// Is an entry loaded at `loaded_block` still fresh at `block`?
@@ -115,6 +135,15 @@ impl WarmCodeCacheInner {
     #[must_use]
     pub fn hot_slots(&self) -> Arc<HotSlotStore> {
         Arc::clone(&self.hot_slots)
+    }
+
+    /// The installed per-hook slot-set store, if the engine owner set one.
+    /// Takes `&self` and hands back an owned handle for the same reason
+    /// [`Self::hot_slots`] does: the fan-out never holds the lock guard across
+    /// provider I/O.
+    #[must_use]
+    pub fn hook_slots(&self) -> Option<Arc<HookSlotStore>> {
+        self.hook_slots.clone()
     }
 }
 

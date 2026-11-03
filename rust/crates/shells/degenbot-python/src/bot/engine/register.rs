@@ -82,7 +82,14 @@ impl PyArbEngine {
         // shared `Arc<RwLock<WarmCodeCacheInner>>` for the engine's life,
         // cloned into each per-block `BlockSimHandle::build`. Empty at
         // construction; warmed lazily by the first block's cold RPCs.
-        let warm_code_cache = degenbot_simulation::WarmCodeCacheInner::shared_default();
+        // The durable per-hook slot-set store (ADR-090 H2) rides the same
+        // owner: every black-box V4 leg quote learns its hook's touched-slot
+        // set once, and the anchor's prefetch joins it so steady-state
+        // re-quotes read hook storage warm. A damaged or unwritable store
+        // degrades to an in-memory one — a slot cache never fails a boot.
+        let warm_code_cache = degenbot_simulation::WarmCodeCacheInner::shared_with_hook_slots(
+            degenbot_simulation::sim::evm2::hook_slots::open_production_store(),
+        );
         Ok(Self {
             stages,
             session,
