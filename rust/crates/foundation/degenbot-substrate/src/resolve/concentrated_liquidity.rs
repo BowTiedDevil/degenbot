@@ -10,9 +10,8 @@
 //! deliberately share NO code. The `build_int_v*_sequence` builders own the
 //! load-bearing differences — fee convention (V3 `gamma = 1e6 − lp_fee` vs V4
 //! combined `swapFee`) and per-range net-sign direction (V4 only).
-//! This file keeps ONLY the state-owner seam: the registry lookups, the ADR-037
-//! hook refusal (V4's identity-side fact), the nonce, and the one
-//! `ResolvedHop` wrap per variant.
+//! This file keeps ONLY the state-owner seam: the registry lookups, the nonce,
+//! and the one `ResolvedHop` wrap per variant.
 //!
 //! TABLE DERIVATION (shared, still downstream of the per-family sequence
 //! builders): the promoted fused-epoch pair (cache-lab winner S1) lives in
@@ -81,8 +80,10 @@ pub(crate) fn project_v3(
 
 /// V4 resolve row: identical concentrated liquidity math as V3 (BotState-owned, ADR-003), with
 /// V4's own fee/protocol-fee convention handled behind the door (inside
-/// `build_int_v4_sequence`), plus the ADR-037 hook refusal at the row (the
-/// hook permission bits live on V4's registration identity).
+/// `build_int_v4_sequence`). An amount-modifying hook no longer refuses the
+/// projection (ADR-090): the row projects the standard-math walk and
+/// `resolve_hops` unions `Caveats::HOOKED_POOL` onto the path, where the
+/// finalist re-quote tier reads it.
 pub(crate) fn project_v4(
     core: &BotState,
     pool_ref: &MixedPoolRef,
@@ -93,15 +94,6 @@ pub(crate) fn project_v4(
     let identity = core
         .pool_slice::<degenbot_pools::V4PoolIdentity>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
-    // ADR-037: hooked pools are ADMITTED at registration but are
-    // not solvable — the concentrated liquidity math assumes no hook intervention. Paths that
-    // would traverse one die here with a named reason so the existing
-    // invalidation telemetry counts them. The door re-checks in capture
-    // order (viability, then hook, then walk) — this row-side check keeps
-    // the hook refusal ahead of the stateless-mode compute path.
-    if ::degenbot_pools::has_amount_modifying_hook(identity.pool_key.hooks) {
-        return Err(MissingHopReason::HookedPool);
-    }
     let int_seq = concentrated_liquidity_read::capture_hop(
         concentrated_liquidity_read::ConcentratedLiquidityState::V4 {
             state: pool_state,
@@ -131,7 +123,6 @@ fn concentrated_liquidity_refusal(
         concentrated_liquidity_read::CaptureRefusal::SequenceUnavailable => {
             MissingHopReason::SequenceUnavailable
         }
-        concentrated_liquidity_read::CaptureRefusal::HookedPool => MissingHopReason::HookedPool,
     }
 }
 
@@ -376,13 +367,21 @@ mod tests {
     }
 
     #[test]
-    fn project_v4_hooked_pool_is_hooked_pool_reason() {
-        // ADR-037: hooked pools are admitted but excluded from
-        // solving — projection fails with the named HookedPool reason.
+    fn project_v4_amount_modifying_hook_projects_the_standard_walk() {
+        // ADR-090: an amount-modifying hook no longer refuses projection — the
+        // row projects the standard-math walk and the path-level caveat
+        // (`resolve_hops`) tells the finalist re-quote tier the leg is
+        // approximate.
         let mut core = BotState::new();
         let v4_id = register_v4_with_hooks(&mut core, two_ticks(), 0x80);
-        let reason = proj4(&core, &v4_ref(v4_id, true)).unwrap_err();
-        assert_eq!(reason, MissingHopReason::HookedPool);
+        let (hop, _nonce) = proj4(&core, &v4_ref(v4_id, true)).expect("hooked pool projects");
+        let seq = hop
+            .as_int_sequence()
+            .expect("hop is a concentrated liquidity sequence");
+        assert!(
+            !seq.ranges.is_empty(),
+            "a hooked pool's standard-math walk still reaches the solver"
+        );
     }
 
     #[test]

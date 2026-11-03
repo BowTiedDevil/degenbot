@@ -16,6 +16,7 @@
 //! the lane/pipelined-sim seams from `executor`/`inline_sim`. The
 //! walk-adjacent helpers (`clamp_result_in_worker`, `flush_solved_item`,
 //! `inline_sim_payload`) are defined HERE.
+use super::hooked_leg_requote::{hooked_leg_facts, HookedLegAnchor, HookedLegPlan};
 use super::solve_cycle::clamp_result_with_state;
 use super::solve_cycle::SolveCycleShared;
 use super::{BlockMetadata, HashMap};
@@ -47,16 +48,27 @@ pub(crate) fn clamp_result_in_worker(
     if !ctx.worker_clamp || idx >= ctx.pool_refs.len() {
         return 0;
     }
+    let pools = &ctx.pool_refs[idx].pools;
+    // ADR-090: the hooked-leg facts come off ONE short guard, the re-quote
+    // runs with the guard DROPPED (the tier prices against its own
+    // anchor-pinned scratch EVM and the node, never `BotState`), and the
+    // clamp then commits both arms under a fresh guard.
+    let plan = {
+        let core = ctx
+            .core
+            .read_at(degenbot_substrate::state_lock::LockSite::Solver);
+        let facts = hooked_leg_facts(&core, pools, &result.consumed_inputs);
+        drop(core);
+        HookedLegPlan::requote(
+            facts,
+            HookedLegAnchor::at(ctx.solve_block, &ctx.metadata),
+            ctx.hooked_leg_requote.as_deref(),
+        )
+    };
     let core = ctx
         .core
         .read_at(degenbot_substrate::state_lock::LockSite::Solver);
-    clamp_result_with_state(
-        &core,
-        pid,
-        &ctx.pool_refs[idx].pools,
-        ctx.clamp_margin,
-        result,
-    )
+    clamp_result_with_state(&core, pid, pools, ctx.clamp_margin, &plan, result)
 }
 /// SIMPIPE2 T3: the WORKER-side inline sim — resolve the per-path payload
 /// from the clamp-committed result on the SAME worker context the T2 clamp

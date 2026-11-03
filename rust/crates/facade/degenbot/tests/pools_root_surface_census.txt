@@ -42,6 +42,15 @@
 # accessors), its module, the root re-export, and `PoolEntry::tick_coverage`
 # (the resolve loop's per-hop registration-coverage read).
 #
+# The 1027 -> 1028 review is ADR-090 H3's caveat lift: `Caveats::without` is
+# the one legitimate AND-NOT on the trust-flag set — a flag that described a
+# TIER rather than a pool stops applying when a later tier answered exactly
+# (`HOOKED_POOL` lifts off a V4 leg the finalist re-quote priced black-box at
+# the anchor). The consumer outside the capability crate is the bot's clamp
+# (`solve_cycle::merge`), which is the seam that owns the solve result the flag
+# rides on; `union`'s existing set-construction API cannot express a removal,
+# and a registration-time fact such as `SPARSE_COVERAGE` never lifts.
+#
 # Regenerate: rg -n '^pub mod' rust/crates/foundation/degenbot-pools/src/lib.rs
 # plus the name count from `count_pub_items` in the gate.
 #

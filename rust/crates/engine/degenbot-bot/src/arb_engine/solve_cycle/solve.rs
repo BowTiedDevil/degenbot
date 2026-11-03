@@ -304,6 +304,7 @@ pub(super) fn solve_epoch(
         clamp_margin: ctx.clamp_margin,
         worker_clamp: ctx.inline_sim_enabled,
         inline_sim: ctx.inline_sim.clone(),
+        hooked_leg_requote: ctx.hooked_leg_requote.clone(),
     });
     // The LPT bins are Arc-shared for every arm; the
     // arms index through the same deref (byte-identical semantics).

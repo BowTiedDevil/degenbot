@@ -55,29 +55,26 @@ pub(super) fn engine_amount_specified(canonical: I256) -> I256 {
 /// The V4 capture arm of [`super::capture_hop`] — one fresh observation of
 /// one V4 hop, refused rather than defaulted: the directional viability gate
 /// (V4 twin of the archived-Python `swap_is_viable` port) runs BEFORE the
-/// ADR-037 hook refusal, which runs BEFORE the `O(tick_data)` range walk in
-/// `build_int_v4_sequence`.
+/// `O(tick_data)` range walk in `build_int_v4_sequence`.
+///
+/// An amount-modifying hook does NOT refuse the projection (ADR-090): the
+/// tick walk is still worth ranking, and `resolve_hops` flags the path with
+/// `Caveats::HOOKED_POOL` so the finalist re-quote tier knows which legs it
+/// must price black-box.
 ///
 /// Errors
 /// ------
 /// [`CaptureRefusal::NotViable`] when the direction is dead at the current
 /// state (sparse-coverage pools default viable — no data to judge);
-/// [`CaptureRefusal::HookedPool`] when the hook address carries an
-/// amount-modifying permission bit (ADR-037: admitted at registration but
-/// never solvable);
 /// [`CaptureRefusal::SequenceUnavailable`] when the integer tick-range
 /// sequence could not be built for the direction.
 pub(super) fn capture_hop(
     state: &V4PoolState,
     scalars: DesignScalars,
-    hooks: Address,
     zero_for_one: bool,
 ) -> Result<Arc<IntV3TickRangeSequence>, CaptureRefusal> {
     if state.coverage == PoolTickCoverage::Tracked && !state.swap_is_viable(zero_for_one) {
         return Err(CaptureRefusal::NotViable);
-    }
-    if has_amount_modifying_hook(hooks) {
-        return Err(CaptureRefusal::HookedPool);
     }
     let sequence = state
         .build_int_v4_sequence(scalars.tick_spacing, scalars.fee, zero_for_one)

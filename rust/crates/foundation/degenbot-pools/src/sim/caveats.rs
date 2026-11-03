@@ -50,6 +50,18 @@ impl Caveats {
         Self(self.0 | other.0)
     }
 
+    /// `self` minus every flag in `other`.
+    ///
+    /// The one legitimate lift: a flag that described a *tier*, not a pool,
+    /// stops applying when a later tier answered exactly (ADR-090 §4 — a
+    /// hooked leg re-quoted black-box at the anchor is the chain's own
+    /// answer, so `HOOKED_POOL` no longer describes it). A registration-time
+    /// fact such as `SPARSE_COVERAGE` never lifts this way.
+    #[must_use]
+    pub const fn without(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
+    }
+
     /// The trust flags a pool's registration-time tick coverage implies.
     ///
     /// Tracked snapshots provided complete tick data, so results are

@@ -213,7 +213,7 @@ impl crate::bot::engine::PyArbEngine {
     ) {
         let bot_state = self.bot_state_arc();
         let warm_cache = self.warm_code_cache_arc();
-        let hook = crate::simulation::inline_hook::InlineSimHook::new(
+        let hook = Arc::new(crate::simulation::inline_hook::InlineSimHook::new(
             Arc::new(context.provider.sim_bounded()),
             context.executor_owner,
             context.executor_address,
@@ -227,14 +227,22 @@ impl crate::bot::engine::PyArbEngine {
             erc6909_profit,
             bot_state,
             warm_cache,
-        );
+        ));
         // LW-T3 (Seam C): the inline-sim runtime registers itself as the
         // DEFAULT escalation port at hook install — escalated lane work
         // drives on THIS runtime, never on CPU seats; the cold-miss budget
         // ceiling is visible at the port's gauge surface.
         let escalation_port = hook.escalation_port();
-        self.with_stages(py, |e| {
-            e.set_inline_simulator(std::sync::Arc::new(hook));
+        // ADR-090 H3: the SAME installed object carries the finalist
+        // re-quote tier — the black-box V4 leg quote shares the hook's
+        // provider, warm code cache (and its learned per-hook slot sets), and
+        // dedicated runtime, so a re-quote prices the anchor on exactly the
+        // machinery the verification frame uses.
+        let hooked_leg_requote: Arc<dyn degenbot_bot::arb_engine::HookedLegReQuote> =
+            Arc::clone(&hook) as Arc<dyn degenbot_bot::arb_engine::HookedLegReQuote>;
+        self.with_stages(py, move |e| {
+            e.set_inline_simulator(hook);
+            e.set_hooked_leg_requote(hooked_leg_requote);
         });
         degenbot_workers::lane::install_default_escalation_port(escalation_port);
         // The soak's hook-wiring tell — one line at install, matching the

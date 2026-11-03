@@ -42,7 +42,7 @@ use hashbrown::HashMap;
 use std::sync::Arc;
 
 use degenbot_pools::solve::{HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath};
-use degenbot_pools::Caveats;
+use degenbot_pools::{has_amount_modifying_hook, Caveats, V4PoolIdentity};
 
 use super::BotState;
 
@@ -298,9 +298,6 @@ pub enum MissingHopReason {
     UnknownVariant,
     /// A pairwise index fell outside the token list.
     OutOfRange,
-    /// The pool carries an amount-modifying V4 hook: sims are caveated and
-    /// paths through it are excluded from solving (ADR-037).
-    HookedPool,
     /// `build_int_v*_sequence` returned `None` (no integer tick-range sequence
     /// for the direction, e.g. tick-range cache miss).
     SequenceUnavailable,
@@ -342,7 +339,6 @@ impl std::fmt::Display for MissingHopReason {
             Self::InvariantError => "stable invariant calculation failed",
             Self::NotViable => "pool not viable in the swap direction",
             Self::Quarantined => "pool quarantined (tainted surface, ADR-040)",
-            Self::HookedPool => "pool carries an amount-modifying V4 hook",
         };
         f.write_str(s)
     }
@@ -377,7 +373,6 @@ impl MissingHopReason {
             Self::InvariantError => "invariant_error",
             Self::NotViable => "not_viable",
             Self::Quarantined => "quarantined",
-            Self::HookedPool => "hooked_pool",
         }
     }
 }
@@ -509,13 +504,27 @@ pub fn resolve_hops(
                 resolved.state_nonces.push(nonce);
                 // Trust flags ride the path: a hop whose registration coverage is
                 // Sparse makes the WHOLE path approximate (union — one sparse hop
-                // is enough), the path-admission analogue of the hooked-pool
-                // refusal sitting in the family rows beside it. The probe is per
-                // hop at admission because coverage is a registration-time fact
-                // of the POOL, not of the projected sequence — so it needs no
-                // cache entry and cannot go stale behind the projection memo.
+                // is enough). The probe is per hop at admission because coverage
+                // is a registration-time fact of the POOL, not of the projected
+                // sequence — so it needs no cache entry and cannot go stale
+                // behind the projection memo.
                 if let Some(coverage) = core.pool_tick_coverage(pool_ref.pool_key) {
                     resolved.caveats = resolved.caveats.union(Caveats::for_coverage(coverage));
+                }
+                // ADR-090: an amount-modifying V4 hook makes this hop's
+                // standard-math walk an approximation (the hook's deltas are
+                // arbitrary bytecode). The path carries the caveat until the
+                // finalist re-quote prices every hooked leg black-box at the
+                // anchor; a path whose hooked legs were all re-quoted exact
+                // drops it. The flag is registered here (not at the family
+                // row) so a re-projection from the memo cannot lose it: it is
+                // an identity fact of the pool, read fresh every admission.
+                if pool_ref.hop_type == HopType::V4
+                    && core
+                        .pool_slice::<V4PoolIdentity>(pool_ref.pool_key)
+                        .is_some_and(|identity| has_amount_modifying_hook(identity.pool_key.hooks))
+                {
+                    resolved.caveats = resolved.caveats.union(Caveats::HOOKED_POOL);
                 }
             }
             Err(reason) => {

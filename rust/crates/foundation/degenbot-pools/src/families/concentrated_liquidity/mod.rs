@@ -185,9 +185,6 @@ pub enum CaptureRefusal {
     NotViable,
     /// The integer tick-range sequence could not be built for the direction.
     SequenceUnavailable,
-    /// The pool carries an amount-modifying V4 hook (ADR-037: admitted at
-    /// registration, never solvable). V4-only.
-    HookedPool,
 }
 
 /// Which miss-recovery posture [`read_swap`] runs — "all variants and both
@@ -275,11 +272,9 @@ pub fn capture_hop(
         ConcentratedLiquidityState::V3 { state, scalars } => {
             v3::capture_hop(state, scalars, zero_for_one)
         }
-        ConcentratedLiquidityState::V4 {
-            state,
-            scalars,
-            hooks,
-        } => v4::capture_hop(state, scalars, hooks, zero_for_one),
+        ConcentratedLiquidityState::V4 { state, scalars, .. } => {
+            v4::capture_hop(state, scalars, zero_for_one)
+        }
     }
 }
 

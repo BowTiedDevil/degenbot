@@ -90,6 +90,7 @@ use std::sync::Arc;
 use super::delivery_policy::{
     compute_diff_and_send, deregister_path, set_profit_thresholds, set_result_channel,
 };
+use super::hooked_leg_requote::HookedLegReQuote;
 use super::inline_sim::InlineSimulator;
 use super::lifecycle::{
     flush_event_buffer, last_processed_block, latest_results, path_count, path_dedups,
@@ -428,6 +429,12 @@ impl EngineStages {
     /// Install the inline-sim hook (construction-time wiring).
     pub fn set_inline_simulator(&self, sim: Arc<dyn InlineSimulator>) {
         self.engine.lock().cycle.inline_sim = Some(sim);
+    }
+
+    /// Install the finalist re-quote tier (ADR-090 H3; construction-time
+    /// wiring, exactly like [`Self::set_inline_simulator`]).
+    pub fn set_hooked_leg_requote(&self, requote: Arc<dyn HookedLegReQuote>) {
+        self.engine.lock().cycle.hooked_leg_requote = Some(requote);
     }
 
     /// Close the delivery channels — the result-batch stream and the block

@@ -45,8 +45,8 @@ use degenbot_arbitrage::{
     simulate_path_on_evm_in_span, FailBuckets, SimResult, SimulateContext, SimulatePath, SolveStep,
 };
 use degenbot_bot::arb_engine::{
-    AccessListRow, CapturedSwapRow, InlineSimFailure, InlineSimRequest, InlineSimulator,
-    InlineSwapFamily, SimulatedPathResult,
+    AccessListRow, CapturedSwapRow, HookedLeg, HookedLegAnchor, HookedLegReQuote, InlineSimFailure,
+    InlineSimRequest, InlineSimulator, InlineSwapFamily, SimulatedPathResult,
 };
 use degenbot_executor::composers::EncodeOptions;
 use degenbot_rpc::provider::AlloyProvider;
@@ -733,6 +733,116 @@ impl InlineSimulator for InlineSimHook {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// ADR-090 H3: the finalist re-quote tier
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Price one hooked V4 leg on an anchor-pinned scratch EVM — the blocking
+/// body the tier drives on the hook's own runtime.
+///
+/// The DB is the chain's, not `BotState`'s: the tier runs from the clamp,
+/// which holds the core read guard, so it must never touch engine state
+/// (module rule on [`HookedLegReQuote`]). A Quoter leg only needs the anchor's
+/// own storage, and the layered `CacheDB` IS the per-anchor memo — a second
+/// quote at the same anchor reads no slot twice.
+fn quote_leg_at_anchor(
+    provider: &AlloyProvider,
+    warm_cache: &Arc<RwLock<WarmCodeCacheInner>>,
+    anchor: HookedLegAnchor,
+    leg: &HookedLeg,
+) -> Option<U256> {
+    let counter = Arc::new(degenbot_simulation::sim::frame_replay::FrameRpcCounter::default());
+    let blocking = degenbot_simulation::sim::evm2::blocking_async_db::BlockingAsyncDb::new(
+        degenbot_simulation::sim::evm2::alloy_async_db::AlloyAsyncDb::new(provider, anchor.block),
+    )?;
+    let cold = degenbot_simulation::sim::evm2::frame_replay::Evm2CountingFrameDb::new(
+        blocking,
+        Arc::clone(&counter),
+    );
+    let warm = degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCache::with_owner(
+        Arc::clone(warm_cache),
+        anchor.block,
+        cold,
+    );
+    let ext = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(warm));
+    let mut scratch = degenbot_simulation::sim::evm2::frame_replay::Evm2ScratchEvm::with_counter(
+        ext,
+        degenbot_simulation::sim::frame_replay::ScratchBlock {
+            number: anchor.block,
+            timestamp: anchor.timestamp,
+            base_fee_next: anchor.base_fee,
+        },
+        counter,
+    )
+    .with_jit(degenbot_simulation::sim::evm2::jit::shared_runner());
+    // The learned per-hook slot sets ride the shared warm cache (ADR-090 H2):
+    // a quote teaches its hook's touched set, and the anchor's prefetch joins
+    // it next time. Values are never cached across anchors — the scratch is
+    // the anchor.
+    let mut quoter = match warm_cache.read().hook_slots() {
+        Some(store) => degenbot_simulation::V4BlackBoxQuoter::default().with_hook_slots(store),
+        None => degenbot_simulation::V4BlackBoxQuoter::default(),
+    };
+    let v4_leg = degenbot_simulation::V4Leg::canonical(leg.pool_key.clone(), leg.zero_for_one);
+    match quoter.quote(&mut scratch, &v4_leg, leg.amount_in) {
+        Ok(quote) => Some(quote.amount_out),
+        // Fail-soft (ADR-090 §4): a refusal is the honest report that this
+        // anchor cannot price the leg (a foreign manager, a frame limit, a
+        // hook that needs settlement inside the swap). The clamp keeps the
+        // white-box figure and the path keeps its caveat.
+        Err(err) => {
+            op_info!(
+                domain = sim,
+                block = anchor.block,
+                hooks = %leg.pool_key.hooks,
+                zero_for_one = leg.zero_for_one,
+                error = %err,
+                "hooked leg re-quote refused — the approximation stands"
+            );
+            None
+        }
+    }
+}
+
+impl HookedLegReQuote for InlineSimHook {
+    fn requote_leg(&self, anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<U256> {
+        let provider = Arc::clone(&self.provider);
+        let warm_cache = Arc::clone(&self.warm_cache);
+        let leg = leg.clone();
+        let drive = move || -> Option<U256> {
+            let provider_inner = Arc::clone(&provider);
+            let warm_inner = Arc::clone(&warm_cache);
+            let leg_inner = leg.clone();
+            // The sync quote BLOCKS on the anchor-pinned DB (revm's
+            // `WrapDatabaseAsync` bridges the async provider via
+            // `block_in_place`), so it runs on the runtime's blocking pool —
+            // the same thread/runtime matrix `simulate_path` documents.
+            self.sim_runtime.block_on(async move {
+                tokio::task::spawn_blocking(move || {
+                    quote_leg_at_anchor(&provider_inner, &warm_inner, anchor, &leg_inner)
+                })
+                .await
+                .ok()
+                .flatten()
+            })
+        };
+        // Fail-soft on an ambient runtime: the clamp's call sites are std
+        // threads (solve bins, the merge sidecar), where `block_on` is the
+        // driving edge. Driving a second runtime from inside an async context
+        // is not, so an ambient runtime reports "no tier at this point" and
+        // the leg stays approximate rather than risking a panic.
+        match tokio::runtime::Handle::try_current() {
+            Ok(_) => {
+                op_info!(
+                    domain = sim,
+                    "hooked leg re-quote skipped: ambient runtime (no tier at this point)"
+                );
+                None
+            }
+            Err(_) => drive(),
+        }
+    }
+}
 #[cfg(test)]
 #[expect(clippy::expect_used)] // census/name assertions follow the repo's loud-assert test style
 mod tests {

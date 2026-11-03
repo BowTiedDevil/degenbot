@@ -92,6 +92,7 @@
 use super::block_cursor::BlockCursor;
 use super::delivery_policy::DeliveryPolicy;
 use super::detached_cycle::DetachedCycle;
+use super::hooked_leg_requote::HookedLegPlan;
 #[cfg(test)]
 use super::inline_sim::InlineSimRequest;
 use super::inline_sim::SimulatedPathResult;
@@ -255,6 +256,11 @@ pub(crate) struct SolveCycleShared {
     /// engine lock — the same off-lock seam the worker clamp opened).
     pub(crate) inline_sim:
         Option<std::sync::Arc<dyn crate::arb_engine::inline_sim::InlineSimulator>>,
+    /// The finalist re-quote tier snapshot (ADR-090 H3). The worker clamp
+    /// prices a candidate's hooked legs through it with the core guard
+    /// dropped — see `crate::arb_engine::hooked_leg_requote`.
+    pub(crate) hooked_leg_requote:
+        Option<std::sync::Arc<dyn crate::arb_engine::hooked_leg_requote::HookedLegReQuote>>,
 }
 
 #[cfg(test)]
@@ -297,6 +303,7 @@ impl SolveCycleShared {
             pool_refs,
             worker_clamp,
             inline_sim,
+            hooked_leg_requote: None,
         }
     }
 }
@@ -501,6 +508,11 @@ pub(crate) struct SolveCycle {
     pub(crate) cfg: Arc<::degenbot_config::BotConfig>,
     pub(crate) runtime_cfg: ::degenbot_pools::SolveRuntimeConfig,
     pub(crate) inline_sim: Option<Arc<dyn super::inline_sim::InlineSimulator>>,
+    /// The finalist re-quote tier (ADR-090 H3), kept in sync by
+    /// `set_hooked_leg_requote`. `None` = this process cannot price a hooked
+    /// leg black-box, so every hooked leg stays approximate.
+    pub(crate) hooked_leg_requote:
+        Option<Arc<dyn crate::arb_engine::hooked_leg_requote::HookedLegReQuote>>,
     // --- construction-time test knobs (ADR-076 D2: data, not methods) ---
     /// Test-only: hook invoked at the start of each path solve.
     #[cfg(test)]
@@ -593,6 +605,9 @@ pub(crate) struct EpochContext<'a> {
     pub(crate) inline_sim_enabled: bool,
     /// The engine's inline-sim hook snapshot.
     pub(crate) inline_sim: &'a Option<Arc<dyn super::inline_sim::InlineSimulator>>,
+    /// The finalist re-quote tier snapshot (ADR-090 H3).
+    pub(crate) hooked_leg_requote:
+        &'a Option<Arc<dyn crate::arb_engine::hooked_leg_requote::HookedLegReQuote>>,
     /// The chunked-parallel resolve stance (instance value).
     pub(crate) resolve_par_stance: bool,
     // --- phase collaborators (ADR-076 D1: the solve/merge/deliver phases) ---
@@ -843,6 +858,7 @@ impl SolveCycle {
             clamp_margin: self.clamp_margin,
             inline_sim_enabled: self.inline_sim_enabled,
             inline_sim: &self.inline_sim,
+            hooked_leg_requote: &self.hooked_leg_requote,
             resolve_par_stance: self.resolve_par_stance,
             scope: &mut self.scope,
             core: &self.core,
@@ -916,12 +932,17 @@ impl SolveCycle {
         result: &mut SolvePathResult,
         registry: &PathRegistry,
     ) -> u64 {
+        // No block env on this door (the eager registration solve), so no
+        // quote frame can be built honestly: hooked legs keep the white-box
+        // figure and the path keeps `Caveats::HOOKED_POOL` (ADR-090
+        // fail-soft). Nothing is refused.
         merge::clamp_concentrated_liquidity_hop_capacity(
             &self.core,
             self.clamp_margin,
             path_id,
             result,
             registry,
+            None,
         )
     }
 
@@ -976,6 +997,7 @@ impl SolveCycle {
             clamp_margin: self.clamp_margin,
             inline_sim_enabled: self.inline_sim_enabled,
             inline_sim: &self.inline_sim,
+            hooked_leg_requote: &self.hooked_leg_requote,
             resolve_par_stance: self.resolve_par_stance,
             scope: &mut self.scope,
             core: &self.core,
@@ -1215,11 +1237,20 @@ impl SolveCycle {
                         if let Some(path) = path_pools.get(path_id) {
                             let core_read =
                                 core.read_at(degenbot_substrate::state_lock::LockSite::Solver);
+                            // ADR-090 fail-soft: the cold-start drive carries
+                            // no block env (no timestamp / base fee), so it
+                            // cannot build an honest quote frame at the block —
+                            // a hook reading `block.timestamp` would be priced
+                            // against a fabricated one. Hooked legs keep the
+                            // white-box figure and the path keeps
+                            // `Caveats::HOOKED_POOL`; nothing is refused.
+                            let plan = HookedLegPlan::empty();
                             let _ = clamp_result_with_state(
                                 &core_read,
                                 *path_id,
                                 &path.pools,
                                 clamp_margin,
+                                &plan,
                                 &mut r,
                             );
                         }

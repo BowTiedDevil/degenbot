@@ -1314,3 +1314,183 @@ fn clamp_concentrated_liquidity_hop_capacity_noop_within_capacity() {
         "in-capacity input must be left untouched by the clamp"
     );
 }
+
+/// ADR-090 H3: the clamp IS the finalist re-quote's commit point. A hooked
+/// V4 leg with a black-box answer at the anchor commits that exact figure (and
+/// the path caveat lifts); with no tier installed the white-box twin stands and
+/// the caveat stays. Both arms on ONE fixture, so the correction is visible.
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture, both arms — splitting it would need two pools and lose the A/B"
+)]
+fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
+    use crate::arb_engine::hooked_leg_requote::{
+        hooked_leg_facts, HookedLeg, HookedLegAnchor, HookedLegPlan, HookedLegReQuote,
+        HookedLegStage,
+    };
+    use crate::arb_engine::solve_cycle::clamp_result_with_state;
+    use degenbot_pools::{Caveats, PoolTickCoverage, TickInfo};
+
+    /// A tier that answers `amount_in + delta` — a figure no white-box walk
+    /// can produce.
+    struct ExactBy(u64);
+    impl HookedLegReQuote for ExactBy {
+        fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<U256> {
+            Some(leg.amount_in + U256::from(self.0))
+        }
+    }
+
+    let mut engine = ArbitrageEngine::new();
+    let mut tick_data = HashMap::new();
+    tick_data.insert(
+        60,
+        TickInfo {
+            liquidity_gross: alloy::primitives::U128::from(300),
+            liquidity_net: 150i128,
+            block: 0,
+        },
+    );
+    tick_data.insert(
+        -60,
+        TickInfo {
+            liquidity_gross: alloy::primitives::U128::from(200),
+            liquidity_net: -100i128,
+            block: 0,
+        },
+    );
+    // The hook permission bits ride the hook ADDRESS's low 16 bytes.
+    let mut hooks = [0u8; 20];
+    hooks[19] = 0x80;
+    let v4_id = engine
+        .register_v4_pool(&RegisterV4PoolParams {
+            pool_manager: Address::from([0x44u8; 20]),
+            pool_id: [0xabu8; 32],
+            pool_key: degenbot_pools::V4PoolKey {
+                currency0: Address::from([0x30u8; 20]),
+                currency1: Address::from([0x31u8; 20]),
+                fee: 500,
+                tick_spacing: 10,
+                hooks: Address::new(hooks),
+            },
+            state_view: Address::ZERO,
+            hook_flags: 0x80,
+            protocol_fee: 0,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+            update_block: 0,
+            tick_data_block: None,
+            coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
+            known_bitmap_words: Vec::new(),
+        })
+        .expect("hooked V4 registration");
+    let v2 = engine.register_v2_pool(
+        Address::from([0x11u8; 20]),
+        usdc(1_500_000),
+        weth(800),
+        GAMMA_03,
+        FEE_DENOM_03,
+    );
+    let path_id = register_path(
+        &mut engine,
+        vec![
+            PoolHop {
+                pool_id: v4_id,
+                zero_for_one: true,
+            },
+            PoolHop {
+                pool_id: v2,
+                zero_for_one: true,
+            },
+        ],
+    )
+    .unwrap();
+    let anchor = HookedLegAnchor::at(100, &degenbot_substrate::BlockMetadata::default());
+    let small = U256::from(1_000u128);
+    let staged = SolvePathResult {
+        optimal_input: small,
+        profit: U256::ONE,
+        hop_outputs: vec![U256::ONE, U256::ONE],
+        consumed_inputs: vec![small, small],
+        state_nonces: vec![0, 0],
+        solver_pool_states: Vec::new(),
+        caveats: Caveats::HOOKED_POOL,
+    };
+    let tier = ExactBy(7_777);
+    // The candidate's hooked-leg facts: exactly ONE amount-modifying V4 leg.
+    let facts = {
+        let core = engine
+            .core
+            .read_at(degenbot_substrate::state_lock::LockSite::Solver);
+        let path = engine.registry.get(path_id).unwrap();
+        hooked_leg_facts(&core, &path.pools, &staged.consumed_inputs)
+    };
+    assert_eq!(facts.len(), 1, "one hooked leg on the path");
+
+    // ── TIER ABSENT: the white-box twin stands, the caveat stays ─────────
+    let mut approximate = staged.clone();
+    let absent = HookedLegPlan::requote(facts.clone(), anchor, None);
+    assert_eq!(absent.stage(0), Some(HookedLegStage::Approximate));
+    {
+        let core = engine
+            .core
+            .read_at(degenbot_substrate::state_lock::LockSite::Solver);
+        let path = engine.registry.get(path_id).unwrap();
+        clamp_result_with_state(
+            &core,
+            path_id,
+            &path.pools,
+            U256::from(1u128),
+            &absent,
+            &mut approximate,
+        );
+    }
+    let white_box_out = approximate.hop_outputs[0];
+    assert!(
+        approximate.caveats.contains(Caveats::HOOKED_POOL),
+        "an approximate hooked leg keeps the caveat"
+    );
+
+    // ── TIER PRESENT: the exact figure commits, the caveat lifts ─────────
+    let mut exact = staged.clone();
+    let present = HookedLegPlan::requote(facts, anchor, Some(&tier));
+    assert_eq!(
+        present.stage(0),
+        Some(HookedLegStage::Exact(small + U256::from(7_777u64)))
+    );
+    assert!(present.lifts_caveat());
+    {
+        let core = engine
+            .core
+            .read_at(degenbot_substrate::state_lock::LockSite::Solver);
+        let path = engine.registry.get(path_id).unwrap();
+        clamp_result_with_state(
+            &core,
+            path_id,
+            &path.pools,
+            U256::from(1u128),
+            &present,
+            &mut exact,
+        );
+    }
+    assert_eq!(
+        exact.hop_outputs[0],
+        small + U256::from(7_777u64),
+        "the black-box figure replaces the white-box twin"
+    );
+    assert_ne!(
+        exact.hop_outputs[0], white_box_out,
+        "the exact quote corrects the approximation"
+    );
+    assert!(
+        !exact.caveats.contains(Caveats::HOOKED_POOL),
+        "a leg re-quoted exact at the anchor drops the caveat"
+    );
+    assert!(
+        exact.profit > U256::ZERO,
+        "the recomputed profit rides the exact figure"
+    );
+}

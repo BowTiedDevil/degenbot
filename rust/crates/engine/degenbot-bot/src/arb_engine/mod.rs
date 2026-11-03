@@ -24,8 +24,14 @@
 //!    V4 Swap events to the V4 engine
 //! 3. Solve registered paths using the appropriate solver
 //!
-//! Hook filtering: V4 pools with amount-modifying hooks are rejected at
-//! registration time in the V4 engine. The unified engine never sees them.
+//! Hooked V4 pools: amount-modifying hooks are ADMITTED at registration and
+//! at hop projection (ADR-090). The search tier ranks them by the standard
+//! concentrated-liquidity walk — the approximation `Caveats::HOOKED_POOL`
+//! flags on the solved result — and the finalist re-quote
+//! ([`hooked_leg_requote`](crate::arb_engine::HookedLegReQuote)) prices each
+//! hooked leg black-box at the solve anchor before the delivery gate, so a
+//! candidate whose exact figure no longer clears the bar dies on economics
+//! rather than on a hook.
 //!
 //! # Module layout
 //!
@@ -104,6 +110,10 @@ mod fleet_sim_executor;
 pub(crate) mod fleet_solve_executor;
 mod fleet_status;
 mod inline_sim;
+// ADR-090 H3: the hooked-leg black-box re-quote seam — the installed tier the
+// clamp consults for an amount-modifying V4 leg, and the plan/stage vocabulary
+// both arms of that decision share.
+mod hooked_leg_requote;
 mod lifecycle;
 mod path_info;
 mod path_lifecycle;
@@ -187,6 +197,9 @@ pub use fleet_status::{
 };
 pub(crate) use fleet_wake::feed_throttle;
 pub use fleet_wake::wake_hosts;
+pub use hooked_leg_requote::{
+    hooked_leg_facts, HookedLeg, HookedLegAnchor, HookedLegPlan, HookedLegReQuote, HookedLegStage,
+};
 pub use inline_sim::{
     AccessListRow, CapturedSwapRow, InlineSimFailure, InlineSimRequest, InlineSimulator,
     InlineSwapFamily, SimulatedPathResult,
@@ -415,6 +428,7 @@ impl ArbitrageEngine {
                 min_profit_floor: alloy::primitives::U256::from(cfg.solve.min_profit_wei),
                 clamp_margin: retune.clamp_margin,
                 inline_sim_enabled: cfg.solve.solve_inline_sim,
+                hooked_leg_requote: None,
                 path_cost_history: std::sync::Arc::new(
                     crate::arb_engine::path_cost_ledger::PathCostHistory::new(),
                 ),

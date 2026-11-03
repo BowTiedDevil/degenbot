@@ -14,6 +14,9 @@ use super::{describe_path_cached_with, EpochContext};
 use crate::arb_engine::delivery_policy::DeliveryPolicy;
 use crate::arb_engine::detached_cycle::{self, LaneDrainCounts};
 use crate::arb_engine::executor::{LaneOutcome, SolveOutcome};
+use crate::arb_engine::hooked_leg_requote::{
+    hooked_leg_facts, HookedLegAnchor, HookedLegPlan, HookedLegReQuote,
+};
 use crate::arb_engine::inline_sim::SimulatedPathResult;
 use crate::arb_engine::lane_walk::LaneArmPolicy;
 use crate::arb_engine::path_registry::PathRegistry;
@@ -21,7 +24,7 @@ use ::degenbot_pools::solve::{HopType, MixedPoolRef, SolvePathResult};
 use alloy::primitives::{I256, U256};
 use degenbot_core::{diag, op_error, op_info};
 use degenbot_pools::v4_simulate_swap;
-use degenbot_pools::{v3_simulate_swap, V3PoolState};
+use degenbot_pools::{v3_simulate_swap, Caveats, V3PoolState};
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::{BlockMetadata, BotState};
 use std::sync::Arc;
@@ -80,6 +83,7 @@ pub(crate) fn clamp_result_with_state(
     path_id: u64,
     pools: &[MixedPoolRef],
     margin: U256,
+    plan: &HookedLegPlan,
     result: &mut SolvePathResult,
 ) -> u64 {
     if pools.len() != result.consumed_inputs.len() {
@@ -143,32 +147,36 @@ pub(crate) fn clamp_result_with_state(
                 ) else {
                     continue;
                 };
-                let Ok(amount) = I256::try_from(requested) else {
-                    continue;
-                };
-                // V4 exact-in passes a NEGATIVE amount (opposite sign to V3).
-                let Some(neg) = amount.checked_neg() else {
-                    continue; // MIN_i256 (no positive twin) → skip
-                };
-                let limit = V3PoolState::default_sqrt_price_limit(pool_ref.zero_for_one);
-                let Some(twin) = v4_simulate_swap(
-                    state,
-                    identity.pool_key.fee,
-                    identity.pool_key.tick_spacing,
-                    pool_ref.zero_for_one,
-                    neg,
-                    limit,
-                )
-                .ok() else {
-                    continue;
-                };
-                let out = if pool_ref.zero_for_one {
-                    twin.amount1
+                // ADR-090: a hooked leg re-quoted black-box at the anchor
+                // commits the chain's own answer. There is no white-box twin
+                // to run (the hook's deltas own the flow) and no empty-march
+                // input bound to derive from it — the exact output is the
+                // authority, and a candidate whose exact figure no longer
+                // clears the bar falls through the profit recompute below
+                // like any other. A hooked leg with NO exact quote (tier
+                // unavailable or refusing) takes the white-box twin, exactly
+                // as it would without the tier.
+                if let Some(exact) = plan.exact_out(i) {
+                    twins_executed += 1;
+                    (exact, None)
                 } else {
-                    twin.amount0
-                };
-                twins_executed += 1;
-                (out, twin.exact_input_clamp_bound(requested, margin))
+                    let Some(twin) = white_box_v4_twin(
+                        state,
+                        identity.pool_key.fee,
+                        identity.pool_key.tick_spacing,
+                        pool_ref.zero_for_one,
+                        requested,
+                    ) else {
+                        continue;
+                    };
+                    let out = if pool_ref.zero_for_one {
+                        twin.amount1
+                    } else {
+                        twin.amount0
+                    };
+                    twins_executed += 1;
+                    (out, twin.exact_input_clamp_bound(requested, margin))
+                }
             }
             HopType::V2 => {
                 // V2 has no empty-march class (no input clamp), but its
@@ -301,8 +309,40 @@ pub(crate) fn clamp_result_with_state(
             result.profit = recomputed;
         }
     }
+    // ADR-090 §4: the caveat lifts off a quote whose every hooked leg was
+    // re-quoted exact at the anchor — the figure is the chain's answer, so
+    // the search-tier approximation no longer describes it (settlement risk
+    // stays the verification frame's domain). One approximate leg keeps the
+    // whole path flagged.
+    if plan.lifts_caveat() && result.caveats.contains(Caveats::HOOKED_POOL) {
+        result.caveats = result.caveats.without(Caveats::HOOKED_POOL);
+        op_info!(
+            domain = solver,
+            path_id,
+            hooked_legs = plan.hooked_legs(),
+            "path caveat lifted: every hooked leg re-quoted exact at the anchor"
+        );
+    }
     twins_executed
 }
+
+/// The byte-exact V4 white-box twin for one hop's committed input — the
+/// standard-math walk the clamp aligns to, and the fallback figure for a
+/// hooked leg the black-box tier could not price (ADR-090 fail-soft).
+fn white_box_v4_twin(
+    state: &degenbot_pools::V4PoolState,
+    fee: u32,
+    tick_spacing: i32,
+    zero_for_one: bool,
+    requested: U256,
+) -> Option<degenbot_pools::V3SwapOutcome> {
+    let amount = I256::try_from(requested).ok()?;
+    // V4 exact-in passes a NEGATIVE amount (opposite sign to V3).
+    let neg = amount.checked_neg()?; // MIN_i256 (no positive twin) → skip
+    let limit = V3PoolState::default_sqrt_price_limit(zero_for_one);
+    v4_simulate_swap(state, fee, tick_spacing, zero_for_one, neg, limit).ok()
+}
+
 /// Recompute a path result's selection profit from its CLAMPED
 /// (twin-aligned) outputs, per the documented `SolvePathResult::profit`
 /// semantics `final_output - consumed_inputs[0]` (with
@@ -345,6 +385,9 @@ pub(super) fn merge_one_result(
             pid,
             &mut result,
             registry,
+            ctx.hooked_leg_requote
+                .as_deref()
+                .map(|tier| (HookedLegAnchor::at(solve_block, metadata), tier)),
         )
     };
     // Telemetry: profitable solves are the signal in the noise -
@@ -615,10 +658,24 @@ pub(super) fn clamp_concentrated_liquidity_hop_capacity(
     path_id: u64,
     result: &mut SolvePathResult,
     registry: &PathRegistry,
+    requote: Option<(HookedLegAnchor, &dyn HookedLegReQuote)>,
 ) -> u64 {
     let Some(path) = registry.get(path_id) else {
         return 0; // Unknown path → nothing to clamp
     };
+    // ADR-090: the hooked-leg facts come off ONE short guard, the re-quote
+    // itself runs with the guard DROPPED (the tier prices against its own
+    // anchor-pinned scratch EVM and the node — never `BotState`), and the
+    // clamp then commits both arms under a fresh guard.
+    let plan = {
+        let core = core.read_at(LockSite::Solver);
+        let facts = hooked_leg_facts(&core, &path.pools, &result.consumed_inputs);
+        drop(core);
+        match requote {
+            Some((anchor, tier)) => HookedLegPlan::requote(facts, anchor, Some(tier)),
+            None => HookedLegPlan::approximate(facts),
+        }
+    };
     let core = core.read_at(LockSite::Solver);
-    clamp_result_with_state(&core, path_id, &path.pools, clamp_margin, result)
+    clamp_result_with_state(&core, path_id, &path.pools, clamp_margin, &plan, result)
 }
