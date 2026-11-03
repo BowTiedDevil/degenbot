@@ -259,10 +259,13 @@ pub struct PipelineInstruments {
     /// Lanes parked on their own delivery-unknown hold instead of signing, by
     /// lane label.
     delivery_slots_parked: Counter<u64>,
-    /// Candidates the pre-sim gas floor suppressed at the delivery window:
-    /// their solver margin did not cover the path's measured execution gas at
-    /// the block's base fee (the sub-gas class that otherwise ships and fails
-    /// verification as no-profit).
+    /// Candidates the pre-sim gas floor suppressed, by the seam that owns the
+    /// decision (`inline` = the walk refused the simulation, `delivery` = the
+    /// window refused the batch entry): their solver margin did not cover the
+    /// path's measured execution gas at the block's base fee (the sub-gas class
+    /// that otherwise ships and fails verification as no-profit). A candidate
+    /// floored at the inline seam is floored again by the window — one
+    /// decision, counted once.
     admission_floored: Counter<u64>,
     detached_in_flight: Gauge<f64>,
     /// detached stragglers DROPPED by the Q1a stale policy.
@@ -1307,9 +1310,11 @@ impl PipelineInstruments {
             .add(1, &[KeyValue::new("strategy", strategy.to_owned())]);
     }
 
-    /// One candidate the pre-sim gas floor suppressed at the delivery window.
-    pub fn count_admission_floored(&self) {
-        self.admission_floored.add(1, &[]);
+    /// One candidate the pre-sim gas floor suppressed, labelled with the seam
+    /// that made the decision (`inline` | `delivery`).
+    pub fn count_admission_floored(&self, seam: &str) {
+        self.admission_floored
+            .add(1, &[KeyValue::new("seam", seam.to_owned())]);
     }
 
     /// PRG-2: one registration-candidate skip; `reason` is a small
@@ -1624,7 +1629,7 @@ impl PipelineInstruments {
             CensusEvent::DeliverySlotParked { strategy } => {
                 self.count_delivery_slot_parked(strategy);
             }
-            CensusEvent::AdmissionFloored => self.count_admission_floored(),
+            CensusEvent::AdmissionFloored { seam } => self.count_admission_floored(seam),
             CensusEvent::MergeInFlight { count } => self.set_detached_in_flight(count),
             CensusEvent::StragglerDropped => self.count_detached_stale_dropped(),
             CensusEvent::StragglerSendFailed => self.count_detached_send_failed(),

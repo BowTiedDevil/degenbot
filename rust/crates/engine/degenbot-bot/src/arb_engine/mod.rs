@@ -79,6 +79,10 @@ pub(crate) mod block_cursor;
 // surface is re-exported at the crate-root `crawl` door (ADR-084 D2 — a driver
 // names the door, never a module beneath it).
 pub(crate) mod crawl;
+// The admission floor as ONE decision (the walk's inline-sim seam and the
+// delivery window are its two enforcement points; see the module's docs for
+// which seam owns the count).
+mod admission_floor;
 // Sub-modules — each contains `impl ArbitrageEngine` or `impl PyArbitrageEngine` blocks.
 mod delivery_lifecycle;
 mod delivery_policy;

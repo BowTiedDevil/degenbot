@@ -8,6 +8,7 @@
 //! epoch's [`EpochContext`].
 
 use super::EpochContext;
+use crate::arb_engine::admission_floor::AdmissionSeam;
 use crate::arb_engine::delivery_policy::DeliveryPolicy;
 use crate::arb_engine::inline_sim::SimulatedPathResult;
 use ::degenbot_pools::solve::SolvePathResult;
@@ -69,6 +70,10 @@ pub(super) fn deliver_merged_result(
     // metadata batch.
     let payload_now = ctx.inline_payloads.get(&pid).map(|e| e.value().clone());
     if ctx.streaming_delivery {
+        // The same counting-seam ownership as the batch sweep: an armed inline
+        // gate already decided this candidate's floor, so its suppression is
+        // counted at that seam and not again here.
+        let seam = AdmissionSeam::of_cycle(ctx.inline_sim_enabled, ctx.inline_sim.is_some());
         hotpath::measure_block!("merge.delivery_emit", {
             delivery.emit_single_result_batch(
                 solve_block,
@@ -76,6 +81,7 @@ pub(super) fn deliver_merged_result(
                 pid,
                 result,
                 payload_now.as_ref(),
+                seam,
             );
         });
     }

@@ -355,7 +355,8 @@ The admission floor is implemented, in three pieces:
 |---|---|---|
 | the cost model | `degenbot_pools::solve`: `GasFloorModel`, `MEASURED_GAS_FLOOR`, `HopGasProfile`, `path_gas_floor_wei` | pure arithmetic over a path's family rows + census + base fee |
 | the census it reads | `SolvePathResult::gas_hops` (one `HopGasProfile` per hop) | the solve's own fact, recorded by the walk (below) |
-| the window | `degenbot-bot`: `DeliveryPolicy::admit` / `admission_floor` | `max(min_profit_wei, gas_floor(path, base_fee))` in `diff_and_send` and `emit_single_result_batch` |
+| the decision | `degenbot-bot`: `arb_engine::admission_floor` (`admission_floor` / `admit` / `AdmissionSeam`) | `max(min_profit_wei, gas_floor(path, base_fee))`, taken once per candidate per seam |
+| the two enforcement points | `PipelinedSims::schedule_one` (inline, first) and `DeliveryPolicy::admit` (the window, second) | the walk denies the candidate its **simulation**; the window denies it a **batch entry** |
 
 ```text
 gas(path) = settlement_fixed                        # 25,672 = 21,000 intrinsic + 4,672 plumbing
@@ -407,21 +408,35 @@ reads is the one the walk actually walked.
 
 ### Admission and its report
 
-`DeliveryPolicy::admit` takes the floor decision ONCE per result per batch;
-every filter (`fresh` / `updated` / `expired`, and the `delivered` advance)
-reads that one decision, so a floored candidate:
+The floor is enforced at the two seams a solved candidate meets, and both read
+the same result, the same static minimum, and the same block base fee:
 
-- does not enter `delivered` (it is not published; a later cheap-gas block
-  re-admits it, a dearer block expires it),
-- increments `degenbot.delivery.admission_floored`, and
-- emits a debug line on `degenbot::solver` naming the path, its margin, the
-  floor, `min_profit_wei`, and the block's base fee.
+- **The inline seam** (`PipelinedSims::schedule_one`, first): a clamp-committed
+  result under the floor is not scheduled for an in-engine simulation. This is
+  the seam that prevents the work — a candidate simulated to discover it cannot
+  pay its own gas has already spent the sim, and the sub-gas flood that ran 300k
+  simulations in a night was born here, upstream of the window.
+- **The delivery window** (`DeliveryPolicy::admit`, second): a result under the
+  floor does not enter `delivered` or the batch (a later cheap-gas block
+  re-admits it, a dearer block expires it). It stays as the second gate: the
+  base fee can move between the solve and the publish, and a candidate that
+  never rode the walk's inline admission (a registration-time eager solve, a
+  cold-start sweep, an engine with the inline stance off) meets no other gate.
+
+A candidate floored at the inline seam still flows to delivery — its held
+outcome flushes with no payload — where the window floors it again. That echo is
+the SAME decision, so the counter counts it ONCE, at the seam that made it: the
+floor's counter (`degenbot.delivery.admission_floored{seam}`) and its debug line
+on `degenbot::solver` (path, margin, floor, `min_profit_wei`, base fee) carry
+`seam="inline"` when the walk's gate is armed (stance on + hook installed) and
+`seam="delivery"` when the window is the only gate.
 
 A candidate below the static `min_profit_wei` is the pre-existing window doing
 its job and is not counted as a gas-floor suppression. A path whose solve
 reported no projection (a family with no measured row — Solidly/Balancer/Curve)
-has **no floor**: the window falls back to `min_profit_wei` rather than
-inventing a cost. No candidate is dropped silently.
+has **no floor**: the seam falls back to `min_profit_wei` rather than inventing a
+cost, so an unpriced candidate still schedules. No candidate is dropped
+silently.
 
 **Units.** The floor is ETH wei; `SolvePathResult::profit` is in the path's
 terminal token. The comparison is exact for an 18-decimal ether-equivalent

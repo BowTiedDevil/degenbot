@@ -97,6 +97,16 @@ const ALLOWED_LABELS: &[&str] = &[
     // ADR-043 §9 review, DVLOOW/NGJBSF telemetry, approved by project
     // manager 2026-10-06.
     "stage",
+    // `degenbot_delivery_admission_floored{seam}`: the pre-sim gas floor's
+    // enforcement point — a two-value closed set (`inline` = the lane walk
+    // refused the candidate its inline simulation, `delivery` = the delivery
+    // window refused it a batch entry, the only gate when no inline gate
+    // runs). `arb_engine::admission_floor::AdmissionSeam::label` is the one
+    // enum→`&'static str` conversion, so a stray value cannot compile.
+    // ADR-043 §9 review: approved — a closed two-value set naming the one
+    // admission decision's enforcement point; the enum is the only conversion,
+    // so no stray value can compile.
+    "seam",
 ];
 
 /// Name fragments that signal an unbounded value (a cardinality bomb).

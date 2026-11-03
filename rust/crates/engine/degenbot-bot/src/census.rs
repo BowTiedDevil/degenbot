@@ -189,11 +189,18 @@ pub enum CensusEvent {
     /// the slot, so the frames in hand wait for chain evidence or an explicit
     /// replacement.
     DeliverySlotParked { strategy: &'static str },
-    /// One solved candidate the pre-sim gas floor suppressed at the delivery
-    /// window: its margin does not cover the path's measured execution gas at
-    /// the block's base fee (the sub-gas class that ships and then fails
-    /// verification as no-profit).
-    AdmissionFloored,
+    /// One solved candidate the pre-sim gas floor suppressed: its margin does
+    /// not cover the path's measured execution gas at the block's base fee (the
+    /// sub-gas class that ships and then fails verification as no-profit).
+    ///
+    /// `seam` is the closed set naming the enforcement point that owns the
+    /// decision: `inline` (the lane walk refused the candidate its simulation —
+    /// the seam that prevents the work) or `delivery` (the delivery window
+    /// refused it a batch entry, the only gate when no inline gate runs). A
+    /// candidate floored at the inline seam is floored again by the window, and
+    /// that echo is the same decision: it is counted once, here, labelled with
+    /// the seam that made it.
+    AdmissionFloored { seam: &'static str },
     /// Detached merge-pipe in-flight depth (stragglers sent but not yet
     /// applied/dropped), sampled at enqueue + per disposition.
     MergeInFlight { count: u64 },

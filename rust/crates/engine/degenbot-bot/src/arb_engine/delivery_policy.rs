@@ -18,13 +18,14 @@
 //! every `tokio` use local to the delivery surface, so when the solver is
 //! eventually pulled into its own crate (ADR-018 trigger: a second engine
 //! family), `DeliveryPolicy` and its channels can travel intact.
+use super::admission_floor::AdmissionSeam;
 use super::delivery_lifecycle::DeliveryLifecycle;
 use super::{ArbitrageEngine, BlockMetadata, ResultBatch};
 use crate::arb_engine::inline_sim::SimulatedPathResult;
 use ::degenbot_pools::solve::SolvePathResult;
 use alloy::primitives::U256;
 use degenbot_core::channel_lifecycle::ChannelDecline;
-use degenbot_core::{op_debug, op_warn};
+use degenbot_core::op_warn;
 use hashbrown::{HashMap, HashSet};
 use tokio::sync::mpsc;
 /// The delivery policy: filters the engine's solve output by the profit
@@ -64,8 +65,8 @@ pub(crate) struct DeliveryPolicy {
     /// Paths below this threshold are excluded from `delivered` and batches.
     ///
     /// This is the STATIC half of the window: the effective floor at a block is
-    /// [`Self::admission_floor`], the static minimum raised by the path's own
-    /// pre-sim gas floor.
+    /// [`super::admission_floor::admission_floor`], the static minimum raised by
+    /// the path's own pre-sim gas floor.
     pub(crate) min_profit: U256,
     /// Maximum profit (in wei) for a result to appear in the batch channel.
     /// Paths above this are likely solver defects or scam tokens.
@@ -118,57 +119,32 @@ impl DeliveryPolicy {
         self.max_profit = max_profit;
     }
 
-    /// The floor one result must clear to be published at this block: the
-    /// static minimum raised by the path's gas floor.
+    /// Admit-or-floor one solved result at this block: the max cap, then the
+    /// shared gas floor ([`super::admission_floor::admit`]). A candidate outside
+    /// the max cap is excluded as it always was.
     ///
-    /// The floor is DATA — per path (its family row and census) and per block
-    /// (that block's base fee) — never a constant. Units: the gas floor is
-    /// priced in ETH wei and `profit` is in the path's terminal token, so the
-    /// comparison is exact only for an 18-decimal ether-equivalent terminal
-    /// (the settlement engine's WETH-terminated paths); a non-comparable token
-    /// must scale the floor itself.
-    ///
-    /// `None` from the model (no base fee on the block, or a path whose solve
-    /// reported no hop projection — a family with no measured coefficient row,
-    /// or a hand-built result) means the window has no gas term and admits on
-    /// the static minimum alone.
-    fn admission_floor(&self, result: &SolvePathResult, metadata: &BlockMetadata) -> U256 {
-        let gas_floor = metadata.base_fee_per_gas.and_then(|base_fee| {
-            ::degenbot_pools::solve::path_gas_floor_wei(result, u128::from(base_fee))
-        });
-        gas_floor.map_or(self.min_profit, |gas_floor| self.min_profit.max(gas_floor))
-    }
-
-    /// Admit-or-floor one solved result at this block, reporting a candidate the
-    /// GAS floor excluded (a counter plus a debug line naming the path and the
-    /// floor vs margin — never a silent drop). A candidate outside the max cap,
-    /// or below the static minimum, is excluded as it always was and is not
-    /// counted here: the counter measures the gas floor's own suppression.
-    fn admit(&self, path_id: u64, result: &SolvePathResult, metadata: &BlockMetadata) -> bool {
+    /// `owner` is the cycle's owning seam ([`AdmissionSeam::of_cycle`]). The
+    /// window EXCLUDES every candidate under the floor either way — it is the
+    /// second gate — but when the walk's inline gate owns the count this floor
+    /// is that same decision re-derived at publish, so the window's echo is not
+    /// counted again.
+    fn admit(
+        &self,
+        owner: AdmissionSeam,
+        path_id: u64,
+        result: &SolvePathResult,
+        metadata: &BlockMetadata,
+    ) -> bool {
         if result.profit > self.max_profit {
             return false;
         }
-        let floor = self.admission_floor(result, metadata);
-        if result.profit > floor {
-            return true;
-        }
-        // Only a floor the GAS term raised above the static minimum is a
-        // gas-floor suppression; a candidate under `min_profit` is the
-        // pre-existing static window doing its job.
-        if floor > self.min_profit {
-            crate::instruments::record(crate::instruments::CensusEvent::AdmissionFloored);
-            op_debug!(
-                domain = solver,
-                path_id,
-                profit = %result.profit,
-                floor = %floor,
-                min_profit = %self.min_profit,
-                base_fee_per_gas = metadata.base_fee_per_gas.unwrap_or(0),
-                "delivery: candidate floored — margin does not cover the path's execution \
-                 gas at this block's base fee"
-            );
-        }
-        false
+        super::admission_floor::admit(
+            owner.window_count(),
+            path_id,
+            result,
+            self.min_profit,
+            metadata.base_fee_per_gas,
+        )
     }
     /// Record a path de-registration in the delivery bookkeeping: drop it from
     /// `delivered` and (only when it actually existed) queue it for the next
@@ -196,6 +172,13 @@ impl DeliveryPolicy {
     /// `anchored` is handed in by the engine from the block cursor
     /// (`BlockCursor::is_anchored`) — the policy consumes the cursor's
     /// predicate instead of re-deriving it from the raw `results_block`.
+    ///
+    /// `owner` is the seam that OWNS the gas floor's count for these candidates
+    /// ([`AdmissionSeam::of_cycle`] over the engine's inline-gate state): the
+    /// floor still EXCLUDES every candidate under it — the window is the second
+    /// gate — but a candidate the walk's inline admission already floored is one
+    /// decision, counted at that seam, so the window's echo is not counted
+    /// again.
     pub fn diff_and_send(
         &mut self,
         results: &HashMap<u64, SolvePathResult>,
@@ -203,6 +186,7 @@ impl DeliveryPolicy {
         anchored: bool,
         metadata: &BlockMetadata,
         inline_payloads: &HashMap<u64, SimulatedPathResult>,
+        owner: AdmissionSeam,
     ) {
         // A non-zero `results_block` is the invariant that a batch's candidates
         // are dispatchable: the strategy sims each candidate at its
@@ -232,7 +216,7 @@ impl DeliveryPolicy {
         let admitted: HashSet<u64> = if anchored {
             results
                 .iter()
-                .filter(|(&id, r)| self.admit(id, r, metadata))
+                .filter(|(&id, r)| self.admit(owner, id, r, metadata))
                 .map(|(&id, _)| id)
                 .collect()
         } else {
@@ -321,9 +305,10 @@ impl DeliveryPolicy {
         path_id: u64,
         result: &SolvePathResult,
         payload: Option<&SimulatedPathResult>,
+        owner: AdmissionSeam,
     ) {
         let anchored = results_block != 0;
-        let admitted = self.admit(path_id, result, metadata);
+        let admitted = self.admit(owner, path_id, result, metadata);
         let mut fresh: Vec<(u64, SolvePathResult)> = Vec::new();
         let mut updated: Vec<(u64, SolvePathResult)> = Vec::new();
         if anchored && admitted {
@@ -410,12 +395,20 @@ pub(crate) fn compute_diff_and_send(engine: &mut ArbitrageEngine, metadata: &Blo
     engine.cycle.inline_payloads.clear();
     // the anchored gate comes from the block cursor.
     let anchored = engine.cycle.cursor.coordinates().is_anchored();
+    // The floor's counting seam for this batch: the walk's inline gate owns the
+    // count when it is armed — its suppressions are the ones that prevented the
+    // sims, and the window's re-floor of those candidates is the same decision.
+    let owner = AdmissionSeam::of_cycle(
+        engine.cycle.inline_sim_enabled,
+        engine.cycle.inline_sim.is_some(),
+    );
     engine.delivery.diff_and_send(
         &results_snapshot,
         results_block,
         anchored,
         metadata,
         &inline_payloads,
+        owner,
     );
 }
 /// De-register a path from the engine (machine-direct free-function route).
@@ -446,6 +439,7 @@ pub(crate) fn deregister_path(engine: &mut ArbitrageEngine, path_id: u64) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::arb_engine::admission_floor;
     use ::degenbot_pools::solve::{HopGasProfile, MEASURED_GAS_FLOOR};
     use alloy::primitives::U256;
     /// Build a minimal `SolvePathResult` with the given profit (other fields
@@ -482,6 +476,7 @@ mod tests {
             true,
             &BlockMetadata::default(),
             &HashMap::default(),
+            AdmissionSeam::DeliveryWindow,
         );
         let batch = rx.try_recv().expect("diff_and_send with a channel sends");
         assert_eq!(batch.solve_block, 42);
@@ -514,6 +509,7 @@ mod tests {
             true,
             &BlockMetadata::default(),
             &HashMap::default(),
+            AdmissionSeam::DeliveryWindow,
         );
         assert!(policy.delivered.contains_key(&1));
     }
@@ -539,6 +535,7 @@ mod tests {
             false,
             &BlockMetadata::default(),
             &HashMap::default(),
+            AdmissionSeam::DeliveryWindow,
         );
         let batch = rx
             .try_recv()
@@ -564,6 +561,7 @@ mod tests {
             true,
             &BlockMetadata::default(),
             &HashMap::default(),
+            AdmissionSeam::DeliveryWindow,
         );
         let batch = rx.try_recv().expect("anchored solve delivers");
         assert!(
@@ -666,7 +664,14 @@ mod tests {
             ),
         );
 
-        policy.diff_and_send(&results, 42, true, &metadata, &HashMap::default());
+        policy.diff_and_send(
+            &results,
+            42,
+            true,
+            &metadata,
+            &HashMap::default(),
+            AdmissionSeam::DeliveryWindow,
+        );
 
         let batch = rx.try_recv().expect("an anchored batch sends");
         let mut shipped: Vec<u64> = batch.fresh.iter().map(|(id, _)| *id).collect();
@@ -685,13 +690,58 @@ mod tests {
         assert!(!policy.delivered.contains_key(&1));
         assert!(!policy.delivered.contains_key(&2));
 
-        policy.diff_and_send(&results, 43, true, &metadata, &HashMap::default());
+        policy.diff_and_send(
+            &results,
+            43,
+            true,
+            &metadata,
+            &HashMap::default(),
+            AdmissionSeam::DeliveryWindow,
+        );
         let second = rx.try_recv().expect("the metadata batch still sends");
         assert!(
             second.fresh.is_empty(),
             "admitted candidates do not re-ship"
         );
         assert!(second.updated.is_empty(), "unchanged values do not re-ship");
+    }
+
+    /// The window stays the SECOND GATE when the walk's inline gate owns the
+    /// count: a candidate the inline seam already floored is still excluded from
+    /// the batch (the base fee can move between the solve and the publish, and
+    /// `delivered` must not advance on a candidate the batch will not carry) —
+    /// only the COUNT moves upstream, so the window's echo is not counted twice.
+    #[test]
+    fn an_armed_inline_gate_keeps_the_windows_gate() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut policy = DeliveryPolicy::default();
+        let _ = policy.set_result_channel(tx);
+        let base_fee = 12_000_000_000u64;
+        let metadata = metadata_at_base_fee(base_fee);
+        let floor = floor_wei(0, base_fee);
+        let mut results: HashMap<u64, SolvePathResult> = HashMap::new();
+        results.insert(
+            1,
+            solve_result_with_gas(u64::try_from(floor / U256::from(2u64)).expect("fixture fits")),
+        );
+        results.insert(
+            2,
+            solve_result_with_gas(u64::try_from(floor + U256::ONE).expect("fixture fits")),
+        );
+        let owner = AdmissionSeam::of_cycle(true, true);
+        assert_eq!(owner, AdmissionSeam::InlineSim);
+        policy.diff_and_send(&results, 42, true, &metadata, &HashMap::default(), owner);
+        let batch = rx.try_recv().expect("an anchored batch sends");
+        assert_eq!(
+            batch.fresh.iter().map(|(id, _)| *id).collect::<Vec<u64>>(),
+            vec![2],
+            "the window still excludes the floored candidate"
+        );
+        assert!(
+            !policy.delivered.contains_key(&1),
+            "a floored candidate never enters the delivered set"
+        );
+        assert!(policy.delivered.contains_key(&2));
     }
 
     /// The floor is PER BLOCK: the same result that ships at a low base fee is
@@ -714,6 +764,7 @@ mod tests {
             true,
             &metadata_at_base_fee(5_000_000_000),
             &HashMap::default(),
+            AdmissionSeam::DeliveryWindow,
         );
         let batch = rx.try_recv().expect("batch at the low base fee");
         assert_eq!(batch.fresh.len(), 1, "cheap-gas block admits the candidate");
@@ -725,6 +776,7 @@ mod tests {
             true,
             &metadata_at_base_fee(20_000_000_000),
             &HashMap::default(),
+            AdmissionSeam::DeliveryWindow,
         );
         let batch = rx.try_recv().expect("batch at the high base fee");
         assert!(batch.fresh.is_empty(), "nothing fresh at the higher fee");
@@ -752,7 +804,14 @@ mod tests {
         results.insert(2, solve_result(101)); // above min_profit
         assert!(results.get(&2).is_some_and(|r| r.gas_hops.is_empty()));
 
-        policy.diff_and_send(&results, 42, true, &metadata, &HashMap::default());
+        policy.diff_and_send(
+            &results,
+            42,
+            true,
+            &metadata,
+            &HashMap::default(),
+            AdmissionSeam::DeliveryWindow,
+        );
         let batch = rx.try_recv().expect("batch sends");
         assert_eq!(
             batch.fresh.iter().map(|(id, _)| *id).collect::<Vec<u64>>(),
@@ -773,19 +832,19 @@ mod tests {
             solve_result_with_gas(u64::try_from(gas_floor + U256::ONE).expect("fixture fits u64"));
 
         assert_eq!(
-            policy.admission_floor(&result, &metadata),
+            admission_floor::admission_floor(&result, policy.min_profit, metadata.base_fee_per_gas),
             gas_floor,
             "with min_profit at zero the gas floor is the floor"
         );
 
         policy.set_profit_thresholds(gas_floor * U256::from(2u64), U256::MAX);
         assert_eq!(
-            policy.admission_floor(&result, &metadata),
+            admission_floor::admission_floor(&result, policy.min_profit, metadata.base_fee_per_gas),
             gas_floor * U256::from(2u64),
             "a static minimum above the gas floor wins"
         );
         assert!(
-            !policy.admit(1, &result, &metadata),
+            !policy.admit(AdmissionSeam::DeliveryWindow, 1, &result, &metadata),
             "a candidate between the gas floor and the raised static minimum is excluded"
         );
     }

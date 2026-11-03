@@ -323,6 +323,30 @@ impl PipelinedSims {
         let Some(sim) = ctx.inline_sim.as_ref() else {
             return false;
         };
+        // THE FLOOR at this seam: a clamp-committed result whose margin does not
+        // cover its OWN measured execution gas at this block's base fee is not
+        // worth a simulation. The floor is the delivery window's, applied
+        // upstream — the same result, the same census it carries, the same base
+        // fee — so this denies the sim, never the candidate's delivery: the
+        // walk flushes the item with no payload and the window floors it again
+        // for the batch (one decision, counted here; see
+        // `arb_engine::admission_floor`).
+        //
+        // The suppression runs BEFORE the slot acquisition below, so a floored
+        // candidate never draws a SimDriver seat — and an ADMITTED candidate's
+        // pacing is untouched (the seat pool, the lane-2 dispatch precedence,
+        // and the receipt contract are all downstream of this early return).
+        if !crate::arb_engine::admission_floor::admit(
+            // The walk's gate is the FLOOR'S OWNER whenever it runs: this
+            // suppression is the one the counter counts.
+            Some(crate::arb_engine::admission_floor::AdmissionSeam::InlineSim),
+            pid,
+            result,
+            ctx.min_profit,
+            ctx.metadata.base_fee_per_gas,
+        ) {
+            return false;
+        }
         // EXPLICIT parent at creation (TLS re-entry alone forked
         // orphan roots on worker threads). The span is created and entered
         // ON THE DRIVER THREAD (std thread context = no inherited span),
@@ -429,6 +453,7 @@ impl PipelinedSims {
 mod inline_sim_tests {
     use super::*;
     use crate::arb_engine::lifecycle::register_path;
+    use crate::arb_engine::solve_cycle::SolveCycleShared;
     use alloy::primitives::U256;
     use degenbot_pools::solve::{HopType, PoolHop};
     use degenbot_pools::RegisterV4PoolParams;
@@ -604,6 +629,255 @@ mod inline_sim_tests {
         assert_eq!(got.hop_count, 2);
         assert!(got.failure.is_none());
     }
+    // ------------------------------------------------------------------
+    // THE INLINE ADMISSION FLOOR at this seam: a clamp-committed result the
+    // gas floor excludes earns no simulation, and an admitted one keeps the
+    // untouched pacing/receipt contract downstream of the guard.
+    // ------------------------------------------------------------------
+
+    /// The anchor block the corpus floor was measured at (26,335,759): its own
+    /// base fee, the figure the live parity rig prices the corpus with.
+    const ANCHOR_BASE_FEE: u64 = 175_374_373;
+
+    /// A block base fee the two-V2-leg fixture floor is priced at in the seam
+    /// tests (an ordinary mainnet fee, chosen so the floor sits well above the
+    /// fixture margins).
+    const SEAM_BASE_FEE: u64 = 12_000_000_000;
+
+    /// The phantom corpus's closed-loop candidate margins (wei): 1.0e12 …
+    /// 2.4e12, the range `docs/gas-estimation.md` §Verification on the corpus
+    /// reports as 6 of 6 floored at the anchor block's base fee.
+    const PHANTOM_MARGINS_WEI: [u64; 6] = [
+        1_000_000_000_000,
+        1_200_000_000_000,
+        1_400_000_000_000,
+        1_600_000_000_000,
+        2_000_000_000_000,
+        2_400_000_000_000,
+    ];
+
+    /// Install this process's sim boot stamp (the fixture the fleet stance
+    /// tests use), so `schedule_one`'s production intake RESOLVES instead of
+    /// refusing: a refused boot flushes the item un-simulated, which would make
+    /// a scheduling assertion vacuous.
+    fn install_sim_boot() {
+        let slot = crate::arb_engine::fleet_boot::FleetBootRegistry::process().sim();
+        if !slot.boot_installed() {
+            slot.install(crate::arb_engine::boot_stamp::BootStamp::of(
+                degenbot_workers::dispatcher::FleetBoot::from_config(
+                    degenbot_substrate::stance::config(),
+                ),
+            ));
+        }
+    }
+
+    /// The seam's cycle context: four registered paths of `hops` hops each, the
+    /// walk's inline stance ARMED, the installed hook, and the block's base fee.
+    #[expect(clippy::expect_used)]
+    fn seam_ctx(
+        sim: Arc<dyn InlineSimulator>,
+        hops: usize,
+        base_fee_per_gas: u64,
+    ) -> Arc<SolveCycleShared> {
+        let pool_refs: Vec<Arc<degenbot_pools::solve::MixedPath>> = (0..4)
+            .map(|_| {
+                Arc::new(degenbot_pools::solve::MixedPath {
+                    pools: (0..hops)
+                        .map(|i| degenbot_pools::solve::MixedPoolRef {
+                            hop_type: HopType::V3,
+                            pool_key: u64::try_from(i).expect("fixture hop"),
+                            zero_for_one: i % 2 == 0,
+                        })
+                        .collect(),
+                })
+            })
+            .collect();
+        Arc::new(SolveCycleShared::for_test(
+            42,
+            BlockMetadata {
+                base_fee_per_gas: Some(base_fee_per_gas),
+                ..BlockMetadata::default()
+            },
+            Arc::new(degenbot_substrate::state_lock::StateLock::new(
+                degenbot_substrate::BotState::new(),
+            )),
+            pool_refs,
+            true,
+            Some(sim),
+        ))
+    }
+
+    /// A clamp-committed result carrying the census the floor prices: `hops`
+    /// flat V2 legs and the given margin.
+    fn priced_result(hops: usize, profit: U256) -> SolvePathResult {
+        SolvePathResult {
+            optimal_input: U256::from(1_000_000_000u64),
+            profit,
+            hop_outputs: vec![U256::from(1u64); hops],
+            consumed_inputs: vec![U256::from(1u64); hops],
+            state_nonces: vec![0; hops],
+            gas_hops: vec![degenbot_pools::solve::HopGasProfile::V2; hops],
+            ..Default::default()
+        }
+    }
+
+    #[expect(clippy::expect_used)]
+    fn priced_floor(hops: usize, base_fee_per_gas: u64) -> U256 {
+        degenbot_pools::solve::path_gas_floor_wei(
+            &priced_result(hops, U256::ZERO),
+            u128::from(base_fee_per_gas),
+        )
+        .expect("a V2-only path is priced")
+    }
+
+    fn recording_sim() -> Arc<RecordingSim> {
+        Arc::new(RecordingSim {
+            requests: Mutex::new(Vec::new()),
+            payload: stub_payload(),
+        })
+    }
+
+    /// A clamp-committed result whose margin cannot pay its own measured
+    /// execution gas at this block's base fee is NOT scheduled for an inline
+    /// sim: nothing is dispatched, nothing parks on a receipt, and the hook
+    /// never runs (the walk flushes the item with no payload — the candidate
+    /// still flows to delivery).
+    #[test]
+    fn a_below_floor_candidate_is_not_scheduled_for_an_inline_sim() {
+        let sim = recording_sim();
+        let ctx = seam_ctx(sim.clone(), 2, SEAM_BASE_FEE);
+        let floor = priced_floor(2, SEAM_BASE_FEE);
+        let below_floor = priced_result(2, floor / U256::from(2u64));
+        let mut pending = PipelinedSims::default();
+        assert!(
+            !pending.schedule_one(&ctx, 0, 7, &below_floor, &tracing::Span::none()),
+            "a sub-gas candidate earns no simulation"
+        );
+        assert!(pending.is_empty(), "nothing is parked on a receipt");
+        assert!(
+            sim.requests.lock().is_empty(),
+            "the hook never ran for a floored candidate"
+        );
+    }
+
+    /// The same guard at the boundary: a margin exactly ON the floor is
+    /// excluded (the min bound stays strict), one wei over is scheduled — and
+    /// the admitted candidate keeps the untouched contract (one receipt, the
+    /// request's own pid, a payload).
+    #[test]
+    fn an_above_floor_candidate_still_schedules() {
+        install_sim_boot();
+        let sim = recording_sim();
+        let ctx = seam_ctx(sim.clone(), 2, SEAM_BASE_FEE);
+        let floor = priced_floor(2, SEAM_BASE_FEE);
+        let mut pending = PipelinedSims::default();
+        assert!(
+            !pending.schedule_one(&ctx, 0, 7, &priced_result(2, floor), &tracing::Span::none()),
+            "a margin exactly ON the floor is excluded"
+        );
+        assert!(pending.is_empty());
+        assert!(pending.schedule_one(
+            &ctx,
+            0,
+            8,
+            &priced_result(2, floor + U256::ONE),
+            &tracing::Span::none()
+        ));
+        assert!(!pending.is_empty(), "the admitted sim is in flight");
+        let joined: Vec<_> = pending.join_all().collect();
+        assert_eq!(joined.len(), 1, "one receipt per admitted candidate");
+        assert_eq!(joined[0].0, 8, "the receipt carries its request's pid");
+        assert!(joined[0].1.is_some(), "the admitted sim returned a payload");
+        assert_eq!(
+            sim.requests.lock().len(),
+            1,
+            "exactly the admitted candidate rode a sim"
+        );
+    }
+
+    /// A result the model cannot price (no hop projection — a family with no
+    /// measured coefficient row, or a hand-built result) keeps the pre-existing
+    /// static window: no floor is better than an invented one, so it schedules.
+    #[test]
+    fn an_unpriceable_candidate_still_schedules() {
+        install_sim_boot();
+        let sim = recording_sim();
+        let ctx = seam_ctx(sim.clone(), 2, 30_000_000_000);
+        let unpriced = SolvePathResult {
+            optimal_input: U256::from(1_000_000_000u64),
+            profit: U256::from(1u64),
+            hop_outputs: vec![U256::from(1u64); 2],
+            consumed_inputs: vec![U256::from(1u64); 2],
+            state_nonces: vec![0; 2],
+            ..Default::default()
+        };
+        assert!(unpriced.gas_hops.is_empty());
+        let mut pending = PipelinedSims::default();
+        assert!(
+            pending.schedule_one(&ctx, 0, 9, &unpriced, &tracing::Span::none()),
+            "an unpriced candidate is admitted on the static window alone"
+        );
+        let joined: Vec<_> = pending.join_all().collect();
+        assert_eq!(joined.len(), 1);
+        assert_eq!(sim.requests.lock().len(), 1);
+    }
+
+    /// The corpus at the scheduling seam: every closed-loop phantom candidate
+    /// (margins 1.0e12 … 2.4e12 wei) sits under the three-hop floor at the
+    /// anchor block's base fee, so not one of them reaches the pipeline — while
+    /// a leg whose margin covers its own gas (the profitable class the corpus
+    /// rig admits) does.
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn the_phantom_corpus_never_reaches_the_inline_pipeline() {
+        install_sim_boot();
+        let sim = recording_sim();
+        let ctx = seam_ctx(sim.clone(), 3, ANCHOR_BASE_FEE);
+        let floor = priced_floor(3, ANCHOR_BASE_FEE);
+        let mut pending = PipelinedSims::default();
+        for (idx, margin) in PHANTOM_MARGINS_WEI.iter().enumerate() {
+            let candidate = priced_result(3, U256::from(*margin));
+            assert!(
+                U256::from(*margin) < floor,
+                "corpus margin {margin} wei must sit under the anchor floor {floor}"
+            );
+            assert!(
+                !pending.schedule_one(
+                    &ctx,
+                    0,
+                    u64::try_from(idx).expect("fixture pid"),
+                    &candidate,
+                    &tracing::Span::none()
+                ),
+                "corpus candidate {idx} (margin {margin} wei) must not schedule"
+            );
+        }
+        assert!(pending.is_empty(), "no phantom sim is in flight");
+        assert!(
+            sim.requests.lock().is_empty(),
+            "not one phantom simulation ran"
+        );
+
+        // The profitable class: a single-hop leg (the corpus's REN leg rows are
+        // single-hop, and the live rig prices each one against its measured
+        // gas) whose margin clears the floor is scheduled.
+        let leg_floor = priced_floor(1, ANCHOR_BASE_FEE);
+        assert!(
+            pending.schedule_one(
+                &ctx,
+                1,
+                100,
+                &priced_result(1, leg_floor + U256::ONE),
+                &tracing::Span::none()
+            ),
+            "a leg that pays its own gas is scheduled"
+        );
+        let joined: Vec<_> = pending.join_all().collect();
+        assert_eq!(joined.len(), 1);
+        assert_eq!(joined[0].0, 100);
+        assert_eq!(sim.requests.lock().len(), 1, "only the profitable leg ran");
+    }
+
     #[test]
     fn no_hook_or_unknown_path_is_none() {
         let (engine, path_id) = two_hop_engine();
