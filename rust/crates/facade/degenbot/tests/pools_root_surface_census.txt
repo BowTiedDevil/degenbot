@@ -20,6 +20,10 @@
 # pools surface, and now live in `degenbot-math::bigint`, which the Möbius
 # solve modules import. The three left the door with no pools-side replacement:
 # a shade wider than U256 is a `degenbot-math` concern, not a pool family one.
+# The 1028 -> 1029 review is the phantom-parity rig's path sim:
+# `ConcentratedLiquidityPathSim` joins the concentrated-liquidity door so the
+# degenbot-simulation phantom-fidelity rig names the path-level sim at the
+# root (ADR-084 D2), its only out-of-crate consumer.
 # The count is per NAME, not per statement (the previous
 # granularity pinned 681 statements): a `pub fn`/`struct`/`enum`/`trait`/
 # `const`/`type`/`mod` declaration counts once, and a `pub use` counts one per

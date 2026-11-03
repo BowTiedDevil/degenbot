@@ -272,9 +272,9 @@ pub use solve::basket::{solve_balancer_weighted, BalancerMultiTokenState};
 pub use solve::concentrated_liquidity::{
     build_concentrated_liquidity_crossing_table, build_concentrated_liquidity_word_profiles,
     derive_and_solve_concentrated_liquidity_piecewise, simulate_v3_range_swap,
-    solve_concentrated_liquidity_piecewise, solve_piecewise, ConcentratedLiquidityWordProfile,
-    MixedHopView, PreparedConcentratedLiquidityHop, WalkMemo, WalkMemoStats, WalkTally,
-    WalkTelemetry, DENSE_OBSERVE_THRESHOLD,
+    solve_concentrated_liquidity_piecewise, solve_piecewise, ConcentratedLiquidityPathSim,
+    ConcentratedLiquidityWordProfile, MixedHopView, PreparedConcentratedLiquidityHop, WalkMemo,
+    WalkMemoStats, WalkTally, WalkTelemetry, DENSE_OBSERVE_THRESHOLD,
 };
 
 /// The profit-envelope gate boundary: the deps a gate call reads, the envelope

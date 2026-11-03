@@ -79,6 +79,10 @@ const TEST_HARNESS_KEYS: &[&str] = &[
     // (`degenbot-simulation/tests/evm2_v4_hook_requote_bench.rs`): narrows the
     // 1,000-quote burst for a smoke run, never read by the engine.
     "DEGENBOT_REQUOTE_BENCH_BURST",
+    // The phantom-parity rig's corpus filter
+    // (`degenbot-simulation/tests/evm2_phantom_parity.rs`): narrows the
+    // corpus to matching path ids, never read by the engine.
+    "DEGENBOT_PHANTOM_PATH",
 ];
 
 const RETIRED_KEYS: &[&str] = &[
