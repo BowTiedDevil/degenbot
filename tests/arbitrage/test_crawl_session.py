@@ -46,7 +46,6 @@ def _context(session: Any) -> ConstructionContext:
         chain_id=1,
         database_path=None,  # type: ignore[arg-type]
         construction_route=None,  # type: ignore[arg-type]
-        weth=None,
         session=session,
     )
 
@@ -60,7 +59,6 @@ async def test_the_operator_surface_survives_the_main_loop_trim() -> None:
     # surface's precondition); the crawl session is what build_paths parks.
     await session.run()
     session.registration_context = _context(crawl)
-    session.registration_pipeline = None
 
     # The trim: the Python-companion bot ref the actors carried is gone.
     session.drop_bot()
@@ -224,7 +222,6 @@ async def test_without_a_booted_session_the_operator_surface_refuses_loudly() ->
     session = session_for_test()
     await session.run()
     session.registration_context = _context(None)
-    session.registration_pipeline = None
 
     with pytest.raises(RuntimeError, match="no live crawl session"):
         await session.enqueue_path([("0x" + "11" * 20, 1, None)])

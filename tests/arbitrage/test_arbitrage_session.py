@@ -24,17 +24,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 import signal
 from dataclasses import dataclass
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 
-from degenbot.arbitrage.policy import NoOpPathPredicate
 from degenbot.exceptions import VerificationMismatchError, VerificationRpcError
-from degenbot.pathfinding import PoolKind
 from degenbot.runner import BotRunner
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner._run_ritual import RunRitual
@@ -50,9 +46,6 @@ from tests.helpers.session import (
     offline_cfg,
     session_for_test,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -983,15 +976,15 @@ class TestSessionOperatorSurface:
     crawl, so the surface must refuse loudly; the trim-proof routing is covered
     by ``tests/arbitrage/test_crawl_session.py``."""
 
-    async def test_programmatic_surface_raises_without_live_pipeline(self) -> None:
-        """With an injected (fake) run there is no live pipeline — the operator
+    async def test_programmatic_surface_raises_without_live_crawl(self) -> None:
+        """With an injected (fake) run no crawl was booted — the operator
         surface must raise loudly, never fail silently or touch a None."""
         session = session_for_test()
 
         await session.run()
 
-        # The pipeline lives on the session (None for fake runs).
-        assert session.registration_pipeline is None
+        # A fake run parks no construction context, so no crawl session.
+        assert session.registration_context is None
         with pytest.raises(RuntimeError, match="no live crawl session"):
             await session.enqueue_path([])
         with pytest.raises(RuntimeError, match="no live crawl session"):
@@ -1000,7 +993,7 @@ class TestSessionOperatorSurface:
     async def test_mid_run_add_path_does_not_stall_dispatch(self) -> None:
         """Adding a path mid-run via the programmatic surface does not stall or
         abort the pump: the consumer keeps dispatching prior work while the
-        operator add is routed to the live pipeline."""
+        operator add is routed to the live crawl session."""
         dispatch_work: list[int] = []
         added: list[tuple[object, object]] = []
 
@@ -1023,6 +1016,16 @@ class TestSessionOperatorSurface:
             for n in range(20):
                 dispatch_work.append(n)
                 if n == 7:
+                    # The real run parks the booted crawl on the construction
+                    # context; this fake run boots none, so park the double the
+                    # same way ``build_paths`` does before the operator asks.
+                    session.registration_context = ConstructionContext(
+                        bot=None,  # type: ignore[arg-type]
+                        chain_id=1,
+                        database_path=None,  # type: ignore[arg-type]
+                        construction_route=None,  # type: ignore[arg-type]
+                        session=fake_pipeline,
+                    )
                     # Operator adds a path + triggers discovery mid-run while
                     # the hot loop keeps solving previously-added hops.
                     await session.enqueue_path(["hop-a", "hop-b"], directions=[True, False])
@@ -1030,9 +1033,6 @@ class TestSessionOperatorSurface:
                 await asyncio.sleep(0)  # yield stands in for one dispatch hot-loop await
 
         session = session_for_test(consumer=consumer)
-        # A live (fake) pipeline is reachable on the running session —
-        # attached through the owner's mutator.
-        session.attach_registration_pipeline(fake_pipeline)
         await session.run()
 
         # Full dispatch progress despite the mid-run add — no stall, no abort.

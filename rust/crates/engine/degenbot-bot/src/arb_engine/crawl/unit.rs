@@ -1,10 +1,8 @@
 //! The core crawl unit — one candidate path, answered entirely engine-side.
 //!
-//! The Python crawl's `_registration_unit` is the same pipeline with the loop
-//! held in the driver: every memo ask, hop key, pool id, gate verdict and fold
-//! delta is a `PyO3` crossing around logic the core already owns (20-40 per
-//! 3-hop path). This module is that unit as ONE engine call, in the stage order
-//! the driver measured (`build_paths.py`'s `UNIT_STAGES`):
+//! Held in the driver, this loop made every memo ask, hop key, pool id, gate
+//! verdict and fold delta a `PyO3` crossing around logic the core already owns
+//! (20-40 per 3-hop path). It is ONE engine call here, in this stage order:
 //!
 //! 1. **memo** — the ledger's stable-refusal memo, asked pre-build per hop;
 //! 2. **build** — each hop through [`Bot::construct_pool`] (the route,

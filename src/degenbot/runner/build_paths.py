@@ -6,7 +6,7 @@ stage profile all live in ``degenbot_bot::arb_engine::crawl``. This module is th
 driver shell around it:
 
 - :class:`ConstructionContext` is the boot assembly: it resolves the construction
-  route and builds WETH once, then the engine holds the ``Arc<Bot>``;
+  route, and the engine holds the ``Arc<Bot>``;
 - :func:`build_paths` resolves the crawl configuration (route, cap, permutation
   filter, retry policy, policy data), begins the engine crawl, and consumes the
   receipt stream for the progress cadence and the observation policy;
@@ -16,8 +16,7 @@ driver shell around it:
 
 The session is kept on :class:`ConstructionContext` for the process's life, so
 the operator surface (``enqueue_path`` / ``trigger_discovery``) keeps working
-after ``run()`` trims the main-loop Python state — the trim-proof identity the
-retired ``PathRegistrationPipeline`` used to be.
+after ``run()`` trims the main-loop Python state.
 
 The driver is Python-companion orchestration (``stays-python``): it registers
 paths with the Rust-owned engine but owns no pool state.
@@ -131,9 +130,9 @@ def _pool_types_from_filter(perms: set[str] | None) -> list[PoolKind]:
 class ConstructionContext:
     """Registration-owned construction resources, kept out of run()'s trim.
 
-    The boot assembly: it resolves the construction-route policy and builds WETH
-    once, then the engine holds the ``Arc<Bot>`` — the context itself carries no
-    per-unit machinery. ``BotRunner.run()`` trims *main-loop* state
+    The boot assembly: it resolves the construction-route policy, and the engine
+    holds the ``Arc<Bot>`` — the context itself carries no per-unit machinery.
+    ``BotRunner.run()`` trims *main-loop* state
     (``release_python_state()`` + ``self.bot = None``); this context is a
     *separate* identity that the trim never severs, and it keeps the crawl
     session the engine booted, which is the operator surface's only door.
@@ -149,7 +148,6 @@ class ConstructionContext:
     chain_id: int
     database_path: pathlib.Path
     construction_route: ConstructionRoute
-    weth: Any  # Erc20Token (WETH)
     #: The engine's booted crawl session, set by :func:`build_paths`. Held for
     #: the process's life: the engine driver holds the run's join handle, and
     #: the controller behind this session is the operator surface.
@@ -163,8 +161,7 @@ class ConstructionContext:
         """Build the construction context for a bot.
 
         Resolves the route policy (the mainnet V3 fork factories in policy order,
-        generic builder rung armed) and builds WETH once. The core route entry
-        owns everything else about construction.
+        generic builder rung armed). The core route entry owns construction.
 
         Returns:
             The construction context.
@@ -178,13 +175,11 @@ class ConstructionContext:
             ),
             generic=True,
         )
-        weth = bot.build_erc20token(WETH_ADDRESS)
         return cls(
             bot=bot,
             chain_id=bot.chain_id,
             database_path=bot.database_path,
             construction_route=construction_route,
-            weth=weth,
         )
 
 
@@ -431,14 +426,16 @@ async def _consume(
 class BuildPathsOptions:
     """The knobs :func:`build_paths` takes, one options object.
 
-    ``max_registered_paths`` and ``discovery_batch_size`` are the non-defaulted
-    fields, and they are required for the same reason the engine's configuration
-    requires them: both are configuration values, so the caller states what it
-    resolved and no code path invents one.
+    ``max_registered_paths``, ``discovery_batch_size`` and
+    ``progress_interval_secs`` are the non-defaulted fields, and they are
+    required for the same reason the engine's configuration requires them: each
+    is a configuration value, so the caller states what it resolved and no code
+    path invents one.
     """
 
     max_registered_paths: int
     discovery_batch_size: int
+    progress_interval_secs: float
     retry_policy: RetryPolicy | None = None
     context: ConstructionContext | None = None
     permutation_filter: frozenset[str] | None = None
@@ -510,14 +507,12 @@ async def build_paths(
     engine_bot = getattr(bot, "_py_bot", bot)
     session = engine_registry.engine.begin_crawl(config, bot=engine_bot)
     constr_ctx.session = session
-    progress_interval_s = getattr(options, "progress_interval_secs", None) or 30.0
-
     completed = False
     try:
         await _consume(
             session,
             bot=bot,
-            progress_interval_s=progress_interval_s,
+            progress_interval_s=options.progress_interval_secs,
         )
         completed = True
     finally:

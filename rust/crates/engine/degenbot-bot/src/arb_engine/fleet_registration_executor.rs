@@ -52,9 +52,6 @@ pub(crate) struct FleetRegistrationExecutor {
     /// The shared pooled-seat host (the channel submit end + the unit
     /// sequence).
     host: SeatHost,
-    /// This executor's S2 fault watch. Per-instance so hermetic
-    /// executors isolate; the process-global executor shares the process one.
-    fault_watch: Arc<IntakeFaultWatch>,
     /// The budget's `PoolStateUpdater` slot cap (the pooled seat count).
     #[cfg(test)]
     seats: usize,
@@ -73,28 +70,17 @@ impl FleetRegistrationExecutor {
     /// # Errors
     /// [`BootError`] — the fleet budget sum check or a boot invariant.
     pub(crate) fn boot(boot: FleetBoot) -> Result<Self, BootError> {
-        Self::boot_with_watch(boot, None)
-    }
-    fn boot_with_watch(
-        boot: FleetBoot,
-        fault_watch: Option<Arc<IntakeFaultWatch>>,
-    ) -> Result<Self, BootError> {
-        let fault_watch = fault_watch.unwrap_or_else(|| Arc::new(IntakeFaultWatch::new()));
+        // The registration host reports a lane-death fault through a fresh
+        // watch (the sim host passes `None`: its units carry no receipt owner).
         let desc = crate::arb_engine::fleet_boot::FleetBootRegistry::process()
             .registration()
             .descriptor();
-        let host = SeatHost::boot(desc, boot, Some(Arc::clone(&fault_watch)))?;
+        let host = SeatHost::boot(desc, boot, Some(Arc::new(IntakeFaultWatch::new())))?;
         Ok(Self {
             #[cfg(test)]
             seats: host.seat_count(),
             host,
-            fault_watch,
         })
-    }
-    /// This executor's S2 fault watch (the pyo3 receipt observes it).
-    #[must_use]
-    pub(crate) fn fault_watch(&self) -> Arc<IntakeFaultWatch> {
-        Arc::clone(&self.fault_watch)
     }
     /// The budget's `PoolStateUpdater` slot cap (the pooled seat count).
     /// Test-facing (the intake submits without asking the cap).

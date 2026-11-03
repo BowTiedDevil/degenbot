@@ -102,11 +102,6 @@ class DynamicFeePoolRejectedError(PoolRegistrationError):
     A V4 pool with a dynamic fee was rejected at registration: the solver assumes a fixed fee.
     """
 
-class FleetIntakeFaultedError(RuntimeError):
-    """
-    The fleet registration intake faulted: the sticky lane-death latch resolved held intake units terminally (they were never executed). Sticky until a fresh process.
-    """
-
 class HighFeePoolRejectedError(PoolRegistrationError):
     """
     A V4 pool whose static fee exceeds the cmd_executor's 2-byte encoding limit (fee > 65535) was rejected at registration: the executor encodes fee as u16 in both V4_SWAP_COMPACT and V4_SWAP_DYNAMIC, so such pools cannot be encoded. They are also unprofitable (32%+ per swap).
@@ -257,8 +252,9 @@ class ArbitrageEngine:
         # Errors
 
         `ValueError` for a configuration the crawl cannot honour (the core's own
-        validation message) and `RuntimeError` when the engine has no construction
-        I/O or a crawl is already installed.
+        validation message), `RuntimeError` when the engine has no construction
+        I/O or a crawl is already installed, and `BootRefused` when the fleet
+        refused to host the registration intake the crawl runs on.
         """
     def debug_buffer_v3_liquidity_update(
         self,
@@ -1629,14 +1625,6 @@ class Bot:
         (on-chain-empty) tick-bitmap WORD positions, seeded INLINE in the
         registration (Sparse pools only; Tracked pools ignore them).
         """
-    def registration_fleet_hosted(self, /) -> bool:
-        """
-        PRG-3: whether the fleet hosts the registration intake (the
-        `fleet.stance=fleet` migration stance installed this process's
-        intake boot descriptor at engine construction). The Python driver
-        reads this ONCE at pipeline construction (stance like the executor
-        field — never re-read on the hot path).
-        """
     def resolve_session_pool(
         self,
         /,
@@ -1719,18 +1707,6 @@ class Bot:
         up to 60s on a silent WS stream). Idempotent — safe to call from both
         the `__aexit__` path and a signal handler. Delegates to the shared
         `PumpState`.
-        """
-    def submit_registration_unit(self, /, fn_work: Any) -> IntakeReceipt:
-        """
-        PRG-3: submit one intake unit (a pool-build callable) to the fleet
-        intake executor. Returns a receipt whose `.wait()` joins the unit.
-        Refuses loudly under the legacy stance — the driver must keep the
-        incumbent worker pool there.
-
-        FF-T1: a refused fleet boot raises the TYPED `BootRefused`
-        (detected budget + floor + one operator hint) at this submit and at
-        every submit after it (the sticky materializer); the host process
-        survives — the library never aborts on the boot-refusal arm.
         """
     def subscribe(self, /, rpc_url: str) -> int:
         """
@@ -2258,32 +2234,6 @@ class BotIo:
         No-op when no `database_path` is configured. DB failures propagate as
         `ValueError`. A no-row match is a benign no-op (the caller
         only reaches the write-back when the row was already fetched).
-        """
-
-@final
-class BuildRefusalView:
-    """
-    One typed build-refusal classification, as the Python pipeline reads it.
-    """
-    @property
-    def counts_as_skip(self, /) -> bool:
-        """
-        Whether the refusal adds to the generic skip counter.
-        """
-    @property
-    def detail(self, /) -> str | None:
-        """
-        The failure text (log-only; never a label).
-        """
-    @property
-    def outcome(self, /) -> str:
-        """
-        The bounded outcome tag.
-        """
-    @property
-    def stable(self, /) -> bool:
-        """
-        Whether the refusal is a pool fact (memoizable) rather than transient.
         """
 
 @final
@@ -3256,72 +3206,6 @@ class HypotheticalConfig:
         """
 
 @final
-class IntakeReceipt:
-    """
-    One submitted intake unit's completion handle. `done()` probes
-    completion cheaply, `result()` delivers the callable's return value
-    or re-raises its exception (repeatable — the outcome is stored, not
-    consumed), `wait()` is the blocking GIL-detached join, and
-    `wait_async()` is the asyncio-native awaitable on the shared runtime.
-    """
-    def done(self, /) -> bool:
-        """
-        Non-blocking probe: has the unit completed? The driver's asyncio
-        join polls this (one relaxed atomic load) instead of parking a
-        waiter thread per in-flight build.
-        """
-    def result(self, /) -> Any:
-        """
-        The unit's result (call once [`Self::done`] turns true). Raises the
-        callable's exception if the build failed.
-
-        # Errors
-        `RuntimeError` when the unit has not completed yet; the callable's
-        own exception on build failure.
-        """
-    def wait(self, /, timeout: SupportsFloat | SupportsIndex | None = None) -> Any:
-        """
-        Blocking join (legacy-future parity). The parked recv runs
-        GIL-DETACHED — a waiter holding the GIL would deadlock its own
-        unit (the seat's `Python::attach` could never acquire it).
-
-        # Errors
-        `TimeoutError` when the unit did not complete in time; the
-        callable's own exception on build failure.
-        """
-    def wait_async(self, /) -> Any:
-        """
-        The asyncio-native join: an awaitable that resolves on the shared
-        tokio runtime when the unit completes (no parked waiter thread, no
-        poll loop — the driver awaits it directly).
-
-        # Errors
-        `RuntimeError` when the signal channel dropped without a delivery
-        (executor died); the callable's own exception on build failure.
-        """
-
-@final
-class PathAdmission:
-    """
-    One eligibility-gate answer, as the Python registration pipeline reads it.
-
-    The gate's mechanical decisions — direction agreement, the rejected-path
-    memo, and the registered-path dup fast-path — are the core's; the Python
-    pipeline renders the verdict it is handed.
-    """
-    @property
-    def hop_sig(self, /) -> list[tuple[int, bool]]:
-        """
-        The hop signature `(pool_id, zero_for_one)` per hop — the signature
-        the memos key on. Empty unless the verdict is `admitted`.
-        """
-    @property
-    def kind(self, /) -> str:
-        """
-        The bounded verdict tag (one of `registration_admission_kinds()`).
-        """
-
-@final
 class PathBatchIterator:
     """
     A batched **async** iterator over the lazy DFS.
@@ -4042,153 +3926,6 @@ class PoolTickCoverage:
     def __ne__(self, value: object, /) -> bool: ...
 
 @final
-class RegistrationFoldDelta:
-    """
-    The delta one unit fold applies to a driver's summary counters — the
-    core's [`PipelineReport`] after exactly one `absorb`. The counter
-    ARITHMETIC is the core's (one definition in
-    `degenbot_bot::bot_core`); a driver that keeps its
-    own counter storage applies this answer mechanically, field for field.
-    """
-    @property
-    def cap_skip_count(self, /) -> int:
-        """
-        Benign post-cap skips added by this fold.
-        """
-    @property
-    def capped(self, /) -> bool:
-        """
-        Whether this fold latched the benign cap stop.
-        """
-    @property
-    def dup_count(self, /) -> int:
-        """
-        Duplicates added by this fold.
-        """
-    @property
-    def engine_reject_count(self, /) -> int:
-        """
-        Engine rejections added by this fold.
-        """
-    @property
-    def other_exc_count(self, /) -> int:
-        """
-        Other counted exceptions added by this fold (folds with
-        `engine_reject_count`).
-        """
-    @property
-    def path_count(self, /) -> int:
-        """
-        New paths registered by this fold.
-        """
-    @property
-    def register_fail_count(self, /) -> int:
-        """
-        Register failures added by this fold.
-        """
-    @property
-    def skip_count(self, /) -> int:
-        """
-        Skips added by this fold.
-        """
-    @property
-    def skip_reasons(self, /) -> list[tuple[str, int]]:
-        """
-        The reason-label deltas as `(label, count)` pairs (a fold records at
-        most one label).
-        """
-    @property
-    def uncounted_skip_count(self, /) -> int:
-        """
-        Uncounted skips added by this fold (`counts_as_skip == false`).
-        """
-    @property
-    def units_folded(self, /) -> int:
-        """
-        Units folded (always 1 — the one-fold-per-unit witness a driver
-        accumulates against its own unit count).
-        """
-    @property
-    def v4_dynamic_fee_rejected(self, /) -> int:
-        """
-        V4 dynamic-fee rejections added by this fold.
-        """
-    @property
-    def v4_hook_rejected(self, /) -> int:
-        """
-        V4 hook rejections added by this fold.
-        """
-    @property
-    def v4_pool_count(self, /) -> int:
-        """
-        V4 hops witnessed by this fold (`Registered` outcomes only).
-        """
-
-@final
-class RegistrationLedger:
-    """
-    The core registration ledger: the four memos, owned by the core.
-    """
-    def __new__(cls, /) -> RegistrationLedger:
-        """
-        A ledger with empty memos.
-        """
-    def admit_path_with_policy(
-        self,
-        /,
-        hop_pool_ids: SupportsGetItem[int, SupportsIndex],
-        pinned_directions: SupportsGetItem[int, bool] | None,
-        resolved_directions: SupportsGetItem[int, bool] | None,
-        policy: str,
-    ) -> PathAdmission:
-        """
-        The eligibility gate: direction agreement, the rejected-path memo,
-        the submitted policy verdict, and the registered-path dup fast-path,
-        in one ordered pass. `policy` is the strategy pre-filter's verdict,
-        evaluated by the caller before this ask and submitted as data.
-        """
-    def memoize_registered_path(
-        self, /, hop_signature: SupportsGetItem[int, tuple[SupportsIndex, bool]]
-    ) -> None:
-        """
-        Record a completed registration (engine-created or engine-dedup'd).
-        """
-    def memoize_rejected_path(
-        self, /, hop_signature: SupportsGetItem[int, tuple[SupportsIndex, bool]]
-    ) -> None:
-        """
-        Record a deterministic policy/predicate deny for a hop signature.
-        """
-    def memoize_unregistrable(self, /, key: str | None, outcome: str, counts_as_skip: bool) -> None:
-        """
-        Record a STABLE build refusal under its bounded tag.
-        """
-    def memoize_verified_pool(self, /, key: str) -> None:
-        """
-        Record a COMPLETED verify lifecycle (a pool fact).
-        """
-    def path_registered(
-        self, /, hop_signature: SupportsGetItem[int, tuple[SupportsIndex, bool]]
-    ) -> bool:
-        """
-        Whether this exact hop signature already completed registration.
-        """
-    def path_rejected(
-        self, /, hop_signature: SupportsGetItem[int, tuple[SupportsIndex, bool]]
-    ) -> bool:
-        """
-        Whether this hop signature already hit a deterministic deny.
-        """
-    def pool_verified(self, /, key: str) -> bool:
-        """
-        Whether this pool's verify lifecycle already completed.
-        """
-    def unregistrable_record(self, /, key: str | None) -> UnregistrablePoolRecord | None:
-        """
-        The memoized stable refusal for a pool key, or `None`.
-        """
-
-@final
 class RegistrationLifecycle:
     """
     One pool's registration verify-lifecycle, as a Python caller states it.
@@ -4674,22 +4411,6 @@ class SwapRefusalKind:
     def __int__(self, /) -> int: ...
     def __ne__(self, value: object, /) -> bool: ...
 
-@final
-class UnregistrablePoolRecord:
-    """
-    A memoized stable refusal of one pool, as the Python pipeline reads it.
-    """
-    @property
-    def counts_as_skip(self, /) -> bool:
-        """
-        Whether the refusal adds to the generic skip counter.
-        """
-    @property
-    def outcome(self, /) -> str:
-        """
-        The bounded outcome tag.
-        """
-
 def build_path_graph(
     database_path: str,
     chain_id: SupportsIndex,
@@ -4810,22 +4531,6 @@ def call_on_ambient_runtime(fn_work: Any) -> Any:
     # Returns
 
     Whatever `fn_work()` returns.
-    """
-
-def classify_build_refusal(
-    failure_kind: str, pool_type: str, detail: str | None
-) -> BuildRefusalView:
-    """
-    Classify a hop-build failure. `failure_kind` is the TYPED refusal a Python
-    caller matched (`"hooked-pool"`, `"dynamic-fee"`, `"high-fee"`) or
-    `"transient"` for everything else; `detail` rides the record for logging and
-    never becomes a label.
-
-    # Errors
-
-    `ValueError` for an unknown `failure_kind` or an unrecognized `pool_type`:
-    a caller that cannot name a failure or a family gets no tag rather than a
-    guessed one.
     """
 
 def classify_pool_kind(kind: Any) -> PoolKind:
@@ -5034,28 +4739,6 @@ def flush_telemetry() -> None:
     Idempotent and none-safe (telemetry off -> no-op).
     """
 
-def fold_registration_unit(
-    kind: str,
-    tag: str | None,
-    counts_as_skip: bool,
-    created: bool,
-    v4_hops: SupportsIndex,
-    detail: str | None,
-) -> RegistrationFoldDelta:
-    """
-    Fold one unit outcome with the core's arithmetic and return the delta.
-
-    `kind` is one of `registration_unit_kinds()`; `tag` is the skip's reason
-    tag (a bounded `RegistrationOutcome` tag, or a free-form driver label
-    recorded verbatim — a skip without one is a caller bug); `detail` is the
-    log-only failure text.
-
-    # Errors
-
-    `ValueError` for a kind outside the closed set, or a skip with no tag:
-    wire drift is a loud construction failure, never a guessed outcome.
-    """
-
 def generate_v2_pool_address(
     deployer_address: str, token0: str, token1: str, init_hash: str
 ) -> str:
@@ -5123,38 +4806,6 @@ def prepare_traversal_plan(
     entry per plan position, in product order with reverse pairs consolidated.
     `filter_len` is the per-depth filter length (or `None`); when set it floors
     the effective minimum depth at that length.
-    """
-
-def registration_admission_kinds() -> list[str]:
-    """
-    The closed eligibility-verdict set — the vocabulary a Python consumer
-    builds its verdict labels from, so a verdict cannot drift between the core
-    and a driver.
-    """
-
-def registration_outcome_tags() -> list[str]:
-    """
-    The bounded outcome tag list — the vocabulary a Python consumer builds its
-    label enum from, so the tag set has exactly one owner.
-    """
-
-def registration_pool_memo_key(
-    pool_type: str, address: str | None, pool_hash: str | None
-) -> str | None:
-    """
-    The hop identity the negative memos key on, or `None` when the hop carries
-    no identity.
-
-    # Errors
-
-    `ValueError` for an unrecognized `pool_type`: wire drift, never a guessed
-    family.
-    """
-
-def registration_unit_kinds() -> list[str]:
-    """
-    The closed unit-kind set — the vocabulary a Python consumer builds its
-    kind labels from, so a kind cannot drift between the core and a driver.
     """
 
 def reinstall_config_holder_for_tests(env: dict[str, str], file: str | None = None) -> None:
@@ -5401,7 +5052,6 @@ __all__ = [
     "BootRefused",
     "Bot",
     "BotIo",
-    "BuildRefusalView",
     "ChainMismatchError",
     "ConcentratedLiquidityView",
     "ConfigSectionValues",
@@ -5413,12 +5063,9 @@ __all__ = [
     "DynamicFeePoolRejectedError",
     "Erc20Token",
     "Erc20TokenRow",
-    "FleetIntakeFaultedError",
     "HighFeePoolRejectedError",
     "HookedPoolRejectedError",
     "HypotheticalConfig",
-    "IntakeReceipt",
-    "PathAdmission",
     "PathBatchIterator",
     "PathGraph",
     "PathIterator",
@@ -5433,8 +5080,6 @@ __all__ = [
     "PoolRegistrationError",
     "PoolTickCoverage",
     "PossibleInaccurateResult",
-    "RegistrationFoldDelta",
-    "RegistrationLedger",
     "RegistrationLifecycle",
     "ReservePairView",
     "ResolvedChainId",
@@ -5453,14 +5098,12 @@ __all__ = [
     "TickMapIntakeInconsistentError",
     "UnconfiguredStrategyError",
     "UnknownStrategyError",
-    "UnregistrablePoolRecord",
     "UnsupportedPoolFamilyError",
     "VerificationMismatchError",
     "VerificationRpcError",
     "build_path_graph",
     "call_blocking_on_ambient_runtime",
     "call_on_ambient_runtime",
-    "classify_build_refusal",
     "classify_pool_kind",
     "classify_pool_kinds",
     "cli_main",
@@ -5473,16 +5116,11 @@ __all__ = [
     "find_paths_async_rust",
     "find_paths_rust",
     "flush_telemetry",
-    "fold_registration_unit",
     "generate_v2_pool_address",
     "generate_v3_pool_address",
     "keccak256",
     "pool_family_tags",
     "prepare_traversal_plan",
-    "registration_admission_kinds",
-    "registration_outcome_tags",
-    "registration_pool_memo_key",
-    "registration_unit_kinds",
     "reinstall_config_holder_for_tests",
     "resolve_directions",
     "resolve_hypothetical",

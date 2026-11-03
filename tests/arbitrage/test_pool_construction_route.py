@@ -14,45 +14,25 @@ impossible: the route lives core-side.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from degenbot.runner.build_paths import ConstructionContext
 from degenbot.runner.identity import (
     PANCAKESWAP_V3_MAINNET_FACTORY,
     SUSHISWAP_V3_MAINNET_FACTORY,
     UNISWAP_V3_MAINNET_FACTORY,
-    WETH_ADDRESS,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
-class _RouteRecordingBot:
-    """A fake construction bot: records the build call, raises on demand."""
+class _ConstructionBot:
+    """A fake construction bot: the two bot facts the context resolves."""
 
-    def __init__(self, *, database_path: Path, exc: BaseException | None = None) -> None:
+    def __init__(self, *, database_path: Path) -> None:
         self.chain_id = 1
         self.database_path = database_path
-        self.exc = exc
-        self.build_calls: list[dict[str, Any]] = []
-
-    def registration_fleet_hosted(self) -> bool:
-        return True
-
-    def build_erc20token(self, address: str) -> Any:
-        return f"weth:{address}"
-
-    def build_pool(self, address: str, *, silent: bool = False, **kwargs: Any) -> Any:
-        self.build_calls.append({"address": address, **kwargs})
-        if self.exc is not None:
-            raise self.exc
-        return f"pool:{address}"
-
-    def build_managed_pool(self, pool_manager: str, request: Any) -> Any:
-        if self.exc is not None:
-            raise self.exc
-        return f"pool:{getattr(request, 'pool_id', '?')}"
 
 
 class TestConstructionContext:
@@ -60,9 +40,8 @@ class TestConstructionContext:
         """The context shrinks to resolved policy values: the core route owns
         the construction order, and the resolved route policy enters."""
 
-        ctx = ConstructionContext.for_bot(_RouteRecordingBot(database_path=tmp_path / "unused.db"))
+        ctx = ConstructionContext.for_bot(_ConstructionBot(database_path=tmp_path / "unused.db"))
         assert ctx.bot.chain_id == 1
-        assert ctx.weth == f"weth:{WETH_ADDRESS}"
         route = ctx.construction_route
         assert route.generic is True
         assert set(route.factories) == {

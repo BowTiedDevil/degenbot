@@ -109,8 +109,6 @@ pub mod price;
 #[cfg(feature = "rpc")]
 pub mod provider_seam;
 pub mod python_log_layer;
-/// The `PyO3` projection of the core registration outcome ledger (S12).
-pub mod registration;
 #[cfg(feature = "rpc")]
 pub mod rpc;
 /// FF-T5: the runtime fleet status — budget, plan, census
@@ -371,18 +369,6 @@ mod _ffi {
     #[pymodule_export]
     use crate::pathfinding::{build_path_graph, PathGraph};
 
-    // S12: the core registration outcome ledger + its bounded tag vocabulary
-    // (`degenbot_bot::bot_core`), projected for the
-    // Python registration pipeline. The tags are exported so Python builds its
-    // label enum FROM the core vocabulary rather than re-declaring it.
-    #[pymodule_export]
-    use crate::registration::{
-        classify_build_refusal, fold_registration_unit, registration_admission_kinds,
-        registration_outcome_tags, registration_pool_memo_key, registration_unit_kinds,
-        PyBuildRefusal, PyPathAdmission, PyRegistrationFoldDelta, PyRegistrationLedger,
-        PyUnregistrablePoolRecord,
-    };
-
     // Uniswap mixed V2/V3/V4 engine (feature = "bot") + the block-stream
     // async iterator (the authoritative `newHeads`-derived block clock) +
     // the cockpit session-phase table (`strategy_host::SessionPhase`),
@@ -394,13 +380,10 @@ mod _ffi {
         session_phase_next, BlockStream, PyArbEngine, PyCrawlReceiptStream, PyCrawlSession,
     };
 
-    // Bot — Rust-owned state (feature = "bot"). `PyIntakeReceipt` and
-    // `PyConcentratedLiquidityView` keep the (missing) gate they had in the
-    // pre-conversion registration body — mirrored, not fixed, so the surface
-    // stays byte-equivalent; `bot` is a default feature so every real build
-    // compiles them.
-    #[pymodule_export]
-    use crate::bot::intake::PyIntakeReceipt;
+    // Bot — Rust-owned state (feature = "bot"). `PyConcentratedLiquidityView`
+    // keeps the (missing) gate it had in the pre-conversion registration body —
+    // mirrored, not fixed, so the surface stays byte-equivalent; `bot` is a
+    // default feature so every real build compiles it.
     #[pymodule_export]
     use crate::bot::pool::PyConcentratedLiquidityView;
     #[cfg(feature = "bot")]
@@ -727,12 +710,6 @@ mod _ffi {
             m.add(
                 "BootRefused",
                 py.get_type::<crate::bot::engine::BootRefused>(),
-            )?;
-            // the Faulted intake drain (spike S2) surfaces as a typed
-            // receipt exception.
-            m.add(
-                "FleetIntakeFaultedError",
-                py.get_type::<crate::bot::engine::FleetIntakeFaultedError>(),
             )?;
             // The construction route's loud refusal (ADR-055 D4).
             m.add(

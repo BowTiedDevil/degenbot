@@ -13,6 +13,11 @@ generalizes), ADR-057 (`StrategyHost` stays process-level governance), and
 ADR-059 (the pool family kernel).
 
 > **Header note (ADR-087 D5).** The census gate this ADR named was deleted under ADR-087 D1/D5 (`retired_python_dedup_maps_do_not_reappear`) — the link breaks in both directions.
+>
+> **Header note (ADR-087 D1).** The `src/degenbot/runner/_registration_ledger.py`
+> adapter this ADR kept ("SURVIVES as an adapter") was deleted with the retired
+> Python crawl loop: the engine's crawl owns the ledger end to end, so the
+> adapter had no live caller left and retired with it.
 
 ## Context
 
@@ -121,15 +126,6 @@ prevent.
   host may reach; it is never a host competitor, and it is not where
   cross-driver arbitration belongs. This is deferred deliberately, not
   overlooked.
-- **`src/degenbot/runner/_registration_ledger.py` SURVIVES as an adapter.**
-  It looks like superseded state and is not. The taxonomy is core-owned: the
-  negative memos, the typed build-refusal classification, and the outcome
-  vocabulary live in `degenbot_bot::bot_core::registration_ledger`, and the
-  pure-Rust driver reads the same implementation, so a tag cannot drift between
-  them. What the module adds is pure translation Python owns: the label enum is
-  BUILT FROM the core's exported tag list rather than re-declared, and a Python
-  exception TYPE is mapped onto a core failure kind. Do not sweep this away as
-  dead code.
 ### The five Python-side address-keyed maps that are NOT session identity
 
 They are collected here, in one place, because "a map keyed by an address is a

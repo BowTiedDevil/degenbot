@@ -328,6 +328,7 @@ class RunRitual:
                 options=BuildPathsOptions(
                     max_registered_paths=session.cfg.max_registered_paths,
                     discovery_batch_size=session.cfg.discovery_batch_size,
+                    progress_interval_secs=session.cfg.reg_progress_secs,
                     retry_policy=retry_policy,
                     context=registration_context,
                     permutation_filter=session.cfg.permutation_filter,

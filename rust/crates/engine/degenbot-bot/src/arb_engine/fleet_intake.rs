@@ -14,7 +14,6 @@
 //! boot-refusal arm).
 use degenbot_workers::dispatcher::BootError;
 use parking_lot::{Condvar, Mutex};
-use std::sync::Arc;
 use std::time::Duration;
 /// The typed terminal record for a Faulted intake (spike S2):
 /// the host drained held work because the lane-death latch is sticky, so no
@@ -28,7 +27,7 @@ pub struct IntakeFault {
     /// The held units resolved by the fault (never executed).
     pub held: usize,
 }
-/// The S2 fault watch: the bot-side seam the pyo3 receipt observes. The host
+/// The S2 fault watch: the bot-side seam the crawl window observes. The host
 /// `set`s it on entering Faulted (first-wins — a second lane death for the
 /// same latch is idempotent); every waiting receipt resolves terminally
 /// instead of parking. This is the ONLY cross-crate surface the S2 seam adds
@@ -66,21 +65,6 @@ impl IntakeFaultWatch {
         }
         *state
     }
-}
-/// The installed registration executor's S2 fault watch — what the pyo3
-/// receipt observes. `None` before any engine construction (a submit would
-/// already have refused with the typed `BootError`). Deliberately NOT a
-/// separate process-global: the watch belongs to the executor, so hermetic
-/// executors isolate completely.
-#[must_use]
-pub fn registration_fault_watch() -> Option<Arc<IntakeFaultWatch>> {
-    crate::arb_engine::fleet_boot::FleetBootRegistry::process()
-        .registration()
-        .global_executor(
-            crate::arb_engine::fleet_registration_executor::FleetRegistrationExecutor::boot,
-        )
-        .ok()
-        .map(crate::arb_engine::fleet_registration_executor::FleetRegistrationExecutor::fault_watch)
 }
 /// The pooled work unit: the seat threads' existing box shape, pinned as
 /// an alias (concrete, object-safe — never a generic on the port).

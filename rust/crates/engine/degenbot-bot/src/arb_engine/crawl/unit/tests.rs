@@ -455,9 +455,8 @@ impl Harness {
 
 // ── the parity table ───────────────────────────────────────────────────────
 
-/// The outcome table BOTH drivers assert (`unit/parity_table.json`) — the Rust
-/// unit here and the Python unit in
-/// `tests/arbitrage/test_crawl_unit_parity.py`.
+/// The outcome table these scenarios assert (`unit/parity_table.json`): per
+/// case, the receipt's kind, breakdown tag, and answering stage.
 const PARITY_TABLE: &str = include_str!("parity_table.json");
 
 /// Every case name the table carries, in table order.

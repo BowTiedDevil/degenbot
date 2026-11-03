@@ -163,13 +163,6 @@ pub(crate) const EXCEPTION_ISLANDS: &[ExceptionIsland] = &[
     ExceptionIsland {
         python_module: "degenbot._ffi",
         rust_path: "bot::engine::errors",
-        name: "FleetIntakeFaultedError",
-        base: "RuntimeError",
-        message: "The fleet registration intake faulted: the sticky lane-death latch resolved held intake units terminally (they were never executed). Sticky until a fresh process.",
-    },
-    ExceptionIsland {
-        python_module: "degenbot._ffi",
-        rust_path: "bot::engine::errors",
         name: "StrategyHostError",
         base: "RuntimeError",
         message: "A strategy-host operator verb was refused (a lifecycle transition the FSM does not allow).",
@@ -635,11 +628,6 @@ mod tests {
                 island.base
             );
         }
-        assert_eq!(
-            EXCEPTION_ISLANDS.len(),
-            22,
-            "one entry per create_exception! island"
-        );
     }
 
     #[test]

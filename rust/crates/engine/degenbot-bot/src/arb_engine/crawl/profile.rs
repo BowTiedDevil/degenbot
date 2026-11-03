@@ -470,9 +470,8 @@ mod tests {
         profile
     }
 
-    // `tests/arbitrage/test_registration_pipeline.py`'s split fixture: a
-    // memo refusal carries one entry, a build refusal two, an eligibility
-    // refusal three, and a registration all five.
+    // A memo refusal carries one split entry, a build refusal two, an
+    // eligibility refusal three, and a registration all five.
     #[test]
     fn skip_class_is_the_stage_that_answered_it() {
         let cases = [

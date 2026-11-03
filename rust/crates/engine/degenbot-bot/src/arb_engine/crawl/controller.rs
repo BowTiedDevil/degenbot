@@ -1,11 +1,10 @@
 //! The crawl controller — the crawl's own machine, its loop, and its operator
 //! surface.
 //!
-//! The Python `PathRegistrationPipeline` is TWO state machines wearing one
-//! object: the benign registry-cap latch (`capped`) and a re-armable
-//! sweep-completion latch (`_sweep_completed_edition`). Everything else on the
-//! object is either a fold (counters, stage profile) or a knob. Here the two
-//! latches are one enum — [`CrawlState`] — because they are the same kind of
+//! The crawl's benign registry-cap latch and its re-armable sweep-completion
+//! latch are TWO state machines wearing one object; everything else on it is
+//! either a fold (counters, stage profile) or a knob. Here the two latches are
+//! one enum — [`CrawlState`] — because they are the same kind of
 //! fact (a pose the pipeline is in, refusing work that pose cannot use), and
 //! because a bool beside an enum cannot say which transitions are legal:
 //!

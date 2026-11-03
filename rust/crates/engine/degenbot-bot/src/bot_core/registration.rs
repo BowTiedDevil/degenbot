@@ -17,8 +17,6 @@
 //!   `assemble_*` entry points — the shell clones its `PyBot.db` Arc and
 //!   passes the borrow, so the shared frozen-WAL-snapshot read is unchanged.
 
-use std::fmt;
-
 use alloy::primitives::Address;
 use degenbot_pools::TickWordSource;
 use degenbot_substrate::registration_gate::AdmissionVerdict;
@@ -40,23 +38,6 @@ use degenbot_pools::{
 use degenbot_pools::{RegisterAerodromePoolError, RegisterAerodromeV2PoolParams};
 use degenbot_pools::{RegisterV2PoolError, RegisterV2PoolParams};
 use degenbot_pools::{RegisterV4PoolError, RegisterV4PoolParams};
-
-/// The PRG-3 stance refusal: the process's fleet stance is not `fleet`, so
-/// the registration intake is not hosted here and the Python driver must
-/// keep the incumbent worker pool.
-#[derive(Debug)]
-pub struct RegistrationIntakeNotHosted;
-
-impl fmt::Display for RegistrationIntakeNotHosted {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "registration intake is not fleet-hosted (fleet.stance != fleet)"
-        )
-    }
-}
-
-impl std::error::Error for RegistrationIntakeNotHosted {}
 
 /// One normalized tick-map row: `(tick, liquidity_gross: u128,
 /// liquidity_net: i128, block: u64)` — the dict-entry shape the shell's
@@ -91,20 +72,6 @@ pub fn parse_address_str(s: &str) -> Result<Address, RefusalKind> {
 #[cfg_attr(not(test), expect(dead_code))]
 pub fn parse_address_list(items: &[String]) -> Result<Vec<Address>, RefusalKind> {
     items.iter().map(|s| parse_address_str(s)).collect()
-}
-
-/// PRG-3: refuse the registration-intake submit when the process's fleet
-/// stance is not `fleet` (the shell's submit-path guard, moved core-side so
-/// a pure-Rust driver sees the same refusal).
-///
-/// # Errors
-/// [`RegistrationIntakeNotHosted`] under the legacy stance.
-pub fn ensure_registration_fleet_hosted() -> Result<(), RegistrationIntakeNotHosted> {
-    if crate::fleet_intake::registration_boot_installed() {
-        Ok(())
-    } else {
-        Err(RegistrationIntakeNotHosted)
-    }
 }
 
 /// Collapse a registration-skip reason onto the closed label set (the
@@ -1482,17 +1449,6 @@ mod tests {
         );
         let single = super::parse_address_str("zz").expect_err("invalid single");
         assert_eq!(malformed_detail(&single), message);
-    }
-
-    /// The PRG-3 stance gate: the typed refusal carries the historical
-    /// message the Python driver matches on.
-    #[test]
-    fn the_fleet_stance_gate_refusal_message_is_stable() {
-        let err = RegistrationIntakeNotHosted;
-        assert_eq!(
-            err.to_string(),
-            "registration intake is not fleet-hosted (fleet.stance != fleet)"
-        );
     }
 
     /// A V4 registration fixture: pool key over the fixture tokens with the

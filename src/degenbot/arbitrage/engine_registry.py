@@ -387,28 +387,6 @@ class EngineRegistry:
         """
         return self.engine.run_registration_lifecycle(lifecycle)
 
-    def register_crawl_path(
-        self,
-        engine_hops: Sequence[tuple[int, bool]],
-    ) -> tuple[int, bool]:
-        """Register a resolved hop list straight into the engine (PRG-5).
-
-        The seat-thread pathRegistration used by the crawl units: unlike
-        :meth:`register_path` it takes ALREADY-RESOLVED ``(pool_id,
-        zero_for_one)`` hops (the unit gets the ids off the build handles).
-        The path-composition predicate is evaluated by the caller over the concrete
-        pools BEFORE hop building. Returns ``(path_id, created)`` with the
-        same semantics as :meth:`register_path` (dedup by construction in the
-        engine, PRG-4; the cap refusal surfaces as typed
-        :class:`PathRegistryFullError`).
-
-        Returns:
-            ``(path_id, created)`` — `created` is False when the engine's
-            signature dedup answered (PRG-4).
-
-        """
-        return self.engine.register_and_solve_path(list(engine_hops))
-
     def register_path(
         self,
         pools_and_zfos: Sequence[tuple[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool, bool]],

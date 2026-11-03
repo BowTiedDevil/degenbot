@@ -57,24 +57,6 @@ ALLOWED_LEAF_FFI_IMPORTS: dict[str, frozenset[str]] = {
     # identity carried as a value, with no Python twin to translate to. This
     # module is its domain home; every caller imports it from here.
     "src/degenbot/builders/construction.py": frozenset({"PoolConstructionRequest"}),
-    # S12: the registration outcome ledger moved into the Rust core
-    # (`degenbot_bot::bot_core::registration_ledger`), so this adapter calls
-    # the core's pyclass and the two classification verbs directly. There is
-    # no Python domain home for the vocabulary — it IS the Rust vocabulary, and
-    # re-exporting it through a package would only add a second name for one
-    # owner.
-    "src/degenbot/runner/_registration_ledger.py": frozenset({
-        "BuildRefusalView",
-        "RegistrationFoldDelta",
-        "RegistrationLedger",
-        "UnregistrablePoolRecord",
-        "classify_build_refusal",
-        "fold_registration_unit",
-        "registration_admission_kinds",
-        "registration_outcome_tags",
-        "registration_pool_memo_key",
-        "registration_unit_kinds",
-    }),
 }
 
 # The suite's one door onto the seam. It is allowlisted for the whole ``_ffi``

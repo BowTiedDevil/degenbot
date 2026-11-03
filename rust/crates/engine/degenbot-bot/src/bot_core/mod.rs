@@ -207,12 +207,9 @@ pub use pool_builder::route::{
 /// dispatcher keyed by `pool_id`.
 pub use refresh::{refresh_pool, RefreshError, RefreshOutcome};
 
-/// Registration: the fleet-intake guard, the address/tick shaping the shell's
-/// argument parsing delegates to, and the V4 echo payload.
-pub use registration::{
-    ensure_registration_fleet_hosted, parse_address_str, tick_rows, RegistrationIntakeNotHosted,
-    V4RegisteredEcho,
-};
+/// Registration: the address/tick shaping the shell's argument parsing
+/// delegates to, and the V4 echo payload.
+pub use registration::{parse_address_str, tick_rows, V4RegisteredEcho};
 pub use reorg_coordinator::{ReorgCoordinator, ReorgError, ReorgOutcome};
 
 /// The stage-machine telemetry seam: the observer a driver wires its stage

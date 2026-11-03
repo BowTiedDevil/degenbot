@@ -10,8 +10,8 @@ The child shrinks its own affinity to 1 CPU — the fleet quota is
 min(cgroup quota, affinity), floored at 1.0 — simulating the
 sub-SERIAL-floor condition (the 2-5-core tier now boots the
 serial binding, so the typed refusal fires only below the tier floor).
-The intake station boot is lazy: the first submit is what
-triggers the fleet budget check.
+The intake station boot is lazy: the crawl's begin is its first use, so that
+is what triggers the fleet budget check.
 """
 
 from __future__ import annotations
@@ -45,15 +45,10 @@ from degenbot._ffi import ArbitrageEngine, Bot
 
 try:
     pre = Bot(1)
-    ArbitrageEngine(py_bot=pre)  # engine construction installs the intake boot
-    probe = Bot(1)
-    if not probe.registration_fleet_hosted():
-        print("RETUNE-NOT-INSTALLED", file=sys.stderr)
-        sys.exit(4)
-    # The registration intake station boots lazily: the first submit runs
-    # the fleet budget check — the sub-floor refusal fires here.
-    receipt = probe.submit_registration_unit(lambda: 1)
-    receipt.wait(timeout=30.0)
+    engine = ArbitrageEngine(py_bot=pre)  # engine construction installs the intake boot
+    # The registration intake station boots lazily, and the crawl's begin is
+    # its first use — the sub-floor refusal fires HERE, before any config work.
+    engine.begin_crawl({})
 except Exception as exc:
     print(f"BOOT-REFUSED {type(exc).__name__}: {exc}", file=sys.stderr)
     sys.exit(3)

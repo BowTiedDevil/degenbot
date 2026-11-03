@@ -348,14 +348,13 @@ class Session:
     Write discipline: downstream modules (the run ritual, the block loop, the
     trim) read fields directly but mutate ONLY through the owner's mutators
     (``advance_block`` / ``attach_consumer_task`` / ``attach_registration`` /
-    ``attach_registration_pipeline`` / ``drop_bot`` / ``build_pipeline``) —
-    remote attribute pokes are forbidden.
+    ``drop_bot`` / ``build_pipeline``) — remote attribute pokes are forbidden.
 
     The mutable run-phase handles are the session's own lifecycle facts:
     ``result_consumer_task`` and ``registration_task``/``registration_context``
     are written by the run ritual through the mutators above, and
-    ``sim_submit_pipeline``/``registration_pipeline`` attach once their
-    producers land (after ``start()``, by design).
+    ``sim_submit_pipeline`` attaches once its producer lands (after ``start()``,
+    by design).
     """
 
     cfg: ArbitrageConfig
@@ -388,12 +387,10 @@ class Session:
     #: The concurrent sim fan-out + single ordered submitter, attached by
     #: :meth:`build_pipeline` when the run ritual attaches the consumer.
     sim_submit_pipeline: BatchExecutor | None = None
-    #: The operator add-a-path surface: the engine's booted crawl session, parked
-    #: on ``registration_context`` by ``build_paths`` (the trim-proof identity);
-    #: ``None`` for injected/fake runs and before the crawl is booted.
-    registration_pipeline: Any = None
     #: The registration-owned construction context (written by the run ritual
-    #: for the real builder; ``None`` for injected builders).
+    #: for the real builder; ``None`` for injected builders). It parks the
+    #: engine's booted crawl session — the operator add-a-path surface — and the
+    #: main-loop trim never severs it.
     registration_context: ConstructionContext | None = None
     #: The result-consumer drain task (written by the run ritual at
     #: consumer-attach; read by the pump-finished watchdog and handed to the
@@ -599,17 +596,18 @@ class Session:
     ) -> None:
         """Add ONE specific path at any time (the operator surface).
 
-        Delegates to the session's live :class:`PathRegistrationPipeline`
-        (created by the run ritual); ``path_steps`` + optional ``directions``
-        are the same shapes as :meth:`PathRegistrationPipeline.enqueue_path`.
+        Delegates to the engine's booted crawl session (parked on the
+        registration-owned construction context); ``path_steps`` + optional
+        ``directions`` are the crawl's enqueue shapes.
 
         Args:
-            path_steps: The path's steps (the pipeline's enqueue shape).
+            path_steps: The path's steps (the crawl's enqueue shape).
             directions: Per-step swap directions (``None`` = resolve them).
 
         Raises:
-            RuntimeError: if no live pipeline exists (injected fake builders
-                have no construction surface, or ``run()`` has not run).
+            RuntimeError: if no live crawl session exists (injected fake
+                builders have no construction surface, or ``run()`` has not
+                run).
 
         """
         self.phase = self.phase.on_query("enqueue_path")
@@ -625,7 +623,7 @@ class Session:
     async def trigger_discovery(self, *, bound: int | None = None) -> int:
         """Trigger a bounded one-shot discovery sweep (on-demand trigger).
 
-        Delegates to the session's live pipeline.
+        Delegates to the engine's booted crawl session.
 
         Args:
             bound: The maximum number of paths the sweep processes.
@@ -634,8 +632,8 @@ class Session:
             The number of paths processed by the sweep.
 
         Raises:
-            RuntimeError: if no live pipeline exists (injected fake builders,
-                or ``run()`` has not run).
+            RuntimeError: if no live crawl session exists (injected fake
+                builders, or ``run()`` has not run).
 
         """
         self.phase = self.phase.on_query("trigger_discovery")
@@ -659,8 +657,6 @@ class Session:
             The live ``CrawlSession``, or ``None``.
 
         """
-        if self.registration_pipeline is not None:
-            return self.registration_pipeline
         context = self.registration_context
         return None if context is None else context.session
 
@@ -735,11 +731,11 @@ class Session:
                 the registration task may trim its own state).
 
         """
-        # The shared tracker/pool/token registries this trim clears are also
-        # held, mutably, by a still-climbing registration's ConstructionContext.
+        # A still-climbing registration owns the crawl's live state, and its
+        # completion hand-off is the only place that knows registration is done.
         # Only the registration task may trim while it is live (its own
         # completion hand-off, or its cancel branch); an outside caller is
-        # mid-climb and would clobber them.
+        # mid-climb and would tear down a live crawl.
         registration_task = self.registration_task
         if registration_task is not None and not registration_task.done():
             try:
@@ -749,10 +745,8 @@ class Session:
             if current is not registration_task:
                 msg = (
                     "refusing to trim Python state while background "
-                    "registration is still climbing: the registration's "
-                    "ConstructionContext holds the same tracker/pool/token "
-                    "registries this trim clears; only the registration task "
-                    "may trim its own state"
+                    "registration is still climbing: the crawl is live and "
+                    "only the registration task may trim its own state"
                 )
                 raise RuntimeError(msg)
         actors = self.actors
@@ -855,15 +849,6 @@ class Session:
         """
         self.registration_task = task
         self.registration_context = context
-
-    def attach_registration_pipeline(self, pipeline: Any) -> None:
-        """Attach the operator add-a-path surface (built by the run ritual).
-
-        Args:
-            pipeline: The live :class:`PathRegistrationPipeline`.
-
-        """
-        self.registration_pipeline = pipeline
 
     def drop_bot(self) -> None:
         """Release the Python-companion bot ref (the post-registration trim).

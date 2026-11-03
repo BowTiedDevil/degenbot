@@ -263,8 +263,9 @@ impl PyArbEngine {
     /// # Errors
     ///
     /// `ValueError` for a configuration the crawl cannot honour (the core's own
-    /// validation message) and `RuntimeError` when the engine has no construction
-    /// I/O or a crawl is already installed.
+    /// validation message), `RuntimeError` when the engine has no construction
+    /// I/O or a crawl is already installed, and `BootRefused` when the fleet
+    /// refused to host the registration intake the crawl runs on.
     #[pyo3(signature = (config, bot=None))]
     fn begin_crawl(
         &self,
@@ -272,6 +273,13 @@ impl PyArbEngine {
         config: &Bound<'_, PyAny>,
         bot: Option<Bound<'_, PyBot>>,
     ) -> PyResult<PyCrawlSession> {
+        // The fleet intake is the crawl's execution substrate, and the station
+        // materializes on first use — this is that use. Taking it HERE puts the
+        // typed `BootRefused` at the configure boundary (detected budget + floor
+        // + one operator hint) instead of letting a refused host fail deep in
+        // the run, and the sticky materializer keeps answering it.
+        degenbot_bot::fleet_intake::registration_intake()
+            .map_err(crate::bot::engine::boot_refused)?;
         let (mut parsed, oracle) = crawl_config_from_python(py, config)?;
         parsed.oracle = oracle.map(|oracle| Arc::new(oracle) as Arc<dyn BatchPolicyOracle>);
         // The tick-map arm is the bot's snapshot SLOT, not a handle: the crawl

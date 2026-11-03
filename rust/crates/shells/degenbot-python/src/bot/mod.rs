@@ -9,7 +9,6 @@ pub mod deployments;
 pub mod dex_identity;
 pub mod engine;
 mod errmap;
-pub mod intake;
 pub mod pool;
 pub mod pump;
 pub mod py_bot_io;
@@ -637,36 +636,6 @@ impl PyBot {
             db: Arc::new(parking_lot::Mutex::new(None)),
             flights: build_flights::BuildFlights::default(),
         }
-    }
-
-    /// PRG-3: whether the fleet hosts the registration intake (the
-    /// `fleet.stance=fleet` migration stance installed this process's
-    /// intake boot descriptor at engine construction). The Python driver
-    /// reads this ONCE at pipeline construction (stance like the executor
-    /// field — never re-read on the hot path).
-    pub fn registration_fleet_hosted(&self) -> bool {
-        degenbot_bot::fleet_intake::registration_boot_installed()
-    }
-
-    /// PRG-3: submit one intake unit (a pool-build callable) to the fleet
-    /// intake executor. Returns a receipt whose `.wait()` joins the unit.
-    /// Refuses loudly under the legacy stance — the driver must keep the
-    /// incumbent worker pool there.
-    ///
-    /// FF-T1: a refused fleet boot raises the TYPED `BootRefused`
-    /// (detected budget + floor + one operator hint) at this submit and at
-    /// every submit after it (the sticky materializer); the host process
-    /// survives — the library never aborts on the boot-refusal arm.
-    #[expect(
-        clippy::unused_self,
-        reason = "pymethod keeps its instance surface; the stance gate is process-global"
-    )]
-    fn submit_registration_unit(&self, fn_work: Py<PyAny>) -> PyResult<intake::PyIntakeReceipt> {
-        // The PRG-3 stance gate is core-owned (the typed refusal carries the
-        // historical message); the receipt itself stays pyo3-bound here.
-        degenbot_bot::bot_core::ensure_registration_fleet_hosted()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-        intake::submit(fn_work)
     }
 
     /// Return a fresh async iterator over `newHeads` block notifications —
