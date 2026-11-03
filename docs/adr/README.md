@@ -120,6 +120,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [087](ADR-087-deletion-is-the-retirement.md) | Deletion is the retirement — retirement tripwires rejected | accepted (reaffirms and enforces ADR-047 D4) |
 | [088](ADR-088-release-profile-default-16.md) | Release profile default 16 codegen units — one pin, no per-crate list | accepted |
 | [089](ADR-089-evm2-pilot-flag-gated-parallel-engine.md) | The evm2 pilot — the engine on production paths, the JIT on by default (Linux builds) | accepted |
+| [090](ADR-090-v4-hook-black-box-finalist-requote.md) | V4 hooked pools — approximate search, exact black-box finalist re-quote (the fidelity tier's first production use) | accepted |
 
 ## Historical — provenance only
 
