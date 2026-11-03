@@ -88,11 +88,16 @@ fn walk_fingerprint_separates_word_boundary_lists() {
 /// an absent key as `Miss`. Covers both the stats-on and stats-off arms.
 #[test]
 fn memo_probe_distinguishes_hit_negative_miss() {
-    let sol = (
-        U256::from(11u64),
-        U256::from(22u64),
-        vec![U256::from(33u64)],
-    );
+    let sol = crate::solve::concentrated_liquidity::WalkSolution {
+        optimal_input: U256::from(11u64),
+        profit: U256::from(22u64),
+        hop_outputs: vec![U256::from(33u64)],
+        census: vec![Some(crate::SwapWalkCensus {
+            initialized_ticks_crossed: 3,
+            bitmap_words_walked: 5,
+            bounded_tail: false,
+        })],
+    };
 
     // Stats-on arm.
     let memo = WalkMemo::new(true, true);
@@ -393,11 +398,12 @@ fn memo_retains_across_epochs_without_stats() {
 /// the gauge without resetting it (it mirrors live cache state).
 #[test]
 fn memo_negative_entries_gauge_mirrors_the_cache() {
-    let sol = (
-        U256::from(44u64),
-        U256::from(55u64),
-        vec![U256::from(66u64)],
-    );
+    let sol = crate::solve::concentrated_liquidity::WalkSolution {
+        optimal_input: U256::from(44u64),
+        profit: U256::from(55u64),
+        hop_outputs: vec![U256::from(66u64)],
+        ..Default::default()
+    };
     let memo = WalkMemo::new(true, true);
 
     memo.probe(0xD1CEu128);

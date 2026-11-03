@@ -73,6 +73,7 @@
     clippy::print_stderr,
     clippy::print_literal,
     clippy::uninlined_format_args,
+    clippy::too_many_arguments,
     clippy::extend_with_drain
 )]
 
@@ -1315,6 +1316,7 @@ async fn phantom_corpus_parity() {
     // Fetched state is shared across paths (the phantom set reuses pools).
     let mut state_cache: HashMap<String, Arc<FetchedHop>> = HashMap::new();
     let mut divergences: Vec<String> = Vec::new();
+    let mut admission = AdmissionCensus::default();
 
     for path in &corpus {
         println!();
@@ -1403,6 +1405,7 @@ async fn phantom_corpus_parity() {
                     nonce,
                     outcome.result.as_ref(),
                     &mut divergences,
+                    &mut admission,
                 )
                 .await;
             }
@@ -1427,6 +1430,7 @@ async fn phantom_corpus_parity() {
                     nonce,
                     None,
                     &mut divergences,
+                    &mut admission,
                 )
                 .await;
             }
@@ -1439,6 +1443,65 @@ async fn phantom_corpus_parity() {
         state_cache.len()
     );
     println!("wall: {:.1} s", started.elapsed().as_secs_f64());
+    println!();
+    println!("-- the admission floor over the corpus --");
+    println!(
+        "   floor = settlement frame + per-hop family row (census-priced) at the anchor's base fee;\n   \
+         truth = the legs' measured quote-frame gas at the same base fee"
+    );
+    println!(
+        "   closed-loop candidates {} | sub-gas {} | floored {} of {} | profitable suppressed {} \
+         | admitted profitable {} | unpriced {}",
+        admission.candidates,
+        admission.sub_gas,
+        admission.floored,
+        admission.sub_gas,
+        admission.profitable_suppressed,
+        admission.admitted_profitable,
+        admission.unpriced
+    );
+    if let Some(headroom) = admission.min_headroom {
+        println!("   least floored margin below the floor: {headroom} wei");
+    }
+    let signed_pct: i128 =
+        (i128::from(admission.floor_legs_gas) - i128::from(admission.measured_legs_gas)) * 100
+            / i128::from(admission.measured_legs_gas);
+    println!(
+        "   the floor's leg model vs the measured legs: {} vs {} gas ({signed_pct:+}%; the floor \
+         must under-predict here — the settlement terms it adds are measured separately and are \
+         not in the quote-frame truth)",
+        admission.floor_legs_gas, admission.measured_legs_gas
+    );
+    assert!(
+        admission.candidates > 0,
+        "the corpus must contain closed-loop candidates for the floor to be tested"
+    );
+    assert_eq!(
+        admission.unpriced, 0,
+        "every corpus leg is V2/V3/V4, so every candidate must be priced"
+    );
+    assert_eq!(
+        admission.floored,
+        admission.sub_gas,
+        "every sub-gas candidate must be floored: {} were not (see the findings above)",
+        admission.sub_gas - admission.floored
+    );
+    assert_eq!(
+        admission.profitable_suppressed, 0,
+        "the floor suppressed a candidate the chain pays for — lost alpha"
+    );
+    // The under-prediction property on the truth set: the floor's leg model must
+    // sit below the legs' measured gas, so a candidate the chain pays for clears
+    // it. (The settlement terms are charged on top and are measured separately;
+    // the quote-frame truth carries none of them.)
+    assert!(
+        admission.floor_legs_gas <= admission.measured_legs_gas,
+        "the floor's leg model OVER-predicts the measured corpus legs ({} vs {} gas) — the \
+         suppression direction is the expensive one",
+        admission.floor_legs_gas,
+        admission.measured_legs_gas
+    );
+
     println!();
     println!(
         "-- divergence summary ({} finding(s)) --",
@@ -1455,6 +1518,43 @@ async fn phantom_corpus_parity() {
     );
 }
 
+/// The admission floor's verdict over the corpus — the truth-set ledger the
+/// corpus assertions read.
+///
+/// The truth set is the CHAIN: each closed-loop candidate's profit is replayed
+/// against the pool's own bytecode, and the candidate's measured execution gas
+/// (the same frames the legs are quoted with) prices it at the anchor block's
+/// base fee. A candidate whose chain margin cannot cover its measured gas is
+/// the sub-gas class the floor exists for.
+#[derive(Default)]
+struct AdmissionCensus {
+    /// Closed-loop candidates with a solver claim (the floor's population).
+    candidates: usize,
+    /// Candidates the truth set calls sub-gas (chain profit ≤ measured gas
+    /// cost at the anchor's base fee).
+    sub_gas: usize,
+    /// Sub-gas candidates the gas floor suppressed.
+    floored: usize,
+    /// Candidates the truth set calls PROFITABLE (chain profit > measured gas
+    /// cost) that the floor suppressed anyway — the lost-alpha direction, which
+    /// must be zero.
+    profitable_suppressed: usize,
+    /// Profitable candidates the floor admitted.
+    admitted_profitable: usize,
+    /// Candidates the floor could not price (a hop outside the measured
+    /// families). Must be zero on this corpus: every leg is V2/V3/V4.
+    unpriced: usize,
+    /// Smallest `floor − candidate margin` over the floored candidates (wei) —
+    /// how far below the bar the phantom class sits.
+    min_headroom: Option<U256>,
+    /// The floor's LEG model summed over the closed-loop candidates (gas) — the
+    /// quantity the measured quote-frame gas is the truth set for, with the
+    /// settlement terms excluded on both sides.
+    floor_legs_gas: u64,
+    /// The same candidates' legs, MEASURED on the chain (gas).
+    measured_legs_gas: u64,
+}
+
 /// Per-hop parity plus the path-level claim replay.
 async fn check_path(
     path: &PathSpec,
@@ -1464,6 +1564,7 @@ async fn check_path(
     nonce: u64,
     claimed: Option<&degenbot_pools::solve::SolvePathResult>,
     divergences: &mut Vec<String>,
+    admission: &mut AdmissionCensus,
 ) {
     let mut canonical: Vec<Option<Address>> = Vec::new();
     for spec in &path.hops {
@@ -1638,6 +1739,81 @@ async fn check_path(
                     "       (single-hop leg row: not a closed loop, so the profit figure is \
                      cross-token and is NOT asserted)"
                 );
+            }
+
+            // ── the admission floor, priced off the census the solve carried ──
+            //
+            // The floor is the policy's own figure: the path's per-hop family
+            // rows + the walk's census + the settlement terms, times the
+            // anchor block's base fee. The truth set prices the same candidate
+            // with the gas its legs MEASURED on the chain, at the same base
+            // fee. Because gas_total carries each quote frame's own intrinsic,
+            // that truth figure is the dearer side — the floor must sit under
+            // it, or the candidate it suppressed was not sub-gas after all.
+            let base_fee = scratch_block.base_fee_next;
+            let floor = degenbot_pools::solve::path_gas_floor_wei(result, base_fee);
+            let measured_cost = U256::from(gas_total) * U256::from(base_fee);
+            let sub_gas = chain_profit <= measured_cost;
+            let floored = floor.is_some_and(|floor| result.profit <= floor);
+
+            match floor {
+                Some(floor) => {
+                    println!(
+                        "       admission floor={floor} wei (gas {} @ {base_fee}) vs margin {} -> {}",
+                        degenbot_pools::solve::MEASURED_GAS_FLOOR
+                            .path_gas(&result.gas_hops)
+                            .unwrap_or(0),
+                        result.profit,
+                        if floored { "FLOORED" } else { "admitted" }
+                    );
+                }
+                None => println!(
+                    "       admission floor=UNPRICED (a hop outside the measured families)"
+                ),
+            }
+            if closed_loop {
+                admission.candidates += 1;
+                if let Some(legs) =
+                    degenbot_pools::solve::MEASURED_GAS_FLOOR.legs_gas(&result.gas_hops)
+                {
+                    admission.floor_legs_gas = admission.floor_legs_gas.saturating_add(legs);
+                    admission.measured_legs_gas =
+                        admission.measured_legs_gas.saturating_add(gas_total);
+                }
+                if floor.is_none() {
+                    admission.unpriced += 1;
+                }
+                if sub_gas {
+                    admission.sub_gas += 1;
+                    if floored {
+                        admission.floored += 1;
+                        if let Some(floor) = floor {
+                            let headroom = floor - result.profit;
+                            admission.min_headroom = Some(
+                                admission
+                                    .min_headroom
+                                    .map_or(headroom, |least| least.min(headroom)),
+                            );
+                        }
+                    } else {
+                        divergences.push(format!(
+                            "path {}: sub-gas candidate NOT floored — chain margin {chain_profit} \
+                             ≤ measured cost {measured_cost} but the floor {floor:?} admits the \
+                             claim {}",
+                            path.id, result.profit
+                        ));
+                    }
+                } else if floored {
+                    admission.profitable_suppressed += 1;
+                    divergences.push(format!(
+                        "path {}: PROFITABLE candidate suppressed — chain margin {chain_profit} > \
+                         measured cost {measured_cost} but the floor {floor:?} suppresses the \
+                         claim {}",
+                        path.id, result.profit
+                    ));
+                } else {
+                    admission.admitted_profitable += 1;
+                }
             }
         }
     }

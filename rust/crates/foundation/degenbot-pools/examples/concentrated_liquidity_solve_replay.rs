@@ -161,10 +161,10 @@ fn main() {
             last_stats = Some(out.stats);
             path_pieces = out.census_pieces;
             match out.result.as_ref() {
-                Some((opt, _p, ho)) => match &first {
-                    None => first = Some((*opt, ho.clone())),
+                Some(solution) => match &first {
+                    None => first = Some((solution.optimal_input, solution.hop_outputs.clone())),
                     Some((fo, fh)) => {
-                        if fo != opt || fh != ho {
+                        if *fo != solution.optimal_input || *fh != solution.hop_outputs {
                             consistent = false;
                         }
                     }

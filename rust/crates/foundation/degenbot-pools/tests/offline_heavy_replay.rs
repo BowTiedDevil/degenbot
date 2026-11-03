@@ -154,8 +154,14 @@ fn replay_captured_heavy_paths() {
                     .iter()
                     .map(|v| v.as_str().unwrap().parse().unwrap())
                     .collect();
-                assert_eq!(&r.0, &go, "golden optimal_input diverges (pid {pid})");
-                assert_eq!(&r.2, &gh, "golden hop_outputs diverge (pid {pid})");
+                assert_eq!(
+                    &r.optimal_input, &go,
+                    "golden optimal_input diverges (pid {pid})"
+                );
+                assert_eq!(
+                    &r.hop_outputs, &gh,
+                    "golden hop_outputs diverge (pid {pid})"
+                );
             }
         }
         let us = t0.elapsed().as_micros();

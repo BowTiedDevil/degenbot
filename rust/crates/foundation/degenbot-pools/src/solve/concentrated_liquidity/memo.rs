@@ -1,6 +1,7 @@
 use alloy::primitives::U256;
 use degenbot_math::v2::IntHopState;
 
+use super::active_set::WalkSolution;
 use super::entries::MixedHopView;
 use super::IntV3TickRangeSequence;
 
@@ -36,7 +37,7 @@ pub struct WalkMemoStats {
 /// skips the walk), `Miss` is an absent key or a disabled memo.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum MemoProbe {
-    Hit((U256, U256, Vec<U256>)),
+    Hit(WalkSolution),
     Negative,
     Miss,
 }
@@ -49,7 +50,7 @@ struct WalkMemoState {
     curr: hashbrown::HashSet<u128>,
     prev_costs: hashbrown::HashMap<u128, u64>,
     curr_costs: hashbrown::HashMap<u128, u64>,
-    cache: hashbrown::HashMap<u128, Option<(U256, U256, Vec<U256>)>>,
+    cache: hashbrown::HashMap<u128, Option<WalkSolution>>,
     /// Running count of `None` values in `cache`, kept exactly equal to it
     /// across every store and census eviction (replaces the O(cache) scan
     /// the old `take_stats` performed).
@@ -303,7 +304,7 @@ impl WalkMemo {
         st.curr_costs.insert(fp, sims);
     }
 
-    pub(super) fn store(&self, fp: u128, result: Option<&(U256, U256, Vec<U256>)>) {
+    pub(super) fn store(&self, fp: u128, result: Option<&WalkSolution>) {
         let mut st = self.lock();
         if !st.memo_on {
             return;

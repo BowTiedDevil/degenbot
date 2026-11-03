@@ -227,24 +227,31 @@ mod tests {
             }
         }
 
-        if let Some((x_star, profit, hop_outputs)) = via_prepared.result.as_ref() {
-            probes.push(*x_star);
+        if let Some(solution) = via_prepared.result.as_ref() {
+            let x_star = solution.optimal_input;
+            probes.push(x_star);
             for delta in 1..=8u64 {
                 probes.push(x_star.saturating_add(U256::from(delta)));
                 probes.push(x_star.saturating_sub(U256::from(delta)));
             }
 
-            let at_optimum = helper.output(*x_star);
+            let at_optimum = helper.output(x_star);
             assert_eq!(
-                &at_optimum.hop_outputs, hop_outputs,
+                &at_optimum.hop_outputs, &solution.hop_outputs,
                 "{label}: helper hop_outputs vs walk result"
             );
             assert_eq!(
-                at_optimum.final_output - *x_star,
-                *profit,
+                at_optimum.final_output - x_star,
+                solution.profit,
                 "{label}: helper final_output - x vs walk profit"
             );
-            let walk = simulate_walk_path(*x_star, &hops, &mut WalkTally::default());
+            assert_eq!(
+                at_optimum.census, solution.census,
+                "{label}: the walk's recorded census and the path sim's must agree — \
+                 the gas floor reads the walk's counts, so a divergence here prices the \
+                 wrong leg"
+            );
+            let walk = simulate_walk_path(x_star, &hops, &mut WalkTally::default());
             assert_eq!(
                 at_optimum.landed, walk.landed,
                 "{label}: helper landed vs walk landed"

@@ -15,8 +15,7 @@
     clippy::cast_possible_wrap,
     clippy::map_unwrap_or,
     clippy::match_wildcard_for_single_variants,
-    clippy::uninlined_format_args,
-    clippy::type_complexity
+    clippy::uninlined_format_args
 )]
 
 use std::borrow::Cow;
@@ -301,7 +300,10 @@ fn loop6_walker_dominates_dense_scan_and_envelope_never_undercuts() {
 
         // walker solve
         let out = derive_and_solve_concentrated_liquidity_piecewise(&refs, &cfg);
-        let walk_profit = out.result.as_ref().map(|r| r.1).unwrap_or(U256::ZERO);
+        let walk_profit = out
+            .result
+            .as_ref()
+            .map_or(U256::ZERO, |solution| solution.profit);
 
         // envelope bound + per-x soundness
         let bound = path_profit_bound(&views, &GateDeps::offline());
@@ -387,8 +389,14 @@ fn loop19_model_anchor_refine_is_argmax_equal_and_saves_sims() {
         // and the discrete top are further apart than one bracket width when
         // the piece's price span is small). The stance stays opt-in-off; this
         // harness documents the loss instead of gating on equality.
-        let profit_off = a.result.as_ref().map(|r| r.1).unwrap_or(U256::ZERO);
-        let profit_on = b.result.as_ref().map(|r| r.1).unwrap_or(U256::ZERO);
+        let profit_off = a
+            .result
+            .as_ref()
+            .map_or(U256::ZERO, |solution| solution.profit);
+        let profit_on = b
+            .result
+            .as_ref()
+            .map_or(U256::ZERO, |solution| solution.profit);
         assert!(
             profit_off >= profit_on,
             "{name}: Loop-19 stance INCREASED profit — flag can be promoted"
@@ -546,17 +554,18 @@ fn loop15_event_solver_agrees_with_legacy_bisection() {
         // The two stances may land on different POINTS of the same staircase
         // plateau (±few wei, equal profit): compare profit exactly and inputs
         // within the straddle tolerance.
-        let profit_eq = a.result.as_ref().map(|r| r.1) == b.result.as_ref().map(|r| r.1);
+        let profit_eq = a.result.as_ref().map(|solution| solution.profit)
+            == b.result.as_ref().map(|solution| solution.profit);
         assert!(
             profit_eq,
             "{name}: evented edge solve changed the PROFIT (a={:?} b={:?})",
             a.result, b.result
         );
         if let (Some(ra), Some(rb)) = (a.result.as_ref(), b.result.as_ref()) {
-            let d = if ra.0 > rb.0 {
-                ra.0 - rb.0
+            let d = if ra.optimal_input > rb.optimal_input {
+                ra.optimal_input - rb.optimal_input
             } else {
-                rb.0 - ra.0
+                rb.optimal_input - ra.optimal_input
             };
             // MEASURED (Loop-15): equal-profit plateau points can sit up to
             // ~3.4e6 wei apart across stances — same profit, different input
@@ -578,10 +587,10 @@ fn loop17_anchor_sweep_modes_agree() {
         let refs: Vec<&IntV3TickRangeSequence> = seqs.iter().collect();
         let mut results: Vec<(
             Option<crate::solve::concentrated_liquidity::WalkStats>,
-            Option<(U256, U256, Vec<U256>)>,
+            Option<crate::solve::concentrated_liquidity::WalkSolution>,
         )> = Vec::new(); // placeholder
         let mut sims = Vec::new();
-        let mut result_first: Option<(U256, U256, Vec<U256>)> = None;
+        let mut result_first: Option<crate::solve::concentrated_liquidity::WalkSolution> = None;
         for (label, sweep) in [
             ("Full", AnchorSweep::Full),
             ("CenterOnly", AnchorSweep::CenterOnly),

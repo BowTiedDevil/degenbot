@@ -346,10 +346,10 @@ fn main() -> ExitCode {
             }
             let golden = match &res {
                 None => Value::Null,
-                Some((opt, _profit, hop_outputs)) => json!({
-                    "optimal_input": opt.to_string(),
-                    "hop_outputs": hop_outputs.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
-                    "n_hops": hop_outputs.len() }),
+                Some(solution) => json!({
+                    "optimal_input": solution.optimal_input.to_string(),
+                    "hop_outputs": solution.hop_outputs.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
+                    "n_hops": solution.hop_outputs.len() }),
             };
             let na = sa.ranges.len();
             let nb = sb.ranges.len();

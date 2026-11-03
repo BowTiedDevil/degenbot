@@ -15,8 +15,11 @@ use super::hop_sim::simulate_v3_range_swap;
 use super::tally::{WalkSection, WalkTally, WalkTelemetry};
 use super::telemetry::{event_census_record, Mark, WalkEventCensus};
 use super::window::{clamp_window_to_bound, RefineBound};
-use super::{ConcentratedLiquidityCrossingTable, ConcentratedLiquidityProfileTable};
+use super::{
+    ConcentratedLiquidityCrossingTable, ConcentratedLiquidityProfileTable, IntV3TickRangeSequence,
+};
 use crate::solve::runtime::{AnchorSweep, SolveRuntimeConfig};
+use crate::state::int_v3_hop::SwapWalkCensus;
 
 // ---------------------------------------------------------------------------
 // Active-set piecewise Möbius walk
@@ -37,6 +40,11 @@ use crate::solve::runtime::{AnchorSweep, SolveRuntimeConfig};
 /// place a constant-product hop and a concentrated-liquidity hop differ.
 pub(super) struct PieceView<'a> {
     family: PieceFamily<'a>,
+    /// The tick-range sequence this hop was derived from, when it has one: the
+    /// only source of the range exit kinds and interior word boundaries the
+    /// swap-loop census reads ([`IntV3TickRangeSequence::swap_census`]).
+    /// `None` for constant product — a hop with no tick map has no census.
+    seq: Option<&'a IntV3TickRangeSequence>,
     /// Walk pieces this hop contributes: one per ending range for concentrated liquidity, one
     /// for constant product.
     piece_count: usize,
@@ -73,6 +81,7 @@ impl<'a> PieceView<'a> {
     pub(super) fn constant_product(hop: &'a IntHopState) -> Self {
         Self {
             family: PieceFamily::ConstantProduct(hop),
+            seq: None,
             piece_count: 1,
             single_piece: true,
             bounded_first_range: None,
@@ -80,6 +89,7 @@ impl<'a> PieceView<'a> {
     }
 
     pub(super) fn concentrated_liquidity(
+        seq: &'a IntV3TickRangeSequence,
         crossings: Arc<ConcentratedLiquidityCrossingTable>,
         profiles: Arc<ConcentratedLiquidityProfileTable>,
     ) -> Self {
@@ -92,6 +102,7 @@ impl<'a> PieceView<'a> {
                 crossings,
                 profiles,
             },
+            seq: Some(seq),
             piece_count,
             single_piece: piece_count == 1,
             bounded_first_range,
@@ -110,14 +121,15 @@ impl<'a> PieceView<'a> {
         self.bounded_first_range
     }
 
-    /// Forward step for a non-zero `current`: the hop output and the
-    /// ending-range index the input landed in (always 0 for constant product).
-    pub(super) fn step(&self, current: U256, tally: &mut WalkTally) -> (U256, usize) {
+    /// Forward step for a non-zero `current`: the hop output and the swap
+    /// loop's facts for this evaluation (the landed ending-range index and the
+    /// landing fill's word steps).
+    pub(super) fn step(&self, current: U256, tally: &mut WalkTally) -> (U256, StepFacts) {
         match &self.family {
             PieceFamily::ConstantProduct(hop_state) => {
                 // V2 overflow-reverts on-chain → the path yields nothing there.
                 let out = hop_state.swap(current).unwrap_or(U256::ZERO);
-                (out, 0)
+                (out, StepFacts::default())
             }
             PieceFamily::ConcentratedLiquidity {
                 crossings,
@@ -130,9 +142,30 @@ impl<'a> PieceView<'a> {
                     Some(profile) => profile.swap(remaining, tally),
                     None => simulate_v3_range_swap(remaining, &crossing.ending_range, tally),
                 };
-                (crossing.crossing_output.saturating_add(ending.output), k)
+                (
+                    crossing.crossing_output.saturating_add(ending.output),
+                    StepFacts {
+                        landed: k,
+                        word_steps: ending.word_steps,
+                        // The fill placed less than it was handed only when the
+                        // sequence's modeled span ran out first: the swap goes
+                        // further than the walk sees, so its census counts are
+                        // lower bounds.
+                        bounded_tail: !remaining.is_zero() && ending.consumed_input < remaining,
+                    },
+                )
             }
         }
+    }
+
+    /// The swap LOOP's census for one evaluation of this hop, from the step's
+    /// own facts — the gas floor's per-hop input (`docs/gas-estimation.md`).
+    ///
+    /// `None` when the hop carries no sequence to read (constant product, or a
+    /// hand-built sequence with no tick map).
+    pub(super) fn census(&self, facts: StepFacts) -> Option<SwapWalkCensus> {
+        self.seq
+            .and_then(|seq| seq.swap_census(facts.landed, facts.word_steps, facts.bounded_tail))
     }
 
     /// The anchor-time projection of piece `k`: the landed range (or
@@ -208,8 +241,21 @@ impl<'a> PieceView<'a> {
     }
 }
 
-/// Result of a [`simulate_walk_path`] evaluation: the per-hop outputs plus
-/// the ending-range tuple the input actually landed in.
+/// The swap loop's per-hop facts one forward step produces beyond its output.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct StepFacts {
+    /// Ending-range index the input landed in (always 0 for a V2 hop).
+    pub(super) landed: usize,
+    /// Bitmap-word boundaries the landing fill completed.
+    pub(super) word_steps: usize,
+    /// The fill ran out of MODELLED range with input left over (the census
+    /// counts are lower bounds).
+    pub(super) bounded_tail: bool,
+}
+
+/// Result of a [`simulate_walk_path`] evaluation: the per-hop outputs, the
+/// ending-range tuple the input actually landed in, and the per-hop step facts
+/// the census is projected from.
 pub(super) struct WalkPathOutcome {
     /// Output after the last hop.
     pub(super) final_output: U256,
@@ -217,6 +263,8 @@ pub(super) struct WalkPathOutcome {
     pub(super) hop_outputs: Vec<U256>,
     /// Ending-range index landed in per hop (always 0 for V2 hops).
     pub(super) landed: Vec<usize>,
+    /// `facts[i]` = hop `i`'s step facts (the census source).
+    pub(super) facts: Vec<StepFacts>,
 }
 
 /// Simulate the path with SELF-DETERMINED crossings: each concentrated liquidity hop's ending
@@ -248,16 +296,19 @@ fn simulate_walk_path_inner(
     let n_hops = hops.len();
     let mut hop_outputs = Vec::with_capacity(n_hops);
     let mut landed = Vec::with_capacity(n_hops);
+    let mut facts = Vec::with_capacity(n_hops);
     let mut current = amount_in;
 
     for hop in hops {
         if current.is_zero() {
             hop_outputs.push(U256::ZERO);
             landed.push(0);
+            facts.push(StepFacts::default());
             continue;
         }
-        let (out, k) = hop.step(current, tally);
-        landed.push(k);
+        let (out, step) = hop.step(current, tally);
+        landed.push(step.landed);
+        facts.push(step);
         hop_outputs.push(out);
         current = out;
     }
@@ -266,6 +317,7 @@ fn simulate_walk_path_inner(
         final_output: hop_outputs.last().copied().unwrap_or(U256::ZERO),
         hop_outputs,
         landed,
+        facts,
     }
 }
 
@@ -349,6 +401,10 @@ pub(super) struct WalkRecorder {
     input: U256,
     profit: U256,
     hop_outputs: Vec<U256>,
+    /// The gas census at the recorded best — projected from that evaluation's
+    /// own step facts, so the solve hands admission the walk's counts without
+    /// a second walk.
+    census: Vec<Option<SwapWalkCensus>>,
     /// Best signed score across every evaluated candidate (including
     /// unprofitable ones) — the direction test's reference level.
     top_score: alloy::primitives::I256,
@@ -360,6 +416,7 @@ impl WalkRecorder {
             input: U256::ZERO,
             profit: U256::ZERO,
             hop_outputs: Vec::new(),
+            census: Vec::new(),
             top_score: alloy::primitives::I256::MIN,
         }
     }
@@ -394,6 +451,11 @@ impl WalkRecorder {
                 self.profit = profit;
                 self.input = candidate;
                 self.hop_outputs.clone_from(&outcome.hop_outputs);
+                self.census = hops
+                    .iter()
+                    .zip(outcome.facts.iter())
+                    .map(|(hop, &facts)| hop.census(facts))
+                    .collect();
             }
         }
         outcome
@@ -653,13 +715,32 @@ pub enum WalkRefusal {
     Unresolved,
 }
 
+/// The walk's winning candidate: the solved amounts plus the per-hop swap-loop
+/// census that THIS evaluation produced.
+///
+/// The census rides the value because it is a fact about the evaluation, not a
+/// property of the composition: the memo stores it with the value, so a hit
+/// replays the gas input too and admission never re-walks a path to price it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WalkSolution {
+    /// The path input the walk's best candidate consumed.
+    pub optimal_input: U256,
+    /// `final_output − optimal_input` at that candidate.
+    pub profit: U256,
+    /// `hop_outputs[i]` = output after hop `i`.
+    pub hop_outputs: Vec<U256>,
+    /// `census[i]` = hop `i`'s swap-loop census at `optimal_input`; `None` for
+    /// a constant-product hop or a sequence with no tick map.
+    pub census: Vec<Option<SwapWalkCensus>>,
+}
+
 /// The walk entry's whole return: result + typed refusal + returned telemetry
 /// (no frozen thread-locals on the read-back path; the entry drains its own
 /// counters at entry and reports this stats value at exit).
 #[derive(Debug, Default)]
 pub struct WalkOutcome {
-    /// `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
-    pub result: Option<(U256, U256, Vec<U256>)>,
+    /// The walked value (amounts + gas census) or `None` if not profitable.
+    pub result: Option<WalkSolution>,
     /// Set only when the surface declined without walking (see
     /// [`WalkRefusal`]); `None` on every walked outcome.
     pub refusal: Option<WalkRefusal>,
@@ -692,7 +773,7 @@ impl WalkOutcome {
         }
     }
 
-    pub(super) fn from_result(result: Option<(U256, U256, Vec<U256>)>) -> Self {
+    pub(super) fn from_result(result: Option<WalkSolution>) -> Self {
         Self {
             result,
             refusal: None,
@@ -766,7 +847,7 @@ fn solve_active_set_path_inner(
     cfg: &SolveRuntimeConfig,
     env: Option<&[RefineBound]>,
     tally: &mut WalkTally,
-) -> Option<(U256, U256, Vec<U256>)> {
+) -> Option<WalkSolution> {
     /// Advance the landed tuple one piece past the window's right edge
     /// (the edge-bisection bracket is ≤4 wide, so scan a few steps).
     fn landed_beyond(
@@ -1228,6 +1309,11 @@ fn solve_active_set_path_inner(
     if rec.profit.is_zero() {
         None
     } else {
-        Some((rec.input, rec.profit, rec.hop_outputs))
+        Some(WalkSolution {
+            optimal_input: rec.input,
+            profit: rec.profit,
+            hop_outputs: rec.hop_outputs,
+            census: rec.census,
+        })
     }
 }

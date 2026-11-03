@@ -259,6 +259,11 @@ pub struct PipelineInstruments {
     /// Lanes parked on their own delivery-unknown hold instead of signing, by
     /// lane label.
     delivery_slots_parked: Counter<u64>,
+    /// Candidates the pre-sim gas floor suppressed at the delivery window:
+    /// their solver margin did not cover the path's measured execution gas at
+    /// the block's base fee (the sub-gas class that otherwise ships and fails
+    /// verification as no-profit).
+    admission_floored: Counter<u64>,
     detached_in_flight: Gauge<f64>,
     /// detached stragglers DROPPED by the Q1a stale policy.
     detached_stale_dropped: Counter<u64>,
@@ -718,6 +723,13 @@ impl PipelineInstruments {
             delivery_slots_parked: meter
                 .u64_counter("degenbot.delivery.slots_parked")
                 .with_description("Lanes parked on their own delivery-unknown hold, by lane")
+                .build(),
+            admission_floored: meter
+                .u64_counter("degenbot.delivery.admission_floored")
+                .with_description(
+                    "Solver candidates suppressed by the pre-sim gas floor (margin under the \
+                     path's execution gas at the block base fee)",
+                )
                 .build(),
             registration_skips: meter
                 .u64_counter("degenbot.registration.skips")
@@ -1295,6 +1307,11 @@ impl PipelineInstruments {
             .add(1, &[KeyValue::new("strategy", strategy.to_owned())]);
     }
 
+    /// One candidate the pre-sim gas floor suppressed at the delivery window.
+    pub fn count_admission_floored(&self) {
+        self.admission_floored.add(1, &[]);
+    }
+
     /// PRG-2: one registration-candidate skip; `reason` is a small
     /// closed set (`v4-admission`, `path-cap`, `dup`, `pool-build-error`,
     /// `engine-reject`, `register-fail`, ...). The live registration-gate
@@ -1607,6 +1624,7 @@ impl PipelineInstruments {
             CensusEvent::DeliverySlotParked { strategy } => {
                 self.count_delivery_slot_parked(strategy);
             }
+            CensusEvent::AdmissionFloored => self.count_admission_floored(),
             CensusEvent::MergeInFlight { count } => self.set_detached_in_flight(count),
             CensusEvent::StragglerDropped => self.count_detached_stale_dropped(),
             CensusEvent::StragglerSendFailed => self.count_detached_send_failed(),

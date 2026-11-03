@@ -422,6 +422,13 @@ fn solve_exact_v2_entry(
                             profit: r.profit,
                             hop_outputs: r.hop_outputs,
                             consumed_inputs,
+                            // A constant-product-only path has no tick map to
+                            // census, and the gas floor prices each hop at the
+                            // family's flat leg cost.
+                            gas_hops: vec![
+                                crate::solve::gas_floor::HopGasProfile::V2;
+                                int_hops.len()
+                            ],
                             ..Default::default()
                         })
                     } else {

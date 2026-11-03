@@ -44,7 +44,6 @@
 //! hops concentrated liquidity -> `all-concentrated-liquidity` entry; any `V2` hop -> mixed entry; other families ->
 //! refused here) — the decision record's traffic-mix input.
 
-use alloy::primitives::U256;
 use degenbot_pools::solve::concentrated_liquidity::{
     solve_concentrated_liquidity_piecewise, solve_piecewise, MixedHopView,
     PreparedConcentratedLiquidityHop, WalkMemo,
@@ -243,7 +242,9 @@ fn main() {
 
         let mut times_intake: Vec<u128> = Vec::with_capacity(iters);
         let mut times_direct: Vec<u128> = Vec::with_capacity(iters);
-        let mut parity_ref: Option<Option<(U256, U256, Vec<U256>)>> = None;
+        let mut parity_ref: Option<
+            Option<degenbot_pools::solve::concentrated_liquidity::WalkSolution>,
+        > = None;
 
         for rep in 0..iters {
             // Interleaved reps with alternating order: thermal/cache drift
@@ -341,8 +342,10 @@ fn main() {
                 .collect();
             let mx = solve_piecewise(&views, None, None, &cfg, None);
             (
-                concentrated_liquidity.result.map(|(_, p, _)| p),
-                mx.result.map(|(_, p, _)| p),
+                concentrated_liquidity
+                    .result
+                    .map(|solution| solution.profit),
+                mx.result.map(|solution| solution.profit),
             )
         }
         None => (None, None),

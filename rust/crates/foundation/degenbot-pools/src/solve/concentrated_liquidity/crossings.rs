@@ -366,7 +366,7 @@ pub(super) fn concentrated_liquidity_walk_hop_cached<'a>(
         let mut tally = WalkTally::default();
         Arc::new(build_word_profiles(&crossings, &mut tally))
     };
-    PieceView::concentrated_liquidity(crossings, profiles)
+    PieceView::concentrated_liquidity(seq, crossings, profiles)
 }
 
 /// Cache-less variant of [`concentrated_liquidity_walk_hop_cached`] for test callers that only

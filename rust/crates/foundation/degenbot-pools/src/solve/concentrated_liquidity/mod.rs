@@ -95,7 +95,7 @@ pub mod cache;
 )]
 mod tests;
 
-pub use active_set::{WalkOutcome, WalkRefusal, WalkStats};
+pub use active_set::{WalkOutcome, WalkRefusal, WalkSolution, WalkStats};
 pub use crossings::{
     build_concentrated_liquidity_crossing_table, build_concentrated_liquidity_word_profiles,
     build_concentrated_liquidity_word_profiles_from_crossings, DENSE_OBSERVE_THRESHOLD,

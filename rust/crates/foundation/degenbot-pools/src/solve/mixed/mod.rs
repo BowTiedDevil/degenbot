@@ -21,6 +21,7 @@ use crate::solve::concentrated_liquidity::{
     ConcentratedLiquidityWordProfile, IntTickRangeCrossing, IntV3TickRangeSequence,
     PreparedConcentratedLiquidityHop,
 };
+use crate::solve::gas_floor::HopGasProfile;
 use crate::{
     BalanceVectorVariant, Caveats, ConcentratedLiquidityVariant, Identity, ReservePairVariant,
 };
@@ -441,6 +442,15 @@ pub struct SolvePathResult {
     /// [`Caveats::SPARSE_COVERAGE`] — the operator contract that sparse pools'
     /// solve results are approximate (correctness is not guaranteed for them).
     pub caveats: Caveats,
+    /// The pre-sim gas floor's input: one [`HopGasProfile`] per hop, carrying
+    /// the family row and the walk's own census at THIS result's optimal input.
+    ///
+    /// Populated by the solve that produced the result — the walk records the
+    /// winning evaluation's census, so admission prices the path without
+    /// re-walking it. Empty when the solve surface reported no projection (a
+    /// family with no coefficient row, or a hand-built result), which leaves
+    /// the path unpriced rather than guessed.
+    pub gas_hops: Vec<HopGasProfile>,
 }
 
 // ---------------------------------------------------------------------------

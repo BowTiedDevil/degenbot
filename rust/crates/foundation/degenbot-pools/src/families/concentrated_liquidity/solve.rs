@@ -28,6 +28,7 @@ use alloy::primitives::{aliases::I512, U256, U512};
 use crate::state::int_v3_hop::{IntTickRangeCrossing, IntV3TickRangeSequence};
 
 use crate::solve::concentrated_liquidity::{ConcentratedLiquidityCrossingTable, RefineBound};
+use crate::solve::gas_floor::HopGasProfile;
 use crate::solve::gate::{
     content_mix_u256, record_gate, GateDeps, GateStats, HopMath, Line, PathBoundLines, PrefixCache,
 };
@@ -142,20 +143,40 @@ pub(crate) fn solve_walkable_path_int(
     );
 
     crate::solve::SolveArmOutcome {
-        result: out.result.map(|(optimal_input, profit, hop_outputs)| {
+        result: out.result.map(|solution| {
             // consumed_inputs[0] = optimal_input (first hop consumes full input).
             // consumed_inputs[i>0] = hop_outputs[i-1] (previous hop's output
             // becomes this hop's input).
-            let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
-            consumed_inputs.push(optimal_input);
-            for i in 1..hop_outputs.len() {
-                consumed_inputs.push(hop_outputs[i - 1]);
+            let mut consumed_inputs = Vec::with_capacity(solution.hop_outputs.len());
+            consumed_inputs.push(solution.optimal_input);
+            for i in 1..solution.hop_outputs.len() {
+                consumed_inputs.push(solution.hop_outputs[i - 1]);
             }
+            // The gas floor's input rides the result: each hop's family row
+            // paired with the census the winning evaluation produced. A V2 hop
+            // has no tick map to count; a hop the walk could not census (a
+            // hand-built sequence) contributes its fixed term only.
+            let gas_hops = resolved
+                .hops
+                .iter()
+                .enumerate()
+                .map(|(index, hop)| match hop {
+                    ResolvedHop::V2 { .. } => HopGasProfile::V2,
+                    ResolvedHop::V3 { .. } => HopGasProfile::V3 {
+                        census: solution.census.get(index).copied().flatten(),
+                    },
+                    ResolvedHop::V4 { .. } => HopGasProfile::V4 {
+                        census: solution.census.get(index).copied().flatten(),
+                    },
+                    _ => HopGasProfile::Unmodeled,
+                })
+                .collect();
             SolvePathResult {
-                optimal_input,
-                profit,
-                hop_outputs,
+                optimal_input: solution.optimal_input,
+                profit: solution.profit,
+                hop_outputs: solution.hop_outputs,
                 consumed_inputs,
+                gas_hops,
                 ..Default::default()
             }
         }),

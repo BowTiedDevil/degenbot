@@ -346,3 +346,116 @@ does not.
    under-predicting side it already is.
 4. **Never (c).** Tick-distance is not crossing count: 273× at the median, 12,470×
    at the tail.
+
+## The floor as shipped
+
+The admission floor is implemented, in three pieces:
+
+| piece | home | role |
+|---|---|---|
+| the cost model | `degenbot_pools::solve`: `GasFloorModel`, `MEASURED_GAS_FLOOR`, `HopGasProfile`, `path_gas_floor_wei` | pure arithmetic over a path's family rows + census + base fee |
+| the census it reads | `SolvePathResult::gas_hops` (one `HopGasProfile` per hop) | the solve's own fact, recorded by the walk (below) |
+| the window | `degenbot-bot`: `DeliveryPolicy::admit` / `admission_floor` | `max(min_profit_wei, gas_floor(path, base_fee))` in `diff_and_send` and `emit_single_result_batch` |
+
+```text
+gas(path) = settlement_fixed                        # 25,672 = 21,000 intrinsic + 4,672 plumbing
+          + transfer_cold                           # 41,056 — the path's own settlement transfer
+          + Σ_hops ( leg_gas(hop) + transfer_warm )  # 23,956 per hop (pool→pool, warm recipient)
+
+leg_gas(V2) = 30,862
+leg_gas(V3) = min(118,594, 81,947) + 24,824·crossings + 7,373·words
+leg_gas(V4) = min( 72,232, 81,947) + 14,254·crossings + 5,684·words
+
+floor_wei(path, base_fee) = gas(path) × base_fee
+```
+
+The table lives once, as `MEASURED_GAS_FLOOR` — a consumer reads it, never
+re-types it. `min(measured_family_fixed, 81,947)` is the under-predicting
+choice the corpus analysis above recommends: a leg's intercept is a pool
+property (96.9k–151.1k across the corpus), 81,947 is the p10, and the floor
+takes the cheaper of the two. V4's own intercept already sits below the cap, so
+it is charged as measured; the two families never share a word rate.
+
+Transfers are charged at the **warm** marginal per hop and one **cold**
+marginal for the path's own settlement leg — the cheap side of the measured
+pair, because a wrongly suppressed candidate is the expensive error. The
+settlement frame's fixed cost is the only term the corpus does not price
+directly: the transaction intrinsic plus the batch caller's measured 4,672-gas
+plumbing, deliberately omitting the executor's richer frame work (flash-loan
+callback, allowance probes, profit transfer) — the under-predicting direction
+again.
+
+### Where the census comes from (no second walk)
+
+The walk already knows the two counts. `PieceView::step` now reports, besides
+the hop output, the landing fill's step facts: the landed ending-range index,
+the fill's completed bitmap-word steps, and whether the sequence ran out of
+modelled span (`bounded_tail`). `PieceView::census` projects those through
+`IntV3TickRangeSequence::swap_census`, and `WalkRecorder` records the census of
+the **winning evaluation only** — one `O(landed)` projection per new best, never
+a re-walk to price a path. `WalkSolution` carries
+`(optimal_input, profit, hop_outputs, census)` as one value; the cross-block
+composition memo stores it whole, so a hit replays the gas input too; and the
+mixed-path solve projects `SolvePathResult::gas_hops` from `resolved.hops` +
+that census (V2 hops are `HopGasProfile::V2`; a hop whose sequence carries no
+tick map prices its fixed term only).
+
+A parity test holds the two independent projections together:
+`ConcentratedLiquidityPathSim::output`'s `census` must equal the walk's recorded
+census at the same optimal input (`path_sim.rs`), so the gas figure admission
+reads is the one the walk actually walked.
+
+### Admission and its report
+
+`DeliveryPolicy::admit` takes the floor decision ONCE per result per batch;
+every filter (`fresh` / `updated` / `expired`, and the `delivered` advance)
+reads that one decision, so a floored candidate:
+
+- does not enter `delivered` (it is not published; a later cheap-gas block
+  re-admits it, a dearer block expires it),
+- increments `degenbot.delivery.admission_floored`, and
+- emits a debug line on `degenbot::solver` naming the path, its margin, the
+  floor, `min_profit_wei`, and the block's base fee.
+
+A candidate below the static `min_profit_wei` is the pre-existing window doing
+its job and is not counted as a gas-floor suppression. A path whose solve
+reported no projection (a family with no measured row — Solidly/Balancer/Curve)
+has **no floor**: the window falls back to `min_profit_wei` rather than
+inventing a cost. No candidate is dropped silently.
+
+**Units.** The floor is ETH wei; `SolvePathResult::profit` is in the path's
+terminal token. The comparison is exact for an 18-decimal ether-equivalent
+terminal (the settlement engine's WETH-terminated paths); a path whose profit
+token is not comparable must scale the floor itself — the model has no price
+oracle and invents none.
+
+### Verification on the corpus
+
+```sh
+TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI=http://host.containers.internal:8545/ \
+  just test-rust-nextest -p degenbot-simulation \
+  -E 'test(phantom_corpus_parity)' --run-ignored=ignored-only --no-capture
+```
+
+At anchor block **26,335,759** the rig replays every corpus candidate against
+the chain and prices the same candidate with its legs' measured quote-frame gas
+at the same base fee (the truth set). The run reports:
+
+```text
+closed-loop candidates 6 | sub-gas 6 | floored 6 of 6 | profitable suppressed 0
+                        | admitted profitable 0 | unpriced 0
+least floored margin below the floor: 60,895,409,252,963 wei
+the floor's leg model vs the measured legs: 1,529,344 vs 1,899,833 gas (-19%)
+```
+
+Every sub-gas phantom candidate is floored (its 1e12–2.4e12-wei margin sits
+60.9e12 wei under the bar at that block), nothing the chain would pay for is
+suppressed, and the floor's leg model under-predicts the measured legs by 19% —
+the settlement terms it adds on top are the measured transfer and frame costs
+the quote-frame truth does not carry. The corpus's single-hop dead-token
+leg rows are not closed loops and are excluded from the admission counts (the
+rig still asserts their leg parity).
+
+The floor is the **only** admission change: no new config key, no toggle. The
+operator's `min_profit_wei` keeps its meaning and composes by `max`, so the
+floor can only raise the bar a path must clear.

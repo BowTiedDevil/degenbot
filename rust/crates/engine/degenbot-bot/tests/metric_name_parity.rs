@@ -30,6 +30,7 @@ const FROZEN_NAMES: &[&str] = &[
     "degenbot.blocks.observed",
     "degenbot.candidates.found",
     "degenbot.cgroup.throttled",
+    "degenbot.delivery.admission_floored",
     "degenbot.delivery.holds_entered",
     "degenbot.delivery.holds_swept",
     "degenbot.delivery.slots_parked",

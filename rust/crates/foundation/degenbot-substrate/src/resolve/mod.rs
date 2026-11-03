@@ -1078,7 +1078,9 @@ mod tests {
     /// The all-concentrated-liquidity intake: resolve -> prepared hops -> the forwarding all-concentrated-liquidity
     /// convenience (`solve_concentrated_liquidity_piecewise`, which builds views and calls the one
     /// solve body).
-    fn all_concentrated_liquidity_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
+    fn all_concentrated_liquidity_solve(
+        r: &ResolvedMixedPath,
+    ) -> Option<degenbot_pools::solve::WalkSolution> {
         // The projection's derivation value rides each concentrated liquidity hop and IS the
         // intake's shape: clone the hop (three `Arc` bumps) as the caller side
         // of callers that own prepared hops.
@@ -1099,7 +1101,7 @@ mod tests {
     }
 
     /// The mixed intake: resolve -> one borrowed hop view -> `solve_piecewise`.
-    fn mixed_solve(r: &ResolvedMixedPath) -> Option<(U256, U256, Vec<U256>)> {
+    fn mixed_solve(r: &ResolvedMixedPath) -> Option<degenbot_pools::solve::WalkSolution> {
         // One borrowed view per position: V2 borrows the resolved state; concentrated liquidity
         // borrows the projection's prepared value (sequence + `Arc` tables).
         let mut hops: Vec<degenbot_pools::MixedHopView<'_>> = Vec::with_capacity(r.hops.len());

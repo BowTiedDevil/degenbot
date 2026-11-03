@@ -487,7 +487,9 @@ fn refine_window_matches_brent_helper_on_stress_books() {
         let (walk_x, walk_profit) = walk
             .result
             .as_ref()
-            .map_or((U256::ZERO, U256::ZERO), |(x, p, _)| (*x, *p));
+            .map_or((U256::ZERO, U256::ZERO), |solution| {
+                (solution.optimal_input, solution.profit)
+            });
         let sim = ConcentratedLiquidityPathSim::new(&refs, None);
         let helper = brent_helper_profit(&sim);
         checked += 1;

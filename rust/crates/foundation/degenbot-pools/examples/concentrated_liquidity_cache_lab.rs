@@ -95,7 +95,7 @@ fn solve_prepared<S: ConcentratedLiquidityCacheStrategy + ?Sized>(
     event: &CacheEvent,
     seq_refs: &[&IntV3TickRangeSequence],
     tele: &WalkTelemetry,
-) -> Option<(U256, U256, Vec<U256>)> {
+) -> Option<degenbot_pools::solve::concentrated_liquidity::WalkSolution> {
     // The strategy hands back the one intake value directly (the projection's
     // `PreparedConcentratedLiquidityHop`), so no per-solve re-pairing of tables to sequences.
     let prepared = strategy.refill(seqs, event);
@@ -123,7 +123,7 @@ fn solve_reference(
     seq_refs: &[&IntV3TickRangeSequence],
     cfg: &degenbot_pools::solve::runtime::SolveRuntimeConfig,
     tele: &WalkTelemetry,
-) -> Option<(U256, U256, Vec<U256>)> {
+) -> Option<degenbot_pools::solve::concentrated_liquidity::WalkSolution> {
     let prepared: Vec<PreparedConcentratedLiquidityHop> = seq_refs
         .iter()
         .map(|s| {

@@ -1273,7 +1273,10 @@ fn test_solve_concentrated_liquidity_piecewise_3hop_profitable() {
     // across the three pools. However, fees may eat all profit.
     // The test primarily verifies the 3-hop solver doesn't panic
     // and produces a well-formed result when profitable.
-    if let Some((optimal_input, profit, hop_outputs)) = result {
+    if let Some(solution) = result {
+        let optimal_input = solution.optimal_input;
+        let profit = solution.profit;
+        let hop_outputs = solution.hop_outputs;
         assert!(!optimal_input.is_zero(), "Optimal input should be nonzero");
         assert!(!profit.is_zero(), "Profit should be nonzero");
         assert_eq!(hop_outputs.len(), 3, "3 hops should produce 3 hop_outputs");
@@ -1469,7 +1472,10 @@ fn test_solve_piecewise_3hop_v2_concentrated_liquidity_v2() {
     // For arb: buy WETH cheap (pool1), sell WETH expensive (pool2).
     // But that's only 2 hops. With V3 in the middle, it's still the same direction.
     // The result is that there should be profit from the V2 price disagreement.
-    if let Some((optimal_input, profit, hop_outputs)) = result.result {
+    if let Some(solution) = result.result {
+        let optimal_input = solution.optimal_input;
+        let profit = solution.profit;
+        let hop_outputs = solution.hop_outputs;
         assert!(!optimal_input.is_zero());
         assert!(!profit.is_zero());
         assert_eq!(hop_outputs.len(), 3);
@@ -2678,12 +2684,14 @@ fn solve_concentrated_liquidity_piecewise_beyond_ten_range_prefix_finds_corner_p
         "oracle sanity: the corner-blind reference must find NOTHING here ({reference:?})"
     );
 
-    let (x, profit, _hop_outputs) = derive_and_solve_concentrated_liquidity_piecewise(
+    let solution = derive_and_solve_concentrated_liquidity_piecewise(
         &[&seq1, &seq2],
         &SolveRuntimeConfig::default(),
     )
     .result
     .expect("the active-set walk must find the deep range-10/11 profit");
+    let x = solution.optimal_input;
+    let profit = solution.profit;
 
     // Non-vacuity floor: a coarse ×2 grid scan of the same path already
     // shows ≥ 1.2e8 profit; the walk's refined optimum must clear it.
@@ -2750,7 +2758,7 @@ fn solve_piecewise_beyond_ten_range_prefix_matches_uncapped_reference() {
     // the walk's dense final sweep picks the exact discrete maximizer —
     // the walk may beat the reference by a wei here (observed: 25189262
     // vs 25189261). The assertion that matters is NEVER WORSE.
-    let solver_profit = result.result.map_or(U256::ZERO, |(_, profit, _)| profit);
+    let solver_profit = result.result.map_or(U256::ZERO, |result| result.profit);
     let reference_profit = reference.map_or(U256::ZERO, |(_, profit, _)| profit);
     assert!(
         solver_profit >= reference_profit,
@@ -2786,7 +2794,7 @@ fn concentrated_liquidity_path_solver_matches_uncapped_reference_across_late_liq
             )
             .result;
             let reference = reference_uncapped_concentrated_liquidity_solve(&[&seq1, &seq2]);
-            let solver_profit = solver.map_or(U256::ZERO, |(_, profit, _)| profit);
+            let solver_profit = solver.map_or(U256::ZERO, |result| result.profit);
             let reference_profit = reference.map_or(U256::ZERO, |(_, profit, _)| profit);
             // Loop-15: 2-wei documented epsilon. The 700/1e14 member's
             // optimum sits on a hyperflat top (~9k wei wide at <1 wei of
@@ -3024,7 +3032,7 @@ fn concentrated_liquidity_path_solver_matches_fine_grid_oracle_across_families()
                 &SolveRuntimeConfig::default(),
             )
             .result;
-            let solver_profit = solver.map_or(U256::ZERO, |(_, p, _)| p);
+            let solver_profit = solver.map_or(U256::ZERO, |solution| solution.profit);
             eprintln!(
                 "deep_liquidity={deep_liquidity} deep_index={deep_index}:                      oracle={oracle} solver={solver_profit}"
             );
@@ -3188,7 +3196,7 @@ fn exact_shifted_anchor_matches_refined_argmax_on_interior_optima() {
                     *l = deep_liquidity;
                 }
                 let seq2 = multi_range_sequence(0, 60, false, &liquidities);
-                let Some((x_star, profit, _)) = derive_and_solve_concentrated_liquidity_piecewise(
+                let Some(solution) = derive_and_solve_concentrated_liquidity_piecewise(
                     &[&seq1, &seq2],
                     &SolveRuntimeConfig::default(),
                 )
@@ -3196,6 +3204,8 @@ fn exact_shifted_anchor_matches_refined_argmax_on_interior_optima() {
                 else {
                     continue;
                 };
+                let x_star = solution.optimal_input;
+                let profit = solution.profit;
                 assert!(!profit.is_zero());
                 let hops = [
                     concentrated_liquidity_walk_hop(&seq1, None),
@@ -3448,7 +3458,7 @@ fn block_25641093_pool_feed_hop2_predicts_revm_output() {
     let oracle_out = lead_out + last_leg_out;
 
     let profiles = Arc::new(build_word_profiles(&crossings, &mut WalkTally::default()));
-    let hops = [PieceView::concentrated_liquidity(crossings, profiles)];
+    let hops = [PieceView::concentrated_liquidity(&seq, crossings, profiles)];
     let outcome = simulate_walk_path(gross_in, &hops, &mut WalkTally::default());
     let got = outcome.hop_outputs[0];
     // vs the validated step-faithful oracle: the residual is per-step
@@ -3562,7 +3572,7 @@ fn single_piece_saturation_kink_is_not_missed() {
         anchor > x_sat,
         "cell sanity: requires anchor > x_sat (got anchor={anchor}, x_sat={x_sat})"
     );
-    let Some((x, profit, _)) = derive_and_solve_concentrated_liquidity_piecewise(
+    let Some(solution) = derive_and_solve_concentrated_liquidity_piecewise(
         &[&seq1, &seq2],
         &SolveRuntimeConfig::default(),
     )
@@ -3572,6 +3582,8 @@ fn single_piece_saturation_kink_is_not_missed() {
             "F1 silent under-shoot: solver=None while the saturation corner x={x_sat} is worth {corner_profit} (anchor={anchor}); the single-piece terminal refine must bracket the corner"
         );
     };
+    let x = solution.optimal_input;
+    let profit = solution.profit;
     assert!(
         profit >= corner_profit,
         "solver profit {profit} < saturation-corner profit {corner_profit} (x*={x}, x_sat={x_sat})"
@@ -3633,7 +3645,7 @@ fn single_piece_hop1_binding_kink_is_not_dropped() {
         corner_profit > U256::from(1_000_000u64),
         "cell needs a substantial hop1-binding profit (got {corner_profit})"
     );
-    let Some((x, profit, _)) = derive_and_solve_concentrated_liquidity_piecewise(
+    let Some(solution) = derive_and_solve_concentrated_liquidity_piecewise(
         &[&seq0, &seq1],
         &SolveRuntimeConfig::default(),
     )
@@ -3643,6 +3655,8 @@ fn single_piece_hop1_binding_kink_is_not_dropped() {
             "hop1-binding kink dropped: solver=None while x_cap={x_cap} is worth {corner_profit}; the terminal refine must not silently skip it"
         );
     };
+    let x = solution.optimal_input;
+    let profit = solution.profit;
     // Coarsened refine resolves the kink to the profit-eps contract rather
     // than dropping it (REFINE_BRACKET_WEI bounds the 33-pt grid step).
     let eps = U256::from(REFINE_BRACKET_WEI);
@@ -3727,7 +3741,7 @@ fn dense_edge_direction_guard_synthetic() {
     }
 
     let eps = U256::from(REFINE_BRACKET_WEI);
-    let Some((xr, profit, _)) = derive_and_solve_concentrated_liquidity_piecewise(
+    let Some(solution) = derive_and_solve_concentrated_liquidity_piecewise(
         &[&seq0, &seq1],
         &SolveRuntimeConfig::default(),
     )
@@ -3735,6 +3749,8 @@ fn dense_edge_direction_guard_synthetic() {
     else {
         panic!("solver=None on a dense path while the fine oracle is {oracle_profit}");
     };
+    let xr = solution.optimal_input;
+    let profit = solution.profit;
     assert!(
         profit >= oracle_profit.saturating_sub(eps),
         "dense path under-shoot: solver {profit} < fine oracle {oracle_profit} - eps {eps}"

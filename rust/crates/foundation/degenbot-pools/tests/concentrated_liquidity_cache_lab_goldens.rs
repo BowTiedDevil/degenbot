@@ -57,7 +57,7 @@ fn solve_prepared<S: ConcentratedLiquidityCacheStrategy + ?Sized>(
     seqs: &[IntV3TickRangeSequence],
     event: &CacheEvent,
     seq_refs: &[&IntV3TickRangeSequence],
-) -> Option<(U256, U256, Vec<U256>)> {
+) -> Option<degenbot_pools::solve::concentrated_liquidity::WalkSolution> {
     // The strategy hands back the one intake value directly (the projection's
     // `PreparedConcentratedLiquidityHop`), so no per-solve re-pairing of tables to sequences.
     let prepared = strategy.refill(seqs, event);
@@ -191,11 +191,11 @@ fn golden_epochs_and_transitioned_epochs_stay_exact() {
                 .unwrap_or(U256::ZERO)
                 .saturating_sub(go);
             let rprof = reference
-                .2
+                .hop_outputs
                 .last()
                 .copied()
                 .unwrap_or(U256::ZERO)
-                .saturating_sub(reference.0);
+                .saturating_sub(reference.optimal_input);
             assert!(
                 gprof.saturating_sub(rprof) <= U256::from(PROFIT_EPS),
                 "path {pid} under-shoots the recorded golden"

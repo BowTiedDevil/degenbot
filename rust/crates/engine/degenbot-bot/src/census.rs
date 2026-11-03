@@ -189,6 +189,11 @@ pub enum CensusEvent {
     /// the slot, so the frames in hand wait for chain evidence or an explicit
     /// replacement.
     DeliverySlotParked { strategy: &'static str },
+    /// One solved candidate the pre-sim gas floor suppressed at the delivery
+    /// window: its margin does not cover the path's measured execution gas at
+    /// the block's base fee (the sub-gas class that ships and then fails
+    /// verification as no-profit).
+    AdmissionFloored,
     /// Detached merge-pipe in-flight depth (stragglers sent but not yet
     /// applied/dropped), sampled at enqueue + per disposition.
     MergeInFlight { count: u64 },

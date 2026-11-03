@@ -1418,6 +1418,7 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
         state_nonces: vec![0, 0],
         solver_pool_states: Vec::new(),
         caveats: Caveats::HOOKED_POOL,
+        gas_hops: Vec::new(),
     };
     let tier = ExactBy(7_777);
     // The candidate's hooked-leg facts: exactly ONE amount-modifying V4 leg.

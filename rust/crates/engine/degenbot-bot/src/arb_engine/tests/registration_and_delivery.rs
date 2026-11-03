@@ -1233,21 +1233,25 @@ fn finalize_block_threads_metadata_into_send() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let mut engine = ArbitrageEngine::new();
     set_result_channel(&mut engine, tx);
-    // Two V2 pools with price divergence → a profitable pure-V2 path
-    // (same setup as `register_and_solve_path_eagerly_solves`).
+    // Two V2 pools with price divergence → a profitable pure-V2 path whose
+    // TERMINAL is WETH. The terminal matters: the delivery window now raises
+    // its floor by the path's execution gas priced in ETH wei, which is only
+    // comparable to a margin denominated in an 18-decimal ether-equivalent
+    // token — a USDC-terminal fixture's 6-decimal margin would be suppressed
+    // for unit reasons, not economics.
     let v2_addr_a = Address::from([0x11u8; 20]);
     let v2_fwd_a = engine.register_v2_pool(
         v2_addr_a,
-        usdc(1_500_000),
         weth(800),
+        usdc(1_500_000),
         GAMMA_03,
         FEE_DENOM_03,
     );
     let v2_addr_b = Address::from([0x12u8; 20]);
     let v2_fwd_b = engine.register_v2_pool(
         v2_addr_b,
+        usdc(1_000_000),
         weth(1000),
-        usdc(2_000_000),
         GAMMA_03,
         FEE_DENOM_03,
     );

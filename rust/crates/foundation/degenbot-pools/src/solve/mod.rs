@@ -64,11 +64,21 @@ pub mod fixtures;
 // gate submodule stays private).
 pub mod gate;
 
+// The pre-sim gas admission floor: a measured per-hop cost model over the
+// walk's census. Its types ride the root door below; the module itself stays
+// internal so external callers name door items, not a path into it.
+pub(crate) mod gas_floor;
+
 // ---------------------------------------------------------------------------
 // Door items — the mixed-path intake contract (ADR-015), promoted from the
 // former `solve::mixed` tree to the root door.
 // ---------------------------------------------------------------------------
 pub use crate::families::solidly::solve::simulate_solidly_path;
+pub use gas_floor::{path_gas_floor_wei, GasFloorModel, HopGasProfile, MEASURED_GAS_FLOOR};
+// The walk's winning value (amounts + the gas census it was priced off): a
+// consumer that only needs the solved amount reads `WalkSolution`, never the
+// kernel module beneath this door.
+pub use concentrated_liquidity::WalkSolution;
 pub use mixed::solve::{solve_path, solve_path_with_min_profit, SolveOutcome};
 pub use mixed::{
     BalancerStableHopState, BalancerWeightedHopState, CurveStableswapHopState, HopType, MixedPath,

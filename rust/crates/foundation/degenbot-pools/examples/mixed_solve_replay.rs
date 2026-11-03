@@ -236,7 +236,8 @@ fn main() {
         // attributable stats (we report the final rep's walk breakdown).
         let mut times_us: Vec<u128> = Vec::with_capacity(iters);
         let mut last_ws: WalkStats = WalkStats::default();
-        let mut last_result: Option<(U256, U256, Vec<U256>)> = None;
+        let mut last_result: Option<degenbot_pools::solve::concentrated_liquidity::WalkSolution> =
+            None;
         let mut divergent_reps = false;
         for _ in 0..iters {
             let t0 = std::time::Instant::now();
@@ -252,7 +253,7 @@ fn main() {
             last_ws = out.stats;
             let r = out.result;
             if let Some(prev) = last_result.as_ref() {
-                if prev.1 != r.as_ref().map(|(_, p, _)| *p).unwrap_or(U256::ZERO) {
+                if prev.profit != r.as_ref().map_or(U256::ZERO, |solution| solution.profit) {
                     divergent_reps = true;
                 }
             }
@@ -286,8 +287,7 @@ fn main() {
                 .unwrap_or(U256::ZERO);
             let r_profit = last_result
                 .as_ref()
-                .map(|(_, p, _)| *p)
-                .unwrap_or(U256::ZERO);
+                .map_or(U256::ZERO, |solution| solution.profit);
             let delta_wei: i128 = if r_profit >= g_profit {
                 (r_profit - g_profit).try_into().unwrap_or(i128::MAX)
             } else {
