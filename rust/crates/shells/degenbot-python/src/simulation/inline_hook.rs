@@ -157,6 +157,41 @@ impl InlineSimHook {
         }
     }
 
+    /// The per-block storage memo for `block` — the SAME memo the block's
+    /// inline sims and its finalist re-quotes read through, minted once per
+    /// block and retired when the block moves.
+    ///
+    /// One owner, two consumers, one anchor: the memo holds only values the RPC
+    /// fallback itself fetched at `block`, so both consumers read exactly the
+    /// node's answer, so the re-quote and the block's inline sims cannot
+    /// disagree (ADR-090: one anchor, one memo).
+    fn memo_for_block(&self, block: u64) -> Arc<degenbot_simulation::StorageMemo> {
+        // A poisoned memo lock is recoverable: the memo is block-scoped
+        // and purely advisory (the fallback path re-fetches on a miss).
+        let mut guard = match self.storage_memo.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if guard.0 != block {
+            // M2 visibility: the retiring block's memo tally - the hit
+            // share is the RPC-trip compression the memo buys. The
+            // degenbot::diag target stays off the Python log cap (console
+            // + OTel only).
+            let (hits, misses) = guard.1.stats();
+            if hits + misses > 0 {
+                op_info!(
+                    domain = sim,
+                    block_number = guard.0,
+                    memo.hits = hits,
+                    memo.misses = misses,
+                    "storage memo stats (block retired)"
+                );
+            }
+            *guard = (block, Arc::new(degenbot_simulation::StorageMemo::new()));
+        }
+        Arc::clone(&guard.1)
+    }
+
     /// The EIP-1559 `next_base_fee` (the `calculations/evm_math.py` port —
     /// the worker-side twin of the driver's pre-sim computation).
     fn next_base_fee(req: &InlineSimRequest) -> u128 {
@@ -508,35 +543,7 @@ impl InlineSimulator for InlineSimHook {
                 "divergence probe armed (on-demand verification)"
             );
         }
-        let storage_memo = {
-            // A poisoned memo lock is recoverable: the memo is block-scoped
-            // and purely advisory (the fallback path re-fetches on a miss).
-            let mut guard = match self.storage_memo.lock() {
-                Ok(g) => g,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            if guard.0 != req.sim_block {
-                // M2 visibility: the retiring block's memo tally - the hit
-                // share is the RPC-trip compression the memo buys. The
-                // degenbot::diag target stays off the Python log cap (console
-                // + OTel only).
-                let (hits, misses) = guard.1.stats();
-                if hits + misses > 0 {
-                    op_info!(
-                        domain = sim,
-                        block_number = guard.0,
-                        memo.hits = hits,
-                        memo.misses = misses,
-                        "storage memo stats (block retired)"
-                    );
-                }
-                *guard = (
-                    req.sim_block,
-                    Arc::new(degenbot_simulation::StorageMemo::new()),
-                );
-            }
-            Arc::clone(&guard.1)
-        };
+        let storage_memo = self.memo_for_block(req.sim_block);
         let executor_owner = self.executor_owner;
         let executor_address = self.executor_address;
         let weth_address = self.weth_address;
@@ -748,6 +755,7 @@ impl InlineSimulator for InlineSimHook {
 fn quote_leg_at_anchor(
     provider: &AlloyProvider,
     warm_cache: &Arc<RwLock<WarmCodeCacheInner>>,
+    memo: &Arc<degenbot_simulation::StorageMemo>,
     anchor: HookedLegAnchor,
     leg: &HookedLeg,
 ) -> Option<U256> {
@@ -759,12 +767,31 @@ fn quote_leg_at_anchor(
         blocking,
         Arc::clone(&counter),
     );
+    // The block's own storage memo ahead of the RPC leaf (ADR-090): the
+    // anchor's earlier reads — the block's inline sims' and previous re-quotes'
+    // — serve this quote, and a miss is recorded for the next one. Values are
+    // the node's answers at `anchor.block`; nothing is cached across anchors
+    // (the memo retires when the block moves).
+    let memoized = degenbot_simulation::sim::evm2::memoized_storage::MemoizedStorage::new(
+        cold,
+        Arc::clone(memo),
+    );
     let warm = degenbot_simulation::sim::evm2::warm_code_cache::WarmCodeCache::with_owner(
         Arc::clone(warm_cache),
         anchor.block,
-        cold,
+        memoized,
     );
-    let ext = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(warm));
+    let mut ext = ::evm2::evm::CacheDB::new(::evm2::evm::Db::new(warm));
+    // The quote frame's caller is the null account (`V4QuoterConfig::default`,
+    // which this tier always builds): a constant, immutable row — nonce 0, no
+    // code, no balance. Seeding it in the scratch keeps the frame's `basic`
+    // call off the RPC leaf; the warm code cache deliberately never caches EOA
+    // rows, so this was the one account read every re-quote still paid. A
+    // quoter configured with a real caller would have to seed that row instead.
+    ext.insert_account_info(
+        &alloy::primitives::Address::ZERO,
+        ::evm2::evm::AccountInfo::default(),
+    );
     let mut scratch = degenbot_simulation::sim::evm2::frame_replay::Evm2ScratchEvm::with_counter(
         ext,
         degenbot_simulation::sim::frame_replay::ScratchBlock {
@@ -808,10 +835,12 @@ impl HookedLegReQuote for InlineSimHook {
     fn requote_leg(&self, anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<U256> {
         let provider = Arc::clone(&self.provider);
         let warm_cache = Arc::clone(&self.warm_cache);
+        let memo = self.memo_for_block(anchor.block);
         let leg = leg.clone();
         let drive = move || -> Option<U256> {
             let provider_inner = Arc::clone(&provider);
             let warm_inner = Arc::clone(&warm_cache);
+            let memo_inner = Arc::clone(&memo);
             let leg_inner = leg.clone();
             // The sync quote BLOCKS on the anchor-pinned DB (revm's
             // `WrapDatabaseAsync` bridges the async provider via
@@ -819,7 +848,13 @@ impl HookedLegReQuote for InlineSimHook {
             // the same thread/runtime matrix `simulate_path` documents.
             self.sim_runtime.block_on(async move {
                 tokio::task::spawn_blocking(move || {
-                    quote_leg_at_anchor(&provider_inner, &warm_inner, anchor, &leg_inner)
+                    quote_leg_at_anchor(
+                        &provider_inner,
+                        &warm_inner,
+                        &memo_inner,
+                        anchor,
+                        &leg_inner,
+                    )
                 })
                 .await
                 .ok()

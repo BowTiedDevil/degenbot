@@ -25,6 +25,7 @@ pub mod handle;
 pub mod hook_slots;
 pub mod inspectors;
 pub mod jit;
+pub mod memoized_storage;
 pub mod session;
 pub mod state_override;
 pub mod v4_black_box;

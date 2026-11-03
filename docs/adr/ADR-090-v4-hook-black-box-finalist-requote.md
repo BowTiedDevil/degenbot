@@ -80,7 +80,25 @@ candidates still compete.
   decision, not made here.
 - Cost is bounded by finalist volume: one black-box leg quote (~72µs warm at
   the pilot measurement) per hooked leg per finalist, plus a one-batch
-  prefetch per anchor.
+  prefetch per anchor. Measured (H4): 1,000 re-quotes over the census's 42
+  quotable hooked pools at one archive anchor give p50 71µs / p95 168µs /
+  p99 232µs with **zero** RPC reads per quote once the anchor's storage is
+  in the memo, and p50 3.6ms / p95 8.4ms (~17 serial reads per leg) without
+  it. The memo is what the "~72µs warm" figure rests on, so the re-quote
+  joined it: an anchor's reads — its inline sims' and its earlier re-quotes' —
+  now serve every later leg quote at that block, and the frame's null caller
+  is seeded rather than fetched. The residual cold tail is one hook's first
+  re-quote per anchor: p50 ~4.4ms / p95 ~7.8ms, its own ~4–32 slot reads.
+- The tier's contracts are not in the durable AOT store, and H4 measured the
+  cost of that as ~60µs per re-quote (p95 233µs interpreted vs 168µs AOT;
+  p50 129µs vs 71µs), with no compile stall either way — the JIT defers a miss
+  to the interpreter in worker-pool mode. So no boot-time prep was wired for
+  them and the store stays the executor's; prep cost for reference: PoolManager
+  0.7s + V4 Quoter 0.2s, and 0.05–0.9s per hook.
+- A batch quoter is not demanded: with the memo the per-leg cost is 71µs p50,
+  of which frame execution is ≤~42µs (the per-anchor scrub floor), so folding
+  N legs into one frame would save at most that — it would not touch the
+  storage term that dominated before the memo.
 
 ## Chunks
 

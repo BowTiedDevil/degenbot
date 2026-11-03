@@ -75,6 +75,10 @@ const TEST_HARNESS_KEYS: &[&str] = &[
     "DEGENBOT_ORACLE_SCAN_BLOCKS",
     "DEGENBOT_ORACLE_TRACE",
     "DEGENBOT_PARITY_BLOCK",
+    // The ADR-090 hooked re-quote latency bench's burst length
+    // (`degenbot-simulation/tests/evm2_v4_hook_requote_bench.rs`): narrows the
+    // 1,000-quote burst for a smoke run, never read by the engine.
+    "DEGENBOT_REQUOTE_BENCH_BURST",
 ];
 
 const RETIRED_KEYS: &[&str] = &[
