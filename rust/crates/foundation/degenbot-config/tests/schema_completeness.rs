@@ -117,8 +117,8 @@ const SWEEP_EXPANSIONS: &[&str] = &[
 ];
 
 /// Committed snapshot of the sweep, used verbatim when `rg` is not installed
-/// (standalone-consumer checkouts). Refresh in-repo with the inventory()'s
-/// own args (both exclusion globs — the config crate's own tests carry
+/// (standalone-consumer checkouts). Refresh in-repo with the `inventory()`
+/// sweep's own args (both exclusion globs — the config crate's own tests carry
 /// negative-probe literals that are not real keys):
 /// `rg -o 'DEGENBOT_[A-Z_]+' rust/crates --no-filename -g '!**/degenbot_env_inventory.txt' -g '!**/degenbot-config/tests/**' | sort -u > <snapshot>`
 const SNAPSHOT: &str = include_str!("degenbot_env_inventory.txt");

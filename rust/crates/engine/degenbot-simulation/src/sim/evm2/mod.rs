@@ -26,6 +26,7 @@ pub mod inspectors;
 pub mod jit;
 pub mod session;
 pub mod state_override;
+pub mod v4_black_box;
 pub mod warm_code_cache;
 
 #[cfg(test)]
