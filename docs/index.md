@@ -30,7 +30,7 @@ Start with {doc}`getting-started` — or open {doc}`adr/README` if you want the 
 
 **Aave V3 integration** — {doc}`aave/README` is the overview; {doc}`aave/flows/position_manager` and {doc}`aave/transformations/index` are good first entries into the per-flow behavior notes.
 
-**Working notes & benchmarks** — lab reports and perf decisions: {doc}`cache-lab-report`, {doc}`rayon-parallelism-lab`, {doc}`mimalloc-purge-delay-decision`, {doc}`detached-solve-cycle-decision`.
+**Working notes & benchmarks** — lab reports and perf decisions: {doc}`cache-lab-report`, {doc}`rayon-parallelism-lab`, {doc}`mimalloc-purge-delay-decision`, {doc}`detached-solve-cycle-decision`, {doc}`gas-estimation` (the measured per-op gas decomposition behind the pre-sim admission floor).
 
 ```{toctree}
 :caption: Getting started
@@ -94,6 +94,7 @@ rayon-parallelism-lab
 mimalloc-purge-delay-decision
 ratr5a-cxrhw3-closure-census
 detached-solve-cycle-decision
+gas-estimation
 ```
 
 ```{toctree}

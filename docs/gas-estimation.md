@@ -1,0 +1,226 @@
+# The pre-sim gas floor: a measured per-op decomposition
+
+> **Measurement note.** Every number below comes from
+> `tests/evm2_gas_decomposition.rs` — real pool bytecode on evm2 over archive
+> mainnet state at block **26,335,759** (the phantom corpus's own anchor). Re-run
+> it with
+>
+> ```sh
+> TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI=http://host:8545 \
+>   just test-rust-nextest -p degenbot-simulation \
+>   -E 'test(gas_decomposition_census)' --run-ignored=ignored-only --no-capture
+> ```
+>
+> The rig prints its whole ledger (per-pool `k → gas` tables, the fits, the
+> error distributions). Numbers drift with the anchor; the *shape* is the
+> finding.
+
+A candidate's cost is not a constant. A swap's gas is dominated by **how far the
+walk travels through the pool's tick map**, which the solver already knows: the
+number of initialised ticks crossed and the number of bitmap words walked. This
+page measures those coefficients and turns them into an admission floor that
+under-predicts cost (a candidate that clears the floor and fails verification is
+a cheap mistake; a wrongly suppressed candidate is lost alpha).
+
+## The decomposition
+
+```text
+gas(leg)  =  a_family                       # the pool's own fixed work
+          +  b_cross  · initialised_ticks_crossed
+          +  b_word   · bitmap_words_walked
+          +  [ b_transfer · token_transfers ]     # settlement only, per hop
+```
+
+Measured coefficients (`gas`, from the frames described below):
+
+| family | fixed `a` | per crossing `b_cross` | per word `b_word` | notes |
+|---|---|---|---|---|
+| **V2** | 30,862 | — (no tick map) | — | flat: 30,850–31,026 over 10^15…10^21 in |
+| **V3** | 118,594 | 24,824 | 7,373 | vanilla pools: `a` 116,464–125,236 |
+| **V3 fork** (1 bp, fork bytecode) | 147,897–151,109 | 33,238–46,913 | — | degenerate sweep: its swaps saturate one range |
+| **V4** (hookless, black-box quote) | 72,232 | 14,254 | — | the whole `unlock`/delta path, quoter frame |
+
+Per-pool V3 fits (`gas = a + b·k`, 9 samples each, both directions, 0–8
+crossings):
+
+```text
+usdc/weth-500  zfo  a=117,421 b=24,590   ofz  a=117,072 b=24,986
+dai/usdc-100   zfo  a=117,522 b=25,265   ofz  a=116,464 b=24,632
+usdc/usdt-100  zfo  a=125,236 b=24,573   ofz  a=121,594 b=24,530
+dai/usdc-500   zfo  a=118,259 b=24,684   ofz  a=118,011 b=24,300
+```
+
+Two facts fall out of the sweep:
+
+- **The per-crossing marginal dominates a multi-crossing leg.** 24.8k per
+  crossing is ~21% of a zero-crossing leg: eight crossings more than double the
+  leg's cost. A static wei floor cannot see this.
+- **The word term is the bigger cost on a sparse pool.** One empty bitmap word
+  costs 7,373 gas and an `EMPTY-HALT` walk crosses hundreds of them: the phantom
+  corpus's 1 bp fork leg (`69150 hop1`) burns **3.16 M gas with 12 crossings and
+  351 words** — a crossings-only estimator predicts 0.4 M and lets it through.
+
+### Cold vs warm bitmap words
+
+The first crossing inside a bitmap word also pays the word's cold `SLOAD` and
+bit walk; each further crossing in that word does not. Measured by comparing the
+0 → 1 increment against the same pool's fitted marginal (median over 9 pools):
+
+```text
+first crossing in a word   38,595 gas
+marginal crossing          24,591 gas   ->  cold-word surcharge ~14,004 (57% of the marginal)
+```
+
+At admission precision this matters only for legs that cross ≥2 ticks inside one
+word (dense 1 bp pools): the marginal is what the floor should use, with the
+per-word term covering the cold first touch.
+
+### Transfers and the settlement frame
+
+The V3/V4 frames below are **quote frames**: they run the pool's real swap loop
+and then revert before settlement, so no token moves. A settled path adds one
+ERC-20 `transfer` per direction per hop. Measured on real USDC (the pool's own
+`balanceOf` slot probed and self-checked, then a funded `transfer` frame):
+
+| transfer shape | frame gas | marginal (frame − 21 000 intrinsic) |
+|---|---|---|
+| cold recipient (0 → nonzero SSTORE) | 62,056 | **41,056** |
+| warm recipient (nonzero → nonzero) | 44,956 | **23,956** |
+
+So a settled V3 hop is `118,594 + 24,824·k + 7,373·w + ~24,000…41,000` — the
+transfer pair is worth a fifth of a zero-crossing leg and must not be dropped
+when the floor prices a *settling* path. A V4 hop settles inside one `unlock`
+(`sync`/`take`/`settle`), which the 72,232 fixed cost already contains for the
+quoter frame; the per-transfer marginal is the same order.
+
+## Error on the phantom corpus
+
+The corpus (`tests/fixtures/phantom_paths.tsv`, 26 hops over 14 paths at the
+run's anchor) is the held-out test set: 120 measured legs (V2/V3/V4, amounts
+scaled to each pool's in-range reserve, dead legs included).
+
+| estimate source | signed p50 | p90 | min | max | `|err|` p50 | `|err|` p90 | under-predicts |
+|---|---|---|---|---|---|---|---|
+| **(b)** census / walk counts | +7.7% | +29.8% | −93.5% | +38.7% | 10.0% | 29.8% | 41/120 |
+| **(c)** `|Δtick| / spacing` | +30.5% | +65,507% | −94.5% | +87,251% | 38.7% | 65,507% | 26/120 |
+
+Per family with (b): V2 `|err|` p50 **0.04%** (the constant is exact), V3 p50
+17.6% / p90 29.8%, V4 p50 7.8% / p90 85.8% (the V4 tail is one pool whose V4 walk
+diverges from the chain — see *Rig self-checks*).
+
+**Why V3 sits at +16%: the intercept is a pool property, not a family constant.**
+The family fit's `a` (118,594) is the *median* pool; the cheapest corpus pool
+runs at 96,909 and a 1 bp fork pool at 147,897. A median intercept
+over-predicts the cheap pools — the expensive error. The floor variant keeps the
+marginals and drops `a` to the 10th percentile of the corpus's per-pool
+intercepts:
+
+```text
+floor variant (a = 81,947, b_cross = 24,824, b_word = 7,373)
+    signed p50 −13.9%   max +33.7%   under-predicts 93/111 legs (V3+V4)
+```
+
+Two admissible choices, both wrong in the safe direction:
+
+- **The low intercept** — family marginals, `a` at the p10 of the observed
+  per-pool intercepts (81,947). Under-predicts 84% of the corpus's V3+V4 legs;
+  the 16% it over-predicts are pools with a dearer fixed cost (fork bytecode,
+  proxy tokens) and are over-predicted by ≤34%.
+- **Percentile floor** — `est = pred + q·residual`: at q10 of the (b) residual
+  the estimate sits 6% below the fitted prediction and under-predicts ~90% of
+  legs; at q05 it sits 9.1% below and under-predicts ~95%.
+
+**Recommendation: floor with the p10 residual of the point estimate** (i.e. the
+estimate is a 10th-percentile cost, not an expected cost). The measured
+suppression cost is then ~10% of candidates that would have passed the sim — the
+same class the static floor already lets through, and orders of magnitude cheaper
+than the 322k wasted sims/7 h that motivated the floor.
+
+## The crossing source: what admission should use
+
+| option | what it costs | measured |
+|---|---|---|
+| **(a) carry the count on the walk's outcome** | zero extra work: the active-set walk already computes the landing index (`landed`) and each landed range's `word_boundary_prices`; `V3SwapOutcome` just does not surface them | exact — it *is* the walk's crossing count; validated against the chain census on every sweep sample |
+| **(b) recompute from the in-memory tick map at admission** | O(initialised ticks between the hop's ticks) with the bitmap already in memory; needs the final tick, which the family sim returns | exact, but repeated work the walk already did |
+| **(c) `|tick_final − tick_initial| / spacing`** | free (the solver has both ticks) | **rejected** |
+
+Option (c) is unusable: on the corpus its ratio to the true initialised count is
+**p50 273×, p90 6,587×, max 12,470×**. The physics is plain once measured — a
+swap that exits the in-range position travels through *empty* tick space, so the
+tick delta grows without bound while the number of ticks actually crossed does
+not (`73502 hop1`: 27 crossings over 168,590 ticks of travel). At 24.8k per
+crossing, (c) over-estimates a leg by ~4×10⁹ gas — every candidate would be
+suppressed.
+
+**Verdict: (a), with (b) as the fallback.** Both counts the formula needs are
+already in the walk's hands; carrying them on the outcome is a small solve
+change and makes the floor's x-axis exact by construction. The reference
+implementation in this rig reads them exactly that way:
+
+```rust
+let outcome = sim.output(amount);            // ConcentratedLiquidityPathSim
+let crossings = outcome.landed[hop];         // initialised ticks crossed
+let words = 1 + prepared.int_seq.ranges
+    .iter().take(crossings + 1)
+    .map(|r| r.word_boundary_prices.len())
+    .sum::<usize>();                         // bitmap words walked
+```
+
+## The chain's own crossing count (`QuoterV2`)
+
+`QuoterV2` returns `initializedTicksCrossed`; the rig compared it against its own
+bitmap census on every canonical sweep sample:
+
+```text
+36 samples: the quoter's count == the census, 36 samples: == census + 1
+            0 samples: anything else
+```
+
+The +1 is a **convention, not noise**: the quoter counts the tick the price
+starts in when it is initialised, which the pool's `cross()` never runs on that
+swap. So the chain figure *over-counts by exactly one* whenever the current tick
+is a liquidity boundary — ~24.8k gas, a fifth of a zero-crossing leg. Any
+estimator fed by the quoter's number inherits that bias; the walk's landing index
+does not.
+
+## Rig self-checks (what the numbers rest on)
+
+- **The frame is the pool's own bytecode.** V3 legs execute `pool.swap` from a
+  quote caller whose `uniswapV3SwapCallback` reverts with
+  `(amount0Delta, amount1Delta, sqrtPriceX96After, tickAfter)`; the last two words
+  come from a `slot0()` staticcall *inside* the callback, and the rig prints the
+  `CALLER`/pool identity as a self-check on every pool (`ok=true` on all ten).
+  Address-agnostic: it prices fork pools no canonical quoter routes to.
+- **The census is the node's storage.** Crossings are counted from
+  `tickBitmap(int16)` bits between the pre-swap and post-swap tick, not from the
+  estimator under test.
+- **The canonical quoter cross-checks the frame** on every pool it serves: the
+  same point is quoted through `QuoterV2` and the pool's own `swap()` and the
+  crossing counts/census are compared (the +1 finding above).
+- **V4 legs are quoted through the black-box primitive** (`V4BlackBoxQuoter`),
+  whose `gas_used` is the whole `unlock`/delta frame. Its walk answers the
+  chain's `amountOut` exactly on the pools that pass parity; the corpus's fee-82
+  pool (`69354 hop1`) **fails parity** (walk 5,932,349,875,526,935,751 vs chain
+  6,110,644,816,568,875,667), which is why its V4 estimates are the error tail —
+  the walk's crossing axis is not trustworthy there, and the rig says so rather
+  than fitting around it.
+- An `EMPTY-HALT` leg (a swap that leaves the liquidity and marches to the price
+  limit) exhausts the 16 M frame cap; the rig records that as a finding rather
+  than a sample, because its gas is bounded by the frame, not by the path.
+
+## What the admission floor should consume
+
+1. **Admission floor** (pre-sim, per path): sum over hops of
+   `a_family + b_cross·crossings + b_word·words`, plus the per-transfer marginal
+   when the path settles, times the block's effective gas price, compared against
+   the solver's gross margin.
+2. **Coefficients as data**, not constants in code: the family table above is the
+   seed, and the per-pool intercept spread (96.9k–151.1k) is the reason the floor
+   uses the low end.
+3. **The crossing counts come from the walk** (option (a)): add
+   `initialized_ticks_crossed` and `bitmap_words_walked` to the V3/V4 swap
+   outcomes so the floor reads them instead of recomputing (or, for a first cut,
+   `ConcentratedLiquidityPathSim::output().landed` plus the prepared hop's
+   `word_boundary_prices`).
+4. **Never (c).** Tick-distance is not crossing count: 273× at the median, 12,470×
+   at the tail.
