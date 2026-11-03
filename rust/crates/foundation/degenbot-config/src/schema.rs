@@ -785,6 +785,8 @@ crate::config_schema! {
             doc = "Network-gated V3 IIA fixture reproduction RPC endpoint (test-only).";
         v3_fixture_block [opt u64] = None, env = "DEGENBOT_V3_FIXTURE_BLOCK", def = "(unset)",
             doc = "Network-gated V3 IIA fixture reproduction block (test-only).";
+        evm2_opt_level [opt string] = None, env = "DEGENBOT_EVM2_OPT_LEVEL", def = "(unset)",
+            doc = "Optimization level for the evm2 batch-quote benchmark's JIT/AOT tuning knobs: none|less|default|aggressive, unset = default (test-only).";
     }
 
     test_hooks TestHookConfig {

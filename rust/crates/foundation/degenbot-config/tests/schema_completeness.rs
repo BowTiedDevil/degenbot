@@ -16,6 +16,9 @@ use degenbot_config::{SCHEMA, UNPREFIXED_ENV_NAMES};
 ///   `DEGENBOT_RPC_WS_CHAINID_<chain_id>` (documented next to `SCHEMA`).
 const SWEEP_ARTIFACTS: &[&str] = &[
     "DEGENBOT_JAEGER_E",
+    // the sweep regex stops at the `2` of `DEGENBOT_EVM2_OPT_LEVEL`
+    // (see SWEEP_EXPANSIONS).
+    "DEGENBOT_EVM",
     // the sweep regex stops at the digit of the dispatch profit-capture
     // stance's env name (see SWEEP_EXPANSIONS).
     "DEGENBOT_ERC",
@@ -110,11 +113,14 @@ const SWEEP_EXPANSIONS: &[&str] = &[
     "DEGENBOT_ERC6909_PROFIT",
     "DEGENBOT_V3_FIXTURE_RPC",
     "DEGENBOT_V3_FIXTURE_BLOCK",
+    "DEGENBOT_EVM2_OPT_LEVEL",
 ];
 
 /// Committed snapshot of the sweep, used verbatim when `rg` is not installed
-/// (standalone-consumer checkouts). Refresh in-repo with:
-/// `rg -o 'DEGENBOT_[A-Z_]+' rust/crates --no-filename −g '!**/degenbot_env_inventory.txt' | sort -u > <snapshot>`
+/// (standalone-consumer checkouts). Refresh in-repo with the inventory()'s
+/// own args (both exclusion globs — the config crate's own tests carry
+/// negative-probe literals that are not real keys):
+/// `rg -o 'DEGENBOT_[A-Z_]+' rust/crates --no-filename -g '!**/degenbot_env_inventory.txt' -g '!**/degenbot-config/tests/**' | sort -u > <snapshot>`
 const SNAPSHOT: &str = include_str!("degenbot_env_inventory.txt");
 
 fn repo_root() -> &'static Path {

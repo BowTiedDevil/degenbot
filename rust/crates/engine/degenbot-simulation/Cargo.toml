@@ -71,6 +71,9 @@ evm2-jit = { git = "https://github.com/alloy-rs/evm2", branch = "main", version 
     "asm-keccak",
     "llvm",
 ] }
+# Named for the OptimizationLevel enum (the tuning knobs' type), which evm2-jit's
+# curated root re-export does not surface.
+evm2-jit-runtime = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", optional = true }
 # Tick-map fixtures mirror the pools hashbrown maps.
 hashbrown.workspace = true
 degenbot-core.workspace = true
@@ -177,7 +180,7 @@ default = []
 # non-optional and the feature alias is gone; the JIT stays opt-in.
 # evm2-jit-build is the build.rs's builtins-symbol export (the README's
 # required wiring), tracking main HEAD with evm2.
-evm2-jit = ["dep:evm2-jit", "dep:evm2-jit-build"]
+evm2-jit = ["dep:evm2-jit", "dep:evm2-jit-build", "dep:evm2-jit-runtime"]
 # The executor-grammar harness (`src/harness/`) is an investigation/oracle lab
 # with no production consumer: the shipped crate root is the engine (`sim`), the
 # fixture driver (`oracle`), and the capture generator (`capture`). Every

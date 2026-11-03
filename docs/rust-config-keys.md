@@ -276,6 +276,7 @@ Env names that are not `DEGENBOT_*`: `VERIFICATION_RETRY_MAX_ATTEMPTS`, `VERIFIC
 | `DEGENBOT_FIXTURE_DB` | `offline.fixture_db` | `Option<path>` | `(unset)` | `test-only` | Database path for the standalone-consumer fixture example. |
 | `DEGENBOT_V3_FIXTURE_RPC` | `offline.v3_fixture_rpc` | `Option<string>` | `(unset)` | `test-only` | Network-gated V3 IIA fixture reproduction RPC endpoint (test-only). |
 | `DEGENBOT_V3_FIXTURE_BLOCK` | `offline.v3_fixture_block` | `Option<u64>` | `(unset)` | `test-only` | Network-gated V3 IIA fixture reproduction block (test-only). |
+| `DEGENBOT_EVM2_OPT_LEVEL` | `offline.evm2_opt_level` | `Option<string>` | `(unset)` | `core` | Optimization level for the evm2 batch-quote benchmark's JIT/AOT tuning knobs: none\|less\|default\|aggressive, unset = default (test-only). |
 ## `test_hooks`
 
 | Env var | TOML key | Type | Default | Owner | Description |

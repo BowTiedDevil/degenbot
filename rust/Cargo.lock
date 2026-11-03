@@ -2744,6 +2744,7 @@ dependencies = [
  "evm2",
  "evm2-jit",
  "evm2-jit-build",
+ "evm2-jit-runtime",
  "hashbrown 0.17.1",
  "hex",
  "parking_lot 0.13.0",

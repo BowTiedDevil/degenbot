@@ -982,17 +982,43 @@ async fn bench_batch_quote_path() {
 #[cfg(feature = "evm2-jit")]
 mod jit {
     use super::{provider_code, AlloyProvider, PIN};
-    use ::evm2_jit::runtime::{AotRequest, JitBackend, ProgramKind, RuntimeConfig};
+    use ::evm2_jit::runtime::{AotRequest, JitBackend, ProgramKind, RuntimeConfig, RuntimeTuning};
+    use ::evm2_jit_runtime::OptimizationLevel;
     use degenbot_simulation::sim::evm2::aot_store::DurableArtifactStore;
     use degenbot_simulation::sim::evm2::handle::EVM2_PRODUCTION_SPEC;
     use std::sync::Arc;
     use std::time::Instant;
+
+    /// The optimization level for this run: `DEGENBOT_EVM2_OPT_LEVEL` =
+    /// `none|less|default|aggressive` (unset = default). The bench's store is
+    /// fresh per run, so each level's artifacts are compiled at that level.
+    fn opt_level() -> OptimizationLevel {
+        match std::env::var("DEGENBOT_EVM2_OPT_LEVEL").as_deref() {
+            Ok("none") => OptimizationLevel::None,
+            Ok("less") => OptimizationLevel::Less,
+            Ok("default") | Err(_) => OptimizationLevel::Default,
+            Ok("aggressive") => OptimizationLevel::Aggressive,
+            Ok(other) => {
+                panic!("unknown DEGENBOT_EVM2_OPT_LEVEL {other:?}: none|less|default|aggressive")
+            }
+        }
+    }
+
+    /// Runtime tuning with both opt-level knobs at this run's level.
+    fn tuning() -> RuntimeTuning {
+        RuntimeTuning {
+            jit_opt_level: opt_level(),
+            aot_opt_level: opt_level(),
+            ..RuntimeTuning::default()
+        }
+    }
 
     /// Build the JIT backend over a durable AOT store and pre-compile every
     /// contract the path's frames execute. Returns `(backend, prep ms,
     /// contracts prepared)`; `None` when the LLVM backend cannot initialize
     /// (the run then reports INTERPRET).
     pub(super) async fn prepare(provider: &AlloyProvider) -> (Option<JitBackend>, u128, usize) {
+        println!("JIT optimization level: {:?}", opt_level());
         let store_dir = std::env::temp_dir().join(format!("evm2-batch-quote-aot-{PIN}"));
         let _ = std::fs::remove_dir_all(&store_dir);
         let store = match DurableArtifactStore::new(store_dir.join("artifacts")) {
@@ -1003,6 +1029,7 @@ mod jit {
                     JitBackend::new(RuntimeConfig {
                         enabled: true,
                         blocking: true,
+                        tuning: tuning(),
                         ..RuntimeConfig::default()
                     })
                     .ok(),
@@ -1014,6 +1041,7 @@ mod jit {
         let backend = JitBackend::new(RuntimeConfig {
             enabled: true,
             blocking: true,
+            tuning: tuning(),
             store: Some(Arc::new(store)),
             ..RuntimeConfig::default()
         });
