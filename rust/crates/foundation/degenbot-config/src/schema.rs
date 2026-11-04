@@ -109,6 +109,7 @@ pub const TEST_ONLY_KEYS: &[&str] = &[
     "offline.clcap_max_fetches",
     "offline.clcap_path_cap",
     "offline.clcap_rpc",
+    "offline.evm2_opt_level",
     "offline.scan_block",
     "offline.fixture_db",
     "offline.v3_fixture_block",
@@ -1443,7 +1444,7 @@ mod tests {
         }
         assert_eq!(
             TEST_ONLY_KEYS.len(),
-            14,
+            15,
             "the test-only census changed: give the fixture a review, or move the key"
         );
     }
