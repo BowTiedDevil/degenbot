@@ -15,9 +15,9 @@
 //! non-empty diff.
 //!
 //! The comparison reaches the whole verdict rather than one key because the
-//! pre-epic divergence was a Python default that disagreed with the schema's:
-//! a key nobody thought to check. The projection is schema-driven, so a key
-//! declared later is compared here with no edit.
+//! divergence it exists to catch was a Python default that disagreed with the
+//! schema: a key nobody thought to check. The projection is schema-driven, so
+//! a key declared later is compared here with no edit.
 //!
 //! The oracle is committed: the Rust half regenerates it from a real load and
 //! the Python half reads it. Both halves must agree with the operator file

@@ -5,12 +5,11 @@ hierarchy shape) — this file exercises the *actual* PyO3 seam so a typed
 ``PoolRegistrationError`` subclass surfaces when a caller registers an
 out-of-spec or duplicate pool via ``Bot.register_v{2,3,4}_pool``.
 
-The admission epic made every
-``register_vx_pool`` a typed ``Result<u64, RegisterVxPoolError>`` and gave
-every variant set a ``SpecViolation`` that wraps the shared
-``spec_bounds::SpecViolation { field, value, bound }``. It promoted the
-stop-gap ``PyValueError`` mappers to a typed ``PoolRegistrationError``
-hierarchy shared across V2/V3/V4:
+Every ``register_vx_pool`` is a typed ``Result<u64, RegisterVxPoolError>``
+and every variant set has a ``SpecViolation`` that wraps the shared
+``spec_bounds::SpecViolation { field, value, bound }``. The typed hierarchy
+replaces the stop-gap ``PyValueError`` mappers with a
+``PoolRegistrationError`` hierarchy shared across V2/V3/V4:
 
     ValueError
     └─ PoolRegistrationError

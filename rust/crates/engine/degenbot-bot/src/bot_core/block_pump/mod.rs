@@ -47,9 +47,8 @@
 //!
 //! **Critical ordering**: backfill must run AFTER `subscribe()` returns but
 //! BEFORE `resume_from_subscribe()`. The engine's
-//! `last_processed_block()` is the backfill-start boundary. (Pre-epic
-//! Python orchestrated this manually; the epic relocates backfill into the
-//! core, driven automatically by `resume`.)
+//! `last_processed_block()` is the backfill-start boundary. The core runs
+//! backfill itself, driven automatically by `resume`.
 
 use degenbot_core::{op_error, op_info, op_warn};
 use std::collections::{HashMap, HashSet};

@@ -1,4 +1,4 @@
-"""Typed verification exceptions exposed by the Rust engine (TODO-53b7453b).
+"""Typed verification exceptions exposed by the Rust engine.
 
 Background — `build_paths` previously classified verification failures by
 string-matching ``"tick data mismatch"`` inside a ``RuntimeError`` and

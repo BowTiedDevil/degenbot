@@ -57,7 +57,7 @@
 //! (the orchestrator) opens ONE `DegenbotDb`, begins ONE `Transaction`, calls
 //! [`apply_aave_chunk_writes_on_conn`], and commits.
 //!
-//! # The TWO roles the [`updater`] module plays in the epic
+//! # The TWO roles the [`updater`] module plays
 //!
 //! - **Transactional apply core** ([`updater::apply_aave_chunk_writes_on_conn`]):
 //!   the pure apply loop, callable on any `&Connection`, fixture-tested with

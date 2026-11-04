@@ -183,7 +183,7 @@ class TestSingletonDexPresets:
         assert ident.reserves_abi == ["uint112", "uint112"]
 
     def test_aerodrome_v2_has_no_dex_identity_yet(self) -> None:
-        """Aerodrome V2 is deferred (TODO-e30504ed) — no dex_identity registered.
+        """Aerodrome V2 has no dex_identity registered yet.
 
         The Aerodrome V2 factory IS registered (with AerodromeV2Pool as the
         pool_class), but no dex_identity is wired for it — Aerodrome V2 has no

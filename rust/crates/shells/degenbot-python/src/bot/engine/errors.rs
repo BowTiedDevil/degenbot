@@ -8,7 +8,7 @@
 use pyo3::{create_exception, PyErr};
 
 // Distinct Python exception types for the two verification failure
-// categories (TODO-53b7453b. Both subclass `RuntimeError` so existing
+// categories. Both subclass `RuntimeError` so existing
 // `except RuntimeError` handlers keep catching them, but they let callers
 // classify by *type* instead of fragile string matching on "tick data
 // mismatch". `build_paths` previously swallowed any `RuntimeError` lacking

@@ -357,8 +357,7 @@ class PoolTypeRegistry:
         """Get the DexIdentity preset for (chain_id, factory), or None.
 
         Returns None if no registration exists OR if the registration was made
-        without a ``dex_identity`` (e.g. Aerodrome V2 — deferred per
-        TODO-e30504ed).
+        without a ``dex_identity`` (e.g. Aerodrome V2, not modelled yet).
 
         Returns:
             The DexIdentity preset, or None if not found / not set.

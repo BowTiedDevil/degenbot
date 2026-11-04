@@ -1,4 +1,4 @@
-# degenbot Grafana-managed alert rules (ADR-040 epic DO5Q5E, task UI7QNH).
+# degenbot Grafana-managed alert rules (ADR-040).
 #
 # SUPERSEDES degenbot-alerts.yml (Prometheus-managed) AFTER the operator
 # mounts this file via Grafana file provisioning:

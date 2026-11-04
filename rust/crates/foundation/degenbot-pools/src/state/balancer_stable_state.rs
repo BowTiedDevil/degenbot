@@ -29,7 +29,7 @@
 //!   BPT-index.
 //! - An **amplification coefficient** `amp` — treated as **immutable after
 //!   construction** (the `external_update` carries no amp field;
-//!   A ramping is a future, non-epic concern; the builder resolves the
+//!   A ramping is a future concern; the builder resolves the
 //!   ramped-at-this-block value and forwards it here).
 //! - **Scaling factors** (`scaling_factors: Vec<U256>`, rate-multiplied)
 //!   — precomputed at registration from `base_scaling_factors * rate_at_registration
@@ -104,20 +104,19 @@ pub struct RegisterBalancerStablePoolParams {
     /// `bpt_idx`.
     pub tokens: Vec<Address>,
     /// Amplification coefficient `amp` at the registration block.
-    /// **Immutable after construction** in this plan — A ramping is a
-    /// future, non-epic concern; the builder resolves the ramped-at-block
-    /// value and forwards it here.
+    /// **Immutable after construction**: a ramping is a future concern; the
+    /// builder resolves the ramped-at-block value and forwards it here.
     pub amp: u128,
     /// Scaling factors (rate-multiplied: `base_sf * rate // ONE` per token)
     /// — precomputed by the builder at registration so Rust never touches
     /// ERC20 decimals or rate providers. The rate-cache-aware
-    /// `CacheAwareRateProvider` (per-block rate refresh) is 12d — for
-    /// 12c, this snapshot is what the Python companion + its
+    /// `CacheAwareRateProvider` (per-block rate refresh) is not built yet;
+    /// this snapshot is what the Python companion + its
     /// `to_hop_state` `swap_fn` consume.
     pub scaling_factors: Vec<U256>,
     /// Swap fee as a fraction of `FEE_DENOMINATOR = 1e18`
-    /// (`int(fee_fraction * 1e18)`). Applied by the (future, 12e) Rust
-    /// `StableMath` swap; opaque to this sub-slice.
+    /// (`int(fee_fraction * 1e18)`). Applied by the future Rust `StableMath`
+    /// swap; opaque to this sub-slice.
     pub swap_fee: u128,
     /// BPT token index for `ComposableStablePools` (`Some(i)` where `i <
     /// tokens.len()`); `None` for `MetaStablePools`. Carried so the

@@ -1,6 +1,6 @@
 """The Balancer V2 registry sweep: every registered pool builds or is refused typed.
 
-The epic's compliance statement for this family is "every registry/factory pool
+The family's compliance statement is "every registry/factory pool
 either builds or is refused as typed Spec with a named reason". Balancer V2 has
 no enumerable on-chain registry to sweep — `getPoolCount()`, `getPools()` and
 `getPoolAt()` revert on every factory revision, and only
@@ -190,7 +190,7 @@ def test_every_registered_pool_builds_or_is_refused_typed(
 ) -> None:
     """Build every pool the Vault registered before the pin.
 
-    The census is the epic's evidence line: n built (by family) / n refused (by
+    The census is the evidence line: n built (by family) / n refused (by
     named reason). Any non-`SpecViolationError` exception is collected and
     raised at the end, so one bad pool names itself without hiding the rest of
     the census.

@@ -47,7 +47,7 @@ use crate::dispatcher::BootError;
 /// boot log line names it; a tier edit bumps the version).
 pub const PLAN_ID: &str = "fleetplan/1";
 
-/// The minimum usable host (the epic's goal state): one core for I/O
+/// The minimum usable host: one core for I/O
 /// work, one core for solve work. Below this the plan refuses TYPED.
 /// Canonically owned by budget.rs — re-exported for the plan's
 /// tier gate.

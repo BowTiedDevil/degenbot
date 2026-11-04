@@ -2529,7 +2529,7 @@ fn collect_rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// ADR-084 W5 phase 0: the `degenbot-pools` root surface is pinned by
+/// ADR-084: the `degenbot-pools` root surface is pinned by
 /// `pools_root_surface_census.txt` (review-required diff). A module added,
 /// removed, or re-homed at the pools root must review the snapshot in the
 /// same change; the root `pub` name count is asserted so untracked surface

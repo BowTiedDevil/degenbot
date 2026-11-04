@@ -690,7 +690,7 @@ mod _ffi {
             py.get_type::<crate::rpc::errors::ChainMismatchError>(),
         )?;
 
-        // Typed verification exceptions (TODO-53b7453b): distinct `RuntimeError`
+        // Typed verification exceptions: distinct `RuntimeError`
         // subclasses so `build_paths` can classify verification failures by type
         // instead of fragile string matching. (feature = "bot")
         #[cfg(feature = "bot")]

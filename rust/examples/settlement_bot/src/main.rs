@@ -14,8 +14,8 @@
 //! Python driver (`examples/eth_settlement_arbitrage_v2_v3_v4_rust.py` +
 //! `src/degenbot/runner/*`).
 //!
-//! This binary is the end-to-end consumer-parity test of epic RGZG4S
-//! (`docs/architecture/rust-settlement-bot-parity.md`): it depends ONLY on
+//! This binary is the end-to-end consumer-parity test of
+//! `docs/architecture/rust-settlement-bot-parity.md`: it depends ONLY on
 //! the umbrella `degenbot` crate (the `cargo add degenbot` experience), so
 //! every surface the Python driver reaches but a Rust consumer cannot is a
 //! compile wall here — recorded as a numbered gap in the ledger.

@@ -10,7 +10,7 @@ which transitively pins them to canonical Solidity.
 (Executing the solidity harness directly from python was attempted: anvil
 1.7.1 raises EVM error StackOverflow on the committed solc-0.7 runtime
 bytecode even on legacy hardfork specs, while the in-process EVM the rust
-test drives runs it fine - see the epic task notes.)
+test drives runs it fine.)
 
 Acceptance gate for the thin-shell migration: every commit
 that touches the Balancer companions keeps this green.

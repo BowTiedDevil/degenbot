@@ -7,10 +7,10 @@
 //! discipline source: per-entry bytes are the currency; a single byte pinched
 //! per tick is fleet-wide.
 //!
-//! The pinned numbers record the BASELINE at the start of the epic (commit
-//! 9ec8d5398 landed the Box<[T]> conversions for state + identity config
-//! Vecs). When a task intentionally changes a size, update the assert AND cite
-//! the epic task in a comment beside the new number.
+//! The pinned numbers record the baseline commit 9ec8d5398 landed (the
+//! Box<[T]> conversions for state + identity config Vecs). A change that
+//! intentionally alters a size updates the assert and the comment beside the
+//! new number.
 
 use degenbot_pools::sim::registry::PoolEntry;
 use degenbot_pools::state::balancer_stable_state::{

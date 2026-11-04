@@ -192,13 +192,12 @@ fn v4_footnotes_reference_the_declaration() {
     // The hookless-only admission is a declared restriction, not a guess.
     const { assert!(V4_HOOKLESS_ONLY) };
 
-    // Both arms declare V4 fully wired post-epic (the capability the V4
-    // backrun epic bought).
+    // Both arms declare V4 fully wired (extract, admit, discover, compose).
     for arm in Arm::ALL {
         let caps = capabilities(arm, Family::V4).expect("table row");
         assert!(
             caps.extract && caps.admit && caps.discover && caps.compose,
-            "{} V4 must be all-true post-epic",
+            "{} V4 must be all-true",
             arm.label()
         );
     }

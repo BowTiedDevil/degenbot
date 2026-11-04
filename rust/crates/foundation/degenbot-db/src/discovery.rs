@@ -516,7 +516,7 @@ impl DegenbotDb {
     /// # No unique index → explicit SELECT-then-INSERT dedup
     ///
     /// `exchanges` has NO unique index on `(chain_id, name)` (see
-    /// [`crate::schema_head`]), and this epic MUST NOT add one (a new index
+    /// [`crate::schema_head`]), and none may be added (a new index
     /// would force a new Alembic migration = out of scope per ADR-010). So this
     /// uses the explicit `SELECT … WHERE chain_id, name` → `INSERT` dedup the
     /// Python code uses, NOT `INSERT … ON CONFLICT(chain_id, name)`. The

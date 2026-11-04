@@ -5,8 +5,8 @@
 //! database upgrades itself at open (ADR-052); `database heal` is the explicit
 //! repair.
 //!
-//! These arms never call heal on another command's behalf; the auto-heal epic
-//!  owns schema self-healing inside `ensure_schema`.
+//! These arms never call heal on another command's behalf; schema self-healing
+//! lives inside `ensure_schema`.
 
 use std::path::{Path, PathBuf};
 

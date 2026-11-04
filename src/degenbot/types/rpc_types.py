@@ -11,7 +11,7 @@ The ``web3.types`` imports (``BlockIdentifier``, ``BlockData``, ``FilterParams``
 ``LogReceipt``, ``RPCEndpoint``, ``RPCResponse``, ``TxParams``) are reproduced here natively
 so the codebase carries zero web3 type imports (no ``web3.types.*`` anywhere). The shapes are
 deliberately loose (``total=False`` TypedDicts with the fields actually
-produced/consumed) so they survive the full web3py retirement epic (Pass C) without
+produced/consumed) so they survive the rest of the web3py retirement without
 type-check churn.
 """
 

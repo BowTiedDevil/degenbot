@@ -453,7 +453,7 @@ pub(crate) fn merge_sidecar_census_entry() -> degenbot_core::worker_census::Work
 // in-cycle arm so this is now the unconditional shape): the whole solve
 // cycle RETURNS at ENQUEUE end — every result then flows through an
 // UNBOUNDED mpsc to the merge sidecar, a plain `std::thread` (see the
-// epic DEADLOCK note: a JOINING scope (a scoped rayon install of old, or
+// DEADLOCK note: a JOINING scope (a scoped rayon install of old, or
 // against a held `parking_lot` guard; `std::thread` cannot deadlock with
 // impatient pool) would starve against the Mutex; the sidecar cannot. The Q1a stale policy
 // (apply-if-unchanged / drop-on-touched) makes the enqueue-time per-hop

@@ -7,8 +7,8 @@
 //!
 //! This is a sibling decode concern to the event-log decoders
 //! (`v2_sync_decoder`, …): both hand-slice EVM bytes into a structured
-//! result. The taxonomy lives here (not under the executor or Simulation
-//! epics) so *both* paths consume it without a cross-epic dependency.
+//! result. The taxonomy lives here (not under the executor or Simulation)
+//! so *both* paths consume it without either depending on the other.
 //!
 //! # Parity gate (`docs/architecture/parity-gate.md`)
 //!

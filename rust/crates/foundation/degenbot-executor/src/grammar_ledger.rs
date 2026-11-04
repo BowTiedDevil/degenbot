@@ -2090,7 +2090,7 @@ mod tests {
         let old_adapters = positions * neighbors * funding_sources * capture_modes;
         // The additive model: one `BalanceLedger` impl (ExternalLedger) + the
         // `ExternalFlash`/`ExternalRepay` LedgerOp variants. Count the concrete
-        // additions this epic made for the external-ledger axis value:
+        // additions the external-ledger axis value carries:
         let additive_additions = 1; // one BalanceLedger impl (ExternalLedger)
                                     // + 2 LedgerOp variants, counted as one axis-value bundle
         assert_eq!(

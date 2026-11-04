@@ -397,7 +397,7 @@ async fn t06_malformed_notification_is_counted_not_fatal() {
 
 #[tokio::test]
 async fn t07_drain_returns_unbatched_frames_oldest_first() {
-    // Characterization (Phase B1): with the ring under capacity, `drain()`
+    // Characterization: with the ring under capacity, `drain()`
     // returns every frame in arrival order, oldest first, as one atomic take.
     let mut steps = vec![Step::ExpectSubscribe, Step::Ack];
     let mut hashes = Vec::new();

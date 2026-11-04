@@ -41,10 +41,10 @@ fn resolved_solidly_hop_round_trips_via_as_solidly_state() {
     assert!(hop.as_int_sequence().is_none());
 }
 // The per-family Solidly projection tests live in
-// `degenbot_substrate::resolve::solidly::tests` (moved in T3 of epic
-// MKRKNB; they assert the `MissingHopReason` variants directly
-// against `project_solidly`). This module keeps only the
-// engine-level classifier test (`solidly_hop_variant_is_not_v2_and_not_concentrated_liquidity`).
+// `degenbot_substrate::resolve::solidly::tests` (they assert the
+// `MissingHopReason` variants directly against `project_solidly`). This module
+// keeps only the engine-level classifier test
+// (`solidly_hop_variant_is_not_v2_and_not_concentrated_liquidity`).
 // -----------------------------------------------------------------
 // solve_solidly_path_int — the two-stage Möbius precheck +
 // golden-section search. Tests cover all four AC cases: (1) all-Solidly

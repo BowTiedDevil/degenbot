@@ -1,7 +1,5 @@
-//! The per-bin lane walk (from the retired grab-file dissolution, ergo epic
-//! T3 created the module for `solve_one_path`; T4 moved the walk
-//! driver in): home of `solve_one_path` — the per-path solve + diagnostics
-//! body every Solver seat's bin executes — and of THE ONE
+//! The per-bin lane walk: home of `solve_one_path` — the per-path solve +
+//! diagnostics body every Solver seat's bin executes — and of THE ONE
 //! LANE WALK (`drive_lane_walk` plus its policy/context/result
 //! types (`LaneArmPolicy`, `LaneWalkBinPlan`, `WalkSubmitCtx`,
 //! `LaneWalkReads`).

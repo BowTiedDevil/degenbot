@@ -1,6 +1,6 @@
 [package]
 name = "degenbot-settlement-bot-example"
-description = "Rust-owned settlement-arbitrage bot — the external consumer's parity twin of examples/eth_settlement_arbitrage_v2_v3_v4_rust.py + src/degenbot/runner (epic RGZG4S; docs/architecture/rust-settlement-bot-parity.md). Depends ONLY on the umbrella `degenbot` crate, exercising exactly what `cargo add degenbot` gives a pure-Rust bot builder — including its gaps."
+description = "Rust-owned settlement-arbitrage bot — the external consumer's parity twin of examples/eth_settlement_arbitrage_v2_v3_v4_rust.py + src/degenbot/runner (docs/architecture/rust-settlement-bot-parity.md). Depends ONLY on the umbrella `degenbot` crate, exercising exactly what `cargo add degenbot` gives a pure-Rust bot builder — including its gaps."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -97,7 +97,7 @@ where
     /// Drain and return the pump events for `key` whose `block_number` is at
     /// or below `cutoff` — the highest block the pump has tombstoned (the
     /// stage machine's tombstone completeness cutoff — the delivery cutoff,
-    /// named `BlockClock` in the pre-epic code, since retired).
+    /// named `BlockClock` in the retired Python code).
     /// Events for a block
     /// the pump has NOT finished processing stay buffered, so a drain+pin at
     /// the registration seam cannot capture a half-delivered block.

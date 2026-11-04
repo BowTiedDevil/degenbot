@@ -2466,8 +2466,8 @@ impl AlloyProvider {
     /// `StateOverride` / `AccountOverride`).
     ///
     /// This is the transport primitive; the simulate orchestration (7-call
-    /// profit pattern, state override construction, revert decoding) is the
-    /// Simulation epic — this fn only performs the typed RPC round-trip.
+    /// profit pattern, state override construction, revert decoding) belongs
+    /// to the Simulation leaf — this fn only performs the typed RPC round-trip.
     ///
     /// `block_id` selects the base state (`BlockId::Number(Tag::Pending)` for
     /// the simulate-v1 `block_identifier="pending"` parity, `BlockId::Number(Tag::Latest)`

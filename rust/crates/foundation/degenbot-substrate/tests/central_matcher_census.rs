@@ -69,7 +69,7 @@ const BANNED_DESIGN_MATH: &[&str] = &[
     "pow_up",
     "pow_down",
     "skip_bpt",
-    // The recorded TODO(extract-per-family-arms) shape.
+    // The per-family compute arm shape.
     "calc_out_given_in",
     // Per-family compute arms (the Solidly read door's design leaves and the
     // reserve-pair closed forms) — one token covers the `calc_exact_*` family.

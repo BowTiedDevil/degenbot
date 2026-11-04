@@ -1,6 +1,6 @@
 """Cross-surface config acceptance ledger.
 
-The epic's claim is that a Rust console, a pure-Rust consumer, and a
+The ledger's claim is that a Rust console, a pure-Rust consumer, and a
 Python-launched bot resolve the operator file IDENTICALLY. This is the closing
 gate: it cross-checks the Python FFI verdict against an oracle produced by
 `degenbot-config` in Rust.
@@ -26,8 +26,9 @@ Why this can fail:
 * The Rust half asserts the operator's intended value AND layer for a sample of
   keys, so a Rust regression fails there rather than silently agreeing with
   itself.
-* The whole projection is compared, not one key: the pre-epic divergence was a
-  Python default that disagreed with the schema's — a key nobody enumerated.
+* The whole projection is compared, not one key: the divergence it exists to
+  catch was a Python default that disagreed with the schema's — a key nobody
+  enumerated.
 
 `test_seeded_*` and `test_an_empty_provenance_map_fails_the_comparator` prove
 the comparator has teeth: a mutated value, layer, entry layer, or an emptied

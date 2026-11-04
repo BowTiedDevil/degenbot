@@ -203,7 +203,7 @@ impl BlockPump {
         // race past the backfill window.
         self.control.set_solve_anchor(Epoch::at(current_block));
         // Whether we're past the first header after resume. The first
-        // Epic A1: the pump's decision state now lives in the StageMachine; the
+        // The pump's decision state lives in the StageMachine; the
         // driver routes the decision arms through it. `current_block` seeds the FSM.
         let mut fsm = StageMachine::new(current_block, 0);
         // the FSM owns the adaptive quiesce estimator (pure) — the

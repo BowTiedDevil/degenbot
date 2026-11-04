@@ -6,12 +6,8 @@
 # token: a lower-case hex tracker ID, a parenthesised work-item label, an
 # epic/slice/phase label, pre-/post-epic narration. Detector 3 closes that gap
 # the same ratchet way: every matched band must be accounted for here, so a NEW
-# citation cannot land, and each sweep deletes the row it retired.
-#
-# The rows below are grandfathered residue AT THIS COMMIT. The sweep that
-# strips them shrinks this file in the same change that removes each citation;
-# a row may outlive the sweep only when the match is NOT a work item, with the
-# reason written above it.
+# citation cannot land, and each sweep deletes the row it retired. The tree is
+# swept: the only row left is a reviewed non-citation (below).
 #
 # Row format: "<repo-relative-path>:<matched band>", the band exactly as rg -o
 # prints it with whitespace runs collapsed to one space (so the row survives a
@@ -27,7 +23,8 @@
 #     sed -n 's/.* -> census row: //p' | sort -u
 #
 # Never list a tracker citation to silence it: restate the rule it introduced
-# in prose (docs/comments.md) or delete the sentence.
+# in prose (docs/comments.md) or delete the sentence. A row stays only when the
+# match is NOT a work item, with the reason written above it.
 #
 # Known blind spots, by design:
 #   - bare "phase <N>" is out of scope (algorithm phases, not plan phases): the
@@ -36,33 +33,8 @@
 #     phases in result_channel.rs are untouched.
 #   - markdown is out of scope; docs are where tracker discussion lives.
 #   - this hook and its two censuses are out of scope (they spell the shapes).
-#
-docs/grafana/provisioning/alerting/degenbot-grafana-rules.yml:epic DO5Q5E
-rust/crates/engine/degenbot-bot/src/arb_engine/detached_cycle.rs:epic DEADLOCK
-rust/crates/engine/degenbot-bot/src/bot_core/block_pump/mod.rs:Pre-epic
-rust/crates/engine/degenbot-bot/src/bot_core/block_pump/mod.rs:epic relocates
-rust/crates/engine/degenbot-bot/src/bot_core/block_pump/run_loop.rs:Epic A1
-rust/crates/engine/degenbot-strategy/tests/family_capabilities.rs:epic bought
-rust/crates/engine/degenbot-strategy/tests/family_capabilities.rs:post-epic
-rust/crates/foundation/degenbot-config/tests/config_parity_oracle.rs:pre-epic
-rust/crates/foundation/degenbot-db/src/discovery.rs:epic MUST
-rust/crates/foundation/degenbot-decoders/src/revert.rs:epic dependency
+
+# --- reviewed non-citations (each row still matches; none is a work item) ---
+# "slice V3/V4 event logs" is the algorithm's verb over a protocol-version
+# pair, not a work-item label; the decoders slice event-log topics.
 rust/crates/foundation/degenbot-decoders/src/uniswap_tick_range.rs:slice V3
-rust/crates/foundation/degenbot-executor/src/grammar_ledger.rs:epic made
-rust/crates/foundation/degenbot-pools/src/families/liquidity_event_buffer.rs:pre-epic
-rust/crates/foundation/degenbot-pools/src/state/balancer_stable_state.rs:epic concern
-rust/crates/foundation/degenbot-pools/tests/size_fidelity.rs:epic task
-rust/crates/foundation/degenbot-rpc/tests/backrun_feed.rs:Phase B1
-rust/crates/foundation/degenbot-substrate/tests/central_matcher_census.rs:TODO(extract-per-family-arms)
-rust/crates/shells/degenbot-python/src/bot/engine/errors.rs:TODO-53b7453b
-rust/crates/shells/degenbot-python/src/lib.rs:TODO-53b7453b
-rust/examples/settlement_bot/Cargo.toml:epic RGZG4S
-rust/examples/settlement_bot/src/main.rs:epic RGZG4S
-src/degenbot/registry/pool_type.py:TODO-e30504ed
-tests/arbitrage/test_strategy_host_verbs.py:slice C4
-tests/balancer/test_tier3_balancer_companion.py:epic task
-tests/exceptions/test_pybot_admission_exceptions.py:epic made
-tests/exceptions/test_v4_admission_exceptions.py:TODO-53b7453b
-tests/exceptions/test_verification_exceptions.py:TODO-53b7453b
-tests/registry/test_dex_identity_plumbing.py:TODO-e30504ed
-tests/test_config_parity.py:pre-epic

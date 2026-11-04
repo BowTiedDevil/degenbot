@@ -1,4 +1,4 @@
-"""Strategy-host operator verbs (Phase C slice C4).
+"""Strategy-host operator verbs.
 
 The engine attaches to a host-minted hub; these tests drive the host's driver
 FSM through the Python verbs. No network: `Bot` + `ArbitrageEngine` are built
