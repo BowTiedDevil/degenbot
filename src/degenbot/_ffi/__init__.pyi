@@ -3575,8 +3575,9 @@ class Pool:
     @property
     def lp_fee(self, /) -> int:
         """
-        The static pool-key fee (the LP fee — dynamic-fee pools are
-        admission-rejected and never registered). `0` if not a V4 pool.
+        The pool key's `fee` pips — the LP fee on a static pool, and the
+        `0x800000` dynamic-fee sentinel (NOT a price) on a dynamic-fee pool,
+        which registers like any other since F1. `0` if not a V4 pool.
         """
     @property
     def pool_family(self, /) -> str:

@@ -55,14 +55,29 @@ under 1% of the fee itself.
 
 Two calibration findings fell out of the controls:
 
-- A static pool's charge is its **key's** `fee` composed with the direction's
-  **protocol** fee — the closed form identifies 3,499 pips for a 3,000-pip key
-  and 10,990 pips for a 10,000-pip key. Overriding `slot0.lpFee` (a reth
-  `stateDiff` `eth_call` and the evm2 twin agree the override lands) leaves the
-  quote byte-identical, so this deployment does not take a static pool's LP fee
-  from the `slot0` word that `degenbot-pools`' V4 slot doc says the swap reads —
-  worth a re-check on the engine side, though it does not move our population
-  (whose key fee is zero).
+- A static pool's charge is `calculateSwapFee(protocol_fee_dir, lpFee)` — the
+  closed form identifies 3,499 pips for a 3,000-pip pool (protocol fee 500) and
+  10,990 pips for a 10,000-pip pool (protocol fee 1,000). **`lpFee` is the pool's
+  `slot0.lpFee` word, and on a static pool that word IS the key's `fee`**: the
+  deployed manager writes it at `initialize` from `key.fee`, and only a
+  dynamic-fee pool's hook can move it (`updateDynamicLPFee` is hook-only and
+  reverts unless `key.fee.isDynamicFee()`). The engine's key-fee composition is
+  therefore exact on a static pool, and a dynamic-fee pool's charge is its
+  recorded black-box measurement.
+
+  *Correction — an earlier revision of this note read the override experiment as
+  "`slot0.lpFee` is inert". It is not; that reading was a dust artifact.*
+  `slot0_lp_fee_word_is_the_static_pool_swap_fee` in the rig rewrites the word
+  through a reth `stateDiff` `eth_call` **and** the evm2 twin, reads it back
+  through the manager's own `extsload`, and gets the quote the composed fee over
+  the overridden word predicts, to the wei, on every priced leg and both arms —
+  the 3,000-pip control's zero-for-one leg at 3,499 pips quotes 22,572,904,399;
+  at `lpFee` 0 (500 pips) 22,640,802,522; at `lpFee` 30,000 (30,485 pips)
+  21,961,924,858. The earlier reading came from a dust walk: a step charges
+  `ceil(amount·fee/1e6)`, so at ~1e6 wei of input every fee in `(0, 1e6]` charges
+  the same single unit and the quote is byte-identical for a reason that has
+  nothing to do with the word. Override probes must price at a depth the step
+  prices.
 - The deployed manager validates hook responses by length AND selector: a
   `beforeSwap` must answer exactly 96 bytes (`selector || delta || lpFee`) and a
   delta-returning `afterSwap` exactly 64 bytes (`selector || delta`), else

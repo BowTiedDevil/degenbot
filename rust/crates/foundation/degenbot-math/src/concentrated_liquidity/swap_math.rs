@@ -361,8 +361,10 @@ pub fn protocol_fee_one_for_zero(protocol_fee_packed: u32) -> u32 {
 /// - `direction_protocol_fee` — the per-direction 12-bit protocol fee pips
 ///   (`protocol_fee_zero_for_one` or `protocol_fee_one_for_zero` of the
 ///   pool's packed `slot0.protocolFee`).
-/// - `lp_fee` — the pool's static `PoolKey.fee` (the LP fee pips, e.g. 3000
-///   for 0.3%).
+/// - `lp_fee` — the pool's LP-fee pips (e.g. 3000 for 0.3%) — the chain's
+///   `slot0.lpFee` (the `beforeSwap` hook's override when it returned one),
+///   seeded at `initialize` from `PoolKey.fee` and movable only by a
+///   dynamic-fee pool's hook, so a static pool's key fee is this figure.
 ///
 /// # Errors
 /// Returns [`ConcentratedLiquidityMathError::Uint256Overflow`] if `direction_protocol_fee + lp_fee`

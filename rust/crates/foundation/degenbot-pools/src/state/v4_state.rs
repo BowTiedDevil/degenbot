@@ -848,7 +848,11 @@ pub fn v4_simulate_swap(
     // (the V4-only divergence pinned in the sim_v4_swap_step_rounding
     // diagnosis, removed in the stale-docs cleanup `71ec78b2`). `fee` here is the
     // pool's static LP fee (`PoolKey.fee`); the protocol fee is read from
-    // `state.protocol_fee`.
+    // `state.protocol_fee`. `Pool.swap` sources that `lpFee` from `slot0.lpFee`
+    // (the hook's `beforeSwap` override when it returned one), a word
+    // `initialize` seeds from `key.fee` and only a dynamic-fee pool's hook may
+    // move — so on a STATIC pool the key fee threaded here IS the chain's figure
+    // (a dynamic-fee pool's charge is its recorded black-box measurement instead).
     let direction_protocol_fee = if zero_for_one {
         degenbot_math::concentrated_liquidity::swap_math::protocol_fee_zero_for_one(
             state.protocol_fee,

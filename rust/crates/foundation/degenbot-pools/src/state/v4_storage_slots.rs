@@ -31,7 +31,12 @@
 //! `Slot0` bit layout (v4-core `types/Slot0.sol`, LSB-first):
 //! `[0..160)` `uint160 sqrtPriceX96` · `[160..184)` `int24 tick` ·
 //! `[184..208)` `uint24 protocolFee` (low 12 bits = 0→1 fee, high 12 = 1→0 fee — matches the engine's `protocol_fee: u32` packing) ·
-//! `[208..232)` `uint24 lpFee` (the pool's static fee; the swap reads this to charge the LP portion) ·
+//! `[208..232)` `uint24 lpFee` — the swap's LP-fee source: `Pool.swap` charges
+//! `calculateSwapFee(protocolFee_dir, lpFee)` where `lpFee` is the `beforeSwap`
+//! hook's override when it returned one, else THIS word. `initialize` seeds it
+//! from `key.fee`, and only a dynamic-fee pool's hook may move it
+//! (`updateDynamicLPFee` is hook-only and reverts unless `key.fee.isDynamicFee()`)
+//! — so a static pool's word IS its key fee ·
 //! `[232..256)` unused (24 bits).
 //!
 //! NOTE: V4 has no `unlocked` flag in `Slot0` — the PoolManager's `locked`
@@ -72,8 +77,10 @@ pub struct V4Slot0Parts {
     pub tick: i32,
     /// `uint24 protocolFee` at bits `[184..208)` (low 12 = 0→1, high 12 = 1→0).
     pub protocol_fee: u32,
-    /// `uint24 lpFee` at bits `[208..232)` (the pool's static fee; V4 `swap()`
-    /// reads this to charge the LP portion of the swap fee).
+    /// `uint24 lpFee` at bits `[208..232)` — the LP fee V4 `swap()` charges
+    /// (`calculateSwapFee(protocolFee_dir, lpFee)`), seeded from `key.fee` at
+    /// `initialize` and movable only by a dynamic-fee pool's hook, so a static
+    /// pool's word equals its key fee.
     pub lp_fee: u32,
 }
 

@@ -26,6 +26,14 @@
 //!    scales at one anchor.
 //! 5. **Time dependence** ([`implied_fee_time_dependence`]): five anchors over
 //!    ~one hour of blocks.
+//! 6. **Where a static pool's LP fee comes from**
+//!    ([`slot0_lp_fee_word_is_the_static_pool_swap_fee`]): the deployed manager
+//!    charges `calculateSwapFee(protocol_fee_dir, slot0.lpFee)`, so rewriting
+//!    that word alone — a reth `stateDiff` `eth_call` and the evm2 twin, the
+//!    override read back through the manager's own `extsload` — moves the quote
+//!    to the wei on both arms. A key-fee white-box is exact on a static pool
+//!    because `initialize` seeds the word from `key.fee` and only a dynamic-fee
+//!    pool's hook may move it.
 //!
 //! # The implied-fee derivation
 //!
@@ -48,12 +56,12 @@
 //!
 //! - the static-fee controls (3) reproduce a fee read off the pool key itself.
 //!   Their fee-free reference is the engine's own chain-verified swap math over
-//!   the pool's state — NOT a lifted `slot0.lpFee` word: at this anchor a
-//!   `slot0` state override of a static pool's `lpFee` (a `stateDiff` `eth_call`
-//!   and the evm2 twin agree) leaves the quote unchanged, so a static pool's
-//!   charge comes from the key's `fee` field. The control's closed form is
-//!   counted only where it reproduces the chain's answer TO THE WEI at the same
-//!   fee, so the reference is the chain's own walk, not an assumption about it;
+//!   the pool's state at fee 0. The control's closed form is counted only where
+//!   it reproduces the chain's answer TO THE WEI at the same fee, so the
+//!   reference is the chain's own walk, not an assumption about it. On a static
+//!   pool the key's `fee` and the `slot0.lpFee` word are the same figure, and the
+//!   word is the one the manager reads — (6) proves it by moving the quote
+//!   through an override;
 //! - the frame's settled `slot0.lpFee` word is reported beside every reading: a
 //!   hook that charges through the pool's LP-fee field lands there, one that
 //!   charges through a swap delta leaves it zero — the mechanism is read out of
@@ -95,7 +103,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
 
-use alloy::primitives::{address, b256, Address, Bytes, B256, I256, U256};
+use alloy::eips::BlockId;
+use alloy::primitives::{address, b256, keccak256, Address, Bytes, B256, I256, U256};
+use alloy::rpc::types::state::AccountOverride;
+use alloy::rpc::types::TransactionRequest;
 
 use ::evm2::bytecode::Bytecode;
 use ::evm2::evm::{AccountInfo, CacheDB, Database, Db};
@@ -454,6 +465,45 @@ impl<'p> Anchor<'p> {
         }
     }
 
+    /// Rewrite one `PoolManager` storage word in the anchor's scratch — the evm2
+    /// twin of a `stateDiff` override: the cache IS the state every frame reads,
+    /// so the next quote sees the rewritten word and nothing else changed.
+    fn put_storage(&mut self, slot: U256, word: U256) {
+        self.scratch
+            .ext_mut()
+            .insert_account_storage(&V4_POOL_MANAGER, &slot, &word);
+    }
+
+    /// The node's answer for `data` at the anchor, with `slot` in the
+    /// `PoolManager`'s state re-pointed to `word` (a reth `stateDiff` override).
+    async fn node_call_state_diff(
+        &self,
+        to: &Address,
+        data: Bytes,
+        slot: U256,
+        word: U256,
+    ) -> Result<Bytes, String> {
+        let diff = [(
+            B256::from(slot.to_be_bytes::<32>()),
+            B256::from(word.to_be_bytes::<32>()),
+        )]
+        .into_iter()
+        .collect();
+        self.provider
+            .provider_arc()
+            .call(TransactionRequest::default().to(*to).input(data.into()))
+            .block(BlockId::number(self.number))
+            .account_override(
+                V4_POOL_MANAGER,
+                AccountOverride {
+                    state_diff: Some(diff),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|error| format!("stateDiff eth_call: {error}"))
+    }
+
     /// What the hook charges for one leg at `amount_in`: the real frame against
     /// the no-op-hook twin on the same walk.
     fn measure(
@@ -596,6 +646,26 @@ fn slot0_view(word: U256) -> Slot0View {
         protocol_fee: field(184),
         lp_fee: field(208),
     }
+}
+
+/// `word` with its `lpFee` field replaced — every other packed field untouched.
+fn with_lp_fee(word: U256, lp_fee: u32) -> U256 {
+    (word & !LP_FEE_MASK) | ((U256::from(lp_fee) & U256::from(0xFF_FFFFu32)) << 208usize)
+}
+
+/// The `lpFee` field of a `slot0` word.
+fn lp_fee_of(word: U256) -> u32 {
+    ((word & LP_FEE_MASK) >> 208usize).saturating_to::<u32>()
+}
+
+/// `PoolManager.extsload(bytes32)` calldata for `slot` — the read-back a
+/// `stateDiff` override lands in (the selector is derived, not pasted, so a
+/// signature typo cannot masquerade as a landed override).
+fn extsload_calldata(slot: U256) -> Bytes {
+    let mut out = Vec::with_capacity(4 + 32);
+    out.extend_from_slice(&keccak256(b"extsload(bytes32)")[..4]);
+    out.extend_from_slice(&slot.to_be_bytes::<32>());
+    Bytes::from(out)
 }
 
 /// One exact-input step of the pool's OWN curve at `fee_pips`: the engine's
@@ -1445,4 +1515,220 @@ async fn implied_fee_time_dependence() {
         grid.values().flatten().flatten().count() >= 4,
         "the time sample must price real walks"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 6. Is the `slot0.lpFee` word the swap's LP fee?
+// ──────────────────────────────────────────────────────────────────────────
+
+/// A static pool's LP fee: the `slot0.lpFee` WORD, not a white-box assumption.
+///
+/// The deployed `PoolManager` charges `calculateSwapFee(protocol_fee_dir, lpFee)`
+/// where `lpFee` is the `beforeSwap` hook's override when it returned one, else
+/// `slot0.lpFee` — a word `initialize` writes from `key.fee` and that only a
+/// DYNAMIC-fee pool's hook can move (`updateDynamicLPFee` is hook-only and
+/// reverts unless `key.fee.isDynamicFee()`). So a static pool's word IS its key
+/// fee, and a key-fee white-box is exact on one.
+///
+/// This test settles which word the chain actually reads, by rewriting that word
+/// alone and asking both arms — a reth `stateDiff` `eth_call` and the evm2 twin:
+///
+/// - the override LANDS: the node's own `extsload` at that slot answers it
+///   inside the overridden state;
+/// - the quote MOVES, on BOTH arms, to the wei the composed fee over the
+///   OVERRIDDEN word predicts;
+/// - at the pool's own word the same closed form reproduces the chain's quote.
+///
+/// The amount is the shallowest census rung whose closed form reproduces the
+/// chain to the wei — never dust. A swap step charges `ceil(amount·fee/1e6)`, so
+/// on a 1-wei walk every fee in `(0, 1e6]` charges the same single unit and an
+/// override probe reports a false "inert".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "live-RPC fee census over archive mainnet state; run with --ignored"]
+async fn slot0_lp_fee_word_is_the_static_pool_swap_fee() {
+    let provider = Arc::new(AlloyProvider::new(&rpc_url(), 3).await.unwrap());
+    let mut anchor = Anchor::open(&provider, PIN).await;
+    let mut quoter = V4BlackBoxQuoter::new(V4QuoterConfig::default());
+
+    println!("=== a static pool's LP fee: the slot0.lpFee WORD, not the key fee by fiat ===");
+    println!(
+        "anchor: {PIN}; the manager charges calculateSwapFee(protocol_fee_dir, lpFee), lpFee = hook override else slot0.lpFee"
+    );
+    println!(
+        "{:<20} {:>4} {:>22} {:>7} {:>8} {:>24}",
+        "control pool", "zfo", "amount", "lpFee", "swapFee", "chain quote"
+    );
+
+    let mut priced = 0usize;
+    let mut applied = 0usize;
+    let mut moved = 0usize;
+
+    for (currency0, currency1, fee, tick_spacing, pool_id) in STATIC_FEE_CONTROLS {
+        let key = V4PoolKey {
+            currency0,
+            currency1,
+            fee,
+            tick_spacing,
+            hooks: Address::ZERO,
+        };
+        assert_eq!(
+            v4_pool_id(&key),
+            pool_id,
+            "a static control's key does not hash to its pool id (fee {fee})"
+        );
+        let label = format!("fee {fee} (ts {tick_spacing})");
+        let liquidity = anchor.liquidity(&key);
+        if liquidity.is_zero() {
+            println!("{label:<20}  no in-range liquidity at the anchor — thin");
+            continue;
+        }
+        let word = anchor.slot0(&key);
+        let view = slot0_view(word);
+        // The invariant a key-fee white-box rests on: `initialize` seeds this word
+        // with `key.fee`, and only a dynamic-fee pool's hook may move it.
+        assert_eq!(
+            view.lp_fee, fee,
+            "a static pool's slot0.lpFee is its key fee ({label})"
+        );
+        let slot0_slot = leg_state_slots(&key)[0];
+        for zero_for_one in [true, false] {
+            let leg = V4Leg::canonical(key.clone(), zero_for_one);
+            let direction_protocol_fee = if zero_for_one {
+                protocol_fee_zero_for_one(view.protocol_fee)
+            } else {
+                protocol_fee_one_for_zero(view.protocol_fee)
+            };
+            let own_swap_fee =
+                calculate_swap_fee(direction_protocol_fee, view.lp_fee).unwrap_or(view.lp_fee);
+
+            let mut rung = None;
+            for amount_in in fee_scales(&view, liquidity, zero_for_one) {
+                let Ok(chain) = anchor.quote(&mut quoter, &leg, amount_in) else {
+                    continue;
+                };
+                if curve_step_out(
+                    &view,
+                    liquidity,
+                    tick_spacing,
+                    zero_for_one,
+                    amount_in,
+                    own_swap_fee,
+                ) == Some(chain.amount_out)
+                {
+                    rung = Some((amount_in, chain.amount_out));
+                    break;
+                }
+            }
+            let Some((amount_in, baseline)) = rung else {
+                println!(
+                    "{label:<20} {:>4}  the walk leaves the current tick range at every rung",
+                    u8::from(zero_for_one)
+                );
+                continue;
+            };
+            priced += 1;
+            println!(
+                "{label:<20} {:>4} {amount_in:>22} {:>7} {own_swap_fee:>8} {baseline:>24}",
+                u8::from(zero_for_one),
+                view.lp_fee
+            );
+
+            for override_lp_fee in [0u32, 30_000] {
+                if override_lp_fee == view.lp_fee {
+                    continue;
+                }
+                let overridden = with_lp_fee(word, override_lp_fee);
+                let override_swap_fee = calculate_swap_fee(direction_protocol_fee, override_lp_fee)
+                    .unwrap_or(override_lp_fee);
+                let Some(expected) = curve_step_out(
+                    &slot0_view(overridden),
+                    liquidity,
+                    tick_spacing,
+                    zero_for_one,
+                    amount_in,
+                    override_swap_fee,
+                ) else {
+                    println!(
+                        "{label:<20} {:>4}  the overridden walk leaves the current tick range",
+                        u8::from(zero_for_one)
+                    );
+                    continue;
+                };
+
+                // (1) the override lands: the node's own `extsload` at the slot
+                // answers it inside the overridden state.
+                let landed = anchor
+                    .node_call_state_diff(
+                        &V4_POOL_MANAGER,
+                        extsload_calldata(slot0_slot),
+                        slot0_slot,
+                        overridden,
+                    )
+                    .await
+                    .expect("the node answers an extsload under a stateDiff override");
+                assert_eq!(
+                    lp_fee_of(U256::from_be_slice(&landed)),
+                    override_lp_fee,
+                    "the stateDiff lpFee override must land in the PoolManager's slot0 ({label})"
+                );
+
+                // (2) the node's quote under the same override.
+                let node_output = anchor
+                    .node_call_state_diff(
+                        &V4_QUOTER,
+                        quote_calldata(&leg, amount_in),
+                        slot0_slot,
+                        overridden,
+                    )
+                    .await
+                    .expect("the node quotes a static pool under an lpFee override");
+                let node_out = decode_quote_return(&node_output)
+                    .expect("(amountOut, gasEstimate)")
+                    .0;
+
+                // (3) the evm2 twin: rewrite the word in the scratch, re-quote,
+                // put it back (the scratch outlives one pool's readings).
+                anchor.put_storage(slot0_slot, overridden);
+                let evm2_out = anchor
+                    .quote(&mut quoter, &leg, amount_in)
+                    .map(|quote| quote.amount_out);
+                anchor.put_storage(slot0_slot, word);
+                let evm2_out =
+                    evm2_out.expect("the evm2 twin quotes a static pool under an lpFee override");
+
+                applied += 1;
+                let leg_moved = evm2_out != baseline;
+                if leg_moved {
+                    moved += 1;
+                }
+                println!(
+                    "{label:<20} {:>4} lpFee {override_lp_fee:>7} swapFee {override_swap_fee:>7}: evm2 {evm2_out:>24} node {node_out:>24} curve {expected:>24} lands=true moved={leg_moved}",
+                    u8::from(zero_for_one)
+                );
+                assert_eq!(
+                    evm2_out, expected,
+                    "the evm2 quote must follow the overridden lpFee word ({label})"
+                );
+                assert_eq!(
+                    node_out, expected,
+                    "the node's quote must follow the overridden lpFee word ({label})"
+                );
+                assert_ne!(
+                    evm2_out, baseline,
+                    "rewriting slot0.lpFee alone must move the quote — the word is the swap's LP fee ({label})"
+                );
+            }
+        }
+    }
+
+    println!();
+    println!(
+        "{priced} legs priced to the wei at their own slot0.lpFee word, {applied} lpFee overrides applied, {moved} moved the quote"
+    );
+    assert!(priced >= 2, "the controls must price real walks ({priced})");
+    assert!(
+        applied >= 4,
+        "the override must run on real walks ({applied})"
+    );
+    assert_eq!(moved, applied, "every lpFee override must move the quote");
 }
