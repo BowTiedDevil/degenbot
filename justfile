@@ -138,7 +138,7 @@ test-standalone:
 # ratchet is a ~1s source scan (ADR-087 D4), so it rides here as well as at
 # pre-push: a tripwire introduced while iterating fails at `just test`, not only
 # at the push that follows.
-test: lint-rust-check lint-tripwire-ratchet test-rust-nextest test-rust-nextest-release test-python check-consumer-probes
+test: lint-rust-check lint-tripwire-ratchet test-rust-nextest test-rust-release test-python check-consumer-probes
 
 # Run the pre-push gates before `git push`. prek.toml's
 # `stages = ["pre-push"]` entries are the single owner of the gate list (the
@@ -187,7 +187,7 @@ test-rust: check-toolchain test-standalone
     # job and the push hook's `rust-test` entry call `test-rust`, not `test`, so
     # the release leg rides here as well: wiring only the aggregator would leave
     # the shipped-profile check out of every CI run and every push.
-    just test-rust-nextest-release
+    just test-rust-release
 
 # Reproduce CI's test-binary build exactly (ci.yml sets these two globally):
 # a crate-private fn's LAYOUT can depend on profile flags -- the ADR-071 D3
@@ -326,12 +326,17 @@ test-rust-nextest *args: check-toolchain
 # opt-level 3). The gated feature list narrows to what the selected packages own
 # — `test-rust-nextest`'s rule: a feature naming an unselected package is a
 # cargo error, and dropping `degenbot-simulation/test-harness` would leave the
-# harness modules behind required-features. The `release-ci` nextest profile
-# keeps this run's JUnit report under `<target>/nextest/release-ci/`, so
-# `just test-timing` still ranks the whole-workspace dev run.
+# harness modules behind required-features.
+#
+# Plain `cargo test`, not nextest: this leg rides `test-rust`, the CI rust job's
+# entrypoint, and that job is a cargo lane — it provisions neither nextest nor
+# `uv`. A nextest-shaped body here leaves the shipped-profile check unrunnable
+# in the one environment it exists to guard. Nothing downstream consumes a
+# JUnit report from this leg; `just test-timing` reads the whole-workspace `ci`
+# profile.
 #
 # Release profile, state layer only — a release-only regression fails here.
-test-rust-nextest-release: check-toolchain
+test-rust-release: check-toolchain
     #!/usr/bin/env bash
     set -euo pipefail
     # No LIBDIR export, unlike `test-rust-nextest`: this selection is
@@ -342,9 +347,8 @@ test-rust-nextest-release: check-toolchain
     # whole-workspace lane stays uv-required. Widening the selection to a crate
     # that turns pyo3 on (or a test that drives the binding) reinstates the
     # runtime dependency and the export with it.
-    cargo nextest run --locked --manifest-path rust/Cargo.toml --release \
+    cargo test --locked --manifest-path rust/Cargo.toml --release \
         -p degenbot-substrate -p degenbot-simulation \
-        --profile release-ci --no-fail-fast \
         --features degenbot-simulation/test-harness
 
 # Run the fork/RPC-gated suites — the legs every offline gate (test, pre-push,

@@ -10,14 +10,3 @@ slow-timeout = { period = "10s", terminate-after = 2 }
 
 [profile.ci.junit]
 path = "nextest-ci.junit.xml"
-
-# The release-profile leg (`just test-rust-nextest-release`). Same fail-fast-free
-# policy as `ci`, in its OWN profile so its JUnit report lands under
-# `<target>/nextest/release-ci/` and never overwrites the whole-workspace dev
-# run's report (`just test-timing` reads `ci`).
-[profile.release-ci]
-retries = 0
-slow-timeout = { period = "10s", terminate-after = 2 }
-
-[profile.release-ci.junit]
-path = "nextest-release-ci.junit.xml"
