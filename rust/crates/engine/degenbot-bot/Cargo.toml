@@ -69,7 +69,7 @@ tracing-opentelemetry = { version = "0.34", optional = true, default-features = 
 # composes a tracing-subscriber registry at the call site, so the crate needs
 # it at runtime, not just in tests.
 tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["std", "registry", "fmt", "env-filter", "time"] }
-hotpath = { version = "^0.30.0", default-features = false }
+hotpath = { version = "^0.31.0", default-features = false }
 parking_lot = { version = "^0.13" }
 tracing = { version = "^0.1" }
 serde = { version = "^1.0", features = ["derive"] }
