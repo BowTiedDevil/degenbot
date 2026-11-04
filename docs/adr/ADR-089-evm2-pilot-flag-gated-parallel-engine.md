@@ -18,7 +18,8 @@ The JIT ships ON by default (`simulation.sim_jit`, flipped 2026-10-31 —
 below); the concurrency trio (coroutine fan-out, speculative detach, BAL
 prefetch) is the remaining open work. The revm dependency remains
 lib-level for the `oracle`/`harness`/`capture` lab modules (the Tier-3
-truth source until their deliberate migration decision).
+truth source until their deliberate migration decision — made by
+ADR-091: retire revm completely).
 
 Accepted (2026-10-30).
 

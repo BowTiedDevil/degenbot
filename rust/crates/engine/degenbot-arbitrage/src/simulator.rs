@@ -36,7 +36,7 @@ use degenbot_core::{diag, diag_trace, op_info};
 
 use std::collections::BTreeMap;
 
-use alloy::primitives::{Address, I256, U256};
+use alloy::primitives::{Address, TxKind, I256, U256};
 use alloy::rpc::types::AccessList;
 use degenbot_core::errors::{ProviderError, ProviderResult};
 use degenbot_core::fee_percentiles::{P10_INDEX, P50_INDEX, PRIORITY_FEE_PERCENTILES};
@@ -47,7 +47,6 @@ use degenbot_executor::composers::{
 use degenbot_executor::WarmupSlots;
 use degenbot_rpc::fees::BlockPriorityFees;
 use degenbot_rpc::provider::AlloyProvider;
-use revm::primitives::TxKind;
 // The engine types the strategy drives: the capture vocabulary + the
 // override params (ADR-089 cutover — the evm2 session type is named at the
 // seam signatures).
