@@ -1,13 +1,13 @@
 //! Shared Tier-3 concentrated-liquidity-family (V3 / Pancake-V3) byte-exact swap oracle driver.
 //!
-//! The Uniswap-V3 oracle (`tier3_v3_pool_swap_vs_revm.rs`) and the PancakeSwap
-//! V3 fork oracle (`tier3_pancake_v3_swap_vs_revm.rs`) drive the same pipeline
-//! against REAL deployed pool bytecode: the canonical pool contract is
-//! deployed via a harness, its `slot0`/`liquidity`/`ticks`/`tickBitmap`
-//! storage is seeded slot-for-slot from a `V3PoolState` via the fork's storage
-//! encoders, then `pool.swap` is driven and the Rust `v3_simulate_swap` result
-//! is compared BYTE-EXACT to the on-chain walk (amounts, post-sqrtPrice,
-//! post-tick, post-liquidity).
+//! The Uniswap-V3 oracle (`tier3_v3_pool_swap_vs_reference_bytecode.rs`) and the
+//! PancakeSwap V3 fork oracle (`tier3_pancake_v3_swap_vs_reference_bytecode.rs`)
+//! drive the same pipeline against REAL deployed pool bytecode: the canonical
+//! pool contract is deployed via a harness, its `slot0`/`liquidity`/`ticks`/
+//! `tickBitmap` storage is seeded slot-for-slot from a `V3PoolState` via the
+//! fork's storage encoders, then `pool.swap` is driven and the Rust
+//! `v3_simulate_swap` result is compared BYTE-EXACT to the on-chain walk
+//! (amounts, post-sqrtPrice, post-tick, post-liquidity).
 //!
 //! The driver is parameterized only by the fork's harness artifact name and
 //! whether the fork harness exceeds EIP-170 ([`V3Fork`]) plus a fork-specific
@@ -34,15 +34,12 @@ use std::path::PathBuf;
 
 use alloy::primitives::{aliases::I256, keccak256, Address, Bytes, U128, U256};
 use alloy::rpc::types::Log as RpcLog;
-use revm::context_interface::result::Output;
-use revm::context_interface::ContextTr;
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
 
 use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_pools::TickInfo;
 use degenbot_pools::{PoolTickCoverage, RegistrationLifecycle, TickRangeCache, V3PoolState};
 use degenbot_pools::{ReorgJournal, V3BlockDelta};
+use degenbot_simulation::oracle::{self, FixtureEvm, Output};
 
 /// Mask selecting the low 128 bits of a U256 (V3 `liquidity`/TickInfo fields).
 pub const MASK_128: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
@@ -56,8 +53,8 @@ pub struct V3Fork {
     pub harness_sol: &'static str,
     /// Harness contract name within that artifact.
     pub harness_contract: &'static str,
-    /// Raise revm's effective code-size limits (`usize::MAX`) so an
-    /// oversized fork harness (mainnet-illegal, revm-runnable) deploys.
+    /// Raise the engine's effective code-size limits (`usize::MAX`) so an
+    /// oversized fork harness (mainnet-illegal, fixture-runnable) deploys.
     pub raise_eip170: bool,
 }
 
@@ -149,7 +146,7 @@ pub fn encode_swap_call(
     call
 }
 
-/// Wrap an alloy primitive log (what revm hands back) into the rpc `Log` shape
+/// Wrap an alloy primitive log (what the engine hands back) into the rpc `Log` shape
 /// the degenbot decoders consume (outer block/tx metadata absent in-process).
 pub fn to_rpc_log(l: alloy::primitives::Log) -> RpcLog {
     RpcLog {
@@ -186,14 +183,14 @@ pub fn decode_error_string(reason: &[u8]) -> Option<String> {
     Some(String::from_utf8_lossy(&data[64..64 + len]).into_owned())
 }
 
-/// Seed a revm `CacheDB`'s pool account from a `V3PoolState` using the fork's
+/// Seed a fixture EVM's pool account from a `V3PoolState` using the fork's
 /// storage-slot encoders (a fork-specific responsibility — Uniswap and
 /// PancakeSwap differ in their `slot0`/`liquidity`/`ticks`/`tickBitmap` slot
 /// indices). The probe calls this right after resolving the pool address.
-pub type PoolSeeder = fn(&mut CacheDB<EmptyDB>, Address, &V3PoolState, i32);
+pub type PoolSeeder = fn(&mut FixtureEvm, Address, &V3PoolState, i32);
 
-/// Drive one on-chain concentrated liquidity `pool.swap` end-to-end against a fresh, self-contained
-/// revm `CacheDB`: deploy the harness + real pool, seed storage via `seeder`,
+/// Drive one on-chain concentrated liquidity `pool.swap` end-to-end against a fresh,
+/// self-contained evm2 fixture EVM: deploy the harness + real pool, seed storage via `seeder`,
 /// call `harness.swap`, and read back the (absolute) flow tuple plus the
 /// post-swap `(sqrtPriceX96, tick, liquidity)` and the swap-tx logs. Each call
 /// rebuilds the evm + harness so storage is pristine.
@@ -212,11 +209,10 @@ pub fn run_onchain_swap(
     amount_specified: I256,
     sqrt_price_limit: u128,
 ) -> ProbeOutcome {
-    // Shared, contract-agnostic revm fixture driver (degenbot_simulation::oracle):
+    // Shared, contract-agnostic fixture driver (`degenbot_simulation::oracle`):
     // deploy the real harness, sequence staged calls, seed storage, drive swap,
     // and classify Revert-vs-Halt — so the tier-3 oracle and any user harness
     // share one EVM spine rather than each re-deriving it.
-    use degenbot_simulation::oracle;
 
     // Assemble init code = harness creation bytecode + constructor args.
     let mut init_code = load_creation_bytecode(fork.harness_sol, fork.harness_contract);
@@ -258,7 +254,7 @@ pub fn run_onchain_swap(
         Ok(a) => a,
         Err(e) => return ProbeOutcome::Halted(format!("pool() failed: {e}")),
     };
-    seeder(evm.ctx.db_mut(), pool, state, tick_spacing);
+    seeder(&mut evm, pool, state, tick_spacing);
 
     // 4. Drive the swap — classify Revert vs Halt via the shared driver.
     let data = encode_swap_call(zero_for_one, amount_specified, sqrt_price_limit);

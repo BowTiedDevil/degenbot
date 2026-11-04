@@ -2,9 +2,9 @@
 //! Tier-3b executor deploy-contract oracle (BHL2R2 / S2 foundation).
 //!
 //! Verifies that the committed Vyper executor artifact deploys correctly in
-//! revm with the REAL constructor-arg contract — resolving the open
-//! "verify once by deploying" item from S1 (2ISTMX) before S2's reproduction
-//! harness depends on it.
+//! the evm2 fixture EVM with the REAL constructor-arg contract — resolving the
+//! open "verify once by deploying" item from S1 (2ISTMX) before S2's
+//! reproduction harness depends on it.
 //!
 //! ## Finding that this test locks in (correct deployment contract)
 //! `cmd_executor.vy`'s `@deploy __init__(weth, pool_manager)` takes only **two**
@@ -26,15 +26,9 @@
 //!    (pseudo-random keccak outputs — a false positive is cryptographically
 //!    implausible), and `WETH_ADDR`/`POOL_MANAGER_ADDR` to appear as well.
 
-use alloy::primitives::{utils::keccak256, Address, Bytes, TxKind, B256};
-use revm::context::Context;
-use revm::context::TxEnv;
-use revm::context_interface::result::{ExecutionResult, Output};
-use revm::context_interface::ContextTr;
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
-use revm::Database;
-use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
+use alloy::primitives::{utils::keccak256, Address, Bytes, B256};
+
+use degenbot_simulation::oracle::{self, Output};
 
 fn repo_root() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -71,29 +65,22 @@ fn executor_deploys_with_two_constructor_args_and_embeds_computed_immutables() {
     let mut init = load_hex("tier3-oracle/artifacts/executor/cmd_executor.creation.hex");
     init.extend_from_slice(&deploy_args(weth, pool_manager));
 
-    let db = CacheDB::new(EmptyDB::default());
-    let mut evm = Context::mainnet().with_db(db).build_mainnet();
-    evm.ctx.cfg.disable_nonce_check = true;
+    let mut evm = oracle::new_fixture_evm();
+    oracle::set_disable_nonce_check(&mut evm, true);
 
-    let res = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Create)
-                .gas_limit(16_000_000)
-                .data(Bytes::from(init))
-                .build()
-                .expect("deploy tx"),
-        )
-        .expect("deploy transact");
-
-    let executor = match &res.result {
-        ExecutionResult::Success {
-            output: Output::Create(_, Some(addr)),
+    let (executor, code) = match oracle::transact(
+        &mut evm,
+        oracle::TxSpec::Deploy {
+            init_code: Bytes::from(init),
+            gas: 16_000_000,
+        },
+    ) {
+        oracle::Verdict::Accepted {
+            output: Output::Create(code, Some(addr)),
             ..
-        } => *addr,
+        } => (addr, code),
         other => panic!("executor deploy failed: {other:?}"),
     };
-    evm.commit(res.state);
 
     // Recompute the two DELTA_SLOT immutables exactly as __init__ computes them:
     // keccak256(abi.encodePacked(self, currency)) with left-padded 32-byte addresses.
@@ -102,16 +89,8 @@ fn executor_deploys_with_two_constructor_args_and_embeds_computed_immutables() {
     let expected_weth_delta = keccak256([self_bytes.as_slice(), weth_bytes.as_slice()].concat());
     let expected_native_delta = keccak256([self_bytes.as_slice(), B256::ZERO.as_slice()].concat());
 
-    // Read back the deployed runtime code; the immutables are embedded in it.
-    let code = evm
-        .ctx
-        .db_mut()
-        .basic(executor)
-        .expect("db basic")
-        .expect("no executor account")
-        .code
-        .map(|c| c.original_bytes().to_vec())
-        .expect("deployed executor has no code");
+    // The creation's `Create` output IS the deployed runtime code (the
+    // immutables are embedded in it).
     assert!(!code.is_empty(), "deployed executor has empty runtime code");
     println!(
         "executor deployed at {executor}; runtime {} bytes",

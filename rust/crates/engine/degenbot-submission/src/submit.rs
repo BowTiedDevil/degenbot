@@ -63,7 +63,7 @@ use degenbot_substrate::nonce::{DeclineKind, HeldFees, NonceLane, NonceLease};
 /// decoupled: submission consumes a candidate's economics (profit, gas, fees),
 /// its ready-to-sign calldata, and the pools it touches — not the simulation
 /// crate's state and journal payloads — so reaching for sim types here would
-/// widen this crate's dependency surface to the revm stack and freeze the
+/// widen this crate's dependency surface to the simulation engine stack and freeze the
 /// submit seam against a shape only one caller produces. The umbrella `Bot` /
 /// Python driver maps `SimResult` → `SubmitCandidate` at the seam instead
 /// (resolving the `path_pools` from `path_info.hops` — `pool_id_hex` for V4,

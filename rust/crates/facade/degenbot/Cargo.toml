@@ -23,7 +23,14 @@ workspace = true
 [dependencies]
 alloy = { version = "^2.5", features = ["full"] }
 serde = { version = "^1.0", features = ["derive"] }
-serde_json = { version = "^1.0" }
+# `preserve_order`: the investigation capture renderer
+# (`investigation::capture`) writes a refreshed `state.json` in the family's
+# declared key order (`state_keys_for_family`), and its lockstep test pins that
+# order. Without the feature `serde_json::Map` is a `BTreeMap`, so a refresh
+# would re-sort every key against the committed fixtures. Declared here because
+# this crate's output depends on it, not inherited from a dependency's
+# transitive feature.
+serde_json = { version = "^1.0", features = ["preserve_order"] }
 degenbot-config.workspace = true
 degenbot-aave.workspace = true
 degenbot-abi.workspace = true
@@ -159,7 +166,6 @@ rusqlite = { version = "^0.41" }
 tempfile = { version = "^3.27" }
 async-trait = "0.1"
 alloy = { version = "^2.5", features = ["full"] }
-revm = { version = "^43.0", default-features = false }
 # The engine (ADR-089 cutover) — the parity tests drive the evm2 in-memory DB.
 evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, features = ["asm-keccak", "blst", "secp256k1", "serde"] }
 tokio = { version = "^1.54", features = ["rt-multi-thread", "macros"] }

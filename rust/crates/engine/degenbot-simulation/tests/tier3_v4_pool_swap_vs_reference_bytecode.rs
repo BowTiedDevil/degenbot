@@ -1,10 +1,10 @@
 //! Tier-3b V4 `PoolManager.swap` end-to-end oracle — the V4 twin of
-//! `tier3_v3_pool_swap_vs_revm.rs`. Hardened for (H1) rejection-reason
+//! `tier3_v3_pool_swap_vs_reference_bytecode.rs`. Hardened for (H1) rejection-reason
 //! airtightness, (H3) pinned edge corpus, (H4) widened proptest across
 //! fee-1/3000 + protocol-fee on/off.
 //!
 //! Deploys the canonical v4-core `PoolManager` (via the `V4SwapOracleHarness`
-//! unlocker wrapper) as real bytecode in an in-process revm `CacheDB<EmptyDB>`,
+//! unlocker wrapper) as real bytecode in an offline evm2 fixture EVM,
 //! seeds the single pool's `slot0`/`liquidity`/`ticks`/`tickBitmap` storage at
 //! the poolId-derived base from a `V4PoolState` via the `v4_storage_slots`
 //! encoders, drives the swap through `unlock` → `unlockCallback` → `swap` →
@@ -60,13 +60,6 @@ use std::path::PathBuf;
 
 use alloy::primitives::{aliases::I256, keccak256, Address, Bytes, U256};
 use proptest::prelude::*;
-use revm::context::TxEnv;
-use revm::context_interface::result::{ExecutionResult, Output};
-use revm::context_interface::ContextTr;
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
-use revm::primitives::TxKind;
-use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
 
 use degenbot_decoders::revert::RevertClass;
 use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
@@ -78,6 +71,7 @@ use degenbot_pools::{
 };
 use degenbot_pools::{v4_simulate_swap, V4PoolKey, V4PoolState};
 use degenbot_pools::{PoolTickCoverage, SimulateSwapError};
+use degenbot_simulation::oracle::{self, Output};
 
 /// First 4 bytes of `keccak256(signature)` — the Solidity function selector.
 fn selector(sig: &str) -> [u8; 4] {
@@ -148,7 +142,7 @@ fn compute_v4_word_from_raw(
 /// `keccak256(abi.encode(poolId, uint256(6)))`, fields are `base + offset`
 /// (0=`Slot0`, 3=`liquidity`, 4=`ticks` base, 5=`tickBitmap` base).
 fn seed_v4_pool_storage(
-    db: &mut CacheDB<EmptyDB>,
+    evm: &mut oracle::FixtureEvm,
     manager: Address,
     pool_key: &V4PoolKey,
     state: &V4PoolState,
@@ -158,40 +152,36 @@ fn seed_v4_pool_storage(
     let pool_id = v4_pool_id(pool_key);
     let base = v4_pool_state_base_slot(pool_id);
 
-    db.insert_account_storage(
-        manager,
-        v4_slot0_slot(base),
-        encode_v4_slot0(V4Slot0Parts {
-            sqrt_price_x96: state.sqrt_price_x96,
-            tick: state.tick,
-            // Seed the pool's OWN protocol fee from the `V4PoolState` — NOT a
-            // hardcoded 0. A pool with `protocol_fee > 0` exercises the
-            // on-chain `Pool.swap` `calculateSwapFee(direction_fee, lp_fee)`
-            // path; omitting it (the original oracle, protocol_fee=0 everywhere)
-            // would make the revm oracle blind to the protocol-fee fee-combination
-            // rounding — the exact gap the fee-1/tiny over-prediction
-            // probes. `state.protocol_fee` uses the same 24-bit packing as
-            // on-chain `slot0.protocolFee` (low 12 bits = 0→1, high 12 = 1→0), so
-            // seeding it verbatim reproduces the on-chain fee the swap charges.
-            protocol_fee: state.protocol_fee,
-            lp_fee: fee,
-        }),
-    )
-    .expect("seed v4 slot0");
-    db.insert_account_storage(
-        manager,
-        v4_liquidity_slot(base),
-        encode_v4_liquidity_slot(state.liquidity),
-    )
-    .expect("seed v4 liquidity");
+    let mut slots: Vec<(U256, U256)> = vec![
+        (
+            v4_slot0_slot(base),
+            encode_v4_slot0(V4Slot0Parts {
+                sqrt_price_x96: state.sqrt_price_x96,
+                tick: state.tick,
+                // Seed the pool's OWN protocol fee from the `V4PoolState` — NOT a
+                // hardcoded 0. A pool with `protocol_fee > 0` exercises the
+                // on-chain `Pool.swap` `calculateSwapFee(direction_fee, lp_fee)`
+                // path; omitting it (the original oracle, protocol_fee=0 everywhere)
+                // would make the oracle blind to the protocol-fee fee-combination
+                // rounding — the exact gap the fee-1/tiny over-prediction
+                // probes. `state.protocol_fee` uses the same 24-bit packing as
+                // on-chain `slot0.protocolFee` (low 12 bits = 0→1, high 12 = 1→0), so
+                // seeding it verbatim reproduces the on-chain fee the swap charges.
+                protocol_fee: state.protocol_fee,
+                lp_fee: fee,
+            }),
+        ),
+        (
+            v4_liquidity_slot(base),
+            encode_v4_liquidity_slot(state.liquidity),
+        ),
+    ];
 
     for (tick, info) in &state.tick_data {
-        db.insert_account_storage(
-            manager,
+        slots.push((
             v4_tick_mapping_slot(*tick, base),
             encode_v4_tick_info_slot(info),
-        )
-        .expect("seed v4 tick info");
+        ));
     }
 
     let mut word_positions: HashSet<i16> = HashSet::new();
@@ -202,13 +192,10 @@ fn seed_v4_pool_storage(
     }
     for word_pos in word_positions {
         let word_value = compute_v4_word_from_raw(&state.tick_data, tick_spacing, word_pos);
-        db.insert_account_storage(
-            manager,
-            v4_tick_bitmap_word_slot(word_pos, base),
-            word_value,
-        )
-        .expect("seed v4 tickBitmap word");
+        slots.push((v4_tick_bitmap_word_slot(word_pos, base), word_value));
     }
+
+    oracle::seed_slots(evm, manager, &slots);
 }
 
 /// Build a dense fully-tracked V4 state at an arbitrary `current_tick` (not
@@ -382,7 +369,6 @@ fn encode_v4_swap_call(
 /// [`ProbeOutcome::Reverted`] with the raw revert data on a Solidity/V4-error
 /// revert, or [`ProbeOutcome::Halted`] when the pipeline itself broke (deploy/
 /// getter failure or the OOG gas trap — no EVM verdict).
-#[expect(clippy::too_many_lines)] // one logical deploy → seed → unlock → swap → verdict pipeline
 fn probe_v4(
     state: &V4PoolState,
     fee: u32,
@@ -391,66 +377,29 @@ fn probe_v4(
     amount_specified: I256,
     sqrt_price_limit: u128,
 ) -> ProbeOutcome {
-    let db = CacheDB::new(EmptyDB::default());
-    let mut evm = revm::context::Context::mainnet()
-        .with_db(db)
-        .build_mainnet();
-    evm.ctx.cfg.disable_nonce_check = true;
+    let mut evm = oracle::new_fixture_evm();
+    oracle::set_disable_nonce_check(&mut evm, true);
 
     let mut init_code = load_creation_bytecode("V4SwapOracleHarness.sol", "V4SwapOracleHarness");
     init_code.extend_from_slice(&harness_constructor_args(fee, tick_spacing));
-    let deploy_res = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Create)
-                .gas_limit(16_000_000)
-                .data(Bytes::from(init_code))
-                .build()
-                .expect("deploy tx"),
-        )
-        .expect("deploy transact");
-    let harness = match &deploy_res.result {
-        ExecutionResult::Success {
-            output: Output::Create(_, Some(addr)),
-            ..
-        } => *addr,
-        other => return ProbeOutcome::Halted(format!("V4 harness deploy failed: {other:?}")),
+    let harness = match oracle::deploy(&mut evm, Bytes::from(init_code), 16_000_000) {
+        Ok(a) => a,
+        Err(e) => return ProbeOutcome::Halted(format!("V4 harness deploy failed: {e}")),
     };
-    evm.commit(deploy_res.state);
 
-    // Read the three public address getters inline (concrete evm type).
-    let mut get_addr = |sig: &str| -> Result<Address, String> {
-        let res = evm
-            .transact(
-                TxEnv::builder()
-                    .kind(TxKind::Call(harness))
-                    .gas_limit(2_000_000)
-                    .data(Bytes::from(selector(sig).to_vec()))
-                    .build()
-                    .expect("getter tx"),
-            )
-            .expect("getter transact");
-        if let ExecutionResult::Success {
-            output: Output::Call(b),
-            ..
-        } = &res.result
-        {
-            let mut buf = [0u8; 32];
-            buf.copy_from_slice(&b.as_ref()[0..32]);
-            Ok(Address::from_slice(&buf[12..32]))
-        } else {
-            Err(format!("getter {sig} failed"))
-        }
+    // Resolve the three public address getters through the shared driver.
+    let get_addr = |evm: &mut oracle::FixtureEvm, sig: &str| -> Result<Address, String> {
+        oracle::read_address(evm, harness, Bytes::from(selector(sig).to_vec()), 2_000_000)
     };
-    let manager = match get_addr("manager()") {
+    let manager = match get_addr(&mut evm, "manager()") {
         Ok(a) => a,
         Err(e) => return ProbeOutcome::Halted(e),
     };
-    let cur0 = match get_addr("currency0()") {
+    let cur0 = match get_addr(&mut evm, "currency0()") {
         Ok(a) => a,
         Err(e) => return ProbeOutcome::Halted(e),
     };
-    let cur1 = match get_addr("currency1()") {
+    let cur1 = match get_addr(&mut evm, "currency1()") {
         Ok(a) => a,
         Err(e) => return ProbeOutcome::Halted(e),
     };
@@ -467,31 +416,26 @@ fn probe_v4(
         tick_spacing,
         hooks: Address::ZERO,
     };
-    seed_v4_pool_storage(evm.ctx.db_mut(), manager, &pool_key, state, fee);
+    seed_v4_pool_storage(&mut evm, manager, &pool_key, state, fee);
 
     let data = encode_v4_swap_call(zero_for_one, amount_specified, sqrt_price_limit);
-    let res = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Call(harness))
-                .gas_limit(16_000_000)
-                .data(Bytes::from(data))
-                .build()
-                .expect("v4 swap tx"),
-        )
-        .expect("v4 swap transact");
-
-    match &res.result {
-        ExecutionResult::Success {
+    match oracle::transact(
+        &mut evm,
+        oracle::TxSpec::Call {
+            to: harness,
+            data: Bytes::from(data),
+            gas: 16_000_000,
+        },
+    ) {
+        oracle::Verdict::Accepted {
             output: Output::Call(b),
             ..
         } => {
-            let out = b.clone();
             // BalanceDelta is ONE packed word: amount0 in the HIGH 128 bits,
             // amount1 in the LOW 128 bits (v4-core `types/BalanceDelta.sol`).
             // Sign-extend each 128-bit field to a proper signed value.
             let mut w32 = [0u8; 32];
-            w32.copy_from_slice(&out.as_ref()[0..32]);
+            w32.copy_from_slice(&b.as_ref()[0..32]);
             let packed = U256::from_be_bytes(w32);
             let low_mask = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
             let hi_u128: u128 = ((packed >> 128u32) & low_mask).to::<u128>();
@@ -514,10 +458,12 @@ fn probe_v4(
                 amount1: d1.unsigned_abs(),
             }
         }
-        ExecutionResult::Revert { output, .. } => ProbeOutcome::Reverted {
-            reason: output.clone(),
-        },
-        other => ProbeOutcome::Halted(format!("on-chain v4 swap halted: {other:?}")),
+        oracle::Verdict::Reverted(output) => ProbeOutcome::Reverted { reason: output },
+        oracle::Verdict::Halted(h) => ProbeOutcome::Halted(format!("on-chain v4 swap halted: {h}")),
+        oracle::Verdict::Accepted {
+            output: Output::Create(..),
+            ..
+        } => ProbeOutcome::Halted("swap returned a Create output".to_string()),
     }
 }
 
@@ -1228,7 +1174,7 @@ fn v4_pool_start_in_empty_region_crosses_to_liquidity() {
 //
 // This is the TDD-first discriminator: feed the IDENTICAL `V4PoolState` to
 // BOTH `v4_simulate_swap` (the Rust twin) and the on-chain PoolManager via
-// this revm harness and assert byte-exact. If it matches, the 1-wei cannot be
+// this on-chain harness and assert byte-exact. If it matches, the 1-wei cannot be
 // in `v4_simulate_swap`'s math and must be solver stale-state; if it diverges,
 // a genuine fee-1/tiny-amount rounding bug lives in `compute_swap_step_v4` /
 // `v4_simulate_swap`.

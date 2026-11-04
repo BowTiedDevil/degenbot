@@ -71,10 +71,15 @@ degenbot-eventhub.workspace = true
 # ungated — the offline provider builds on it at runtime.) Production builds
 # (the umbrella, the cdylib) never enable this feature.
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
-# `hosted_driver_ambient_runtime` wraps an async DB (`WrapDatabaseAsync`) as the
-# revm read surface a driver's ambient runtime polls; `asyncdb` is what exposes
-# it now that no production dependency pulls it in transitively.
-revm = { version = "^43.0", default-features = false, features = ["std", "asyncdb"] }
+# `hosted_driver_ambient_runtime` builds the engine's blocking cold-miss
+# adapter (`BlockingAsyncDb` over `AlloyAsyncDb`) as the async read surface a
+# driver's ambient runtime polls.
+degenbot-simulation.workspace = true
+# The adapter's `Database` trait (the read the ambient-runtime contract drives).
+evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, features = [
+    "async",
+    "std",
+] }
 serde_json = { version = "^1.0" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 tokio-tungstenite = { version = "^0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }

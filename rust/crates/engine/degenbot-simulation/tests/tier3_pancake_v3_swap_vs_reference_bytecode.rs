@@ -37,8 +37,8 @@
 //!
 //! The PancakeSwap fork's embedded pool-creation code makes the harness's
 //! deployed code ~25.0KB — over the 24.6KB EIP-170 limit the Uniswap harness
-//! stays under. `V3Fork.raise_eip170` is set so the shared driver raises revm's
-//! effective code-size limits to `usize::MAX`.
+//! stays under. `V3Fork.raise_eip170` is set so the shared driver removes the
+//! engine's effective code-size cap (`usize::MAX`).
 //!
 //! ## Harness bytecode (committed)
 //!
@@ -56,8 +56,6 @@ use std::collections::HashSet;
 use alloy::primitives::{aliases::I256, Address, U256};
 use alloy::rpc::types::Log as RpcLog;
 use proptest::prelude::*;
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
 
 use degenbot_decoders::v3_pancakeswap_swap_decoder::{
     decode_v3_pancakeswap_swap_log, V3_PANCAKESWAP_SWAP_TOPIC,
@@ -72,11 +70,12 @@ use degenbot_pools::{
     encode_pancake_v3_slot0_word1, pancake_v3_tick_bitmap_word_slot, pancake_v3_tick_mapping_slot,
 };
 use degenbot_pools::{v3_simulate_swap, SimulateSwapError, V3PoolState, V3SwapOutcome};
+use degenbot_simulation::oracle;
 
 use tier3_v3_common::{decode_error_string, dense_state, run_onchain_swap, ProbeOutcome, V3Fork};
 
 /// The PancakeSwap V3 fork descriptor. Its harness exceeds EIP-170 (~25KB), so
-/// `raise_eip170` is set and the shared driver raises revm's code-size limits.
+/// `raise_eip170` is set and the shared driver removes the code-size cap.
 const FORK: V3Fork = V3Fork {
     harness_sol: "PancakeV3SwapOracleHarness.sol",
     harness_contract: "PancakeV3SwapOracleHarness",
@@ -103,12 +102,12 @@ const PANCAKE_PROTOCOL_FEE0: u32 = 1000;
 /// OFF by default; use [`seed_pancake_pool_storage_with_protocol_fee`] to
 /// accrue a token0 protocol cut (exercises the 9-field event's trailing words).
 fn seed_pancake_pool_storage(
-    db: &mut CacheDB<EmptyDB>,
+    evm: &mut oracle::FixtureEvm,
     pool: Address,
     state: &V3PoolState,
     tick_spacing: i32,
 ) {
-    seed_pancake_pool_storage_impl(db, pool, state, tick_spacing, 0);
+    seed_pancake_pool_storage_impl(evm, pool, state, tick_spacing, 0);
 }
 
 /// Same seeder but with a nonzero token0 protocol fee (a real divergence the
@@ -116,49 +115,40 @@ fn seed_pancake_pool_storage(
 /// so the `Swap` event's trailing `protocolFeesToken0` word is nonzero while
 /// the state walk is byte-identical.
 fn seed_pancake_pool_storage_with_protocol_fee(
-    db: &mut CacheDB<EmptyDB>,
+    evm: &mut oracle::FixtureEvm,
     pool: Address,
     state: &V3PoolState,
     tick_spacing: i32,
 ) {
-    seed_pancake_pool_storage_impl(db, pool, state, tick_spacing, PANCAKE_PROTOCOL_FEE0);
+    seed_pancake_pool_storage_impl(evm, pool, state, tick_spacing, PANCAKE_PROTOCOL_FEE0);
 }
 
 fn seed_pancake_pool_storage_impl(
-    db: &mut CacheDB<EmptyDB>,
+    evm: &mut oracle::FixtureEvm,
     pool: Address,
     state: &V3PoolState,
     tick_spacing: i32,
     fee_protocol: u32,
 ) {
-    // slot0 word 0: sqrtPrice | tick | observation{Index,Cardinality,CardinalityNext}.
-    db.insert_account_storage(
-        pool,
-        U256::from(0u64),
-        encode_v3_slot0_fresh(state.sqrt_price_x96, state.tick),
-    )
-    .expect("seed slot0 word0");
-    // slot0 word 1: feeProtocol (32b) | unlocked (bit 32, =true).
-    db.insert_account_storage(
-        pool,
-        U256::from(1u64),
-        encode_pancake_v3_slot0_word1(fee_protocol, true),
-    )
-    .expect("seed slot0 word1 (unlocked)");
-    // liquidity @ slot 5 (after the 2-word slot0 + feeGrowth×2 + protocolFees).
-    db.insert_account_storage(
-        pool,
-        U256::from(5u64),
-        encode_v3_liquidity_slot(state.liquidity),
-    )
-    .expect("seed liquidity");
+    let mut slots: Vec<(U256, U256)> = vec![
+        // slot0 word 0: sqrtPrice | tick | observation{Index,Cardinality,CardinalityNext}.
+        (
+            U256::from(0u64),
+            encode_v3_slot0_fresh(state.sqrt_price_x96, state.tick),
+        ),
+        // slot0 word 1: feeProtocol (32b) | unlocked (bit 32, =true).
+        (
+            U256::from(1u64),
+            encode_pancake_v3_slot0_word1(fee_protocol, true),
+        ),
+        // liquidity @ slot 5 (after the 2-word slot0 + feeGrowth×2 + protocolFees).
+        (U256::from(5u64), encode_v3_liquidity_slot(state.liquidity)),
+    ];
     for (tick, info) in &state.tick_data {
-        db.insert_account_storage(
-            pool,
+        slots.push((
             pancake_v3_tick_mapping_slot(*tick),
             encode_v3_tick_info_slot(info),
-        )
-        .expect("seed tick info");
+        ));
     }
     let mut word_positions: HashSet<i16> = HashSet::new();
     for &tick in state.tick_data.keys() {
@@ -169,9 +159,9 @@ fn seed_pancake_pool_storage_impl(
     for word_pos in word_positions {
         let word_value =
             compute_v3_tick_bitmap_word_from_raw(&state.tick_data, tick_spacing, word_pos);
-        db.insert_account_storage(pool, pancake_v3_tick_bitmap_word_slot(word_pos), word_value)
-            .expect("seed tickBitmap word");
+        slots.push((pancake_v3_tick_bitmap_word_slot(word_pos), word_value));
     }
+    oracle::seed_slots(evm, pool, &slots);
 }
 
 /// Assert the swap-tx logs carry exactly-one PancakeSwap `Swap` event that is

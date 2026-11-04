@@ -13,7 +13,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-# The simulation engine (revm executor, BlockSimHandle, overrides, AL, warm
+# The simulation engine (evm2 executor, BlockSimHandle, overrides, AL, warm
 # cache). This crate is ONE strategy over the engine — it builds the 7-call
 # vector, drives `BlockSimHandle`'s EVM, decodes balances, sizes the priority
 # fee, + runs the fan-out/categorization policy. ADR-019 D4/D7: the engine
@@ -54,11 +54,11 @@ degenbot-abi.workspace = true
 # `ProviderError` / `ProviderResult` / `AbiDecodeError` — the shared error
 # types `simulate_path_on_evm` + the calldata builders return.
 degenbot-core.workspace = true
-# revm — the transaction envelopes the 7-call bundle builds (`TxEnv`), the
-# `CacheDB` entry point's DB parameter, and the per-call results the session's
-# sequence verb returns (`ExecutionResult`).
-revm = { version = "^43.0", default-features = true, features = ["alloydb", "asyncdb"] }
-alloy = { version = "^2.5" }
+# The alloy umbrella: the 7-call bundle's typed surface plus `eips`, which
+# carries EIP-7825's `MAX_TX_GAS_LIMIT_OSAKA` — the per-tx ceiling
+# `INITIAL_EXECUTE_GAS` pins (the same constant evm2's `Version::tx_gas_limit_cap`
+# installs at Osaka).
+alloy = { version = "^2.5", features = ["eips"] }
 parking_lot = "^0.13"
 tracing = { version = "^0.1" }
 # The net-profit order index — used (feature `order-index`) to make the pre-sim

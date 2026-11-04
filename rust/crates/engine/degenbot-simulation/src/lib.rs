@@ -1,4 +1,4 @@
-//! The simulation engine — the in-process revm EVM handle + its DB stack.
+//! The simulation engine — the in-process evm2 EVM handle + its DB stack.
 //!
 //! ADR-019 D4/D7 (decision R — strategy/engine separation): this crate owns
 //! the **engine** (`BlockSimHandle`, the settle verb [`SimSession::run`], the
@@ -20,7 +20,7 @@
 // to match the peer core crates.
 #![expect(clippy::doc_markdown)]
 
-/// The in-process revm engine + its DB stack (the EVM handle, overrides,
+/// The in-process evm2 engine + its DB stack (the EVM handle, overrides,
 /// AL collector, warm cache). The settlement-arbitrage strategy relocated to
 /// `degenbot-arbitrage` (ADR-019 D4/D7, decision R).
 pub mod sim;
@@ -39,7 +39,7 @@ pub mod sim;
 #[cfg(feature = "test-harness")]
 pub mod harness;
 
-/// Contract-agnostic in-process revm **fixture driver** — deploy a pinned
+/// Contract-agnostic in-process evm2 **fixture driver** — deploy a pinned
 /// contract artifact, run staged calls, seed storage slots, drive a call,
 /// classify the verdict (Revert vs Halt), and read back output + logs. The
 /// shared spine of the tier-3 on-chain oracles and any per-contract (user)

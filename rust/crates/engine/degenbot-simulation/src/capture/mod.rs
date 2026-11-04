@@ -3,7 +3,7 @@
 //! EVM ([`crate::oracle`]).
 //!
 //! [`ScratchDriver`] executes REAL contract frames (deploy / call) on a
-//! driver-thread-owned revm EVM and publishes each frame's committed-state
+//! driver-thread-owned evm2 EVM and publishes each frame's committed-state
 //! snapshot into [`ScratchChain`] — the served chain. The chain answers the
 //! updater's JSON-RPC surface — `eth_chainId`, `eth_blockNumber`,
 //! `eth_getLogs`, `eth_call` — from the frames' products: logs come from
@@ -19,7 +19,7 @@
 //!
 //! # The driver/served split (why two types)
 //!
-//! A revm [`FixtureEvm`](crate::oracle::FixtureEvm) is deliberately `!Send`
+//! A [`FixtureEvm`](crate::oracle::FixtureEvm) is deliberately `!Send`
 //! (its working buffers carry `Rc`/raw-pointer internals). The driver keeps
 //! it thread-local; the served state carries only the Send-able committed
 //! snapshot (plain maps + `Arc`-held bytecode) plus the log ledger, so the
@@ -46,6 +46,7 @@
 
 use std::sync::Arc;
 
+use ::evm2::evm::Cache;
 use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy::providers::{Provider, RootProvider};
 use alloy::rpc::client::RpcClient;
@@ -56,13 +57,9 @@ use alloy::transports::TransportFut;
 use degenbot_rpc::multicall3::{AGGREGATE3_SELECTOR, MULTICALL3_ADDRESS};
 use degenbot_rpc::provider::AlloyProvider;
 use parking_lot::Mutex;
-use revm::context_interface::result::Output;
-use revm::context_interface::ContextTr as _;
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
 use serde_json::Value;
 
-use crate::oracle::{self, FixtureEvm, TxSpec, Verdict};
+use crate::oracle::{self, FixtureEvm, Output, TxSpec, Verdict};
 
 pub mod actor;
 
@@ -96,9 +93,10 @@ struct ScratchChainInner {
     next_tx_index: u64,
     next_log_index: u64,
     /// The committed state the frames produced (the driver publishes a
-    /// clone after each frame). `CacheDB<EmptyDB>` is plain maps + `Arc`
-    /// bytecode — Send.
-    db_snapshot: CacheDB<EmptyDB>,
+    /// clone after each frame). evm2's `Cache` is plain maps + `Arc`
+    /// bytecode — Send, and it is exactly the state a throwaway read EVM
+    /// needs (see [`throwaway_evm`]).
+    db_snapshot: Cache,
 }
 
 /// The served, cloneable view of a scratch chain. Frame driving goes through
@@ -313,7 +311,7 @@ impl ScratchChainInner {
     }
 }
 
-/// The frame driver: owns the revm EVM (thread-local — it is `!Send`) and
+/// The frame driver: owns the evm2 EVM (thread-local — it is `!Send`) and
 /// publishes each frame's committed state into the served [`ScratchChain`].
 pub struct ScratchDriver {
     evm: FixtureEvm,
@@ -330,9 +328,7 @@ impl ScratchDriver {
         oracle::set_disable_nonce_check(&mut evm, true);
         // The capture harness embeds the full canonical UniswapV3Pool plus
         // the mint/burn/announce entries — it exceeds EIP-170's deployed
-        // size, so the fixture caps are set to usize::MAX. (revm 43's `None`
-        // means the SPEC limit, not unlimited — the oracle helper's doc
-        // notwithstanding.)
+        // size, so the fixture caps are set to unlimited.
         oracle::set_code_size_limits(&mut evm, Some(usize::MAX));
         let chain = ScratchChain(Arc::new(Mutex::new(ScratchChainInner {
             chain_id,
@@ -341,7 +337,7 @@ impl ScratchDriver {
             logs: Vec::new(),
             next_tx_index: 0,
             next_log_index: 0,
-            db_snapshot: CacheDB::new(EmptyDB::default()),
+            db_snapshot: Cache::default(),
         })));
         Self { evm, chain }
     }
@@ -463,8 +459,9 @@ impl ScratchDriver {
         let mut inner = self.chain.0.lock();
         inner.next_tx_index += 1;
         // Publish the committed state: a plain-map clone (Send) — the served
-        // reads rebuild throwaway EVMs over exactly this state.
-        inner.db_snapshot = self.evm.ctx.db_mut().clone();
+        // reads rebuild throwaway EVMs over exactly this state. The fixture EVM
+        // accumulates every committed frame in its accepted-state overlay.
+        inner.db_snapshot = self.evm.engine().overlay_db().cache.clone();
     }
 }
 
@@ -575,10 +572,10 @@ fn tx_hash(block: u64, tx_index: u64) -> B256 {
 
 /// A throwaway read EVM over the published snapshot (nonce check off — the
 /// served call carries no signature; base fee is the fixture default 0).
-fn throwaway_evm(snapshot: &CacheDB<EmptyDB>) -> FixtureEvm {
+fn throwaway_evm(snapshot: &Cache) -> FixtureEvm {
     let mut evm = oracle::new_fixture_evm();
     oracle::set_disable_nonce_check(&mut evm, true);
-    *evm.ctx.db_mut() = snapshot.clone();
+    evm.engine_mut().overlay_db_mut().cache = snapshot.clone();
     evm
 }
 
@@ -1109,7 +1106,7 @@ mod tests {
             logs: Vec::new(),
             next_tx_index: 0,
             next_log_index: 0,
-            db_snapshot: CacheDB::new(EmptyDB::default()),
+            db_snapshot: Cache::default(),
         };
         let log = ScratchLog {
             block: 1001,

@@ -605,7 +605,7 @@ def merge_payload_results_py(
 def simulate_in_process_revert_probe(path_id: SupportsIndex, runtime_bytecode: bytes) -> dict:
     """
     Drive the `0xcafebabe`-style REVERT fixture (executor injected with
-    caller-supplied runtime bytecode) through the in-process revm EVM —
+    caller-supplied runtime bytecode) through the in-process evm2 EVM —
     ADR-005 Tier-2 dual-driver parity entrypoint for the inspector.
 
     The fixture (addresses, 2-hop V2 path, block env) is hardcoded to mirror
@@ -627,7 +627,7 @@ def simulate_in_process_revert_probe(path_id: SupportsIndex, runtime_bytecode: b
 
     # Errors
 
-    `RuntimeError` only on an unrecoverable revm `transact` error (a DB
+    `RuntimeError` only on an unrecoverable evm2 `transact` error (a DB
     cold-miss RPC failure — cannot happen over `CacheDB<EmptyDB>`, but the
     `ProviderResult` is honored for parity with the production signature).
     """
@@ -635,7 +635,7 @@ def simulate_in_process_revert_probe(path_id: SupportsIndex, runtime_bytecode: b
 def simulate_in_process_success_probe(path_id: SupportsIndex) -> dict:
     """
     Drive the SELFDESTRUCT-gift success-path fixture through the in-process
-    revm EVM — the ADR-005 Tier-2 dual-driver parity entrypoint for the
+    evm2 EVM — the ADR-005 Tier-2 dual-driver parity entrypoint for the
     success-path `SimResult` (gross/net/gas).
 
     The fixture (identical to the Rust `parity_evm_sim.rs` test): the executor
@@ -660,7 +660,7 @@ def simulate_in_process_success_probe(path_id: SupportsIndex) -> dict:
 
     # Errors
 
-    `RuntimeError` only on an unrecoverable revm `transact` error (cannot
+    `RuntimeError` only on an unrecoverable evm2 `transact` error (cannot
     happen over `CacheDB<EmptyDB>`) or if the fixture regresses to a non-None
     bucket (a `debug_assert!` fires + is surfaced as `RuntimeError`).
     """

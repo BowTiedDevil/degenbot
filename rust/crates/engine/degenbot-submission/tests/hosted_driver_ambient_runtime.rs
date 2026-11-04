@@ -6,69 +6,68 @@
 //! The live two-driver run failed every `BlockSimHandle::build` with "no ambient
 //! multi-threaded tokio runtime" because `StrategyHost::start_driving` booted
 //! the !Send driver future on a dedicated current-thread runtime; the standalone
-//! sidecar polls the same future directly on a multi-thread runtime. `revm`'s
-//! `WrapDatabaseAsync::new` (the layer `BlockSimHandle::build_inner` stacks
-//! over `AlloyDB`) returns `None` unless the current handle is multi-threaded,
-//! and its reads block on that handle through `block_in_place`.
+//! sidecar polls the same future directly on a multi-thread runtime. The
+//! engine's cold-miss adapter carries the same callsite contract today:
+//! `BlockingAsyncDb::new` returns `None` unless the current handle is
+//! multi-threaded, and its reads then block on that handle through
+//! `block_in_place`.
 //!
 //! This test boots a driver through the real host edge and asserts both halves
-//! of the callsite contract inside the driver's own future: construction returns
-//! `Some`, and a read completes (the `block_in_place` path) without panicking.
-//! No chain is needed.
+//! of the contract inside the driver's own future: construction returns `Some`,
+//! and a read completes (the `block_in_place` path) without panicking — plus the
+//! negative half, a current-thread runtime capturing no handle. The provider is
+//! a mock transport, so no node is needed.
 
-use std::future::{ready, Future};
 use std::sync::Arc;
+
+use alloy::network::Ethereum;
+use alloy::primitives::Address;
+use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::client::ClientBuilder;
+use alloy::transports::mock::{Asserter, MockTransport};
 
 use degenbot_bot::connector_index::V2ConnectorIndex;
 use degenbot_bot::strategy_host::{FacetStatus, StrategyHost};
 use degenbot_eventhub::Hub;
+use degenbot_rpc::provider::AlloyProvider;
+use degenbot_simulation::sim::evm2::alloy_async_db::AlloyAsyncDb;
+use degenbot_simulation::sim::evm2::blocking_async_db::BlockingAsyncDb;
 use degenbot_substrate::driver_spawn::{DriverExit, DriverSpawnFactory};
 use degenbot_substrate::nonce::{NonceAuthority, StrategyId};
 use degenbot_substrate::RouteRegistry;
-use revm::database_interface::async_db::DatabaseAsyncRef;
-use revm::database_interface::{DatabaseRef, WrapDatabaseAsync};
-use revm::primitives::{Address, StorageKey, StorageValue, B256};
-use revm::state::AccountInfo;
+use evm2::evm::Database;
 
-/// A ready `DatabaseAsyncRef` so the wrapped read completes synchronously
-/// without a node; `Infallible` already implements `DBErrorMarker`.
-struct ReadyDb;
+/// The block every adapter read is fenced to.
+const READ_BLOCK: u64 = 1;
 
-impl DatabaseAsyncRef for ReadyDb {
-    type Error = core::convert::Infallible;
-
-    fn basic_async_ref(
-        &self,
-        _address: Address,
-    ) -> impl Future<Output = Result<Option<AccountInfo>, Self::Error>> + Send {
-        ready(Ok(None))
-    }
-
-    fn code_by_hash_async_ref(
-        &self,
-        _code_hash: B256,
-    ) -> impl Future<Output = Result<revm::bytecode::Bytecode, Self::Error>> + Send {
-        ready(Ok(revm::bytecode::Bytecode::default()))
-    }
-
-    fn storage_async_ref(
-        &self,
-        _address: Address,
-        _index: StorageKey,
-    ) -> impl Future<Output = Result<StorageValue, Self::Error>> + Send {
-        ready(Ok(StorageValue::ZERO))
-    }
-
-    fn block_hash_async_ref(
-        &self,
-        _number: u64,
-    ) -> impl Future<Output = Result<B256, Self::Error>> + Send {
-        ready(Ok(B256::ZERO))
-    }
+/// A provider answering [`AlloyProvider::get_account_at`]'s
+/// balance/nonce/code batch with an empty account — the offline read the
+/// ambient-runtime contract performs.
+fn offline_provider() -> AlloyProvider {
+    let asserter = Asserter::new();
+    asserter.push_success(&"0x0"); // eth_getBalance
+    asserter.push_success(&"0x0"); // eth_getTransactionCount
+    asserter.push_success(&"0x"); // eth_getCode
+    let client = ClientBuilder::default().transport(MockTransport::new(asserter), true);
+    let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
+    AlloyProvider::from_provider(Arc::new(dyn_provider) as Arc<dyn Provider<Ethereum>>)
 }
 
+/// The negative half: a current-thread runtime captures no handle, so the
+/// blocking adapter refuses to build (the failure mode the live run hit).
 #[tokio::test]
-async fn hosted_driver_builds_wrap_database_async() {
+async fn current_thread_runtime_captures_no_blocking_db() {
+    let provider = offline_provider();
+    let db = AlloyAsyncDb::new(&provider, READ_BLOCK);
+    assert!(
+        BlockingAsyncDb::new(db).is_none(),
+        "a current-thread runtime must not yield a blocking cold-miss adapter"
+    );
+}
+
+/// The positive half, driven through the real host edge.
+#[tokio::test]
+async fn hosted_driver_builds_the_blocking_db() {
     let mut host = StrategyHost::new(
         Arc::new(Hub::new()),
         Arc::new(RouteRegistry::new(V2ConnectorIndex::default())),
@@ -82,13 +81,13 @@ async fn hosted_driver_builds_wrap_database_async() {
     let spawn: DriverSpawnFactory = Box::new(move |_namespace| {
         Box::pin(async move {
             // The exact `BlockSimHandle::build_inner` construction contract.
-            let built = WrapDatabaseAsync::new(ReadyDb);
-            // The layer-read contract: `WrapDatabaseAsync`'s `DatabaseRef`
-            // impl blocks on the captured handle, which must be reachable via
-            // `block_in_place` from the driver's runtime context.
-            let read_ok = built
-                .as_ref()
-                .is_some_and(|db| DatabaseRef::basic_ref(db, Address::ZERO).is_ok());
+            let provider = offline_provider();
+            let db = AlloyAsyncDb::new(&provider, READ_BLOCK);
+            // The layer-read contract: the adapter's reads block on the
+            // captured handle, which must be reachable via `block_in_place`
+            // from the driver's runtime context.
+            let read_ok = BlockingAsyncDb::new(db)
+                .is_some_and(|mut db| matches!(db.get_account(&Address::ZERO), Ok(None)));
             contract_tx.send(read_ok).expect("driver contract receiver");
             DriverExit::Stopped
         })
@@ -103,6 +102,6 @@ async fn hosted_driver_builds_wrap_database_async() {
         contract_rx
             .await
             .expect("driver reported the callsite verdict"),
-        "hosted driver must expose a multi-thread runtime to WrapDatabaseAsync"
+        "hosted driver must expose a multi-thread runtime to the blocking cold-miss adapter"
     );
 }

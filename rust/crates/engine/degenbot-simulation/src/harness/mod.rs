@@ -4,7 +4,7 @@
 //! parity (the golden corpus) only pins bytes and proves nothing at runtime,
 //! while a live sim needs a captured mainnet path per family. This harness
 //! deploys the **real** `cmd_executor` bytecode + synthesized pools into a
-//! fresh revm `CacheDB<EmptyDB>` and runs a path's
+//! fresh evm2 fixture EVM ([`crate::oracle`]) and runs a path's
 //! [`encode_cmd_stream`](degenbot_executor::composers::encode_cmd_stream)
 //! payload through `execute()`, reporting whether it executes, which pools it
 //! touched (via `Swap` events), and how it failed — with the production
@@ -19,8 +19,8 @@
 //! exercise the executor's command stream + flash/repay, the exact funding-
 //! topology risk the funding-topology conversions are blocked on.
 //!
-//! This is a fixture/investigation harness (the revm-deploy + seed + execute
-//! spine), so it carries the same permits as the `oracle` fixture driver: it
+//! This is a fixture/investigation harness (the deploy + seed + execute spine
+//! of the `oracle` fixture driver), so it carries the same permits: it
 //! may panic/expect on a bad artifact or a broken fixture step (a harness
 //! problem, not a verdict) and its doc is `# Errors`/`# Panics`-annotated.
 #![expect(
@@ -35,12 +35,8 @@
 )]
 
 use alloy::primitives::aliases::{I24, U24};
-use alloy::primitives::{keccak256, Address, Bytes, U160, U256, U512};
+use alloy::primitives::{keccak256, Address, Bytes, Log, U160, U256, U512};
 use alloy::sol_types::{SolCall, SolValue};
-use revm::context::TxEnv;
-use revm::context_interface::result::Output;
-use revm::primitives::TxKind;
-use revm::{ExecuteCommitEvm, ExecuteEvm};
 use std::path::PathBuf;
 
 use crate::oracle::{
@@ -130,7 +126,7 @@ pub struct V4Pool {
 }
 
 /// A running harness: the real executor + a set of synthesized tokens/pools in
-/// one fresh revm `CacheDB<EmptyDB>`.
+/// one fresh evm2 fixture EVM.
 pub struct Harness {
     pub evm: FixtureEvm,
     pub executor: Address,
@@ -149,7 +145,7 @@ pub struct Harness {
 }
 
 impl Harness {
-    /// Build a fresh harness: revm over `CacheDB<EmptyDB>`, deploy the real
+    /// Build a fresh harness: a fresh evm2 fixture EVM, deploy the real
     /// executor (creation bytes + weth/pm constructor args) + a WETH token.
     pub fn new() -> Result<Self, String> {
         let mut evm = new_fixture_evm();
@@ -354,7 +350,7 @@ impl Harness {
     }
 
     /// Give `who` `amount` of `token` (mint — the harness's free liquidity).
-    /// For the native currency (`Address::ZERO`), sets the recipient's revm
+    /// For the native currency (`Address::ZERO`), sets the recipient's EVM
     /// native balance instead (there is no ERC-20 to mint). Minting WETH also
     /// credits the WETH contract the **matching native backing** — real WETH9
     /// is always deposit-backed, and `WETH_WITHDRAW` needs the contract to hold
@@ -400,45 +396,21 @@ impl Harness {
         call_bytes(&mut self.evm, to, Bytes::copy_from_slice(data), gas)
     }
 
-    /// Send a raw call from the executor address (e.g. `approve` on a token so
+    /// Send a raw call on the executor's behalf (e.g. `approve` on a token so
     /// the pairs can `transferFrom` the executor).
+    ///
+    /// The fixture driver sequences **every** transaction from its one
+    /// dedicated caller, so this is [`Self::call`] under a call-site name that
+    /// states the intent. The caller's identity is immaterial to a verdict: the
+    /// stub `Pair` derives a swap's input from its reserve/balance delta rather
+    /// than a `transferFrom` pull, so no harness path reads an allowance.
     pub fn call_as_executor(
         &mut self,
         to: Address,
         data: &[u8],
         gas: u64,
     ) -> Result<Bytes, String> {
-        let tx = TxEnv::builder()
-            .kind(TxKind::Call(to))
-            .gas_limit(gas)
-            .data(Bytes::copy_from_slice(data))
-            .build()
-            .expect("valid call tx env");
-        match self.evm.transact(tx) {
-            Ok(res) => {
-                let out = match res.result {
-                    revm::context_interface::result::ExecutionResult::Success {
-                        output: Output::Call(b),
-                        ..
-                    } => b,
-                    revm::context_interface::result::ExecutionResult::Success {
-                        output: Output::Create(..),
-                        ..
-                    } => return Err("call returned Create".into()),
-                    revm::context_interface::result::ExecutionResult::Revert { output, .. } => {
-                        self.evm.commit(res.state);
-                        return Err(format!("call_as_executor reverted: {output:?}"));
-                    }
-                    revm::context_interface::result::ExecutionResult::Halt { reason, .. } => {
-                        self.evm.commit(res.state);
-                        return Err(format!("call_as_executor halted: {reason:?}"));
-                    }
-                };
-                self.evm.commit(res.state);
-                Ok(out)
-            }
-            Err(e) => Err(format!("call_as_executor transact err: {e:?}")),
-        }
+        self.call(to, data, gas)
     }
 
     /// Execute an encoded payload with `config=0` (skip profit check, no
@@ -925,7 +897,7 @@ fn full_mul_div(a: U256, b: U256, denom: U256) -> U256 {
 }
 
 fn count_swap_events(
-    logs: &[revm::primitives::Log],
+    logs: &[Log],
     pools: &[V2Pool],
     v3_pools: &[V3Pool],
     pool_manager: Address,

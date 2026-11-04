@@ -37,11 +37,8 @@ mod tier3_v3_common;
 
 use hashbrown::{HashMap, HashSet};
 
-use alloy::primitives::{aliases::I256, Address, U256};
+use alloy::primitives::{aliases::I256, Address, Bytes, U256};
 use proptest::prelude::*;
-use revm::context_interface::result::{ExecutionResult, Output};
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
 
 use degenbot_math::concentrated_liquidity::tick_math::get_sqrt_ratio_at_tick_internal;
 use degenbot_pools::TickInfo;
@@ -54,6 +51,7 @@ use degenbot_pools::{
     V3PoolState,
 };
 use degenbot_pools::{ReorgJournal, V3BlockDelta};
+use degenbot_simulation::oracle;
 
 use tier3_v3_common::{
     build_arbitrary_v3_state, decode_error_string, run_onchain_swap, ArbV3Position,
@@ -68,35 +66,25 @@ const FORK: V3Fork = V3Fork {
     raise_eip170: false,
 };
 
-/// Seed a revm `CacheDB`'s pool account from a `V3PoolState` using the v3-core
+/// Seed the fixture EVM's pool account from a `V3PoolState` using the v3-core
 /// storage-slot encoders. Writes `slot0` (slot 0), `liquidity` (slot 4), every
 /// `ticks(tick)` entry (mapping base slot 5), and every occupied `tickBitmap(word)`
 /// (mapping base slot 6) — the full swap-math read set.
 fn seed_v3_pool_storage(
-    db: &mut CacheDB<EmptyDB>,
+    evm: &mut oracle::FixtureEvm,
     pool: Address,
     state: &V3PoolState,
     tick_spacing: i32,
 ) {
-    db.insert_account_storage(
-        pool,
-        U256::from(0u64),
-        encode_v3_slot0_fresh(state.sqrt_price_x96, state.tick),
-    )
-    .expect("seed slot0");
-    db.insert_account_storage(
-        pool,
-        U256::from(4u64),
-        encode_v3_liquidity_slot(state.liquidity),
-    )
-    .expect("seed liquidity");
+    let mut slots: Vec<(U256, U256)> = vec![
+        (
+            U256::from(0u64),
+            encode_v3_slot0_fresh(state.sqrt_price_x96, state.tick),
+        ),
+        (U256::from(4u64), encode_v3_liquidity_slot(state.liquidity)),
+    ];
     for (tick, info) in &state.tick_data {
-        db.insert_account_storage(
-            pool,
-            v3_tick_mapping_slot(*tick),
-            encode_v3_tick_info_slot(info),
-        )
-        .expect("seed tick info");
+        slots.push((v3_tick_mapping_slot(*tick), encode_v3_tick_info_slot(info)));
     }
     let mut word_positions: HashSet<i16> = HashSet::new();
     for &tick in state.tick_data.keys() {
@@ -107,20 +95,20 @@ fn seed_v3_pool_storage(
     for word_pos in word_positions {
         let word_value =
             compute_v3_tick_bitmap_word_from_raw(&state.tick_data, tick_spacing, word_pos);
-        db.insert_account_storage(pool, v3_tick_bitmap_word_slot(word_pos), word_value)
-            .expect("seed tickBitmap word");
+        slots.push((v3_tick_bitmap_word_slot(word_pos), word_value));
     }
+    oracle::seed_slots(evm, pool, &slots);
 }
 
 /// The `PoolSeeder` for the Uniswap fork — pass `seed_v3_pool_storage` where a
 /// `PoolSeeder` is expected.
 fn uniswap_seeder(
-    db: &mut CacheDB<EmptyDB>,
+    evm: &mut oracle::FixtureEvm,
     pool: Address,
     state: &V3PoolState,
     tick_spacing: i32,
 ) {
-    seed_v3_pool_storage(db, pool, state, tick_spacing);
+    seed_v3_pool_storage(evm, pool, state, tick_spacing);
 }
 
 /// Drive one on-chain swap and REQUIRES the pool to accept it (revert / halt
@@ -224,12 +212,7 @@ fn assert_byte_exact(
 /// storage-encoder-seeding pipeline reads back byte-exact (the prerequisite
 /// for the swap byte-exact assertion).
 #[test]
-#[expect(clippy::too_many_lines)]
 fn v3_pool_reads_back_seeded_state_byte_exact() {
-    use revm::context_interface::ContextTr;
-    use revm::primitives::TxKind;
-    use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
-
     let fee = 3000u32;
     let tick_spacing = 60i32;
 
@@ -239,97 +222,40 @@ fn v3_pool_reads_back_seeded_state_byte_exact() {
         fee,
         tick_spacing,
     ));
-    let db = CacheDB::new(EmptyDB::default());
-    let mut evm = revm::context::Context::mainnet()
-        .with_db(db)
-        .build_mainnet();
-    evm.ctx.cfg.disable_nonce_check = true;
 
-    let deploy_res = evm
-        .transact(
-            revm::context::TxEnv::builder()
-                .kind(TxKind::Create)
-                .gas_limit(16_700_000)
-                .data(revm::primitives::Bytes::from(init_code))
-                .build()
-                .expect("deploy tx"),
-        )
-        .expect("deploy transact");
-    let harness = match &deploy_res.result {
-        ExecutionResult::Success {
-            output: Output::Create(_, Some(addr)),
-            ..
-        } => *addr,
-        other => panic!("deploy did not create a contract: {other:?}"),
-    };
-    evm.commit(deploy_res.state);
+    let mut evm = oracle::new_fixture_evm();
+    oracle::set_disable_nonce_check(&mut evm, true);
 
-    let setup_res = evm
-        .transact(
-            revm::context::TxEnv::builder()
-                .kind(TxKind::Call(harness))
-                .gas_limit(16_700_000)
-                .data(revm::primitives::Bytes::from(
-                    tier3_v3_common::selector("setupPool()").to_vec(),
-                ))
-                .build()
-                .expect("setupPool tx"),
-        )
-        .expect("setupPool transact");
-    match &setup_res.result {
-        ExecutionResult::Success { .. } => {}
-        other => panic!("setupPool failed: {other:?}"),
-    }
-    evm.commit(setup_res.state);
+    let harness = oracle::deploy(&mut evm, Bytes::from(init_code), 16_700_000)
+        .expect("deploy did not create a contract");
 
-    let pool_res = evm
-        .transact(
-            revm::context::TxEnv::builder()
-                .kind(TxKind::Call(harness))
-                .gas_limit(2_000_000)
-                .data(revm::primitives::Bytes::from(
-                    tier3_v3_common::selector("pool()").to_vec(),
-                ))
-                .build()
-                .expect("pool() tx"),
-        )
-        .expect("pool() transact");
-    let pool_out = match &pool_res.result {
-        ExecutionResult::Success {
-            output: Output::Call(b),
-            ..
-        } => b.clone(),
-        other => panic!("pool() reverted: {other:?}"),
-    };
-    evm.commit(pool_res.state);
-    let mut pool_buf = [0u8; 32];
-    pool_buf.copy_from_slice(&pool_out.as_ref()[0..32]);
-    let pool = Address::from_slice(&pool_buf[12..32]);
+    oracle::call_bytes(
+        &mut evm,
+        harness,
+        Bytes::from(tier3_v3_common::selector("setupPool()").to_vec()),
+        16_700_000,
+    )
+    .expect("setupPool failed");
+
+    let pool = oracle::read_address(
+        &mut evm,
+        harness,
+        Bytes::from(tier3_v3_common::selector("pool()").to_vec()),
+        2_000_000,
+    )
+    .expect("pool() reverted");
 
     let liq = 1_000_000_000_000_000_000u128;
     let state = state_at_tick_zero(liq, tick_spacing);
-    seed_v3_pool_storage(evm.ctx.db_mut(), pool, &state, tick_spacing);
+    seed_v3_pool_storage(&mut evm, pool, &state, tick_spacing);
 
-    let s0_res = evm
-        .transact(
-            revm::context::TxEnv::builder()
-                .kind(TxKind::Call(pool))
-                .gas_limit(2_000_000)
-                .data(revm::primitives::Bytes::from(
-                    tier3_v3_common::selector("slot0()").to_vec(),
-                ))
-                .build()
-                .expect("slot0 tx"),
-        )
-        .expect("slot0 transact");
-    let s0_out = match &s0_res.result {
-        ExecutionResult::Success {
-            output: Output::Call(b),
-            ..
-        } => b.clone(),
-        other => panic!("slot0() reverted: {other:?}"),
-    };
-    evm.commit(s0_res.state);
+    let s0_out = oracle::call_bytes(
+        &mut evm,
+        pool,
+        Bytes::from(tier3_v3_common::selector("slot0()").to_vec()),
+        2_000_000,
+    )
+    .expect("slot0() reverted");
     let word = |i: usize| -> U256 {
         let mut buf = [0u8; 32];
         buf.copy_from_slice(&s0_out.as_ref()[i * 32..(i + 1) * 32]);
@@ -349,26 +275,13 @@ fn v3_pool_reads_back_seeded_state_byte_exact() {
     assert_eq!(on_tick, state.tick, "seeded tick read back");
     assert!(!word(6).is_zero(), "seeded slot0 unlocked (LOK-safe)");
 
-    let liq_res = evm
-        .transact(
-            revm::context::TxEnv::builder()
-                .kind(TxKind::Call(pool))
-                .gas_limit(2_000_000)
-                .data(revm::primitives::Bytes::from(
-                    tier3_v3_common::selector("liquidity()").to_vec(),
-                ))
-                .build()
-                .expect("liquidity tx"),
-        )
-        .expect("liquidity transact");
-    let liq_out = match &liq_res.result {
-        ExecutionResult::Success {
-            output: Output::Call(b),
-            ..
-        } => b.clone(),
-        other => panic!("liquidity() reverted: {other:?}"),
-    };
-    evm.commit(liq_res.state);
+    let liq_out = oracle::call_bytes(
+        &mut evm,
+        pool,
+        Bytes::from(tier3_v3_common::selector("liquidity()").to_vec()),
+        2_000_000,
+    )
+    .expect("liquidity() reverted");
     let mut liq_buf = [0u8; 32];
     liq_buf.copy_from_slice(&liq_out.as_ref()[0..32]);
     let liq_word = U256::from_be_bytes(liq_buf);
@@ -385,24 +298,8 @@ fn v3_pool_reads_back_seeded_state_byte_exact() {
             .into_raw()
             .to_be_bytes::<32>(),
     );
-    let tk_res = evm
-        .transact(
-            revm::context::TxEnv::builder()
-                .kind(TxKind::Call(pool))
-                .gas_limit(2_000_000)
-                .data(revm::primitives::Bytes::from(tick_call))
-                .build()
-                .expect("ticks tx"),
-        )
-        .expect("ticks transact");
-    let tk_out = match &tk_res.result {
-        ExecutionResult::Success {
-            output: Output::Call(b),
-            ..
-        } => b.clone(),
-        other => panic!("ticks() reverted: {other:?}"),
-    };
-    evm.commit(tk_res.state);
+    let tk_out = oracle::call_bytes(&mut evm, pool, Bytes::from(tick_call), 2_000_000)
+        .expect("ticks() reverted");
     let mut w = [0u8; 32];
     w.copy_from_slice(&tk_out.as_ref()[0..32]);
     let on_gross = U256::from_be_bytes(w) & tier3_v3_common::MASK_128;

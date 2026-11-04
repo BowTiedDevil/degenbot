@@ -12,7 +12,7 @@
 //!
 //! ## Layering (ADR-005 / ADR-019 D7)
 //!
-//! - **Engine** (`degenbot-simulation`): the in-process revm EVM handle
+//! - **Engine** (`degenbot-simulation`): the in-process evm2 EVM handle
 //!   (`BlockSimHandle`, layered DB, overrides, AL collector, warm cache).
 //!   Zero pyo3.
 //! - **Strategy** (`degenbot-arbitrage`): the settlement-arbitrage bundle —

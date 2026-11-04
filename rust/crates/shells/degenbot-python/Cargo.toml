@@ -55,7 +55,6 @@ degenbot-simulation = { workspace = true, optional = true }
 # in-memory DB; optional, riding the `simulation` feature.
 evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, optional = true, features = ["asm-keccak", "blst", "secp256k1", "serde"] }
 degenbot-workers = { workspace = true, optional = true }
-revm = { version = "^43.0", default-features = false }
 degenbot-arbitrage = { workspace = true, optional = true, features = ["order-index"] }
 # The core batch executor: the batch assembly + payload-merge policies the
 # simulation seams delegate to (one home with the executor's stage 1).

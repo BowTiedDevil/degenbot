@@ -1,6 +1,6 @@
 # ADR-091: Retire revm completely — evm2 as the sole EVM dependency
 
-**Status:** accepted (phases R0–R2 landed; R3–R5 in flight)
+**Status:** implemented (R0–R5 landed). revm is removed from every manifest and the lockfile; the Tier-3 suites, the oracle/harness/capture labs, and the wave-2/wave-3 cassette generators run on evm2 with zero divergence (the cassettes regenerate byte-identical).
 
 ## Context
 

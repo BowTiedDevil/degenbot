@@ -4,13 +4,13 @@
 //! the type `SimResult`, `FailBuckets`, `compute_priority_fee`, `fits_int128`,
 //! `SimulateContext`, `SimulatePath`, `BlockPriorityFees` (re-exported from
 //! `degenbot_rpc::fees` — the fee struct is market data, owned by the RPC
-//! crate per ADR-019 D5) + the priority-fee constants, + the in-process revm
+//! crate per ADR-019 D5) + the priority-fee constants, + the in-process
 //! 7-call vector `simulate_path_on_evm`, driven per-block through the settle
 //! verb a `SimSession` opens (`SimSession::run_sequence`).
 //!
 //! ADR-019 D4/D7 (decision R — Rust-canonical): this is the settlement-arbitrage bundle +
 //! gross/net + priority-fee sizing — one strategy over the
-//! `degenbot-simulation` engine. The engine owns the revm EVM handle
+//! `degenbot-simulation` engine. The engine owns the EVM handle
 //! (`BlockSimHandle`), the settle verb, the DB stack, overrides, + the AL
 //! inspector; this crate hands the session its 7 calls and reads the per-step
 //! results back. The Python driver is a
@@ -18,7 +18,7 @@
 //! it does NOT re-derive the 7-call bundle (AGENTS.md: "driver shell, not a
 //! co-implementation").
 //!
-//! # In-process revm sim
+//! # In-process sim
 //!
 //! Executes the 7-call vector (pre-balances → `execute()` → post-balances) via
 //! one `SimSession::run_sequence` of `transact_one` steps (the journaled state
@@ -36,6 +36,7 @@ use degenbot_core::{diag, diag_trace, op_info};
 
 use std::collections::BTreeMap;
 
+use alloy::eips::eip7825::MAX_TX_GAS_LIMIT_OSAKA;
 use alloy::primitives::{Address, TxKind, I256, U256};
 use alloy::rpc::types::AccessList;
 use degenbot_core::errors::{ProviderError, ProviderResult};
@@ -85,26 +86,27 @@ pub const MAX_PRIORITY_FEE_PERCENTILE: u64 = PRIORITY_FEE_PERCENTILES[P50_INDEX]
 /// `tx_params["gas"]`.
 pub const GAS_SAFETY_MARGIN: f64 = 1.5;
 
-/// The default gas cap for the `execute()` tx in the in-process revm sim —
-/// pinned to revm's EIP-7825 per-transaction gas-limit cap
-/// ([`revm::primitives::eip7825::TX_GAS_LIMIT_CAP`] = 16_777_216), the
+/// The default gas cap for the `execute()` tx in the in-process sim —
+/// pinned to EIP-7825's per-transaction gas-limit cap
+/// ([`MAX_TX_GAS_LIMIT_OSAKA`] = 2^24 = 16_777_216, the figure evm2's
+/// `Version::tx_gas_limit_cap` installs at Osaka), the
 /// realistic per-tx ceiling, replacing the defunct legacy 5M hard cap that
 /// false-OOG'd gas-hungry V3/V4 tick-crossing / USDT swaps which succeed
 /// on-chain. After the simulate returns the real `gasUsed`, `tx_params["gas"]`
 /// is overwritten with `gasUsed * 1.5` ([`GAS_SAFETY_MARGIN`]).
-pub const INITIAL_EXECUTE_GAS: u64 = revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
+pub const INITIAL_EXECUTE_GAS: u64 = MAX_TX_GAS_LIMIT_OSAKA;
 
 /// The env-var name overriding [`INITIAL_EXECUTE_GAS`]. The default is now the
 /// realistic EIP-7825 per-tx gas-limit cap (`16_777_216`), not the legacy 5M
 /// artificial ceiling that false-OOG'd gas-hungry swaps in sim while they
-/// succeed on-chain. revm's default `BlockEnv.gas_limit` here is `u64::MAX`
-/// (block-level validation never binds); at the Osaka spec revm's EIP-7825
-/// `tx_gas_limit_cap` is also `16_777_216`, so this value is both the default
-/// AND the effective ceiling — the override can only *lower* it (e.g. to a
-/// tighter submission budget) unless `tx_gas_limit_cap` is also uncapped via
+/// succeed on-chain. The engine's block gas limit is unbounded by default
+/// (block-level validation never binds); at the Osaka spec its EIP-7825
+/// `Version::tx_gas_limit_cap` is also `16_777_216`, so this value is both the
+/// default AND the effective ceiling — the override can only *lower* it (e.g.
+/// to a tighter submission budget) unless the cap is also lifted via
 /// `degenbot_simulation::oracle::set_tx_gas_limit_cap(u64::MAX)` (as the
-/// investigation oracle does), which lifts revm's EIP-7825 validation stop
-/// and lets it be raised toward the ~30M mainnet block ceiling.
+/// investigation oracle does), which removes the EIP-7825 validation stop and
+/// lets it be raised toward the ~30M mainnet block ceiling.
 pub const EXECUTE_GAS_ENV: &str = "DEGENBOT_SIM_EXECUTE_GAS";
 
 /// Read the effective `execute()` gas limit: `DEGENBOT_SIM_EXECUTE_GAS` when
