@@ -1,5 +1,5 @@
-//! Camelot-variant stable-pool invariant math — pure-Rust ports of
-//! `src/degenbot/calculations/camelot.py`.
+//! Camelot-variant stable-pool invariant math — pure-Rust ports of the
+//! deployed Camelot stable-pool contracts' `f()` / `k()` / `get_y` math.
 //!
 //! Camelot is a Solidly fork: same `k`/`D` shape but its own `f()` operation
 //! ordering + a simpler convergence check in `get_y_camelot`. Direct 1:1 ports.
@@ -9,7 +9,7 @@
 //! `get_y_camelot` reuses [`crate::solidly::solidly::calc_d`] (the analytic `D` is
 //! identical to Solidly's); only `f_camelot` / the convergence check differ.
 //! `k_camelot` is byte-identical to [`crate::solidly::solidly::calc_k`] (separate
-//! function for parity with the Python module that imports it by name).
+//! function because the Camelot contract addresses its own `k`).
 
 use alloy::primitives::U256;
 
@@ -17,14 +17,14 @@ use crate::solidly::{solidly::calc_d, SolidlyMathError, ONE};
 
 /// `f(x0, y) = x0 * (y^2 * y // 1e18) // 1e18 + (x0^2 * x0 // 1e18) * y // 1e18`.
 ///
-/// Direct port of `camelot.f_camelot`. Same mathematical form as
+/// Direct port of the Camelot contract's `f_camelot`. Same mathematical form as
 /// [`crate::solidly::solidly::calc_f`] but with the deployed-Camelot contract's
-/// operation-ordering (different intermediate-rounding). The Python
-/// `f_camelot` body uses left-associative `*`/`//` chains — expressed here
-/// as explicit temporaries so the rounding ordering is byte-identical.
+/// operation-ordering (different intermediate-rounding). The contract's
+/// left-associative `*`/`//` chains are expressed here as explicit
+/// temporaries so the rounding ordering is byte-identical.
 #[must_use]
 pub fn f_camelot(x0: U256, y: U256) -> U256 {
-    // Python source (left-associative):
+    // Contract source (left-associative):
     //   x0 * (y * y // 10**18 * y // 10**18) // 10**18
     //   + (x0 * x0 // 10**18 * x0 // 10**18) * y // 10**18
     let yy = y.wrapping_mul(y) / ONE;
@@ -37,8 +37,8 @@ pub fn f_camelot(x0: U256, y: U256) -> U256 {
 }
 
 /// `k = a*b` for unnormalized reserves. Same form as
-/// [`crate::solidly::solidly::calc_k`] but surfaced as a separate function (the Camelot
-/// Python module imports it by name).
+/// [`crate::solidly::solidly::calc_k`] but surfaced as a separate function
+/// (the Camelot contract addresses its own `k`).
 ///
 /// # Errors
 ///
@@ -62,11 +62,10 @@ pub fn k_camelot(
 
 /// Solve for `y` in the Camelot invariant using Newton's method.
 ///
-/// Direct port of `camelot.get_y_camelot`. Uses Solidly's
+/// Direct port of the Camelot contract's `get_y_camelot`. Uses Solidly's
 /// [`calc_d`] (same `D` analytic) but Camelot's `f_camelot` + a simpler
-/// convergence check (delta <= 1 in either direction). 255-iteration cap
-/// (the Python loop's `for _ in range(255)`), at which point it returns
-/// the last `y` (the oracle's `return y` after the loop — no revert).
+/// convergence check (delta <= 1 in either direction). 255-iteration cap, at
+/// which point it returns the last `y` (no revert).
 ///
 /// # Errors
 ///
@@ -79,17 +78,13 @@ pub fn get_y_camelot(x_0: U256, xy: U256, y_seed: U256) -> U256 {
         let y_prev = y;
         let k = f_camelot(x_0, y);
         // calc_d's zero case is impossible (we'd never get here with x0==0
-        // since f_camelot would short-circuit). Use wrapping div to mirror
-        // Solidity unchecked arithmetic; the Python oracle's full-precision
-        // int division maps cleanly when D ≠ 0.
+        // since f_camelot would short-circuit). Wrapping div mirrors Solidity
+        // unchecked arithmetic.
         let d = calc_d(x_0, y);
         if d.is_zero() {
-            // Mirrors the Python `solidly_calc_d` returning 0 → division
-            // by zero. The deployed Camelot contract would revert; the
-            // Python oracle propagates `ZeroDivisionError` and the caller
-            // (`calc_exact_in_stable`) re-wraps as `EVMRevertError`.
-            // `get_y_camelot` itself doesn't catch — we return y unchanged
-            // to mirror the Python's "no try/except in get_y_camelot".
+            // A zero `D` is a division-by-zero revert on the deployed Camelot
+            // contract. This leaf returns `y` unchanged instead and leaves the
+            // revert mapping to the seam that drives `calc_exact_in_stable`.
             return y;
         }
         if k < xy {
@@ -113,9 +108,8 @@ pub fn get_y_camelot(x_0: U256, xy: U256, y_seed: U256) -> U256 {
 /// `amountOut` for an exact-input swap to a Camelot stable pool. Pre-baked
 /// Camelot variant: uses [`k_camelot`] + [`get_y_camelot`].
 ///
-/// Direct port of `solidly_stable.calc_exact_in_stable` with
-/// `k_func=k_camelot` and `get_y_func=get_y_camelot`. Mirrors the Solidly
-/// orchestration
+/// The contract's exact-in-stable path with [`k_camelot`] +
+/// [`get_y_camelot`]. Mirrors the Solidly orchestration
 /// ([`crate::solidly::solidly::calc_exact_in_stable_solidly`]) but with the Camelot
 /// invariant helpers.
 ///

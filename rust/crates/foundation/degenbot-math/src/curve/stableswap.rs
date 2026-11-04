@@ -1,8 +1,10 @@
 //! Curve StableSwap invariant solvers + step functions.
 //!
-//! Direct Rust ports of `src/degenbot/calculations/stableswap.py` (themselves
-//! direct ports of the Vyper contract logic). All arithmetic is EVM-exact
-//! integer math over [`U256`]; overflow (a Vyper revert) surfaces as
+//! Direct Rust ports of the Vyper `get_D` / `get_y` / `get_y_D` /
+//! `calc_withdraw_one_coin` math of the deployed Curve V1 `StableSwap` pool
+//! contracts (`docs/architecture/curve-stableswap-reference.md` maps which pool
+//! version runs which variant). All arithmetic is EVM-exact integer math over
+//! [`U256`]; overflow (a Vyper revert) surfaces as
 //! [`CurveMathError::Overflow`]; non-convergence within 255 iterations surfaces
 //! as [`CurveMathError::NotConverged`].
 //!
@@ -17,11 +19,11 @@ use alloy::primitives::U256;
 
 /// Errors from the Curve StableSwap math solvers.
 ///
-/// Mirrors the Vyper contract's revert conditions: the Python oracle raises
-/// `ValueError` (non-convergence) or `AssertionError` (index / safety
-/// violations); the Rust port surfaces these as recoverable values so the
-/// eventual Rust `get_dy` can map them to typed
-/// Python exceptions without catching a panic.
+/// Mirrors the Vyper contract's revert conditions: an `assert` on an index or
+/// safety bound, checked-arithmetic overflow, and a 255-iteration
+/// non-convergence bail. Surfaced as recoverable values so the `get_dy` layer
+/// maps them to typed Python exceptions at the FFI seam without catching a
+/// panic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CurveMathError {
     /// A Newton iteration did not converge within 255 steps (Vyper revert).
@@ -170,7 +172,7 @@ pub fn calc_d(
     n_coins: U256,
     a_precision: U256,
 ) -> Result<U256> {
-    // Python oracle / Vyper order: `(a_nn * s) // a_precision` (multiply first,
+    // Vyper order: `(a_nn * s) // a_precision` (multiply first,
     // then truncate). Dividing `s` first loses up to `a_precision-1` wei.
     let lhs = checked_add(
         div(checked_mul(a_nn, s)?, a_precision)?,

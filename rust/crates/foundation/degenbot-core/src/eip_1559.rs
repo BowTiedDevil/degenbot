@@ -1,12 +1,12 @@
 //! EIP-1559 base-fee math (relocated from the retired single-function crate
 //! `degenbot-evm-math`).
 //!
-//! Pure-integer EVM math ported from the Python reference
-//! (`src/degenbot/calculations/evm_math.py`), which is retained as the **parity
-//! oracle** (the parity gate,
-//! `docs/architecture/parity-gate.md`). This module is the canonical Rust implementation, exposed
-//! to the Python driver as `degenbot._ffi.eip_1559` and to standalone consumers via
-//! the umbrella re-export (`degenbot::eip_1559`).
+//! The delta formula is the integer form of the example code in the
+//! [EIP-1559] proposal; this module is the canonical Rust implementation of it,
+//! exposed to the Python driver as `degenbot._ffi.eip_1559` and to standalone
+//! consumers via the umbrella re-export (`degenbot::eip_1559`).
+//!
+//! [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
 //!
 //! # Integer discipline
 //!
@@ -38,13 +38,12 @@ pub const DEFAULT_ELASTICITY_MULTIPLIER: u128 = 2;
 
 /// Calculate the next EIP-1559 base fee for a compatible blockchain.
 ///
-/// Ports `degenbot.calculations.evm_math.next_base_fee` (integer-exact, no
-/// float). The formula is taken from the example code in the [EIP-1559]
-/// proposal. The default `base_fee_max_change_denominator` (8) and
+/// Integer-exact (no float) evaluation of the formula in the [EIP-1559]
+/// proposal's example code. The default `base_fee_max_change_denominator` (8) and
 /// `elasticity_multiplier` (2) are taken from EIP-1559; non-Ethereum EIP-1559
 /// chains (e.g. some L2s) may override either.
 ///
-/// # Branch logic (matches the Python oracle exactly)
+/// # Branch logic
 ///
 /// - `parent_gas_used == target` → base fee is unchanged.
 /// - `parent_gas_used > target`  → base fee increases by `max(delta, 1)`
@@ -58,16 +57,16 @@ pub const DEFAULT_ELASTICITY_MULTIPLIER: u128 = 2;
 /// # `min_base_fee` clamp
 ///
 /// When `Some(min)`, the result is `max(min, working_base_fee)`. `None` applies
-/// no clamp. This preserves the Python oracle's `min_base_fee` argument, which
-/// supports non-Ethereum EIP-1559 chains that floor the base fee (e.g. Linea).
+/// no clamp. `min_base_fee` supports non-Ethereum EIP-1559 chains that floor
+/// the base fee (e.g. Linea).
 ///
 /// # Arguments
 ///
 /// - `parent_base_fee` — the parent block's base fee (wei).
 /// - `parent_gas_used` — gas consumed by the parent block.
 /// - `parent_gas_limit` — the parent block's gas limit (must be ≥
-///   `elasticity_multiplier` so the target is non-zero; a zero target mirrors
-///   the Python oracle, which raises `ZeroDivisionError`).
+///   `elasticity_multiplier` so the target is non-zero; a zero target is a
+///   division-by-zero revert).
 /// - `min_base_fee` — optional floor applied to the result.
 /// - `base_fee_max_change_denominator` — max per-block change denominator
 ///   (default 8).
@@ -124,20 +123,20 @@ mod tests {
 
     /// A parity-test fixture row:
     /// `(parent_base_fee, parent_gas_used, parent_gas_limit, min_base_fee,
-    ///   base_fee_max_change_denominator, elasticity_multiplier)` → oracle result.
+    ///   base_fee_max_change_denominator, elasticity_multiplier)` → expected result.
     type Case = (u128, u128, u128, Option<u128>, u128, u128, u128);
 
-    /// Convenience wrapper using the EIP-1559 defaults and no `min_base_fee`,
-    /// matching the Python oracle's most common call shape.
+    /// Convenience wrapper using the EIP-1559 defaults and no `min_base_fee`
+    /// — the common mainnet call shape.
     fn nbf(bf: u128, gu: u128, gl: u128) -> u128 {
         next_base_fee(bf, gu, gl, None, 8, 2)
     }
 
     // ---------------------------------------------------------------------------
-    // Parity fixtures: generated from the Python oracle
-    // `src/degenbot/calculations/evm_math.py` `next_base_fee`. Each row is
-    // (parent_base_fee, parent_gas_used, parent_gas_limit, min_base_fee,
-    //  denom, elasticity) => oracle result.
+    // Parity fixtures recorded from the Python reference implementation while
+    // it existed (the `src/degenbot/calculations/` package is gone). Each row
+    // is (parent_base_fee, parent_gas_used, parent_gas_limit, min_base_fee,
+    //  denom, elasticity) => expected result.
     // ---------------------------------------------------------------------------
     #[test]
     fn parity_vs_python_oracle() {
@@ -360,7 +359,7 @@ mod tests {
     #[test]
     fn property_max_change_bounded() {
         use proptest::prelude::*;
-        // Ranges kept modest so `bf * (gl - target)` fits `u128` in the oracle calc.
+        // Ranges kept modest so `bf * (gl - target)` fits `u128` in the bound check.
         proptest!(|(bf in 1u128..10u128.pow(30), gl in 4u128..100_000_000, denom in 2u128..=64)| {
             let target = gl / 2;
             if target > 0 {
@@ -379,9 +378,8 @@ mod tests {
     // Edge cases.
     // ---------------------------------------------------------------------------
 
-    /// `min_base_fee = Some(0)` is a no-op clamp (matches the Python oracle,
-    /// where `min_base_fee=0` is falsy and skipped — and `max(0, x) == x` for
-    /// unsigned x regardless).
+    /// `min_base_fee = Some(0)` is a no-op clamp (`max(0, x) == x` for unsigned
+    /// `x`).
     #[test]
     fn min_fee_zero_is_noop() {
         let none = next_base_fee(1_000_000_000, 0, 30_000_000, None, 8, 2);
@@ -391,7 +389,7 @@ mod tests {
     }
 
     /// The increase-floor: above target with a tiny `parent_base_fee`, the `max(_,1)`
-    /// floor bumps the fee by exactly 1 (mirrors the Python oracle).
+    /// floor bumps the fee by exactly 1.
     #[test]
     fn increase_floor_bumps_by_one() {
         // bf=1, target=1; gu=2>1 → gas_used_delta=1, delta=1*1//1//8=0 → max(0,1)=1 → 1+1=2

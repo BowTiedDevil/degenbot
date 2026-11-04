@@ -228,8 +228,8 @@ impl InlineSimHook {
         Arc::clone(&guard.1)
     }
 
-    /// The EIP-1559 `next_base_fee` (the `calculations/evm_math.py` port —
-    /// the worker-side twin of the driver's pre-sim computation).
+    /// The EIP-1559 `next_base_fee` — the worker-side twin of the driver's
+    /// pre-sim computation, evaluated in integers per the EIP-1559 formula.
     fn next_base_fee(req: &InlineSimRequest) -> u128 {
         if req.parent_base_fee == 0 {
             return 0; // pre-EIP-1559 / unknown parent

@@ -83,12 +83,11 @@ fn yd_variant_from_u8(d: u8) -> PyResult<YDVariant> {
 /// Translate a `CurveMathError` into the matching Python exception.
 ///
 /// All variants surface as `ValueError` carrying the Vyper revert shape the
-/// Python `DyCalculator` catches and re-wraps as `EVMRevertError(error=str(e))`
+/// driver's `DyCalculator` catches and re-wraps as `EVMRevertError(error=str(e))`
 /// — including overflow (Vyper uses checked uint256 arithmetic, so overflow is
-/// a revert, not a Python `OverflowError`). The Python oracle
-/// (`calculations/stableswap.py`) raises `ValueError` for the same conditions
-/// (Python big-ints can't overflow, so the only oracle raises are
-/// non-convergence / index / unsafe-value).
+/// a revert, not a Python `OverflowError`). The contracts revert on exactly
+/// these conditions: non-convergence, an out-of-range index, an `assert` on a
+/// safety bound, and checked-arithmetic overflow.
 fn curve_err(e: CurveMathError) -> PyErr {
     match e {
         CErr::Overflow => PyValueError::new_err("OVERFLOW"),

@@ -99,7 +99,7 @@ def calc_exact_in_volatile(
 ) -> Any:
     """
     `calc_exact_in_volatile` — Solidly volatile (`x*y >= k`) amount-out.
-    Direct port of `solidly_stable.calc_exact_in_volatile`.
+    Direct port of the deployed `Pool.sol`'s volatile `getAmountOut`.
 
     # Errors
 
@@ -159,14 +159,13 @@ def camelot_f(x0: Any, y: Any) -> Any:
 def camelot_get_y_camelot(x_0: Any, xy: Any, y: Any) -> Any:
     """
     `camelot_get_y_camelot` — Newton's-method `y` solve for the Camelot
-    invariant. Direct port of `camelot.get_y_camelot`. Takes `x_0, xy, y_seed`
-    (3-arg form — the Python oracle's 5-arg shape ignores the decimals pair).
+    invariant. Direct port of the deployed Camelot pool's `get_y_camelot`.
+    Takes `x_0, xy, y_seed` (the decimals pair plays no part in the solve).
 
     # Errors
 
     Never reverts from the loop; surfaces `ValueError` only if the inner
-    `calc_d` would divide by zero (the Python oracle propagates
-    `ZeroDivisionError` from `calc_d`).
+    `calc_d` would divide by zero (a revert on the deployed contract).
     """
 
 def camelot_k(balance_0: Any, balance_1: Any, decimals_0: Any, decimals_1: Any) -> Any:
@@ -181,7 +180,7 @@ def camelot_k(balance_0: Any, balance_1: Any, decimals_0: Any, decimals_1: Any) 
 def get_y_solidly(x0: Any, xy: Any, y: Any, decimals_0: Any, decimals_1: Any) -> Any:
     """
     `get_y_solidly` — Newton's-method `y` solve for the Solidly/Aerodrome
-    invariant. Direct port of `solidly_stable.get_y_solidly`.
+    invariant. Direct port of the deployed `Pool.sol`'s `get_y`.
 
     # Errors
 

@@ -5,20 +5,18 @@
 //! library functions.
 //
 // Lint allows: the variable names (`x0`, `y`, `a`, `b`, `k`, `xy`, `dy`)
-// mirror the deployed Solidity + the Python oracle
-// (`src/degenbot/calculations/{solidly_stable,camelot}.py`) notation
-// (1:1 direct ports), so renaming obscures the direct-port correspondence.
+// mirror the deployed Solidity notation (1:1 direct ports), so renaming
+// obscures the direct-port correspondence.
 #![expect(clippy::doc_markdown)]
 // Direct Solidity ports that mirror the deployed-contract control flow
 // (index-based loops, single-function 1:1 mirrors).
 //!
 //! Solidly-derived DEX math (Solidly/Aerodrome/Camelot), shaped like the Curve
 //! and Balancer math crates: a standalone, `pyo3`-free, `tokio`-free crate
-//! depending only on `alloy::primitives`. Cross-checked against the Python
-//! oracle (`src/degenbot/calculations/{solidly_stable,camelot}.py`) by the
-//! frozen oracle snapshot in `tests/oracle_crosscheck.rs`.
+//! depending only on `alloy::primitives`. Cross-checked against the frozen
+//! oracle snapshot in `tests/oracle_crosscheck_solidly.rs`.
 //!
-//! # Module layout (mirrors the Python module split)
+//! # Module layout
 //!
 //! - [`solidly`] — `calc_d` / `calc_k` / `calc_f` / `calc_exact_in_stable` /
 //!   `calc_exact_in_volatile` / `get_y_solidly` (Solidly / Aerodrome).
@@ -26,10 +24,9 @@
 //!
 //! # Design: closure-free API
 //!
-//! The Python oracle's `calc_exact_in_stable` accepts injected `k_func` /
-//! `get_y_func` closures so the same orchestration can route Aerodrome
-//! (`calc_k` + `get_y_solidly`) or Camelot (`k_camelot` + `get_y_camelot`).
-//! Rust's solver has no closure parameter: the two orchestration flavors
+//! The contract's exact-in-stable path routes through the per-DEX k/y pair:
+//! Aerodrome (`calc_k` + `get_y_solidly`) or Camelot (`k_camelot` +
+//! `get_y_camelot`). Rust's solver has no closure parameter: the two flavors
 //! are exposed as two distinct top-level entrypoints
 //! (`calc_exact_in_stable_solidly` / `calc_exact_in_stable_camelot`). This
 //! avoids `dyn Fn` indirection in the hot path and keeps the API
@@ -76,9 +73,9 @@ pub use solidly::{
 
 /// Errors raised by the Solidly / Camelot math ports.
 ///
-/// All variants surface to Python as `EVMRevertError` (matching the Python
-/// oracle's `InvalidUint256` / `EVMRevertError` for the Solidity-arithmetic
-/// reverts) or as `DegenbotValueError` (for invalid `token_in`).
+/// All variants surface to Python as `EVMRevertError` (the driver's class for
+/// a Solidity-arithmetic revert) or as `DegenbotValueError` (for invalid
+/// `token_in`).
 ///
 /// Mirrors `degenbot_math::balancer::BalancerMathError`: a plain `#[derive]`
 /// enum with no `thiserror` dep — the PyO3 binding layer translates each
@@ -87,15 +84,15 @@ pub use solidly::{
 pub enum SolidlyMathError {
     /// A computation produced a value outside the `uint256` range.
     ///
-    /// Mirrors the Python oracle's `raise_if_invalid_uint256` (Solidity
-    /// uses checked uint256 arithmetic — multiplication overflow reverts).
+    /// Mirrors the contract's `require(x <= type(uint256).max)` guard
+    /// (Solidity uses checked uint256 arithmetic — multiplication overflow
+    /// reverts).
     Overflow,
     /// `token_in` was not 0 or 1.
     InvalidTokenIn,
     /// Newton's method did not converge within 255 iterations.
     ///
-    /// Mirrors the Python oracle's
-    /// `raise EVMRevertError(error="Failed to converge on a value for y")`.
+    /// Mirrors the contract's "Failed to converge on a value for y" revert.
     DidNotConverge,
     /// `amount_out` was zero, so no input can produce a strictly-positive
     /// output. Mirrors the on-chain Solidly `getAmountIn` revert

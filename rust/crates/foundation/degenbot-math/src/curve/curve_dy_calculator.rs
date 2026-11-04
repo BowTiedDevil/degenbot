@@ -1,12 +1,15 @@
 //! Pure-Rust Curve swap `get_dy` + calculator layer.
 //!
-//! Ports the Python `curve/get_dy` orchestration into `degenbot-curve-math`:
-//! the per-`SwapStyle` calculators (`StandardDyCalculator`,
+//! Ports the deployed Curve V1 pools' `get_dy` / `get_dy_underlying`
+//! dispatch into `degenbot_math::curve`
+//! (`docs/architecture/curve-stableswap-reference.md` maps pool version →
+//! style): the per-`SwapStyle` calculators (`StandardDyCalculator`,
 //! `LiveAdminDynamicDyCalculator`, `CryptoDyCalculator`), the two metapool
 //! calculators (`MetapoolDyCalculator`, `MetapoolUnderlyingDyCalculator`),
 //! the dynamic-fee helper, and the A-ramping resolution — all as pure
-//! functions over a pre-resolved [`DyCalculationInputs`] snapshot (mirroring
-//! the Python `curve/calculators/*` + `_a()` + `_resolve_calculation_inputs`).
+//! functions over a pre-resolved [`DyCalculationInputs`] snapshot (rates and
+//! per-coin precisions arrive resolved; the contract reads them from its own
+//! storage, which is I/O the caller owns here).
 //! It reuses the already-ported D / Y / YD invariant primitives in
 //! [`crate::curve::stableswap`]; no I/O and no `pyo3`, so a standalone `cargo add
 //! degenbot` consumer can actually calculate a swap.
@@ -154,9 +157,9 @@ pub trait CurveBasePoolPort {
     ) -> Result<U256, CurveSwapError>;
 }
 
-/// Recoverable swap-calculation failure. Mirrors the Python calculator
-/// raising `EVMRevertError` (non-convergence / safety) or an assertion error
-/// (index / args).
+/// Recoverable swap-calculation failure. Mirrors the contract's reverts
+/// (non-convergence / safety `assert`) plus the driver's argument errors
+/// (out-of-range index, unknown style).
 #[derive(Debug, PartialEq, Eq)]
 pub enum CurveSwapError {
     /// The invariant solver rejected the inputs (non-convergence, overflow,
@@ -268,11 +271,10 @@ pub fn resolve_ramping_a(p: ARampingParams, timestamp: u64) -> Result<U256, Curv
     Ok(scaled)
 }
 
-/// Apply the `YVariant0` A_PRECISION divisor to a raw amp (mirrors the
-/// `y_variant == VARIANT_0` branch in `_resolve_calculation_inputs_via_io`).
+/// Apply the `YVariant0` A_PRECISION divisor to a raw amp.
 ///
-/// NOTE: only `VARIANT_0` divides by `a_precision` here — the Python companion
-/// resolves `amp = raw_a // A_PRECISION` iff `y_variant == VARIANT_0`. This is
+/// NOTE: only `VARIANT_0` divides by `a_precision` here (`amp = raw_a //
+/// A_PRECISION` iff `y_variant == VARIANT_0`). This is
 /// distinct from [`YVariant::omits_a_precision`], which ALSO omits for
 /// `VARIANT_1` but is used *inside* `stableswap_get_y`'s c/b formulas (a
 /// different, correct dual-use). Reusing `omits_a_precision()` here caused a
@@ -536,7 +538,7 @@ fn calculate_live_admin_dynamic_dy(
 // ---------------------------------------------------------------------------
 
 /// Tricrypto precision multipliers (hard-coded in the contract), mirrored
-/// verbatim from the Python.
+/// verbatim from the Vyper.
 const TRICRYPTO_PRECISIONS: [U256; 3] = [
     U256::from_limbs([1_000_000_000_000, 0, 0, 0]), // 1e12
     U256::from_limbs([10_000_000_000, 0, 0, 0]),    // 1e10

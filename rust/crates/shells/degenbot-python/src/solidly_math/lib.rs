@@ -54,18 +54,16 @@ fn u256_to_py_obj(py: Python<'_>, v: U256) -> PyResult<PyObject> {
 
 /// Translate a [`SolidlyMathError`] into the matching Python exception.
 ///
-/// Mirrors the Python oracle's exception shapes:
-/// - `Overflow` (the Python oracle's `InvalidUint256` / `EVMRevertError("Not a
-///   valid uint256")`) surfaces as `ValueError` carrying the Solidity revert
-///   string — this matches how the Python oracle raises in
-///   `calculations/evm_math.py:raise_if_invalid_uint256` and how the Python
-///   `solidly_stable.py:calc_exact_in_stable` re-wraps `ZeroDivisionError`
-///   into `EVMRevertError("Division by zero")` (caught by Aerodrome callers
-///   and surfaced to user code as `EVMRevertError`).
-/// - `InvalidTokenIn` (the oracle's `DegenbotValueError(message=...)`) surfaces
-///   as `ValueError` (the `DegenbotValueError` parent class).
-/// - `DidNotConverge` (the oracle's `EVMRevertError("Failed to converge on a
-///   value for y")`) surfaces as `ValueError` (the binding matches the
+/// Each variant names a revert the deployed pair can raise:
+/// - `Overflow` (the contract's `require(x <= type(uint256).max)` guard on the
+///   widened multiply) surfaces as the `Not a valid uint256` revert string, in
+///   the same class as the `"Division by zero"` revert the stable path can hit
+///   (caught by Aerodrome callers and surfaced to user code as
+///   `EVMRevertError`).
+/// - `InvalidTokenIn` surfaces as `ValueError` (the `DegenbotValueError`
+///   parent class).
+/// - `DidNotConverge` (the Newton solve's `"Failed to converge on a value for
+///   y"` revert) surfaces as `ValueError` (the binding matches the
 ///   curve/balancer pattern of converting revert-tagged errors to
 ///   `ValueError`).
 /// - `InsufficientOutputAmount` (the on-chain Solidly `getAmountIn` revert
@@ -177,7 +175,7 @@ pub fn camelot_k(
 // ─── Iterative solvers ──────────────────────────────────────────────────
 
 /// `get_y_solidly` — Newton's-method `y` solve for the Solidly/Aerodrome
-/// invariant. Direct port of `solidly_stable.get_y_solidly`.
+/// invariant. Direct port of the deployed `Pool.sol`'s `get_y`.
 ///
 /// # Errors
 ///
@@ -203,14 +201,13 @@ pub fn get_y_solidly(
 }
 
 /// `camelot_get_y_camelot` — Newton's-method `y` solve for the Camelot
-/// invariant. Direct port of `camelot.get_y_camelot`. Takes `x_0, xy, y_seed`
-/// (3-arg form — the Python oracle's 5-arg shape ignores the decimals pair).
+/// invariant. Direct port of the deployed Camelot pool's `get_y_camelot`.
+/// Takes `x_0, xy, y_seed` (the decimals pair plays no part in the solve).
 ///
 /// # Errors
 ///
 /// Never reverts from the loop; surfaces `ValueError` only if the inner
-/// `calc_d` would divide by zero (the Python oracle propagates
-/// `ZeroDivisionError` from `calc_d`).
+/// `calc_d` would divide by zero (a revert on the deployed contract).
 #[pyfunction(signature = (x_0, xy, y))]
 pub fn camelot_get_y_camelot(
     x_0: &Bound<'_, PyAny>,
@@ -229,7 +226,7 @@ pub fn camelot_get_y_camelot(
 // ─── Pre-baked orchestration entrypoints ────────────────────────────────
 
 /// `calc_exact_in_volatile` — Solidly volatile (`x*y >= k`) amount-out.
-/// Direct port of `solidly_stable.calc_exact_in_volatile`.
+/// Direct port of the deployed `Pool.sol`'s volatile `getAmountOut`.
 ///
 /// # Errors
 ///

@@ -2,8 +2,8 @@
 //! D/Y solvers and their variant forms.
 //
 // Lint allows: the single-char names (d, s, c, x, y) mirror the Vyper
-// contract + Python oracle notation, so renaming obscures the direct-port
-// correspondence; `StableSwap`/`D`/`Y` are domain terms that read better
+// contract notation, so renaming obscures the direct-port correspondence;
+// `StableSwap`/`D`/`Y` are domain terms that read better
 // without backticks; the step functions return `Result` for overflow/
 // non-convergence but their contracts are trivial (documented under the
 // solvers that call them).
@@ -23,11 +23,10 @@
 //! The counterpart of [`degenbot_math::concentrated_liquidity`] for the Curve
 //! StableSwap family: a standalone, `pyo3`-free, `tokio`-free crate depending
 //! only on `alloy::primitives`.
-//! Cross-checked against the Python oracle
-//! (`src/degenbot/calculations/stableswap.py`) by the property tests in this
-//! crate.
+//! Cross-checked against the frozen oracle snapshot
+//! (`tests/oracle_curve_snapshot.txt`) by `tests/oracle_crosscheck_curve.rs`.
 //!
-//! # Two function levels (mirroring the Python module)
+//! # Two function levels
 //!
 //! 1. **Step functions** ([`calc_d`], [`calc_dp`], …) — a single Newton step.
 //!    Variant selection is explicit via [`DVariant`], [`YVariant`],

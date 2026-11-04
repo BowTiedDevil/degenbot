@@ -1,25 +1,24 @@
-//! Solidly / Aerodrome stable-pool invariant math — pure-Rust ports of
-//! `src/degenbot/calculations/solidly_stable.py`.
+//! Solidly / Aerodrome stable-pool invariant math — pure-Rust ports of the
+//! deployed Solidity `Pool.sol` math.
 //!
-//! Direct 1:1 ports of the deployed Solidity `Pool.sol` math: 18-decimal
-//! fixed-point arithmetic, Newton's method solver for `y`, and the
-//! `calc_k` / `calc_f` / `calc_d` invariant-family helpers.
+//! Direct 1:1 ports: 18-decimal fixed-point arithmetic, Newton's method solver
+//! for `y`, and the `calc_k` / `calc_f` / `calc_d` invariant-family helpers.
 //!
 //! # Inputs (`U256`-bounded)
 //!
-//! All inputs are bounded `uint256` (Solidity's native width). The Python
-//! oracle's `raise_if_invalid_uint256` is reproduced via
+//! All inputs are bounded `uint256` (Solidity's native width). The contract's
+//! checked-arithmetic guard is reproduced via
 //! [`crate::solidly::SolidlyMathError::Overflow`] on every multiplication that
 //! Solidity would have checked.
 //!
 //! # `fee` representation
 //!
-//! The Python oracle accepts `fee: Fraction` (e.g. `Fraction(997, 1000)`
-//! for a 0.3% Solidly fee — `gamma_numer=997`, `gamma_denom=1000` retained
-//! post-fee fraction). Rust accepts `fee_numer` + `fee_denom` as two `U256`s
+//! The contract carries the fee as a post-fee fraction of the input
+//! (`997/1000` for a 0.3% Solidly fee — `gamma_numer=997`,
+//! `gamma_denom=1000`). Rust accepts `fee_numer` + `fee_denom` as two `U256`s
 //! to avoid either pulling `num-rational` into the pure-math leaf or
-//! surface-coupling the wrapper to the Python `Fraction` API. The pre-baked
-//! wrapper normalizes the PyO3 `Fraction`-shaped call into two integers.
+//! surface-coupling the wrapper to the Python `Fraction` API; the seam
+//! normalizes a rational fee into two integers.
 
 use alloy::primitives::U256;
 
@@ -27,21 +26,18 @@ use crate::solidly::{SolidlyMathError, ONE};
 
 /// `D = 3*x0*y^2 + x0^3*y`, all scaled by 10^18.
 ///
-/// Direct port of `solidly_stable.calc_d`. Used by `get_y_solidly`'s
-/// Newton step.
+/// Direct port of the contract's `calc_d`. Used by `get_y_solidly`'s Newton
+/// step.
 #[must_use]
 pub fn calc_d(x0: U256, y: U256) -> U256 {
-    // Mirrors the Python form:
+    // Mirrors the contract form:
     //   (3 * x0 * (y * y // 1e18)) // 1e18
     //   + (((x0 * x0) // 1e18) * x0) // 1e18
     //
     // All inner products overflow-check on Solidity; the deployed contract
     // checks `raise_if_invalid_uint256` only on `calc_k`'s `a * b` (the
-    // single widest multiply), NOT on `calc_d` / `calc_f`. The Python
-    // oracle's intermediate products silently wrap modulo 2^256 here too:
-    // no overflow check, mirroring Solidity unchecked arithmetic on the
-    // `calc_d`/`calc_f` paths (the deployed Solidly pool wraps them under
-    // `unchecked { }`).
+    // single widest multiply), NOT on `calc_d` / `calc_f`, whose intermediate
+    // products wrap modulo 2^256 under `unchecked { }`.
     let three = U256::from(3u64);
     let yy = y.wrapping_mul(y) / ONE;
     let term1 = three.wrapping_mul(x0).wrapping_mul(yy) / ONE;
@@ -51,12 +47,13 @@ pub fn calc_d(x0: U256, y: U256) -> U256 {
 }
 
 /// `k = a*b` for unnormalized reserves, where `a = x*y`, `b = x^2 + y^2`
-/// (reserves scaled by their decimals). Direct port of `solidly_stable.calc_k`.
+/// (reserves scaled by their decimals). Direct port of the contract's
+/// `calc_k`.
 ///
 /// # Errors
 ///
 /// Returns [`SolidlyMathError::Overflow`] if `a * b` exceeds `MAX_UINT256`
-/// (mirrors the Python `raise_if_invalid_uint256(a * b)` revert).
+/// (the contract's checked `a * b`).
 pub fn calc_k(
     balance_0: U256,
     balance_1: U256,
@@ -78,7 +75,7 @@ pub fn calc_k(
 
 /// `f(x0, y) = x0*y^3 + x0^3*y` (Solidly/Aerodrome invariant form).
 ///
-/// Direct port of `solidly_stable.calc_f`. Used by `get_y_solidly`'s loop.
+/// Direct port of the contract's `calc_f`. Used by `get_y_solidly`'s loop.
 #[must_use]
 pub fn calc_f(x0: U256, y: U256) -> U256 {
     let a = x0.wrapping_mul(y) / ONE;
@@ -89,7 +86,7 @@ pub fn calc_f(x0: U256, y: U256) -> U256 {
 /// Solve for `y` in the Solidly/Aerodrome invariant `f(x0, y) >= xy`.
 ///
 /// Newton's method on `f` against `D` (the analytic `calc_d`), bounded by
-/// 255 iterations. Direct port of `solidly_stable.get_y_solidly`.
+/// 255 iterations. Direct port of the contract's `get_y`.
 ///
 /// # Errors
 ///
@@ -159,7 +156,7 @@ pub fn get_y_solidly(
 
 /// `amountOut` for an exact-input swap to a Solidly volatile pool (`x*y >= k`).
 ///
-/// Direct port of `solidly_stable.calc_exact_in_volatile`.
+/// Direct port of the contract's `getAmountOut` volatile branch.
 ///
 /// # Errors
 ///
@@ -175,7 +172,7 @@ pub fn calc_exact_in_volatile(
     if token_in != 0 && token_in != 1 {
         return Err(SolidlyMathError::InvalidTokenIn);
     }
-    // Mirrors the Python form:
+    // Mirrors the contract form:
     //   amount_in_after_fee = amount_in - amount_in * fee_numer // fee_denom
     //   reserves_a, reserves_b = (reserves_0, reserves_1) if token_in == 0 else (reserves_1, reserves_0)
     //   return (amount_in_after_fee * reserves_b) // (reserves_a + amount_in_after_fee)
@@ -187,10 +184,9 @@ pub fn calc_exact_in_volatile(
     };
     let denom = reserves_a.wrapping_add(amount_in_after_fee);
     if denom.is_zero() {
-        // Solidity revert (Division or modulo by 0) — matches EVMRevertError
-        // raised when `ZeroDivisionError` fires in the Python `calc_exact_in_stable`
-        // path; the volatile path doesn't catch it in Python, but surfacing
-        // Overflow keeps the wrapper's revert-class uniform.
+        // Solidity revert (Division or modulo by 0) — surfaced as the same
+        // revert class as the stable path so the wrapper's error mapping stays
+        // uniform.
         return Err(SolidlyMathError::Overflow);
     }
     Ok(amount_in_after_fee.wrapping_mul(reserves_b) / denom)
@@ -200,16 +196,16 @@ pub fn calc_exact_in_volatile(
 /// (`x^3*y + y^3*x >= k`). Pre-baked Solidly/Aerodrome variant: uses
 /// [`calc_k`] + [`get_y_solidly`].
 ///
-/// Direct port of `solidly_stable.calc_exact_in_stable` with `k_func=calc_k`
-/// and `get_y_func=get_y_solidly`. The Camelot flavor
+/// The contract's exact-in-stable path with [`calc_k`] + [`get_y_solidly`].
+/// The Camelot flavor
 /// ([`crate::solidly::calc_exact_in_stable_camelot`]) uses `k_camelot` /
 /// `get_y_camelot`.
 ///
 /// # Errors
 ///
 /// - [`SolidlyMathError::InvalidTokenIn`] if `token_in` is not 0 or 1.
-/// - [`SolidlyMathError::Overflow`] on divide-by-zero (matches the Python
-///   oracle's `EVMRevertError("Division by zero")` raise).
+/// - [`SolidlyMathError::Overflow`] on divide-by-zero (the contract's
+///   `"Division by zero"` revert).
 /// - Propagates [`get_y_solidly`]'s revert on non-convergence.
 #[expect(clippy::too_many_arguments)]
 pub fn calc_exact_in_stable_solidly(
