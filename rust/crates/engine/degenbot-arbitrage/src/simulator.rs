@@ -329,6 +329,56 @@ pub struct RevertingFrame {
     pub gas_used: u64,
 }
 
+/// The shapes a zero-gross-profit simulation outcome can take, as a labeled
+/// discriminant rather than a `no-profit` catch-all.
+///
+/// One bucket used to carry two different verdicts: an ECONOMIC one (the path
+/// traded and its balance legs netted ≤ 0) and an ORCHESTRATION one
+/// (`execute()` emitted no swap at all — nothing ran). An empty
+/// `captured_swaps` list was documented as "`execute()` did nothing", so a
+/// record could not say which it was, and every legitimately empty list read as
+/// the other class. The captured swap set is the discriminator, so the label
+/// derives from the same record it labels and cannot disagree with the evidence
+/// beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoProfitShape {
+    /// Committed swaps were captured: the executor traded and the balance delta
+    /// still netted to zero — an economic verdict (`SolverCalc`/`Encoding`
+    /// suspect), not a no-op.
+    SwapsEmitted,
+    /// No committed swap, but swaps were captured inside REVERTED frames: the
+    /// frame classification disagrees with the balance delta (the pairing bug
+    /// `reverted_swaps` exists to expose).
+    SwapsReverted,
+    /// No swap captured anywhere: `execute()` did nothing (an empty encode, a
+    /// no-op executor) — the only case where that reading is honest.
+    ExecuteDidNothing,
+}
+
+impl NoProfitShape {
+    /// Classify a zero-gross outcome from its two captured swap sets.
+    #[must_use]
+    pub fn of(captured_swaps: &[CapturedSwap], reverted_swaps: &[CapturedSwap]) -> Self {
+        if !captured_swaps.is_empty() {
+            Self::SwapsEmitted
+        } else if !reverted_swaps.is_empty() {
+            Self::SwapsReverted
+        } else {
+            Self::ExecuteDidNothing
+        }
+    }
+
+    /// The `[sim] by reason` bucket label this shape tallies under.
+    #[must_use]
+    pub const fn bucket(self) -> &'static str {
+        match self {
+            Self::SwapsEmitted => "no-profit",
+            Self::SwapsReverted => "no-profit-reverted",
+            Self::ExecuteDidNothing => "execute-no-op",
+        }
+    }
+}
+
 /// A revert-bucket tally accumulator (ports `_tally_fail`, L1769–L1771).
 ///
 /// `_tally_fail(bucket)` does `_fail_buckets[bucket] = _fail_buckets.get(bucket, 0) + 1`.
@@ -413,17 +463,18 @@ impl FailBuckets {
     /// but WITHOUT a reverting frame (no call reverted). The companion to
     /// [`record`](Self::record) for the success-path-no-profit case: the
     /// inspector-captured `execute()` swap events ARE in scope at the
-    /// `no-profit` recording site (they are drained before the profit check),
-    /// but [`record`](Self::record) hardcodes `captured_swaps: Vec::new()`.
-    /// This variant surfaces them so the `[sim-fixture]` / `[sim-diag]` dumps
-    /// distinguish a no-op encoding (`captured_swaps` empty — `execute()` did
-    /// nothing) from a solver calc divergence (`captured_swaps` non-empty but
-    /// the balance delta netted to zero).
+    /// recording site (they are drained before the profit check), but
+    /// [`record`](Self::record) hardcodes `captured_swaps: Vec::new()`.
+    ///
+    /// The bucket is DERIVED from the swap sets ([`NoProfitShape::of`]), never
+    /// passed: a caller-supplied label let an empty `captured_swaps` list
+    /// record as a plain `no-profit`, which downstream reads as "the path
+    /// traded and earned nothing" when it means "`execute()` emitted no swap
+    /// at all". Callers cannot mislabel a shape they do not name.
     #[expect(clippy::too_many_arguments)] // path attribution + swap/trace/weth detail
     pub fn record_no_profit(
         &mut self,
         path_id: u64,
-        bucket: &str,
         captured_swaps: Vec<CapturedSwap>,
         reverted_swaps: Vec<CapturedSwap>,
         log_full_count: usize,
@@ -437,6 +488,7 @@ impl FailBuckets {
         erc6909_before: u128,
         erc6909_after: u128,
     ) {
+        let bucket = NoProfitShape::of(&captured_swaps, &reverted_swaps).bucket();
         self.tally(bucket);
         self.failures.push(SimFailure {
             path_id,
@@ -1424,7 +1476,6 @@ fn simulate_path_on_evm_seam(
             .collect();
         fail_buckets.record_no_profit(
             path.path_id,
-            "no-profit",
             captured_swaps.clone(),
             reverted_swaps.clone(),
             sequence.capture.log_count,
@@ -2136,9 +2187,10 @@ mod tests {
 
     /// The no-profit smoke: executor injected as EMPTY bytecode (no-op) → all 7
     /// calls succeed (balance calls to no-code accounts return empty → 0) →
-    /// pre==post → gross 0 → `no-profit` bucket. Proves the success-path
+    /// pre==post → gross 0 → the `execute-no-op` shape. Proves the success-path
     /// orchestration (7 transact_one, journal finalize, balance decode,
-    /// profit arithmetic, tally) runs end-to-end.
+    /// profit arithmetic, tally) runs end-to-end, and that the no-op shape is
+    /// named for what it is instead of posing as an economic `no-profit`.
     #[test]
     fn simulate_in_process_with_db_no_profit_path_smoke() {
         let asserter = Asserter::new();
@@ -2155,11 +2207,16 @@ mod tests {
         let path = smoke_v2_path(11);
         let result = simulate_in_process_with_db(&ctx, cache_db, &path, &mut buckets).unwrap();
         assert!(result.is_none(), "no-profit returns None");
-        assert_eq!(buckets.get("no-profit"), 1, "no-profit bucket tallied");
+        assert_eq!(
+            buckets.get("execute-no-op"),
+            1,
+            "the empty swap set names the no-op shape"
+        );
+        assert_eq!(buckets.get("no-profit"), 0, "not an economic no-profit");
         let failures = buckets.failures();
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].path_id, 11);
-        assert_eq!(failures[0].bucket, "no-profit");
+        assert_eq!(failures[0].bucket, "execute-no-op");
         assert!(failures[0].fail_index.is_none(), "no call reverted");
         // Empty-bytecode executor emits no Swap events; record_no_profit
         // surfaces the (empty) captured swaps instead of hardcoding Vec::new()
@@ -2167,6 +2224,95 @@ mod tests {
         assert!(
             failures[0].captured_swaps.is_empty(),
             "empty bytecode swaps"
+        );
+    }
+
+    /// The shape discriminator: a zero-gross outcome is named by what the
+    /// capture saw, so a no-profit that really swapped never reads as
+    /// "execute() did nothing" and a no-op never poses as an economic verdict.
+    #[test]
+    fn record_no_profit_names_the_shape_from_the_captured_swap_set() {
+        use degenbot_simulation::SwapFamily;
+
+        fn swap() -> CapturedSwap {
+            CapturedSwap {
+                emitter: Address::repeat_byte(0x42),
+                family: SwapFamily::V3,
+                amount0: alloy::primitives::I256::try_from(-1_000_i128).unwrap(),
+                amount1: alloy::primitives::I256::try_from(990_i128).unwrap(),
+                sqrt_price_x96: U256::ZERO,
+                liquidity: U256::ZERO,
+                tick: 0,
+            }
+        }
+
+        // (captured, reverted) → (bucket, shape)
+        for (captured, reverted, bucket, shape) in [
+            (
+                vec![swap()],
+                Vec::new(),
+                "no-profit",
+                super::NoProfitShape::SwapsEmitted,
+            ),
+            (
+                Vec::new(),
+                vec![swap()],
+                "no-profit-reverted",
+                super::NoProfitShape::SwapsReverted,
+            ),
+            (
+                Vec::new(),
+                Vec::new(),
+                "execute-no-op",
+                super::NoProfitShape::ExecuteDidNothing,
+            ),
+        ] {
+            let mut buckets = FailBuckets::new();
+            buckets.record_no_profit(
+                3,
+                captured,
+                reverted,
+                0,
+                1_000,
+                vec![990],
+                Vec::new(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            );
+            assert_eq!(buckets.get(bucket), 1, "tallied under its own shape");
+            let failures = buckets.failures();
+            assert_eq!(failures[0].bucket, bucket);
+            assert_eq!(shape.bucket(), bucket);
+            // The request's figures and the captured set ride the record —
+            // the dump is evidence, not an artifact.
+            assert_eq!(failures[0].optimal_input, 1_000);
+            assert_eq!(failures[0].hop_outputs, vec![990]);
+        }
+    }
+
+    /// The swap set is the discriminator, whichever way the sets come in: a
+    /// committed swap wins over a reverted one (a path that traded is an
+    /// economic verdict even if a later frame reverted).
+    #[test]
+    fn no_profit_shape_prefers_committed_swaps() {
+        use degenbot_simulation::SwapFamily;
+
+        let one = CapturedSwap {
+            emitter: Address::repeat_byte(0x42),
+            family: SwapFamily::V2,
+            amount0: alloy::primitives::I256::try_from(-5_i128).unwrap(),
+            amount1: alloy::primitives::I256::try_from(4_i128).unwrap(),
+            sqrt_price_x96: U256::ZERO,
+            liquidity: U256::ZERO,
+            tick: 0,
+        };
+        assert_eq!(
+            super::NoProfitShape::of(std::slice::from_ref(&one), std::slice::from_ref(&one)),
+            super::NoProfitShape::SwapsEmitted
         );
     }
 

@@ -45,8 +45,8 @@ use degenbot_arbitrage::{
     simulate_path_on_evm_in_span, FailBuckets, SimResult, SimulateContext, SimulatePath, SolveStep,
 };
 use degenbot_bot::arb_engine::{
-    AccessListRow, CapturedSwapRow, HookedLeg, HookedLegAnchor, HookedLegReQuote, InlineSimFailure,
-    InlineSimRequest, InlineSimulator, InlineSwapFamily, SimulatedPathResult,
+    AccessListRow, CapturedSwapRow, HookedLeg, HookedLegAnchor, HookedLegQuote, HookedLegReQuote,
+    InlineSimFailure, InlineSimRequest, InlineSimulator, InlineSwapFamily, SimulatedPathResult,
 };
 use degenbot_executor::composers::EncodeOptions;
 use degenbot_rpc::provider::AlloyProvider;
@@ -116,6 +116,30 @@ impl InlineSimHook {
 /// arms. With no failure record at all, the task outcome alone decides.
 fn should_reverify(task_excepted: bool, revert_data: Option<&[u8]>) -> bool {
     task_excepted || revert_data.is_some_and(|data| !data.is_empty())
+}
+
+/// The engine's primitive mirror of a captured swap, one row per decoded
+/// `Swap` event. The single conversion for both payload arms: a SUCCESSFUL
+/// sim's capture (the survivor's record) and a FAILED sim's capture (the
+/// failure dump) must arrive in the identical shape, or the classifier reads
+/// two different `captured_swaps` formats.
+fn captured_swap_rows(swaps: &[degenbot_arbitrage::CapturedSwap]) -> Vec<CapturedSwapRow> {
+    swaps
+        .iter()
+        .map(|s| CapturedSwapRow {
+            emitter: s.emitter,
+            family: match s.family {
+                SwapFamily::V2 => InlineSwapFamily::V2,
+                SwapFamily::V3 => InlineSwapFamily::V3,
+                SwapFamily::V4 => InlineSwapFamily::V4,
+            },
+            amount0: s.amount0,
+            amount1: s.amount1,
+            sqrt_price_x96: s.sqrt_price_x96,
+            liquidity: s.liquidity,
+            tick: s.tick,
+        })
+        .collect()
 }
 
 fn outputs_vec(req: &InlineSimRequest) -> Vec<u128> {
@@ -252,23 +276,7 @@ impl InlineSimHook {
                     })
                     .collect()
             }),
-            captured_swaps: sim
-                .captured_swaps
-                .iter()
-                .map(|s| CapturedSwapRow {
-                    emitter: s.emitter,
-                    family: match s.family {
-                        SwapFamily::V2 => InlineSwapFamily::V2,
-                        SwapFamily::V3 => InlineSwapFamily::V3,
-                        SwapFamily::V4 => InlineSwapFamily::V4,
-                    },
-                    amount0: s.amount0,
-                    amount1: s.amount1,
-                    sqrt_price_x96: s.sqrt_price_x96,
-                    liquidity: s.liquidity,
-                    tick: s.tick,
-                })
-                .collect(),
+            captured_swaps: captured_swap_rows(&sim.captured_swaps),
             hop_count: sim.hop_count,
             failure: None,
         }
@@ -745,7 +753,12 @@ impl InlineSimulator for InlineSimHook {
                     base_fee_next: 0,
                     execute_calldata: Vec::new(),
                     access_list: None,
-                    captured_swaps: Vec::new(),
+                    // The sim's own capture rides the failure payload. It used
+                    // to be dropped here (`Vec::new()`), which left every
+                    // inline-sim failure dump with `captured[]` — the ACTUAL
+                    // half of the expected-vs-actual comparison the trap exists
+                    // to capture, gone at the one site that had it.
+                    captured_swaps: captured_swap_rows(&f.captured_swaps),
                     hop_count,
                     failure: Some(InlineSimFailure {
                         fail_index: f.fail_index,
@@ -776,7 +789,7 @@ fn quote_leg_at_anchor(
     memo: &Arc<degenbot_simulation::StorageMemo>,
     anchor: HookedLegAnchor,
     leg: &HookedLeg,
-) -> Option<U256> {
+) -> Option<HookedLegQuote> {
     let counter = Arc::new(degenbot_simulation::sim::frame_replay::FrameRpcCounter::default());
     let blocking = degenbot_simulation::sim::evm2::blocking_async_db::BlockingAsyncDb::new(
         degenbot_simulation::sim::evm2::alloy_async_db::AlloyAsyncDb::new(provider, anchor.block),
@@ -830,7 +843,15 @@ fn quote_leg_at_anchor(
     };
     let v4_leg = degenbot_simulation::V4Leg::canonical(leg.pool_key.clone(), leg.zero_for_one);
     match quoter.quote(&mut scratch, &v4_leg, leg.amount_in) {
-        Ok(quote) => Some(quote.amount_out),
+        // Both halves ride out: the amount the clamp commits, and the frame's
+        // gas the admission floor charges in place of the hookless V4 row. The
+        // frame is the same one `docs/gas-estimation.md` fit that row on, so
+        // `gas_used` (not the quoter's diagnostic `gasEstimate` word) is the
+        // commensurable figure.
+        Ok(quote) => Some(HookedLegQuote {
+            amount_out: quote.amount_out,
+            gas: quote.gas_used,
+        }),
         // Fail-soft (ADR-090 §4): a refusal is the honest report that this
         // anchor cannot price the leg (a foreign manager, a frame limit, a
         // hook that needs settlement inside the swap). The clamp keeps the
@@ -850,12 +871,12 @@ fn quote_leg_at_anchor(
 }
 
 impl HookedLegReQuote for InlineSimHook {
-    fn requote_leg(&self, anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<U256> {
+    fn requote_leg(&self, anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<HookedLegQuote> {
         let provider = Arc::clone(&self.provider);
         let warm_cache = Arc::clone(&self.warm_cache);
         let memo = self.memo_for_block(anchor.block);
         let leg = leg.clone();
-        let drive = move || -> Option<U256> {
+        let drive = move || -> Option<HookedLegQuote> {
             let provider_inner = Arc::clone(&provider);
             let warm_inner = Arc::clone(&warm_cache);
             let memo_inner = Arc::clone(&memo);
@@ -922,6 +943,38 @@ mod tests {
         ));
         // an excepting sim task is state-suspect even with no revert data
         assert!(super::should_reverify(true, None));
+    }
+
+    /// The failure payload carries the sim's captured swap events through the
+    /// ONE conversion both payload arms use: a failed sim's dump then has the
+    /// ACTUAL amounts beside the request's expected ones.
+    #[test]
+    fn captured_swap_rows_maps_every_field_of_the_sim_capture() {
+        use degenbot_arbitrage::CapturedSwap;
+
+        let swap = CapturedSwap {
+            emitter: degenbot_core::address_utils::parse_address(
+                "0x1111111111111111111111111111111111111111",
+            )
+            .expect("valid fixture address"),
+            family: super::SwapFamily::V3,
+            amount0: alloy::primitives::I256::try_from(-1_000_i128).expect("fits i256"),
+            amount1: alloy::primitives::I256::try_from(997_i128).expect("fits i256"),
+            sqrt_price_x96: super::U256::from(12_345_u64),
+            liquidity: super::U256::from(7_u64),
+            tick: -7,
+        };
+        let rows = super::captured_swap_rows(std::slice::from_ref(&swap));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].family, super::InlineSwapFamily::V3);
+        assert_eq!(rows[0].emitter, swap.emitter);
+        assert_eq!(rows[0].amount0, swap.amount0);
+        assert_eq!(rows[0].amount1, swap.amount1);
+        assert_eq!(rows[0].sqrt_price_x96, swap.sqrt_price_x96);
+        assert_eq!(rows[0].liquidity, swap.liquidity);
+        assert_eq!(rows[0].tick, swap.tick);
+        // An empty capture stays empty (the no-op shape's evidence).
+        assert!(super::captured_swap_rows(&[]).is_empty());
     }
 
     #[test]

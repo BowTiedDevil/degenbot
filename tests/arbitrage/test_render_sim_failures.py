@@ -318,6 +318,100 @@ def test_failure_action_wire_drift_raises(
         failure_action("sim_failure", None)
 
 
+# ── The fixture dump renders the record's REAL figures ──────────────────
+
+
+def _fixture_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """The ``[sim-fixture]`` lines a trap-armed render emitted."""
+    return [r.message for r in caplog.records if r.message.startswith("[sim-fixture]")]
+
+
+def test_the_fixture_dump_prints_the_solver_amounts_in_hex(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A no-profit dump is EVIDENCE: the request's input, the solver's expected
+    per-hop outputs and the captured swap count all render on the header line —
+    as ``0x``-hex, the engine's own spelling, not decimal ints.
+
+    The trap exists to capture a fixture; a dump whose amounts render as ``0``
+    and ``[]`` (the pre-threading shape) is an artifact.
+    """
+    failures = [
+        {
+            "path_id": 1,
+            "bucket": "no-profit",
+            "fail_index": None,
+            "revert_data": "0x",
+            "optimal_input": 1_000,
+            "hop_outputs": [1_100, 1_000],
+            "captured_swaps": [
+                {
+                    "family": "v2",
+                    "emitter": "0x" + "bb" * 20,
+                    "amount0": -1_000,
+                    "amount1": 990,
+                    "sqrt_price_x96": 0,
+                    "liquidity": 0,
+                    "tick": 0,
+                }
+            ],
+        }
+    ]
+    with pytest.raises(SystemExit), caplog.at_level("ERROR", logger="degenbot"):
+        _render(_outcome(failures), armed=True, action=FailureAction.EXIT)
+
+    line = next(m for m in _fixture_lines(caplog) if "path=1 " in m)
+    assert "optimal_input=0x3e8" in line
+    assert "hop_outputs=[0x44c, 0x3e8]" in line
+    assert "swaps=1" in line
+    assert "bucket=no-profit" in line
+    # The expected amounts render hex on the hop header too.
+    assert any("hop_outputs=[0x44c, 0x3e8]" in m for m in _fixture_lines(caplog))
+
+
+def test_the_fixture_dump_shows_an_empty_swap_set_as_the_no_op_shape(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The emptiness discriminator is on the line: the engine NAMES the shape
+    (``execute-no-op``) and the renderer shows ``swaps=0``, so "execute() did
+    nothing" is never inferred from an empty list on a record that also claims
+    an economic no-profit.
+    """
+    failures = [
+        {
+            "path_id": 1,
+            "bucket": "execute-no-op",
+            "fail_index": None,
+            "revert_data": "0x",
+            "optimal_input": 1_000,
+            "hop_outputs": [1_000],
+            "captured_swaps": [],
+        }
+    ]
+    with pytest.raises(SystemExit), caplog.at_level("ERROR", logger="degenbot"):
+        _render(_outcome(failures), armed=True, action=FailureAction.EXIT)
+
+    line = next(m for m in _fixture_lines(caplog) if "path=1 " in m)
+    assert "bucket=execute-no-op" in line
+    assert "swaps=0" in line
+    assert not any("captured[" in m for m in _fixture_lines(caplog))
+
+
+def test_a_record_without_solver_figures_renders_unset_not_zero(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A record that genuinely carries no figures renders ``unset`` — a
+    missing value must not masquerade as a measured ``0x0``."""
+    failures = [{"path_id": 1, "bucket": "rpc-failed", "fail_index": None, "revert_data": "0x"}]
+    with pytest.raises(SystemExit), caplog.at_level("ERROR", logger="degenbot"):
+        _render(_outcome(failures), armed=True, action=FailureAction.EXIT)
+
+    line = next(m for m in _fixture_lines(caplog) if "path=1 " in m)
+    assert "optimal_input=unset" in line
+    assert "hop_outputs=unset" in line
+    assert "swaps=0" in line
+
+
 # ── Tripwire bucket-fatal semantics (fail hard + loud, no default mask) ──
 
 

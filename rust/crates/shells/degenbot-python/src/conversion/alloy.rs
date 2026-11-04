@@ -125,6 +125,39 @@ pub(crate) fn extract_python_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {
     Err(PyValueError::new_err("Value must be an integer or bytes"))
 }
 
+/// Extract an `I256` from a Python object (signed two's complement).
+///
+/// Accepts small integers directly (via `i128`) and larger ones through
+/// Python's `int.to_bytes(32, "big", signed=True)` — the same encoding the ABI
+/// argument conversion takes, so `I256::MIN` and every negative amount
+/// round-trip exactly. The mirror of [`extract_python_u256`] for the signed
+/// fields (a captured swap's `amount0`/`amount1` are deltas, negative for the
+/// paid-in side).
+///
+/// # Errors
+///
+/// Returns `PyValueError` if the object is not an integer or does not fit in
+/// 256 signed bits.
+pub(crate) fn extract_python_i256(obj: &Bound<'_, PyAny>) -> PyResult<I256> {
+    if let Ok(int_val) = obj.extract::<i128>() {
+        return I256::try_from(int_val)
+            .map_err(|_| PyValueError::new_err("Integer value out of range for int256"));
+    }
+    let int_type = pyo3::types::PyInt::type_object(obj.py());
+    if obj.is_instance(&int_type)? {
+        let kwargs = PyDict::new(obj.py());
+        kwargs.set_item("signed", true)?;
+        let bytes = obj.call_method("to_bytes", (32, "big"), Some(&kwargs))?;
+        let bytes: &[u8] = bytes.extract()?;
+        let raw = U256::from_be_bytes(
+            <[u8; 32]>::try_from(bytes)
+                .map_err(|_| PyValueError::new_err("Integer value out of range for int256"))?,
+        );
+        return Ok(I256::from_raw(raw));
+    }
+    Err(PyValueError::new_err("Value must be an integer"))
+}
+
 // =============================================================================
 // Python → AbiValue conversion
 // =============================================================================

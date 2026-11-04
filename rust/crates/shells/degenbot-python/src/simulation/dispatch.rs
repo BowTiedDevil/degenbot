@@ -12,12 +12,15 @@
 //! crate-side, and the Python view built at the boundary — no business logic in
 //! this wrapper.
 
+use crate::conversion::alloy::{extract_python_i256, extract_python_u256};
 use crate::prelude::*;
 use crate::simulation::render::path_info_to_py_dict;
+use degenbot_arbitrage::CapturedSwap;
 use degenbot_batch_executor::assembly::{merge_payload_results, PayloadArm};
 use degenbot_batch_executor::row::{PayloadFailure, PayloadRow};
 use degenbot_batch_executor::PathResolver;
 use degenbot_executor::composers::PathInfo;
+use degenbot_simulation::sim::capture::SwapFamily;
 use degenbot_submission::SubmitCandidate;
 use pyo3::exceptions::PyValueError;
 use pyo3::types::{PyBytes, PyDict, PyList};
@@ -232,6 +235,72 @@ pub(crate) fn payload_row_from_dict(entry: &Bound<'_, PyDict>) -> PyResult<Paylo
         execute_calldata: alloy::primitives::Bytes::copy_from_slice(calldata_bytes),
         access_list,
         failure,
+        captured_swaps: captured_swaps_from_payload(entry)?,
+    })
+}
+
+/// Build the crate's captured-swap rows from the payload's `captured_swaps`
+/// list — the result-channel dict shape (`family` / `emitter` / `amount0` /
+/// `amount1` / `sqrt_price_x96` / `liquidity` / `tick`).
+///
+/// A payload dict without the key (or with `None`) parses as EMPTY rather than
+/// failing: the capture is diagnostic detail, and a producer that predates it
+/// must still reach the batch. A row that IS present but malformed is loud (the
+/// seam never guesses an amount).
+fn captured_swaps_from_payload(entry: &Bound<'_, PyDict>) -> PyResult<Vec<CapturedSwap>> {
+    let Some(rows) = entry.get_item("captured_swaps")? else {
+        return Ok(Vec::new());
+    };
+    if rows.is_none() {
+        return Ok(Vec::new());
+    }
+    rows.try_iter()?
+        .map(|row| captured_swap_from_dict(&row?))
+        .collect()
+}
+
+/// Extract one captured-swap row dict into the core's [`CapturedSwap`].
+fn captured_swap_from_dict(row: &Bound<'_, PyAny>) -> PyResult<CapturedSwap> {
+    let row = row
+        .cast::<PyDict>()
+        .map_err(|_| PyValueError::new_err("payload captured_swaps rows must be dicts"))?;
+    let family_raw: String = row
+        .get_item("family")?
+        .ok_or_else(|| PyValueError::new_err("captured swap missing 'family'"))?
+        .extract()
+        .map_err(|_| PyValueError::new_err("captured swap 'family' must be a string"))?;
+    let family = match family_raw.to_ascii_uppercase().as_str() {
+        "V2" => SwapFamily::V2,
+        "V3" => SwapFamily::V3,
+        "V4" => SwapFamily::V4,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "unknown captured-swap family '{other}'"
+            )));
+        }
+    };
+    let emitter_raw: String = row
+        .get_item("emitter")?
+        .ok_or_else(|| PyValueError::new_err("captured swap missing 'emitter'"))?
+        .extract()
+        .map_err(|_| PyValueError::new_err("captured swap 'emitter' must be a string"))?;
+    let emitter = degenbot_core::address_utils::parse_address(&emitter_raw)
+        .map_err(|e| PyValueError::new_err(format!("bad captured-swap emitter: {e}")))?;
+    let field = |key: &str| -> PyResult<Bound<'_, PyAny>> {
+        row.get_item(key)?
+            .ok_or_else(|| PyValueError::new_err(format!("captured swap missing '{key}'")))
+    };
+    let tick: i32 = field("tick")?
+        .extract()
+        .map_err(|_| PyValueError::new_err("captured swap 'tick' must be an int"))?;
+    Ok(CapturedSwap {
+        emitter,
+        family,
+        amount0: extract_python_i256(&field("amount0")?)?,
+        amount1: extract_python_i256(&field("amount1")?)?,
+        sqrt_price_x96: extract_python_u256(&field("sqrt_price_x96")?)?,
+        liquidity: extract_python_u256(&field("liquidity")?)?,
+        tick,
     })
 }
 

@@ -30,11 +30,12 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use alloy::primitives::{B256, U256};
-use degenbot::arbitrage::{compute_priority_fee, BlockPriorityFees};
+use degenbot::arbitrage::{compute_priority_fee, BlockPriorityFees, CapturedSwap};
 use degenbot::batch_executor::{BatchWork, PathResolver, PayloadFailure, PayloadRow, RawResult};
-use degenbot::bot::arb_engine::{ResultBatch, SimulatedPathResult};
+use degenbot::bot::arb_engine::{InlineSwapFamily, ResultBatch, SimulatedPathResult};
 use degenbot::cmd_executor::composers::PathInfo;
 use degenbot::rpc::provider::AlloyProvider;
+use degenbot::simulation::sim::capture::SwapFamily;
 use degenbot::solvers::SolvePathResult;
 use degenbot::submission::{Dispatcher, ReceiptProbe, SubmissionError, SubmissionResult};
 
@@ -88,6 +89,29 @@ pub fn payload_row(sim: &SimulatedPathResult) -> PayloadRow {
             fail_index: failure.fail_index,
             revert_data: alloy::primitives::Bytes::from(failure.revert_data.clone()),
         }),
+        // The sim's own capture rides the row: a failed payload's dump then
+        // shows the ACTUAL swap amounts beside the request's expected ones,
+        // which is the whole point of the trap dump.
+        captured_swaps: sim.captured_swaps.iter().map(captured_swap).collect(),
+    }
+}
+
+/// The engine's primitive swap mirror back into the sim core's decoded swap
+/// (the driver-side half of the `degenbot-bot` seam's primitive mirror — this
+/// module owns the seam extraction, so the row translation lives here).
+fn captured_swap(row: &degenbot::bot::arb_engine::CapturedSwapRow) -> CapturedSwap {
+    CapturedSwap {
+        emitter: row.emitter,
+        family: match row.family {
+            InlineSwapFamily::V2 => SwapFamily::V2,
+            InlineSwapFamily::V3 => SwapFamily::V3,
+            InlineSwapFamily::V4 => SwapFamily::V4,
+        },
+        amount0: row.amount0,
+        amount1: row.amount1,
+        sqrt_price_x96: row.sqrt_price_x96,
+        liquidity: row.liquidity,
+        tick: row.tick,
     }
 }
 
@@ -279,7 +303,8 @@ pub async fn record_fee_history(
 mod tests {
     use super::*;
     use crate::consume::BlockClock;
-    use degenbot::bot::arb_engine::{AccessListRow, InlineSimFailure};
+    use alloy::primitives::I256;
+    use degenbot::bot::arb_engine::{AccessListRow, CapturedSwapRow, InlineSimFailure};
     use degenbot::cmd_executor::composers::{HopInfo, V2HopInfo, V3HopInfo};
     use degenbot::core::address_utils::parse_address;
 
@@ -357,7 +382,15 @@ mod tests {
                 address: parse_address("0x1111111111111111111111111111111111111111").unwrap(),
                 storage_keys: vec![U256::from(3_u64)],
             }]),
-            captured_swaps: Vec::new(),
+            captured_swaps: vec![CapturedSwapRow {
+                emitter: parse_address("0x4444444444444444444444444444444444444444").unwrap(),
+                family: InlineSwapFamily::V2,
+                amount0: I256::try_from(-1_000_i128).unwrap(),
+                amount1: I256::try_from(3_000_i128).unwrap(),
+                sqrt_price_x96: U256::ZERO,
+                liquidity: U256::ZERO,
+                tick: 0,
+            }],
             hop_count: 2,
             failure: Some(InlineSimFailure {
                 fail_index: Some(3),
@@ -378,6 +411,22 @@ mod tests {
         assert_eq!(failure.bucket, "no-profit");
         assert_eq!(failure.fail_index, Some(3));
         assert_eq!(failure.revert_data.as_ref(), &[0x01, 0x02][..]);
+        // The capture projects with its family + both signed amounts — the
+        // failure dump's ACTUAL half.
+        assert_eq!(row.captured_swaps.len(), 1);
+        assert_eq!(row.captured_swaps[0].family, SwapFamily::V2);
+        assert_eq!(
+            row.captured_swaps[0].emitter,
+            parse_address("0x4444444444444444444444444444444444444444").unwrap()
+        );
+        assert_eq!(
+            row.captured_swaps[0].amount0,
+            I256::try_from(-1_000_i128).unwrap()
+        );
+        assert_eq!(
+            row.captured_swaps[0].amount1,
+            I256::try_from(3_000_i128).unwrap()
+        );
 
         // A healthy payload carries no failure.
         let healthy = SimulatedPathResult {

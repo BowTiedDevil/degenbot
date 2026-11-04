@@ -459,6 +459,31 @@ def _render_profit_logs(outcome: MergedOutcome) -> None:
         )
 
 
+def _hex_amount(value: object) -> str:
+    """Render one solver amount as the ``0x``-hex the engine's dumps carry.
+
+    ``None`` renders as ``unset``: a record that never carried the figure is
+    visibly missing rather than a plausible ``0x0``.
+
+    Returns:
+        The ``0x<hex>`` amount, or ``unset`` when the record has no value.
+
+    """
+    return f"0x{value:x}" if isinstance(value, int) else "unset"
+
+
+def _hex_amounts(values: object) -> str:
+    """Render a per-hop amount list as ``[0x…, 0x…]`` (the engine's spelling).
+
+    Returns:
+        The bracketed hex list, or ``unset`` when the record has no list.
+
+    """
+    if not isinstance(values, (list, tuple)):
+        return "unset"
+    return "[" + ", ".join(f"0x{int(v):x}" for v in values) + "]"
+
+
 def _dump_failure_fixture(
     rec: dict[str, Any],
     path_info: dict[str, Any] | None,
@@ -476,7 +501,9 @@ def _dump_failure_fixture(
     bot_logger.error(
         f"[sim-fixture] path={path_id} block={current_block} "
         f"bucket={rec.get('bucket')} fail_index={rec.get('fail_index')} "
-        f"optimal_input={optimal_input} "
+        f"optimal_input={_hex_amount(optimal_input)} "
+        f"hop_outputs={_hex_amounts(hop_outputs)} "
+        f"swaps={len(captured)} "
         f"revert={rec.get('revert_data', '')[:10]}…",
     )
 
@@ -489,7 +516,7 @@ def _dump_failure_fixture(
 
     bot_logger.error(
         f"[sim-fixture] path_type={path_info.get('path_type')} hops={len(hops)} "
-        f"hop_outputs={hop_outputs}",
+        f"hop_outputs={_hex_amounts(hop_outputs)}",
     )
 
     for i, h in enumerate(hops):

@@ -131,6 +131,14 @@ pub struct AssembledBatch {
 pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, AssemblyError> {
     let mut batch = AssembledBatch::default();
     let mut path_info_by_id: HashMap<u64, PathInfo> = HashMap::new();
+    // The solver request row per path — the figures the inline sim was issued
+    // from. A payload row carries only its verdict, so a payload FAILURE's dump
+    // reads `optimal_input`/`hop_outputs` off this map: the batch's own request
+    // rows, beside the payload, never the engine's result store (a retried or
+    // expired candidate has already left it, which is exactly how every dump
+    // came to render `optimal_input=0 hop_outputs=[]`).
+    let request_by_path: HashMap<u64, &RawResult> =
+        inputs.rows.iter().map(|row| (row.path_id, row)).collect();
 
     // ── Raw rows ─────────────────────────────────────────────────────────
     // Order: empty-hops, payload-served, resolve, shape — the PyO3 seam's
@@ -316,7 +324,7 @@ pub fn assemble_batch(inputs: &AssemblyInputs<'_>) -> Result<AssembledBatch, Ass
             });
         };
         let view = PathInfoView::from(&path_info);
-        if let Some(detail) = p.failure_detail() {
+        if let Some(detail) = p.failure_detail(request_by_path.get(&p.path_id).copied()) {
             batch.outcomes.push(BatchOutcome {
                 path_id: p.path_id,
                 block: inputs.current_block,
@@ -721,6 +729,7 @@ mod tests {
             execute_calldata: alloy::primitives::Bytes::from_static(&[0xab]),
             access_list: None,
             failure: None,
+            captured_swaps: Vec::new(),
         };
         let batch = assemble(&[row(7, 1_000, 100)], &[payload], &res, &p).unwrap();
         let verdicts: Vec<AssemblyVerdict> = batch.outcomes.iter().map(|o| o.assembly).collect();
@@ -878,6 +887,7 @@ mod tests {
                 fail_index: None,
                 revert_data: alloy::primitives::Bytes::new(),
             }),
+            captured_swaps: Vec::new(),
         };
         let batch = assemble(&[], &[payload], &res, &p).unwrap();
         assert_eq!(batch.outcomes.len(), 1);
@@ -885,6 +895,108 @@ mod tests {
             batch.outcomes[0].simulate,
             Some(SimulateVerdict::Failed(_))
         ));
+    }
+
+    /// A payload FAILURE's detail carries the batch request's real figures
+    /// (`optimal_input` + expected `hop_outputs`) and the payload's own captured
+    /// swaps. Without the join the dump renders `optimal_input=0
+    /// hop_outputs=[] captured[]` for every inline failure — an artifact, not
+    /// evidence.
+    #[test]
+    fn payload_failure_detail_threads_the_request_and_the_capture() {
+        use degenbot_arbitrage::CapturedSwap;
+        use degenbot_simulation::SwapFamily;
+
+        let res = resolver(&[9]);
+        let p = Policy::fresh();
+        let captured = CapturedSwap {
+            emitter: degenbot_core::address_utils::parse_address(
+                "0x1111111111111111111111111111111111111111",
+            )
+            .unwrap(),
+            family: SwapFamily::V2,
+            amount0: alloy::primitives::I256::try_from(-1_000_i128).unwrap(),
+            amount1: alloy::primitives::I256::try_from(990_i128).unwrap(),
+            sqrt_price_x96: alloy::primitives::U256::ZERO,
+            liquidity: alloy::primitives::U256::ZERO,
+            tick: 0,
+        };
+        let payload = PayloadRow {
+            path_id: 9,
+            gross_profit: alloy::primitives::U256::ZERO,
+            net_profit: alloy::primitives::U256::ZERO,
+            gas_used: 0,
+            priority_fee: 0,
+            base_fee_next: 0,
+            execute_calldata: alloy::primitives::Bytes::new(),
+            access_list: None,
+            failure: Some(PayloadFailure {
+                bucket: "no-profit".to_string(),
+                fail_index: None,
+                revert_data: alloy::primitives::Bytes::new(),
+            }),
+            captured_swaps: vec![captured.clone()],
+        };
+        // The batch's own solver row for the path — the request the inline sim
+        // ran on (the same batch carries it; a payload-served row is skipped
+        // from the sim lane, not from the record).
+        let request = row(9, 1_234, 5_678);
+        let batch = assemble(&[request], &[payload], &res, &p).unwrap();
+        let failed = batch
+            .outcomes
+            .iter()
+            .find(|o| matches!(o.simulate, Some(SimulateVerdict::Failed(_))))
+            .expect("the payload arm must emit a failed record");
+        let Some(SimulateVerdict::Failed(detail)) = failed.simulate.as_ref() else {
+            unreachable!("selected by the Failed predicate above");
+        };
+        assert_eq!(detail.bucket, "no-profit");
+        assert_eq!(detail.optimal_input, 1_234, "the request's input");
+        assert_eq!(detail.hop_outputs, vec![5_678], "the request's outputs");
+        assert_eq!(detail.captured_swaps, vec![captured]);
+    }
+
+    /// With no request row in the batch beside the payload (the standalone
+    /// payload-only arm), the join is ABSENT rather than wrong: the figures stay
+    /// `0`/`[]` and the captured swaps still ride the record.
+    #[test]
+    fn payload_failure_without_a_request_row_still_carries_the_capture() {
+        use degenbot_arbitrage::CapturedSwap;
+        use degenbot_simulation::SwapFamily;
+
+        let captured = CapturedSwap {
+            emitter: degenbot_core::address_utils::parse_address(
+                "0x1111111111111111111111111111111111111111",
+            )
+            .unwrap(),
+            family: SwapFamily::V3,
+            amount0: alloy::primitives::I256::try_from(-7_i128).unwrap(),
+            amount1: alloy::primitives::I256::try_from(6_i128).unwrap(),
+            sqrt_price_x96: alloy::primitives::U256::ZERO,
+            liquidity: alloy::primitives::U256::ZERO,
+            tick: 0,
+        };
+        let payload = PayloadRow {
+            path_id: 9,
+            gross_profit: alloy::primitives::U256::ZERO,
+            net_profit: alloy::primitives::U256::ZERO,
+            gas_used: 0,
+            priority_fee: 0,
+            base_fee_next: 0,
+            execute_calldata: alloy::primitives::Bytes::new(),
+            access_list: None,
+            failure: Some(PayloadFailure {
+                bucket: "unknown:0xcafebabe".to_string(),
+                fail_index: Some(3),
+                revert_data: alloy::primitives::Bytes::from_static(&[0xca, 0xfe]),
+            }),
+            captured_swaps: vec![captured.clone()],
+        };
+        let detail = payload.failure_detail(None).expect("failure detail");
+        assert_eq!(detail.optimal_input, 0);
+        assert!(detail.hop_outputs.is_empty());
+        assert_eq!(detail.captured_swaps, vec![captured]);
+        assert_eq!(detail.revert_data.as_ref(), &[0xca, 0xfe]);
     }
 
     // ── Moved from the PyO3 seam (the join's one home is here now) ────────
@@ -1029,6 +1141,7 @@ mod tests {
                 execute_calldata: alloy::primitives::Bytes::from_static(&[0xab]),
                 access_list: None,
                 failure: None,
+                captured_swaps: Vec::new(),
             },
             PayloadRow {
                 path_id: 8,
@@ -1040,6 +1153,7 @@ mod tests {
                 execute_calldata: alloy::primitives::Bytes::from_static(&[0xab]),
                 access_list: None,
                 failure: None,
+                captured_swaps: Vec::new(),
             },
             PayloadRow {
                 path_id: 9,
@@ -1055,6 +1169,7 @@ mod tests {
                     fail_index: None,
                     revert_data: alloy::primitives::Bytes::new(),
                 }),
+                captured_swaps: Vec::new(),
             },
         ];
         let merged = merge_payload_results(&payloads, &res, EXECUTOR).unwrap();
@@ -1091,6 +1206,7 @@ mod tests {
             execute_calldata: alloy::primitives::Bytes::from_static(&[0xab]),
             access_list: None,
             failure: None,
+            captured_swaps: Vec::new(),
         }];
         let err = merge_payload_results(&payloads, &res, EXECUTOR).unwrap_err();
         assert_eq!(err.path_id, 11);

@@ -25,6 +25,7 @@ from degenbot.dispatch import (
     TxSigner,
     typed_submit_record,
 )
+from degenbot.runner._dispatch import RawEngineResult
 from degenbot.runner._render import MergedOutcome
 from degenbot.runner._sim_submit import BatchWork
 from tests.helpers.seam import AlloyProvider, AsyncAlloyProvider, build_batch_executor_py
@@ -140,3 +141,126 @@ class TestEnqueueDrainFold:
         assert bool(outcome)
         # The lane is drained.
         assert await executor.next_outcome() is None
+
+
+class TestPayloadFailureDetail:
+    """A payload FAILURE's dump record carries the real figures.
+
+    The inline-sim arm builds its failure record from the payload, which carries
+    only the bucket + revert bytes. The request's ``optimal_input`` / expected
+    ``hop_outputs`` are joined from the batch's own solver row at the failure
+    site, and the sim's captured swaps ride the payload — so the trap's
+    ``[sim-fixture]`` dump is evidence, not ``optimal_input=0 hop_outputs=[]``.
+    """
+
+    async def test_the_failure_detail_threads_the_request_and_the_capture(
+        self, nxm2bf_v2_engine_and_path
+    ) -> None:
+        engine, path_id = nxm2bf_v2_engine_and_path
+        executor = _executor(engine)
+        swap = {
+            "family": "V2",
+            "emitter": "0x" + "cc" * 20,
+            "amount0": -1_000,
+            "amount1": 3_000,
+            "sqrt_price_x96": 0,
+            "liquidity": 0,
+            "tick": 0,
+        }
+        payload = inline_sim_payload(
+            path_id,
+            net=0,
+            failure={"bucket": "no-profit", "fail_index": None, "revert_data": "0x"},
+        )
+        payload["captured_swaps"] = [swap]
+        executor.enqueue(
+            BatchWork(
+                # The batch's own solver row for the path — the request the
+                # inline sim was issued from (payload-served rows are skipped
+                # from the sim lane, not from the batch).
+                results=[
+                    RawEngineResult(
+                        path_id=path_id,
+                        optimal_input=1_000,
+                        engine_profit=1,
+                        hop_outputs=(1_100, 1_000),
+                        consumed_inputs=(1_000, 1_100),
+                        solve_block=100,
+                        state_nonces=(0, 0),
+                    )
+                ],
+                block_timestamp=1_700_000_000,
+                base_fee_next=30,
+                current_block=100,
+                payloads={path_id: payload},
+            )
+        )
+        await executor.shutdown()
+
+        batch = await executor.next_outcome()
+        assert batch is not None
+        failed = [rec for rec in batch.records if isinstance(rec.simulate, SimulateVerdict.Failed)]
+        assert len(failed) == 1
+        match failed[0].simulate:
+            case SimulateVerdict.Failed(detail=detail):
+                record = detail.record()
+            case _:  # pragma: no cover - the filter above pins the variant
+                pytest.fail("expected a failed record")
+
+        assert record["bucket"] == "no-profit"
+        assert record["optimal_input"] == 1_000
+        assert record["hop_outputs"] == [1_100, 1_000]
+        assert len(record["captured_swaps"]) == 1
+        assert record["captured_swaps"][0]["amount1"] == 3_000
+        assert record["captured_swaps"][0]["emitter"] == "0x" + "cc" * 20
+
+    async def test_a_revert_dump_carries_its_revert_data_and_failing_call(
+        self, nxm2bf_v2_engine_and_path
+    ) -> None:
+        """A revert's dump keeps the revert bytes + the failing call index (the
+        payload's own failure fields), beside the request's figures."""
+        engine, path_id = nxm2bf_v2_engine_and_path
+        executor = _executor(engine)
+        payload = inline_sim_payload(
+            path_id,
+            net=0,
+            failure={
+                "bucket": "unknown:0xcafebabe",
+                "fail_index": 3,
+                "revert_data": "0xcafebabe",
+            },
+        )
+        executor.enqueue(
+            BatchWork(
+                results=[
+                    RawEngineResult(
+                        path_id=path_id,
+                        optimal_input=2_000,
+                        engine_profit=1,
+                        hop_outputs=(2_100, 2_000),
+                        consumed_inputs=(2_000, 2_100),
+                        solve_block=100,
+                        state_nonces=(0, 0),
+                    )
+                ],
+                block_timestamp=1_700_000_000,
+                base_fee_next=30,
+                current_block=100,
+                payloads={path_id: payload},
+            )
+        )
+        await executor.shutdown()
+
+        batch = await executor.next_outcome()
+        assert batch is not None
+        record = next(
+            rec.simulate.detail.record()
+            for rec in batch.records
+            if isinstance(rec.simulate, SimulateVerdict.Failed)
+        )
+        assert record["bucket"] == "unknown:0xcafebabe"
+        assert record["revert_data"] == "0xcafebabe"
+        assert record["fail_index"] == 3
+        assert record["optimal_input"] == 2_000
+        assert record["hop_outputs"] == [2_100, 2_000]
+        assert record["captured_swaps"] == []

@@ -8,7 +8,7 @@
 
 use crate::record::FailureDetail;
 use alloy::primitives::U256;
-use degenbot_arbitrage::{DispatchCandidate, SimResult, SolveStep};
+use degenbot_arbitrage::{CapturedSwap, DispatchCandidate, SimResult, SolveStep};
 use degenbot_executor::composers::{EncodeOptions, PathInfo};
 
 /// One raw engine-result row — the solver's result for one path.
@@ -92,6 +92,13 @@ pub struct PayloadRow {
     pub access_list: Option<alloy::rpc::types::AccessList>,
     /// The inline sim's failure record, when the path failed.
     pub failure: Option<PayloadFailure>,
+    /// The inspector-captured swap events the inline sim decoded — the ACTUAL
+    /// side of the expected-vs-actual comparison a failure dump needs. Carried
+    /// on the ROW rather than on [`PayloadFailure`] because a survivor's
+    /// capture is equally part of the sim's record, and because the failure's
+    /// `captured_swaps` is a `SimFailure` field no payload row otherwise
+    /// reaches.
+    pub captured_swaps: Vec<CapturedSwap>,
 }
 
 /// The payload arm's failure record — the same keys the FFI failures row
@@ -108,8 +115,7 @@ pub struct PayloadFailure {
 
 impl PayloadRow {
     /// Reassemble the core `SimResult` the FFI batch join consumes
-    /// (field-for-field with an FFI survivor). The inline path never carries
-    /// inspector-captured swaps — they ride the engine's own render dict.
+    /// (field-for-field with an FFI survivor, including the capture).
     #[must_use]
     pub fn sim_result(&self) -> SimResult {
         SimResult {
@@ -121,27 +127,44 @@ impl PayloadRow {
             base_fee_next: self.base_fee_next,
             execute_calldata: self.execute_calldata.clone(),
             access_list: self.access_list.clone(),
-            captured_swaps: Vec::new(),
+            captured_swaps: self.captured_swaps.clone(),
             hop_count: 0,
         }
     }
 
-    /// Build the failure detail record (the inline sim surfaces revert detail
-    /// through the bucket + revert bytes; the EVM-diagnostic extras default
-    /// empty — the inline sim never ran an inspector capture).
+    /// Build the failure detail record.
+    ///
+    /// `request` is the batch's OWN solver row for this path — the figures the
+    /// inline sim was issued from (`optimal_input` + the expected per-hop
+    /// outputs). The payload's failure record carries only the bucket + revert
+    /// bytes, so without the request the dump renders `optimal_input=0` and
+    /// `hop_outputs=[]` for every inline failure; the values are read from the
+    /// batch beside the payload row rather than from the engine's result store,
+    /// which a retried or expired candidate has already left.
+    ///
+    /// The captured swaps come from the payload itself (the sim's own capture),
+    /// and the EVM-diagnostic extras (reverting frame, call trace, balance
+    /// legs) stay empty: the inline sim keeps no inspector trace, so those are
+    /// `[sim-diag]`-class fields the FFI arm fills.
+    ///
+    /// A missing request row (`None`) yields `optimal_input: 0` /
+    /// `hop_outputs: []` — the record still emits (dropping a failure record
+    /// would hide the failure outright), and a solved candidate never carries a
+    /// zero input, so the zero is readable as "this row had no request beside
+    /// it" rather than as a measurement.
     #[must_use]
-    pub fn failure_detail(&self) -> Option<FailureDetail> {
+    pub fn failure_detail(&self, request: Option<&RawResult>) -> Option<FailureDetail> {
         self.failure.as_ref().map(|f| FailureDetail {
             path_id: self.path_id,
             bucket: f.bucket.clone(),
             fail_index: f.fail_index,
             revert_data: f.revert_data.clone(),
             reverting_frame: None,
-            captured_swaps: Vec::new(),
+            captured_swaps: self.captured_swaps.clone(),
             log_full_count: 0,
             reverted_swaps: Vec::new(),
-            optimal_input: 0,
-            hop_outputs: Vec::new(),
+            optimal_input: request.map_or(0, |r| r.optimal_input),
+            hop_outputs: request.map_or_else(Vec::new, |r| r.hop_outputs.clone()),
             call_trace: Vec::new(),
             weth_before: 0,
             weth_after: 0,
