@@ -504,7 +504,7 @@ async def build_paths(
     # The engine takes the core bot handle (the Python companion's ``_py_bot``):
     # its cached snapshot tick-map handle is what a head-stamped V3/V4
     # construction reads.
-    engine_bot = getattr(bot, "_py_bot", bot)
+    engine_bot = bot._py_bot  # ruff:ignore[private-member-access]
     session = engine_registry.engine.begin_crawl(config, bot=engine_bot)
     constr_ctx.session = session
     completed = False
