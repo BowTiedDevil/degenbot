@@ -122,6 +122,7 @@ The load-bearing decisions behind the two-consumer architecture:
 | [089](ADR-089-evm2-pilot-flag-gated-parallel-engine.md) | The evm2 pilot — the engine on production paths, the JIT on by default (Linux builds) | accepted |
 | [090](ADR-090-v4-hook-black-box-finalist-requote.md) | V4 hooked pools — approximate search, exact black-box finalist re-quote (the fidelity tier's first production use) | accepted |
 | [091](ADR-091-retire-revm-completely.md) | Retire revm completely — evm2 sole EVM; Tier-3 oracles ported; reth is the independent interpreter | implemented |
+| [092](ADR-092-regenerable-math-oracles.md) | Frozen math oracles are regenerable — one generator per snapshot, the deployed contract is the authority | accepted |
 
 ## Historical — provenance only
 

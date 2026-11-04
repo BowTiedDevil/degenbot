@@ -11,11 +11,17 @@
 // Rust port matches the frozen Python oracle byte-for-byte.
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //!
-//! The oracle snapshot (`oracle_curve_snapshot.txt`) is frozen output of a
+//! The oracle snapshot (`oracle_curve_snapshot.txt`) is the frozen output of a
 //! fixture sweep covering the D/Y/Y_D/Newton-Y variants and the reduction
-//! coefficient, recorded from the Python reference implementation before it
-//! was retired. Each line is `<fn_tag> <args...> = <expected>` (or
-//! `= ERROR:<reason>`). This test parses each line, replays it through the
+//! coefficient. It is regenerable: `scripts/oracles/generate_curve_snapshot.py`
+//! owns the fixture table and computes every expected value from the oracle
+//! reference math beside it (`scripts/oracles/curve_stableswap_reference.py`),
+//! an independent port of the deployed Vyper solvers documented in
+//! `docs/architecture/curve-stableswap-reference.md`. Its `--check` mode
+//! compares that output against this snapshot byte-for-byte and `--out` writes a
+//! fresh body (default `target/oracle-regen/`); the snapshot itself is read-only
+//! parity ground truth (ADR-092). Each line is `<fn_tag> <args...> = <expected>`
+//! (or `= ERROR:<reason>`). This test parses each line, replays it through the
 //! Rust functions, and asserts the Rust result matches the snapshot
 //! byte-for-byte — the "direct port of the Vyper contract logic" contract.
 

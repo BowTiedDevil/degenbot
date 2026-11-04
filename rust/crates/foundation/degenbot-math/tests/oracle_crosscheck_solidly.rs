@@ -1,17 +1,27 @@
-//! Freeze-parity cross-check against the Python
-//! `degenbot.calculations.solidly_stable` + `degenbot.calculations.camelot`
-//! oracle.
+//! Freeze-parity cross-check of the Rust Solidly / Camelot math against a frozen
+//! snapshot of deployed-contract semantics.
 //!
-//! Same shape as `degenbot-math/tests/oracle_crosscheck.rs` +
-//! `degenbot-math/tests/oracle_crosscheck.rs`: load a JSON corpus
-//! generated with a fixed RNG seed from the Python oracle
-//! (`tests/oracle_solidly_snapshot.txt`), feed every `(args, result)` pair through the
-//! Rust port, and assert byte-identical output.
+//! The authority is the deployed contracts' invariant math: the Solidly-family
+//! `Pool.sol` (Aerodrome / Velodrome lineage) for `calc_d`, `calc_f`, `calc_k`,
+//! `get_y_solidly`, `calc_exact_in_volatile` and
+//! `calc_exact_in_stable_solidly`, and Camelot's variant of it for `f_camelot`,
+//! `k_camelot`, `get_y_camelot` and `calc_exact_in_stable_camelot`.
 //!
-//! The snapshot is a frozen, version-checked artifact — re-running the Python
-//! to regenerate the corpus is a separate step (the snapshot is the parity
-//! ground truth; if the Python oracle changes shape, the snapshot must be
-//! regenerated deliberately, not silently).
+//! The oracle is regenerable: `scripts/oracles/generate_solidly_snapshot.py`
+//! recomputes every case's `result` from the oracle reference math beside it
+//! (`scripts/oracles/solidly_stable_reference.py`,
+//! `scripts/oracles/camelot_reference.py`), which imports nothing from the Rust
+//! leaf it checks. This test loads the snapshot
+//! (`tests/oracle_solidly_snapshot.txt`), feeds every `(args, result)` pair
+//! through the Rust port, and asserts byte-identical output.
+//!
+//! The snapshot is a frozen, read-only parity ground truth (ADR-092): the
+//! generator's `--check` mode compares its recomputed results against it
+//! byte-for-byte, and `--out` writes a fresh body (default
+//! `target/oracle-regen/`). The frozen corpus's seeded-RNG inputs were never
+//! archived, so the generator reads the case arguments back and re-derives the
+//! results only; regenerating the snapshot deliberately means re-running that
+//! generator, never editing the file by hand.
 
 // The corpus loader + parity assertions below use `unwrap`/`expect`/`panic`
 // freely — idiomatic for a test harness that replays a frozen snapshot and
@@ -253,11 +263,12 @@ fn cross_check_calc_exact_in_stable_camelot() {
 
 // ── calc_exact_out_stable_solidly roundtrip property ──
 //
-// The exact-out leaf has no deployed-contract oracle (the Python `_calc_tokens_in_stable`
-// raised `NotImplementedError`). The parity oracle is the property-based check
-// `exact_out` is the *inverse* of `exact_in` over the Python-oracle snapshot
-// corpus — the same (reserves, decimals, fee, token_in, amount_in) cases the
-// exact-in parity pins. For each case:
+// The exact-out leaf has no deployed-contract values to pin: the Solidly-family
+// `Pool.getAmountIn` path is the Newton solver's inverse, and the frozen corpus
+// carries exact-in rows only. The parity oracle is the property-based check that
+// `exact_out` is the *inverse* of `exact_in` over the snapshot corpus — the same
+// (reserves, decimals, fee, token_in, amount_in) cases the exact-in parity pins.
+// For each case:
 //   1. out        = calc_exact_in_stable_solidly(amount_in, ...)
 //   2. recovered  = calc_exact_out_stable_solidly(out,   ...)
 // Asserts:
