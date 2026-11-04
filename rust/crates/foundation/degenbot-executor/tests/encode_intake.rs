@@ -2,7 +2,7 @@
 //! tests. The hop-alignment checks are the constructor's loud failure mode;
 //! the routing test pins that the re-shaped funnel still drives the same
 //! production encode (byte-identity itself is pinned by `glopcn_bytepin` +
-//! the revm matrix).
+//! the evm2 matrix).
 
 #![expect(
     clippy::panic,

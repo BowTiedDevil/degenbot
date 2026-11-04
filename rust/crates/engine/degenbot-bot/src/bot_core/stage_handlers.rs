@@ -66,7 +66,7 @@ pub enum Stage {
     Resolve,
     /// Solved row: the solver runs the affected paths.
     Solve,
-    /// Simulated row: in-process revm simulation — the sole executor
+    /// Simulated row: in-process evm2 simulation — the sole executor
     /// (ADR-019); tri-state profit facts per candidate (ADR-030).
     Simulate,
     /// Gated row: risk/size/profit rechecks; deliver/reject verdicts per
@@ -571,7 +571,7 @@ pub trait StageHandlers: Send + Sync {
     /// [`StageError::Failed`] on a hard hook failure.
     fn on_solve(&self, work: &Solve) -> Result<SolveOutcome, StageError>;
 
-    /// Simulated row: in-process revm simulation — the sole executor
+    /// Simulated row: in-process evm2 simulation — the sole executor
     /// (ADR-019); tri-state facts per candidate (ADR-030).
     ///
     /// # Errors

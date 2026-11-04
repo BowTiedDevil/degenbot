@@ -3,7 +3,7 @@
 //! A pure-observation accessor used by the sim's `BotStateDb.storage_ref`
 //! to quantify the gap between the **engine's event-applied typed pool
 //! state** (what the solver read to derive `hop_outputs`) and the
-//! **RPC-served storage state** (what the in-process revm sim reads during
+//! **RPC-served storage state** (what the in-process evm2 sim reads during
 //! `execute()`). The divergence on the failing V4-V3-V3 paths
 //! (`CurrencyNotSettled` — selector `0x5212cba1`) is rooted in this gap;
 //! this accessor answers the spike checkpoint question — *do the engine's
@@ -49,7 +49,7 @@
 //! the call site, before this method runs). Default runs pay zero. When on:
 //! - V2/V3: O(1) `pool_id_by_address(address)`.
 //! - V4: O(v4-pools-under-this-PoolManager) `keccak256` on PM cold reads;
-//!   revm's `CacheDB` caches `storage_ref`, so each cold slot pays once per
+//!   the sim's `CacheDB` caches `storage_ref`, so each cold slot pays once per
 //!   sim. Bounded by the sim's working set of Pool.State slots.
 
 #![cfg_attr(

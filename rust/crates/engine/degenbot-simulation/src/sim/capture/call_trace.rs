@@ -1,4 +1,4 @@
-//! A `revm::Inspector` capturing the structural call trace — every `call`/
+//! An evm2 `Inspector` capturing the structural call trace — every `call`/
 //! `call_end`/`create`/`create_end` frame as a tree of [`CallFrame`] — for
 //! post-run failure attribution + diagnostic rendering.
 //!
@@ -56,7 +56,7 @@ pub struct CallFrame {
     /// The frame's target (the account whose storage/code runs).
     pub target: Address,
     /// The first 4 bytes of the calldata (the Solidity selector). For a
-    /// `SharedBuffer` `CallInput` this is zero-padded (revm passes optimized
+    /// `SharedBuffer` `CallInput` this is zero-padded (the interpreter passes optimized
     /// calldata through a shared memory buffer) — use [`CallFrame::data`] for
     /// the full input.
     pub selector: [u8; 4],

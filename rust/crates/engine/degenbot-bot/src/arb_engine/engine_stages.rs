@@ -772,7 +772,7 @@ impl StageHandlers for EngineStages {
             solved: Epoch::at(outcome.solved_block()),
         })
     }
-    /// Simulated row: in-process revm simulation ran inside the Solved
+    /// Simulated row: in-process evm2 simulation ran inside the Solved
     /// cycle (the engine's sole-executor posture is a property of the
     /// cycle, not a separate pass). No engine action.
     fn on_simulate(&self, _work: &Simulate) -> Result<SimulateOutcome, StageError> {

@@ -2,7 +2,7 @@
 //! PoolManager (via the committed `V4SwapOracleHarness` unlocker artifact), seed
 //! a reconstructed pool's storage slot-for-slot, and drive a swap — as a reuseable
 //! building block for the path-investigation fixtures (the deep, contract-agnostic
-//! revm spine is [`degenbot_simulation::oracle`]; this module layers the V4
+//! evm2 spine is [`degenbot_simulation::oracle`]; this module layers the V4
 //! pool-specific deploy/seed/swap/call-encoding on top of it).
 //!
 //! **Layering.** Investigation tooling (like the wider [`crate::investigation`]
@@ -10,7 +10,7 @@
 //! pedantic `doc_markdown`/`cast_possible_wrap` nits the production cores keep
 //! (run-once diagnostic scaffolding, not library surface). It
 //! still emits no `pyo3` and holds no engine state—it is a thin, contract-level
-//! revm driver over the reusable [`degenbot_simulation::oracle`] spine.
+//! evm2 driver over the reusable [`degenbot_simulation::oracle`] spine.
 #![expect(
     clippy::cast_possible_wrap,
     clippy::doc_markdown,

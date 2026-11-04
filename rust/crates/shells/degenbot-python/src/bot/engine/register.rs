@@ -80,7 +80,7 @@ impl PyArbEngine {
         }
         // The cross-block warm bytecode cache (Option A) — one
         // shared `Arc<RwLock<WarmCodeCacheInner>>` for the engine's life,
-        // cloned into each per-block `BlockSimHandle::build`. Empty at
+        // cloned into each per-block `Evm2BlockSimHandle::build`. Empty at
         // construction; warmed lazily by the first block's cold RPCs.
         // The durable per-hook slot-set store (ADR-090 H2) rides the same
         // owner: every black-box V4 leg quote learns its hook's touched-slot

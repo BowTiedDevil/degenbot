@@ -2,7 +2,7 @@
 #![expect(clippy::identity_op, clippy::cast_possible_wrap)]
 //! V4 on-chain storage-slot encoders — engine typed state → PoolManager slots.
 //!
-//! Pure functions (no revm, no pyo3) that pack the engine's `V4PoolState`
+//! Pure functions (no EVM dependency, no pyo3) that pack the engine's `V4PoolState`
 //! typed fields into the EXACT storage layout the canonical V4 `PoolManager`
 //! singleton bytecode reads during a real `Pool.swap()` (via `unlock()`).
 //! V4 twin of [`crate::v3_storage_slots`]; see that module's docs for the

@@ -19,7 +19,7 @@
 //! `LedgerValidator` gate (one representation) is reused unchanged: the
 //! walker emits exactly one `Plan`, and the encoder + validator are pure
 //! functions of it. Structural + behavioral parity with the pre-refactor
-//! reference producer is pinned by the revm contract matrix + the
+//! reference producer is pinned by the evm2 contract matrix + the
 //! `spike_derivation` golden suite.
 
 use crate::composers::{ComposerInputs, HopInfo, PathInfo, V2HopInfo, V3HopInfo, V4HopInfo};
@@ -811,7 +811,7 @@ pub fn build_walk(
 /// per shape module under [`shapes`] — a `(len, repay-sequence)` partition,
 /// with a genuine `Repay`/`OutDest`-tag partition for the single-V4-middle
 /// residual. See the ADR-031 record correction (2026-08): ordering defects are
-/// caught by the `LedgerValidator` + revm matrix, not unrepresentable by
+/// caught by the `LedgerValidator` + evm2 matrix, not unrepresentable by
 /// construction.
 #[must_use]
 pub(crate) fn derive_plan(

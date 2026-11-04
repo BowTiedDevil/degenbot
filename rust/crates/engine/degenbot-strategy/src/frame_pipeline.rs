@@ -548,7 +548,7 @@ impl FrameArtifacts {
 /// registry load failed; the shared `warm_cache` carries the cross-block
 /// bytecode/account caches across handle rebuilds.
 /// `None` when the head block fetch or the handle build fails (no ambient
-/// multi-threaded runtime for `WrapDatabaseAsync` included).
+/// multi-threaded runtime for `BlockingAsyncDb` included).
 pub async fn build_block_handle<'a>(
     provider: &'a AlloyProvider,
     head: u64,

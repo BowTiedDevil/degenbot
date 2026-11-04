@@ -384,8 +384,8 @@ impl DispatchOutcome {
 ///    Python oracle slices `results[:MAX_SIMULATE_CONCURRENT]`; the candidates
 ///    are expected pre-sorted by engine profit descending — the caller does
 ///    the sort, ports L1684).
-/// 5. **Fan-out** — the in-process revm path: build ONE per-block
-///    `BlockSimHandle` + simulate each candidate SERIALLY on the shared
+/// 5. **Fan-out** — the in-process evm2 path: build ONE per-block
+///    `Evm2BlockSimHandle` + simulate each candidate SERIALLY on the shared
 ///    `&mut evm` (Tier 1). `bot_state` is `Option` so that
 ///    empty / pre-filtered-to-empty input (which short-circuits at step 5)
 ///    need not construct an engine; the `None` arm is the unreachable
@@ -494,13 +494,13 @@ pub fn dispatch_profitable_results(
     // feeds the 0-success disambiguator (a token that ever succeeds is not
     // FoT — the fee always shorts the input).
     fot_registry: &Arc<Mutex<FeeOnTransferRegistry>>,
-    // The fan-out routes each candidate through the in-process revm sim
-    // over the borrowed `&BotState` via a per-block shared `BlockSimHandle`
+    // The fan-out routes each candidate through the in-process evm2 sim
+    // over the borrowed `&BotState` via a per-block shared `Evm2BlockSimHandle`
     // (Tier 1 — retired the per-path `simulate_in_process`
     // fresh-`CacheDB`-per-call build), the sole executor since the
     // `eth_simulateV1` RPC path retired (ADR-019 D1). The `Arc<RwLock<BotState>>`
     // is the engine's shared state owner (ADR-003); a per-block read guard is
-    // taken for the serial loop. revm's `WrapDatabaseAsync::block_on` uses
+    // taken for the serial loop. The sync DB bridge's `block_on` uses
     // `tokio::task::block_in_place` under a multi-threaded runtime, so the
     // in-process sim's blocking RPC cold-miss path does not deadlock against
     // the pump's worker pool. `Option` (not required) so that empty /
@@ -511,7 +511,7 @@ pub fn dispatch_profitable_results(
     bot_state: Option<Arc<StateLock<BotState>>>,
     // The cross-block persistent bytecode + account-existence cache
     // (`WarmCodeCacheInner`, the Option-A layer). Required by the
-    // `BlockSimHandle` build (the `None` arm is unreachable — see `bot_state`).
+    // `Evm2BlockSimHandle` build (the `None` arm is unreachable — see `bot_state`).
     // The `Arc` clones cheaply into this async fn's future; the engine owner
     // (`PyArbitrageEngine` / standalone `Bot`) holds it for the engine's
     // life. If `Some(bot_state)` arrives with `None` warm_cache (a caller
@@ -640,13 +640,13 @@ pub fn dispatch_profitable_results(
     // Empty-input short-circuit: with no candidates to simulate, the outcome
     // (all counters already set above) is complete. This avoids requiring a
     // `BotState` for the trivial empty case (suppressed-to-empty / genuinely
-    // empty input) — the in-process revm path never builds a `BlockSimHandle`
+    // empty input) — the in-process evm2 path never builds a handle
     // for zero candidates.
     if candidates.is_empty() {
         return outcome;
     }
 
-    // 5. Fan-out — build ONE per-block `BlockSimHandle` + simulate each
+    // 5. Fan-out — build ONE per-block `Evm2BlockSimHandle` + simulate each
     //    candidate SERIALLY on the shared `&mut evm` (Tier 1).
     //    `buffer_unordered(MAX_SIMULATE_CONCURRENT)` was the Rust idiom for
     //    the Python `asyncio.gather(*sim_tasks)` + the
@@ -664,15 +664,15 @@ pub fn dispatch_profitable_results(
     let lab_fanout_started = std::time::Instant::now();
     let fanout_candidate_count = candidates.len();
     let sim_results: Vec<(u64, FailBuckets, Result<Option<SimResult>, String>)> = match bot_state {
-        // In-process revm path (Tier 1): build ONE per-block EVM
-        // (`BlockSimHandle`) and simulate each candidate SERIALLY on the
+        // In-process evm2 path (Tier 1): build ONE per-block EVM
+        // (`Evm2BlockSimHandle`) and simulate each candidate SERIALLY on the
         // shared `&mut evm`. The shared `CacheDB` captures the ~50× latency
         // win (benchmark `examples/rpc_cache_fanout.rs` config B vs A): the
         // trigger path pays the cold RPCs, the fan-out hits the warmed cache
         // at ~1 µs p50. Serial (not `buffer_unordered`) because a shared
         // `&mut evm` can't be held across `'static`+`Send` futures — the
         // per-path RPC cold-miss dwarfs the per-path EVM execution, so
-        // serial-warm beats parallel-cold. Per-path isolation is revm's
+        // serial-warm beats parallel-cold. Per-path isolation is the engine's
         // `finalize()` (execute() SSTOREs live in the per-path `State`, never
         // committed to the shared `CacheDB`). `parking_lot`'s read guard is
         // held for the serial loop's duration.
@@ -680,7 +680,7 @@ pub fn dispatch_profitable_results(
             // Incident 2026-08-20 #1 root fix: snapshot the sim
             // anchor under a SHORT read and drop the guard BEFORE any
             // provider I/O. Pre-fix this read guard was held across
-            // `BlockSimHandle::build` + the whole serial sim loop — every
+            // `Evm2BlockSimHandle::build` + the whole serial sim loop — every
             // cold-miss fetch parked a `BotState` writer behind it for the
             // transport delay (minutes on a stalled RPC pre-F2). The
             // snapshot is O(pools) scalar words; see
@@ -696,7 +696,7 @@ pub fn dispatch_profitable_results(
                 let guard = arc.read_at(degenbot_substrate::state_lock::LockSite::Sim);
                 degenbot_substrate::SimAnchorState::snapshot(&guard)
             };
-            // The engine `BlockSimHandle` build takes the block-env primitives
+            // The engine `Evm2BlockSimHandle` build takes the block-env primitives
             // + the override params projected from this strategy's
             // `SimulateContext` (ADR-019 D7, decision R — the engine stays
             // generic over strategy config; it never names `SimulateContext`).
@@ -883,7 +883,7 @@ pub fn dispatch_profitable_results(
             fanout
         }
         // ADR-019 D1 — the legacy RPC `eth_simulateV1` path retired; the
-        // in-process revm path (the `Some` arm above) is the sole executor.
+        // in-process evm2 path (the `Some` arm above) is the sole executor.
         // This arm is unreachable in production: the FFI seam always sources a
         // `BotState` from the engine, and empty / pre-filtered-to-empty input
         // short-circuits at step 4 above before the `match` is reached. The
@@ -1437,7 +1437,7 @@ mod tests {
 
     /// Incident 2026-08-20 #1 root fix: the fan-out must NOT hold
     /// the `BotState` read guard across provider I/O. Pre-fix,
-    /// `BlockSimHandle::build` + the serial sim loop borrowed the guard
+    /// the per-block handle build + the serial sim loop borrowed the guard
     /// while every cold-miss fetch went over RPC — a writer parked for the
     /// full transport delay (minutes on a stalled RPC pre-F2). Post-fix the
     /// anchor is snapshotted under a SHORT read and the writer proceeds
@@ -1446,7 +1446,7 @@ mod tests {
     #[expect(clippy::expect_used)]
     fn fanout_does_not_hold_the_botstate_guard_across_provider_io() {
         use alloy::transports::Transport;
-        // WrapDatabaseAsync needs an ambient multi-threaded runtime; the
+        // `BlockingAsyncDb::new` needs an ambient multi-threaded runtime; the
         // delaying transport needs its reactor for the sleep.
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -1525,8 +1525,8 @@ mod tests {
     /// A method-keyed scripted transport serving empty accounts (zero
     /// balance, zero nonce, no code, zero storage) — enough for the
     /// INVALID-executor fixture, whose execute() reverts before any pool
-    /// read. Serves either engine's read pattern (the revm override apply
-    /// pre-fetches WETH/PM accounts; the evm2 apply does not).
+    /// read. Serves either engine's read pattern (the retired revm override
+    /// apply pre-fetched WETH/PM accounts; the evm2 apply does not).
     #[expect(clippy::expect_used)] // test-only scripted transport (static values always encode)
     mod empty_transport {
         use super::*;
@@ -2031,9 +2031,9 @@ mod tests {
     }
 
     /// The end-to-end engine parity run (ADR-089): the full dispatch fan-out
-    /// over a scripted provider with the INVALID-executor fixture — run
-    /// under BOTH feature sets (default = revm arm, `evm2` = the twin arm),
-    /// the fixed expectations ARE the parity gate.
+    /// over a scripted provider with the INVALID-executor fixture — the evm2
+    /// fan-out is unconditional post-cutover; the fixed expectations ARE the
+    /// parity gate.
     #[expect(clippy::expect_used)] // test-only: runtime build + thread join
     #[test]
     fn dispatch_end_to_end_revert_fixture_matches_fixed_expectations() {
@@ -2102,9 +2102,9 @@ mod tests {
     /// Tier 1 parity: the in-process serial branch
     /// (`Some(bot_state)`) tallies `rpc-failed` for every candidate when the
     /// per-block EVM build fails. Under a `current_thread` tokio runtime,
-    /// `WrapDatabaseAsync::new` returns `None` (it requires a multi-threaded
+    /// `BlockingAsyncDb::new` returns `None` (it requires a multi-threaded
     /// runtime — the pump's `pyo3_async_runtimes` default), so
-    /// `BlockSimHandle::build` returns `None` and the dispatch fans a
+    /// `Evm2BlockSimHandle::build` returns `None` and the dispatch fans a
     /// `rpc-failed` `SimFailure` out to every candidate — one per `path_id`.
     /// This is the RPC-free characterization of the serial branch's
     /// build-failure handling, mirroring the retired per-path

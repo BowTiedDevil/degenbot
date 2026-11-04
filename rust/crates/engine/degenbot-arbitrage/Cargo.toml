@@ -13,9 +13,9 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-# The simulation engine (evm2 executor, BlockSimHandle, overrides, AL, warm
-# cache). This crate is ONE strategy over the engine — it builds the 7-call
-# vector, drives `BlockSimHandle`'s EVM, decodes balances, sizes the priority
+# The simulation engine (evm2 executor, `Evm2BlockSimHandle`, overrides, AL,
+# warm cache). This crate is ONE strategy over the engine — it builds the 7-call
+# vector, drives `Evm2BlockSimHandle`'s EVM, decodes balances, sizes the priority
 # fee, + runs the fan-out/categorization policy. ADR-019 D4/D7: the engine
 # stays thin + generic; the settlement-arbitrage bundle is this strategy's concern, not the
 # engine's.
@@ -26,7 +26,7 @@ degenbot-simulation.workspace = true
 evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, features = ["asm-keccak", "blst", "c-kzg", "secp256k1", "serde"] }
 degenbot-config.workspace = true
 # `BotState` (ADR-003 state owner) — the snapshot surface the dispatch
-# fan-out reads via `BlockSimHandle`.
+# fan-out reads via `Evm2BlockSimHandle`.
 degenbot-bot.workspace = true
 degenbot-substrate.workspace = true
 # `PathInfo` / `HopInfo` / `EncodeOptions` / `WarmupSlots` / the
@@ -79,7 +79,7 @@ order-index = ["dep:degenbot-order-index"]
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.23", features = ["registry", "ansi"] }
-# multi-thread flavor for the WrapDatabaseAsync ambient-runtime requirement
+# multi-thread flavor for the `BlockingAsyncDb` ambient-runtime requirement
 tokio = { version = "^1.54", features = ["macros", "rt", "rt-multi-thread", "time"] }
 degenbot-rpc = { workspace = true, features = ["test-utils"] }
 serde_json = { version = "^1.0" }

@@ -5,7 +5,7 @@
 //! liquidity, fee scalars), no pool slice; a synthetic-state bridge
 //! (fabricating a slice whose tick map reproduces the prepared word
 //! boundaries) would move the byte-exact oracle surface rather than pin it —
-//! the tier-3 revm legs run through `v3_simulate_swap` (the pools-side walk
+//! the tier-3 legs run through `v3_simulate_swap` (the pools-side walk
 //! behind the read door), and no drift net pins this kernel's
 //! per-word-boundary outcomes against a pre-refactor snapshot. The kernel's
 //! step math delegates to the same canonical `compute_swap_step_v3` leaf the

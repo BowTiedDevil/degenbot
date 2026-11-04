@@ -1,7 +1,7 @@
 //! The sim-vs-engine divergence observer — the env-gated, pure-observation
 //! hook the in-process sim runs inside `BotStateDb::storage_ref`.
 //!
-//! When revm SLOADs a storage slot, [`observe_storage_read`] compares the
+//! When the sim SLOADs a storage slot, [`observe_storage_read`] compares the
 //! engine's packed typed pool state (via [`BotState::probe_tracked_storage_slot`])
 //! against the RPC-served value the fallback just returned, logs a
 //! `[sim-divergence]` line when the tracked fields disagree, and accumulates
@@ -145,8 +145,8 @@ fn tracked_fields_match(probe: &TrackedSlotProbe, rpc_word: U256) -> bool {
 /// RPC value is returned unchanged by the caller — this fn never affects
 /// what the sim reads.
 ///
-/// `index` + `rpc_value` are `revm` `StorageKey`/`StorageValue` (both `U256`
-/// type-aliases) — taken as `U256` to bridge the `alloy` umbrella cleanly.
+/// `index` + `rpc_value` are the storage-read slot-key / slot-value words
+/// (both `U256`) — taken as `U256` to bridge the `alloy` umbrella cleanly.
 pub fn observe_storage_read(
     oracle: &dyn SimAnchorOracle,
     address: Address,

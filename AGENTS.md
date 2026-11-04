@@ -107,7 +107,7 @@ The canonical Python gate is `just test-python` (CI and the pre-push hook run it
 
 ## Fork/RPC-gated suites (`just test-fork`)
 
-The one on-demand lane for the legs every offline gate deliberately deselects: the pytest live-RPC tiers and the Rust live revm fork-truth legs (the `#[ignore]`d `live_*` tests in degenbot-simulation). Fails closed unless a declared endpoint answers an `eth_chainId` probe; the devcontainer's reth satisfies both, and any reachable Ethereum endpoint works. Minutes of live-RPC work — never in `test`, pre-push, or CI.
+The one on-demand lane for the legs every offline gate deliberately deselects: the pytest live-RPC tiers and the Rust live evm2 fork-truth legs (the `#[ignore]`d `live_*` tests in degenbot-simulation). Fails closed unless a declared endpoint answers an `eth_chainId` probe; the devcontainer's reth satisfies both, and any reachable Ethereum endpoint works. Minutes of live-RPC work — never in `test`, pre-push, or CI.
 
 ## Build-Artifact Housekeeping
 

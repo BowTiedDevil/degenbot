@@ -3,8 +3,8 @@
 //!
 //! The engine's `degenbot_bot` seam stays strategy-agnostic (ADR-019 D7):
 //! this crate installs the concrete simulator. One per-path sim drives the
-//! SAME core the FFI fan-out drives — `BlockSimHandle` (the layered DB:
-//! `AlloyDB` → `WrapDatabaseAsync` → `BotStateDb` → `WarmCodeCache` →
+//! SAME core the FFI fan-out drives — `Evm2BlockSimHandle` (the layered DB:
+//! `AlloyAsyncDb` → `BlockingAsyncDb` → `BotStateDb` → `WarmCodeCache` →
 //! `CacheDB`, the state overrides applied once) → `simulate_path_on_evm` —
 //! so the two arms' verdicts are comparable by construction (the T4
 //! soak's premise). The deliberate differences:
@@ -19,7 +19,7 @@
 //!   primarily; the formula (target/decay) dominates the clamp on mainnet.
 //!
 //! Runtime caveat (the T4 body note, updated by LW-T9):
-//! `WrapDatabaseAsync::new` captures `Handle::try_current()` at build time,
+//! `BlockingAsyncDb::new` captures `Handle::try_current()` at build time,
 //! and its DB calls escalate to `block_in_place` on a multi-threaded
 //! worker. The fleet worker seats are `std` threads — NO ambient runtime
 //! (the LW-T2 wedge test pins this structurally; the old
@@ -28,7 +28,7 @@
 //! hook's DEDICATED multi-thread runtime and the SYNC sim
 //! drive runs on that runtime's BLOCKING pool (`tokio::task::spawn_blocking`):
 //! a blocking-pool thread still carries the runtime handle (the
-//! build-time capture succeeds), and revm's `WrapDatabaseAsync::block_on`
+//! build-time capture succeeds), and the sync DB bridge's `block_on`
 //! bridging (`block_in_place` under a multi-thread handle) collapses to a
 //! plain call there — a DB wait never converts a runtime worker, and the
 //! runtime never spawns replacement workers mid-block. The worker only
@@ -607,8 +607,9 @@ impl InlineSimulator for InlineSimHook {
                         sim_ok = false,
                     );
                     // The sync sim drive BLOCKS on its cold-miss
-                    // path — revm's `WrapDatabaseAsync` bridges the async
-                    // provider via `block_in_place` + `handle.block_on`
+                    // path — the evm2 sync DB bridge (`BlockingAsyncDb`)
+                    // bridges the async provider via `block_in_place` +
+                    // `handle.block_on`
                     // under this multi-thread runtime. That drive runs on
                     // the runtime's BLOCKING pool (`spawn_blocking`), NOT
                     // on the worker: on a blocking-pool thread the internal
@@ -931,8 +932,8 @@ impl HookedLegReQuote for InlineSimHook {
             let warm_inner = Arc::clone(&warm_cache);
             let memo_inner = Arc::clone(&memo);
             let leg_inner = leg.clone();
-            // The sync quote BLOCKS on the anchor-pinned DB (revm's
-            // `WrapDatabaseAsync` bridges the async provider via
+            // The sync quote BLOCKS on the anchor-pinned DB (the evm2 sync DB
+            // bridge, `BlockingAsyncDb`, bridges the async provider via
             // `block_in_place`), so it runs on the runtime's blocking pool —
             // the same thread/runtime matrix `simulate_path` documents.
             self.sim_runtime.block_on(async move {

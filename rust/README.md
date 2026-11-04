@@ -210,16 +210,16 @@ The direct-overlap decisions are intentional:
   `tungstenite` 0.30 and QUIC also require 0.10. A direct downgrade would change
   source-facing traits without collapsing the resolved family.
 - `degenbot-pools`' solve tree (`solve/mobius_shifted_piece.rs`) exposes
-  `num-bigint` 0.5 `BigInt` coefficients in a public struct. Arkworks/revm retain
+  `num-bigint` 0.5 `BigInt` coefficients in a public struct. Arkworks retains
   0.4; downgrading the solver would change that public type identity and requires
   separate numerical-behavior validation, so it is not a graph-only cleanup.
-- `sha2` 0.11 is a development-only artifact check; Alloy/revm retain 0.10 and
-  revm also uses 0.11. The direct WebSocket 0.30 choice coexists with Alloy's
+- `sha2` 0.11 is a development-only artifact check; Alloy retains 0.10. The
+  direct WebSocket 0.30 choice coexists with Alloy's
   upstream 0.29 requirement; this audit demonstrated no measured feature,
   build-time, or binary-size benefit from changing it.
 
 The remaining families are semver/API splits reached through Alloy, Arkworks,
-revm, reqwest/serde_with, proc-macro stacks, or WebSocket roots, not duplicate
+reqwest/serde_with, proc-macro stacks, or WebSocket roots, not duplicate
 internal crates or accidental second workspace declarations. The audit made no
 manifest or lockfile change. `rust/Cargo.lock` had SHA-256
 `35e6ae51d963a035a31e10bf4835ff0f100242b611b98540d881c745fb995031`;
@@ -302,7 +302,7 @@ oracles have one shared source of truth.
   reference the committed read-only database instead of duplicating it.
 - **Real-EVM Tier-3 oracles:** `tier3-oracle/` owns Solidity/Vyper harness
   sources and committed artifacts. `degenbot-simulation` owns the reusable
-  revm/oracle driver; its tests consume the committed artifacts. Regenerate or
+  evm2/oracle driver; its tests consume the committed artifacts. Regenerate or
   verify them through the recipes in [ADR-020](../docs/adr/ADR-020-tier3-onchain-accuracy-oracle.md)
   and the [`justfile`](../justfile). The default Rust suite runs against
   committed bytecode and does not require solc, forge, or vyper.

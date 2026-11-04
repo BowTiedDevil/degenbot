@@ -38,7 +38,7 @@
 //!
 //! `gross_profit` IS closed-form (1 ETH = the gift's seeded balance, a
 //! constant). But `gas_used` + `priority_fee` + `net_profit` are recorded
-//! from the revm EVM run (the byte-exact gas accounting + the lossy f64
+//! from the evm2 EVM run (the byte-exact gas accounting + the lossy f64
 //! priority-fee path have no closed form). The parity contract is: both
 //! drivers produce the same recorded constants. A deliberately-wrong fixture
 //! edit fails BOTH halves (the fixture is the shared contract, not copied

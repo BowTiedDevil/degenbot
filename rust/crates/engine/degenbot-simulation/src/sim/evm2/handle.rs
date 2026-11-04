@@ -1,4 +1,4 @@
-//! The evm2 per-block shared-EVM handle — the twin of
+//! The evm2 per-block shared-EVM handle — the twin of the retired revm-side
 //! `sim::evm::simulator::BlockSimHandle` (ADR-089 phase 4/5: the hard-swap
 //! wiring, not a genericization layer; the revm handle retires at cutover).
 //!

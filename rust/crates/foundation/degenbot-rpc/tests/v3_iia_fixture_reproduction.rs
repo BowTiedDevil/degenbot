@@ -18,15 +18,15 @@
 //! against the real pool state.
 //!
 //! This test fetches the real `V3PoolState` at the captured block via the
-//! archive RPC and runs `v3_simulate_swap` (the byte-exact twin the revm
+//! archive RPC and runs `v3_simulate_swap` (the byte-exact twin the evm2
 //! sim's `actual` mirrors) on byte-identical on-chain state. The fork is
 //! decided by comparing the result to the captured values:
 //!
-//! - sim == captured actual (150836781502) → the revm sim matches the Rust
+//! - sim == captured actual (150836781502) → the evm2 sim matches the Rust
 //!   twin → the +13 is a SOLVER-MATH divergence (fix targets `compute_crossing`
 //!   / `compute_tick_ranges`).
 //! - sim == captured predicted (150836781515) → the Rust twin matches the
-//!   solver → the revm sim's `actual` came from DIFFERENT state than on-chain@N
+//!   solver → the evm2 sim's `actual` came from DIFFERENT state than on-chain@N
 //!   → STALE ENGINE STATE (fix targets pump ordering).
 //!
 //! Gated by env `DEGENBOT_V3_FIXTURE_RPC` + `DEGENBOT_V3_FIXTURE_BLOCK` so CI
@@ -72,7 +72,7 @@ const FIXTURE_BLOCK: u64 = 25_647_669;
 const FEE: u32 = 500;
 const TICK_SPACING: i32 = 10;
 const AMOUNT_IN: u128 = 50_868_891_135; // hop[0] matched output → hop[1] amount_in
-const CAPTURED_ACTUAL: u128 = 150_836_781_502; // revm sim measured hop[1] output
+const CAPTURED_ACTUAL: u128 = 150_836_781_502; // sim measured hop[1] output
 const CAPTURED_PREDICTED: u128 = 150_836_781_515; // solver hop_outputs[1] (+13)
 
 /// The miss-path fetch over the one unified source: build the pool's read
@@ -254,7 +254,7 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
         }
     );
 
-    // DECISIVE ASSERTION. The revm sim's `actual` mirrors `v3_simulate_swap`
+    // DECISIVE ASSERTION. The evm2 sim's `actual` mirrors `v3_simulate_swap`
     // (the proven byte-exact twin). If `v3_simulate_swap` reproduces the
     // captured ACTUAL on byte-identical on-chain state, then the solver's +13
     // is a topology-specific `compute_crossing` divergence (the fix targets the
@@ -265,7 +265,7 @@ fn v3_iia_fixture_reproduces_plus_thirteen_divergence() {
         sim_out,
         U256::from(CAPTURED_ACTUAL),
         "v3_simulate_swap on byte-identical on-chain@N state did NOT reproduce the \
-         captured revm-sim actual ({CAPTURED_ACTUAL}) — got {sim_out}. This means the revm sim's \
+         captured sim actual ({CAPTURED_ACTUAL}) — got {sim_out}. This means the evm2 sim's \
          `actual` came from DIFFERENT state than on-chain@N → STALE ENGINE STATE (ph1 confirmed; \
          fix pump ordering). [conversely if it matched, the +13 is solver math]"
     );

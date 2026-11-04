@@ -1,14 +1,14 @@
 //! The simulation engine — the in-process evm2 EVM handle + its DB stack.
 //!
 //! ADR-019 D4/D7 (decision R — strategy/engine separation): this crate owns
-//! the **engine** (`BlockSimHandle`, the settle verb [`SimSession::run`], the
-//! layered DB, `apply_simulation_overrides`, `AccessListCollector`,
+//! the **engine** (`Evm2BlockSimHandle`, the settle verb `Evm2SimSession::run`,
+//! the layered DB, `apply_simulation_overrides`, `CollectedSlots`,
 //! `WarmCodeCache`). The **strategy** — the 7-call pre/post-balance bundle,
 //! `compute_priority_fee`, `decode_balance`, `SimResult`,
 //! `dispatch_profitable_results`, `SimulateContext`, `SimulatePath`,
 //! `FailBuckets`, the calldata builders — relocated to the
 //! `degenbot-arbitrage` crate, which drives the engine through
-//! [`BlockSimHandle::session`].
+//! [`Evm2BlockSimHandle::session`].
 //!
 //! # Standalone-Rust consumer
 //!
@@ -26,7 +26,7 @@
 pub mod sim;
 
 /// The executor grammar harness: deploy the real `cmd_executor` +
-/// synthesized pools into a fresh revm `CacheDB`, run a path's
+/// synthesized pools into a fresh evm2 `CacheDB`, run a path's
 /// [`encode_cmd_stream`](degenbot_executor::composers::encode_cmd_stream)
 /// payload through `execute()`, and report whether it executes + which pools
 /// it touched. The missing third correctness tool — byte parity can't prove

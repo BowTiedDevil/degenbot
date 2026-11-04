@@ -41,7 +41,7 @@
 //! `cmd_executor.initialize()`'s storage layout (the parity gate,
 //! `docs/architecture/parity-gate.md`) — canonical mainnet
 //! WETH (`0xC02…`) / PoolManager (`0x0000…444c`). The grammar's byte-identity
-//! is pinned by the golden corpus + the revm runtime matrix
+//! is pinned by the golden corpus + the evm2 runtime matrix
 //! (degenbot-simulation).
 
 // Solidity/ERC identifiers (balanceOf, ERC6909, protocolFeesAccrued, …) are

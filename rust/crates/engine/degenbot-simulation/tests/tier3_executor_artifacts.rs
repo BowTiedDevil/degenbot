@@ -1,5 +1,5 @@
 //! Toolchain-free integrity guard for the Vyper executor artifact (BHL2R2 /
-//! tier-3b deterministic revm-replay oracle).
+//! tier-3b deterministic evm2-replay oracle).
 //!
 //! The tier-3b executor tests (S2/S3) run in the default
 //! `cargo test --workspace` suite and load the canonical executor bytecode from

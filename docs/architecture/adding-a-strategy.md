@@ -149,7 +149,7 @@ skipped, not failed — the settlement pump arm is its own driver.
   `rust/crates/engine/degenbot-submission/tests/hosted_driver_ambient_runtime.rs`.
 - Keeps: "the host decides which drivers run; a driver owns its loop".
 - Retires: booting a driver inline on a dedicated current-thread runtime (it
-  fails `WrapDatabaseAsync::new`).
+  fails `BlockingAsyncDb::new`).
 
 ## 3. The nonce lane — sign-time issuance over one authority
 

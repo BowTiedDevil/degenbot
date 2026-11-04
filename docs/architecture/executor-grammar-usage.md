@@ -271,7 +271,7 @@ surface is:
    `LedgerValidator` on every produced Plan; an ordering defect is a fatal
    `Rejected` (ADR-030), never silently dropped — so the new family either
    produces an invariant-clean Plan or produces nothing. Byte-identity /
-   execution grounds come from the golden suites + the revm runtime matrix.
+   execution grounds come from the golden suites + the evm2 runtime matrix.
 
 The Plan tree is an execution-ordered, callback-nested tree whose leaves
 carry BOTH the resolved address-table index (for the byte encoder) and the

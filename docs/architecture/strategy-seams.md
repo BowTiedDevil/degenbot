@@ -19,7 +19,7 @@ partitions, the config-facet additions, and the test-surface pattern.
 | Pool state + identity values | `degenbot-pools` | `PoolEntry`, family states, `slot_layout` (the one location table) |
 | Solver math + envelopes | `degenbot-pools` (the `solve/` tree) | value-only; no chain, no async; `SolveOutcome` carries the typed `Envelope` verdict to planning |
 | Path enumeration primitive | `degenbot-pathfinding` | leaf `PathGraph` DFS; both discovery styles build on it |
-| Simulation engine | `degenbot-simulation` | `BlockSimHandle`, `ScratchEvm`, replay seam, journal extraction (V2/V3/V4) |
+| Simulation engine | `degenbot-simulation` | `Evm2BlockSimHandle`, `Evm2ScratchEvm`, replay seam, journal extraction (V2/V3/V4) |
 | Command grammar | `degenbot-executor` | `encode_cmd_stream`, `EncodeRequest` |
 | RPC spine | `degenbot-rpc` | provider, multicall3, head watch, pending-tx feeds, fee oracle |
 | State owner + admission | `degenbot-substrate` | live registry `BotState` (pump-fed) and the planning sandbox (`planning::Workspace` + `ExplicitPoolState`) — the substrate's one home since ADR-067; `degenbot-bot` composes it as a peer and re-exports it at the historical `bot_core::*` paths |
@@ -36,7 +36,7 @@ A strategy picks exactly ONE:
 - **Pending-transaction strategies** (`PendingTxReaction` trait,
   `degenbot-strategy/src/pending_tx.rs`) react to observed mempool
   transactions. The pending-transaction driver owns the substrate loop:
-  simulate the pending tx (`ScratchEvm::replay`) → recover pool post-states
+  simulate the pending tx (`Evm2ScratchEvm::replay`) → recover pool post-states
   (`extract_pool_post_states`) → admit → discover → evaluate → compose →
   bundle-sim gate → decide → submit. `BackrunStrategy`
   (`degenbot-strategy/src/backrun_strategy.rs`) is the reference implementation.

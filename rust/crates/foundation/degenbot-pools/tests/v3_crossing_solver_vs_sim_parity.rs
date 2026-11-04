@@ -17,7 +17,7 @@
 //! Two residual suspects (mirroring the sibling V4 experiment):
 //!
 //! 1. **Stale engine state** — the engine `V3PoolState` the solver read lags
-//!    the solve-block state the in-process revm sim reads.
+//!    the solve-block state the in-process evm2 sim reads.
 //! 2. **A residual in the solver's concentrated liquidity crossing accumulation** —
 //!    `IntV3TickRangeSequence::compute_crossing` + `simulate_v3_range_swap`
 //!    diverges from V3's stepwise `compute_swap_step_v3` walk on a multi-tick

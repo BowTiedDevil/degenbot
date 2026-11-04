@@ -97,7 +97,7 @@ pub fn record_block_hash() {
     COLD_BLOCK_HASH.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Record one `BlockSimHandle` build.
+/// Record one `Evm2BlockSimHandle` build.
 pub fn record_handle_build(dur: Duration) {
     HANDLE_BUILDS.fetch_add(1, Ordering::Relaxed);
     HANDLE_BUILD_NS.fetch_add(

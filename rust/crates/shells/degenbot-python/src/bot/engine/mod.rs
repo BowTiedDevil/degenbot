@@ -82,7 +82,7 @@ pub struct PyArbEngine {
     // Python.
     /// The cross-block persistent bytecode + account-existence cache
     /// (`WarmCodeCacheInner`, the Option-A layer). Held for the
-    /// engine's life; cloned into each per-block `BlockSimHandle::build` so
+    /// engine's life; cloned into each per-block `Evm2BlockSimHandle::build` so
     /// the per-block cold `basic`/code RPCs stop repeating across blocks
     /// (first block warms; later blocks hit until TTL expiry). Constructed
     /// once in `new`; untouched by the pump (read-only under the
@@ -151,7 +151,7 @@ impl PyArbEngine {
 
     /// The shared `BotState` arc (ADR-003) — the stage surface's `core`
     /// handoff, cloned out for callers that need to read the pool-state
-    /// registry (the in-process `BlockSimHandle` path borrows `&BotState`
+    /// registry (the in-process `Evm2BlockSimHandle` path borrows `&BotState`
     /// for `BotStateDb`). One Arc clone, no state copy.
     pub(crate) fn bot_state_arc(&self) -> Arc<StateLock<BotState>> {
         self.stages.core()
@@ -160,7 +160,7 @@ impl PyArbEngine {
     /// The cross-block warm bytecode cache arc (Option A) — the
     /// persistent `Arc<RwLock<WarmCodeCacheInner>>` held for the engine's life.
     /// The batch executor's sim stage clones this into the per-block
-    /// `BlockSimHandle::build` so the `WarmCodeCache` layer shares one inner
+    /// `Evm2BlockSimHandle::build` so the `WarmCodeCache` layer shares one inner
     /// map across every per-block EVM. One Arc clone, no map copy.
     pub(crate) fn warm_code_cache_arc(
         &self,

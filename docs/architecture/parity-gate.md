@@ -45,7 +45,7 @@ Two adjacent gates are distinct and keep their own homes: the **on-chain golden
 parity** tests compare against recorded on-chain truth
 ([golden-onchain-parity.md](golden-onchain-parity.md)), and the **Tier-2
 dual-driver sim parity** pair is documented with the sim inspector
-([revm-inspector-diagnostics.md](revm-inspector-diagnostics.md)).
+([inspector-diagnostics.md](inspector-diagnostics.md)).
 
 ## Delegation has its own proof
 

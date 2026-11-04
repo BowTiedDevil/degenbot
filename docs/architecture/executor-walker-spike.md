@@ -41,7 +41,7 @@ This is D3's "enclosure is derived, not chosen": the author states *facts* (wher
 
 ## Evidence (the spike's gate)
 
-- **Byte-identity**: `derive_v3v4v3_walk(...)`'s bytes equal `build_v3v4v3_plan`'s bytes on representative amount sets (`walker_matches_hand_authored_v3v4v3`). Byte-identity ⇒ execution-identity: both share `plan_to_bytes`, and the revm matrix already runs `build_v3v4v3_plan` GREEN.
+- **Byte-identity**: `derive_v3v4v3_walk(...)`'s bytes equal `build_v3v4v3_plan`'s bytes on representative amount sets (`walker_matches_hand_authored_v3v4v3`). Byte-identity ⇒ execution-identity: both share `plan_to_bytes`, and the evm2 matrix already runs `build_v3v4v3_plan` GREEN.
 - **Validator gate**: the walked Plan passes `LedgerValidator::validate_full`.
 - **Default unchanged**: `cargo test -p degenbot-executor` (no `walk`) — 109 lib + all integration suites green; `grammar_walker` is `#[cfg(feature = "walk")]`, absent from default builds.
 - **Lint**: `cargo clippy -p degenbot-executor --features walk --all-targets` clean.
@@ -61,7 +61,7 @@ struct HopFacts {
 }
 ```
 
-A2 generalizes by: (1) adding the V2/V4 mechanics modules (the swap/`unlock` step constructors), (2) extending `OutDest`/`Repay` to any new coupling a family exercises (native bridging, V2 pre-fund, capture terminals), (3) widening the walker to walk an arbitrary hop sequence reading each hop's facts, and (4) proving the **full 25-family revm contract-matrix** (not byte-parity against the suspect builders) before hard cutover (A3).
+A2 generalizes by: (1) adding the V2/V4 mechanics modules (the swap/`unlock` step constructors), (2) extending `OutDest`/`Repay` to any new coupling a family exercises (native bridging, V2 pre-fund, capture terminals), (3) widening the walker to walk an arbitrary hop sequence reading each hop's facts, and (4) proving the **full 25-family evm2 contract-matrix** (not byte-parity against the suspect builders) before hard cutover (A3).
 
 ## Non-goals (checked)
 

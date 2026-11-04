@@ -4,7 +4,7 @@
 //! (`grammar::encode_grammar` → `derive_shape` → `build_*_plan` + validator +
 //! `plan_to_bytes`, and the all-V2 any-N family → `grammar_shape::derive_all_v2`),
 //! the byte-identity of every combo is pinned by the
-//! revm runtime matrix (`degenbot-simulation` `harness_declarative`
+//! evm2 runtime matrix (`degenbot-simulation` `harness_declarative`
 //! `full_matrix`, exact delta — the ADR-029 D5 source of truth) plus the
 //! primitive wire-format layer (`encoders_parity.rs`) and the native bridge
 //! byte-golden (`native_eth_3hop_bridge.rs`). The former golden-master byte

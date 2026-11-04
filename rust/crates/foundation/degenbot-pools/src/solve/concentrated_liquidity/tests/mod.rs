@@ -3288,12 +3288,12 @@ fn exact_shifted_anchor_matches_refined_argmax_on_interior_optima() {
 /// synthetic mid-spine), feeds it through the same
 /// `V3PoolState::build_int_v3_sequence` path `solver_dispatch` uses, then
 /// replays hop 2 with the fixture input through the walk's ground-truth
-/// simulator. The predicted hop-2 output must match on-chain revm
+/// simulator. The predicted hop-2 output must match on-chain
 /// (1_109_518_347) within the integer model's residual step-rounding slack
 /// (observed 7 wei).
 #[test]
 #[expect(clippy::too_many_lines)] // still >100 in hotpath builds (test-only, never instrumented)
-fn block_25641093_pool_feed_hop2_predicts_revm_output() {
+fn block_25641093_pool_feed_hop2_predicts_onchain_output() {
     use crate::state::v3_state::{PoolTickCoverage, RegisterV3PoolParams, V3PoolState};
     use crate::TickInfo;
     use alloy::primitives::{Address, B256, U128, U512};

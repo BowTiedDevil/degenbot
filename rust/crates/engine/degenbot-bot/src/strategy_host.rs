@@ -827,12 +827,12 @@ impl StrategyHost {
             // `!Send` and must be polled inline on one thread, never spawned.
             // Drive it under the AMBIENT multi-thread runtime (via `block_on`
             // from a blocking thread) so the lane sees the same runtime
-            // ambience a dedicated process entrypoint provides: `revm`'s
-            // `WrapDatabaseAsync::new` captures the current handle only when
-            // that runtime is multi-threaded, and its layer reads then use
+            // ambience a dedicated process entrypoint provides: the evm2 sync
+            // DB bridge (`BlockingAsyncDb::new`) captures the current handle only
+            // when that runtime is multi-threaded, and its layer reads then use
             // `block_in_place`. A dedicated current-thread runtime captures no
             // handle and forbids block-in-place, so every
-            // `BlockSimHandle::build` would fail.
+            // `Evm2BlockSimHandle::build` would fail.
             let handle = runtime.spawn_blocking(move || {
                 let future = spawn(lane);
                 runtime.block_on(future)
@@ -1344,10 +1344,11 @@ mod tests {
     }
 
     /// A hosted lane must observe the multi-thread ambient runtime the
-    /// dedicated process entrypoint provides: `revm`'s `WrapDatabaseAsync::new` (the
-    /// layer `BlockSimHandle::build` stacks) returns `None` under a
-    /// current-thread runtime, so a dedicated current-thread lane runtime
-    /// leaves every frame with `replay_unavailable`.
+    /// dedicated process entrypoint provides: the evm2 sync DB bridge
+    /// (`BlockingAsyncDb::new`, the layer `Evm2BlockSimHandle::build` stacks)
+    /// returns
+    /// `None` under a current-thread runtime, so a dedicated current-thread lane
+    /// runtime leaves every frame with `replay_unavailable`.
     #[tokio::test]
     async fn start_driving_boots_the_lane_under_the_multi_thread_ambient_runtime() {
         use tokio::runtime::RuntimeFlavor;

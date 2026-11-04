@@ -2,7 +2,7 @@
 //! (incident 2026-08-20 #1 root fix) — plus the [`SimAnchorOracle`]
 //! seam the sim DB is generic over.
 //!
-//! Before this type, `BlockSimHandle::build` borrowed `&BotState` for the
+//! Before this type, the per-block handle build borrowed `&BotState` for the
 //! whole serial sim loop — every cold-miss fetch went over RPC while the
 //! read guard was held, parking any writer behind it for the transport
 //! delay (minutes on a stalled RPC pre-F2). Now the fan-out takes a SHORT
@@ -43,7 +43,7 @@ use alloy::primitives::{Address, U256};
 use super::divergence_probe::TrackedSlotProbe;
 use super::BotState;
 
-/// The view `BotStateDb`/`BlockSimHandle` consult for pool membership and,
+/// The view `BotStateDb`/`Evm2BlockSimHandle` consult for pool membership and,
 /// when it carries engine state, for the divergence observer's words.
 ///
 /// Two implementations back the seam: [`RouteRegistry`](super::RouteRegistry)

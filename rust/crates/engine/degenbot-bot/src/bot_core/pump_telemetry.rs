@@ -136,7 +136,7 @@ impl PumpTelemetry {
                 secs: self.last_apply_at.elapsed().as_secs_f64(),
             });
             // RSS drift-watch: RSS creeps linearly with the
-            // registry (tick maps + revm working set) and a container
+            // registry (tick maps + evm2 working set) and a container
             // OOM-kill presents as an overnight availability failure, not a
             // solver symptom - sample it on the same periodic heartbeat.
             if let Some(bytes) = crate::instruments::read_process_rss_bytes() {

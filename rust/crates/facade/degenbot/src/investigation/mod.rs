@@ -6,7 +6,7 @@
 //! its V2/V3/V4 pool reconstruction, its per-hop pool oracle). It contains NO
 //! executor logic and is NOT the deep reusable primitive. The genuinely reusable,
 //! contract-agnostic EVM spine is [`degenbot_simulation::oracle`] — deploy a
-//! pinned contract into revm, seed storage slots, drive a call, classify
+//! pinned contract into evm2, seed storage slots, drive a call, classify
 //! Revert-vs-Halt — which any individual/a user's OWN contract harness builds on
 //! as a standalone per-contract project at the user layer. This module's per-hop oracle checks currently use
 //! the fast Rust twins; a deep bytecode-level probe would replace them with

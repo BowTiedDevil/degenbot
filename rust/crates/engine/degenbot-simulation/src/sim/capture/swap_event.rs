@@ -8,7 +8,7 @@
 //! # The onchain-recompute replacement (spike findings Q1)
 //!
 //! `execute()` drives real swaps into V2/V3/V4 pools; those pools emit
-//! `Swap` LOG events revm surfaces via `Inspector::log_full`. The existing
+//! `Swap` LOG events the inspector surfaces via its `log` hook. The existing
 //! `degenbot_decoders::{decode_v2_swap_log, decode_v3_swap_log,
 //! decode_v4_swap_log}` decode them. So "did the solver's `hop_outputs[i]`
 //! match reality" is `decode_swap_log(event).amount == solver.hop_outputs[i]`
@@ -71,8 +71,8 @@ pub enum SwapFamily {
     /// the post-swap `sqrtPriceX96`/`liquidity`/`tick`, AND the `int128`
     /// amounts) byte-match the onchain receipt across V2/V3/V4 families. The
     /// V4 pool state is PERSISTENT (`_pools[poolId]` at slot 6, per
-    /// `docs/architecture/v4_poolmanager_storage_layout.md`), cold-loaded via
-    /// `WrapDatabaseAsync<AlloyDB>` in production.
+    /// `docs/architecture/v4_poolmanager_storage_layout.md`), cold-loaded
+    /// through `BlockingAsyncDb` in production.
     ///
     /// **Reverted-frame over-capture (fixed):** `log_full` fires per LOG
     /// opcode BEFORE the enclosing frame's revert resolves, so a swap emitted
@@ -208,7 +208,7 @@ fn u256_to_signed_delta(amount_out: U256, amount_in: U256) -> Option<I256> {
 
 /// The capture buffer the engine's composite inspector drives. The
 /// frame-stack state machine is engine-neutral — the evm2 inspector drives
-/// the same buffer (the revm hooks below are a thin delegation layer).
+/// the same buffer (the hook methods below are a thin delegation layer).
 #[derive(Debug, Default)]
 pub struct SwapEventBuffer {
     /// Committed swaps — only logs from frames that **committed** (didn't

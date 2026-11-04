@@ -1,8 +1,8 @@
 //! `simulate_in_process_revert_probe` — the ADR-005 Tier-2 dual-driver
-//! parity entrypoint for the revm inspector.
+//! parity entrypoint for the evm2 inspector.
 //!
 //! The production inspector path (the batch executor's sim stage) runs over a real
-//! provider (`WrapDatabaseAsync<AlloyDB>`) — the cold-miss fallback RPCs the
+//! provider (the `BlockingAsyncDb` cold-miss adapter) — the fallback RPCs the
 //! node. The Tier-2 dual-driver parity test can't depend on a live RPC, so
 //! this binding exposes the **in-process** path (`simulate_in_process_with_db`
 //! over `CacheDB<EmptyDB>`) — no RPC, no `BotState` tracked pools. The

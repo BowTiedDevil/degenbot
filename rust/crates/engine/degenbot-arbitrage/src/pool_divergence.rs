@@ -184,8 +184,7 @@ impl PoolDivergence {
     }
 }
 
-/// Did `failure` classify as `SolverCalc`? The Rust-core port of the Python
-/// `logs/permutation_analyzer.py::classify_candidate` SolverCalc verdict —
+/// Did `failure` classify as `SolverCalc`? The Rust-core SolverCalc verdict —
 /// the one dispatch policy cares about (the other verdicts, `Encoding`/
 /// `Unknown`/`Drift`, are log-line taxonomy, not dispatch policy).
 ///

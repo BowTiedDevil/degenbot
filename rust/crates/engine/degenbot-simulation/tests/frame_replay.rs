@@ -14,7 +14,7 @@
 //!   to `disable_base_fee` and records which path settled.
 //!
 //! Live claims (ignored by default, network-gated):
-//! - `BlockSimHandle::scratch_evm()` stacks successfully on a live fork and
+//! - `Evm2BlockSimHandle::scratch_evm()` stacks successfully on a live fork and
 //!   replays a plain transfer.
 //! - A real mainnet V2 router swap replayed at its parent block matches the
 //!   chain's post-tx storage for the touched accounts.
@@ -40,7 +40,7 @@ use degenbot_executor::WarmupSlots;
 
 /// The scratch stack never applies the strategy's state overrides, so the
 /// live tests only need a well-formed (all-zero) warmup set to pass through
-/// `BlockSimHandle::build`.
+/// `Evm2BlockSimHandle::build`.
 fn zero_warmup() -> WarmupSlots {
     WarmupSlots {
         weth_balance: U256::ZERO,
@@ -306,7 +306,7 @@ fn warm_replay_over_a_pre_touched_set_forwards_zero_reads() {
     assert_eq!(warm.rpc_reads, 0, "warm frame must forward nothing");
 }
 
-/// A reverted frame reports `Reverted` with NO partial state (revm rolled the
+/// A reverted frame reports `Reverted` with NO partial state (the EVM rolls the
 /// journal back — the mid-flight SSTORE contributes nothing), touches no
 /// slots, and the next frame on the same scratch observes the clean state.
 #[test]

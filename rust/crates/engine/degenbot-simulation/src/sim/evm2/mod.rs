@@ -2,11 +2,10 @@
 //! `evm2` feature.
 //!
 //! Scope is deliberately thin: a constructor over evm2's in-memory DB plus
-//! the spec pin, with `tests/evm2_pilot.rs` as the differential gate (one
-//! transaction through both engines, identical status/gas/output/storage
-//! writes required). Every later migration stage — the `BotStateDb` storage
+//! the spec pin. The differential gates are the parity harnesses: engine
+//! and chain must agree on status/gas/output/storage writes, to the wei. Every later migration stage — the `BotStateDb` storage
 //! forwarding, the warm code cache, the async RPC cold-miss fallback
-//! (`evm2::evm::AsyncDatabase` takes the `WrapDatabaseAsync<AlloyDB>` role),
+//! (`evm2::evm::AsyncDatabase` is the async seam `BlockingAsyncDb` adapts),
 //! and the inspector surface — builds on this seam and must keep that gate
 //! green.
 //!

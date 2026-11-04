@@ -29,9 +29,9 @@ it can't be ordered independently. You get a sane default; override it only if
 you price differently.
 
 **You are never asked to own the sim loop.** The engine keeps running your
-payload through revm and returning per-call outcomes; you name *what to
+payload through evm2 and returning per-call outcomes; you name *what to
 observe* (Probe) and *how to interpret it* (Assess). There is no free-form
-"here's the whole `BlockSimHandle`, you do everything" hook.
+"here's the whole `Evm2BlockSimHandle`, you do everything" hook.
 
 ## Where you plug in
 

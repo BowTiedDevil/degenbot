@@ -17,7 +17,7 @@
 //! **Current status:** the hand-written
 //! `derive_2hop_*` / `derive_3hop_*` byte-assembling emitters and their
 //! parity-oracle are **deleted** — the Plan is the sole production producer
-//! for every 2/3-hop family. The revm runtime matrix (`degenbot-simulation`
+//! for every 2/3-hop family. The evm2 runtime matrix (`degenbot-simulation`
 //! `harness_declarative` full-matrix, exact delta) is the ADR-029 D5 source of
 //! truth; the primitive wire format is pinned by `tests/encoders_parity.rs`
 //! and the native bridge by `tests/native_eth_3hop_bridge.rs`. The all-V2
@@ -1023,7 +1023,7 @@ mod tests {
     // cannot cover the flash repayment is REJECTED by the LedgerValidator
     // (the flash-repay `Erc20Transfer` would over-debit `erc20[weth]`, so
     // credit-before-debit fires). The retired hand-written speedrail emitted
-    // this stream unvalidated (and the revm harness's 2× WETH buffer let it
+    // this stream unvalidated (and the evm2 harness's 2× WETH buffer let it
     // "execute but lose"); the gate now makes it unrepresentable — which is the
     // entire point. The SAME losing stream under SelfFund still validates
     // (no flash debt to repay — the executor eats the loss from held capital,

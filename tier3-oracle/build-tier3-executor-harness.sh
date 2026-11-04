@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the committed Vyper executor artifact for the tier-3b oracle
-# (deterministic revm replay of the V3->V4->V3 sim-Halt against real bytecode).
+# (deterministic evm2 replay of the V3->V4->V3 sim-Halt against real bytecode).
 #
 # Compiles the vendored `executor/contracts/cmd_executor.vy` with the PINNED
 # vyper 0.5.0a3 (the only version proven to compile it — ./AGENTS.md), emits creation + runtime bytecode + ABI + method identifiers +

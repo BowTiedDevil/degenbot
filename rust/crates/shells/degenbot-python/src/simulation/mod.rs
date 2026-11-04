@@ -2,18 +2,18 @@
 //!
 //! The settlement-arbitrage strategy is the per-block profitability pipeline — it takes a
 //! batch of solved arbitrage candidates, runs each through the in-process
-//! revm sim (the engine's `BlockSimHandle` EVM driven by the strategy's
+//! evm2 sim (the engine's `Evm2BlockSimHandle` EVM driven by the strategy's
 //! `simulate_path_on_evm`), classifies the outcome
 //! (gas-profitable / unprofitable / revert), computes gross/net profit +
 //! the market-aware age-decay priority fee, and hands the winners to the
 //! submission seam. It is a pyo3-free core leaf (ADR-019 D4/D7, decision R —
 //! the strategy stays in Rust; ADR-019 retired the legacy `eth_simulateV1`
-//! RPC executor — the in-process revm path is the sole executor).
+//! RPC executor — the in-process evm2 path is the sole executor).
 //!
 //! ## Layering (ADR-005 / ADR-019 D7)
 //!
 //! - **Engine** (`degenbot-simulation`): the in-process evm2 EVM handle
-//!   (`BlockSimHandle`, layered DB, overrides, AL collector, warm cache).
+//!   (`Evm2BlockSimHandle`, layered DB, overrides, AL collector, warm cache).
 //!   Zero pyo3.
 //! - **Strategy** (`degenbot-arbitrage`): the settlement-arbitrage bundle —
 //!   `dispatch_profitable_results`, `SimResult`, `SimulateContext`,

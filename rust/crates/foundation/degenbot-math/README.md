@@ -12,7 +12,7 @@ modules (ADR-035).
 | `solidly` | Solidly / Aerodrome / Camelot stable-pool invariants |
 
 Every port is cross-verified against its canonical source by the workspace's
-tier-3 oracle suites (REVM-transacted Solidity harnesses and Python
+tier-3 oracle suites (evm2-transacted Solidity harnesses and Python
 crosscheck snapshots); this crate hosts those suites.
 
 Part of the [degenbot](https://crates.io/crates/facade/degenbot) workspace — see

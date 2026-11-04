@@ -1048,7 +1048,7 @@ const V3_POOL_USDC_WETH_005: Address = address!("0x88e6A0c2dDD26FEEb64F039a2c412
 
 /// The scratch stack never applies the strategy's state overrides, so the
 /// live tests only need a well-formed (all-zero) warmup set to pass through
-/// `BlockSimHandle::build`.
+/// `Evm2BlockSimHandle::build`.
 fn zero_warmup() -> WarmupSlots {
     WarmupSlots {
         weth_balance: U256::ZERO,
@@ -1429,7 +1429,7 @@ fn replayable_of(t: &alloy::rpc::types::Transaction) -> ReplayableTx {
 }
 
 /// Build a live scratch over the fixture frame's parent block — the
-/// `BlockSimHandle::build` shape the sibling live tests use. The handle
+/// `Evm2BlockSimHandle::build` shape the sibling live tests use. The handle
 /// borrows the override/anchor/cache locals, so the pairing expands in the
 /// CALLER's scope.
 macro_rules! live_scratch {

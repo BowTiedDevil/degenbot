@@ -66,9 +66,9 @@ pub enum DriverExit {
 /// backrun lane's `Rc`-backed buffers) is polled inline on one blocking thread
 /// using the ambient multi-thread runtime by the host's `start_driving`,
 /// while the factory itself must be `Send` so it can travel to that thread.
-/// The ambient multi-thread runtime is what `revm`'s `WrapDatabaseAsync::new`
-/// requires; a dedicated current-thread runtime captures no handle and forbids
-/// block-in-place, failing every `BlockSimHandle::build`.
+/// The ambient multi-thread runtime is what the evm2 sync DB bridge
+/// (`BlockingAsyncDb::new`) requires; a dedicated current-thread runtime captures
+/// no handle and forbids block-in-place, failing every `Evm2BlockSimHandle::build`.
 pub type DriverFuture = Pin<Box<dyn Future<Output = DriverExit> + 'static>>;
 
 /// The once-only factory that boots a driver's loop.

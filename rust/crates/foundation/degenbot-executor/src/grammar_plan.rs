@@ -23,7 +23,7 @@
 //! returning `None` on decline or gate rejection.
 //!
 //! ---
-//! **Parity sources of truth:** the revm runtime matrix (`degenbot-simulation`
+//! **Parity sources of truth:** the evm2 runtime matrix (`degenbot-simulation`
 //! full_matrix, exact delta); the primitive wire-format layer
 //! (`tests/encoders_parity.rs`); the native bridge byte-golden
 //! (`tests/native_eth_3hop_bridge.rs`).

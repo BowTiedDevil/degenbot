@@ -344,7 +344,7 @@ test-rust-nextest-release: check-toolchain
 # Run the fork/RPC-gated suites — the legs every offline gate (test, pre-push,
 # CI) deliberately deselects:
 #   - the pytest live-RPC tiers (`online_rpc` / `base`, minus `slow`);
-#   - the Rust live revm fork-truth legs: the `#[ignore]`d `live_*` tests in
+#   - the Rust live evm2 fork-truth legs: the `#[ignore]`d `live_*` tests in
 #     degenbot-simulation, gated on the chain-1 endpoint env family
 #     `DEGENBOT_RPC_HTTP_CHAINID_1` (exported here from the probe target).
 # Fails CLOSED unless the machine DECLARES an endpoint (process env or the
@@ -382,7 +382,7 @@ test-fork: dev
     pytest_rc=0
     {{ py_run }} pytest -m '(online_rpc or base) and not slow' -q --no-header || pytest_rc=$?
     echo
-    echo "▶ Rust live revm fork legs: degenbot-simulation live_* (run-ignored only)"
+    echo "▶ Rust live evm2 fork legs: degenbot-simulation live_* (run-ignored only)"
     rust_rc=0
     # The live_ fork-truth legs run on the engine (ADR-089: post-cutover
     # the evm2 engine is unconditional — no feature flag to carry).
@@ -923,13 +923,13 @@ record-deployment-golden *args:
 #
 # Family notes (harness sources under `tier3-oracle/src*/`):
 #   step      SwapMath.computeSwapStep (V3 + V4) vs the real canonical core
-#             libraries run as EVM bytecode in revm. V3 via direct
+#             libraries run as EVM bytecode in evm2. V3 via direct
 #             solc 0.7.6 (v3-core pragmas <0.8 + foundry can't resolve solc
 #             <0.8 in this env — documented toolchain deviation; the script
 #             caches solc 0.7.6 in the svm dir) + V4 via forge 0.8.26.
 #             Asserts each Rust output field === the on-chain output.
 #   swap      V3 `Pool.swap` end-to-end. solc 0.7.6 harness, drives
-#             `v3_simulate_swap` against real UniswapV3Pool bytecode in revm.
+#             `v3_simulate_swap` against real UniswapV3Pool bytecode in evm2.
 #   v2        V2 `Pair.swap` (family 1/3 of the Tier-3 cutover). solc 0.5.16
 #             harness; `IntHopState::swap` (V2 getAmountOut) byte-exact via the
 #             K-invariant boundary.
@@ -969,7 +969,7 @@ record-deployment-golden *args:
 # COMMITTED bytecode from `tier3-oracle/artifacts/`, toolchain-free), so this
 # recipe's unique role is regenerate + publish the artifacts (after a
 # harness-source edit; `rebuild-tier3-artifacts` republishes without running
-# them) and re-run the family. Recompiling dozens of revm harnesses is slow —
+# them) and re-run the family. Recompiling dozens of evm2 harnesses is slow —
 # run a single family, or `all`, accordingly.
 test-tier3 family='all':
     #!/usr/bin/env bash
@@ -1183,7 +1183,7 @@ format: check-toolchain
 # Rust — two passes, because Cargo splits the job:
 #   1. `cargo upgrade --incompatible` rewrites the version *requirements* in
 #      every member Cargo.toml to the latest published, including across
-#      semver major boundaries (e.g. revm 41 -> 42). `cargo update` alone
+#      semver major boundaries (a crate at 41 -> 42). `cargo update` alone
 #      cannot do this — it only refreshes Cargo.lock within the existing
 #      `^x.y.z` range, so a major release on crates.io is invisible to it.
 #   2. `cargo update` then refreshes Cargo.lock to satisfy the new

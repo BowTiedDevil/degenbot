@@ -54,7 +54,7 @@ The Rust core is the engine; Python is a driver shell, not a co-implementation. 
 
 Degenbot abstracts the implementation details of Uniswap liquidity pools and their underlying ERC-20 tokens into a set of Rust core crates exposed to Python through a thin PyO3 binding layer. The Rust core owns all performance-critical and stateful logic — pool/token state, swap math, event decoding, solvers, the pump loop, and swap encoding — while the Python companion provides the user-facing API, docstrings, and I/O orchestration.
 
-The Rust core also owns the operator-facing infrastructure: the settlement-arbitrage engine and pump loop, the in-process revm simulation engine, on-chain price readers, the DB-aware pool/Aave updaters, EIP-1559 transaction signing and submission, and WS/HTTP pub-sub. Python remains the user-facing API, configuration, and registry driver, while the Rust `degenbot-db` crate owns the SQLite schema, file lifecycle, and read/write operations. Python consumers use the stable typed mirror in `degenbot.db`; there is no Python SQLAlchemy session or ORM layer.
+The Rust core also owns the operator-facing infrastructure: the settlement-arbitrage engine and pump loop, the in-process evm2 simulation engine, on-chain price readers, the DB-aware pool/Aave updaters, EIP-1559 transaction signing and submission, and WS/HTTP pub-sub. Python remains the user-facing API, configuration, and registry driver, while the Rust `degenbot-db` crate owns the SQLite schema, file lifecycle, and read/write operations. Python consumers use the stable typed mirror in `degenbot.db`; there is no Python SQLAlchemy session or ORM layer.
 
 These classes serve as building blocks for the lessons published by [BowTiedDevil](https://twitter.com/BowTiedDevil) on [Degen Code](https://www.degencode.com/).
 
@@ -1597,7 +1597,7 @@ Advanced drivers can also reach the engine directly through the `degenbot._ffi` 
 
 ### Why Rust for the Hot Path
 
-The MEV workload — per-block re-solve of hundreds of cyclic paths, EVM-exact revm simulation, ABI decode, tick math, and swap encoding — is latency-bound at the CPython boundary, so the pump loop runs in Rust with the GIL released around each PyO3 crossing. Per-operation microbenchmarks are not tracked in-repo.
+The MEV workload — per-block re-solve of hundreds of cyclic paths, EVM-exact evm2 simulation, ABI decode, tick math, and swap encoding — is latency-bound at the CPython boundary, so the pump loop runs in Rust with the GIL released around each PyO3 crossing. Per-operation microbenchmarks are not tracked in-repo.
 
 ### Build Requirements
 

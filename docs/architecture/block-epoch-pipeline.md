@@ -58,7 +58,7 @@ rows.
 | **Quiesced** | All dispatched logs for the open block applied; completeness classified (tombstone vs settle; early-slice/debounce gates) | Read guard | `Notify` (header tick), `Verify` (WS completeness), `Backfill`, watchdog `Recover`/`LogSilence` — data, not timers | `BlockClock` tick detection + quiesce classification (ADR-008); `PumpFSM` watchdogs + backfill trigger (ADR-028) | inline quiesce/`block-window` reasoning |
 | **Resolved** | The block's `EpochDelta` → affected-path derivation | Read guard (path index) | The epoch's affected-path set | `PathLifecycle` registration bookkeeping | `DirtySets` + `EngineSubscriber` classification |
 | **Solved** | Solver runs the affected paths | **Cheap-read:** read guard through the solve — `solve_path_duration` p99 **5 ms**, `solve_gate_duration` p99 **1 ms** (budget 100 ms) | Solved candidates | Solver dispatch | `drain_lock` + engine `Mutex` on the solve path (ADR-037 shard retired here) |
-| **Simulated** | In-process revm simulation — the sole executor (ADR-019) | Read guard | Derivation/profit facts per candidate (tri-state per ADR-030) | simulation bookkeeping only (`EnginePhase` carries none of this — it is runtime-lifecycle, see below) | the sim anchor of `sim_anchor.rs` (expressed as `Epoch`) |
+| **Simulated** | In-process evm2 simulation — the sole executor (ADR-019) | Read guard | Derivation/profit facts per candidate (tri-state per ADR-030) | simulation bookkeeping only (`EnginePhase` carries none of this — it is runtime-lifecycle, see below) | the sim anchor of `sim_anchor.rs` (expressed as `Epoch`) |
 | **Gated** | Risk/size/profit rechecks on solved+simulated candidates | None (pure evaluation) | Deliver/reject verdicts per bucket (ADR-040) | `DeliveryLifecycle` gating policy | `DrainerHealth` no-progress checks (→ machine watchdogs) |
 | **Published** | Winning bundle to execution; sinks subscribe here (delivery channel, submission, Python) | None (results written to delivery/FFI surface, not pool state) | `Publish` — exactly one per quiesce cycle; RPC-disagreement `Verify` (ADR-021 upstream check retained) | `PumpFSM` settle publish gate | `DrainWork::Publish` + `DispatchOwner` + `DrainSink` routing |
 | **Finalized** | Epoch closed: delivery cutoff stamped, results final | Cutoff monotone on `BotState`; never reset by resume | Epoch close | `DeliveryLifecycle` terminal stamps; registration verify-lifecycle terminal (ADR-022) | cursor stamps in `solve_coordinator.rs` (`last_solved_block`) |
@@ -286,7 +286,7 @@ bridges `PoolStateSubscriber` callbacks. No raw WS stream reaches Python.
    the D1 tombstone-by-successor rule survives unchanged).
 4. **Stages** — `on_streaming_complete` (quiesce + completeness classify +
    debounce/early-slice gates) → `on_resolve` (`EpochDelta::take_keys` → affected
-   paths) → `on_solve` → `on_simulate` (in-process revm, the sole executor) →
+   paths) → `on_solve` → `on_simulate` (in-process evm2, the sole executor) →
    `on_gate` (deliver/reject buckets, ADR-040) → `on_publish` (exactly one per
    quiesce cycle) → `on_finalize` (delivery cutoff stamped, monotone, I7).
 5. **Published edge** — `StageHandlers::on_publish` is where every sink hangs:

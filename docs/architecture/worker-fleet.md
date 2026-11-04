@@ -286,11 +286,11 @@ Cross the FFI only for:
 Simulation **never round-trips Python**: the `SimDriver` role hosts the sim
 body; the inline-sim hook's *private dedicated runtime* is replaced by the
 fleet-hosted slot pool, and the hook retains only its (Rust, pure) simulation
-closure and config. The `WrapDatabaseAsync` runtime-capture caveat (its
+closure and config. The `BlockingAsyncDb` runtime-capture caveat (its
 `Handle::try_current()` at build time + `block_in_place` escalation) is
 resolved by hosting sims on fleet `SimDriver` workers booted *inside* the
 fleet's runtime — the worker is the ambient runtime for the sim, so the
-capture succeeds and no per-call runtime is built (VJGZJ2's rule retained).
+capture succeeds and no per-call runtime is built.
 
 ## 9. Migration plan
 

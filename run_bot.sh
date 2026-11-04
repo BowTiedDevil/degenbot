@@ -49,7 +49,7 @@ mkdir -p "$LOGDIR"
 # invocation — run_bot.sh, a hand-run, a CI/harness — gets loud failure
 # by default; there is no liberal default posture. Flags that follow
 # are all default-ON in code via `bot_env_flag_default_on` (opt OUT with =0):
-#   DEGENBOT_DUMP_CALL_TRACE     (full revm call trace on sim failure)
+#   DEGENBOT_DUMP_CALL_TRACE     (full EVM call trace on sim failure)
 #   DEGENBOT_SIM_EXIT_ON_FAIL  (stop on first sim failure) - see below: this
 #     script DEFAULTS it to 0; failing sims are identified via OTel traces.
 #   DEGENBOT_WS_COMPLETENESS    (per-block eth_getLogs vs WS delivery cross-

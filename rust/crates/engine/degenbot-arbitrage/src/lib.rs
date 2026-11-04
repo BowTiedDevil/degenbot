@@ -11,13 +11,13 @@
 //! - `compute_priority_fee` (TARGET_PROFIT_RATIO / age-decay),
 //! - the sim value types (`SimResult`, `SimulateContext`, `SimulatePath`,
 //!   `FailBuckets`, the int128 guard),
-//! - `dispatch_profitable_results` (the revm-only fan-out) + its thin-margin /
+//! - `dispatch_profitable_results` (the in-process fan-out) + its thin-margin /
 //!   suppression / categorization policy.
 //!
-//! The engine (revm executor, `BlockSimHandle`, `apply_simulation_overrides`,
+//! The engine (evm2 executor, `Evm2BlockSimHandle`, `apply_simulation_overrides`,
 //! AL Inspector, `WarmCodeCache`) stays thin + generic in
 //! `degenbot-simulation`; this strategy builds the handle via
-//! `BlockSimHandle::build` and hands a session's `run_sequence` verb its calls.
+//! `Evm2BlockSimHandle::build` and hands a session's `run_sequence` verb its calls.
 //! Other searcher strategies (sandwich, JIT-L, liquidation)
 //! would be sibling crates over the same engine.
 //!

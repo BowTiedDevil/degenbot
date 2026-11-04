@@ -904,7 +904,7 @@ fn assert_pinned_pool(verified: &[VerifiedPool], frame: &PinnedFrame) {
 
 /// The scratch stack never applies the strategy's state overrides, so the
 /// live tests only need a well-formed (all-zero) warmup set to pass through
-/// `BlockSimHandle::build`.
+/// `Evm2BlockSimHandle::build`.
 fn zero_warmup() -> degenbot_executor::WarmupSlots {
     degenbot_executor::WarmupSlots {
         weth_balance: U256::ZERO,
@@ -1029,7 +1029,7 @@ async fn parent_base_fee(provider: &alloy::providers::RootProvider, pin: u64) ->
 }
 
 /// Build a live handle + scratch over the fixture frame's parent block —
-/// the `BlockSimHandle::build` shape `tests/frame_replay.rs` uses. The
+/// the `Evm2BlockSimHandle::build` shape `tests/frame_replay.rs` uses. The
 /// handle borrows the override/anchor/cache locals, so the whole pairing
 /// expands in the CALLER's scope: pass idents for the handle AND the
 /// scratch (the scratch borrows the handle mutably).

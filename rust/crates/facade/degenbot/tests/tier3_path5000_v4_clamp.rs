@@ -28,7 +28,7 @@
 //! ## What this test asserts (real PoolManager bytecode + all)
 //!
 //! Deploys the canonical v4-core `PoolManager` (via the committed
-//! `V4SwapOracleHarness` unlocker wrapper) into an in-process revm
+//! `V4SwapOracleHarness` unlocker wrapper) into an in-process evm2
 //! `CacheDB`, seeds the path-5000 pool slot-for-slot from the reconstructed
 //! `V4PoolState`, and drives the real swap through `unlock→swap→settle` —
 //! reusing the shared `degenbot::investigation::real_oracle` driver. It proves:

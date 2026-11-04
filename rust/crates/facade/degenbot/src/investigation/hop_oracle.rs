@@ -5,9 +5,10 @@
 //! input→output is correct, isolating a failure to composition/execution rather
 //! than per-hop math.
 //!
-//! The twins here are the SAME functions the tier-3 revm oracles prove byte-exact
-//! to the real `UniswapV2Pair` / `UniswapV3Pool` / V4 `PoolManager` bytecode
-//! (see `degenbot-pools/tests/tier3_*_swap_vs_revm.rs`).
+//! The twins here are the SAME functions the tier-3 oracles prove byte-exact to
+//! the real `UniswapV2Pair` / `UniswapV3Pool` / V4 `PoolManager` bytecode (see the
+//! `tier3_*_swap_vs_reference_bytecode` suites under `degenbot-pools/tests` and
+//! `degenbot-simulation/tests`).
 
 #![expect(clippy::expect_used)]
 

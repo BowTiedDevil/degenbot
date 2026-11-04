@@ -22,8 +22,8 @@ alloy = { version = "^2.5", features = ["full"] }
 # the drift alarm, ADR-089); the `version` key lets `cargo publish` strip
 # the git source. Features are the pure-Rust precompile backends (no
 # GMP/MCL/aws-lc native builds).
-# `async` enables the AsyncDatabase coroutine seam (the WrapDatabaseAsync
-# replacement) — corosensei is pure Rust.
+# `async` enables the AsyncDatabase coroutine seam — the coroutine
+# replacement for the sync `BlockingAsyncDb` adapter; corosensei is pure Rust.
 evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, features = [
     "asm-keccak",
     "async",
@@ -58,8 +58,8 @@ degenbot-executor.workspace = true
 # computes V3 hop outputs byte-consistent with the `PoolV3` stub.
 degenbot-math.workspace = true
 # `AlloyProvider` — the typed RPC provider the in-process sim's cold-miss
-# fallback (`WrapDatabaseAsync<AlloyDB>`) + the access-list / feeHistory paths
-# consume. The `SimulateContext.provider` field holds a borrowed `&AlloyProvider`.
+# fallback (`BlockingAsyncDb` over `AlloyAsyncDb`) + the access-list /
+# feeHistory paths consume. The `SimulateContext.provider` field holds a borrowed `&AlloyProvider`.
 degenbot-rpc.workspace = true
 # `BotState` (ADR-003 state owner; ADR-005 standalone-core) — the snapshot
 # surface (`registered_pools_snapshot`) + the typed pool-state
@@ -88,9 +88,9 @@ parking_lot = "^0.13"
 # `tower::Service` — the JSON-RPC transport seam the scratch chain serves (the
 # same shape the degenbot-rpc recording/replay transports implement).
 tower = { version = "^0.5", default-features = false }
-# `rt` is required by `WrapDatabaseAsync` (it blocks the async `AlloyDB`
-# `DatabaseAsyncRef` calls on a runtime — `WrapDatabaseAsync::new` needs a
-# current-thread tokio handle). The fan-out/categorization policy + its
+# `rt` is required by `BlockingAsyncDb` (it blocks the async `AlloyAsyncDb`
+# reads on a runtime — `BlockingAsyncDb::new` needs an ambient multi-threaded
+# tokio handle). The fan-out/categorization policy + its
 # `buffer_unordered`/`Semaphore` concurrency retired with the strategy
 # relocation to `degenbot-arbitrage` (ADR-019 D4/D7).
 tokio = { version = "^1.54", features = ["rt"] }
@@ -170,9 +170,9 @@ test-harness = []
 # without a rebuild fails the default suite. sha2 is already in the lock (via
 # alloy); this is a dev-only linkage.
 sha2 = "0.11"
-# `examples/rpc_cache_fanout.rs` uses `#[tokio::main(flavor = "multi_thread")]`
-# — `WrapDatabaseAsync<AlloyDB>` blocks on the ambient tokio runtime, which
-# requires a multi-thread runtime (`CurrentThread` returns `None`).
+# `rt-multi-thread` is the flavor the `BlockingAsyncDb` cold path needs: its
+# reads block on the ambient tokio runtime, and under a `CurrentThread`
+# runtime `BlockingAsyncDb::new` returns `None`.
 tokio = { version = "^1.54", features = ["macros", "rt-multi-thread"] }
 # `test-utils` gates the pending-tx pump's frame-injection support
 # (`PendingTxPump::push`) so the §4.2 wire-shape tests + the parity fixture can

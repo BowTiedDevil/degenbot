@@ -1,4 +1,4 @@
-"""Tier-2 behavioral dual-driver parity — revm inspector (ADR-005 standalone claim).
+"""Tier-2 behavioral dual-driver parity — evm2 inspector (ADR-005 standalone claim).
 
 The behavioral companion to the Rust `parity_inspector.rs` test. Proves the
 **same** canonical fixture (the `0xcafebabe` REVERT executor stub over a
@@ -20,7 +20,7 @@ delegation is *lossless*).
 ## Oracle (weaker — recorded constant, no closed form)
 
 Unlike the V2/V3/V4 calc parity pairs (closed-form `getAmountOut`), the
-inspector runs a full revm EVM — no closed-form derivation of the
+inspector runs a full evm2 EVM — no closed-form derivation of the
 reverting-frame output. The expected output is a **recorded constant** in
 the shared fixture JSON (captured from the Rust smoke test — the byte-exact
 EVM run is the truth). A deliberately-wrong fixture edit fails BOTH the
@@ -49,7 +49,7 @@ def test_inspector_dual_driver_parity_cafebabe_revert() -> None:
     """The Python half of the ADR-005 Tier-2 dual-driver parity pair.
 
     Drives the `0xcafebabe` REVERT executor stub through the
-    `simulate_in_process_revert_probe` PyO3 binding (in-process revm EVM,
+    `simulate_in_process_revert_probe` PyO3 binding (in-process evm2 EVM,
     `CacheDB<EmptyDB>`, no RPC) + asserts the reverting-frame +
     captured-swaps + bucket output matches the shared fixture JSON — the
     same fixture the Rust `parity_inspector.rs` test loads + asserts.

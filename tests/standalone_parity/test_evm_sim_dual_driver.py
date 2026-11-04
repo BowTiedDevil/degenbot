@@ -29,7 +29,7 @@ reads return real ETH values.
 ## Oracle (weaker — recorded constant, no closed form)
 
 `gross_profit` IS closed-form (1 ETH = the gift's seeded balance). But
-`gas_used` + `priority_fee` + `net_profit` are recorded from the revm EVM run
+`gas_used` + `priority_fee` + `net_profit` are recorded from the evm2 EVM run
 (the byte-exact gas accounting + the lossy f64 priority-fee path have no closed
 form). The parity contract is: both drivers produce the same recorded
 constants. A deliberately-wrong fixture edit fails BOTH halves (the fixture is
@@ -55,7 +55,7 @@ def test_evm_sim_success_path_dual_driver_parity() -> None:
     """The Python half of the Tier-2 dual-driver parity pair.
 
     Drives the SELFDESTRUCT-gift fixture through the
-    `simulate_in_process_success_probe` PyO3 binding (in-process revm EVM,
+    `simulate_in_process_success_probe` PyO3 binding (in-process evm2 EVM,
     `CacheDB<EmptyDB>`, no RPC) + asserts the SimResult (gross_profit /
     net_profit / gas_used / priority_fee / base_fee_next / hop_count /
     captured_swaps) matches the shared fixture JSON — the same fixture the

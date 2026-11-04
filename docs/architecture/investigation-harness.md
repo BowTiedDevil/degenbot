@@ -1,11 +1,11 @@
-# Revm investigation-harness architecture
+# Evm2 investigation-harness architecture
 
 How to assemble an in-process EVM investigation harness (deploy a contract,
 drive a call, read the result) against a **real contract**, without re-deriving
-the revm plumbing every time.
+the evm2 plumbing every time.
 
 The tl;dr: the only part that was ever *hard* — deploying pinned bytecode into a
-revm `CacheDB`, seeding storage, driving a call, and telling a Solidity `Revert`
+evm2 `CacheDB`, seeding storage, driving a call, and telling a Solidity `Revert`
 apart from a verbless `Halt` — is now a single deep, contract-agnostic module in
 the simulation crate. Everything else is a thin per-contract driver you scaffold
 at the user layer.
@@ -28,7 +28,7 @@ at the user layer.
 └───────────────────────────────┬─────────────────────────────────────────┘
                                 │ also the landing zone for the tier-3 oracles
 ┌───────────────────────────────▼─────────────────────────────────────────┐
-│  degenbot-simulation (revm owner) — in-process EVM engine              │
+│  degenbot-simulation (evm2 owner) — in-process EVM engine              │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -50,7 +50,7 @@ backruns — it only sequences EVM transactions against a fresh self-contained
 
 | Function | What it does |
 |----------|--------------|
-| `new_fixture_evm()` | Build a pristine revm EVM over an empty `CacheDB`. One per probe. |
+| `new_fixture_evm()` | Build a pristine evm2 EVM over an empty `CacheDB`. One per probe. |
 | `set_disable_nonce_check(&mut, bool)` | Turn off the nonce check for arbitrary staged txs. |
 | `set_code_size_limits(&mut, Option<usize>)` | Raise/clear contract+initcode size caps (deploying oversized harnesses, e.g. EIP-170).
 | `deploy(&mut, Bytes, gas) -> Result<Address, String>` | Deploy creation bytecode, return its address. |
@@ -202,7 +202,7 @@ instead.
   `rust/crates/facade/degenbot/examples/` run-once `path*`/`fee1`/`desync`/probe
   harnesses plus their fixtures and one-off capture/verify/watch scripts — no
   live test, example, or doc consumed them (verified by whole-tree `rg`; per
-  GLOSSARY.md, ad-hoc path fixtures are weak cross-checks to DELETE once the revm
+  GLOSSARY.md, ad-hoc path fixtures are weak cross-checks to DELETE once the evm2
   harnesses cover them). Kept: `standalone_consumer.rs`, the `path5000` /
   `path73385` fixtures + capture scripts (consumed by committed tier-3 regression
   tests). The Layer-3 worked example now points at the kept `path5000` fixture,

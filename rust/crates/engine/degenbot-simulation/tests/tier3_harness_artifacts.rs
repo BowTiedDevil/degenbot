@@ -1,6 +1,6 @@
 //! Toolchain-free integrity guard for the Tier-3 on-chain oracle artifacts.
 //!
-//! The Tier-3 revm tests run in the default `cargo test --workspace` suite and
+//! The Tier-3 evm2 tests run in the default `cargo test --workspace` suite and
 //! load their canonical-reference harness bytecode from the COMMITTED
 //! `tier3-oracle/artifacts/` tree (so no solc/forge is needed to RUN the
 //! suite). This test closes the drift hole a committed-binary decision opens:

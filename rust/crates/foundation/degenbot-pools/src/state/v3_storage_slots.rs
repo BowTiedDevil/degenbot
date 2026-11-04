@@ -2,11 +2,11 @@
 #![expect(clippy::identity_op, clippy::cast_possible_wrap)]
 //! V3 on-chain storage-slot encoders — engine typed state → EVM slot words.
 //!
-//! Pure functions (no revm, no pyo3) that pack the engine's `V3PoolState`
+//! Pure functions (no EVM dependency, no pyo3) that pack the engine's `V3PoolState`
 //! typed fields into the EXACT `bytes32` storage layout the canonical
 //! UniswapV3Pool bytecode reads during a real `swap()` callback. Used by the
 //! Tier-3 on-chain accuracy oracle  to
-//! seed an offline revm `CacheDB` from a `V3PoolState` so a `Pool.swap` call
+//! seed an offline evm2 `CacheDB` from a `V3PoolState` so a `Pool.swap` call
 //! against real V3-core bytecode reproduces the engine's swap math — closing
 //! the "Rust == Rust" blind spot of Tier 2 (ADR-005 dual-path coverage).
 //!
@@ -245,7 +245,7 @@ pub fn encode_v3_liquidity_slot(liquidity: u128) -> U256 {
 /// # On-chain ground truth
 ///
 /// This is a Tier-3 verified layout: the up-direction (oneForZero) byte-exact
-/// oracle (`tier3_v3_pool_swap_vs_revm.rs`) previously seeded the pool with
+/// oracle (`tier3_v3_pool_swap_vs_reference_bytecode.rs`) previously seeded the pool with
 /// gross/net SWAPPED, and a swap crossing an upper boundary read `net = +
 /// gross` (liquidity grew instead of shrinking). Fixing the halves to match the
 /// canonical pool made the up-direction walk byte-exact.
@@ -265,7 +265,7 @@ pub fn encode_v3_tick_info_slot(tick_info: &TickInfo) -> U256 {
 /// The slot is a pure function of the tick (the V3 contract's storage layout
 /// is identical across all V3 pools); the pool ADDRESS selects the
 /// `CacheDB` account at seed time, NOT part of the slot derivation. Returns
-/// `U256` (the revm `CacheDB` slot-key type).
+/// `U256` (alloy's slot-key word type).
 ///
 /// The per-tick `TickInfo` occupies THREE consecutive slots starting here:
 /// slot+0 = `liquidityGross | liquidityNet` (see [`encode_v3_tick_info_slot`]),

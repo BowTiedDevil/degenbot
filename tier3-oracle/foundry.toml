@@ -2,7 +2,7 @@
 #
 # This project compiles *reference* Solidity (canonical deployed bytecode from
 # Uniswap V2/V3/V4, Curve, Balancer cores) into runtime bytecode that a Rust
-# `#[test]` deploys into an offline revm `CacheDB<EmptyDB>` and calls, so the
+# `#[test]` deploys into an offline evm2 `CacheDB<EmptyDB>` and calls, so the
 # Rust swap-math / solver code is compared against the real on-chain contract
 # logic byte-for-byte — closing the "Rust == Rust" blind spot of Tier 2 (see
 # ADR-005 dual-path coverage in AGENTS.md, and the ADR covering it).

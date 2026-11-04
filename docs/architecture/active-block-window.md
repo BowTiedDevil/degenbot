@@ -20,7 +20,7 @@ that BOTH the solver and the sim derive from, replacing the three scattered
 outruns the solve anchor. The promote gate and the publish gate are distinct:
 `active_block` advances optimistically on newHead, while the final publish stays
 log-closed (quiesce-gated) and re-solves on stragglers. The promoted object is
-*a numeric label + a lazily-built revm view* — **never a second authoritative
+*a numeric label + a lazily-built evm2 view* — **never a second authoritative
 state**. `BotState` remains the single source of truth; the EVM window is a
 derived projection.
 
@@ -152,8 +152,8 @@ The earlier design discussion (the concern about "materializing a second
 authoritative state") is honored: the active block window is
 
 - a **numeric label** (`active_block: u64`), and
-- a **lazily constructed revm view** of `BotState`, built on demand at sim
-  time (the existing `BlockSimHandle`), **not** eagerly materialized and **not**
+- a **lazily constructed evm2 view** of `BotState`, built on demand at sim
+  time (the existing `Evm2BlockSimHandle`), **not** eagerly materialized and **not**
   dual-tracked.
 
 `BotState` stays the single authoritative state owner (ADR-003). We do not build

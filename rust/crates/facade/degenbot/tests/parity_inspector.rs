@@ -1,9 +1,9 @@
 #![expect(clippy::expect_used, clippy::panic)]
-//! Tier-2 behavioral dual-driver parity — revm inspector (ADR-005 standalone
+//! Tier-2 behavioral dual-driver parity — evm2 inspector (ADR-005 standalone
 //! claim, the behavioral tier).
 //!
 //! The Tier-1 `reachability.rs` test proves `simulate_in_process_with_db` +
-//! `SimInspector` are *resolvable* from a standalone Rust consumer. This
+//! `Evm2SimInspector` are *resolvable* from a standalone Rust consumer. This
 //! Tier-2 test proves the inspector's revert attribution is *lossless* across
 //! the FFI: the **same** canonical fixture (the `0xcafebabe` REVERT stub over
 //! a 2-hop V2 path against `CacheDB<EmptyDB>`), driven through the **Rust
@@ -15,7 +15,7 @@
 //! `tests/standalone_parity/test_inspector_dual_driver.py` — it drives the
 //! **same** fixture through the Python consumer path (the
 //! `simulate_in_process_revert_probe` PyO3 binding). Both consumers hit the
-//! same `simulate_in_process_with_db` + `SimInspector` core; the recorded
+//! same `simulate_in_process_with_db` + `Evm2SimInspector` core; the recorded
 //! constant is the shared oracle. If the PyO3 arg-extraction → core-call →
 //! result-wrap seam ever drops a field, changes an address format, or
 //! mis-renders the revert bytes, the two tests diverge from the fixture.
@@ -23,7 +23,7 @@
 //! ## Oracle (weaker — recorded constant, no closed form)
 //!
 //! Unlike the V2/V3/V4 calc parity pairs (which derive `amount_out` from a
-//! closed-form `getAmountOut`), the inspector runs a full revm EVM — there is
+//! closed-form `getAmountOut`), the inspector runs a full evm2 EVM — there is
 //! no closed-form derivation of the reverting-frame output. The expected
 //! output is a **recorded constant** captured from the
 //! `simulate_in_process_with_db_revert_with_data_attributes_reverting_frame`
@@ -187,7 +187,7 @@ fn smoke_v2_path(path_id: u64) -> SimulatePath {
 }
 
 /// The smoke-test fixture drives the `0xcafebabe` REVERT executor through the
-/// in-process revm EVM + asserts the recorded reverting-frame + bucket +
+/// in-process evm2 EVM + asserts the recorded reverting-frame + bucket +
 /// captured-swaps output matches the shared fixture JSON.
 ///
 /// This is the Rust half of the ADR-005 Tier-2 dual-driver parity pair for

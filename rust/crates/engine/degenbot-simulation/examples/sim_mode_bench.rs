@@ -11,7 +11,7 @@
 //! # Corpus
 //!
 //! The fixture spine mirrors the executor grammar harness (`crate::harness`,
-//! revm-based): the REAL `cmd_executor` creation artifact plus the
+//! evm2-based): the REAL `cmd_executor` creation artifact plus the
 //! `Token`/`Pair`/`PoolManager` stubs from `tier3-oracle/artifacts/`,
 //! deployed as CREATE frames through the production-policy evm2 EVM and
 //! committed. The workload is one encoded V2 two-hop cycle

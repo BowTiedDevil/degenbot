@@ -431,7 +431,7 @@ pub fn build_corpus(evm: &mut Evm<'_, BaseEvmTypes>) -> Result<(Corpus, PathInfo
 /// A fresh production-policy EVM over a funded deployer account. Mirrors
 /// the handle's version policy with the fixture deltas: the EIP-7825
 /// per-tx cap lifted (the executor creation artifact + init exceeds the
-/// 2^24 default — the revm grammar harness lifts it too), the nonce/balance
+/// 2^24 default — the evm2 grammar harness lifts it too), the nonce/balance
 /// checks and EIP-3607 off (the corpus's approval frames originate from
 /// the executor contract itself, which holds no native funds).
 ///

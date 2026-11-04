@@ -16,7 +16,7 @@
 //!
 //! This test feeds the **IDENTICAL** synthetic `V4PoolState` to BOTH:
 //! - `degenbot_pools::v4_simulate_swap` — the byte-exact full-tick-walk the
-//!   in-process revm sim's `actual` amount mirrors (it runs the real V4
+//!   in-process evm2 sim's `actual` amount mirrors (it runs the real V4
 //!   PoolManager bytecode; this Rust twin matches it, proven by the V3/V4
 //!   Python `compute_swap_step` oracle suite).
 //! - the solver's crossing path: `IntV3TickRangeSequence::compute_crossing`

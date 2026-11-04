@@ -1644,7 +1644,7 @@ impl Clone for AlloyProvider {
 }
 
 /// Per-call timeout for the in-process SIMULATION path (incident 2026-08-20):
-/// the dispatch fan-out holds a `BotState` READ guard across `BlockSimHandle`
+/// the dispatch fan-out holds a `BotState` READ guard across `Evm2BlockSimHandle`
 /// build + sim-loop fetches on the fan-out worker; GIL-held FFI writers park
 /// behind that reader and keep the GIL while parked. With the default 30s
 /// call timeout x 3-5 attempts + backoff, one stalled RPC stalled the guard

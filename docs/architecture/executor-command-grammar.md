@@ -220,7 +220,7 @@ The cutover/`debug_assert` oracle and the ~32 proven adapter functions it
 guarded were retired in `WAYDTL` once `derive_shape` covered every family
 byte-identically. The last hand-written emitters — the all-V2 N-hop speedrail
 and the distinct all-V2 3-hop layout — were deleted in `4JOWO5` (the 3-hop
-layout collapsing onto the any-N Plan layout the revm matrix always
+layout collapsing onto the any-N Plan layout the evm2 matrix always
 exercised). The per-family `build_*_plan` bodies followed under epic
 `62V6Q5` A3; the walker's internal dispatch tables (`build_for` /
 `AxisSupport` / `derive_2hop_*` / `derive_3hop_*`) under `PZBGP7` T3; and the
@@ -234,7 +234,7 @@ survives only as a `#[doc(hidden)]` test shim over `encode_grammar`.)
 
 Correctness is judged by **actual execution through the on-chain contract**:
 the runtime harness (`rust/crates/engine/degenbot-simulation/tests/harness_declarative.rs`)
-runs the production encoder methods, executes the stream in revm, and asserts
+runs the production encoder methods, executes the stream in evm2, and asserts
 `actual_delta == predicted` exactly. The matrix **also validates every produced
 Plan through the ledger validator** (`Plan → LedgerOp` depth-first walk, then
 `LedgerValidator::validate_full`) and asserts the ordering invariants hold.
@@ -244,6 +244,6 @@ matrix calls, so a future executor revision (new commands, new byte layout) is
 absorbed by those methods without re-validating bytes. The `ShapeClass`-walker
 branch (a) is realized: the 2/3-hop surface is generic (`facts_for` entry +
 at most one mechanics constructor and a rule-walker arm per new DEX family),
-with byte-identity held by the golden suites + the revm matrix and the three
+with byte-identity held by the golden suites + the evm2 matrix and the three
 `rule_walker_shadows_*` unit tests in `grammar_walker/shapes/three_hop.rs`
 pinning the current enclosure per topology-rule group.

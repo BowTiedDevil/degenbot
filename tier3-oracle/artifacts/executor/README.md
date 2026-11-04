@@ -1,6 +1,6 @@
 # Vyper executor artifact (BHL2R2 / tier-3b)
 
-Committed binary artifact for the deterministic revm-replay oracle that
+Committed binary artifact for the deterministic evm2-replay oracle that
 reproduces the V3->V4->V3 executor sim-Halt against real bytecode (tasks
 2ISTMX [this pipeline], 4O7BPZ [RED harness], 72YZXI [fix]).
 
@@ -25,7 +25,7 @@ reproduces the V3->V4->V3 executor sim-Halt against real bytecode (tasks
 lists five entries, but only `WETH_ADDR` + `POOL_MANAGER_ADDR` come from the
 appended calldata; `OWNER_ADDR` is `msg.sender` (endogenous) and
 `WETH_DELTA_SLOT`/`NATIVE_DELTA_SLOT` are **computed** in `__init__`
-(`keccak256(abi.encodePacked(self, currency))`). So the revm harness deploys
+(`keccak256(abi.encodePacked(self, currency))`). So the evm2 harness deploys
 via `create(creation.hex ++ abi.encode(weth, pool_manager))` (64 bytes), NOT
 5*32 bytes. Immutables are embedded in the runtime **code**, not storage (so
 "verify by reading slot 0" is wrong). VERIFIED by

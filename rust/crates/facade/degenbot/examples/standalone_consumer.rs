@@ -463,7 +463,7 @@ fn main() {
         println!("standalone degenbot consumer OK: fixture DB at chain 8453 loaded with S={seed_block:?} (set SMOKE_RPC_URL='ws://...' to drive `BlockPump::subscribe()`+`resume_from_subscribe()` — gated so the example stays CI-runnable without a node; the auto-backfill path is covered by `block_pump::tests::resume_anchors_to_subscribe_block`).");
     }
 
-    // 8. Standalone-Rust consumer reaches the in-process revm EVM sim
+    // 8. Standalone-Rust consumer reaches the in-process evm2 EVM sim
     //    (ADR-005 Tier-0 — `cargo add degenbot` reaches
     //    `simulate_in_process_with_db` with no Python in the build graph).
     //    Proven via the SELFDESTRUCT-gift success path: the executor stub
@@ -761,7 +761,7 @@ fn registration_lifecycle_standalone_slice() {
     );
 }
 
-/// Standalone-Rust consumer reaches the in-process revm EVM sim.
+/// Standalone-Rust consumer reaches the in-process evm2 EVM sim.
 ///
 /// The SELFDESTRUCT-gift success path: the executor stub bytecode CALLs a
 /// gift contract; the gift (`CALLER SELFDESTRUCT`) sends 1 ETH to the
@@ -893,7 +893,7 @@ fn in_process_sim_standalone_slice() {
         "standalone: net_profit must be positive"
     );
     println!(
-        "standalone degenbot consumer OK: in-process revm sim — gross_profit=1ETH gas_used={} priority_fee={} net_profit={} wei",
+        "standalone degenbot consumer OK: in-process evm2 sim — gross_profit=1ETH gas_used={} priority_fee={} net_profit={} wei",
         sim.gas_used, sim.priority_fee, sim.net_profit
     );
 

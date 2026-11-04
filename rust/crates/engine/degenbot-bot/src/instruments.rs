@@ -298,7 +298,7 @@ pub struct PipelineInstruments {
     /// time a guard was held after acquisition, same labels.
     state_lock_hold: Histogram<f64>,
     /// Close-out: resident set bytes of the bot process (the
-    /// drift-watch signal — tick maps + revm working set grow linearly with
+    /// drift-watch signal — tick maps + evm2 working set grow linearly with
     /// the registry, and a container OOM-kill presents as an overnight
     /// availability failure, not a solver symptom).
     ///

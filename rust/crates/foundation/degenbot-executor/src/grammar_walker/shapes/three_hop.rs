@@ -21,7 +21,7 @@ pub(crate) fn derive(
         // rule-driven walker (`rule_walk_v2v3`) — R1 (enclosure root) + R2
         // (repay-graph nest) + R3 (leaf + WETH-seed placement) + the
         // V2-flash upgrade — instead of 7 hand-written arms. Byte-identity
-        // is pinned by `glopcn_bytepin` + the `degenbot-simulation` revm
+        // is pinned by `glopcn_bytepin` + the `degenbot-simulation` evm2
         // matrix; the per-family golden-ordered AddressTable staging lives
         // in `stage_pools`.
         return rule_walk_v2v3(facts, inputs);
@@ -43,7 +43,7 @@ pub(crate) fn derive(
             // unlock) + R3 (finish = SettleAll when a downstream hop is V4
             // else SettleΔ(WETH); capture only for the pure-V4 family) —
             // instead of 9 hand-written arms. Byte-identity is pinned by
-            // `glopcn_bytepin` + the `degenbot-simulation` revm matrix;
+            // `glopcn_bytepin` + the `degenbot-simulation` evm2 matrix;
             // the per-family golden-ordered AddressTable staging lives
             // inside `rule_walk_v4_led`.
             return rule_walk_v4_led(facts, inputs);
@@ -71,7 +71,7 @@ pub(crate) fn derive(
             //     `fa.seed_delivery = V4TakeCompact` emits it as a
             //     `V4TakeCompact` inside the unlock plus a profit take to SELF.
             // Byte-identity is pinned by `glopcn_bytepin` + the
-            // `degenbot-simulation` revm matrix; the per-family golden-ordered
+            // `degenbot-simulation` evm2 matrix; the per-family golden-ordered
             // AddressTable staging lives inside `rule_walk_v2v3_v4_mixed`.
             return rule_walk_v2v3_v4_mixed(facts, inputs);
         } else if facts[0].prot == Prot::V3
@@ -276,7 +276,7 @@ pub(crate) fn derive(
 // The one irreducible per-family residue is the **AddressTable staging
 // order** (the preamble dumps addresses in insertion order and every
 // `pool_idx` reference rides on it) — that is byte-pinned by the golden +
-// revm suites and lives in [`stage_pools`].
+// evm2 suites and lives in [`stage_pools`].
 /// `rule_walk_v2v3` — the rule-driven walker over the 7 families.
 #[expect(clippy::too_many_lines)]
 fn rule_walk_v2v3(facts: &[HopFacts], inputs: &ComposerInputs<'_>) -> Option<(Plan, AddressTable)> {
@@ -562,7 +562,7 @@ fn stage_pools(at: &mut AddressTable, hops: &[&HopFacts; 3]) -> Option<(u8, u8, 
 // The irreducible per-family residue is the `AddressTable` staging ORDER
 // (the preamble dumps addresses in insertion order and every `pool_idx` /
 // currency reference rides on it) — byte-pinned by `glopcn_bytepin` + the
-// `degenbot-simulation` revm matrix. Each family reproduces its hand-authored
+// `degenbot-simulation` evm2 matrix. Each family reproduces its hand-authored
 // staging sequence exactly (the `at.add` calls below mirror the arms 1:1;
 // `mechanics::v4_swap` / `v2_swap` / `v3_flash` dedup against the
 // pre-staged entries, preserving the preamble order).
@@ -1256,7 +1256,7 @@ fn rule_walk_v4_led(
 // The irreducible per-family residue is the `AddressTable` staging ORDER
 // (the preamble dumps addresses in insertion order and every `pool_idx` /
 // currency reference rides on it) — byte-pinned by `glopcn_bytepin` + the
-// `degenbot-simulation` revm matrix. Each family reproduces its hand-authored
+// `degenbot-simulation` evm2 matrix. Each family reproduces its hand-authored
 // staging sequence exactly.
 /// `rule_walk_v2v3_v4_mixed` — the rule-driven walker over the group-C
 /// families. `facts_for` sets the two T6c facts only where a consumer arm

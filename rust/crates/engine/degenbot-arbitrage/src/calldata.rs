@@ -106,7 +106,7 @@ fn encode_single_address(selector: [u8; 4], account: Address) -> Result<Bytes, A
 /// Delegates to `degenbot_executor::composers::encode_execute_call` — the
 /// selector + the `(bytes, uint256)` ABI encoding live
 /// there. Colocated with the settlement-arbitrage bundle (the 7-call vector's execute
-/// wrap) so the in-process revm path can build the execute calldata without
+/// wrap) so the in-process evm2 path can build the execute calldata without
 /// a cycle.
 ///
 #[must_use]

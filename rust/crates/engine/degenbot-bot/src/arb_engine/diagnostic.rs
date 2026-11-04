@@ -13,8 +13,7 @@
 //! revm inspector's **captured swaps**. Captured swaps ARE byte-exact ground
 //! truth (proven via the `swap_capture_correctness` mainnet probe, block
 //! 25612576 V2+V3 PASS), so no RPC re-fetch + offline recompute is needed to
-//! classify a revert. The classifier (`logs/permutation_analyzer.py::
-//! classify_candidate`) now compares each captured swap's output amount
+//! classify a revert. The classifier compares each captured swap's output amount
 //! against the solver-reported `hop_outputs[i]`: `SolverCalc` = mismatch,
 //! Encoding = all match but sim reverted.
 //!

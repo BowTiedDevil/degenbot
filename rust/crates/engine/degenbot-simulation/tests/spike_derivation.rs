@@ -1,6 +1,6 @@
 //! The golden proof suite for ADR-031 D6: for every family, the Plan produced
 //! by the facts-driven walker (`derive_plan` + `facts_of_<family>`) is executed
-//! end-to-end against the revm contract matrix and asserted byte-identical to
+//! end-to-end against the evm2 contract matrix and asserted byte-identical to
 //! the pre-refactor reference. Despite the historical "spike" filename, this is
 //! the standing behavioral-parity regression gate — not a throwaway probe.
 #![expect(
@@ -18,12 +18,12 @@
     clippy::print_stderr
 )]
 //! EYQ6UF: the native-bridge + capture-axis runtime proofs that complement the
-//! canonical revm matrix (`harness_declarative.rs`, which drives every
+//! canonical evm2 matrix (`harness_declarative.rs`, which drives every
 //! `{V2,V3,V4}^` base family through the Plan with exact delta). The per-family
 //! `derived_*` / `plan_*` byte-parity rows were collapsed into that matrix in
 //! EYQ6UF — the Plan is the sole producer, so there is one canonical per-family
 //! proof (build Plan → `LedgerValidator::validate_full` → `plan_to_bytes` →
-//! revm execute → assert exact delta). This file keeps the sub-cases the base
+//! evm2 execute → assert exact delta). This file keeps the sub-cases the base
 //! matrix does not drive: native-ETH input/output V4 bridges and the
 //! batch / erc6909 / native-capture / self-fund / bribe option axes, each
 //! executed through the real executor with exact delta (ADR-029 D5).
@@ -2051,7 +2051,7 @@ fn all_v2_in_path_flash_pays_builder_bribe_from_profit() {
 
     // --- 5% bribe: WETH delta = profit - bribe = 19*profit/20. ---
     // Re Fund/Re-run: rebuild the same harness state by re-funding pools is not
-    // needed — revm state persists across calls, but the flash path leaves the
+    // needed — engine state persists across calls, but the flash path leaves the
     // executor holding `profit` WETH. To re-measure cleanly, deploy a fresh
     // harness with the SAME pool reserves so predicted_profit holds.
     let mut h2 = Harness::new().unwrap();

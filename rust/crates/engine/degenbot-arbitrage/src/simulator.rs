@@ -6,12 +6,12 @@
 //! `degenbot_rpc::fees` — the fee struct is market data, owned by the RPC
 //! crate per ADR-019 D5) + the priority-fee constants, + the in-process
 //! 7-call vector `simulate_path_on_evm`, driven per-block through the settle
-//! verb a `SimSession` opens (`SimSession::run_sequence`).
+//! verb an `Evm2SimSession` opens (`Evm2SimSession::run_sequence`).
 //!
 //! ADR-019 D4/D7 (decision R — Rust-canonical): this is the settlement-arbitrage bundle +
 //! gross/net + priority-fee sizing — one strategy over the
 //! `degenbot-simulation` engine. The engine owns the EVM handle
-//! (`BlockSimHandle`), the settle verb, the DB stack, overrides, + the AL
+//! (`Evm2BlockSimHandle`), the settle verb, the DB stack, overrides, + the AL
 //! inspector; this crate hands the session its 7 calls and reads the per-step
 //! results back. The Python driver is a
 //! thin cockpit over a PyO3 wrapper around `dispatch_profitable_results` —
@@ -21,7 +21,7 @@
 //! # In-process sim
 //!
 //! Executes the 7-call vector (pre-balances → `execute()` → post-balances) via
-//! one `SimSession::run_sequence` of `transact_one` steps (the journaled state
+//! one `Evm2SimSession::run_sequence` of journaled steps (the journaled state
 //! accumulates across the 7 calls), returning the `SimResult` shape the
 //! dispatch leaf consumes. Measured latency profile (cold 8374 µs / 9 RPCs; warm 442 µs /
 //! 0 RPC; 18.9× speedup vs cold; standing record: ADR-019) + the
@@ -182,8 +182,8 @@ pub struct SimResult {
     pub execute_calldata: alloy::primitives::Bytes,
     /// The EIP-2930 access list computed for the `execute()` call, if any.
     pub access_list: Option<AccessList>,
-    /// The swap events (`Sync`/`Swap`) the `SwapEventCaptureInspector`
-    /// captured during `execute()` call [3]'s `inspect_one` — the V2/V3/V4
+    /// The swap events (`Sync`/`Swap`) the composite `Evm2SimInspector`'s
+    /// capture handle collected during `execute()` call [3] — the V2/V3/V4
     /// pools' own emitted swap events, decoded. The ground-truth "what each
     /// hop actually produced, as simulated" — replaces the onchain-recompute
     /// pipeline. Empty if `execute()` reverted before any swap emitted.
@@ -228,7 +228,7 @@ impl SimResult {
 /// it carries the DEEP attribution (depth, target, selector, revert data,
 /// `classify_revert` label) of the frame that actually reverted, rather than
 /// the top-level bubble. `None` for orchestration-only buckets + the
-/// balance-decode branch (no `inspect_one` ran on the failing call).
+/// balance-decode branch (no inspection ran on the failing call).
 #[derive(Debug, Clone)]
 pub struct SimFailure {
     /// The path id (mirror of `SimulatePath::path_id`).
@@ -246,14 +246,14 @@ pub struct SimFailure {
     /// the Python `[sim-fail]` column-stability contract).
     pub revert_data: alloy::primitives::Bytes,
     /// The inspector-captured reverting-frame attribution — `Some` only for
-    /// `execute()` reverts where call [3]'s `inspect_one` ran the
-    /// `CallTraceInspector`. `None` for orchestration-only buckets + the
+    /// `execute()` reverts where call [3] ran under the composite
+    /// inspector's call trace. `None` for orchestration-only buckets + the
     /// balance-decode branch.
     pub reverting_frame: Option<RevertingFrame>,
     /// The swap events captured BEFORE the revert (the swaps `execute()` did
     /// before reverting) — diagnostic for WHY it reverted (e.g. a partial fill
     /// that blew the price limit). Empty for orchestration-only buckets + the
-    /// balance-decode branch (no `inspect_one` ran).
+    /// balance-decode branch (no inspection ran).
     pub captured_swaps: Vec<CapturedSwap>,
     /// Total `log_full` hook firings during `execute()` (ALL logs, incl.
     /// non-swap + reverted-frame). Diagnostic: if it exceeds
@@ -261,7 +261,7 @@ pub struct SimFailure {
     /// dropped from BOTH buffers (the outermost-committed-swap capture gap).
     pub log_full_count: usize,
     /// Swaps emitted inside REVERTED frames — preserved for the divergence
-    /// diagnostic (revm pops reverted-fame logs, so they don't reach
+    /// diagnostic (the EVM pops reverted-fame logs, so they don't reach
     /// [`captured_swaps`](Self::captured_swaps)). For a `no-profit`, if the
     /// outermost V3 hop's Swap appears here and not in `captured_swaps`, the
     /// frame was misclassified as reverted (a frame-stack pairing bug) despite
@@ -301,8 +301,8 @@ pub struct SimFailure {
 
 /// The inspector-captured attribution of a failing `execute()` frame — the
 /// depth, target, selector, revert data, + `classify_revert` label of the
-/// deepest non-`Success` frame the `CallTraceInspector` saw during call [3]'s
-/// `inspect_one` run. Replaces the top-level-only `fail_index` + revert-bubble
+/// deepest non-`Success` frame the composite inspector's call trace saw
+/// during call [3]. Replaces the top-level-only `fail_index` + revert-bubble
 /// data with the frame that actually reverted (or halted).
 ///
 /// For a `Halt` (e.g. `0xfe` INVALID, OOG), `revert_data` is empty + `label`
@@ -761,7 +761,7 @@ fn scan_for_v4_v2_boundary_bridge(hops: &[HopInfo], weth_address: Address) -> Op
 // The orchestration inputs
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Inputs to [`BlockSimHandle`] / [`simulate_path_on_evm`] that don't vary per-path.
+/// Inputs to `Evm2BlockSimHandle` / [`simulate_path_on_evm`] that don't vary per-path.
 ///
 /// Ports the closure-captured state in the Python oracle's per-path simulate: the
 /// executor/weth/pm/multicall addresses, the funding flags, the warmup slots,
@@ -772,8 +772,8 @@ fn scan_for_v4_v2_boundary_bridge(hops: &[HopInfo], weth_address: Address) -> Op
 #[derive(Clone)]
 pub struct SimulateContext<'a> {
     /// The typed RPC provider (wrapped). The in-process path
-    /// uses it for the cold-miss `AlloyDB` fallback under the engine's
-    /// `WrapDatabaseAsync` (a sim miss for an untracked account/block routes
+    /// uses it for the cold-miss `AlloyAsyncDb` fallback under the engine's
+    /// `BlockingAsyncDb` (a sim miss for an untracked account/block routes
     /// through `block_in_place` to a single `eth_call`).
     pub provider: &'a AlloyProvider,
     /// The operator key's address — the `from` of the `execute()` call + the
@@ -841,7 +841,7 @@ impl SimulateContext<'_> {
     }
 }
 
-/// Per-path inputs to [`BlockSimHandle`] / [`simulate_path_on_evm`].
+/// Per-path inputs to `Evm2BlockSimHandle` / [`simulate_path_on_evm`].
 #[derive(Debug, Clone)]
 pub struct SimulatePath {
     /// The path id.
@@ -915,21 +915,21 @@ impl SimulatePath {
 // ─────────────────────────────────────────────────────────────────────────
 
 /// The gas limit granted to each balance-of read call in the 7-call vector
-/// (revm path). Mirrors the implicit gas the `eth_simulateV1` node grants a
+/// (evm2 path). Mirrors the implicit gas the `eth_simulateV1` node grants a
 /// read-only `eth_call`-shaped entry; a balanceOf SLOAD + RETURN fits well
 /// under 100k gas.
 pub const BALANCE_CALL_GAS_LIMIT: u64 = 100_000;
 
-// The engine `BlockSimHandle` (the per-block shared EVM handle) + the
-// `BlockEvm`/`ProductionBlockDb` type aliases + the `ArcDynProviderEthereum`
-// provider newtype live in `degenbot-simulation` (the engine). This strategy
-// builds the handle via `BlockSimHandle::build` and hands the session the 7
-// calls as one sequence: the bundle is the consumer whose journal must
-// accumulate ACROSS calls, which is what `SimSession::run_sequence` is for.
+// The engine `Evm2BlockSimHandle` (the per-block shared EVM handle) + the
+// `Evm2ProductionBlockDb`/`Evm2ScratchDb` type aliases live in
+// `degenbot-simulation` (the engine). This strategy builds the handle via
+// `Evm2BlockSimHandle::build` and hands the session the 7 calls as one
+// sequence: the bundle is the consumer whose journal must accumulate ACROSS
+// calls, which is what `Evm2SimSession::run_sequence` is for.
 
 // ── The evm2 twin (ADR-089, hard-swap wiring) ────────────────────────────
 //
-// `simulate_path_on_evm2` is the evm2 variant of the 7-call seam: the SAME
+// `simulate_path_on_evm` is the 7-call seam: the SAME
 // policy (encoders, bucket taxonomy, profit/priority-fee math) driven
 // through `Evm2SimSession`'s journaled sequence. Engine substitutions
 // only: envelopes for `TxEnv`s, the ambient composite inspector for the
@@ -1009,7 +1009,7 @@ impl Drop for SimSpanVerdict {
 /// The evm2 in-process entry point (mirrors `simulate_in_process_with_db`):
 /// overrides already applied by the caller over the evm2 `CacheDB`; the
 /// EVM built with the engine's per-block policy; the 7-call orchestration
-/// in [`simulate_path_on_evm2`].
+/// in [`simulate_path_on_evm`].
 ///
 /// # Errors
 ///
@@ -1531,7 +1531,7 @@ fn simulate_path_on_evm_seam(
     }))
 }
 
-/// Decode a 32-byte big-endian uint256 from a revm call's return output.
+/// Decode a 32-byte big-endian uint256 from an EVM call's return output.
 /// Mirrors the oracle's `decode_balance`: empty → `0`;
 /// 32 bytes → big-endian uint256; >32 → last 32 bytes (uint256 ABI right-align);
 /// 1..31 → left-padded.
@@ -1554,7 +1554,7 @@ fn decode_balance(data: &alloy::primitives::Bytes) -> U256 {
 // ── Revert-tolerant swap diagnostic ───────────────────
 //
 // The committed `captured_swaps` is empty for a reverting V4 `unlock`
-// (revm pops the inner swaps from the journal), but the inspector preserves
+// (the EVM pops the inner swaps from the journal), but the inspector preserves
 // them in `reverted_swaps`. Comparing each reverted swap's ACTUAL output to
 // `hop_outputs[i]` pinpoints which hop diverged — the decisive
 // state-divergence-vs-composer-bug test for `CurrencyNotSettled`. Conservative
@@ -1642,7 +1642,7 @@ struct RevertedSwapMatch {
     /// solver did not register — should not occur, handled defensively).
     hop_index: Option<usize>,
     /// Emission order of the captured swap (0-based), preserved for the log so
-    /// a reader can reconstruct revm's execution order independently of the
+    /// a reader can reconstruct the EVM's execution order independently of the
     /// hop attribution.
     emit_index: usize,
     family: degenbot_simulation::SwapFamily,
@@ -1678,10 +1678,10 @@ struct RevertedSwapMatch {
 }
 
 /// Attribute each captured reverted swap to its path hop by the swap's
-/// EMITTER, not by capture index. Capture (emission) order is revm's
+/// EMITTER, not by capture index. Capture (emission) order is the EVM's
 /// execution order: the deepest nested swap emits first, the outermost
-/// frame emits last. For a `V3-V4-V3` whose V3c (outer) frame reverts, revm
-/// captures `[V4_emit, V3a_emit]` — the V4 swap (hop 1) emits before the V3a
+/// frame emits last. For a `V3-V4-V3` whose V3c (outer) frame reverts, the
+/// inspector captures `[V4_emit, V3a_emit]` — the V4 swap (hop 1) emits before the V3a
 /// swap (hop 0). Index-based attribution crosses them, so the V4 swap is
 /// compared to `hop_outputs[0]` (the V3a prediction) and vice versa, making
 /// the actual-vs-predicted diagnostic lie about WHICH hop diverged.
@@ -2557,7 +2557,7 @@ mod tests {
     // ── match_reverted_swaps_to_hops emitter attribution (the IIA log lie) ─
     //
     // The bug this pins: a V3-V4-V3 whose V3c (outer) frame reverts captures
-    // swaps in revm's EMISSION order [V4_emit, V3a_emit], because the V4 swap
+    // swaps in the EVM's EMISSION order [V4_emit, V3a_emit], because the V4 swap
     // (nested deepest) emits before the V3a swap (outer) completes. The OLD
     // index-based log compared captured[0]→hop_outputs[0], crossing V4↔V3a,
     // so the log lied about which hop diverged. Emitter attribution fixes it.
@@ -2592,7 +2592,7 @@ mod tests {
         }
     }
 
-    /// A V3-V4-V3 path whose V3c outer frame reverts: revm captures the
+    /// A V3-V4-V3 path whose V3c outer frame reverts: the inspector captures the
     /// nested V4 swap (hop 1) and the V3a swap (hop 0) in emission order
     /// [V4, V3a]. Index-based attribution crossed them; emitter attribution
     /// must map each to its true hop.

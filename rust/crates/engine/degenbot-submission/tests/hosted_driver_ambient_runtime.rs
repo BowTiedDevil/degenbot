@@ -3,7 +3,7 @@
 //! A hosted driver must see the multi-thread runtime ambience a dedicated
 //! `#[tokio::main]` entrypoint provides (the retired standalone bin's shape).
 //!
-//! The live two-driver run failed every `BlockSimHandle::build` with "no ambient
+//! The live two-driver run failed every per-block handle build with "no ambient
 //! multi-threaded tokio runtime" because `StrategyHost::start_driving` booted
 //! the !Send driver future on a dedicated current-thread runtime; the standalone
 //! sidecar polls the same future directly on a multi-thread runtime. The
@@ -80,7 +80,7 @@ async fn hosted_driver_builds_the_blocking_db() {
     let (contract_tx, contract_rx) = tokio::sync::oneshot::channel::<bool>();
     let spawn: DriverSpawnFactory = Box::new(move |_namespace| {
         Box::pin(async move {
-            // The exact `BlockSimHandle::build_inner` construction contract.
+            // The exact `Evm2BlockSimHandle::build_inner` construction contract.
             let provider = offline_provider();
             let db = AlloyAsyncDb::new(&provider, READ_BLOCK);
             // The layer-read contract: the adapter's reads block on the
