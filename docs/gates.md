@@ -14,7 +14,7 @@ The seven ratchets:
 
 | Ratchet | Gate body | Census / data | Local command |
 | --- | --- | --- | --- |
-| Comment hygiene | `scripts/hooks/comment-hygiene.sh` | `scripts/hooks/comment-hygiene-census.txt` (+ `-waivers.txt`) | `just lint-comment-hygiene` |
+| Comment hygiene | `scripts/hooks/comment-hygiene.sh` | `scripts/hooks/comment-hygiene-census.txt` (+ `-waivers.txt`) and `scripts/hooks/comment-hygiene-citation-census.txt` (Detector 3) | `just lint-comment-hygiene` |
 | Config-derived statics | `rust/crates/facade/degenbot/tests/architecture_gates.rs::config_derived_statics_are_classified` | `rust/crates/facade/degenbot/tests/config_derived_statics_census.txt` | `just check-config-derived-statics` |
 | Worker census | `rust/crates/foundation/degenbot-core/src/worker_census.rs` (+ `pubsub_runtime.rs` live counts) | the `register(...)` call sites themselves | `cargo test -p degenbot-core worker_census` |
 | Stub drift | `prek.toml` `stub-drift-staged` -> `just gen-stubs --check`; `tests/ffi/test_ffi_stub_drift.py` (compile-coupled test carries the `stub_drift` marker; runs once as the CI `stub-drift` job) | the committed `src/degenbot/_ffi/*.pyi` tree | `just lint-stub-drift` |
@@ -31,7 +31,7 @@ comments. The 2026-09-15 tech-debt survey (`docs/findings/2026-09-15-tech-debt-s
 found 237 in-code tracker citations, zero resolvable. The rules live in
 [comment hygiene](comments.md) and `AGENTS.md` ("Comment Hygiene").
 
-**Gate body.** `scripts/hooks/comment-hygiene.sh`, two detectors:
+**Gate body.** `scripts/hooks/comment-hygiene.sh`, three detectors:
 
 - Detector 1 (anchored) — `ergo <ID>` / `epic|task|slice <ID>` citations,
   migration-work-item labels (`ADR-005 slice 14j`, `slice 14l`, `Plan 102`,
@@ -59,6 +59,18 @@ found 237 in-code tracker citations, zero resolvable. The rules live in
   surface: `justfile`, `*.toml`, `*.yml`/`*.yaml`, `*.pyi`, `*.sol`,
   `.github/**`, `tier3-oracle/**`, `scripts/`, `run_bot.sh`); `*.rs` files are
   scanned on comment lines only, every other file class on all lines.
+- Detector 3 (the citation census ratchet) — the shapes the first two cannot
+  see, case-insensitive and word-boundary anchored: `TODO-<hex>` in any case
+  and `TODO(<word>)` tracker IDs, `Epic <token>` / `slice <token>` work-item
+  labels, `Phase <letter><digit>` labels, and `pre-`/`post-epic` narration.
+  Bare `phase <N>` is deliberately OUT of scope: that prose is algorithm prose
+  (the eager-vs-boundary-tail phases in
+  `foundation/degenbot-pools/src/state/tick_bitmap.rs`, the pre-solve gap
+  phases in the bot's `instruments.rs`, the GIL phases in `result_channel.rs`),
+  so the phase shape wants a letter+digit token and the slice shape a token
+  containing a digit. Scope: Detector 1's working-tree file classes minus this
+  gate's own hook and census files (they spell the shapes by construction);
+  markdown stays out.
 
 **Census / waivers.**
 
@@ -69,6 +81,15 @@ found 237 in-code tracker citations, zero resolvable. The rules live in
 - `scripts/hooks/comment-hygiene-waivers.txt` — one repo-relative path per line;
   a waiver means "this file still carries pre-rule citations" and never licenses
   new ones. Empty today.
+- `scripts/hooks/comment-hygiene-citation-census.txt` — the Detector 3 census,
+  one `path:<matched band>` row per grandfathered site (the band exactly as
+  `rg -o` prints it, whitespace collapsed, so a row survives a line reflow and
+  disappears only when the citation does). The tree is swept: the one row left
+  is a reviewed non-citation, with its reason written above it. The
+  reconciliation is **bidirectional and fails closed** — an unlisted citation
+  fails (a new citation landed), a listed row with no citation fails (a swept
+  row has to be deleted in the same change), and a missing census file fails
+  instead of passing over an empty census.
 
 **Adding an entry.** Strip the citation from the code instead — a tracker
 citation must NEVER be added to the census. The same holds for a migration
@@ -82,11 +103,25 @@ ratchet; the fix is the lexicon or restructuring the line). For a deliberate,
 explicitly reviewed exception, a census line containing `/` is read as a
 grandfathered `path:token` citation — that form is currently unused.
 
+Detector 3's census is never the answer for a citation either: strip the band,
+and delete its row in the same change — the stale-row check turns a forgotten
+row into a red gate. Regenerate the rows after a sweep with
+`CCF=/dev/null scripts/hooks/comment-hygiene.sh 2>&1 | sed -n 's/.* -> census
+row: //p' | sort -u`, then delete the rows for the sites this change swept. A
+row survives only for a reviewed non-citation; the standing example is
+`slice V3/V4` in `degenbot-decoders/src/uniswap_tick_range.rs`, the algorithm's
+slicing verb over a protocol-version pair.
+
 **Run it.** `just lint-comment-hygiene` (also the `comment-hygiene` pre-commit
 hook; it is the one documented exception to staged scoping — `pass_filenames =
-false`, it sweeps the working tree). For a red probe, run it with the census
+false`, it sweeps the working tree). For a red probe, run it with a census
 forced empty: `CHF=/dev/null scripts/hooks/comment-hygiene.sh` fails on every
-bare token.
+bare token, and `CCF=/dev/null scripts/hooks/comment-hygiene.sh` fails on every
+Detector 3 band. `tests/test_comment_hygiene_gate.py` is Detector 3's committed
+negative probe: it runs the real hook with `HCR` pointing the scan at a
+throwaway tree (the remaining override; `WAF`/`CHF`/`CCF` point at `/dev/null`)
+and requires the red path, every shape firing on its own source, both ratchet
+directions, and the fail-closed missing census.
 
 ---
 

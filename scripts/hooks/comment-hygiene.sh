@@ -65,9 +65,44 @@
 #   per-token subprocesses.
 #   Override the census for testing: CHF=/dev/null <this script> (fails on
 #   every bare token).
+#
+# Detector 3 — the tracker-citation census ratchet: the citation shapes
+# Detector 1 (which needs an anchor word) and Detector 2 (which needs an
+# all-uppercase token) cannot see, and the residue a per-file waiver cannot
+# express. Case-insensitive, word-boundary anchored:
+#   - TODO-<hex> (any case) and TODO(<word>) tracker IDs
+#   - Epic <token> and slice <token> work-item labels
+#   - Phase <letter><digit> labels
+#   - pre-/post-epic narration
+# Bare "phase <N>" is deliberately out of scope: that prose carries live
+# algorithm semantics (the eager-vs-boundary-tail phases in tick_bitmap.rs,
+# the pre-solve gap phases in instruments.rs, the GIL phases in
+# result_channel.rs), so this shape wants a letter+digit token after the
+# label word. The slice shape likewise wants a token CONTAINING a digit, so
+# data-slicing prose ("the two-slice intake") survives.
+# Scope: the working tree, over Detector 1's file classes, minus this gate's
+# own files (the hook and its censuses carry the shapes by construction), so
+# brand-new untracked sources are examined and markdown — where tracker
+# discussion legitimately lives — stays out. The engine's algorithm-phase
+# prose is a blind spot the design accepts; the sweep that shrank this
+# census left it alone.
+# Census: scripts/hooks/comment-hygiene-citation-census.txt, one row per
+# grandfathered site, formatted "<repo-relative-path>:<matched text>" (the
+# band as rg -o prints it, whitespace collapsed, so the row survives a line
+# reflow). The check is bidirectional and fails closed: a citation with no
+# row fails (a NEW citation cannot land), a row with no citation fails (a
+# swept row must be deleted in the same commit), and a missing census file
+# fails instead of passing over an empty census. The only rows left are
+# reviewed non-citations, each with the reason written above it.
+# Override for testing: CCF=/dev/null <this script> (fails on every matched
+# band; the negative probe in tests/test_comment_hygiene_gate.py drives
+# this and the HCR root override below).
 
 set -euo pipefail
-cd "$(git rev-parse --show-toplevel)"
+# HCR points the scan at another tree (the negative probe's fixture); unset,
+# it roots at the git top level. The overrides (HCR, WAF, CHF, CCF) are test
+# seams only: a gate run has to examine the whole working tree.
+cd "${HCR:-$(git rev-parse --show-toplevel)}"
 
 waf="${WAF:-scripts/hooks/comment-hygiene-waivers.txt}"
 census="${CHF:-scripts/hooks/comment-hygiene-census.txt}"
@@ -190,6 +225,66 @@ if [ -n "$bare_fail" ]; then
   echo "  Otherwise strip the citation, or — only for a real word/identifier — add it" >&2
   echo "  to the census lexicon section:" >&2
   printf '%s\n' "$bare_fail" >&2
+  fail=1
+fi
+
+# --- Detector 3: tracker-citation census ratchet ---
+# -o emits the matched band alone, so a census row is keyed on the path and
+# the text instead of a line number: the row survives a reflow and disappears
+# only when the citation itself does. One rg pass; the awk pass classifies the
+# bands and reconciles them against the census in both directions.
+ccf="${CCF:-scripts/hooks/comment-hygiene-citation-census.txt}"
+if [ ! -e "$ccf" ]; then
+  echo "comment-hygiene: citation census missing: $ccf" >&2
+  exit 1
+fi
+d3_tmp="$(mktemp)"
+trap 'rm -f "$tmp" "$d3_tmp"' EXIT
+d3='(\btodo[ \t]*[-_][ \t]*[0-9a-f]{4,}\b)|(\btodo\([a-z][a-z0-9_-]*\))|(\bepic\b[ \t]+[a-z0-9][a-z0-9_-]*)|(\bslice\b[ \t-]+[a-z0-9_-]*[0-9][a-z0-9_-]*)|(\bphase\b[ \t]+[a-z][0-9]\b)|(\b(?:pre|post)-epic\b)'
+rg -n -o --no-heading -i -P \
+  -g '*.py' -g '*.rs' -g '*.pyi' -g '*.toml' \
+  -g '*.yml' -g '*.yaml' -g '*.sh' -g '*.sol' \
+  -g 'justfile' \
+  -g '!executor/**' \
+  -g '!tier3-oracle/src*/**' \
+  -g '!scripts/hooks/comment-hygiene*' \
+  -e "$d3" >"$d3_tmp" 2>/dev/null || true
+d3_out="$(awk -v CENSUS="$ccf" '
+  BEGIN {
+    while ((getline row < CENSUS) > 0) {
+      sub(/[ \t]+$/, "", row)
+      if (row == "" || row ~ /^#/) continue
+      listed[row] = 1
+    }
+  }
+  {
+    c1 = index($0, ":")
+    if (c1 == 0) next
+    path = substr($0, 1, c1 - 1)
+    rest = substr($0, c1 + 1)
+    c2 = index(rest, ":")
+    if (c2 == 0) next
+    lineno = substr(rest, 1, c2 - 1)
+    hit = substr(rest, c2 + 1)
+    gsub(/[ \t]+/, " ", hit)
+    key = path ":" hit
+    seen[key] = 1
+    if (key in listed) next
+    if (key in reported) next
+    reported[key] = 1
+    printf "  fresh: %s:%s: %s -> census row: %s\n", path, lineno, hit, key
+  }
+  END {
+    for (row in listed) if (!(row in seen)) printf "  stale: %s -> delete this row\n", row
+  }
+' "$d3_tmp" | sort || true)"
+if [ -n "$d3_out" ]; then
+  echo "comment-hygiene: Detector 3 — tracker citations / work-item labels are out" >&2
+  echo "  of sync with scripts/hooks/comment-hygiene-citation-census.txt" >&2
+  echo "  (docs/gates.md section 1). 'fresh' is a citation the census does not" >&2
+  echo "  grandfather: strip it (docs/comments.md), never list a new one. 'stale'" >&2
+  echo "  is a swept citation whose row has to go in the same change." >&2
+  printf '%s\n' "$d3_out" >&2
   fail=1
 fi
 exit "$fail"
