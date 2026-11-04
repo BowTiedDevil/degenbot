@@ -5,9 +5,10 @@ runtime driver (``BotRunner``) and its tests consume:
 
 - :class:`ArbitrageConfig` — the unified frozen config value object (built from
   the resolved verdict + CLI flags via :meth:`ArbitrageConfig.build`;
-  the operator/executor identity it carries is read from the process
-  environment; the deployment defaults and the checksum helper live in
-  :mod:`degenbot.runner.identity`).
+  the operator/executor identity it carries is the verdict's declared
+  ``driver.*`` section, so it resolves through the same cascade as every other
+  key; the deployment defaults a key's absence falls back to and the checksum
+  helper live in :mod:`degenbot.runner.identity`).
 
 The display renderers (sim-diag / sim-fail / failure-breakdown) live in
 :mod:`degenbot.runner._render`. The thin-margin solver-result pre-filter of the
@@ -153,10 +154,11 @@ class ArbitrageConfig:
     Replaces the scattered config sources (the example's dotenv file,
     module-top constants, and CLI flags) with a single frozen value object.
     Construct via :meth:`build`; the bridge onto ``main()`` lives in the
-    ``BotRunner`` orchestration. The operational stances resolve through the
-    core verdict, and the operator/executor identity is read from the process
-    environment. Live defaults reproduce ``main()``'s behavior exactly — no
-    new defaults invented.
+    ``BotRunner`` orchestration. Every operational stance and the
+    operator/executor identity resolve through the core verdict's declared
+    keys, so the operator file and the environment reach them through the one
+    cascade. Live defaults reproduce ``main()``'s behavior exactly — no new
+    defaults invented.
     """
 
     # Operator identity
@@ -216,13 +218,13 @@ class ArbitrageConfig:
     executor_runtime: str | Path | None = None
 
     @classmethod
-    def _resolve_operator(cls, *, live: bool) -> tuple[str, str]:
-        """Resolve the operator identity from the process environment.
+    def _resolve_operator(cls, *, live: bool, values: ConfigValues) -> tuple[str, str]:
+        """Resolve the operator identity from the verdict's declared ``driver`` keys.
 
-        - live mode requires both OPERATOR_ADDRESS/OPERATOR_PRIVATE_KEY from
-          the process environment and refuses a known placeholder key (raises
-          ValueError); dry-run defaults to a valid throwaway key + its derived
-          address.
+        - live mode requires both ``driver.operator_address`` and
+          ``driver.operator_private_key`` and refuses a known placeholder key
+          (raises ValueError); dry-run defaults to a valid throwaway key + its
+          derived address.
         - dry-run: a missing operator falls back to a valid throwaway key (must
           be a real secp256k1 scalar so the eagerly constructed ``TxSigner``
           doesn't reject it — see the constants' docstring). The key never
@@ -236,8 +238,8 @@ class ArbitrageConfig:
             ValueError: operator identity is missing or a known placeholder in live mode.
 
         """
-        operator_address_raw = os.environ.get("OPERATOR_ADDRESS") or ""
-        operator_private_key = os.environ.get("OPERATOR_PRIVATE_KEY") or ""
+        operator_address_raw = values.driver.operator_address or ""
+        operator_private_key = values.driver.operator_private_key or ""
         operator_address = _checksum_or_empty(operator_address_raw) if operator_address_raw else ""
         if not live:
             if not operator_address:
@@ -247,15 +249,17 @@ class ArbitrageConfig:
         else:
             if not operator_address or not operator_private_key:
                 msg = (
-                    "OPERATOR_ADDRESS and OPERATOR_PRIVATE_KEY must be set in the process "
-                    "environment (the launch shell exports them from bot.env) for live mode"
+                    "operator identity must be set for live mode: driver.operator_address "
+                    "and driver.operator_private_key (env OPERATOR_ADDRESS / "
+                    "OPERATOR_PRIVATE_KEY, which the launch shell exports from bot.env)"
                 )
                 raise ValueError(msg)
             if operator_private_key.lower() in _PLACEHOLDER_OPERATOR_PRIVATE_KEYS:
                 msg = (
-                    "OPERATOR_PRIVATE_KEY is a known placeholder (the dry-run throwaway or "
-                    "the all-zero scalar): refusing to run live with a key the repository "
-                    "publishes. Set the real operator key in the process environment."
+                    "driver.operator_private_key (OPERATOR_PRIVATE_KEY) is a known "
+                    "placeholder (the dry-run throwaway or the all-zero scalar): refusing "
+                    "to run live with a key the repository publishes. Set the real operator "
+                    "key."
                 )
                 raise ValueError(msg)
         return operator_address, operator_private_key
@@ -269,18 +273,18 @@ class ArbitrageConfig:
         rpc: RpcCascadeOverrides | None = None,
         values: ConfigValues | None = None,
     ) -> "ArbitrageConfig":
-        """Build an ArbitrageConfig from the resolved verdict + CLI flags + process identity.
+        """Build an ArbitrageConfig from the resolved verdict + CLI flags.
 
-        The dotenv file is no longer a source: operator/executor identity is
-        read from the process environment (the launch shell exports it from
-        ``bot.env``), and every ``DEGENBOT_*`` operational stance is a declared
-        schema key that arrives from :func:`degenbot.config.resolved_config`
-        and reaches the operator file as well as the environment; nothing here
-        re-resolves a layer.
+        Every key this object carries — the operator/executor identity
+        included — is a declared schema key that arrives from
+        :func:`degenbot.config.resolved_config` (or from ``values``, the
+        verdict a caller resolved itself) and reaches the operator file as well
+        as the environment; nothing here re-resolves a layer or reads the
+        process environment for a value.
 
         Behavior:
-        - operator: live mode requires both OPERATOR_ADDRESS/OPERATOR_PRIVATE_KEY
-          from the process environment and refuses a known placeholder key
+        - operator: live mode requires both driver.operator_address and
+          driver.operator_private_key and refuses a known placeholder key
           (raises ValueError); dry-run defaults to a valid throwaway key + its
           derived address.
         - nodes: delegated to :func:`degenbot.config.resolve_rpc_uris`, so the
@@ -292,7 +296,7 @@ class ArbitrageConfig:
         - executor: zero address is a fatal ``ValueError`` (a factory cannot
           return early like ``main()``'s ``return``).
         - inject code: when ``simulation.inject_executor_code`` resolves true,
-          the executor address is overridden to ``INJECTED_EXECUTOR_ADDRESS``.
+          the executor address is overridden to ``driver.injected_address``.
         - permutation: a CLI string becomes a singleton frozenset; ``None`` stays ``None``.
 
         Returns:
@@ -308,9 +312,12 @@ class ArbitrageConfig:
         _refuse_retired_shell_knobs()
         _refuse_retired_injection_key()
         overrides = rpc if rpc is not None else RpcCascadeOverrides()
+        resolved_values = resolved_config().values if values is None else values
 
         # ── Operator ──
-        operator_address, operator_private_key = cls._resolve_operator(live=live)
+        operator_address, operator_private_key = cls._resolve_operator(
+            live=live, values=resolved_values
+        )
 
         # ── Node URLs — delegated to the library cascade (resolve_rpc_uris) ──
 
@@ -318,28 +325,26 @@ class ArbitrageConfig:
 
         # ── Executor ──
         executor_address = _checksum_or_empty(
-            os.environ.get("EXECUTOR_CONTRACT_ADDRESS") or _DEFAULT_EXECUTOR_ADDRESS
+            resolved_values.driver.executor_address or _DEFAULT_EXECUTOR_ADDRESS
         )
         if executor_address == _ZERO_ADDRESS:
-            msg = "EXECUTOR_CONTRACT_ADDRESS is the zero address"
+            msg = "driver.executor_address (EXECUTOR_CONTRACT_ADDRESS) is the zero address"
             raise ValueError(msg)
 
-        resolved_values = resolved_config().values if values is None else values
         inject_executor_code = bool(resolved_values.simulation.inject_executor_code)
         injected_address = _checksum_or_empty(
-            os.environ.get("INJECTED_EXECUTOR_ADDRESS") or _DEFAULT_INJECTED_ADDRESS
+            resolved_values.driver.injected_address or _DEFAULT_INJECTED_ADDRESS
         )
         # Owner defaulting follows the deployment invariant: a real
         # deployment makes the owner the deployer, and the operator IS the
         # deployer (bot.env key), so an unset owner is the operator — with
         # the dry-run placeholder pair as the only non-live fallback.
         default_owner = operator_address if live else _DEFAULT_EXECUTOR_OWNER
-        executor_owner = _checksum_or_empty(
-            os.environ.get("EXECUTOR_OWNER_ADDRESS") or default_owner
-        )
+        executor_owner = _checksum_or_empty(resolved_values.driver.executor_owner or default_owner)
         if live and executor_owner != operator_address:
             msg = (
-                "EXECUTOR_OWNER_ADDRESS must equal OPERATOR_ADDRESS in live mode "
+                "driver.executor_owner (EXECUTOR_OWNER_ADDRESS) must equal "
+                "driver.operator_address in live mode "
                 f"(owner {executor_owner} != operator {operator_address}): the "
                 "executor's owner gate and the sim's caller both key off this address"
             )
@@ -361,7 +366,7 @@ class ArbitrageConfig:
             executor_address = injected_address
 
         verification_retry_policy = _verification_retry_policy(resolved_values)
-        executor_runtime = os.environ.get("EXECUTOR_RUNTIME") or None
+        executor_runtime = resolved_values.driver.executor_runtime
         # The incident probes' intervals come from the declared
         # `diagnostics.*` keys; zero is the declared default, so there is no
         # second "off" spelling here.

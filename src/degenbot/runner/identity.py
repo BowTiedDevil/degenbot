@@ -3,8 +3,10 @@
 The Ethereum mainnet deployment addresses the driver's leaves consume, the
 dry-run operator placeholders, the private keys the repository
 publishes, and the address checksum helper. These are properties of the chain
-and of the operator's deployment, not of the config schema, so they live apart
-from the config value object and its factory.
+and of the operator's deployment, not of the core's schema: the declared
+``driver.*`` keys are what an operator sets, and the deployment constants here
+are only what a driver applies when a key is unset (the schema declares no
+default for one deployment's addresses).
 
 The pure-Rust parity example (``rust/examples/settlement_bot/src/main.rs``)
 carries its own copy of the deployment identity below. The core deliberately

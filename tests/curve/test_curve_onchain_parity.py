@@ -203,9 +203,10 @@ def _build_curve_io_free(cassette: dict[str, Any]) -> CurveStableswapPool:
     for cass_key, kwarg in KWARG_MAP:
         if cass_key in cassette:
             extra[kwarg] = cassette[cass_key]
-    # A-ramping: cassette uses short names; make_curve_pool expects the long
-    # kwarg names. These MUST be forwarded or the pool's _a(timestamp) used by
-    # get_dy falls back to defaults and the calc drifts.
+    # A-ramping: the cassette uses short names; make_curve_pool expects the
+    # long kwarg names. They are forwarded because the Rust identity's get_dy
+    # ramps A from them; unset, the ramp endpoints fall back to the flat
+    # a_coefficient and the calc drifts.
     if "initial_a" in cassette:
         extra["initial_a_coefficient"] = cassette["initial_a"]
         extra["future_a_coefficient"] = cassette["future_a"]

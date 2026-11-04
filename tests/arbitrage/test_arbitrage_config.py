@@ -23,7 +23,6 @@ import pytest
 from degenbot.config import RpcNotConfiguredError
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 from tests.helpers import verdict_probe as probe
-from tests.helpers.identity_env import identity_env
 
 # A chain id no operator file, environment, or harness sets, so a refusal is
 # genuinely the absence of every layer rather than a leak.
@@ -47,17 +46,20 @@ def test_discovery_batch_size_clamps_to_a_positive_batch() -> None:
 
 
 def _cfg(env=None, *, live=False, permutation=None, rpc=None) -> ArbitrageConfig:
-    """Build a config with the identity installed and the RPC override pinned.
+    """Build a config with the identity in the env layer and the RPC override pinned.
 
-    Every test here is about a non-RPC field, so the endpoint is supplied
-    through the explicit layer. The operator/executor identity is installed in
-    the process environment for the build, because that is where ``ArbitrageConfig.build``
-    reads it.
+    Every test here is about the identity or a non-RPC field, so the endpoint is
+    supplied through the explicit layer. Operator/executor identity is declared
+    config (``driver.*``), so ``env`` is the env layer of a hypothetical
+    resolution rather than a process mutation: the installed verdict read this
+    process's environment at FFI module init, long before a test could set it.
     """
-    with identity_env(env):
-        return ArbitrageConfig.build(
-            live=live, permutation=permutation, rpc=rpc if rpc is not None else _OVERRIDE
-        )
+    return ArbitrageConfig.build(
+        live=live,
+        permutation=permutation,
+        rpc=rpc if rpc is not None else _OVERRIDE,
+        values=probe.hypothetical_values(env),
+    )
 
 
 def _full_env() -> dict[str, str]:

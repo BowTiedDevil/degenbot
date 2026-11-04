@@ -23,8 +23,8 @@ from degenbot.runner.session import Actors, InjectedActors, Session
 from tests.fakes.bot import FakeBot
 from tests.fakes.engine import FakeEngineRegistry
 from tests.fakes.runner_pipelines import StubPipeline
+from tests.helpers import verdict_probe as probe
 from tests.helpers.boot_actors import inline_registration_scheduler, noop_coro
-from tests.helpers.identity_env import identity_env
 
 if TYPE_CHECKING:
     from degenbot.runner._session_watch import SessionWatch
@@ -51,6 +51,11 @@ def offline_cfg(
     installed config reads the environment at FFI module init, long before a
     test could set it.
 
+    The identity keys are declared config (``driver.*``), so they travel in the
+    env layer of the hypothetical resolution this helper asks for — the
+    installed verdict read the process environment at FFI module init, long
+    before a test could set it.
+
     Args:
         live: Whether the config is a live (signing) stance.
         env: Extra identity env values overriding the standard operator keys.
@@ -65,12 +70,12 @@ def offline_cfg(
         "EXECUTOR_CONTRACT_ADDRESS": EXECUTOR_ADDRESS,
     }
     identity.update(env or {})
-    with identity_env(identity):
-        return ArbitrageConfig.build(
-            live=live,
-            permutation=None,
-            rpc=RpcCascadeOverrides(chain_id=1, node=NODE),
-        )
+    return ArbitrageConfig.build(
+        live=live,
+        permutation=None,
+        rpc=RpcCascadeOverrides(chain_id=1, node=NODE),
+        values=probe.hypothetical_values(identity),
+    )
 
 
 class FakeAsyncW3:

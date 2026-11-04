@@ -19,17 +19,20 @@ import pytest
 from degenbot.runner import ActivationGateRefused, BotRunner
 from degenbot.runner._relay_posture import RelayPosture
 from degenbot.runner.config import ArbitrageConfig
+from tests.helpers import verdict_probe as probe
 from tests.helpers.boot_actors import boot_runner
-from tests.helpers.identity_env import identity_env
 
 
 def _cfg(*, dry_run: bool) -> ArbitrageConfig:
-    with identity_env({
-        "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
-        "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
-        "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-    }):
-        return ArbitrageConfig.build(live=not dry_run, permutation=None)
+    return ArbitrageConfig.build(
+        live=not dry_run,
+        permutation=None,
+        values=probe.hypothetical_values({
+            "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
+            "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
+            "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
+        }),
+    )
 
 
 def _runner(

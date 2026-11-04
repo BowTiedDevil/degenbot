@@ -50,19 +50,22 @@ Shared across chains: the V2 Vault itself (`0xBA12222222228d8Ba445958a75a0704d56
 
 ## Version detection at construction
 
-- **Weighted pow version** — `detect_pow_version()` (`balancer/pools.py`) scans
+Every one of these is resolved in the Rust build path
+(`degenbot-bot`'s `bot_core::pool_builder`); the Python companion reads the
+verdict off the registered pool handle and derives nothing.
+
+- **Weighted pow version** — `detect_pow_version()` (the pool builder) scans
   the deployed bytecode for the `TWO` constant (`0x1bc16d674ec80000`) used by
   the `y == TWO` fast path, absent from 2021-era contracts → `PowVersion.V1`.
-- **Stable invariant version** — `resolve_invariant_version()`
-  (`builders/balancer_builder_base.py`) maps the Vault pool specialization:
-  `General = 0` → `ComposableStablePool` → `INVARIANT_V1`;
-  `MinimalSwapInfo = 1` → `MetaStablePool` → `INVARIANT_V2`. Plain 2021
-  `StablePool`s are `General` (3+ tokens) or `TwoToken` (2 tokens) with no
-  BPT and also use `INVARIANT_V2`; the heuristic has no branch for them, so
-  builds must pass the `BuildPoolRequest.invariant_version` override (see
-  gaps).
-- **BPT-in-balances** — `detect_bpt_index()` probes the token list; `None`
-  marks MetaStable (no BPT token).
+- **Stable invariant version** — `derive_invariant_version()` (the pool
+  builder) maps the BPT presence: a pool whose token list carries its own
+  address is a `ComposableStablePool` → `INVARIANT_V1`; no BPT is a
+  `MetaStablePool` → `INVARIANT_V2`. Plain 2021 `StablePool`s are `General`
+  (3+ tokens) or `TwoToken` (2 tokens) with no BPT and also use
+  `INVARIANT_V2`; the heuristic has no branch for them, so builds must pass
+  the `BuildPoolRequest.invariant_version` override (see gaps).
+- **BPT-in-balances** — the builder probes the token list for the pool's own
+  address; `None` marks MetaStable (no BPT token).
 
 ## Known deployed pools used as parity ground truth
 

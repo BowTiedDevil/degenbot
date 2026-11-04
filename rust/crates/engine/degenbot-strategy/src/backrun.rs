@@ -140,9 +140,9 @@ pub struct BackrunConfig {
     pub fixture_head: Option<u64>,
     /// Executor contract address (validated at the driver boot).
     pub executor: String,
-    /// Executor owner / sim caller; unset falls back to
-    /// `EXECUTOR_OWNER_ADDRESS`, then the built-in default.
-    pub operator: Option<String>,
+    /// Executor owner / sim caller (the facet's declared default is the
+    /// deployed backrun executor's owner).
+    pub operator: String,
     /// Dry-run fixture frames path (`logging.dry_run_jsonl`).
     pub dry_run_jsonl: Option<PathBuf>,
     /// The submission slot this composition binds.
@@ -170,7 +170,7 @@ struct BackrunKnobs {
     cycle_max_hops: usize,
     fixture_head: Option<u64>,
     executor: String,
-    operator: Option<String>,
+    operator: String,
 }
 
 impl BackrunKnobs {
@@ -734,7 +734,7 @@ mod tests {
         cfg.strategy.mevblocker_backrun.executor =
             "0x00000000000000000000000000000000000000aa".to_string();
         cfg.strategy.mevblocker_backrun.operator =
-            Some("0x00000000000000000000000000000000000000bb".to_string());
+            "0x00000000000000000000000000000000000000bb".to_string();
         cfg.strategy.mevblocker_backrun.sim_url = Some("http://sim.local".to_string());
         cfg.strategy.mevblocker_backrun.rank_evidence = true;
         cfg.strategy.mevblocker_backrun.connectors = 5;
@@ -867,10 +867,7 @@ mod tests {
         assert!(c.dry_run);
         assert_eq!(c.key_file, Some(PathBuf::from("/tmp/k.key")));
         assert_eq!(c.executor, "0x00000000000000000000000000000000000000aa");
-        assert_eq!(
-            c.operator.as_deref(),
-            Some("0x00000000000000000000000000000000000000bb")
-        );
+        assert_eq!(c.operator, "0x00000000000000000000000000000000000000bb");
         assert_eq!(c.sim_url.as_deref(), Some("http://sim.local:8545"));
         assert_eq!(c.feed_url, degenbot_config::DEFAULT_BACKRUN_STREAM_URL);
         assert_eq!(

@@ -967,8 +967,7 @@ pub const fn derive_invariant_version(bpt_present: bool) -> u8 {
 
 /// The `2e18` constant (`0x1BC16D674EC80000`) that only appears in the
 /// deployed bytecode of **V2** `WeightedPool` contracts (the `y == TWO`
-/// fast-path in `powDown`/`powUp`). Absent from V1 `WeightedPool2Tokens` —
-/// mirroring `detect_pow_version` in `balancer/pools.py`.
+/// fast-path in `powDown`/`powUp`). Absent from V1 `WeightedPool2Tokens`.
 const POW_V2_TWO: [u8; 8] = [0x1B, 0xC1, 0x6D, 0x67, 0x4E, 0xC8, 0x00, 0x00];
 
 /// Detect which `FixedPoint` library version a pool contract uses from its
@@ -984,7 +983,7 @@ pub fn detect_pow_version(bytecode: &[u8]) -> u8 {
 }
 
 /// Compute a single token's Balancer scaling factor `ONE * 10^(18 - decimals)`
-/// (mirrors `scaling_helpers.py::_compute_scaling_factor`; `ONE = 1e18`).
+/// (`ONE = 1e18`).
 ///
 /// # Errors
 ///

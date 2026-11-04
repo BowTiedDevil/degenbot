@@ -8,6 +8,13 @@ through a second path to the same setting. Each test here names the TIMING
 property, not the value, so a correct-by-accident value still fails when the
 timing regresses.
 
+The operator/executor identity sits on the other side of that line: it is
+declared config (``driver.*``), decided by the verdict the process installed
+at FFI module init, so a name installed after the import reaches no build.
+The identity tests below pin that timing: a fresh interpreter for the
+process-level claim, and the hypothetical door for a caller that means a
+specific layer.
+
 The fresh-interpreter probes exist because the verdict installs once at FFI
 module init: a child process is the only place a layer can be observed
 honestly, and a name inherited from this process would be a layer no probe
@@ -43,11 +50,25 @@ _OVERRIDE = RpcCascadeOverrides(chain_id=1, node="wss://override.example")
 #: the home instead; the names themselves live only in ``config``.
 _ENV_READ_GATE = _REPO_ROOT / "rust/crates/foundation/degenbot-config/tests/no_stray_env_reads.rs"
 
+#: The declared identity keys and their pre-prefix spellings: a child must not
+#: inherit one, or "the verdict saw nothing" would be a claim about this
+#: process's shell rather than about the probe.
+_IDENTITY_KEYS = frozenset({
+    "OPERATOR_ADDRESS",
+    "OPERATOR_PRIVATE_KEY",
+    "EXECUTOR_CONTRACT_ADDRESS",
+    "INJECTED_EXECUTOR_ADDRESS",
+    "EXECUTOR_OWNER_ADDRESS",
+    "EXECUTOR_RUNTIME",
+})
+
 
 def _run(code: str, **env: str) -> subprocess.CompletedProcess[str]:
-    """Run ``code`` in a fresh interpreter with no inherited ``DEGENBOT_*`` name."""
+    """Run ``code`` in a fresh interpreter with no inherited config name."""
     child_env = {
-        name: value for name, value in os.environ.items() if not name.startswith("DEGENBOT_")
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith("DEGENBOT_") and name not in _IDENTITY_KEYS
     }
     child_env.update(env)
     return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] — trusted source, args list, no shell
@@ -206,6 +227,64 @@ def test_a_config_load_succeeds_with_no_retired_knob_present(
 
     assert isinstance(cfg.max_registered_paths, int)
     assert cfg.max_registered_paths >= 0
+
+
+# ── Operator/executor identity: decided by the verdict, not by the build ──
+
+_IDENTITY_PROBE = """import os
+
+from degenbot.config import resolved_config
+from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
+
+
+
+# Installed AFTER the verdict read the environment at FFI module init.
+
+os.environ["OPERATOR_ADDRESS"] = "0x" + "1" * 40
+
+os.environ["OPERATOR_PRIVATE_KEY"] = "0x" + "2" * 32
+
+
+
+cfg = ArbitrageConfig.build(
+
+    live=False, permutation=None, rpc=RpcCascadeOverrides(chain_id=1, node="wss://probe.example")
+
+)
+
+print("VERDICT", resolved_config().values.driver.operator_address)
+
+print("CONFIG", cfg.operator_address)
+
+"""
+
+
+def test_the_identity_is_decided_by_the_installed_verdict() -> None:
+    """A name set after the import reaches neither the verdict nor a build.
+
+    The identity is declared config now, so its read timing is the verdict's:
+    the cascade installs once, at FFI module init, and every key (``driver.*``
+    included) is decided there. A caller that means a specific identity layer
+    asks the hypothetical door with that layer.
+    """
+    proc = _run(_IDENTITY_PROBE)
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "VERDICT None" in proc.stdout, (
+        "a name installed after the module init must not reach the installed "
+        f"verdict, got {proc.stdout!r}"
+    )
+    assert "0x1111111111111111111111111111111111111111" not in proc.stdout, (
+        f"the late name must not reach a build either, got {proc.stdout!r}"
+    )
+
+
+def test_an_identity_name_before_the_import_reaches_the_verdict() -> None:
+    """The complement: the layer present at module init is the layer the verdict keeps."""
+    proc = _run(_IDENTITY_PROBE, OPERATOR_ADDRESS="0x" + "3" * 40)
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "VERDICT 0x" + "3" * 40 in proc.stdout, (
+        f"the declared key must carry the layer the process booted with, got {proc.stdout!r}"
+    )
 
 
 # live-invariant gate (ADR-087 D2): watches the live `config._RETIRED_SHELL_KNOBS`

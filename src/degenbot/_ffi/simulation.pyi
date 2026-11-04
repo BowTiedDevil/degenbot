@@ -371,7 +371,8 @@ class SimulateContext:
             `injected_address`: the fresh address to inject the executor at
                 (hex); required when `inject_code` is `True`.
             `executor_runtime_path`: the operator's explicit artifact path (the
-                `EXECUTOR_RUNTIME` key). `None` hands resolution to the engine.
+                declared `driver.executor_runtime` key). `None` hands resolution
+                to the engine.
             `contracts_dir`: the declared `dispatch.contracts_dir` key — the
                 directory holding `cmd_executor_runtime_bytecode.txt`. `None`
                 (or an empty path) falls through to the engine's source-layout

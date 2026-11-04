@@ -6,7 +6,7 @@ from fractions import Fraction
 from itertools import starmap
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, cast, runtime_checkable
 
-from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
+from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.math import fixed_point_mul_down
 from degenbot.balancer.pool_quoter import BalancerStableSwapQuoter, answer
 from degenbot.checksum_cache import get_checksum_address
@@ -225,8 +225,13 @@ class BalancerV2StablePool(AbstractLiquidityPool):
         # read under one lock as ints.
         self.scaling_factors = tuple(int(x) for x in arm.scaling_factors)
 
-        # Base scaling factors: decimal-adjustment-only (10^(18-dec)).
-        self._base_scaling_factors = tuple(_compute_scaling_factor(token) for token in self._tokens)
+        # Base scaling factors: decimal-adjustment-only (10^(18-dec)), the
+        # multiplicand the per-block refresh pairs with the block's rates. The
+        # identity carries only the rate-multiplied snapshot, so the
+        # decimal-only base is derived from the decimals the tokens report.
+        self._base_scaling_factors = tuple(
+            ONE * 10 ** (18 - token.decimals) for token in self._tokens
+        )
 
         # Rate provider: the stored I/O trait object. The companion never
         # holds a direct Python reference — it queries the handle (which

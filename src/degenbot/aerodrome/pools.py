@@ -219,16 +219,3 @@ class AerodromeV3Pool(UniswapV3Pool):
     # ``UniswapV3Pool.PoolState``; ty cannot prove assignability across two
     # ``TypeAliasType`` values.
     type PoolState = AerodromeV3PoolState  # ty: ignore[invalid-attribute-override]
-
-    TICK_STRUCT_TYPES = (
-        "uint128",
-        "int128",
-        "int128",
-        "uint256",
-        "uint256",
-        "uint256",
-        "int56",
-        "uint160",
-        "uint32",
-        "bool",
-    )

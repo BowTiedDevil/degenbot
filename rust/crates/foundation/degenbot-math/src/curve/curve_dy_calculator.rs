@@ -231,8 +231,8 @@ fn cdiv(a: U256, b: U256) -> Result<U256, CurveSwapError> {
 // A-ramping resolution
 // ---------------------------------------------------------------------------
 
-/// Resolve the raw amplified A at `timestamp`, mirroring
-/// `CurveStableswapPool._a(timestamp)`.
+/// Resolve the raw amplified A at `timestamp` as the StableSwap contract's
+/// `_get_A`-equivalent view of the ramp does.
 ///
 /// - No ramp endpoints → `a_coefficient * a_precision`.
 /// - Ramp finished (`create_timestamp >= future_a_time`) → `future_a`.

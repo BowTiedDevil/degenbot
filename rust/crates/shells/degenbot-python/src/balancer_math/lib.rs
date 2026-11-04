@@ -236,8 +236,9 @@ pub fn weighted_add_swap_fee_amount(
 /// Uses `widening_mul` + truncation (mirrors Solidity's `uint256` return for
 /// over-large-but-unreachable inputs); the deployed contract reverts on
 /// `a * b > MAX_UINT256` — observable only for adversarial inputs the bot
-/// never feeds in normal swap math. C8d: routes `scaling_helpers` off the
-/// pure-Python `fixed_point.py` port.
+/// never feeds in normal swap math. C8d: the stable companion's per-block
+/// scaling-factor refresh multiplies through this leaf rather than a
+/// pure-Python port.
 ///
 /// # Errors
 ///

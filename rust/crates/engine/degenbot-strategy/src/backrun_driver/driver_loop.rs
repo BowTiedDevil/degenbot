@@ -1159,14 +1159,14 @@ impl BackrunDriver {
         // (`execute()` asserts msg.sender == OWNER_ADDR), so the simulated
         // call must come from the OPERATOR address -- never the target tx's
         // original sender. The bid tx itself is signed by the operator key,
-        // so sim-from == tx-from.
+        // so sim-from == tx-from. The address is the facet's declared
+        // `operator` key (one typed home; its default is the deployed
+        // backrun executor's owner), so this reads config, never an
+        // environment of its own.
         let owner: Address = cfg
             .operator
-            .clone()
-            .or_else(|| std::env::var("EXECUTOR_OWNER_ADDRESS").ok())
-            .unwrap_or_else(|| String::from("0x5c603b8a137A40426E0dDFA981EC10c245AF080e"))
             .parse()
-            .expect("executor owner address parses");
+            .expect("the facet's operator is a valid address");
         let wallet_gas_cost_wei = Arc::new(std::sync::atomic::AtomicU64::new(
             u64::try_from(initial_wallet_gas_cost(&provider, &cfg).await).unwrap_or(u64::MAX),
         ));

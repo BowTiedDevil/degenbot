@@ -23,7 +23,6 @@ import pytest
 
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 from tests.helpers import verdict_probe as probe
-from tests.helpers.identity_env import identity_env
 from tests.helpers.seam import AlloyProvider, AsyncAlloyProvider, SimulateContext
 
 FILE = "cmd_executor_runtime_bytecode.txt"
@@ -46,12 +45,12 @@ def _cfg(env: dict[str, str] | None = None) -> ArbitrageConfig:
         "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
     }
     base.update(env or {})
-    with identity_env(base):
-        return ArbitrageConfig.build(
-            live=False,
-            permutation=None,
-            rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
-        )
+    return ArbitrageConfig.build(
+        live=False,
+        permutation=None,
+        rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
+        values=probe.hypothetical_values(base),
+    )
 
 
 def _ctx(*, executor_runtime_path: str | None = None, contracts_dir: str | None = None):

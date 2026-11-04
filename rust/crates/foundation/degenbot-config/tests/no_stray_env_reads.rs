@@ -139,15 +139,6 @@ fn allowed() -> &'static BTreeMap<&'static str, &'static [&'static str]> {
             &["name"][..],
         );
 
-        // The backrun sidecar's configuration now loads through the typed
-        // per-ecosystem backrun facets; the one
-        // remaining env read is the pre-typed executor-owner fallback the
-        // facet's `operator` key documents.
-        m.insert(
-            "crates/engine/degenbot-strategy/src/backrun_driver/driver_loop.rs",
-            &["EXECUTOR_OWNER_ADDRESS"][..],
-        );
-
         insert_python_entries(&mut m);
 
         m
@@ -163,31 +154,18 @@ fn insert_python_entries(map: &mut BTreeMap<&'static str, &'static [&'static str
     // schema does not own, read at a site that predates the cascade, or a
     // tooling posture the cascade does not express.
     //
-    // The companion owns two classes of env read:
-    //   - refusals: `name` is the element of the closed retired-knob list
-    //     `src/degenbot/runner/config.py::_RETIRED_SHELL_KNOBS` (presence of
-    //     any list member fails the config load, and nothing would consume a
-    //     value), and
-    //     `_RETIRED_INJECTION_KEY` is the retired bare spelling of the
-    //     injection stance, refused everywhere; the honored spelling is the
-    //     declared `simulation.inject_executor_code` key, which arrives
-    //     through the verdict.
-    //   - operator/executor identity, which the typed schema does not
-    //     declare: the launch shell exports it from `bot.env`, and `build`
-    //     reads it so a live run signs with the operator's key. Live mode
-    //     additionally refuses a placeholder key the repository publishes.
+    // The companion's one class of env read is the refusal: `name` is the
+    // element of the closed retired-knob list
+    // `src/degenbot/runner/config.py::_RETIRED_SHELL_KNOBS` (presence of any
+    // list member fails the config load, and nothing would consume a value),
+    // and `_RETIRED_INJECTION_KEY` is the retired bare spelling of the
+    // injection stance, refused everywhere; the honored spelling is the
+    // declared `simulation.inject_executor_code` key, which arrives through
+    // the verdict. Operator/executor identity is declared (`driver.*`), so it
+    // reaches the build through that same verdict.
     map.insert(
         "src/degenbot/runner/config.py",
-        &[
-            "name",
-            "_RETIRED_INJECTION_KEY",
-            "OPERATOR_ADDRESS",
-            "OPERATOR_PRIVATE_KEY",
-            "EXECUTOR_CONTRACT_ADDRESS",
-            "INJECTED_EXECUTOR_ADDRESS",
-            "EXECUTOR_OWNER_ADDRESS",
-            "EXECUTOR_RUNTIME",
-        ][..],
+        &["name", "_RETIRED_INJECTION_KEY"][..],
     );
     // The console level for the Python side of the log pipeline, the same
     // class as the Rust `RUST_LOG` tooling signal: output plumbing, not

@@ -6,9 +6,6 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 from degenbot.balancer.libraries.constants import PowVersion
-from degenbot.balancer.libraries.scaling_helpers import (
-    _compute_scaling_factor,
-)
 from degenbot.balancer.pool_quoter import BalancerSwapQuoter, answer
 from degenbot.balancer.types import (
     BalancerV2PoolState,
@@ -22,31 +19,6 @@ from degenbot.types.abstract import AbstractLiquidityPool
 if TYPE_CHECKING:
     from degenbot.types import Pool
     from degenbot.types.chain import ChecksummedAddress
-
-# Hex representation of the TWO constant (2e18 = 0x1bc16d674ec80000)
-# This value only appears in the bytecode of V2 WeightedPool contracts that include
-# the fast-path optimizations for y == ONE / TWO / FOUR in powDown/powUp.
-_V2_TWO_HEX = "1bc16d674ec80000"
-
-
-def detect_pow_version(bytecode: str) -> PowVersion:
-    """Detect which FixedPoint library version a pool contract uses from its bytecode.
-
-    V2 (WeightedPool) contracts include fast paths for y == ONE, TWO, FOUR in
-    powDown/powUp. These reference the TWO and FOUR constants, which are absent
-    from V1 (WeightedPool2Tokens) bytecode.
-
-    The detection works by checking for the TWO constant (0x1bc16d674ec80000)
-    in the deployed bytecode. This constant is used in the `y == TWO` fast-path
-    comparison and does not appear in V1 contracts.
-
-    Returns:
-        The computed value.
-
-    """
-    if _V2_TWO_HEX in bytecode:
-        return PowVersion.V2
-    return PowVersion.V1
 
 
 class BalancerV2Pool(AbstractLiquidityPool):
@@ -135,7 +107,9 @@ class BalancerV2Pool(AbstractLiquidityPool):
             )
             raise DegenbotValueError(message=msg)
         self._tokens = tuple(Erc20Token.from_handle(t) for t in py_tokens)
-        self.scaling_factors = tuple(_compute_scaling_factor(t) for t in self._tokens)
+        # The Rust identity derives the factors from the tokens' decimals at
+        # build time, so the seam only reads them.
+        self.scaling_factors = tuple(int(x) for x in arm.scaling_factors)
         self.fee = Fraction(arm.swap_fee, cls.FEE_DENOMINATOR)
         self.weights = tuple(arm.weights)
         # The core carries PowVersion as an opaque `u8` (1 = V1, 2 = V2), so

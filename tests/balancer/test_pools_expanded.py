@@ -22,7 +22,8 @@ from degenbot.balancer.deployments import (
     BALANCER_V2_VAULT_ADDRESS,
     BALANCERQUERIES_CONTRACT_ADDRESS,
 )
-from degenbot.balancer.pools import BalancerV2Pool, detect_pow_version
+from degenbot.balancer.libraries.constants import PowVersion
+from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import ContractLogicError
 from degenbot.exceptions.pool import EVMRevertError
@@ -60,11 +61,14 @@ VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA960
 
 # ---------- Pool Definitions ----------
 
-# Each entry: (address, pool_id_hex, description)
+# Each entry: (address, pool_id_hex, description, pow_version)
 # Weight profiles range from 1/99 to 90/10
 # Decimals: 18/18, 6/18, 8/18
 # Token counts: 2, 3, 4
 # Specializations: GENERAL(2), MINIMAL_SWAP_INFO(1)
+# pow_version is a fact of the pool's deployed code: V2 carries the LogExpMath
+# `y == TWO` fast-path constant (0x1bc16d674ec80000), V1 (WeightedPool2Tokens)
+# does not. The build path derives it in the core; this table names it.
 
 TWO_TOKEN_POOLS = {
     # 50/50, 0.10% fee, 18/18 decimals, GENERAL
@@ -72,36 +76,42 @@ TWO_TOKEN_POOLS = {
         "0x62E57e37E3185871c13a422A363293780D17305B",
         "0x62e57e37e3185871c13a422a363293780d17305b0002000000000000000006d3",
         "AURA/kaiAURA 50/50, 0.10% fee",
+        PowVersion.V2,
     ),
     # 60/40, 0.1761% fee, 18/18 decimals, GENERAL
     "gel_dexg_60_40": (
         "0xe8075304A388f2f9B2af61f502741a88Ff21D9A4",
         "0xe8075304a388f2f9b2af61f502741a88ff21d9a400020000000000000000006b",
         "GEL/DEXG 60/40, 0.1761% fee",
+        PowVersion.V1,
     ),
     # 75/25, 0.15% fee, 18/18 decimals, GENERAL
     "par_mimo_75_25": (
         "0x5b1C06c4923DBBa4B27Cfa270FFB2E60Aa286159",
         "0x5b1c06c4923dbba4b27cfa270ffb2e60aa28615900020000000000000000004a",
         "PAR/MIMO 75/25, 0.15% fee",
+        PowVersion.V1,
     ),
     # 90/10, 0.20% fee, 18/18 decimals, GENERAL
     "sdvecrv_crv_90_10": (
         "0xF3a605DA753e9dE545841de10EA8bFfBd1Da9C75",
         "0xf3a605da753e9de545841de10ea8bffbd1da9c75000200000000000000000035",
         "sdveCRV/CRV 90/10, 0.20% fee",
+        PowVersion.V1,
     ),
     # 40/60, 0.05% fee, 18/18 decimals, GENERAL
     "dai_weth_40_60": (
         "0x0b09deA16768f0799065C475bE02919503cB2a35",
         "0x0b09dea16768f0799065c475be02919503cb2a3500020000000000000000001a",
         "DAI/WETH 40/60, 0.05% fee",
+        PowVersion.V1,
     ),
     # 50/50, 0.30% fee, 6/18 decimals (USDC/WETH), GENERAL
     "usdc_weth_50_50": (
         "0x96646936b91d6B9D7D0c47C496AfBF3D6ec7B6f8",
         "0x96646936b91d6b9d7d0c47c496afbf3d6ec7b6f8000200000000000000000019",
         "USDC/WETH 50/50, 0.30% fee, mixed decimals (6/18)",
+        PowVersion.V1,
     ),
 }
 
@@ -111,12 +121,14 @@ MULTI_TOKEN_POOLS = {
         "0x9D0D36cC9E989598F01A4656E0efFf73896c30ed",
         "0x9d0d36cc9e989598f01a4656e0efff73896c30ed0001000000000000000006e6",
         "APU/PEPE/SPX 33/33/33, 1.00% fee, mixed decimals (18/18/8)",
+        PowVersion.V2,
     ),
     # 4-token, 16.7/50/16.7/16.7, 0.30% fee, 18/18/18/6 decimals, MINIMAL_SWAP_INFO
     "dai_gp_weth_usdt_4_token": (
         "0xd6855F0A3C26A1b1B2785Ba2604758c0878169bC",
         "0xd6855f0a3c26a1b1b2785ba2604758c0878169bc000100000000000000000317",
         "DAI/GP/WETH/USDT 17/50/17/17, 0.30% fee, mixed decimals (18/18/18/6)",
+        PowVersion.V1,
     ),
 }
 
@@ -133,6 +145,7 @@ def _build_pool_from_chain(
     fork: AnvilFork,
     pool_address: str,
     pool_id_hex: str,
+    pow_version: PowVersion,
 ) -> BalancerV2Pool:
     """Build a BalancerV2Pool by fetching on-chain data from an anvil fork."""
     bot = make_bot_with_provider(fork.provider)
@@ -155,10 +168,6 @@ def _build_pool_from_chain(
     tokens_addresses, balances, _ = vault_contract.functions.getPoolTokens(pool_id).call()
 
     tokens = [bot.build_erc20token(addr) for addr in tokens_addresses]
-
-    # Detect which FixedPoint pow implementation the deployed pool uses
-    bytecode = fork.provider.get_code(get_checksum_address(pool_address)).hex()
-    pow_version = detect_pow_version(bytecode)
 
     return make_balancer_weighted_pool(
         address=get_checksum_address(pool_address),
@@ -348,8 +357,8 @@ def test_given_in_two_token(
     pool_key: str,
 ):
     """GIVEN_IN swap calculations for 2-token weighted pools with diverse weights and fees."""
-    pool_address, pool_id_hex, _description = TWO_TOKEN_POOLS[pool_key]
-    lp = _build_pool_from_chain(fork_mainnet_full, pool_address, pool_id_hex)
+    pool_address, pool_id_hex, _description, pow_version = TWO_TOKEN_POOLS[pool_key]
+    lp = _build_pool_from_chain(fork_mainnet_full, pool_address, pool_id_hex, pow_version)
     _run_given_in_swaps(fork_mainnet_full, lp)
 
 
@@ -365,8 +374,8 @@ def test_given_out_two_token(
     pool_key: str,
 ):
     """GIVEN_OUT swap calculations for 2-token weighted pools with diverse weights and fees."""
-    pool_address, pool_id_hex, _description = TWO_TOKEN_POOLS[pool_key]
-    lp = _build_pool_from_chain(fork_mainnet_full, pool_address, pool_id_hex)
+    pool_address, pool_id_hex, _description, pow_version = TWO_TOKEN_POOLS[pool_key]
+    lp = _build_pool_from_chain(fork_mainnet_full, pool_address, pool_id_hex, pow_version)
     _run_given_out_swaps(fork_mainnet_full, lp)
 
 
@@ -382,8 +391,8 @@ def test_given_in_multi_token(
     pool_key: str,
 ):
     """GIVEN_IN swap calculations for multi-token weighted pools."""
-    pool_address, pool_id_hex, _description = MULTI_TOKEN_POOLS[pool_key]
-    lp = _build_pool_from_chain(fork_mainnet_full, pool_address, pool_id_hex)
+    pool_address, pool_id_hex, _description, pow_version = MULTI_TOKEN_POOLS[pool_key]
+    lp = _build_pool_from_chain(fork_mainnet_full, pool_address, pool_id_hex, pow_version)
 
     # For multi-token pools, test all N*(N-1) directions
     n = len(lp.tokens)
@@ -403,8 +412,8 @@ def test_given_out_multi_token(
     pool_key: str,
 ):
     """GIVEN_OUT swap calculations for multi-token weighted pools."""
-    pool_address, pool_id_hex, _description = MULTI_TOKEN_POOLS[pool_key]
-    lp = _build_pool_from_chain(fork_mainnet_full, pool_address, pool_id_hex)
+    pool_address, pool_id_hex, _description, pow_version = MULTI_TOKEN_POOLS[pool_key]
+    lp = _build_pool_from_chain(fork_mainnet_full, pool_address, pool_id_hex, pow_version)
 
     # For multi-token pools, test all N*(N-1) directions
     n = len(lp.tokens)
@@ -424,8 +433,8 @@ def test_two_token_pool_construction(
     pool_key: str,
 ):
     """Verify that pool construction produces correct weights, fees, and token ordering."""
-    pool_address, pool_id_hex, _description = TWO_TOKEN_POOLS[pool_key]
-    lp = _build_pool_from_chain(fork_mainnet_full, pool_address, pool_id_hex)
+    pool_address, pool_id_hex, _description, pow_version = TWO_TOKEN_POOLS[pool_key]
+    lp = _build_pool_from_chain(fork_mainnet_full, pool_address, pool_id_hex, pow_version)
 
     assert lp.address == get_checksum_address(pool_address)
     assert lp.pool_id == to_bytes(pool_id_hex)
@@ -446,8 +455,8 @@ def test_multi_token_pool_construction(
     pool_key: str,
 ):
     """Verify multi-token pool construction: weights, fees, token ordering."""
-    pool_address, pool_id_hex, _description = MULTI_TOKEN_POOLS[pool_key]
-    lp = _build_pool_from_chain(fork_mainnet_full, pool_address, pool_id_hex)
+    pool_address, pool_id_hex, _description, pow_version = MULTI_TOKEN_POOLS[pool_key]
+    lp = _build_pool_from_chain(fork_mainnet_full, pool_address, pool_id_hex, pow_version)
 
     assert lp.address == get_checksum_address(pool_address)
     assert lp.pool_id == to_bytes(pool_id_hex)

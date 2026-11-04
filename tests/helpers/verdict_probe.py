@@ -15,6 +15,10 @@ two different questions, and using the wrong one is a tautology:
 * :func:`run` -- a fresh interpreter whose environment is fixed BEFORE the
   import. The door for a claim about the process that booted: an exit code, an
   import timing, a raw-table reader closing over the installed file.
+  Operator/executor identity is a declared key (``driver.*``), so a test that
+  wants a specific identity names it in the env layer of a hypothetical
+  resolution -- the way it names any other key -- rather than mutating this
+  process's environment, which the installed verdict has already read.
 * :func:`hypothetical_values` / :func:`resolved_value` / :func:`build_config` /
   :func:`config_values` -- ``degenbot._ffi.resolve_hypothetical``, a pure
   function of a captured environment + file that installs nothing. The door
@@ -36,7 +40,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
-from tests.helpers.identity_env import identity_env
 from tests.helpers.seam import resolve_hypothetical
 
 if TYPE_CHECKING:
@@ -56,9 +59,20 @@ _OVERRIDE_NODE = "wss://probe.example"
 
 #: Names a child must not inherit: every declared key's env name except
 #: `DEGENBOT_CONFIG` (which this module sets), the pre-prefix verification-retry
-#: family, and the retired bare injection name — so "absent" means absent.
+#: family, the operator/executor identity names (declared keys whose spellings
+#: predate the prefix), and the retired bare injection name — so "absent" means
+#: absent.
 _SCRUBBED_PREFIXES = ("DEGENBOT_", "VERIFICATION_RETRY_")
-_SCRUBBED_NAMES = frozenset({"DEGENBOT_CONFIG", "INJECT_EXECUTOR_CODE"})
+_SCRUBBED_NAMES = frozenset({
+    "DEGENBOT_CONFIG",
+    "INJECT_EXECUTOR_CODE",
+    "OPERATOR_ADDRESS",
+    "OPERATOR_PRIVATE_KEY",
+    "EXECUTOR_CONTRACT_ADDRESS",
+    "INJECTED_EXECUTOR_ADDRESS",
+    "EXECUTOR_OWNER_ADDRESS",
+    "EXECUTOR_RUNTIME",
+})
 
 
 def run(
@@ -203,12 +217,12 @@ def build_config(
 
     The declared keys come from :func:`hypothetical_values`, so the build reads
     the cascade's answer for ``env`` + ``operator_file`` and installs nothing.
-    Operator/executor identity is read from the process environment, so
-    ``identity`` is installed for the build and blanked otherwise.
+    Operator/executor identity is declared (``driver.*``), so ``identity`` is
+    more of the env layer rather than a process-environment mutation.
 
     Args:
         env: The declared env layer.
-        identity: The operator/executor identity installed for the build.
+        identity: The operator/executor identity names, in that same env layer.
         live: Whether to build in live mode.
         operator_file: The file layer to resolve through, or ``None`` for none.
 
@@ -216,14 +230,13 @@ def build_config(
         The built config, carrying the hypothetical verdict's values.
 
     """
-    values = hypothetical_values(env, operator_file=operator_file)
-    with identity_env(identity):
-        return ArbitrageConfig.build(
-            live=live,
-            permutation=None,
-            rpc=RpcCascadeOverrides(chain_id=1, node=_OVERRIDE_NODE),
-            values=values,
-        )
+    values = hypothetical_values({**(env or {}), **(identity or {})}, operator_file=operator_file)
+    return ArbitrageConfig.build(
+        live=live,
+        permutation=None,
+        rpc=RpcCascadeOverrides(chain_id=1, node=_OVERRIDE_NODE),
+        values=values,
+    )
 
 
 def config_values(
@@ -240,7 +253,7 @@ def config_values(
         fields: Dotted paths off the built config, e.g. ``diag.tracemalloc_secs``
             or ``verification_retry_policy.max_attempts``.
         env: The declared env layer.
-        identity: The operator/executor identity installed for the build.
+        identity: The operator/executor identity names, in that same env layer.
         live: Whether to build the config in live mode.
         operator_file: The file layer to resolve through, or ``None`` for none.
 

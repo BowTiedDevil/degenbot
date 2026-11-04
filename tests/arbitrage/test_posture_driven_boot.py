@@ -16,8 +16,8 @@ import pytest
 
 from degenbot.runner.config import ArbitrageConfig
 from degenbot.strategy import validate_strategy_readiness
+from tests.helpers import verdict_probe as probe
 from tests.helpers.boot_actors import FakeBootReadiness, boot_runner, noop_coro
-from tests.helpers.identity_env import identity_env
 from tests.helpers.rpc_env import rpc_env_autouse  # noqa: F401 — registers the autouse fixture
 
 if TYPE_CHECKING:
@@ -37,12 +37,15 @@ def _runner(
     readiness=None,
     settlement_endpoints=None,
 ) -> BotRunner:
-    with identity_env({
-        "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
-        "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
-        "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-    }):
-        cfg = ArbitrageConfig.build(live=True, permutation=None)
+    cfg = ArbitrageConfig.build(
+        live=True,
+        permutation=None,
+        values=probe.hypothetical_values({
+            "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
+            "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
+            "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
+        }),
+    )
     return boot_runner(
         cfg,
         path_builder=path_builder,

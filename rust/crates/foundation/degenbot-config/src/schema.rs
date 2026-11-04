@@ -90,6 +90,7 @@ pub enum KeyOwner {
 /// implementation still has to be removed.
 pub const SHELL_OWNED_KEYS: &[&str] = &[
     "diagnostics.faulthandler_timeout_secs",
+    "driver.operator_address",
     "diagnostics.procmem_csv",
     "diagnostics.procmem_secs",
     "diagnostics.tracemalloc_secs",
@@ -312,16 +313,24 @@ impl std::str::FromStr for VerifyTicks {
 /// Declared env names that predate the `DEGENBOT_` prefix and keep their own.
 ///
 /// The verification-retry names were the operator's contract before the prefix
-/// existed, and the pure-Rust example reads the same four. Putting the prefix
-/// in front of them would silently stop honoring an export an operator has
-/// already written, which is the one outcome worse than a non-uniform naming
-/// scheme: a name nothing reads. Every other declared key is `DEGENBOT_`, and
-/// this list is the whole exception.
+/// existed, and the pure-Rust example reads the same four. The operator and
+/// executor identity names are the launch shell's `bot.env` exports: they were
+/// read straight off the process environment before they were declared, so
+/// putting the prefix in front of them would silently stop honoring an export
+/// an operator has already written, which is the one outcome worse than a
+/// non-uniform naming scheme: a name nothing reads. Every other declared key is
+/// `DEGENBOT_`, and this list is the whole exception.
 pub const UNPREFIXED_ENV_NAMES: &[&str] = &[
     "VERIFICATION_RETRY_MAX_ATTEMPTS",
     "VERIFICATION_RETRY_BASE_DELAY",
     "VERIFICATION_RETRY_MAX_DELAY",
     "VERIFICATION_RETRY_JITTER",
+    "OPERATOR_ADDRESS",
+    "OPERATOR_PRIVATE_KEY",
+    "EXECUTOR_CONTRACT_ADDRESS",
+    "INJECTED_EXECUTOR_ADDRESS",
+    "EXECUTOR_OWNER_ADDRESS",
+    "EXECUTOR_RUNTIME",
 ];
 
 // ⚠ ONE DECLARATION SITE PER KEY BELOW. Do NOT add parallel env/TOML const
@@ -664,6 +673,26 @@ crate::config_schema! {
             doc = "Owner: the engine's executor-runtime artifact resolution (`degenbot-arbitrage`'s loader). Directory holding the injected executor runtime bytecode file (`cmd_executor_runtime_bytecode.txt`); the engine reads it and validates the 0x-hex body. Resolution order is the explicit artifact path, then this key, then the source-layout candidate a checkout carries — so unset works in a checkout, while a wheel install, which ships no contracts directory, sets this key or the explicit path. A driver shell only passes the value across its boundary; it resolves nothing.";
     }
 
+    // The operator and executor identity the driver signs and dispatches with.
+    // Declared here so the operator file, the environment, and a declared
+    // default reach it through the one cascade; the deployment defaults a
+    // Python driver applies when a key is unset stay in
+    // `degenbot.runner.identity`, which owns this deployment, not the core.
+    driver DriverConfig {
+        operator_address [opt string] = None, env = "OPERATOR_ADDRESS", def = "(unset; dry-run falls back to the throwaway operator)",
+            doc = "Operator EOA the driver signs with, EIP-55 checksummed. A live run requires it (with operator_private_key); unset in dry-run falls back to the published throwaway operator.";
+        operator_private_key [opt string] = None, env = "OPERATOR_PRIVATE_KEY", def = "(unset; observe-only)",
+            doc = "Operator secp256k1 private key (0x-prefixed hex), consumed by the submit leaf's signer and never rendered. A live run refuses a key this repository publishes; unset leaves the process observe-only.";
+        executor_address [opt string] = None, env = "EXECUTOR_CONTRACT_ADDRESS", def = "(unset; the deployed settlement executor)",
+            doc = "Settlement executor contract the driver dispatches to. The zero address is a fatal refusal; unset falls back to this deployment's settlement executor.";
+        injected_address [opt string] = None, env = "INJECTED_EXECUTOR_ADDRESS", def = "(unset; the deployed injected-code address)",
+            doc = "Address the simulator injects the executor runtime bytecode at when simulation.inject_executor_code is set; the driver then dispatches there instead of the deployed executor, because injected code exists only in the sim overlay.";
+        executor_owner [opt string] = None, env = "EXECUTOR_OWNER_ADDRESS", def = "(unset; live defaults to the operator address)",
+            doc = "Executor owner / sim caller address: execute() is OWNER-gated, so the simulated call must come from it. Live mode requires it to equal operator_address; unset defaults to the operator in live mode and to this deployment's settlement executor owner otherwise.";
+        executor_runtime [opt path] = None, env = "EXECUTOR_RUNTIME", def = "(unset; the engine's artifact resolution)",
+            doc = "Explicit executor runtime artifact path (a file holding the 0x-prefixed hex bytecode). Wins over the dispatch.contracts_dir key and over the source-layout candidate a checkout carries, and it is the one knob a wheel install, which ships no contracts directory, must set. The engine resolves and loads it; a driver shell only passes the value across its boundary.";
+    }
+
     // The per-arm facet namespaces: the typed config home each strategy's own
     // knobs land in. Activation is per-facet and explicit — a strategy runs
     // when its facet sets `active`, and an activated facet must carry a
@@ -702,8 +731,8 @@ crate::config_schema! {
                 doc = "Hex secp256k1 operator key file. Unset means no signing material is loaded (observe-only); the key never leaves TxSigner.";
             executor [string] = String::from("0x30b28ed8aa581fbc0191c3b532b0697773070e97"), env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_EXECUTOR", def = "0x30b28ed8aa581fbc0191c3b532b0697773070e97",
                 doc = "Executor contract address the composed backrun calls; parsed and validated at the driver boot.";
-            operator [opt string] = None, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_OPERATOR", def = "(unset; falls back to EXECUTOR_OWNER_ADDRESS)",
-                doc = "Executor owner / sim caller address. Unset falls back to the legacy EXECUTOR_OWNER_ADDRESS env name, then the built-in default; parsed at the driver boot.";
+            operator [string] = String::from("0x5c603b8a137A40426E0dDFA981EC10c245AF080e"), env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_OPERATOR", def = "0x5c603b8a137A40426E0dDFA981EC10c245AF080e",
+                doc = "Executor owner / sim caller address for this arm — the deployed backrun executor's owner by default; parsed at the driver boot.";
             sim_url [opt string] = None, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_SIM_URL", def = "(unset; the chain node)",
                 doc = "Bundle-sim endpoint serving eth_callMany. Unset reuses the chain node; MEVBlocker's /fast tier answers method-missing, so the node is the fallback.";
             rank_evidence [bool] = false, env = "DEGENBOT_STRATEGY_MEVBLOCKER_BACKRUN_RANK_EVIDENCE", def = "false",
@@ -746,8 +775,8 @@ crate::config_schema! {
                 doc = "Hex secp256k1 operator key file. Unset means no signing material is loaded (observe-only); the key never leaves TxSigner.";
             executor [string] = String::from("0x30b28ed8aa581fbc0191c3b532b0697773070e97"), env = "DEGENBOT_STRATEGY_TXPOOL_BACKRUN_EXECUTOR", def = "0x30b28ed8aa581fbc0191c3b532b0697773070e97",
                 doc = "Executor contract address the composed backrun calls; parsed and validated at the driver boot.";
-            operator [opt string] = None, env = "DEGENBOT_STRATEGY_TXPOOL_BACKRUN_OPERATOR", def = "(unset; falls back to EXECUTOR_OWNER_ADDRESS)",
-                doc = "Executor owner / sim caller address. Unset falls back to the legacy EXECUTOR_OWNER_ADDRESS env name, then the built-in default; parsed at the driver boot.";
+            operator [string] = String::from("0x5c603b8a137A40426E0dDFA981EC10c245AF080e"), env = "DEGENBOT_STRATEGY_TXPOOL_BACKRUN_OPERATOR", def = "0x5c603b8a137A40426E0dDFA981EC10c245AF080e",
+                doc = "Executor owner / sim caller address for this arm — the deployed backrun executor's owner by default; parsed at the driver boot.";
             sim_url [opt string] = None, env = "DEGENBOT_STRATEGY_TXPOOL_BACKRUN_SIM_URL", def = "(unset; the chain node)",
                 doc = "Bundle-sim endpoint serving eth_callMany. Unset reuses the chain node; MEVBlocker's /fast tier answers method-missing, so the node is the fallback.";
             rank_evidence [bool] = false, env = "DEGENBOT_STRATEGY_TXPOOL_BACKRUN_RANK_EVIDENCE", def = "false",
@@ -1422,7 +1451,7 @@ mod tests {
         }
         assert_eq!(
             SHELL_OWNED_KEYS.len(),
-            8,
+            9,
             "the shell-owned census changed: give the new key a core implementation, or add it here on review"
         );
     }
@@ -1740,7 +1769,7 @@ mod tests {
             assert!(!b.dry_run);
             assert_eq!(b.key_file, None);
             assert_eq!(b.executor, "0x30b28ed8aa581fbc0191c3b532b0697773070e97");
-            assert_eq!(b.operator, None);
+            assert_eq!(b.operator, "0x5c603b8a137A40426E0dDFA981EC10c245AF080e");
             assert_eq!(b.sim_url, None);
             assert_eq!(b.endpoints, None);
             assert!(!b.rank_evidence);
@@ -1780,7 +1809,7 @@ mod tests {
         dry_run: bool,
         key_file: Option<std::path::PathBuf>,
         executor: String,
-        operator: Option<String>,
+        operator: String,
         sim_url: Option<String>,
         rank_evidence: bool,
         connectors: usize,

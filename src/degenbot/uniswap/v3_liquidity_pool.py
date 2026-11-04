@@ -92,16 +92,6 @@ class UniswapV3Pool(
     name: str
     _initial_state_block: int
 
-    TICK_STRUCT_TYPES = (
-        "uint128",
-        "int128",
-        "uint256",
-        "uint256",
-        "int56",
-        "uint160",
-        "uint32",
-        "bool",
-    )
     SLOT0_STRUCT_TYPES = (
         "uint160",
         "int24",

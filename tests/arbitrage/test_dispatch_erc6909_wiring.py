@@ -19,7 +19,7 @@ import pytest
 from degenbot.dispatch import Dispatcher, TxSigner
 from degenbot.runner._sim_submit import ExecutorInputs, build_batch_executor, build_executor_for
 from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
-from tests.helpers.identity_env import identity_env
+from tests.helpers import verdict_probe as probe
 from tests.helpers.seam import AlloyProvider, AsyncAlloyProvider, SimulateContext
 from tests.helpers.session import session_for_test
 
@@ -56,16 +56,16 @@ class _FakeW3:
 
 
 def _cfg() -> ArbitrageConfig:
-    with identity_env({
-        "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
-        "OPERATOR_PRIVATE_KEY": "0x" + "11" * 32,
-        "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
-    }):
-        return ArbitrageConfig.build(
-            live=False,
-            permutation=None,
-            rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
-        )
+    return ArbitrageConfig.build(
+        live=False,
+        permutation=None,
+        rpc=RpcCascadeOverrides(node="ws://localhost:8546"),
+        values=probe.hypothetical_values({
+            "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
+            "OPERATOR_PRIVATE_KEY": "0x" + "11" * 32,
+            "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
+        }),
+    )
 
 
 def _session(engine: Any, cfg: ArbitrageConfig) -> Session:

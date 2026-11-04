@@ -505,49 +505,6 @@ class CurveStableswapPool(
         self._cache_block_timestamps[block_number] = result
         return result
 
-    def _a(self, timestamp: int | None = None) -> int:
-        """Handle ramping A up or down.
-
-        Returns:
-            The computed integer value.
-
-        """
-        if any([
-            self.future_a_coefficient is None,
-            self.initial_a_coefficient is None,
-        ]):
-            return self.a_coefficient * self.A_PRECISION
-
-        if TYPE_CHECKING:
-            assert self.initial_a_coefficient is not None
-            assert self.initial_a_coefficient_time is not None
-            assert self.future_a_coefficient_time is not None
-            assert self.future_a_coefficient is not None
-            assert self._create_timestamp is not None
-
-        if self._create_timestamp >= self.future_a_coefficient_time:
-            return self.future_a_coefficient
-
-        if timestamp is None:
-            timestamp = self._get_cached_block_timestamp(0)
-
-        a_1 = self.future_a_coefficient
-        t_1 = self.future_a_coefficient_time
-
-        # Modified from contract template to check timestamp argument instead
-        # of block.timestamp
-        if timestamp < t_1:
-            a_0 = self.initial_a_coefficient
-            t_0 = self.initial_a_coefficient_time
-            if a_1 > a_0:
-                scaled_a = a_0 + (a_1 - a_0) * (timestamp - t_0) // (t_1 - t_0)
-            else:
-                scaled_a = a_0 - (a_0 - a_1) * (timestamp - t_0) // (t_1 - t_0)
-        else:
-            scaled_a = a_1
-
-        return scaled_a
-
     def calc_token_amount(
         self,
         *,

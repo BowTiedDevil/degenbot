@@ -21,7 +21,6 @@ Role split after the golden conversion (survey T8):
 """
 
 import itertools
-from typing import cast
 
 import pytest
 
@@ -32,9 +31,8 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.crypto import function_selector
 from degenbot.curve.abi import CURVE_V1_FACTORY_ABI, CURVE_V1_POOL_ABI, CURVE_V1_REGISTRY_ABI
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot.exceptions import ContractLogicError
+from degenbot.exceptions import ContractLogicError, SpecViolationError
 from degenbot.exceptions.arbitrage import NoLiquidity
-from degenbot.exceptions import SpecViolationError
 from degenbot.exceptions.pool import (
     BrokenPool,
     EVMRevertError,
@@ -44,25 +42,14 @@ from degenbot.exceptions.pool import (
 from degenbot.fork import AnvilFork
 from degenbot.provider import AlloyProvider
 from degenbot.types.rpc_types import TxParams
-from tests.curve.test_curve_onchain_parity import (
-    _METAPOOL_CASSETTE,
-    _build_curve_io_free,
-    _load_cassette,
-)
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.contract_compat import ContractCompat, make_contract
 from tests.sweep_pin import SWEEP_FORK_BLOCK
-
-Timestamp = int
 
 CRYPTO_POOL_ADDRESSES = {"0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"}
 CURVE_V1_FACTORY_ADDRESS = get_checksum_address("0x127db66E7F0b16470Bec194d0f496F9Fa065d0A9")
 CURVE_V1_REGISTRY_ADDRESS = get_checksum_address("0x90E00ACe148ca3b23Ac1bC8C240C2a7Dd9c2d7f5")
 TRIPOOL_ADDRESS = get_checksum_address("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7")
-
-# Cassette recorded from a live fork at the A-ramp regression block
-# (scripts/record_curve_tripool_cassette.py --block 14900000).
-_A_RAMP_CASSETTE = _METAPOOL_CASSETTE.parent / "curve_tripool_block_14900000.json"
 
 
 def _build_pool(fork: AnvilFork, address: str) -> CurveStableswapPool:
@@ -247,27 +234,6 @@ def test_bot_update_curve_pool(fork_mainnet_archive: AnvilFork):
     # Updating again at the same block should return False
     changed = advanced_bot.update(tripool)
     assert changed is False
-
-
-@pytest.mark.ethereum
-def test_a_ramping():
-    # A range:      5000 -> 2000
-    # A time :      1653559305 -> 1654158027
-    # Replayed from the cassette recorded at the pinned block 14_900_000
-    # (scripts/record_curve_tripool_cassette.py --block 14900000); the ramp
-    # parameters are the on-chain values at that block.
-    initial_a = 5000
-    final_a = 2000
-
-    initial_a_time = 1653559305
-    final_a_time = 1654158027
-
-    tripool = _build_curve_io_free(_load_cassette(_A_RAMP_CASSETTE))
-    tripool._create_timestamp = cast("Timestamp", 0)  # defeat the timestamp optimization
-
-    assert tripool._a(timestamp=initial_a_time) == initial_a
-    assert tripool._a(timestamp=final_a_time) == final_a
-    assert tripool._a(timestamp=(initial_a_time + final_a_time) // 2) == (initial_a + final_a) // 2
 
 
 @pytest.mark.online_rpc

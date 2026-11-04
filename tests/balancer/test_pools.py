@@ -8,7 +8,8 @@ from degenbot.balancer.deployments import (
     BALANCER_V2_VAULT_ADDRESS,
     BALANCERQUERIES_CONTRACT_ADDRESS,
 )
-from degenbot.balancer.pools import BalancerV2Pool, detect_pow_version
+from degenbot.balancer.libraries.constants import PowVersion
+from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.fork import AnvilFork
 from degenbot.utils.bytes import to_bytes
@@ -81,6 +82,7 @@ class SwapKind(enum.IntEnum):
 def _build_pool_from_chain(
     fork: AnvilFork,
     pool_address: str,
+    pow_version: PowVersion,
 ) -> BalancerV2Pool:
     """Build a BalancerV2Pool by fetching on-chain data from an anvil fork."""
     bot = make_bot_with_provider(fork.provider)
@@ -97,10 +99,6 @@ def _build_pool_from_chain(
     tokens_addresses, balances, _ = vault_contract.functions.getPoolTokens(pool_id).call()
 
     tokens = [bot.build_erc20token(addr) for addr in tokens_addresses]
-
-    # Detect which FixedPoint pow implementation the deployed pool uses
-    bytecode = fork.provider.get_code(get_checksum_address(pool_address)).hex()
-    pow_version = detect_pow_version(bytecode)
 
     return make_balancer_weighted_pool(
         address=get_checksum_address(pool_address),
@@ -121,21 +119,27 @@ def _build_pool_from_chain(
 def ethereum_balancer_v2_weth_bal_pool(
     fork_mainnet_full: AnvilFork,
 ) -> BalancerV2Pool:
-    return _build_pool_from_chain(fork_mainnet_full, BALANCER_V2_WETH_BAL_POOL_ADDRESS)
+    return _build_pool_from_chain(
+        fork_mainnet_full, BALANCER_V2_WETH_BAL_POOL_ADDRESS, PowVersion.V1
+    )
 
 
 @pytest.fixture
 def ethereum_balancer_v2_usdc_weth_pool(
     fork_mainnet_full: AnvilFork,
 ) -> BalancerV2Pool:
-    return _build_pool_from_chain(fork_mainnet_full, BALANCER_V2_USDC_WETH_POOL_ADDRESS)
+    return _build_pool_from_chain(
+        fork_mainnet_full, BALANCER_V2_USDC_WETH_POOL_ADDRESS, PowVersion.V1
+    )
 
 
 @pytest.fixture
 def ethereum_balancer_v2_weth_rpl_pool(
     fork_mainnet_full: AnvilFork,
 ) -> BalancerV2Pool:
-    return _build_pool_from_chain(fork_mainnet_full, BALANCER_V2_WETH_RPL_POOL_ADDRESS)
+    return _build_pool_from_chain(
+        fork_mainnet_full, BALANCER_V2_WETH_RPL_POOL_ADDRESS, PowVersion.V1
+    )
 
 
 # ---------- Pool Creation Tests ----------

@@ -1520,7 +1520,7 @@ fn submit_cfg(dry_run: bool) -> BackrunConfig {
         cycle_max_hops: 4,
         fixture_head: None,
         executor: String::from("0x00000000000000000000000000000000000000e1"),
-        operator: None,
+        operator: String::from("0x00000000000000000000000000000000000000e0"),
         dry_run_jsonl: None,
         submission: SubmissionSlot::PublicFanOut { relays: Vec::new() },
     }

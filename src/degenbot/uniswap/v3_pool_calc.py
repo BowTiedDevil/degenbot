@@ -34,7 +34,6 @@ class UniswapV3PoolCalc:
 
     Class variables that V3 subclasses may override:
     - FEE_DENOMINATOR
-    - TICK_STRUCT_TYPES
     - SLOT0_STRUCT_TYPES
     """
 

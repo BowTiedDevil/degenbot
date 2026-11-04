@@ -21,8 +21,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot.balancer.libraries.constants import PowVersion
-from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
+from degenbot.balancer.libraries.constants import ONE, PowVersion
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import INVARIANT_V2, BalancerV2StablePool
 from degenbot.checksum_cache import get_checksum_address
@@ -68,20 +67,19 @@ def make_balancer_weighted_pool(
     ``Bot.build_pool()`` is the production path (registers in the session's
     shared ``_py_bot``); this helper is the test-only equivalent.
 
-    The immutable config (tokens, weights, scaling_factors, fee, pow_version)
-    stays Python-side on the companion; the mutable ``balances`` +
-    ``update_block`` + the reorg journal live in Rust. The factory derives
-    ``scaling_factors`` via the shared ``_compute_scaling_factor`` helper and
-    forwards them to ``register_balancer_weighted_pool`` so the Rust core
-    stores the same values the companion keeps (consumed by the future Rust
-    ``WeightedMath``).
+    The mutable ``balances`` + ``update_block`` + the reorg journal live in
+    Rust; the companion reads the immutable identity (weights,
+    ``scaling_factors``, ``pow_version``) back off the registered handle. This
+    factory fabricates that registration input the way the core builder
+    derives it for a real build — ``10^(18 - decimals)`` per token — so the
+    values the core stores are the values a production build would store.
     """
     address_checksum = get_checksum_address(address)
     state_block_int = state_block if state_block is not None else 0
 
     bot = py_bot if py_bot is not None else new_pool_bot()
 
-    scaling_factors = [_compute_scaling_factor(token) for token in tokens]
+    scaling_factors = [ONE * 10 ** (18 - token.decimals) for token in tokens]
     # encode the Fraction fee the Python-side companion keeps target-perfect as
     # int(fee * FEE_DENOMINATOR) (1e18 denominator), mirroring on-chain swap
     # fee representation.
