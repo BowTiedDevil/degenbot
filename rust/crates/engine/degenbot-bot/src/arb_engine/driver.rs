@@ -1702,6 +1702,7 @@ mod tests {
     use degenbot_pools::PoolTickCoverage;
     use futures_util::StreamExt;
     use hashbrown::HashSet;
+    use tokio::sync::Notify;
 
     /// Build an offline driver over a fresh `Bot` + `EngineStages`.
     fn driver_for_test() -> EngineDriver {
@@ -2071,27 +2072,40 @@ mod tests {
         }
     }
 
-    /// A seat that resolves each unit after `delay`, recording the crawl's pose
-    /// and join fact at that moment — the window a latched stop has to leave
-    /// draining, observed from inside the crawl.
+    /// A seat whose unit stays in flight until the crawl's own teardown latches,
+    /// recording the crawl's pose and join fact at that moment — the window a
+    /// latched stop has to leave draining, observed from inside the crawl.
+    ///
+    /// The unit's release edge is that latch and never a clock: the ordering this
+    /// fixture is for is "a latched stop meets a unit still draining", so a unit
+    /// that could resolve on its own would leave the test asserting nothing
+    /// whenever the loop was slow enough to be stopped before it submitted.
     struct DriftingSeat {
         controller: Arc<std::sync::OnceLock<Arc<CrawlController>>>,
         observed: Arc<Mutex<Option<(CrawlState, bool)>>>,
-        delay: Duration,
+        /// Fired on the first dispatch: the unit is in flight.
+        inflight: Arc<Notify>,
     }
 
     impl CrawlUnitSeat for DriftingSeat {
         fn dispatch(&self, future: CrawlUnitFuture) -> Result<(), String> {
             let holder = Arc::clone(&self.controller);
             let observed = Arc::clone(&self.observed);
-            let delay = self.delay;
             tokio::spawn(async move {
-                tokio::time::sleep(delay).await;
+                while holder
+                    .get()
+                    .is_some_and(|controller| !controller.state().is_tearing_down())
+                {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
                 if let Some(controller) = holder.get() {
                     *observed.lock() = Some((controller.state(), controller.is_finished()));
                 }
                 future.await;
             });
+            // The dispatch itself is the "in flight" edge the test waits on: it
+            // happens on the loop, before the unit can resolve.
+            self.inflight.notify_one();
             Ok(())
         }
     }
@@ -2102,16 +2116,17 @@ mod tests {
         observed: Arc<Mutex<Option<(CrawlState, bool)>>>,
     }
 
-    /// Boot a crawl whose run future is LIVE and takes `delay` to drain its
-    /// window, handing back the `JoinHandle` the controller deliberately never
-    /// spawns for itself.
-    fn live_crawl_for_test(driver: &Arc<EngineDriver>, delay: Duration) -> CrawlFixture {
+    /// Boot a crawl whose run future is LIVE, with its first unit in flight and held
+    /// until the crawl tears down, handing back the `JoinHandle` the controller
+    /// deliberately never spawns for itself.
+    fn live_crawl_for_test(driver: &Arc<EngineDriver>) -> CrawlFixture {
         let observed = Arc::new(Mutex::new(None));
         let holder = Arc::new(std::sync::OnceLock::new());
+        let inflight = Arc::new(Notify::new());
         let seat = Arc::new(DriftingSeat {
             controller: Arc::clone(&holder),
             observed: Arc::clone(&observed),
-            delay,
+            inflight: Arc::clone(&inflight),
         });
         let io = Arc::new(ConstructionIo::new(Arc::new(NoDb), Arc::new(UnreachedRpc)));
         let host = CrawlHost::from_driver(driver, io, None);
@@ -2133,16 +2148,14 @@ mod tests {
         let run = runtime.spawn(async move {
             let _ = runner.run().await;
         });
-        // `Live` is the run's own arming edge, taken before the sweep prepares,
-        // so waiting on it means the stop below always meets a run to latch.
+        // The edge a stop needs is the first unit's DISPATCH, not the run's arming:
+        // `Live` is taken before the sweep prepares, so a stop that lands in between
+        // drains nothing and the fixture would prove nothing. The guard only names a
+        // run that never submits.
         runtime.block_on(async {
-            tokio::time::timeout(Duration::from_secs(5), async {
-                while controller.run_phase() != RunPhase::Live {
-                    tokio::time::sleep(Duration::from_millis(1)).await;
-                }
-            })
-            .await
-            .expect("the run arms before it prepares its sweep");
+            tokio::time::timeout(Duration::from_secs(5), inflight.notified())
+                .await
+                .expect("the run submits a unit, so a stop below always has a window to drain");
         });
         CrawlFixture {
             controller,
@@ -2172,7 +2185,7 @@ mod tests {
     #[test]
     fn a_stop_latches_the_crawl_and_joins_its_run_within_the_grace() {
         let driver = Arc::new(driver_for_test());
-        let fixture = live_crawl_for_test(&driver, Duration::from_millis(500));
+        let fixture = live_crawl_for_test(&driver);
         assert_eq!(
             fixture.controller.state(),
             CrawlState::Running {
@@ -2194,10 +2207,6 @@ mod tests {
         assert!(
             elapsed < PUMP_STOP_GRACE,
             "the crawl's run is joined inside the grace window, not aborted; took {elapsed:?}"
-        );
-        assert!(
-            elapsed >= Duration::from_millis(300),
-            "the stop really waited for the unit in flight; took {elapsed:?}"
         );
         assert_eq!(driver.current_phase(), PumpPhase::Stopped);
         assert!(driver.crawl.lock().is_none(), "the teardown took the pair");
