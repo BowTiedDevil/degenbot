@@ -325,6 +325,14 @@ pub enum V4QuoteError {
         /// The returned byte count.
         len: usize,
     },
+    /// A charge measurement's no-op twin still touched storage at the hook
+    /// address — the code override did not land, so the twin is not the pool's
+    /// own curve and its reading would be a fabricated fee.
+    #[error("the no-op twin left {slots} slot(s) at the hook address")]
+    TwinTouchedHookStorage {
+        /// How many slots at the hook address the twin touched.
+        slots: usize,
+    },
 }
 
 /// The ABI calldata for one quote — `quoteExactInputSingle` with empty
@@ -464,6 +472,77 @@ impl Default for V4BlackBoxQuoter {
     }
 }
 
+/// The no-op hook a pool's TWIN runs: every callback answers ZERO.
+///
+/// The shape is not free — the deployed manager validates each hook callback's
+/// return (`InvalidHookResponse`, `0x1e048e1d`, observed when a stub answered a
+/// bare zero word): a callback must return its own selector in the first word,
+/// `beforeSwap` exactly 96 bytes (`selector || delta || lpFeeOverride`) and a
+/// delta-returning `afterSwap` exactly 64 bytes (`selector || delta`). So this
+/// stub dispatches on `msg.sig`:
+///
+/// ```text
+/// selector = calldataload(0) >> 224
+/// if selector == afterSwap (0xb47b2fb1): mstore(0, afterSwap << 224); return 64 bytes
+/// else:                                  mstore(0, beforeSwap << 224); return 96 bytes
+/// ```
+///
+/// Both bodies are zero beyond the selector word — `BeforeSwapDelta(0)`,
+/// `lpFeeOverride(0)` and `hookDelta(0)`: the pool's own curve with nothing
+/// charged and no hook storage read at all (which [`measure_hook_fee`]
+/// asserts). Validated live by the census rig
+/// (`tests/evm2_v4_dynamic_fee_census.rs`), whose readings this measurement
+/// reproduces.
+pub const NOOP_HOOK: [u8; 48] = [
+    // calldataload(0) >> 224
+    0x60, 0x00, 0x35, 0x60, 0xE0, 0x1C, //
+    // selector == afterSwap? jump to the 64-byte body
+    0x63, 0xB4, 0x7B, 0x2F, 0xB1, 0x14, 0x60, 0x1F, 0x57, //
+    // beforeSwap body: mstore(0, beforeSwap << 224); return (0, 96)
+    0x63, 0x57, 0x5E, 0x24, 0xB4, 0x60, 0xE0, 0x1B, 0x60, 0x00, 0x52, 0x60, 0x60, 0x60, 0x00, 0xF3,
+    // JUMPDEST: mstore(0, afterSwap << 224); return (0, 64)
+    0x5B, 0x63, 0xB4, 0x7B, 0x2F, 0xB1, 0x60, 0xE0, 0x1B, 0x60, 0x00, 0x52, 0x60, 0x40, 0x60, 0x00,
+    0xF3,
+];
+
+/// One leg's measured hook charge: the charge as the output-side equivalent
+/// fee, in pips of `1_000_000` (the V4 fee scale), with both walks that
+/// produced it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct V4HookFeeMeasurement {
+    /// The charge in pips of 1e6 (`1e6` = 100%). A hook that REBATES reads `0`:
+    /// a negative charge is not a fee, and searching a rebating pool at fee 0
+    /// understates its output (the conservative direction).
+    pub pips: u32,
+    /// The leg's output as traded.
+    pub traded_out: U256,
+    /// The same walk with the hook neutered — the pool's own curve.
+    pub hookless_out: U256,
+}
+
+/// `1 − traded/hookless` in pips of 1e6 — a fee is a ratio of two walks over
+/// identical state, so the sign is meaningful and the twin's zero output (a
+/// walk the curve rounds away) has nothing to take a ratio against.
+///
+/// The derivation is the census's (`docs/findings/2026-11-04-dynamic-fee-census.md`),
+/// where it was validated against static-fee control pools whose fee is
+/// readable off the key: the residual is the walk's curvature (worst 0.55 bps,
+/// 0.5% relative). Because a charge is a pool CONFIGURATION — flat over the
+/// census's hour-long sample, 5/5 series — the reading does not rot.
+#[must_use]
+pub fn implied_pips(traded_out: U256, hookless_out: U256) -> Option<u32> {
+    if hookless_out.is_zero() {
+        return None;
+    }
+    if traded_out >= hookless_out {
+        // A rebate (or an exact tie): nothing charged.
+        return Some(0);
+    }
+    let scale = U256::from(1_000_000u64);
+    let pips = ((hookless_out - traded_out) * scale) / hookless_out;
+    Some(u32::try_from(pips.min(U256::from(1_000_000u64))).unwrap_or(1_000_000))
+}
+
 impl V4BlackBoxQuoter {
     /// A quoter over `config`.
     #[must_use]
@@ -533,6 +612,88 @@ impl V4BlackBoxQuoter {
             quote.hook_slots_learned = merge.added;
         }
         Ok(quote)
+    }
+
+    /// Measure `leg`'s charge with a twin frame — the pool's own curve on the
+    /// same anchor with the hook's code replaced by [`NOOP_HOOK`] — against the
+    /// output a [`Self::quote`] of the same leg at the same amount just took.
+    ///
+    /// This is the F2 reading: one extra black-box frame per hook-carried leg at
+    /// the anchor (the twin), on top of the re-quote ADR-090 already takes. The
+    /// scratch's DB is the anchor's memo, so the twin's reads are mostly warm
+    /// (the census priced 74 walks and their twins in 2.3 s over 5,425 cold
+    /// reads).
+    ///
+    /// `Ok(None)` is "no fact": the leg has no hook to neuter, or the twin's walk
+    /// produced nothing to take a ratio against (a thin pool).
+    ///
+    /// # Errors
+    ///
+    /// Whatever the twin frame reports ([`V4QuoteError`]) — a refusal there is
+    /// an abnormal hook, reported rather than smoothed over.
+    pub fn measure_hook_fee<Ext: ::evm2::evm::DynDatabase>(
+        &self,
+        scratch: &mut Evm2ScratchEvm<::evm2::evm::CacheDB<Ext>>,
+        leg: &V4Leg,
+        amount_in: U256,
+        traded_out: U256,
+    ) -> Result<Option<V4HookFeeMeasurement>, V4QuoteError> {
+        let hook = leg.pool_key.hooks;
+        if hook.is_zero() {
+            return Ok(None);
+        }
+        let saved = swap_in_noop_hook(scratch, hook)?;
+        let twin = quote_exact_in(scratch, &self.config, leg, amount_in);
+        restore_hook(scratch, hook, saved);
+        let twin = twin?;
+        if !twin.hook_slots.is_empty() {
+            return Err(V4QuoteError::TwinTouchedHookStorage {
+                slots: twin.hook_slots.len(),
+            });
+        }
+        let Some(pips) = implied_pips(traded_out, twin.amount_out) else {
+            return Ok(None);
+        };
+        Ok(Some(V4HookFeeMeasurement {
+            pips,
+            traded_out,
+            hookless_out: twin.amount_out,
+        }))
+    }
+}
+
+/// Replace the hook's code with [`NOOP_HOOK`], returning the account it
+/// displaced (the real nonce/balance ride along, so a hook reading its own
+/// account still sees the chain's answer).
+fn swap_in_noop_hook<Ext: ::evm2::evm::DynDatabase>(
+    scratch: &mut Evm2ScratchEvm<::evm2::evm::CacheDB<Ext>>,
+    hook: Address,
+) -> Result<Option<::evm2::evm::AccountInfo>, V4QuoteError> {
+    use ::evm2::bytecode::Bytecode;
+    let saved = scratch.ext_mut().get_account(&hook).map_err(|error| {
+        V4QuoteError::Frame(ReplayFrameError::Other {
+            raw: format!("hook account read: {error}"),
+        })
+    })?;
+    let mut stub = ::evm2::evm::AccountInfo::default()
+        .with_code(Bytecode::new_raw(Bytes::from_static(&NOOP_HOOK)));
+    if let Some(real) = saved.as_ref() {
+        stub.nonce = real.nonce;
+        stub.balance = real.balance;
+    }
+    scratch.ext_mut().insert_account_info(&hook, stub);
+    Ok(saved)
+}
+
+/// Put the real hook code back (the scratch outlives one leg's measurement, and
+/// every pool of one hook shares the hook address).
+fn restore_hook<Ext: ::evm2::evm::DynDatabase>(
+    scratch: &mut Evm2ScratchEvm<::evm2::evm::CacheDB<Ext>>,
+    hook: Address,
+    saved: Option<::evm2::evm::AccountInfo>,
+) {
+    if let Some(real) = saved {
+        scratch.ext_mut().insert_account_info(&hook, real);
     }
 }
 
@@ -718,6 +879,65 @@ mod tests {
             quoter: STUB_QUOTER,
             ..V4QuoterConfig::default()
         }
+    }
+
+    /// The charge derivation, in the census's units: `1 − traded/hookless` in
+    /// pips of 1e6, the scale the V4 swap fee is charged at. `tests/
+    /// evm2_v4_dynamic_fee_census.rs` validates the same estimator live against
+    /// static-fee controls (worst bias 0.55 bps); this pins its arithmetic.
+    #[test]
+    fn implied_pips_is_the_census_derivation_in_v4_fee_units() {
+        // 149.22 bps — the biggest hook family's reading, 1e6·(1 − 985.078/1000).
+        assert_eq!(
+            implied_pips(U256::from(985_078u64), U256::from(1_000_000u64)),
+            Some(14_922)
+        );
+        // An exact tie charges nothing.
+        assert_eq!(
+            implied_pips(U256::from(500u64), U256::from(500u64)),
+            Some(0)
+        );
+        // A rebate (more out than the fee-free twin) reads 0: a negative charge
+        // is not a fee, and fee 0 understates such a pool (the conservative
+        // direction).
+        assert_eq!(
+            implied_pips(U256::from(1_000u64), U256::from(900u64)),
+            Some(0)
+        );
+        // Nothing to take a ratio against (a walk the curve rounds away).
+        assert_eq!(implied_pips(U256::from(1u64), U256::ZERO), None);
+        // A hook that eats the whole input saturates at 100%, never wraps.
+        assert_eq!(
+            implied_pips(U256::ZERO, U256::from(1_000_000u64)),
+            Some(1_000_000)
+        );
+        // The static-fee controls' closed form: a 3,000-pip key fee composes to
+        // 3,499 pips with the direction's protocol fee, exactly what the census
+        // identified off the chain's own quotes.
+        let traded = U256::from(1_000_000u64 - 3_499u64) * U256::from(1_000u64);
+        let hookless = U256::from(1_000_000u64) * U256::from(1_000u64);
+        assert_eq!(implied_pips(traded, hookless), Some(3_499));
+    }
+
+    /// The twin stub's code is the four-branch shape the deployed manager
+    /// accepts: `beforeSwap` answers 96 bytes, `afterSwap` 64, each with its own
+    /// selector word (a bare zero word is `InvalidHookResponse` on chain).
+    #[test]
+    fn the_noop_hook_answers_both_callback_selectors() {
+        // calldataload(0) >> 224, the selector dispatch, the jump, two bodies.
+        assert_eq!(NOOP_HOOK.len(), 48);
+        assert!(
+            NOOP_HOOK
+                .windows(4)
+                .any(|window| window == [0x57, 0x5E, 0x24, 0xB4]),
+            "the beforeSwap selector is answered"
+        );
+        assert!(
+            NOOP_HOOK
+                .windows(4)
+                .any(|window| window == [0xB4, 0x7B, 0x2F, 0xB1]),
+            "the afterSwap selector is answered"
+        );
     }
 
     /// The frame reaches the quoter, the calldata's amount word lands where the

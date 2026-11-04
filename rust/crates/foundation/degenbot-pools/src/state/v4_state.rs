@@ -65,9 +65,11 @@ pub fn has_amount_modifying_hook(hooks: Address) -> bool {
     flags & AMOUNT_MODIFYING_HOOK_MASK != 0
 }
 
-/// V4 dynamic-fee flag. A pool whose `fee` is EXACTLY `0x0080_0000` has a
-/// swap fee that changes between blocks; the solver assumes a fixed fee, so
-/// these are excluded at registration.
+/// V4 dynamic-fee flag. A pool whose `fee` is EXACTLY `0x0080_0000` charges
+/// whatever its hook charges: the sentinel is not a price. Such a pool is
+/// ADMITTED (F1) and its search-time fee is the last measured hook charge per
+/// direction ([`crate::state::v4_hook_fee::HookFeeRecord`]); a direction with no
+/// record is not searchable, never searched at fee 0.
 ///
 /// Upstream: Uniswap v4-core `LPFeeLibrary.sol:15`
 /// (`uint24 constant DYNAMIC_FEE_FLAG = 0x800000`) and `isDynamicFee`, which
@@ -182,8 +184,9 @@ pub struct RegisterV4PoolParams {
     /// Pre-decoded hook flags bitmask (low 16 bits of the hook address).
     /// Amount-modifying hooks (`& 0xCC != 0`, ADR-037) no longer block
     /// admission — such pools register with `Caveats::HOOKED_POOL` on every
-    /// simulation and are excluded from solving at hop projection.
-    /// Dynamic fees are still rejected (`RegisterV4PoolError::DynamicFee`).
+    /// simulation, are ranked by the standard-math walk at their measured hook
+    /// charge, and are re-quoted black-box at a finalist. Dynamic fees (the
+    /// `0x800000` sentinel) are admitted too (F1).
     pub hook_flags: u16,
     /// The V4 pool's packed `slot0.protocolFee` (`uint24` — two 12-bit
     /// direction fees, `getZeroForOneFee | (getOneForZeroFee << 12)`).
@@ -267,6 +270,9 @@ pub enum RegisterV4PoolError {
     /// mapping stays stable.
     HookedPool { hook_flags: u16 },
     /// Pool uses a dynamic fee (`fee == 0x0080_0000`).
+    /// RESERVED since F1: no raise site remains (the sentinel is admitted and
+    /// priced from the measured per-direction hook charge); kept so the `PyO3`
+    /// error mapping and the ledger's census vocabulary stay stable.
     DynamicFee { fee: u32 },
     /// Pool's static `fee` exceeds the `cmd_executor`'s 2-byte encoding limit
     /// (`fee >= degenbot_executor::encoders::V4_FEE_ENCODER_MAX`, i.e.

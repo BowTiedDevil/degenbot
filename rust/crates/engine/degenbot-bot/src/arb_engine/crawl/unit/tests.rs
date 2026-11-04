@@ -503,8 +503,8 @@ const EXERCISED: [&str; 11] = [
     "registered_cycle",
     "duplicate_cycle",
     "memoized_build_refusal",
-    "v4_admission_refusal",
-    "v4_admission_refusal_memoized",
+    "v4_encoder_limit_refusal",
+    "v4_encoder_limit_refusal_memoized",
     "v4_hop_without_pool_id",
     "pinned_direction_mismatch",
     "policy_denied",
@@ -580,16 +580,17 @@ async fn a_memoized_build_refusal_answers_before_any_build() {
 }
 
 #[tokio::test]
-async fn a_v4_admission_refusal_is_a_stable_uncounted_skip_and_memoizes() {
+async fn a_v4_encoder_limit_refusal_is_a_stable_counted_skip_and_memoizes() {
     let mut rpc = FakeRpc::new();
     set_v4(&mut rpc);
     set_v2(&mut rpc, &dex_identity::UNISWAP_V2, USDC, WETH);
     let harness = Harness::with_db(
         rpc,
         Arc::new(V4Db {
-            // The dynamic-fee admission flag: a STABLE refusal with its own
-            // counter class (ADR-037 reserved the hooked-pool arm).
-            fee: 0x0080_0000,
+            // A static fee past the executor's 2-byte field: a pool-key fact,
+            // so a STABLE refusal that memoizes (the dynamic-fee sentinel is
+            // ADMITTED since F1 and no longer answers this scenario).
+            fee: 320_000,
             hooks: Address::ZERO,
         }),
     );
@@ -599,7 +600,7 @@ async fn a_v4_admission_refusal_is_a_stable_uncounted_skip_and_memoizes() {
         directions: None,
     };
     let receipt = harness.run(&unit).await.unwrap();
-    assert_parity("v4_admission_refusal", &receipt);
+    assert_parity("v4_encoder_limit_refusal", &receipt);
     match &receipt.outcome {
         RegistrationUnitOutcome::Skip {
             label,
@@ -608,12 +609,13 @@ async fn a_v4_admission_refusal_is_a_stable_uncounted_skip_and_memoizes() {
         } => {
             assert_eq!(
                 label.as_label(),
-                RegistrationOutcome::V4DynamicFeeRejected.as_str(),
-                "the admission refusal keeps its own tag"
+                RegistrationOutcome::build_refused_for(degenbot_pathfinding::graph::PoolKind::V4)
+                    .as_str(),
+                "the encoder-limit refusal keeps the build-skip tag"
             );
             assert!(
-                !counts_as_skip,
-                "a V4 admission refusal carries its own counter, not skip_count"
+                *counts_as_skip,
+                "a static-fee refusal is a counted build skip"
             );
         }
         other => panic!("expected a skip, got {other:?}"),
@@ -622,7 +624,7 @@ async fn a_v4_admission_refusal_is_a_stable_uncounted_skip_and_memoizes() {
     // The stable refusal is now a pool fact, so a re-sighting answers at the
     // memo stage with the same label and the same counter class.
     let again = harness.run(&unit).await.unwrap();
-    assert_parity("v4_admission_refusal_memoized", &again);
+    assert_parity("v4_encoder_limit_refusal_memoized", &again);
     assert_eq!(again.split.len(), 1);
     match &again.outcome {
         RegistrationUnitOutcome::Skip {
@@ -632,9 +634,10 @@ async fn a_v4_admission_refusal_is_a_stable_uncounted_skip_and_memoizes() {
         } => {
             assert_eq!(
                 label.as_label(),
-                RegistrationOutcome::V4DynamicFeeRejected.as_str()
+                RegistrationOutcome::build_refused_for(degenbot_pathfinding::graph::PoolKind::V4)
+                    .as_str()
             );
-            assert!(!counts_as_skip);
+            assert!(*counts_as_skip);
         }
         other => panic!("expected a memoized skip, got {other:?}"),
     }

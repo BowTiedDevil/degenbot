@@ -223,8 +223,9 @@ pub fn validate_v3_fee(fee: u32) -> Result<(), SpecViolation> {
 /// Validate a V4 `lpFee` (`uint24`, static-fee path).
 ///
 /// On-chain invariant: `fee < 1 << 24` (the `0x800000` high bit flags a
-/// dynamic-fee pool, which `register_v4_pool` rejects upstream as
-/// `DynamicFee` — this validator is the static-fee floor).
+/// dynamic-fee pool, which `register_v4_pool` ADMITS — its charge comes from the
+/// measured per-direction hook record, not from this field; this validator is
+/// the spec-bounds floor only).
 ///
 /// # Errors
 ///

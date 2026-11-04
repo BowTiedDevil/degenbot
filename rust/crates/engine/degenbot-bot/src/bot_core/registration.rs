@@ -731,7 +731,7 @@ impl Bot {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    #![expect(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use alloy::primitives::aliases::U112;
     use degenbot_pools::{V4PoolKey, V4_DYNAMIC_FEE_FLAG};
@@ -1052,24 +1052,25 @@ mod tests {
     }
 
     /// PRG-2: the keyed immutable admission verdict is consulted BEFORE the
-    /// registry read on the already-registered fast path. A dynamic-fee V4
-    /// pool is refused at registration (recording the verdict); the payload
-    /// read then surfaces the SAME typed refusal pre-registry.
+    /// registry read on the already-registered fast path. A STATIC fee above
+    /// the executor's 2-byte field is refused at registration (recording the
+    /// verdict); the payload read then surfaces the SAME typed refusal
+    /// pre-registry.
     #[test]
     fn registered_v4_payload_consults_the_gate_before_the_registry() {
         let bot = Bot::new(8453);
         let pm = Address::from([0x50u8; 20]);
         let pid = [0xABu8; 32];
-        let dynamic_fee_params = v4_params(pm, pid, V4_DYNAMIC_FEE_FLAG, Address::ZERO);
+        let encoder_limit_params = v4_params(pm, pid, 320_000, Address::ZERO);
         let err = bot
-            .register(PoolRegistration::V4(Box::new(dynamic_fee_params)))
-            .expect_err("dynamic fee is admission-refused");
+            .register(PoolRegistration::V4(Box::new(encoder_limit_params)))
+            .expect_err("a 320k static fee is admission-refused");
         assert!(
             matches!(
                 err,
                 RefusalKind::RegisterRefused {
                     reason: RegisterRefusal::Admission {
-                        failure: BuildFailure::DynamicFee,
+                        failure: BuildFailure::HighFee,
                         ..
                     },
                     ..
@@ -1087,21 +1088,34 @@ mod tests {
             gate_err,
             RefusalKind::RegisterRefused {
                 reason: RegisterRefusal::Admission {
-                    failure: BuildFailure::DynamicFee,
+                    failure: BuildFailure::HighFee,
                     ..
                 },
                 ..
             }
         ));
+
+        // F1: the `DYNAMIC_FEE_FLAG` sentinel is NOT an admission verdict — the
+        // pool registers, so both the registration and the pre-registry echo
+        // answer it.
+        let dynamic_pid = [0xACu8; 32];
+        let dynamic_fee_params = v4_params(pm, dynamic_pid, V4_DYNAMIC_FEE_FLAG, Address::ZERO);
+        bot.register(PoolRegistration::V4(Box::new(dynamic_fee_params)))
+            .expect("a dynamic-fee pool registers (F1)");
+        assert!(
+            bot.registered_v4_echo(pm, &dynamic_pid).is_ok(),
+            "an admitted pool answers the fast path"
+        );
     }
 
-    /// A REAL dynamic-fee pool (`fee == 0x0080_0000`, the upstream sentinel)
-    /// is refused on the `DynamicFee` arm, so its census lands in
-    /// `v4_dynamic_fee_rejected` (an uncounted admission skip). The
-    /// encoder-limit arm keeps its own counted `build-v4-refused` census — the
-    /// taxonomy is unchanged in kind, only which fee values reach which arm.
+    /// F1: a REAL dynamic-fee pool (`fee == 0x0080_0000`, the upstream
+    /// sentinel) REGISTERS — the sentinel is a flag, not a fee to refuse. The
+    /// retained `DynamicFee` vocabulary (kept for the `PyO3` boundary and the
+    /// ledger's census) still classifies as the uncounted admission skip it
+    /// always was; the encoder-limit arm keeps its own COUNTED
+    /// `build-v4-refused` census, so the two arms stay distinct.
     #[test]
-    fn real_dynamic_fee_pool_folds_into_the_dynamic_fee_census_arm() {
+    fn the_dynamic_fee_sentinel_registers_and_the_retained_vocabulary_classifies() {
         use crate::bot_core::registration_ledger::{
             OutcomeLabel, PipelineReport, RegistrationLedger, RegistrationOutcome,
             RegistrationUnitOutcome,
@@ -1109,24 +1123,19 @@ mod tests {
 
         // The literal sentinel (never the constant) so this test cannot pass
         // by the constant moving with it.
-        let err = Bot::new(8453)
+        Bot::new(8453)
             .register(PoolRegistration::V4(Box::new(v4_params(
                 Address::from([0x52u8; 20]),
                 [0xE1u8; 32],
                 0x0080_0000,
                 Address::ZERO,
             ))))
-            .expect_err("the real dynamic-fee sentinel is admission-refused");
-        let RefusalKind::RegisterRefused {
-            reason: RegisterRefusal::Admission { failure, fee, .. },
-            ..
-        } = err
-        else {
-            panic!("expected the V4 admission refusal, got {err:?}");
-        };
-        assert_eq!(failure, BuildFailure::DynamicFee);
-        assert_eq!(fee, Some(0x0080_0000), "the refusal carries the real fee");
+            .expect("the real dynamic-fee sentinel registers (F1)");
 
+        // The vocabulary's own classification is unchanged — nothing raises it
+        // on the registration path any more, but the boundary mapping (the PyO3
+        // exception + the ledger census) still answers.
+        let failure = BuildFailure::DynamicFee;
         let refusal = RegistrationLedger::classify_build_refusal(
             &failure,
             degenbot_pathfinding::graph::PoolKind::V4,

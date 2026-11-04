@@ -15,7 +15,7 @@ use crate::arb_engine::delivery_policy::DeliveryPolicy;
 use crate::arb_engine::detached_cycle::{self, LaneDrainCounts};
 use crate::arb_engine::executor::{LaneOutcome, SolveOutcome};
 use crate::arb_engine::hooked_leg_requote::{
-    hooked_leg_facts, HookedLegAnchor, HookedLegPlan, HookedLegReQuote,
+    commit_plan_hook_fees, hooked_leg_facts, HookedLegAnchor, HookedLegPlan, HookedLegReQuote,
 };
 use crate::arb_engine::inline_sim::SimulatedPathResult;
 use crate::arb_engine::lane_walk::LaneArmPolicy;
@@ -676,15 +676,25 @@ pub(super) fn clamp_concentrated_liquidity_hop_capacity(
     // itself runs with the guard DROPPED (the tier prices against its own
     // anchor-pinned scratch EVM and the node — never `BotState`), and the
     // clamp then commits both arms under a fresh guard.
-    let plan = {
+    let (plan, anchor_block) = {
         let core = core.read_at(LockSite::Solver);
         let facts = hooked_leg_facts(&core, &path.pools, &result.consumed_inputs);
         drop(core);
         match requote {
-            Some((anchor, tier)) => HookedLegPlan::requote(facts, anchor, Some(tier)),
-            None => HookedLegPlan::approximate(facts),
+            Some((anchor, tier)) => (
+                HookedLegPlan::requote(facts, anchor, Some(tier)),
+                Some(anchor.block),
+            ),
+            None => (HookedLegPlan::approximate(facts), None),
         }
     };
+    // ADR-090 H3 + F2: the charges the re-quote MEASURED are recorded before
+    // the clamp commits the amounts, so the next cycle's hop projection ranks
+    // this pool at what it charges — or excludes the direction the chain
+    // refuses. A plan with no hook-carried leg takes no write guard.
+    if let Some(block) = anchor_block {
+        commit_plan_hook_fees(core, &plan, block);
+    }
     let core = core.read_at(LockSite::Solver);
     clamp_result_with_state(&core, path_id, &path.pools, clamp_margin, &plan, result)
 }

@@ -29,6 +29,11 @@
 # `ConcentratedLiquidityPathOutcome` — the per-hop crossed-ticks /
 # bitmap-words census the gas model consumes, consumed by the gas
 # decomposition harness and the admission floor's crossing counts.
+# The 1053 -> 1073 review is the recorded hook charge (F2): the
+# `state::v4_hook_fee` vocabulary (HookFeeRecord / HookFeeReading /
+# charge_is_hook_carried / direction_slot / the refresh constant and
+# accessors) — the search-time fee record for hook-carried-charge pools,
+# consumed by the admission floor, the re-quote plan, and registration.
 # The count is per NAME, not per statement (the previous
 # granularity pinned 681 statements): a `pub fn`/`struct`/`enum`/`trait`/
 # `const`/`type`/`mod` declaration counts once, and a `pub use` counts one per

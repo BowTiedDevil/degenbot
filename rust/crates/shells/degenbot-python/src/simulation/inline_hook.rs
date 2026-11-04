@@ -45,8 +45,9 @@ use degenbot_arbitrage::{
     simulate_path_on_evm_in_span, FailBuckets, SimResult, SimulateContext, SimulatePath, SolveStep,
 };
 use degenbot_bot::arb_engine::{
-    AccessListRow, CapturedSwapRow, HookedLeg, HookedLegAnchor, HookedLegQuote, HookedLegReQuote,
-    InlineSimFailure, InlineSimRequest, InlineSimulator, InlineSwapFamily, SimulatedPathResult,
+    AccessListRow, CapturedSwapRow, HookedLeg, HookedLegAnchor, HookedLegAnswer, HookedLegQuote,
+    HookedLegReQuote, InlineSimFailure, InlineSimRequest, InlineSimulator, InlineSwapFamily,
+    SimulatedPathResult,
 };
 use degenbot_executor::composers::EncodeOptions;
 use degenbot_rpc::provider::AlloyProvider;
@@ -789,11 +790,15 @@ fn quote_leg_at_anchor(
     memo: &Arc<degenbot_simulation::StorageMemo>,
     anchor: HookedLegAnchor,
     leg: &HookedLeg,
-) -> Option<HookedLegQuote> {
+) -> HookedLegAnswer {
     let counter = Arc::new(degenbot_simulation::sim::frame_replay::FrameRpcCounter::default());
-    let blocking = degenbot_simulation::sim::evm2::blocking_async_db::BlockingAsyncDb::new(
+    let Some(blocking) = degenbot_simulation::sim::evm2::blocking_async_db::BlockingAsyncDb::new(
         degenbot_simulation::sim::evm2::alloy_async_db::AlloyAsyncDb::new(provider, anchor.block),
-    )?;
+    ) else {
+        // No runtime to drive the anchor's DB on this thread: no tier answer
+        // (never a pool fact).
+        return HookedLegAnswer::Unavailable;
+    };
     let cold = degenbot_simulation::sim::evm2::frame_replay::Evm2CountingFrameDb::new(
         blocking,
         Arc::clone(&counter),
@@ -848,14 +853,52 @@ fn quote_leg_at_anchor(
         // frame is the same one `docs/gas-estimation.md` fit that row on, so
         // `gas_used` (not the quoter's diagnostic `gasEstimate` word) is the
         // commensurable figure.
-        Ok(quote) => Some(HookedLegQuote {
-            amount_out: quote.amount_out,
-            gas: quote.gas_used,
-        }),
+        Ok(quote) => {
+            // F2: a pool whose charge its HOOK carries also gets a twin frame —
+            // the same walk with the hook neutered — so the search tier can rank
+            // this pool at what it actually charges (or exclude the direction
+            // the chain refuses). One extra black-box frame per such leg, on top
+            // of the re-quote ADR-090 already takes; the scratch's read cache is
+            // the anchor's memo, so the twin's reads are mostly warm.
+            let hook_fee = if degenbot_pools::charge_is_hook_carried(&leg.pool_key) {
+                match quoter.measure_hook_fee(
+                    &mut scratch,
+                    &v4_leg,
+                    leg.amount_in,
+                    quote.amount_out,
+                ) {
+                    Ok(Some(measured)) => Some(degenbot_pools::HookFeeReading::Measured {
+                        pips: measured.pips,
+                    }),
+                    // No fact: nothing to take a ratio against (a thin walk).
+                    Ok(None) => None,
+                    Err(err) => {
+                        op_info!(
+                            domain = sim,
+                            block = anchor.block,
+                            hooks = %leg.pool_key.hooks,
+                            zero_for_one = leg.zero_for_one,
+                            error = %err,
+                            "hook-charge twin refused — no charge fact this anchor"
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            HookedLegAnswer::Exact(HookedLegQuote {
+                amount_out: quote.amount_out,
+                gas: quote.gas_used,
+                hook_fee,
+            })
+        }
         // Fail-soft (ADR-090 §4): a refusal is the honest report that this
         // anchor cannot price the leg (a foreign manager, a frame limit, a
         // hook that needs settlement inside the swap). The clamp keeps the
-        // white-box figure and the path keeps its caveat.
+        // white-box figure and the path keeps its caveat. F2 splits the chain's
+        // own `Reverted` answer out: that IS a pool fact (the direction cannot be
+        // traded), while a frame/halt/malformed failure is not.
         Err(err) => {
             op_info!(
                 domain = sim,
@@ -865,18 +908,25 @@ fn quote_leg_at_anchor(
                 error = %err,
                 "hooked leg re-quote refused — the approximation stands"
             );
-            None
+            match err {
+                degenbot_simulation::sim::evm2::v4_black_box::V4QuoteError::Reverted { .. }
+                    if degenbot_pools::charge_is_hook_carried(&leg.pool_key) =>
+                {
+                    HookedLegAnswer::Refused
+                }
+                _ => HookedLegAnswer::Unavailable,
+            }
         }
     }
 }
 
 impl HookedLegReQuote for InlineSimHook {
-    fn requote_leg(&self, anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<HookedLegQuote> {
+    fn requote_leg(&self, anchor: HookedLegAnchor, leg: &HookedLeg) -> HookedLegAnswer {
         let provider = Arc::clone(&self.provider);
         let warm_cache = Arc::clone(&self.warm_cache);
         let memo = self.memo_for_block(anchor.block);
         let leg = leg.clone();
-        let drive = move || -> Option<HookedLegQuote> {
+        let drive = move || -> HookedLegAnswer {
             let provider_inner = Arc::clone(&provider);
             let warm_inner = Arc::clone(&warm_cache);
             let memo_inner = Arc::clone(&memo);
@@ -897,7 +947,7 @@ impl HookedLegReQuote for InlineSimHook {
                 })
                 .await
                 .ok()
-                .flatten()
+                .unwrap_or(HookedLegAnswer::Unavailable)
             })
         };
         // Fail-soft on an ambient runtime: the clamp's call sites are std
@@ -911,7 +961,7 @@ impl HookedLegReQuote for InlineSimHook {
                     domain = sim,
                     "hooked leg re-quote skipped: ambient runtime (no tier at this point)"
                 );
-                None
+                HookedLegAnswer::Unavailable
             }
             Err(_) => drive(),
         }

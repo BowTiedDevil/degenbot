@@ -329,7 +329,8 @@ mod tests {
     // ── the hooked leg: the re-quote's MEASURED gas in the floor ─────────
 
     use crate::arb_engine::hooked_leg_requote::{
-        HookedLeg, HookedLegAnchor, HookedLegPlan, HookedLegQuote, HookedLegReQuote,
+        HookedLeg, HookedLegAnchor, HookedLegAnswer, HookedLegPlan, HookedLegQuote,
+        HookedLegReQuote,
     };
 
     /// The frame gas a hooked leg's black-box quote reports: far above the
@@ -345,10 +346,11 @@ mod tests {
     struct MeasuredTier;
 
     impl HookedLegReQuote for MeasuredTier {
-        fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<HookedLegQuote> {
-            Some(HookedLegQuote {
+        fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> HookedLegAnswer {
+            HookedLegAnswer::Exact(HookedLegQuote {
                 amount_out: leg.amount_in,
                 gas: MEASURED_HOOK_GAS,
+                hook_fee: None,
             })
         }
     }
@@ -357,12 +359,8 @@ mod tests {
     struct RefusingTier;
 
     impl HookedLegReQuote for RefusingTier {
-        fn requote_leg(
-            &self,
-            _anchor: HookedLegAnchor,
-            _leg: &HookedLeg,
-        ) -> Option<HookedLegQuote> {
-            None
+        fn requote_leg(&self, _anchor: HookedLegAnchor, _leg: &HookedLeg) -> HookedLegAnswer {
+            HookedLegAnswer::Unavailable
         }
     }
 
@@ -381,6 +379,7 @@ mod tests {
                 },
                 zero_for_one: true,
                 amount_in: U256::from(1_000u64),
+                pool_id: 3,
             },
         )
     }

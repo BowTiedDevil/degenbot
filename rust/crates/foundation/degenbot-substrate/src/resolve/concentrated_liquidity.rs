@@ -84,6 +84,25 @@ pub(crate) fn project_v3(
 /// projection (ADR-090): the row projects the standard-math walk and
 /// `resolve_hops` unions `Caveats::HOOKED_POOL` onto the path, where the
 /// finalist re-quote tier reads it.
+///
+/// F2 — the search-time fee. A pool whose charge its hook carries
+/// ([`charge_is_hook_carried`]: keyed at the `DYNAMIC_FEE_FLAG` sentinel, or
+/// keyed at zero with an amount-modifying hook) has no usable fee in its key, so
+/// the walk is built at the LAST MEASURED charge of THIS direction — the
+/// record the black-box twin writes when the finalist re-quote prices the leg.
+/// Two exclusions follow, and both are the point:
+///
+/// - **unmeasured** (`HookFeeUnmeasured`) — the direction has no record, so the
+///   pool is NOT SEARCHABLE. Searching it at fee 0 is the systematic
+///   overestimate the census measured at 1.0–1.5% for 44.7% of the population
+///   and 0–42% across the long tail, against arb edges of a few bps.
+/// - **refused** (`HookFeeRefused`) — the chain refuses the direction outright
+///   (44% of the census's pool-direction walks), so no fee could make it a hop.
+///
+/// Both are CLEARABLE (a measurement writes the record and bumps the pool's
+/// state nonce, which re-walks the memo entry), so neither is structurally
+/// unroutable. A pool whose charge is its key's fee — every hookless pool, and
+/// every static-fee pool, hooked or not — projects exactly as before.
 pub(crate) fn project_v4(
     core: &BotState,
     pool_ref: &MixedPoolRef,
@@ -94,11 +113,24 @@ pub(crate) fn project_v4(
     let identity = core
         .pool_slice::<degenbot_pools::V4PoolIdentity>(pool_ref.pool_key)
         .ok_or(MissingHopReason::MissingIdentity)?;
+    // F2: the walk's fee field — the key's own fee for a pool whose charge its
+    // key carries, the recorded per-direction hook charge otherwise.
+    let fee = if degenbot_pools::charge_is_hook_carried(&identity.pool_key) {
+        match core.recorded_hook_fee(pool_ref.pool_key, pool_ref.zero_for_one) {
+            None => return Err(MissingHopReason::HookFeeUnmeasured),
+            Some(record) => record
+                .rankable_pips()
+                .ok_or(MissingHopReason::HookFeeRefused)?,
+        }
+    } else {
+        identity.pool_key.fee
+    };
+
     let int_seq = concentrated_liquidity_read::capture_hop(
         concentrated_liquidity_read::ConcentratedLiquidityState::V4 {
             state: pool_state,
             scalars: concentrated_liquidity_read::DesignScalars::new(
-                identity.pool_key.fee,
+                fee,
                 identity.pool_key.tick_spacing,
             ),
             hooks: identity.pool_key.hooks,
@@ -314,6 +346,17 @@ mod tests {
         tick_data: HashMap<i32, TickInfo>,
         hook_flags: u16,
     ) -> u64 {
+        register_v4_with(core, tick_data, 500, hook_flags)
+    }
+
+    /// Register a V4 pool with an explicit KEY fee — the F2 tests need a pool
+    /// keyed at the `DYNAMIC_FEE_FLAG` sentinel and one keyed at zero.
+    fn register_v4_with(
+        core: &mut BotState,
+        tick_data: HashMap<i32, TickInfo>,
+        fee: u32,
+        hook_flags: u16,
+    ) -> u64 {
         // The hook ADDRESS's low 16 bits carry the permission bitmask — the
         // builder derives hook_flags from it, so craft the address to match.
         let mut hooks = [0u8; 20];
@@ -325,7 +368,7 @@ mod tests {
             pool_key: V4PoolKey {
                 currency0: Address::from([0x30u8; 20]),
                 currency1: Address::from([0x31u8; 20]),
-                fee: 500,
+                fee,
                 tick_spacing: 10,
                 hooks: Address::new(hooks),
             },
@@ -382,6 +425,187 @@ mod tests {
             !seq.ranges.is_empty(),
             "a hooked pool's standard-math walk still reaches the solver"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // F2: the recorded hook charge drives the walk's fee field
+    // -----------------------------------------------------------------
+
+    /// The census's reading for the biggest hook family's pools (149.22 bps,
+    /// all ten sampled pools) — the record a measurement writes.
+    const CENSUS_PIPS: u32 = 14_922;
+
+    /// 1 bp = 100 pips of 1e6.
+    const BP_PIPS: u32 = 100;
+
+    /// The walk's fee the projection committed, read back off the sequence's
+    /// first range (`gamma_numer = 1e6 − swap_fee`, `fee_denom = 1e6`; the
+    /// fixture pools carry no protocol fee, so the swap fee IS the fee input).
+    fn projected_fee_pips(core: &BotState, pool_id: u64, zero_for_one: bool) -> u32 {
+        let (hop, _nonce) = proj4(core, &v4_ref(pool_id, zero_for_one)).expect("projection");
+        let seq = hop
+            .as_int_sequence()
+            .expect("concentrated liquidity sequence");
+        let fee_denom = seq.ranges[0].fee_denom;
+        assert_eq!(fee_denom, 1_000_000, "the walk's fee denominator is pips");
+        1_000_000 - u32::try_from(seq.ranges[0].gamma_numer).expect("gamma fits u32")
+    }
+
+    #[test]
+    fn an_unmeasured_hook_carried_pool_is_not_searchable() {
+        // The sentinel pool from F1 and the census's hooked zero-fee population:
+        // no record ⇒ NO hop. Never fee 0 — the census measured 1.0–1.5% for
+        // 44.7% of the population and 0–42% on the long tail, against arb edges
+        // of a few bps.
+        for (fee, hook_flags) in [(crate::V4_DYNAMIC_FEE_FLAG, 0x80), (0, 0x80)] {
+            let mut core = BotState::new();
+            let v4_id = register_v4_with(&mut core, two_ticks(), fee, hook_flags);
+            for zero_for_one in [true, false] {
+                assert_eq!(
+                    proj4(&core, &v4_ref(v4_id, zero_for_one)).unwrap_err(),
+                    MissingHopReason::HookFeeUnmeasured,
+                    "key fee {fee:#x} / flags {hook_flags:#x} with no record"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_measured_hook_charge_ranks_the_pool_at_the_recorded_fee() {
+        // The recorded last-measured charge is the walk's fee field — composed
+        // with the pool's protocol fee exactly like a static key fee.
+        let mut core = BotState::new();
+        let v4_id = register_v4_with(&mut core, two_ticks(), crate::V4_DYNAMIC_FEE_FLAG, 0x80);
+
+        assert!(core.record_hook_fee(
+            v4_id,
+            true,
+            degenbot_pools::HookFeeReading::Measured { pips: CENSUS_PIPS },
+            26_320_000,
+        ));
+        assert_eq!(
+            projected_fee_pips(&core, v4_id, true),
+            CENSUS_PIPS,
+            "the zfo walk charges the record"
+        );
+        assert_eq!(
+            proj4(&core, &v4_ref(v4_id, false)).unwrap_err(),
+            MissingHopReason::HookFeeUnmeasured,
+            "the other direction is still unmeasured"
+        );
+    }
+
+    #[test]
+    fn a_refused_direction_is_excluded_in_that_direction_only() {
+        // 44% of the census's pool-direction walks refuse outright; a refused
+        // leg must never enter a path, and the twin direction is unaffected.
+        let mut core = BotState::new();
+        let v4_id = register_v4_with(&mut core, two_ticks(), crate::V4_DYNAMIC_FEE_FLAG, 0x80);
+        assert!(core.record_hook_fee(
+            v4_id,
+            true,
+            degenbot_pools::HookFeeReading::Refused,
+            26_320_000,
+        ));
+        assert!(core.record_hook_fee(
+            v4_id,
+            false,
+            degenbot_pools::HookFeeReading::Measured { pips: 12_435 },
+            26_320_000,
+        ));
+
+        assert_eq!(
+            proj4(&core, &v4_ref(v4_id, true)).unwrap_err(),
+            MissingHopReason::HookFeeRefused
+        );
+        assert_eq!(projected_fee_pips(&core, v4_id, false), 12_435);
+    }
+
+    #[test]
+    fn the_hookless_zero_fee_pools_keep_their_fee_0_walk() {
+        // The census database's 330 genuine zero-fee pools: no hook, key fee 0,
+        // and 0 IS the truth. They must stay searchable and unchanged.
+        let mut core = BotState::new();
+        let v4_id = register_v4_with(&mut core, two_ticks(), 0, 0);
+        for zero_for_one in [true, false] {
+            assert_eq!(
+                projected_fee_pips(&core, v4_id, zero_for_one),
+                0,
+                "a hookless zero-fee pool walks at fee 0"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hooked_static_fee_pool_walks_at_its_key_fee() {
+        // A hooked pool whose KEY carries the charge is priced by that key fee:
+        // the record governs only hook-carried charges, so no measurement is
+        // needed for it (ADR-090's re-quote remains its exactness backstop).
+        let mut core = BotState::new();
+        let v4_id = register_v4_with(&mut core, two_ticks(), 3_000, 0x80);
+        for zero_for_one in [true, false] {
+            assert_eq!(projected_fee_pips(&core, v4_id, zero_for_one), 3_000);
+        }
+    }
+
+    #[test]
+    fn measuring_a_direction_bumps_the_pool_nonce_and_re_walks_the_projection() {
+        // The record's WRITE is what clears the exclusion: the projection memo
+        // is nonce-validated, so the cached `Invalid(HookFeeUnmeasured)` entry
+        // must not outlive the measurement.
+        let mut core = BotState::new();
+        let v4_id = register_v4_with(&mut core, two_ticks(), 0, 0x80);
+        let cache = super::super::HopProjectionCache::new();
+
+        let mut resolved = degenbot_pools::solve::ResolvedMixedPath::default();
+        let refs = [v4_ref(v4_id, true), v4_ref(v4_id, true)];
+        let deficits = super::super::resolve_hops(&core, &refs, &mut resolved, &cache, None, true);
+        assert_eq!(deficits.len(), 2, "both hops are unmeasured");
+        assert_eq!(deficits[0].reason, MissingHopReason::HookFeeUnmeasured);
+
+        let before = core.pool_state_nonce(v4_id);
+        assert!(core.record_hook_fee(
+            v4_id,
+            true,
+            degenbot_pools::HookFeeReading::Measured { pips: BP_PIPS },
+            42,
+        ));
+        assert_eq!(
+            core.pool_state_nonce(v4_id),
+            before + 1,
+            "a record that changes the fact bumps the pool's nonce"
+        );
+
+        let deficits = super::super::resolve_hops(&core, &refs, &mut resolved, &cache, None, true);
+        assert!(deficits.is_empty(), "the measured direction projects");
+        assert!(resolved.valid);
+
+        // An AGREEING reading (inside the refresh horizon) is a no-op — no
+        // nonce churn, no re-walk.
+        let settled = core.pool_state_nonce(v4_id);
+        assert!(!core.record_hook_fee(
+            v4_id,
+            true,
+            degenbot_pools::HookFeeReading::Measured { pips: BP_PIPS },
+            43,
+        ));
+        assert_eq!(core.pool_state_nonce(v4_id), settled);
+
+        // A DISAGREEING reading supersedes it and re-walks.
+        assert!(core.record_hook_fee(
+            v4_id,
+            true,
+            degenbot_pools::HookFeeReading::Measured { pips: 2 * BP_PIPS },
+            44,
+        ));
+        assert_eq!(projected_fee_pips(&core, v4_id, true), 2 * BP_PIPS);
+    }
+
+    #[test]
+    fn a_record_for_an_unregistered_pool_is_not_stored() {
+        let mut core = BotState::new();
+        assert!(!core.record_hook_fee(999, true, degenbot_pools::HookFeeReading::Refused, 1,));
+        assert_eq!(core.hook_fee_pool_count(), 0);
     }
 
     #[test]

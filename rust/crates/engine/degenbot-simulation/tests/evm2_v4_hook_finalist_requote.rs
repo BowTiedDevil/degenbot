@@ -51,7 +51,8 @@ use alloy::primitives::{Address, B256, I256, U256};
 use ::evm2::evm::{CacheDB, Database, Db};
 
 use degenbot_bot::arb_engine::{
-    hooked_leg_facts, HookedLeg, HookedLegAnchor, HookedLegPlan, HookedLegQuote, HookedLegReQuote,
+    hooked_leg_facts, HookedLeg, HookedLegAnchor, HookedLegAnswer, HookedLegPlan, HookedLegQuote,
+    HookedLegReQuote,
 };
 use degenbot_pools::solve::{HopType, MixedPoolRef};
 use degenbot_pools::{v4_pool_id, v4_simulate_swap, V3PoolState, V4PoolKey};
@@ -81,17 +82,28 @@ struct ScratchTier<'a> {
 }
 
 impl HookedLegReQuote for ScratchTier<'_> {
-    fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<HookedLegQuote> {
+    fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> HookedLegAnswer {
         let mut guard = self.inner.lock().unwrap();
         let (quoter, scratch) = &mut *guard;
         let v4_leg = V4Leg::canonical(leg.pool_key.clone(), leg.zero_for_one);
-        quoter
-            .quote(scratch, &v4_leg, leg.amount_in)
-            .ok()
-            .map(|quote| HookedLegQuote {
-                amount_out: quote.amount_out,
-                gas: quote.gas_used,
-            })
+        // F2: the charge rides the re-quote for a pool that carries it in its
+        // hook (the census population this fixture draws from) — measured by the
+        // same twin frame the production tier runs.
+        match quoter.quote(scratch, &v4_leg, leg.amount_in) {
+            Ok(quote) => {
+                let hook_fee = quoter
+                    .measure_hook_fee(scratch, &v4_leg, leg.amount_in, quote.amount_out)
+                    .ok()
+                    .flatten()
+                    .map(|fee| degenbot_pools::HookFeeReading::Measured { pips: fee.pips });
+                HookedLegAnswer::Exact(HookedLegQuote {
+                    amount_out: quote.amount_out,
+                    gas: quote.gas_used,
+                    hook_fee,
+                })
+            }
+            Err(_) => HookedLegAnswer::Unavailable,
+        }
     }
 }
 

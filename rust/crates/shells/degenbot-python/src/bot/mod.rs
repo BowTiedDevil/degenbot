@@ -2439,18 +2439,19 @@ impl PyBot {
 
     /// Register a V4 pool by `(pool_manager, pool_id)`.
     ///
-    /// Returns the auto-assigned pool ID. The dynamic-fee admission floor
-    /// lives in `BotState::register_v4_pool`: pools with
-    /// dynamic fees (`fee == 0x0080_0000`) or static fees exceeding the
+    /// Returns the auto-assigned pool ID. The admission rules live in
+    /// `BotState::register_v4_pool`: pools with a STATIC fee exceeding the
     /// executor's 2-byte encoding limit (`fee > 65535`) are rejected here,
-    /// surfacing as typed Python exceptions
-    /// (`DynamicFeePoolRejectedError` / `HighFeePoolRejectedError`) so Python
-    /// classifies by type, not string matching. Since ADR-037
-    /// amount-modifying hooked pools are ADMITTED (the ADR-037 guards use the
-    /// registered hook address at hop projection / simulation-caveat time),
-    /// and the `HookedPoolRejectedError` raise site is reserved (no longer
-    /// fires). The FULL `hook_address` rides into the registered pool key so
-    /// the identity round-trips `keccak(abi.encode(pool_key))`.
+    /// surfacing as the typed `HighFeePoolRejectedError` so Python classifies by
+    /// type, not string matching. Since ADR-037 amount-modifying hooked pools are
+    /// ADMITTED (the registered hook address drives the simulation caveat and
+    /// the finalist re-quote), and since F1 pools keyed at the dynamic-fee
+    /// sentinel (`fee == 0x0080_0000`) are ADMITTED too — their search-time fee
+    /// is the last measured hook charge per direction, so the
+    /// `HookedPoolRejectedError` / `DynamicFeePoolRejectedError` raise sites are
+    /// reserved (no longer fire). The FULL `hook_address` rides into the
+    /// registered pool key so the identity round-trips
+    /// `keccak(abi.encode(pool_key))`.
     ///
     /// ADR-006 rolling-start race closure: the snapshot `tick_data` is seeded
     /// INLINE in `register_v4_pool` (one `BotState` write lock) so the pool is
@@ -2462,8 +2463,9 @@ impl PyBot {
     /// mismatch). Mirrors the V3 closure.
     ///
     /// Raises:
-    ///     `DynamicFeePoolRejectedError`: If `fee == 0x0080_0000`.
-    ///     `HighFeePoolRejectedError`: If `fee > 65535` (executor can't encode).
+    ///     `HighFeePoolRejectedError`: If `fee > 65535` (executor can't encode;
+    ///         the `0x800000` dynamic-fee sentinel is exempt — it is not a
+    ///         static fee).
     ///     `ValueError`: If `addresses/pool_id` are malformed or already
     ///         registered.
     #[expect(clippy::too_many_arguments)]

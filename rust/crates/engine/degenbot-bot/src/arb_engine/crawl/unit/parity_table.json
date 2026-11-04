@@ -23,18 +23,18 @@
       "about": "a hop whose stable build refusal is already a pool fact answers the unit before any build"
     },
     {
-      "case": "v4_admission_refusal",
+      "case": "v4_encoder_limit_refusal",
       "kind": "skip",
-      "tag": "v4-dynamic-fee-rejected",
+      "tag": "build-v4-refused",
       "stage": "build",
-      "about": "a dynamic-fee V4 pool: a stable admission refusal that does not count as a skip"
+      "about": "a V4 pool whose static fee exceeds the executor's 2-byte field: a stable build skip that counts"
     },
     {
-      "case": "v4_admission_refusal_memoized",
+      "case": "v4_encoder_limit_refusal_memoized",
       "kind": "skip",
-      "tag": "v4-dynamic-fee-rejected",
+      "tag": "build-v4-refused",
       "stage": "memo",
-      "about": "the same dynamic-fee V4 pool re-sighted: the pool fact answers at the memo stage"
+      "about": "the same encoder-limit V4 pool re-sighted: the pool fact answers at the memo stage"
     },
     {
       "case": "v4_hop_without_pool_id",

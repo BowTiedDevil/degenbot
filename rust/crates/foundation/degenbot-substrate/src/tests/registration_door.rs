@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::registration_door::{PoolRegistration, RegistrationVerdict};
-use crate::{BuildFailure, RegisterRefusal};
+use crate::RegisterRefusal;
 use crate::{
     RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
     RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolError,
@@ -363,21 +363,24 @@ fn door_refuses_out_of_spec_v3_as_spec_violation() {
 }
 
 #[test]
-fn door_refuses_dynamic_fee_v4_as_admission() {
+fn door_admits_dynamic_fee_v4() {
+    // F1: the `DYNAMIC_FEE_FLAG` sentinel is admitted through the ONE
+    // registration door like any static-fee pool — it is a flag, not a fee, and
+    // the pool's search-time charge comes from the measured per-direction
+    // record.
     let mut params = v4_params();
     params.pool_key.fee = crate::V4_DYNAMIC_FEE_FLAG;
     let mut core = BotState::new();
     let verdict = core.register_pool(PoolRegistration::V4(Box::new(params)));
-    assert_eq!(
-        verdict,
-        RegistrationVerdict::Refused {
-            family: RegisteredPoolFamily::V4,
-            refusal: RegisterRefusal::Admission {
-                failure: BuildFailure::DynamicFee,
-                hook_flags: None,
-                fee: Some(crate::V4_DYNAMIC_FEE_FLAG),
-            },
-        }
+    assert!(
+        matches!(
+            verdict,
+            RegistrationVerdict::Registered {
+                family: RegisteredPoolFamily::V4,
+                ..
+            }
+        ),
+        "a dynamic-fee V4 pool must register, got {verdict:?}"
     );
 }
 

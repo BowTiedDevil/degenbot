@@ -311,6 +311,15 @@ pub enum MissingHopReason {
     /// (directional viability gate — ported from the archived Python
     /// `swap_is_viable`; O(1), checked BEFORE any tick-range walk).
     NotViable,
+    /// F2: the pool's charge is carried by its hook and this direction has never
+    /// been measured, so there is no fee to rank it at (never fee 0). Clearable
+    /// — the black-box twin's measurement writes the record and bumps the pool's
+    /// state nonce, which re-walks this hop.
+    HookFeeUnmeasured,
+    /// F2: the chain REFUSES this pool's direction outright (the quote frame
+    /// reverted in the hook or the manager), so no fee could make it a hop.
+    /// Clearable: a later measurement supersedes the refusal.
+    HookFeeRefused,
 }
 
 /// One unprojectable hop inside a resolved path: the failing pool
@@ -338,6 +347,8 @@ impl std::fmt::Display for MissingHopReason {
             Self::SequenceUnavailable => "integer tick-range sequence unavailable",
             Self::InvariantError => "stable invariant calculation failed",
             Self::NotViable => "pool not viable in the swap direction",
+            Self::HookFeeUnmeasured => "hook-carried charge never measured in this direction",
+            Self::HookFeeRefused => "chain refuses this pool direction",
             Self::Quarantined => "pool quarantined (tainted surface, ADR-040)",
         };
         f.write_str(s)
@@ -372,6 +383,8 @@ impl MissingHopReason {
             Self::SequenceUnavailable => "sequence_unavailable",
             Self::InvariantError => "invariant_error",
             Self::NotViable => "not_viable",
+            Self::HookFeeUnmeasured => "hook_fee_unmeasured",
+            Self::HookFeeRefused => "hook_fee_refused",
             Self::Quarantined => "quarantined",
         }
     }

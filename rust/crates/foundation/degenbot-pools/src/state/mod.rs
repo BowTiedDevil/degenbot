@@ -35,6 +35,8 @@ pub mod v3_state;
 
 pub mod v3_storage_slots;
 
+pub mod v4_hook_fee;
+
 pub mod v4_state;
 
 pub mod v4_storage_slots;

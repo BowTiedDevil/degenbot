@@ -38,6 +38,20 @@
 //! the hook at all (`HopGasProfile::Measured`). A refused re-quote carries no
 //! gas, so the floor keeps the hookless row and the honest under-prediction.
 //!
+//! # F2 — the leg's re-quote also MEASURES its charge
+//!
+//! When the leg's pool carries its charge in its HOOK — keyed at the
+//! `DYNAMIC_FEE_FLAG` sentinel, or keyed at zero with an amount-modifying hook
+//! ([`degenbot_pools::charge_is_hook_carried`]) — the tier's answer carries the
+//! charge it measured beside the exact output: the quote's output against a
+//! twin frame of the SAME walk with the hook neutered
+//! ([`HookedLegQuote::hook_fee`]). The clamp commits that reading under a fresh
+//! guard ([`commit_hook_fees`]) into the search tier's per-direction record, so
+//! the NEXT cycle's white-box walk ranks the pool at the charge it actually
+//! takes instead of at fee 0 — or, when the chain refuses the direction, does
+//! not rank it at all. The record is for RANKING; THIS re-quote stays the
+//! exactness backstop (ADR-090 §2 unchanged).
+//!
 //! # The one hard rule for implementations
 //!
 //! [`HookedLegReQuote::requote_leg`] is called from the clamp, which holds the
@@ -48,6 +62,7 @@
 //! self-deadlock, not a slow path.
 
 use alloy::primitives::{Address, U256};
+use degenbot_core::diag;
 use degenbot_pools::solve::MixedPoolRef;
 use degenbot_pools::{has_amount_modifying_hook, V4PoolKey};
 use degenbot_substrate::BotState;
@@ -97,6 +112,10 @@ pub struct HookedLeg {
     pub zero_for_one: bool,
     /// This hop's committed input (wei), in the input currency's units.
     pub amount_in: U256,
+    /// The engine's registered pool id — the key the measured charge is
+    /// recorded under (the record IS the search tier's fee input for this
+    /// pool's directions).
+    pub pool_id: u64,
 }
 
 /// One black-box re-quote's answer: the leg's exact output plus the gas its
@@ -110,6 +129,12 @@ pub struct HookedLegQuote {
     /// The leg's output amount in the output currency's base units — exact by
     /// construction (the chain's own answer).
     pub amount_out: U256,
+    /// F2: the charge this leg takes, when the leg's pool carries its charge in
+    /// its hook and the tier could measure it (the quote's output against the
+    /// same walk with the hook neutered). `None` — a static-fee or hookless
+    /// pool, a twin the frame could not run, or a walk with nothing to take a
+    /// ratio against — claims no pool fact.
+    pub hook_fee: Option<degenbot_pools::HookFeeReading>,
     /// The gas the quote frame burned (`V4BlackBoxQuote::gas_used`) — the same
     /// quantity `docs/gas-estimation.md` fits the floor's V4 row on, so the
     /// admission floor can charge it IN PLACE OF that row.
@@ -122,15 +147,37 @@ pub struct HookedLegQuote {
 /// The installed black-box leg quoter (ADR-090 H1's primitive behind the
 /// bot's dependency inversion).
 ///
-/// `None` is the fail-soft answer: no exact figure is available at this
-/// anchor, so the leg stays approximate.
+/// [`HookedLegAnswer::Unavailable`] is the fail-soft answer: no exact figure is
+/// available at this anchor, so the leg stays approximate and nothing is
+/// recorded.
 pub trait HookedLegReQuote: Send + Sync {
-    /// The exact answer for `leg` at `anchor` — its output and the quote
-    /// frame's gas — or `None` when the tier cannot answer (unavailable,
-    /// refusing, or a manager it does not hold).
+    /// The answer for `leg` at `anchor` — the exact output and the quote frame's
+    /// gas when the chain priced the leg, or the direction's refusal when the
+    /// chain refused it.
+    ///
+    /// [`HookedLegAnswer::Unavailable`] is the "no fact at all" arm: no tier at
+    /// this point, a manager the quoter does not hold, a frame that never ran.
+    /// It must NOT be reported as [`HookedLegAnswer::Refused`] — a refusal is a
+    /// FACT about the pool (recorded, and excluded from search in that
+    /// direction), while an unavailable tier says nothing about the pool.
     ///
     /// MUST NOT read [`BotState`] — see the module docs.
-    fn requote_leg(&self, anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<HookedLegQuote>;
+    fn requote_leg(&self, anchor: HookedLegAnchor, leg: &HookedLeg) -> HookedLegAnswer;
+}
+
+/// What one re-quote answered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HookedLegAnswer {
+    /// The chain priced the leg.
+    Exact(HookedLegQuote),
+    /// The chain REFUSES this leg in this direction: the quote frame reverted
+    /// in the hook or the `PoolManager`. No output exists, so the leg can never
+    /// be a hop — the strongest admission fact the tier can learn (44% of the
+    /// census's pool-direction walks).
+    Refused,
+    /// The tier has no answer. No fact about the pool: the leg stays
+    /// approximate and nothing is recorded.
+    Unavailable,
 }
 
 /// How one hooked leg staged at the finalist re-quote.
@@ -143,6 +190,10 @@ pub enum HookedLegStage {
     /// The chain's own answer at the anchor — exact by construction, with the
     /// quote frame's measured gas riding along.
     Exact(HookedLegQuote),
+    /// The chain refused the leg. The white-box figure stands for this pass (no
+    /// output exists to commit) and the path keeps its caveat, but the refusal
+    /// is recorded and the direction leaves the search tier.
+    Refused,
     /// The white-box approximation stands; the path keeps its caveat.
     Approximate,
 }
@@ -155,13 +206,20 @@ pub enum HookedLegStage {
 pub struct HookedLegPlan {
     /// `(hop index, stage)` for every hooked leg, in path order.
     stages: Vec<(usize, HookedLegStage)>,
+    /// The legs themselves, in the same order — the commit's identity source
+    /// (the pool id a measured charge is recorded under, and the pool key whose
+    /// charge decides whether the fact applies at all).
+    legs: Vec<(usize, HookedLeg)>,
 }
 
 impl HookedLegPlan {
     /// The empty plan — no hooked leg to re-quote.
     #[must_use]
     pub const fn empty() -> Self {
-        Self { stages: Vec::new() }
+        Self {
+            stages: Vec::new(),
+            legs: Vec::new(),
+        }
     }
 
     /// Record every leg in `facts` as [`HookedLegStage::Approximate`] — the
@@ -169,16 +227,21 @@ impl HookedLegPlan {
     #[must_use]
     pub fn approximate(facts: Vec<(usize, HookedLeg)>) -> Self {
         let stages = facts
-            .into_iter()
-            .map(|(hop, _leg)| (hop, HookedLegStage::Approximate))
+            .iter()
+            .map(|(hop, _leg)| (*hop, HookedLegStage::Approximate))
             .collect();
-        Self { stages }
+        Self {
+            stages,
+            legs: facts,
+        }
     }
 
     /// Price every leg in `facts` with `tier` at `anchor`.
     ///
-    /// `tier: None` (not installed) or a `None` answer leaves that leg
-    /// [`HookedLegStage::Approximate`].
+    /// `tier: None` (not installed) or an
+    /// [`Unavailable`](HookedLegAnswer::Unavailable) answer leaves that leg
+    /// [`HookedLegStage::Approximate`]; a chain refusal stages
+    /// [`HookedLegStage::Refused`] (no output, but a recordable pool fact).
     #[must_use]
     pub fn requote(
         facts: Vec<(usize, HookedLeg)>,
@@ -186,14 +249,47 @@ impl HookedLegPlan {
         tier: Option<&dyn HookedLegReQuote>,
     ) -> Self {
         let mut stages = Vec::with_capacity(facts.len());
-        for (hop, leg) in facts {
-            let stage = match tier.and_then(|tier| tier.requote_leg(anchor, &leg)) {
-                Some(exact) => HookedLegStage::Exact(exact),
-                None => HookedLegStage::Approximate,
+        for (hop, leg) in &facts {
+            let stage = match tier.map(|tier| tier.requote_leg(anchor, leg)) {
+                Some(HookedLegAnswer::Exact(exact)) => HookedLegStage::Exact(exact),
+                Some(HookedLegAnswer::Refused) => HookedLegStage::Refused,
+                Some(HookedLegAnswer::Unavailable) | None => HookedLegStage::Approximate,
             };
-            stages.push((hop, stage));
+            stages.push((*hop, stage));
         }
-        Self { stages }
+        Self {
+            stages,
+            legs: facts,
+        }
+    }
+
+    /// The legs the plan re-quoted, in path order.
+    #[must_use]
+    pub fn legs(&self) -> &[(usize, HookedLeg)] {
+        &self.legs
+    }
+
+    /// F2: the charge the re-quote measured for `hop` — `None` when the leg was
+    /// not re-quoted, the tier answered
+    /// [`Unavailable`](HookedLegAnswer::Unavailable), or the pool's charge is
+    /// its key's fee (a static-fee or hookless pool has no hook-carried charge
+    /// to record).
+    #[must_use]
+    pub fn fee_reading(&self, hop: usize) -> Option<degenbot_pools::HookFeeReading> {
+        self.stages.iter().find_map(|&(i, stage)| match stage {
+            HookedLegStage::Exact(quote) if i == hop => quote.hook_fee,
+            HookedLegStage::Refused if i == hop => Some(degenbot_pools::HookFeeReading::Refused),
+            _ => None,
+        })
+    }
+
+    /// F2: every `(hop, leg, reading)` the plan measured — the commit's facts.
+    #[must_use]
+    pub fn fee_readings(&self) -> Vec<(usize, &HookedLeg, degenbot_pools::HookFeeReading)> {
+        self.legs
+            .iter()
+            .filter_map(|(hop, leg)| self.fee_reading(*hop).map(|reading| (*hop, leg, reading)))
+            .collect()
     }
 
     /// The exact output staged for `hop`, if that leg was re-quoted.
@@ -291,10 +387,58 @@ pub fn hooked_leg_facts(
                 pool_key: identity.pool_key.clone(),
                 zero_for_one: pool_ref.zero_for_one,
                 amount_in,
+                pool_id: pool_ref.pool_key,
             },
         ));
     }
     facts
+}
+
+/// F2: commit every charge the plan measured into the search tier's
+/// per-direction record, stamped with the anchor block it was measured at.
+///
+/// Returns how many pools' records the write changed. A leg whose pool carries
+/// its charge in its KEY (a static fee, hookless or not) records nothing: the
+/// record governs only [`degenbot_pools::charge_is_hook_carried`] pools, so a
+/// re-quote of every other leg touches no state and takes no write guard.
+pub fn commit_hook_fees(core: &mut BotState, plan: &HookedLegPlan, at_block: u64) -> usize {
+    let mut written = 0;
+    for (_hop, leg, reading) in plan.fee_readings() {
+        if !degenbot_pools::charge_is_hook_carried(&leg.pool_key) {
+            continue;
+        }
+        if core.record_hook_fee(leg.pool_id, leg.zero_for_one, reading, at_block) {
+            written += 1;
+            diag!(
+                domain = solver,
+                pool_id = leg.pool_id,
+                zero_for_one = leg.zero_for_one,
+                ?reading,
+                block_number = at_block,
+                "hook-carried charge recorded — the search tier ranks this direction at it"
+            );
+        }
+    }
+    written
+}
+
+/// The clamp's commit door: take the state WRITE guard only when there is a
+/// fact to commit, so a path with no hook-carried leg (the common case) pays no
+/// write at all.
+///
+/// The clamp's re-quote runs with the read guard DROPPED (the tier prices
+/// against its own scratch EVM), so this is a fresh acquisition after it — never
+/// a re-entrant one.
+pub fn commit_plan_hook_fees(
+    core: &std::sync::Arc<degenbot_substrate::state_lock::StateLock<BotState>>,
+    plan: &HookedLegPlan,
+    at_block: u64,
+) -> usize {
+    if plan.fee_readings().is_empty() {
+        return 0;
+    }
+    let mut core = core.write_at(degenbot_substrate::state_lock::LockSite::Solver);
+    commit_hook_fees(&mut core, plan, at_block)
 }
 
 #[cfg(test)]
@@ -322,6 +466,7 @@ mod tests {
             },
             zero_for_one: true,
             amount_in: U256::from(amount_in),
+            pool_id: 7,
         }
     }
 
@@ -335,13 +480,20 @@ mod tests {
     const STUB_GAS: u64 = 184_500;
 
     impl HookedLegReQuote for StubTier {
-        fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<HookedLegQuote> {
+        fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> HookedLegAnswer {
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            self.answer.then(|| HookedLegQuote {
-                amount_out: leg.amount_in + U256::from(7u64),
-                gas: STUB_GAS,
-            })
+            if self.answer {
+                HookedLegAnswer::Exact(HookedLegQuote {
+                    amount_out: leg.amount_in + U256::from(7u64),
+                    gas: STUB_GAS,
+                    // The leg's pool carries its charge in its KEY (fee 3,000),
+                    // so the tier measures no hook-carried charge.
+                    hook_fee: None,
+                })
+            } else {
+                HookedLegAnswer::Unavailable
+            }
         }
     }
 
@@ -358,6 +510,7 @@ mod tests {
             Some(HookedLegStage::Exact(HookedLegQuote {
                 amount_out: U256::from(1_007u64),
                 gas: STUB_GAS,
+                hook_fee: None,
             }))
         );
         assert_eq!(plan.exact_out(1), Some(U256::from(1_007u64)));
@@ -415,16 +568,17 @@ mod tests {
             seen: std::sync::atomic::AtomicUsize,
         }
         impl HookedLegReQuote for OneShot {
-            fn requote_leg(
-                &self,
-                _anchor: HookedLegAnchor,
-                leg: &HookedLeg,
-            ) -> Option<HookedLegQuote> {
+            fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> HookedLegAnswer {
                 let n = self.seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                (n == 0).then_some(HookedLegQuote {
-                    amount_out: leg.amount_in,
-                    gas: STUB_GAS,
-                })
+                if n == 0 {
+                    HookedLegAnswer::Exact(HookedLegQuote {
+                        amount_out: leg.amount_in,
+                        gas: STUB_GAS,
+                        hook_fee: None,
+                    })
+                } else {
+                    HookedLegAnswer::Unavailable
+                }
             }
         }
         let tier = OneShot {

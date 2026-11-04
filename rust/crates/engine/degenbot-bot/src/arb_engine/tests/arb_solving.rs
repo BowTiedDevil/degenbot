@@ -1326,8 +1326,8 @@ fn clamp_concentrated_liquidity_hop_capacity_noop_within_capacity() {
 )]
 fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
     use crate::arb_engine::hooked_leg_requote::{
-        hooked_leg_facts, HookedLeg, HookedLegAnchor, HookedLegPlan, HookedLegQuote,
-        HookedLegReQuote, HookedLegStage,
+        hooked_leg_facts, HookedLeg, HookedLegAnchor, HookedLegAnswer, HookedLegPlan,
+        HookedLegQuote, HookedLegReQuote, HookedLegStage,
     };
     use crate::arb_engine::solve_cycle::clamp_result_with_state;
     use ::degenbot_pools::solve::HopGasProfile;
@@ -1341,10 +1341,11 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
     /// can produce — with a fixed measured frame gas.
     struct ExactBy(u64);
     impl HookedLegReQuote for ExactBy {
-        fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<HookedLegQuote> {
-            Some(HookedLegQuote {
+        fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> HookedLegAnswer {
+            HookedLegAnswer::Exact(HookedLegQuote {
                 amount_out: leg.amount_in + U256::from(self.0),
                 gas: QUOTE_GAS,
+                hook_fee: None,
             })
         }
     }
@@ -1478,6 +1479,7 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
         Some(HookedLegStage::Exact(HookedLegQuote {
             amount_out: small + U256::from(7_777u64),
             gas: QUOTE_GAS,
+            hook_fee: None,
         }))
     );
     assert_eq!(present.measured_gas(0), Some(QUOTE_GAS));
@@ -1520,5 +1522,210 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
             HopGasProfile::V2
         ],
         "the same clamp commits the quote's MEASURED gas onto the floor's          profile for that hop — and only that hop"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// F2: the recorded-last-measured hook charge drives the search tier
+// ─────────────────────────────────────────────────────────────────────────
+
+use crate::arb_engine::hooked_leg_requote::{
+    commit_hook_fees, hooked_leg_facts, HookedLeg, HookedLegAnchor, HookedLegAnswer, HookedLegPlan,
+    HookedLegQuote, HookedLegReQuote, HookedLegStage,
+};
+use degenbot_substrate::TickInfo;
+
+/// A quote frame's gas for the census-shaped stub tier.
+const CENSUS_QUOTE_GAS: u64 = 213_000;
+
+/// The census's reading for the biggest hook family's pools (149.22 bps on all
+/// ten sampled pools of `0x0d625293…c0cc`) — what a real twin measured.
+const CENSUS_HOOK_PIPS: u32 = 14_922;
+
+/// A tier shaped like the production one: it prices the leg and, for a pool
+/// whose charge its hook carries, measures that charge.
+struct CensusTier {
+    reading: degenbot_pools::HookFeeReading,
+}
+
+impl HookedLegReQuote for CensusTier {
+    fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> HookedLegAnswer {
+        // The production shape: a refusal means the chain will not price the
+        // leg at all, so there is no output to report — the refusal itself is
+        // the fact.
+        match self.reading {
+            degenbot_pools::HookFeeReading::Refused => HookedLegAnswer::Refused,
+            degenbot_pools::HookFeeReading::Measured { pips } => {
+                HookedLegAnswer::Exact(HookedLegQuote {
+                    amount_out: leg.amount_in,
+                    gas: CENSUS_QUOTE_GAS,
+                    hook_fee: Some(degenbot_pools::HookFeeReading::Measured { pips }),
+                })
+            }
+        }
+    }
+}
+
+/// Register the census's population shape: a hooked V4 pool keyed at fee ZERO
+/// with an amount-modifying hook (the 32,358-pool population the F4 census
+/// measured — every one carries `hooks & 0xCC != 0`).
+fn register_census_hook_pool(core: &mut degenbot_substrate::BotState) -> u64 {
+    use degenbot_substrate::{PoolTickCoverage, RegisterV4PoolParams, V4PoolKey};
+    let mut hooks = [0u8; 20];
+    hooks[19] = 0x80; // BEFORE_SWAP — amount-modifying
+    core.register_v4_pool(&RegisterV4PoolParams {
+        pool_manager: Address::from([0x44u8; 20]),
+        pool_id: [0xabu8; 32],
+        pool_key: V4PoolKey {
+            currency0: Address::from([0x30u8; 20]),
+            currency1: Address::from([0x31u8; 20]),
+            fee: 0,
+            tick_spacing: 10,
+            hooks: Address::from(hooks),
+        },
+        sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336u128),
+        liquidity: 10_000_000_000_000,
+        tick: 0,
+        tick_data: HashMap::from([
+            (
+                120,
+                TickInfo {
+                    liquidity_gross: alloy::primitives::U128::from(10_000u64),
+                    liquidity_net: 5_000i128,
+                    block: 0,
+                },
+            ),
+            (
+                -120,
+                TickInfo {
+                    liquidity_gross: alloy::primitives::U128::from(8_000u64),
+                    liquidity_net: -4_000i128,
+                    block: 0,
+                },
+            ),
+        ]),
+        update_block: 42,
+        coverage: PoolTickCoverage::Tracked,
+        ..Default::default()
+    })
+    .expect("a hooked zero-fee pool registers")
+}
+
+/// Project the pool in one direction through the real hop projection, returning
+/// the fee the walk committed (`gamma_numer = 1e6 − swap fee`) or the reason it
+/// was excluded.
+fn project_census_pool(
+    core: &degenbot_substrate::BotState,
+    pool_id: u64,
+) -> Result<u32, degenbot_substrate::resolve::MissingHopReason> {
+    let cache = degenbot_substrate::resolve::HopProjectionCache::new();
+    let pool_ref = degenbot_pools::solve::MixedPoolRef {
+        hop_type: degenbot_pools::solve::HopType::V4,
+        pool_key: pool_id,
+        zero_for_one: true,
+    };
+    let refs = [pool_ref.clone(), pool_ref];
+    let mut resolved = degenbot_pools::solve::ResolvedMixedPath::default();
+    let deficits =
+        degenbot_substrate::resolve::resolve_hops(core, &refs, &mut resolved, &cache, None, false);
+    if let Some(deficit) = deficits.first() {
+        return Err(deficit.reason);
+    }
+    let hop = resolved.hops.first().expect("a projected hop");
+    let seq = hop
+        .as_int_sequence()
+        .expect("concentrated liquidity sequence");
+    Ok(1_000_000 - u32::try_from(seq.ranges[0].gamma_numer).expect("gamma fits"))
+}
+
+/// THE F2 STORY, end to end: a census hook-carried pool registers, is NOT
+/// searchable before its first measurement (never at fee 0), gets measured on
+/// its first re-quote, and from then on ranks at the recorded charge.
+#[test]
+fn f2_a_census_hook_pool_is_measured_on_its_first_requote_and_ranks_at_the_record() {
+    use degenbot_substrate::resolve::MissingHopReason;
+
+    let mut core = degenbot_substrate::BotState::new();
+    let pool_id = register_census_hook_pool(&mut core);
+
+    // 1. ADMITTED but UNMEASURED: excluded, with a clearable reason.
+    assert_eq!(
+        project_census_pool(&core, pool_id),
+        Err(MissingHopReason::HookFeeUnmeasured),
+        "an unmeasured hook-carried direction is never searched at fee 0"
+    );
+
+    // 2. The re-quote the finalist tier takes measures the charge.
+    let anchor = HookedLegAnchor::at(26_320_000, &degenbot_substrate::BlockMetadata::default());
+    let consumed_inputs = [U256::from(5_000_000_000_000_000_000u128)];
+    let pools = [degenbot_pools::solve::MixedPoolRef {
+        hop_type: degenbot_pools::solve::HopType::V4,
+        pool_key: pool_id,
+        zero_for_one: true,
+    }];
+    let facts = hooked_leg_facts(&core, &pools, &consumed_inputs);
+    assert_eq!(facts.len(), 1, "the census pool is a hooked leg");
+    let tier = CensusTier {
+        reading: degenbot_pools::HookFeeReading::Measured {
+            pips: CENSUS_HOOK_PIPS,
+        },
+    };
+    let plan = HookedLegPlan::requote(facts, anchor, Some(&tier));
+    assert!(matches!(plan.stage(0), Some(HookedLegStage::Exact(_))));
+
+    // 3. The clamp's commit records it.
+    assert_eq!(
+        commit_hook_fees(&mut core, &plan, anchor.block),
+        1,
+        "the measured charge is committed"
+    );
+    assert_eq!(
+        core.recorded_hook_fee(pool_id, true),
+        Some(degenbot_pools::HookFeeRecord::Measured {
+            pips: CENSUS_HOOK_PIPS,
+            at_block: anchor.block,
+        })
+    );
+
+    // 4. SEARCH-TIME APPLICATION: the walk now charges the record.
+    assert_eq!(
+        project_census_pool(&core, pool_id),
+        Ok(CENSUS_HOOK_PIPS),
+        "the white-box walk applies the recorded hook charge"
+    );
+
+    // 5. A REFUSED direction is recorded as refused, not as a fee — and can
+    //    never be a hop.
+    let refused = HookedLegPlan::requote(
+        hooked_leg_facts(&core, &pools, &consumed_inputs),
+        anchor,
+        Some(&CensusTier {
+            reading: degenbot_pools::HookFeeReading::Refused,
+        }),
+    );
+    assert_eq!(refused.stage(0), Some(HookedLegStage::Refused));
+    assert_eq!(commit_hook_fees(&mut core, &refused, anchor.block), 1);
+    assert_eq!(
+        project_census_pool(&core, pool_id),
+        Err(MissingHopReason::HookFeeRefused)
+    );
+
+    // 6. The record's write is the invalidation: a re-measurement re-ranks.
+    let remeasured = HookedLegPlan::requote(
+        hooked_leg_facts(&core, &pools, &consumed_inputs),
+        anchor,
+        Some(&CensusTier {
+            reading: degenbot_pools::HookFeeReading::Measured { pips: 99 },
+        }),
+    );
+    assert_eq!(commit_hook_fees(&mut core, &remeasured, anchor.block), 1);
+    assert_eq!(project_census_pool(&core, pool_id), Ok(99));
+
+    // 7. An AGREEING reading inside the refresh horizon writes nothing — the
+    //    record does not churn the pool's nonce every cycle.
+    assert_eq!(
+        commit_hook_fees(&mut core, &remeasured, anchor.block + 1),
+        0,
+        "an agreeing reading inside the refresh horizon is a no-op"
     );
 }

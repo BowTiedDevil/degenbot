@@ -203,6 +203,11 @@ pub use state::v3_state::{
     SimulateSwapError, TickRangeCache, V3PoolIdentity, V3StateSync, V3SwapOutcome, V3SwapUpdate,
 };
 
+pub use state::v4_hook_fee::{
+    charge_is_hook_carried, direction_slot, HookFeeReading, HookFeeRecord, HOOK_FEE_REFRESH_BLOCKS,
+    MAX_RANKABLE_HOOK_FEE_PIPS,
+};
+
 pub use state::v4_state::{
     has_amount_modifying_hook, v4_simulate_swap, BufferedV4LiquidityUpdate, BufferedV4PoolEvent,
     BufferedV4SwapEvent, RegisterV4PoolError, RegisterV4PoolParams, V4PoolIdentity, V4PoolKey,

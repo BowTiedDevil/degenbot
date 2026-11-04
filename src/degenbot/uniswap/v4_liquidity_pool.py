@@ -152,11 +152,13 @@ class UniswapV4Pool(
     Construct via the V4 builder (which registers in Rust and hands the handle
     here); tests use ``make_v4_pool``.
 
-    Hook admission floor: pools with amount-modifying hooks (`hook_flags & 0xCC
-    != 0`) or dynamic fees (`fee == 0x800000`, the exact v4-core
-    `LPFeeLibrary.DYNAMIC_FEE_FLAG` sentinel) are rejected in Rust
-    (`BotState::register_v4_pool`), surfaced at `Bot.register_v4_pool` as
-    typed exceptions — so this companion never holds a hooked/dynamic-fee pool.
+    Hook admission: pools with amount-modifying hooks (`hook_flags & 0xCC != 0`)
+    and pools keyed at the dynamic-fee sentinel (`fee == 0x800000`, the exact
+    v4-core `LPFeeLibrary.DYNAMIC_FEE_FLAG`) are ADMITTED in Rust
+    (`BotState::register_v4_pool`) since ADR-037 / F1 — their simulations carry
+    `Caveats::HOOKED_POOL` and their search-time charge is the last measured hook
+    charge per direction. This companion therefore holds them like any other V4
+    pool.
     """
 
     type PoolState = UniswapV4PoolState

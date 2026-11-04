@@ -153,6 +153,16 @@ pub struct ConcentratedLiquidityOrchestration {
     /// pinned for the owner's lifetime (the same shape as
     /// `LogDispatcher::strict_decode_fault`).
     pub(crate) strict_sparse_apply: bool,
+    /// F2: the last measured hook charge per (pool id, direction) — the
+    /// search-time fee of a pool whose charge its HOOK carries
+    /// ([`degenbot_pools::charge_is_hook_carried`]). A side record rather than a
+    /// `V4PoolState` field: the fact is refreshed by MEASUREMENT (the black-box
+    /// twin the finalist re-quote runs at a solve anchor), never by state drift,
+    /// so it must not ride the pool's reorg journal, snapshot seed, or restore.
+    /// Its write bumps the pool's `state_nonce`, which is what invalidates the
+    /// hop-projection memo (a projection built while the direction was
+    /// unmeasured must not outlive the measurement that made it searchable).
+    pub(crate) hook_fees: HashMap<u64, [Option<degenbot_pools::HookFeeRecord>; 2]>,
 }
 
 /// The family-specific half of an orchestration verb.
@@ -664,6 +674,7 @@ impl ConcentratedLiquidityOrchestration {
             v3_event_horizons: HashMap::new(),
             v4_event_horizons: HashMap::new(),
             strict_sparse_apply: crate::stance::config().pump.strict_sparse_apply,
+            hook_fees: HashMap::new(),
         }
     }
 
@@ -1579,10 +1590,14 @@ impl ConcentratedLiquidityOrchestration {
     /// Register a V4 pool by `(pool_manager, pool_id)`.
     ///
     /// ADR-037: pools with amount-modifying hooks are ADMITTED (their
-    /// simulations carry `Caveats::HOOKED_POOL` and hop projection excludes
-    /// them from solving). Dynamic fees and static fees exceeding the
-    /// `cmd_executor`'s 2-byte encoding limit are still rejected. Returns
-    /// `Err(RegisterV4PoolError)` on rejection.
+    /// simulations carry `Caveats::HOOKED_POOL`; hop projection admits them to
+    /// ranking and the finalist re-quote prices their legs black-box). Pools
+    /// keyed at the `DYNAMIC_FEE_FLAG` sentinel are admitted too (F1): they
+    /// register like any other hooked pool, and their search-time fee is the
+    /// last measured hook charge per direction — an unmeasured direction is
+    /// excluded at hop projection, never searched at fee 0. Static fees
+    /// exceeding the `cmd_executor`'s 2-byte encoding limit are still rejected.
+    /// Returns `Err(RegisterV4PoolError)` on rejection.
     ///
     /// # Errors
     ///
@@ -1592,10 +1607,10 @@ impl ConcentratedLiquidityOrchestration {
     /// before the dynamic-fee / high-fee / already-registered rejections — so
     /// an impossible-concentrated-liquidity-config rejection surfaces the primitive at fault.
     ///
-    /// Returns `Err` if the pool uses a dynamic fee (`fee == 0x0080_0000`),
-    /// has a static fee exceeding the executor's `u16` encoding field
-    /// (`fee >= degenbot_executor::encoders::V4_FEE_ENCODER_MAX`), or a pool
-    /// with the same `(pool_manager, pool_id)` is already registered.
+    /// Returns `Err` if the pool has a STATIC fee exceeding the executor's
+    /// `u16` encoding field (`fee >= degenbot_executor::encoders::V4_FEE_ENCODER_MAX`;
+    /// the `DYNAMIC_FEE_FLAG` sentinel is exempt — it is not a static fee), or
+    /// a pool with the same `(pool_manager, pool_id)` is already registered.
     pub(crate) fn register_v4_pool(
         &mut self,
         reg: &mut PoolTable,
@@ -1609,27 +1624,25 @@ impl ConcentratedLiquidityOrchestration {
         sb::validate_tick_spacing(params.pool_key.tick_spacing)
             .map_err(RegisterV4PoolError::SpecViolation)?;
 
+        // The `0x800000` `DYNAMIC_FEE_FLAG` sentinel is NOT a price: such a
+        // pool charges whatever its hook charges. It is admitted (F1) and its
+        // search-time fee is the last measured charge per direction
+        // (`degenbot_pools::HookFeeRecord`); a direction with no record is not
+        // searchable, never searched at fee 0. The encoder-limit arm below
+        // therefore excludes the sentinel — it is not a static fee that has to
+        // fit the 2-byte encoding field.
+        //
         // v4-core `LPFeeLibrary.isDynamicFee` tests exact equality on the
-        // `0x800000` sentinel — never a mask, so a static fee merely sharing
-        // the high bit falls through to the encoder-limit arm below.
-        if params.pool_key.fee == V4_DYNAMIC_FEE_FLAG {
-            self.registration_gate.record(
-                params.pool_manager,
-                params.pool_id,
-                crate::registration_gate::AdmissionVerdict::DynamicFee {
-                    fee: params.pool_key.fee,
-                },
-            );
-            return Err(RegisterV4PoolError::DynamicFee {
-                fee: params.pool_key.fee,
-            });
-        }
-        // the cmd_executor encodes V4 `fee` as a 2-byte field in both
+        // sentinel — never a mask, so a static fee merely sharing the high bit
+        // falls through to the encoder-limit arm below.
+        //
+        // the cmd_executor encodes a V4 STATIC `fee` as a 2-byte field in both
         // swap commands; a static fee > 65535 is protocol-valid but
-        // un-encodable. Reject at admission (mirroring the dynamic-fee floor)
-        // so these pools never reach the composer's `u16::try_from` guard and
-        // waste a solve cycle.
-        if params.pool_key.fee >= degenbot_executor::encoders::V4_FEE_ENCODER_MAX {
+        // un-encodable. Reject at admission so these pools never reach the
+        // composer's `u16::try_from` guard and waste a solve cycle.
+        if params.pool_key.fee != V4_DYNAMIC_FEE_FLAG
+            && params.pool_key.fee >= degenbot_executor::encoders::V4_FEE_ENCODER_MAX
+        {
             self.registration_gate.record(
                 params.pool_manager,
                 params.pool_id,
@@ -1986,9 +1999,10 @@ impl ConcentratedLiquidityOrchestration {
     /// `PyO3` layer can synthesize the builder's return surface (identity +
     /// coverage + fees) with core-tracked values and NO RPC.
     ///
-    /// Dynamic-fee / hooked / fee-exceeds-encoder pools are admission-rejected
-    /// and never registered, so they miss here and keep their existing typed
-    /// rejections.
+    /// Fee-exceeds-encoder pools are admission-rejected and never registered,
+    /// so they miss here and keep their typed rejection. Hooked pools and
+    /// dynamic-fee (`DYNAMIC_FEE_FLAG`) pools ARE registered (ADR-037 / F1) and
+    /// so hit this path like any other pool.
     #[must_use]
     pub(crate) fn try_registered_v4(
         &self,
@@ -2095,6 +2109,84 @@ impl BotState {
                 state.snapshot_seed.as_ref()
             }
         }
+    }
+}
+
+/// F2: the recorded hook charge per (pool, direction) — the search-time fee of
+/// a pool whose charge its hook carries
+/// ([`degenbot_pools::charge_is_hook_carried`]).
+///
+/// The record is written by whoever measured the leg (the black-box twin the
+/// finalist re-quote runs at a solve anchor) and read by hop projection under
+/// the same short guard the projection already holds. A write that changes the
+/// fact bumps the pool's `state_nonce`, so the hop-projection memo — which is
+/// nonce-validated — re-walks: a projection built while the direction was
+/// unmeasured must never outlive the measurement that made it searchable.
+impl BotState {
+    /// The recorded hook charge of `pool_id` in `zero_for_one`'s direction,
+    /// `None` when the direction has never been measured (not searchable) or
+    /// the pool is not a registered V4 pool.
+    #[must_use]
+    pub fn recorded_hook_fee(
+        &self,
+        pool_id: u64,
+        zero_for_one: bool,
+    ) -> Option<degenbot_pools::HookFeeRecord> {
+        self.concentrated_liquidity
+            .hook_fees
+            .get(&pool_id)
+            .and_then(|fees| fees[degenbot_pools::direction_slot(zero_for_one)])
+    }
+
+    /// Record one measurement of `pool_id`'s charge in `zero_for_one`'s
+    /// direction, stamped with `at_block`. Returns whether the pool's state
+    /// changed.
+    ///
+    /// A reading that agrees with the standing record inside its refresh horizon
+    /// is a no-op: repeated re-quotes of one pool at different notional widths
+    /// must not churn the pool's `state_nonce` (and the projections and sim
+    /// verdicts keyed on it) every cycle. A disagreeing reading, or one taken
+    /// past [`degenbot_pools::HOOK_FEE_REFRESH_BLOCKS`], supersedes the record
+    /// and bumps the nonce.
+    ///
+    /// A record is only ever stored for a REGISTERED V4 pool: the record is the
+    /// search tier's fee input, so a measurement of an unregistered pool has no
+    /// projection to invalidate and nothing to price.
+    pub fn record_hook_fee(
+        &mut self,
+        pool_id: u64,
+        zero_for_one: bool,
+        reading: degenbot_pools::HookFeeReading,
+        at_block: u64,
+    ) -> bool {
+        if !matches!(self.pools.get(pool_id), Some(PoolEntry::V4(_))) {
+            return false;
+        }
+        let slot = degenbot_pools::direction_slot(zero_for_one);
+        let slots = self
+            .concentrated_liquidity
+            .hook_fees
+            .entry(pool_id)
+            .or_insert([None; 2]);
+        if slots[slot]
+            .is_some_and(|existing| existing.agrees(reading) && !existing.is_due(at_block))
+        {
+            return false;
+        }
+        slots[slot] = Some(degenbot_pools::HookFeeRecord::from_reading(
+            reading, at_block,
+        ));
+        if let Some(entry) = self.pools.get_mut(pool_id) {
+            entry.bump_state_nonce();
+        }
+        true
+    }
+
+    /// How many pools carry at least one recorded hook charge (the F2 census
+    /// the registration/measurement telemetry reports).
+    #[must_use]
+    pub fn hook_fee_pool_count(&self) -> usize {
+        self.concentrated_liquidity.hook_fees.len()
     }
 }
 

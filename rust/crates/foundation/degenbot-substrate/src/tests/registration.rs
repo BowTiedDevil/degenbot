@@ -499,15 +499,22 @@ fn register_v4_pool_admits_amount_modifying_hook_with_caveat() {
 }
 
 #[test]
-fn register_v4_pool_rejects_dynamic_fee_with_typed_error() {
-    use crate::{RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey};
+fn register_v4_pool_admits_the_dynamic_fee_sentinel() {
+    // F1: a keyed-at-`DYNAMIC_FEE_FLAG` pool charges whatever its hook charges,
+    // so the sentinel is not a fee to refuse — it registers like any other
+    // hooked pool and its search-time fee comes from the measured record. The
+    // encoder-limit arm must NOT catch it on the way in (the sentinel is a
+    // 24-bit value far past the 2-byte field, but it is not a STATIC fee).
+    use crate::{RegisterV4PoolParams, V4PoolKey};
     use hashbrown::HashMap;
 
     let mut core = BotState::new();
-    let err = core
+    let pool_manager = Address::from([0x44u8; 20]);
+    let pool_id: degenbot_decoders::v4_swap_decoder::V4PoolId = [0xeeu8; 32];
+    let registered = core
         .register_v4_pool(&RegisterV4PoolParams {
-            pool_manager: Address::from([0x44u8; 20]),
-            pool_id: [0xeeu8; 32],
+            pool_manager,
+            pool_id,
             pool_key: V4PoolKey {
                 currency0: Address::ZERO,
                 currency1: Address::from([1u8; 20]),
@@ -522,13 +529,19 @@ fn register_v4_pool_rejects_dynamic_fee_with_typed_error() {
             tick_data: HashMap::new(),
             ..Default::default()
         })
-        .expect_err("dynamic-fee pool must be rejected");
-    assert_eq!(
-        err,
-        RegisterV4PoolError::DynamicFee {
-            fee: crate::V4_DYNAMIC_FEE_FLAG,
-        },
-        "dynamic-fee refusal returns the typed DynamicFee variant"
+        .expect("a dynamic-fee pool registers (F1)");
+
+    assert!(core.try_registered(pool_manager, &pool_id).is_some());
+    assert!(
+        core.concentrated_liquidity()
+            .admission_verdict(pool_manager, &pool_id)
+            .is_none(),
+        "an admitted pool records no admission verdict — the gate would skip it"
+    );
+    assert!(
+        core.recorded_hook_fee(registered, true).is_none()
+            && core.recorded_hook_fee(registered, false).is_none(),
+        "a fresh dynamic-fee pool has no measured direction yet"
     );
 }
 
@@ -844,16 +857,17 @@ fn admission_refusal_records_a_consultable_gate_verdict() {
         ..Default::default()
     };
 
-    // Dynamic-fee refusal records a consultable verdict.
-    assert!(matches! {
-        core.register_v4_pool(&base(V4_DYNAMIC_FEE_FLAG)),
-        Err(RegisterV4PoolError::DynamicFee { .. }),
-    });
+    // The dynamic-fee sentinel is ADMITTED (F1), so it records NO verdict — a
+    // verdict here would make the PyO3 pre-check skip a pool that must
+    // register.
+    assert!(
+        core.register_v4_pool(&base(V4_DYNAMIC_FEE_FLAG)).is_ok(),
+        "a dynamic-fee pool registers"
+    );
     assert_eq!(
         core.concentrated_liquidity().admission_verdict(pm, &pid),
-        Some(AdmissionVerdict::DynamicFee {
-            fee: V4_DYNAMIC_FEE_FLAG
-        })
+        None,
+        "an admitted pool gate-records nothing"
     );
 
     // Fee-encoder-limit refusal records its verdict on a fresh pool.
@@ -868,7 +882,7 @@ fn admission_refusal_records_a_consultable_gate_verdict() {
         core.concentrated_liquidity().admission_verdict(pm, &pid2),
         Some(AdmissionVerdict::FeeExceedsEncoderLimit { fee: 320_000 })
     );
-    assert_eq!(core.concentrated_liquidity.registration_gate.len(), 2);
+    assert_eq!(core.concentrated_liquidity.registration_gate.len(), 1);
 
     // An admitted pool registers normally and answers via the registry
     // of record — the REGISTRATION refusals gate-record, admissions do
@@ -888,11 +902,11 @@ fn admission_refusal_records_a_consultable_gate_verdict() {
 }
 
 #[test]
-fn register_v4_pool_dynamic_fee_arm_catches_the_exact_sentinel() {
+fn register_v4_pool_admits_the_exact_sentinel_and_the_encoder_limit_stays_exact() {
     // Upstream `LPFeeLibrary.isDynamicFee` tests exact EQUALITY against the
     // `0x800000` sentinel. A real dynamic-fee pool carries exactly that value
-    // — no static pool can hold it (`MAX_LP_FEE = 1_000_000 < 0x800000`) — so
-    // this literal is the only value the dynamic-fee arm may catch.
+    // — no static pool can hold it (`MAX_LP_FEE = 1_000_000 < 0x800000`) — and
+    // since F1 it is ADMITTED: the sentinel is a flag, not a fee.
     use crate::RegisterV4PoolError;
 
     let mut core = BotState::new();
@@ -900,11 +914,8 @@ fn register_v4_pool_dynamic_fee_arm_catches_the_exact_sentinel() {
     params.pool_id = [0xd1u8; 32];
     params.pool_key.fee = 0x0080_0000;
     assert!(
-        matches! {
-            core.register_v4_pool(&params),
-            Err(RegisterV4PoolError::DynamicFee { fee: 0x0080_0000 }),
-        },
-        "the real dynamic-fee sentinel (0x800000) must reach the DynamicFee arm"
+        core.register_v4_pool(&params).is_ok(),
+        "the real dynamic-fee sentinel (0x800000) is admitted"
     );
 
     // Exact equality, never a mask: a fee sharing the sentinel's high bit is
