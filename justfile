@@ -334,8 +334,14 @@ test-rust-nextest *args: check-toolchain
 test-rust-nextest-release: check-toolchain
     #!/usr/bin/env bash
     set -euo pipefail
-    python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
-    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    # No LIBDIR export, unlike `test-rust-nextest`: this selection is
+    # `degenbot-substrate` + `degenbot-simulation`, pyo3-free core crates with
+    # no pyo3 anywhere in their graph, so no test binary links libpython and
+    # there is no LIBDIR to hand the loader. That is why this leg runs with no
+    # Python and no `uv` -- the state CI's rust job is in -- while the
+    # whole-workspace lane stays uv-required. Widening the selection to a crate
+    # that turns pyo3 on (or a test that drives the binding) reinstates the
+    # runtime dependency and the export with it.
     cargo nextest run --locked --manifest-path rust/Cargo.toml --release \
         -p degenbot-substrate -p degenbot-simulation \
         --profile release-ci --no-fail-fast \
