@@ -27,7 +27,7 @@ use degenbot_db::{DbError, GraphEdition, PathGraphData};
 use degenbot_pathfinding::PoolKind;
 use hashbrown::{HashMap, HashSet};
 use parking_lot::Mutex;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 use super::{
     transition, CrawlAbort, CrawlConfig, CrawlController, CrawlEvent, CrawlHandle, CrawlHost,
@@ -279,6 +279,13 @@ fn abort_rpc() -> FakeRpc {
 
 // ── the seat ────────────────────────────────────────────────────────────────
 
+/// The budget on a wait whose completion edge the fixture itself raises.
+///
+/// A guard, never an expectation: the fixtures' own work is microseconds, so this
+/// sits far above any plausible scheduling delay and exists only so a regression
+/// that never reaches the edge names itself instead of parking the test worker.
+const FIXTURE_GUARD: Duration = Duration::from_secs(30);
+
 /// The seat's counters: how many units were handed out, how many are running, and
 /// the high-water mark (the window's own witness).
 #[derive(Default)]
@@ -286,6 +293,43 @@ struct Metrics {
     outstanding: AtomicUsize,
     max_outstanding: AtomicUsize,
     dispatched: AtomicUsize,
+    /// Fired when the last outstanding unit's seat task finished counting out.
+    quiesced: Notify,
+}
+
+impl Metrics {
+    /// Count one unit out of the seat.
+    ///
+    /// A unit publishes its outcome from INSIDE its future and the run resolves on
+    /// that outcome, so the run's return proves no unit is still to deliver — but
+    /// it orders nothing about this counter, which is decremented by the seat's own
+    /// task AFTER the future returns. A reader that must see "no unit is still in
+    /// flight" therefore waits on [`Metrics::wait_quiesced`] instead of reading the
+    /// count.
+    fn count_out(&self) {
+        if self.outstanding.fetch_sub(1, Ordering::SeqCst) == 1 {
+            self.quiesced.notify_waiters();
+        }
+    }
+
+    /// Wait for the seat's own tasks to finish counting out.
+    ///
+    /// The edge is the seat's last task returning, which is the seat-side meaning
+    /// of "no unit is still in flight". [`FIXTURE_GUARD`] only names a seat that
+    /// never reaches it.
+    async fn wait_quiesced(&self) {
+        let quiesced = self.quiesced.notified();
+        tokio::pin!(quiesced);
+        // Enable before the check: the count can reach zero between the load and
+        // the first poll of the wait.
+        quiesced.as_mut().enable();
+        if self.outstanding.load(Ordering::SeqCst) == 0 {
+            return;
+        }
+        tokio::time::timeout(FIXTURE_GUARD, quiesced)
+            .await
+            .expect("the seat's unit task must finish counting out");
+    }
 }
 
 /// The dispatch hook: fires on the Nth dispatch (the cap and stop latches'
@@ -299,6 +343,9 @@ struct TokioSeat {
     metrics: Arc<Metrics>,
     delay: Duration,
     hook: Option<SeatHook>,
+    /// When set, the FIRST unit may not run until the window's second dispatch
+    /// lands — see [`TokioSeat::filling_the_window`].
+    fill_gate: Option<Arc<Notify>>,
 }
 
 impl TokioSeat {
@@ -307,6 +354,26 @@ impl TokioSeat {
             metrics: Arc::new(Metrics::default()),
             delay,
             hook,
+            fill_gate: None,
+        })
+    }
+
+    /// A seat whose FIRST unit may not run until the window's second submission
+    /// has been dispatched.
+    ///
+    /// The window is filled by DISPATCH, not by a unit's speed, so "the window was
+    /// actually filled" is a fact about two submissions. Without the gate the claim
+    /// races the seat's own delay: a loop descheduled for longer than that delay
+    /// lets the first unit resolve before the second submission is ordered, and the
+    /// high-water mark then reads one short with nothing wrong — the window was
+    /// never asked to fill. The gate makes the ordering the assertion reads one the
+    /// fixture owns.
+    fn filling_the_window(delay: Duration) -> Arc<Self> {
+        Arc::new(Self {
+            metrics: Arc::new(Metrics::default()),
+            delay,
+            hook: None,
+            fill_gate: Some(Arc::new(Notify::new())),
         })
     }
 
@@ -324,13 +391,25 @@ impl CrawlUnitSeat for TokioSeat {
         if let Some(hook) = &self.hook {
             hook(ordinal, &metrics);
         }
+        // The gate's release edge is the window's second dispatch, and only the
+        // first unit waits on it.
+        let fill_gate = self.fill_gate.as_ref().map(Arc::clone);
+        if let Some(gate) = fill_gate.as_ref() {
+            if ordinal == 2 {
+                gate.notify_one();
+            }
+        }
+        let held = fill_gate.filter(|_| ordinal == 1);
         let delay = self.delay;
         tokio::spawn(async move {
+            if let Some(gate) = held {
+                gate.notified().await;
+            }
             if delay > Duration::ZERO {
                 tokio::time::sleep(delay).await;
             }
             future.await;
-            metrics.outstanding.fetch_sub(1, Ordering::SeqCst);
+            metrics.count_out();
         });
         Ok(())
     }
@@ -679,14 +758,21 @@ fn the_latch_sets_only_under_a_live_pipeline_and_rearms_only_on_an_edition_chang
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_window_bounds_the_outstanding_units_and_every_receipt_folds() {
-    // 5 parallel pools -> 20 ordered cycles; a 2-unit window over a slow seat.
+    // 5 parallel pools -> 20 ordered cycles; a 2-unit window over a slow seat whose
+    // first unit cannot run until the window's second submission is dispatched, so
+    // the fill the high-water mark reports is an edge this fixture owns.
     let fixture = fixture(
         FakeRpc::new(),
         skip_graph(5),
         config(2, 1),
-        TokioSeat::new(Duration::from_millis(5), None),
+        TokioSeat::filling_the_window(Duration::from_millis(5)),
     );
-    fixture.controller.run().await.unwrap();
+    // The guard names a loop that never fills the window (the first unit would
+    // otherwise wait out the crawl's own idle deadline); it sequences nothing.
+    tokio::time::timeout(FIXTURE_GUARD, fixture.controller.run())
+        .await
+        .expect("the window fills: the second unit is submitted before the first runs")
+        .unwrap();
 
     let metrics = fixture.seat.metrics();
     assert_eq!(
@@ -886,6 +972,7 @@ async fn the_cap_latch_halts_submission_and_the_window_still_drains() {
         dispatched, 2,
         "no candidate is submitted after the cap fired"
     );
+    fixture.seat.metrics().wait_quiesced().await;
     assert_eq!(
         fixture.seat.metrics().outstanding.load(Ordering::SeqCst),
         0,
@@ -944,6 +1031,7 @@ async fn a_stop_during_the_crawl_latches_stopping_and_drains() {
         2,
         "a stop is honoured before the next submission"
     );
+    fixture.seat.metrics().wait_quiesced().await;
     assert_eq!(
         fixture.seat.metrics().outstanding.load(Ordering::SeqCst),
         0,
@@ -975,6 +1063,7 @@ async fn a_fatal_unit_aborts_the_crawl_loudly_after_the_drain() {
         }
         other => panic!("expected the loud construction abort, got {other:?}"),
     }
+    fixture.seat.metrics().wait_quiesced().await;
     assert_eq!(
         fixture.seat.metrics().outstanding.load(Ordering::SeqCst),
         0,
@@ -1167,7 +1256,7 @@ impl CrawlUnitSeat for HoldingSeat {
 fn run_async(future: CrawlUnitFuture, metrics: Arc<Metrics>) {
     tokio::spawn(async move {
         future.await;
-        metrics.outstanding.fetch_sub(1, Ordering::SeqCst);
+        metrics.count_out();
     });
 }
 
@@ -1219,6 +1308,7 @@ async fn a_held_window_outlives_the_park_deadline_and_delivers_on_the_lift() {
         0,
         "the lift released everything the hold parked"
     );
+    seat.metrics().wait_quiesced().await;
     assert_eq!(
         seat.metrics().outstanding.load(Ordering::SeqCst),
         0,
