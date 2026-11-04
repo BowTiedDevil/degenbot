@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 
+from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import StaleRateResult
 from tests.helpers.balancer_pool_factory import (
     make_balancer_stable_pool,
@@ -309,3 +310,26 @@ class TestStableCompanionVsEngine:
                     f"plain 2021 V2 given-out pair({i},{j}) mult={mult}: "
                     f"py={calc_in} engine={engine_in}"
                 )
+
+
+def test_weighted_companion_refuses_an_unknown_pow_version() -> None:
+    """The companion's ``pow_version`` is an enum, not a boolean flag.
+
+    A registered identity whose discriminant is neither 1 (V1) nor 2 (V2) must
+    raise: rendering it as V2 silently selects V2's rounding in the swap math,
+    so a drifted discriminant would trade on the wrong FixedPoint revision.
+    """
+    bot = Bot()
+    t0, t1 = _token(bot, 18, 30), _token(bot, 18, 31)
+    with pytest.raises(DegenbotValueError, match="pow_version"):
+        make_balancer_weighted_pool(
+            _addr(0xAE01),
+            pool_id=b"\x63" + bytes(range(31)),
+            vault=_VAULT,
+            tokens=[t0, t1],
+            balances=[10_000 * 10**18, 10_000 * 10**18],
+            fee=Fraction(0),
+            weights=[5 * 10**17, 5 * 10**17],
+            pow_version=3,
+            py_bot=bot,
+        )

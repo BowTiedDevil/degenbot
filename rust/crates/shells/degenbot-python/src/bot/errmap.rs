@@ -227,14 +227,24 @@ fn map_admission(failure: BuildFailure, hook_flags: Option<u16>, fee: Option<u32
 }
 
 /// The family label the registration messages spell.
+///
+/// The V2/V3/V4 families keep their long-standing uppercase labels; every
+/// other family renders its registry tag ([`RegisteredPoolFamily::tag`]), so a
+/// Balancer or Curve refusal names itself instead of borrowing the V2 label.
+/// Exhaustive over the registry vocabulary: a family added there is a compile
+/// error here, never a silent fall-through to another family's label.
 fn family_label(family: Option<RegisteredPoolFamily>) -> &'static str {
     match family {
+        // A family-less refusal keeps the historical V2 spelling.
+        Some(RegisteredPoolFamily::V2) | None => "V2",
         Some(RegisteredPoolFamily::V3) => "V3",
-        Some(RegisteredPoolFamily::AerodromeV2) => "Aerodrome",
         Some(RegisteredPoolFamily::V4) => "V4",
-        // The address-keyed families share the V2 rendering; only V2 reaches
-        // a register refusal today.
-        _ => "V2",
+        Some(
+            family @ (RegisteredPoolFamily::AerodromeV2
+            | RegisteredPoolFamily::BalancerWeighted
+            | RegisteredPoolFamily::BalancerStable
+            | RegisteredPoolFamily::Curve),
+        ) => family.tag(),
     }
 }
 
@@ -635,6 +645,33 @@ mod tests {
             message(&err),
             "V2 pool registration failed: field `reserve0` value 7 is out of bounds: uint112 (≤ 2^112 − 1)"
         );
+    }
+
+    /// The registration messages' family label is a census over the registry
+    /// vocabulary: the pair-keyed concentrated-liquidity families keep their
+    /// uppercase labels, every other family renders its registry tag, and a
+    /// family-less refusal keeps the historical V2 spelling. An added family
+    /// cannot inherit another family's label.
+    #[test]
+    fn family_label_renders_every_registry_family() {
+        let expected = [
+            (RegisteredPoolFamily::V2, "V2"),
+            (RegisteredPoolFamily::V3, "V3"),
+            (RegisteredPoolFamily::V4, "V4"),
+            (RegisteredPoolFamily::AerodromeV2, "aerodrome-v2"),
+            (RegisteredPoolFamily::BalancerWeighted, "balancer-weighted"),
+            (RegisteredPoolFamily::BalancerStable, "balancer-stable"),
+            (RegisteredPoolFamily::Curve, "curve"),
+        ];
+        assert_eq!(
+            expected.map(|(family, _)| family),
+            RegisteredPoolFamily::ALL,
+            "the label census covers every registry family"
+        );
+        for (family, want) in expected {
+            assert_eq!(family_label(Some(family)), want, "{family:?}");
+        }
+        assert_eq!(family_label(None), "V2");
     }
 
     #[test]
@@ -1050,7 +1087,7 @@ mod tests {
         });
         assert_eq!(
             message(&err),
-            "Aerodrome pool already registered: address=0x0505050505050505050505050505050505050505"
+            "aerodrome-v2 pool already registered: address=0x0505050505050505050505050505050505050505"
         );
     }
 

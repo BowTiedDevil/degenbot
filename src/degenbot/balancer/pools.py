@@ -104,8 +104,9 @@ class BalancerV2Pool(AbstractLiquidityPool):
             A ``cls`` instance wrapping ``py_pool``.
 
         Raises:
-            DegenbotValueError: If the handle is not a Balancer weighted pool
-                or any token is not registered.
+            DegenbotValueError: If the handle is not a Balancer weighted pool,
+                any token is not registered, or the handle's ``pow_version``
+                discriminant is outside the ``PowVersion`` vocabulary (1 or 2).
 
         """
         self = cls.__new__(cls)
@@ -137,7 +138,22 @@ class BalancerV2Pool(AbstractLiquidityPool):
         self.scaling_factors = tuple(_compute_scaling_factor(t) for t in self._tokens)
         self.fee = Fraction(arm.swap_fee, cls.FEE_DENOMINATOR)
         self.weights = tuple(arm.weights)
-        self.pow_version = PowVersion.V1 if arm.pow_version == 1 else PowVersion.V2
+        # The core carries PowVersion as an opaque `u8` (1 = V1, 2 = V2), so
+        # the decoding is this seam's job — and a discriminant outside the pair
+        # is loud: rendering it as V2 would silently apply V2's fast-path
+        # rounding to a pool that has none.
+        pow_version = arm.pow_version
+        if pow_version == PowVersion.V1.to_u8():
+            self.pow_version = PowVersion.V1
+        elif pow_version == PowVersion.V2.to_u8():
+            self.pow_version = PowVersion.V2
+        else:
+            msg = (
+                f"Balancer weighted pool {self.address} reports pow_version "
+                f"{pow_version} (expected 1 or 2): the Rust identity's "
+                "discriminant is outside the PowVersion vocabulary"
+            )
+            raise DegenbotValueError(message=msg)
         return self
 
     def __repr__(self) -> str:  # pragma: no cover

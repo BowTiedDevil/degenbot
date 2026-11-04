@@ -1088,20 +1088,31 @@ impl RequestFamily {
     }
 }
 
-/// Map a registered family tag to the request vocabulary's family spelling —
-/// the inverse of the request constructors' mapping, so the construction
-/// verdict answers what the registry recorded (ADR-085 D2). Closed over the
-/// registry's 7-arm tag vocabulary: `None` for a tag with no entry (the
-/// family-parity guard skips it, known-vs-known like the variant half).
-fn python_family_spelling(tag: &str) -> Option<&'static str> {
-    match tag {
-        "v2" | "aerodrome-v2" => Some("constant_product"),
-        "v3" => Some("concentrated_liquidity"),
-        "v4" => Some("managed_v4"),
-        "balancer-weighted" => Some("weighted"),
-        "balancer-stable" | "curve" => Some("stableswap"),
-        _ => None,
+/// Map a registry family onto the request vocabulary's family spelling — the
+/// inverse of the request constructors' mapping, so the construction verdict
+/// answers what the registry recorded (ADR-085 D2).
+///
+/// Exhaustive over [`RegisteredPoolFamily`]: a family added to the registry is
+/// a compile error here, never a silent unmapped arm that the parity guard
+/// would skip without anyone noticing.
+const fn request_spelling(family: RegisteredPoolFamily) -> &'static str {
+    match family {
+        RegisteredPoolFamily::V2 | RegisteredPoolFamily::AerodromeV2 => "constant_product",
+        RegisteredPoolFamily::V3 => "concentrated_liquidity",
+        RegisteredPoolFamily::V4 => "managed_v4",
+        RegisteredPoolFamily::BalancerWeighted => "weighted",
+        RegisteredPoolFamily::BalancerStable | RegisteredPoolFamily::Curve => "stableswap",
     }
+}
+
+/// Map a registered family TAG to the request vocabulary's family spelling.
+///
+/// `None` only for a tag outside the registry's vocabulary — the family-parity
+/// guard skips that (known-vs-known, like the variant half). Every tag the
+/// registry can emit resolves, because the spelling itself is exhaustive over
+/// the enum.
+fn python_family_spelling(tag: &str) -> Option<&'static str> {
+    RegisteredPoolFamily::from_tag(tag).map(request_spelling)
 }
 
 /// The construction echo — the identity the seam registered, ONE shape
@@ -3252,6 +3263,42 @@ pub(crate) fn extract_u256_list(
 mod tests {
     #![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
     use super::*;
+
+    /// The registry's family vocabulary binds onto the request vocabulary
+    /// utterly: every `RegisteredPoolFamily` names its request spelling at
+    /// compile time (an added family is a compile error, never a silent
+    /// `None`), so the family-parity guard's `None` means only "not a
+    /// registry family" — the documented known-vs-known skip (ADR-085 D2/D4).
+    #[test]
+    fn every_registry_family_states_its_request_spelling() {
+        let bound = RegisteredPoolFamily::ALL.map(|family| (family, request_spelling(family)));
+        assert_eq!(
+            bound,
+            [
+                (RegisteredPoolFamily::V2, "constant_product"),
+                (RegisteredPoolFamily::V3, "concentrated_liquidity"),
+                (RegisteredPoolFamily::V4, "managed_v4"),
+                (RegisteredPoolFamily::AerodromeV2, "constant_product"),
+                (RegisteredPoolFamily::BalancerWeighted, "weighted"),
+                (RegisteredPoolFamily::BalancerStable, "stableswap"),
+                (RegisteredPoolFamily::Curve, "stableswap"),
+            ],
+        );
+
+        // The tag side is the same binding: every registry tag resolves, and a
+        // string outside the tag vocabulary stays unclassified.
+        for family in RegisteredPoolFamily::ALL {
+            assert_eq!(
+                python_family_spelling(family.tag()),
+                Some(request_spelling(family)),
+                "tag {:?}",
+                family.tag()
+            );
+        }
+        for raw in ["", "V2", "aerodrome_v2", "uniswap-v3"] {
+            assert_eq!(python_family_spelling(raw), None, "{raw:?}");
+        }
+    }
 
     /// PRG-1 registry unification: `construct_pool` answers an
     /// address that is already registered in `BotState` (the registry of

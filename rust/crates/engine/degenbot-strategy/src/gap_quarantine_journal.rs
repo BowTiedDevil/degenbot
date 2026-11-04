@@ -335,13 +335,19 @@ impl ParkRecord {
     ///
     /// # Errors
     ///
-    /// [`JournalError`] when the frame hash fails to parse.
+    /// [`JournalError`] when the frame hash or the recorded sender fails to
+    /// parse.
     pub fn to_parked_frame(&self) -> Result<ParkedFrame, JournalError> {
         if self.fidelity == RecordFidelity::Degraded {
             let hash = self.frame.hash.parse::<B256>()?;
+            // The degraded wire carries its sender as the raw journal string:
+            // an unparsable one makes the identity unrebuildable, so the
+            // rebuild refuses instead of parking the frame under the zero
+            // address (which no tx could ever have sent).
+            let from = self.frame.from.parse::<Address>()?;
             return Ok(ParkedFrame {
                 hash,
-                from: self.frame.from.parse::<Address>().unwrap_or(Address::ZERO),
+                from,
                 to: self
                     .frame
                     .to
@@ -1210,5 +1216,29 @@ mod tests {
         assert_eq!(reread.skipped, 0);
 
         let _ = std::fs::remove_dir_all(path.parent().expect("parent"));
+    }
+
+    /// A degraded park keeps only its identity, so a sender the wire cannot
+    /// parse makes the frame unrebuildable: the rebuild answers `JournalError`
+    /// instead of parking the frame under the zero address.
+    #[test]
+    fn degraded_frame_with_unparsable_sender_is_refused() {
+        let mut record = ParkRecord::new(&event(7, 70, 9_000), 68, now_ms());
+        record.fidelity = RecordFidelity::Degraded;
+        record.frame.from = String::from("not-an-address");
+
+        let err = record
+            .to_parked_frame()
+            .expect_err("an unparsable sender must refuse the rebuild");
+        assert!(
+            matches!(err, JournalError::Field(_)),
+            "the refusal rides the journal's field-error channel: {err}"
+        );
+
+        // The readable-sender case still rebuilds: the refusal is the parse,
+        // not the degraded fidelity.
+        record.frame.from = Address::with_last_byte(7).to_string();
+        let frame = record.to_parked_frame().expect("readable sender rebuilds");
+        assert_eq!(frame.from, Address::with_last_byte(7));
     }
 }
