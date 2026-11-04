@@ -28,6 +28,16 @@
 //! white-box figure and the path keeps `Caveats::HOOKED_POOL`, byte-identical
 //! to the pre-ADR-090 behavior.
 //!
+//! # The quote carries the leg's GAS too
+//!
+//! A re-quote answers with both halves of what a black-box frame measured: the
+//! leg's exact output ([`HookedLegQuote::amount_out`]) and the gas that frame
+//! burned ([`HookedLegQuote::gas`]) — the `PoolManager` swap AND the hook. The
+//! clamp commits the first onto the result's amounts; the admission floor
+//! charges the second, because the floor's V4 row is hookless and cannot see
+//! the hook at all (`HopGasProfile::Measured`). A refused re-quote carries no
+//! gas, so the floor keeps the hookless row and the honest under-prediction.
+//!
 //! # The one hard rule for implementations
 //!
 //! [`HookedLegReQuote::requote_leg`] is called from the clamp, which holds the
@@ -89,17 +99,38 @@ pub struct HookedLeg {
     pub amount_in: U256,
 }
 
+/// One black-box re-quote's answer: the leg's exact output plus the gas its
+/// quote frame burned.
+///
+/// Both halves come off the same frame (the deployed V4 `Quoter` over the
+/// anchor), so they describe the same execution — the `PoolManager` swap, the
+/// pool's tick walk, and the hook's own `beforeSwap`/`afterSwap` work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HookedLegQuote {
+    /// The leg's output amount in the output currency's base units — exact by
+    /// construction (the chain's own answer).
+    pub amount_out: U256,
+    /// The gas the quote frame burned (`V4BlackBoxQuote::gas_used`) — the same
+    /// quantity `docs/gas-estimation.md` fits the floor's V4 row on, so the
+    /// admission floor can charge it IN PLACE OF that row.
+    ///
+    /// The quoter's `gasEstimate` word is deliberately not this: it scales
+    /// with the frame's gas limit and is diagnostic only.
+    pub gas: u64,
+}
+
 /// The installed black-box leg quoter (ADR-090 H1's primitive behind the
 /// bot's dependency inversion).
 ///
 /// `None` is the fail-soft answer: no exact figure is available at this
 /// anchor, so the leg stays approximate.
 pub trait HookedLegReQuote: Send + Sync {
-    /// The exact `amount_out` for `leg` at `anchor`, or `None` when the tier
-    /// cannot answer (unavailable, refusing, or a manager it does not hold).
+    /// The exact answer for `leg` at `anchor` — its output and the quote
+    /// frame's gas — or `None` when the tier cannot answer (unavailable,
+    /// refusing, or a manager it does not hold).
     ///
     /// MUST NOT read [`BotState`] — see the module docs.
-    fn requote_leg(&self, anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<U256>;
+    fn requote_leg(&self, anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<HookedLegQuote>;
 }
 
 /// How one hooked leg staged at the finalist re-quote.
@@ -109,8 +140,9 @@ pub trait HookedLegReQuote: Send + Sync {
 /// (the standard-math figure the caveat already flags).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HookedLegStage {
-    /// The chain's own answer at the anchor — exact by construction.
-    Exact(U256),
+    /// The chain's own answer at the anchor — exact by construction, with the
+    /// quote frame's measured gas riding along.
+    Exact(HookedLegQuote),
     /// The white-box approximation stands; the path keeps its caveat.
     Approximate,
 }
@@ -168,7 +200,18 @@ impl HookedLegPlan {
     #[must_use]
     pub fn exact_out(&self, hop: usize) -> Option<U256> {
         self.stages.iter().find_map(|&(i, stage)| match stage {
-            HookedLegStage::Exact(out) if i == hop => Some(out),
+            HookedLegStage::Exact(quote) if i == hop => Some(quote.amount_out),
+            _ => None,
+        })
+    }
+
+    /// The measured quote-frame gas staged for `hop` — `None` for a leg that
+    /// was not re-quoted (or is not a hooked leg), which is the clamp's and the
+    /// floor's "the approximation stands" signal.
+    #[must_use]
+    pub fn measured_gas(&self, hop: usize) -> Option<u64> {
+        self.stages.iter().find_map(|&(i, stage)| match stage {
+            HookedLegStage::Exact(quote) if i == hop => Some(quote.gas),
             _ => None,
         })
     }
@@ -289,11 +332,16 @@ mod tests {
         calls: std::sync::atomic::AtomicUsize,
     }
 
+    const STUB_GAS: u64 = 184_500;
+
     impl HookedLegReQuote for StubTier {
-        fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<U256> {
+        fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<HookedLegQuote> {
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            self.answer.then(|| leg.amount_in + U256::from(7u64))
+            self.answer.then(|| HookedLegQuote {
+                amount_out: leg.amount_in + U256::from(7u64),
+                gas: STUB_GAS,
+            })
         }
     }
 
@@ -307,21 +355,36 @@ mod tests {
         let plan = HookedLegPlan::requote(vec![(1, leg(1_000))], anchor(), Some(&tier));
         assert_eq!(
             plan.stage(1),
-            Some(HookedLegStage::Exact(U256::from(1_007u64)))
+            Some(HookedLegStage::Exact(HookedLegQuote {
+                amount_out: U256::from(1_007u64),
+                gas: STUB_GAS,
+            }))
         );
         assert_eq!(plan.exact_out(1), Some(U256::from(1_007u64)));
+        assert_eq!(
+            plan.measured_gas(1),
+            Some(STUB_GAS),
+            "the quote frame's gas rides the staged figure"
+        );
+        assert_eq!(
+            plan.measured_gas(0),
+            None,
+            "a hop that is not a hooked leg carries no measured gas"
+        );
         assert_eq!(plan.hooked_legs(), 1);
         assert_eq!(plan.exact_legs(), 1);
         assert!(plan.lifts_caveat(), "every hooked leg was priced exact");
         assert_eq!(tier.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
 
-    /// TIER ABSENT: the leg stages Approximate and the caveat stays.
+    /// TIER ABSENT: the leg stages Approximate and the caveat stays. No gas is
+    /// claimed either — the floor has nothing measured to charge.
     #[test]
     fn an_absent_tier_leaves_the_leg_approximate() {
         let plan = HookedLegPlan::requote(vec![(0, leg(1_000))], anchor(), None);
         assert_eq!(plan.stage(0), Some(HookedLegStage::Approximate));
         assert_eq!(plan.exact_out(0), None);
+        assert_eq!(plan.measured_gas(0), None);
         assert!(!plan.lifts_caveat(), "an approximate leg keeps the caveat");
     }
 
@@ -336,6 +399,8 @@ mod tests {
         let plan = HookedLegPlan::requote(vec![(0, leg(9)), (2, leg(11))], anchor(), Some(&tier));
         assert_eq!(plan.stage(0), Some(HookedLegStage::Approximate));
         assert_eq!(plan.stage(2), Some(HookedLegStage::Approximate));
+        assert_eq!(plan.measured_gas(0), None, "a refusal claims no gas");
+        assert_eq!(plan.measured_gas(2), None);
         assert_eq!(plan.hooked_legs(), 2);
         assert_eq!(plan.exact_legs(), 0);
         assert!(!plan.lifts_caveat());
@@ -350,9 +415,16 @@ mod tests {
             seen: std::sync::atomic::AtomicUsize,
         }
         impl HookedLegReQuote for OneShot {
-            fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<U256> {
+            fn requote_leg(
+                &self,
+                _anchor: HookedLegAnchor,
+                leg: &HookedLeg,
+            ) -> Option<HookedLegQuote> {
                 let n = self.seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                (n == 0).then_some(leg.amount_in)
+                (n == 0).then_some(HookedLegQuote {
+                    amount_out: leg.amount_in,
+                    gas: STUB_GAS,
+                })
             }
         }
         let tier = OneShot {
@@ -361,6 +433,8 @@ mod tests {
         let plan = HookedLegPlan::requote(vec![(0, leg(5)), (1, leg(6))], anchor(), Some(&tier));
         assert_eq!(plan.exact_legs(), 1);
         assert!(!plan.lifts_caveat());
+        assert_eq!(plan.measured_gas(0), Some(STUB_GAS), "the exact leg");
+        assert_eq!(plan.measured_gas(1), None, "the refused leg");
     }
 
     /// An empty plan never lifts the caveat and answers nothing.
@@ -371,5 +445,6 @@ mod tests {
         assert_eq!(plan.hooked_legs(), 0);
         assert!(!plan.lifts_caveat());
         assert_eq!(plan.exact_out(0), None);
+        assert_eq!(plan.measured_gas(0), None);
     }
 }

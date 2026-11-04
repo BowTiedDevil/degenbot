@@ -1326,18 +1326,26 @@ fn clamp_concentrated_liquidity_hop_capacity_noop_within_capacity() {
 )]
 fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
     use crate::arb_engine::hooked_leg_requote::{
-        hooked_leg_facts, HookedLeg, HookedLegAnchor, HookedLegPlan, HookedLegReQuote,
-        HookedLegStage,
+        hooked_leg_facts, HookedLeg, HookedLegAnchor, HookedLegPlan, HookedLegQuote,
+        HookedLegReQuote, HookedLegStage,
     };
     use crate::arb_engine::solve_cycle::clamp_result_with_state;
+    use ::degenbot_pools::solve::HopGasProfile;
     use degenbot_pools::{Caveats, PoolTickCoverage, TickInfo};
 
+    /// The quote frame's gas the tier reports — a hooked leg's own cost, well
+    /// above the hookless V4 row.
+    const QUOTE_GAS: u64 = 213_000;
+
     /// A tier that answers `amount_in + delta` — a figure no white-box walk
-    /// can produce.
+    /// can produce — with a fixed measured frame gas.
     struct ExactBy(u64);
     impl HookedLegReQuote for ExactBy {
-        fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<U256> {
-            Some(leg.amount_in + U256::from(self.0))
+        fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<HookedLegQuote> {
+            Some(HookedLegQuote {
+                amount_out: leg.amount_in + U256::from(self.0),
+                gas: QUOTE_GAS,
+            })
         }
     }
 
@@ -1418,7 +1426,9 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
         state_nonces: vec![0, 0],
         solver_pool_states: Vec::new(),
         caveats: Caveats::HOOKED_POOL,
-        gas_hops: Vec::new(),
+        // The floor's profiles: the hooked V4 leg's hookless row, then the V2
+        // leg behind it. The clamp's re-quote commit rewrites hop 0 only.
+        gas_hops: vec![HopGasProfile::V4 { census: None }, HopGasProfile::V2],
     };
     let tier = ExactBy(7_777);
     // The candidate's hooked-leg facts: exactly ONE amount-modifying V4 leg.
@@ -1454,14 +1464,23 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
         approximate.caveats.contains(Caveats::HOOKED_POOL),
         "an approximate hooked leg keeps the caveat"
     );
+    assert_eq!(
+        approximate.gas_hops,
+        vec![HopGasProfile::V4 { census: None }, HopGasProfile::V2],
+        "a leg with no exact quote keeps its hookless row on the floor"
+    );
 
     // ── TIER PRESENT: the exact figure commits, the caveat lifts ─────────
     let mut exact = staged.clone();
     let present = HookedLegPlan::requote(facts, anchor, Some(&tier));
     assert_eq!(
         present.stage(0),
-        Some(HookedLegStage::Exact(small + U256::from(7_777u64)))
+        Some(HookedLegStage::Exact(HookedLegQuote {
+            amount_out: small + U256::from(7_777u64),
+            gas: QUOTE_GAS,
+        }))
     );
+    assert_eq!(present.measured_gas(0), Some(QUOTE_GAS));
     assert!(present.lifts_caveat());
     {
         let core = engine
@@ -1493,5 +1512,13 @@ fn hooked_v4_leg_stages_the_black_box_figure_or_the_approximation() {
     assert!(
         exact.profit > U256::ZERO,
         "the recomputed profit rides the exact figure"
+    );
+    assert_eq!(
+        exact.gas_hops,
+        vec![
+            HopGasProfile::Measured { gas: QUOTE_GAS },
+            HopGasProfile::V2
+        ],
+        "the same clamp commits the quote's MEASURED gas onto the floor's          profile for that hop — and only that hop"
     );
 }

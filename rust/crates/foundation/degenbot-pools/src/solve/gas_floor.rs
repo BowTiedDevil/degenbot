@@ -22,6 +22,7 @@
 //! leg_gas(V4)        = min(v4_fixed, concentrated_intercept_p10)
 //!                    + v4_per_crossing · initialized_ticks_crossed
 //!                    + v4_per_word      · bitmap_words_walked
+//! leg_gas(measured)  = the leg's own measured frame gas
 //! ```
 //!
 //! # Every choice is the under-predicting one
@@ -40,6 +41,22 @@
 //! - a census that ran out of modelled range (`SwapWalkCensus::bounded_tail`)
 //!   reports lower bounds, and the floor takes them as given — the true cost is
 //!   higher.
+//!
+//! # The hooked leg no row can see
+//!
+//! A V4 pool with an amount-modifying hook runs arbitrary bytecode inside the
+//! swap (`beforeSwap`/`afterSwap` deltas), so its true cost is not a family
+//! row: the row is hookless by construction, and a hooked leg clears the floor
+//! only to fail net-of-hook-gas at verification. Once the finalist re-quote has
+//! priced that leg black-box at the solve's anchor, the leg's profile becomes
+//! [`HopGasProfile::Measured`] and the floor charges the measured frame gas.
+//!
+//! It REPLACES the row rather than adding to it. `docs/gas-estimation.md` fits
+//! the V4 row on that same quote frame's gas (`V4BlackBoxQuote::gas_used`, "the
+//! whole `unlock`/delta path"), so the measurement already contains the manager
+//! swap, the tick walk, and the hook — adding both would charge the swap twice.
+//! A refused re-quote leaves the row in place: the honest under-prediction,
+//! already reported as the path's caveat.
 //!
 //! # Units
 //!
@@ -70,8 +87,16 @@ pub enum HopGasProfile {
     /// come from the walk.
     V3 { census: Option<SwapWalkCensus> },
     /// Uniswap V4 concentrated liquidity (same swap math as V3, a different
-    /// settlement frame, hence its own coefficient row).
+    /// settlement frame, hence its own coefficient row). HOOKLESS by
+    /// construction: a hooked pool's own work is invisible here, which is what
+    /// a black-box re-quote replaces with `Measured`.
     V4 { census: Option<SwapWalkCensus> },
+
+    /// A leg whose own execution gas was MEASURED at the solve's anchor — the
+    /// black-box re-quote of an amount-modifying hooked V4 leg, whose quote
+    /// frame ran the real `PoolManager` swap and the real hook. The figure IS
+    /// the leg's cost (it replaces the family row; see the module docs).
+    Measured { gas: u64 },
     /// A family with no measured coefficient row: the floor cannot price it,
     /// so it reports no floor rather than a guessed one (no floor suppresses
     /// nothing).
@@ -145,7 +170,9 @@ impl GasFloorModel {
     }
 
     /// One hop's quote-frame leg cost — the pool's own swap loop, no
-    /// settlement. `None` for a hop the model has no row for.
+    /// settlement — or the leg's own measured frame gas when the hop carries
+    /// it ([`HopGasProfile::Measured`]). `None` for a hop the model has no row
+    /// for.
     ///
     /// A missing census contributes its fixed term only: the leg ran, and its
     /// crossings are unknown, which is the under-predicting direction.
@@ -169,6 +196,7 @@ impl GasFloorModel {
                         .saturating_add(self.v4_per_word.saturating_mul(words)),
                 )
             }
+            HopGasProfile::Measured { gas } => Some(gas),
             HopGasProfile::Unmodeled => None,
         }
     }
@@ -414,6 +442,54 @@ mod tests {
         let first = MEASURED_GAS_FLOOR.floor_wei(&hops, 12_000_000_000);
         let second = MEASURED_GAS_FLOOR.floor_wei(&hops, 12_000_000_000);
         assert_eq!(first, second);
+    }
+
+    /// A MEASURED leg is the figure itself, verbatim: the re-quote ran the real
+    /// frame (manager swap + hook), so no family row is added on top and no
+    /// cap applies — the model has no floor-of-the-floor.
+    #[test]
+    fn a_measured_leg_is_the_measured_frame_gas() {
+        let m = MEASURED_GAS_FLOOR;
+        assert_eq!(
+            m.leg_gas(HopGasProfile::Measured { gas: 240_000 }),
+            Some(240_000),
+            "the hook's work is already inside the figure"
+        );
+        assert_eq!(
+            m.leg_gas(HopGasProfile::Measured { gas: 10 }),
+            Some(10),
+            "a measured leg is not re-capped or floored by a family row"
+        );
+    }
+
+    /// Replacement, not addition: replacing a hooked hop's hookless row with
+    /// its measured gas moves the path's gas by exactly the hook's own cost —
+    /// the difference between the frame the re-quote ran and the row it
+    /// replaces. Adding the row on top would charge the manager swap twice.
+    #[test]
+    fn a_measured_hooked_leg_replaces_the_hookless_row() {
+        let m = MEASURED_GAS_FLOOR;
+        let census = Some(census(1, 2));
+        let hookless_leg = m.leg_gas(HopGasProfile::V4 { census }).unwrap();
+        let measured_gas = 240_000u64;
+        assert!(
+            measured_gas > hookless_leg,
+            "a measured hooked leg is the case the row under-prices"
+        );
+        let path_hookless = m
+            .path_gas(&[HopGasProfile::V2, HopGasProfile::V4 { census }])
+            .unwrap();
+        let path_measured = m
+            .path_gas(&[
+                HopGasProfile::V2,
+                HopGasProfile::Measured { gas: measured_gas },
+            ])
+            .unwrap();
+        assert_eq!(
+            path_measured - path_hookless,
+            measured_gas - hookless_leg,
+            "the delta IS the hook's execution cost"
+        );
     }
 
     /// A bounded-tail census is a LOWER bound on travel, so the floor

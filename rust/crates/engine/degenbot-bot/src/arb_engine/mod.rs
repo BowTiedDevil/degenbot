@@ -202,7 +202,8 @@ pub use fleet_status::{
 pub(crate) use fleet_wake::feed_throttle;
 pub use fleet_wake::wake_hosts;
 pub use hooked_leg_requote::{
-    hooked_leg_facts, HookedLeg, HookedLegAnchor, HookedLegPlan, HookedLegReQuote, HookedLegStage,
+    hooked_leg_facts, HookedLeg, HookedLegAnchor, HookedLegPlan, HookedLegQuote, HookedLegReQuote,
+    HookedLegStage,
 };
 pub use inline_sim::{
     AccessListRow, CapturedSwapRow, InlineSimFailure, InlineSimRequest, InlineSimulator,

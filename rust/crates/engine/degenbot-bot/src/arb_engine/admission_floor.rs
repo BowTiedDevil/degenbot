@@ -34,6 +34,17 @@
 //! window otherwise — so a floored candidate increments the counter exactly
 //! once, at the seam that made the decision.
 //!
+//! # The hooked leg: measured gas replaces the hookless row
+//!
+//! The cost model's V4 row is hookless, so a hooked leg's own work is invisible
+//! to it and the candidate clears the floor only to fail net-of-hook-gas at
+//! verification. The finalist re-quote ([`super::hooked_leg_requote`]) prices
+//! that leg black-box at the solve's anchor and its quote frame carries the
+//! gas. [`commit_measured_leg_gas`] writes that figure into the result's hop
+//! profile ([`HopGasProfile::Measured`]) for every leg the plan re-quoted
+//! exact; a refused leg keeps the row. Both seams read the same result, so one
+//! commit at the clamp reaches the inline gate AND the delivery window.
+//!
 //! # Units
 //!
 //! The floor is ETH wei (gas times the block's base fee) and `profit` is in the
@@ -41,7 +52,8 @@
 //! ether-equivalent terminal (the settlement engine's WETH-terminated paths).
 //! The model has no price oracle and invents none.
 
-use ::degenbot_pools::solve::SolvePathResult;
+use super::hooked_leg_requote::HookedLegPlan;
+use ::degenbot_pools::solve::{HopGasProfile, SolvePathResult};
 use alloy::primitives::U256;
 use degenbot_core::op_debug;
 
@@ -107,6 +119,31 @@ pub(crate) fn admission_floor(
         ::degenbot_pools::solve::path_gas_floor_wei(result, u128::from(base_fee))
     });
     gas_floor.map_or(min_profit, |gas_floor| min_profit.max(gas_floor))
+}
+
+/// Commit a finalist re-quote's MEASURED leg gas onto the result's floor
+/// profiles: every hop the plan re-quoted exact at the anchor becomes
+/// [`HopGasProfile::Measured`], which the cost model charges verbatim in place
+/// of the hookless V4 row (see `degenbot_pools::solve::gas_floor`'s module docs
+/// for why it replaces rather than adds — the row was fitted on that same quote
+/// frame).
+///
+/// A hop the plan left approximate (no tier installed, a refusal, a hook the
+/// frame cannot execute) keeps whatever profile the solve recorded, so the
+/// candidate keeps its honest under-prediction. Hops the plan does not name —
+/// every non-hooked leg — are untouched.
+///
+/// The commit belongs at the CLAMP (the one body both seams share an upstream
+/// of): it is the re-quote's own commit point, and it writes the same result the
+/// inline gate and the delivery window price. Out-of-range hops (a plan built
+/// over a longer pool list than the result carries projections for) are
+/// ignored rather than panicking: the result simply keeps its rows.
+pub(crate) fn commit_measured_leg_gas(result: &mut SolvePathResult, plan: &HookedLegPlan) {
+    for (hop, profile) in result.gas_hops.iter_mut().enumerate() {
+        if let Some(gas) = plan.measured_gas(hop) {
+            *profile = HopGasProfile::Measured { gas };
+        }
+    }
 }
 
 /// Admit-or-floor one solved result, reporting a candidate the GAS floor
@@ -286,6 +323,279 @@ mod tests {
         assert_eq!(
             AdmissionSeam::of_cycle(true, false).window_count(),
             Some(AdmissionSeam::DeliveryWindow)
+        );
+    }
+
+    // ── the hooked leg: the re-quote's MEASURED gas in the floor ─────────
+
+    use crate::arb_engine::hooked_leg_requote::{
+        HookedLeg, HookedLegAnchor, HookedLegPlan, HookedLegQuote, HookedLegReQuote,
+    };
+
+    /// The frame gas a hooked leg's black-box quote reports: far above the
+    /// hookless V4 row (72,232) because the hook's own work is inside it.
+    const MEASURED_HOOK_GAS: u64 = 264_000;
+
+    /// The hooked hop's index on these fixtures (a V2 leg in front of it, so a
+    /// wrong-hop commit is visible).
+    const HOOKED_HOP: usize = 1;
+
+    /// A tier that answers every leg with the same fixed frame gas — the
+    /// re-quote's shape, without an EVM.
+    struct MeasuredTier;
+
+    impl HookedLegReQuote for MeasuredTier {
+        fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<HookedLegQuote> {
+            Some(HookedLegQuote {
+                amount_out: leg.amount_in,
+                gas: MEASURED_HOOK_GAS,
+            })
+        }
+    }
+
+    /// A tier that refuses (no scratch EVM, a foreign manager, a halted frame).
+    struct RefusingTier;
+
+    impl HookedLegReQuote for RefusingTier {
+        fn requote_leg(
+            &self,
+            _anchor: HookedLegAnchor,
+            _leg: &HookedLeg,
+        ) -> Option<HookedLegQuote> {
+            None
+        }
+    }
+
+    /// One hooked V4 leg's facts, hop-indexed to the fixtures below.
+    fn hooked_fact() -> (usize, HookedLeg) {
+        (
+            HOOKED_HOP,
+            HookedLeg {
+                pool_manager: alloy::primitives::Address::ZERO,
+                pool_key: degenbot_pools::V4PoolKey {
+                    currency0: alloy::primitives::Address::ZERO,
+                    currency1: alloy::primitives::Address::ZERO,
+                    fee: 3_000,
+                    tick_spacing: 60,
+                    hooks: alloy::primitives::Address::ZERO,
+                },
+                zero_for_one: true,
+                amount_in: U256::from(1_000u64),
+            },
+        )
+    }
+
+    fn hooked_plan(tier: Option<&dyn HookedLegReQuote>) -> HookedLegPlan {
+        HookedLegPlan::requote(
+            vec![hooked_fact()],
+            HookedLegAnchor {
+                block: 1,
+                timestamp: 2,
+                base_fee: u128::from(BASE_FEE),
+            },
+            tier,
+        )
+    }
+
+    /// A V2 leg then a HOOKLESS V4 row — the profile a hooked leg carries
+    /// before anything measured it.
+    fn hooked_hops() -> Vec<HopGasProfile> {
+        vec![HopGasProfile::V2, HopGasProfile::V4 { census: None }]
+    }
+
+    fn hooked_result(profit: U256) -> SolvePathResult {
+        SolvePathResult {
+            optimal_input: U256::from(1_000u64),
+            profit,
+            gas_hops: hooked_hops(),
+            ..Default::default()
+        }
+    }
+
+    /// The hookless leg's price, so the delta the hook adds is explicit.
+    fn hookless_v4_leg() -> U256 {
+        U256::from(
+            MEASURED_GAS_FLOOR
+                .leg_gas(HopGasProfile::V4 { census: None })
+                .unwrap(),
+        )
+    }
+
+    /// The re-quote's measured gas commits onto the result — the carrier both
+    /// seams read — at the leg's own hop and nowhere else.
+    #[test]
+    fn a_re_quoted_hooked_leg_commits_the_measured_gas() {
+        let tier = MeasuredTier;
+        let plan = hooked_plan(Some(&tier));
+        let mut result = hooked_result(U256::ZERO);
+        commit_measured_leg_gas(&mut result, &plan);
+        assert_eq!(
+            result.gas_hops[HOOKED_HOP],
+            HopGasProfile::Measured {
+                gas: MEASURED_HOOK_GAS
+            },
+            "the measured frame gas replaces the hookless row"
+        );
+        assert_eq!(
+            result.gas_hops[0],
+            HopGasProfile::V2,
+            "a leg the plan does not name keeps its profile"
+        );
+        assert_eq!(
+            admission_floor(&result, U256::ZERO, Some(BASE_FEE)),
+            MEASURED_GAS_FLOOR
+                .floor_wei(
+                    &[
+                        HopGasProfile::V2,
+                        HopGasProfile::Measured {
+                            gas: MEASURED_HOOK_GAS
+                        },
+                    ],
+                    u128::from(BASE_FEE),
+                )
+                .unwrap(),
+            "the floor prices the measured figure, not the row"
+        );
+    }
+
+    /// The regression this floor exists for: a hooked candidate whose margin
+    /// clears the HOOKLESS floor is floored once the hook's own gas is charged.
+    #[test]
+    fn the_measured_gas_floors_a_candidate_the_hookless_row_admitted() {
+        let before = hooked_result(U256::ZERO);
+        let hookless_floor = admission_floor(&before, U256::ZERO, Some(BASE_FEE));
+        // One wei over the hookless floor: admitted, as it always was.
+        let margin = hookless_floor + U256::ONE;
+        let mut result = hooked_result(margin);
+        assert!(
+            admit(
+                Some(AdmissionSeam::InlineSim),
+                11,
+                &result,
+                U256::ZERO,
+                Some(BASE_FEE)
+            ),
+            "the hookless row prices this candidate as profitable"
+        );
+
+        let tier = MeasuredTier;
+        let plan = hooked_plan(Some(&tier));
+        commit_measured_leg_gas(&mut result, &plan);
+        assert!(
+            !admit(
+                Some(AdmissionSeam::InlineSim),
+                11,
+                &result,
+                U256::ZERO,
+                Some(BASE_FEE)
+            ),
+            "the hook's own gas takes the candidate under the bar"
+        );
+        assert_eq!(
+            admission_floor(&result, U256::ZERO, Some(BASE_FEE)) - hookless_floor,
+            (U256::from(MEASURED_HOOK_GAS) - hookless_v4_leg()) * U256::from(BASE_FEE),
+            "the floor rose by exactly the hook's measured execution cost"
+        );
+        // The delivery window derives the same figure from the same result.
+        assert!(
+            !admit(
+                AdmissionSeam::of_cycle(false, true).window_count(),
+                11,
+                &result,
+                U256::ZERO,
+                Some(BASE_FEE)
+            ),
+            "the window floors it too — one candidate, one decision"
+        );
+    }
+
+    /// A REFUSED re-quote has no measured gas, so the hookless row stands and
+    /// the candidate keeps its honest under-prediction — it still ships.
+    #[test]
+    fn a_refused_requote_keeps_the_hookless_row() {
+        let tier = RefusingTier;
+        let plan = hooked_plan(Some(&tier));
+        let before = hooked_result(U256::ZERO);
+        let hookless_floor = admission_floor(&before, U256::ZERO, Some(BASE_FEE));
+        let mut result = hooked_result(hookless_floor + U256::ONE);
+        commit_measured_leg_gas(&mut result, &plan);
+        assert_eq!(
+            result.gas_hops,
+            hooked_hops(),
+            "a refusal writes nothing: the rows stay as the solve recorded them"
+        );
+        assert_eq!(
+            admission_floor(&result, U256::ZERO, Some(BASE_FEE)),
+            hookless_floor
+        );
+        assert!(
+            admit(
+                Some(AdmissionSeam::InlineSim),
+                12,
+                &result,
+                U256::ZERO,
+                Some(BASE_FEE)
+            ),
+            "the approximation stands, so the candidate is not suppressed"
+        );
+    }
+
+    /// A hooked candidate whose margin covers its TRUE (measured) cost still
+    /// ships: the measured gas raises the bar, it never vetoes hook work.
+    #[test]
+    fn a_hooked_candidate_covering_its_measured_cost_still_ships() {
+        let tier = MeasuredTier;
+        let plan = hooked_plan(Some(&tier));
+        let mut probe = hooked_result(U256::ZERO);
+        commit_measured_leg_gas(&mut probe, &plan);
+        let measured_floor = admission_floor(&probe, U256::ZERO, Some(BASE_FEE));
+        assert!(
+            measured_floor
+                > admission_floor(&hooked_result(U256::ZERO), U256::ZERO, Some(BASE_FEE)),
+            "the fixture only tests anything if the measured gas raises the floor"
+        );
+        let mut result = hooked_result(measured_floor + U256::ONE);
+        commit_measured_leg_gas(&mut result, &plan);
+        assert!(
+            admit(
+                Some(AdmissionSeam::InlineSim),
+                13,
+                &result,
+                U256::ZERO,
+                Some(BASE_FEE)
+            ),
+            "a hooked candidate that covers its measured cost ships"
+        );
+        let mut on_the_floor = hooked_result(measured_floor);
+        commit_measured_leg_gas(&mut on_the_floor, &plan);
+        assert!(
+            !admit(
+                Some(AdmissionSeam::InlineSim),
+                13,
+                &on_the_floor,
+                U256::ZERO,
+                Some(BASE_FEE)
+            ),
+            "ON the composed floor is still out (the strict boundary)"
+        );
+    }
+
+    /// The commit is bounded by the result it writes: a plan naming a hop the
+    /// result carries no projection for writes nothing and never panics.
+    #[test]
+    fn the_commit_ignores_hops_the_result_does_not_carry() {
+        let tier = MeasuredTier;
+        let plan = hooked_plan(Some(&tier));
+        let mut result = SolvePathResult {
+            profit: U256::from(50u64),
+            ..Default::default()
+        };
+        commit_measured_leg_gas(&mut result, &plan);
+        assert!(result.gas_hops.is_empty());
+        assert_eq!(
+            admission_floor(&result, U256::from(100u64), Some(BASE_FEE)),
+            U256::from(100u64),
+            "an unpriceable result keeps the static minimum"
         );
     }
 

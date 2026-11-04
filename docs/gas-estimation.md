@@ -366,6 +366,7 @@ gas(path) = settlement_fixed                        # 25,672 = 21,000 intrinsic 
 leg_gas(V2) = 30,862
 leg_gas(V3) = min(118,594, 81,947) + 24,824·crossings + 7,373·words
 leg_gas(V4) = min( 72,232, 81,947) + 14,254·crossings + 5,684·words
+leg_gas(hooked V4, re-quoted) = the quote frame's gas_used   # swap + hook
 
 floor_wei(path, base_fee) = gas(path) × base_fee
 ```
@@ -405,6 +406,26 @@ A parity test holds the two independent projections together:
 `ConcentratedLiquidityPathSim::output`'s `census` must equal the walk's recorded
 census at the same optimal input (`path_sim.rs`), so the gas figure admission
 reads is the one the walk actually walked.
+
+### The hooked leg: a measured frame replaces the row
+
+The V4 row is hookless, so a hooked pool's own `beforeSwap`/`afterSwap` work is
+invisible to it: the candidate clears the floor and fails net-of-hook-gas at
+verification, which is the shape of the residual no-profit stream (V4 first
+leg). The finalist re-quote (ADR-090 H3) has already measured that leg — its
+quote frame runs the real `PoolManager` swap, the real tick walk, and the real
+hook — and that frame's `gas_used` is exactly the quantity the V4 row above was
+fitted on. So the clamp commits it onto the result's hop profile as
+`HopGasProfile::Measured { gas }`, **replacing** the row for that hop rather
+than adding to it (the frame already contains the manager swap the row prices;
+adding would charge it twice).
+
+It is one commit at the clamp, reaching both seams, because both seams price
+the same result. A REFUSED re-quote writes nothing: the row stands and the
+candidate keeps the honest under-prediction its caveat already declares. The
+quoter's `gasEstimate` word is deliberately not used — it scales with the
+frame's gas limit and is diagnostic only, while `gas_used` is the frame's own
+burn.
 
 ### Admission and its report
 

@@ -51,7 +51,7 @@ use alloy::primitives::{Address, B256, I256, U256};
 use ::evm2::evm::{CacheDB, Database, Db};
 
 use degenbot_bot::arb_engine::{
-    hooked_leg_facts, HookedLeg, HookedLegAnchor, HookedLegPlan, HookedLegReQuote, HookedLegStage,
+    hooked_leg_facts, HookedLeg, HookedLegAnchor, HookedLegPlan, HookedLegQuote, HookedLegReQuote,
 };
 use degenbot_pools::solve::{HopType, MixedPoolRef};
 use degenbot_pools::{v4_pool_id, v4_simulate_swap, V3PoolState, V4PoolKey};
@@ -81,14 +81,17 @@ struct ScratchTier<'a> {
 }
 
 impl HookedLegReQuote for ScratchTier<'_> {
-    fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<U256> {
+    fn requote_leg(&self, _anchor: HookedLegAnchor, leg: &HookedLeg) -> Option<HookedLegQuote> {
         let mut guard = self.inner.lock().unwrap();
         let (quoter, scratch) = &mut *guard;
         let v4_leg = V4Leg::canonical(leg.pool_key.clone(), leg.zero_for_one);
         quoter
             .quote(scratch, &v4_leg, leg.amount_in)
             .ok()
-            .map(|quote| quote.amount_out)
+            .map(|quote| HookedLegQuote {
+                amount_out: quote.amount_out,
+                gas: quote.gas_used,
+            })
     }
 }
 
@@ -413,9 +416,20 @@ async fn finalist_requote_stages_the_chain_figure() {
     );
     let plan = HookedLegPlan::requote(facts, anchor, Some(&tier));
     assert_eq!(
-        plan.stage(0),
-        Some(HookedLegStage::Exact(exact)),
+        plan.exact_out(0),
+        Some(exact),
         "the staged figure is the chain's own answer, to the wei"
+    );
+    // The same frame's gas rides the staged answer — the admission floor's
+    // replacement for the hookless V4 row. The second quote shares the warm
+    // scratch, so its gas is a little under the first frame's; the assertion is
+    // the quantity's SHAPE (a whole frame, intrinsic included), not a parity.
+    let measured_gas = plan
+        .measured_gas(0)
+        .expect("an exact re-quote carries the quote frame's gas");
+    assert!(
+        measured_gas > 21_000,
+        "a quote frame burns at least the transaction intrinsic; got {measured_gas}"
     );
     assert!(plan.lifts_caveat(), "an exact re-quote lifts the caveat");
     assert_ne!(
@@ -425,7 +439,8 @@ async fn finalist_requote_stages_the_chain_figure() {
     );
     println!();
     println!(
-        "staged      : {:?}\n              == the Quoter truth to the wei, != the white-box figure",
+        "staged      : {:?}\n              == the Quoter truth to the wei, != the white-box figure; \
+         measured frame gas {measured_gas} (the floor's replacement for the hookless V4 row)",
         plan.stage(0)
     );
 }

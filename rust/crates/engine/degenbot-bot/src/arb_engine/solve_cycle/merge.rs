@@ -86,6 +86,15 @@ pub(crate) fn clamp_result_with_state(
     plan: &HookedLegPlan,
     result: &mut SolvePathResult,
 ) -> u64 {
+    // ADR-090 H3 → the admission floor: a hooked leg the finalist re-quote
+    // priced exact at the anchor commits its MEASURED frame gas onto this
+    // result's floor profiles. The clamp IS the re-quote's commit point, so the
+    // commit rides it and reaches BOTH floor seams (the inline gate and the
+    // delivery window price this same result). A refused re-quote writes
+    // nothing and the hookless row stands. No hop projections, nothing to
+    // write: an unpriceable result stays unpriced.
+    crate::arb_engine::admission_floor::commit_measured_leg_gas(result, plan);
+
     if pools.len() != result.consumed_inputs.len() {
         return 0; // Index misalignment — never clamp a wrong hop
     }
