@@ -1,9 +1,10 @@
 //! Shared Tier-3 V2-family byte-exact swap oracle driver.
 //!
-//! Both the Uniswap V2 oracle (`tier3_v2_pair_swap_vs_revm.rs`) and the
-//! PancakeSwap V2 fork oracle (`tier3_pancake_v2_swap_vs_revm.rs`) drive the
-//! same probe against REAL deployed pair bytecode: the pair is deployed in an
-//! in-process revm `CacheDB`, seeded via `setup` (mint reserves + `sync` so
+//! Both the Uniswap V2 oracle (`tier3_v2_pair_swap_vs_reference_bytecode.rs`)
+//! and the PancakeSwap V2 fork oracle
+//! (`tier3_pancake_v2_swap_vs_reference_bytecode.rs`) drive the same probe
+//! against REAL deployed pair bytecode: the pair is deployed in an in-process
+//! EVM fixture, seeded via `setup` (mint reserves + `sync` so
 //! slot-8 reserves equal the live `balanceOf`, per ADR-020 D4), then
 //! `pair.swap` is driven with the engine's `amountOut` passed as a PARAMETER
 //! (the harness carries no swap math — see the harness `.sol`). The fork's
@@ -11,7 +12,7 @@
 //! canonical-source Uniswap V2 build) or deployed from PINNED on-chain
 //! creation bytecode passed as the harness's `(bytes)` constructor arg
 //! (`pair_init_artifact: Some(…)`, the Sourcify-verified PancakeSwap V2 pair —
-//! see `tier3_pancake_v2_swap_vs_revm.rs`).
+//! see `tier3_pancake_v2_swap_vs_reference_bytecode.rs`).
 //!
 //! Each case assembles **three independent proofs** of byte-exactness (in
 //! increasing strength) via [`assert_byte_exact`](self::assert_byte_exact):
@@ -41,16 +42,12 @@
 #![expect(clippy::expect_used, clippy::panic)]
 use std::path::PathBuf;
 
-use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
+use alloy::primitives::{keccak256, Address, Bytes, Log, B256, U256};
 use proptest::prelude::*;
-use revm::context::TxEnv;
-use revm::context_interface::result::{ExecutionResult, Output};
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
-use revm::primitives::TxKind;
-use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
 
 use degenbot_math::v2::IntHopState;
+
+use crate::evm2_fixture::{Fixture, Outcome};
 
 /// `uint112` max — the V2 pair's reserve width. The post-swap input-token
 /// balance must stay at or below this or the pair's `_update` reverts
@@ -193,7 +190,7 @@ fn swap_topic() -> B256 {
 /// topics, mirroring `degenbot_decoders::v2_swap_decoder`'s documented format
 /// (kept local so the oracle doesn't depend on the decoder crate's
 /// `alloy::rpc::types::Log` input type).
-fn decode_swap_event(logs: &[revm::primitives::Log], pair: Address) -> Option<DecodedSwap> {
+fn decode_swap_event(logs: &[Log], pair: Address) -> Option<DecodedSwap> {
     let topic = swap_topic();
     for log in logs {
         if log.address != pair || log.topics().first() != Some(&topic) {
@@ -224,7 +221,6 @@ fn decode_swap_event(logs: &[revm::primitives::Log], pair: Address) -> Option<De
 /// `recipient = harness`. Fully self-contained: each call rebuilds the evm +
 /// harness so reserves/balances are pristine (a `doSwap` mutates them, so
 /// reuse would compound and break the K-boundary crispness).
-#[expect(clippy::too_many_lines)] // one logical deploy → setup → swap → read pipeline
 pub fn probe(
     fork: &V2Fork,
     r0: u128,
@@ -233,11 +229,7 @@ pub fn probe(
     zfo: bool,
     amount_out: U256,
 ) -> ProbeOutcome {
-    let db = CacheDB::new(EmptyDB::default());
-    let mut evm = revm::context::Context::mainnet()
-        .with_db(db)
-        .build_mainnet();
-    evm.ctx.cfg.disable_nonce_check = true;
+    let mut fixture = Fixture::new();
 
     // 1. Deploy the harness (mock tokens + the real pair fork). If the fork
     // pins its pair (Sourcify on-chain bytecode), forward that creation code as
@@ -247,67 +239,27 @@ pub fn probe(
         let pair_code = load_pair_creation_code(pair_artifact);
         init_code.extend_from_slice(&abi_encode_bytes(&pair_code));
     }
-    let deploy_res = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Create)
-                .gas_limit(16_700_000)
-                .data(Bytes::from(init_code))
-                .build()
-                .expect("deploy tx"),
-        )
-        .expect("deploy transact");
-    let harness = match &deploy_res.result {
-        ExecutionResult::Success {
-            output: Output::Create(_, Some(addr)),
-            ..
-        } => *addr,
-        other => return ProbeOutcome::Halted(format!("harness deploy did not create: {other:?}")),
-    };
-    evm.commit(deploy_res.state);
+    let harness = fixture.deploy(init_code);
 
     // 2. setup(r0, r1): mint reserves + sync (slot-8 reserves == balanceOf).
     let mut setup_call = selector("setup(uint112,uint112)").to_vec();
     setup_call.extend_from_slice(&U256::from(r0).to_be_bytes::<32>());
     setup_call.extend_from_slice(&U256::from(r1).to_be_bytes::<32>());
-    let setup_res = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Call(harness))
-                .gas_limit(6_000_000)
-                .data(Bytes::from(setup_call))
-                .build()
-                .expect("setup tx"),
-        )
-        .expect("setup transact");
-    if !matches!(&setup_res.result, ExecutionResult::Success { .. }) {
-        return ProbeOutcome::Halted(format!("setup failed: {:?}", setup_res.result));
+    if let other @ (Outcome::Revert(_) | Outcome::Halt(_)) =
+        fixture.call(harness, 6_000_000, setup_call)
+    {
+        return ProbeOutcome::Halted(format!("setup failed: {other:?}"));
     }
-    evm.commit(setup_res.state);
 
     // 3. Resolve the pair address (public `pair()` storage getter).
-    let pair_res = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Call(harness))
-                .gas_limit(2_000_000)
-                .data(Bytes::from(selector("pair()").to_vec()))
-                .build()
-                .expect("pair() tx"),
-        )
-        .expect("pair() transact");
-    let pair = match &pair_res.result {
-        ExecutionResult::Success {
-            output: Output::Call(b),
-            ..
-        } => {
+    let pair = match fixture.call(harness, 2_000_000, selector("pair()").to_vec()) {
+        Outcome::Ok { output, .. } => {
             let mut buf = [0u8; 32];
-            buf.copy_from_slice(&b.as_ref()[0..32]);
+            buf.copy_from_slice(&output[0..32]);
             Address::from_slice(&buf[12..32])
         }
         other => return ProbeOutcome::Halted(format!("pair() failed: {other:?}")),
     };
-    evm.commit(pair_res.state);
 
     // 4. doSwap(amount_in, zfo, amount_out, recipient=harness).
     let recipient = harness;
@@ -318,49 +270,24 @@ pub fn probe(
     // address: right-aligned in 32 bytes (12 zero bytes prefix + 20-byte address).
     swap_call.extend_from_slice(&[0u8; 12]);
     swap_call.extend_from_slice(recipient.as_slice());
-    let swap_res = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Call(harness))
-                .gas_limit(6_000_000)
-                .data(Bytes::from(swap_call))
-                .build()
-                .expect("doSwap tx"),
-        )
-        .expect("doSwap transact");
 
-    // Consume the result by value so we can commit the swap state (which a
-    // `doSwap` mutates) BEFORE reading post-swap reserves — otherwise the
-    // getReserves() read would see the stale pre-swap state.
-    let outcome = match swap_res.result {
-        ExecutionResult::Success { logs, .. } => {
+    // The fixture commits each call's state writes, so a `doSwap` (which
+    // mutates reserves/balances) is visible to the post-swap `getReserves()`
+    // read below.
+    match fixture.call(harness, 6_000_000, swap_call) {
+        Outcome::Ok { logs, .. } => {
             let swap = decode_swap_event(&logs, pair).unwrap_or_else(|| {
                 panic!("pair {pair} did not emit a decodable Swap event on a successful swap")
             });
             assert_eq!(swap.to, harness, "Swap recipient must be the harness");
-            evm.commit(swap_res.state);
             // Post-swap reserves (reserve0, reserve1) from getReserves().
-            let gr_res = evm
-                .transact(
-                    TxEnv::builder()
-                        .kind(TxKind::Call(pair))
-                        .gas_limit(2_000_000)
-                        .data(Bytes::from(selector("getReserves()").to_vec()))
-                        .build()
-                        .expect("getReserves tx"),
-                )
-                .expect("getReserves transact");
-            let out = match gr_res.result {
-                ExecutionResult::Success {
-                    output: Output::Call(b),
-                    ..
-                } => b,
+            let out = match fixture.call(pair, 2_000_000, selector("getReserves()").to_vec()) {
+                Outcome::Ok { output, .. } => output,
                 other => return ProbeOutcome::Halted(format!("getReserves() failed: {other:?}")),
             };
-            evm.commit(gr_res.state);
             let word = |i: usize| -> U256 {
                 let mut buf = [0u8; 32];
-                buf.copy_from_slice(&out.as_ref()[i * 32..(i + 1) * 32]);
+                buf.copy_from_slice(&out[i * 32..(i + 1) * 32]);
                 U256::from_be_bytes(buf)
             };
             ProbeOutcome::Accepted {
@@ -368,16 +295,9 @@ pub fn probe(
                 post_reserves: (word(0).to::<u128>(), word(1).to::<u128>()),
             }
         }
-        ExecutionResult::Revert { output, .. } => {
-            evm.commit(swap_res.state);
-            ProbeOutcome::Reverted { reason: output }
-        }
-        ExecutionResult::Halt { reason, .. } => {
-            evm.commit(swap_res.state);
-            ProbeOutcome::Halted(format!("swap halted: {reason:?}"))
-        }
-    };
-    outcome
+        Outcome::Revert(reason) => ProbeOutcome::Reverted { reason },
+        Outcome::Halt(stop) => ProbeOutcome::Halted(format!("swap halted: {stop:?}")),
+    }
 }
 
 /// Decode a Solidity `Error(string)` revert payload to its message string.

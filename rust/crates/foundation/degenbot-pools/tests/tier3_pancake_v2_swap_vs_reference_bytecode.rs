@@ -1,5 +1,6 @@
 //! Tier-3 PancakeSwap V2 pair on-chain accuracy oracle (the fork-fee sub-slice
-//! of the V2 family — the case `tier3_v2_pair_swap_vs_revm.rs`'s header calls
+//! of the V2 family — the case
+//! `tier3_v2_pair_swap_vs_reference_bytecode.rs`'s header calls
 //! "a follow-on sub-slice … deferred as gilding"). Deploys the REAL
 //! Ethereum-mainnet `PancakePair` from its PINNED on-chain creation bytecode
 //! (the live mainnet pair `0x2E8135bE…`, Sourcify `exact_match`, committed
@@ -57,6 +58,7 @@
 
 #![expect(clippy::doc_markdown)] // repo-consistent tier3 doc lint
 
+pub mod evm2_fixture;
 mod tier3_v2_common;
 
 use proptest::prelude::*;

@@ -1,14 +1,15 @@
 //! Tier-3a byte-exact oracle for `compute_swap_step` (V3 + V4) against the
-//! canonical Uniswap core libraries run as real EVM bytecode in revm.
+//! canonical Uniswap core libraries run as real EVM bytecode.
 //!
 //! Closes the "Rust == Rust" blind spot of Tier 2: the existing
 //! `swap_math.rs` proptest checks V3/V4 INVARIANTS
 //! (amountIn+fee ≤ amountRemaining; sqrtPriceNext in range) — NOT byte-exact
 //! equality with the canonical library. This test runs the REAL v3-core
 //! `SwapMath.computeSwapStep` (solc 0.7.6) and v4-core `SwapMath.computeSwapStep`
-//! (solc 0.8.26) bytecode, deployed into an offline revm `CacheDB<EmptyDB>`,
-//! under a proptest fuzz — and asserts each Rust output field === the on-chain
-//! output byte-for-byte (U256 equality).
+//! (solc 0.8.26) bytecode, deployed into an offline in-memory EVM, under a
+//! proptest fuzz — and asserts each Rust output field === the on-chain output
+//! byte-for-byte (U256 equality). The oracle's independence is the reference
+//! BYTECODE; the interpreter executing it is ours (ADR-091).
 //!
 //! ## Why a single-step oracle does NOT catch the word-boundary bug
 //!
@@ -26,7 +27,7 @@
 //! orchestration). This test therefore mostly GREENs symmetrically; its value
 //! is the REGRESSION GUARD: any future perturbation to the Rust swap-step math
 //! (rounding direction, fee calc, sign convention) REDs here before it ships.
-//! The harness-from-reference-library loop (forge/solc → bytecode → revm →
+//! The harness-from-reference-library loop (forge/solc → bytecode → EVM →
 //! assert) is the real deliverable; the end-to-end payoff is 3b.
 //!
 //! ## Harness bytecode (committed)
@@ -40,8 +41,8 @@
 //! After a harness-source edit, regenerate + publish via
 //! `tier3-oracle/build-tier3-harnesses.sh`.
 
-// The revm fuzz harness below uses `unwrap`/`expect`/`panic` freely to
-// enforce byte-exact oracle equality.
+// The fuzz harness below uses `unwrap`/`expect`/`panic` freely to enforce
+// byte-exact oracle equality.
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -53,17 +54,14 @@ use std::path::PathBuf;
 
 use alloy::primitives::{aliases::I256, Address, Bytes, U256};
 use proptest::prelude::*;
-use revm::bytecode::Bytecode;
-use revm::context::TxEnv;
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
-use revm::primitives::TxKind;
-use revm::state::AccountInfo;
-use revm::{ExecuteEvm, MainBuilder, MainContext};
 
 use degenbot_math::concentrated_liquidity::swap_math::{
     compute_swap_step_v3, compute_swap_step_v4, SwapStepResult,
 };
+
+pub mod evm2_fixture;
+
+use evm2_fixture::{Fixture, Outcome};
 
 /// `computeSwapStep(uint160,uint160,uint128,int256,uint24)` selector
 /// (`cast sig` → `0x100d3f74`). Identical for the V3 + V4 harnesses (same
@@ -85,7 +83,7 @@ fn harness_artifact_path(contract_dir: &str, contract: &str) -> PathBuf {
 }
 
 /// Load the `deployedBytecode.object` hex from a harness artifact JSON.
-fn load_harness_bytecode(contract_dir: &str, contract: &str) -> Bytecode {
+fn load_harness_bytecode(contract_dir: &str, contract: &str) -> Vec<u8> {
     let path = harness_artifact_path(contract_dir, contract);
     let path_display = path.display();
     let json_str = std::fs::read_to_string(&path).unwrap_or_else(|err| {
@@ -103,9 +101,8 @@ fn load_harness_bytecode(contract_dir: &str, contract: &str) -> Bytecode {
         .and_then(|v| v.get("object"))
         .and_then(|v| v.as_str())
         .unwrap_or_else(|| panic!("harness JSON missing deployedBytecode.object: {path_display}"));
-    let bytes = alloy::primitives::hex::decode(hex_str.trim_start_matches("0x"))
-        .expect("deployedBytecode.object must be valid 0x-prefixed hex");
-    Bytecode::new_raw(Bytes::from(bytes))
+    alloy::primitives::hex::decode(hex_str.trim_start_matches("0x"))
+        .expect("deployedBytecode.object must be valid 0x-prefixed hex")
 }
 
 /// ABI-encode the `computeSwapStep` calldata: selector + 5 padded 32-byte args.
@@ -126,28 +123,17 @@ fn compute_swap_step_calldata(
     Bytes::from(data)
 }
 
-/// Call a deployed `computeSwapStep` harness via revm `transact`. Returns
-/// `Ok(SwapStepResult)` if the call succeeded, `Err(())` if it reverted.
+/// Call a deployed `computeSwapStep` harness. Returns `Ok(SwapStepResult)` when
+/// the call succeeded and `Err(())` when it reverted — the harness reverts
+/// wherever the Rust step errors, so a revert is the on-chain rejection signal.
 fn call_harness(
+    fixture: &mut Fixture,
     harness_addr: Address,
-    db: CacheDB<EmptyDB>,
     calldata: Bytes,
 ) -> Result<SwapStepResult, ()> {
-    let mut evm = revm::context::Context::mainnet()
-        .with_db(db)
-        .build_mainnet();
-    let tx = TxEnv::builder()
-        .kind(TxKind::Call(harness_addr))
-        .gas_limit(15_000_000)
-        .data(calldata)
-        .build()
-        .expect("well-formed tx");
-    let result = evm.transact(tx).expect("revm transact must not error");
-    let res = result.result;
-    if !res.is_success() {
+    let Outcome::Ok { output: out, .. } = fixture.call(harness_addr, 15_000_000, calldata) else {
         return Err(());
-    }
-    let out = res.into_output().expect("success must have output");
+    };
     let words: Vec<U256> = (0..4)
         .map(|i| {
             let mut buf = [0u8; 32];
@@ -164,18 +150,11 @@ fn call_harness(
     })
 }
 
-/// Deploy `code` at `addr` into a fresh `CacheDB<EmptyDB>`.
-fn db_with_contract(addr: Address, code: Bytecode) -> CacheDB<EmptyDB> {
-    let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(
-        addr,
-        AccountInfo {
-            balance: U256::from(1_000_000_000_000_000_000u64),
-            code: Some(code),
-            ..Default::default()
-        },
-    );
-    db
+/// Install the harness `code` at `addr` in a fresh fixture.
+fn fixture_with_contract(addr: Address, code: &[u8]) -> Fixture {
+    let mut fixture = Fixture::new();
+    fixture.insert_contract(addr, code, U256::from(1_000_000_000_000_000_000u64));
+    fixture
 }
 
 // ── proptest strategies (H4: widened to the numerical extremes — MIN/MAX
@@ -241,11 +220,11 @@ proptest! {
         fee_pips in arb_fee_pips(),
     ) {
         let addr = Address::repeat_byte(0x31);
-        let db = db_with_contract(addr, load_harness_bytecode("SwapMathV3Harness.sol", "SwapMathV3Harness"));
+        let mut fixture = fixture_with_contract(addr, &load_harness_bytecode("SwapMathV3Harness.sol", "SwapMathV3Harness"));
         let calldata = compute_swap_step_calldata(sp_current, sp_target, liquidity.cast_unsigned(), amount, fee_pips);
 
         let rust = compute_swap_step_v3(sp_current, sp_target, liquidity, amount, U256::from(fee_pips));
-        let onchain = call_harness(addr, db, calldata);
+        let onchain = call_harness(&mut fixture, addr, calldata);
         match (rust, onchain) {
             (Ok(r), Ok(o)) => {
                 prop_assert_eq!(r.sqrt_price_next, o.sqrt_price_next, "sqrtPriceNext diverges");
@@ -283,11 +262,11 @@ proptest! {
             return Ok(());
         }
         let addr = Address::repeat_byte(0x41);
-        let db = db_with_contract(addr, load_harness_bytecode("SwapMathV4Harness.sol", "SwapMathV4Harness"));
+        let mut fixture = fixture_with_contract(addr, &load_harness_bytecode("SwapMathV4Harness.sol", "SwapMathV4Harness"));
         let calldata = compute_swap_step_calldata(sp_current, sp_target, liquidity.cast_unsigned(), amount, fee_pips);
 
         let rust = compute_swap_step_v4(sp_current, sp_target, liquidity, amount, U256::from(fee_pips));
-        let onchain = call_harness(addr, db, calldata);
+        let onchain = call_harness(&mut fixture, addr, calldata);
         match (rust, onchain) {
             (Ok(r), Ok(o)) => {
                 prop_assert_eq!(r.sqrt_price_next, o.sqrt_price_next, "sqrtPriceNext diverges");
@@ -324,9 +303,9 @@ fn v3_pinned_input_anchors_byte_exact_oracle() {
     let fee_pips = 3000u32;
 
     let addr = Address::repeat_byte(0x31);
-    let db = db_with_contract(
+    let mut fixture = fixture_with_contract(
         addr,
-        load_harness_bytecode("SwapMathV3Harness.sol", "SwapMathV3Harness"),
+        &load_harness_bytecode("SwapMathV3Harness.sol", "SwapMathV3Harness"),
     );
     let calldata = compute_swap_step_calldata(sp_current, sp_target, liquidity, amount, fee_pips);
 
@@ -338,7 +317,7 @@ fn v3_pinned_input_anchors_byte_exact_oracle() {
         U256::from(fee_pips),
     )
     .expect("Rust V3 step must succeed for the pinned input");
-    let onchain = call_harness(addr, db, calldata)
+    let onchain = call_harness(&mut fixture, addr, calldata)
         .expect("on-chain V3 harness must succeed (not revert) for the pinned input");
 
     assert_eq!(
@@ -366,9 +345,9 @@ fn v4_compute_swap_step_pinned_fee1_tiny_liquidity_first_step() {
     let fee_pips = 1u32;
 
     let addr = Address::repeat_byte(0x42);
-    let db = db_with_contract(
+    let mut fixture = fixture_with_contract(
         addr,
-        load_harness_bytecode("SwapMathV4Harness.sol", "SwapMathV4Harness"),
+        &load_harness_bytecode("SwapMathV4Harness.sol", "SwapMathV4Harness"),
     );
     let calldata = compute_swap_step_calldata(
         sqrt_current,
@@ -386,7 +365,7 @@ fn v4_compute_swap_step_pinned_fee1_tiny_liquidity_first_step() {
         U256::from(fee_pips),
     )
     .expect("rust step");
-    let onchain = call_harness(addr, db, calldata).expect("onchain step");
+    let onchain = call_harness(&mut fixture, addr, calldata).expect("onchain step");
     assert_eq!(
         rust.sqrt_price_next, onchain.sqrt_price_next,
         "sqrtPriceNext"
@@ -407,9 +386,9 @@ fn v4_compute_swap_step_pinned_fee1_final_partial_step() {
     let fee_pips = 1u32;
 
     let addr = Address::repeat_byte(0x43);
-    let db = db_with_contract(
+    let mut fixture = fixture_with_contract(
         addr,
-        load_harness_bytecode("SwapMathV4Harness.sol", "SwapMathV4Harness"),
+        &load_harness_bytecode("SwapMathV4Harness.sol", "SwapMathV4Harness"),
     );
     let calldata = compute_swap_step_calldata(
         sqrt_current,
@@ -426,7 +405,7 @@ fn v4_compute_swap_step_pinned_fee1_final_partial_step() {
         U256::from(fee_pips),
     )
     .expect("rust step");
-    let onchain = call_harness(addr, db, calldata).expect("onchain step");
+    let onchain = call_harness(&mut fixture, addr, calldata).expect("onchain step");
     println!(
         "rust: sqrt_next={} in={} out={} fee={}",
         rust.sqrt_price_next, rust.amount_in, rust.amount_out, rust.fee_amount
@@ -467,8 +446,8 @@ fn assert_step_parity(
         amount,
         fee_pips,
     );
-    let db = db_with_contract(addr, load_harness_bytecode(which.0, which.1));
-    let onchain = call_harness(addr, db, calldata);
+    let mut fixture = fixture_with_contract(addr, &load_harness_bytecode(which.0, which.1));
+    let onchain = call_harness(&mut fixture, addr, calldata);
     match (rust, onchain) {
         (Ok(r), Ok(o)) => {
             assert_eq!(r.sqrt_price_next, o.sqrt_price_next, "sqrtPriceNext");

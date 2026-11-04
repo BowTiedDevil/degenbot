@@ -958,8 +958,8 @@ record-deployment-golden *args:
 #             9-field `Swap` event variant decodes only via the PancakeSwap
 #             decoder (not the Uniswap one).
 #   pancake2  PancakeSwap V2 pair swap (the fork-fee sub-slice of the V2
-#             family — the source of `tier3_v2_pair_swap_vs_revm.rs`'s
-#             deferral). solc 0.5.16 harness over the REAL Ethereum-mainnet
+#             family — the source of
+#             `tier3_v2_pair_swap_vs_reference_bytecode.rs`'s deferral). solc 0.5.16 harness over the REAL Ethereum-mainnet
 #             `PancakePair` (hardcoded 0.25% fee = the engine's
 #             `PANCAKESWAP_V2` preset, 3-tuple timestamped reserves);
 #             `IntHopState::swap` byte-exact at the fork fee via the
@@ -978,15 +978,15 @@ test-tier3 family='all':
     run_family() {
         local harness pkg test
         case "$1" in
-            step)     harness=build-tier3-harnesses.sh;           pkg=degenbot-math; test=tier3_compute_swap_step_vs_revm ;;
+            step)     harness=build-tier3-harnesses.sh;           pkg=degenbot-math; test=tier3_compute_swap_step_vs_reference_bytecode ;;
             swap)     harness=build-tier3-v3-swap-harness.sh;     pkg=degenbot-simulation; test=tier3_v3_pool_swap_vs_revm ;;
-            v2)       harness=build-tier3-v2-swap-harness.sh;     pkg=degenbot-pools; test=tier3_v2_pair_swap_vs_revm ;;
+            v2)       harness=build-tier3-v2-swap-harness.sh;     pkg=degenbot-pools; test=tier3_v2_pair_swap_vs_reference_bytecode ;;
             v4)       harness=build-tier3-v4-swap-harness.sh;     pkg=degenbot-simulation; test=tier3_v4_pool_swap_vs_revm ;;
             path5000) harness=build-tier3-v4-swap-harness.sh;     pkg=degenbot; test=tier3_path5000_v4_clamp ;;
-            curve)    harness=build-tier3-curve-swap-harness.sh;  pkg=degenbot-pools; test=tier3_curve_swap_vs_revm ;;
-            balancer) harness=build-tier3-balancer-swap-harness.sh; pkg=degenbot-pools; test=tier3_balancer_swap_vs_revm ;;
+            curve)    harness=build-tier3-curve-swap-harness.sh;  pkg=degenbot-pools; test=tier3_curve_swap_vs_reference_bytecode ;;
+            balancer) harness=build-tier3-balancer-swap-harness.sh; pkg=degenbot-pools; test=tier3_balancer_swap_vs_reference_bytecode ;;
             pancake)  harness=build-tier3-pancake-v3-swap-harness.sh; pkg=degenbot-simulation; test=tier3_pancake_v3_swap_vs_revm ;;
-            pancake2) harness=build-tier3-pancake-v2-swap-harness.sh; pkg=degenbot-pools; test=tier3_pancake_v2_swap_vs_revm ;;
+            pancake2) harness=build-tier3-pancake-v2-swap-harness.sh; pkg=degenbot-pools; test=tier3_pancake_v2_swap_vs_reference_bytecode ;;}
             *) echo "unknown tier-3 family '$1' (families: step swap v2 v4 path5000 curve balancer pancake pancake2 | all)" >&2; exit 2 ;;
         esac
         tier3-oracle/"$harness"

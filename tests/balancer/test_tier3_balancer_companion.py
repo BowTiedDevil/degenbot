@@ -3,14 +3,14 @@
 The rust engine (degenbot-pools simulate_balancer_weighted/stable_swap) is
 pinned byte-for-byte to canonical Solidity (balancer-v2-monorepo cores
 vendored @ f8b6f44) by rust/crates/foundation/degenbot-pools/tests/
-tier3_balancer_swap_vs_revm.rs. This gate pins the PYTHON companion methods
+tier3_balancer_swap_vs_reference_bytecode.rs. This gate pins the PYTHON companion methods
 to that same engine across a decimals/weights/fee/pow-version/amount grid,
 which transitively pins them to canonical Solidity.
 
 (Executing the solidity harness directly from python was attempted: anvil
 1.7.1 raises EVM error StackOverflow on the committed solc-0.7 runtime
-bytecode even on legacy hardfork specs, while revm inside the rust test runs
-it fine - see the epic task notes.)
+bytecode even on legacy hardfork specs, while the in-process EVM the rust
+test drives runs it fine - see the epic task notes.)
 
 Acceptance gate for the thin-shell migration: every commit
 that touches the Balancer companions keeps this green.

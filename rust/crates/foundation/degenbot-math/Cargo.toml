@@ -21,9 +21,19 @@ degenbot-core.workspace = true
 proptest = "^1.12"
 serde_json = "^1.0"
 criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }
-# Tier-3a byte-exact oracle (cl module): revm-transacted SwapMath harness;
-# dev-only, so the no-pyo3-in-cores check is unaffected.
-revm = { version = "^43.0", default-features = true }
+# Tier-3a byte-exact oracle (cl module): the SwapMath harness executes on
+# evm2's in-memory DB (ADR-091). Dev-only, so the no-pyo3-in-cores check is
+# unaffected.
+evm2 = { git = "https://github.com/alloy-rs/evm2", branch = "main", version = "0.1.0", default-features = false, features = [
+    "asm-keccak",
+    "blst",
+    "c-kzg",
+    "secp256k1",
+    "serde",
+] }
+# The oracle builds its fixture transactions as EIP-1559 envelopes, so the
+# test build needs alloy's consensus types.
+alloy = { version = "^2.5", features = ["consensus"] }
 
 [[bench]]
 name = "swap"

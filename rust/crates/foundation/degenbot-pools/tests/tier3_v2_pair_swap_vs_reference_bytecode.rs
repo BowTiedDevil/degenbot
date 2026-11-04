@@ -28,6 +28,7 @@
 
 #![expect(clippy::doc_markdown)] // repo-consistent tier3 doc lint
 
+pub mod evm2_fixture;
 mod tier3_v2_common;
 
 use proptest::prelude::*;

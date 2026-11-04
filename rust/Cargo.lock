@@ -2615,9 +2615,9 @@ dependencies = [
  "alloy",
  "criterion",
  "degenbot-core",
+ "evm2",
  "hashbrown 0.17.1",
  "proptest",
- "revm",
  "serde_json",
 ]
 
@@ -2665,6 +2665,7 @@ dependencies = [
  "degenbot-decoders",
  "degenbot-math",
  "degenbot-uniswap",
+ "evm2",
  "hashbrown 0.17.1",
  "hex",
  "hotpath",
@@ -2672,7 +2673,6 @@ dependencies = [
  "parking_lot 0.13.0",
  "proptest",
  "rayon",
- "revm",
  "serde_json",
  "tempfile",
  "thiserror",

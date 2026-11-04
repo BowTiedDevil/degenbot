@@ -2,7 +2,7 @@
 //! Deploys the `CurveSwapOracleHarness` (solc-0.8.26 compiled — a faithful
 //! Solidity port of the STANDARD stableswap `get_dy`; Curve's canonical source
 //! is Vyper, absent here, so the documented algorithm is the on-chain
-//! reference — see the .sol header) into an offline revm `CacheDB`, seeds it
+//! reference — see the .sol header) into an offline in-memory EVM, seeds it
 //! from a `CurvePoolState` (whole-slot-set: balances, rate multipliers, raw A,
 //! `A_PRECISION`, fee), and drives the engine's `simulate_swap`
 //! (`simulate_curve_stableswap_swap` standard path) against the on-chain
@@ -23,19 +23,17 @@
 #![expect(clippy::expect_used, clippy::panic)]
 use std::path::PathBuf;
 
-use alloy::primitives::{keccak256, Address, Bytes, U256};
+use alloy::primitives::{keccak256, Address, U256};
 use proptest::prelude::*;
-use revm::context::TxEnv;
-use revm::context_interface::result::{ExecutionResult, Output};
-use revm::database::CacheDB;
-use revm::database_interface::EmptyDB;
-use revm::primitives::TxKind;
-use revm::{ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext};
 
 use degenbot_decoders::revert::RevertClass;
 use degenbot_pools::sim::registry::PoolEntry;
 use degenbot_pools::sim::simulate_swap::simulate_swap;
 use degenbot_pools::state::curve_state::{CurvePoolState, RegisterCurvePoolParams};
+
+pub mod evm2_fixture;
+
+use evm2_fixture::{Fixture, Outcome};
 
 /// Curve native precision scale (`1e18`) — mirrors the engine constant.
 const CURVE_PRECISION: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
@@ -188,69 +186,26 @@ fn get_dy_call(coin_in: u64, coin_out: u64, amount_in: U256) -> Vec<u8> {
 /// would also reject). Fully self-contained: each call rebuilds evm + harness
 /// so every case runs from pristine storage.
 fn onchain_get_dy(case: &CurveCase, coin_in: u64, coin_out: u64, amount_in: U256) -> GetDyOutcome {
-    let db = CacheDB::new(EmptyDB::default());
-    let mut evm = revm::context::Context::mainnet()
-        .with_db(db)
-        .build_mainnet();
-    evm.ctx.cfg.disable_nonce_check = true;
+    let mut fixture = Fixture::new();
 
     let init_code = load_creation_bytecode("CurveSwapOracleHarness.sol", "CurveSwapOracleHarness");
-    let deploy_res = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Create)
-                .gas_limit(16_700_000)
-                .data(Bytes::from(init_code))
-                .build()
-                .expect("deploy tx"),
-        )
-        .expect("deploy transact");
-    let harness = match &deploy_res.result {
-        ExecutionResult::Success {
-            output: Output::Create(_, Some(addr)),
-            ..
-        } => *addr,
-        other => panic!("harness deploy did not create a contract: {other:?}"),
-    };
-    evm.commit(deploy_res.state);
+    let harness = fixture.deploy(init_code);
 
-    let setup_res = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Call(harness))
-                .gas_limit(6_000_000)
-                .data(Bytes::from(setup_call(case)))
-                .build()
-                .expect("setup tx"),
-        )
-        .expect("setup transact");
-    assert!(
-        matches!(&setup_res.result, ExecutionResult::Success { .. }),
-        "setup failed: {:?}",
-        setup_res.result
-    );
-    evm.commit(setup_res.state);
+    match fixture.call(harness, 6_000_000, setup_call(case)) {
+        Outcome::Ok { .. } => {}
+        other => panic!("setup failed: {other:?}"),
+    }
 
-    let get_dy_res = evm
-        .transact(
-            TxEnv::builder()
-                .kind(TxKind::Call(harness))
-                .gas_limit(6_000_000)
-                .data(Bytes::from(get_dy_call(coin_in, coin_out, amount_in)))
-                .build()
-                .expect("getDy tx"),
-        )
-        .expect("getDy transact");
-
-    match &get_dy_res.result {
-        ExecutionResult::Success {
-            output: Output::Call(bytes),
-            ..
-        } => {
+    match fixture.call(
+        harness,
+        6_000_000,
+        get_dy_call(coin_in, coin_out, amount_in),
+    ) {
+        Outcome::Ok { output, .. } => {
             // The return value is a single uint256 (32 bytes).
-            GetDyOutcome::Ok(U256::from_be_slice(&bytes[..32]))
+            GetDyOutcome::Ok(U256::from_be_slice(&output[..32]))
         }
-        ExecutionResult::Revert { output, .. } => {
+        Outcome::Revert(output) => {
             // H1: decode the revert — only the GENUINE stableswap rejection
             // (a Solidity-0.8 `Panic(0x11)` arithmetic overflow/underflow, or
             // the Newton `not converged` failure) matches the engine's
@@ -272,7 +227,7 @@ fn onchain_get_dy(case: &CurveCase, coin_in: u64, coin_out: u64, amount_in: U256
                 other => GetDyOutcome::Spurious(other.label()),
             }
         }
-        other => panic!("getDy unexpected result: {other:?}"),
+        other @ Outcome::Halt(_) => panic!("getDy unexpected result: {other:?}"),
     }
 }
 

@@ -4,7 +4,7 @@
 # manager cannot resolve solc <0.8 in this environment (see the Tier-3a build
 # note in `build-tier3-harnesses.sh`). The standard-json output is reshaped
 # into foundry's `out/<File>.sol/<Contract>.json` shape so the Rust loader
-# (`tier3_compute_swap_step_vs_revm.rs` loader pattern) reads it uniformly.
+# (`tier3_compute_swap_step_vs_reference_bytecode.rs` loader pattern) reads it uniformly.
 #
 # Artifact: out/V3SwapOracleHarness.sol/V3SwapOracleHarness.json
 set -euo pipefail

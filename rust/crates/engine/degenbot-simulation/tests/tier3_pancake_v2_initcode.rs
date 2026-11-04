@@ -2,7 +2,7 @@
 //! (Tier-3 oracle, `tier3-oracle/artifacts/PancakeV2Pair/PancakeV2Pair.json`).
 //!
 //! The oracle deploys the pair from this committed on-chain creation bytecode
-//! (raw `create`, see `tier3_pancake_v2_swap_vs_revm.rs`). Two invariants must
+//! (raw `create`, see `tier3_pancake_v2_swap_vs_reference_bytecode.rs`). Two invariants must
 //! hold for that pin to be the genuine deployed PancakeSwap V2 pair:
 //!
 //! 1. **Init-code-pair hash.** `INIT_CODE_PAIR_HASH` (degenbot's
