@@ -107,6 +107,17 @@ impl InlineSimHook {
     }
 }
 
+/// Whether a failed sim could mean corrupt pool state, arming the path's
+/// next sim with the divergence probe. A revert (non-empty revert data) or
+/// an excepting sim task is state-suspect. An economic failure — the path
+/// executed and merely paid less than hoped — proves the state was right,
+/// and an orchestration failure (`rpc-failed`, `encode-failed`, the
+/// balance-decode branch) is local; neither carries revert data, so neither
+/// arms. With no failure record at all, the task outcome alone decides.
+fn should_reverify(task_excepted: bool, revert_data: Option<&[u8]>) -> bool {
+    task_excepted || revert_data.is_some_and(|data| !data.is_empty())
+}
+
 fn outputs_vec(req: &InlineSimRequest) -> Vec<u128> {
     req.hop_outputs
         .iter()
@@ -698,15 +709,23 @@ impl InlineSimulator for InlineSimHook {
 
         // 5. Convert: Ok(Some) → success payload; Ok(None)/Err → failure
         //    payload through the buckets (one record — single path).
+        let task_excepted = result.is_err();
         if let Ok(Some(sim)) = result {
             Some(Self::payload_from_sim(path_id, &sim))
         } else {
             {
-                // VERIFY2 T2: this sim failed - arm the path so its NEXT sim
-                // re-verifies with the divergence probe (the failure itself
-                // already carries its failure data in the payload). The set
-                // is flood-guarded (cleared beyond 1024 arms).
-                {
+                let mut failures = buckets.into_failures();
+                // Arm the path's next sim with the divergence probe only
+                // when the failure could mean corrupt pool state. An
+                // economic failure (the path executed and merely paid less
+                // than hoped) proves the state was right; an orchestration
+                // failure is local. Neither arms. The set is flood-guarded
+                // (cleared beyond 1024 arms).
+                let state_suspect = should_reverify(
+                    task_excepted,
+                    failures.last().map(|f| f.revert_data.as_ref()),
+                );
+                if state_suspect {
                     let mut arm = self
                         .reverify_armed
                         .lock()
@@ -716,7 +735,6 @@ impl InlineSimulator for InlineSimHook {
                     }
                     arm.insert(path_id);
                 }
-                let mut failures = buckets.into_failures();
                 let f = failures.pop()?;
                 Some(SimulatedPathResult {
                     path_id,
@@ -890,6 +908,22 @@ mod tests {
     // tests (the loader owns the env read). This pins the production
     // default only: with no override, the count follows the leftover CPU
     // budget, NOT raw available_parallelism.
+    #[test]
+    fn should_reverify_arms_only_on_state_suspect_failures() {
+        use alloy::primitives::Bytes;
+        // economic failure: executed, merely unprofitable — state was right
+        assert!(!super::should_reverify(false, Some(&Bytes::new())));
+        // no failure record and a clean task outcome: nothing to suspect
+        assert!(!super::should_reverify(false, None));
+        // a revert is state-suspect
+        assert!(super::should_reverify(
+            false,
+            Some(&Bytes::from_static(&[0x08, 0xc3, 0x79, 0xa0]))
+        ));
+        // an excepting sim task is state-suspect even with no revert data
+        assert!(super::should_reverify(true, None));
+    }
+
     #[test]
     fn inline_sim_worker_count_defaults_to_leftover_budget() {
         let default = degenbot_core::cpu_budget::leftover_worker_budget();
