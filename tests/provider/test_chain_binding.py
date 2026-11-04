@@ -68,9 +68,11 @@ class _FakeHttpNode:
         return f"http://{host}:{port}"
 
     def close(self) -> None:
+        # ``shutdown()`` returns only once ``serve_forever``'s loop has exited,
+        # so the join reaps a thread that is already returning.
         self._server.shutdown()
         self._server.server_close()
-        self._thread.join(timeout=5)
+        self._thread.join()
 
 
 class _FakeIpcNode:

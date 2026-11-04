@@ -37,6 +37,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tests.aave.writer_parity.harness import (
+    mock_rpc_server,
+    seeded_db,
+)
+from tests.helpers.aave_logs import (
     FIXTURE_BLOCK,
     make_erc20_transfer_log,
     make_liquidation_call_log,
@@ -44,8 +48,6 @@ from tests.aave.writer_parity.harness import (
     make_scaled_token_burn_log,
     make_scaled_token_mint_log,
     make_supply_log,
-    mock_rpc_server,
-    seeded_db,
 )
 from tests.helpers.database import sqlite_connection
 from tests.helpers.seam import (
@@ -95,7 +97,7 @@ def _eth_call_responses() -> dict[str, str]:
     # add the verify fn's scaledBalanceOf + getPreviousIndex selectors. The
     # verify fn's responses return the on-chain truth = _ON_CHAIN_* matches
     # the writer's post-chunk DB state on the GREEN arm.
-    from tests.aave.writer_parity.harness import (
+    from tests.helpers.aave_logs import (
         ATOKEN_REVISION_SELECTOR,
         DEBT_TOKEN_REVISION_SELECTOR,
         GET_SOURCE_OF_ASSET_SELECTOR,
@@ -396,7 +398,7 @@ def _liq_eth_call_responses() -> dict[str, str]:
     """Scaled-balance + last-index MockRpc responses for the SENDER position
     AFTER the LiquidationCall inlcurs the burn-side single-debit (the on-chain
     truth the post-fix writer must match)."""
-    from tests.aave.writer_parity.harness import (
+    from tests.helpers.aave_logs import (
         ATOKEN_REVISION_SELECTOR,
         DEBT_TOKEN_REVISION_SELECTOR,
         GET_SOURCE_OF_ASSET_SELECTOR,

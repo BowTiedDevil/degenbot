@@ -27,6 +27,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
+import pytest
+
 from tests.conftest import SUITE_ENV
 from tests.helpers.seam import reinstall_config_holder_for_tests
 
@@ -57,3 +59,15 @@ def rpc_env() -> Iterator[None]:
         yield
     finally:
         reinstall_config_holder_for_tests(SUITE_ENV)
+
+
+@pytest.fixture(autouse=True)
+def rpc_env_autouse() -> Iterator[None]:
+    """Install the loopback endpoints for every test in the importing module.
+
+    Autouse scope follows where a fixture is VISIBLE, so a module that imports
+    this name gets the per-test install/restore without restating the
+    context-manager wrapper; a module that does not import it is untouched.
+    """
+    with rpc_env():
+        yield

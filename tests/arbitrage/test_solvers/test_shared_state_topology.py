@@ -21,6 +21,7 @@ import threading
 import pytest
 
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
+from tests.deadlock_guard import Worker
 from tests.helpers.seam import Bot
 from tests.helpers.synthetic_logs import (
     v2_sync,
@@ -719,14 +720,11 @@ class TestSharedStateTopologyConcurrency:
             except BaseException as exc:  # ruff: ignore[blind-except]
                 errors.append(exc)
 
-        thread = threading.Thread(target=writer)
+        thread = Worker(writer, what="the dispatched-write thread")
         thread.start()
-        # Deadlock guard only — the postcondition assertions below are the
-        # real check.
-        thread.join(timeout=30.0)
-        assert not thread.is_alive(), (
-            "writer thread deadlocked (engine-then-core lock ordering broken)"
-        )
+        # The writer's own return is the completion edge: a broken
+        # engine-then-core lock ordering never reaches it and fails by name.
+        thread.wait_finished()
         assert not errors, errors
         # The final write is visible (live read after the pump-side writes).
         assert _update_block(handle) == self._ITERATIONS
@@ -793,19 +791,17 @@ class TestSharedStateTopologyConcurrency:
                     errors.append(f"torn read: tick={tick} != base+block={V3_TICK + block}")
                     return
 
-        writer_thread = threading.Thread(target=writer)
-        readers = [threading.Thread(target=reader) for _ in range(self._READERS)]
+        writer_thread = Worker(writer, what="the snapshot writer thread")
+        readers = [Worker(reader, what="a snapshot reader thread") for _ in range(self._READERS)]
         writer_thread.start()
         for t in readers:
             t.start()
-        # Deadlock guard only — the error assertions below are the real check.
-        writer_thread.join(timeout=30.0)
-        assert not writer_thread.is_alive(), "writer deadlocked"
+        # The writer's return ends the write phase; `stop` then ends the
+        # readers. Both are the workers' own edges, not an elapsed time.
+        writer_thread.wait_finished()
         stop.set()
         for t in readers:
-            # Deadlock guard only.
-            t.join(timeout=10.0)
-            assert not t.is_alive(), "reader deadlocked"
+            t.wait_finished()
         assert not errors, errors
 
     def test_concurrent_engine_solve_and_handle_reads_do_not_deadlock(self) -> None:
@@ -846,19 +842,19 @@ class TestSharedStateTopologyConcurrency:
             except BaseException as exc:  # ruff: ignore[blind-except]
                 errors.append(exc)
 
-        solver_thread = threading.Thread(target=solver)
-        reader_threads = [threading.Thread(target=reader) for _ in range(self._READERS)]
+        solver_thread = Worker(solver, what="the solve loop thread")
+        reader_threads = [
+            Worker(reader, what="a handle reader thread") for _ in range(self._READERS)
+        ]
         solver_thread.start()
         for t in reader_threads:
             t.start()
-        # Deadlock guard only — the error assertions below are the real check.
-        solver_thread.join(timeout=60.0)
-        assert not solver_thread.is_alive(), "solver deadlocked"
+        # The solver's return ends the solve phase; `done` then ends the
+        # readers. Both are the workers' own edges, not an elapsed time.
+        solver_thread.wait_finished()
         done.set()
         for t in reader_threads:
-            # Deadlock guard only.
-            t.join(timeout=10.0)
-            assert not t.is_alive(), "reader deadlocked"
+            t.wait_finished()
         assert not errors, errors
 
 

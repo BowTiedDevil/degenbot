@@ -17,13 +17,15 @@ from pathlib import Path
 import pytest
 
 from tests.aave.writer_parity.harness import (
+    mock_rpc_server,
+    seed_asset_and_user,
+    seeded_db,
+)
+from tests.helpers.aave_logs import (
     BOOTSTRAP_BLOCK,
     FIXTURE_BLOCK,
     USER_ADDRESS,
     make_user_e_mode_set_log,
-    mock_rpc_server,
-    seed_asset_and_user,
-    seeded_db,
 )
 from tests.helpers.seam import CancelHandle, run_aave_update
 

@@ -52,6 +52,7 @@ from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.seam import Bot
+from tests.helpers.swap_amount_multipliers import ONCHAIN_PARITY_TOKEN_AMOUNT_MULTIPLIERS
 
 # Pinned well inside mainnet.base.org's keyless archive window (tip ~47.8M).
 AERODROME_V2_PARITY_BLOCK = 46_875_151
@@ -70,21 +71,6 @@ _STABLE_CASSETTE = _CASSETTE_DIR / "aerodrome_v2_dola_usdbc_stable_block_4687515
 _PYBOT = Bot()
 
 # Same multiplier coverage as the live ``test_calculation_*`` loops.
-_TOKEN_AMOUNT_MULTIPLIERS = (
-    0.000000001,
-    0.00000001,
-    0.0000001,
-    0.000001,
-    0.00001,
-    0.0001,
-    0.001,
-    0.01,
-    0.1,
-    0.125,
-    0.25,
-    0.5,
-    0.75,
-)
 
 
 def _load_cassette(path: pathlib.Path) -> dict[str, Any]:
@@ -155,7 +141,7 @@ def _parity_cases(lp: AerodromeV2Pool) -> list[tuple[str, Any, int]]:
     ):
         if reserve_out < 2:  # mirror the live test's guard
             continue
-        for mult in _TOKEN_AMOUNT_MULTIPLIERS:
+        for mult in ONCHAIN_PARITY_TOKEN_AMOUNT_MULTIPLIERS:
             amount_in = int(mult * reserve_in)
             if amount_in == 0:
                 continue

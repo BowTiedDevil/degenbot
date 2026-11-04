@@ -48,8 +48,8 @@ _LIQUIDITY = 1_000_000
 def _make_v3(py_bot: Bot, *, tick_data: dict[int, tuple[int, int, int]] | None):
     return make_v3_pool(
         USDC_WETH_V3_POOL,
-        token0=make_weth(),
-        token1=make_usdc(),
+        token0=make_weth(py_bot),
+        token1=make_usdc(py_bot),
         factory=UNISWAP_V3_FACTORY,
         fee=V3_FEE,
         tick_spacing=V3_TICK_SPACING,

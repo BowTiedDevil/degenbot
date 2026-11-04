@@ -4,8 +4,9 @@ Under ADR-005, ``Erc20Token`` is a Python companion over a ``Erc20Token``
 handle (token metadata is owned by the Rust ``Bot``). These helpers register
 the metadata and wrap the handle, mirroring what ``Erc20Builder`` does in
 production. They are idempotent (``Bot::register_token`` asserts on a
-duplicate address) so they're safe to call with a shared module-level
-``Bot`` across test functions.
+duplicate address), so a re-registration inside one test is a no-op — but the
+engine is still the caller's to own: pass the per-test one (a fixture), never a
+module-level shared handle, whose registrations would leak across tests.
 """
 
 from __future__ import annotations

@@ -24,6 +24,7 @@ import pytest
 from degenbot.exceptions import DegenbotValueError
 from degenbot.registry.pool import ManagedPoolRegistry, PoolRegistry
 from degenbot.registry.token import TokenRegistry
+from tests.deadlock_guard import Worker
 from tests.helpers.seam import Bot
 
 CHAIN = 1
@@ -110,11 +111,13 @@ def test_managed_pool_registry_get_or_add_concurrent_no_raise() -> None:
         except BaseException as exc:  # ruff:ignore[blind-except] - test harness collect-all
             errors.append(exc)
 
-    threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+    # Each worker's own return is the completion edge (a one-shot body past the
+    # barrier); the guard only names a worker that never gets there.
+    threads = [Worker(worker, what="a registration worker") for _ in range(n_threads)]
     for t in threads:
         t.start()
     for t in threads:
-        t.join(timeout=10)
+        t.wait_finished()
 
     assert not errors, f"concurrent get_or_add raised: {errors}"
     assert reg.get(CHAIN, MANAGER, POOL_ID) is not None

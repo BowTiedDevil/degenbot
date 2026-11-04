@@ -46,34 +46,16 @@ import pytest
 from degenbot.bot import Bot
 from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.provider import OfflineProvider
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.types.pool_type import PoolProbe
 from tests.fakes.session import session_registry_methods
 from tests.fakes.tokens import FakeToken
+from tests.helpers.bot_factory import ProviderKind, bot_session, fake_provider
 from tests.helpers.seam import Bot as _Engine
 from tests.helpers.seam import PoolConstructionRequest
 
 # Not in the deployments registry, so the type resolver falls back to probing.
 _UNREGISTERED_FACTORY = "0x" + "f" * 40
-
-
-def _test_session(tmp_path: pathlib.Path, chain_id: int = 1) -> dict[str, object]:
-    """The explicit keyword overrides a session under test runs with."""
-    return {"chain_id": chain_id, "database": str(tmp_path / "test.db")}
-
-
-def _fake_provider(chain_id: int = 1) -> OfflineProvider:
-    """A real offline provider (recorded JSON, no RPC) with the given chain_id.
-
-    `Bot.__init__` reads `provider.get_chain_id()` (the recorded chain_id) to enforce
-    session/chain alignment; no RPC is issued at construction, so an offline
-    provider over an in-memory Rust transport suffices — no mock double.
-    """
-    return OfflineProvider(
-        chain_id=chain_id,
-        blocks={"1": {"timestamp": 1, "calls": {}, "code": {}}},
-    )
 
 
 @dataclass
@@ -135,29 +117,29 @@ class TestBotInit:
     """Bot constructor tests (single-chain)."""
 
     def test_bot_exposes_database_path(self, tmp_path: pathlib.Path) -> None:
-        session = _test_session(tmp_path)
-        bot = Bot(**session, provider=_fake_provider(1))
+        session = bot_session(tmp_path)
+        bot = Bot(**session, provider=fake_provider(ProviderKind.OFFLINE, 1))
 
         assert bot.database_path == tmp_path / "test.db"
 
     def test_bot_creates_pool_registry(self, tmp_path: pathlib.Path) -> None:
-        session = _test_session(tmp_path)
-        bot = Bot(**session, provider=_fake_provider(1))
+        session = bot_session(tmp_path)
+        bot = Bot(**session, provider=fake_provider(ProviderKind.OFFLINE, 1))
         assert isinstance(bot.pools, PoolRegistry)
 
     def test_bot_creates_token_registry(self, tmp_path: pathlib.Path) -> None:
-        session = _test_session(tmp_path)
-        bot = Bot(**session, provider=_fake_provider(1))
+        session = bot_session(tmp_path)
+        bot = Bot(**session, provider=fake_provider(ProviderKind.OFFLINE, 1))
         assert isinstance(bot.tokens, TokenRegistry)
 
     def test_bot_creates_managed_pool_registry(self, tmp_path: pathlib.Path) -> None:
-        session = _test_session(tmp_path)
-        bot = Bot(**session, provider=_fake_provider(1))
+        session = bot_session(tmp_path)
+        bot = Bot(**session, provider=fake_provider(ProviderKind.OFFLINE, 1))
         assert isinstance(bot.managed_pools, ManagedPoolRegistry)
 
     def test_bot_exposes_chain_id_and_provider(self, tmp_path: pathlib.Path) -> None:
-        session = _test_session(tmp_path, chain_id=1)
-        provider = _fake_provider(1)
+        session = bot_session(tmp_path, chain_id=1)
+        provider = fake_provider(ProviderKind.OFFLINE, 1)
         bot = Bot(**session, provider=provider)
         assert bot.chain_id == 1
         assert bot.provider is provider
@@ -167,13 +149,17 @@ class TestBotPyBotHandle:
     """Bot constructs and owns a PyO3 _Engine handle (ADR-005)."""
 
     def test_bot_constructs_py_bot(self, tmp_path: pathlib.Path) -> None:
-        session = _test_session(tmp_path)
-        bot = Bot(**session, provider=_fake_provider(1))
+        session = bot_session(tmp_path)
+        bot = Bot(**session, provider=fake_provider(ProviderKind.OFFLINE, 1))
         assert isinstance(bot._py_bot, _Engine)
 
     def test_each_bot_has_independent_py_bot(self, tmp_path: pathlib.Path) -> None:
-        bot1 = Bot(**_test_session(tmp_path / "bot1"), provider=_fake_provider(1))
-        bot2 = Bot(**_test_session(tmp_path / "bot2"), provider=_fake_provider(1))
+        bot1 = Bot(
+            **bot_session(tmp_path / "bot1"), provider=fake_provider(ProviderKind.OFFLINE, 1)
+        )
+        bot2 = Bot(
+            **bot_session(tmp_path / "bot2"), provider=fake_provider(ProviderKind.OFFLINE, 1)
+        )
         assert isinstance(bot1._py_bot, _Engine)
         assert isinstance(bot2._py_bot, _Engine)
         assert bot1._py_bot is not bot2._py_bot
@@ -183,16 +169,16 @@ class TestBotPyBotHandle:
         ``_Engine`` (ADR-006 D4: ``Bot::new(chain_id)``), with no
         ``chain_id = 0`` placeholder.
         """
-        session = _test_session(tmp_path, chain_id=1)
-        bot = Bot(**session, provider=_fake_provider(1))
+        session = bot_session(tmp_path, chain_id=1)
+        bot = Bot(**session, provider=fake_provider(ProviderKind.OFFLINE, 1))
         assert bot._py_bot.chain_id == 1
 
     def test_py_bot_chain_id_follows_the_override(self, tmp_path: pathlib.Path) -> None:
         """A non-default session chain propagates to the ``_Engine`` (the wiring
         is real, not a hard-coded constant).
         """
-        session = _test_session(tmp_path, chain_id=10)
-        bot = Bot(**session, provider=_fake_provider(10))
+        session = bot_session(tmp_path, chain_id=10)
+        bot = Bot(**session, provider=fake_provider(ProviderKind.OFFLINE, 10))
         assert bot._py_bot.chain_id == 10
 
 
@@ -200,8 +186,12 @@ class TestMultipleBots:
     """Multiple Bot instances must have independent state."""
 
     def test_independent_registries(self, tmp_path: pathlib.Path) -> None:
-        bot1 = Bot(**_test_session(tmp_path / "bot1"), provider=_fake_provider(1))
-        bot2 = Bot(**_test_session(tmp_path / "bot2"), provider=_fake_provider(1))
+        bot1 = Bot(
+            **bot_session(tmp_path / "bot1"), provider=fake_provider(ProviderKind.OFFLINE, 1)
+        )
+        bot2 = Bot(
+            **bot_session(tmp_path / "bot2"), provider=fake_provider(ProviderKind.OFFLINE, 1)
+        )
 
         assert bot1.pools is not bot2.pools
         assert bot1.tokens is not bot2.tokens
@@ -242,8 +232,8 @@ class TestBuildManagedPoolRequestShape:
             build_many=lambda *a, **k: [token, token],
         )
         return Bot(
-            **_test_session(tmp_path),
-            provider=_fake_provider(1),
+            **bot_session(tmp_path),
+            provider=fake_provider(ProviderKind.OFFLINE, 1),
             py_bot=self._capturing_engine(captured),
             io=_ScriptedIo(),
             erc20_builder=erc20_builder,
@@ -294,14 +284,14 @@ class TestBuildManagedPoolResolveErrorMapping:
     def test_resolve_missing_identity_raises_degenbot(self, tmp_path: pathlib.Path) -> None:
         """When the ONE construction verb raises ValueError (no DB row, no
         overrides), the V4 build path re-raises DegenbotValueError."""
-        session = _test_session(tmp_path)
+        session = bot_session(tmp_path)
         io = _ScriptedIo()
         py_bot = _ScriptedEngine(
             construct_pool=lambda request: (_ for _ in ()).throw(
                 ValueError("V4 identity incomplete: pool not in the database")
             ),
         )
-        bot = Bot(**session, provider=_fake_provider(1), py_bot=py_bot, io=io)
+        bot = Bot(**session, provider=fake_provider(ProviderKind.OFFLINE, 1), py_bot=py_bot, io=io)
 
         pm = "0x" + "aa" * 20
         pool_id_hex = "0x" + "11" * 32
@@ -365,8 +355,8 @@ class TestBuildPoolDbArmEligibility:
             probe_pool_type=lambda address: int(PoolProbe.V3),
         )
         return Bot(
-            **_test_session(tmp_path),
-            provider=_fake_provider(1),
+            **bot_session(tmp_path),
+            provider=fake_provider(ProviderKind.OFFLINE, 1),
             py_bot=self._capturing_engine(captured),
             io=io,
         )
@@ -413,8 +403,8 @@ class TestBuildManagedPoolDbArmEligibility:
 
         py_bot = _ScriptedEngine(construct_pool=construct_pool)
         return Bot(
-            **_test_session(tmp_path),
-            provider=_fake_provider(1),
+            **bot_session(tmp_path),
+            provider=fake_provider(ProviderKind.OFFLINE, 1),
             py_bot=py_bot,
             io=_ScriptedIo(),
             erc20_builder=erc20_builder,

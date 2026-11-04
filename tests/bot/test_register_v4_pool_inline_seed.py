@@ -19,10 +19,9 @@ fails at startup with ``liquidityGross mismatch``.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
 
 from degenbot.bot import Bot
-from degenbot.provider import AlloyProvider
+from tests.helpers.bot_factory import ProviderKind, bot_session, fake_provider
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.seam import Bot as _Engine
 from tests.helpers.v4_pool_factory import make_v4_pool
@@ -31,17 +30,6 @@ if TYPE_CHECKING:
     import pathlib
 
 V4_POOL_MANAGER = "0x000000000004444c5DC75cB358380D2e3dE08A90"
-
-
-def _test_session(tmp_path: pathlib.Path, chain_id: int = 1) -> dict[str, object]:
-    """The explicit keyword overrides a session under test runs with."""
-    return {"chain_id": chain_id, "database": str(tmp_path / "test.db")}
-
-
-def _fake_provider(chain_id: int = 1) -> AlloyProvider:
-    provider = MagicMock(spec=AlloyProvider)
-    provider.get_chain_id.return_value = chain_id
-    return provider
 
 
 def _make_tokens(py_bot: object) -> tuple[object, object]:
@@ -115,8 +103,8 @@ def test_release_python_state_keeps_rust_v4_pool_registered(tmp_path: pathlib.Pa
     release (the engine still solves against them).
     """
 
-    session = _test_session(tmp_path)
-    bot = Bot(**session, provider=_fake_provider(1))
+    session = bot_session(tmp_path)
+    bot = Bot(**session, provider=fake_provider(ProviderKind.ALLOY_MOCK, 1))
     py_bot = bot._py_bot
     weth, usdc = _make_tokens(py_bot)
 

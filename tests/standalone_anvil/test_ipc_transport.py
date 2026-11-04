@@ -37,6 +37,7 @@ import shutil
 import socket
 import threading
 from collections.abc import Iterator
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -46,6 +47,7 @@ from degenbot.arbitrage.engine_registry import ArbitrageEngine
 from degenbot.crypto import function_selector
 from degenbot.fork import AnvilFork, ForkLaunchConfig
 from degenbot.provider import AlloyProvider
+from tests.deadlock_guard import Worker
 from tests.helpers.seam import resolve_hypothetical_node_uri
 from tests.standalone_anvil import seed as seed_catalog
 from tests.standalone_anvil.emit import emit_tx
@@ -186,13 +188,15 @@ def _ping_logs_during_subscribe(fork: AnvilFork) -> Iterator[None]:
         finally:
             provider.close()
 
-    thread = threading.Thread(target=_emit_loop, daemon=True)
+    thread = Worker(_emit_loop, what="the ping emitter thread")
     thread.start()
     try:
         yield
     finally:
+        # `stop` is the emitter's own exit edge; the guard only bounds how long
+        # an in-flight `emit_tx` may keep it from reading the flag.
         stop.set()
-        thread.join(timeout=10.0)
+        thread.wait_finished()
 
 
 @pytest.fixture
@@ -291,10 +295,10 @@ class _IpcCallManyNode:
         self.chain_id = chain_id
         self.requests: list[dict] = []
         self._listener: socket.socket | None = None
-        self._thread: threading.Thread | None = None
+        self._accept_loop_worker: Worker | None = None
         self._stop = threading.Event()
         self._connections: set[socket.socket] = set()
-        self._serve_threads: list[threading.Thread] = []
+        self._serve_workers: list[Worker] = []
         self._state_lock = threading.Lock()
         self._closed = False
 
@@ -306,8 +310,8 @@ class _IpcCallManyNode:
         # platforms where closing a socket does not wake a blocked `accept()`.
         listener.settimeout(0.1)
         self._listener = listener
-        self._thread = threading.Thread(target=self._accept_loop, daemon=True)
-        self._thread.start()
+        self._accept_loop_worker = Worker(self._accept_loop, what="the IPC accept loop")
+        self._accept_loop_worker.start()
 
     def _accept_loop(self) -> None:
         listener = self._listener
@@ -326,9 +330,9 @@ class _IpcCallManyNode:
                         conn.close()
                         return
                     self._connections.add(conn)
-                    serve_thread = threading.Thread(target=self._serve, args=(conn,), daemon=True)
-                    self._serve_threads.append(serve_thread)
-                serve_thread.start()
+                    serve_worker = Worker(partial(self._serve, conn), what="an IPC serve thread")
+                    self._serve_workers.append(serve_worker)
+                serve_worker.start()
         finally:
             listener.close()
 
@@ -390,16 +394,23 @@ class _IpcCallManyNode:
             listener.close()
         with self._state_lock:
             connections = list(self._connections)
-            serve_threads = list(self._serve_threads)
+            serve_workers = list(self._serve_workers)
         for conn in connections:
             with contextlib.suppress(OSError):
                 conn.shutdown(socket.SHUT_RDWR)
-        thread = self._thread
-        if thread is not None:
-            thread.join(timeout=5.0)
-            assert not thread.is_alive(), "the accept loop did not stop"
-        for serve_thread in serve_threads:
-            serve_thread.join(timeout=5.0)
+        # Each thread's return is its own stop edge: the listener close + the
+        # `_stop` flag end the accept loop, and the connection shutdown + the
+        # flag end every serve thread's recv loop. The guard only names a loop
+        # that never reaches that edge.
+        #
+        # The accept loop is awaited FIRST and that order is load-bearing: it
+        # starts each serve worker before its body returns, so a worker in the
+        # list copied above is always started by the time it is awaited.
+        accept_loop_worker = self._accept_loop_worker
+        if accept_loop_worker is not None:
+            accept_loop_worker.wait_finished()
+        for serve_worker in serve_workers:
+            serve_worker.wait_finished()
         for conn in connections:
             with contextlib.suppress(OSError):
                 conn.close()

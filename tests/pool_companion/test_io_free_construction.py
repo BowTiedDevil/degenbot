@@ -44,13 +44,11 @@ from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20, make_ether_placeholder
 from tests.helpers.pool_bot import new_pool_bot
-from tests.helpers.seam import Bot as _Engine
 from tests.helpers.synthetic_logs import v2_sync, v3_swap, v4_swap
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
 from tests.helpers.v4_pool_factory import make_v4_pool
 from tests.pool_companion._helpers import (
-    PY_BOT,
     UNISWAP_V2_FACTORY,
     UNISWAP_V3_FACTORY,
     USDC_ADDR,
@@ -79,36 +77,38 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from degenbot.erc20 import EtherPlaceholder
+    from tests.helpers.seam import Bot as _Engine
 
 # ---------------------------------------------------------------------------
 # Per-kind injected-data builders (I/O-free pool construction)
 # ---------------------------------------------------------------------------
 
 
-def _v2_injected(**overrides: Any) -> UniswapV2Pool:
+def _v2_injected(py_bot: _Engine, **overrides: Any) -> UniswapV2Pool:
     """I/O-free V2 pool with the reference reserves/fees; ``overrides`` win."""
     kwargs: dict[str, Any] = {
         "address": WETH_USDC_V2_POOL,
         "chain_id": 1,
-        "token0": make_weth(),
-        "token1": make_usdc(),
+        "token0": make_weth(py_bot),
+        "token1": make_usdc(py_bot),
         "factory": UNISWAP_V2_FACTORY,
         "fee_token0": Fraction(3, 1000),
         "fee_token1": Fraction(3, 1000),
         "reserves_token0": 1000 * 10**18,
         "reserves_token1": 2_000_000 * 10**6,
         "state_block": 18_000_000,
+        "py_bot": py_bot,
     }
     kwargs.update(overrides)
     return make_v2_pool(**kwargs)
 
 
-def _v3_injected(**overrides: Any) -> UniswapV3Pool:
+def _v3_injected(py_bot: _Engine, **overrides: Any) -> UniswapV3Pool:
     """I/O-free V3 pool with the reference scalars; ``overrides`` win."""
     kwargs: dict[str, Any] = {
         "address": USDC_WETH_V3_POOL,
-        "token0": make_weth(),
-        "token1": make_usdc(),
+        "token0": make_weth(py_bot),
+        "token1": make_usdc(py_bot),
         "factory": UNISWAP_V3_FACTORY,
         "fee": V3_FEE,
         "tick_spacing": V3_TICK_SPACING,
@@ -116,18 +116,19 @@ def _v3_injected(**overrides: Any) -> UniswapV3Pool:
         "tick": -76020,
         "liquidity": 1234567890,
         "state_block": 18_000_000,
+        "py_bot": py_bot,
     }
     kwargs.update(overrides)
     return make_v3_pool(**kwargs)
 
 
-def _v4_injected(**overrides: Any) -> UniswapV4Pool:
+def _v4_injected(py_bot: _Engine, **overrides: Any) -> UniswapV4Pool:
     """I/O-free V4 pool with the reference scalars; ``overrides`` win."""
     kwargs: dict[str, Any] = {
         "pool_id": V4_POOL_ID,
         "pool_manager_address": V4_POOL_MANAGER,
-        "token0": make_native_eth(),
-        "token1": make_usdc(),
+        "token0": make_native_eth(py_bot),
+        "token1": make_usdc(py_bot),
         "fee": V4_FEE,
         "tick_spacing": V4_TICK_SPACING,
         "hook_address": V4_HOOKS,
@@ -138,6 +139,7 @@ def _v4_injected(**overrides: Any) -> UniswapV4Pool:
         "protocol_fee_one_for_zero": 0,
         "lp_fee": 500000,
         "state_block": 18_000_000,
+        "py_bot": py_bot,
     }
     kwargs.update(overrides)
     return make_v4_pool(**kwargs)
@@ -321,12 +323,12 @@ def test_construction_touches_no_provider(case: NoIOCase, tmp_path: pathlib.Path
 class TestV2PoolIOFreeConstructor:
     """UniswapV2Pool can be constructed with pre-fetched data only."""
 
-    def test_io_free_constructor_basic(self) -> None:
-        pool = _v2_injected()
+    def test_io_free_constructor_basic(self, py_bot: _Engine) -> None:
+        pool = _v2_injected(py_bot)
 
         assert pool.address == WETH_USDC_V2_POOL
-        assert pool.token0.address == make_weth().address
-        assert pool.token1.address == make_usdc().address
+        assert pool.token0.address == make_weth(py_bot).address
+        assert pool.token1.address == make_usdc(py_bot).address
         assert pool.factory == get_checksum_address(UNISWAP_V2_FACTORY)
         assert pool.fee_token0 == Fraction(3, 1000)
         assert pool.fee_token1 == Fraction(3, 1000)
@@ -336,7 +338,7 @@ class TestV2PoolIOFreeConstructor:
 
     def test_io_free_pool_computation_works(self) -> None:
         bot = new_pool_bot()
-        pool = _v2_injected(py_bot=bot)
+        pool = _v2_injected(bot)
 
         # New reserves arrive through the pump's own door: a synthetic
         # `Sync(uint112,uint112)` log decoded + applied by the bot.
@@ -347,8 +349,8 @@ class TestV2PoolIOFreeConstructor:
         )
         assert pool.reserves_token0 == 1100 * 10**18
 
-    def test_io_free_constructor_with_split_fees(self) -> None:
-        pool = _v2_injected(fee_token1=Fraction(2, 1000))
+    def test_io_free_constructor_with_split_fees(self, py_bot: _Engine) -> None:
+        pool = _v2_injected(py_bot, fee_token1=Fraction(2, 1000))
 
         assert pool.fee_token0 == Fraction(3, 1000)
         assert pool.fee_token1 == Fraction(2, 1000)
@@ -398,12 +400,12 @@ class TestBotBuildV2Pool:
 class TestV3PoolIOFreeConstructor:
     """UniswapV3Pool can be constructed with pre-fetched data only."""
 
-    def test_io_free_constructor_basic(self) -> None:
-        pool = _v3_injected()
+    def test_io_free_constructor_basic(self, py_bot: _Engine) -> None:
+        pool = _v3_injected(py_bot)
 
         assert pool.address == get_checksum_address(USDC_WETH_V3_POOL)
-        assert pool.token0.address == make_weth().address
-        assert pool.token1.address == make_usdc().address
+        assert pool.token0.address == make_weth(py_bot).address
+        assert pool.token1.address == make_usdc(py_bot).address
         assert pool.factory == get_checksum_address(UNISWAP_V3_FACTORY)
         assert pool.fee == V3_FEE
         assert pool.tick_spacing == V3_TICK_SPACING
@@ -412,12 +414,12 @@ class TestV3PoolIOFreeConstructor:
         assert pool.liquidity == 1234567890
         assert pool.update_block == 18_000_000
 
-    def test_io_free_constructor_with_tick_data(self) -> None:
+    def test_io_free_constructor_with_tick_data(self, py_bot: _Engine) -> None:
         tick_data = {
             -76080: LiquidityAtTick(liquidity_gross=1000, liquidity_net=-500, block=18_000_000),
             -75960: LiquidityAtTick(liquidity_gross=2000, liquidity_net=300, block=18_000_000),
         }
-        pool = _v3_injected(tick_data=tick_data)
+        pool = _v3_injected(py_bot, tick_data=tick_data)
 
         assert pool.sparse_liquidity_map is False
         assert -76080 in pool.tick_data
@@ -425,7 +427,7 @@ class TestV3PoolIOFreeConstructor:
 
     def test_io_free_pool_swap_event_update(self) -> None:
         bot = new_pool_bot()
-        pool = _v3_injected(py_bot=bot)
+        pool = _v3_injected(bot)
 
         # A V3 Swap log carries the post-swap scalars; the pumped event moves
         # the pool's sqrt_price/tick/liquidity.
@@ -445,7 +447,7 @@ class TestV3PoolIOFreeConstructor:
 class TestBotBuildV3Pool:
     """Bot.build_pool() constructs I/O-free V3 pools from on-chain data."""
 
-    def test_build_pool_with_mock_provider(self, tmp_path: pathlib.Path) -> None:
+    def test_build_pool_with_mock_provider(self, tmp_path: pathlib.Path, py_bot: _Engine) -> None:
         weth_addr = WETH_ADDR
         usdc_addr = USDC_ADDR
         factory_addr = UNISWAP_V3_FACTORY
@@ -469,8 +471,8 @@ class TestBotBuildV3Pool:
             ),
         )
 
-        weth = make_weth()
-        usdc = make_usdc()
+        weth = make_weth(py_bot)
+        usdc = make_usdc(py_bot)
         for tok in (weth, usdc):
             if bot._py_bot.get_token(tok.address) is None:
                 bot._py_bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, 1)
@@ -495,20 +497,21 @@ class TestBotBuildV3Pool:
 class TestV4PoolIOFreeConstructor:
     """UniswapV4Pool can be constructed with pre-fetched data only."""
 
-    def test_io_free_constructor_basic(self) -> None:
+    def test_io_free_constructor_basic(self, py_bot: _Engine) -> None:
         sqrt_price = 2198666895605149686863
         tick = -76020
         liquidity = 1234567890
 
         pool = _v4_injected(
+            py_bot,
             protocol_fee_zero_for_one=100,
             protocol_fee_one_for_zero=200,
         )
 
         assert pool.address == get_checksum_address(V4_POOL_MANAGER)
         assert pool.pool_id == to_bytes(V4_POOL_ID)
-        assert pool.token0 == make_native_eth()
-        assert pool.token1 == make_usdc()
+        assert pool.token0 == make_native_eth(py_bot)
+        assert pool.token1 == make_usdc(py_bot)
         assert pool.fee == V4_FEE
         assert pool.tick_spacing == V4_TICK_SPACING
         assert pool.sqrt_price_x96 == sqrt_price
@@ -518,13 +521,13 @@ class TestV4PoolIOFreeConstructor:
         assert pool.protocol_fee.one_for_zero == 200
         assert pool.lp_fee == 500000
 
-    def test_io_free_with_tick_data(self) -> None:
+    def test_io_free_with_tick_data(self, py_bot: _Engine) -> None:
         tick_data = {
             120: LiquidityAtTick(liquidity_net=100, liquidity_gross=200, block=18_000_000),
             -10: LiquidityAtTick(liquidity_net=100, liquidity_gross=200, block=18_000_000),
         }
 
-        pool = _v4_injected(tick_data=tick_data)
+        pool = _v4_injected(py_bot, tick_data=tick_data)
 
         assert pool.sparse_liquidity_map is False
         # Keys only: the words the tick rows land in (bit 12 → word 0, bit 255
@@ -535,7 +538,7 @@ class TestV4PoolIOFreeConstructor:
 
     def test_io_free_swap_event_update(self) -> None:
         bot = new_pool_bot()
-        pool = _v4_injected(py_bot=bot)
+        pool = _v4_injected(bot)
 
         # The V4 twin: a `PoolManager` Swap log keyed by pool_id, dispatched
         # at the manager address the pool lives under.
@@ -552,12 +555,12 @@ class TestV4PoolIOFreeConstructor:
         assert pool.tick == -76010
         assert pool.liquidity == 1234567999
 
-    def test_io_free_pool_key_and_hooks(self) -> None:
-        pool = _v4_injected()
+    def test_io_free_pool_key_and_hooks(self, py_bot: _Engine) -> None:
+        pool = _v4_injected(py_bot)
 
         assert pool.pool_key == UniswapV4PoolKey(
-            currency0=make_native_eth().address,
-            currency1=make_usdc().address,
+            currency0=make_native_eth(py_bot).address,
+            currency1=make_usdc(py_bot).address,
             fee=V4_FEE,
             tick_spacing=V4_TICK_SPACING,
             hooks=V4_HOOKS,
@@ -565,10 +568,10 @@ class TestV4PoolIOFreeConstructor:
         assert pool.hook_address == ZERO_ADDRESS
         assert pool.active_hooks == frozenset()
 
-    def test_io_free_state_view_address(self) -> None:
+    def test_io_free_state_view_address(self, py_bot: _Engine) -> None:
         state_view = get_checksum_address(V4_STATE_VIEW)
 
-        pool = _v4_injected(state_view_address=state_view)
+        pool = _v4_injected(py_bot, state_view_address=state_view)
 
         assert pool._state_view_address == state_view
 
@@ -576,7 +579,7 @@ class TestV4PoolIOFreeConstructor:
 class TestBotBuildV4Pool:
     """Bot.build_pool() constructs I/O-free V4 pools from on-chain data."""
 
-    def test_build_pool_with_mock_provider(self, tmp_path: pathlib.Path) -> None:
+    def test_build_pool_with_mock_provider(self, tmp_path: pathlib.Path, py_bot: _Engine) -> None:
         sqrt_price = 2198666895605149686863
         tick = -76020
         protocol_fee = 0
@@ -599,8 +602,8 @@ class TestBotBuildV4Pool:
             ),
         )
 
-        native_eth = make_native_eth()
-        usdc = make_usdc()
+        native_eth = make_native_eth(py_bot)
+        usdc = make_usdc(py_bot)
         for tok in (native_eth, usdc):
             if bot._py_bot.get_token(tok.address) is None:
                 bot._py_bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, 1)
@@ -649,9 +652,9 @@ class TestBotBuildV4Pool:
 class TestErc20TokenDataOnlyConstructor:
     """Erc20Token companion reads metadata through the Erc20Token handle."""
 
-    def test_constructor_with_data(self) -> None:
+    def test_constructor_with_data(self, py_bot: _Engine) -> None:
         token = make_erc20(
-            PY_BOT, WETH_ADDR, chain_id=1, name="Wrapped Ether", symbol="WETH", decimals=18
+            py_bot, WETH_ADDR, chain_id=1, name="Wrapped Ether", symbol="WETH", decimals=18
         )
         assert token.name == "Wrapped Ether"
         assert token.symbol == "WETH"
@@ -659,9 +662,9 @@ class TestErc20TokenDataOnlyConstructor:
         assert token.chain_id == 1
         assert token.address == WETH_ADDR
 
-    def test_constructor_normalizes_address(self) -> None:
+    def test_constructor_normalizes_address(self, py_bot: _Engine) -> None:
         token = make_erc20(
-            PY_BOT,
+            py_bot,
             "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
             chain_id=1,
             name="Wrapped Ether",
@@ -670,9 +673,9 @@ class TestErc20TokenDataOnlyConstructor:
         )
         assert token.address == WETH_ADDR
 
-    def test_constructor_defaults_chain_id(self) -> None:
+    def test_constructor_defaults_chain_id(self, py_bot: _Engine) -> None:
         token = make_erc20(
-            PY_BOT,
+            py_bot,
             "0x6810e776880C02933D47DB1b9fc05908e5386b96",
             name="Gnosis",
             symbol="GNO",
@@ -680,9 +683,9 @@ class TestErc20TokenDataOnlyConstructor:
         )
         assert token.chain_id == 1
 
-    def test_cache_accessors_balance(self) -> None:
+    def test_cache_accessors_balance(self, py_bot: _Engine) -> None:
         token = make_erc20(
-            PY_BOT,
+            py_bot,
             "0x6B175474E89094C44Da98b954EedeAC495271d0F",
             chain_id=1,
             name="DAI",
@@ -693,9 +696,9 @@ class TestErc20TokenDataOnlyConstructor:
         token.set_cached_balance("0x" + "11" * 20, block_number=100, balance=10**18)
         assert token.get_cached_balance("0x" + "11" * 20, block_number=100) == 10**18
 
-    def test_cache_accessors_approval(self) -> None:
+    def test_cache_accessors_approval(self, py_bot: _Engine) -> None:
         token = make_erc20(
-            PY_BOT, USDC_ADDR, chain_id=1, name="USD Coin", symbol="USDC", decimals=6
+            py_bot, USDC_ADDR, chain_id=1, name="USD Coin", symbol="USDC", decimals=6
         )
         owner = "0x" + "11" * 20
         spender = "0x" + "22" * 20
@@ -704,9 +707,9 @@ class TestErc20TokenDataOnlyConstructor:
         token.set_cached_approval(block_number=100, owner=owner, spender=spender, amount=500)
         assert token.get_cached_approval(block_number=100, owner=owner, spender=spender) == 500
 
-    def test_cache_accessors_total_supply(self) -> None:
+    def test_cache_accessors_total_supply(self, py_bot: _Engine) -> None:
         token = make_erc20(
-            PY_BOT,
+            py_bot,
             "0xdAC17F958D2ee523a2206206994597C13D831ec7",
             chain_id=1,
             name="Tether USD",
@@ -756,9 +759,9 @@ class TestBotBuildErc20Token:
 class TestEtherPlaceholderDataOnly:
     """EtherPlaceholder delegates metadata through the Erc20Token handle."""
 
-    def test_constructor_with_data(self) -> None:
+    def test_constructor_with_data(self, py_bot: _Engine) -> None:
         placeholder = make_ether_placeholder(
-            PY_BOT,
+            py_bot,
             "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
             chain_id=1,
         )
@@ -771,8 +774,6 @@ class TestEtherPlaceholderDataOnly:
 # ---------------------------------------------------------------------------
 # Curve I/O-free data-provider example (one body, four pool-kind cases)
 # ---------------------------------------------------------------------------
-
-_CURVE_BOT = _Engine()
 
 
 @dataclass(frozen=True)
@@ -863,10 +864,10 @@ _CURVE_IO_FREE: tuple[CurveIoFreeCase, ...] = (
 
 
 @pytest.mark.parametrize("case", _CURVE_IO_FREE, ids=[c.id for c in _CURVE_IO_FREE])
-def test_curve_pool_with_data_provider(case: CurveIoFreeCase) -> None:
+def test_curve_pool_with_data_provider(case: CurveIoFreeCase, py_bot: _Engine) -> None:
     """A Curve pool kind computes ``get_dy`` from an injected data provider."""
     tokens = [
-        make_erc20(_CURVE_BOT, addr, name=name, symbol=symbol, decimals=decimals)
+        make_erc20(py_bot, addr, name=name, symbol=symbol, decimals=decimals)
         for addr, name, symbol, decimals in case.tokens
     ]
     provider = FakeCurveDataProvider(block_timestamp=1_700_000_000, **case.provider_kwargs)

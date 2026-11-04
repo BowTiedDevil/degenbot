@@ -31,11 +31,9 @@ from degenbot.uniswap.v2_types import UniswapV2PoolState
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot as _Engine
 from tests.helpers.seam import calc_exact_in_v2, calc_exact_out_v2
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.pool_companion._helpers import (
-    PY_BOT,
     UNISWAP_V2_FACTORY,
     WETH_USDC_V2_POOL,
     make_test_database,
@@ -46,16 +44,24 @@ from tests.pool_companion._helpers import (
 if TYPE_CHECKING:
     import pathlib
 
-    from degenbot.erc20.erc20 import Erc20Token
     from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+    from tests.helpers.seam import Bot as _Engine
 
 
-def _make_weth() -> Erc20Token:
-    return make_weth()
-
-
-def _make_usdc() -> Erc20Token:
-    return make_usdc()
+def _v2_pool(py_bot: _Engine) -> UniswapV2Pool:
+    """The reference WETH/USDC V2 pool over ``py_bot``'s engine."""
+    return make_v2_pool(
+        address=WETH_USDC_V2_POOL,
+        chain_id=1,
+        token0=make_weth(py_bot),
+        token1=make_usdc(py_bot),
+        factory=UNISWAP_V2_FACTORY,
+        fee_token0=Fraction(3, 1000),
+        fee_token1=Fraction(3, 1000),
+        reserves_token0=1000 * 10**18,
+        reserves_token1=2_000_000 * 10**6,
+        state_block=18_000_000,
+    )
 
 
 class _DelegateSpy:
@@ -96,26 +102,9 @@ class TestV2CalcDelegation:
     consistency.
     """
 
-    @staticmethod
-    def _make_pool() -> UniswapV2Pool:
-        weth = make_weth()
-        usdc = make_usdc()
-        return make_v2_pool(
-            address=WETH_USDC_V2_POOL,
-            chain_id=1,
-            token0=weth,
-            token1=usdc,
-            factory=UNISWAP_V2_FACTORY,
-            fee_token0=Fraction(3, 1000),
-            fee_token1=Fraction(3, 1000),
-            reserves_token0=1000 * 10**18,
-            reserves_token1=2_000_000 * 10**6,
-            state_block=18_000_000,
-        )
-
-    def test_calculate_tokens_out_delegates_to_rust_no_override(self) -> None:
+    def test_calculate_tokens_out_delegates_to_rust_no_override(self, py_bot: _Engine) -> None:
         """No override_state: calc delegates to Pool.calculate_tokens_out."""
-        pool = self._make_pool()
+        pool = _v2_pool(py_bot)
         weth = pool.token0
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy
@@ -126,9 +115,9 @@ class TestV2CalcDelegation:
         assert spy.calc_in_calls == []
         assert result > 0
 
-    def test_calculate_tokens_out_reverse_delegates_to_rust(self) -> None:
+    def test_calculate_tokens_out_reverse_delegates_to_rust(self, py_bot: _Engine) -> None:
         """token1 in -> zero_for_one=False, still delegates to Rust."""
-        pool = self._make_pool()
+        pool = _v2_pool(py_bot)
         usdc = pool.token1
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy
@@ -138,9 +127,9 @@ class TestV2CalcDelegation:
         assert spy.calc_out_calls == [(False, 10**6)]
         assert result > 0
 
-    def test_calculate_tokens_out_uses_python_path_with_override(self) -> None:
+    def test_calculate_tokens_out_uses_python_path_with_override(self, py_bot: _Engine) -> None:
         """override_state: calc uses the FFI seam (calc_exact_in_v2)."""
-        pool = self._make_pool()
+        pool = _v2_pool(py_bot)
         weth = pool.token0
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy
@@ -166,9 +155,9 @@ class TestV2CalcDelegation:
             1000,
         )
 
-    def test_calculate_tokens_in_delegates_to_rust_no_override(self) -> None:
+    def test_calculate_tokens_in_delegates_to_rust_no_override(self, py_bot: _Engine) -> None:
         """No override_state: calc delegates to Pool.calculate_tokens_in."""
-        pool = self._make_pool()
+        pool = _v2_pool(py_bot)
         usdc = pool.token1
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy
@@ -179,9 +168,9 @@ class TestV2CalcDelegation:
         assert spy.calc_out_calls == []
         assert result > 0
 
-    def test_calculate_tokens_in_reverse_delegates_to_rust(self) -> None:
+    def test_calculate_tokens_in_reverse_delegates_to_rust(self, py_bot: _Engine) -> None:
         """token0 out -> zero_for_one=False, still delegates to Rust."""
-        pool = self._make_pool()
+        pool = _v2_pool(py_bot)
         weth = pool.token0
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy
@@ -191,9 +180,9 @@ class TestV2CalcDelegation:
         assert spy.calc_in_calls == [(False, 10**18)]
         assert result > 0
 
-    def test_calculate_tokens_in_uses_python_path_with_override(self) -> None:
+    def test_calculate_tokens_in_uses_python_path_with_override(self, py_bot: _Engine) -> None:
         """override_state: calc-in uses the FFI seam (calc_exact_out_v2)."""
-        pool = self._make_pool()
+        pool = _v2_pool(py_bot)
         usdc = pool.token1
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy
@@ -219,9 +208,9 @@ class TestV2CalcDelegation:
             1000,
         )
 
-    def test_calculate_tokens_in_raises_on_overdraw_via_rust(self) -> None:
+    def test_calculate_tokens_in_raises_on_overdraw_via_rust(self, py_bot: _Engine) -> None:
         """Non-override overdraw: Rust returns 0, Python raises LiquidityPoolError."""
-        pool = self._make_pool()
+        pool = _v2_pool(py_bot)
         usdc = pool.token1
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy
@@ -234,9 +223,9 @@ class TestV2CalcDelegation:
 
         assert spy.calc_in_calls == [(True, 2_000_000_000_001)]
 
-    def test_calculate_tokens_out_rejects_zero_input(self) -> None:
+    def test_calculate_tokens_out_rejects_zero_input(self, py_bot: _Engine) -> None:
         """InvalidSwapInputAmount still raised before delegation is attempted."""
-        pool = self._make_pool()
+        pool = _v2_pool(py_bot)
         weth = pool.token0
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy
@@ -246,11 +235,11 @@ class TestV2CalcDelegation:
 
         assert spy.calc_out_calls == []
 
-    def test_calculate_tokens_out_rejects_unknown_token(self) -> None:
+    def test_calculate_tokens_out_rejects_unknown_token(self, py_bot: _Engine) -> None:
         """Unknown token_in raises DegenbotValueError before delegation."""
-        pool = self._make_pool()
+        pool = _v2_pool(py_bot)
         bogus = make_erc20(
-            PY_BOT,
+            py_bot,
             "0x0000000000000000000000000000000000000009",
             chain_id=1,
             name="Bogus",
@@ -269,10 +258,10 @@ class TestV2CalcDelegation:
 class TestBotTokenIOMethods:
     """Bot.get_token_balance/approval/total_supply use cache + RPC."""
 
-    def test_get_token_balance_cache_hit(self, tmp_path: pathlib.Path) -> None:
+    def test_get_token_balance_cache_hit(self, tmp_path: pathlib.Path, py_bot: _Engine) -> None:
         """Balance returned from cache without RPC call."""
         token = make_erc20(
-            PY_BOT,
+            py_bot,
             "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
             chain_id=1,
             name="Wrapped BTC",
@@ -292,10 +281,10 @@ class TestBotTokenIOMethods:
         assert balance == 10**18
         provider.call.assert_not_called()
 
-    def test_get_token_balance_cache_miss(self, tmp_path: pathlib.Path) -> None:
+    def test_get_token_balance_cache_miss(self, tmp_path: pathlib.Path, py_bot: _Engine) -> None:
         """Balance fetched from chain (offline cassette) on cache miss, then cached."""
         token = make_erc20(
-            PY_BOT,
+            py_bot,
             "0xDe30239bB7673E3021A8cF8c6B7Df7Af60e9C0d6",
             chain_id=1,
             name="Golem",
@@ -329,9 +318,9 @@ class TestBotTokenIOMethods:
         assert balance == expected_balance
         assert token.get_cached_balance(holder, block_number=200) == expected_balance
 
-    def test_get_token_approval_cache_hit(self, tmp_path: pathlib.Path) -> None:
+    def test_get_token_approval_cache_hit(self, tmp_path: pathlib.Path, py_bot: _Engine) -> None:
         token = make_erc20(
-            PY_BOT,
+            py_bot,
             "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
             chain_id=1,
             name="Uniswap",
@@ -352,9 +341,11 @@ class TestBotTokenIOMethods:
         assert approval == 500
         provider.call.assert_not_called()
 
-    def test_get_token_total_supply_cache_hit(self, tmp_path: pathlib.Path) -> None:
+    def test_get_token_total_supply_cache_hit(
+        self, tmp_path: pathlib.Path, py_bot: _Engine
+    ) -> None:
         token = make_erc20(
-            PY_BOT,
+            py_bot,
             "0x514910771AF9Ca656af840dff83E8264EcF986CA",
             chain_id=1,
             name="Chainlink",
@@ -377,11 +368,10 @@ class TestBotTokenIOMethods:
 class TestRateProviderIsStored:
     """The rate provider is the stored Rust trait object, read off the handle."""
 
-    def test_static_pool_reports_static_provider(self) -> None:
+    def test_static_pool_reports_static_provider(self, py_bot: _Engine) -> None:
         """A pool with no injected provider reports the static fallback."""
-        bot = _Engine()
-        t0 = make_erc20(bot, address="0x" + "d4" * 20, name="S0", symbol="S0", decimals=18)
-        t1 = make_erc20(bot, address="0x" + "e5" * 20, name="S1", symbol="S1", decimals=18)
+        t0 = make_erc20(py_bot, address="0x" + "d4" * 20, name="S0", symbol="S0", decimals=18)
+        t1 = make_erc20(py_bot, address="0x" + "e5" * 20, name="S1", symbol="S1", decimals=18)
         pool = make_balancer_stable_pool(
             address="0x" + "f6" * 20,
             pool_id=bytes.fromhex("f6" * 20 + "0002" + "0" * 20),
@@ -391,14 +381,14 @@ class TestRateProviderIsStored:
             fee=Fraction(3, 1000),
             amp=100_000,
             scaling_factors=[10**18, 10**18],
-            py_bot=bot,
+            py_bot=py_bot,
         )
 
         assert pool._rate_provider_is_static is True
         assert pool.rate_provider is None
         assert not pool.requires_io_at_calculation_time
 
-    def test_dynamic_pool_reports_non_static(self) -> None:
+    def test_dynamic_pool_reports_non_static(self, py_bot: _Engine) -> None:
         """A pool with an injected provider reports the stored (dynamic) provider."""
 
         class _CaptureProvider:
@@ -408,9 +398,8 @@ class TestRateProviderIsStored:
             def get_rates(self, block_identifier=None):
                 return self._rates
 
-        bot = _Engine()
-        t0 = make_erc20(bot, address="0x" + "d4" * 20, name="S0", symbol="S0", decimals=18)
-        t1 = make_erc20(bot, address="0x" + "e5" * 20, name="S1", symbol="S1", decimals=18)
+        t0 = make_erc20(py_bot, address="0x" + "d4" * 20, name="S0", symbol="S0", decimals=18)
+        t1 = make_erc20(py_bot, address="0x" + "e5" * 20, name="S1", symbol="S1", decimals=18)
         rates = (10**18, 2 * 10**18, 3 * 10**18)
         pool = make_balancer_stable_pool(
             address="0x" + "07" * 20,
@@ -423,7 +412,7 @@ class TestRateProviderIsStored:
             scaling_factors=[10**18, 2 * 10**18],
             bpt_idx=None,
             rate_provider=_CaptureProvider(rates),
-            py_bot=bot,
+            py_bot=py_bot,
         )
 
         assert pool._rate_provider_is_static is False
@@ -434,10 +423,9 @@ class TestRateProviderIsStored:
 class TestSingleArgReadsIdentityOffHandle:
     """The companion reads every field off the handle (single-arg end state)."""
 
-    def test_plain_pool_identity_round_trips(self) -> None:
-        bot = _Engine()
-        t0 = make_erc20(bot, address="0x" + "d4" * 20, name="DAI", symbol="DAI", decimals=18)
-        t1 = make_erc20(bot, address="0x" + "e5" * 20, name="USDC", symbol="USDC", decimals=6)
+    def test_plain_pool_identity_round_trips(self, py_bot: _Engine) -> None:
+        t0 = make_erc20(py_bot, address="0x" + "d4" * 20, name="DAI", symbol="DAI", decimals=18)
+        t1 = make_erc20(py_bot, address="0x" + "e5" * 20, name="USDC", symbol="USDC", decimals=6)
         pool = make_curve_pool(
             "0x" + "f6" * 20,
             tokens=[t0, t1],
@@ -445,7 +433,7 @@ class TestSingleArgReadsIdentityOffHandle:
             fee=4_000_000,
             admin_fee=5_000_000_000,
             balances=[10**18, 2 * 10**18],
-            py_bot=bot,
+            py_bot=py_bot,
         )
         assert pool.address == get_checksum_address("0x" + "f6" * 20)
         assert pool.fee == 4_000_000
@@ -457,11 +445,10 @@ class TestSingleArgReadsIdentityOffHandle:
 class TestGoBetweenResolvesBasePool:
     """``curve().base_pool()`` + ``_LazyBasePool`` recover the base companion."""
 
-    def test_metapool_resolves_base_pool_through_handle(self) -> None:
-        bot = _Engine()
-        bt0 = make_erc20(bot, address="0x" + "11" * 20, name="B0", symbol="B0", decimals=18)
-        bt1 = make_erc20(bot, address="0x" + "22" * 20, name="B1", symbol="B1", decimals=18)
-        blp = make_erc20(bot, address="0x" + "33" * 20, name="BLP", symbol="BLP", decimals=18)
+    def test_metapool_resolves_base_pool_through_handle(self, py_bot: _Engine) -> None:
+        bt0 = make_erc20(py_bot, address="0x" + "11" * 20, name="B0", symbol="B0", decimals=18)
+        bt1 = make_erc20(py_bot, address="0x" + "22" * 20, name="B1", symbol="B1", decimals=18)
+        blp = make_erc20(py_bot, address="0x" + "33" * 20, name="BLP", symbol="BLP", decimals=18)
         base_pool = make_curve_pool(
             "0x" + "44" * 20,
             tokens=[bt0, bt1],
@@ -470,13 +457,13 @@ class TestGoBetweenResolvesBasePool:
             admin_fee=5_000_000_000,
             balances=[10**18, 2 * 10**18],
             lp_token=blp,
-            py_bot=bot,
+            py_bot=py_bot,
         )
 
         assert base_pool._py_pool.curve().base_pool() is None
 
-        mt0 = make_erc20(bot, address="0x" + "55" * 20, name="M0", symbol="M0", decimals=18)
-        mlp = make_erc20(bot, address="0x" + "66" * 20, name="MLP", symbol="MLP", decimals=18)
+        mt0 = make_erc20(py_bot, address="0x" + "55" * 20, name="M0", symbol="M0", decimals=18)
+        mlp = make_erc20(py_bot, address="0x" + "66" * 20, name="MLP", symbol="MLP", decimals=18)
         meta = make_curve_pool(
             "0x" + "77" * 20,
             tokens=[mt0, mlp],
@@ -486,7 +473,7 @@ class TestGoBetweenResolvesBasePool:
             balances=[10**18, 2 * 10**18],
             lp_token=mlp,
             base_pool=base_pool,
-            py_bot=bot,
+            py_bot=py_bot,
         )
 
         assert isinstance(meta.base_pool, BasePoolPort)

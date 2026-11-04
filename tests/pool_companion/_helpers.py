@@ -5,6 +5,10 @@ this package (see the task report for the class -> case mapping). This module
 holds the pieces every module shares: the reference mainnet pool addresses,
 the token/pool builders, and the one-block ``OfflineProvider`` casettes used by
 ``Bot.build_*`` choreography tests.
+
+Every builder takes the engine to register into as an argument: the ``py_bot``
+fixture (``conftest.py``) owns it per test, because an engine carries mutable
+state and a module-level one would leak between tests.
 """
 
 from __future__ import annotations
@@ -16,17 +20,13 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.provider import OfflineProvider
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.utils.bytes import to_bytes
-from tests.conftest import TEST_ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20
-from tests.helpers.seam import Bot as _Engine
 
 if TYPE_CHECKING:
     import pathlib
 
     from degenbot.erc20.erc20 import Erc20Token
-
-# A single shared handle-less engine for token companions (metadata-only, no I/O).
-PY_BOT = _Engine()
+    from tests.helpers.seam import Bot
 
 WETH_ADDR = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 USDC_ADDR = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
@@ -55,17 +55,17 @@ def make_test_database(tmp_path: pathlib.Path) -> str:
     return str(tmp_path / "test.db")
 
 
-def make_weth(py_bot: _Engine = PY_BOT) -> Erc20Token:
+def make_weth(py_bot: Bot) -> Erc20Token:
     return make_erc20(
         py_bot, WETH_ADDR, chain_id=1, name="Wrapped Ether", symbol="WETH", decimals=18
     )
 
 
-def make_usdc(py_bot: _Engine = PY_BOT) -> Erc20Token:
+def make_usdc(py_bot: Bot) -> Erc20Token:
     return make_erc20(py_bot, USDC_ADDR, chain_id=1, name="USD Coin", symbol="USDC", decimals=6)
 
 
-def make_native_eth(py_bot: _Engine = PY_BOT) -> Erc20Token:
+def make_native_eth(py_bot: Bot) -> Erc20Token:
     return make_erc20(py_bot, ZERO_ADDRESS, chain_id=1, name="Ether", symbol="ETH", decimals=18)
 
 

@@ -18,16 +18,10 @@ from degenbot.runner.config import ArbitrageConfig
 from degenbot.strategy import validate_strategy_readiness
 from tests.helpers.boot_actors import FakeBootReadiness, boot_runner, noop_coro
 from tests.helpers.identity_env import identity_env
-from tests.helpers.rpc_env import rpc_env
+from tests.helpers.rpc_env import rpc_env_autouse  # noqa: F401 — registers the autouse fixture
 
 if TYPE_CHECKING:
     from degenbot.runner import BotRunner
-
-
-@pytest.fixture(autouse=True)
-def _rpc_env():
-    with rpc_env():
-        yield
 
 
 @pytest.fixture(autouse=True)

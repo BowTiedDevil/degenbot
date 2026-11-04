@@ -37,19 +37,21 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from tests.aave.writer_parity.harness import (
+    dump_collateral_position_rows,
+    dump_user_rows,
+    mock_rpc_server,
+    seeded_db,
+)
+from tests.helpers.aave_logs import (
     ATOKEN_REVISION_SELECTOR,
     DEBT_TOKEN_REVISION_SELECTOR,
     FIXTURE_BLOCK,
     GET_SOURCE_OF_ASSET_SELECTOR,
     USER_ADDRESS,
-    dump_collateral_position_rows,
-    dump_user_rows,
     make_erc20_transfer_log,
     make_reserve_initialized_log,
     make_scaled_token_mint_log,
     make_supply_log,
-    mock_rpc_server,
-    seeded_db,
 )
 from tests.helpers.seam import CancelHandle, run_aave_update
 

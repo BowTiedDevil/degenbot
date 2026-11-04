@@ -11,7 +11,7 @@
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use degenbot_rpc::txpool_feed::{TxpoolFeed, TxpoolFeedConfig};
+use degenbot_rpc::txpool_feed::{TxpoolFeed, TxpoolFeedConfig, TxpoolFeedStatus};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value as Json};
 use tokio::net::TcpListener;
@@ -217,6 +217,32 @@ async fn drain_until(feed: &TxpoolFeed, want: usize, timeout: Duration) -> Vec<J
     }
 }
 
+/// Wait until the pump's own status counters satisfy `ready`, then return them.
+///
+/// A notice-driven test cannot read the pump's counters on a fixed delay: the
+/// classification the assertions read is the pump's published state, so this
+/// waits for THAT state. `timeout` only bounds a regression that never gets
+/// there, and the panic names the condition plus the last observed counters.
+async fn status_until(
+    feed: &TxpoolFeed,
+    what: &str,
+    timeout: Duration,
+    ready: impl Fn(&TxpoolFeedStatus) -> bool,
+) -> TxpoolFeedStatus {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let status = feed.status();
+        if ready(&status) {
+            return status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {what}: status={status:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 /// Happy path: hash notice -> by-hash fetch -> full 1559 tx parsed with raw
 /// bytes and direct fee caps.
 #[tokio::test]
@@ -288,9 +314,16 @@ async fn chain_gate_and_null_fetch_are_counted_not_fatal() {
     ]])
     .await;
     let feed = TxpoolFeed::spawn(cfg(server.addr.port()));
-    // Let the pump consume both fetches; nothing may publish.
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let status = feed.status();
+    // Both fetches must have been consumed and classified before the
+    // assertions read the counters — the pump's own status is that signal, so
+    // no "give it a moment" delay decides when they are ready.
+    let status = status_until(
+        &feed,
+        "the wrong-chain reject and the null-fetch mine miss to be counted",
+        Duration::from_secs(30),
+        |s| s.rejected_chain_id >= 1 && s.mine_misses >= 1,
+    )
+    .await;
     feed.stop();
 
     assert_eq!(feed.drain().len(), 0);

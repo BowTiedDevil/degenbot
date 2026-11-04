@@ -129,9 +129,12 @@ def _mock_rpc_server() -> Generator[str, None, None]:
     try:
         yield f"http://127.0.0.1:{port}"
     finally:
+        # ``shutdown()`` returns only once ``serve_forever``'s loop has exited,
+        # so the join reaps a thread that is already returning: no timeout, and
+        # nothing here reads elapsed time as evidence.
         server.shutdown()
         server.server_close()
-        thread.join(timeout=5)
+        thread.join()
 
 
 @pytest.fixture

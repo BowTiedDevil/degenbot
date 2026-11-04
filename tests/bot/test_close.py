@@ -22,6 +22,7 @@ import pytest
 
 from degenbot.bot import Bot
 from tests.fakes.pools import FakeSessionPool
+from tests.helpers.bot_factory import bot_session
 
 if TYPE_CHECKING:
     import pathlib
@@ -56,14 +57,9 @@ class _BoundaryProvider:
         self.closed = True
 
 
-def _test_session(tmp_path: pathlib.Path, chain_id: int = 1) -> dict[str, object]:
-    """The explicit keyword overrides a session under test runs with."""
-    return {"chain_id": chain_id, "database": str(tmp_path / "test.db")}
-
-
 def _make_bot(tmp_path: pathlib.Path) -> tuple[Bot, _BoundaryProvider]:
     provider = _BoundaryProvider(1)
-    return Bot(**_test_session(tmp_path), provider=provider), provider
+    return Bot(**bot_session(tmp_path), provider=provider), provider
 
 
 def _seed_pool_registry(bot: Bot) -> None:
@@ -78,7 +74,7 @@ def _seed_pool_registry(bot: Bot) -> None:
 class TestBotContextManager:
     def test_context_manager_releases_all_handles_on_exit(self, tmp_path: pathlib.Path) -> None:
         """Contracts (a)-(b): exit closes the provider and drops caches."""
-        session = _test_session(tmp_path)
+        session = bot_session(tmp_path)
         provider = _BoundaryProvider(1)
 
         with Bot(**session, provider=provider) as bot:
@@ -116,7 +112,7 @@ class TestBotContextManager:
 
     def test_exit_does_not_suppress_exceptions(self, tmp_path: pathlib.Path) -> None:
         """Contract (d): the exception propagates *and* teardown still runs."""
-        session = _test_session(tmp_path)
+        session = bot_session(tmp_path)
         provider = _BoundaryProvider(1)
         boom_msg = "boom"
 

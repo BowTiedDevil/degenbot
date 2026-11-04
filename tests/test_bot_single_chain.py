@@ -14,25 +14,7 @@ import pytest
 from degenbot.bot import Bot
 from degenbot.exceptions import DegenbotValueError
 from degenbot.provider import AlloyProvider, OfflineProvider
-
-
-def _test_session(tmp_path: pathlib.Path, chain_id: int = 1) -> dict[str, object]:
-    """The explicit keyword overrides a session under test runs with."""
-    return {"chain_id": chain_id, "database": str(tmp_path / "test.db")}
-
-
-def _fake_provider(chain_id: int = 1) -> OfflineProvider:
-    """A real offline provider (recorded JSON, no RPC) with the given chain_id.
-
-    `Bot.__init__` reads `provider.get_chain_id()` (the recorded chain_id) to enforce
-    session/chain alignment; no RPC is issued at construction, so an offline
-    provider over an in-memory Rust transport suffices — no MagicMock double
-    (see O3).
-    """
-    return OfflineProvider(
-        chain_id=chain_id,
-        blocks={"1": {"timestamp": 1, "calls": {}, "code": {}}},
-    )
+from tests.helpers.bot_factory import ProviderKind, bot_session, fake_provider
 
 
 class TestSingleChainBot:
@@ -48,17 +30,17 @@ class TestSingleChainBot:
         )
 
         with pytest.raises(ValueError, match="no layer named a chain"):
-            Bot(database=str(tmp_path / "t.db"), provider=_fake_provider(1))
+            Bot(database=str(tmp_path / "t.db"), provider=fake_provider(ProviderKind.OFFLINE, 1))
 
     def test_rejects_chain_id_mismatch(self, tmp_path: pathlib.Path) -> None:
         # the session says chain 1, the provider reports 137 — fail fast.
-        session = _test_session(tmp_path, chain_id=1)
+        session = bot_session(tmp_path, chain_id=1)
         with pytest.raises(DegenbotValueError, match="chain"):
-            Bot(**session, provider=_fake_provider(137))
+            Bot(**session, provider=fake_provider(ProviderKind.OFFLINE, 137))
 
     def test_accepts_matching_provider(self, tmp_path: pathlib.Path) -> None:
-        session = _test_session(tmp_path, chain_id=1)
-        bot = Bot(**session, provider=_fake_provider(1))
+        session = bot_session(tmp_path, chain_id=1)
+        bot = Bot(**session, provider=fake_provider(ProviderKind.OFFLINE, 1))
         assert bot.chain_id == 1
         assert isinstance(bot.provider, (AlloyProvider, OfflineProvider))
 
@@ -67,8 +49,14 @@ class TestTwoBotsAreIndependent:
     """D5 positive proof: two Bots in one process share nothing."""
 
     def test_separate_providers_and_py_bots(self, tmp_path: pathlib.Path) -> None:
-        bot1 = Bot(**_test_session(tmp_path / "a", chain_id=1), provider=_fake_provider(1))
-        bot2 = Bot(**_test_session(tmp_path / "b", chain_id=137), provider=_fake_provider(137))
+        bot1 = Bot(
+            **bot_session(tmp_path / "a", chain_id=1),
+            provider=fake_provider(ProviderKind.OFFLINE, 1),
+        )
+        bot2 = Bot(
+            **bot_session(tmp_path / "b", chain_id=137),
+            provider=fake_provider(ProviderKind.OFFLINE, 137),
+        )
         assert bot1.chain_id == 1
         assert bot2.chain_id == 137
         assert bot1.provider is not bot2.provider

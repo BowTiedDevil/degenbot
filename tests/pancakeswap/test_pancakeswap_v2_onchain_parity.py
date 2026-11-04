@@ -47,6 +47,7 @@ from tests.golden.oracle import (
 from tests.helpers.contract_compat import make_contract
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.seam import Bot
+from tests.helpers.swap_amount_multipliers import ONCHAIN_PARITY_TOKEN_AMOUNT_MULTIPLIERS
 from tests.helpers.v2_pool_factory import make_v2_pool
 
 if TYPE_CHECKING:
@@ -84,21 +85,6 @@ _ROUTER_ABI = [
     },
 ]
 
-_TOKEN_AMOUNT_MULTIPLIERS = (
-    0.000000001,
-    0.00000001,
-    0.0000001,
-    0.000001,
-    0.00001,
-    0.0001,
-    0.001,
-    0.01,
-    0.1,
-    0.125,
-    0.25,
-    0.5,
-    0.75,
-)
 
 _PYBOT = Bot()
 
@@ -161,7 +147,7 @@ def _parity_cases(lp: UniswapV2Pool) -> list[tuple[str, Any, Any, int]]:
     ):
         if reserve_out < 2:
             continue
-        for mult in _TOKEN_AMOUNT_MULTIPLIERS:
+        for mult in ONCHAIN_PARITY_TOKEN_AMOUNT_MULTIPLIERS:
             amount_in = int(mult * reserve_in)
             if amount_in == 0 or reserve_in <= 1:
                 continue

@@ -270,7 +270,6 @@ fn metrics_http_server_serves_registry_text() {
     use opentelemetry::metrics::MeterProvider;
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::time::Duration;
 
     let (provider, registry) = metrics::build_prometheus_provider().expect("provider");
     let meter = provider.meter("degenbot.test");
@@ -287,8 +286,11 @@ fn metrics_http_server_serves_registry_text() {
         metrics::serve_on_listener(&listener, &body, &server_stop);
     });
 
-    // Give the accept loop a beat, then scrape it like Prometheus would.
-    std::thread::sleep(Duration::from_millis(50));
+    // No readiness sleep: `bind` + `listen` ran on this thread before the
+    // accept loop was spawned, so the socket is already listening when the
+    // scrape connects — the kernel queues the connection in the backlog and the
+    // loop drains it whenever it is scheduled. The scrape's own
+    // `read_to_string` is the ordering edge that proves the loop served it.
     let mut stream = std::net::TcpStream::connect(addr).expect("connect");
     stream
         .write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")

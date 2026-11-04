@@ -12,12 +12,14 @@ from typing import TYPE_CHECKING
 
 from degenbot.checksum_cache import get_checksum_address
 from tests.aave.writer_parity.harness import (
-    BOOTSTRAP_BLOCK,
-    FIXTURE_BLOCK,
     dump_user_rows,
-    make_user_e_mode_set_log,
     mock_rpc_server,
     seeded_db,
+)
+from tests.helpers.aave_logs import (
+    BOOTSTRAP_BLOCK,
+    FIXTURE_BLOCK,
+    make_user_e_mode_set_log,
 )
 from tests.helpers.seam import CancelHandle, run_aave_update
 

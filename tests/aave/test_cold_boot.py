@@ -22,6 +22,9 @@ import pytest
 
 from degenbot.db import db_upgrade_database
 from tests.aave.writer_parity.harness import (
+    mock_rpc_server,
+)
+from tests.helpers.aave_logs import (
     CONFIGURATOR_REVISION_SELECTOR,
     POOL_ADDRESS,
     POOL_ADDRESS_PROVIDER_ADDRESS,
@@ -30,7 +33,6 @@ from tests.aave.writer_parity.harness import (
     _make_log,
     _pad_address,
     _u256,
-    mock_rpc_server,
 )
 from tests.helpers.database import sqlite_connection
 from tests.helpers.seam import CancelHandle, run_aave_update
