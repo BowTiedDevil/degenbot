@@ -317,6 +317,9 @@ mod tests {
     /// storage forward and reads the same value.
     #[test]
     fn one_anchors_fan_outs_share_the_storage_memo() {
+        let _tally_guard = crate::sim::divergence_probe::TALLY_TEST_GUARD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let core = bot_state_with_pool();
         let anchor = SimAnchorState::snapshot(&core);
         let cache = crate::sim::StorageMemoCache::new();
@@ -344,6 +347,9 @@ mod tests {
     /// NEW anchor is never shadowed by the old memo's.
     #[test]
     fn an_anchor_move_starts_a_fresh_storage_memo() {
+        let _tally_guard = crate::sim::divergence_probe::TALLY_TEST_GUARD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let core = bot_state_with_pool();
         let anchor = SimAnchorState::snapshot(&core);
         let cache = crate::sim::StorageMemoCache::new();

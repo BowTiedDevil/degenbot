@@ -118,13 +118,12 @@ pub fn divergence_tally_snapshot() -> DivergenceTally {
     tally().lock().map(|acc| acc.to_tally()).unwrap_or_default()
 }
 
-/// Serializes every lib-binary test that can bump the process-global
-/// divergence tally. `observe_storage_read` is reached by ANY
-/// `BotStateDb::storage_ref` read of a tracked slot — this module's probe tests
-/// and the `BotStateDb` tripwire/observer tests alike — so the absolute
-/// `slots_compared` pins can only hold while no other read interleaves. (The
-/// guard used to live inside this module's test module, which could not
-/// exclude the sibling-module readers.)
+/// Serializes every lib-binary test whose reads can bump the process-global
+/// divergence tally: `observe_storage_read` is reached by any `BotStateDb`
+/// storage read of a tracked slot — this module's probe tests and the
+/// `BotStateDb` reader tests alike. The absolute `slots_compared` pins hold
+/// only while no other read interleaves, so every test that reads a tracked
+/// slot takes this guard for its duration.
 #[cfg(test)]
 pub(crate) static TALLY_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -234,7 +233,7 @@ pub fn dump_divergence_summary() {
     );
 }
 
-#[expect(clippy::unwrap_used, clippy::expect_used, clippy::cast_sign_loss)]
+#[expect(clippy::expect_used, clippy::cast_sign_loss)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,7 +371,9 @@ mod tests {
     #[test]
     fn storage_ref_returns_rpc_value_unchanged_when_probe_on_or_off() {
         // Reading a tracked slot below bumps the process-global tally.
-        let _tally = TALLY_TEST_GUARD.lock().unwrap();
+        let _tally = TALLY_TEST_GUARD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let core = v3_pool(U256::from(1u128) << 96, 1_000_000, -5010, 18_000_000);
         let anchor = SimAnchorState::snapshot(&core);
         // rpc serves slot0 = a DIFFERENT tick → would diverge IF the probe
@@ -394,7 +395,9 @@ mod tests {
 
     #[test]
     fn observe_logs_divergence_when_engine_lags_rpc_and_tally_accumulates() {
-        let _g = TALLY_TEST_GUARD.lock().unwrap();
+        let _g = TALLY_TEST_GUARD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // The probe is always on (the gate flag was retired), so exercise the
         // divergence path directly: build an engine V3 pool whose tick disagrees
         // with a fixed rpc slot0, call observe_storage_read, then assert the
@@ -416,7 +419,9 @@ mod tests {
 
     #[test]
     fn observe_never_complains_when_engine_matches_rpc() {
-        let _g = TALLY_TEST_GUARD.lock().unwrap();
+        let _g = TALLY_TEST_GUARD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         reset_divergence_tally();
         let sqrt = U256::from(1u128) << 96;
         let core = v3_pool(sqrt, 1_000_000, -5010, 18_000_000);
@@ -432,7 +437,9 @@ mod tests {
 
     #[test]
     fn observe_ignores_untracked_slot() {
-        let _g = TALLY_TEST_GUARD.lock().unwrap();
+        let _g = TALLY_TEST_GUARD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // feeGrowthGlobal0X128 (slot 1) is NOT tracked → observe does nothing.
         reset_divergence_tally();
         let core = v3_pool(U256::from(1u128) << 96, 1_000_000, 0, 18_000_000);
