@@ -268,8 +268,8 @@ fn pair_exact_in(
 
 /// Balancer V2 weighted exact-output across an explicit token pair.
 ///
-/// Mirrors the python companion `calculate_tokens_in_from_tokens_out`:
-/// upscale the out amount (`mulDown`), `calc_in_given_out` in scaled space,
+/// The tokens-in solve, in the deployed `WeightedMath` order: upscale the out
+/// amount (`mulDown`), `calc_in_given_out` in scaled space,
 /// downscale UP, then add the fee LAST (div-up over the complement).
 ///
 /// # Errors

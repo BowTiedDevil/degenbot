@@ -10,7 +10,7 @@ with un-prefixed names — `fixed_point_mul_down`, not
 `balancer_fixed_point_mul_down`. The `balancer_` prefix was an artifact
 of the flat root registration; on the submodule it is redundant.
 
-The companion `src/degenbot/balancer/math.py` re-exports these as the
+The companion `src/degenbot/balancer/math/` package re-exports these as the
 stable import path (`from degenbot.balancer.math import fixed_point_div_down`),
 decoupling Python consumers from the `degenbot._ffi` internal module and
 letting the Rust crate structure show through to Python.

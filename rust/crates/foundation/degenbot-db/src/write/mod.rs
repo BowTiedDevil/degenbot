@@ -1,11 +1,10 @@
 //! Aave V3 lending-market DB writers — the per-event apply fns +
 //! `get_or_create_*` upsert substrate.
 //!
-//! Port of `src/degenbot/cli/aave/event_handlers.py::_process_*` handlers +
-//! `db_market.py` / `db_assets.py` / `db_users.py` / `db_positions.py`
-//! `get_or_create_*` upsert helpers. The Python `aave_update` driver loop +
-//! RPC event fetch stay as the shell (`stays-python`); the Rust core owns the
-//! pure-typed upsert substrate: get-or-create + event-decode→row-write.
+//! The per-event `_process_*` handlers plus the `get_or_create_*` upsert
+//! helpers. The driver shell keeps the `aave_update` loop and the RPC event
+//! fetch; this crate owns the pure-typed upsert substrate: get-or-create +
+//! event-decode→row-write.
 //!
 //! # The write-capable connection (`open_for_writes`)
 //!
@@ -47,8 +46,7 @@
 //!
 //! # The bit-decode (the pure CPU seam)
 //!
-//! [`decode_reserve_configuration_bitmap`] ports
-//! `_decode_reserve_configuration_bitmap` (`event_handlers.py` L133–L214) verbatim:
+//! [`decode_reserve_configuration_bitmap`] decodes
 //! the Aave V3 reserve-config `uint256` bitmap bits → a typed
 //! [`ReserveConfiguration`] (ltv / liquidation-threshold / -bonus / decimals /
 //! active / frozen / borrowing-enabled / stable-rate / reserve-factor /
@@ -59,8 +57,7 @@
 //!
 //! # The upsert substrate (`get_or_create_*`)
 //!
-//! Each `get_or_create_*` mirrors the Python `session.scalar(select(...)) →
-//! mutate ORM → session.add()` trajectory as a single `SELECT … WHERE …` →
+//! Each `get_or_create_*` is one `SELECT … WHERE …` →
 //! `INSERT` (or `UPDATE` for the mutate path). The Python `Erc20TokenTable` /
 //! `AaveV3Asset` / `AaveV3User` / `AaveV3EModeCategory` / `AaveV3AssetConfig` /
 //! `AaveV3UserCollateralConfig` / `AaveV3CollateralPosition` /

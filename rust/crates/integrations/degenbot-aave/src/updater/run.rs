@@ -282,8 +282,8 @@ pub struct RunSpec {
     /// The widest block range a single `eth_getLogs` request may span. Must be
     /// non-zero. The commit granularity ([`Self::chunk_size`]) is
     /// independent: a chunk wider than this is fetched as several
-    /// `max_block_range`-sized requests. Mirrors the Python updater's
-    /// per-request clamp (`fetch_logs_retrying`'s `max_blocks_per_request`),
+    /// `max_block_range`-sized requests: the per-request clamp
+    /// (`fetch_logs_retrying`'s `max_blocks_per_request`),
     /// so an operator can point the run at a public RPC with a tighter
     /// `eth_getLogs` range limit without shrinking the commit chunk.
     pub max_block_range: u64,
@@ -601,8 +601,8 @@ async fn run_aave_update_driver(
     // The RPC request width is the `max_block_range` clamp, NOT the commit
     // chunk: a chunk wider than the clamp is fetched as several
     // `max_block_range`-sized `eth_getLogs` requests, while the commit stays
-    // `chunk_size`-wide. Mirrors the Python updater's per-request clamp
-    // (`fetch_logs_retrying`'s `max_blocks_per_request`) decoupled from its
+    // `chunk_size`-wide. The per-request clamp
+    // (`fetch_logs_retrying`'s `max_blocks_per_request`) is decoupled from its
     // `--chunk` commit granularity.
     let fetcher = LogFetcher::new(provider.clone(), max_block_range);
 
@@ -630,8 +630,8 @@ async fn run_aave_update_driver(
     // `ProxyCreated` events from the `POOL_ADDRESS_PROVIDER` over the bootstrap
     // window + applies them idempotently (so the chunk loop's later
     // re-encounter of the same events is a no-op). No-op on a warm boot (both
-    // rows already present). Mirrors the Python `update_aave_market` Phase-1
-    // bootstrap (commands.py:1010-1062 + `_process_proxy_creation_event`).
+    // rows already present): the first-pass bootstrap that seeds the market's
+    // pool contracts + proxy rows before the chunk loop runs.
     bootstrap_pool_contracts(db, &provider, &fetcher, market_id, from_block).await?;
 
     // Build the fetch spec + the GHO asset (chain-unique). The per-chunk
@@ -1023,9 +1023,8 @@ async fn run_aave_update_driver(
         // mid-loop and NOT before the first chunk). `last_update_block` is
         // advanced to the last committed chunk's `chunk_end` (the stamp write
         // happened inside `apply_chunk_events_on_conn`'s commit), so the next
-        // run resumes from there. Mirrors the Python pre-cutover `stop_after_n`
-        // behavior (commands.py:454 pre-Rust-core — downgraded to a warning in
-        // the cutover; restored here as a first-class loop cap).
+        // run resumes from there. `--stop-after-n` is a first-class loop cap: a
+        // bounded run stops cleanly instead of being killed mid-chunk.
         if let Some(limit) = max_chunks {
             if report.chunks_committed >= limit {
                 report.to_block = chunk_end;

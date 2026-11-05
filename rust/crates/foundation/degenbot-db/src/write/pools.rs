@@ -52,8 +52,7 @@ impl DegenbotDb {
 
     conn_writer! {
         /// Apply a `ReserveDataUpdated` event's decoded fields to the
-        /// `aave_v3_assets` row. Port of
-        /// `event_handlers.py::_process_reserve_data_update_event` (L788–L847).
+        /// `aave_v3_assets` row.
         ///
         /// Updates `liquidity_rate` / `borrow_rate` (= variable borrow rate;
         /// stable borrow rate is deprecated on Aave V3, ignored as in Python) /
@@ -107,9 +106,8 @@ impl DegenbotDb {
     }
 
     conn_writer! {
-        /// Seed the `aave_v3_assets` row for a freshly-initialized reserve. Port
-        /// of `event_handlers.py::_process_asset_initialization_event`
-        /// (L549–L687). Get-or-create on `(market_id, underlying_asset_id)`:
+        /// Seed the `aave_v3_assets` row for a freshly-initialized reserve.
+        /// Get-or-create on `(market_id, underlying_asset_id)`:
         /// - **create** — insert `a_token_id`/`a_token_revision`/`v_token_id`/
         ///   `v_token_revision`/`price_source` + the zero defaults
         ///   (`liquidity_index='0'`/`liquidity_rate='0'`/`borrow_index='0'`/
@@ -132,7 +130,7 @@ impl DegenbotDb {
         /// # Errors
         ///
         /// Returns [`DbError::Sqlite`] on a query failure.
-        // mirrors the Python event arg list 1:1
+        // one argument per event field, in event order
         #[expect(clippy::too_many_arguments)]
         fn apply_reserve_initialized, apply_reserve_initialized_on_conn(
             conn: &rusqlite::Connection,
@@ -145,7 +143,7 @@ impl DegenbotDb {
             price_source: Option<&str>,
             gho_link_token_id: Option<i64>,
         ) -> Result<i64, DbError>;
-        // mirrors the Python event arg list 1:1
+        // one argument per event field, in event order
         #[expect(clippy::too_many_arguments)]
         {
             if let Some(id) = existing_aave_v3_asset(conn, market_id, underlying_asset_id)? {
@@ -191,8 +189,7 @@ impl DegenbotDb {
                 ],
             )?;
             let asset_id = conn.last_insert_rowid();
-            // divergence #8: mirror the Python's GHO-vToken-FK link
-            // (event_handlers.py:689-698) — when the new asset's underlying IS
+            // The GHO-vToken-FK link: when the new asset's underlying IS
             // the GHO token, set `aave_gho_tokens.v_token_id` to the new vToken's
             // erc20 id. The FK is the precondition for the emitter guard
             // (resolved via `gho_asset.v_token_address`). `None` for a regular

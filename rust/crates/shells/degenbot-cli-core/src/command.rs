@@ -109,8 +109,8 @@ impl Command {
     }
 }
 
-/// The `database` command group (the template group; ports
-/// `src/degenbot/cli/database.py` arm for arm).
+/// The `database` command group — the template group the other groups' shape
+/// follows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DatabaseCommand {
     /// Back up the database to its `.db.bak` sibling. Confirms replacement only

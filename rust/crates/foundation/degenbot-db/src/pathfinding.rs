@@ -335,7 +335,7 @@ impl DegenbotDb {
     ///
     /// Addresses are stored EIP-55 checksummed; the lookup matches the
     /// checksummed form, so callers must provide checksummed addresses
-    /// (mirrors the Python `get_checksum_address` pre-normalization).
+    /// (the pre-normalization the checksum cache applies).
     ///
     /// # Errors
     ///

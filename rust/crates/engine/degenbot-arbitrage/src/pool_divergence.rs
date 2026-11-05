@@ -193,7 +193,7 @@ impl PoolDivergence {
 /// amount is the token RECEIVED by the swapper) differs from the solver's
 /// reported `hop_outputs[i]`.
 ///
-/// Mirrors the Python classifier's amount-direction convention: the output is
+/// The amount-direction convention: the output is
 /// the positive amount (received); for an exact-input swap exactly one of
 /// `amount0`/`amount1` is positive. A count mismatch (captured_swaps.len()
 /// != hop_outputs.len()) is NOT `SolverCalc` (defensive — classify as
@@ -256,8 +256,7 @@ pub fn diverging_pool_keys(failure: &SimFailure, hops: &[HopInfo]) -> Vec<PoolDi
 
 /// The output amount of a captured swap — the POSITIVE one (token received by
 /// the swapper). For an exact-input swap exactly one of `amount0`/`amount1` is
-/// positive; `max` picks the output. Mirrors the Python classifier's
-/// `actual_output = max(amount0, amount1)` convention.
+/// positive; `max` picks the output (`actual_output = max(amount0, amount1)`).
 pub(crate) fn captured_swap_output(swap: &CapturedSwap) -> U256 {
     // amount0/amount1 are I256 (signed deltas — positive = received,
     // negative = paid in). The output is the positive one; clamp negatives

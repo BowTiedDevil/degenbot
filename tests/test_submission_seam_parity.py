@@ -3,8 +3,8 @@
 
 Drives the full ``TxSigner`` / ``TxParams`` pyclasses + the
 ``finalize_fees`` pyfunction through the Rust core signing path and asserts
-**byte-exact parity vs `eth_account.Account.sign_transaction`** — the Python
-oracle (`examples/eth_backrun_v2_v3_v4_rust.py` L2623–L2640).
+**byte-exact parity vs `eth_account.Account.sign_transaction`** — the
+library's own signer, the oracle for the ABI-level signed-bytes shape.
 
 Because both ``eth_account`` and the Rust ``alloy-signer-local`` use RFC 6979
 deterministic ECDSA over secp256k1, a pinned key + ``tx_params`` produces

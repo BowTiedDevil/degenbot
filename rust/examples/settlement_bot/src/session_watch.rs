@@ -161,8 +161,8 @@ impl<T> SessionWatch<T> {
             let reg_enabled = registration.is_some();
             let facts_enabled = facts.is_some();
             tokio::select! {
-                // Deterministic ranking (mirrors the Python done-set check
-                // order): registration is polled first, so a same-batch
+                // Deterministic ranking (the done-set check order):
+                // registration is polled first, so a same-batch
                 // registration failure outranks a detection fact.
                 biased;
                 res = &mut consumer => {
@@ -193,8 +193,8 @@ impl<T> SessionWatch<T> {
                         None => std::future::pending().await,
                     }
                 }, if facts_enabled => {
-                    // Same-batch ranking (mirrors the Python done-set
-                    // check order): a registration that already finished
+                    // Same-batch ranking (the done-set check order):
+                    // a registration that already finished
                     // with a fatal error OUTRANKS the detection fact, even
                     // if the fact was polled first.
                     if let Some(reg) = registration.take() {

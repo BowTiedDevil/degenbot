@@ -329,7 +329,7 @@ pub use solve::fixtures::read_fixture;
 
 /// Liquidity data at an initialized tick.
 ///
-/// Mirrors the Python `LiquidityAtTick` from `concentrated/types.py`. Used by
+/// One tick's liquidity delta + block stamp. Used by
 /// the V3/V4 pool-state structs and by [`tick_fetch::FetchedTickWord`]. Pulled
 /// into this crate ahead of the full state-struct move
 /// because the `TickWordSource` seam returns `HashMap<i32, TickInfo>`.

@@ -11,8 +11,7 @@
 //! the tier-3-proven `v4_simulate_swap` twin reports it can only *convert*
 //! `input_consumed = 15351327867192638` (the remaining 20,139 wei tips the
 //! loop past the last funded tick into zero liquidity). With a MAX price limit
-//! (what the live executor passes, per the exploration-no-profit-crash writeup,
-//! removed in the stale-docs cleanup `71ec78b2`, L308) the
+//! (what the live executor passes) the
 //! **unclamped** over-feed makes the exact-in loop march empty bitmap words
 //! toward `MAX_SQRT_PRICE` — a 20.7M-gas `EMPTY-HALT` that reverts under the
 //! sim's execute gas ceiling (originally the 5M `INITIAL_EXECUTE_GAS`;

@@ -1,5 +1,4 @@
-//! Domain types for the Aave V3 transaction operations parser (port of
-//! `src/degenbot/aave/operations.py` + `operation_types.py` + `pattern_types.py`).
+//! Domain types for the Aave V3 transaction operations parser.
 //!
 //! The parser [`crate::operations_parser::TransactionOperationsParser`] is a
 //! per-Ethereum-tx grouping engine: it matches Pool events (Supply/Borrow/
@@ -81,8 +80,7 @@ pub enum OperationType {
     /// stkAAVE (GHO discount-token) transfer.
     StkAaveTransfer,
     /// Only `DeficitCreated` falls here — placeholder awaiting liquidation
-    /// matching downstream. Mirrors the Python's "`DEFICIT_CREATED` is always
-    /// marked UNKNOWN" treatment.
+    /// matching downstream: a `DEFICIT_CREATED` event is always UNKNOWN.
     Unknown,
 }
 

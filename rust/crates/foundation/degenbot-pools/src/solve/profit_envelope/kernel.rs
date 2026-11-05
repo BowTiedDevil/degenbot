@@ -876,8 +876,8 @@ pub(crate) fn compose_envelopes_exact(
 }
 
 /// Canonical (breakpoint, line, ORIGIN index) pieces of the lower
-/// envelope over [0, upper]. Mirrors the PRUNE hull's arithmetic
-/// (stage-2, ~L1140) — slope-descending order with exact cross-mult
+/// envelope over [0, upper]. The PRUNE hull's arithmetic — slope-descending
+/// order with exact cross-mult
 /// fallback, same-slope dominance swap, ceil-rounded takeover,
 /// U256 saturation clamps, pops-before-bx>upper-reject — NOT the
 /// search-phase hull. The origin index maps each piece back to its

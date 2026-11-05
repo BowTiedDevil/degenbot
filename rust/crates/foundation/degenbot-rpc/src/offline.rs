@@ -12,8 +12,10 @@
 //!
 //! ## Supported RPCs
 //!
-//! Mirrors the Python interface: `eth_call`, `eth_getCode`, `eth_blockNumber`,
-//! `eth_getBlockByNumber`. The Python impl raised `NotImplementedError` for
+//! Answers the read-only subset the offline lanes need: `eth_call`,
+//! `eth_getCode`, `eth_blockNumber`, `eth_getBlockByNumber`. Balance / storage /
+//! nonce / logs reads are refused rather than answered with a guess. The retired
+//! Python impl raised `NotImplementedError` for
 //! balance / storage / nonce / logs — those surface here as
 //! [`TransportErrorKind`] "method not found" (non-revert RPC error), preserving
 //! the "unsupported" contract without panicking.
@@ -156,8 +158,8 @@ impl OfflineProvider {
     ///
     /// # Panics
     ///
-    /// Panics if no blocks are recorded (mirrors the Python `ValueError` on
-    /// empty data — construction with zero blocks is a usage error).
+    /// Panics if no blocks are recorded — construction with zero blocks is a
+    /// usage error, not an empty chain.
     #[must_use]
     pub fn latest_block(&self) -> u64 {
         #[expect(clippy::expect_used)] // provider always records at least one block

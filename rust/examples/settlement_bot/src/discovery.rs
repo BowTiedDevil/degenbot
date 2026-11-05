@@ -176,8 +176,8 @@ fn node_from_row(row: &DiscoveryPoolRow, row_index: usize) -> PoolNode {
 /// 1. keep rows whose family is in `requested_kinds`;
 /// 2. candidate tokens = tokens incident to >= 2 kept edges;
 /// 3. when `allowed_intermediate_lower` is set, retain only those tokens
-///    (mirrors the Python whitelist intersection — boundary tokens must be in
-///    the set too, exactly as `build_path_graph` does);
+///    (the whitelist intersection — boundary tokens must be in the set, not
+///    only the intermediate hops);
 /// 4. keep edges whose BOTH endpoints survive;
 /// 5. build + prune.
 #[must_use]

@@ -6,8 +6,7 @@
 //! receiving a Python-built exchange list through FFI. This module joins the
 //! DB row ([`degenbot_db::ExchangeRow`], read via
 //! [`DegenbotDb::fetch_active_exchanges_by_chain`]) with a **static
-//! event-config map** — the Rust equivalent of `src/degenbot/cli/pool.py`'s
-//! `_V2_CONFIGS`/`_V3_CONFIGS`/`_V4_CONFIGS` dataclasses — to build a single
+//! event-config map** — this crate's per-family tables below — to build a single
 //! [`ExchangeSpec`] carrying everything the chunk fn needs to
 //! dispatch per exchange: the resolved [`PoolFamily`] (decode-leaf
 //! discriminator), the per-exchange `PoolCreated` topic0 (from `degenbot_decoders`'s
@@ -49,10 +48,8 @@ use crate::fetch::PoolFamily;
 ///
 /// Built by joining an [`ExchangeRow`] (from the `exchanges` table — the DB is
 /// the source of truth for `id`/`chain_id`/`name`/`factory`) with the static
-/// event-config map (the Rust equivalent of `src/degenbot/cli/pool.py`'s
-/// per-family `V2PoolUpdateConfig`/`V3PoolUpdateConfig`/`V4PoolUpdateConfig`
-/// dataclasses — the source of truth for `family`/`event_topic`/
-/// `fee_denominator`/`v2_fee_token`/`rpc_fee_call`, which are NOT in the DB).
+/// event-config map — the source of truth for `family`/`event_topic`/
+/// `fee_denominator`/`v2_fee_token`/`rpc_fee_call`, which are NOT in the DB.
 ///
 /// One spec carries everything the chunk fn needs to fetch +
 /// decode + persist one exchange's pool-creation events without consulting
@@ -67,7 +64,7 @@ pub struct ExchangeSpec {
     pub chain_id: i64,
     /// The exchange `name` discriminator (`"uniswap_v2"`, `"uniswap_v3"`,
     /// `"aerodrome_v2"`, ...). Drives [`Self::family`] + the static-config
-    /// resolution. Mirrors the Python `exchange.name` dispatch key.
+    /// resolution — the `exchanges.name` dispatch key.
     pub name: String,
     /// The `exchanges.factory` — the `PoolCreated`/`Initialize` emitter (the
     /// `address` filter on `eth_getLogs`). Checksummed.
@@ -116,10 +113,8 @@ pub struct ExchangeSpec {
     pub last_update_block: Option<i64>,
 }
 
-/// The RPC fee-override call an Aerodrome exchange requires (the Rust
-/// equivalent of `V2PoolUpdateConfig.rpc_fee_call` +
-/// `rpc_fee_return_types` + `rpc_fee_includes_stable` in
-/// `src/degenbot/cli/pool_updater_configs.py`).
+/// The RPC fee-override call an Aerodrome exchange requires: the call it makes,
+/// the return types it decodes, and whether the `stable` arg is threaded.
 ///
 /// Modeled as a closed enum (not stringly-typed fields) because only two
 /// variants exist today (`aerodrome_v2`, `aerodrome_v3`) — encoding the
@@ -144,8 +139,7 @@ pub enum RpcFeeCall {
 }
 
 /// The static per-exchange config (everything NOT in the `exchanges` DB
-/// table). The Rust equivalent of `src/degenbot/cli/pool.py`'s
-/// `_V2_CONFIGS`/`_V3_CONFIGS`/`_V4_CONFIGS` dataclasses.
+/// table).
 ///
 /// Kept private to this crate — callers consume it through [`ExchangeSpec`]
 /// (built by [`load_active_exchange_specs`]); the resolver is an internal
@@ -163,11 +157,9 @@ struct StaticExchangeConfig {
 /// unknown names (an exchange the Rust side doesn't yet model —
 /// [`load_active_exchange_specs`] skips these).
 ///
-/// The mapping is the faithful Rust port of the three Python config dicts in
-/// `src/degenbot/cli/pool.py` (the `fee_denominator`/`fee_token0`/`rpc_fee_call`
-/// values + the event-hash constant references are copied directly from
-/// `_V2_CONFIGS`/`_V3_CONFIGS`/`_V4_CONFIGS`). Update this `match` when a new
-/// DEX is added to the Python configs — the two MUST stay in sync.
+/// The `fee_denominator`/`fee_token0`/`rpc_fee_call` values + the event-hash
+/// constants are this table's own data. Add the arm here when a DEX joins the
+/// fleet: an exchange with no arm is skipped by [`load_active_exchange_specs`].
 #[must_use]
 fn resolve_static_config(name: &str) -> Option<StaticExchangeConfig> {
     // V2 family — the canonical `PairCreated` (no `stable` flag).

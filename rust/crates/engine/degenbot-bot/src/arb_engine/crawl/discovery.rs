@@ -65,7 +65,7 @@ pub use degenbot_db::GraphEdition as Edition;
 
 /// The pool-family degree a token needs before it can anchor a cycle.
 ///
-/// Mirrors the Python callers' `_get_tokens_with_min_degree(degree=2)`: a
+/// The minimum-degree intake filter (`degree=2`): a
 /// two-hop cycle touches a token through two pools, so a token that appears in
 /// fewer than two pools can never close one.
 const CANDIDATE_TOKEN_DEGREE: u32 = 2;

@@ -72,7 +72,7 @@ def cleanup_zero_balance_positions(database_path: str, market_id: SupportsIndex)
     `degenbot._ffi.aave.cleanup_zero_balance_positions(database_path, market_id)`
 
     Delete all zero-balance collateral + debt positions for `market_id`.
-    Mirrors the Python `cleanup_zero_balance_positions` (verification.py:19).
+    Delete every zero-balance collateral + debt row for the market.
     Opens the DB for writes, deletes, + commits. The GIL is released across
     the call.
     """

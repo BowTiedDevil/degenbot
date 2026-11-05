@@ -92,7 +92,7 @@ impl PyLiquidityUpdateEvent {
 /// apply each event (`apply_liquidity_mapping_update`) → upsert live
 /// positions/init-maps, delete stale, stamp `liquidity_update_block`/
 /// `log_index` with the last event. Returns `False` if the pool row isn't found
-/// (mirrors the Python `if pool_in_db is None: return`); `True` after a
+/// (a missing pool row is a no-op); `True` after a
 /// successful apply. The block/log-index ordering invariant is enforced
 /// (panics on violation, matching the Python `assert`s).
 #[pyfunction]

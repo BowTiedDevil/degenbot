@@ -14,12 +14,11 @@
 //! orchestrator/parser maps them to resolved ids before constructing
 //! `AaveChunkEvent` variants the apply layer consumes.
 //!
-//! Event signatures + topic constants are reproduced from the Python
-//! `src/degenbot/aave/events.py` (the canonical degenbot source), which
-//! itself computes them as `keccak256` of the canonical Solidity event
-//! signature. The 34 topic-hash constants below are byte-for-byte copies of
-//! the Python `HexBytes(...)` values; a `parity_topic_constants_match_python`
-//! test pins every constant against the `events.py` source of truth.
+//! Event signatures + topic constants are the `keccak256` of the canonical
+//! Solidity event signature. The topic-hash constants below are the transcribed
+//! hashes; the `parity_topic_constants_match_python` fixture pins every
+//! constant against the recorded topic table, so a mistyped literal cannot
+//! silently decode every log as Unknown.
 //!
 //! # Decode-error handling (mirrors precedent)
 //!
@@ -116,8 +115,8 @@ use alloy::rpc::types::Log;
 // ── topic constants (35 — keccak256 of the canonical event signatures) ─────
 //
 // Each constant is the keccak256 of its canonical Solidity event signature
-// (byte-for-byte copies of the Python `events.py` values; pinned by the
-// `parity_topic_constants_match_python` test). The one-line doc per constant
+// (the transcribed topic hashes; pinned by the
+// `parity_topic_constants_match_python` fixture). The one-line doc per constant
 // states that signature so a plain-text search for any event name lands on
 // both its topic constant and its decoder in one step.
 
@@ -1821,15 +1820,15 @@ mod tests {
         word
     }
 
-    // ── parity: every topic constant matches the Python `events.py` ─────
-    // This test pins every Rust topic constant against the Python source of
-    // truth (catches transcription errors in the byte literals — a sentinel
+    // ── parity: every topic constant matches the recorded topic table ────
+    // This fixture pins every Rust topic constant against the recorded hex
+    // (catches transcription errors in the byte literals — a sentinel
     // value that's off-by-one would silently decode every log as Unknown).
 
     #[test]
     #[expect(clippy::too_many_lines)] // fixture table — one entry per event is intrinsic
     fn parity_topic_constants_match_python() {
-        // (Rust constant, Python `events.py` topic0 hex string).
+        // (Rust constant, the recorded topic0 hex string).
         let cases: [(&B256, &str); 34] = [
             (
                 &AAVE_BORROW_TOPIC,
@@ -1974,7 +1973,7 @@ mod tests {
             );
             assert_eq!(
                 rust_const, &python,
-                "Rust topic constant diverged from Python events.py ({python_hex})"
+                "Rust topic constant diverged from the recorded topic hex ({python_hex})"
             );
         }
     }

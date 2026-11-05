@@ -1,6 +1,7 @@
 //! Aave V3 position analysis — pure math for liquidation-risk assessment.
 //!
-//! Verbatim port of `src/degenbot/aave/analysis/core.py`. No I/O, no `pyo3`.
+//! No I/O, no `pyo3`: a pure projection from the decoded records to the risk
+//! verdict the CLI renders.
 //! Consumes the record structs [`degenbot_db::aave`] already produces
 //! ([`AaveUserRecord`], [`AaveCollateralPositionRecord`],
 //! [`AaveDebtPositionRecord`]) + builds the derived [`CollateralPositionData`]
@@ -12,8 +13,8 @@
 //! # Float discipline
 //!
 //! Index arithmetic is integer-exact (`U256`); the final health-factor +
-//! max-LTV ratios are `f64` (mirrors the Python `int / int → float`
-//! division). `u256_to_f64` converts via a lossy limb sum — exact for
+//! max-LTV ratios are `f64` (`int / int → float` division). `u256_to_f64`
+//! converts via a lossy limb sum — exact for
 //! values ≤ `2^53` and within `rel-1e-6` for all realistic magnitudes (the
 //! tolerance the Python `test_core.py` suite uses).
 
@@ -194,9 +195,9 @@ impl PositionAnalysisResult {
 
     /// Sort at-risk + liquidatable users by health factor (lowest first).
     ///
-    /// Mirrors the Python `key=lambda x: x.health_factor or float("inf")`:
-    /// `None` *and* `Some(0.0)` both sort as `+∞` (the Python `or` treats `0.0`
-    /// as falsy). Faithful replication of the oracle's sort key.
+    /// The sort key: `None` *and* `Some(0.0)` both rank as `+∞`. A zero health
+    /// factor is indistinguishable from an absent one to the risk ranking, so
+    /// both belong at the end.
     pub fn sort_by_risk(&mut self) {
         let key = |s: &UserPositionSummary| -> f64 {
             match s.health_factor {
@@ -539,7 +540,7 @@ mod tests {
     const ZERO_ADDR_HEX: &str = "0x0000000000000000000000000000000000000000";
 
     fn addr(n: u8) -> String {
-        // Mirrors the Python `_addr(n)`: `0x{'0'*39}{n}` (a 40-hex-char
+        // `0x{'0'*39}{n}` (a 40-hex-char
         // address with `n` as the last hex digit). Kept as a `String` (the
         // analysis records key on address strings) — the value itself isn't
         // checksum-validated, mirroring the test-only Python helper.

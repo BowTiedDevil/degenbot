@@ -32,8 +32,8 @@ pub const DEFAULT_VERIFY_ALL_INTERVAL: u64 = 1_000_000;
 /// The `--max-block-range` default (`10_000`): the widest block range a single
 /// `eth_getLogs` request may span.
 ///
-/// Mirrors the Python updater's per-request clamp (`fetch_logs_retrying`'s
-/// `max_blocks_per_request`), which capped the RPC request range independently
+/// The per-request clamp (`fetch_logs_retrying`'s `max_blocks_per_request`),
+/// which caps the RPC request range independently
 /// of the `--chunk` commit granularity. Exposing it lets an operator point the
 /// updater at a public RPC whose `eth_getLogs` range limit is tighter than the
 /// default `--chunk` (e.g. dRPC's free plan) without shrinking the commit chunk.

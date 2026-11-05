@@ -48,9 +48,8 @@ alloy::sol! {
 // Hop descriptors + PathInfo
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Engine-facing hop descriptor — the Rust mirror of the Python
-/// `V2HopInfo`/`V3HopInfo`/`V4HopInfo` dataclasses in
-/// `src/degenbot/arbitrage/hop_info.py`.
+/// Engine-facing hop descriptor — one variant per pool family, carrying the
+/// typed hop the solver emits and the executor consumes.
 #[derive(Clone, Debug)]
 pub enum HopInfo {
     /// A Uniswap-V2 (or V2-compatible) pool hop.

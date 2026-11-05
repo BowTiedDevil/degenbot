@@ -63,12 +63,12 @@ use crate::dispatch::SolveStep;
 // Fee-sizing + gas constants
 // ─────────────────────────────────────────────────────────────────────────
 
-/// The target profit ratio `TARGET_PROFIT_RATIO = 1.25` (L147) — the priority
-/// fee is sized so the gross profit / (gas_fee + priority_fee*gas) ≈ 1.25.
+/// The target profit ratio — the priority fee is sized so the gross profit /
+/// (gas_fee + priority_fee*gas) ≈ 1.25.
 pub const TARGET_PROFIT_RATIO: f64 = 1.25;
 
-/// The age-decay constant `AGE_DECAY_CONSTANT = 0.25` (L150) — older results
-/// are worth exponentially less: `priority_fee *= 1/(1 + 0.25*age)`.
+/// The age-decay constant — older results are worth exponentially less:
+/// `priority_fee *= 1/(1 + 0.25*age)`.
 pub const AGE_DECAY_CONSTANT: f64 = 0.25;
 
 /// The p10 element of the shared percentile pair
@@ -81,9 +81,8 @@ pub const MIN_PRIORITY_FEE_PERCENTILE: u64 = PRIORITY_FEE_PERCENTILES[P10_INDEX]
 /// priority fee's ceiling is `p50 + 1`.
 pub const MAX_PRIORITY_FEE_PERCENTILE: u64 = PRIORITY_FEE_PERCENTILES[P50_INDEX];
 
-/// The 1.5× gas safety margin (`gas_used * 1.5`, L2421) — the simulate's
-/// `gasUsed` for the `execute()` call is inflated before being assigned to
-/// `tx_params["gas"]`.
+/// The 1.5× gas safety margin — the simulate's `gasUsed` for the `execute()`
+/// call is inflated before being assigned to the tx's gas limit.
 pub const GAS_SAFETY_MARGIN: f64 = 1.5;
 
 /// The default gas cap for the `execute()` tx in the in-process sim —
@@ -141,8 +140,8 @@ pub const INT128_MAX: i128 = i128::MAX;
 ///
 /// Ports `fits_int128` (`INT128_MIN <= value <= INT128_MAX`). V4 `BalanceDelta`
 /// uses int128 per component, so `amountSpecified` and the swap output delta
-/// must both fit — the encoder rejects int128 overflow to avoid wasted
-/// encoding (L1887–L1900).
+/// must both fit — the encoder rejects int128 overflow instead of encoding a
+/// call the pool would revert on.
 #[must_use]
 #[inline]
 pub fn fits_int128(value: u128) -> bool {
@@ -195,7 +194,7 @@ pub struct SimResult {
 }
 
 impl SimResult {
-    /// The 1.5× safety-margin gas assigned to `tx_params["gas"]` (L2421).
+    /// The 1.5× safety-margin gas assigned to the tx's gas limit.
     #[must_use]
     #[expect(
         clippy::cast_precision_loss,
@@ -382,9 +381,8 @@ impl NoProfitShape {
     }
 }
 
-/// A revert-bucket tally accumulator (ports `_tally_fail`, L1769–L1771).
-///
-/// `_tally_fail(bucket)` does `_fail_buckets[bucket] = _fail_buckets.get(bucket, 0) + 1`.
+/// A revert-bucket tally accumulator: one increment per bucket hit, so the
+/// driver can render the reason breakdown from typed counts.
 /// The bucket strings are the `classify_revert` labels + a handful of
 /// orchestration-only buckets (`int128-overflow`, `rpc-failed`,
 /// `balance-decode`, `no-profit`, `encode-failed`, `blocked-path`).
@@ -589,8 +587,7 @@ impl FailBuckets {
 // The market-aware age-decay priority fee (C4)
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Compute the market-aware priority fee with age decay (ports
-/// `_compute_priority_fee`, L1570–L1615).
+/// Compute the market-aware priority fee with age decay.
 ///
 /// The fee is:
 /// 1. **Target fee** — the priority fee that achieves `TARGET_PROFIT_RATIO`

@@ -19,7 +19,7 @@ use pyo3::prelude::*;
 /// (`muldiv`, not `concentrated_liquidity_muldiv`). The parent module registers the submodule
 /// itself; the `sys.modules` entry lives in the parent's shared helper.
 ///
-/// The companion `src/degenbot/uniswap/math.py` re-exports these as the
+/// The companion `src/degenbot/uniswap/math/` package re-exports these as the
 /// stable import path, decoupling Python consumers from `degenbot._ffi`.
 #[pymodule(submodule)]
 #[pyo3(module = "degenbot._ffi")]

@@ -403,7 +403,7 @@ mod tests {
         assert!(x2 <= x);
         assert!(hop.swap(x2).unwrap() >= y);
 
-        // Mirrors the Python reference
+        // The closed form this pins:
         // `1 + r_in*y*fee_denom // ((r_out - y) * (fee_denom - fee_numer))`.
         let r_in: u128 = 1_000_000;
         let r_out: u128 = 2_000_000;

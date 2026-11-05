@@ -33,8 +33,7 @@ pub enum ExchangeFamily {
 
 impl ExchangeFamily {
     /// The SQL SUFFIX pattern (used with an explicit ESCAPE so the `_` is
-    /// treated as a literal underscore, not a wildcard — mirrors the Python
-    /// `escape="!"` `LIKE '%!_v3'`).
+    /// treated as a literal underscore, not a wildcard (`LIKE '%!_v3' ESCAPE`).
     fn suffix(self) -> &'static str {
         match self {
             ExchangeFamily::V3 => "%\\_v3",
@@ -443,9 +442,8 @@ impl DegenbotDb {
     /// `SELECT id, chain_id, name, active, last_update_block, factory, deployer
     /// FROM exchanges WHERE chain_id = ? AND active = 1 ORDER BY id`.
     ///
-    /// The pool-updater chunk loop's run-start discovery read (the Rust-owned
-    /// replacement for the Python `active_exchanges` query in
-    /// `src/degenbot/cli/pool.py`). Returns every active exchange row for a
+    /// The pool-updater chunk loop's run-start discovery read: every active
+    /// exchange row for a
     /// chain, ordered by `id` for deterministic dispatch order. The
     /// chunk-loop crate (`degenbot-pool-updater`) joins these rows with the
     /// static event-config map (family, event-topic, fee denominator) to build

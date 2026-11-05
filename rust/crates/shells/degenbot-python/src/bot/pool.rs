@@ -914,9 +914,8 @@ impl PyLiquidityPool {
     /// Like [`calculate_tokens_out`][Self::calculate_tokens_out], but on a
     /// sparse tick-map miss it calls `fetcher(word, block)` to fetch the
     /// missing word's tick data, merges it, and retries (dedup-protected — a
-    /// repeated miss on a word gives up with `0`). Mirrors the Python
-    /// companion's `MissingLiquidityData` → `_tick_data_fetcher` loop, now
-    /// driven from the Rust calc path.
+    /// repeated miss on a word gives up with `0`) — the missing-liquidity-data
+    /// loop, driven from the Rust calc path.
     /// `fetcher` is a Python callable
     /// `fetcher(word: int, block: int) -> dict[int, tuple[int, int, int]] | None`.
     /// It MUST return the fetched tick data mapping tick →
@@ -2962,7 +2961,7 @@ impl PyCurveView {
     /// future_a_time, create_timestamp)` — `None` for a non-ramping pool.
     /// Each element is the option value so a non-ramping pool reports `None`
     /// for every field instead of a sentinel zero.
-    // The nested-`Option` tuple mirrors the Python-facing Curve ramp shape.
+    // The nested-`Option` tuple is the Python-facing Curve ramp shape.
     #[expect(clippy::type_complexity)]
     fn a_ramp(
         &self,
@@ -2987,7 +2986,7 @@ impl PyCurveView {
 
     /// Curve crypto-pool fees: `(fee_gamma, mid_fee, offpeg_fee_multiplier,
     /// out_fee, gamma)` — `None` for a standard stableswap pool.
-    // The nested-`Option` tuple mirrors the Python-facing Curve fee shape.
+    // The nested-`Option` tuple is the Python-facing Curve fee shape.
     #[expect(clippy::type_complexity)]
     fn crypto_fees(
         &self,

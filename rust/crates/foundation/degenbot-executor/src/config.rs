@@ -1,7 +1,6 @@
 //! The `execute(commands, config)` ABI `config` `uint256` packing.
 //!
-//! Ports `examples/cmd_stream.py::pack_config` (L137–L171). Mirrors the
-//! `cmd_executor.vy` `execute` config-bitfield layout:
+//! Packs into the `cmd_executor.vy` `execute` config-bitfield layout:
 //!
 //! - bits `0–7`:   `check_mode` (0=skip, 1=WETH+ETH, 2=ERC6909 WETH)
 //! - bits `8–23`:  `bribe_bips` (0=none, 1–10000=basis points)

@@ -15,9 +15,8 @@
 //! position. Wrapping preserves that attribute-access shape so the Step C
 //! cutover (`delete analysis/core.py`) needs no CLI rewrite.
 //!
-//! No business logic (ADR-005 three-layer architecture). The Python
-//! `analyze_user_position` (`src/degenbot/aave/analysis/core.py`) becomes a
-//! delegating shell over this seam in Step C.
+//! No business logic (ADR-005 three-layer architecture): the Python
+//! `analyze_user_position` is a delegating shell over this seam.
 //!
 //! [`PyDatabasePositionQuery`]: crate::db::aave::PyDatabasePositionQuery
 
@@ -36,7 +35,7 @@ use degenbot_aave::analysis::{
 use degenbot_db::aave::{AaveCollateralPositionRecord, AaveDebtPositionRecord, AaveUserRecord};
 
 // =========================================================================
-// #[pyclass] wrappers — attribute access mirrors the Python dataclass fields
+// #[pyclass] wrappers — attribute access keeps the analysis record's field names
 // =========================================================================
 
 /// A user's Aave V3 position summary (health factor, LTV, position lists).

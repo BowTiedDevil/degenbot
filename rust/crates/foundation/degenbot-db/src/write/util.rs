@@ -2,8 +2,8 @@
 
 use super::{DbError, OptionalExtension};
 
-/// Parse a decimal-`VARCHAR` `U256` value. Mirrors the Python `int(s)` parse
-/// of an `AaveV3*Position.balance` attribute read back from the DB.
+/// Parse a decimal-`VARCHAR` `U256` value — the stored form of an
+/// `AaveV3*Position.balance`.
 ///
 /// # Errors
 ///

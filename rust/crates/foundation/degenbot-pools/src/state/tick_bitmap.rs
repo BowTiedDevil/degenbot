@@ -645,7 +645,8 @@ fn range_exit_kind(
 
 /// A V3 tick range for the solver.
 ///
-/// Mirrors the Python `V3TickRangeInfo` dataclass.
+/// One solver-visible tick range: the initialized span it covers + its per-tick
+/// liquidity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct V3TickRangeForSolver {
     /// Lower tick boundary of this range.
@@ -701,9 +702,8 @@ pub fn update_tick_liquidity<S: std::hash::BuildHasher>(
         liquidity_net: 0,
         block,
     });
-    // Update the per-tick block to the event block — mirrors the Python
-    // ``LiquidityAtTick`` replacement (a touched tick's block reflects the
-    // last mutation).
+    // Update the per-tick block to the event block: a touched tick's stamp must
+    // reflect the last mutation, or the stale-read guard keeps skipping it.
     entry.block = block;
 
     // Update liquidity_gross: += delta (always the same direction for both ticks)

@@ -230,47 +230,51 @@ fn checksum_or_empty(addr: &str) -> Result<String, String> {
     to_checksum_address_str(addr).map_err(|e| format!("invalid address {addr}: {e}"))
 }
 
-/// One process-environment value, empty when unset. The launch shell exports
-/// operator and executor identity from `bot.env`.
-fn env_value(name: &str) -> String {
-    std::env::var(name).unwrap_or_default()
-}
-
-/// One process-environment value with a declared fallback for unset/empty.
-fn env_or(name: &str, default: &str) -> String {
-    match std::env::var(name) {
-        Ok(v) if !v.is_empty() => v,
-        _ => default.to_string(),
+/// The per-transport node overrides from the repeated `--node` flag.
+///
+/// One `--node` per transport; the value classifies itself (ADR-062 D6). The
+/// request scope (ipc > ws > http) serves construction and tx IO, the
+/// subscription scope (ipc > ws) serves the engine feed, and both read the same
+/// loaded operator file + environment.
+fn node_overrides(cli: &Cli) -> Result<degenbot::config::NodeOverrides, String> {
+    let mut overrides = degenbot::config::NodeOverrides::new();
+    for raw in &cli.node {
+        let transport = degenbot::config::NodeTransport::classify(raw).ok_or_else(|| {
+            format!(
+                "{raw:?} names no node transport; pass an http(s)://, ws(s)://, or ipc:// \
+                 URL or an absolute socket path"
+            )
+        })?;
+        overrides = overrides.with_transport(transport, raw.clone());
     }
+    Ok(overrides)
 }
 
 impl SettlementBotConfig {
     /// Mirror of `ArbitrageConfig.build(live=..., permutation=...)`: same
     /// defaults, same fail-fast error strings, same cascade order. Identity is
-    /// read from the process environment, which the launch shell exports from
-    /// `bot.env`.
+    /// read from the loaded `driver.*` keys — the declared home whose
+    /// environment layer is the launch shell's `bot.env` export.
     fn build(cli: &Cli, loaded: &degenbot::config::LoadedConfig) -> Result<Self, String> {
         // ── Operator ──
-        let operator_raw = env_value("OPERATOR_ADDRESS");
-        let mut operator_address = if operator_raw.is_empty() {
-            String::new()
-        } else {
-            checksum_or_empty(&operator_raw)?
-        };
-        let mut operator_private_key = env_value("OPERATOR_PRIVATE_KEY");
+        let driver = &loaded.config.driver;
+        let mut operator_address =
+            checksum_or_empty(driver.operator_address.as_deref().unwrap_or_default())?;
+        let mut operator_private_key = driver.operator_private_key.clone().unwrap_or_default();
         if cli.live {
             if operator_address.is_empty() || operator_private_key.is_empty() {
                 return Err(
-                    "OPERATOR_ADDRESS and OPERATOR_PRIVATE_KEY must be set in the process \
-                     environment (the launch shell exports them from bot.env) for live mode"
+                    "operator identity must be set for live mode: driver.operator_address \
+                     and driver.operator_private_key (env OPERATOR_ADDRESS / \
+                     OPERATOR_PRIVATE_KEY)"
                         .to_string(),
                 );
             }
             if is_published_operator_private_key(&operator_private_key) {
                 return Err(
-                    "OPERATOR_PRIVATE_KEY is a known placeholder (the dry-run throwaway or \
-                     the all-zero scalar): refusing to run live with a key the repository \
-                     publishes"
+                    "driver.operator_private_key (OPERATOR_PRIVATE_KEY) is a known \
+                     placeholder (the dry-run throwaway or the all-zero scalar): refusing to \
+                     run live with a key the repository publishes"
                         .to_string(),
                 );
             }
@@ -284,32 +288,27 @@ impl SettlementBotConfig {
         }
 
         // ── Node URLs (ADR-062 capability-scoped cascade) ──
-        // One `--node` per transport; the value classifies itself (D6). The
-        // request scope (ipc > ws > http) serves construction and tx IO, the
-        // subscription scope (ipc > ws) serves the engine feed, and both read
-        // the same loaded operator file + environment.
-        let mut overrides = degenbot::config::NodeOverrides::new();
-        for raw in &cli.node {
-            let transport = degenbot::config::NodeTransport::classify(raw).ok_or_else(|| {
-                format!(
-                    "{raw:?} names no node transport; pass an http(s)://, ws(s)://, or ipc:// \
-                     URL or an absolute socket path"
-                )
-            })?;
-            overrides = overrides.with_transport(transport, raw.clone());
-        }
+        let overrides = node_overrides(cli)?;
         let node_http = degenbot::config::resolve_node_request_uri(loaded, CHAIN_ID, &overrides)
             .map_err(|e| e.to_string())?;
         let node_ws = degenbot::config::resolve_node_subscription_uri(loaded, CHAIN_ID, &overrides)
             .map_err(|e| e.to_string())?;
 
         // ── Executor ──
-        let mut executor_address = checksum_or_empty(&env_or(
-            "EXECUTOR_CONTRACT_ADDRESS",
-            DEFAULT_EXECUTOR_ADDRESS,
-        ))?;
+        // A key the operator did not set falls back to this deployment's
+        // constant above: the schema declares no default for one deployment's
+        // addresses, so the fallback belongs to the driver applying it.
+        let mut executor_address = checksum_or_empty(
+            driver
+                .executor_address
+                .as_deref()
+                .unwrap_or(DEFAULT_EXECUTOR_ADDRESS),
+        )?;
         if executor_address == ZERO_ADDRESS {
-            return Err("EXECUTOR_CONTRACT_ADDRESS is the zero address".to_string());
+            return Err(
+                "driver.executor_address (EXECUTOR_CONTRACT_ADDRESS) is the zero address"
+                    .to_string(),
+            );
         }
         // The injection stance is a declared key; the retired bare name is
         // refused rather than re-admitted, mirroring the Python runner.
@@ -321,18 +320,25 @@ impl SettlementBotConfig {
             );
         }
         let inject_executor_code = loaded.config.simulation.inject_executor_code;
-        let injected_address = checksum_or_empty(&env_or(
-            "INJECTED_EXECUTOR_ADDRESS",
-            DEFAULT_INJECTED_ADDRESS,
-        ))?;
-        let executor_owner =
-            checksum_or_empty(&env_or("EXECUTOR_OWNER_ADDRESS", DEFAULT_EXECUTOR_OWNER))?;
+        let injected_address = checksum_or_empty(
+            driver
+                .injected_address
+                .as_deref()
+                .unwrap_or(DEFAULT_INJECTED_ADDRESS),
+        )?;
+        let executor_owner = checksum_or_empty(
+            driver
+                .executor_owner
+                .as_deref()
+                .unwrap_or(DEFAULT_EXECUTOR_OWNER),
+        )?;
         if inject_executor_code {
             executor_address.clone_from(&injected_address);
         }
-        let executor_runtime = std::env::var("EXECUTOR_RUNTIME")
-            .ok()
-            .filter(|v| !v.is_empty());
+        let executor_runtime = driver
+            .executor_runtime
+            .as_ref()
+            .map(|path| path.display().to_string());
 
         // The retry policy is declared in the core schema, and the projection
         // from that declaration lives beside the retry dance.
@@ -456,8 +462,9 @@ fn run() -> Result<(), String> {
     // scrape server on every exit path (ADR-043 section 6).
     let _telemetry_boot = telemetry::init(&loaded);
 
-    // Operator/executor identity comes from the process environment, which the
-    // launch shell fills from bot.env — the same source the Python example reads.
+    // Operator/executor identity is read from the loaded `driver.*` keys, whose
+    // environment layer is the launch shell's bot.env export — the same cascade
+    // `runner/config.py::ArbitrageConfig.build` reads on the Python side.
     if let Some(p) = &cli.permutation {
         println!("[startup] Permutation filter from CLI: {p}");
     }

@@ -288,8 +288,8 @@ pub fn derive_rate_and_precision_multipliers(
 /// The `curve_` prefix was an artifact of the flat root registration; on the
 /// submodule it is redundant.
 ///
-/// The companion `src/degenbot/curve/math.py` re-exports these as the stable
-/// import path (`from degenbot.curve.math import stableswap_get_y`),
+/// The companion `src/degenbot/curve/math/` package re-exports these as the
+/// stable import path (`from degenbot.curve.math import stableswap_get_y`),
 /// decoupling Python consumers from the `degenbot._ffi` internal module.
 ///
 /// # Errors

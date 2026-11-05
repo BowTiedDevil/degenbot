@@ -60,8 +60,8 @@
 //! # Parity gate (`docs/architecture/parity-gate.md`)
 //!
 //! The parity oracle is `eth_account.Account.sign_transaction(transaction_dict=
-//! tx_params, private_key=operator_private_key).raw_transaction`
-//! (`examples/eth_backrun_v2_v3_v4_rust.py` L2623–L2640). Because both
+//! tx_params, private_key=operator_private_key).raw_transaction`. Because
+//! both
 //! `eth_account` and `alloy-signer-local` use RFC 6979 deterministic ECDSA
 //! over secp256k1, a pinned key + `tx_params` produces **byte-for-byte
 //! identical** raw signed `bytes` in Rust and Python — pinned in

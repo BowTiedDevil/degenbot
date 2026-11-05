@@ -1,34 +1,32 @@
-//! The `dispatch_profitable_results` fan-out + categorization (D-row).
+//! The candidate-simulation fan-out + categorization.
 //!
-//! Ports `examples/eth_backrun_v2_v3_v4_rust.py::dispatch_profitable_results`
-//! (the fan-out L2450–L2517 + categorization + summary L2519–L2535) + the
-//! thin-margin pre-filter (`filter_thin_margin_results` from
-//! `examples/eth_backrun_helpers.py::filter_thin_margin_results`, L407–L446).
+//! Owns the dispatch contract end to end: the per-block candidate fan-out, the
+//! thin-margin pre-filter, the categorization into gas-profitable /
+//! gas-unprofitable / exception tallies, and the suppression bookkeeping the
+//! next block's skip reads.
 //!
 //! This is the concurrency orchestration that owns the GIL release + the
 //! tokio fan-out over the per-path [`simulate_path_on_evm`] leaf. Owning
 //! the fan-out in Rust releases the GIL across the per-tx sim RPCs
 //! (ADR-005 — "Python is the cockpit, Rust is the engine").
 //!
-//! # Dispositions
+//! # Ownership
 //!
-//! - **D1 `port-now`** — the fan-out + categorization (this leaf). Pure
-//!   concurrency orchestration: a `buffer_unordered(MAX_SIMULATE_CONCURRENT)`
-//!   stream (capped by `truncate` pre-fan-out); pure-int categorization.
-//! - **D2 `done`-reference** — [`degenbot_submission::PathSuppression`]
+//! - **This leaf** — the fan-out + categorization: pure concurrency
+//!   orchestration over a `buffer_unordered(MAX_SIMULATE_CONCURRENT)` stream
+//!   (capped by `truncate` pre-fan-out) plus pure-int categorization.
+//! - **Consumed, not re-ported** — [`degenbot_submission::PathSuppression`]
 //!   (`record_success`/`record_failure`/`is_suppressed`/
-//!   `total_suppressed` + `PATH_SUPPRESS_THRESHOLD`). CONSUMED, not re-ported.
-//! - **D3 `done`-reference** — [`filter_thin_margin_results`]. The leaf was Python-only at the time of this
-//!   port; it's small (20 lines, pure int) + has a clean standalone signature,
-//!   so it is ported HERE (with a note it should later move to a shared
-//!   crate). Re-porting it inline is the standalone-Rust-core constraint — a
-//!   standalone consumer (`cargo add degenbot`) must NOT have to call into
-//!   Python for the thin-margin pre-filter.
-//! - **D4 `stays-python`** — the `[sim] ... by reason: {breakdown}` summary
-//!   log rendering (`format_failure_breakdown`) stays in the Python driver;
-//!   this leaf exposes the tally as a typed [`FailBuckets`] (re-exported
-//!   from `simulator` at this crate's root) the companion renders.
-//!   the companion renders.
+//!   `total_suppressed` + `PATH_SUPPRESS_THRESHOLD`).
+//! - **Here, by the standalone-core constraint** —
+//!   [`filter_thin_margin_results`]: small (20 lines, pure int) with a clean
+//!   standalone signature. A consumer (`cargo add degenbot`) must NOT have to
+//!   call into Python for the thin-margin pre-filter, so the leaf lives beside
+//!   the fan-out it filters.
+//! - **The driver's** — the `[sim] ... by reason: {breakdown}` summary log
+//!   rendering (`format_failure_breakdown`). This leaf exposes the tally as a
+//!   typed [`FailBuckets`] (re-exported from `simulator` at this crate's root)
+//!   and the companion renders it.
 
 use degenbot_core::diag;
 use degenbot_core::op_info;
@@ -144,10 +142,12 @@ fn v2_calc_trace_body<S: V2ReservesReader>(session: &mut S, sim_path: &SimulateP
 /// above what a per-block candidate set realistically reaches.
 pub const MAX_SIMULATE_CONCURRENT: usize = 50;
 
-/// The min net-profit threshold (`MIN_PROFIT_NET = 1`, L137) — a gross-
-/// profitable result is "gas-profitable" iff `net_profit >= MIN_PROFIT_NET`.
-/// Was `5 * 10**9` (5 gwei); relaxed to `1` wei to keep all gross-profitable
-/// paths for the operator to inspect.
+/// The min net-profit threshold — a gross-profitable result is "gas-profitable"
+/// iff `net_profit >= MIN_PROFIT_NET`.
+///
+/// One wei: `net_profit` already carries the gas cost, so this seam is not the
+/// place for a second value judgement — every gross-profitable path reaches the
+/// operator's inspect surface.
 pub const MIN_PROFIT_NET: u128 = 1;
 
 /// The gas-profitability predicate — the one dispatch-floor comparison both
@@ -160,16 +160,14 @@ pub fn is_gas_profitable(net_profit: U256) -> bool {
     net_profit >= U256::from(MIN_PROFIT_NET)
 }
 
-/// The basis-points denominator (`BPS_DENOM = 10_000`,
-/// `examples/eth_backrun_helpers.py::BPS_DENOM`, L400).
+/// The basis-points denominator.
 pub const BPS_DENOM: u128 = 10_000;
 
 // ─────────────────────────────────────────────────────────────────────────
 // The thin-margin pre-filter (D3 — ported inline)
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Drop solver results whose gross-profit margin is too low (ports
-/// `filter_thin_margin_results`, `eth_backrun_helpers.py` L407–L446).
+/// Drop solver results whose gross-profit margin is too low.
 ///
 /// S1 found that the dominant IIA reverts in V3/V4-heavy perms are razor-thin
 /// arb (gross profit ≈ $0.001 on ≈ $0.06–$1.30 input = sub-0.2 bps margin)
@@ -291,35 +289,30 @@ impl DispatchCandidate {
     }
 }
 
-/// The dispatch fan-out outcome — the categorization + tallies (D1).
+/// The dispatch fan-out outcome — the categorization + tallies.
 ///
-/// Ports the closure locals `gas_profitable` / `gas_unprofitable` /
-/// `exception_count` / `_fail_buckets` (L2519–L2535 + the summary log).
-/// The `[sim] ... by reason: {breakdown}` RENDERING stays Python (D4); this
-/// struct exposes the typed buckets the companion renders.
+/// The `[sim] ... by reason: {breakdown}` RENDERING belongs to the driver; this
+/// struct exposes the typed buckets it renders.
 #[derive(Debug, Default)]
 pub struct DispatchOutcome {
     /// Gas-profitable results (net ≥ [`MIN_PROFIT_NET`]), sorted by net profit
-    /// descending (L2561).
+    /// descending.
     pub gas_profitable: Vec<SimResult>,
     /// Onchain-valid but gas-unprofitable (gross > 0, net below threshold),
-    /// sorted by net profit descending (L2563).
+    /// sorted by net profit descending.
     pub gas_unprofitable: Vec<SimResult>,
-    /// The number of candidates that raised an exception during simulation
-    /// (ports `exception_count`, L2536).
+    /// The number of candidates that raised an exception during simulation.
     pub exception_count: usize,
     /// The number of candidates that returned `None` from `simulate_path_on_evm`
-    /// (revert / no-profit / int128-overflow / etc.) — `sim_fail_count`
-    /// (L2537): `len(candidates) - sim_ok_count - exception_count`.
+    /// (revert / no-profit / int128-overflow / etc.): the candidate count less
+    /// the simulated-ok and exception tallies.
     pub fail_count: usize,
     /// The number of candidates passed to simulation (after the pre-filters
-    /// + the `MAX_SIMULATE_CONCURRENT` cap). Ports `len(candidates)` (L2491).
+    /// + the `MAX_SIMULATE_CONCURRENT` cap).
     pub candidate_count: usize,
-    /// The number of candidates dropped by [`PathSuppression::is_suppressed`]
-    /// (ports `suppressed_count`, L2489).
+    /// The number of candidates dropped by [`PathSuppression::is_suppressed`].
     pub suppressed_count: usize,
-    /// The number of candidates dropped by [`filter_thin_margin_results`]
-    /// (ports `thin_dropped`, L2499).
+    /// The number of candidates dropped by [`filter_thin_margin_results`].
     pub thin_dropped: usize,
     /// The number of candidates dropped pre-sim because every surviving
     /// hop routed through a pool flagged `SolverCalc` within the decay window.
@@ -336,10 +329,9 @@ pub struct DispatchOutcome {
     /// the snapshot captured at solve time (the solver computed against
     /// state the pump has since superseded — simulating would revert).
     pub stale_dropped: usize,
-    /// The `_fail_buckets` tally — the revert/no-profit/overflow buckets
-    /// accumulated across the fan-out (ports `_fail_buckets`, L1769). The
-    /// aggregation rendering (`format_failure_breakdown`) stays Python (D4);
-    /// this exposes the typed buckets the companion renders.
+    /// The revert/no-profit/overflow bucket tally accumulated across the
+    /// fan-out. The aggregation rendering (`format_failure_breakdown`) belongs
+    /// to the driver; this exposes the typed buckets it renders.
     pub fail_buckets: FailBuckets,
     /// The per-path `SimFailure` records (one per `tally`/`record` site across
     /// the fan-out), in fan-out completion order — surfaced across the FFI so
@@ -352,8 +344,7 @@ pub struct DispatchOutcome {
 }
 
 impl DispatchOutcome {
-    /// The total `sim_ok_count` — `len(gas_profitable) + len(gas_unprofitable)`
-    /// (ports L2536).
+    /// The total `sim_ok_count` — `len(gas_profitable) + len(gas_unprofitable)`.
     #[must_use]
     pub fn sim_ok_count(&self) -> usize {
         self.gas_profitable.len() + self.gas_unprofitable.len()
@@ -361,13 +352,12 @@ impl DispatchOutcome {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// The fan-out (D1)
+// The fan-out
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Fan out [`simulate_path_on_evm`] across a `buffer_unordered(MAX_SIMULATE_CONCURRENT)`
 /// stream (capped by `truncate` pre-fan-out), gather with exception tolerance,
-/// and categorize into gas-profitable / gas-unprofitable / exception (ports the
-/// fan-out L2450–L2517 + categorization L2519–L2535).
+/// and categorize into gas-profitable / gas-unprofitable / exception.
 ///
 /// Pipeline:
 /// 1. **Pre-filter — suppression** — drop paths currently suppressed by
@@ -397,10 +387,9 @@ impl DispatchOutcome {
 ///    through it pre-sim.
 /// 8. **Categorize** — gas-profitable (`net ≥ MIN_PROFIT_NET`) /
 ///    gas-unprofitable (`None`-filtered, gross > 0, net below threshold) /
-///    exception. Sort both categories by net profit descending (L2561/L2563).
+///    exception. Sort both categories by net profit descending.
 /// 9. **Record suppression outcomes** — `record_success(pid)` for paths that
-///    returned a result, `record_failure(pid)` for paths that didn't
-///    (L2573–L2577).
+///    returned a result, `record_failure(pid)` for paths that didn't.
 ///
 /// `ctx` is the shared [`SimulateContext`] (provider, addresses, warmup,
 /// block context — see [`simulate_path_on_evm`]). `path_suppression` is
@@ -529,7 +518,7 @@ pub fn dispatch_profitable_results(
         arm: "fanout",
     });
 
-    // 1. Pre-filter — suppression (L2486–L2490). Lock the suppression arc
+    // 1. Pre-filter — suppression. Lock the suppression arc
     //    ONLY for this synchronous retain (the guard is dropped before the
     //    fan-out `.await` so the future stays `Send` — a `std::sync::MutexGuard`
     //    is not `Send`). A3 extracted `PathSuppression` onto its own
@@ -603,7 +592,7 @@ pub fn dispatch_profitable_results(
         }
     }
 
-    // 3. Pre-filter — thin-margin (L2497–L2499).
+    // 3. Pre-filter — thin-margin.
     let (kept, thin_dropped) = filter_thin_margin_results(candidates, min_profit_margin_bps);
     outcome.thin_dropped = thin_dropped;
     candidates = kept;
@@ -624,11 +613,11 @@ pub fn dispatch_profitable_results(
     }
     outcome.stale_dropped = stale_before - candidates.len();
 
-    // 4. Cap (L2491). With the `order-index` feature, the selection is made
+    // 4. Cap. With the `order-index` feature, the selection is made
     //    deterministic by profit via the net-profit order index (see ADR-024)
     //    instead of trusting the caller's pre-sort; otherwise the candidates
     //    are expected pre-sorted by engine profit descending (the caller's
-    //    responsibility — ports L1684's sort).
+    //    responsibility).
     #[cfg(feature = "order-index")]
     order_index_top_selection(&mut candidates);
     candidates.truncate(MAX_SIMULATE_CONCURRENT);
@@ -648,7 +637,7 @@ pub fn dispatch_profitable_results(
     //    `buffer_unordered(MAX_SIMULATE_CONCURRENT)` was the Rust idiom for
     //    the Python `asyncio.gather(*sim_tasks)` + the
     //    `results[:MAX_SIMULATE_CONCURRENT]` cap under the retired RPC path
-    //    (the cap is double-asserted: the L2491 truncate + the buffer bound
+    //    (the cap is double-asserted: the truncate above + the buffer bound
     //    belt + suspenders); the in-process serial path uses a plain
     //    `.map().collect()` over the borrowed `&mut evm`. Unlike
     //    `tokio::spawn`, neither borrows `'static` — the closure borrows
@@ -909,11 +898,11 @@ pub fn dispatch_profitable_results(
         );
     }
 
-    // 6. Categorize — gas-profitable / gas-unprofitable / exception (ports
-    //    L2519–L2557). `simulate_path_on_evm` returns `Ok(Some(result))` for gross-
-    //    profitable paths; `Ok(None)` for revert/no-profit/overflow (tallied
-    //    into `buckets`); `Err(_)` for an unrecoverable RPC failure (counted
-    //    as an exception — ports `return_exceptions=True`, L2504).
+    // 6. Categorize — gas-profitable / gas-unprofitable / exception.
+    //    `simulate_path_on_evm` returns `Ok(Some(result))` for gross-profitable
+    //    paths; `Ok(None)` for revert/no-profit/overflow (tallied into
+    //    `buckets`); `Err(_)` for an unrecoverable RPC failure (counted as an
+    //    exception — one broken path must not sink a batch).
     let mut succeeded_path_ids: HashSet<u64> = HashSet::new();
     for (pid, buckets, result) in sim_results {
         // Merge the per-path buckets into the outcome tally first.
@@ -950,7 +939,7 @@ pub fn dispatch_profitable_results(
         }
     }
 
-    // `fail_count = len(candidates) - sim_ok_count - exception_count` (L2537).
+    // `fail_count = len(candidates) - sim_ok_count - exception_count`.
     outcome.fail_count = outcome.candidate_count - outcome.sim_ok_count() - outcome.exception_count;
 
     // 7. Feedback — record divergence for `SolverCalc` failures' diverging
@@ -1001,7 +990,7 @@ pub fn dispatch_profitable_results(
         }
     }
 
-    // 8. Record suppression outcomes (L2573–L2577). Ports
+    // 8. Record suppression outcomes:
     //    `record_success(pid)` for succeeded, `record_failure(pid)` for the
     //    rest (revert/no-profit/overflow/exception). Scope-locked (same
     //    bookend-only discipline as step 1 — the guard drops before any
@@ -1045,7 +1034,7 @@ pub fn dispatch_profitable_results(
         }
     }
 
-    // 9. Sort both categories by net profit descending (L2561/L2563).
+    // 9. Sort both categories by net profit descending.
     outcome
         .gas_profitable
         .sort_by_key(|r| std::cmp::Reverse(r.net_profit));

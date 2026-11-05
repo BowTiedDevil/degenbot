@@ -1164,8 +1164,8 @@ pub enum RunError {
 /// - `max_block_range` — the widest block range a single `eth_getLogs`
 ///   request may span (the `MAX_BLOCKS_PER_REQUEST` clamp), independent
 ///   of `chunk_size`: a chunk wider than this is fetched as several
-///   `max_block_range`-sized requests. Mirrors the Python updater's
-///   per-request clamp (`fetch_logs_retrying`'s `max_blocks_per_request`),
+///   `max_block_range`-sized requests: the per-request clamp
+///   (`fetch_logs_retrying`'s `max_blocks_per_request`),
 ///   so an operator can point the run at a public RPC with a tighter
 ///   `eth_getLogs` range limit without shrinking the commit chunk.
 /// - `provider` — the already-built [`AlloyProvider`] the whole run is
@@ -1299,8 +1299,8 @@ pub fn run_pool_update_on_db(
     // The RPC request width is the `max_block_range` clamp, NOT the commit
     // chunk: a chunk wider than the clamp is fetched as several
     // `max_block_range`-sized `eth_getLogs` requests, while the commit stays
-    // `chunk_size`-wide. Mirrors the Python updater's per-request clamp
-    // (`fetch_logs_retrying`'s `max_blocks_per_request`) decoupled from its
+    // `chunk_size`-wide. The per-request clamp
+    // (`fetch_logs_retrying`'s `max_blocks_per_request`) is decoupled from its
     // `--chunk` commit granularity.
     let fetcher = LogFetcher::new(provider.clone(), max_block_range);
 

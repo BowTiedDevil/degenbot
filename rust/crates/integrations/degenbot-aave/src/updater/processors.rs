@@ -1,13 +1,13 @@
 //! Aave V3 scaled-token processors — the revision-aware `balance_delta`
 //! computation for aToken/vToken Mint/Burn events.
 //!
-//! Port of the Python `src/degenbot/aave/processors/processor.py` (the
-//! `UnifiedCollateralProcessor` + `UnifiedDebtProcessor`) and the
-//! `src/degenbot/aave/processors/strategies.py` module (the `RoundingStrategy`
-//! struct + the per-revision `COLLATERAL_STRATEGIES` / `DEBT_STRATEGIES`
-//! dicts). The GHO processor (`UnifiedGhoProcessor`) is NOT ported here.
+//! Two processors live here: `UnifiedCollateralProcessor` +
+//! `UnifiedDebtProcessor`, each selecting its rounding through the
+//! `RoundingStrategy` struct + the per-revision `COLLATERAL_STRATEGIES` /
+//! `DEBT_STRATEGIES` tables. The GHO processor (`UnifiedGhoProcessor`) is NOT
+//! here.
 //!
-//! # The two-layer split (mirrors the Python architecture)
+//! # The two-layer split
 //!
 //! This module is the processor: pure CPU, no I/O. It takes the event's
 //! decoded fields (`value`, `balance_increase`, `index`, `scaled_amount`)
@@ -454,8 +454,8 @@ impl ScaledTokenProcessor {
 
 // ── U256 → I256 conversion helpers (thesigned-delta bridge) ──────────────
 
-/// Convert a `U256` to a non-negative `I256`. Mirrors the Python's implicit
-/// `int` (arbitrary precision, no overflow). Returns
+/// Convert a `U256` to a non-negative `I256`. Every value fits `I256`, so the
+/// only refusal is a magnitude past `I256::MAX`. Returns
 /// [`ProcessorError::DeltaOverflow`] if the value exceeds `I256::MAX`.
 fn to_i256(value: U256) -> Result<I256, ProcessorError> {
     I256::try_from(value)

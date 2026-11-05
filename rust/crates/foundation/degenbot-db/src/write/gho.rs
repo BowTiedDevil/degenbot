@@ -26,8 +26,7 @@ impl DegenbotDb {
         /// Apply a GHO `DiscountPercentUpdated` event: set the user's
         /// `gho_discount` column (an `INTEGER` percentage; the Python path stores
         /// the raw uint256 but the Aave protocol caps discount at 100% so `i64` is
-        /// the correct Rust type). Port of
-        /// `event_handlers._process_discount_percent_updated_event` (L1167).
+        /// the correct Rust type).
         ///
         /// `user_id` is pre-resolved by the orchestrator/parser (the Python calls
         /// `get_or_create_user` upstream; the apply fn takes the resolved id — the
@@ -58,8 +57,7 @@ impl DegenbotDb {
     conn_writer! {
         /// Apply a GHO `DiscountRateStrategyUpdated` event: set the GHO token's
         /// `v_gho_discount_rate_strategy` column (a checksummed address or
-        /// `NULL`). Port of
-        /// `event_handlers._process_discount_rate_strategy_updated_event` (L752).
+        /// `NULL`).
         ///
         /// `gho_token_id` is the `aave_gho_tokens.id` (NOT the erc20 token id —
         /// the GHO token row is chain-unique, identified by its primary key).
@@ -90,8 +88,7 @@ impl DegenbotDb {
 
     conn_writer! {
         /// Apply a GHO `DiscountTokenUpdated` event: set the GHO token's
-        /// `v_gho_discount_token` column (a checksummed address or `NULL`). Port
-        /// of `event_handlers._process_discount_token_updated_event` (L717).
+        /// `v_gho_discount_token` column (a checksummed address or `NULL`).
         ///
         /// # Errors
         ///
@@ -133,12 +130,11 @@ impl DegenbotDb {
         /// GHO-burn delta overshoots the scaled balance → crash (byte-exact
         /// match: overshoot == `discount_scaled` at stale `prev_discount`).
         ///
-        /// The `from`-leg underflow guard (value > from's balance) errors —
-        /// mirrors the Python `assert from_user.stk_aave_balance >= 0` (the Python
-        /// asserts before applying; the Rust returns [`DbError::Decode`] instead
-        /// of panicking). The `to`-leg overflow guard errors (Python's
-        /// `checked_add` semantics — the stdlib `+=` would panic on overflow, the
-        /// Rust guards it explicitly). Both writes happen in the caller's
+        /// The `from`-leg underflow guard (value > from's balance) errors as
+        /// [`DbError::Decode`] rather than panicking: a chain that could produce
+        /// it is a decode fault, and the caller must see it. The `to`-leg
+        /// overflow guard is explicit for the same reason — an unchecked `+=`
+        /// would panic on overflow. Both writes happen in the caller's
         /// `Transaction` (atomic with the chunk).
         ///
         /// # Errors
@@ -228,13 +224,9 @@ impl DegenbotDb {
     }
 
     conn_writer! {
-        /// Apply a `RewardsController` `RewardsClaimed` event. **No-op** —
-        /// investigation (2026-07-04) confirmed the Python `event_handlers.py`
-        /// defines `AaveV3RewardsControllerEvent.REWARDS_CLAIMED` in
-        /// `src/degenbot/aave/events.py` but has NO handler for it: rewards claims
-        /// surface only via the stkAAVE token's `Transfer` events (see
-        /// `transaction_processor.py:249` — "This handles cases where stkAAVE
-        /// transfers (e.g., rewards claims) occur"). The DB has no rewards table.
+        /// Apply a `RewardsController` `RewardsClaimed` event. **No-op** — the
+        /// event has NO handler: rewards claims surface only via the stkAAVE
+        /// token's `Transfer` events, and the DB has no rewards table.
         /// The variant exists in `AaveChunkEvent` so the parser can route the
         /// event through the chunk pipeline (for operation-classification + log
         /// accounting), but the apply dispatch records the count + writes nothing.

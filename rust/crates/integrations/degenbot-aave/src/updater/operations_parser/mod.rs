@@ -175,7 +175,7 @@ impl<'a, 's> TransactionOperationsParser<'a, 's> {
     /// # Errors
     /// Returns [`ParseError::Substrate`] if the pool-revision lookup fails.
     #[expect(clippy::similar_names)] // gho_token vs gho_vtoken is intrinsic to the domain
-    #[expect(clippy::too_many_arguments)] // mirrors the Python context-construction arg list
+    #[expect(clippy::too_many_arguments)] // one arg per context input; a builder hides the required set
     pub fn new(
         market_id: i64,
         chain_id: i64,

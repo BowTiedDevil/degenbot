@@ -90,9 +90,9 @@ pub struct WarmupSlots {
 /// Compute a Solidity mapping storage slot: `keccak256(key ‖ base_slot)`,
 /// both 32-byte big-endian.
 ///
-/// Ports `examples/cmd_stream.py::mapping_slot` (L884–L891). **Layout note:**
-/// the key is concatenated *before* the base slot (`key ‖ base_slot`, not
-/// `base_slot ‖ key`) — this is the parity-sensitive point.
+/// **Layout note:** the key is concatenated *before* the base slot
+/// (`key ‖ base_slot`, not `base_slot ‖ key`) — the Solidity mapping layout,
+/// and the parity-sensitive point of this leaf.
 #[must_use]
 pub fn mapping_slot(base_slot: U256, key: U256) -> U256 {
     let mut preimage = [0u8; 64];
@@ -104,7 +104,7 @@ pub fn mapping_slot(base_slot: U256, key: U256) -> U256 {
 /// Compute the storage slot for `mapping[key1][key2]` at `base_slot`:
 /// `mapping_slot(mapping_slot(base_slot, key1), key2)`.
 ///
-/// Ports `examples/cmd_stream.py::_nested_mapping_slot` (L894–L916).
+/// Two levels of [`mapping_slot`], innermost first.
 #[must_use]
 pub fn nested_mapping_slot(base_slot: U256, key1: U256, key2: U256) -> U256 {
     mapping_slot(mapping_slot(base_slot, key1), key2)
@@ -147,18 +147,16 @@ const MASK_160: U256 =
 #[must_use]
 pub fn erc6909_id(currency: Address) -> U256 {
     // address(0) → 0; any address → its low 160 bits (a no-op on a valid
-    // `Address`, which is type-guaranteed ≤160 bits, but mirrors the Python
-    // oracle's `int(addr,16) & ((1<<160)-1)` for fidelity).
+    // `Address`, which is type-guaranteed ≤160 bits, but the mask is written out
+    // so the word layout is visible at the site).
     U256::from_be_bytes(currency.into_word().0) & MASK_160
 }
 
 /// Compute the three `eth_simulateV1` warmup slot addresses that replicate the
 /// effect of `cmd_executor.initialize()`.
 ///
-/// Ports `examples/cmd_stream.py::compute_simulation_warmup_slots`
-/// (L919–L1054). Returns the **slot addresses** only (typed struct); the 1-wei
-/// warmed values + the `stateDiff` dict shape are the cutover-task PyO3
-/// adapter.
+/// Returns the **slot addresses** only (typed struct); the 1-wei warmed
+/// values + the `stateDiff` dict shape belong to the driver's PyO3 adapter.
 ///
 /// # Arguments
 ///
@@ -287,7 +285,7 @@ mod tests {
 
     /// The mapping_slot composition is `keccak256(key ‖ base_slot)` (key FIRST),
     /// matching the Solidity layout `key.to_bytes(32,"big") ‖ base_slot.to_bytes(32,"big")`.
-    /// Cross-checks against the parity corpus's manual keccak (L271–L278):
+    /// Cross-checks against the parity corpus's manual keccak:
     ///   keccak256(executor_32bytes ‖ 3_32bytes).
     #[test]
     fn mapping_slot_layout_is_key_then_base_slot() {

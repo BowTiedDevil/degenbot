@@ -29,8 +29,8 @@ use degenbot_rpc::abi::{ContractRead, ICurvePool, ILendingRateReads, IERC20};
 use crate::bot_core::construction_io::RpcConstruction;
 
 /// The `lending_rates` cache key is the block number; the value the per-coin
-/// lending rates for that block. `Metrics`-free; mirrors the Python
-/// `_lending_rate_cache` (a `dict[int, tuple[int, ...]]`).
+/// lending rates for that block. `Metrics`-free: one map entry per block, holding
+/// the per-coin rates that block's read produced.
 type LendingCache = Mutex<HashMap<u64, Vec<U256>>>;
 
 #[expect(clippy::missing_fields_in_debug)] // the RPC trait object is not `Debug`
@@ -168,7 +168,7 @@ impl CurveDataProvider for RpcCurveDataProvider {
     }
 
     fn lending_rates(&self, block_number: u64) -> Result<Vec<U256>, CurveDataProviderError> {
-        // Per-block cache (mirrors the Python `_lending_rate_cache`). The read
+        // Per-block cache. The read
         // guard is scoped so it drops before the fetch and the insert below —
         // holding it across the whole method deadlocks on the second lock
         // (`std::sync::Mutex` is not re-entrant, and the guard would otherwise

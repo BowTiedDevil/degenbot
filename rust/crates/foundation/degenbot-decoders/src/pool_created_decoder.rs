@@ -14,9 +14,8 @@
 //! a row-input is the chunk loop's job, not the leaf's). This keeps the leaf
 //! unfettered by DB concerns + preserves the alloy-only property.
 //!
-//! Event signatures + topic constants are reproduced from the Python
-//! `src/degenbot/cli/pool.py` event-hash constants (the canonical degenbot
-//! source), computed as keccak256 of the canonical event signature.
+//! Event signatures + topic constants are the keccak256 of the canonical
+//! event signature each family's factory declares.
 //!
 //! # V2 `PairCreated` (Uniswap V2 family)
 //!
@@ -105,7 +104,7 @@ use crate::v4_swap_decoder::V4PoolId;
 
 /// Keccak256 of `PairCreated(address,address,address,uint256)` — the
 /// Uniswap V2 family sig (shared by `Uniswap`, `PancakeSwap`, `SushiSwap`,
-/// Swapbased V2, per `src/degenbot/cli/pool.py` constants).
+/// Swapbased V2 — the forks whose factories emit the same event).
 pub const V2_PAIR_CREATED_TOPIC: B256 =
     b256!("0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9");
 
@@ -117,10 +116,8 @@ pub const AERODROME_V2_POOL_CREATED_TOPIC: B256 =
 /// Keccak256 of Aerodrome V3's `PoolCreated` event signature — a distinct
 /// topic0 from the canonical Uniswap V3 sig ([`V3_POOL_CREATED_TOPIC`]),
 /// though structurally decoded the same way (token0/token1/fee in
-/// topics[1..=3], `tickSpacing`/`pool_address` in non-indexed data, per the
-/// Python `update_v3_pools` updater that handles both `uniswap_v3` and
-/// `aerodrome_v3`). See `src/degenbot/cli/pool.py`'s
-/// `AERODROME_V3_POOLCREATED_EVENT_HASH`. The decode leaf that accepts this
+/// topics[1..=3], `tickSpacing`/`pool_address` in non-indexed data — one
+/// updater handles both `uniswap_v3` and `aerodrome_v3`). The decode leaf that accepts this
 /// topic is deferred to the chunk loop — the constant is
 /// surfaced here so `ExchangeSpec.event_topic` can carry it faithfully.
 pub const AERODROME_V3_POOL_CREATED_TOPIC: B256 =

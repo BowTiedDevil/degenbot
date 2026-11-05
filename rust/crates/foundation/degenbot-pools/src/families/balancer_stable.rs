@@ -209,7 +209,7 @@ pub fn read_swap(
 
 /// Balancer V2 stable exact-input swap across an explicit token pair.
 ///
-/// Mirrors the python companion `BalancerV2StablePool.calculate_tokens_out_from_tokens_in`:
+/// The tokens-out solve, in the deployed `StableMath` order:
 ///   1. Subtract swap fee from the RAW amount.
 ///   2. Upscale balances (drop BPT for `ComposableStable` pools) + amount.
 ///   3. Compute invariant per `invariant_version` (V1 roundDown `D_P`,
@@ -289,8 +289,8 @@ fn pair_exact_in(
 
 /// Balancer V2 stable exact-output across an explicit token pair.
 ///
-/// Mirrors the python companion `calculate_tokens_in_from_tokens_out`:
-/// upscale balances + the out amount (`mulDown`), BPT-skip, the registered
+/// The tokens-in solve: upscale balances + the out amount (`mulDown`),
+/// BPT-skip, the registered
 /// invariant revision, `calc_in_given_out` in scaled space, downscale UP,
 /// add the fee LAST.
 ///

@@ -37,9 +37,8 @@ use crate::spec::ExchangeSpec;
 /// The Uniswap family a pool-creation event belongs to — drives the topic0
 /// filter + the decode leaf the fetcher dispatches to.
 ///
-/// Discriminators mirror the Python `kind` strings in
-/// `src/degenbot/cli/pool.py` (the `POOL_UPDATER[chain_id, exchange.name]`
-/// dispatch keys).
+/// The discriminant is the exchange's family — the dispatch key the chunk loop
+/// selects its decode leaf by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PoolFamily {
     /// Canonical Uniswap V2 `PairCreated` (no `stable` flag). Shared by

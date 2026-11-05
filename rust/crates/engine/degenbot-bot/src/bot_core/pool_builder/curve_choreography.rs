@@ -14,8 +14,8 @@
 //! [`ContractRead::read`](degenbot_rpc::abi::ContractRead::read), which is the
 //! same verb the standalone consumer uses.
 //!
-//! Revert/decode tolerance mirrors the Python `try/except (RpcError,
-//! AbiDecodeError, ValueError)` scoping exactly: a detection function returns
+//! Revert/decode tolerance is scoped to the detection functions: a detection
+//! function returns
 //! its "nothing found" default (empty/None) rather than erroring, except the
 //! required pool-params fetch (`A`/`fee`/`admin_fee`) which a well-formed pool
 //! always exposes and therefore propagates [`ProviderError`].

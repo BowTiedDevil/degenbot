@@ -270,41 +270,6 @@ const RATE_ADJUSTED: [Address; 4] = [
     address!("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"),
 ];
 
-/// Standard rate style (audited list; every axis at its default).
-const STANDARD_RATE: [Address; 31] = [
-    address!("0x0Ce6a5fF5217e38315f87032CF90686C96627CAA"),
-    address!("0x19b080FE1ffA0553469D20Ca36219F17Fcf03859"),
-    address!("0x1C5F80b6B68A9E1Ef25926EeE00b5255791b996B"),
-    address!("0x1F6bb2a7a2A84d08bb821B89E38cA651175aeDd4"),
-    address!("0x21B45B2c1C53fDFe378Ed1955E8Cc29aE8cE0132"),
-    address!("0x3CFAa1596777CAD9f5004F9a0c443d912E262243"),
-    address!("0x3F1B0278A9ee595635B61817630cC19DE792f506"),
-    address!("0x4424b4A37ba0088D8a718b8fc2aB7952C7e695F5"),
-    address!("0x602a9Abb10582768Fd8a9f13aD6316Ac2A5A2e2B"),
-    address!("0x8461A004b50d321CB22B7d034969cE6803911899"),
-    address!("0x857110B5f8eFD66CC3762abb935315630AC770B5"),
-    address!("0x8818a9bb44Fbf33502bE7c15c500d0C783B73067"),
-    address!("0x9c2C8910F113181783c249d8F6Aa41b51Cde0f0c"),
-    address!("0xa1F8A6807c402E4A15ef4EBa36528A3FED24E577"),
-    address!("0xaE34574AC03A15cd58A92DC79De7B1A0800F1CE3"),
-    address!("0xAf25fFe6bA5A8a29665adCfA6D30C5Ae56CA0Cd3"),
-    address!("0xBa3436Fd341F2C8A928452Db3C5A3670d1d5Cc73"),
-    address!("0xbB2dC673E1091abCA3eaDB622b18f6D4634b2CD9"),
-    address!("0xc5424B857f758E906013F3555Dad202e4bdB4567"),
-    address!("0xc8a7C1c4B748970F57cA59326BcD49F5c9dc43E3"),
-    address!("0xcbD5cC53C5b846671C6434Ab301AD4d210c21184"),
-    address!("0xD6Ac1CB9019137a896343Da59dDE6d097F710538"),
-    address!("0xD7C10449A6D134A9ed37e2922F8474EAc6E5c100"),
-    address!("0xDC24316b9AE028F1497c275EB9192a3Ea0f67022"),
-    address!("0xDcEF968d416a41Cdac0ED8702fAC8128A64241A2"),
-    address!("0xe7A3b38c39F97E977723bd1239C3470702568e7B"),
-    address!("0xf083FBa98dED0f9C970e5a418500bad08D8b9732"),
-    address!("0xF178C0b5Bb7e7aBF4e12A4838C7b7c5bA2C623c0"),
-    address!("0xf253f83AcA21aAbD2A20553AE0BF7F65C755A07F"),
-    address!("0xfC8c34a3B3CFE1F1Dd6DBCCEC4BC5d3103b80FF0"),
-    address!("0xFD5dB7463a3aB53fD211b4af195c5BCCC1A03890"),
-];
-
 /// Raw balance style (no rate conversion).
 const RAW_BALANCE: [Address; 10] = [
     address!("0x04c90C198b2eFF55716079bc06d7CCc4aa4d7512"),
@@ -378,8 +343,6 @@ fn mapped_strategies(addr: Address) -> Option<Strategies> {
         Some(Strategies::swap(SwapStyle::Crypto))
     } else if RATE_ADJUSTED.contains(&addr) {
         Some(Strategies::swap(SwapStyle::RateAdjusted))
-    } else if STANDARD_RATE.contains(&addr) {
-        Some(Strategies::DEFAULT)
     } else if RAW_BALANCE.contains(&addr) {
         Some(Strategies::swap(SwapStyle::RawBalance))
     } else if LIVE_ADMIN_ORACLE.contains(&addr) {
@@ -517,6 +480,56 @@ mod tests {
             resolve_curve_strategy_discriminants(unknown),
             CurveStrategyDiscriminants::default()
         );
+    }
+
+    /// The audited pools whose four strategy axes are every-default. The table
+    /// carries no entry for any of them: each one takes the unmapped fallback,
+    /// so the list is the audit's assertion rather than a dispatch input. An
+    /// address that moves off the default belongs in its own arm and must leave
+    /// this list in the same change.
+    const AUDITED_STANDARD_RATE: [Address; 31] = [
+        address!("0x0Ce6a5fF5217e38315f87032CF90686C96627CAA"),
+        address!("0x19b080FE1ffA0553469D20Ca36219F17Fcf03859"),
+        address!("0x1C5F80b6B68A9E1Ef25926EeE00b5255791b996B"),
+        address!("0x1F6bb2a7a2A84d08bb821B89E38cA651175aeDd4"),
+        address!("0x21B45B2c1C53fDFe378Ed1955E8Cc29aE8cE0132"),
+        address!("0x3CFAa1596777CAD9f5004F9a0c443d912E262243"),
+        address!("0x3F1B0278A9ee595635B61817630cC19DE792f506"),
+        address!("0x4424b4A37ba0088D8a718b8fc2aB7952C7e695F5"),
+        address!("0x602a9Abb10582768Fd8a9f13aD6316Ac2A5A2e2B"),
+        address!("0x8461A004b50d321CB22B7d034969cE6803911899"),
+        address!("0x857110B5f8eFD66CC3762abb935315630AC770B5"),
+        address!("0x8818a9bb44Fbf33502bE7c15c500d0C783B73067"),
+        address!("0x9c2C8910F113181783c249d8F6Aa41b51Cde0f0c"),
+        address!("0xa1F8A6807c402E4A15ef4EBa36528A3FED24E577"),
+        address!("0xaE34574AC03A15cd58A92DC79De7B1A0800F1CE3"),
+        address!("0xAf25fFe6bA5A8a29665adCfA6D30C5Ae56CA0Cd3"),
+        address!("0xBa3436Fd341F2C8A928452Db3C5A3670d1d5Cc73"),
+        address!("0xbB2dC673E1091abCA3eaDB622b18f6D4634b2CD9"),
+        address!("0xc5424B857f758E906013F3555Dad202e4bdB4567"),
+        address!("0xc8a7C1c4B748970F57cA59326BcD49F5c9dc43E3"),
+        address!("0xcbD5cC53C5b846671C6434Ab301AD4d210c21184"),
+        address!("0xD6Ac1CB9019137a896343Da59dDE6d097F710538"),
+        address!("0xD7C10449A6D134A9ed37e2922F8474EAc6E5c100"),
+        address!("0xDC24316b9AE028F1497c275EB9192a3Ea0f67022"),
+        address!("0xDcEF968d416a41Cdac0ED8702fAC8128A64241A2"),
+        address!("0xe7A3b38c39F97E977723bd1239C3470702568e7B"),
+        address!("0xf083FBa98dED0f9C970e5a418500bad08D8b9732"),
+        address!("0xF178C0b5Bb7e7aBF4e12A4838C7b7c5bA2C623c0"),
+        address!("0xf253f83AcA21aAbD2A20553AE0BF7F65C755A07F"),
+        address!("0xfC8c34a3B3CFE1F1Dd6DBCCEC4BC5d3103b80FF0"),
+        address!("0xFD5dB7463a3aB53fD211b4af195c5BCCC1A03890"),
+    ];
+
+    #[test]
+    fn audited_standard_rate_addresses_take_the_default_fallback() {
+        for addr in AUDITED_STANDARD_RATE {
+            assert_eq!(
+                mapped_strategies(addr).unwrap_or(Strategies::DEFAULT),
+                Strategies::DEFAULT,
+                "{addr}: an audited all-default pool must not land in a strategy arm"
+            );
+        }
     }
 
     #[test]

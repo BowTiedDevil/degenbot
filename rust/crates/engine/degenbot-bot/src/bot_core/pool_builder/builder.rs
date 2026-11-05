@@ -1394,7 +1394,8 @@ pub async fn build_balancer_stable(
     }
 
     // getRateProviders reverts for WeightedPool2Tokens / MetaStablePools —
-    // degrade to an empty list (mirrors the Python `except -> []`).
+    // degrade to an empty list: a pool that exposes no rate providers is a
+    // static-rate pool, not a failure.
     let providers = match io
         .read(address, IBalancerPool::getRateProvidersCall {}, block)
         .await

@@ -5,12 +5,11 @@ use super::{params, DbError, DegenbotDb, OptionalExtension, U256};
 
 // ── the pure bit-decode (no I/O) ───────────────────────────────────────────
 
-/// The decoded Aave V3 reserve-configuration bitmap. Port of the dict returned
-/// by `_decode_reserve_configuration_bitmap` (`event_handlers.py` L133–L214).
+/// The decoded Aave V3 reserve-configuration bitmap.
 /// Every field maps 1:1 to a Python dict key (`snake_case` preserved) so the
 /// parity-gate fixture (`docs/architecture/parity-gate.md`) asserts
 /// field-by-field equivalence.
-#[expect(clippy::struct_excessive_bools)] // mirrors the Python dict's flag set 1:1
+#[expect(clippy::struct_excessive_bools)] // one bool per reserve-config bitmap flag
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ReserveConfiguration {
     /// bits 0–15. Loan-to-value (basis points).
@@ -222,8 +221,7 @@ impl DegenbotDb {
     }
 
     conn_writer! {
-        /// Get-or-create an `aave_v3_asset_configs` row by `asset_id`. Port of
-        /// `db_market.py::get_or_create_asset_config` (L81–L129). On create, the
+        /// Get-or-create an `aave_v3_asset_configs` row by `asset_id`. On create, the
         /// row is inserted with the Python ORM defaults (all zero/`false`/`None`).
         /// Returns the row `id`.
         ///
@@ -257,8 +255,7 @@ impl DegenbotDb {
 
     conn_writer! {
         /// Get-or-create an `aave_v3_user_collateral_configs` row by `(user_id,
-        /// asset_id)`. Port of
-        /// `db_market.py::get_or_create_user_collateral_config` (L131–L162). On
+        /// asset_id)`. On
         /// create, the row is inserted with `enabled=false` (the Python default).
         /// Returns the row `id`.
         ///
@@ -322,11 +319,9 @@ impl DegenbotDb {
 
     conn_writer! {
         /// Apply a `CollateralConfigurationChanged` event's decoded config
-        /// bitmap to the asset's `aave_v3_asset_configs` row. Port of
-        /// `event_handlers.py::_process_collateral_configuration_changed_event`
-        /// (L40-L131), minus the RPC fetch of the bitmap (the Python path
-        /// `raw_call`s `Pool.getConfiguration(address)`; the driver passes the
-        /// fetched bitmap here — the RPC fetch is `stays-python`).
+        /// bitmap to the asset's `aave_v3_asset_configs` row, minus the RPC fetch
+        /// of the bitmap: the driver `raw_call`s `Pool.getConfiguration(address)`
+        /// and passes the fetched bitmap here.
         ///
         /// Decodes the bitmap via [`decode_reserve_configuration_bitmap`] then
         /// upserts the `asset_config` row: on a new row, inserts every decoded
@@ -346,7 +341,7 @@ impl DegenbotDb {
         ) -> Result<i64, DbError> {
             let decoded = decode_reserve_configuration_bitmap(config_bitmap);
             if let Some(id) = existing_asset_config(conn, asset_id)? {
-                // UPDATE every bitmap-sourced field (matches the Python mutate path).
+                // UPDATE every bitmap-sourced field, leaving the rest of the row as-is.
                 conn.execute(
                     "UPDATE aave_v3_asset_configs SET \
                         ltv = ?1, liquidation_threshold = ?2, liquidation_bonus = ?3, \
@@ -397,8 +392,7 @@ impl DegenbotDb {
 
     conn_writer! {
         /// Apply an `EModeCategoryAdded` event's decoded fields to the
-        /// `aave_v3_emode_categories` row. Port of
-        /// `event_handlers.py::_process_e_mode_category_added_event` (L216-L277).
+        /// `aave_v3_emode_categories` row.
         ///
         /// On create, inserts `(label, ltv, liquidation_threshold, liquidation_bonus,
         /// price_source)`; on existing, `UPDATE`s the same five fields (matching
@@ -414,7 +408,7 @@ impl DegenbotDb {
         /// # Errors
         ///
         /// Returns [`DbError::Sqlite`] on a query failure.
-        // mirrors the Python event arg list 1:1
+        // one argument per event field, in event order
         #[expect(clippy::too_many_arguments)]
         fn apply_e_mode_category_added, apply_e_mode_category_added_on_conn(
             conn: &rusqlite::Connection,
@@ -426,7 +420,7 @@ impl DegenbotDb {
             price_source: Option<&str>,
             label: &str,
         ) -> Result<i64, DbError>;
-        // mirrors the Python event arg list 1:1
+        // one argument per event field, in event order
         #[expect(clippy::too_many_arguments)]
         {
             if let Some(id) = existing_emode_category(conn, market_id, category_id)? {
@@ -467,8 +461,7 @@ impl DegenbotDb {
     conn_writer! {
         /// Apply an `EModeAssetCategoryChanged` event's category assignment to
         /// the asset's `aave_v3_asset_configs` row's `e_mode_category_id`.
-        /// Port of `_process_emode_asset_category_changed_event` (L279-L347) —
-        /// the older Aave variant. Unconditionally sets `e_mode_category_id` to
+        /// The older Aave variant. Unconditionally sets `e_mode_category_id` to
         /// the new category (`None` when the category id is `0`). Returns the row
         /// `id`.
         ///
@@ -488,8 +481,7 @@ impl DegenbotDb {
     conn_writer! {
         /// Apply an `AssetCollateralInEModeChanged` event's category assignment
         /// to the asset's `aave_v3_asset_configs` row's `e_mode_category_id`.
-        /// Port of `_process_asset_collateral_in_emode_changed_event`
-        /// (L349-L420) — the newer Aave v3.4+ variant. Sets `e_mode_category_id`
+        /// The newer Aave v3.4+ variant. Sets `e_mode_category_id`
         /// to the category ONLY when `is_collateral && category_id > 0`; when
         /// `is_collateral` is false the row is LEFT UNCHANGED (the Python `elif`
         /// branch does nothing on removal). Returns the row `id`.
@@ -555,10 +547,9 @@ impl DegenbotDb {
 
     conn_writer! {
         /// Apply a `ReserveUsedAsCollateralEnabled`/`Disabled` event to the
-        /// `aave_v3_user_collateral_configs` row's `enabled` flag. Ports
-        /// `_process_reserve_used_as_collateral_enabled_event` (L422-L483) AND
-        /// `_process_reserve_used_as_collateral_disabled_event` (L485-L547):
-        /// both collapse to setting `enabled` (`true` for enabled, `false` for
+        /// `aave_v3_user_collateral_configs` row's `enabled` flag. The enabled
+        /// and disabled events collapse to setting `enabled` (`true` for
+        /// enabled, `false` for
         /// disabled). On create, inserts with the given `enabled` value; on
         /// existing, `UPDATE`s the flag. Returns the row `id`.
         ///
@@ -590,7 +581,7 @@ impl DegenbotDb {
 
     conn_writer! {
         /// Apply a `UserEModeSet` event to the user's `aave_v3_users.e_mode`
-        /// column. Port of `_process_user_e_mode_set_event` (L688-L715). The user
+        /// column. The user
         /// row must already exist (the Python path `get_or_create_user`s first;
         /// the driver passes the existing `user_id` here). Returns the row `id`.
         ///
@@ -612,10 +603,8 @@ impl DegenbotDb {
 
     conn_writer! {
         /// Apply a `PriceOracleUpdated` event: register the new `PRICE_ORACLE`
-        /// `aave_v3_contracts` row for `market_id`. Port of
-        /// `_process_price_oracle_updated_event` (L1080-L1126). The Python path
-        /// asserts no existing `PRICE_ORACLE` row (a fresh insert); this Rust fn
-        /// upserts — if a `PRICE_ORACLE` row exists it `UPDATE`s the address,
+        /// `aave_v3_contracts` row for `market_id`. The write upserts — if a
+        /// `PRICE_ORACLE` row exists it `UPDATE`s the address,
         /// else it inserts (defensive vs the Python `assert existing_oracle is
         /// None`). Returns the row `id`.
         ///
@@ -653,9 +642,8 @@ impl DegenbotDb {
 
     conn_writer! {
         /// Apply an `AssetSourceUpdated` event: set the asset's
-        /// `aave_v3_assets.price_source` column. Port of
-        /// `_process_asset_source_updated_event` (L1128-L1166). The `asset_id`
-        /// must already exist (the Python `assert asset is not None`). Returns the
+        /// `aave_v3_assets.price_source` column. The `asset_id`
+        /// must already exist (the row is looked up, never created). Returns the
         /// row `id`.
         ///
         /// # Errors
@@ -675,7 +663,7 @@ impl DegenbotDb {
     }
 
     /// Resolve the asset-row id for an emitter token address (the
-    /// `_get_asset_by_token_type` port). Mirrors the Python `_get_token_type` +
+    /// `_get_asset_by_token_type` port). The `_get_token_type` +
     /// `_get_asset_by_token` JOIN — the parser classifies each decoded
     /// `Mint/Burn/BalanceTransfer` event by the contract that emitted it: aToken →
     /// [`ScaledTokenEventType`][crate::operations::ScaledTokenEventType] collateral, vToken → debt.

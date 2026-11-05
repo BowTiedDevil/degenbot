@@ -1,12 +1,10 @@
 //! The `dispatch_and_submit` orchestration + `eth_sendRawTransaction`
 //! broadcast + `eth_feeHistory` percentile fetch.
 //!
-//! Ports `examples/eth_backrun_v2_v3_v4_rust.py::dispatch_profitable_results`
-//! submit tail (L2608–L2660 — the `dry_run` guard L2608, `INJECT_EXECUTOR_CODE`
-//! guard L2666, mutual-exclusivity guard L2622, claim nonce L2636, finalize
-//! fees L2637–L2639, re-compute access list L2641–L2645, sign+broadcast
-//! L2647–L2660, reserve pools L2662, spawn monitor L2664–L2672) + the
-//! `_apply_block_if_ready` `eth_feeHistory` fetch (L2907–L2923).
+//! The submit tail of a dispatched candidate: the mutual-exclusivity guard, the
+//! `dry_run` / `inject_code` skip, the claim nonce, the fee finalization, the
+//! access-list re-computation, sign + broadcast, the pool reservation, and the
+//! monitor spawn — plus the block-apply `eth_feeHistory` fetch.
 //!
 //! This is the orchestration that owns the GIL release across the async
 //! sign+broadcast slice (ADR-005 — "Python is the cockpit, Rust is the
@@ -67,11 +65,10 @@ use degenbot_substrate::nonce::{DeclineKind, HeldFees, NonceLane, NonceLease};
 /// submit seam against a shape only one caller produces. The umbrella `Bot` /
 /// Python driver maps `SimResult` → `SubmitCandidate` at the seam instead
 /// (resolving the `path_pools` from `path_info.hops` — `pool_id_hex` for V4,
-/// `pool_address` for V2/V3 — ports L2623).
+/// `pool_address` for V2/V3).
 ///
-/// Ports the Python `gas_profitable` tuple `(path_id, gross, net, gas,
-/// tx_params, path_info)` (L2428 — the dispatch fan-out output the submit loop
-/// iterates).
+/// The dispatch fan-out's `gas_profitable` row `(path_id, gross, net, gas,
+/// tx_params, path_info)` — the record the submit loop iterates.
 #[derive(Debug, Clone)]
 pub struct SubmitCandidate {
     /// `path_id` — the unique arb path identifier.
@@ -92,11 +89,11 @@ pub struct SubmitCandidate {
     pub executor_address: Address,
     /// The pre-sim access list (the V2/V3 slot reads warmup). Re-computed by
     /// the submit orchestration with the updated nonce/fees for accuracy —
-    /// if that re-computation fails, this list is kept (ports the
-    /// `except Exception: pass` guard, L2644).
+    /// if that re-computation fails, this list is kept: a failed refresh must
+    /// not discard a list that still warms the calls.
     pub access_list: Option<alloy::rpc::types::AccessList>,
-    /// The pools this path touches (for mutual-exclusivity — ports the Python
-    /// `{h.pool_id_hex if V4 else h.pool_address for h in path_info.hops}`).
+    /// The pools this path touches, for mutual-exclusivity: each hop's
+    /// `pool_id_hex` for V4, its `pool_address` otherwise.
     pub path_pools: HashSet<PoolKey>,
 }
 
@@ -149,22 +146,19 @@ const BUNDLE_RELAY_TIMEOUT: std::time::Duration = std::time::Duration::from_mill
 // The submit outcome (N6)
 // ─────────────────────────────────────────────────────────────────────────
 
-/// The typed Skip reason for a not-submitted candidate (ports the
-/// `dry_run`/`inject_code`/mutual-exclusivity skip branches L2608/L2666/L2626).
+/// The typed Skip reason for a not-submitted candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkipReason {
-    /// Pools already claimed by an in-flight or committed tx this batch (the
-    /// `is_path_blocked` guard, L2626).
+    /// Pools already claimed by an in-flight or committed tx this batch.
     PoolsClaimed,
-    /// `dry_run` is active — the live submission is skipped (the `dry_run`
-    /// guard, L2608). Pools are still committed to (so the dry-run respects
-    /// mutual exclusivity).
+    /// `dry_run` is active — the live submission is skipped. Pools are still
+    /// committed to, so the dry-run respects mutual exclusivity.
     DryRun,
     /// `inject_code` is active — the injected contract doesn't exist on-chain,
-    /// so live submission is unsafe (the `INJECT_EXECUTOR_CODE` guard, L2666).
+    /// so live submission is unsafe.
     InjectCode,
-    /// The broadcast RPC failed (the `Web3Exception` skip, L2654 — corresponds
-    /// to [`AlloyProvider::eth_send_raw_transaction`] returning `Err`).
+    /// The broadcast RPC failed — [`AlloyProvider::eth_send_raw_transaction`]
+    /// returned `Err`.
     ///
     /// The record says the candidate was not submitted; what became of its
     /// nonce is the delivery classifier's verdict, not the record's.
@@ -231,9 +225,8 @@ impl SubmitOutcome {
 // The submit orchestration (N6)
 // ─────────────────────────────────────────────────────────────────────────
 
-/// The 1.5× gas safety margin (`tx_params["gas"] = int(gas_used * 1.5)`,
-/// `examples/eth_backrun_v2_v3_v4_rust.py` L2419). Applied to the simulate's
-/// `gasUsed` when building the `TxParams`.
+/// The 1.5× gas safety margin (`int(gas_used * 1.5)`) applied to the
+/// simulate's `gasUsed` when building the [`TxParams`].
 const GAS_SAFETY_MARGIN: f64 = 1.5;
 
 /// T4: a candidate's net profit as `f64` wei (saturating at `u128::MAX`;
@@ -1296,7 +1289,7 @@ fn percentile_key(p: f64) -> Option<u64> {
 
 /// Fetch the per-block priority-fee percentiles via `eth_feeHistory` (typed
 /// surface) + record them into the dispatcher's `block_priority_fees`
-/// ring (ports L2907–L2923).
+/// ring.
 ///
 /// Requests `block_count` blocks ending at `last_block` with the given
 /// `reward_percentiles` (e.g. `[10.0, 50.0]` for the p10/p50 the
@@ -1305,8 +1298,8 @@ fn percentile_key(p: f64) -> Option<u64> {
 /// is block `i`'s percentile rewards) zipped with the percentile keys into a
 /// `BTreeMap<percentile, fee>` + feeds `Dispatcher::record_priority_fees`.
 ///
-/// On any RPC failure the call is a no-op (ports the `except Web3Exception:
-/// pass` guard, L2921-2922) — the dispatcher keeps its previous fee samples.
+/// On any RPC failure the call is a no-op — the dispatcher keeps its previous
+/// fee samples rather than blanking them.
 ///
 /// # Errors
 ///
@@ -1375,8 +1368,8 @@ pub async fn fetch_fee_history(
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Build an alloy `TransactionRequest` from the finalized `TxParams` (for the
-/// `eth_createAccessList` re-computation, L2641).
+/// Build an alloy `TransactionRequest` from the finalized [`TxParams`], for the
+/// `eth_createAccessList` re-computation.
 fn build_transaction_request(params: &TxParams) -> TransactionRequest {
     use alloy::rpc::types::TransactionInput;
     TransactionRequest {

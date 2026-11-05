@@ -38,10 +38,7 @@ impl DegenbotDb {
         ) -> Result<i64, DbError> {
             if let Some(id) = existing_erc20_token(conn, chain, address)? {
                 // backfill any NULL metadata cells on the existing row
-                // with the freshly-passed values. Mirrors the Python
-                // `activate_ethereum_aave_v3` pre-pass (commands.py:213) which
-                // drives `get_or_create_erc20_token` on a freshly-seeded row →
-                // `_fetch_erc20_token_metadata` (RPC `name()`/`symbol()`/`decimals()`) +
+                // with the freshly-passed values (RPC `name()`/`symbol()`/`decimals()`) +
                 // INSERT with metadata. Rust defers the equivalent to drive-time:
                 // when `resolve_reserve_initialized` fetches the metadata via
                 // `fetch_erc20_metadata` + resolves the token here, the existing

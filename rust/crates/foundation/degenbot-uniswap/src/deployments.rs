@@ -126,7 +126,7 @@ pub fn resolve_v3_init_hash(chain_id: u64, factory: Address) -> alloy::primitive
 /// mirror cannot drift from the canonical registry.
 const DEPLOYMENTS_JSON: &str = include_str!("deployments.json");
 
-/// The raw JSON record shape (mirrors the Python loader's schema).
+/// The raw JSON record shape, exactly as the deployments file spells it.
 ///
 /// Only the CREATE2-critical fields are deserialized; `name` / `pool_type` /
 /// `variant` / `dex_variant` / `family` are companion-layer concerns (Python

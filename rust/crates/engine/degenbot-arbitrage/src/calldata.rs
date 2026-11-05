@@ -45,7 +45,7 @@ pub const ERC6909_BALANCE_OF_SELECTOR: [u8; 4] = [0x00, 0xfd, 0xd5, 0x8e];
 
 /// Encode the WETH9 / ERC20 `balanceOf(address)` calldata.
 ///
-/// Ports `encode_balanceof_calldata` (L372–L375): the 4-byte selector followed
+/// The 4-byte selector followed
 /// by the ABI-encoded `address` argument (left-padded to 32 bytes).
 ///
 /// # Errors
@@ -60,7 +60,7 @@ pub fn encode_balance_of_calldata(account: Address) -> Result<Bytes, AbiDecodeEr
 ///
 /// The ETH balance read is folded into the simulate call vector as a Multicall3
 /// call (see [`GET_ETH_BALANCE_SELECTOR`]) so it shares the same simulate
-/// state as the other six reads (ports the L1720–L1722 block).
+/// state as the other six reads.
 ///
 /// # Errors
 ///
@@ -71,8 +71,8 @@ pub fn encode_get_eth_balance_calldata(account: Address) -> Result<Bytes, AbiDec
 
 /// Encode the PoolManager ERC6909 `balanceOf(address,uint256)` calldata.
 ///
-/// Ports the L1736–L1738 block: `pm_balanceof_selector +
-/// eth_abi.abi.encode(["address", "uint256"], [executor, weth_erc6909_id])`.
+/// `pm_balanceof_selector` followed by the ABI encoding of
+/// `("address", "uint256")` = `(executor, weth_erc6909_id)`.
 /// The `uint256` id is the ERC6909 `uint160(currency)` for the given token
 /// (`CurrencyLibrary.toId()`) — reused from `degenbot_executor::erc6909_id`
 /// (consume, don't duplicate).

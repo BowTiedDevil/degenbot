@@ -15,8 +15,6 @@ import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 
-import pytest
-
 
 def _console_executable() -> list[str]:
     """The installed console script (what ``uv run degenbot`` runs)."""
@@ -57,19 +55,3 @@ def test_database_upgrade_is_retired() -> None:
     assert proc.returncode == 1, (proc.stdout, proc.stderr)
     assert "the database upgrades itself at open" in proc.stderr
     assert "degenbot database heal" in proc.stderr
-
-
-@pytest.mark.skip(
-    reason=(
-        "manual gate: no reachable boot-refusal path exists on this console yet "
-        "(degenbot-cli-core defines CliError::BootRefused and maps it to "
-        "EX_CONFIG 78 but no arm constructs it). Until a cheap fleet "
-        "fixture lands, the mapping is pinned by the Rust unit test "
-        "degenbot_rs::cli::tests::boot_refusal_maps_to_ex_config."
-    ),
-)
-def test_boot_refused_exits_78() -> None:
-    """A fleet boot refusal must exit 78 (sysexits EX_CONFIG)."""
-    proc = _run([*_console_executable(), "fleet", "status"])
-    assert proc.returncode == 78
-    assert "[fleet-boot] REFUSED" in proc.stderr

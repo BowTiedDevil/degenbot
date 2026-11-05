@@ -201,8 +201,8 @@ pub(crate) fn db_err_to_py(err: &degenbot_db::DbError) -> PyErr {
 /// files, ~45 fns) and (b) `db_` functions as a functional namespace marker
 /// is clearer than bare `backup_database` on a `db` submodule.
 ///
-/// The companion `src/degenbot/database/_ffi.py` re-exports these as the
-/// stable import path, decoupling Python consumers from `degenbot._ffi`.
+/// `degenbot._ffi.db` IS the stable import path: a Python consumer names the
+/// submodule rather than a bare root symbol.
 /// The parent module registers the submodule itself and its `sys.modules`
 /// entry.
 #[pymodule(submodule)]

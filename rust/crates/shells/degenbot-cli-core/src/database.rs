@@ -1,9 +1,9 @@
 //! The database command arms (ADR-051 D1/D4) — the template group.
 //!
-//! Ported verbatim from `src/degenbot/cli/database.py`: same dry-run text, same
-//! confirmation conditions, same refusals. `database upgrade` is retired — the
-//! database upgrades itself at open (ADR-052); `database heal` is the explicit
-//! repair.
+//! The console's dry-run text, confirmation conditions and refusals are the
+//! contract here: a `--dry-run` prints what it would do and writes nothing.
+//! `database upgrade` is retired — the database upgrades itself at open
+//! (ADR-052); `database heal` is the explicit repair.
 //!
 //! These arms never call heal on another command's behalf; schema self-healing
 //! lives inside `ensure_schema`.

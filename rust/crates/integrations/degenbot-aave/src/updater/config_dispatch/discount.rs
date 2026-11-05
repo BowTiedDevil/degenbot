@@ -279,8 +279,8 @@ pub(super) fn dispatch_discount_rate_strategy_updated(
 // ── the discount pre-pass (the 3-way hybrid) ───────────────────────────────
 
 /// Build the per-tx GHO discount snapshot — the `HashMap<Address, U256>` that
-/// `process_transaction` (C3) consumes as the `discounts` parameter. Mirrors
-/// the Python `_process_transaction` L140-210 pre-pass: scan the tx's GHO
+/// `process_transaction` (C3) consumes as the `discounts` parameter: scan the
+/// tx's GHO
 /// vToken Mint/Burn events, + for each user, resolve the START discount (the
 /// value in effect at tx start, BEFORE any `DISCOUNT_PERCENT_UPDATED` in this
 /// tx — the `GhoDiscountContext` applies the in-tx overrides via
@@ -289,15 +289,14 @@ pub(super) fn dispatch_discount_rate_strategy_updated(
 /// # The 3-way hybrid
 ///
 /// - **path #1 (DB-cache):** the user exists in `aave_v3_users` → read
-///   `gho_discount` (the snapshot at tx start). Mirrors the Python
-///   `gho_users.get(user_address)` → `user.gho_discount`.
+///   `gho_discount` (the snapshot at tx start).
 /// - **path #2 (RPC):** the user is NOT in the DB → `getDiscountPercent(user)`
 ///   `eth_call` at the tx's `block_number` (the user has an existing GHO debt
 ///   position first encountered in this chunk's tx range). Mirrors the
 ///   Python `raw_call(getDiscountPercent)`. Only when `vtoken_revision < 4`.
 /// - **path #3 (V4+ deprecation):** `vtoken_revision >= 4` → the discount
-///   mechanism is deprecated → 0. Mirrors the Python
-///   `is_discount_supported(session, market)` gate (revision < 4).
+///   mechanism is deprecated → 0 — the `is_discount_supported` gate
+///   (revision < 4).
 ///
 /// Returns an empty map when there's no GHO vToken (`gho_vtoken_address` is
 /// `None`) or the revision couldn't be resolved.

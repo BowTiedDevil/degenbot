@@ -288,7 +288,7 @@ class EngineRegistry:
 
         ADR-006 D1: the pool is ALREADY registered in the shared
         ``BotState`` by `bot.build_managed_pool`; re-registering would raise
-        ``ValueError("V4 pool already registered")`` for every V4 hop in every
+        ``ValueError("v4 pool already registered")`` for every V4 hop in every
         discovered path. V4 hook/dynamic-fee admission is enforced at
         `bot.build_managed_pool` time — BEFORE this method is ever called — so
         it surfaces from the builder, not here. As with V3, the at-most-once

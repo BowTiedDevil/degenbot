@@ -10,12 +10,13 @@
 //!    revision-based skip guard — `v_token_revision >= 4` → skip).
 //!
 //! Plus `cleanup_zero_balance_positions_on_conn` — DELETEs zero-balance
-//! collateral + debt rows (the Python `cleanup_zero_balance_positions`).
+//! collateral + debt rows.
 //!
-//! Mirrors `src/degenbot/cli/aave/verification.py` +
-//! `src/degenbot/cli/aave/db_verification.py`. The `DEAD_ADDRESS` /
-//! `ZERO_ADDRESS` skip is preserved. Uses `AlloyProvider::eth_call`
-//! (per-position calls) — multicall3 batching is the natural extension.
+//! The verification pass reads each position's on-chain state and reconciles it
+//! against the committed rows; the `DEAD_ADDRESS` / `ZERO_ADDRESS` skip is part
+//! of the contract (an address with no state has nothing to reconcile). Reads go
+//! through `AlloyProvider::eth_call` per position — multicall3 batching is the
+//! natural extension.
 
 use alloy::primitives::{Address, Bytes, U256};
 use degenbot_db::{DbError, DegenbotDb};
@@ -257,8 +258,8 @@ pub async fn verify_touched_positions_on_conn(
 
     for kind in [PositionKind::Collateral, PositionKind::Debt] {
         let rows = load_position_rows(conn, market_id, kind, user_addresses)?;
-        // Skip dead/zero-address users (mirror the Python skip) before
-        // batching so no calls are wasted on them.
+        // Skip dead/zero-address users before batching so no calls are wasted
+        // on them.
         let rows: Vec<&PositionRow> = rows
             .iter()
             .filter(|r| r.user_address != DEAD_ADDRESS && r.user_address != ZERO_ADDRESS)
@@ -647,8 +648,8 @@ pub async fn verify_all_positions_on_conn(
 }
 
 /// Delete all zero-balance collateral + debt positions for `market_id`.
-/// Mirrors the Python `cleanup_zero_balance_positions`
-/// (verification.py:19). A WRITE operation — must be called on a writable
+/// Delete every zero-balance collateral + debt row for the market. A WRITE
+/// operation — must be called on a writable
 /// connection; the caller commits.
 ///
 /// # Errors

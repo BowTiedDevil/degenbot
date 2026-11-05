@@ -12,7 +12,7 @@ shared-core key, mirroring the V2 path (``register_v2_pool`` reads
 Regression (the production settlement-arbitrage bot,
 ``examples/eth_settlement_arbitrage_v2_v3_v4_rust.py``):
 ``register_v4_pool`` called ``self.engine.register_v4_pool`` on the pre-
-registered pool, raising ``ValueError("V4 pool already registered: …")`` for
+registered pool, raising ``ValueError("v4 pool already registered: …")`` for
 every V4 hop in every discovered path. Because the Python ``_v4_keys`` cache
 was only set on success, the same pool tripped the error repeatedly.
 
@@ -81,7 +81,7 @@ def test_register_v4_pool_resolves_shared_state_key_without_re_registering() -> 
     """A V4 pool pre-registered in the shared BotState resolves to its key.
 
     ``register_v4_pool`` must NOT call ``engine.register_v4_pool`` (which would
-    raise ``ValueError("V4 pool already registered")``); it reads the shared
+    raise ``ValueError("v4 pool already registered")``); it reads the shared
     ``pool._py_pool.pool_id`` like the V2 path.
     """
     py_bot = Bot()

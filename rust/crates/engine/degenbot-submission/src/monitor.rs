@@ -1,10 +1,8 @@
 //! `SubmittedTx` + `monitor_pending_transaction` — the pending-tx
 //! confirmation/expiry lifecycle.
 //!
-//! Port of `examples/eth_backrun_v2_v3_v4_rust.py` `SubmittedTx` (L1617–L1622)
-//! and `monitor_pending_transaction` (L1624–L1652). A typed pending-tx
-//! coordination view with an async loop that waits on real head events and
-//! probes `get_transaction_receipt` once per event. On receipt
+//! A typed pending-tx coordination view with an async loop that waits on real
+//! head events and probes `get_transaction_receipt` once per event. On receipt
 //! (`confirmed`) the monitor releases the tx's pools via
 //! [`Dispatcher::release_tx`]; on `blocks_before_nonce_expires` blocks
 //! without inclusion it releases the pools and returns `Expired`. Nonce
@@ -37,7 +35,7 @@
 //! not included yet, and the receipt for one it has: "not yet included" is a
 //! state of the chain, not an error. The Rust equivalent is a typed
 //! `get_transaction_receipt` that returns `Option` (the rpc leaf EXISTS at
-//! `degenbot-rpc::AlloyProvider::get_transaction_receipt` L688 — `None` =
+//! `degenbot-rpc::AlloyProvider::get_transaction_receipt` — `None` =
 //! not yet included, `Some(receipt)` = confirmed). To keep the submission
 //! core pyo3-free AND decoupled from the heavy RPC stack (ADR-005
 //! standalone-core), this module defines a minimal
@@ -80,9 +78,8 @@ pub const BLOCKS_BEFORE_NONCE_EXPIRES: u64 = 5;
 
 /// The pending-tx coordination view.
 ///
-/// Port of `examples/eth_backrun_v2_v3_v4_rust.py` `SubmittedTx`
-/// (L1617–L1622). The N6 submit orchestration constructs this (after
-/// `eth_sendRawTransaction` returns the hash) and spawns
+/// The N6 submit orchestration constructs this after
+/// `eth_sendRawTransaction` returns the hash, then spawns
 /// [`monitor_pending_transaction`] over it. `pools` holds the Rust pool keys
 /// (V4 `pool_id_hex` / V2–V3 pool address) locked by the tx — typed as
 /// [`PoolKey`] (the dispatcher's pool-key newtype) so the
@@ -128,9 +125,8 @@ impl SubmittedTx {
 
 /// The outcome of monitoring a pending transaction.
 ///
-/// Port of the two `return` paths in the Python `monitor_pending_transaction`
-/// (L1624–L1652): `Confirmed` (receipt found) or `Expired` (threshold
-/// exceeded without inclusion).
+/// The monitor's two terminal verdicts: `Confirmed` (receipt found) or
+/// `Expired` (threshold exceeded without inclusion).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MonitorOutcome {
     /// The tx was mined — the nonce + pools were released and confirmation
@@ -175,9 +171,9 @@ impl MonitorOutcome {
 ///
 /// The concrete impl lives in `degenbot-rpc` for
 /// `AlloyProvider` (sibling; CONSUMES the I3 leaf
-/// `AlloyProvider::get_transaction_receipt` L688: map `Ok(None)` → `false`,
-/// `Ok(Some(_))` → `true`, `Err(e)` → propagate). Equivalent to the Python
-/// "try receipt / except `TransactionNotFound`" branch.
+/// `AlloyProvider::get_transaction_receipt`: map `Ok(None)` → `false`,
+/// `Ok(Some(_))` → `true`, `Err(e)` → propagate). An absent receipt is a
+/// state of the chain, not a failure — only a transport error propagates.
 ///
 /// Returns a pinned, boxed, `Send` future so the trait is object-safe and
 /// the monitor's spawned task future is `Send` (tokio `JoinSet` requires
@@ -242,8 +238,7 @@ impl Drop for ReservationGuard<'_> {
 
 /// Monitor a submitted transaction until it confirms or expires.
 ///
-/// Port of `examples/eth_backrun_v2_v3_v4_rust.py` `monitor_pending_transaction`
-/// (L1624–L1652). Probes [`ReceiptProbe::receipt_found`] once immediately and
+/// Probes [`ReceiptProbe::receipt_found`] once immediately and
 /// then once per real head event — awaited via [`Dispatcher::block_events`]
 /// (a `tokio::sync::watch<u64>` fed by [`Dispatcher::advance_block`]) — so the
 /// monitor reacts at head granularity, not at a fixed timer interval. On

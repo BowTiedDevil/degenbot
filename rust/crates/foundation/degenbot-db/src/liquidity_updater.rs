@@ -198,8 +198,8 @@ impl DegenbotDb {
     /// `tick_spacing`, + the `liquidity_update_block`/`log_index` guard stamp.
     /// Returns `Ok(None)` if no matching pool row exists.
     ///
-    /// Mirrors the Python `session.scalar(select(LiquidityPoolTable).where(
-    /// address==pool_address, chain==chain_id))` reconstitution step.
+    /// The reconstitution read: one `liquidity_pools` row by
+    /// `(address, chain)`.
     ///
     /// # Errors
     ///
@@ -290,8 +290,8 @@ impl DegenbotDb {
     /// Returns `Ok(None)` if no matching pool row exists (joins
     /// `uniswap_v4_pools` × `managed_pools` × `pool_managers`).
     ///
-    /// Mirrors the Python `session.scalar(select(UniswapV4PoolTable).where(
-    /// pool_hash==..., manager.has(chain==pool_manager.chain)))` reconstitution.
+    /// The reconstitution read: one `uniswap_v4_pools` row by pool hash, joined
+    /// through its manager's chain.
     ///
     /// # Errors
     ///
@@ -353,8 +353,7 @@ impl DegenbotDb {
     }
 
     /// Reconstitute the V3 tick-data map from the `liquidity_positions` rows
-    /// for `pool_id`. Mirrors the Python `pool_liquidity_map.model_construct`
-    /// reconstitution; produces the concentrated-liquidity-math types directly (no `U256`-bridge
+    /// for `pool_id`: produces the concentrated-liquidity-math types directly (no `U256`-bridge
     /// round-trip — `liquidity_net` is decoded as `I256`, `liquidity_gross` as
     /// low-128 `U128`).
     ///
@@ -484,8 +483,8 @@ impl DegenbotDb {
     /// pool row's `liquidity_update_block`/`liquidity_update_log_index` with the
     /// LAST event's `(block, log_index)`.
     ///
-    /// Returns `Ok(false)` if the pool row isn't found (mirrors the Python
-    /// `if pool_in_db is None: return`); `Ok(true)` after a successful apply.
+    /// Returns `Ok(false)` if the pool row isn't found; `Ok(true)` after a
+    /// successful apply.
     ///
     /// # Panics (debug builds only)
     ///
@@ -852,8 +851,7 @@ impl DegenbotDb {
     }
 
     /// Set the V3 pool's `liquidity_update_block`/`liquidity_update_log_index`
-    /// stamp to `(block, log_index)` — mirrors the Python
-    /// `pool_in_db.liquidity_update_block = ...`.
+    /// stamp to `(block, log_index)`.
     ///
     /// # Errors
     ///
@@ -949,8 +947,8 @@ impl DegenbotDb {
     }
 
     /// Delete liquidity positions for ticks NOT in `live_ticks` (the V3
-    /// `liquidity_positions` table, keyed by `pool_id`). Mirrors the Python
-    /// `delete(...).where(pool_id==?, tick.in_(ticks_to_drop))`.
+    /// `liquidity_positions` table, keyed by `pool_id`, restricted to the ticks
+    /// this event zeroed).
     ///
     /// # Errors
     ///
@@ -1019,8 +1017,8 @@ impl DegenbotDb {
 
     /// Upsert the V3 `liquidity_positions` rows for `pool_id` from the live
     /// `tick_data` map. Chunked to respect `SQLite`'s 32,766-variable limit
-    /// (4 vars/row → ≤ 7,500 rows/chunk). Mirrors the Python
-    /// `sqlite_upsert(LiquidityPositionTable).values([...]).on_conflict_do_update(...)`.
+    /// (4 vars/row → ≤ 7,500 rows/chunk): an upsert on the position's key, so a
+    /// re-apply of the same chunk is idempotent.
     ///
     /// The `on_conflict_do_update`'s `where != excl.net || != excl.gross`
     /// guard is implicit: `SQLite`'s `ON CONFLICT DO UPDATE` writes the new
@@ -1196,8 +1194,7 @@ impl DegenbotDb {
 /// no events hit a non-zero delta).
 ///
 /// `MAX_UINT256` is passed as `initial_state_block` to skip the in-range
-/// liquidity adjustment (mirrors the Python path, which always passes
-/// `MAX_UINT256`).
+/// liquidity adjustment, which always passes `MAX_UINT256` (no fee cap).
 fn apply_event_loop(
     tick_data: &mut HashMap<i32, LiquidityAtTick>,
     current_liquidity: &mut U128,
@@ -1615,8 +1612,7 @@ fn decode_i256(s: &str) -> Result<I256, DbError> {
 }
 
 /// Re-encode an [`I256`] to its `VARCHAR(78)` signed-decimal form (the inverse
-/// of [`decode_i256`]); mirrors the Python `IntMappedToString.process_bind_param`'s
-/// `str(value)` (which prepends `-` for negatives).
+/// of [`decode_i256`]): `str(value)`, which carries the `-` for negatives.
 #[must_use]
 #[cfg(test)]
 fn encode_i256(v: &I256) -> String {

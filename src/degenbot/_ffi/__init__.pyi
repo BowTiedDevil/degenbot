@@ -1965,8 +1965,7 @@ class BotIo:
         `SQLAlchemy` `session.scalar(select(Erc20TokenTable).where(...))` call.
 
         Returns a [`PyErc20TokenRow`] with `(id, chain, address, name, symbol,
-        decimals)`, or `None` when the row is absent (mirrors the Python
-        `get_token_from_database` returning `None`). Returns `None` (no error)
+        decimals)`, or `None` when the row is absent. Returns `None` (no error)
         when no `database_path` is configured (the `Bot` has no DB — matches
         the prior `contextlib.suppress(Exception)` skip). DB failures propagate
         as `ValueError` (the Python caller wraps the read in
@@ -1990,8 +1989,8 @@ class BotIo:
         called from Python via `PyBotIo`.
 
         Returns `None` on any provider error, decode failure, or short result —
-        mirrors the Python impl's `except (Web3Exception, DecodingError): return None`
-        contract (a pool whose `factory()` reverts yields `None`, not an error).
+        implements the `None`-on-failure contract: a pool whose `factory()`
+        reverts yields `None`, not an error.
         """
     def fetch_pool_row(self, /, chain_id: SupportsIndex, address: str) -> LiquidityPoolRow | None:
         """
@@ -3497,9 +3496,8 @@ class Pool:
         Like [`calculate_tokens_out`][Self::calculate_tokens_out], but on a
         sparse tick-map miss it calls `fetcher(word, block)` to fetch the
         missing word's tick data, merges it, and retries (dedup-protected — a
-        repeated miss on a word gives up with `0`). Mirrors the Python
-        companion's `MissingLiquidityData` → `_tick_data_fetcher` loop, now
-        driven from the Rust calc path.
+        repeated miss on a word gives up with `0`) — the missing-liquidity-data
+        loop, driven from the Rust calc path.
         `fetcher` is a Python callable
         `fetcher(word: int, block: int) -> dict[int, tuple[int, int, int]] | None`.
         It MUST return the fetched tick data mapping tick →

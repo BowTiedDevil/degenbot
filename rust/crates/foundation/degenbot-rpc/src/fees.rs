@@ -10,9 +10,9 @@
 //!
 //! # Parity gate (`docs/architecture/parity-gate.md`)
 //!
-//! Ports the `fee_history(block_count=1, newest_block, reward_percentiles)`
-//! and `dict(zip(FEE_PERCENTILES, reward[-1]))` block (L2842–L2851). The
-//! wire-shape matches the Python web3.py `fee_history` round-trip; the typed
+//! The `fee_history(block_count=1, newest_block, reward_percentiles)` request
+//! and its `reward[-1]` percentile pairing. The
+//! wire-shape is web3.py's `fee_history` round-trip; the typed
 //! `eth_fee_history` surface carries retry-with-backoff
 //! and error classification.
 
@@ -41,9 +41,9 @@ pub const FEE_PERCENTILES: [f64; 2] = [
 
 /// A per-block percentile fee summary the `_compute_priority_fee` consumer reads.
 ///
-/// Mirrors the Python `dispatcher.block_priority_fees[block]` dict
-/// (`dict(zip(FEE_PERCENTILES, reward[-1]))` — L2851): p10 and p50 priority-fee
-/// samples for a single block, keyed by percentile.
+/// The `block_priority_fees[block]` view: p10 and p50 priority-fee samples for
+/// a single block, keyed by percentile (the last reward row zipped with
+/// `FEE_PERCENTILES`).
 ///
 /// The strategy-side consumer (`compute_priority_fee`) lives in
 /// `degenbot-simulation` (the `sim::evm` submodule), which imports this type
@@ -62,8 +62,8 @@ pub struct BlockPriorityFees {
 /// percentiles, returning the typed per-block summary the
 /// `_compute_priority_fee` consumer reads.
 ///
-/// Ports the `fee_history(block_count=1, newest_block, reward_percentiles)`
-/// and `dict(zip(FEE_PERCENTILES, reward[-1]))` block (L2842–L2851).
+/// The `fee_history(block_count=1, newest_block, reward_percentiles)` request
+/// and its `reward[-1]` percentile pairing.
 ///
 /// # Errors
 ///

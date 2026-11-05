@@ -6,9 +6,8 @@
 //! [`degenbot_decoders::aave_event_decoder::decode_aave_log`], + for the 10
 //! enum-covered config event types, resolve ids via the `DegenbotDb`
 //! substrate (`get_or_create_*_on_conn` / `lookup_asset_by_*_on_conn`) +
-//! emit [`AaveChunkEvent`] variants (mirror of Python
-//! `transaction_processor.py::_process_transaction` L328-430 — the Phase 1+2
-//! config-event dispatch). The apply step (`-3`'s `apply_aave_chunk_writes_on_conn`)
+//! emit [`AaveChunkEvent`] variants — the tx's first dispatch phase, covering
+//! the config-event types. The apply step (`-3`'s `apply_aave_chunk_writes_on_conn`)
 //! consumes the emitted variants on the chunk `Transaction` (chunk
 //! atomicity).
 //!
@@ -40,9 +39,9 @@
 //! `PoolDataProviderUpdated`, `AddressSet`, `ProxyCreated` — the
 //! upgrade-transition resolvers in `revision` + the pure-decode arms here.
 //!
-//! # The dispatch flow (mirror of Python `_process_transaction` L320-430)
+//! # The dispatch flow
 //!
-//! The Python's `_process_transaction` loops over the tx's UNASSIGNED events
+//! The dispatch loops over the tx's UNASSIGNED events
 //! (those not matched to an Operation by the parser) + dispatches by topic0.
 //! In Rust, the config events are NEVER operation-assigned (the parser only
 //! assigns Mint/Burn/BalanceTransfer/Transfer/Pool-event Supply/Borrow/etc.),
@@ -103,8 +102,7 @@ use discount::{
 };
 use revision::{resolve_contract_revision_updated, resolve_upgraded};
 
-/// The GHO-discount deprecation revision (V4+). Mirrors the Python
-/// `GHO_DISCOUNT_DEPRECATION_REVISION = 4`. At vToken revision ≥ this value,
+/// The GHO-discount deprecation revision (V4+). At vToken revision ≥ this value,
 /// the discount mechanism is deprecated → the effective discount is always 0
 /// (`build_discount_snapshot` path #3; `is_discount_supported` gate).
 const GHO_DISCOUNT_DEPRECATION_REVISION: u32 = 4;
@@ -156,8 +154,7 @@ fn revision_selector(sig: &str) -> [u8; 4] {
 
 // ── the dispatch loop ──────────────────────────────────────────────────────
 
-/// The per-tx config-event dispatch loop. Mirrors Python
-/// `_process_transaction` L328-430: loop over `tx_logs`, decode each via
+/// The per-tx config-event dispatch loop: loop over `tx_logs`, decode each via
 /// [`decode_aave_log`], + for the 10 enum-covered config event types,
 /// resolve ids + emit [`AaveChunkEvent`] variants. Non-config events
 /// (Supply/Borrow/Mint/Burn/Transfer — the Operation events C3's
@@ -507,9 +504,8 @@ fn checksum(addr: &Address) -> String {
 }
 
 /// Clamp a `U256` discount/revision percent to `i64` (the `aave_v3_users
-/// .gho_discount` / `*_revision` column type). Mirrors the Python's implicit
-/// `int(...)` (the Aave protocol caps discount at 100%, revisions at single
-/// digits).
+/// .gho_discount` / `*_revision` column type): the Aave protocol caps the
+/// discount at 100% and revisions at single digits, so `i64` holds either.
 fn discount_to_i64(v: U256) -> i64 {
     v.to::<u64>().try_into().unwrap_or(i64::MAX)
 }

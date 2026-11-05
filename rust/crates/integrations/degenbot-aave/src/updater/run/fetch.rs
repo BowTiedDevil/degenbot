@@ -33,8 +33,8 @@ const BOOTSTRAP_WINDOW: u64 = 2_000;
 /// on the implementation address), and applies the resolved rows via
 /// [`DegenbotDb::apply_contract_inserted_if_absent_on_conn`] (idempotent — so the
 /// chunk loop's later re-encounter of the same `ProxyCreated` events is a
-/// no-op). No-op on a warm boot (both rows already present). Mirrors the Python
-/// `update_aave_market` Phase-1 bootstrap (commands.py:1010-1062).
+/// no-op). No-op on a warm boot (both rows already present): the first-pass
+/// bootstrap that seeds a market's contracts before the chunk loop runs.
 ///
 /// # Errors
 ///
@@ -131,8 +131,8 @@ pub(super) async fn bootstrap_pool_contracts(
 /// Resolve the [`AaveFetchSpec`] for `market_id`: the `POOL`/
 /// `POOL_CONFIGURATOR` / `POOL_ADDRESS_PROVIDER` / `PRICE_ORACLE` contract
 /// addresses (from `aave_v3_contracts`), the chain's aToken+vToken addresses, + the GHO
-/// asset's stkAAVE address. Mirrors the Python `update_aave_market`'s contract
-/// + `known_scaled_token_addresses` resolution (commands.py:1008-1058).
+/// asset's stkAAVE address — the contract resolution the bootstrap needs to
+/// know which scaled tokens to track.
 ///
 /// Returns `(spec, gho_asset)` — the `gho_asset` is the chain's GHO token row
 /// (`None` for non-GHO markets); the orchestrator passes it to the discount

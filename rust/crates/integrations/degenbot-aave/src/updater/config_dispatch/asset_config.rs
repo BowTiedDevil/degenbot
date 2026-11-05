@@ -36,7 +36,7 @@ use super::{
 
 /// The EIP-1967 implementation storage slot (the canonically-fixed
 /// `bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1)`).
-/// Mirrors the Python `ERC_1967_IMPLEMENTATION_SLOT` — read via
+/// The ERC-1967 implementation slot — read via
 /// `get_storage_at` to resolve a proxy's logic contract. Written as the
 /// canonical hex and parsed at compile time (a typo fails the build rather
 /// than silently mis-routing proxy resolution).
@@ -216,7 +216,7 @@ pub(super) fn dispatch_e_mode_category_added(
 
 /// `EModeAssetCategoryChanged(asset, old, new)` →
 /// [`AaveChunkEvent::EModeAssetCategoryChanged`] (the older variant).
-/// Mirrors the Python's unconditionally-set `e_mode_category_id` (`None` when
+/// The `e_mode_category_id` is set unconditionally (`None` when
 /// `new_category_id == 0`). NB: the apply fn takes `new_category_id: i64` +
 /// zero means "clear".
 pub(super) fn dispatch_e_mode_asset_category_changed(
@@ -431,9 +431,8 @@ pub(super) async fn resolve_reserve_initialized(
         v_token_id,
         v_token_revision: discount_to_i64(*v_token_revision),
         price_source,
-        // 5. GHO-vToken-FK link (divergence #8): mirror the Python's
-        //    `if asset_address == gho_asset.token.address: gho_token_entry
-        //    .v_token_id = v_token.id` (event_handlers.py:689-698). The FK is
+        // 5. GHO-vToken-FK link: when the asset IS the GHO token, the GHO token
+        //    row's `v_token_id` points at this vToken. The FK is
         //    the precondition for the discount-event emitter guard (which compares
         //    against `gho_asset.v_token_address`, resolved via the FK).
         gho_link_token_id: gho_asset

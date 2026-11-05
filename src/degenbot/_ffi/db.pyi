@@ -9,8 +9,8 @@ dropped their prefix) because (a) the blast radius is much larger (5 Rust
 files, ~45 fns) and (b) `db_` functions as a functional namespace marker
 is clearer than bare `backup_database` on a `db` submodule.
 
-The companion `src/degenbot/database/_ffi.py` re-exports these as the
-stable import path, decoupling Python consumers from `degenbot._ffi`.
+`degenbot._ffi.db` IS the stable import path: a Python consumer names the
+submodule rather than a bare root symbol.
 The parent module registers the submodule itself and its `sys.modules`
 entry.
 """
@@ -603,7 +603,7 @@ def db_apply_v3_liquidity_updates(
     apply each event (`apply_liquidity_mapping_update`) → upsert live
     positions/init-maps, delete stale, stamp `liquidity_update_block`/
     `log_index` with the last event. Returns `False` if the pool row isn't found
-    (mirrors the Python `if pool_in_db is None: return`); `True` after a
+    (a missing pool row is a no-op); `True` after a
     successful apply. The block/log-index ordering invariant is enforced
     (panics on violation, matching the Python `assert`s).
     """
@@ -854,8 +854,8 @@ def db_upsert_v2_pools(
     `erc20_tokens` per row + inserts the polymorphic base `pools` row (kind) +
     the subclass detail row (`fee_token0`/`fee_token1`/`fee_denominator`, +
     `stable` for `aerodrome_v2`). Raises `ValueError` if `kind` is not a known
-    V2 family discriminator (mirrors the Python
-    `config.database_type` dispatch). The address uniqueness constraint raises
+    V2 family discriminator, taken from the exchange config's database type. The
+    address uniqueness constraint raises
     `ValueError` (`SQLITE_CONSTRAINT`) on a duplicate `(address, chain)`,
     matching the Python `session.add` `IntegrityError` trajectory.
     """
@@ -894,8 +894,7 @@ def db_upsert_v4_pools(
     `SELECT`), then per row: get-or-create the two currency tokens + insert
     the `managed_pools` polymorphic base (`kind='uniswap_v4', manager_id`) +
     the `uniswap_v4_pools` detail row. Raises `ValueError` if no
-    `PoolManager` row matches (mirrors the Python
-    `assert manager_in_db is not None`).
+    `PoolManager` row matches.
     """
 
 __all__ = [

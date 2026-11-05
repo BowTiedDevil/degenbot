@@ -47,8 +47,8 @@ use crate::processors::{RayDivMode, RoundingStrategy, ScaledTokenEventData};
 // ── the GHO strategies (ports `strategies.py::GHO_STRATEGIES` +
 //    `GHO_DISCOUNT_STRATEGIES`) ─────────────────────────────────────────────
 
-/// The GHO discount strategy per revision. Mirrors the Python
-/// `DiscountStrategy` (`supports_discount` + `has_discounted_balance_method`).
+/// The GHO discount strategy per revision: whether the revision supports a
+/// discount, and whether it carries the discounted-balance method.
 ///
 /// - V1: discount supported, no `getDiscountedBalance` method (the V1 contract
 ///   use the `_burn(user, (amountScaled + discountScaled).toUint128())` path).
@@ -114,8 +114,8 @@ pub const fn gho_discount_strategy(revision: u32) -> DiscountStrategy {
 // ── the result types (ports `GhoScaledTokenMintResult` /
 //    `GhoScaledTokenBurnResult`) ────────────────────────────────────────────
 
-/// The GHO operation classification for a Mint event (mirrors the Python
-/// `GhoUserOperation` enum). Used by the parser's flow-classification; the
+/// The GHO operation classification for a Mint event. Used by the parser's
+/// flow-classification; the
 /// apply fn ignores it (consumes `balance_delta` + `new_index`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GhoUserOperation {
@@ -171,9 +171,8 @@ impl GhoScaledTokenMintResult {
     }
 }
 
-/// The result of processing a GHO debt `Burn` event. Mirrors the Python
-/// `GhoScaledTokenBurnResult` (`balance_delta`, `new_index`,
-/// `discount_scaled`, `should_refresh_discount`).
+/// The result of processing a GHO debt `Burn` event: `balance_delta`,
+/// `new_index`, `discount_scaled`, `should_refresh_discount`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GhoScaledTokenBurnResult {
     /// The signed delta (always negative — a burn decrements the scaled
@@ -205,8 +204,7 @@ pub enum GhoProcessorError {
 
 /// The GHO debt processor — the strategy-bound `process_gho_debt_mint` /
 /// `process_gho_debt_burn` pair with the discount machinery. Stateless
-/// (mirrors the Python `UnifiedGhoProcessor` which is constructed per-revision
-/// but holds no mutable state).
+/// (constructed per revision, holding no mutable state).
 #[derive(Debug, Clone, Copy)]
 pub struct UnifiedGhoProcessor {
     rounding: RoundingStrategy,
@@ -1113,10 +1111,9 @@ mod tests {
     // Each fixture is `(rev, value, balance_increase, index, scaled_amount,
     // prev_balance, prev_index, prev_discount, actual_repay)` → the EXACT
     // `(user_operation, balance_delta, discount_scaled, should_refresh)` the
-    // processor must produce. The rows were recorded from the Python
-    // `UnifiedGhoProcessor` (`src/degenbot/aave/processors/processor.py` — that
-    // package is gone; the rows are the surviving record). This is the
-    // zero-drift surface for the GHO processor — the final arbiter.
+    // processor must produce. The rows are the recorded fixture: the surviving
+    // record of the retired processor, and the final arbiter of this leaf's
+    // zero-drift surface.
 
     #[test]
     fn parity_mint_borrow_v1_v2_v4_v5() {

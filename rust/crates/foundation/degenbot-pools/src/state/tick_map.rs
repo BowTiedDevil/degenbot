@@ -13,8 +13,7 @@
 //! cannot accidentally read
 //! or mutate them — the rule is carried by the type, not a module doc comment.
 //!
-//! The Rust analogue of Python's `_HasTickData` duck-type (see
-//! `src/degenbot/uniswap/concentrated/liquidity_map.py`). Per ADR-004, the
+//! The typed replacement for the retired `_HasTickData` duck-type. Per ADR-004, the
 //! state structs themselves stay flat (the full-split candidate α was
 //! rejected — zero `slot0-only` consumers exist); only the verifier/apply
 //! **views** are typed-narrowed.

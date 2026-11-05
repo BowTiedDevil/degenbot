@@ -365,7 +365,7 @@ pub fn calc_exact_in_stable_camelot(
 /// the flat root registration; `camelot_` stays because camelot is a distinct
 /// variant in the same crate (matches `camelot.rs`).
 ///
-/// The companion `src/degenbot/aerodrome/math.py` re-exports these as the
+/// The companion `src/degenbot/aerodrome/math/` package re-exports these as the
 /// stable import path, decoupling Python consumers from `degenbot._ffi`.
 ///
 /// # Errors

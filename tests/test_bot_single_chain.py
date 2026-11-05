@@ -8,6 +8,7 @@ independent (separate ``Bot``s, separate providers, no shared registry).
 """
 
 import pathlib
+from collections.abc import Callable
 
 import pytest
 
@@ -21,15 +22,24 @@ class TestSingleChainBot:
     """Bot.__init__ takes one chain; rejects a provider whose chain_id mismatches."""
 
     def test_an_unresolvable_session_chain_is_refused(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+        self,
+        governed_holder: Callable[[dict[str, str]], None],
+        tmp_path: pathlib.Path,
     ) -> None:
-        """No layer names a chain: refuse rather than guess one."""
-        monkeypatch.setattr(
-            "degenbot.bot._bot.resolve_chain_id",
-            lambda _chain_id=None: (_ for _ in ()).throw(ValueError("no layer named a chain")),
-        )
+        """No layer names a chain: refuse rather than guess one.
 
-        with pytest.raises(ValueError, match="no layer named a chain"):
+        The governed operator file declares no ``[session] chain_id`` and no
+        exported chain name outranks it, so every layer the cascade consults is
+        silent and the resolver raises instead of guessing a chain.
+        """
+        operator_file = tmp_path / "chain-less.toml"
+        operator_file.write_text(
+            "# No [session] chain_id: the file layer is silent about the chain.\n",
+            encoding="utf-8",
+        )
+        governed_holder({"DEGENBOT_CONFIG": str(operator_file)})
+
+        with pytest.raises(ValueError, match="no session chain id resolved"):
             Bot(database=str(tmp_path / "t.db"), provider=fake_provider(ProviderKind.OFFLINE, 1))
 
     def test_rejects_chain_id_mismatch(self, tmp_path: pathlib.Path) -> None:

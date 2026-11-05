@@ -10,8 +10,8 @@
 #![expect(clippy::missing_errors_doc, clippy::doc_markdown)]
 //! fetcher's contract — AC4's deterministic ordering); the per-tx grouping +
 //! the `DecodedAaveEvent` decode are the orchestrator's concern (`-3`) — these
-//! fetchers do NOT decode (mirrors the Python `fetch_*` fns which return raw
-//! `LogReceipt`s).
+//! fetchers do NOT decode: a fetch returns raw `LogReceipt`s and the decode leaf
+//! owns the interpretation.
 //!
 //! The topic groups are sourced verbatim from
 //! `degenbot_decoders::aave_event_dispatcher`'s `*_TOPIC` constants (the
@@ -55,8 +55,7 @@ use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 /// `scaled_token_addresses` is the deduplicated aToken+vToken set (both the
 /// `Mint`/`Burn`/`BalanceTransfer` + the `DISCOUNT_PERCENT_UPDATED` events
 /// are fetched against it — mirrors `fetch_scaled_token_events`). `None`
-/// optional fields skip their fetch (mirrors the Python `if not discount_token:
-/// return []` guard).
+/// optional fields skip their fetch: an absent `discount_token` returns `[]`.
 #[derive(Debug, Clone, Default)]
 pub struct AaveFetchSpec {
     /// `aave_v3_contracts` row name `POOL` — the Pool contract.
@@ -131,11 +130,10 @@ pub async fn fetch_reserve_init_logs(
 
 /// Fetch scaled-token (aToken/vToken) events (`Mint`/`Burn`/`BalanceTransfer`/
 /// `DiscountPercentUpdated`/`Upgraded`/ERC20 `Transfer`). The ERC20 `Transfer`
-/// inclusion mirrors the Python's "Include ERC20 Transfer events for proper
-/// paired transfer matching" comment — the(stkAAVE) discount-token Transfer
-/// pairing needs them. Mirrors `event_fetchers.fetch_scaled_token_events`.
-/// Returns `Ok(empty)` when `token_addresses` is empty (mirrors the Python
-/// guard).
+/// inclusion is required for paired transfer matching: the stkAAVE
+/// discount-token Transfer pairing needs the paired ERC20 Transfer events.
+/// Returns `Ok(empty)` when `token_addresses` is empty — nothing to fetch is a
+/// success, not an error.
 pub async fn fetch_scaled_token_logs(
     fetcher: &LogFetcher,
     from_block: u64,
@@ -165,7 +163,7 @@ pub async fn fetch_scaled_token_logs(
 
 /// Fetch stkAAVE events (`Staked`/`Redeem`/ERC20 `Transfer`) for the discount
 /// token. Mirrors `event_fetchers.fetch_stk_aave_events`. Returns `Ok(empty)`
-/// when `discount_token` is `None` (mirrors the Python guard).
+/// when `discount_token` is `None`.
 pub async fn fetch_stk_aave_logs(
     fetcher: &LogFetcher,
     from_block: u64,
@@ -245,8 +243,8 @@ pub async fn fetch_oracle_logs(
 // ── the batch driver (calls all 7 + merges + re-sorts) ────────────────────
 
 /// Run all 7 Aave V3 fetch passes for the chunk + merge into one
-/// `(block_number, log_index)`-sorted `Vec<Log>`. Mirrors the Python
-/// `update_aave_market` driver's `all_events` accumulation (proxy_events +
+/// `(block_number, log_index)`-sorted `Vec<Log>` accumulated across every event
+/// family (proxy_events +
 /// config_events + pool_events + oracle_events + scaled_token_events +
 /// discount_config_events + stk_aave_events) before `_build_transaction_contexts`
 /// sorts.
@@ -616,8 +614,8 @@ mod tests {
 
     #[test]
     fn topic_groups_match_event_fetchers_py() {
-        // Parity-gate pin: the topic OR-groups mirror the Python
-        // `event_fetchers.py` topic lists EXACTLY. This test fails if a topic
+        // Parity-gate pin: the topic OR-groups match the recorded topic census
+        // EXACTLY. This test fails if a topic
         // is added/removed on one side but not the other — the single source
         // of truth is `degenbot_decoders::aave_event_decoder`'s `*_TOPIC`
         // constants + the Python `AaveV3*Event` enum. The counts are the

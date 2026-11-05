@@ -25,9 +25,8 @@ use rusqlite::params;
 // `activate_aave_market_on_conn` in ONE transaction.
 //
 // Idempotent: re-activating an existing market sets `active = true` + does
-// NOT insert duplicate contract / GHO rows (mirrors the Python
-// `activate_ethereum_aave_v3`'s `if market is not None: market.active = True`
-// branch).
+// NOT insert duplicate contract / GHO rows: activation flips `market.active`
+// on an existing market instead.
 
 /// The block the Aave V3 Ethereum mainnet `PoolAddressProvider` was deployed
 /// (TX `0x75fb6e6b…`). The activation path stamps `last_update_block` to the

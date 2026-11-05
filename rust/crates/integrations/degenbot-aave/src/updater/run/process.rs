@@ -19,7 +19,7 @@ use crate::transaction_processor::process_transaction;
 
 /// One transaction's grouped logs. Sorted by `(block_number, first log_index)`
 /// (the fetcher's `(block_number, log_index)` sort is preserved; the grouping
-/// is stable). Mirrors the Python `_build_transaction_contexts` (utils.py:82).
+/// is stable).
 #[derive(Debug)]
 pub(super) struct TxGroup<'a> {
     tx_hash: [u8; 32],
@@ -28,8 +28,7 @@ pub(super) struct TxGroup<'a> {
 }
 
 /// Group a chunk's logs by `transactionHash`, preserving the
-/// `(block_number, log_index)` sort. Mirrors the Python
-/// `_build_transaction_contexts` (utils.py:82) — the events are pre-sorted,
+/// `(block_number, log_index)` sort: the events are pre-sorted,
 /// then bucketed by `tx_hash`; the groups are emitted in first-seen order
 /// (sorted by the group's first log's `(block_number, log_index)`, which the
 /// fetcher's sort guarantees).
@@ -41,8 +40,8 @@ pub(super) fn group_logs_by_tx(logs: &[Log]) -> Vec<TxGroup<'_>> {
     for log in logs {
         let Some(tx_hash_b256) = log.transaction_hash else {
             // A log with no tx_hash — shouldn't happen for fetched logs. Treat
-            // it as its own singleton group keyed by zero (mirrors the Python
-            // which would KeyError on `event["transactionHash"]`).
+            // it as its own singleton group keyed by zero: a log with no tx hash
+            // still applies, in chain order, exactly once.
             continue;
         };
         let tx_hash = tx_hash_b256.0;
@@ -449,7 +448,7 @@ mod tests {
     use super::*;
 
     // ── the `group_logs_by_tx` unit tests (the loop's pure
-    //    tx-grouping seam — mirrors the Python `_build_transaction_contexts`).
+    //    tx-grouping seam).
 
     /// Build a minimal `alloy::rpc::types::Log` with the given tx hash,
     /// block number, + log index (the grouping key).
@@ -630,8 +629,8 @@ mod tests {
     #[test]
     fn group_logs_by_tx_skips_logs_without_tx_hash() {
         // A log with no transaction_hash — shouldn't happen for fetched logs,
-        // but the grouping is defensive (mirrors the Python which would
-        // KeyError on `event["transactionHash"]`).
+        // but the grouping is defensive: a hash-less log lands in its own
+        // singleton group instead of panicking.
         let tx = [0xaa; 32];
         let log_with_tx = make_tx_log(tx, 100, 0);
         let mut log_no_tx = make_tx_log([0x00; 32], 100, 1);

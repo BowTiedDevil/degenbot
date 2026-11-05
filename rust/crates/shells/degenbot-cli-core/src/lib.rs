@@ -26,8 +26,7 @@
 //!
 //! # Groups
 //!
-//! - `database` ([`DatabaseCommand`]): the template group; ports
-//!   `src/degenbot/cli/database.py` arm for arm.
+//! - `database` ([`DatabaseCommand`]): the template group.
 //! - `exchange` ([`ExchangeCommand`]): the 34 Python click verbs collapse to
 //!   one data-driven command resolving `(chain, name)` through the
 //!   `degenbot-uniswap` deployments registry (ADR-051 D5).

@@ -1,7 +1,5 @@
-//! The per-tx apply dispatch glue. Mirrors
-//! `src/degenbot/cli/aave/transaction_processor.py::_process_transaction` +
-//! `_process_operation` — the bridge from parsed `Operation`s to substrate
-//! [`AaveChunkEvent`] variants the orchestrator batches +
+//! The per-tx apply dispatch glue — the bridge from parsed `Operation`s to
+//! substrate [`AaveChunkEvent`] variants the orchestrator batches +
 //! `apply_aave_chunk_writes_on_conn` stamps.
 //!
 //! # The plumbing-equivalence caveat (Finding 1 — the parity-drift canary)
@@ -156,7 +154,7 @@ pub fn process_transaction(
 
     // Sort the parsed operations by pool_event logIndex (or minimum
     // scaled_event log_index for the no-pool-event operations — INTEREST_
-    // ACCRUAL / MintToTreasury). Mirrors the Python `_get_operation_sort_key`.
+    // ACCRUAL / MintToTreasury) — the apply order the DB rows are stamped in.
     let mut sorted_ops: Vec<&Operation> = parsed.operations.iter().collect();
     sorted_ops.sort_by_key(|op| operation_sort_key(op));
 
@@ -476,8 +474,7 @@ fn extract_raw_amount_for_event(pool_event: &Log, ev: &ScaledTokenEvent, op: &Op
             _ => extract_pool_amount_word0(pool_event),
         }
     } else {
-        // mirroring Python's RawAmountExtractor per-event selector
-        // (src/degenbot/aave/extraction.py). Supply + Borrow encode `user`
+        // the per-event selector: Supply + Borrow encode `user`
         // (address) at data word 0, with `amount` at word 1; Repay, RepayWithAtokens,
         // and Withdraw encode `amount` at word 0. Using word 0 uniformly here
         // produced SENDER balances equal to the user ADDRESS interpreted as
@@ -1129,7 +1126,7 @@ fn dispatch_interest_accrual(
 //    `transaction_processor._process_transaction` L73-192 + `_is_bad_debt_liquidation`) ─
 
 /// The per-tx GHO-discount context. Computed once at the top of
-/// [`process_transaction`] (mirrors the Python `_process_transaction`'s pre-pass):
+/// [`process_transaction`] — its pre-pass:
 /// - scans `tx_logs` for `DISCOUNT_PERCENT_UPDATED` events → builds the
 ///   `updates_by_log_index` map (per-user, sorted by log index).
 /// - scans `tx_logs` for `DEFICIT_CREATED` events → builds the `bad_debt_users`
@@ -1169,9 +1166,9 @@ pub struct GhoDiscountContext<'a> {
 }
 
 impl<'a> GhoDiscountContext<'a> {
-    /// Construct the context by scanning `tx_logs` once. Mirrors the Python
-    /// `_process_transaction` pre-pass (the `DISCOUNT_PERCENT_UPDATED` scan) +
-    /// `_is_bad_debt_liquidation`'s `DEFICIT_CREATED` scan.
+    /// Construct the context by scanning `tx_logs` once: the
+    /// `DISCOUNT_PERCENT_UPDATED` scan plus the `DEFICIT_CREATED` scan the
+    /// bad-debt-liquidation verdict reads.
     #[must_use]
     pub fn new(
         tx_logs: &[&Log],

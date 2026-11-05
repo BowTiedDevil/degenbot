@@ -15,7 +15,7 @@ Combines the swap-path math functions in `lib.rs` (`BitMath`/`FullMath`/
 (`muldiv`, not `concentrated_liquidity_muldiv`). The parent module registers the submodule
 itself; the `sys.modules` entry lives in the parent's shared helper.
 
-The companion `src/degenbot/uniswap/math.py` re-exports these as the
+The companion `src/degenbot/uniswap/math/` package re-exports these as the
 stable import path, decoupling Python consumers from `degenbot._ffi`.
 """
 

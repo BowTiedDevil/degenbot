@@ -4,9 +4,8 @@
 //! lifecycle) + a connected alloy [`Provider`] (over IPC) + the anvil dev-RPC
 //! surface as typed methods delegating to [`alloy::providers::ext::AnvilApi`].
 //!
-//! Mirrors the public config + dev-method surface of the legacy Python
-//! `AnvilFork` (see `src/degenbot/anvil_fork.py`); the Python class is a
-//! thin `PyO3` shell.
+//! The public config + dev-method surface of a fork: the Python `AnvilFork`
+//! any driver sees is a thin `PyO3` shell over this crate.
 //!
 //! [`Provider`]: alloy::providers::Provider
 
@@ -47,7 +46,7 @@ impl From<alloy::transports::TransportError> for ForkError {
     }
 }
 
-/// Mining mode — mirrors the Python `AnvilFork(mining_mode=...)` parameter.
+/// Mining mode — auto-mine on each transaction, or interval-mine, or none.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum MiningMode {
     /// `mining_mode="auto"` — anvil's default (mine on each tx).
@@ -73,7 +72,7 @@ fn default_ipc_path() -> String {
 
 /// Builder for an [`AnvilFork`].
 ///
-/// Mirrors the Python `AnvilFork.__init__` config surface; call
+/// The fork's config surface; call
 /// [`AnvilForkBuilder::try_spawn`] to spawn the subprocess + connect the
 /// Provider + apply any post-spawn state overrides.
 #[derive(Debug, Clone)]
@@ -410,7 +409,7 @@ impl AnvilForkBuilder {
     }
 
     /// Build the `alloy::node_bindings::Anvil` builder from the configured
-    /// params (mirrors the Python command construction).
+    /// params.
     fn build_anvil(&self, ipc_path: &str) -> Anvil {
         let mut anvil = Anvil::new()
             // Python default args:

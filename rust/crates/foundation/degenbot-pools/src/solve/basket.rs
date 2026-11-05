@@ -1,8 +1,8 @@
 //! `QuantAMM` closed-form N-token Balancer weighted basket arbitrage solver.
 //!
-//! Faithful Rust port of `src/degenbot/arbitrage/solvers/balancer_weighted.py`
-//! implementing Equation 9 from Willetts & Harrington, "Closed-form solutions
-//! for generic N-token AMM arbitrage" (QuantAMM.fi, Feb 2024).
+//! Implements Equation 9 from Willetts & Harrington, "Closed-form solutions for
+//! generic N-token AMM arbitrage" (QuantAMM.fi, Feb 2024), over the deployed
+//! Balancer weighted-pool invariant.
 //!
 //! # Why f64
 //!
@@ -42,8 +42,8 @@ const MAX_COMBINATIONS: usize = 1000;
 
 /// State for an N-token Balancer weighted pool basket arbitrage.
 ///
-/// Faithful Rust port of `BalancerMultiTokenState`
-/// (`src/degenbot/arbitrage/solvers/balancer_weighted.py`).
+/// The N-token Balancer state the closed-form solve reads: one reserve +
+/// weight per token, plus the pool's swap fee.
 ///
 /// # Fields
 ///

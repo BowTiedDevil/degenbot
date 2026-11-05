@@ -294,8 +294,7 @@ impl PyBotIo {
     /// `SQLAlchemy` `session.scalar(select(Erc20TokenTable).where(...))` call.
     ///
     /// Returns a [`PyErc20TokenRow`] with `(id, chain, address, name, symbol,
-    /// decimals)`, or `None` when the row is absent (mirrors the Python
-    /// `get_token_from_database` returning `None`). Returns `None` (no error)
+    /// decimals)`, or `None` when the row is absent. Returns `None` (no error)
     /// when no `database_path` is configured (the `Bot` has no DB — matches
     /// the prior `contextlib.suppress(Exception)` skip). DB failures propagate
     /// as `ValueError` (the Python caller wraps the read in
@@ -498,14 +497,14 @@ impl PyBotIo {
     /// called from Python via `PyBotIo`.
     ///
     /// Returns `None` on any provider error, decode failure, or short result —
-    /// mirrors the Python impl's `except (Web3Exception, DecodingError): return None`
-    /// contract (a pool whose `factory()` reverts yields `None`, not an error).
+    /// implements the `None`-on-failure contract: a pool whose `factory()`
+    /// reverts yields `None`, not an error.
     #[pyo3(signature = (address))]
     fn fetch_factory_address(&self, py: Python<'_>, address: &str) -> Option<String> {
         // Delegate the encode->call->decode->checksum to the core choreography
         // (14b), then swallow any error into `None` to preserve the
-        // `None`-on-failure contract this method promises (mirrors the Python
-        // `except (Web3Exception, DecodingError): return None`).
+        // `None`-on-failure contract this method promises: an RPC failure or an
+        // undecodable answer reads as an absent value.
         let Ok(io) = self.required_construction_io() else {
             return None;
         };
@@ -1311,9 +1310,8 @@ impl PyBotIo {
         let providers = match r {
             Ok(v) => Ok(v),
             Err(ProviderError::ExecutionReverted { message, .. }) => {
-                // Callers mirror the Python `except (RpcError, AbiDecodeError):
-                // return []` clause (WeightedPool2Tokens / MetaStable pools that
-                // don't expose getRateProviders revert).
+                // Callers read a refusal as an empty list (WeightedPool2Tokens /
+                // MetaStable pools that don't expose getRateProviders revert).
                 Err(revert_to_pyerr(py, address, &message))
             }
             Err(e) => Err(e.into()),

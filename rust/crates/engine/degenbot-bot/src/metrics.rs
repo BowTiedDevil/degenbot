@@ -208,8 +208,8 @@ struct GlobalMetrics {
 }
 
 /// Initialize the process-global metrics provider + scrape server. Idempotent:
-/// a second call returns `Ok(())` unchanged (mirrors the Python path's
-/// `OnceLock` subscriber discipline). The server thread runs for the process
+/// a second call returns `Ok(())` unchanged (the `OnceLock` subscriber
+/// discipline). The server thread runs for the process
 /// lifetime; [`shutdown_global_metrics`] stops it and flushes.
 ///
 /// # Errors

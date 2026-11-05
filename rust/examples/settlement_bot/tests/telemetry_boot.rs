@@ -139,7 +139,7 @@ fn offline_boot_announces_telemetry_and_keeps_the_parity_contract() {
         stderr.contains("telemetry boot complete"),
         "missing telemetry boot announcement: {stderr}"
     );
-    // (b) The scrape-server thread line (mirrors the Python boot census).
+    // (b) The scrape-server thread line (the boot census both drivers emit).
     assert!(
         stderr.contains("Prometheus metrics endpoint active"),
         "missing scrape-endpoint announcement: {stderr}"

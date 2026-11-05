@@ -5,9 +5,9 @@
 //! - [`updater`] — the transactional apply core: pure, synchronous, fixture-testable, NO RPC, NO `pyo3`, NO
 //!   `database_path`, NO `open_for_writes`.
 //! - [`analysis`] — the pure position health-factor / LTV / eMode / isolation
-//!   math (port of `src/degenbot/aave/analysis/core.py`).
+//!   math.
 //! - [`wad_ray_math`] + [`percentage_math`] — the Aave V3 fixed-point math
-//!   libraries (ports of `src/degenbot/aave/libraries/{wad_ray,percentage}_math.py`)
+//!   libraries (`WadRayMath` / `PercentageMath`)
 //! - [`positions`] — the Aave side of the session's position seam: a
 //!   `degenbot_core::session_positions::PositionObserver` over the state this
 //!   crate's updater maintains, so a session can read one account's position

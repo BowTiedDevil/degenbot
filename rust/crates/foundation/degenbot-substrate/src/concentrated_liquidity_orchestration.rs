@@ -1527,8 +1527,8 @@ impl ConcentratedLiquidityOrchestration {
     /// existing entries at the same tick) and records the `word` as known in
     /// `known_bitmap_words` (so the next simulate does not re-fetch it). A
     /// fetched-but-empty word is recorded as known with no ticks added —
-    /// mirrors the Python bitmap-store rule (a region is unknown unless its
-    /// word key is in the lazy-loaded map, regardless of the bitmap value).
+    /// the bitmap-store rule: a region is unknown unless its word key is in the
+    /// lazy-loaded map, regardless of the bitmap value.
     ///
     /// Returns `true` if the merge applied to a registered V3/V4 pool,
     /// `false` otherwise (silent no-op — mirrors `sync_tick_data_by_pool_id`).

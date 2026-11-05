@@ -35,8 +35,8 @@ pub struct HopView {
     pub token_out: String,
 }
 
-/// A deterministic path-composition refusal (mirrors the Python
-/// `PathRejectedError` subtype family — classified by variant, never string).
+/// A deterministic path-composition refusal — classified by variant, never by
+/// string, so a caller cannot match on a message that a reword would break.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PathRejection {
     /// `HopCountInsufficientError`.

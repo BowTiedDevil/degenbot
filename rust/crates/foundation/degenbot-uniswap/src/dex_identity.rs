@@ -204,9 +204,8 @@ impl TryFrom<&str> for DexVariant {
 
 /// The ABI struct-type shape a DEX uses for its `Sync`-event reserve decoding.
 ///
-/// Mirrors the Python `RESERVES_STRUCT_TYPES` `ClassVar`
-/// (`src/degenbot/uniswap/v2_pool_calc.py` default; `pancakeswap/pools.py`
-/// override). Decoupled from `DexVariant` because a future DEX could share a
+/// The reserves-struct type per DEX (defaulted, with per-DEX overrides).
+/// Decoupled from `DexVariant` because a future DEX could share a
 /// variant's identity but use a different reserve encoding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ReservesAbi {

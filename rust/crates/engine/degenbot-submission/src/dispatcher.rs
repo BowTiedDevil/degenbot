@@ -1,7 +1,6 @@
 //! Dispatcher nonce/pool/task coordination state.
 //!
-//! Port of `examples/eth_backrun_v2_v3_v4_rust.py` `Dispatcher` (L579–L678) +
-//! the composed `PathSuppression` (L509–L578). Pure coordination state:
+//! The dispatcher's coordination state, composing `PathSuppression`. Pure state:
 //! `HashSet`/`HashMap` containers + a single-element `Arc<Mutex<u64>>` for the
 //! by-reference block clock (read by monitor tasks across the consumer/
 //! monitor boundary without a per-access lock in Python — Rust uses the
@@ -135,8 +134,7 @@ impl CommittedTx {
 /// paths are retried every `PATH_SUPPRESS_RETRY_INTERVAL` blocks; if a retry
 /// succeeds the path is permanently un-suppressed.
 ///
-/// Port of `examples/eth_backrun_v2_v3_v4_rust.py` `PathSuppression`
-/// (L509–L578).
+/// The path-suppression ledger: which paths are benched, and until when.
 ///
 /// # Ownership
 ///
@@ -254,10 +252,9 @@ impl PathSuppression {
 
 /// Coordination state for the dispatch loop.
 ///
-/// Port of `examples/eth_backrun_v2_v3_v4_rust.py` `Dispatcher` (L579–L678).
-/// Bundles the seven mutable containers `main()` previously declared as
-/// exploded locals and threaded through `consume_result_batches`,
-/// `dispatch_profitable_results`, and `monitor_pending_transaction`. The
+/// Bundles the seven mutable containers `consume_result_batches`,
+/// `dispatch_profitable_results`, and `monitor_pending_transaction` thread as
+/// one unit. The
 /// containers are mutated in place by the methods. `PathSuppression` is
 /// composed (and delegated) so all dispatch coordination lives behind one
 /// object.

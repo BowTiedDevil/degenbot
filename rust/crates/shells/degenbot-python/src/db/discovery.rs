@@ -171,8 +171,8 @@ impl PyV4PoolRowInput {
 /// `erc20_tokens` per row + inserts the polymorphic base `pools` row (kind) +
 /// the subclass detail row (`fee_token0`/`fee_token1`/`fee_denominator`, +
 /// `stable` for `aerodrome_v2`). Raises `ValueError` if `kind` is not a known
-/// V2 family discriminator (mirrors the Python
-/// `config.database_type` dispatch). The address uniqueness constraint raises
+/// V2 family discriminator, taken from the exchange config's database type. The
+/// address uniqueness constraint raises
 /// `ValueError` (`SQLITE_CONSTRAINT`) on a duplicate `(address, chain)`,
 /// matching the Python `session.add` `IntegrityError` trajectory.
 #[pyfunction]
@@ -232,8 +232,7 @@ pub(crate) fn db_upsert_v3_pools(
 /// `SELECT`), then per row: get-or-create the two currency tokens + insert
 /// the `managed_pools` polymorphic base (`kind='uniswap_v4', manager_id`) +
 /// the `uniswap_v4_pools` detail row. Raises `ValueError` if no
-/// `PoolManager` row matches (mirrors the Python
-/// `assert manager_in_db is not None`).
+/// `PoolManager` row matches.
 #[pyfunction]
 pub(crate) fn db_upsert_v4_pools(
     py: Python<'_>,

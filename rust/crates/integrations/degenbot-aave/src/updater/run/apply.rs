@@ -96,7 +96,7 @@ pub enum AaveChunkEvent {
     /// variableBorrowRate, liquidityIndex, variableBorrowIndex)` — update the
     /// `aave_v3_assets` row's indices/rates (one of the only two Pool
     /// events that write DB rows directly). `stableBorrowRate` is deprecated on
-    /// Aave V3 + dropped (mirrors the Python handler). Stored raw (27-decimal
+    /// Aave V3 + dropped. Stored raw (27-decimal
     /// ray as decimal `VARCHAR(78)`); no ray-math in the apply path.
     ReserveDataUpdated {
         asset_id: i64,
@@ -269,9 +269,9 @@ pub enum AaveChunkEvent {
     /// contract burns the ENTIRE remaining debt (not just `debtToCover`) when
     /// a `DeficitCreated` event accompanies a `LiquidationCall` — the
     /// protocol writes off the bad debt. Sets the debt position's `balance` to
-    /// 0 + advances `last_index` (max-with-prev). Mirrors the Python's
-    /// `debt_position.balance = 0` + the `last_index` guard in
-    /// `_process_debt_burn_with_match`'s bad-debt arm.
+    /// 0 + advances `last_index` (max-with-prev): the bad-debt arm zeroes the
+    /// balance but never rewinds the index, so a later burn cannot
+    /// double-count the written-off amount.
     DebtPositionReset {
         /// The debt position row id (`aave_v3_debt_positions.id`).
         position_id: i64,
@@ -1477,7 +1477,7 @@ mod tests {
         }
 
         // The asset row was created with the seeded fields + the zero
-        // index/rate defaults (mirrors the Python AaveV3Asset constructor).
+        // index/rate defaults (the create-path zero defaults).
         let (lr, br, li, bi, lub) = asset_indices_rates(&db, 1);
         assert_eq!(lr, "0", "create-path zero default for liquidity_rate");
         assert_eq!(br, "0", "create-path zero default for borrow_rate");

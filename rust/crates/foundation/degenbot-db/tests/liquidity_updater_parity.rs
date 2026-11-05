@@ -104,8 +104,8 @@ fn to_event(packed: (u64, u64, i32, i32, I256)) -> degenbot_db::LiquidityUpdateE
 /// The post-apply dump: `(pool_id, positions, marker_block, marker_log_idx)`.
 type Dbdump = (i64, Vec<(i32, String, String)>, Option<i64>, Option<i64>);
 
-/// Dump the actual post-apply rows from the DB (mirrors the Python generator's
-/// `_dump_v3_state` / `_dump_v4_state` shape so the comparison is like-for-like).
+/// Dump the actual post-apply rows from the DB in the recorded fixture's shape,
+/// so the comparison is like-for-like.
 fn dump_v3(db: &DegenbotDb) -> Dbdump {
     let conn = db.lock();
     let row: (i64, Option<i64>, Option<i64>) = conn

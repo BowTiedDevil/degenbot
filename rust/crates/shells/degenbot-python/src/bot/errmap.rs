@@ -188,7 +188,7 @@ fn map_register_refusal(family: Option<RegisteredPoolFamily>, reason: RegisterRe
                 family_label(family)
             )),
             (None, Some((pool_manager, pool_id))) => PoolAlreadyRegisteredError::new_err(format!(
-                "V4 pool already registered: pool_manager={pool_manager}, pool_id=0x{}",
+                "v4 pool already registered: pool_manager={pool_manager}, pool_id=0x{}",
                 alloy::hex::encode(pool_id)
             )),
             (None, None) => PoolAlreadyRegisteredError::new_err("pool already registered"),
@@ -228,24 +228,15 @@ fn map_admission(failure: BuildFailure, hook_flags: Option<u16>, fee: Option<u32
 
 /// The family label the registration messages spell.
 ///
-/// The V2/V3/V4 families keep their long-standing uppercase labels; every
-/// other family renders its registry tag ([`RegisteredPoolFamily::tag`]), so a
-/// Balancer or Curve refusal names itself instead of borrowing the V2 label.
-/// Exhaustive over the registry vocabulary: a family added there is a compile
-/// error here, never a silent fall-through to another family's label.
+/// Every family renders its registry tag ([`RegisteredPoolFamily::tag`]) — the
+/// one lowercase kebab vocabulary the core spells a family with, the same label
+/// `degenbot_strategy::frame_pipeline::family_label` puts in an extract row — so
+/// no family borrows another's spelling and a Balancer or Curve refusal names
+/// itself. The label is display text; the operator wire's `family` field keeps
+/// its own `V2`/`V3`/`V4` spelling, which this function never produces.
 fn family_label(family: Option<RegisteredPoolFamily>) -> &'static str {
-    match family {
-        // A family-less refusal keeps the historical V2 spelling.
-        Some(RegisteredPoolFamily::V2) | None => "V2",
-        Some(RegisteredPoolFamily::V3) => "V3",
-        Some(RegisteredPoolFamily::V4) => "V4",
-        Some(
-            family @ (RegisteredPoolFamily::AerodromeV2
-            | RegisteredPoolFamily::BalancerWeighted
-            | RegisteredPoolFamily::BalancerStable
-            | RegisteredPoolFamily::Curve),
-        ) => family.tag(),
-    }
+    // A family-less refusal renders the default family's tag.
+    family.unwrap_or(RegisteredPoolFamily::V2).tag()
 }
 
 /// A verify failure's Python surface (the historical `map_verify_err` /
@@ -633,7 +624,7 @@ mod tests {
         });
         assert_eq!(
             message(&err),
-            "V2 pool already registered: address=0x0101010101010101010101010101010101010101"
+            "v2 pool already registered: address=0x0101010101010101010101010101010101010101"
         );
 
         let err = map_register_v2_err(&RegisterV2PoolError::SpecViolation(SpecViolation {
@@ -643,35 +634,24 @@ mod tests {
         }));
         assert_eq!(
             message(&err),
-            "V2 pool registration failed: field `reserve0` value 7 is out of bounds: uint112 (≤ 2^112 − 1)"
+            "v2 pool registration failed: field `reserve0` value 7 is out of bounds: uint112 (≤ 2^112 − 1)"
         );
     }
 
-    /// The registration messages' family label is a census over the registry
-    /// vocabulary: the pair-keyed concentrated-liquidity families keep their
-    /// uppercase labels, every other family renders its registry tag, and a
-    /// family-less refusal keeps the historical V2 spelling. An added family
-    /// cannot inherit another family's label.
+    /// The registration messages' family label IS the registry tag: one
+    /// vocabulary over the whole registry, no family borrowing another's
+    /// spelling, and a family-less refusal rendering the default family. The
+    /// closed-set census is [`RegisteredPoolFamily::tag`]'s own pin.
     #[test]
-    fn family_label_renders_every_registry_family() {
-        let expected = [
-            (RegisteredPoolFamily::V2, "V2"),
-            (RegisteredPoolFamily::V3, "V3"),
-            (RegisteredPoolFamily::V4, "V4"),
-            (RegisteredPoolFamily::AerodromeV2, "aerodrome-v2"),
-            (RegisteredPoolFamily::BalancerWeighted, "balancer-weighted"),
-            (RegisteredPoolFamily::BalancerStable, "balancer-stable"),
-            (RegisteredPoolFamily::Curve, "curve"),
-        ];
-        assert_eq!(
-            expected.map(|(family, _)| family),
-            RegisteredPoolFamily::ALL,
-            "the label census covers every registry family"
-        );
-        for (family, want) in expected {
-            assert_eq!(family_label(Some(family)), want, "{family:?}");
+    fn family_label_is_the_registry_tag_over_every_family() {
+        for family in RegisteredPoolFamily::ALL {
+            assert_eq!(
+                family_label(Some(family)),
+                family.tag(),
+                "{family:?} must not borrow another family's spelling"
+            );
         }
-        assert_eq!(family_label(None), "V2");
+        assert_eq!(family_label(None), "v2");
     }
 
     #[test]
@@ -683,7 +663,7 @@ mod tests {
         ));
         assert_eq!(
             message(&err),
-            "V3 pool already registered: address=0x0202020202020202020202020202020202020202"
+            "v3 pool already registered: address=0x0202020202020202020202020202020202020202"
         );
 
         let err = map_refusal(RefusalKind::from_register_v3_error(
@@ -695,7 +675,7 @@ mod tests {
         ));
         assert_eq!(
             message(&err),
-            "V3 pool registration failed: field `tick` value 887273 is out of bounds: |tick| ≤ 887272"
+            "v3 pool registration failed: field `tick` value 887273 is out of bounds: |tick| ≤ 887272"
         );
     }
 
@@ -759,7 +739,7 @@ mod tests {
         assert_eq!(
             message(&err),
             format!(
-                "V4 pool already registered: pool_manager={}, pool_id=0x{}",
+                "v4 pool already registered: pool_manager={}, pool_id=0x{}",
                 addr("0x0303030303030303030303030303030303030303"),
                 "0".repeat(64),
             )
@@ -775,7 +755,7 @@ mod tests {
         }));
         assert_eq!(
             message(&err),
-            "V4 pool registration failed: field `tick_spacing` value 0 is out of bounds: nonzero"
+            "v4 pool registration failed: field `tick_spacing` value 0 is out of bounds: nonzero"
         );
     }
 
@@ -944,7 +924,7 @@ mod tests {
                     address: addr("0x0101010101010101010101010101010101010101"),
                 },
             ))),
-            "V2 pool already registered: address=0x0101010101010101010101010101010101010101"
+            "v2 pool already registered: address=0x0101010101010101010101010101010101010101"
         );
     }
 
@@ -1031,7 +1011,7 @@ mod tests {
         ));
         assert_eq!(
             message(&err),
-            "V2 pool already registered: address=0x0101010101010101010101010101010101010101"
+            "v2 pool already registered: address=0x0101010101010101010101010101010101010101"
         );
     }
 

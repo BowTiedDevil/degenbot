@@ -288,9 +288,8 @@ fn get_or_create_erc20_token_creates_then_preserves_metadata() {
 /// when a row exists with NULL metadata (e.g. seeded by the
 /// harness `_seed_market_db`) and a later `ReserveInitialized` dispatch
 /// is resolved with freshly-RPC-fetched metadata, the existing row must
-/// be UPDATED in place (mirrors the Python `activate_ethereum_aave_v3`
-/// pre-pass that populates the GHO token metadata via `get_or_create_erc20_token`
-/// → `_fetch_erc20_token_metadata`).
+/// be UPDATED in place — the resolve path backfills NULL metadata cells on the
+/// row it finds instead of inserting a second one.
 ///
 /// This is the Rust-native equivalent: defer the writeback from activate-time
 /// to `ReserveInitialized` dispatch time (Rust's drive IS its bootstrap — no

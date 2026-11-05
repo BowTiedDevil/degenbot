@@ -130,9 +130,8 @@ fn apply_scaled_token_balance_delta_on_conn(
 /// # `last_index` reconciliation
 ///
 /// Advances `last_index` to `new_index` ONLY when `new_index >
-/// COALESCE(current_last_index, 0)` — mirrors the Python
-/// `if mint_result.new_index > (position.last_index or 0) { position.last_index
-/// = mint_result.new_index }`. The max-with-prev guard prevents an out-of-log-
+/// COALESCE(current_last_index, 0)` — advance `last_index` only to a strictly
+/// greater index. The max-with-prev guard prevents an out-of-log-
 /// order event from clobbering a newer event's index.
 ///
 /// # Errors
@@ -193,7 +192,7 @@ fn finish_scaled_token_balance_state(
         })?;
         new_balance
     };
-    // last_index reconciliation — max-with-prev (mirrors the Python guard).
+    // last_index reconciliation — max-with-prev.
     let new_last_index = match current_index {
         Some(cur) if new_index > cur => Some(new_index),
         Some(_) => current_index, // keep the prior higher index
@@ -355,8 +354,7 @@ impl DegenbotDb {
     // `value`/`balance_increase`/`index`/`scaled_amount` + the token
     // revision's rounding strategy) + the new index, then mutate the row.
     //
-    // The `last_index` reconciliation mirrors the Python
-    // `token_processor._process_scaled_token_operation` L91/L109/L131/L148:
+    // The `last_index` reconciliation:
     // `position.last_index = max(position.last_index or 0, new_index)` — only
     // advance last_index when the event's index is strictly greater (so
     // out-of-log-order events don't clobber a later event's index).
@@ -536,8 +534,8 @@ impl DegenbotDb {
     /// Read a position's current `balance` + `last_index`. Used by the GHO
     /// apply dispatch (C3 — `UnifiedGhoProcessor::accrue_debt_on_action` +
     /// `get_discounted_balance` need the position's prev balance/index to
-    /// compute the discount-scaled amount). Mirrors the Python's read of
-    /// `debt_position.balance` / `.last_index` on the ORM-tracked position.
+    /// compute the discount-scaled amount): the position's stored `balance` and
+    /// `last_index`, read in one round-trip.
     ///
     /// Returns `(balance, None)` for a position whose `last_index` is NULL
     /// (a fresh position). Returns [`DbError::MissingRow`] if the position id
@@ -648,9 +646,8 @@ impl DegenbotDb {
     }
 
     /// Reset a debt position's balance to 0 + advance `last_index` (the
-    /// bad-debt liquidation path — C3). Mirrors the Python's
-    /// `debt_position.balance = 0` + `if index > current_index: last_index =
-    /// index` guard in `_process_debt_burn_with_match`'s bad-debt arm. The
+    /// bad-debt liquidation path — C3): zero the balance and advance `last_index`
+    /// only when the event's index is greater. The
     /// contract burns the ENTIRE remaining debt when a `DeficitCreated`
     /// accompanies a `LiquidationCall`; the delta-based apply may be off by 1
     /// wei, so this reset is the faithful path.

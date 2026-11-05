@@ -569,7 +569,7 @@ pub fn find_paths_rust(
 ///     `StopAsyncIteration`. Dropping the iterator cancels a mid-search DFS.
 #[must_use]
 #[expect(clippy::implicit_hasher)]
-#[expect(clippy::too_many_arguments)] // pyfunction surface mirrors the Python call 1:1
+#[expect(clippy::too_many_arguments)] // one parameter per caller-supplied pathfinding input
 #[pyfunction]
 #[pyo3(signature = (
     edges,

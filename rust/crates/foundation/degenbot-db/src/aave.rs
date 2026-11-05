@@ -82,8 +82,8 @@ pub struct AaveDebtPositionRecord {
 
 /// The GHO-token row for a market, with the underlying GHO token + vToken
 /// addresses resolved via the `erc20_tokens` FK joins (`fetch_aave_gho_asset`).
-/// Mirrors the Python `get_gho_asset(market)` shape (the hydrated `AaveGhoToken`
-/// ORM object + its `token`/`v_token` relationships).
+/// Carries the GHO token's own row plus its `token`/`v_token` relationships
+/// resolved.
 ///
 /// `v_gho_discount_token` is the stkAAVE address (the discount-token that
 /// stkAAVE-`Transfer`s are fetched against in `fetch_stk_aave_events`);
@@ -493,10 +493,8 @@ impl DegenbotDb {
     // Four read fns the `run_aave_update` orchestrator
     // calls once at the top of a run to build the per-market `AaveMarketContext`
     // (the pool/configurator/oracle/gho-asset addresses + the scaled-token
-    // address set + the `last_update_block` cursor). These mirror the Python
-    // `aave/commands.py` bootstrap: `get_contract(market, name)` (the contracts
-    // row), `get_gho_asset(market)` (the GHO token), +
-    // `_get_all_scaled_token_addresses(chain_id)` (the aToken/vToken set).
+    // address set + the `last_update_block` cursor). Three reads compose it: the
+    // contracts row, the GHO token, and the chain's aToken/vToken address set.
     //
     // They follow the same `&self` + `self.lock()` + `rusqlite::params!` shape
     // as `fetch_aave_oracle_address` / `fetch_aave_asset_addresses` above (the
@@ -639,8 +637,7 @@ impl DegenbotDb {
     /// orchestrator indexes these by `name` (the Python `get_contract(market,
     /// name)` shape) to resolve `POOL`, `POOL_CONFIGURATOR`, `PRICE_ORACLE`,
     /// `POOL_ADDRESS_PROVIDER` (the bootstrap contracts). Returns all rows so
-    /// one query serves every name lookup (mirrors the Python's per-market
-    /// `session.query` over the ORM relationship — a single round-trip).
+    /// one query serves every name lookup — a single round-trip per market.
     ///
     /// # Errors
     ///
@@ -678,10 +675,8 @@ impl DegenbotDb {
 
     /// The GHO-token row for `chain_id` (the `aave_gho_tokens` table) with the
     /// underlying GHO token + vToken addresses resolved via the `erc20_tokens`
-    /// FK joins. Mirrors the Python `get_gho_asset(market)` shape (which loads
-    /// all `AaveGhoToken` rows + filters by `gho.token.chain == market.chain_id` —
-    /// the table is tiny, ~1 row per chain, so the JOIN-through-chain filter is
-    /// the Rust equivalent). Returns `None` when the chain has no GHO token
+    /// FK joins, filtered by the underlying token's chain (the table is tiny,
+    /// ~1 row per chain). Returns `None` when the chain has no GHO token
     /// (a non-GHO market, e.g. the zkSync or Polygon instances without GHO).
     ///
     /// NB: `aave_gho_tokens` has NO `market_id` column — the linkage to a market
@@ -750,8 +745,7 @@ impl DegenbotDb {
     ///
     /// Addresses are returned as raw stored [`String`]s — `fetch_pool_events`/
     /// `fetch_scaled_token_events` accept the checksum form; the orchestrator
-    /// checksum-normalizes once at the call site (mirrors the Python path
-    /// which holds `ChecksummedAddress`s).
+    /// checksum-normalizes once at the call site.
     ///
     /// # Errors
     ///
@@ -782,8 +776,7 @@ impl DegenbotDb {
     /// Read a user's `gho_discount` by `(market_id, address)` — the path #1
     /// lookup for the discount pre-pass (`build_discount_snapshot` in
     /// `degenbot-aave::config_dispatch`). Returns `None` when the user
-    /// doesn't exist (the path #2 RPC trigger — mirrors the Python
-    /// `gho_users.get(user_address)` returning `None`). Pure read (does NOT
+    /// doesn't exist (the path #2 RPC trigger). Pure read (does NOT
     /// create a user — `get_or_create_user_on_conn` is the dispatch path's
     /// responsibility). The `_on_conn` bound serves the chunk-loop's single
     /// `Transaction` (the chunk-atomicity invariant).
@@ -944,9 +937,8 @@ mod tests {
     #[test]
     fn fetch_aave_contracts_empty_market_returns_empty_vec() {
         let db = db_with_market_and_assets();
-        // market 2 doesn't exist → zero contracts (mirrors the Python
-        // `get_contract(missing_market) → None` path; the orchestrator handles
-        // the empty case).
+        // market 2 doesn't exist → zero contracts (the orchestrator handles the
+        // empty case).
         assert!(db.fetch_aave_contracts(2).unwrap().is_empty());
     }
 
@@ -1081,7 +1073,7 @@ mod tests {
     #[test]
     fn fetch_aave_scaled_token_addresses_no_assets_for_chain_returns_empty() {
         let db = db_with_market_and_assets();
-        // chain 2 has no assets → empty (mirrors the Python guard).
+        // chain 2 has no assets → empty.
         assert!(db.fetch_aave_scaled_token_addresses(2).unwrap().is_empty());
     }
 }
