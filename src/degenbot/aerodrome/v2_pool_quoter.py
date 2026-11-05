@@ -178,9 +178,9 @@ class AerodromeV2SwapQuoter(DoorSwapQuoter):
     ) -> int:
         """Calculate the required token input for an exact output.
 
-        There is no door arm on this side: the family's reserve-pair design
-        answers exact-input over the door, so exact-output resolves its reserves
-        and calls the wired leaf.
+        The family's reserve-pair door prices this shape too (its exact-out
+        arm binds the same leaf); this method resolves the pool's reserves and
+        calls that leaf directly.
 
         Returns:
             The required input token amount.
