@@ -63,7 +63,7 @@ def _verification_retry_policy(values: ConfigValues) -> RetryPolicy:
     )
 
 
-#: The crawl shell's sizing knobs, retired at the PRG-5 hard cutover: pool
+#: The crawl shell's sizing knobs, retired: pool
 #: builds and the registration work host on the fleet's duty-counted
 #: ``PoolStateUpdater`` intake seats (ADR-042), so there is no crawl queue or
 #: worker pool left to size.
@@ -85,7 +85,7 @@ def _refuse_retired_shell_knobs() -> None:
     for name in _RETIRED_SHELL_KNOBS:
         if name in os.environ:
             msg = (
-                f"{name} was retired at the PRG-5 hard cutover: the registration "
+                f"{name} is retired: the registration "
                 "crawl is hosted by the fleet PoolStateUpdater intake "
                 "(fleet.pool_state_updater_slots) — there is no crawl queue or "
                 "worker pool to size. Remove the knob."

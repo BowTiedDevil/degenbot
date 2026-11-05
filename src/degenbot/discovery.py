@@ -15,8 +15,8 @@ into the PoolId (so even manager + tokens + fee underdetermines it). Discovery i
 therefore a *database* question whose answer is refs — the caller picks from ref
 data, then builds exactly one.
 
-Seam note (P3b scope)
----------------------
+Seam note
+---------
 
 This module is built on the exposed **database discovery read**:
 ``degenbot.db.db_fetch_discovery_rows`` — the Python seam over the Rust
@@ -28,10 +28,10 @@ the liquidity-update marker). :func:`pools_for_tokens` projects the token-pair
 query from that read, so every :class:`PoolRef` kind param is populated from the
 database and no degree >= 2 cycle filter applies.
 
-The earlier P3 implementation ran on the graph-read seam
-(``degenbot.pathfinding.build_path_graph`` over ``fetch_path_graph_edges``),
-which carries only identity fields and applies a degree >= 2 cycle filter; that
-seam is no longer used here.
+The graph-edge seam (``degenbot.pathfinding.build_path_graph`` over
+``fetch_path_graph_edges``) is a different read: it carries only identity
+fields and applies a degree >= 2 cycle filter, so it cannot supply the
+per-family detail these refs carry.
 """
 
 from __future__ import annotations

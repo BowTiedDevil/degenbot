@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from degenbot.arbitrage.engine_registry import EngineRegistry
 
 
-#: Paths legally in flight on the fleet intake at once (PRG-5). The engine's
+#: Paths legally in flight on the fleet intake at once. The engine's
 #: submission window is the driver-side backpressure: a candidate is submitted,
 #: and only when the OLDEST receipt resolves does the next submission leave the
 #: window — discovery can never outrun registration by more than the window.
@@ -332,8 +332,8 @@ def _observe_skip(bot: Any, reason: str, detail: str | None = None) -> None:
     """Apply the driver-side observation policy for one skip reason.
 
     ``reason`` is a short stable tag (e.g. ``"build-v3-refused"``), never an
-    interpolated address, so the aggregate stays compact and greppable. PRG-2:
-    the skip ALSO lands in the Rust ``degenbot.registration.skips`` metric family
+    interpolated address, so the aggregate stays compact and greppable. The skip
+    ALSO lands in the Rust ``degenbot.registration.skips`` metric family
     (closed-set labels); the per-error-class detail stays here in logs, first few
     occurrences only so a skip flood cannot resurrect the log-flood hazard.
     """
