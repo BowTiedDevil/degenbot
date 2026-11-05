@@ -55,7 +55,7 @@ def _hops() -> list[dict[str, Any]]:
     """
     return [
         {
-            "family": "V2",
+            "family": "v2",
             "pool_address": "0x" + "b1" * 20,
             "token0_address": WETH,
             "token1_address": USDC,
@@ -63,7 +63,7 @@ def _hops() -> list[dict[str, Any]]:
             "zfo": True,
         },
         {
-            "family": "V2",
+            "family": "v2",
             "pool_address": "0x" + "b2" * 20,
             "token0_address": USDC,
             "token1_address": WETH,

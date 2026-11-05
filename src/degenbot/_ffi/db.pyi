@@ -248,7 +248,7 @@ class DiscoveryPoolRow:
     @property
     def family(self, /) -> str:
         """
-        The coarse family tag (`"V2"` / `"V3"` / `"V4"`) — the key Python maps
+        The coarse family tag (`"v2"` / `"v3"` / `"v4"`) — the key Python maps
         to `degenbot.pathfinding.PoolKind`.
         """
     @property

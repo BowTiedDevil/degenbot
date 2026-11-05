@@ -66,7 +66,13 @@ fn convert_item(py: Python<'_>, item: RawSubItem) -> PyResult<Option<Py<PyAny>>>
             let json_val = json_guard.lock().take().ok_or_else(|| {
                 pyo3::exceptions::PyRuntimeError::new_err("Transaction data already consumed")
             })?;
-            let obj = crate::conversion::rpc_types::json_to_py_with_hexbytes(py, json_val)?;
+            // A pending-transaction subscription carries transaction objects,
+            // so it decodes with the transaction shape's field kinds.
+            let obj = crate::conversion::rpc_types::json_to_py_with_hexbytes(
+                py,
+                json_val,
+                crate::conversion::rpc_types::FieldSchema::TRANSACTION,
+            )?;
             Ok(Some(obj.unbind()))
         }
         RawSubItem::Log(log) => {

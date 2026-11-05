@@ -4,7 +4,6 @@ use crate::abi_types::AbiValue;
 use crate::contract::{encode_arguments, Contract, FunctionSignature};
 use crate::prelude::*;
 use crate::rpc::provider::PyAlloyProvider;
-use alloy::hex;
 use pyo3::types::{PyBool, PyBytes, PyList};
 use runtime::get_runtime;
 use std::sync::Arc;
@@ -249,11 +248,13 @@ fn decode_return_data(
 ///     `function_signature`: Function signature like "transfer(address,uint256)"
 ///
 /// Returns:
-///     4-byte function selector as hex string
+///     The 4-byte selector as `bytes` — the same shape
+///     [`keccak256`](crate::crypto::keccak256) hands back, so a caller never
+///     hex-decodes a selector to use it.
 #[pyfunction]
-fn get_function_selector(function_signature: &str) -> PyResult<String> {
+fn get_function_selector(function_signature: &str) -> PyResult<Vec<u8>> {
     let func = FunctionSignature::parse(function_signature)?;
-    Ok(format!("0x{}", hex::encode(func.selector)))
+    Ok(func.selector.to_vec())
 }
 
 /// Convert an `AbiValue` to a native Python object.

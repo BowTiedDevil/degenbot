@@ -92,16 +92,20 @@ impl PoolKind {
         }
     }
 
-    /// The family tag: the one spelling of this discriminant on the operator
-    /// wire and the render seam (`V2` / `V3` / `V4`).
+    /// The public version label (`V2` / `V3` / `V4`).
     ///
-    /// The tag list every wire-spelling vocabulary projects through (the
-    /// operator channel's `family` strings, the render labels, and the FFI
-    /// list Python derives its family sets from). The exhaustive match is the
-    /// compile tripwire: a family added to this enum does not compile until
-    /// it carries a tag, so no downstream spelling can precede the taxonomy.
+    /// Two vocabularies exist on purpose, each with exactly one owner. THIS is
+    /// the public/display one: the operator wire's `family` field and the
+    /// render seam's hop labels. It is a versioned operator protocol, so its
+    /// upper-case spelling does not follow the core's internal casing. The
+    /// internal family tag is `degenbot_pools::RegisteredPoolFamily::tag`
+    /// (kebab — `v2`, `aerodrome-v2`, …), the ONE spelling the core emits and
+    /// reads back.
+    ///
+    /// The exhaustive match is the compile tripwire: a discriminant added
+    /// here does not compile until it carries a label.
     #[must_use]
-    pub const fn tag(self) -> &'static str {
+    pub const fn version_label(self) -> &'static str {
         match self {
             PoolKind::V2 => "V2",
             PoolKind::V3 => "V3",
@@ -125,7 +129,7 @@ impl PoolKind {
     }
 
     /// The single table of persisted `kind` discriminators the graph
-    /// vocabulary admits, paired with their tag.
+    /// vocabulary admits, paired with their discriminant.
     ///
     /// ADR-059 D1: this is the one enumeration [`Self::try_from`] (and
     /// therefore every schema `is_v*_kind` helper and graph reader) projects

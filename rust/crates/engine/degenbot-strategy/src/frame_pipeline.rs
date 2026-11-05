@@ -834,13 +834,16 @@ pub fn state_digest(state: &PoolPostState) -> String {
     format!("0x{}", alloy::hex::encode(&h.as_slice()[..8]))
 }
 
-/// The JSONL-family label of a descriptor.
+/// The JSONL-family label of a descriptor — the registry's kebab family tag,
+/// so the extract detail spells a family exactly as the rest of the core does.
 #[must_use]
 pub fn family_label(family: &PoolFamily) -> &'static str {
+    use degenbot_pools::RegisteredPoolFamily;
+
     match family {
-        PoolFamily::V2Pair => "v2",
-        PoolFamily::V3 { .. } => "v3",
-        PoolFamily::V4PoolManager { .. } => "v4",
+        PoolFamily::V2Pair => RegisteredPoolFamily::V2.tag(),
+        PoolFamily::V3 { .. } => RegisteredPoolFamily::V3.tag(),
+        PoolFamily::V4PoolManager { .. } => RegisteredPoolFamily::V4.tag(),
     }
 }
 

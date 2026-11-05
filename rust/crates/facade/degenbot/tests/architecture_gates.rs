@@ -2541,7 +2541,7 @@ fn pools_root_surface_is_pinned() {
     // existing `pub use a::b::{X, Y}` block moves the pin exactly as a new
     // `pub fn` does. ONE const: the count and the failure message derive from
     // it, so a snapshot bump is one edit.
-    const POOLS_ROOT_PUB_ITEMS: usize = 1073;
+    const POOLS_ROOT_PUB_ITEMS: usize = 1075;
     let census = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pools_root_surface_census.txt"),
     )

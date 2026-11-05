@@ -159,7 +159,7 @@ class TestPayloadFailureDetail:
         engine, path_id = nxm2bf_v2_engine_and_path
         executor = _executor(engine)
         swap = {
-            "family": "V2",
+            "family": "v2",
             "emitter": "0x" + "cc" * 20,
             "amount0": -1_000,
             "amount1": 3_000,

@@ -21,6 +21,17 @@ use pyo3::prelude::*;
 
 use crate::db::db_err_to_py;
 use degenbot_db::{DegenbotDb, DiscoveryPoolRow};
+use degenbot_pools::RegisteredPoolFamily;
+
+/// The registration family one discovered row names — the single source of
+/// the `family` tag this seam reports.
+const fn registered_family(row: &DiscoveryPoolRow) -> RegisteredPoolFamily {
+    match row {
+        DiscoveryPoolRow::V2(_) => RegisteredPoolFamily::V2,
+        DiscoveryPoolRow::V3(_) => RegisteredPoolFamily::V3,
+        DiscoveryPoolRow::V4(_) => RegisteredPoolFamily::V4,
+    }
+}
 
 /// One discovered candidate pool — the typed `degenbot_db::discovery_read` row
 /// flattened across the three family variants so Python sees one uniform view.
@@ -53,6 +64,7 @@ impl PyDiscoveryPoolRow {
     /// Flatten one core [`DiscoveryPoolRow`] into the uniform Python view.
     fn from_row(row: &DiscoveryPoolRow) -> Self {
         let kind = row.kind().to_string();
+        let family = registered_family(row).tag().to_string();
         let token0 = row.token0().address.to_checksum(None);
         let token1 = row.token1().address.to_checksum(None);
         let token0_id = row.token0().id;
@@ -61,7 +73,7 @@ impl PyDiscoveryPoolRow {
         match row {
             DiscoveryPoolRow::V2(r) => Self {
                 kind,
-                family: "V2".to_string(),
+                family: family.clone(),
                 address: Some(r.pool.address.to_checksum(None)),
                 manager: None,
                 pool_hash: None,
@@ -78,7 +90,7 @@ impl PyDiscoveryPoolRow {
             },
             DiscoveryPoolRow::V3(r) => Self {
                 kind,
-                family: "V3".to_string(),
+                family: family.clone(),
                 address: Some(r.pool.address.to_checksum(None)),
                 manager: None,
                 pool_hash: None,
@@ -95,7 +107,7 @@ impl PyDiscoveryPoolRow {
             },
             DiscoveryPoolRow::V4(r) => Self {
                 kind,
-                family: "V4".to_string(),
+                family: family.clone(),
                 address: None,
                 manager: Some(r.manager.address.to_checksum(None)),
                 pool_hash: Some(format!("{:#x}", r.pool_hash)),
@@ -122,7 +134,7 @@ impl PyDiscoveryPoolRow {
         self.kind.clone()
     }
 
-    /// The coarse family tag (`"V2"` / `"V3"` / `"V4"`) — the key Python maps
+    /// The coarse family tag (`"v2"` / `"v3"` / `"v4"`) — the key Python maps
     /// to `degenbot.pathfinding.PoolKind`.
     #[getter]
     fn family(&self) -> String {

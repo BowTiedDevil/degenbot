@@ -12,6 +12,7 @@ use crate::prelude::*;
 use alloy::primitives::U256;
 use degenbot_arbitrage::{CapturedSwap, SimFailure};
 use degenbot_executor::composers::{HopInfo, PathInfo};
+use degenbot_pools::RegisteredPoolFamily;
 use pyo3::types::{PyDict, PyList};
 
 /// Build a plain-Python-dict view of a `PathInfo` (the render shape).
@@ -38,10 +39,13 @@ pub(crate) fn path_info_to_py_dict<'py>(
 
 /// Build a plain-Python-dict view of a `HopInfo` (the per-hop render shape).
 ///
-/// Returns the `family` discriminator alongside the dict so the caller
-/// (`path_info_to_py_dict`) can assemble the `path_type` label without reading
-/// the dict back. The dict carries that variant's display fields; addresses
-/// are EIP-55 checksummed strings (alloy `Address::Display`).
+/// Returns the display label alongside the dict so the caller
+/// (`path_info_to_py_dict`) can assemble the `path_type` summary without
+/// reading the dict back. Two spellings, on purpose: the dict's `family` is
+/// the registry's INTERNAL kebab tag (what the Python render seam decodes back
+/// into a `PoolKind`), while the returned label is the display spelling the
+/// `V2-V2`-shaped `path_type` joins. The dict carries that variant's display
+/// fields; addresses are EIP-55 checksummed strings (alloy `Address::Display`).
 fn hop_to_py_dict<'py>(
     py: Python<'py>,
     hop: &HopInfo,
@@ -49,7 +53,7 @@ fn hop_to_py_dict<'py>(
     let dict = PyDict::new(py);
     let family = match hop {
         HopInfo::V2(v2) => {
-            dict.set_item("family", "V2")?;
+            dict.set_item("family", RegisteredPoolFamily::V2.tag())?;
             dict.set_item("pool_address", format!("{}", v2.pool_address))?;
             dict.set_item("token0_address", format!("{}", v2.token0_address))?;
             dict.set_item("token1_address", format!("{}", v2.token1_address))?;
@@ -58,7 +62,7 @@ fn hop_to_py_dict<'py>(
             "V2"
         }
         HopInfo::V3(v3) => {
-            dict.set_item("family", "V3")?;
+            dict.set_item("family", RegisteredPoolFamily::V3.tag())?;
             dict.set_item("pool_address", format!("{}", v3.pool_address))?;
             dict.set_item("token0_address", format!("{}", v3.token0_address))?;
             dict.set_item("token1_address", format!("{}", v3.token1_address))?;
@@ -67,7 +71,7 @@ fn hop_to_py_dict<'py>(
             "V3"
         }
         HopInfo::V4(v4) => {
-            dict.set_item("family", "V4")?;
+            dict.set_item("family", RegisteredPoolFamily::V4.tag())?;
             dict.set_item(
                 "pool_manager_address",
                 format!("{}", v4.pool_manager_address),
@@ -171,7 +175,7 @@ pub(crate) fn captured_swap_to_dict<'py>(
     s: &CapturedSwap,
 ) -> PyResult<Bound<'py, PyDict>> {
     let sdict = PyDict::new(py);
-    sdict.set_item("family", format!("{:?}", s.family).to_lowercase())?;
+    sdict.set_item("family", s.family.as_tag())?;
     sdict.set_item("emitter", format!("{:#x}", s.emitter))?;
     let amount0 = alloy_py::i256_to_py(py, &s.amount0)?;
     sdict.set_item("amount0", amount0)?;

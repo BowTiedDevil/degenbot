@@ -9,7 +9,9 @@
 //! - Serialization/conversion errors during Python object creation → `PyValueError`
 
 use crate::conversion::cache::to_py_bytes;
-use crate::conversion::rpc_types::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
+use crate::conversion::rpc_types::{
+    block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict, FieldSchema,
+};
 use crate::prelude::*;
 use crate::provider::{AlloyProvider, LogFetcher, LogFilter};
 use pyo3::exceptions::PyValueError;
@@ -461,10 +463,12 @@ impl PyAlloyProvider {
                 let tx_json = serde_json::to_value(&tx_typed).map_err(|e| {
                     PyValueError::new_err(format!("Failed to serialize transaction: {e}"))
                 })?;
-                // Use json_to_py_with_hexbytes to convert with automatic HexBytes detection
-                let py_obj = json_to_py_with_hexbytes(py, tx_json).map_err(|e| {
-                    PyValueError::new_err(format!("Failed to convert transaction: {e}"))
-                })?;
+                // The transaction shape's own field kinds — not a name table
+                // shared with every other method.
+                let py_obj = json_to_py_with_hexbytes(py, tx_json, FieldSchema::TRANSACTION)
+                    .map_err(|e| {
+                        PyValueError::new_err(format!("Failed to convert transaction: {e}"))
+                    })?;
                 Ok(Some(py_obj))
             }
             None => Ok(None),
@@ -494,10 +498,11 @@ impl PyAlloyProvider {
                 let receipt_json = serde_json::to_value(&receipt_typed).map_err(|e| {
                     PyValueError::new_err(format!("Failed to serialize transaction receipt: {e}"))
                 })?;
-                // Use json_to_py_with_hexbytes to convert with automatic HexBytes detection
-                let py_obj = json_to_py_with_hexbytes(py, receipt_json).map_err(|e| {
-                    PyValueError::new_err(format!("Failed to convert receipt: {e}"))
-                })?;
+                // The receipt shape's own field kinds (log rows included).
+                let py_obj = json_to_py_with_hexbytes(py, receipt_json, FieldSchema::RECEIPT)
+                    .map_err(|e| {
+                        PyValueError::new_err(format!("Failed to convert receipt: {e}"))
+                    })?;
                 Ok(Some(py_obj))
             }
             None => Ok(None),
@@ -608,6 +613,9 @@ impl PyAlloyProvider {
         let params_json = crate::conversion::json::python_list_to_json(params)?;
 
         let method = method.to_string();
+        // The method's own response shape decides the decode; an unmodeled
+        // method declares none, so its result crosses as plain JSON types.
+        let schema = FieldSchema::for_method(&method);
         let provider = Arc::clone(&self.provider);
 
         // Release GIL during RPC call
@@ -618,7 +626,7 @@ impl PyAlloyProvider {
             .map_err(Into::<PyErr>::into)?;
 
         // Convert JSON result back to Python
-        let py_obj = json_to_py_with_hexbytes(py, result)
+        let py_obj = json_to_py_with_hexbytes(py, result, schema)
             .map_err(|e| PyValueError::new_err(format!("Failed to convert result: {e}")))?;
 
         Ok(py_obj)

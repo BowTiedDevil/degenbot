@@ -18,7 +18,9 @@
 
 use crate::ambient_runtime::future_into_py;
 use crate::conversion::cache::to_py_bytes;
-use crate::conversion::rpc_types::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
+use crate::conversion::rpc_types::{
+    block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict, FieldSchema,
+};
 use crate::prelude::*;
 use crate::provider::{AlloyProvider, LogFetcher};
 use crate::rpc::provider::PyAlloyProvider;
@@ -337,7 +339,10 @@ impl PyAsyncAlloyProvider {
                             "Failed to serialize transaction: {e}"
                         ))
                     })?;
-                    Python::attach(|py| json_to_py_with_hexbytes(py, tx_json).map(Bound::unbind))
+                    Python::attach(|py| {
+                        json_to_py_with_hexbytes(py, tx_json, FieldSchema::TRANSACTION)
+                            .map(Bound::unbind)
+                    })
                 },
             )
         })
@@ -369,7 +374,8 @@ impl PyAsyncAlloyProvider {
                         ))
                     })?;
                     Python::attach(|py| {
-                        json_to_py_with_hexbytes(py, receipt_json).map(Bound::unbind)
+                        json_to_py_with_hexbytes(py, receipt_json, FieldSchema::RECEIPT)
+                            .map(Bound::unbind)
                     })
                 },
             )
@@ -459,6 +465,9 @@ impl PyAsyncAlloyProvider {
         let params_json = crate::conversion::json::python_list_to_json(params)?;
 
         let method = method.to_string();
+        // The method's own response shape decides the decode; an unmodeled
+        // method declares none, so its result crosses as plain JSON types.
+        let schema = FieldSchema::for_method(&method);
         let provider = Arc::clone(&self.provider);
 
         future_into_py(py, async move {
@@ -467,7 +476,7 @@ impl PyAsyncAlloyProvider {
                 .await
                 .map_err(Into::<PyErr>::into)?;
 
-            Python::attach(|py| json_to_py_with_hexbytes(py, result).map(Bound::unbind))
+            Python::attach(|py| json_to_py_with_hexbytes(py, result, schema).map(Bound::unbind))
         })
     }
 

@@ -176,7 +176,7 @@ def encode_function_call(function_signature: str, args: list) -> bytes:
         Encoded calldata as bytes
     """
 
-def get_function_selector(function_signature: str) -> str:
+def get_function_selector(function_signature: str) -> bytes:
     """
     Parse a function signature and return its selector.
 
@@ -184,7 +184,9 @@ def get_function_selector(function_signature: str) -> str:
         `function_signature`: Function signature like "transfer(address,uint256)"
 
     Returns:
-        4-byte function selector as hex string
+        The 4-byte selector as `bytes` — the same shape
+        [`keccak256`](crate::crypto::keccak256) hands back, so a caller never
+        hex-decodes a selector to use it.
     """
 
 __all__ = [

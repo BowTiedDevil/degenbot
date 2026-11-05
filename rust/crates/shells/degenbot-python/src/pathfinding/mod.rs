@@ -25,6 +25,7 @@ use degenbot_db::DegenbotDb;
 use degenbot_pathfinding::directions::resolve_directions as core_resolve_directions;
 use degenbot_pathfinding::directions::DirectionHop as CoreDirectionHop;
 use degenbot_pathfinding::graph::{OwnedPathFinder, PoolKind as CorePoolKind, SearchSpec};
+use degenbot_pools::RegisteredPoolFamily;
 use pyo3::exceptions::{PyKeyError, PyStopAsyncIteration, PyValueError};
 use pyo3::types::{PyDict, PyList, PySet, PyTuple};
 use std::collections::{HashMap, HashSet};
@@ -90,21 +91,65 @@ pub fn classify_pool_kind<'py>(py: Python<'py>, kind: &Bound<'py, PyAny>) -> PyR
     extract_pool_kind(py, kind)
 }
 
-/// The canonical pool-family tags, in discriminant order — the list Python
-/// derives its family sets from.
+/// The registration family a pathfinding discriminant names.
 ///
-/// The S12 pattern: the taxonomy has one owner (the `degenbot-pathfinding`
-/// graph enum, whose exhaustive `tag` match forces every family to carry a
-/// spelling), and this seam exports that list instead of Python re-declaring
-/// the set. A family added to the core surfaces here on the next build; a
-/// pyclass binding that does not know a discriminant fails loudly at the
-/// per-value conversion (`from_core` returns `None`) rather than
-/// mistranslating it.
-#[must_use]
+/// `PoolKind` is `#[non_exhaustive]`, so a discriminant this binding does not
+/// know is a stale binding meeting a newer core: `None`, and the caller raises
+/// loudly rather than guessing a family.
+const fn registered_family(kind: CorePoolKind) -> Option<RegisteredPoolFamily> {
+    match kind {
+        CorePoolKind::V2 => Some(RegisteredPoolFamily::V2),
+        CorePoolKind::V3 => Some(RegisteredPoolFamily::V3),
+        CorePoolKind::V4 => Some(RegisteredPoolFamily::V4),
+        _ => None,
+    }
+}
+
+/// The canonical pool-family tags, in discriminant order — the internal kebab
+/// vocabulary Python derives its family sets from.
+///
+/// One owner: `degenbot_pools::RegisteredPoolFamily::tag`. This seam exports
+/// that spelling instead of Python re-declaring the set, so a Python reader of
+/// an internal `family` string and a core consumer of the same string cannot
+/// drift apart. The upper-case version labels the operator wire speaks are a
+/// separate vocabulary, exported by [`pool_kind_labels`].
+/// # Errors
+///
+/// `ValueError` for a core discriminant this binding cannot name a family for
+/// (a stale binding meeting a newer core).
 #[pyfunction]
 #[pyo3(name = "pool_family_tags")]
-pub fn pool_family_tags() -> Vec<&'static str> {
-    CorePoolKind::ALL.iter().map(|kind| kind.tag()).collect()
+pub fn pool_family_tags() -> PyResult<Vec<&'static str>> {
+    CorePoolKind::ALL
+        .iter()
+        .map(|kind| {
+            registered_family(*kind)
+                .map(RegisteredPoolFamily::tag)
+                .ok_or_else(|| {
+                    PyValueError::new_err(format!(
+                        "core pool kind {kind:?} has no registered family (stale binding)"
+                    ))
+                })
+        })
+        .collect()
+}
+
+/// The public version labels (`V2`/`V3`/`V4`), aligned index-for-index with
+/// [`pool_family_tags`].
+///
+/// The operator wire's `family` vocabulary and the render seam's hop labels.
+/// Deliberately separate from the internal kebab tag: the operator protocol is
+/// versioned, so its spelling does not follow the core's internal casing.
+/// Python pairs the two lists to mint its taxonomy (`PoolKind` members ↔
+/// internal tags ↔ wire labels).
+#[must_use]
+#[pyfunction]
+#[pyo3(name = "pool_kind_labels")]
+pub fn pool_kind_labels() -> Vec<&'static str> {
+    CorePoolKind::ALL
+        .iter()
+        .map(|kind| kind.version_label())
+        .collect()
 }
 
 /// Resolve per-hop directions so the cycle closes — the typed-FFI seam over

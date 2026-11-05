@@ -49,7 +49,7 @@ V2_POOL_B = "0x1200000000000000000000000000000000000000"
 
 def _pool_key(hop: dict[str, Any]) -> str:
     """The render-dict's pool identity — the Rust derive rule's OUTPUT shape."""
-    return hop["pool_id_hex"] if hop["family"] == "V4" else hop["pool_address"]
+    return hop["pool_id_hex"] if hop["family"] == "v4" else hop["pool_address"]
 
 
 @pytest.fixture

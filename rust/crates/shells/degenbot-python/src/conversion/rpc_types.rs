@@ -27,8 +27,6 @@ use alloy::rpc::types::eth::Transaction;
 use alloy::rpc::types::Log;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
-use std::collections::HashSet;
-use std::sync::LazyLock;
 
 use crate::address_utils::address_to_checksum_string;
 use crate::conversion::cache::to_py_bytes;
@@ -37,81 +35,180 @@ use crate::hex_utils::decode_hex;
 use crate::provider::EthBlock;
 use alloy::rpc::types::eth::Header as RpcHeader;
 
-/// Field names that should be converted to `HexBytes`.
-/// These are commonly used field names for Ethereum hashes and data.
-/// Note: Address fields are converted to checksummed strings, not `HexBytes`.
-static HEXBYTES_FIELDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    [
-        "hash",
-        "parent_hash",
-        "transactions_root",
-        "receipts_root",
-        "state_root",
-        "logs_bloom",
-        "mix_hash",
-        "nonce",
-        "sha3_uncles",
-        "extra_data",
-        "withdrawals_root",
-        "block_hash",
-        "input",
-        "r",
-        "s",
-        "v",
-        "blob_versioned_hashes",
-        "transaction_hash",
-        "contract_address",
-        "topics",
-        "data",
-    ]
-    .iter()
-    .copied()
-    .collect()
-});
+/// How one JSON-RPC response field decodes into Python.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldKind {
+    /// `0x`-hex byte string → `HexBytes`.
+    HexBytes,
+    /// 20-byte `0x` address → EIP-55 checksummed `str`.
+    Address,
+    /// JSON-RPC `QUANTITY` (`0x`-hex, leading zeros dropped) → `int`.
+    Numeric,
+}
 
-/// Field names that should be converted to checksummed address strings.
-static ADDRESS_FIELDS: LazyLock<HashSet<&'static str>> =
-    LazyLock::new(|| ["address", "miner", "from", "to"].iter().copied().collect());
+/// One RPC method's response shape: its field names and the decode each needs.
+///
+/// The decode is declared per method, never as one name table shared by every
+/// call: a field name means what the method's own response says it means, and
+/// a field the method does not declare crosses as the JSON's natural Python
+/// type (never a guessed conversion, and never an error — an unmodeled method
+/// has no shape to check a name against).
+#[derive(Clone, Copy, Debug)]
+pub struct FieldSchema(&'static [(&'static str, FieldKind)]);
 
-/// Field names that should be converted to integers.
-/// These are numeric fields that may be returned as hex strings by the JSON-RPC API.
-static NUMERIC_FIELDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    [
-        // Block fields
-        "number",
-        "timestamp",
-        "gas_used",
-        "gas_limit",
-        "base_fee_per_gas",
-        "blob_gas_used",
-        "excess_blob_gas",
-        "difficulty",
-        "total_difficulty",
-        "size",
-        // Transaction fields
-        "chain_id",
-        "gas_price",
-        "max_fee_per_gas",
-        "max_priority_fee_per_gas",
-        "max_fee_per_blob_gas",
-        "value",
-        "gas",
-        // Note: nonce is intentionally excluded because it has different meanings
-        // in block vs transaction contexts and is handled by the typed converters
-        // Receipt fields
-        "cumulative_gas_used",
-        "effective_gas_price",
-        "status",
-        "transaction_type",
-        // Log fields
-        "block_number",
-        "log_index",
-        "transaction_index",
-    ]
-    .iter()
-    .copied()
-    .collect()
-});
+/// The transaction object's fields (`eth_getTransactionByHash` and its
+/// block-indexed siblings, and a pending-transaction subscription).
+const TRANSACTION_FIELDS: &[(&str, FieldKind)] = &[
+    ("hash", FieldKind::HexBytes),
+    ("block_hash", FieldKind::HexBytes),
+    ("input", FieldKind::HexBytes),
+    ("nonce", FieldKind::HexBytes),
+    ("r", FieldKind::HexBytes),
+    ("s", FieldKind::HexBytes),
+    ("blob_versioned_hashes", FieldKind::HexBytes),
+    ("from", FieldKind::Address),
+    ("to", FieldKind::Address),
+    ("block_number", FieldKind::Numeric),
+    ("transaction_index", FieldKind::Numeric),
+    ("chain_id", FieldKind::Numeric),
+    ("gas", FieldKind::Numeric),
+    ("gas_price", FieldKind::Numeric),
+    ("max_fee_per_gas", FieldKind::Numeric),
+    ("max_priority_fee_per_gas", FieldKind::Numeric),
+    ("max_fee_per_blob_gas", FieldKind::Numeric),
+    ("value", FieldKind::Numeric),
+];
+
+/// The transaction receipt's fields, including the log rows it carries.
+const RECEIPT_FIELDS: &[(&str, FieldKind)] = &[
+    ("transaction_hash", FieldKind::HexBytes),
+    ("block_hash", FieldKind::HexBytes),
+    ("contract_address", FieldKind::HexBytes),
+    ("logs_bloom", FieldKind::HexBytes),
+    ("topics", FieldKind::HexBytes),
+    ("data", FieldKind::HexBytes),
+    ("from", FieldKind::Address),
+    ("to", FieldKind::Address),
+    ("address", FieldKind::Address),
+    ("block_number", FieldKind::Numeric),
+    ("transaction_index", FieldKind::Numeric),
+    ("log_index", FieldKind::Numeric),
+    ("status", FieldKind::Numeric),
+    ("cumulative_gas_used", FieldKind::Numeric),
+    ("effective_gas_price", FieldKind::Numeric),
+    ("gas_used", FieldKind::Numeric),
+    ("transaction_type", FieldKind::Numeric),
+    ("blob_gas_used", FieldKind::Numeric),
+];
+
+/// A block's fields, including the nested transactions and log rows it
+/// carries (`eth_getBlockBy*`).
+const BLOCK_FIELDS: &[(&str, FieldKind)] = &[
+    ("hash", FieldKind::HexBytes),
+    ("parent_hash", FieldKind::HexBytes),
+    ("transactions_root", FieldKind::HexBytes),
+    ("receipts_root", FieldKind::HexBytes),
+    ("state_root", FieldKind::HexBytes),
+    ("logs_bloom", FieldKind::HexBytes),
+    ("mix_hash", FieldKind::HexBytes),
+    ("sha3_uncles", FieldKind::HexBytes),
+    ("extra_data", FieldKind::HexBytes),
+    ("withdrawals_root", FieldKind::HexBytes),
+    ("block_hash", FieldKind::HexBytes),
+    ("input", FieldKind::HexBytes),
+    ("r", FieldKind::HexBytes),
+    ("s", FieldKind::HexBytes),
+    ("blob_versioned_hashes", FieldKind::HexBytes),
+    ("transaction_hash", FieldKind::HexBytes),
+    ("contract_address", FieldKind::HexBytes),
+    ("topics", FieldKind::HexBytes),
+    ("data", FieldKind::HexBytes),
+    ("miner", FieldKind::Address),
+    ("address", FieldKind::Address),
+    ("from", FieldKind::Address),
+    ("to", FieldKind::Address),
+    ("number", FieldKind::Numeric),
+    ("timestamp", FieldKind::Numeric),
+    ("gas_used", FieldKind::Numeric),
+    ("gas_limit", FieldKind::Numeric),
+    ("base_fee_per_gas", FieldKind::Numeric),
+    ("blob_gas_used", FieldKind::Numeric),
+    ("excess_blob_gas", FieldKind::Numeric),
+    ("difficulty", FieldKind::Numeric),
+    ("total_difficulty", FieldKind::Numeric),
+    ("size", FieldKind::Numeric),
+    ("chain_id", FieldKind::Numeric),
+    ("gas_price", FieldKind::Numeric),
+    ("max_fee_per_gas", FieldKind::Numeric),
+    ("max_priority_fee_per_gas", FieldKind::Numeric),
+    ("max_fee_per_blob_gas", FieldKind::Numeric),
+    ("value", FieldKind::Numeric),
+    ("gas", FieldKind::Numeric),
+    ("cumulative_gas_used", FieldKind::Numeric),
+    ("effective_gas_price", FieldKind::Numeric),
+    ("status", FieldKind::Numeric),
+    ("transaction_type", FieldKind::Numeric),
+    ("block_number", FieldKind::Numeric),
+    ("log_index", FieldKind::Numeric),
+    ("transaction_index", FieldKind::Numeric),
+];
+
+/// A bundle/simulation call result's fields (`eth_callMany`,
+/// `eth_simulateV1`), including the log rows each call carries.
+const SIMULATION_FIELDS: &[(&str, FieldKind)] = &[
+    ("status", FieldKind::Numeric),
+    ("gasUsed", FieldKind::Numeric),
+    ("returnData", FieldKind::HexBytes),
+    ("topics", FieldKind::HexBytes),
+    ("data", FieldKind::HexBytes),
+    ("address", FieldKind::Address),
+];
+
+impl FieldSchema {
+    /// A method this seam does not model: no field is declared, so every value
+    /// crosses as the JSON's natural Python type.
+    pub const RAW: Self = Self(&[]);
+
+    /// A transaction object.
+    pub const TRANSACTION: Self = Self(TRANSACTION_FIELDS);
+
+    /// A transaction receipt (log rows included).
+    pub const RECEIPT: Self = Self(RECEIPT_FIELDS);
+
+    /// A block (nested transactions and log rows included).
+    pub const BLOCK: Self = Self(BLOCK_FIELDS);
+
+    /// A bundle/simulation call result.
+    pub const SIMULATION: Self = Self(SIMULATION_FIELDS);
+
+    /// The declared shape of `method`'s response.
+    ///
+    /// The typed getters pass their own constant; the raw `make_request`
+    /// surface resolves the method name here so a caller of a modelled method
+    /// gets the same decode the typed getter would, and a caller of anything
+    /// else gets [`Self::RAW`].
+    #[must_use]
+    pub fn for_method(method: &str) -> Self {
+        match method {
+            "eth_getTransactionByHash"
+            | "eth_getTransactionByBlockHashAndIndex"
+            | "eth_getTransactionByBlockNumberAndIndex" => Self::TRANSACTION,
+            "eth_getTransactionReceipt" | "eth_getBlockReceipts" => Self::RECEIPT,
+            "eth_getBlockByHash" | "eth_getBlockByNumber" => Self::BLOCK,
+            "eth_callMany" | "eth_simulateV1" => Self::SIMULATION,
+            _ => Self::RAW,
+        }
+    }
+
+    /// The declared decode for `field`, or `None` when this shape says nothing
+    /// about it.
+    fn kind(&self, field: &str) -> Option<FieldKind> {
+        self.0
+            .iter()
+            .find(|(name, _)| *name == field)
+            .map(|(_, kind)| *kind)
+    }
+}
 
 /// Check if a string value should be converted to `HexBytes`.
 /// Returns true if the string starts with "0x" and contains valid hex characters.
@@ -200,32 +297,39 @@ pub fn log_to_py_dict<'py>(py: Python<'py>, log: &Log) -> PyResult<Bound<'py, Py
     Ok(dict)
 }
 
-/// Convert a `serde_json::Value` to a Python object with `HexBytes` conversion.
+/// Convert a `serde_json::Value` to a Python object, decoding the fields
+/// `schema` declares.
 ///
-/// Single-pass conversion that builds Python objects directly from JSON, converting
-/// hex strings in recognized Ethereum fields to `HexBytes` or integers as appropriate.
+/// Single-pass conversion that builds Python objects directly from JSON. The
+/// field kinds come from the caller's [`FieldSchema`] — the response shape of
+/// the method this value came from — so one method's field name is never
+/// decoded by another method's rule.
 ///
 /// - `null` → `None`
 /// - `bool` → `bool`
 /// - `number` → `int` or `float`
-/// - `string` → `str` (or `HexBytes`/checksummed address/`int` for recognized fields)
-/// - `array` → `list`
-/// - `object` → `dict`
+/// - `string` → `str`, or `HexBytes`/checksummed address/`int` where the
+///   schema declares that field kind and the value is a hex string
+/// - `array` → `list` (elements inherit the array's field name, so a declared
+///   list of hashes decodes element-wise)
+/// - `object` → `dict` (keys are looked up in the same schema)
 ///
 /// # Errors
 ///
-/// Returns `PyValueError` if hex string conversion fails for a recognized field.
+/// Returns `PyValueError` if hex string conversion fails for a declared field.
 pub fn json_to_py_with_hexbytes(
     py: Python<'_>,
     value: serde_json::Value,
+    schema: FieldSchema,
 ) -> PyResult<Bound<'_, PyAny>> {
-    json_to_py_inner(py, value, None)
+    json_to_py_inner(py, value, schema, None)
 }
 
 /// Single-pass recursive JSON-to-Python conversion with field-aware hex handling.
 fn json_to_py_inner<'py>(
     py: Python<'py>,
     value: serde_json::Value,
+    schema: FieldSchema,
     field_name: Option<&str>,
 ) -> PyResult<Bound<'py, PyAny>> {
     match value {
@@ -246,17 +350,18 @@ fn json_to_py_inner<'py>(
             }
         }
         serde_json::Value::String(s) => {
-            // Check for address fields first (convert to checksummed string)
-            if field_name.is_some_and(|name| ADDRESS_FIELDS.contains(name)) && is_hex_string(&s) {
+            let kind = field_name.and_then(|name| schema.kind(name));
+            // Address fields decode to a checksummed string.
+            if kind == Some(FieldKind::Address) && is_hex_string(&s) {
                 let checksummed = hex_to_checksum_address(&s)?;
                 return Ok(checksummed.into_pyobject(py)?.into_any());
             }
-            // Then check for hexbytes fields
-            if field_name.is_some_and(|name| HEXBYTES_FIELDS.contains(name)) && is_hex_string(&s) {
+            // Hash/data fields decode to `HexBytes`.
+            if kind == Some(FieldKind::HexBytes) && is_hex_string(&s) {
                 return hex_to_hexbytes(py, &s).map(Bound::into_any);
             }
-            // Then check for numeric fields
-            if field_name.is_some_and(|name| NUMERIC_FIELDS.contains(name)) && is_hex_string(&s) {
+            // Quantity fields decode to `int`.
+            if kind == Some(FieldKind::Numeric) && is_hex_string(&s) {
                 // Use the odd-length-tolerant decode_hex (JSON-RPC QUANTITY
                 // values routinely drop leading zeros, producing single-digit
                 // hex like "0x1"/"0x0" for e.g. eth_simulateV1 call `status`).
@@ -279,14 +384,14 @@ fn json_to_py_inner<'py>(
         serde_json::Value::Array(arr) => {
             let py_list = PyList::empty(py);
             for item in arr {
-                py_list.append(json_to_py_inner(py, item, field_name)?)?;
+                py_list.append(json_to_py_inner(py, item, schema, field_name)?)?;
             }
             Ok(py_list.into_any())
         }
         serde_json::Value::Object(map) => {
             let py_dict = PyDict::new(py);
             for (key, val) in map {
-                py_dict.set_item(&key, json_to_py_inner(py, val, Some(&key))?)?;
+                py_dict.set_item(&key, json_to_py_inner(py, val, schema, Some(&key))?)?;
             }
             Ok(py_dict.into_any())
         }
@@ -730,7 +835,7 @@ mod tests {
                     {"status": "0x1", "gasUsed": "0x5208", "returnData": "0x"}
                 ]
             });
-            let py_obj = json_to_py_with_hexbytes(py, value).unwrap();
+            let py_obj = json_to_py_with_hexbytes(py, value, FieldSchema::SIMULATION).unwrap();
             let dict = py_obj.cast::<PyDict>().unwrap();
             let calls = dict.get_item("calls").unwrap().unwrap();
             let first = calls.get_item(0).unwrap();
@@ -740,7 +845,7 @@ mod tests {
 
             // status "0x0" -> 0
             let value = serde_json::json!({"status": "0x0"});
-            let py_obj = json_to_py_with_hexbytes(py, value).unwrap();
+            let py_obj = json_to_py_with_hexbytes(py, value, FieldSchema::SIMULATION).unwrap();
             let d = py_obj.cast::<PyDict>().unwrap();
             assert_eq!(
                 d.get_item("status")

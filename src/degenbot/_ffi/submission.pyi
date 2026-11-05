@@ -208,7 +208,7 @@ class DivergentPool:
     @property
     def family(self, /) -> str:
         """
-        The Uniswap family (`"V2"` / `"V3"` / `"V4"`).
+        The pool family's internal tag (`"v2"` / `"v3"` / `"v4"`).
         """
     @property
     def last_flagged_block(self, /) -> int:

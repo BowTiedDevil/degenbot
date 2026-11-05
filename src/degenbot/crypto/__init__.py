@@ -44,9 +44,7 @@ def function_selector(signature: str) -> bytes:
         The 4-byte selector (e.g. ``b"\\xa9\\x05\\x9c\\xbb"``).
 
     """
-    # get_function_selector returns "0x"-prefixed hex; strip the prefix +
-    # decode to the 4 raw bytes.
-    return bytes.fromhex(get_function_selector(signature).removeprefix("0x"))
+    return get_function_selector(signature)
 
 
 def keccak256(data: bytes) -> bytes:

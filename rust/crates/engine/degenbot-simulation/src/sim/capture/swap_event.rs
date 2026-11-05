@@ -87,6 +87,28 @@ pub enum SwapFamily {
     V4,
 }
 
+impl SwapFamily {
+    /// The registration family this captured swap belongs to.
+    #[must_use]
+    pub const fn registered_family(self) -> degenbot_pools::RegisteredPoolFamily {
+        use degenbot_pools::RegisteredPoolFamily as Family;
+
+        match self {
+            Self::V2 => Family::V2,
+            Self::V3 => Family::V3,
+            Self::V4 => Family::V4,
+        }
+    }
+
+    /// The internal family tag this capture spells — the registry's kebab
+    /// vocabulary, so a captured-swap dict has one spelling whichever arm
+    /// produced it.
+    #[must_use]
+    pub const fn as_tag(self) -> &'static str {
+        self.registered_family().tag()
+    }
+}
+
 /// A captured swap event — the decoded, pool-family-tagged shape consumed by
 /// the settlement-arbitrage strategy's four-way classifier (Drift/SolverCalc/Encoding).
 /// Engine-generic: no `SimulateContext`/`SimResult`/strategy vocabulary.

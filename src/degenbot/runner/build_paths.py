@@ -32,7 +32,7 @@ from degenbot.arbitrage import RetryPolicy
 from degenbot.arbitrage.policy import NoOpPathPredicate, PathPolicy
 from degenbot.builders.request import ConstructionRoute
 from degenbot.logging import logger as bot_logger
-from degenbot.pathfinding import FAMILY_TAG_TO_POOL_KIND, PoolKind
+from degenbot.pathfinding import POOL_KIND_BY_LABEL, PoolKind
 from degenbot.runner.identity import (
     PANCAKESWAP_V3_MAINNET_FACTORY,
     SUSHISWAP_V3_MAINNET_FACTORY,
@@ -75,13 +75,19 @@ def _parse_permutation_filter(
     The result is a pool_type_per_depth list suitable for the engine's discovery
     configuration.
 
+    The tokens are the public version labels (the same `V2`/`V3`/`V4`
+    vocabulary the operator wire speaks), so they resolve through
+    :data:`~degenbot.pathfinding.POOL_KIND_BY_LABEL` — not the core's internal
+    kebab family tag.
+
     Returns:
         The per-depth allowed-family list, or ``None`` when ``perms`` is
         None/empty (no filter). An entry is ``None`` when every permutation
         allows any type at that depth.
 
     Raises:
-        ValueError: On an unknown version tag, or permutations of unequal depth.
+        ValueError: On an unknown version label, or permutations of unequal
+            depth.
 
     """
     if not perms:
@@ -89,7 +95,7 @@ def _parse_permutation_filter(
     parsed: list[list[str]] = []
     for perm in perms:
         parts = perm.split("-")
-        if not all(p in FAMILY_TAG_TO_POOL_KIND for p in parts):
+        if not all(p in POOL_KIND_BY_LABEL for p in parts):
             msg = f"Invalid permutation '{perm}': unknown version tag"
             raise ValueError(msg)
         parsed.append(parts)
@@ -100,7 +106,7 @@ def _parse_permutation_filter(
     result: list[set[PoolKind] | None] = []
     for depth in range(max_depth):
         allowed_this_depth: set[PoolKind] = {
-            FAMILY_TAG_TO_POOL_KIND[perm_parts[depth]] for perm_parts in parsed
+            POOL_KIND_BY_LABEL[perm_parts[depth]] for perm_parts in parsed
         }
         result.append(allowed_this_depth or None)
     return result
@@ -115,10 +121,10 @@ def _pool_types_from_filter(perms: set[str] | None) -> list[PoolKind]:
 
     """
     if not perms:
-        return list(FAMILY_TAG_TO_POOL_KIND.values())
+        return list(POOL_KIND_BY_LABEL.values())
 
     versions_needed = {version for perm in perms for version in perm.split("-")}
-    return [FAMILY_TAG_TO_POOL_KIND[version] for version in sorted(versions_needed)]
+    return [POOL_KIND_BY_LABEL[version] for version in sorted(versions_needed)]
 
 
 # ──────────────────────────────────────────────────────────────────

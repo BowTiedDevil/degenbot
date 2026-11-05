@@ -20,6 +20,7 @@ use degenbot_batch_executor::assembly::{merge_payload_results, PayloadArm};
 use degenbot_batch_executor::row::{PayloadFailure, PayloadRow};
 use degenbot_batch_executor::PathResolver;
 use degenbot_executor::composers::PathInfo;
+use degenbot_pools::RegisteredPoolFamily;
 use degenbot_simulation::sim::capture::SwapFamily;
 use degenbot_submission::SubmitCandidate;
 use pyo3::exceptions::PyValueError;
@@ -259,6 +260,21 @@ fn captured_swaps_from_payload(entry: &Bound<'_, PyDict>) -> PyResult<Vec<Captur
         .collect()
 }
 
+/// The capture family a registry tag names, or `None` when the tag is not a
+/// captured-swap family at all (`v2`/`v3`/`v4` are the only families that
+/// emit a decodable `Swap` log; the multi-token families have no capture arm).
+fn swap_family_from_tag(raw: &str) -> Option<SwapFamily> {
+    match RegisteredPoolFamily::from_tag(raw)? {
+        RegisteredPoolFamily::V2 => Some(SwapFamily::V2),
+        RegisteredPoolFamily::V3 => Some(SwapFamily::V3),
+        RegisteredPoolFamily::V4 => Some(SwapFamily::V4),
+        RegisteredPoolFamily::AerodromeV2
+        | RegisteredPoolFamily::BalancerWeighted
+        | RegisteredPoolFamily::BalancerStable
+        | RegisteredPoolFamily::Curve => None,
+    }
+}
+
 /// Extract one captured-swap row dict into the core's [`CapturedSwap`].
 fn captured_swap_from_dict(row: &Bound<'_, PyAny>) -> PyResult<CapturedSwap> {
     let row = row
@@ -269,16 +285,14 @@ fn captured_swap_from_dict(row: &Bound<'_, PyAny>) -> PyResult<CapturedSwap> {
         .ok_or_else(|| PyValueError::new_err("captured swap missing 'family'"))?
         .extract()
         .map_err(|_| PyValueError::new_err("captured swap 'family' must be a string"))?;
-    let family = match family_raw.to_ascii_uppercase().as_str() {
-        "V2" => SwapFamily::V2,
-        "V3" => SwapFamily::V3,
-        "V4" => SwapFamily::V4,
-        other => {
-            return Err(PyValueError::new_err(format!(
-                "unknown captured-swap family '{other}'"
-            )));
-        }
-    };
+    // Exact match on the core's internal family tag: the producer of this row
+    // is the result channel, which spells `SwapFamily::as_tag`, so a near miss
+    // is a caller bug rather than a spelling to tolerate.
+    let family = swap_family_from_tag(&family_raw).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "unknown captured-swap family '{family_raw}' (expected v2|v3|v4)"
+        ))
+    })?;
     let emitter_raw: String = row
         .get_item("emitter")?
         .ok_or_else(|| PyValueError::new_err("captured swap missing 'emitter'"))?

@@ -49,19 +49,19 @@ impl From<(PoolDivergenceKey, u64)> for PyDivergentPool {
     fn from((key, last_flagged_block): (PoolDivergenceKey, u64)) -> Self {
         match key {
             PoolDivergenceKey::V2(addr) => Self {
-                family: "V2",
+                family: degenbot_pools::RegisteredPoolFamily::V2.tag(),
                 address: Some(format!("{addr:#x}")),
                 pool_id: None,
                 last_flagged_block,
             },
             PoolDivergenceKey::V3(addr) => Self {
-                family: "V3",
+                family: degenbot_pools::RegisteredPoolFamily::V3.tag(),
                 address: Some(format!("{addr:#x}")),
                 pool_id: None,
                 last_flagged_block,
             },
             PoolDivergenceKey::V4(id) => Self {
-                family: "V4",
+                family: degenbot_pools::RegisteredPoolFamily::V4.tag(),
                 address: None,
                 pool_id: Some(format!("{id:#x}")),
                 last_flagged_block,
@@ -71,7 +71,7 @@ impl From<(PoolDivergenceKey, u64)> for PyDivergentPool {
 }
 #[pymethods]
 impl PyDivergentPool {
-    /// The Uniswap family (`"V2"` / `"V3"` / `"V4"`).
+    /// The pool family's internal tag (`"v2"` / `"v3"` / `"v4"`).
     #[getter]
     fn family(&self) -> &str {
         self.family

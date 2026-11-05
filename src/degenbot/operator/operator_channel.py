@@ -71,13 +71,15 @@ from typing import Any
 
 from degenbot import fleet
 from degenbot.logging import logger
-from degenbot.pathfinding import FAMILY_TAG_TO_POOL_KIND, POOL_FAMILY_TAGS, PoolKind
+from degenbot.pathfinding import POOL_KIND_BY_LABEL, POOL_KIND_LABELS, PoolKind
 from degenbot.utils.tasks import cancel_and_reap
 
-#: Map the public wire labels to the typed pool families used by pathfinding.
-#: minted from the core's exported tag list (degenbot.pathfinding) — never
-#: re-declared here.
-_FAMILY_TO_POOL_KIND = FAMILY_TAG_TO_POOL_KIND
+#: Map the PUBLIC wire labels (`V2`/`V3`/`V4`) to the typed pool families used
+#: by pathfinding, minted from the core's exported label list
+#: (degenbot.pathfinding) — never re-declared here. The wire's spelling is a
+#: versioned operator protocol, so it is the upper-case label, NOT the core's
+#: internal kebab family tag.
+_FAMILY_TO_POOL_KIND = POOL_KIND_BY_LABEL
 
 #: Handler signature: ``async def (op: str, payload: dict) -> dict`` returning a
 #: response with ``detail`` (ok) or ``error`` (failure).
@@ -116,9 +118,9 @@ def step_from_wire(step: dict[str, Any]) -> StepSpec:
     family = step.get("family")
     pool_kind = _FAMILY_TO_POOL_KIND.get(family)  # type: ignore[arg-type]
     if pool_kind is None:
-        # The expected set is the core's minted tag list, so the refusal names
-        # the taxonomy the core actually declares.
-        expected = "|".join(POOL_FAMILY_TAGS)
+        # The expected set is the core's minted wire-label list, so the
+        # refusal names the vocabulary the operator channel actually accepts.
+        expected = "|".join(POOL_KIND_LABELS)
         msg = f"unknown pool family {family!r} (expected {expected})"
         raise ValueError(msg)
     address = step.get("address")

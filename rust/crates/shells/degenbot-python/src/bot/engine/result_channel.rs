@@ -11,7 +11,7 @@ use super::{
 };
 use crate::conversion::alloy::{PyI256, PyU256};
 use crate::prelude::*;
-use degenbot_bot::arb_engine::{InlineSwapFamily, SimulatedPathResult};
+use degenbot_bot::arb_engine::SimulatedPathResult;
 use pyo3::types::{PyBytes, PyString};
 
 fn address_to_checksum<'py>(py: Python<'py>, a: &Address) -> Bound<'py, PyString> {
@@ -30,7 +30,9 @@ impl PyArbEngine {
     /// Returns a dict with:
     ///   - "`path_id"`: int
     ///   - "hops": list of dicts, each with:
-    ///     - "type": "V2" | "V3" | "V4"
+    ///     - "type": the hop's internal family tag (`"v2"` / `"v3"` / `"v4"` /
+    ///       `"aerodrome-v2"` / `"balancer-weighted"` / `"balancer-stable"` /
+    ///       `"curve"` — `HopType::as_tag`)
     ///     - "address": str (V2/V3 contract address, or V4 `pool_manager`)
     ///     - "`pool_id"`: str (V4 only — the pool ID hex)
     ///     - "`zero_for_one"`: bool
@@ -71,7 +73,7 @@ impl PyArbEngine {
                             }
                         });
                         hops.push(HopInfo {
-                            hop_type: "V2".to_string(),
+                            hop_type: pool_ref.hop_type.as_tag(),
                             address: addr,
                             pool_id: None,
                             zero_for_one: pool_ref.zero_for_one,
@@ -90,7 +92,7 @@ impl PyArbEngine {
                             )
                         });
                         hops.push(HopInfo {
-                            hop_type: "V3".to_string(),
+                            hop_type: pool_ref.hop_type.as_tag(),
                             address: addr,
                             pool_id: None,
                             zero_for_one: pool_ref.zero_for_one,
@@ -110,7 +112,7 @@ impl PyArbEngine {
                             )
                         });
                         hops.push(HopInfo {
-                            hop_type: "V4".to_string(),
+                            hop_type: pool_ref.hop_type.as_tag(),
                             address: pm,
                             pool_id: pid,
                             zero_for_one: pool_ref.zero_for_one,
@@ -124,7 +126,7 @@ impl PyArbEngine {
                     // resolve short-circuit means no Solidly hop reaches a solve.
                     HopType::SolidlyStable => {
                         hops.push(HopInfo {
-                            hop_type: "Solidly".to_string(),
+                            hop_type: pool_ref.hop_type.as_tag(),
                             address: None,
                             pool_id: None,
                             zero_for_one: pool_ref.zero_for_one,
@@ -137,7 +139,7 @@ impl PyArbEngine {
                             pool_ref.pool_key,
                         );
                         hops.push(HopInfo {
-                            hop_type: "BalW".to_string(),
+                            hop_type: pool_ref.hop_type.as_tag(),
                             address: id.map(|i| format!("{}", i.address)),
                             pool_id: None,
                             zero_for_one: pool_ref.zero_for_one,
@@ -150,7 +152,7 @@ impl PyArbEngine {
                             pool_ref.pool_key,
                         );
                         hops.push(HopInfo {
-                            hop_type: "BalS".to_string(),
+                            hop_type: pool_ref.hop_type.as_tag(),
                             address: id.map(|i| format!("{}", i.address)),
                             pool_id: None,
                             zero_for_one: pool_ref.zero_for_one,
@@ -162,7 +164,7 @@ impl PyArbEngine {
                         let id =
                             core.pool_slice::<degenbot_pools::CurvePoolIdentity>(pool_ref.pool_key);
                         hops.push(HopInfo {
-                            hop_type: "Crv".to_string(),
+                            hop_type: pool_ref.hop_type.as_tag(),
                             address: id.map(|i| format!("{}", i.address)),
                             pool_id: None,
                             zero_for_one: pool_ref.zero_for_one,
@@ -438,14 +440,7 @@ fn simulated_path_result_to_py_dict<'py>(
     for s in &payload.captured_swaps {
         let sd = PyDict::new(py);
         sd.set_item("emitter", address_to_checksum(py, &s.emitter))?;
-        sd.set_item(
-            "family",
-            match s.family {
-                InlineSwapFamily::V2 => "V2",
-                InlineSwapFamily::V3 => "V3",
-                InlineSwapFamily::V4 => "V4",
-            },
-        )?;
+        sd.set_item("family", s.family.as_tag())?;
         sd.set_item("amount0", PyI256(s.amount0))?;
         sd.set_item("amount1", PyI256(s.amount1))?;
         sd.set_item("sqrt_price_x96", PyU256(s.sqrt_price_x96))?;
@@ -509,7 +504,7 @@ fn solve_result_to_py_tuple<'py>(
 /// engine's sub-states before being projected into a Python dict by
 /// [`hop_info_to_pydict`].
 struct HopInfo {
-    hop_type: String,
+    hop_type: &'static str,
     address: Option<String>,
     pool_id: Option<String>,
     zero_for_one: bool,
@@ -519,7 +514,7 @@ struct HopInfo {
 /// Build the Python dict describing a single hop for `inspect_path`.
 fn hop_info_to_pydict<'py>(py: Python<'py>, hop: &HopInfo) -> PyResult<Bound<'py, PyDict>> {
     let hop_dict = PyDict::new(py);
-    hop_dict.set_item("type", hop.hop_type.as_str())?;
+    hop_dict.set_item("type", hop.hop_type)?;
     if let Some(ref a) = hop.address {
         hop_dict.set_item("address", a)?;
     }

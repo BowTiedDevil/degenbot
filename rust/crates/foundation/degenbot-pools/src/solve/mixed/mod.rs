@@ -107,6 +107,34 @@ impl HopType {
     pub const fn is_concentrated_liquidity(&self) -> bool {
         matches!(self, Self::V3 | Self::V4)
     }
+
+    /// The registration family this hop belongs to.
+    ///
+    /// Total over both closed sets: the seven solver families are the seven
+    /// registry families, named differently by each vocabulary
+    /// (`SolidlyStable` is the math name for the reserve-pair family the
+    /// registry tags `aerodrome-v2`).
+    #[must_use]
+    pub const fn registered_family(self) -> crate::RegisteredPoolFamily {
+        use crate::RegisteredPoolFamily as Family;
+
+        match self {
+            Self::V2 => Family::V2,
+            Self::V3 => Family::V3,
+            Self::V4 => Family::V4,
+            Self::SolidlyStable => Family::AerodromeV2,
+            Self::BalancerWeighted => Family::BalancerWeighted,
+            Self::BalancerStable => Family::BalancerStable,
+            Self::CurveStableswap => Family::Curve,
+        }
+    }
+
+    /// The internal family tag this hop spells — the registry's kebab
+    /// vocabulary (`v2` … `curve`), never a second spelling of its own.
+    #[must_use]
+    pub const fn as_tag(self) -> &'static str {
+        self.registered_family().tag()
+    }
 }
 
 /// A taxonomy identity whose structure the mixed solver has no hop engine for

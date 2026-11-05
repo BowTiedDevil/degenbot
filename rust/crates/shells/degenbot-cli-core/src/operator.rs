@@ -106,11 +106,11 @@ pub const SIM_INTAKE_FLOOR_RESTORE: &str = "null";
 /// pool-family taxonomy, re-exported under its wire name.
 ///
 /// One taxonomy, one owner: the variant set, the discriminants, and the wire
-/// tags live on [`degenbot_db::PoolKind`] (re-exported from the
+/// labels live on [`degenbot_db::PoolKind`] (re-exported from the
 /// `degenbot-pathfinding` graph vocabulary this crate's DB surface already
 /// projects through). This shell adds only the operator channel's lenient
 /// parse; a family added to the canonical enum compiles here without an edit
-/// and inherits its tag, where the second enum this re-export replaced would
+/// and inherits its label, where the second enum this re-export replaced would
 /// have drifted silently.
 pub use degenbot_db::PoolKind as PathFamily;
 
@@ -130,11 +130,14 @@ pub fn path_family_from_wire(raw: &str) -> Result<PathFamily, UnknownVariant> {
     let upper = raw.to_ascii_uppercase();
     PathFamily::ALL
         .iter()
-        .find(|family| family.tag() == upper)
+        .find(|family| family.version_label() == upper)
         .copied()
         .ok_or_else(|| UnknownVariant {
             raw: raw.to_owned(),
-            known: PathFamily::ALL.iter().map(|family| family.tag()).collect(),
+            known: PathFamily::ALL
+                .iter()
+                .map(|family| family.version_label())
+                .collect(),
         })
 }
 
@@ -424,7 +427,10 @@ impl WireRequest {
 /// One wire `steps` entry (only the V4 hash key is carried, and only when set).
 fn step_json(step: &PathStep) -> Value {
     let mut object = Map::new();
-    object.insert("family".to_string(), Value::from(step.family.tag()));
+    object.insert(
+        "family".to_string(),
+        Value::from(step.family.version_label()),
+    );
     object.insert("address".to_string(), Value::from(step.address.clone()));
     if let Some(hash) = &step.hash {
         object.insert("hash".to_string(), Value::from(hash.clone()));

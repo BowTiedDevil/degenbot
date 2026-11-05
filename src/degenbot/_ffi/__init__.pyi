@@ -347,7 +347,9 @@ class ArbitrageEngine:
         Returns a dict with:
           - "`path_id"`: int
           - "hops": list of dicts, each with:
-            - "type": "V2" | "V3" | "V4"
+            - "type": the hop's internal family tag (`"v2"` / `"v3"` / `"v4"` /
+              `"aerodrome-v2"` / `"balancer-weighted"` / `"balancer-stable"` /
+              `"curve"` — `HopType::as_tag`)
             - "address": str (V2/V3 contract address, or V4 `pool_manager`)
             - "`pool_id"`: str (V4 only — the pool ID hex)
             - "`zero_for_one"`: bool
@@ -4803,16 +4805,30 @@ def keccak256(data: bytes) -> bytes:
 
 def pool_family_tags() -> list[str]:
     """
-    The canonical pool-family tags, in discriminant order — the list Python
-    derives its family sets from.
+    The canonical pool-family tags, in discriminant order — the internal kebab
+    vocabulary Python derives its family sets from.
 
-    The S12 pattern: the taxonomy has one owner (the `degenbot-pathfinding`
-    graph enum, whose exhaustive `tag` match forces every family to carry a
-    spelling), and this seam exports that list instead of Python re-declaring
-    the set. A family added to the core surfaces here on the next build; a
-    pyclass binding that does not know a discriminant fails loudly at the
-    per-value conversion (`from_core` returns `None`) rather than
-    mistranslating it.
+    One owner: `degenbot_pools::RegisteredPoolFamily::tag`. This seam exports
+    that spelling instead of Python re-declaring the set, so a Python reader of
+    an internal `family` string and a core consumer of the same string cannot
+    drift apart. The upper-case version labels the operator wire speaks are a
+    separate vocabulary, exported by [`pool_kind_labels`].
+    # Errors
+
+    `ValueError` for a core discriminant this binding cannot name a family for
+    (a stale binding meeting a newer core).
+    """
+
+def pool_kind_labels() -> list[str]:
+    """
+    The public version labels (`V2`/`V3`/`V4`), aligned index-for-index with
+    [`pool_family_tags`].
+
+    The operator wire's `family` vocabulary and the render seam's hop labels.
+    Deliberately separate from the internal kebab tag: the operator protocol is
+    versioned, so its spelling does not follow the core's internal casing.
+    Python pairs the two lists to mint its taxonomy (`PoolKind` members ↔
+    internal tags ↔ wire labels).
     """
 
 def prepare_traversal_plan(
@@ -5142,6 +5158,7 @@ __all__ = [
     "generate_v3_pool_address",
     "keccak256",
     "pool_family_tags",
+    "pool_kind_labels",
     "prepare_traversal_plan",
     "reinstall_config_holder_for_tests",
     "resolve_directions",

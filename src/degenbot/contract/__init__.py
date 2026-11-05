@@ -224,20 +224,20 @@ class Contract:
         return _encode_function_call(function_signature, list(args))
 
     @staticmethod
-    def get_function_selector(function_signature: str) -> str:
-        """Get the 4-byte function selector for a signature.
+    def get_function_selector(function_signature: str) -> bytes:
+        r"""Get the 4-byte function selector for a signature.
 
         Args:
             function_signature: Function signature like "transfer(address,uint256)"
 
         Returns:
-            4-byte selector as hex string with 0x prefix
+            The 4-byte selector as ``bytes``
 
         Example:
             >>> Contract.get_function_selector("transfer(address,uint256)")
-            '0xa9059cbb'
+            b'\xa9\x05\x9c\xbb'
             >>> Contract.get_function_selector("balanceOf(address)")
-            '0x70a08231'
+            b'p\xa0\x821'
 
         """
         return _get_function_selector(function_signature)
@@ -264,18 +264,18 @@ class Contract:
         return _decode_return_data(data, list(output_types))
 
 
-def get_function_selector(function_signature: str) -> str:
-    """Get the 4-byte function selector for a signature.
+def get_function_selector(function_signature: str) -> bytes:
+    r"""Get the 4-byte function selector for a signature.
 
     Args:
         function_signature: Function signature like "transfer(address,uint256)"
 
     Returns:
-        4-byte selector as hex string with 0x prefix
+        The 4-byte selector as ``bytes``
 
     Example:
         >>> get_function_selector("transfer(address,uint256)")
-        '0xa9059cbb'
+        b'\xa9\x05\x9c\xbb'
 
     """
     return _get_function_selector(function_signature)

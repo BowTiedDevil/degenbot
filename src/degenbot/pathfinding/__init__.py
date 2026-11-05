@@ -21,6 +21,7 @@ from degenbot._ffi import (
     find_paths_async_rust,
     find_paths_rust,
     pool_family_tags,
+    pool_kind_labels,
     prepare_traversal_plan,
     resolve_directions,
 )
@@ -28,8 +29,9 @@ from degenbot._ffi import (
 # Ordering contract: both inner modules resolve names through this
 # partially-initialized package, so the `_ffi` bindings above MUST precede
 # them, and `_kinds` MUST precede `_pathfinding`. `_kinds` takes
-# `PoolKind`/`pool_family_tags` as bound here and mints the family taxonomy
-# from the core's exported tag list rather than re-declaring it;
+# `PoolKind`/`pool_family_tags`/`pool_kind_labels` as bound here and mints the
+# family taxonomy from the core's exported tag/label lists rather than
+# re-declaring them;
 # `._pathfinding` in turn consumes the minted names. The order is also
 # isort's preferred one (first-party absolute import, then the relative
 # imports sorted), so no import-order suppression belongs on these lines.
@@ -37,7 +39,9 @@ from ._kinds import (
     ALL_POOL_KINDS,
     FAMILY_TAG_TO_POOL_KIND,
     POOL_FAMILY_TAGS,
-    POOL_KIND_TAG,
+    POOL_KIND_BY_LABEL,
+    POOL_KIND_LABEL,
+    POOL_KIND_LABELS,
 )
 from ._pathfinding import PathfindingRequest, PathStep, find_paths, find_paths_async
 
@@ -45,7 +49,9 @@ __all__ = [
     "ALL_POOL_KINDS",
     "FAMILY_TAG_TO_POOL_KIND",
     "POOL_FAMILY_TAGS",
-    "POOL_KIND_TAG",
+    "POOL_KIND_BY_LABEL",
+    "POOL_KIND_LABEL",
+    "POOL_KIND_LABELS",
     "PathGraph",
     "PathStep",
     "PathStepBuilder",
@@ -61,6 +67,7 @@ __all__ = [
     "find_paths_async_rust",
     "find_paths_rust",
     "pool_family_tags",
+    "pool_kind_labels",
     "prepare_traversal_plan",
     "resolve_directions",
 ]

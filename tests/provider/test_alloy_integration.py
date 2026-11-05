@@ -55,17 +55,17 @@ class TestContractUtilities:
 
     def test_get_function_selector_basic(self):
         """Test function selector calculation for common ERC20 functions."""
-        assert get_function_selector("transfer(address,uint256)") == "0xa9059cbb"
-        assert get_function_selector("balanceOf(address)") == "0x70a08231"
-        assert get_function_selector("totalSupply()") == "0x18160ddd"
-        assert get_function_selector("decimals()") == "0x313ce567"
+        assert get_function_selector("transfer(address,uint256)") == bytes.fromhex("a9059cbb")
+        assert get_function_selector("balanceOf(address)") == bytes.fromhex("70a08231")
+        assert get_function_selector("totalSupply()") == bytes.fromhex("18160ddd")
+        assert get_function_selector("decimals()") == bytes.fromhex("313ce567")
 
     def test_get_function_selector_with_returns(self):
         """Test function selector ignores return type declaration."""
         # Selector should be the same regardless of return type declaration
         selector_without_return = get_function_selector("balanceOf(address)")
         selector_with_return = get_function_selector("balanceOf(address) returns (uint256)")
-        assert selector_without_return == selector_with_return == "0x70a08231"
+        assert selector_without_return == selector_with_return == bytes.fromhex("70a08231")
 
     def test_encode_function_call_simple(self):
         """Test encoding function calls without arguments."""
@@ -144,7 +144,7 @@ class TestContractRustBoundary:
     def test_contract_static_methods(self):
         """Test Contract static utility methods (these don't require initialization)."""
         selector = Contract.get_function_selector("transfer(address,uint256)")
-        assert selector == "0xa9059cbb"
+        assert selector == bytes.fromhex("a9059cbb")
         data = eth_abi.encode(["uint256"], [10**18])
         decoded = Contract.decode_return_data(data, output_types=["uint256"])
         assert decoded == ["1000000000000000000"]
@@ -152,7 +152,7 @@ class TestContractRustBoundary:
     def test_module_level_functions(self):
         """Test module-level utility functions (don't require Contract instance)."""
         selector = get_function_selector("transfer(address,uint256)")
-        assert selector == "0xa9059cbb"
+        assert selector == bytes.fromhex("a9059cbb")
         calldata = encode_function_call(
             "balanceOf(address)", args=["0x742d35Cc6634C0532925a3b8D4C9db96590d6B75"]
         )

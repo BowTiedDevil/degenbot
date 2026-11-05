@@ -1485,9 +1485,9 @@ from degenbot.contract import encode_function_call, get_function_selector, decod
 -->
 
 ```python
-# Get a 4-byte function selector
+# Get a 4-byte function selector (raw bytes, like the other crypto leaves)
 selector = get_function_selector("transfer(address,uint256)")
-assert selector == "0xa9059cbb"
+assert selector == bytes.fromhex("a9059cbb")
 
 # Encode a function call (selector + encoded args)
 calldata = encode_function_call(

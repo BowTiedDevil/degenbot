@@ -154,14 +154,17 @@ impl PySolveResult {
 }
 
 /// Build a descriptor dict for one hop (`family` tag + addresses + direction).
+///
+/// The `family` value is the registry's internal kebab tag, the one spelling
+/// every internal family reader reports.
 fn hop_descriptor_to_dict<'py>(py: Python<'py>, d: &HopDescriptor) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
     dict.set_item(
         "family",
         match d.family {
-            HopFamily::V2 => "V2",
-            HopFamily::V3 => "V3",
-            HopFamily::V4 => "V4",
+            HopFamily::V2 => degenbot_pools::RegisteredPoolFamily::V2.tag(),
+            HopFamily::V3 => degenbot_pools::RegisteredPoolFamily::V3.tag(),
+            HopFamily::V4 => degenbot_pools::RegisteredPoolFamily::V4.tag(),
         },
     )?;
     dict.set_item("pool_address", d.pool_address.to_checksum(None))?;
@@ -429,7 +432,7 @@ mod tests {
             let callback = py
                 .eval(
                     c"lambda result: bytes([len(result.hop_descriptors), \
-                     result.hop_descriptors[0]['family'] == 'V2'])",
+                     result.hop_descriptors[0]['family'] == 'v2'])",
                     None,
                     None,
                 )
