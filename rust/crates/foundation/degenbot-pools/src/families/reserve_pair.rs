@@ -22,9 +22,12 @@
 //! `(gamma_numer, fee_denom)`; Aerodrome V2 volatile carries the
 //! unidirectional FEE fraction. Aerodrome V2 **stable** is the Solidly
 //! family's design (its own read arm, per the ADR-073 D6 landing order) —
-//! the central rows route a `stable` identity to that arm; this module's
-//! Aerodrome door refuses it defensively rather than mis-price it with the
-//! volatile constant-product math.
+//! the central rows route a `stable` identity to that arm, and this module's
+//! Aerodrome arm hands it through to that arm UNCHANGED. That design's math
+//! constants ride the identity itself (the unidirectional fee fraction and
+//! the construction-time decimal scales), so the hand-through is a routing
+//! decision, not a second math implementation: nothing here prices a stable
+//! swap with the volatile constant product.
 //!
 //! # The four intent doors (ADR-073 D4)
 //!
@@ -73,7 +76,9 @@ use crate::families::solidly as solidly_read;
 use crate::state::state_history::{ReorgJournal, ReservePairPoolState, V2BlockDelta};
 use crate::state::v3_state::SimulateSwapError;
 
-use super::door::{FamilyApply, Observe, Observed, ReadOutcome, SwapReadRequest, SyncEvent};
+use super::door::{
+    FamilyApply, Observe, Observed, ReadOutcome, SwapReadRefusal, SwapReadRequest, SyncEvent,
+};
 #[cfg(test)]
 use degenbot_core::fee::{fee_fraction, fee_ratio};
 
@@ -101,7 +106,8 @@ pub enum ReservePairState<'a> {
         state: &'a V2PoolState,
     },
     /// The Aerodrome V2 design slice (unidirectional fee fraction). The
-    /// volatile design — a `stable` identity is refused (see [`read_swap`]).
+    /// volatile design: a `stable` identity is the Solidly family's design and
+    /// is handed to that family's read arm (see [`read_swap`]).
     Aerodrome {
         /// The pool's immutable registration identity (fee + `stable` flag).
         identity: &'a AerodromeV2PoolIdentity,
@@ -190,14 +196,15 @@ pub fn capture_aerodrome_hop(
 ///
 /// [`SimulateSwapError::NotComputable`] on arithmetic overflow / invariant
 /// violation (mirroring the on-chain `SafeMath` revert contract), on an
-/// exact-output refusal (see [`SwapReadRequest::ExactOut`]), when an
-/// Aerodrome design carries a `stable` identity (the Solidly family's read
-/// arm owns that invariant — refusing beats mis-pricing with volatile math),
-/// and when a V2 design carries a `stable_swap` identity WITHOUT its
-/// construction-time decimal scales (the behavioral axis routes the Camelot
-/// arm at this door, and a scale-less stable identity refuses rather than
-/// guess). (The family carries no sparse-map miss — a reserve-pair slice has
-/// no tick words to miss.)
+/// exact-output refusal (see [`SwapReadRequest::ExactOut`]), and
+/// [`ReadOutcome::Refused`] naming the missing read when a V2 design carries a
+/// `stable_swap` identity WITHOUT its construction-time decimal scales (the
+/// behavioral axis routes the Camelot arm at this door, and the stable
+/// invariant cannot be evaluated in the scale-less domain — the token
+/// registry's decimals are the extra read). An Aerodrome `stable` identity is
+/// not a refusal: it is the Solidly family's design and is handed through to
+/// that family's read arm. (The family carries no sparse-map miss — a
+/// reserve-pair slice has no tick words to miss.)
 #[must_use]
 pub fn read_swap(design: ReservePairState<'_>, request: SwapReadRequest) -> ReadOutcome {
     match design {
@@ -213,7 +220,10 @@ pub fn read_swap(design: ReservePairState<'_>, request: SwapReadRequest) -> Read
             // scale, never CP math.
             if identity.stable_swap {
                 let Some((d0, d1)) = identity.token0_decimals.zip(identity.token1_decimals) else {
-                    return ReadOutcome::NotComputable;
+                    return ReadOutcome::Refused(SwapReadRefusal::MissingTokenDecimals {
+                        token0: identity.token0_decimals.is_none(),
+                        token1: identity.token1_decimals.is_none(),
+                    });
                 };
                 let decimals = (
                     U256::from(10u64).pow(U256::from(d0)),
@@ -234,9 +244,16 @@ pub fn read_swap(design: ReservePairState<'_>, request: SwapReadRequest) -> Read
             if identity.stable {
                 // The stable invariant is the Solidly family's read arm (the
                 // ADR-073 D6 landing order): the central rows route a stable
-                // identity there. Refuse rather than mis-price with the
-                // volatile constant-product math.
-                return ReadOutcome::NotComputable;
+                // identity there, and this door hands the SAME request through
+                // — the shared vocabulary needs no per-family adapter. The
+                // design's own math constants ride the identity (the
+                // unidirectional fee fraction and the construction-time
+                // decimal scales the invariant evaluates at), so the arm
+                // prices the reserve pair without an extra read.
+                return solidly_read::read_swap(
+                    solidly_read::SolidlyState::Aerodrome { identity, state },
+                    request,
+                );
             }
             ReadOutcome::simple(read_aerodrome_volatile_swap(state, identity, request))
         }
@@ -283,11 +300,14 @@ pub enum OverrideReadOutcome {
     /// The transient read computed.
     Computed(OverrideAmounts),
     /// The registered arm's typed refusal: a zero exact-output request,
-    /// overdraw against the transient reserves, a `stable` Aerodrome identity
-    /// at the volatile door, a scale-less Camelot identity, an
-    /// arithmetic/invariant overflow, an input past the `uint112` reserve
-    /// width, or a request variant this family does not answer.
+    /// overdraw against the transient reserves, an arithmetic/invariant
+    /// overflow, an input past the `uint112` reserve width, or a request
+    /// variant this family does not answer.
     NotComputable,
+    /// The registered arm's typed, NAMED refusal — the transient cannot be
+    /// priced without an input the slice does not carry (see
+    /// [`SwapReadRefusal`]).
+    Refused(SwapReadRefusal),
 }
 
 /// The override (hypothetical) read arm: the caller's reserves + the
@@ -342,8 +362,12 @@ pub fn read_swap_override(
             )
         }
     };
-    let Ok(computed) = read.amount() else {
-        return OverrideReadOutcome::NotComputable;
+    let computed = match read {
+        ReadOutcome::Amount(amount) => amount,
+        // A refusal that names its missing input keeps the name; a plain
+        // not-computable is the arithmetic refusal.
+        ReadOutcome::Refused(reason) => return OverrideReadOutcome::Refused(reason),
+        _ => return OverrideReadOutcome::NotComputable,
     };
     let (amount_in, amount_out) = if specified_is_output {
         (computed, specified_amount)
@@ -540,39 +564,63 @@ fn read_v2_swap(
 // Aerodrome V2 volatile design-private read arm (fee-fraction constant product)
 // ---------------------------------------------------------------------------
 
-/// The Aerodrome V2 volatile design's swap-read arm: the Solidly volatile
-/// (constant-product) read via `calc_exact_in_volatile`. The Aerodrome fee is
-/// a unidirectional `(fee_numer, fee_denom)` FEE fraction (taken from the
-/// input), matching `calc_exact_in_volatile`'s convention exactly. A stable
-/// identity never reaches this arm (refused at the door); an exact-output
-/// request is refused defensively — the central row answers it with its
-/// typed family gap before the door is consulted.
+/// The Aerodrome V2 volatile design's swap-read arm: both directions behind
+/// the Solidly volatile (constant-product) leaves.
+///
+/// The Aerodrome fee is a unidirectional `(fee_numer, fee_denom)` FEE
+/// fraction taken from the input, matching `calc_exact_in_volatile`'s
+/// convention exactly. The exact-output arm is that read's inverse, and it
+/// composes the door's own projection ([`capture_aerodrome_hop`] — which
+/// folds the fee fraction into the retained gamma the inverse carries) with
+/// `IntHopState::swap_exact_out`, the leaf
+/// `degenbot.aerodrome.math.calc_exact_out_v2` binds; the door therefore
+/// quotes what the companion quotes. A stable identity never reaches this arm
+/// (the door hands it to the Solidly family's arm).
 fn read_aerodrome_volatile_swap(
     state: &AerodromeV2PoolState,
     identity: &AerodromeV2PoolIdentity,
     request: SwapReadRequest,
 ) -> Result<U256, SimulateSwapError> {
-    let SwapReadRequest::ExactIn {
-        zero_for_one,
-        amount_in,
-    } = request
-    else {
-        return Err(SimulateSwapError::NotComputable);
-    };
-    // Legacy sentinel semantics, AS-IS: `getAmountOut(0) = 0`.
-    if amount_in.is_zero() {
-        return Ok(U256::ZERO);
+    match request {
+        SwapReadRequest::ExactIn {
+            zero_for_one,
+            amount_in,
+        } => {
+            // Legacy sentinel semantics, AS-IS: `getAmountOut(0) = 0`.
+            if amount_in.is_zero() {
+                return Ok(U256::ZERO);
+            }
+            let token_in: u8 = u8::from(!zero_for_one);
+            solidly::calc_exact_in_volatile(
+                amount_in,
+                token_in,
+                state.reserve0.to::<U256>(),
+                state.reserve1.to::<U256>(),
+                U256::from(identity.fee.fee_numer()),
+                U256::from(identity.fee.denominator()),
+            )
+            .map_err(|_| SimulateSwapError::NotComputable)
+        }
+        SwapReadRequest::ExactOut {
+            zero_for_one,
+            amount_out,
+        } => {
+            // The V2 arm's exact-output verdict set applies unchanged: a zero
+            // request refuses here, an overdraw refuses inside the leaf.
+            if amount_out.is_zero() {
+                return Err(SimulateSwapError::NotComputable);
+            }
+            // Project, then invert:
+            //   x = 1 + reserve_in·amount_out·fee_denom
+            //         / ((reserve_out − amount_out)·(fee_denom − fee_numer))
+            capture_aerodrome_hop(state, identity, zero_for_one)
+                .swap_exact_out(amount_out)
+                .map_err(|_| SimulateSwapError::NotComputable)
+        }
+        // A variant this family doesn't answer (the N-token pair reads, the
+        // concentrated liquidity canonical request) is a typed refusal.
+        _ => Err(SimulateSwapError::NotComputable),
     }
-    let token_in: u8 = u8::from(!zero_for_one);
-    solidly::calc_exact_in_volatile(
-        amount_in,
-        token_in,
-        state.reserve0.to::<U256>(),
-        state.reserve1.to::<U256>(),
-        U256::from(identity.fee.fee_numer()),
-        U256::from(identity.fee.denominator()),
-    )
-    .map_err(|_| SimulateSwapError::NotComputable)
 }
 
 #[cfg(test)]
@@ -930,18 +978,129 @@ mod tests {
         );
     }
 
+    // The canonical `pool_handle_aerodrome` recorded constant (the
+    // independent Python `AerodromeV2Pool` companion's cross-check) — the
+    // same constant the Solidly family's door test pins, mirrored here so the
+    // stable routing is checked against the recording rather than against the
+    // leaf the arm calls.
+    const AERO_STABLE_RESERVE: u64 = 1_000_000_000_000_000_000; // 1e18 (18dp)
+    const AERO_STABLE_AMOUNT_IN: u64 = 1_000_000_000_000_000_000; // 1e18
+    const AERO_STABLE_OUT: u64 = 753_627_265_063_405_946;
+
+    /// The recorded stable Aerodrome fixture: equal 1e18 reserves, the 0.03%
+    /// fee fraction, 18 decimals both sides.
+    fn aerodrome_stable_recording() -> (AerodromeV2PoolIdentity, AerodromeV2PoolState) {
+        let (mut identity, _) = aerodrome_fixture(true);
+        identity.fee = fee_fraction(3, 10_000);
+        let state = AerodromeV2PoolState {
+            reserve0: U112::from(AERO_STABLE_RESERVE),
+            reserve1: U112::from(AERO_STABLE_RESERVE),
+            update_block: 7,
+            state_nonce: 0,
+            journal: ReorgJournal::<V2BlockDelta>::new(8),
+        };
+        (identity, state)
+    }
+
     #[test]
-    fn aerodrome_stable_identity_is_refused_not_mis_priced() {
-        let (identity, state) = aerodrome_fixture(true);
+    fn aerodrome_stable_identity_reads_the_stable_invariant() {
+        // What: a `stable` Aerodrome identity is the Solidly family's design
+        // (ADR-073 D1) and that design's own math constants ride the
+        // identity — the unidirectional fee fraction AND the
+        // construction-time decimal scales — so the reserve-pair door hands
+        // the request through to that family's read arm and answers the
+        // recorded stable quote, never the volatile constant product.
+        let (identity, state) = aerodrome_stable_recording();
+        let design = ReservePairState::Aerodrome {
+            identity: &identity,
+            state: &state,
+        };
+        let out = match read_swap(
+            design,
+            SwapReadRequest::ExactIn {
+                zero_for_one: true,
+                amount_in: U256::from(AERO_STABLE_AMOUNT_IN),
+            },
+        ) {
+            ReadOutcome::Amount(out) => out,
+            other => panic!("the stable identity computes, got {other:?}"),
+        };
+        assert_eq!(out, U256::from(AERO_STABLE_OUT));
+
+        // The constant product on the same reserves answers a different
+        // number — the routing is load-bearing, not cosmetic.
+        let cp_out = match capture_aerodrome_hop(&state, &identity, true)
+            .swap(U256::from(AERO_STABLE_AMOUNT_IN))
+        {
+            Ok(out) => out,
+            other => panic!("CP arithmetic on the fixture fits, got {other:?}"),
+        };
+        assert_ne!(cp_out, U256::from(AERO_STABLE_OUT));
+
+        // Symmetry: equal balances and equal decimals ⇒ both directions
+        // answer the same quote (the invariant is symmetric).
+        let reverse = match read_swap(
+            design,
+            SwapReadRequest::ExactIn {
+                zero_for_one: false,
+                amount_in: U256::from(AERO_STABLE_AMOUNT_IN),
+            },
+        ) {
+            ReadOutcome::Amount(out) => out,
+            other => panic!("the stable identity computes, got {other:?}"),
+        };
+        assert_eq!(reverse, out);
+    }
+
+    #[test]
+    fn aerodrome_stable_exact_out_inverts_the_invariant() {
+        // What: the stable identity's exact-output arm — the invariant's
+        // inverse with the router's ceiling convention (the leaf the Python
+        // companion's `_leaf_tokens_in_stable` binds). The quoted input must
+        // DELIVER the request through the stable exact-in read, and must not
+        // exceed the input the exact-in fixture spends for the same output.
+        let (identity, state) = aerodrome_stable_recording();
+        let design = ReservePairState::Aerodrome {
+            identity: &identity,
+            state: &state,
+        };
+        let required = match read_swap(
+            design,
+            SwapReadRequest::ExactOut {
+                zero_for_one: true,
+                amount_out: U256::from(AERO_STABLE_OUT),
+            },
+        ) {
+            ReadOutcome::Amount(required) => required,
+            other => panic!("the stable exact-out arm computes, got {other:?}"),
+        };
+        assert!(
+            required <= U256::from(AERO_STABLE_AMOUNT_IN),
+            "{required} must not exceed the input the exact-in fixture spends"
+        );
+        let realized = match read_swap(
+            design,
+            SwapReadRequest::ExactIn {
+                zero_for_one: true,
+                amount_in: required,
+            },
+        ) {
+            ReadOutcome::Amount(out) => out,
+            other => panic!("the round trip computes, got {other:?}"),
+        };
+        assert!(
+            realized >= U256::from(AERO_STABLE_OUT),
+            "{realized} must deliver the requested {AERO_STABLE_OUT}"
+        );
+
+        // The zero request is the on-chain INSUFFICIENT_OUTPUT_AMOUNT revert
+        // class — a typed refusal, never a computed zero.
         assert_eq!(
             read_swap(
-                ReservePairState::Aerodrome {
-                    identity: &identity,
-                    state: &state,
-                },
-                SwapReadRequest::ExactIn {
+                design,
+                SwapReadRequest::ExactOut {
                     zero_for_one: true,
-                    amount_in: U256::from(1000u64),
+                    amount_out: U256::ZERO,
                 }
             ),
             ReadOutcome::NotComputable
@@ -949,17 +1108,71 @@ mod tests {
     }
 
     #[test]
-    fn aerodrome_exact_out_is_refused_defensively() {
+    fn aerodrome_volatile_exact_out_inverts_the_quoting_leaf() {
+        // What: the volatile exact-output arm — the quoting math's own
+        // inverse (`v2_swap_exact_out`, the leaf
+        // `degenbot.aerodrome.math.calc_exact_out_v2` binds):
+        //   x = 1 + reserve_in·amount_out·fee_denom
+        //         / ((reserve_out − amount_out)·(fee_denom − fee_numer))
         let (identity, state) = aerodrome_fixture(false);
+        let design = ReservePairState::Aerodrome {
+            identity: &identity,
+            state: &state,
+        };
+        let amount_out = U256::from(1_000u64);
+        let required = match read_swap(
+            design,
+            SwapReadRequest::ExactOut {
+                zero_for_one: true,
+                amount_out,
+            },
+        ) {
+            ReadOutcome::Amount(required) => required,
+            other => panic!("the volatile exact-out arm computes, got {other:?}"),
+        };
+
+        // The closed form recomputed from raw parameters (fee (3, 1000) → the
+        // retained gamma 997): an independent oracle, sharing no code path.
+        let expected = U256::from(1_000_000u64) * amount_out * U256::from(1_000u64)
+            / ((U256::from(2_000_000u64) - amount_out) * U256::from(997u64))
+            + U256::ONE;
+        assert_eq!(required, expected);
+
+        // The quoted input delivers at least the request through the deployed
+        // `getAmountOut` shape.
+        let realized = match read_swap(
+            design,
+            SwapReadRequest::ExactIn {
+                zero_for_one: true,
+                amount_in: required,
+            },
+        ) {
+            ReadOutcome::Amount(out) => out,
+            other => panic!("the round trip computes, got {other:?}"),
+        };
+        assert!(
+            realized >= amount_out,
+            "{realized} must deliver {amount_out}"
+        );
+
+        // Refusals: the zero request and an overdraw against the output
+        // reserve are the family's typed refusal, never a computed zero.
         assert_eq!(
             read_swap(
-                ReservePairState::Aerodrome {
-                    identity: &identity,
-                    state: &state,
-                },
+                design,
                 SwapReadRequest::ExactOut {
                     zero_for_one: true,
-                    amount_out: U256::from(1u64),
+                    amount_out: U256::ZERO,
+                }
+            ),
+            ReadOutcome::NotComputable
+        );
+        assert_eq!(
+            read_swap(
+                design,
+                SwapReadRequest::ExactOut {
+                    zero_for_one: true,
+                    amount_out: U256::from(2_000_000u64),
                 }
             ),
             ReadOutcome::NotComputable
@@ -1047,8 +1260,11 @@ mod tests {
     #[test]
     fn camelot_stable_identity_without_scales_refuses_at_the_door() {
         // What: a stable identity whose construction-time scales are absent
-        // (token unregistered at registration) answers the typed refusal —
-        // never a guessed scale, never CP math.
+        // (token unregistered at registration) answers the door's NAMED
+        // refusal — it names the side whose decimal count is missing, hence
+        // the extra read (the token registry's `decimals`) that closes the
+        // gap — never a guessed scale, never CP math, and never the
+        // arithmetic verdict that reads as a math failure.
         let (mut identity, state) = camelot_stable_fixture();
         identity.token0_decimals = None;
         assert_eq!(
@@ -1062,9 +1278,13 @@ mod tests {
                     amount_in: U256::from(CAM2[0]),
                 },
             ),
-            ReadOutcome::NotComputable
+            ReadOutcome::Refused(SwapReadRefusal::MissingTokenDecimals {
+                token0: true,
+                token1: false,
+            })
         );
-        // One side missing is equally refused.
+        // One side missing is equally refused, and the refusal names WHICH
+        // side.
         identity.token0_decimals = Some(6);
         identity.token1_decimals = None;
         assert_eq!(
@@ -1078,7 +1298,30 @@ mod tests {
                     amount_in: U256::from(CAM2[0]),
                 },
             ),
-            ReadOutcome::NotComputable
+            ReadOutcome::Refused(SwapReadRefusal::MissingTokenDecimals {
+                token0: false,
+                token1: true,
+            })
+        );
+        // The name survives the override arm — the hypothetical read answers
+        // the same named refusal rather than the coarser verdict.
+        assert_eq!(
+            read_swap_override(
+                ReservePairState::V2 {
+                    identity: &identity,
+                    state: &state,
+                },
+                override_reserves(CAM2[1], CAM2[2]),
+                JOURNAL_DEPTH,
+                SwapReadRequest::ExactIn {
+                    zero_for_one: true,
+                    amount_in: U256::from(CAM2[0]),
+                },
+            ),
+            OverrideReadOutcome::Refused(SwapReadRefusal::MissingTokenDecimals {
+                token0: false,
+                token1: true,
+            })
         );
     }
 
@@ -1305,7 +1548,9 @@ mod tests {
             },
         ) {
             OverrideReadOutcome::Computed(amounts) => amounts.amount_out,
-            OverrideReadOutcome::NotComputable => panic!("the override read computes"),
+            OverrideReadOutcome::NotComputable | OverrideReadOutcome::Refused(_) => {
+                panic!("the override read computes")
+            }
         };
         // The transient reserves equal the registered ones, so the override
         // read answers the registered constant exactly.
@@ -1338,24 +1583,38 @@ mod tests {
             amounts.end_reserves,
             override_reserves(1_001_000, 1_998_008)
         );
+    }
 
-        // A stable identity stays the Solidly family's: the volatile door
-        // refuses it exactly as the registered arm does.
-        let (stable_identity, stable_state) = aerodrome_fixture(true);
+    #[test]
+    fn reserve_pair_override_aerodrome_stable_reads_the_stable_invariant() {
+        // What: a `stable` Aerodrome identity read through the OVERRIDE arm
+        // keeps the behavioral routing — the CALLER's reserves go through the
+        // stable invariant (the identity's fee fraction + decimal scales),
+        // and the post-swap end reserves follow those hypothetical reserves,
+        // not the registered slice.
+        let (identity, state) = aerodrome_stable_recording();
+        let read = read_swap_override(
+            ReservePairState::Aerodrome {
+                identity: &identity,
+                state: &state,
+            },
+            override_reserves(AERO_STABLE_RESERVE, AERO_STABLE_RESERVE),
+            JOURNAL_DEPTH,
+            SwapReadRequest::ExactIn {
+                zero_for_one: true,
+                amount_in: U256::from(AERO_STABLE_AMOUNT_IN),
+            },
+        );
+        let OverrideReadOutcome::Computed(amounts) = read else {
+            panic!("the stable override read computes, got {read:?}")
+        };
+        assert_eq!(amounts.amount_out, U256::from(AERO_STABLE_OUT));
         assert_eq!(
-            read_swap_override(
-                ReservePairState::Aerodrome {
-                    identity: &stable_identity,
-                    state: &stable_state,
-                },
-                override_reserves(1_000_000, 2_000_000),
-                JOURNAL_DEPTH,
-                SwapReadRequest::ExactIn {
-                    zero_for_one: true,
-                    amount_in: U256::from(1000u64),
-                },
-            ),
-            OverrideReadOutcome::NotComputable
+            amounts.end_reserves,
+            override_reserves(
+                AERO_STABLE_RESERVE + AERO_STABLE_AMOUNT_IN,
+                AERO_STABLE_RESERVE - AERO_STABLE_OUT
+            )
         );
     }
 

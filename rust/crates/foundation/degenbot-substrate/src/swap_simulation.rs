@@ -701,7 +701,13 @@ impl BotState {
                     caveats: Caveats::default(),
                 }))
             }
-            reserve_pair::OverrideReadOutcome::NotComputable => None,
+            // The door's named refusal (the transient cannot be priced
+            // without an input the slice does not carry) and its arithmetic
+            // refusal both answer this row's coarser verdict — `None` is the
+            // override door's shape, and the reason stays reachable at the
+            // family door that named it.
+            reserve_pair::OverrideReadOutcome::NotComputable
+            | reserve_pair::OverrideReadOutcome::Refused(_) => None,
         }
     }
 
@@ -765,6 +771,7 @@ impl BotState {
                 Some(OverrideOutcome::ConcentratedLiquidity(outcome))
             }
             ReadOutcome::NotComputable
+            | ReadOutcome::Refused(_)
             | ReadOutcome::FetchFailed { .. }
             | ReadOutcome::FetchExhausted { .. } => None,
             ReadOutcome::Amount(_) | ReadOutcome::Stateless(_) | ReadOutcome::MissingWords(_) => {
@@ -1021,7 +1028,7 @@ impl BotState {
                     SwapOutcomeFamily::V4 => SwapOutcome::V4(payload),
                 })
             }
-            ReadOutcome::NotComputable => SwapRead::NotComputable,
+            ReadOutcome::NotComputable | ReadOutcome::Refused(_) => SwapRead::NotComputable,
             ReadOutcome::FetchFailed { word } => SwapRead::FetchFailed { word },
             ReadOutcome::FetchExhausted { word } => SwapRead::FetchExhausted { word },
             ReadOutcome::Amount(_) | ReadOutcome::Stateless(_) | ReadOutcome::MissingWords(_) => {

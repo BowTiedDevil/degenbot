@@ -88,19 +88,44 @@ pub enum SwapReadRequest<'a> {
     },
 }
 
+/// Why a door cannot price a request from the state slice it was handed — a
+/// refusal that NAMES the missing input, never a bare "not computable".
+///
+/// A door refuses where the slice alone cannot answer, and the alternative
+/// would be guessing a constant or pricing with another design's math. The
+/// variant names what is missing, so a caller knows which extra read closes
+/// the gap rather than reading a family-local doc to find out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwapReadRefusal {
+    /// The stable invariant evaluates in the `10**decimals`-scaled domain and
+    /// this identity carries no decimal count for the flagged side(s). The
+    /// extra read is the token registry's `decimals` for the pair's tokens —
+    /// the construction-time fact a later re-registration supplies. Never a
+    /// guessed scale.
+    MissingTokenDecimals {
+        /// Token0's decimal count is unknown.
+        token0: bool,
+        /// Token1's decimal count is unknown.
+        token1: bool,
+    },
+}
+
 /// The ONE swap-read outcome vocabulary — the family doors' verdicts, which
 /// the substrate swap-simulation row adapts onto its typed `SwapRead`
 /// contract. The simple families (reserve-pair, Solidly, balance-vector)
-/// answer [`ReadOutcome::Amount`] / [`ReadOutcome::NotComputable`]; the
-/// concentrated-liquidity tree's richer miss-recovery verdicts ride as
-/// additive variants.
+/// answer [`ReadOutcome::Amount`] / [`ReadOutcome::NotComputable`] /
+/// [`ReadOutcome::Refused`]; the concentrated-liquidity tree's richer
+/// miss-recovery verdicts ride as additive variants.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ReadOutcome {
     /// A completed simple read: the math's `U256` output.
     Amount(U256),
-    /// Arithmetic overflow / invariant violation / non-positive amount / a
-    /// typed family refusal — the simple doors' only error verdict.
+    /// Arithmetic overflow / invariant violation / non-positive amount — the
+    /// simple doors' arithmetic error verdict.
     NotComputable,
+    /// A refusal that names the input the slice cannot supply — the simple
+    /// doors' typed refusal, distinct from an arithmetic failure.
+    Refused(SwapReadRefusal),
     /// A completed concentrated liquidity read: the raw engine outcome (V3-shaped; both concentrated liquidity
     /// designs return it) + the words fetched during miss recovery, in fetch
     /// order.
@@ -146,10 +171,15 @@ impl ReadOutcome {
     /// The simple families' verdict as the stateless dispatch's `Result`
     /// contract (the inverse of [`ReadOutcome::simple`]).
     ///
+    /// A [`ReadOutcome::Refused`] folds into
+    /// [`SimulateSwapError::NotComputable`]: the stateless dispatch's error
+    /// vocabulary is one variant, and its callers branch on refusal-vs-zero,
+    /// not on why. A caller that needs the reason matches the door's own
+    /// outcome instead of collapsing it here.
+    ///
     /// # Errors
     ///
-    /// [`SimulateSwapError::NotComputable`] for the refusal verdict — the
-    /// simple doors' only error verdict.
+    /// [`SimulateSwapError::NotComputable`] for both simple refusal verdicts.
     ///
     /// # Panics
     ///
@@ -158,8 +188,8 @@ impl ReadOutcome {
     pub fn amount(self) -> Result<U256, SimulateSwapError> {
         match self {
             Self::Amount(amount) => Ok(amount),
-            Self::NotComputable => Err(SimulateSwapError::NotComputable),
-            _ => unreachable!("the simple doors answer only Amount/NotComputable"),
+            Self::NotComputable | Self::Refused(_) => Err(SimulateSwapError::NotComputable),
+            _ => unreachable!("the simple doors answer only Amount/NotComputable/Refused"),
         }
     }
 

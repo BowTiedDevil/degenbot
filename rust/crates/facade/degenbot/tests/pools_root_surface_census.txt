@@ -102,6 +102,16 @@
 # crate-private: the public doors are `Family::from_identity` and the reverse
 # `TryFrom`, which is why the count moves by the refusal alone.
 #
+# The 1084 -> 1085 review is the swap-read refusal vocabulary:
+# `SwapReadRefusal` (`families::door`) is the payload of the new
+# `ReadOutcome::Refused` verdict — a door that cannot price a request from the
+# state slice it was handed names the missing input (`MissingTokenDecimals`:
+# the token registry's decimals) instead of answering the arithmetic verdict.
+# It is a count mover rather than a re-export because the door vocabulary is
+# reached through `ReadOutcome`, the shape every family already speaks; the
+# reserve-pair and Solidly door tests and the reserve-pair override outcome
+# are its consumers.
+#
 # Regenerate: rg -n '^pub mod' rust/crates/foundation/degenbot-pools/src/lib.rs
 # plus the name count from `count_pub_items` in the gate.
 #

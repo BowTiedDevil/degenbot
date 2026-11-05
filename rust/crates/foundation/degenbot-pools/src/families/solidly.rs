@@ -229,12 +229,14 @@ pub fn capture_hop(
 ///
 /// [`SimulateSwapError::NotComputable`] on arithmetic overflow /
 /// non-convergence / invariant violation (mirroring the on-chain revert
-/// contract the math leaf ports), on an exact-output request (see
-/// [`SwapReadRequest::ExactOut`]), and when a design carries the OTHER
-/// family's identity (a volatile Aerodrome identity, or a `stable_swap =
-/// false` V2 identity — the reserve-pair family's read arm owns those
-/// invariants; refusing beats mis-pricing with the wrong math). (The family
-/// carries no sparse-map miss — a Solidly slice has no tick words to miss.)
+/// contract the math leaf ports), on an exact-output request the design has no
+/// inverse leaf for (the Camelot stable species — see
+/// `read_camelot_stable_swap`; the Aerodrome species answers both
+/// directions), and when a design carries the OTHER family's identity (a
+/// volatile Aerodrome identity, or a `stable_swap = false` V2 identity — the
+/// reserve-pair family's read arm owns those invariants; refusing beats
+/// mis-pricing with the wrong math). (The family carries no sparse-map miss —
+/// a Solidly slice has no tick words to miss.)
 #[must_use]
 pub fn read_swap(design: SolidlyState<'_>, request: SwapReadRequest) -> ReadOutcome {
     let read = match design {
@@ -277,13 +279,16 @@ pub fn observe(design: SolidlyState<'_>, probe: Observe) -> Observed {
 // Aerodrome stable design-private read arm (fee-fraction stable invariant)
 // ---------------------------------------------------------------------------
 
-/// The Aerodrome stable design's swap-read arm: the Solidly stable invariant
-/// via `calc_exact_in_stable_solidly`. The identity carries the
-/// unidirectional `(fee_numer, fee_denom)` FEE fraction and the token decimal
-/// counts; the scales are derived at the leaf's calling convention
-/// (`10**decimals`, mirroring the Python `AerodromeV2Pool` companion). A
-/// volatile identity never reaches this arm (the central rows route it to
-/// the reserve-pair family's Aerodrome door); refused defensively here.
+/// The Aerodrome stable design's swap-read arm: both directions behind the
+/// Solidly stable invariant — `calc_exact_in_stable_solidly` (the on-chain
+/// `getAmountOut`) and `calc_exact_out_stable_solidly` (its inverse, the
+/// router-side `getAmountIn`). The identity carries the design's own math
+/// constants: the unidirectional `(fee_numer, fee_denom)` FEE fraction and
+/// the token decimal counts, from which the scales are derived at the leaf's
+/// calling convention (`10**decimals`, mirroring the Python
+/// `AerodromeV2Pool` companion). A volatile identity never reaches this arm
+/// (the reserve-pair family's Aerodrome door owns it); refused defensively
+/// here.
 fn read_aerodrome_stable_swap(
     state: &AerodromeV2PoolState,
     identity: &AerodromeV2PoolIdentity,
@@ -295,30 +300,58 @@ fn read_aerodrome_stable_swap(
         // identity there. Refuse rather than mis-price with stable math.
         return Err(SimulateSwapError::NotComputable);
     }
-    let SwapReadRequest::ExactIn {
-        zero_for_one,
-        amount_in,
-    } = request
-    else {
-        return Err(SimulateSwapError::NotComputable);
-    };
-    // Legacy sentinel semantics, AS-IS: `getAmountOut(0) = 0`.
-    if amount_in.is_zero() {
-        return Ok(U256::ZERO);
-    }
-    let token_in: u8 = u8::from(!zero_for_one);
     let fee = identity.fee;
-    solidly::calc_exact_in_stable_solidly(
-        amount_in,
-        token_in,
-        state.reserve0.to::<U256>(),
-        state.reserve1.to::<U256>(),
+    let (reserves_0, reserves_1) = (state.reserve0.to::<U256>(), state.reserve1.to::<U256>());
+    let (decimals_0, decimals_1) = (
         U256::from(10u64).pow(U256::from(identity.token0_decimals)),
         U256::from(10u64).pow(U256::from(identity.token1_decimals)),
-        U256::from(fee.fee_numer()),
-        U256::from(fee.denominator()),
-    )
-    .map_err(|_| SimulateSwapError::NotComputable)
+    );
+    match request {
+        SwapReadRequest::ExactIn {
+            zero_for_one,
+            amount_in,
+        } => {
+            // Legacy sentinel semantics, AS-IS: `getAmountOut(0) = 0`.
+            if amount_in.is_zero() {
+                return Ok(U256::ZERO);
+            }
+            let token_in: u8 = u8::from(!zero_for_one);
+            solidly::calc_exact_in_stable_solidly(
+                amount_in,
+                token_in,
+                reserves_0,
+                reserves_1,
+                decimals_0,
+                decimals_1,
+                U256::from(fee.fee_numer()),
+                U256::from(fee.denominator()),
+            )
+            .map_err(|_| SimulateSwapError::NotComputable)
+        }
+        SwapReadRequest::ExactOut {
+            zero_for_one,
+            amount_out,
+        } => {
+            // The inverse's own verdict set (the on-chain
+            // INSUFFICIENT_OUTPUT_AMOUNT revert for a zero request, the
+            // overdraw refusal for a request the reserve cannot pay) is the
+            // leaf's, mapped onto the one error variant.
+            let token_in: u8 = u8::from(!zero_for_one);
+            solidly::calc_exact_out_stable_solidly(
+                amount_out,
+                token_in,
+                reserves_0,
+                reserves_1,
+                decimals_0,
+                decimals_1,
+                U256::from(fee.fee_numer()),
+                U256::from(fee.denominator()),
+            )
+            .map_err(|_| SimulateSwapError::NotComputable)
+        }
+        // A variant this family doesn't answer is a typed refusal.
+        _ => Err(SimulateSwapError::NotComputable),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +371,12 @@ fn read_aerodrome_stable_swap(
 /// resolve row routes the family's PROJECTION through [`capture_hop`]); the
 /// read arm completes the family's contract so a routed row has one door to
 /// call — the family's read story is whole even where the wiring lags.
+///
+/// Exact output stays refused for THIS species: the Camelot `k`/`get_y` pair
+/// has no inverse leaf in the math tree (`calc_exact_out_stable_solidly` is
+/// the Solidly pair's, and the companion has no Camelot tokens-in arm either),
+/// so the request is a typed refusal rather than a solve against the wrong
+/// pair.
 fn read_camelot_stable_swap(
     state: &V2PoolState,
     identity: &V2PoolIdentity,
@@ -544,17 +583,54 @@ mod tests {
     }
 
     #[test]
-    fn exact_out_is_refused_defensively() {
+    fn aerodrome_stable_exact_out_inverts_the_stable_leaf() {
+        // What: the stable exact-output arm — `calc_exact_out_stable_solidly`,
+        // the invariant's inverse (the leaf the Python companion's
+        // `_leaf_tokens_in_stable` binds). The quoted input must DELIVER the
+        // request through the stable exact-in read, and must not exceed the
+        // input the exact-in fixture spends for the same output.
         let (identity, state) = aerodrome_fixture(true);
+        let design = SolidlyState::Aerodrome {
+            identity: &identity,
+            state: &state,
+        };
+        let required = match read_swap(
+            design,
+            SwapReadRequest::ExactOut {
+                zero_for_one: true,
+                amount_out: U256::from(AERO_EXPECTED_OUT),
+            },
+        ) {
+            ReadOutcome::Amount(required) => required,
+            other => panic!("the stable exact-out arm computes, got {other:?}"),
+        };
+        assert!(
+            required <= U256::from(AERO_AMOUNT_IN),
+            "{required} must not exceed the input the exact-in fixture spends"
+        );
+        let realized = match read_swap(
+            design,
+            SwapReadRequest::ExactIn {
+                zero_for_one: true,
+                amount_in: required,
+            },
+        ) {
+            ReadOutcome::Amount(out) => out,
+            other => panic!("the round trip computes, got {other:?}"),
+        };
+        assert!(
+            realized >= U256::from(AERO_EXPECTED_OUT),
+            "{realized} must deliver the requested {AERO_EXPECTED_OUT}"
+        );
+
+        // The zero request is the on-chain INSUFFICIENT_OUTPUT_AMOUNT revert
+        // class — a typed refusal, never a computed zero.
         assert_eq!(
             read_swap(
-                SolidlyState::Aerodrome {
-                    identity: &identity,
-                    state: &state,
-                },
+                design,
                 SwapReadRequest::ExactOut {
                     zero_for_one: true,
-                    amount_out: U256::from(1u64),
+                    amount_out: U256::ZERO,
                 }
             ),
             ReadOutcome::NotComputable
