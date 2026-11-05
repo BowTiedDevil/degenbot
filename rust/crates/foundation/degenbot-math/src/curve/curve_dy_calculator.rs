@@ -29,13 +29,17 @@ use crate::curve::stableswap::{
 };
 
 // ---------------------------------------------------------------------------
-// Style enums (canonical discriminant table; see degenbot-pools/curve_strategies)
+// Style enums — the canonical discriminant tables. Each value IS the byte a
+// pool identity stores (the Python `auto()` order), so the declaration below is
+// the whole change: `degenbot-pools::sim::curve_strategies` resolves a pool
+// address to these names and the identity stores the number.
 // ---------------------------------------------------------------------------
 
 /// Which swap computation path `get_dy` uses. Mirrors `SwapStyle` (`auto()`,
 /// 1-based). `CYTOKEN` maps to the same arithmetic as `STANDARD`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SwapStyle {
+    #[default]
     Standard = 1,
     RateAdjusted = 2,
     RawBalance = 3,
@@ -69,6 +73,53 @@ impl SwapStyle {
             _ => None,
         }
     }
+}
+
+/// Which stored-rate path supplies a lending token's rate. Mirrors
+/// `LendingRateStyle` (`auto()`, 1-based).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LendingRateStyle {
+    /// No lending tokens — `rate_multipliers` are the rates.
+    #[default]
+    None = 1,
+    /// cToken exchange rate with supply-rate accrual.
+    Ctoken = 2,
+    /// yToken price per full share.
+    Ytoken = 3,
+    /// cToken and yToken combined accrual.
+    CyToken = 4,
+    /// `ankrETH` ratio (inverted).
+    Aeth = 5,
+    /// Rocket Pool exchange rate.
+    Reth = 6,
+    /// On-chain oracle bitmask.
+    Oracle = 7,
+}
+
+/// How a metapool builds its `get_dy` rate tuple. Mirrors
+/// `MetapoolRateStyle` (`auto()`, 1-based).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MetapoolRateStyle {
+    /// `(rate_multipliers[0], virtual_price)`.
+    #[default]
+    Standard = 1,
+    /// `(PRECISION, virtual_price)`.
+    PrecisionVp = 2,
+    /// `(redemption_price, virtual_price)`.
+    RedemptionVp = 3,
+}
+
+/// How a metapool walks `get_dy_underlying`. Mirrors
+/// `MetapoolUnderlyingStyle` (`auto()`, 1-based).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MetapoolUnderlyingStyle {
+    /// Rate multipliers, with the base-pool LP token carrying its virtual price.
+    #[default]
+    Standard = 1,
+    /// Redemption price for the first coin, virtual price for the second.
+    Redemption = 2,
+    /// `(PRECISION, virtual_price)` — no rate multiplier for the first coin.
+    PrecisionVp = 3,
 }
 
 /// A-ramping resolution outcome. The pool stores a fixed `a_coefficient`

@@ -74,9 +74,10 @@ fn div(a: U256, b: U256) -> Result<U256> {
 // ---------------------------------------------------------------------------
 
 /// Which D-step / D'-step variant to use. Mirrors `DVariant`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DVariant {
     /// `STANDARD` — calc_d + calc_dp.
+    #[default]
     Standard = 1,
     /// `VARIANT_ALPHA` — calc_d_variant_alpha.
     VariantAlpha = 2,
@@ -108,9 +109,10 @@ impl DVariant {
 }
 
 /// Which Y-step variant to use. Mirrors `YVariant`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum YVariant {
     /// `STANDARD` — amp WITH A_PRECISION divisor + standard c/b.
+    #[default]
     Standard = 1,
     /// `VARIANT_0` — amp WITHOUT A_PRECISION divisor.
     Variant0 = 2,
@@ -139,9 +141,10 @@ impl YVariant {
 }
 
 /// Which Y_D-step variant to use. Mirrors `YDVariant`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum YDVariant {
     /// `STANDARD`.
+    #[default]
     Standard = 1,
     /// `VARIANT_0`.
     Variant0 = 2,

@@ -48,6 +48,8 @@ Resolution: the core's `resolve_yd_variant()` (`degenbot_pools::sim::curve_strat
 
 Mainnet Curve pools differ in their swap computation path, rate source, and fee application. Each pool receives a `PoolStrategies` frozen dataclass at construction time.
 
+The numeric discriminants are declared once, in the Rust enums of `degenbot_math::curve`; the driver's `degenbot/curve/types.py` mirror writes the same numbers out explicitly (never `auto()`) and `tests/curve/test_curve_discriminant_mirror.py` pins every member, so a renumbered member fails a test instead of mis-dispatching a live pool.
+
 ### SwapStyle
 
 Identifies which computation path `get_dy()` uses for dy calculation, fee application, and rate conversion order.
@@ -100,7 +102,7 @@ Identifies which `_stored_rates_from_*()` method provides lending rates.
 | `RETH` | rETH oracle rates |
 | `ORACLE` | Oracle-based rates |
 
-Strategy resolution is done by the core's `resolve_curve_strategy_discriminants()` (`degenbot_pools::sim::curve_strategies`), which combines the address→strategy map with variant-group resolution into the seven `u8` discriminants the pool identity stores. The Python `PoolStrategies` dataclass is frozen (immutable after creation) and is rebuilt field-by-field from exactly those discriminants. No Python calculator is constructed: the core derives its math axes from the same discriminants.
+Strategy resolution is done by the core's `resolve_curve_strategy_discriminants()` (`degenbot_pools::sim::curve_strategies`), which combines the address→strategy map with variant-group resolution into the seven typed discriminants of `CurveStrategyDiscriminants` — one `degenbot_math::curve` enum per axis (`DVariant`, `YVariant`, `YDVariant`, `SwapStyle`, `LendingRateStyle`, `MetapoolRateStyle`, `MetapoolUnderlyingStyle`). Each enum declaration owns its byte value; the registration boundary (`bot_core::pool_builder`) casts every field to the `u8` the pool identity stores. The Python `PoolStrategies` dataclass is frozen (immutable after creation) and is rebuilt field-by-field from exactly those discriminants. No Python calculator is constructed: the core derives its math axes from the same discriminants.
 
 ## Crypto Pool Internals
 

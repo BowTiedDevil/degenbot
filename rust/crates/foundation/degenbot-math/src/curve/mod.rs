@@ -53,7 +53,8 @@ pub mod stableswap;
 
 pub use curve_dy_calculator::{
     calculate_dy, calculate_dy_underlying, resolve_amp, resolve_ramping_a, ARampingParams,
-    CurveBasePoolPort, CurveSwapError, DyCalculationInputs, SwapStyle,
+    CurveBasePoolPort, CurveSwapError, DyCalculationInputs, LendingRateStyle, MetapoolRateStyle,
+    MetapoolUnderlyingStyle, SwapStyle,
 };
 pub use multipliers::{derive_rate_and_precision_multipliers, PRECISION_DECIMALS};
 pub use stableswap::{

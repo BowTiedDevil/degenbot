@@ -1,9 +1,20 @@
-"""Curve-specific type definitions (swap style, metapool enums)."""
+"""Curve-specific type definitions (swap style, metapool enums).
+
+The member VALUES below are discriminants a pool identity stores — a contract
+shared with the Rust core, not a local choice. The core owns them: each enum
+mirrors the Rust declaration of the same name in ``degenbot_math::curve``
+(``DVariant`` / ``YVariant`` / ``YDVariant`` in its ``stableswap`` module, the
+rest in ``curve_dy_calculator``), and
+``degenbot_pools::sim::curve_strategies`` resolves a pool address onto those
+discriminants. The numbers are written out instead of left to ``auto()`` so an
+insertion cannot silently renumber a deployed pool's strategy;
+``tests/curve/test_curve_discriminant_mirror.py`` pins every member.
+"""
 
 from __future__ import annotations
 
 import dataclasses
-from enum import Enum, auto
+from enum import Enum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from degenbot.types.abstract import AbstractPoolState
@@ -32,12 +43,12 @@ class DVariant(Enum):
     - Group 3: standard d + variant_alpha dp
     """
 
-    STANDARD = auto()  # calc_d + calc_dp
-    VARIANT_ALPHA = auto()  # calc_d_variant_alpha + calc_dp
-    VARIANT_ALPHA_DP_ALPHA = auto()  # calc_d_variant_alpha + calc_dp_variant_alpha
-    VARIANT_DP_ALPHA = auto()  # calc_d + calc_dp_variant_alpha
-    VARIANT_BETA_DP = auto()  # calc_d + calc_dp_variant_beta
-    VARIANT_GAMMA_DP = auto()  # calc_d + calc_dp_variant_gamma
+    STANDARD = 1  # calc_d + calc_dp
+    VARIANT_ALPHA = 2  # calc_d_variant_alpha + calc_dp
+    VARIANT_ALPHA_DP_ALPHA = 3  # calc_d_variant_alpha + calc_dp_variant_alpha
+    VARIANT_DP_ALPHA = 4  # calc_d + calc_dp_variant_alpha
+    VARIANT_BETA_DP = 5  # calc_d + calc_dp_variant_beta
+    VARIANT_GAMMA_DP = 6  # calc_d + calc_dp_variant_gamma
 
 
 class YVariant(Enum):
@@ -49,16 +60,16 @@ class YVariant(Enum):
     combinations, yielding these variants:
     """
 
-    STANDARD = auto()  # amp WITH A_PRECISION divisor + standard c/b
-    VARIANT_0 = auto()  # amp WITHOUT A_PRECISION divisor + standard c/b
-    VARIANT_1 = auto()  # amp WITHOUT A_PRECISION divisor + c/b without A_PRECISION
+    STANDARD = 1  # amp WITH A_PRECISION divisor + standard c/b
+    VARIANT_0 = 2  # amp WITHOUT A_PRECISION divisor + standard c/b
+    VARIANT_1 = 3  # amp WITHOUT A_PRECISION divisor + c/b without A_PRECISION
 
 
 class YDVariant(Enum):
     """Which Y_D-calculation formula to use in _get_y_d."""
 
-    STANDARD = auto()
-    VARIANT_0 = auto()  # A_PRECISION in b/c formulas
+    STANDARD = 1
+    VARIANT_0 = 2  # A_PRECISION in b/c formulas
 
 
 class SwapStyle(Enum):
@@ -75,33 +86,33 @@ class SwapStyle(Enum):
     - What balances are used (pool state, live minus admin, raw)
     """
 
-    STANDARD = auto()  # dy = xp[j] - y - 1, fee, then rate convert
-    RATE_ADJUSTED = auto()  # dy = (xp[j] - y - 1) * PRECISION // rates[j], fee on converted dy
-    RAW_BALANCE = auto()  # raw balances, no rate conversion, direct fee
-    CRYPTO = auto()  # Newton's method, dynamic fee
-    LIVE_ADMIN = auto()  # live balances minus admin, dy = xp[j] - y - 1, fee, rate convert
-    LIVE_ADMIN_DYNAMIC = auto()  # live balances minus admin, dynamic offpeg fee
-    LIVE_ADMIN_DYNAMIC_PRECISION = auto()  # live-admin + precision multipliers + dynamic offpeg fee
-    LIVE_ADMIN_ORACLE = auto()  # live-admin + oracle rates, dy = xp[j] - y - 1
-    NO_ONE_FEE_RATE = auto()  # dy = xp[j] - y (no -1), fee, rate convert
-    CYTOKEN = auto()  # dy = xp[j] - y - 1, then (dy-fee)*PRECISION//rates[j]
-    RATE_ADJUSTED_NO_ONE = auto()  # dy = (xp[j]-y)*PRECISION//rates[j], fee on converted dy
+    STANDARD = 1  # dy = xp[j] - y - 1, fee, then rate convert
+    RATE_ADJUSTED = 2  # dy = (xp[j] - y - 1) * PRECISION // rates[j], fee on converted dy
+    RAW_BALANCE = 3  # raw balances, no rate conversion, direct fee
+    CRYPTO = 4  # Newton's method, dynamic fee
+    LIVE_ADMIN = 5  # live balances minus admin, dy = xp[j] - y - 1, fee, rate convert
+    LIVE_ADMIN_DYNAMIC = 6  # live balances minus admin, dynamic offpeg fee
+    LIVE_ADMIN_DYNAMIC_PRECISION = 7  # live-admin + precision multipliers + dynamic offpeg fee
+    LIVE_ADMIN_ORACLE = 8  # live-admin + oracle rates, dy = xp[j] - y - 1
+    NO_ONE_FEE_RATE = 9  # dy = xp[j] - y (no -1), fee, rate convert
+    CYTOKEN = 10  # dy = xp[j] - y - 1, then (dy-fee)*PRECISION//rates[j]
+    RATE_ADJUSTED_NO_ONE = 11  # dy = (xp[j]-y)*PRECISION//rates[j], fee on converted dy
 
 
 class MetapoolRateStyle(Enum):
     """Which rates to use for the metapool branch in get_dy."""
 
-    STANDARD = auto()  # (rate_multipliers[0], virtual_price)
-    PRECISION_VP = auto()  # (PRECISION, virtual_price)
-    REDEMPTION_VP = auto()  # (redemption_price, virtual_price)
+    STANDARD = 1  # (rate_multipliers[0], virtual_price)
+    PRECISION_VP = 2  # (PRECISION, virtual_price)
+    REDEMPTION_VP = 3  # (redemption_price, virtual_price)
 
 
 class MetapoolUnderlyingStyle(Enum):
     """Which computation path to use in _get_dy_underlying."""
 
-    STANDARD = auto()  # rate_multipliers with VP for base pool LP token
-    REDEMPTION = auto()  # redemption_price for first coin, VP for second
-    PRECISION_VP = auto()  # (PRECISION, virtual_price) — no rate multiplier for first coin
+    STANDARD = 1  # rate_multipliers with VP for base pool LP token
+    REDEMPTION = 2  # redemption_price for first coin, VP for second
+    PRECISION_VP = 3  # (PRECISION, virtual_price) — no rate multiplier for first coin
 
 
 class LendingRateStyle(Enum):
@@ -111,13 +122,13 @@ class LendingRateStyle(Enum):
     via CurveDataProvider.lending_rates().
     """
 
-    NONE = auto()  # No lending tokens — use rate_multipliers directly
-    CTOKEN = auto()  # Exchange rate with supply rate accrual
-    YTOKEN = auto()  # Price per full share
-    CYTOKEN = auto()  # cToken + yToken combined accrual
-    AETH = auto()  # Lido aETH ratio inversion
-    RETH = auto()  # Rocket Pool exchange rate
-    ORACLE = auto()  # On-chain oracle bitmask
+    NONE = 1  # No lending tokens — use rate_multipliers directly
+    CTOKEN = 2  # Exchange rate with supply rate accrual
+    YTOKEN = 3  # Price per full share
+    CYTOKEN = 4  # cToken + yToken combined accrual
+    AETH = 5  # Lido aETH ratio inversion
+    RETH = 6  # Rocket Pool exchange rate
+    ORACLE = 7  # On-chain oracle bitmask
 
 
 @runtime_checkable
