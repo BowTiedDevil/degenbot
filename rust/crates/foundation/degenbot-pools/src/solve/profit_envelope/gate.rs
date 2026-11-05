@@ -20,6 +20,15 @@ use super::kernel::{
 /// bounding the line count across chained hops. `upper` is the envelope
 /// domain endpoint: a candidate dominated at both 0 and `upper` never
 /// matters for any input in [0, upper] (two affine lines cross once).
+///
+/// Single-prune contract: each caller prunes one composed set ONCE and
+/// consumes the survivors; the returned set's pointwise min is the input's
+/// (`prune_matches_frozen_reference_on_randomized_sets` pins it). Re-pruning
+/// is deliberately NOT byte-idempotent — the stable stage-1 `idx` tiebreak
+/// plus the ceil fuzz can reseat equal-valued survivors into a different
+/// order — and nothing may assume it: a loop that prunes to a fixpoint would
+/// change bytes for no bound tightness, so the composition prunes exactly
+/// once per hop boundary and feeds the result forward.
 #[expect(clippy::too_many_lines)]
 pub(crate) fn prune(lines: &mut Vec<Line>, upper: U256, stats: &mut GateStats) {
     struct S1Key {

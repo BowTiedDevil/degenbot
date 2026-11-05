@@ -961,19 +961,19 @@ fn hull_pieces(lines: &[Line]) -> Vec<(I512, Line, usize)> {
 }
 
 /// Frozen legacy boundary chain: hop prune -> ALL-pairs product ->
-/// prune -> reduce -> sample.
+/// prune -> reduce -> sample. The differential reference the merged
+/// composition must reproduce (modulo the documented `DomainOverflow`
+/// skip-relaxation).
 ///
-/// KEEP-IN-SYNC with the production sequence in
-/// `path_profit_bound_inner` (hop prune at the loop head, product,
-/// prune, reduce, sample in the per-boundary tail): this is a hand
-/// copy so the merge can be differentially pinned; golden dual-run
-/// asserting reference == production on captures is the fast-follow
-/// guard against silent fork. Byte-for-byte the production sequence
-/// with the prefix cache and telemetry elided; the merge
-/// implementation must reproduce this output exactly (modulo the
-/// documented `DomainOverflow` skip-relaxation). `cap` is passed
-/// explicitly (production: `sampled_compose_lines()`) so tests can
-/// pin it smaller and exercise the sampling path deterministically.
+/// The loop-head hop prune is kept here and nowhere else: it is an exact-hull
+/// no-op (a pruned line set has the same pointwise min as its input) that only
+/// keeps this reference's all-pairs product small, while production composes a
+/// hop's raw lines with its single per-boundary prune
+/// (`compose_envelopes_exact`). A hand copy with the prefix cache and telemetry
+/// elided is what makes the differential legible: the reference stays frozen
+/// as the legacy behavior, and the merge is pinned against it. `cap` is passed
+/// explicitly (production: `sampled_compose_lines()`) so tests can pin it
+/// smaller and exercise the sampling path deterministically.
 fn compose_boundary_reference(
     hop_lines: &[Line],
     chain: &[Line],
@@ -1192,67 +1192,6 @@ mod tests {
                     assert_eq!(merged_err, reference_err, "seed {seed}");
                 }
             }
-        }
-    }
-
-    /// M2 DIAGNOSTIC (reviewer discovery, 2026-09-03): prune is NOT
-    /// byte-idempotent under its stable stage-1 idx tiebreaks + ceil
-    /// fuzz — a handful of seeds re-prune into a different survivor
-    /// ordering. Production is SINGLE-prune (the loop-head prune was
-    /// removed in the same pass as this finding), matching the
-    /// differential configuration exactly, so the divergence window is
-    /// closed. Ignored so CI stays green; re-check deliberately if
-    /// prune usage ever changes.
-    #[test]
-    #[ignore = "prune not byte-idempotent (M2); production is single-prune"]
-    fn prune_is_idempotent_on_randomized_sets() {
-        for seed in 0..256u64 {
-            let mut lcg = seed | (seed << 32) | 1;
-            let rand_nxt = |lcg: &mut u64| {
-                *lcg = lcg
-                    .wrapping_mul(6_364_136_223_846_793_005)
-                    .wrapping_add(1_442_695_040_888_963_407);
-                *lcg
-            };
-            let n = (rand_nxt(&mut lcg) % 40) as usize + 2;
-            let mk = |lcg: &mut u64| -> Line {
-                let nxt = |cur: &mut u64| -> u64 {
-                    *cur = cur
-                        .wrapping_mul(6_364_136_223_846_793_005)
-                        .wrapping_add(1_442_695_040_888_963_407);
-                    *cur
-                };
-                let v = |cur: &mut u64, bits: u32| -> I512 {
-                    let mut x = I512::from_raw(U512::from(nxt(cur)));
-                    let shift = u32::try_from(nxt(cur) % (u64::from(bits) + 1)).unwrap_or(0);
-                    x <<= shift;
-                    if nxt(cur).is_multiple_of(3) {
-                        -x
-                    } else {
-                        x
-                    }
-                };
-                let c = I512::from_raw(U512::from(nxt(lcg) % 15 + 1));
-                let b = I512::from_raw(U512::from(nxt(lcg) % 7));
-                Line {
-                    a: v(lcg, 40),
-                    b,
-                    c,
-                }
-            };
-            let lines: Vec<Line> = (0..n).map(|_| mk(&mut lcg)).collect();
-            let upper = U256::from(1_000u64) << 190;
-            let once = {
-                let mut s = lines.clone();
-                prune(&mut s, upper);
-                s
-            };
-            let twice = {
-                let mut s = once.clone();
-                prune(&mut s, upper);
-                s
-            };
-            assert_eq!(twice, once, "seed {seed}: prune not idempotent");
         }
     }
 

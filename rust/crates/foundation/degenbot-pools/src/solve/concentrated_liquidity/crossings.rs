@@ -323,7 +323,8 @@ pub fn build_concentrated_liquidity_crossing_table(
 
 /// Cache-less dense-range profiles for a concentrated liquidity sequence (offline replays and the
 /// direct `solve_concentrated_liquidity_piecewise` path, which build per call). Result is parallel to
-/// `seq.ranges` (`None` for ranges below `WORD_PROFILE_THRESHOLD`).
+/// `seq.ranges`: `Some` for every ending range that carries word-boundary prices (a hop whose
+/// `liquidity` is zero or whose range spans no word boundary gets `None`).
 #[must_use]
 pub fn build_concentrated_liquidity_word_profiles(
     seq: &IntV3TickRangeSequence,

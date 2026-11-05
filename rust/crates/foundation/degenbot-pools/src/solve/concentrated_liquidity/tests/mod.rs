@@ -3666,79 +3666,123 @@ fn single_piece_hop1_binding_kink_is_not_dropped() {
     );
 }
 
-/// Q3 SYNTHETIC dense guard (gated OFF CI — a stopgap until a real dense
-/// capture from one of the ~27 current-tick-in-gap pools replaces it; the
-/// DB audit shows dense is real + live). A path whose hop0 carries a
-/// 300-word-boundary DENSE range takes the
-/// word-profile path (WORD_PROFILE_THRESHOLD=128). This pins that (a) the
-/// solver's landed profit stays >= a fine-grid oracle (never under-shoots on
-/// a dense path) and (b) the ±64-wei direction-test straddle near the
-/// optimum agrees with the fine oracle's local slope. Replace with a real
-/// dense capture the moment the telemetry hook observes one.
-#[test]
-// Gated OFF CI — synthetic dense guard; run manually with --ignored.
-#[ignore = "synthetic stopgap until a real dense capture replaces it (see doc comment)"]
-fn dense_edge_direction_guard_synthetic() {
-    let mut seq0 = multi_range_sequence(750, 4, true, &[1_000_000_000_000_000u128]);
-    {
-        let r = &mut seq0.ranges[0];
-        let entry = r.sqrt_price_x96;
-        let lower = r.sqrt_price_lower_x96;
-        let span = entry - lower;
-        let n = 300u128;
-        r.word_boundary_prices = (1..=n)
-            .map(|i| entry - span * U256::from(i) / U256::from(n + 1))
-            .collect();
-        assert!(
-            r.word_boundary_prices.len() >= 128,
-            "synthetic cell must be dense (>= 128 boundaries)"
-        );
+/// Fine-grid profit oracle: one coarse 128-step scan over `[0, hi]`, then six
+/// refinement rounds that re-scan ±1 step around the running peak at 1/512
+/// resolution (~700 wei by the last round). A dense range is orders of
+/// magnitude wider than its profitable region, so one fixed grid cannot
+/// resolve the optimum.
+fn fine_grid_profit_oracle(profit_at: &impl Fn(U256) -> U256, hi: U256) -> U256 {
+    let mut oracle_profit = U256::ZERO;
+    let (mut lo_x, mut hi_x) = (U256::ZERO, hi);
+    let mut step = hi / U256::from(128u64) + U256::from(1);
+    for _ in 0..6u32 {
+        let (mut peak_x, mut peak_v) = (U256::ZERO, U256::ZERO);
+        let mut x = lo_x;
+        while x <= hi_x {
+            let v = profit_at(x);
+            if v > peak_v {
+                peak_v = v;
+                peak_x = x;
+            }
+            x = x.saturating_add(step);
+        }
+        if peak_v > oracle_profit {
+            oracle_profit = peak_v;
+        }
+        lo_x = peak_x.saturating_sub(step);
+        hi_x = peak_x.saturating_add(step);
+        step = step / U256::from(512u64) + U256::from(1);
     }
-    // 2-range partner -> multi-piece, so the walk runs the ±64 direction
-    // test (single-piece paths take the F1 terminal branch instead).
-    let seq1 = multi_range_sequence(
-        0,
-        1200,
-        false,
-        &[10_000_000_000_000u128, 10_000_000_000_000u128],
+    oracle_profit
+}
+
+/// Captured mainnet state: Uniswap V3 pool `0x1f87…f5320` (fee 100 pips, tick
+/// spacing 1) at block 26_350_149 holds its whole liquidity in one position
+/// `[-115136, 115135)`, and the current tick (-18132) sits 378 empty bitmap
+/// words above the position's lower edge. The zfo walk collapses those word
+/// boundaries into range 0's interior, so hop0's landing range is priced
+/// through a 378-boundary forward word profile — a real dense range, derived
+/// from the captured tick map. hop1 is a constructed two-range partner that
+/// makes the path multi-piece (the ±64 direction test runs only there); the
+/// optimum lands in hop1's second range while hop0 stays inside its dense one.
+///
+/// Pins that over that dense range (a) the solver's landed profit stays
+/// within the profit-ε contract of a fine-grid forward-path oracle — the
+/// active-set search does not under-shoot the forward walk — and (b) the
+/// ±64-wei direction-test straddle near the optimum agrees with the fine
+/// oracle's local slope.
+#[test]
+fn dense_edge_direction_guard_on_captured_pool() {
+    use crate::families::concentrated_liquidity::state_fixture::ClStateFixture;
+    use crate::state::v3_state::V3PoolState;
+    use alloy::primitives::U128;
+
+    // Captured pool state, verbatim from the node at block 26_350_149
+    // (hash 0x165edede…5857): slot0.sqrtPriceX96, slot0.tick, liquidity(),
+    // and the pool's only two initialized ticks (`ticks(int24)`), whose
+    // liquidity_net opens and closes the single position.
+    const CAPTURE_BLOCK: u64 = 26_350_149;
+    const TICK_SPACING: i32 = 1;
+    const FEE_PIPS: u32 = 100;
+    const SQRT_PRICE_X96: u128 = 32_002_374_342_613_074_021_679_741_484;
+    const CURRENT_TICK: i32 = -18_132;
+    const LIQUIDITY: u128 = 10_031_723_111_361_052;
+    let gross = U128::from(LIQUIDITY);
+    let net = LIQUIDITY.cast_signed();
+    let mut tick_data = hashbrown::HashMap::new();
+    tick_data.insert(
+        -115_136,
+        crate::TickInfo {
+            liquidity_gross: gross,
+            liquidity_net: net,
+            block: CAPTURE_BLOCK,
+        },
     );
-    let hops = [
-        concentrated_liquidity_walk_hop(&seq0, None),
-        concentrated_liquidity_walk_hop(&seq1, None),
-    ];
+    tick_data.insert(
+        115_135,
+        crate::TickInfo {
+            liquidity_gross: gross,
+            liquidity_net: -net,
+            block: CAPTURE_BLOCK,
+        },
+    );
+    // The sequence comes from the production walk over the captured tick map.
+    let mut state = V3PoolState::with_position(LIQUIDITY);
+    state.replace_tick_data(tick_data, CAPTURE_BLOCK, TICK_SPACING);
+    state.set_tick(CURRENT_TICK);
+    state.set_sqrt_price(U256::from(SQRT_PRICE_X96));
+    let seq0 = state
+        .build_int_sequence(TICK_SPACING, FEE_PIPS, true)
+        .expect("captured pool must yield a zfo tick-range sequence");
+    // (114944 - 18176) / 256 + 1 collapsed boundaries between the current
+    // tick and the position's near edge: a genuine multi-word dense run.
+    assert_eq!(
+        seq0.ranges[0].word_boundary_prices.len(),
+        378,
+        "captured range 0 must carry the dense interior word-boundary run"
+    );
+
+    let dense_crossings = build_concentrated_liquidity_crossing_table(&seq0);
+    assert!(
+        build_concentrated_liquidity_word_profiles_from_crossings(&dense_crossings)[0].is_some(),
+        "captured dense range 0 must take the forward word-profile path"
+    );
+    let hop0 = concentrated_liquidity_walk_hop(&seq0, None);
+    // Partner: ofz at ~8% below hop0's price so the round trip is profitable,
+    // and narrow enough that the optimum crosses its first range.
+    let seq1 = multi_range_sequence(-19_000, 300, false, &[10_000_000_000_000u128; 2]);
+    let hops = [hop0, concentrated_liquidity_walk_hop(&seq1, None)];
     let o = |x: U256| simulate_walk_path(x, &hops, &mut WalkTally::default()).final_output;
     let p = |x: U256| o(x).checked_sub(x).unwrap_or(U256::ZERO);
 
-    // Fine-grid oracle: coarse 128-step scan over [0, hi], then a fine
-    // 4k-wei sweep around the coarse peak.
     let hi = seq0.ranges[0]
         .max_gross_input_in_range()
         .saturating_add(U256::from(1));
-    let coarse = hi / U256::from(128) + U256::from(1);
-    let (mut peak_x, mut peak_v) = (U256::ZERO, U256::ZERO);
-    let mut x = U256::ZERO;
-    while x < hi {
-        let v = p(x);
-        if v > peak_v {
-            peak_v = v;
-            peak_x = x;
-        }
-        x = x.saturating_add(coarse);
-    }
-    let lo = peak_x.saturating_sub(U256::from(1_000_000));
-    let hi2 = peak_x
-        .saturating_add(U256::from(1_000_000))
-        .saturating_add(U256::from(1));
-    let step = U256::from(4000);
-    let mut oracle_profit = peak_v;
-    x = lo;
-    while x < hi2 {
-        let v = p(x);
-        if v > oracle_profit {
-            oracle_profit = v;
-        }
-        x = x.saturating_add(step);
-    }
+    let oracle_profit = fine_grid_profit_oracle(&p, hi);
+    assert!(
+        oracle_profit > U256::from(1_000_000u64),
+        "oracle sanity: the captured dense cell must be substantially profitable (got {oracle_profit})"
+    );
 
     let eps = U256::from(REFINE_BRACKET_WEI);
     let Some(solution) = derive_and_solve_concentrated_liquidity_piecewise(
@@ -3747,24 +3791,26 @@ fn dense_edge_direction_guard_synthetic() {
     )
     .result
     else {
-        panic!("solver=None on a dense path while the fine oracle is {oracle_profit}");
+        panic!("solver=None on the captured dense path while the fine oracle is {oracle_profit}");
     };
     let xr = solution.optimal_input;
     let profit = solution.profit;
+
     assert!(
         profit >= oracle_profit.saturating_sub(eps),
-        "dense path under-shoot: solver {profit} < fine oracle {oracle_profit} - eps {eps}"
+        "dense path under-shoot: solver {profit} < fine oracle {oracle_profit} - eps {eps} (x*={xr})"
     );
 
-    // ±64 direction-test straddle at the optimum agrees with the fine
-    // oracle's local slope (the Q3 mechanism).
+    // The ±64 direction-test straddle at the optimum agrees with the fine
+    // oracle's local slope: the solver's climb/stop decision on a dense edge
+    // is not torn by the per-boundary rounding staircase.
     let back = xr.saturating_sub(U256::from(64));
     let fwd = xr.saturating_add(U256::from(64));
     let sb = walk_profit_score(o(back), back);
     let sf = walk_profit_score(o(fwd), fwd);
     let straddle_climbing = sf + I256::ONE >= sb;
-    // Fine-oracle truth: profit should be flat-to-falling at/just past the
-    // optimum, so it must agree that the edge is not climbing.
+    // Fine-oracle truth: profit is flat-to-falling at/just past the optimum,
+    // so it must agree that the edge is not climbing.
     let oracle_rising = p(xr.saturating_add(U256::from(258))) >= profit;
     assert_eq!(
         straddle_climbing, oracle_rising,
