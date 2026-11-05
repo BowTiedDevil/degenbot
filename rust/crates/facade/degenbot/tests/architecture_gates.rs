@@ -1864,6 +1864,9 @@ fn param_types_of(text: &str, function: &str) -> Vec<String> {
 /// once, every home path must resolve against the module tree, every umbrella
 /// alias must land on a catalogged crate, and the console rows must carry the
 /// consumer (v) task.
+///
+/// live-invariant gate (ADR-087 D2): watches the live capability catalog
+/// against the crates and door items it names; not tripwire precedent.
 #[test]
 fn capability_catalog_covers_every_public_crate() {
     let catalog_path = repo_root().join("docs/capabilities.md");
@@ -1964,6 +1967,19 @@ fn backtick_spans(s: &str) -> Vec<String> {
         .collect()
 }
 
+/// Whether a backticked span names a Rust item path (`WorkerRole`,
+/// `sim::registry::PoolEntry`) rather than describing the door
+/// (`pub(crate)`, `config show --resolved`, `solve_door_census.txt`).
+fn is_item_path(token: &str) -> bool {
+    token.split("::").all(|segment| {
+        let mut chars = segment.chars();
+        chars
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
+
 /// Every segment of `modules` must be a declared `pub mod` or a real file
 /// under `src` — the catalog may not name a path that does not compile.
 fn resolve_module_path(src: &Path, modules: &[&str], token: &str) {
@@ -1986,9 +2002,14 @@ fn resolve_module_path(src: &Path, modules: &[&str], token: &str) {
 
 /// Every door item the catalog names resolves to real code (ADR-084 D1's
 /// "every entry resolves to real code (gate-checked)" — the homes are checked
-/// by the caller; the door-items column is checked here). A door item is
-/// either a qualified path (`sim::registry::PoolEntry`) or a bare item name
-/// (`WorkerRole`) that must be declared somewhere in the named crate.
+/// by the caller; the door-items column is checked here). A door item is a
+/// backticked identifier path of any case — a qualified path
+/// (`degenbot_pools::sim::registration_refusal::SpecRefusal` resolves against
+/// the crate it names, `sim::registry::PoolEntry` against the row's home) or a
+/// bare item name (`WorkerRole`, `build_v2`) — and must be declared somewhere
+/// in the crate it resolves against. A backticked span that is not an
+/// identifier path (`pub(crate)`, `config show --resolved`) describes the door
+/// rather than naming an item.
 fn assert_catalog_door_items_resolve(
     rows: &[Vec<String>],
     manifest_of: &std::collections::BTreeMap<String, String>,
@@ -2006,22 +2027,21 @@ fn assert_catalog_door_items_resolve(
             })
             .collect();
         for token in backtick_spans(&row[3]) {
-            if !token
-                .chars()
-                .next()
-                .is_some_and(|first| first.is_ascii_uppercase())
-            {
+            if !is_item_path(&token) {
                 continue;
             }
-            // A qualified path (`degenbot_pools::sim::registry::PoolEntry`)
-            // resolves against the crate it names; a bare name resolves
-            // against the row's home crate(s).
-            let target_crates: Vec<String> = if token.contains("::") {
-                vec![token
-                    .split("::")
-                    .next()
-                    .expect("crate token")
-                    .replace('_', "-")]
+            // The token's first segment decides the crate: when it names a
+            // workspace crate (`degenbot_pools::sim::...::SpecRefusal`) the
+            // item resolves against that crate; otherwise the token is
+            // crate-relative (`sim::registry::PoolEntry`) or bare
+            // (`WorkerRole`) and resolves against the row's home crate(s).
+            let named_crate = token
+                .split("::")
+                .next()
+                .expect("crate token")
+                .replace('_', "-");
+            let target_crates: Vec<String> = if manifest_of.contains_key(&named_crate) {
+                vec![named_crate]
             } else {
                 home_crates.clone()
             };
@@ -2037,17 +2057,19 @@ fn assert_catalog_door_items_resolve(
             });
             assert!(
                 resolved,
-                "catalog door item {token:?} does not resolve to a declared pub item                  in any home crate {home_crates:?} (row {:?})",
+                "catalog door item {token:?} does not resolve to a declared pub item \
+                 in any of {target_crates:?} (row {:?})",
                 row[0]
             );
         }
     }
 }
 
-/// A door item resolves when the named crate declares it: a qualified path
-/// (`sim::registry::PoolEntry`) resolves each segment as a module path and the
-/// last as a declared item; a bare name (`WorkerRole`) is a declared
-/// `pub fn/struct/enum/trait/type/const` anywhere under the crate's `src/`.
+/// A door item resolves when the crate it resolves against declares its item
+/// segment — the last `::` segment, or the whole bare name: a visible
+/// declaration (`pub fn`, `pub async fn`, `pub const fn`, `pub unsafe fn`,
+/// `pub struct`, `pub enum`, `pub trait`, `pub type`, `pub const`, `pub mod`)
+/// anywhere under the crate's `src/`, or a `pub use` re-export of the name.
 fn resolve_door_item(src: &Path, token: &str) -> bool {
     let item = token.rsplit("::").next().expect("item segment");
     let declared = |text: &str| {
@@ -2061,11 +2083,15 @@ fn resolve_door_item(src: &Path, token: &str) -> bool {
             }
             [
                 "pub fn ",
+                "pub async fn ",
+                "pub const fn ",
+                "pub unsafe fn ",
                 "pub struct ",
                 "pub enum ",
                 "pub trait ",
                 "pub type ",
                 "pub const ",
+                "pub mod ",
             ]
             .iter()
             .any(|kw| {
