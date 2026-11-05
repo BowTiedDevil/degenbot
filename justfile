@@ -911,7 +911,7 @@ test-flake-probe-rust: check-toolchain
     runs=5
     probe_tests=(
         'arb_engine::crawl::controller::tests::a_fatal_unit_aborts_the_crawl_loudly_after_the_drain'
-        'arb_engine::crawl::controller::tests::the_window_bounds_the_outstanding_units_and_every_receipt_folds'
+        'arb_engine::crawl::controller::tests::the_window_fills_by_submission_and_every_receipt_folds_in_order'
         'arb_engine::driver::tests::a_stop_latches_the_crawl_and_joins_its_run_within_the_grace'
     )
     python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"

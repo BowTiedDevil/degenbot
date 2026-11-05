@@ -286,12 +286,20 @@ fn abort_rpc() -> FakeRpc {
 /// that never reaches the edge names itself instead of parking the test worker.
 const FIXTURE_GUARD: Duration = Duration::from_secs(30);
 
-/// The seat's counters: how many units were handed out, how many are running, and
-/// the high-water mark (the window's own witness).
+/// The seat's two counters: how many units were handed out, and how many seat
+/// tasks are still alive.
+///
+/// `outstanding` counts a TASK's life, not a submission: a unit's future
+/// publishes its receipt from inside itself and the seat's task counts out only
+/// after that future returns, so the loop may admit the next unit inside that
+/// gap. It is the gauge for "no seat task is still running", never the window's
+/// bound — nothing in a seat task is ordered against the admission edge, so a
+/// high-water mark over it reads one past the window with nothing wrong. The
+/// bound is read where nothing can resolve, off the quantity the production loop
+/// owns: `a_parked_window_takes_on_exactly_the_window_and_names_every_submission`.
 #[derive(Default)]
 struct Metrics {
     outstanding: AtomicUsize,
-    max_outstanding: AtomicUsize,
     dispatched: AtomicUsize,
     /// Fired when the last outstanding unit's seat task finished counting out.
     quiesced: Notify,
@@ -364,10 +372,9 @@ impl TokioSeat {
     /// The window is filled by DISPATCH, not by a unit's speed, so "the window was
     /// actually filled" is a fact about two submissions. Without the gate the claim
     /// races the seat's own delay: a loop descheduled for longer than that delay
-    /// lets the first unit resolve before the second submission is ordered, and the
-    /// high-water mark then reads one short with nothing wrong — the window was
-    /// never asked to fill. The gate makes the ordering the assertion reads one the
-    /// fixture owns.
+    /// lets the first unit resolve before the second submission is ordered, and no
+    /// fill happened with nothing wrong — the window was never asked to fill. The
+    /// gate makes the ordering the fill claim reads one the fixture owns.
     fn filling_the_window(delay: Duration) -> Arc<Self> {
         Arc::new(Self {
             metrics: Arc::new(Metrics::default()),
@@ -385,8 +392,7 @@ impl TokioSeat {
 impl CrawlUnitSeat for TokioSeat {
     fn dispatch(&self, future: CrawlUnitFuture) -> Result<(), String> {
         let metrics = Arc::clone(&self.metrics);
-        let running = metrics.outstanding.fetch_add(1, Ordering::SeqCst) + 1;
-        metrics.max_outstanding.fetch_max(running, Ordering::SeqCst);
+        metrics.outstanding.fetch_add(1, Ordering::SeqCst);
         let ordinal = metrics.dispatched.fetch_add(1, Ordering::SeqCst) + 1;
         if let Some(hook) = &self.hook {
             hook(ordinal, &metrics);
@@ -756,11 +762,22 @@ fn the_latch_sets_only_under_a_live_pipeline_and_rearms_only_on_an_edition_chang
 
 // ── the loop ────────────────────────────────────────────────────────────────
 
+/// The window fills by SUBMISSION, and every landed receipt folds once, in
+/// submission order.
+///
+/// Two facts, and this test owns the pair: the loop takes on a second unit
+/// BEFORE the first has resolved (the fill), and the FIFO reaper folds each
+/// receipt exactly once in the order this call submitted, however the seats ran.
+/// The window's CEILING is not here, because no seat-side meter can witness it:
+/// a seat task counts out after the future that published its receipt returns,
+/// so the admission edge is not ordered against the count, and a high-water mark
+/// reads `window + 1` with nothing wrong. The bound is read instead where
+/// nothing can resolve — `a_parked_window_takes_on_exactly_the_window_and_names_every_submission`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn the_window_bounds_the_outstanding_units_and_every_receipt_folds() {
+async fn the_window_fills_by_submission_and_every_receipt_folds_in_order() {
     // 5 parallel pools -> 20 ordered cycles; a 2-unit window over a slow seat whose
     // first unit cannot run until the window's second submission is dispatched, so
-    // the fill the high-water mark reports is an edge this fixture owns.
+    // the fill is an edge this fixture owns.
     let fixture = fixture(
         FakeRpc::new(),
         skip_graph(5),
@@ -774,12 +791,6 @@ async fn the_window_bounds_the_outstanding_units_and_every_receipt_folds() {
         .expect("the window fills: the second unit is submitted before the first runs")
         .unwrap();
 
-    let metrics = fixture.seat.metrics();
-    assert_eq!(
-        metrics.max_outstanding.load(Ordering::SeqCst),
-        2,
-        "the window is the submission bound, and it was actually filled"
-    );
     assert_eq!(
         fixture.controller.summary().report.units_folded,
         20,
@@ -799,6 +810,58 @@ async fn the_window_bounds_the_outstanding_units_and_every_receipt_folds() {
     assert!(
         fixture.controller.receipts_ended(),
         "the run ends the stream exactly once"
+    );
+}
+
+/// The window's ceiling, read where nothing can resolve it.
+///
+/// A parked window is the one place the bound is exact: every future is held
+/// unpolled, so no receipt can land, and the loop's own unresolved set — the
+/// fold's submission window, reported verbatim as `stalled` — is its submission
+/// count. Exactly `window` submissions is the bound, and the report names every
+/// one of them; a loop without the window check would take on all twenty
+/// candidates and name them here instead.
+///
+/// This is the ceiling no mid-flight reading can show. A seat task outlives the
+/// receipt its unit published, so a task-lifetime high-water mark reads one past
+/// the window while the loop never left it; and the loop's own gauge
+/// (`Fold::inflight`) counts a landed receipt only when the FIFO front reaches
+/// it, so one out-of-order landing leaves that reading at `window + 1` with the
+/// admission discipline intact. Parked, nothing can land: both readings are the
+/// submission count, and the bound is exact.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_parked_window_takes_on_exactly_the_window_and_names_every_submission() {
+    let seat = Arc::new(ParkingSeat::default());
+    let (controller, _source, _rx) = harness(
+        FakeRpc::new(),
+        // Twenty ordered cycles behind a two-unit window: a bound of two says
+        // where submission stopped, not how little there was to submit.
+        skip_graph(5),
+        config(2, 1),
+        Arc::clone(&seat) as Arc<dyn CrawlUnitSeat>,
+    );
+    controller.set_unit_idle_deadline_for_test(Duration::from_millis(50));
+
+    let run = tokio::time::timeout(Duration::from_secs(5), controller.run())
+        .await
+        .expect("a parked window resolves at the deadline, never parks its consumer");
+    match run {
+        Err(CrawlRequestError::UnitStalled { stalled, .. }) => assert_eq!(
+            stalled,
+            vec![1, 2],
+            "the loop took on exactly the window, and the report names every unresolved submission"
+        ),
+        other => panic!("expected the loud stalled-window error, got {other:?}"),
+    }
+    assert_eq!(
+        seat.parked.lock().len(),
+        2,
+        "the second submission filled the window; a third would be one past it"
+    );
+    assert_eq!(controller.run_phase(), RunPhase::Finished);
+    assert!(
+        controller.receipts_ended(),
+        "the consumer's stream ends with the run, however the run ended"
     );
 }
 
