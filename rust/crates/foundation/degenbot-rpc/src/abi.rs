@@ -554,7 +554,8 @@ fn int24(tick: i32) -> ProviderResult<alloy::primitives::aliases::I24> {
 //   rather than a truncated value.
 // - The solidly-family stable-vs-volatile flags (`stable()`, `stableSwap()`) and
 //   Camelot's fee probes (`FEE_DENOMINATOR()`, `token0FeePercent()`,
-//   `token1FeePercent()`), read only by the resolver that classifies the pool.
+//   `token1FeePercent()`), read by the resolver that classifies the pool and by
+//   the construction path that prices it (a stable pool's fee is per-pool).
 //
 // The caller passes the Solidity signature (`b"decimals()"`, …), which is hashed
 // to the 4-byte selector here, called once through the read primitive, and

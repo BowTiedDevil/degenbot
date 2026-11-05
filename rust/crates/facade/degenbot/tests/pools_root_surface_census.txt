@@ -73,6 +73,12 @@
 # variant's `Debug` name, so the registry's `RegisteredPoolFamily::tag()`
 # remains the ONE kebab family vocabulary (ADR-059 D1).
 #
+# The 1074 -> 1076 review is the solidly-stable fee bound:
+# `state::spec_bounds::validate_stable_swap_fee` (its declaration plus the door
+# name) joins the surface because `degenbot-substrate`'s `register_v2_pool`
+# applies it — a `stable_swap` identity whose retained gamma is zero is a 100%
+# fee, so the entry refuses a pool that could only ever quote zero.
+#
 # Regenerate: rg -n '^pub mod' rust/crates/foundation/degenbot-pools/src/lib.rs
 # plus the name count from `count_pub_items` in the gate.
 #

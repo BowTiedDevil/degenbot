@@ -144,6 +144,14 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
     # The stable pair resolves to the ``camelot-v2-stable`` preset.
     assert isinstance(lp, UniswapV2Pool)
     assert lp.dex.variant == "camelot-v2-stable"
+    # The fee is per-pool state, not the preset's: the pool's
+    # `getReserves()[2..4]` answers (40, 40) over `FEE_DENOMINATOR()` = 100000,
+    # i.e. 0.04%. Pin the built pair positively — a pool carrying the preset's
+    # `(0, denom)` "read the pool" marker would charge 100% and quote zero for
+    # every input, which is the defect this test's on-chain comparison caught.
+    assert lp.fee_token0 == Fraction(40, 100_000)
+    assert lp.fee_token1 == Fraction(40, 100_000)
+    assert lp.fee_denominator == 100_000
 
     token_in = lp.token0  # MIM token
     amount_in = 1000 * 10**token_in.decimals  # nominal value of $1000
@@ -157,6 +165,7 @@ def test_create_camelot_v2_stable_pool(fork_arbitrum_full: AnvilFork):
         amountIn=amount_in,
         tokenIn=token_in.address,
     ).call()
+    assert contract_amount > 0
     assert contract_amount == lp.calculate_tokens_out_from_tokens_in(
         token_in=token_in,
         token_in_quantity=amount_in,

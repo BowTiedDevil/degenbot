@@ -70,7 +70,8 @@ pub struct SpecViolation {
 }
 
 /// A type-erased primitive value carried by [`SpecViolation`] across the
-/// `u32` / `i32` / `u128` / `U256` field types a pool registration can hold.
+/// `u32` / `i32` / `u64` / `u128` / `U256` field types a pool registration can
+/// hold.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SpecValue {
     /// `U256`-typed field (V2 reserves, V3/V4 `sqrtPriceX96`).
@@ -78,6 +79,8 @@ pub enum SpecValue {
     /// `u128`-typed field (V3/V4 liquidity — guarded by the Rust type, no
     /// runtime check; kept for completeness).
     U128(u128),
+    /// `u64`-typed field (the V2 `(gamma_numer, fee_denom)` pair).
+    U64(u64),
     /// `u32`-typed field (V3/V4 fee).
     U32(u32),
     /// `i32`-typed field (V3/V4 tick / tickSpacing).
@@ -89,6 +92,7 @@ impl std::fmt::Display for SpecValue {
         match self {
             Self::U256(v) => std::fmt::Display::fmt(&v, f),
             Self::U128(v) => std::fmt::Display::fmt(&v, f),
+            Self::U64(v) => std::fmt::Display::fmt(&v, f),
             Self::U32(v) => std::fmt::Display::fmt(&v, f),
             Self::I32(v) => std::fmt::Display::fmt(&v, f),
         }
@@ -159,6 +163,41 @@ pub fn narrow_v2_reserve(value: U256, field: &'static str) -> Result<U112, SpecV
         });
     }
     Ok(value.to::<U112>())
+}
+
+/// Validate one direction of a solidly-stable V2 identity's fee pair.
+///
+/// The identity stores the post-fee RETAINED fraction `(gamma_numer, denom)`
+/// and the solidly-stable math takes the complement as the fee, so a gamma of
+/// zero is a 100% fee: every swap prices at zero output. A `stable_swap`
+/// identity whose pair carries that shape (the Camelot stable preset's
+/// `(0, denom)` "read the pool" marker is one) cannot quote, so it is refused
+/// at admission rather than registered as a silently-unpriceable pool.
+///
+/// `field` is the offending struct-field name (`"fee_token0"` /
+/// `"fee_token1"`).
+///
+/// # Errors
+///
+/// Returns [`Err`] with a [`SpecViolation`] bound `"non-zero fee denominator"`
+/// for `denom == 0`, and bound `"retained gamma > 0 (...)"` for `gamma == 0`.
+pub fn validate_stable_swap_fee(fee: (u64, u64), field: &'static str) -> Result<(), SpecViolation> {
+    let (gamma_numer, fee_denom) = fee;
+    if fee_denom == 0 {
+        return Err(SpecViolation {
+            field,
+            value: SpecValue::U64(fee_denom),
+            bound: "non-zero fee denominator",
+        });
+    }
+    if gamma_numer == 0 {
+        return Err(SpecViolation {
+            field,
+            value: SpecValue::U64(gamma_numer),
+            bound: "retained gamma > 0 (a zero gamma prices every swap at zero output)",
+        });
+    }
+    Ok(())
 }
 
 /// Validate a V3/V4 `sqrtPriceX96` (`TickMath`-bounded `uint160`).
@@ -280,6 +319,42 @@ mod tests {
     #[test]
     fn v2_reserve_accepts_zero() {
         assert_eq!(validate_v2_reserve(U112::ZERO, "reserve1"), Ok(()));
+    }
+
+    #[test]
+    fn stable_swap_fee_accepts_a_retained_gamma() {
+        // Arbitrum MIM/USDC stable: 40/100000 fee → retained 99960/100000.
+        assert_eq!(
+            validate_stable_swap_fee((99_960, 100_000), "fee_token0"),
+            Ok(())
+        );
+        // The smallest retained gamma is still a priceable fee.
+        assert_eq!(validate_stable_swap_fee((1, 100_000), "fee_token1"), Ok(()));
+    }
+
+    #[test]
+    fn stable_swap_fee_rejects_a_zero_gamma() {
+        // A 100% fee: the solidly math's complement is the whole input.
+        assert_eq!(
+            validate_stable_swap_fee((0, 100_000), "fee_token0"),
+            Err(SpecViolation {
+                field: "fee_token0",
+                value: SpecValue::U64(0),
+                bound: "retained gamma > 0 (a zero gamma prices every swap at zero output)",
+            })
+        );
+    }
+
+    #[test]
+    fn stable_swap_fee_rejects_a_zero_denominator() {
+        assert_eq!(
+            validate_stable_swap_fee((997, 0), "fee_token1"),
+            Err(SpecViolation {
+                field: "fee_token1",
+                value: SpecValue::U64(0),
+                bound: "non-zero fee denominator",
+            })
+        );
     }
     // Note: the pre-widening `v2_reserve_rejects_uint112_max_plus_one` test is
     // removed — a value `> UINT112_MAX` cannot be constructed as a `U112`

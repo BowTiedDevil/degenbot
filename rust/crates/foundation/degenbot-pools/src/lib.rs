@@ -146,8 +146,8 @@ pub use sim::rate_provider::{BalancerRateProvider, RateProviderError, StaticRate
 pub use sim::caveats::Caveats;
 
 pub use state::spec_bounds::{
-    narrow_v2_reserve, validate_v2_reserve, SpecValue, SpecViolation, MAX_TICK_SPACING,
-    UINT112_MAX, V3_FEE_MAX, V4_FEE_MAX,
+    narrow_v2_reserve, validate_stable_swap_fee, validate_v2_reserve, SpecValue, SpecViolation,
+    MAX_TICK_SPACING, UINT112_MAX, V3_FEE_MAX, V4_FEE_MAX,
 };
 
 pub use state::state_history::ReorgPoolState;

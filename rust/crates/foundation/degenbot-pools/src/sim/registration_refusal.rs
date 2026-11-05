@@ -173,6 +173,10 @@ impl From<&RegisterAerodromePoolError> for RegisterRefusal {
 pub enum SpecRefusal {
     /// A reserve above the on-chain `uint112` bound (V2 / Aerodrome V2).
     V2Reserve,
+    /// A solidly-stable V2 identity whose retained-gamma fee pair retains
+    /// nothing: the pool answers a per-token fee of 100%, so every swap prices
+    /// at zero output.
+    StableSwapZeroGamma,
     /// A pool in the known-broken Balancer V2 set — swaps disabled at the
     /// contract, so the pool could never simulate.
     BalancerBrokenPool,
@@ -220,6 +224,7 @@ impl SpecRefusal {
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::V2Reserve => "v2 reserve out of bounds",
+            Self::StableSwapZeroGamma => "stable-swap zero gamma",
             Self::BalancerBrokenPool => "balancer broken pool",
             Self::BalancerComposableWeighted => "balancer composable weighted pool",
             Self::BalancerRateProviderUnreadable => "balancer rate provider unreadable",
@@ -306,6 +311,7 @@ mod tests {
     /// here — the drift gate for the reason vocabulary.
     const VOCABULARY: &[(SpecRefusal, &str)] = &[
         (SpecRefusal::V2Reserve, "v2 reserve out of bounds"),
+        (SpecRefusal::StableSwapZeroGamma, "stable-swap zero gamma"),
         (SpecRefusal::BalancerBrokenPool, "balancer broken pool"),
         (
             SpecRefusal::BalancerComposableWeighted,

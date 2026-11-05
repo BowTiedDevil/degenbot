@@ -397,6 +397,12 @@ fn classify_builder_error(err: PoolBuilderError, address: Address) -> Constructi
         // `PoolBuildDecodeError` / ...), so flattening one into a transient
         // string would rename the refusal at the seam.
         PoolBuilderError::Spec(reason) => ConstructionRefusal::Skipped(BuildFailure::Spec(reason)),
+        // A stable pool whose fee configuration cannot be read into a retained
+        // gamma is a pool fact (re-reading the same block answers the same
+        // way), so it rides the spec class rather than the retryable one.
+        PoolBuilderError::CamelotStableFee { .. } => ConstructionRefusal::Skipped(
+            BuildFailure::Spec(degenbot_pools::SpecRefusal::StableSwapZeroGamma),
+        ),
         PoolBuilderError::Rpc(inner) => {
             ConstructionRefusal::Skipped(BuildFailure::Rpc(inner.to_string()))
         }

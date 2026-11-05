@@ -583,6 +583,11 @@ impl RefusalKind {
                 phase,
                 failure: BuildFailure::Spec(*reason),
             },
+            PoolBuilderError::CamelotStableFee { .. } => Self::BuildRefused {
+                family,
+                phase,
+                failure: BuildFailure::Spec(SpecRefusal::StableSwapZeroGamma),
+            },
             PoolBuilderError::Decoding { message } => Self::BuildRefused {
                 family,
                 phase,

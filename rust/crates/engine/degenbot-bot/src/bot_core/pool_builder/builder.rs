@@ -124,6 +124,13 @@ pub enum PoolBuilderError {
     Db(#[from] DbError),
     #[error("V4 identity incomplete: {message}")]
     MissingIdentity { message: String },
+    /// A Camelot solidly-stable pool answered a fee configuration that cannot
+    /// price a swap: a zero `FEE_DENOMINATOR()`, a per-token percent above it,
+    /// or a percent that leaves no retained gamma. The pool is refused by
+    /// address — registering it with the preset's gamma-0 pair would quote
+    /// zero for every input.
+    #[error("Camelot stable pool {address} has an unusable fee configuration: {detail}")]
+    CamelotStableFee { address: Address, detail: String },
     /// A Tracked Db snapshot failed the intake reconciliation against CHAIN
     /// truth: its tick rows disagree with the word bitmaps read from chain.
     /// Registration is rejected with a typed error; the message names the
@@ -490,7 +497,6 @@ pub async fn fetch_v3_immutable_data(
 
 /// Camelot V2 pool fee configuration read from the pool (ADR-005).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct CamelotState {
     /// The pool's `stableSwap()` flag.
     pub stable: bool,
@@ -505,10 +511,14 @@ pub struct CamelotState {
 /// Fetch a Camelot V2 pool's `stableSwap()` flag and fee configuration
 /// (ADR-005). The four probes are independent reads over the one call step.
 ///
+/// This is the only read that answers a stable pool's `< 100`% fee: the fee
+/// is per-pool state (`token0FeePercent` / `token1FeePercent` over the pool's
+/// own `FEE_DENOMINATOR()`), not a deployment constant, so [`build_v2`] reads
+/// it here rather than trusting the preset's pair.
+///
 /// # Errors
 ///
 /// Returns a [`ProviderError`] when any of the four reads fails.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn fetch_camelot_state(
     read: &impl ContractRead,
     address: &Address,
@@ -746,23 +756,82 @@ pub async fn resolve_v2_dex(
     }
 }
 
-/// Read Camelot's `FEE_DENOMINATOR()`, used to scale the solidly-stable math.
-/// `None` when the read fails (non-Camelot-stable callers never ask).
-async fn fetch_fee_denominator(
-    read: &impl ContractRead,
+/// The retained-gamma numerator for one direction of a Camelot solidly-stable
+/// pool: `FEE_DENOMINATOR() - tokenFeePercent()`.
+///
+/// The V2 identity stores the post-fee RETAINED fraction `(gamma, denom)`; the
+/// solidly math takes the complement as the fee, so a gamma of zero is a 100%
+/// fee and prices every swap at zero output. That is exactly the shape of the
+/// `CAMELOT_V2_STABLE` preset's `(0, denom)` "read the pool" marker, so a
+/// percent that retains nothing — or a denominator that cannot carry the
+/// percent — refuses the build by address instead of registering a pool that
+/// cannot quote.
+///
+/// # Errors
+///
+/// [`PoolBuilderError::CamelotStableFee`] naming the pool when the denominator
+/// is zero, the percent exceeds it, or the percent leaves no gamma.
+fn retained_gamma(
     address: Address,
-    block: Option<u64>,
-) -> Result<Option<u64>, ProviderError> {
-    Ok(abi::fetch_no_arg_uint(
-        read,
-        b"FEE_DENOMINATOR()",
-        &address,
-        block,
-        &DynSolType::Uint(256),
-    )
-    .await
-    .ok()
-    .map(|denominator| denominator.to::<u64>()))
+    denominator: u64,
+    fee_percent: u64,
+) -> Result<(u64, u64), PoolBuilderError> {
+    let refuse = |detail: String| PoolBuilderError::CamelotStableFee { address, detail };
+    if denominator == 0 {
+        return Err(refuse("FEE_DENOMINATOR() is zero".to_owned()));
+    }
+    let gamma = denominator.checked_sub(fee_percent).ok_or_else(|| {
+        refuse(format!(
+            "token fee percent {fee_percent} exceeds FEE_DENOMINATOR() {denominator}"
+        ))
+    })?;
+    if gamma == 0 {
+        return Err(refuse(format!(
+            "token fee percent {fee_percent} over FEE_DENOMINATOR() {denominator} retains nothing, \
+             so every swap would price at zero output"
+        )));
+    }
+    Ok((gamma, denominator))
+}
+
+/// A Camelot solidly-stable pool's fee configuration in the V2 identity's
+/// retained-gamma convention: one pair per direction over the denominator they
+/// share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CamelotFees {
+    /// `(gamma_numer, fee_denom)` for token0 → token1.
+    token0: (u64, u64),
+    /// `(gamma_numer, fee_denom)` for token1 → token0.
+    token1: (u64, u64),
+    /// The pool's `FEE_DENOMINATOR()`, shared by both pairs.
+    denominator: u64,
+}
+
+/// Build a Camelot solidly-stable pool's fee configuration from the pool's own
+/// per-token percents.
+///
+/// # Errors
+///
+/// [`PoolBuilderError::CamelotStableFee`] naming the pool when
+/// `FEE_DENOMINATOR()` does not fit `u64` or a token percent leaves no
+/// retained gamma (see [`retained_gamma`]).
+fn camelot_stable_fee(
+    address: Address,
+    state: &CamelotState,
+) -> Result<CamelotFees, PoolBuilderError> {
+    let denominator =
+        u64::try_from(state.fee_denominator).map_err(|_| PoolBuilderError::CamelotStableFee {
+            address,
+            detail: format!(
+                "FEE_DENOMINATOR() {} does not fit u64",
+                state.fee_denominator
+            ),
+        })?;
+    Ok(CamelotFees {
+        token0: retained_gamma(address, denominator, state.token0_fee_percent)?,
+        token1: retained_gamma(address, denominator, state.token1_fee_percent)?,
+        denominator,
+    })
 }
 
 /// Assemble `build_v2` params for a V2-style constant-product pool.
@@ -773,11 +842,19 @@ async fn fetch_fee_denominator(
 /// deployer/`init_hash` — producing a [`RegisterV2PoolParams`] ready for
 /// `BotState::register_v2_pool` with no Python round-trip.
 ///
+/// A Camelot solidly-stable pool's fee is per-pool state, so this reads the
+/// pool's own `token0FeePercent()` / `token1FeePercent()` over its
+/// `FEE_DENOMINATOR()` ([`fetch_camelot_state`]) and never the preset's
+/// `(0, denom)` marker: the preset pair is a "read the pool" signal, and a
+/// registered pool carrying it would price every swap at zero output.
+///
 /// # Errors
 ///
 /// Returns [`PoolBuilderError::UnknownVariant`] for an unregistered factory,
 /// [`PoolBuilderError::Identity`] on a CREATE2 mismatch (when the factory ships
-/// in the JSON), or an RPC/spec error.
+/// in the JSON), [`PoolBuilderError::CamelotStableFee`] when a stable pool's
+/// fee configuration cannot be read into a non-zero retained gamma, or an
+/// RPC/spec error.
 pub async fn build_v2(
     chain_id: u64,
     address: Address,
@@ -805,10 +882,15 @@ pub async fn build_v2(
     let init_hash: B256 = deployments::resolve_v2_init_hash(chain_id, imm.factory);
 
     let stable_swap = matches!(id.variant, DexVariant::CamelotV2Stable);
-    let fee_denominator = if stable_swap {
-        fetch_fee_denominator(io, address, block).await?
+    // `stableSwap()` rides the fee read: the species and the fee configuration
+    // are one fact about a Camelot pool, and the construction read memo serves
+    // the resolver's identical read for free.
+    let (fee_token0, fee_token1, fee_denominator) = if stable_swap {
+        let camelot = fetch_camelot_state(io, &address, block).await?;
+        let fees = camelot_stable_fee(address, &camelot)?;
+        (fees.token0, fees.token1, Some(fees.denominator))
     } else {
-        None
+        (id.fee_token0, id.fee_token1, None)
     };
 
     Ok(RegisterV2PoolParams {
@@ -817,8 +899,8 @@ pub async fn build_v2(
         token1: imm.token1,
         reserve0,
         reserve1,
-        fee_token0: id.fee_token0,
-        fee_token1: id.fee_token1,
+        fee_token0,
+        fee_token1,
         factory: imm.factory,
         deployer,
         init_hash,

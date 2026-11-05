@@ -782,6 +782,253 @@ async fn fetch_camelot_state_decodes_all_four_probes() {
     assert_eq!(s.token1_fee_percent, 200);
 }
 
+/// A Camelot solidly-stable pool's fee is per-pool state, not a preset
+/// constant: the build reads `token0FeePercent()` / `token1FeePercent()` over
+/// the pool's own `FEE_DENOMINATOR()`.
+///
+/// The measured pool is the Arbitrum MIM/USDC stable pair (reserves and the
+/// 0.04% fee as recorded on-chain: `getReserves()[2..4] = (40, 40)` over
+/// `FEE_DENOMINATOR() = 100000`). Taking the `CAMELOT_V2_STABLE` preset's
+/// `(0, denom)` "read the pool" marker instead would build a 100%-fee pool
+/// that quotes zero for every input.
+#[tokio::test]
+async fn build_v2_reads_the_camelot_stable_fee_pair_from_the_pool() {
+    use degenbot_uniswap::create2::compute_v2_address;
+    use degenbot_uniswap::dex_identity::{self, DexVariant};
+
+    let mim: Address = alloy::primitives::address!("0xFEa7a6a0B346362BF88A9e4A88416B77a57D6c2A");
+    let usdc: Address = alloy::primitives::address!("0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8");
+    let measured: Address =
+        alloy::primitives::address!("0x68A0859de50B4Dfc6EFEbE981cA906D38Cdb0D1F");
+    let pool = compute_v2_address(
+        dex_identity::CAMELOT_V2_STABLE.factory,
+        mim,
+        usdc,
+        dex_identity::CAMELOT_V2_STABLE.init_hash,
+    );
+    assert_eq!(
+        pool, measured,
+        "the recorded MIM/USDC pool is the CREATE2 address of its pair"
+    );
+
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::selector(b"factory()"),
+        addr_word(dex_identity::CAMELOT_V2_STABLE.factory),
+    );
+    f.set(abi::selector(b"token0()"), addr_word(mim));
+    f.set(abi::selector(b"token1()"), addr_word(usdc));
+    f.set(
+        abi::selector(b"getReserves()"),
+        enc(DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(234_608_881_288_298_988_978u128), 112),
+            DynSolValue::Uint(U256::from(2_945_856u64), 112),
+            DynSolValue::Uint(U256::ZERO, 32),
+        ])),
+    );
+    f.set(abi::selector(b"stableSwap()"), enc(DynSolValue::Bool(true)));
+    f.set(
+        abi::selector(b"FEE_DENOMINATOR()"),
+        enc(DynSolValue::Uint(U256::from(100_000u64), 256)),
+    );
+    f.set(
+        abi::selector(b"token0FeePercent()"),
+        enc(DynSolValue::Uint(U256::from(40u64), 16)),
+    );
+    f.set(
+        abi::selector(b"token1FeePercent()"),
+        enc(DynSolValue::Uint(U256::from(40u64), 16)),
+    );
+    let io = io_with(f);
+
+    let params = builder::build_v2(42_161, pool, &io, Some(477_785_000))
+        .await
+        .unwrap();
+    assert_eq!(params.variant, DexVariant::CamelotV2Stable);
+    assert!(params.stable_swap);
+    // 0.04% fee = 40/100000 → retained gamma 99960/100000, both directions.
+    assert_eq!(params.fee_token0, (99_960, 100_000));
+    assert_eq!(params.fee_token1, (99_960, 100_000));
+    assert_eq!(params.fee_denominator, Some(100_000));
+
+    // The registered identity carries the pool's own pair, not the marker's.
+    let (identity, _state) =
+        degenbot_pools::V2PoolState::from_params(&params, 8, (Some(18), Some(6)));
+    assert_eq!(identity.fee_token0, (99_960, 100_000));
+    assert_eq!(identity.fee_token1, (99_960, 100_000));
+}
+
+/// A stable fee configuration that retains nothing (a 100% fee, i.e. the
+/// preset marker's own gamma) is refused BY ADDRESS rather than registered.
+#[tokio::test]
+async fn build_v2_refuses_a_camelot_stable_fee_that_retains_nothing() {
+    use degenbot_uniswap::create2::compute_v2_address;
+    use degenbot_uniswap::dex_identity;
+
+    let tok0: Address = alloy::primitives::address!("0xFEa7a6a0B346362BF88A9e4A88416B77a57D6c2A");
+    let tok1: Address = alloy::primitives::address!("0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8");
+    let pool = compute_v2_address(
+        dex_identity::CAMELOT_V2_STABLE.factory,
+        tok0,
+        tok1,
+        dex_identity::CAMELOT_V2_STABLE.init_hash,
+    );
+
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::selector(b"factory()"),
+        addr_word(dex_identity::CAMELOT_V2_STABLE.factory),
+    );
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
+    f.set(
+        abi::selector(b"getReserves()"),
+        enc(DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(1_000u64), 112),
+            DynSolValue::Uint(U256::from(2_000u64), 112),
+            DynSolValue::Uint(U256::ZERO, 32),
+        ])),
+    );
+    f.set(abi::selector(b"stableSwap()"), enc(DynSolValue::Bool(true)));
+    f.set(
+        abi::selector(b"FEE_DENOMINATOR()"),
+        enc(DynSolValue::Uint(U256::from(100_000u64), 256)),
+    );
+    // A 100% fee on token0: gamma = denom - percent = 0.
+    f.set(
+        abi::selector(b"token0FeePercent()"),
+        enc(DynSolValue::Uint(U256::from(100_000u64), 16)),
+    );
+    f.set(
+        abi::selector(b"token1FeePercent()"),
+        enc(DynSolValue::Uint(U256::from(40u64), 16)),
+    );
+    let io = io_with(f);
+
+    match builder::build_v2(42_161, pool, &io, Some(477_785_000)).await {
+        Err(builder::PoolBuilderError::CamelotStableFee { address, detail }) => {
+            assert_eq!(address, pool, "the refusal names the pool");
+            assert!(
+                detail.contains("100000"),
+                "the refusal names the offending percent: {detail}"
+            );
+        }
+        other => panic!("expected a CamelotStableFee refusal, got {other:?}"),
+    }
+}
+
+/// A failed fee read surfaces as the provider error — the build never falls
+/// back to the preset's gamma-0 pair.
+#[tokio::test]
+async fn build_v2_surfaces_a_failed_camelot_fee_read() {
+    use degenbot_uniswap::create2::compute_v2_address;
+    use degenbot_uniswap::dex_identity;
+
+    let tok0: Address = alloy::primitives::address!("0xFEa7a6a0B346362BF88A9e4A88416B77a57D6c2A");
+    let tok1: Address = alloy::primitives::address!("0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8");
+    let pool = compute_v2_address(
+        dex_identity::CAMELOT_V2_STABLE.factory,
+        tok0,
+        tok1,
+        dex_identity::CAMELOT_V2_STABLE.init_hash,
+    );
+
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::selector(b"factory()"),
+        addr_word(dex_identity::CAMELOT_V2_STABLE.factory),
+    );
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
+    f.set(
+        abi::selector(b"getReserves()"),
+        enc(DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(1_000u64), 112),
+            DynSolValue::Uint(U256::from(2_000u64), 112),
+            DynSolValue::Uint(U256::ZERO, 32),
+        ])),
+    );
+    f.set(abi::selector(b"stableSwap()"), enc(DynSolValue::Bool(true)));
+    f.set(
+        abi::selector(b"FEE_DENOMINATOR()"),
+        enc(DynSolValue::Uint(U256::from(100_000u64), 256)),
+    );
+    // The pool answers `token0FeePercent()` with a transport fault.
+    f.set_error(
+        abi::selector(b"token0FeePercent()"),
+        ProviderError::Timeout {
+            message: "fee read timed out".into(),
+        },
+    );
+    f.set(
+        abi::selector(b"token1FeePercent()"),
+        enc(DynSolValue::Uint(U256::from(40u64), 16)),
+    );
+    let io = io_with(f);
+
+    match builder::build_v2(42_161, pool, &io, Some(477_785_000)).await {
+        Err(builder::PoolBuilderError::Rpc(ProviderError::Timeout { message })) => {
+            assert_eq!(message, "fee read timed out");
+        }
+        other => panic!("expected the provider failure to surface, got {other:?}"),
+    }
+}
+
+/// A volatile Camelot pool keeps the preset's deployment-constant fee and
+/// issues no per-pool fee read at all.
+#[tokio::test]
+async fn build_v2_keeps_the_preset_pair_for_camelot_volatile() {
+    use degenbot_uniswap::create2::compute_v2_address;
+    use degenbot_uniswap::dex_identity::{self, DexVariant};
+
+    let tok0: Address = alloy::primitives::address!("0x82aF49447D8a07e3bd95BD0d56f35241523fBab1");
+    let tok1: Address = alloy::primitives::address!("0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8");
+    let pool = compute_v2_address(
+        dex_identity::CAMELOT_V2_VOLATILE.factory,
+        tok0,
+        tok1,
+        dex_identity::CAMELOT_V2_VOLATILE.init_hash,
+    );
+
+    // No `FEE_DENOMINATOR()` / `token*FeePercent()` responses: a read of any
+    // of them reverts, so the pair below can only come from the preset.
+    let mut f = FakeRpc::new();
+    f.set(
+        abi::selector(b"factory()"),
+        addr_word(dex_identity::CAMELOT_V2_VOLATILE.factory),
+    );
+    f.set(abi::selector(b"token0()"), addr_word(tok0));
+    f.set(abi::selector(b"token1()"), addr_word(tok1));
+    f.set(
+        abi::selector(b"getReserves()"),
+        enc(DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(41_955_211_741_551_457_825u128), 112),
+            DynSolValue::Uint(U256::from(66_259_753_282u64), 112),
+            DynSolValue::Uint(U256::ZERO, 32),
+        ])),
+    );
+    f.set(
+        abi::selector(b"stableSwap()"),
+        enc(DynSolValue::Bool(false)),
+    );
+    let io = io_with(f);
+
+    let params = builder::build_v2(42_161, pool, &io, Some(477_785_000))
+        .await
+        .unwrap();
+    assert_eq!(params.variant, DexVariant::CamelotV2Volatile);
+    assert!(!params.stable_swap);
+    assert_eq!(
+        params.fee_token0,
+        dex_identity::CAMELOT_V2_VOLATILE.fee_token0
+    );
+    assert_eq!(
+        params.fee_token1,
+        dex_identity::CAMELOT_V2_VOLATILE.fee_token1
+    );
+    assert_eq!(params.fee_denominator, None);
+}
+
 #[tokio::test]
 async fn build_v2_assembles_register_params_from_onchain() {
     use degenbot_uniswap::create2::compute_v2_address;

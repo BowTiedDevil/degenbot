@@ -367,6 +367,12 @@ pub const CAMELOT_V2_VOLATILE: DexIdentity = DexIdentity {
 /// Camelot V2 stable. Fee is per-pool on-chain; preset carries no
 /// compile-time fee default (gamma 0 signals "fetched per-pool"); the
 /// denominator mirrors Camelot's `FEE_DENOMINATOR` for encoding contexts.
+///
+/// This pair is a marker, never a quotable fee: `build_v2` reads the pool's
+/// `token0FeePercent()`/`token1FeePercent()` over its own `FEE_DENOMINATOR()`
+/// and registers that pair, and `BotState::register_v2_pool` refuses a
+/// `stable_swap` identity whose gamma is zero (a 100% fee quotes zero for
+/// every input), so the marker cannot reach a pool's state.
 pub const CAMELOT_V2_STABLE: DexIdentity = DexIdentity {
     factory: address!("6EcCab422D763aC031210895C81787E87B43A652"),
     deployer: address!("6EcCab422D763aC031210895C81787E87B43A652"),

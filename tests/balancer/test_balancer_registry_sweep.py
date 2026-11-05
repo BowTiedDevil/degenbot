@@ -71,6 +71,7 @@ _CORPUS_PATH = (
 # drift between the Rust enum and this test, so the check fails closed.
 _NAMED_SPEC_REFUSALS = frozenset({
     "v2 reserve out of bounds",
+    "stable-swap zero gamma",
     "balancer broken pool",
     "balancer composable weighted pool",
     "balancer rate provider unreadable",

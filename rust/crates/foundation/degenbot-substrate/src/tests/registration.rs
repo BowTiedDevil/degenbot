@@ -1210,6 +1210,48 @@ fn unregister_pool_on_unknown_address_returns_false_silently() {
 // on (a) and silently degrading to `U256::MAX` on (b).
 // -----------------------------------------------------------------------
 #[test]
+fn register_v2_pool_refuses_a_stable_swap_identity_with_zero_gamma() {
+    // A solidly-stable fee pair is the RETAINED gamma fraction, so gamma 0 is
+    // a 100% fee: the pool would quote zero for every input. The Camelot
+    // stable preset's `(0, denom)` "read the pool" marker must not become a
+    // registered pool's fee, whichever door carried it.
+    let mut core = BotState::new();
+    let params = RegisterV2PoolParams {
+        stable_swap: true,
+        variant: degenbot_uniswap::dex_identity::DexVariant::CamelotV2Stable,
+        fee_token0: (0, 100_000),
+        fee_token1: (0, 100_000),
+        fee_denominator: Some(100_000),
+        ..make_params(U112::from(1000), U112::from(2000))
+    };
+    assert_eq!(
+        core.register_v2_pool(&params),
+        Err(RegisterV2PoolError::SpecViolation(
+            degenbot_pools::SpecViolation {
+                field: "fee_token0",
+                value: degenbot_pools::SpecValue::U64(0),
+                bound: "retained gamma > 0 (a zero gamma prices every swap at zero output)",
+            }
+        ))
+    );
+    assert_eq!(
+        core.pool_count(),
+        0,
+        "a refused registration mutates nothing"
+    );
+
+    // The same pool with a real per-token fee pair registers.
+    let ok = RegisterV2PoolParams {
+        fee_token0: (99_960, 100_000),
+        fee_token1: (99_960, 100_000),
+        ..params
+    };
+    core.register_v2_pool(&ok)
+        .expect("a priced stable pair registers");
+    assert_eq!(core.pool_count(), 1);
+}
+
+#[test]
 fn register_v2_pool_rejects_duplicate_address_as_already_registered() {
     let mut core = BotState::new();
     let params = make_params(U112::from(1000), U112::from(2000));
