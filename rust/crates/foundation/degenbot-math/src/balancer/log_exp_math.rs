@@ -1,5 +1,6 @@
-//! Balancer V2 `LogExpMath` — fixed-point exponentiation via Taylor
-//! series. Direct port of `src/degenbot/balancer/libraries/log_exp_math.py`.
+//! Balancer V2 `LogExpMath` — fixed-point exponentiation via Taylor series.
+//! Direct port of the deployed `LogExpMath` library
+//! (`tier3-oracle/lib/balancer-src/solidity-utils/contracts/math/LogExpMath.sol`).
 //!
 //! Internally uses signed 256-bit (`[`alloy::primitives::I256`]`) arithmetic
 //! because the deployed Solidity treats these quantities as `int256` —
@@ -7,11 +8,12 @@
 //! "signed range" `x` (the high bit asserted clear), and intermediate
 //! `y * ln(x)` products can be negative.
 //!
-//! `_truncated_div` is the Solidity `/` (truncates toward zero). Python's
-//! `//` floors toward -∞ for negative dividends — the Python oracle has a
-//! helper to wrap that. Rust's `I256::Div` truncates toward zero (two's
-//! complement signed division), so the helper is a no-op kept for the 1:1
-//! port correspondence + single panic-on-overflow seam.
+//! `_truncated_div` is the Solidity `/` (truncates toward zero); a
+//! floor-dividing big-integer representation rounds the other way for
+//! negative dividends, which is the property the helper's name pins down.
+//! Rust's `I256::Div` truncates toward zero (two's complement signed
+//! division), so the helper is a no-op kept for the 1:1 port correspondence
+//! + single panic-on-overflow seam.
 
 use alloy::primitives::{I256, U256};
 
@@ -25,7 +27,7 @@ pub type Result<T> = std::result::Result<T, BalancerMathError>;
 // ---------------------------------------------------------------------------
 
 /// 1.0 in 18-decimal fixed point (the unit of `pow`/`exp`/`ln` inputs and
-/// outputs). Matches Python `ONE_18`.
+/// outputs). Matches the contract's `ONE_18`.
 pub const ONE_18: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
 /// 1.0 in 18-decimal fixed point as I256 (used by `ln`/`pow` boundary
@@ -33,12 +35,10 @@ pub const ONE_18: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 /// (high bit clear → positive 1e18).
 pub const ONE_18_I: I256 = I256::from_raw(U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]));
 
-/// 10^20 spans two limbs (10^20 > 2^64). Computed via Python:
-/// `limbs_u256(10**20) = [7766279631452241920, 5, 0, 0]`.
+/// 10^20 spans two limbs (10^20 > 2^64): `[7766279631452241920, 5, 0, 0]`.
 const ONE_20: I256 = I256::from_raw(U256::from_limbs([7_766_279_631_452_241_920, 5, 0, 0]));
 
-/// 10^36 spans two limbs. Computed via Python:
-/// `limbs_u256(10**36) = [12919594847110692864, 54210108624275221, 0, 0]`.
+/// 10^36 spans two limbs: `[12919594847110692864, 54210108624275221, 0, 0]`.
 const ONE_36: I256 = I256::from_raw(U256::from_limbs([
     12_919_594_847_110_692_864,
     54_210_108_624_275_221,
@@ -80,8 +80,8 @@ const LN_36_LOWER_BOUND: U256 = U256::from_limbs([900_000_000_000_000_000, 0, 0,
 const LN_36_UPPER_BOUND: U256 = U256::from_limbs([1_100_000_000_000_000_000, 0, 0, 0]);
 
 /// `MILD_EXPONENT_BOUND = 2^254 / ONE_20` — guards `y` against overflow when
-/// computing `y * ln(x)` in the `pow` entry. Computed via Python:
-/// `limbs_u256(2**254 // 10**20) = [4720311721447089458, 12146009947018874712, 850705917302346158, 0]`.
+/// computing `y * ln(x)` in the `pow` entry:
+/// `[4720311721447089458, 12146009947018874712, 850705917302346158, 0]`.
 const MILD_EXPONENT_BOUND: U256 = U256::from_limbs([
     4_720_311_721_447_089_458,
     12_146_009_947_018_874_712,
@@ -157,10 +157,11 @@ const ONE_18_SIGNED: I256 = ONE_18_I;
 /// Integer division that matches Solidity's truncation-toward-zero
 /// semantics.
 ///
-/// Solidity's signed `/` truncates toward zero. Rust's `I256::Div` does
-/// the same (two's complement signed division). Python's `//` floors
-/// toward -∞ for negative dividends — the Python oracle wraps it in
-/// `_truncated_div`. In Rust, `a / b` already truncates toward zero.
+/// Solidity's signed `/` truncates toward zero. Rust's `I256::Div` does the
+/// same (two's complement signed division); a floor-dividing big-integer
+/// representation would round the other way for negative dividends, which is
+/// what `_truncated_div` exists to pin down. In Rust, `a / b` already
+/// truncates toward zero.
 ///
 /// # Panics
 ///

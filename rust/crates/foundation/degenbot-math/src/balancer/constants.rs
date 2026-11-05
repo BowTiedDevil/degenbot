@@ -1,6 +1,10 @@
 //! Balancer V2 math constants (18/20/36-decimal fixed-point bases, `PowVersion`).
 //!
-//! Direct port of `src/degenbot/balancer/libraries/constants.py`.
+//! `ONE` / `TWO` / `FOUR` / `MAX_POW_RELATIVE_ERROR` are the deployed
+//! `FixedPoint` constants
+//! (`tier3-oracle/lib/balancer-src/solidity-utils/contracts/math/FixedPoint.sol`);
+//! [`PowVersion`] is this crate's discriminant between the two deployed
+//! `FixedPoint` generations.
 
 use alloy::primitives::U256;
 
@@ -47,8 +51,8 @@ pub enum PowVersion {
 }
 
 impl PowVersion {
-    /// Map the Python-carried `u8` discriminant (1 = V1, 2 = V2) to a
-    /// `PowVersion`. Matches `BalancerBuilderBase::pow_version_to_rust`.
+    /// Map the builder-carried `u8` discriminant (1 = V1, 2 = V2) to a
+    /// `PowVersion`; every pool-family resolution goes through this.
     ///
     /// Returns `None` for an unknown discriminant (a builder wiring error).
     #[must_use]

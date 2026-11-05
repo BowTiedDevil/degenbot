@@ -1,9 +1,10 @@
 //! Balancer V2 `WeightedMath` — invariant + swap math + fee helpers.
-//! Direct port of `src/degenbot/balancer/libraries/weighted_math.py`.
+//! Direct port of the deployed `WeightedMath` library
+//! (`tier3-oracle/lib/balancer-src/solidity-utils/contracts/math/WeightedMath.sol`).
 //!
 //! All quantities are non-negative `U256` (balances, weights, amounts, fee
-//! percentages). Overflow checks delegate to [`crate::balancer::fixed_point`] (matching
-//! Python's `MAX_UINT256`-checked Solidity `SafeMath` reverts).
+//! percentages). Overflow checks delegate to [`crate::balancer::fixed_point`]
+//! (matching the contracts' `MAX_UINT256`-checked arithmetic reverts).
 
 use alloy::primitives::U256;
 

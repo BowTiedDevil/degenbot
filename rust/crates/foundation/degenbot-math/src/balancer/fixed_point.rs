@@ -1,11 +1,12 @@
-//! Balancer V2 `FixedPoint` arithmetic helpers — direct port of
-//! `src/degenbot/balancer/libraries/fixed_point.py`.
+//! Balancer V2 `FixedPoint` arithmetic helpers — direct port of the deployed
+//! `FixedPoint` library
+//! (`tier3-oracle/lib/balancer-src/solidity-utils/contracts/math/FixedPoint.sol`).
 //!
-//! 18-decimal fixed-point arithmetic with overflow checks vs
-//! `MAX_UINT256` (matching the deployed Solidity `SafeMath` reverts). The
-//! `MAX_UINT256 = 2**256 - 1` cap is the EVM word-size bound; Python's
-//! arbitrary-precision ints would never overflow, so the Python oracle
-//! raises `EVMRevertError` to mirror the deployed contract.
+//! 18-decimal fixed-point arithmetic with overflow checks vs `MAX_UINT256`,
+//! matching the deployed Solidity checked-arithmetic reverts. The
+//! `MAX_UINT256 = 2**256 - 1` cap is the EVM word-size bound, and
+//! [`BalancerMathError`] carries the same `Errors.<TAG>` revert tags the
+//! contracts raise.
 //!
 //! `pow_down`/`pow_up` take a [`PowVersion`] that selects V1 (general
 //! path only) vs V2 (fast paths for `y == ONE`, `TWO`, `FOUR`). The
@@ -29,11 +30,11 @@ pub type Result<T> = std::result::Result<T, BalancerMathError>;
 /// semantics.
 ///
 /// Solidity's signed `/` truncates toward zero (matching native Rust
-/// signed division). Python's `//` floors toward -infinity for negative
-/// dividends, which is why the Python oracle has a `_truncated_div`
-/// helper. In Rust, signed `Div` already truncates toward zero, so this
-/// is just `a / b`. Kept as a named helper for the 1:1 port
-/// correspondence + as the single panic-on-overflow seam.
+/// signed division); a floor-dividing big-integer representation rounds the
+/// other way for negative dividends, which is the property the
+/// `_truncated_div` name pins down. In Rust, signed `Div` already truncates
+/// toward zero, so this is just `a / b`. Kept as a named helper for the 1:1
+/// port correspondence + as the single panic-on-overflow seam.
 #[inline]
 pub(crate) fn truncated_div(a: U256, b: U256) -> U256 {
     // U256 is unsigned, so this is just plain floor division (no sign
@@ -54,18 +55,17 @@ pub fn sub(a: U256, b: U256) -> Result<U256> {
 
 /// `mul_down(a, b) = a * b / ONE`, rounding down.
 ///
-/// **Note on overflow semantics:** the Python oracle's `mul_down` overflow
-/// check (`if not (a == 0 or product // a == b)` — meant to mirror
-/// Solidity's uint256-wraparound check) is a big-int no-op: for arbitrary
-/// precision ints, `product // a == b` is always true, so the check never
-/// triggers. The Rust port mirrors this — it uses `widening_mul` to compute
-/// the true product (no wraparound), divides by `ONE`, and returns the
-/// low 256 bits as a `U256` (truncation, mirroring Solidity's `uint256`
-/// return type when the true result exceeds 2^256 — unreachable in
-/// practice). The deployed Solidity contract would revert on `a * b >
-/// MAX_UINT256`; the divergence is observable only for adversarial
-/// overflow inputs (e.g. `2**128 * 2**128`) the bot never feeds in normal
-/// swap math.
+/// **Note on overflow semantics:** the deployed `FixedPoint.mulDown` detects
+/// uint256 wraparound with `_require(a == 0 || product / a == b,
+/// Errors.MUL_OVERFLOW)` — the multiply wraps first, so the division
+/// mismatches exactly when it overflowed. A wider intermediate cannot wrap,
+/// so that guard is unreachable here: the port uses `widening_mul` to compute
+/// the true product, divides by `ONE`, and returns the low 256 bits as a
+/// `U256` (truncation, mirroring Solidity's `uint256` return type when the
+/// true result exceeds 2^256 — unreachable in practice). The deployed
+/// contract would revert on `a * b > MAX_UINT256`; the divergence is
+/// observable only for adversarial overflow inputs (e.g. `2**128 * 2**128`)
+/// the bot never feeds in normal swap math.
 pub fn mul_down(a: U256, b: U256) -> Result<U256> {
     let product = a.widening_mul(b); // Uint<512, 8>
     let quotient = product / U512::from(ONE);

@@ -9,12 +9,14 @@
 //! updated active `liquidity`. No I/O, no allocation beyond the map copy — the
 //! caller owns the map.
 //!
-//! The typed struct [`LiquidityAtTick`] mirrors the Python
-//! `concentrated/types.py` models and `degenbot-bot`'s `TickInfo`:
-//! `liquidity_gross: U128`, `liquidity_net: I256`, `block: u64`. `liquidity_net`
-//! uses `I256` (not `I128`) so the intermediate `current_net + delta` never
-//! overflows for valid inputs — arbitrary-precision arithmetic; the Solidity
-//! `int128` bound is the caller's concern.
+//! The typed struct [`LiquidityAtTick`] mirrors the core contracts'
+//! `Tick.Info` `liquidityGross` / `liquidityNet` pair, plus the driver's
+//! `LiquidityAtTick` (`src/degenbot/uniswap/concentrated/types.py`) and
+//! `degenbot-bot`'s `TickInfo`: `liquidity_gross: U128`,
+//! `liquidity_net: I256`, `block: u64`. `liquidity_net` uses `I256` (wider than
+//! the contract's `int128`) so the intermediate `current_net + delta` never
+//! overflows for valid inputs; the Solidity `int128` bound is the caller's
+//! concern.
 //!
 //! The word-position helper [`get_tick_word_and_bit_position`] survives the
 //! word-*value* retirement as load-bearing word-**key** math: it computes the
@@ -38,10 +40,10 @@ use crate::concentrated_liquidity::functions::tick_position;
 
 /// Liquidity data at an initialized tick.
 ///
-/// Mirrors the Python `LiquidityAtTick` (`concentrated/types.py`) and
-/// `degenbot-bot`'s `TickInfo`. `liquidity_net` is `I256` (wide) so the
-/// `current_net ± delta` intermediate never overflows for valid inputs,
-/// matching the Python oracle's arbitrary-precision arithmetic.
+/// Mirrors the core contracts' `Tick.Info` `liquidityGross` / `liquidityNet`
+/// pair and `degenbot-bot`'s `TickInfo`. `liquidity_net` is `I256` (wider than
+/// the contract's `int128`) so the `current_net ± delta` intermediate never
+/// overflows for valid inputs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LiquidityAtTick {
     /// Signed liquidity delta for ticks crossed left-to-right.
@@ -65,11 +67,10 @@ pub struct LiquidityUpdateResult {
 /// Compute the word position and bit position for a tick, accounting for tick
 /// spacing.
 ///
-/// Mirrors the Python `get_tick_word_and_bit_position`:
-/// `position(evm_divide(tick, tick_spacing))` where `evm_divide` truncates
-/// toward zero (matching EVM / Solidity `int` division and Rust's `/`).
-/// `position(t) = (t >> 8, t % 256)` with `%` non-negative (matching Python's
-/// modulo and Rust's `rem_euclid`).
+/// Mirrors the core contracts' `TickBitmap.position(tick / tickSpacing)`: EVM
+/// `int` division truncates toward zero (Rust's `/` does too), and
+/// `position(t) = (t >> 8, t % 256)` takes the bit non-negative, which
+/// `rem_euclid` yields directly.
 ///
 /// The returned `word` is the mapping key; `bit` is in `0..=255`.
 #[must_use]
@@ -94,8 +95,8 @@ fn gross_to_i256(gross: U128) -> I256 {
 ///
 /// # Panics (debug only)
 ///
-/// `debug_assert!`s the value is in `[0, 2^128 - 1]`, matching the Python
-/// `ValidatedUint128` field bound. Release builds truncate to the low 128 bits.
+/// `debug_assert!`s the value is in `[0, 2^128 - 1]`, the contracts' `uint128`
+/// bound on `liquidityGross`. Release builds truncate to the low 128 bits.
 fn narrow_to_u128(v: I256) -> U128 {
     debug_assert!(
         v >= I256::ZERO,
@@ -117,12 +118,13 @@ fn narrow_to_u128(v: I256) -> U128 {
 
 /// Apply a liquidity-mapping update to the tick-data map.
 ///
-/// This is the canonical Rust computation core for
-/// `UniswapV3Pool.update_liquidity_map` / `UniswapV4Pool.update_liquidity_map`.
+/// This is the canonical Rust computation core for the core contracts'
+/// position-update tick mutation (`UniswapV3Pool._updatePosition` →
+/// `Tick.update`, `PoolManager.modifyLiquidity` → `Pool.updateTick`).
 /// The input map is consumed
 /// (moved) — the caller passes a clone if it needs to retain the prior state.
 ///
-/// # Invariants (debug-checked, mirroring the Python `assert`s)
+/// # Invariants (debug-checked)
 ///
 /// - `liquidity` starts non-negative (always true for `U128`).
 /// - The in-range `liquidity + liquidity_delta` stays non-negative.
@@ -131,8 +133,7 @@ fn narrow_to_u128(v: I256) -> U128 {
 ///
 /// # Panics
 ///
-/// Panics (debug builds only) if an invariant is violated — matching the
-/// Python `assert`s, which are stripped under `python -O`. Release builds do
+/// Panics (debug builds only) if an invariant is violated. Release builds do
 /// not check.
 #[must_use = "the updated state must be used"]
 #[expect(clippy::too_many_arguments)]
@@ -150,9 +151,9 @@ pub fn apply_liquidity_mapping_update(
     let state_block = update_block;
     let mut working_liquidity = liquidity;
 
-    // Both boundary ticks must be grid-aligned, mirroring the Python
-    // `ValueError("Invalid tick or spacing")` guard the retired bitmap path
-    // enforced.
+    // Both boundary ticks must be grid-aligned: `TickBitmap.flipTick` rejects a
+    // tick off the spacing grid (v3 `require(tick % tickSpacing == 0)`, v4
+    // `TickMisaligned(tick, tickSpacing)`).
     debug_assert!(
         tick_lower.rem_euclid(tick_spacing) == 0 && tick_upper.rem_euclid(tick_spacing) == 0,
         "Invalid tick or spacing"

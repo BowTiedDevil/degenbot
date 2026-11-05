@@ -2,9 +2,8 @@
 //! `FixedPoint` / `LogExpMath` / `WeightedMath` / `StableMath` libraries.
 //
 // Lint allows: the variable names (`x`, `y`, `a`, `c`, `p_d`, `d_p`, `sum_`,
-// `series_sum`, `z`, `num`) mirror the deployed Solidity + Python oracle
-// notation (1:1 direct ports), so renaming obscures the direct-port
-// correspondence.
+// `series_sum`, `z`, `num`) mirror the deployed Solidity notation (1:1 direct
+// ports), so renaming obscures the direct-port correspondence.
 #![expect(clippy::doc_markdown)]
 #![expect(clippy::missing_errors_doc)]
 // Direct Solidity ports: index-based loops, conditional subtract-then-multiply
@@ -13,12 +12,14 @@
 //!
 //! The Balancer family port, shaped like `degenbot-curve-math`: a standalone,
 //! `pyo3`-free, `tokio`-free crate
-//! depending only on `alloy::primitives`. Cross-checked against the Python
-//! oracle (`src/degenbot/balancer/libraries/{fixed_point,log_exp_math,
-//! weighted_math,stable_math}.py`) by the property tests + the frozen
-//! oracle snapshot in `tests/oracle_crosscheck.rs`.
+//! depending only on `alloy::primitives`. Cross-checked against the deployed
+//! `FixedPoint` / `LogExpMath` / `WeightedMath` / `StableMath` libraries (the
+//! pinned canonical sources recorded in
+//! `docs/architecture/balancer-contract-reference.md`) by the property tests
+//! and the frozen oracle snapshot replayed in
+//! `tests/oracle_crosscheck_balancer.rs`.
 //!
-//! # Module layout (mirrors the Python module split)
+//! # Module layout
 //!
 //! - [`constants`] — `ONE`/`TWO`/`FOUR` 18-decimal units + `PowVersion`
 //!   discriminant.
@@ -36,7 +37,7 @@
 //! # Variant axes (the systematic-1-wei guards)
 //!
 //! Two discriminants thread through this crate, both byte-for-byte
-//! cross-checked vs the Python oracle:
+//! cross-checked against the frozen oracle snapshot:
 //!
 //! 1. [`PowVersion`] (`V1` general path / `V2` fast paths for
 //!    `y == ONE/TWO/FOUR`) — controls `FixedPoint::pow_down`/`pow_up`
@@ -71,10 +72,10 @@ pub use weighted_math::{
     calculate_invariant as weighted_calculate_invariant, subtract_swap_fee_amount,
 };
 
-/// Errors raised by the Balancer math port — direct equivalent of the
-/// Python `EVMRevertError`s the oracle raises (with `error="<TAG>"`).
+/// Errors raised by the Balancer math port — direct equivalent of the deployed
+/// contracts' `_require(_, Errors.<TAG>)` reverts.
 ///
-/// The `tests/oracle_crosscheck.rs` snapshot cross-check treats every
+/// The `tests/oracle_crosscheck_balancer.rs` snapshot cross-check treats every
 /// `EVMRevertError` (regardless of tag) as `Expected::Err` — i.e. only
 /// "the function reverts" vs "returns a value" is observable. This enum
 /// preserves the tag for callers that want to distinguish (the deployed

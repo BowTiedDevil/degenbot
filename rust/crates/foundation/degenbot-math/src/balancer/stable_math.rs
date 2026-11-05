@@ -1,5 +1,6 @@
 //! Balancer V2 `StableMath` — StableSwap invariant + swap math. Direct port
-//! of `src/degenbot/balancer/libraries/stable_math.py`.
+//! of the deployed `StableMath` library
+//! (`tier3-oracle/lib/balancer-src/solidity-utils/contracts/math/StableMath.sol`).
 //!
 //! Plain integer math (NOT 18-decimal fixed point) — the Solidity
 //! `Math.mul`/`Math.divDown`/`Math.divUp` map to plain `*` / `/` here with

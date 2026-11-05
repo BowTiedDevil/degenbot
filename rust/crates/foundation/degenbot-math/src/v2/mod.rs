@@ -103,16 +103,15 @@ mod tests {
         U256::from(n)
     }
 
-    /// Ground-truth exact-in vectors, transcribed from the retired Python
-    /// reference `constant_product_calc_exact_in` (deleted in this change).
+    /// Ground-truth exact-in vectors pinning the deployed V2 pairs'
+    /// `getAmountOut`.
     ///
     /// Provenance: random.Random(seed) for seed in 0..25, reserves in
     /// [10^6, 2*10^16), `amount_in` in [1, 10^14), fee rate drawn from
-    /// [(3,1000),(5,10000),(25,10000),(30,10000),(0,1000)] - the exact seed
-    /// space the former Python-vs-Rust parity test exercised. The outputs were
-    /// emitted by the Python oracle before its deletion and are now literal
-    /// truth pinning, so the Rust primitive no longer needs a Python shadow to
-    /// stay honest.
+    /// [(3,1000),(5,10000),(25,10000),(30,10000),(0,1000)] - the sweep the
+    /// parity vectors cover. The outputs were emitted by the Python reference
+    /// before it was retired and are now literal truth pinning, so the Rust
+    /// primitive is held to fixed data instead of a live shadow.
     #[rustfmt::skip]
     const EXACT_IN_VECTORS: &[(u128, u128, u128, u64, u64, u128)] = &[
         (13879924884195853u128, 1458602765833877u128, 68386665195107u128, 30, 10000, 7129980893919u128),
