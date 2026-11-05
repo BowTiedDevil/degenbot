@@ -20,13 +20,17 @@
 //! family), `DeliveryPolicy` and its channels can travel intact.
 use super::admission_floor::AdmissionSeam;
 use super::delivery_lifecycle::DeliveryLifecycle;
+#[cfg(test)]
+use super::session_events::SessionEvent;
 use super::{ArbitrageEngine, BlockMetadata, ResultBatch};
 use crate::arb_engine::inline_sim::SimulatedPathResult;
 use ::degenbot_pools::solve::SolvePathResult;
 use alloy::primitives::U256;
+#[cfg(test)]
 use degenbot_core::channel_lifecycle::ChannelDecline;
 use degenbot_core::op_warn;
 use hashbrown::{HashMap, HashSet};
+#[cfg(test)]
 use tokio::sync::mpsc;
 /// The delivery policy: filters the engine's solve output by the profit
 /// window, tracks what Python has already received, and pushes an incremental
@@ -95,9 +99,10 @@ impl DeliveryPolicy {
     ///
     /// [`ChannelDecline::AlreadyAttached`] when one is already attached, and
     /// [`ChannelDecline::AttachedAfterClose`] after [`DeliveryLifecycle::close`].
+    #[cfg(test)]
     pub fn set_result_channel(
         &mut self,
-        tx: mpsc::UnboundedSender<ResultBatch>,
+        tx: mpsc::UnboundedSender<SessionEvent>,
     ) -> Result<(), ChannelDecline> {
         self.lifecycle.attach(tx)
     }
@@ -342,9 +347,10 @@ impl DeliveryPolicy {
 /// Set the sender for the result batch channel (machine-direct free-function
 /// route). The solve itself is channel-free — this only attaches the optional
 /// delivery sink.
+#[cfg(test)]
 pub(crate) fn set_result_channel(
     engine: &mut ArbitrageEngine,
-    tx: mpsc::UnboundedSender<ResultBatch>,
+    tx: mpsc::UnboundedSender<SessionEvent>,
 ) {
     // Test seam: the wiring is attach-once, so a decline here is a caller bug
     // the test that made it will surface on its own assertions.
@@ -478,7 +484,8 @@ mod tests {
             &HashMap::default(),
             AdmissionSeam::DeliveryWindow,
         );
-        let batch = rx.try_recv().expect("diff_and_send with a channel sends");
+        let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
+            .expect("diff_and_send with a channel sends");
         assert_eq!(batch.solve_block, 42);
         // 1 is fresh (never delivered); 3 changed → updated (not fresh).
         assert!(batch.fresh.iter().any(|(id, _)| *id == 1));
@@ -537,8 +544,7 @@ mod tests {
             &HashMap::default(),
             AdmissionSeam::DeliveryWindow,
         );
-        let batch = rx
-            .try_recv()
+        let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
             .expect("zero-anchor still sends metadata batch");
         assert!(
             batch.fresh.is_empty(),
@@ -563,7 +569,8 @@ mod tests {
             &HashMap::default(),
             AdmissionSeam::DeliveryWindow,
         );
-        let batch = rx.try_recv().expect("anchored solve delivers");
+        let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
+            .expect("anchored solve delivers");
         assert!(
             batch.fresh.iter().any(|(id, _)| *id == 1),
             "candidate re-delivered once anchored"
@@ -673,7 +680,8 @@ mod tests {
             AdmissionSeam::DeliveryWindow,
         );
 
-        let batch = rx.try_recv().expect("an anchored batch sends");
+        let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
+            .expect("an anchored batch sends");
         let mut shipped: Vec<u64> = batch.fresh.iter().map(|(id, _)| *id).collect();
         shipped.sort_unstable();
         assert_eq!(
@@ -698,7 +706,8 @@ mod tests {
             &HashMap::default(),
             AdmissionSeam::DeliveryWindow,
         );
-        let second = rx.try_recv().expect("the metadata batch still sends");
+        let second = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
+            .expect("the metadata batch still sends");
         assert!(
             second.fresh.is_empty(),
             "admitted candidates do not re-ship"
@@ -731,7 +740,8 @@ mod tests {
         let owner = AdmissionSeam::of_cycle(true, true);
         assert_eq!(owner, AdmissionSeam::InlineSim);
         policy.diff_and_send(&results, 42, true, &metadata, &HashMap::default(), owner);
-        let batch = rx.try_recv().expect("an anchored batch sends");
+        let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
+            .expect("an anchored batch sends");
         assert_eq!(
             batch.fresh.iter().map(|(id, _)| *id).collect::<Vec<u64>>(),
             vec![2],
@@ -766,7 +776,8 @@ mod tests {
             &HashMap::default(),
             AdmissionSeam::DeliveryWindow,
         );
-        let batch = rx.try_recv().expect("batch at the low base fee");
+        let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
+            .expect("batch at the low base fee");
         assert_eq!(batch.fresh.len(), 1, "cheap-gas block admits the candidate");
 
         // The same candidate at a base fee whose floor exceeds its margin.
@@ -778,7 +789,8 @@ mod tests {
             &HashMap::default(),
             AdmissionSeam::DeliveryWindow,
         );
-        let batch = rx.try_recv().expect("batch at the high base fee");
+        let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
+            .expect("batch at the high base fee");
         assert!(batch.fresh.is_empty(), "nothing fresh at the higher fee");
         assert_eq!(
             batch.expired,
@@ -812,7 +824,8 @@ mod tests {
             &HashMap::default(),
             AdmissionSeam::DeliveryWindow,
         );
-        let batch = rx.try_recv().expect("batch sends");
+        let batch =
+            crate::arb_engine::test_harness::expect_batch(rx.try_recv()).expect("batch sends");
         assert_eq!(
             batch.fresh.iter().map(|(id, _)| *id).collect::<Vec<u64>>(),
             vec![2],

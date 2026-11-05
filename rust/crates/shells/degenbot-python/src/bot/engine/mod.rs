@@ -47,7 +47,9 @@ pub(crate) use degenbot_bot::bot_core::Bot;
 
 pub(crate) use degenbot_bot::arb_engine::EngineStages;
 
-pub(crate) use degenbot_bot::arb_engine::{BlockNotification, ResultBatch};
+pub(crate) use degenbot_bot::arb_engine::{
+    BlockNotification, ConsumerClaim, ResultBatch, SessionEvent, SessionStream,
+};
 pub(crate) use degenbot_pools::solve::{HopType, PoolHop, SolvePathResult};
 
 /// Python-facing mixed V2/V3 arbitrage engine.
@@ -72,10 +74,17 @@ pub struct PyArbEngine {
     /// handle instead of four it must wire in order.
     pub(crate) session: degenbot_bot::bot_core::EngineSession,
 
-    /// Receiver for the result batch channel.
-    /// Created in `new()`, consumed by `__anext__`.
-    /// Wrapped in Arc so the async coroutine can share it.
-    result_rx: Arc<parking_lot::Mutex<Option<degenbot_eventhub::NamedReceiver<ResultBatch>>>>,
+    /// The session's ordered event stream — the ONE consumer hand-off, taken in
+    /// `new()` and read by `__anext__`.
+    ///
+    /// `Block(N)` reaches the stream before every `Batch(N)`; the block clock also
+    /// arrives on `PyBot::block_stream`'s observer tap (both written at the one
+    /// header producer site), so `__anext__` skips the clock arm it does not own.
+    stream: Arc<parking_lot::Mutex<Option<SessionStream>>>,
+
+    /// The `ConsumerClaim` that travelled with the stream. `run()` consumes it:
+    /// production cannot start without the proof that a consumer is attached.
+    claim: parking_lot::Mutex<Option<ConsumerClaim>>,
     // The block-notification receiver is NOT here any more (ADR-027
     // completion): the block-clock pipe is driver-owned, and its receiver
     // lives on the shared EngineDriver — `PyBot::block_stream` hands it to

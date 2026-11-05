@@ -25,7 +25,7 @@
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use degenbot_bot::arb_engine::DriverError;
+use degenbot_bot::arb_engine::{ConnectRefusal, DriverError};
 use degenbot_bot::bot_core::{
     BuildFailure, IdentityMismatchShape, LifecyclePrecondition, RefusalKind, RegisterRefusal,
     SnapshotLoadReason, UnsupportedSubject, VerifyOrigin,
@@ -43,19 +43,32 @@ use crate::bot::engine::{
 // --- Driver lifecycle (`EngineDriver` seam) ---
 
 /// Map a core [`DriverError`] to a Python exception.
+///
+/// Every arm carries its typed refusal, and `Display` is the single source of
+/// the text — the Python `RuntimeError` vocabulary is unchanged from the prose
+/// era while the matching is now a variant, not a string. The verify lifecycle
+/// does not travel through `DriverError` at all: the verify home raises its
+/// `RefusalKind` and this module's `map_refusal` owns that vocabulary.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the mapper consumes the driver's error, the shell's one error channel"
+)]
 pub(crate) fn map_driver_err(err: DriverError) -> PyErr {
-    match err {
-        // The typed receiver refusal carries no payload; Display is the single
-        // source of the remediation text, so the Python `RuntimeError` string
-        // stays byte-identical to the pre-typing refusal.
-        DriverError::NoResultReceiver => PyRuntimeError::new_err(err.to_string()),
-        // Every other variant (phase/session/subscribe/resume/registration)
-        // surfaces as the legacy `RuntimeError` with the driver's message. The
-        // verify lifecycle does not travel through `DriverError` at all: the
-        // verify home raises its `RefusalKind` and this module's `map_refusal`
-        // owns that vocabulary.
-        other => PyRuntimeError::new_err(other.to_string()),
-    }
+    PyRuntimeError::new_err(err.to_string())
+}
+
+/// Map a `connect` refusal to a Python exception.
+///
+/// A pose refusal and a transport refusal are different answers ("you called
+/// this at the wrong time" versus "the endpoint refused us"), so the text names
+/// which one it is while the exception type stays the shell's historical
+/// `RuntimeError`.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the mapper consumes the connect refusal, the shell's one error channel"
+)]
+pub(crate) fn map_connect_err(err: ConnectRefusal) -> PyErr {
+    PyRuntimeError::new_err(err.to_string())
 }
 
 /// The ONE mapper over the refusal vocabulary (ADR-077 D2).
@@ -493,14 +506,19 @@ mod tests {
 
     #[test]
     fn driver_err_passthrough_uses_display_text() {
-        let err = map_driver_err(DriverError::NoResultReceiver);
-        assert_eq!(
-            runtime_error(&err),
-            DriverError::NoResultReceiver.to_string(),
-            "the receiver refusal keeps Display as the single source of its text"
-        );
-        let err = map_driver_err(DriverError::SessionState("already subscribed".to_string()));
-        assert_eq!(runtime_error(&err), "already subscribed");
+        // The typed refusals keep Display as the single source of their text.
+        let err = map_driver_err(DriverError::Phase(degenbot_bot::arb_engine::PhaseError {
+            method: "run",
+            current: degenbot_bot::arb_engine::PumpPhase::Detached,
+            required: Some(degenbot_bot::arb_engine::PumpPhase::Subscribed),
+            detail: "cannot resume from detached".to_string(),
+        }));
+        assert_eq!(runtime_error(&err), "cannot resume from detached");
+
+        let err = map_driver_err(DriverError::Backfill(
+            degenbot_bot::arb_engine::BackfillGap { from: 86, to: 100 },
+        ));
+        assert!(runtime_error(&err).contains("86-100"));
     }
 
     #[test]

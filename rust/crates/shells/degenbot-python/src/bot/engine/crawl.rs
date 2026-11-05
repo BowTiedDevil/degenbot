@@ -28,7 +28,7 @@ use crate::prelude::*;
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration, PyValueError};
 use pyo3::types::{PyDict, PyList};
 
-use degenbot_bot::arb_engine::{CrawlBoot, EngineDriver};
+use degenbot_bot::arb_engine::{CrawlBoot, CrawlRefusal, EngineDriver};
 use degenbot_bot::bot_core::ConstructionRoute;
 use degenbot_bot::crawl::{
     BatchPolicyOracle, CrawlAbort, CrawlConfig, CrawlConfigError, CrawlController, CrawlPathPolicy,
@@ -300,7 +300,7 @@ impl PyArbEngine {
         let driver: Arc<EngineDriver> = Arc::clone(self.session.driver());
         let controller = driver
             .begin_crawl_with(crawl_boot)
-            .map_err(|error| map_crawl_config_error(&error))?;
+            .map_err(map_crawl_boot_refusal)?;
         Ok(PyCrawlSession {
             controller,
             receipts: parking_lot::Mutex::new(Some(rx)),
@@ -771,6 +771,18 @@ fn map_crawl_config_error(error: &CrawlConfigError) -> PyErr {
         | CrawlConfigError::CrawlAlreadyBegun
         | CrawlConfigError::Receipts(_) => PyRuntimeError::new_err(message),
         _ => PyValueError::new_err(message),
+    }
+}
+
+/// Map a crawl ATTACH refusal.
+///
+/// The pose arm is the new one (a crawl cannot be booted over a session that is
+/// gone or tearing down), and it is a `RuntimeError` like the other wiring
+/// mistakes; the configuration vocabulary keeps its historical split.
+fn map_crawl_boot_refusal(refusal: CrawlRefusal) -> PyErr {
+    match refusal {
+        CrawlRefusal::Config(error) => map_crawl_config_error(&error),
+        other => PyRuntimeError::new_err(other.to_string()),
     }
 }
 

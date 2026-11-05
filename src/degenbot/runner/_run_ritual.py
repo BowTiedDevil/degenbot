@@ -174,7 +174,7 @@ class RunRitual:
             )
         actors = session.actors
         assert actors is not None, "the run ritual drives a started session"
-        actors.engine_registry.engine.resume(facets=facets)
+        actors.engine_registry.engine.run(facets=facets)
         self._state = _RitualState.REGISTRATION
 
     def registration(self) -> None:

@@ -14,7 +14,9 @@ use parking_lot::Mutex;
 
 use degenbot_core::{op_info, op_warn};
 
-use crate::arb_engine::{DriverError, EngineDriver};
+use crate::arb_engine::{
+    ConnectRefusal, Connected, ConsumerClaim, DriverError, EngineDriver, TeardownReport,
+};
 use crate::bot_core::bot::Bot;
 use crate::bot_core::registration_ledger::RefusalKind;
 
@@ -106,36 +108,37 @@ impl Bot {
         )
     }
 
-    /// Subscribe to the WS `newHeads` + logs streams — the `block_on` wrapper
-    /// over [`EngineDriver::subscribe`] the `PyO3` shells (`PyBot`,
-    /// `PyArbEngine`) drive detached from the GIL. Blocks (sync, via the
-    /// shared tokio runtime) until the first block is observed, then returns
-    /// the first WS block number (the backfill target).
+    /// Connect the session — the `block_on` wrapper over
+    /// [`EngineDriver::connect`] the `PyO3` shells (`PyBot`, `PyArbEngine`)
+    /// drive detached from the GIL. Blocks (sync, via the shared tokio runtime)
+    /// until the first complete block is observed, then reports it as the link
+    /// block (the backfill target).
     ///
     /// # Errors
-    /// [`DriverError`] if the pump is already started/subscribed, the phase
-    /// is wrong, or the WS subscribe fails.
-    pub fn subscribe(driver: &EngineDriver, rpc_url: &str) -> Result<u64, DriverError> {
-        degenbot_core::runtime::get_runtime().block_on(driver.subscribe(rpc_url))
+    /// [`ConnectRefusal`] when the pose does not admit the move (including a
+    /// concurrent one in flight) or the WS transport refuses the handshake.
+    pub fn connect(driver: &EngineDriver, rpc_url: &str) -> Result<Connected, ConnectRefusal> {
+        degenbot_core::runtime::get_runtime().block_on(driver.connect(rpc_url))
     }
 
-    /// Resume the pump — begin normal WS processing, including the driver's
+    /// Arm the live loop — begin normal WS processing, including the driver's
     /// synchronous `S+1..W` auto-backfill. The `block_on` wrapper over
-    /// [`EngineDriver::resume`].
+    /// [`EngineDriver::run`], which CONSUMES the session's consumer claim: the
+    /// caller must already hold the hand-off's stream, so "a consumer is
+    /// attached before production starts" is a type fact.
     ///
     /// # Errors
-    /// [`DriverError`] if the phase is wrong, subscribe wasn't called, the
-    /// driver is stopped, or it was already resumed.
-    pub fn resume(driver: &EngineDriver) -> Result<(), DriverError> {
-        degenbot_core::runtime::get_runtime().block_on(driver.resume())
+    /// [`DriverError`] when the pose does not admit the move, or the backfill
+    /// fails (the gap is then unapplied).
+    pub fn run(driver: &EngineDriver, claim: ConsumerClaim) -> Result<(), DriverError> {
+        degenbot_core::runtime::get_runtime().block_on(driver.run(claim))
     }
 
-    /// Stop the pump — the driver's any-phase, idempotent stop.
-    ///
-    /// # Errors
-    /// Currently always `Ok`; the typed result keeps the surface symmetric.
-    pub fn stop(driver: &EngineDriver) -> Result<(), DriverError> {
-        driver.stop()
+    /// Close the session — the driver's total, asynchronous, idempotent
+    /// teardown, blocked at this adapter boundary (never inside the core
+    /// runtime).
+    pub fn close(driver: &EngineDriver) -> TeardownReport {
+        degenbot_core::runtime::get_runtime().block_on(driver.close())
     }
 
     /// Install the verify home's RPC provider from `rpc_url`. `None` (no engine
@@ -576,14 +579,15 @@ mod tests {
         Bot::set_verify_state_view(Some(&driver), "0x0000000000000000000000000000000000000001");
     }
 
-    /// `Bot::stop` drives the driver's any-phase idempotent stop (the shell
-    /// keeps only the error map).
+    /// `Bot::close` drives the driver's total, idempotent close (the shell keeps
+    /// only the error map), and concurrent callers observe one report.
     #[test]
-    fn stop_drives_the_driver_stop() {
+    fn close_drives_the_driver_close() {
         let bot = std::sync::Arc::new(Bot::new(8453));
         let driver =
             crate::arb_engine::EngineDriver::new(bot, degenbot_config::holder::config_arc());
-        Bot::stop(&driver).expect("any-phase stop is Ok");
-        Bot::stop(&driver).expect("stop is idempotent");
+        let first = Bot::close(&driver);
+        assert_eq!(first.from, crate::arb_engine::PumpPhase::Detached);
+        assert_eq!(Bot::close(&driver), first, "close is idempotent");
     }
 }

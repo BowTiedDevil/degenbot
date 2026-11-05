@@ -28,10 +28,10 @@ def test_start_no_snapshots_calls_subscribe_then_verify_never_resume() -> None:
     )
 
     assert fake.calls == [
-        "subscribe",
+        "connect",
         "set_verify_rpc_url",
     ]
-    assert "resume" not in fake.calls
+    assert "run" not in fake.calls
     assert backfill_target == 18_000_000
 
 
@@ -49,14 +49,14 @@ def test_start_reads_the_snapshot_seed_block_from_the_engine() -> None:
 
     registry.start("http://localhost:8545", "ws://localhost:8546")
 
-    # The seed is READ (no setter call), then verify-config; never resume.
+    # The seed is READ (no setter call), then verify-config; never run.
     assert fake.calls == [
-        "subscribe",
+        "connect",
         "set_verify_rpc_url",
     ]
     assert fake.seed_args == []
     assert registry._verify_snapshot_block == 18_000_050
-    assert "resume" not in fake.calls
+    assert "run" not in fake.calls
 
 
 def test_start_passes_verify_state_view_when_supplied() -> None:
@@ -117,10 +117,10 @@ def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
     bot = Bot()
     # Constructing the engine against the bot attaches the shared PumpState.
     engine = ArbitrageEngine(py_bot=bot)
-    for method in ("subscribe", "resume"):
+    for method in ("connect", "run"):
         assert hasattr(bot, method), f"Bot must expose {method} after engine attach"
     # The engine still exposes subscribe/resume too (reads the same shared state).
-    for method in ("subscribe", "resume"):
+    for method in ("connect", "run"):
         assert hasattr(engine, method)
     # The engine still exposes the snapshot seed block (getter+setter): the DB
     # load records `S` and `start()` reads it back.
@@ -174,7 +174,7 @@ def test_start_delegates_the_ritual_to_one_engine_call() -> None:
         ("http://localhost:8545", "ws://localhost:8546", state_view),
     ]
     assert target == 18_000_000
-    assert "resume" not in fake.calls
+    assert "run" not in fake.calls
 
 
 def test_start_propagates_driver_session_error_on_double_start() -> None:
@@ -186,5 +186,5 @@ def test_start_propagates_driver_session_error_on_double_start() -> None:
     registry = runner.EngineRegistry(bot=None, engine=fake)
     registry.start("http://localhost:8545", "ws://localhost:8546")
 
-    with pytest.raises(RuntimeError, match="already subscribed"):
+    with pytest.raises(RuntimeError, match="already connected"):
         registry.start("http://localhost:8545", "ws://localhost:8546")

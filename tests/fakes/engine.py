@@ -35,16 +35,16 @@ ENGINE_SEAM_MEMBERS: tuple[str, ...] = (
     "session_end_future",
     "register_and_solve_path",
     "release_all_v3_v4_quarantined",
-    "resume",
+    "run",
     "run_registration_lifecycle",
     "set_path_cap",
     "set_verify_rpc_url",
     "set_verify_state_view",
     "snapshot_seed_block",
     "start",
-    "stop",
+    "close",
     "strategies",
-    "subscribe",
+    "connect",
     "reserve_pair_pool_count",
     "v3_pool_count",
     "v4_pool_count",
@@ -60,7 +60,7 @@ class EngineSeam(Protocol):
 
     snapshot_seed_block: int | None
 
-    def subscribe(self, rpc_url: str) -> int: ...
+    def connect(self, rpc_url: str) -> int: ...
     def start(self, node_http: str, node_ws: str, verify_state_view: str | None = None) -> int: ...
     def set_verify_rpc_url(self, rpc_url: str) -> None: ...
     def set_verify_state_view(self, address: str) -> None: ...
@@ -81,8 +81,8 @@ class EngineSeam(Protocol):
     def v4_pool_count(self) -> int: ...
     def path_count(self) -> int: ...
     def session_end_future(self) -> Any: ...
-    def resume(self, facets: list[str]) -> None: ...
-    def stop(self) -> None: ...
+    def run(self, facets: list[str]) -> None: ...
+    def close(self) -> None: ...
     def enable_strategy(self, name: str) -> str: ...
     def disable_strategy(self, name: str) -> None: ...
     def strategies(self) -> list[tuple[str, str, str | None]]: ...
@@ -149,18 +149,18 @@ class FakeEngine:
 
     # ── lifecycle ──────────────────────────────────────────────────
 
-    def resume(self, facets: list[str]) -> None:
-        """Enable the named facets, then resume the pump (the engine-owned
-        enable-then-resume ordering, mirrored in-process)."""
+    def run(self, facets: list[str]) -> None:
+        """Enable the named facets, then arm the live loop (the engine-owned
+        enable-then-run ordering, mirrored in-process)."""
         self.resumed = True
         self.resume_facets = list(facets)
         for facet in facets:
             self.enable_strategy(facet)
-        self._record("resume")
+        self._record("run")
 
-    def stop(self) -> None:
+    def close(self) -> None:
         self.stop_calls += 1
-        self._record("stop")
+        self._record("close")
         if self.stop_raises is not None:
             raise self.stop_raises
 
@@ -230,9 +230,9 @@ class FakeEngine:
         self.seed_args.append(value)
         self._snapshot_seed_block = value
 
-    def subscribe(self, rpc_url: str) -> int:
+    def connect(self, rpc_url: str) -> int:
         self.subscribe_calls.append(rpc_url)
-        self._record("subscribe")
+        self._record("connect")
         return self._backfill_target
 
     def start(
@@ -241,19 +241,19 @@ class FakeEngine:
         node_ws: str,
         verify_state_view: str | None = None,
     ) -> int:
-        """The one-call startup ritual (the Rust ``EngineDriver::start`` mirror):
+        """The one-call startup ritual (the shell adapter's mirror):
 
-        ``subscribe(ws)`` then verify-config, stopping before ``resume()``. The
+        ``connect(ws)`` then verify-config, stopping before ``run()``. The
         granular recorders below are invoked so the observed call order is the
         driver's; a re-entry is refused exactly as the driver refuses a second
-        subscribe.
+        connect.
         """
         if self._started:
-            msg = "Cannot subscribe: already subscribed. Call resume() first."
+            msg = "Cannot connect: the session is already connected. Call run() first."
             raise RuntimeError(msg)
         self._started = True
         self.start_calls.append((node_http, node_ws, verify_state_view))
-        target = self.subscribe(node_ws)
+        target = self.connect(node_ws)
         self.set_verify_rpc_url(node_http)
         if verify_state_view is not None:
             self.set_verify_state_view(verify_state_view)

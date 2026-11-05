@@ -256,6 +256,31 @@ class ArbitrageEngine:
         I/O or a crawl is already installed, and `BootRefused` when the fleet
         refused to host the registration intake the crawl runs on.
         """
+    def close(self, /) -> dict:
+        """
+        Stop the pump and signal the Rust core to clean up (ADR-006 D4).
+
+        The symmetric teardown half of `resume()`: sets the shutdown flag and
+        aborts the spawned pump task so a Ctrl-C exits promptly — the pump loop
+        otherwise blocks up to `BACKFILL_TIMEOUT_SECS` (60s) on a silent WS
+        stream before re-checking its shutdown flag, and indefinitely if the WS
+        subscription never delivers a final frame. Aborting unblocks the
+        `combined.next().await` immediately and drops the WS subscription
+        futures (closing the transport). Idempotent — safe from both the
+        session teardown path and a signal handler. Delegates to the shared
+        `PumpState`.
+        """
+    def connect(self, /, rpc_url: str) -> int:
+        """
+        Connect the session: `Detached -> Connecting -> Subscribed`.
+
+        Returns the link block `W` (the first complete block), which is the
+        backfill target `run()` closes. Stops before production: no batch flows
+        down a stream no consumer holds.
+
+        Raises `RuntimeError` when the pose refuses the move (a concurrent one in
+        flight, a terminal session) or the WS transport refuses the handshake.
+        """
     def debug_buffer_v3_liquidity_update(
         self,
         /,
@@ -454,9 +479,9 @@ class ArbitrageEngine:
         Number of pools the V2 solve lane admits (the reserve-pair family's
         volatile designs — V2 + Aerodrome volatile; ADR-059 D6).
         """
-    def resume(self, /, facets: SupportsGetItem[int, str]) -> None:
+    def run(self, /, facets: SupportsGetItem[int, str]) -> None:
         """
-        Resume phase: begin normal pump processing.
+        Run phase: arm the live loop (consumes the session's consumer claim).
 
         Must be called after `subscribe()`. Takes the WS stream from the
         subscribe phase and begins processing events on block boundaries.
@@ -645,27 +670,12 @@ class ArbitrageEngine:
         Raises `RuntimeError` if the phase is past the subscribe window, the
         pump is already started/subscribed, or the WS subscribe fails.
         """
-    def stop(self, /) -> None:
-        """
-        Stop the pump and signal the Rust core to clean up (ADR-006 D4).
-
-        The symmetric teardown half of `resume()`: sets the shutdown flag and
-        aborts the spawned pump task so a Ctrl-C exits promptly — the pump loop
-        otherwise blocks up to `BACKFILL_TIMEOUT_SECS` (60s) on a silent WS
-        stream before re-checking its shutdown flag, and indefinitely if the WS
-        subscription never delivers a final frame. Aborting unblocks the
-        `combined.next().await` immediately and drops the WS subscription
-        futures (closing the transport). Idempotent — safe from both the
-        session teardown path and a signal handler. Delegates to the shared
-        `PumpState`.
-        """
     def strategies(self, /) -> list[tuple[str, str, str | None]]:
         """
         Every registered strategy as `(name, state, halt_reason)`, in
         registration order. A halted tombstone carries its cause; every other
         state carries `None`.
         """
-    def subscribe(self, /, rpc_url: str) -> int: ...
     def sync_v3_pool_states(self, /, v3_sync_updates: list, block_number: SupportsIndex) -> None:
         """
         Full-sync V3 pool `tick_data` from Python backfill.
@@ -1090,6 +1100,17 @@ class Bot:
         single-chain Python `Bot` facade's ``config.default_chain_id``; `0` on
         the bare-test-fixture path (see `PyBot::new`).
         """
+    def close(self, /) -> None:
+        """
+        Stop the pump and signal the Rust core to clean up (ADR-006 D4).
+
+        The symmetric teardown half of the `subscribe` → `backfill_from_snapshot`
+        → `resume` lifecycle. Sets the shutdown flag and aborts the spawned
+        pump task so a Ctrl-C exits promptly (the pump loop otherwise blocks
+        up to 60s on a silent WS stream). Idempotent — safe to call from both
+        the `__aexit__` path and a signal handler. Delegates to the shared
+        `PumpState`.
+        """
     def close_snapshot_tx(self, /) -> None:
         """
         Commit + drop the held snapshot read transaction.
@@ -1107,6 +1128,19 @@ class Bot:
         # Errors
         `PyRuntimeError` if the quiescence drain expires with an assembler still
         holding the handle, or if the `COMMIT` fails.
+        """
+    def connect(self, /, rpc_url: str) -> int:
+        """
+        Subscribe to the WS `newHeads` + logs streams (ADR-006 D4 T3).
+
+        The Bot-owned pump entry point — delegates to the shared `PumpState`
+        attached when an engine wrapper was constructed against this bot.
+        Blocks (sync, via the shared tokio runtime) until the first block is
+        observed, then returns the first WS block number (the backfill target).
+
+        # Errors
+        `PyRuntimeError` if no engine is attached, the pump is already
+        started/subscribed, or the WS subscribe fails.
         """
     def construct_pool(self, /, request: PoolConstructionRequest) -> ConstructionOutcome:
         """
@@ -1666,7 +1700,7 @@ class Bot:
         The session's canonical token object for this address, or `None` when
         this session does not hold it. Registers nothing.
         """
-    def resume(self, /) -> None:
+    def run(self, /) -> None:
         """
         Resume the pump — begin normal WS processing (ADR-006 D4 T3).
 
@@ -1707,30 +1741,6 @@ class Bot:
         The snapshot seed block `S` (or `None` when no DB snapshot was loaded —
         the cold-start path). Python reads this in `engine_registry.start()`
         to stash `_verify_snapshot_block` for the per-pool two-step verify.
-        """
-    def stop(self, /) -> None:
-        """
-        Stop the pump and signal the Rust core to clean up (ADR-006 D4).
-
-        The symmetric teardown half of the `subscribe` → `backfill_from_snapshot`
-        → `resume` lifecycle. Sets the shutdown flag and aborts the spawned
-        pump task so a Ctrl-C exits promptly (the pump loop otherwise blocks
-        up to 60s on a silent WS stream). Idempotent — safe to call from both
-        the `__aexit__` path and a signal handler. Delegates to the shared
-        `PumpState`.
-        """
-    def subscribe(self, /, rpc_url: str) -> int:
-        """
-        Subscribe to the WS `newHeads` + logs streams (ADR-006 D4 T3).
-
-        The Bot-owned pump entry point — delegates to the shared `PumpState`
-        attached when an engine wrapper was constructed against this bot.
-        Blocks (sync, via the shared tokio runtime) until the first block is
-        observed, then returns the first WS block number (the backfill target).
-
-        # Errors
-        `PyRuntimeError` if no engine is attached, the pump is already
-        started/subscribed, or the WS subscribe fails.
         """
     def unregister_pool(
         self, /, address: str, pool_id: SupportsGetItem[int, SupportsIndex] | None = None

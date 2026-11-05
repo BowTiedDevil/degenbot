@@ -34,7 +34,7 @@ use alloy::primitives::Address;
 
 use crate::bot::engine::{hex_string_to_pool_id, SpecViolationError};
 use crate::bot::errmap::{
-    map_build_refusal, map_calc_tokens_in_err, map_calc_tokens_out_err, map_driver_err,
+    map_build_refusal, map_calc_tokens_in_err, map_calc_tokens_out_err, map_connect_err,
     map_no_construction_io, map_refusal, map_register_v2_err,
 };
 
@@ -935,13 +935,14 @@ impl PyBot {
     /// `PyRuntimeError` if no engine is attached, the pump is already
     /// started/subscribed, or the WS subscribe fails.
     #[pyo3(signature = (rpc_url))]
-    fn subscribe(&self, py: Python<'_>, rpc_url: &str) -> PyResult<u64> {
+    fn connect(&self, py: Python<'_>, rpc_url: &str) -> PyResult<u64> {
         let driver = self.pump_state()?;
         // GIL-release across the WS handshake block_on (the block_on lives in
-        // the core `Bot::subscribe`): the handshake future (WS subscribe +
+        // the core `Bot::connect`): the handshake future (WS subscribe +
         // header polling) does NOT need the GIL to complete.
-        py.detach(|| Bot::subscribe(&driver, rpc_url))
-            .map_err(map_driver_err)
+        py.detach(|| Bot::connect(&driver, rpc_url))
+            .map(|connected| connected.link_block)
+            .map_err(map_connect_err)
     }
 
     /// Resume the pump — begin normal WS processing (ADR-006 D4 T3).
@@ -950,12 +951,15 @@ impl PyBot {
     /// `BlockPump::resume_from_subscribe`; the pyo3
     /// `backfill_from_snapshot` method is retired. Delegates to the
     /// shared `PumpState`.
-    fn resume(&self, py: Python<'_>) -> PyResult<()> {
-        let driver = self.pump_state()?;
-        // GIL-release across the backfill block_on (the block_on lives in the
-        // core `Bot::resume`): the backfill (`eth_getLogs` + `BotState`
-        // mutation) is pure Rust async and does not need the GIL.
-        py.detach(|| Bot::resume(&driver)).map_err(map_driver_err)
+    fn run(&self, _py: Python<'_>) -> PyResult<()> {
+        let _driver = self.pump_state()?;
+        // The run move CONSUMES the session's one consumer claim, and the engine
+        // wrapper holds it (it owns the stream). Running from `Bot` would produce
+        // batches for a consumer that is not this wrapper, so the refusal is loud
+        // and names the door to use.
+        Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "Cannot run from Bot: this session's event stream is claimed by the \n             engine wrapper. Call the engine wrapper's run() instead.",
+        ))
     }
 
     /// Stop the pump and signal the Rust core to clean up (ADR-006 D4).
@@ -966,9 +970,11 @@ impl PyBot {
     /// up to 60s on a silent WS stream). Idempotent — safe to call from both
     /// the `__aexit__` path and a signal handler. Delegates to the shared
     /// `PumpState`.
-    fn stop(&self, _py: Python<'_>) -> PyResult<()> {
+    fn close(&self, py: Python<'_>) -> PyResult<()> {
         let driver = self.pump_state()?;
-        Bot::stop(&driver).map_err(map_driver_err)
+        // The close blocks at this adapter boundary and is idempotent.
+        let _report = py.detach(|| Bot::close(&driver));
+        Ok(())
     }
 
     /// Set the HTTP RPC URL used for verification (ADR-006 D4 T4).

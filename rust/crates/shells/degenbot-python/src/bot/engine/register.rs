@@ -6,7 +6,7 @@
 //! blocks per type, so each concern file contributes one slice.
 
 use super::{Arc, Bot, EngineStages, PoolHop, PyArbEngine, PyBot, PyList};
-use crate::bot::errmap::{map_driver_err, map_path_registration_err};
+use crate::bot::errmap::{map_connect_err, map_driver_err, map_path_registration_err};
 use crate::prelude::*;
 
 use degenbot_substrate::session_registry::SessionObjectRegistry;
@@ -71,7 +71,17 @@ impl PyArbEngine {
         // fails the constructor before the engine is handed to Python.
         let session = super::strategy::boot_session(Arc::clone(&bot), Arc::clone(&stages))
             .map_err(super::strategy::map_session_boot_error)?;
-        let result_rx = session.driver().take_result_receiver();
+        // ONE consumer hand-off: the ordered stream AND the claim that proves a
+        // consumer holds it. `resume`/`run` consumes the claim.
+        let (stream, claim) = session
+            .driver()
+            .claim_consumer()
+            .map_err(|refusal| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "{refusal} (the engine wrapper is this session's one consumer)"
+                ))
+            })?
+            .split();
         // Both wrappers share the driver itself.
         if let Some(parent) = py_bot_ref {
             parent
@@ -93,7 +103,8 @@ impl PyArbEngine {
         Ok(Self {
             stages,
             session,
-            result_rx: Arc::new(parking_lot::Mutex::new(result_rx)),
+            stream: Arc::new(parking_lot::Mutex::new(Some(stream))),
+            claim: parking_lot::Mutex::new(Some(claim)),
             warm_code_cache,
         })
     }
@@ -233,13 +244,20 @@ impl PyArbEngine {
         self.stages.path_dedups()
     }
 
+    /// Connect the session: `Detached -> Connecting -> Subscribed`.
+    ///
+    /// Returns the link block `W` (the first complete block), which is the
+    /// backfill target `run()` closes. Stops before production: no batch flows
+    /// down a stream no consumer holds.
+    ///
+    /// Raises `RuntimeError` when the pose refuses the move (a concurrent one in
+    /// flight, a terminal session) or the WS transport refuses the handshake.
     #[expect(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url))]
-    fn subscribe(&self, py: Python<'_>, rpc_url: String) -> PyResult<u64> {
-        // ADR-050 D7: the engine-only test-seam twin of
-        // `PyBot::subscribe` — drives the shared `EngineDriver` directly.
-        py.detach(|| degenbot_bot::bot_core::Bot::subscribe(self.session.driver(), &rpc_url))
-            .map_err(map_driver_err)
+    fn connect(&self, py: Python<'_>, rpc_url: String) -> PyResult<u64> {
+        py.detach(|| degenbot_bot::bot_core::Bot::connect(self.session.driver(), &rpc_url))
+            .map(|connected| connected.link_block)
+            .map_err(map_connect_err)
     }
 
     /// Pre-pump startup ritual: `subscribe(ws)` → verify-config
@@ -271,7 +289,7 @@ impl PyArbEngine {
         )
     }
 
-    /// Resume phase: begin normal pump processing.
+    /// Run phase: arm the live loop (consumes the session's consumer claim).
     ///
     /// Must be called after `subscribe()`. Takes the WS stream from the
     /// subscribe phase and begins processing events on block boundaries.
@@ -290,9 +308,15 @@ impl PyArbEngine {
     /// admit fails the call before the pump resumes.
     #[pyo3(signature = (facets))]
     #[expect(clippy::needless_pass_by_value)]
-    fn resume(&self, py: Python<'_>, facets: Vec<String>) -> PyResult<()> {
+    fn run(&self, py: Python<'_>, facets: Vec<String>) -> PyResult<()> {
         self.enable_facets(py, &facets)?;
-        py.detach(|| degenbot_bot::bot_core::Bot::resume(self.session.driver()))
+        let claim = self.claim.lock().take().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Cannot run: this session's event stream is not claimed. \
+                 Construct the engine (which claims it) before running.",
+            )
+        })?;
+        py.detach(|| degenbot_bot::bot_core::Bot::run(self.session.driver(), claim))
             .map_err(map_driver_err)?;
         // The start boundary for the deferred hosted I/O: the head-watch WS
         // connect and each active arm's feed pump launch here, BEFORE the
@@ -313,8 +337,16 @@ impl PyArbEngine {
     /// futures (closing the transport). Idempotent — safe from both the
     /// session teardown path and a signal handler. Delegates to the shared
     /// `PumpState`.
-    fn stop(&self, _py: Python<'_>) -> PyResult<()> {
-        degenbot_bot::bot_core::Bot::stop(self.session.driver()).map_err(map_driver_err)
+    fn close(&self, py: Python<'_>) -> PyResult<Py<pyo3::types::PyDict>> {
+        // The close blocks at this adapter boundary (never inside the core
+        // runtime) and is idempotent: every caller observes the one teardown.
+        let report = py.detach(|| degenbot_bot::bot_core::Bot::close(self.session.driver()));
+        let rendered = pyo3::types::PyDict::new(py);
+        rendered.set_item("from", report.from.as_str())?;
+        rendered.set_item("pump", format!("{:?}", report.pump))?;
+        rendered.set_item("crawl", format!("{:?}", report.crawl))?;
+        rendered.set_item("delivery", format!("{:?}", report.delivery))?;
+        Ok(rendered.unbind())
     }
 
     /// Awaitable session-end DETECTION FACT: resolves the core

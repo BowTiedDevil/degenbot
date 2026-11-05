@@ -1,16 +1,29 @@
 use super::{
     feed_executor_throttle_sample, op_error, op_info, op_warn, stream, us_to_secs, wall_ms,
     BlockMetadata, BlockPump, CompletenessDecision, Duration, Epoch, GateOutcome, HashSet,
-    HeaderReceipts, Instrument, LogDecision, Ordering, PreSolveGapTrack, StageDecision,
-    StageMachine, StreamExt, WsEvent, B256, BACKFILL_TIMEOUT_SECS, RELEVANT_TOPICS,
+    HeaderReceipts, Instrument, LogDecision, Ordering, PreSolveGapTrack, PumpControl,
+    StageDecision, StageMachine, StreamExt, WsEvent, B256, BACKFILL_TIMEOUT_SECS, RELEVANT_TOPICS,
 };
-// The `hotpath`-gated cooperative timed-exit block below is the only user of
-// `Arc` in this submodule (`Arc::clone(&self.shutdown)`). The pre-split monolith
-// had a file-scope `use std::sync::Arc;` that the decomposition did not carry
-// across the module boundary; import it under the same feature gate so the
-// default build keeps no unused import while the extension feature set resolves.
-#[cfg(feature = "hotpath")]
+// `Arc` is used by the exit guard (a `PumpControl` handle) and by the
+// `hotpath`-gated cooperative timed-exit block (`Arc::clone(&self.shutdown)`).
 use super::Arc;
+
+/// The live loop's ONE exit door.
+///
+/// Every way this loop can end — the stream ending, the shutdown flag, a
+/// too-deep reorg, or a panic unwinding through the loop — publishes the
+/// session's one pump-exit fact when this guard drops. A guard rather than a
+/// call per return site: a return path added later cannot forget it, and the
+/// panic path (which no `return` statement covers) is the same shape.
+struct PumpExitGuard {
+    control: Arc<dyn PumpControl>,
+}
+
+impl Drop for PumpExitGuard {
+    fn drop(&mut self) {
+        self.control.on_pump_ended();
+    }
+}
 
 /// The pump's ONE point of truth for the current settle/inactivity window:
 /// `(publish_pending, window)`. While a publish is pending the window is the
@@ -83,6 +96,12 @@ impl BlockPump {
         // Drained-settle solve gate: peekable so the loop
         // can probe "is another event already buffered?" WITHOUT consuming it.
         let mut combined = combined.peekable();
+
+        // The one exit edge: whatever ends this loop, the session learns it
+        // exactly once, through the same door (see [`PumpExitGuard`]).
+        let _exit_guard = PumpExitGuard {
+            control: Arc::clone(&self.control),
+        };
         // [DIAG] newHeads-stall investigation: track header arrivals so the
         // log shows, in production, whether `BlockHeader` events actually stop
         // arriving (subscription silent) vs. arrive but the arm doesn't fire
@@ -1422,7 +1441,8 @@ impl BlockPump {
                     // forever (the "deadlock" operators observed).
                     op_error!(domain = pump, "BlockPump: WS subscription streams ended - pump is STOPPED. The bot will no longer process blocks (no reconnect). Check the WS endpoint / restart."
                     );
-                    self.control.on_pump_ended();
+                    // The exit guard publishes the session's pump-exit fact as
+                    // this loop unwinds; calling it here too would only warn.
                     return;
                 }
             }

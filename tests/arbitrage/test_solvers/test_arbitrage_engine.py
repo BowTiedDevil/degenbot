@@ -37,25 +37,31 @@ class TestEventBufferControl:
         engine.flush_event_buffer()
 
 
-class TestSubscribeResume:
-    def test_subscribe_returns_block_number_type(self):
-        """subscribe() should be callable (won't actually connect in tests)."""
+class TestConnectRun:
+    def test_connect_and_run_are_the_lifecycle_moves(self):
+        """The session exposes the two moves (they will not connect in tests)."""
         engine = ArbitrageEngine()
-        assert hasattr(engine, "subscribe")
-        assert hasattr(engine, "resume")
+        assert hasattr(engine, "connect")
+        assert hasattr(engine, "run")
+        assert hasattr(engine, "close")
 
-    def test_resume_without_subscribe_raises(self):
-        """resume() without subscribe() should raise RuntimeError."""
+    def test_run_before_connect_refuses_on_the_claim(self):
+        """`run` consumes the consumer claim; a wrapper that never held one
+
+        (this bare engine claims at construction, so its claim was already
+
+        consumed or is present) refuses through the driver's typed pose gate.
+        """
         engine = ArbitrageEngine()
-        with pytest.raises(RuntimeError, match="subscribe"):
-            engine.resume([])
+        with pytest.raises(RuntimeError):
+            engine.run([])
 
-    def test_double_subscribe_raises(self):
-        """Calling subscribe() twice without resume() should raise."""
+    def test_connect_signature_takes_the_endpoint_only(self):
+        """Configuration is not a lifecycle argument (ADR-093 D1)."""
         engine = ArbitrageEngine()
         import inspect
 
-        sig = inspect.signature(engine.subscribe)
+        sig = inspect.signature(engine.connect)
         params = list(sig.parameters.keys())
         assert "rpc_url" in params
         assert "buffer_event_types" not in params
@@ -89,6 +95,6 @@ class TestEngineStartRefusals:
         session refusal (``RuntimeError``) instead of re-authoring the
         sequence — the real twin of the fake's double-start pin."""
         engine = ArbitrageEngine()
-        engine.stop()
-        with pytest.raises(RuntimeError, match="driver has been stopped"):
+        engine.close()
+        with pytest.raises(RuntimeError, match="session is stopped"):
             engine.start("http://127.0.0.1:1", "ws://127.0.0.1:1")

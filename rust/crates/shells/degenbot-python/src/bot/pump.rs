@@ -20,7 +20,7 @@ use pyo3::prelude::*;
 use pyo3::Bound;
 use std::sync::Arc;
 
-use crate::bot::errmap::map_driver_err;
+use crate::bot::errmap::map_connect_err;
 
 /// Run the pre-pump startup ritual: `subscribe(ws)` then verify-config
 /// (`http`, optional `view`) — the one-call `EngineDriver::start` detached
@@ -46,14 +46,20 @@ pub(crate) fn start(
     let verify_state_view = verify_state_view.map(str::to_string);
     // GIL-release across the WS handshake `block_on`: the handshake future
     // (WS subscribe + header polling + provider build) does NOT need the GIL.
+    //
+    // The ritual is an ADAPTER over two core doors: `connect` (the lifecycle
+    // move, which deliberately carries no configuration — ADR-093 D1) and the
+    // verify home's own configuration door.
     py.detach(move || {
-        degenbot_core::runtime::get_runtime().block_on(driver.start(
-            &node_http,
-            &node_ws,
-            verify_state_view.as_deref(),
-        ))
+        let connected = degenbot_core::runtime::get_runtime()
+            .block_on(driver.connect(&node_ws))
+            .map_err(map_connect_err)?;
+        degenbot_bot::bot_core::Bot::set_verify_rpc_url(Some(&driver), &node_http);
+        if let Some(view) = verify_state_view.as_deref() {
+            degenbot_bot::bot_core::Bot::set_verify_state_view(Some(&driver), view);
+        }
+        Ok(connected.link_block)
     })
-    .map_err(map_driver_err)
 }
 
 /// Awaitable session-end DETECTION FACT over [`EngineDriver::wait_session_end`].

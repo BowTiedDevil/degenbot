@@ -52,7 +52,7 @@ from tests.helpers.session import (
 def _restore_sigint() -> None:
     """Restore the default SIGINT handler after each test.
 
-    ``start()`` binds a SIGINT->``engine.stop()`` handler on the production path
+    ``start()`` binds a SIGINT->``engine.close()`` handler on the production path
     (``install_sigint=True``). Tests that call ``start()`` then ``run()``
     directly (without ``async with``) never reach the exit teardown, so the
     handler would leak across tests and pollute ``signal.getsignal``
@@ -167,7 +167,7 @@ class TestBotRunnerRun:
         await runner.run()
 
         # consumer task created FIRST (before resume), then resume, then paths, then release
-        assert events == ["consumer", "resume", "path_builder", "release"]
+        assert events == ["consumer", "run", "path_builder", "release"]
         assert engine_registry.engine.resumed is True
         assert bot.released is True
 
@@ -364,7 +364,7 @@ class TestShutdown:
     loop), so a ``KeyboardInterrupt`` tearing down ``asyncio.run`` does not reach
     it — the pump keeps blocking on the WS stream, holding process exit for up
     to 60s on a silent subscription. ``shutdown()`` closes that gap by calling
-    ``engine.stop()`` (which sets the shutdown flag + aborts the pump task). It
+    ``engine.close()`` (which sets the shutdown flag + aborts the pump task). It
     must be best-effort: callable at any lifecycle point, swallow any error from
     a torn-down engine, and idempotent (so both the exit teardown and a signal
     handler can call it).
@@ -377,7 +377,7 @@ class TestShutdown:
         await session.shutdown()
 
         assert engine_registry.engine.stop_calls == 1, (
-            "shutdown() must call engine.stop() exactly once"
+            "shutdown() must call engine.close() exactly once"
         )
 
     async def test_shutdown_is_idempotent(self) -> None:
@@ -397,7 +397,7 @@ class TestShutdown:
 
     async def test_shutdown_swallows_engine_stop_exception(self) -> None:
         # A partial-startup teardown (engine torn down mid-lifecycle) must not
-        # let engine.stop() mask the original in-flight exception. shutdown()
+        # let engine.close() mask the original in-flight exception. shutdown()
         # swallows + logs any error from stop().
         engine_registry = FakeEngineRegistry()
         engine_registry.engine.stop_raises = RuntimeError("engine torn down")
@@ -444,11 +444,11 @@ class TestShutdown:
             pass
 
         assert engine_registry.engine.stop_calls == 1
-        assert "stop" in events
+        assert "close" in events
 
 
 class TestSigintHandler:
-    """The SIGINT->``engine.stop()`` handler closes the "first Ctrl-C swallowed"
+    """The SIGINT->``engine.close()`` handler closes the "first Ctrl-C swallowed"
     gap.
 
     During ``build_paths`` the main thread is blocked inside the synchronous
@@ -456,7 +456,7 @@ class TestSigintHandler:
     default SIGINT -> ``KeyboardInterrupt`` is deferred until that section
     yields to the eval loop, so the first Ctrl-C appeared swallowed: the pump
     (on the shared tokio runtime) kept running and the operator pressed again.
-    ``start()`` binds a handler that calls ``engine.stop()`` *immediately* the
+    ``start()`` binds a handler that calls ``engine.close()`` *immediately* the
     moment the signal arrives (the Rust DFS releases the GIL, so the handler
     runs mid-DFS). These tests verify the binding lifecycle without sending a
     real SIGINT (which is unsafe in a pytest worker).
@@ -501,7 +501,7 @@ class TestSigintHandler:
         await runner.shutdown()
 
     async def test_handler_closure_calls_engine_stop(self) -> None:
-        # The bound handler, when invoked, must call engine.stop() so the pump
+        # The bound handler, when invoked, must call engine.close() so the pump
         # is killed the instant SIGINT arrives — not deferred until find_paths
         # yields. We invoke the handler directly (not via OS signal, which is
         # unsafe under pytest) — same callable Python would call.
@@ -518,7 +518,7 @@ class TestSigintHandler:
             handler(signal.SIGINT, None)  # type: ignore[operator]
 
         assert engine_registry.engine.stop_calls == 1, (
-            "the SIGINT handler must call engine.stop() so the pump dies "
+            "the SIGINT handler must call engine.close() so the pump dies "
             "immediately, even while the main thread is blocked in find_paths"
         )
         await session.shutdown()

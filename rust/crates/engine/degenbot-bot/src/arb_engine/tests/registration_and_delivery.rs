@@ -890,7 +890,7 @@ fn solve_does_not_send_result_batch_only_send_does() {
     solve_all_paths(&mut engine, 1);
     assert!(
         matches!(
-            rx.try_recv(),
+            crate::arb_engine::test_harness::expect_batch(rx.try_recv()),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
         ),
         "solve must not push a result batch onto the channel; \
@@ -909,8 +909,7 @@ fn solve_does_not_send_result_batch_only_send_does() {
     );
     // Only the explicit send drives the channel.
     compute_diff_and_send(&mut engine, &BlockMetadata::default());
-    let batch = rx
-        .try_recv()
+    let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
         .expect("send_result_batch must deliver the batch");
     assert!(
         batch.fresh.iter().any(|(id, _)| *id == path_id),
@@ -977,8 +976,7 @@ fn send_result_batch_advances_delivered_to_above_threshold() {
     // `delivered` to the above-threshold subset.
     compute_diff_and_send(&mut engine, &BlockMetadata::default());
     // Batch was actually delivered to the channel.
-    let batch = rx
-        .try_recv()
+    let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
         .expect("send_result_batch should deliver a batch");
     assert!(
         batch.fresh.iter().any(|(id, _)| *id == path_id),
@@ -1052,8 +1050,7 @@ fn set_solve_anchor_seeds_cold_start_results_for_immediate_delivery() {
     assert!(!results_before.get(&path_id).unwrap().profit.is_zero());
     // Delivery uses the seeded settled anchor — immediate, no deferral.
     compute_diff_and_send(&mut engine, &BlockMetadata::default());
-    let batch = rx
-        .try_recv()
+    let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
         .expect("compute_diff_and_send should deliver a batch");
     assert_eq!(
         batch.solve_block, 500,
@@ -1135,8 +1132,7 @@ fn profit_threshold_includes_results_above_u64_max_when_unbounded() {
     // anchor would sim at block 0, the 0x841820 code-less panic).
     engine.cycle.cursor.set_results_block_for_test(100);
     compute_diff_and_send(&mut engine, &BlockMetadata::default());
-    let batch = rx
-        .try_recv()
+    let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
         .expect("compute_diff_and_send should deliver a batch");
     assert!(
         batch.fresh.iter().any(|(id, _)| *id == path_id),
@@ -1177,8 +1173,7 @@ fn profit_threshold_max_bound_is_inclusive() {
     // `diff_and_send_with_zero_anchor_defers_candidates_and_does_not_commit`).
     engine.cycle.cursor.set_results_block_for_test(100);
     compute_diff_and_send(&mut engine, &BlockMetadata::default());
-    let batch = rx
-        .try_recv()
+    let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
         .expect("compute_diff_and_send should deliver a batch");
     assert!(
         batch.fresh.iter().any(|(id, _)| *id == path_id),
@@ -1209,8 +1204,7 @@ fn profit_threshold_min_bound_is_exclusive() {
         },
     );
     compute_diff_and_send(&mut engine, &BlockMetadata::default());
-    let batch = rx
-        .try_recv()
+    let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
         .expect("compute_diff_and_send should deliver a batch");
     assert!(
         batch.fresh.is_empty(),
@@ -1285,8 +1279,7 @@ fn finalize_block_threads_metadata_into_send() {
     engine.cycle.cursor.record_logs();
     finalize_for_test(&mut engine, 10, &metadata);
     // The emitted batch must carry the passed metadata, not default.
-    let batch = rx
-        .try_recv()
+    let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
         .expect("finalize_block should emit a result batch");
     assert_eq!(batch.solve_block, 10);
     assert_eq!(

@@ -269,7 +269,7 @@ def test_ipc_request_and_subscription_resolve_from_the_operator_file(
     try:
         block_before = fork.provider.get_block_number()
         with _ping_logs_during_subscribe(fork):
-            boundary = engine.subscribe(subscription["uri"])
+            boundary = engine.connect(subscription["uri"])
         assert boundary >= block_before, (
             "the pump's subscribe reaches a live block over the ipc socket"
         )
@@ -277,7 +277,7 @@ def test_ipc_request_and_subscription_resolve_from_the_operator_file(
             "the subscription boundary is a real observed block"
         )
     finally:
-        engine.stop()
+        engine.close()
 
 
 class _IpcCallManyNode:

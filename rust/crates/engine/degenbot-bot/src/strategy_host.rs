@@ -1526,9 +1526,10 @@ mod tests {
             "the mint closure's two engine channels are registered on the host's hub"
         );
         assert_eq!(
-            host.hub().named_policy("engine_result_batch"),
+            host.hub()
+                .named_policy(crate::arb_engine::SESSION_EVENT_CHANNEL_NAME),
             Some(OverflowPolicy::UnboundedFlagged {
-                name: "engine_result_batch"
+                name: crate::arb_engine::SESSION_EVENT_CHANNEL_NAME
             }),
             "the host hub carries the registration the closure made"
         );

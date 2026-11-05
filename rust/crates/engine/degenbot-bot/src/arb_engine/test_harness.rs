@@ -19,6 +19,28 @@ use degenbot_pools::V3SwapUpdate;
 use degenbot_substrate::concentrated_liquidity_route::ApplyOutcome;
 use hashbrown::HashSet;
 
+/// Read one `ResultBatch` off the session's ordered stream in a test.
+///
+/// The delivery edge writes `SessionEvent::Batch` and nothing else, so a test
+/// that only attaches the delivery side sees batches; the `Block` arm (written
+/// by the header edge) is named loudly rather than skipped, so a test can never
+/// silently pass by dropping the clock.
+#[expect(
+    clippy::panic,
+    clippy::panic_in_result_fn,
+    reason = "a Block on a delivery-only channel is a broken fixture, and a test must fail loudly on it"
+)]
+pub(crate) fn expect_batch(
+    recv: Result<super::session_events::SessionEvent, tokio::sync::mpsc::error::TryRecvError>,
+) -> Result<super::ResultBatch, tokio::sync::mpsc::error::TryRecvError> {
+    recv.map(|event| match event {
+        super::session_events::SessionEvent::Batch(batch) => batch,
+        super::session_events::SessionEvent::Block(block) => {
+            panic!("the delivery edge writes only the Batch arm, got Block({block:?})")
+        }
+    })
+}
+
 /// Test-only F-suite probe: the engine's construction-stamped boot —
 /// lets the white-box tests verify twin constructions share a byte-identical
 /// boot value WITHOUT reaching into the fleet statics.

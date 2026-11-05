@@ -33,43 +33,14 @@
 //!
 //! `latest_results` / `register_path` / the FFI surface keep their
 //! StateLock-mediated core locking — this type adds NO lock layer.
-use super::pump_session::{self, PhaseAdvance, PumpEvent};
+use super::pump_session::PumpSession;
+use super::session_events::{SessionEvent, SessionEventSource};
 use super::solve_cycle::{CycleOutcome, CycleTicket};
 use super::walk_telemetry;
 use super::ArbitrageEngine;
 use super::EngineRetune;
 use super::PumpPhase;
 
-/// The pump session's phase projection, with exactly one writer.
-///
-/// A `Copy` value behind a lock: readers never hold a handle into the session.
-/// The one production writer is [`EngineStages::advance_phase`], which decides
-/// legality and writes the landing inside this cell's lock; the crate-private
-/// force the driver's test seam uses is `#[cfg(test)]`-only.
-#[derive(Default)]
-struct PhaseCell(Mutex<PumpPhase>);
-
-impl PhaseCell {
-    fn read(&self) -> PumpPhase {
-        *self.0.lock()
-    }
-
-    /// Force a pose with no table check — the driver's test seam only.
-    #[cfg(test)]
-    fn write(&self, phase: PumpPhase) {
-        *self.0.lock() = phase;
-    }
-
-    /// Read, ask the table, write — under ONE lock acquisition, so two callers
-    /// cannot both decide against the same predecessor.
-    fn advance(&self, event: PumpEvent) -> Result<PhaseAdvance, pump_session::PumpDecline> {
-        let mut pose = self.0.lock();
-        let from = *pose;
-        let to = pump_session::transition(from, event)?;
-        *pose = to;
-        Ok(PhaseAdvance { from, to })
-    }
-}
 use crate::bot_core::stage_handlers::StageHandlers;
 use crate::bot_core::stage_handlers::{
     AffectedPaths, Finalize, FinalizeOutcome, Gate, GateOutcome, Publish, PublishOutcome,
@@ -87,9 +58,7 @@ use degenbot_substrate::{BlockMetadata, Epoch, EpochDelta};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-use super::delivery_policy::{
-    compute_diff_and_send, deregister_path, set_profit_thresholds, set_result_channel,
-};
+use super::delivery_policy::{compute_diff_and_send, deregister_path, set_profit_thresholds};
 use super::hooked_leg_requote::HookedLegReQuote;
 use super::inline_sim::InlineSimulator;
 use super::lifecycle::{
@@ -99,7 +68,9 @@ use super::lifecycle::{
     v3_pool_count, v4_pool_count,
 };
 use super::path_registry::PathRegistrationError;
-use super::{DiagnosticPathState, ResultBatch};
+use super::DiagnosticPathState;
+#[cfg(test)]
+use super::ResultBatch;
 use ::degenbot_pools::solve::{MixedPoolRef, PoolHop, SolvePathResult};
 use degenbot_executor::composers::PathInfo;
 use degenbot_substrate::path_info::PathInfoBuildError;
@@ -137,8 +108,21 @@ pub struct EngineStages {
     /// business — B2/ADR-027 lineage; the pipe moved here from the
     /// dissolved coordinator).
     block_clock: Mutex<BlockClockPipe>,
-    /// The pump session's phase, as observed by stages-only consumers.
-    phase: PhaseCell,
+    /// The session's ordered event source — the producer end the header edge
+    /// writes `SessionEvent::Block` into. The delivery edge writes the SAME
+    /// source from the engine's delivery lifecycle, which is what makes
+    /// `Block(N)`-before-`Batch(N)` the producer's call order rather than a
+    /// consumer's poll order (ADR-093 D5).
+    session_events: Arc<SessionEventSource>,
+
+    /// The session whose pose this stage surface reads (and whose one external
+    /// edge — the pump's own exit — it publishes).
+    ///
+    /// Installed by the driver's composition and never written by a caller: the
+    /// pose lives in ONE owner ([`PumpSession`]) and this is a handle, not a
+    /// second projection. A stages surface built without a driver (the
+    /// crate-internal stage tests) reads [`PumpPhase::Detached`].
+    session: Mutex<Option<Arc<PumpSession>>>,
 }
 impl EngineStages {
     /// Construct over a strong clone of the shared engine handle and the
@@ -183,8 +167,14 @@ impl EngineStages {
     /// [`Self::with_core_cfg`] / [`Self::with_core`].
     #[must_use]
     pub(crate) fn new(engine: Arc<Mutex<ArbitrageEngine>>, delta: Arc<EpochDelta>) -> Self {
+        let session_events;
         {
             let mut engine = engine.lock();
+            // One stream per engine: the delivery edge and the header edge write
+            // the SAME ordered source, so the ordering is the producer's call
+            // order (ADR-093 D5). The engine's delivery lifecycle owns it; this
+            // surface takes a handle.
+            session_events = engine.delivery.lifecycle.source_handle();
             let ledger = Arc::clone(&delta);
             set_deferred_re_record(
                 &mut engine,
@@ -207,9 +197,64 @@ impl EngineStages {
         Self {
             engine,
             delta,
-            phase: PhaseCell::default(),
+            session_events,
+            session: Mutex::new(None),
             block_clock: Mutex::new(BlockClockPipe::default()),
         }
+    }
+
+    /// Attach the session's ordered-event sender (wiring: the driver's
+    /// composition owns the hub's consumer end).
+    ///
+    /// # Errors
+    ///
+    /// [`degenbot_core::channel_lifecycle::ChannelDecline`] when one is already
+    /// attached, or after [`Self::close_delivery_channels`].
+    pub(crate) fn attach_session_events(
+        &self,
+        tx: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+    ) -> Result<(), degenbot_core::channel_lifecycle::ChannelDecline> {
+        self.session_events.attach(tx)
+    }
+
+    /// The session's ordered event source — crate-internal, so the driver can
+    /// read its phase.
+    #[must_use]
+    pub(crate) fn session_event_source(&self) -> &Arc<SessionEventSource> {
+        &self.session_events
+    }
+
+    /// Install the session whose pose this surface reads (driver composition).
+    ///
+    /// One owner: the pose lives in the [`PumpSession`], and the stage surface
+    /// holds a handle to it. There is no second projection to keep in step.
+    pub(crate) fn install_session(&self, session: Arc<PumpSession>) {
+        *self.session.lock() = Some(session);
+    }
+
+    /// The installed session, when this surface was composed by a driver.
+    #[must_use]
+    pub(crate) fn session(&self) -> Option<Arc<PumpSession>> {
+        self.session.lock().clone()
+    }
+
+    /// Deliver one batch through the engine's delivery edge — the crate-test
+    /// emitter for the session stream's `Batch` arm, with no solve behind it.
+    #[cfg(test)]
+    pub(crate) fn emit_batch_for_test(&self, solve_block: u64) {
+        let batch = ResultBatch {
+            solve_block,
+            timestamp: 0,
+            base_fee_per_gas: None,
+            gas_used: 0,
+            gas_limit: 0,
+            fresh: Vec::new(),
+            updated: Vec::new(),
+            expired: Vec::new(),
+            removed: Vec::new(),
+            payloads: hashbrown::HashMap::new(),
+        };
+        let _ = self.engine.lock().delivery.lifecycle.send_batch(batch);
     }
     /// Attach the block-clock channel sender (the wiring layer creates the
     /// channel pair; the Python-facing receiver lives on `PumpState`).
@@ -260,34 +305,15 @@ impl EngineStages {
         )))
     }
 
-    /// Read the current pump-protocol phase: the
-    /// engine session's read-only sub-state. Operator legality lives in the
+    /// Read the current pump-protocol phase: the session's pose, derived from
+    /// the one data-carrying pose it owns. Operator legality lives in the
     /// [`crate::strategy_host::StrategyHost`] FSM, not here.
     #[must_use]
     pub fn current_phase(&self) -> PumpPhase {
-        self.phase.read()
-    }
-
-    /// Publish one table transition: read the pose, ask the table, write the
-    /// landing. The ONE production writer of the projection.
-    ///
-    /// # Errors
-    ///
-    /// The table's typed [`PumpDecline`](pump_session::PumpDecline); the pose is
-    /// untouched on a refusal.
-    pub(crate) fn advance_phase(
-        &self,
-        event: PumpEvent,
-    ) -> Result<PhaseAdvance, pump_session::PumpDecline> {
-        self.phase.advance(event)
-    }
-
-    /// Force the projection's pose with no ordering check. The single caller is
-    /// the driver's `#[cfg(test)]` seam, which stages a pose a test cannot reach
-    /// without a live WS session.
-    #[cfg(test)]
-    pub(crate) fn publish_phase(&self, phase: PumpPhase) {
-        self.phase.write(phase);
+        self.session
+            .lock()
+            .as_ref()
+            .map_or(PumpPhase::Detached, |session| session.phase())
     }
 
     /// The packed streaming-delivery construction stance (smoke-boot probe).
@@ -410,11 +436,6 @@ impl EngineStages {
     #[must_use]
     pub fn path_info_for(&self, path_id: u64) -> Option<Result<PathInfo, PathInfoBuildError>> {
         super::path_info::path_info_for(&self.engine.lock(), path_id)
-    }
-
-    /// Attach the result-batch channel (the optional delivery sink).
-    pub fn set_result_channel(&self, tx: tokio::sync::mpsc::UnboundedSender<ResultBatch>) {
-        set_result_channel(&mut self.engine.lock(), tx);
     }
 
     /// Set the delivery profit thresholds.
@@ -874,32 +895,48 @@ impl PumpControl for EngineStages {
     fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
         // Direct, non-FIFO dispatch: one send per accepted header, never
         // queued behind solver work (B2). NOT taking the engine lock.
-        self.block_clock.lock().notify(BlockNotification {
+        let notification = BlockNotification {
             number: block,
             timestamp: metadata.timestamp,
             base_fee_per_gas: metadata.base_fee_per_gas,
             gas_used: metadata.gas_used,
             gas_limit: metadata.gas_limit,
-        });
+        };
+        self.block_clock.lock().notify(notification);
+        // The session stream's Block arm, written by the SAME producer call as
+        // the observer tap above: the header edge is the one place a block
+        // becomes visible, so the two cannot disagree about the clock, and
+        // `Block(N)` is on the stream before any `Batch(N)` this task later
+        // publishes (ADR-093 D5).
+        self.session_events.send(SessionEvent::Block(notification));
     }
     fn on_pump_ended(&self) {
         // The live loop returned without a `Stop`: the table's `Running ->
         // Ended` edge, published here so `current_phase()` stops claiming a
         // pump that is gone. A session already tearing down owes only
         // `StopCompleted`, so the edge is refused there and the pose stays
-        // `Stopping` — the driver's `stop()` owns that landing.
-        match self.advance_phase(PumpEvent::PumpExited) {
-            Ok(advance) => diag!(
-                domain = solver,
-                from = %advance.from,
-                to = %advance.to,
-                "EngineStages: the live loop ended; the session pose follows the table"
-            ),
-            Err(decline) => op_warn!(
-                domain = solver,
-                %decline,
-                "EngineStages: the live loop ended outside a running pose; teardown owns the landing"
-            ),
+        // `Stopping` — `close()` owns that landing.
+        let session = self.session();
+        match session.as_deref().map(PumpSession::pump_exited) {
+            None => {
+                diag!(
+                    domain = solver,
+                    "EngineStages: a pump ended on a stage surface with no session attached"
+                );
+            }
+            Some(verdict) => match verdict {
+                Ok(advance) => diag!(
+                    domain = solver,
+                    from = %advance.from,
+                    to = %advance.to,
+                    "EngineStages: the live loop ended; the session pose follows the table"
+                ),
+                Err(decline) => op_warn!(
+                    domain = solver,
+                    %decline,
+                    "EngineStages: the live loop ended outside a running pose; teardown owns the landing"
+                ),
+            },
         }
         op_error!(domain = solver, "EngineStages: pump ended - closing the block-clock pipe + engine delivery channels; the Python block/result streams now end so the bot fails loudly"
         );
@@ -1054,54 +1091,80 @@ mod construction_ledger_pins {
 #[expect(clippy::expect_used)]
 mod phase_projection_tests {
     use super::EngineStages;
-    use crate::arb_engine::{PumpEvent, PumpPhase};
+    use crate::arb_engine::pump_session::{PumpEvent, PumpPhase, PumpSession};
     use std::sync::Arc;
 
-    fn stages() -> EngineStages {
-        EngineStages::new(
+    /// A stage surface with a session installed, exactly as the driver's
+    /// composition installs one.
+    fn stages_with_session() -> (EngineStages, Arc<PumpSession>) {
+        let stages = EngineStages::new(
             Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
             Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
-        )
+        );
+        let (tx, _rx) = tokio::sync::watch::channel(false);
+        let session = Arc::new(PumpSession::new(tx));
+        stages.install_session(Arc::clone(&session));
+        (stages, session)
+    }
+
+    /// A stage surface with NO session reads `Detached`: there is no second
+    /// projection to fall out of step with a session it does not have.
+    #[test]
+    fn a_stages_surface_without_a_session_reads_detached() {
+        let stages = EngineStages::new(
+            Arc::new(parking_lot::Mutex::new(super::ArbitrageEngine::new())),
+            Arc::new(degenbot_substrate::EpochDelta::new(0u64)),
+        );
+        assert_eq!(stages.current_phase(), PumpPhase::Detached);
     }
 
     /// A live loop that returns on its own lands the table's `Running -> Ended`
     /// edge, so `current_phase()` stops claiming a pump that is gone.
     #[test]
     fn pump_ended_lands_ended() {
-        let stages = stages();
-        stages.publish_phase(PumpPhase::Running);
+        let (stages, session) = stages_with_session();
+        // A stand-in live loop: the pose is what the exit edge reads.
+        let handle = degenbot_core::runtime::get_runtime().spawn(async {});
+        session.seed_running_for_test(Box::new(crate::arb_engine::pump_session::LiveLoop {
+            handle,
+            completion: None,
+        }));
+        assert_eq!(stages.current_phase(), PumpPhase::Running);
+
         crate::bot_core::PumpControl::on_pump_ended(&stages);
         assert_eq!(stages.current_phase(), PumpPhase::Ended);
     }
 
     /// A session already tearing down owes the table only `StopCompleted`, so the
     /// pump's own exit edge is refused and the pose stays `Stopping` for the
-    /// driver's `stop()` to land.
+    /// close to land.
     #[test]
     fn pump_ended_during_teardown_leaves_stopping() {
-        let stages = stages();
-        stages.publish_phase(PumpPhase::Stopping);
+        let (stages, session) = stages_with_session();
+        // Something TO tear down: a live loop, so the stop lands `Stopping`.
+        let handle = degenbot_core::runtime::get_runtime().spawn(async {});
+        session.seed_running_for_test(Box::new(crate::arb_engine::pump_session::LiveLoop {
+            handle,
+            completion: None,
+        }));
+        let mv = session
+            .take(PumpEvent::Stop)
+            .expect("stop is total from every pose");
+        mv.release();
+        assert_eq!(stages.current_phase(), PumpPhase::Stopping);
+
         crate::bot_core::PumpControl::on_pump_ended(&stages);
         assert_eq!(stages.current_phase(), PumpPhase::Stopping);
     }
 
-    /// The publish is ONE locked read-decide-write: an accepted move reports the
-    /// pair it wrote, and a declined move writes nothing.
+    /// The one external pose writer is the pump's own exit edge, and it names
+    /// exactly one transition.
     #[test]
-    fn advance_reports_the_pair_and_writes_nothing_on_a_decline() {
-        let stages = stages();
-        let advance = stages
-            .advance_phase(PumpEvent::SubscribeRequested)
-            .expect("detached admits subscribe");
-        assert_eq!(
-            (advance.from, advance.to),
-            (PumpPhase::Detached, PumpPhase::Connecting)
-        );
-        assert!(stages.advance_phase(PumpEvent::SubscribeRequested).is_err());
-        assert_eq!(
-            stages.current_phase(),
-            PumpPhase::Connecting,
-            "a decline leaves the pose untouched"
+    fn the_pump_exit_edge_is_refused_off_a_running_pose() {
+        let (_stages, session) = stages_with_session();
+        assert!(
+            session.pump_exited().is_err(),
+            "a detached session has no live loop to end"
         );
     }
 }

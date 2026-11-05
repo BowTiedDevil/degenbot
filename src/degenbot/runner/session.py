@@ -946,9 +946,9 @@ class Session:
             actors.stop_engine()
             return
         try:
-            actors.engine_registry.engine.stop()
+            actors.engine_registry.engine.close()
         except Exception as exc:
-            bot_logger.warning(f"[shutdown] engine.stop() failed: {exc!r}")
+            bot_logger.warning(f"[shutdown] engine.close() failed: {exc!r}")
 
     def _install_sigint_handler(self) -> None:
         """Bind a SIGINT handler that stops the Rust pump *immediately*.

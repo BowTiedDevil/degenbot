@@ -127,6 +127,11 @@ pub mod pump_session;
 // The engine-session end DETECTION facts: the cause vocabulary, the heartbeat
 // stall watchdog, and the once-only delivery channel shared by both drivers.
 mod session_end;
+
+// The session's ONE ordered event stream and its ONE consumer claim (ADR-093 D5):
+// `Block(N)` before every `Batch(N)`, no `End` item, natural end = the stream's
+// closure.
+mod session_events;
 // ADR-045: the path-identity registry (`PathRegistry`) —
 // registered paths, reverse index, signatures, id allocator, cap, dedups.
 mod path_registry;
@@ -196,7 +201,11 @@ mod tests;
 pub use diagnostic::{
     compute_field_diffs, DiagnosticHop, DiagnosticPathState, DiagnosticPoolState, FieldDiff,
 };
-pub use driver::{CrawlBoot, DriverError, EngineChannelHandles, EngineDriver, PhaseError};
+pub use driver::{
+    BackfillGap, ConnectRefusal, Connected, CrawlBoot, CrawlRefusal, DriverError,
+    EngineChannelHandles, EngineDriver, PhaseError, SubscribeRefusal, TeardownReport,
+    BLOCK_CHANNEL_NAME, SESSION_EVENT_CHANNEL_NAME,
+};
 pub use engine_stages::EngineStages;
 pub use fleet_status::{
     fleet_profile_summary, fleet_runtime_status, FleetBinding, FleetProfileSummary,
@@ -217,10 +226,13 @@ pub use lifecycle::PathRegistrationError;
 /// The engine-session end DETECTION facts: the typed cause vocabulary, the
 /// heartbeat stall watchdog, and the once-only delivery channel the drivers
 /// rank into their own end-state verdicts.
-pub use pump_session::{transition, PumpDecline, PumpEvent, PumpPhase};
+pub use pump_session::{transition, CrawlExit, PumpDecline, PumpEvent, PumpExit, PumpPhase};
 pub use retune::EngineRetune;
 pub use session_end::{
     Heartbeat, SessionEndCause, SessionEndDetection, SessionEndFacts, SessionEndPublisher,
+};
+pub use session_events::{
+    ClaimRefusal, ConsumerClaim, EventHandoff, SessionEvent, SessionEventSource, SessionStream,
 };
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------

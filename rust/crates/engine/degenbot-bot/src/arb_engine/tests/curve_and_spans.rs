@@ -540,8 +540,7 @@ fn finalize_block_consumes_no_dirt_and_emits_no_solve() {
     }
     // Terminal publish: the boundary batch still flows to Python with the
     // finalized block as its solve_block.
-    let batch = rx
-        .try_recv()
+    let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
         .expect("finalize must emit the terminal boundary batch");
     assert_eq!(batch.solve_block, 5);
 }
@@ -560,14 +559,13 @@ fn finalize_boundary_publishes_even_when_nothing_dirtied() {
     finalize_for_test(&mut engine, 7, &BlockMetadata::default());
     assert_eq!(last_solved_block(&engine,), 7);
     assert!(!has_logs_this_block(&engine,));
-    let batch = rx
-        .try_recv()
+    let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
         .expect("boundary batch must be emitted without dirt");
     assert_eq!(batch.solve_block, 7);
     // Guard no-ops the re-fired boundary.
     finalize_for_test(&mut engine, 7, &BlockMetadata::default());
     assert!(
-        rx.try_recv().is_err(),
+        crate::arb_engine::test_harness::expect_batch(rx.try_recv()).is_err(),
         "guard must not double-publish a settled boundary"
     );
 }
@@ -1287,7 +1285,7 @@ fn streaming_delivery_emits_fast_result_while_slow_path_solves() {
         if observed.load(std::sync::atomic::Ordering::Relaxed) {
             break;
         }
-        while let Ok(batch) = result_rx.try_recv() {
+        while let Ok(batch) = crate::arb_engine::test_harness::expect_batch(result_rx.try_recv()) {
             let has_fast = batch
                 .fresh
                 .iter()

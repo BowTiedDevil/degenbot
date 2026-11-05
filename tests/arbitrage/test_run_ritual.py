@@ -173,7 +173,7 @@ class TestTransitionTable:
         assert events == [
             "consumer",
             "watch-attach",
-            "resume",
+            "run",
             "path-builder",
             "release",
             "watch-attach-registration",
@@ -194,12 +194,14 @@ class TestTransitionTable:
         assert session.actors is not None
         assert session.actors.engine_registry.engine.resumed is False
         ritual.resume()
-        assert events.index("consumer") < events.index("resume")
-        assert events.index("watch-attach") < events.index("resume")
+        assert events.index("consumer") < events.index("run")
+        assert events.index("watch-attach") < events.index("run")
 
 
 class TestRefusals:
     async def test_transitions_refused_before_the_ritual_started(self) -> None:
+        # The RITUAL's transition names (its `resume` move arms the engine the
+        # same way the driver's `run` does).
         for name in ("attach_watch", "resume", "registration"):
             ritual = RunRitual(_session())
             with pytest.raises(RunRitualError, match="refused"):

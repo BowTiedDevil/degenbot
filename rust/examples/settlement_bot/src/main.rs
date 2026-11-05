@@ -770,11 +770,31 @@ fn run() -> Result<(), String> {
     // The wrapper's receiver tally exists for the hub-side depth diagnostic
     // (`Hub::named_pending`); the sample's own consume loop does not poll it,
     // so hand it the raw channel end.
-    let result_rx = driver
-        .take_result_receiver()
-        .map(degenbot_eventhub::NamedReceiver::into_inner)
-        .ok_or_else(|| "EngineDriver result receiver already taken".to_string())?;
+    // Claim the session's ONE event hand-off BEFORE producing: the stream and
+    // the claim that proves a consumer holds it travel together, and `run`
+    // consumes the claim (ADR-093 D5). A second claim is refused by name.
+    let (stream, claim) = driver
+        .claim_consumer()
+        .map_err(|refusal| refusal.to_string())?
+        .split();
     let runtime = degenbot::runtime::get_runtime();
+    // TEMPORARY DEMULTIPLEX (ADR-093 D5): the session's one ordered stream
+    // carries `Block(N)` before that epoch's `Batch(N)`, and this sample's G4
+    // consumer still speaks `ResultBatch`. One task reads the stream and
+    // forwards the `Batch` arm; the clock arm is the same `newHeads` edge the
+    // driver's observer tap publishes. The session-consumer slice (`ZJZU27`)
+    // deletes this bridge together with the loop it feeds.
+    let (batch_tx, result_rx) = tokio::sync::mpsc::unbounded_channel();
+    let _stream_bridge = runtime.spawn(async move {
+        let mut stream = stream;
+        while let Some(event) = stream.recv().await {
+            if let degenbot::SessionEvent::Batch(batch) = event {
+                if batch_tx.send(batch).is_err() {
+                    break;
+                }
+            }
+        }
+    });
     let outcome = runtime.block_on(async {
         // G4 : the result-batch consumer runs concurrently with
         // the live registration arm; `driver.stop()` below closes the channel
@@ -854,14 +874,22 @@ fn run() -> Result<(), String> {
                  will use the PoolManager target"
             ),
         }
+        // The verify home's configuration is NOT a lifecycle argument
+        // (ADR-093 D1): this adapter sets it on the home, then makes the move.
+        degenbot::bot_core::Bot::set_verify_rpc_url(Some(&driver), &http);
+        if let Some(view) = verify_state_view.as_deref() {
+            degenbot::bot_core::Bot::set_verify_state_view(Some(&driver), view);
+        }
         let w = driver
-            .start(&http, &ws, verify_state_view.as_deref())
+            .connect(&ws)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?
+            .link_block;
         let phase_after_start = driver.current_phase();
-        // resume is the single gate after which batches flow; the driver owns
-        // the S+1..W auto-backfill before it spawns the live loop.
-        driver.resume().await.map_err(|e| e.to_string())?;
+        // `run` is the single gate after which batches flow AND it consumes the
+        // consumer claim; the driver owns the S+1..W auto-backfill before it
+        // spawns the live loop.
+        driver.run(claim).await.map_err(|e| e.to_string())?;
         let phase_after_resume = driver.current_phase();
 
         // ── G3 live registration arm (gated by SMOKE_RPC_URL) ──
@@ -1002,7 +1030,17 @@ fn run() -> Result<(), String> {
     // single end-of-stream), then close the operator channel, then join the
     // session watch/consumer. The order is never reordered.
     let watch_outcome = run_loop::teardown_session(
-        || driver.stop().map_err(|e| e.to_string()),
+        || {
+            // `close` is async, total and idempotent; it reports what it tore
+            // down. The adapter blocks at this boundary, never inside the core
+            // runtime.
+            let report = runtime.block_on(driver.close());
+            println!(
+                "[teardown] session closed from {} (pump {:?}, crawl {:?}, stream {:?})",
+                report.from, report.pump, report.crawl, report.delivery
+            );
+            Ok(())
+        },
         || {
             if let Some(operator) = operator {
                 runtime.block_on(operator.close());

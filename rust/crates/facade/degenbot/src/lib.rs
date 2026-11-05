@@ -50,11 +50,14 @@ pub mod session_end {
     };
 }
 
-/// ADR-050 / Gap G1: the public Rust driver seam over the
+/// ADR-050 / Gap G1 / ADR-093: the public Rust driver seam over the
 /// crate-private engine. `cargo add degenbot` reaches the full
-/// subscribe→resume(+auto-backfill)→stop ritual (also available as
-/// `degenbot::bot::arb_engine::EngineDriver`).
-pub use degenbot_bot::arb_engine::{DriverError, EngineDriver, PhaseError};
+/// claim→connect→run→close ritual, its one ordered event stream and its
+/// consumer claim (also available as `degenbot::bot::arb_engine::*`).
+pub use degenbot_bot::arb_engine::{
+    BackfillGap, ClaimRefusal, ConnectRefusal, Connected, ConsumerClaim, CrawlRefusal, DriverError,
+    EngineDriver, EventHandoff, PhaseError, SessionEvent, SessionStream, TeardownReport,
+};
 
 /// `BotState` state-owner surface, re-exported alongside [`crate::bot`].
 pub use degenbot_bot::bot_core;

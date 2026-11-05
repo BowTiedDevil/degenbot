@@ -7,7 +7,7 @@
 
 use super::{
     Address, Arc, BlockNotification, EngineStages, HopType, PyArbEngine, PyDict, PyList,
-    PyStopAsyncIteration, ResultBatch, SolvePathResult, U256,
+    PyStopAsyncIteration, ResultBatch, SessionEvent, SolvePathResult, U256,
 };
 use crate::conversion::alloy::{PyI256, PyU256};
 use crate::prelude::*;
@@ -179,22 +179,34 @@ impl PyArbEngine {
     ///   - "expired": list of int (`path_ids`)
     ///   - "removed": list of int (`path_ids`)
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let result_rx = Arc::clone(&self.result_rx);
+        let stream_slot = Arc::clone(&self.stream);
 
         crate::ambient_runtime::future_into_py(py, async move {
-            // Take the receiver for awaiting
-            let mut rx = result_rx
+            // Take the stream for awaiting
+            let mut stream = stream_slot
                 .lock()
                 .take()
-                .ok_or_else(|| PyStopAsyncIteration::new_err("Result channel closed"))?;
+                .ok_or_else(|| PyStopAsyncIteration::new_err("Result stream closed"))?;
 
-            // Wait for the next batch
-            let batch = rx.recv().await.ok_or_else(|| {
-                PyStopAsyncIteration::new_err("Result channel closed — pump may have stopped.")
-            })?;
+            // TEMPORARY DEMULTIPLEX (ADR-093 D5): the session's one ordered
+            // stream carries `Block` before that epoch's `Batch`. The cockpit's
+            // block clock is still the observer tap (`PyBot::block_stream`),
+            // written by the same producer call, so this adapter forwards the
+            // `Batch` arm and ignores the clock arm until the Session consumer
+            // slice moves the whole loop into Rust.
+            let mut next = stream.recv().await;
+            while let Some(SessionEvent::Block(_)) = next {
+                next = stream.recv().await;
+            }
+            let Some(SessionEvent::Batch(batch)) = next else {
+                // A dropped channel is terminal: the stream is not put back.
+                return Err(PyStopAsyncIteration::new_err(
+                    "Result stream closed — pump may have stopped.",
+                ));
+            };
 
-            // Put the receiver back
-            *result_rx.lock() = Some(rx);
+            // Put the stream back
+            *stream_slot.lock() = Some(stream);
 
             // Convert batch to Python dict (requires GIL)
             Python::attach(|py| batch_to_py_dict(&batch, py))

@@ -462,7 +462,7 @@ fn handle_reorg_rolls_back_v2_sync_and_expires_delivered_result() {
     );
     // Drain all batches queued so far (sanity + post-Sync) so the next
     // receive is the reorg batch.
-    while rx.try_recv().is_ok() {}
+    while crate::arb_engine::test_harness::expect_batch(rx.try_recv()).is_ok() {}
     // Reorg: roll back block 5 (the Sync that created the arb). Inline the
     // restore+re-dirty the per-event `ReorgCoordinator::dispatch_reorg_log`
     // performs; this test verifies the engine-level outcome holds under the
@@ -493,8 +493,7 @@ fn handle_reorg_rolls_back_v2_sync_and_expires_delivered_result() {
         "previously-delivered result should expire out of `delivered`"
     );
     // The reorg batch must carry an `expired` entry for this path.
-    let batch = rx
-        .try_recv()
+    let batch = crate::arb_engine::test_harness::expect_batch(rx.try_recv())
         .expect("a result batch should be sent after the reorg solve");
     assert!(
         batch.expired.contains(&path_id),
@@ -1222,7 +1221,7 @@ fn on_pump_ended_closes_the_result_stream() {
     let mut engine = ArbitrageEngine::new();
     set_result_channel(&mut engine, result_tx);
     engine.delivery.lifecycle.close();
-    match result_rx.try_recv() {
+    match crate::arb_engine::test_harness::expect_batch(result_rx.try_recv()) {
         Err(TryRecvError::Disconnected) => {}
         other => panic!("result stream must be Disconnected after drop, got {other:?}"),
     }

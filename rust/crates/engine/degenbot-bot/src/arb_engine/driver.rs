@@ -1,67 +1,69 @@
 //! `EngineDriver` — the public Rust driver seam over the crate-private
-//! engine (ADR-050, Gap G1 /).
+//! engine (ADR-050, ADR-093 D1/D2/D5/D7).
 //!
 //! # Why this type exists
 //!
-//! Before this module the only external driver of the pump/solve lifecycle was
-//! the `PyO3` `PyArbEngine` + `PumpState` pair in `degenbot-python`:
+//! The only external driver of the pump/solve lifecycle used to be the `PyO3`
+//! `PyArbEngine` + `PumpState` pair in `degenbot-python`:
 //! [`crate::arb_engine::ArbitrageEngine`] is `pub(crate)` machinery, and the
 //! public [`crate::arb_engine::EngineStages`] seam is an observer/stage surface
-//! (no `subscribe`/`resume`/`stop`). A pure-Rust `cargo add degenbot` consumer
-//! could therefore not run the startup ritual. `EngineDriver` is the ONE driver
-//! seam above the ONE engine seam: it composes the shared `Arc<Bot>`, the
-//! public `Arc<EngineStages>`, the reorg coordinator, the shutdown flag, the
-//! pump handle, the subscribe state, the verify provider, and the result/block
-//! channel ends — the session state that previously lived on `PumpState`.
+//! (no connect/run/close). A pure-Rust `cargo add degenbot` consumer could not
+//! run the startup ritual. `EngineDriver` is the ONE driver seam above the ONE
+//! engine seam.
 //!
-//! This is **not** the "engine facade" GLOSSARY.md forbids (ADR-049 D1): the
-//! engine type stays `pub(crate)`, every engine touch crosses `EngineStages`,
-//! and the one-impl-block census gate is untouched. It is a layer above the
-//! existing door, not a second door.
+//! # Lifecycle-only (ADR-093 D1)
 //!
-//! # The startup ritual (mirrors `EngineRegistry.start()`)
+//! The seam is the session and nothing else:
 //!
-//! 1. `start(http, ws, state_view)` (or `subscribe`) reads the snapshot seed
-//!    `S` from the shared `BotState`, opens the WS subscriptions, observes the
-//!    first complete block `W`, and pokes the verify config. It **stops before
-//!    `resume()`** so the consumer can attach its result receiver while no
-//!    batches can flow.
-//! 2. `resume()` gates on `PumpPhase::Subscribed`, **owns the
-//!    `S+1..W` auto-backfill** (awaiting `BlockPump::backfill_with_drain`
-//!    synchronously), then spawns the live pump loop and advances
-//!    `Subscribed -> Resuming -> Running`. Consumers never call
-//!    `backfill_from_snapshot`.
-//! 3. `stop()` publishes the table's teardown edge (`Stop`, then
-//!    `StopCompleted` once the teardown returns), sets the shutdown flag, waits
-//!    up to `PUMP_STOP_GRACE` for the pump to exit **cooperatively** (its own
-//!    500 ms tick polls the flag), and only escalates to `abort()` + join if the
-//!    grace expires; it then clears the subscribe state and closes the delivery
-//!    channels. It is any-phase + idempotent (the `BotRunner.shutdown`
-//!    contract).
+//! ```text
+//! claim_consumer() -> Result<EventHandoff, ClaimRefusal>   // the stream + its claim
+//! connect(ws)      -> Result<Connected, ConnectRefusal>    // Detached -> Subscribed
+//! run(claim)       -> Result<(), DriverError>              // Subscribed -> Running
+//! close()          -> TeardownReport                       // total from every pose
+//! current_phase() / is_stopped() / wait_session_end()
+//! ```
 //!
-//! # Open questions resolved in this implementation (ADR-050)
+//! Every engine operation is reached at [`EngineStages`] (path registry, retune,
+//! inline simulator, results) or at its pose-independent core door; this type
+//! does not forward them (ADR-093 D3). The Verify lifecycle is a capability of
+//! its own ([`Self::verify`]), not a session move.
 //!
-//! - **Blocking wrappers.** The async `start`/`subscribe`/`resume` are the
-//!   canonical entry points; the adapters own `runtime.block_on`. `stop` is
-//!   sync (it parks on the join), matching the ADR.
-//! - **`PumpState`.** It survives as a thin `PyBot`-side adapter holding
-//!   `Arc<EngineDriver>` and delegating; the session fields collapsed into this
-//!   driver. Full dissolution was deferred to avoid churning every `PyBot`
-//!   call site in the same cutover.
-//! - **`DriverError`.** Closed enum below. Phase violations carry a typed
-//!   `PhaseError`; registration propagates the typed
-//!   `PathRegistrationError`; the verify lifecycle propagates the core
-//!   `RefusalKind` so the adapter keeps its byte-identical Python exception
-//!   mapping.
-//! - **Verify provider.** Built once at session start (`configure_verify` over
-//!   [`VerifyLifecycle::configure`]) and installed as the verify home's
-//!   construction value, alongside the V4 `StateView` address.
-//! - **Lifecycle inputs are typed.** ADR-050 D4 sketches `&str` inputs; the
-//!   implementation takes `Address`/`V4PoolId` so string parsing stays in the
-//!   `PyO3` adapter, preserving its synchronous `ValueError` raise (the
-//!   Python-visible behavior is byte-identical).
-//! - **Main loop.** No `run_until_stopped` convenience: the consumer owns its
-//!   consume/dispatch loop (ADR-050 D9).
+//! # The startup ritual
+//!
+//! 1. [`Self::claim_consumer`] hands out the session's ordered event stream AND
+//!    the [`ConsumerClaim`] that proves a consumer holds it. One hand-off per
+//!    session; a second declines by name.
+//! 2. [`Self::connect`] opens the WS subscriptions and observes the first
+//!    complete block `W`, reporting it as [`Connected::link_block`]. It stops
+//!    **before** production: no batch can flow down a stream nobody reads.
+//! 3. [`Self::run`] consumes the claim, owns the `S+1..W` auto-backfill
+//!    (awaiting `BlockPump::backfill_with_drain` synchronously), and spawns the
+//!    live loop. Consumers never call `backfill_from_snapshot`.
+//! 4. [`Self::close`] is asynchronous, total, idempotent and shared: it requests
+//!    termination, waits for any in-flight move to unwind, latches the crawl's
+//!    stop before joining the pump, closes the event stream exactly once, drains
+//!    the walk memo after the pump is down, and publishes `StopCompleted` last.
+//!
+//! # The two ordering holes (ADR-093 §1.3), closed structurally
+//!
+//! The session's pose is private and **data-carrying** ([`crate::arb_engine::pump_session`]):
+//! `Subscribed` owns the pump, `Running` owns the live loop's join fact. A move
+//! the table no longer admits cannot install a payload, so a `run` landing after
+//! a `close` aborts its own loop instead of arming it on a dead session, and a
+//! crawl attach after teardown begins is refused by the same table.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use degenbot_core::{diag, op_error, op_info, op_warn};
+use degenbot_eventhub::Hub;
+use degenbot_substrate::session_registry::PoolIdentity;
+use degenbot_substrate::state_lock::{LockSite, StateLock};
+use degenbot_substrate::BotState;
+#[cfg(test)]
+use parking_lot::Mutex;
+use tokio::sync::watch;
 
 use crate::arb_engine::crawl::admission::{CrawlLedger, RegistrationAdmission};
 use crate::arb_engine::crawl::controller::{
@@ -69,85 +71,80 @@ use crate::arb_engine::crawl::controller::{
 };
 use crate::arb_engine::crawl::flights::BuildFlights;
 use crate::arb_engine::crawl::receipt::CrawlReceipt;
-use crate::arb_engine::lifecycle::PathRegistrationError;
-use crate::arb_engine::pump_session::{self, PhaseAdvance, PumpEvent};
-use crate::arb_engine::{BlockNotification, EngineStages, PumpPhase, ResultBatch};
+use crate::arb_engine::pump_session::{
+    ConnectedSession, CrawlExit, CrawlTeardown, LiveLoop, MovePayload, PumpDecline, PumpEvent,
+    PumpExit, PumpPhase, PumpSession,
+};
+use crate::arb_engine::session_events::{
+    ClaimRefusal, ConsumerClaim, EventHandoff, SessionEvent, SessionStream,
+};
+use crate::arb_engine::{BlockNotification, EngineStages};
 use crate::bot_core::block_pump::{BlockPump, SubscribeState};
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
 use crate::bot_core::verify_lifecycle::VerifyLifecycleConfig;
 use crate::bot_core::{Bot, PumpControl, StageHandlers, VerifyLifecycle};
 use crate::strategy_host::HostHub;
-use alloy::primitives::Address;
-use degenbot_core::{diag, op_error, op_info, op_warn};
-use degenbot_eventhub::Hub;
+#[cfg(test)]
 use degenbot_ingestion::IngestEvent as WsEvent;
-use degenbot_substrate::session_registry::PoolIdentity;
-use degenbot_substrate::state_lock::{LockSite, StateLock};
-use degenbot_substrate::BotState;
-use parking_lot::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::watch;
 
-/// Hub registration name for the engine's result-batch source channel.
+/// Hub registration name for the session's ONE ordered event source.
 ///
 /// A named source channel ([`degenbot_eventhub::NamedSender`]) rather than a
-/// [`degenbot_eventhub::HubEvent`] variant: `ResultBatch` is an engine-owned
+/// [`degenbot_eventhub::HubEvent`] variant: `SessionEvent` is an engine-owned
 /// downstream type the hub vocabulary deliberately does not name.
-pub const RESULT_CHANNEL_NAME: &str = "engine_result_batch";
+pub const SESSION_EVENT_CHANNEL_NAME: &str = "engine_session_event";
 
-/// Hub registration name for the engine's block-clock source channel. Named
-/// for the same reason as [`RESULT_CHANNEL_NAME`].
+/// Hub registration name for the block-clock observer tap.
+///
+/// The forwarded-header edge (ADR-027) the observer surfaces read; the session's
+/// own clock is the stream's `Block` arm, written by the same producer call.
 pub const BLOCK_CHANNEL_NAME: &str = "engine_block_notification";
 
-/// How long [`EngineDriver::stop`] waits for the pump task to exit
+/// How long [`EngineDriver::close`] waits for each loop to exit
 /// **cooperatively** before escalating to `abort()`.
 ///
 /// The pump arms a 500 ms `timed_exit_tick` whose select arm polls the shared
 /// shutdown flag, so a halted session unwinds the loop normally within one
-/// tick. Four ticks with margin is the window: long enough that a healthy
-/// pump always returns through its own machinery, short enough that teardown
-/// stays prompt. The escalation only exists for a pump parked somewhere that
-/// tick cannot reach (the `run_loop.rs` limitation note: a GIL re-entry park
-/// through `PySubscriberAdapter`, or engine-lock contention inside
-/// `on_drain`/`apply_buffer_v3`).
+/// tick. Four ticks with margin is the window: long enough that a healthy pump
+/// always returns through its own machinery, short enough that teardown stays
+/// prompt. The escalation only exists for a loop parked somewhere that tick
+/// cannot reach (the `run_loop.rs` limitation note: a GIL re-entry park through
+/// `PySubscriberAdapter`, or engine-lock contention inside `on_drain`).
 pub const PUMP_STOP_GRACE: Duration = Duration::from_secs(2);
 
-/// [`PUMP_STOP_GRACE`] in milliseconds, for the `stop()` log fields — the
+/// [`PUMP_STOP_GRACE`] in milliseconds, for the teardown log fields — the
 /// `Duration::as_millis` widening kept non-truncating.
 fn pump_stop_grace_ms() -> u64 {
     u64::try_from(PUMP_STOP_GRACE.as_millis()).unwrap_or(u64::MAX)
 }
 
-/// The engine's two named source-channel producers, minted together.
+/// The engine's named source-channel producers, minted together.
 ///
-/// A hub owns one channel per name; the engine registers its `ResultBatch` +
-/// `BlockNotification` channels once on the hub it is attaching to and keeps
-/// the producer ends here until the driver installs them on the stage seam.
-/// The consumer ends stay hub-held for the once-only `take_*_receiver`
-/// hand-off, exactly as on [`EngineDriver::from_stages`].
+/// A hub owns one channel per name; the engine registers its ordered
+/// `SessionEvent` source and its block-clock observer tap once on the hub it is
+/// attaching to, and keeps the producer ends here until the driver installs
+/// them. The consumer ends stay hub-held for the once-only hand-offs.
 pub struct EngineChannelHandles {
-    result: tokio::sync::mpsc::UnboundedSender<ResultBatch>,
+    session: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     block: tokio::sync::mpsc::UnboundedSender<BlockNotification>,
 }
 
 impl EngineChannelHandles {
-    /// Register the engine's two named source channels on `hub` and return
-    /// their producer ends.
+    /// Register the engine's named source channels on `hub` and return their
+    /// producer ends.
     ///
-    /// Taking `&mut Hub` is the point: a named channel is minted into the
-    /// hub's map, so registration must complete before the hub is shared as an
-    /// `Arc` and handed to a driver.
+    /// Taking `&mut Hub` is the point: a named channel is minted into the hub's
+    /// map, so registration must complete before the hub is shared as an `Arc`
+    /// and handed to a driver.
     #[must_use]
     pub fn register_on(hub: &mut Hub) -> Self {
-        let result = hub
-            .add_named_unbounded_source::<ResultBatch>(RESULT_CHANNEL_NAME)
+        let session = hub
+            .add_named_unbounded_source::<SessionEvent>(SESSION_EVENT_CHANNEL_NAME)
             .into_inner();
         let block = hub
             .add_named_unbounded_source::<BlockNotification>(BLOCK_CHANNEL_NAME)
             .into_inner();
-        Self { result, block }
+        Self { session, block }
     }
 }
 
@@ -159,12 +156,12 @@ impl EngineChannelHandles {
 /// a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PhaseError {
-    /// The rejected driver method (`"subscribe"`, `"resume"`, …).
+    /// The rejected driver method (`"connect"`, `"run"`, `"crawl"`).
     pub method: &'static str,
     /// The pump-protocol phase at call time.
     pub current: PumpPhase,
     /// The phase boundary the method required, or `None` when the method
-    /// imposes none (`stop` admits every pose).
+    /// imposes none (`close` admits every pose).
     pub required: Option<PumpPhase>,
     /// The decline's own message — the table's error text, which the Python
     /// shells surface verbatim in a `RuntimeError`.
@@ -179,205 +176,157 @@ impl std::fmt::Display for PhaseError {
 
 impl std::error::Error for PhaseError {}
 
-/// The closed driver error surface (ADR-050 D5).
+/// Why the WS transport refused a `connect` — the handshake failure with its
+/// diagnostic source retained, or a session that handed back no stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubscribeRefusal {
+    /// The WS handshake failed. `source` is the transport's own diagnostic, kept
+    /// verbatim so the operator sees the endpoint's error and not a paraphrase.
+    Handshake {
+        /// The transport error text.
+        source: String,
+    },
+    /// The session opened but handed back no WS stream.
+    NoStream,
+}
+
+impl std::fmt::Display for SubscribeRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Handshake { source } => f.write_str(source),
+            Self::NoStream => f.write_str("BlockPump::subscribe returned no WS stream"),
+        }
+    }
+}
+
+impl std::error::Error for SubscribeRefusal {}
+
+/// Why `connect` was refused: a pose the table does not admit, or the WS
+/// transport.
+#[derive(Debug)]
+pub enum ConnectRefusal {
+    /// The session's pose does not admit `connect` (including another lifecycle
+    /// move already in flight).
+    Pose(PhaseError),
+    /// The WS handshake failed, or handed back no stream.
+    Transport(SubscribeRefusal),
+}
+
+impl std::fmt::Display for ConnectRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pose(e) => write!(f, "{e}"),
+            Self::Transport(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for ConnectRefusal {}
+
+/// The `S+1..W` backfill range a failed resume left UNAPPLIED, as data.
 ///
-/// A consumer matches on the variant; no string matching.
+/// The resume aborted with the snapshot→WS gap unclosed, so there is no live
+/// loop and no pool admitted over a stale gap. The caller starts a new session;
+/// a re-subscribe is refused (`Abandoned` is terminal).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BackfillGap {
+    /// The first block that was not applied (`S + 1`).
+    pub from: u64,
+    /// The last block that was not applied (the WS link block `W`).
+    pub to: u64,
+}
+
+impl std::fmt::Display for BackfillGap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the resume backfill failed for blocks {}-{}; the gap is UNAPPLIED and no live loop was started",
+            self.from, self.to
+        )
+    }
+}
+
+impl std::error::Error for BackfillGap {}
+
+/// The closed `run` error surface.
+///
+/// A consumer matches on the variant; no string matching, and no arm that
+/// exists only to carry a sentence. The three prose arms the old surface had
+/// (`SessionState(String)`, `Subscribe(String)`, `Backfill(String)`) became a
+/// typed pose refusal, a typed transport refusal at `connect`, and this gap.
+/// `NoResultReceiver` is deleted as unrepresentable: the hand-off carries the
+/// claim and `run` takes it by value, so "no consumer attached" has no state to
+/// name. `Registration` left with the operation (ADR-093 D4/D7).
 #[derive(Debug)]
 pub enum DriverError {
-    /// A lifecycle phase precondition failed.
+    /// The session's pose does not admit `run` (a concurrent move in flight, a
+    /// session that was never connected, or a terminal one).
     Phase(PhaseError),
-    /// A pump-session precondition failed (a pump is already started or a
-    /// subscribe state is already pending, or the session is terminal).
-    SessionState(String),
-    /// The `resume()` consumer-before-resume gate: no result receiver was
-    /// taken, so the unbounded result channel would have no consumer.
-    NoResultReceiver,
-    /// The WS subscribe/handshake failed.
-    Subscribe(String),
-    /// The `S+1..W` resume backfill failed. The resume aborted with the
-    /// snapshot→WS gap **UNAPPLIED** — the session landed `Abandoned` and no
-    /// live loop was started, so the caller stops the session and starts a new
-    /// one (a re-subscribe is refused: `Abandoned` is terminal) instead of
-    /// running over stale pool state. The detail names the offending block
-    /// range.
-    Backfill(String),
-    /// Typed path-registration refusal (propagated verbatim, ADR-050 D4).
-    Registration(PathRegistrationError),
+    /// The `S+1..W` resume backfill failed; the gap is unapplied.
+    Backfill(BackfillGap),
 }
 
 impl std::fmt::Display for DriverError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Phase(e) => write!(f, "{e}"),
-            Self::SessionState(m) | Self::Subscribe(m) | Self::Backfill(m) => f.write_str(m),
-            Self::NoResultReceiver => f.write_str(
-                "Cannot resume: the result receiver has not been taken. Call take_result_receiver() before resume() so the unbounded result channel has a consumer attached.",
-            ),
-            Self::Registration(e) => write!(f, "{e}"),
+            Self::Backfill(gap) => write!(f, "{gap}"),
         }
     }
 }
 
 impl std::error::Error for DriverError {}
 
-/// One session move in flight, guarded against the future being dropped.
-///
-/// `subscribe` and `resume` publish their in-flight pose (`Connecting`,
-/// `Resuming`) BEFORE their first await, so a reader always sees that WS work is
-/// outstanding. The price of an in-flight pose is that a future dropped in that
-/// window would park the session where no other entry point is legal — so the
-/// guard carries the table's abandonment edge for that leg (`SubscribeAbandoned`,
-/// `ResumeAbandoned`) and publishes it from `Drop`. The leg's own landing
-/// (`Subscribed`, `ResumeSpawned`, or a typed failure event) defuses the guard;
-/// that pairing is the documented cancel policy: **an in-flight pose is always
-/// either landed or abandoned, never left standing**.
-struct PhaseLeg<'a> {
-    /// The projection the guard publishes into.
-    driver: &'a EngineDriver,
-    /// The rejected-method name a decline is reported under.
-    method: &'static str,
-    /// The boundary the leg's events require (see [`PhaseError::required`]).
-    required: Option<PumpPhase>,
-    /// The table's abandonment edge for this leg.
-    abandonment: PumpEvent,
-    /// Cleared by the landing; a still-armed guard publishes on drop.
-    armed: bool,
+/// Why a crawl attach was refused.
+#[derive(Debug)]
+pub enum CrawlRefusal {
+    /// The session's pose does not admit a crawl (a terminal or tearing-down
+    /// session, or a move in flight).
+    Pose(PhaseError),
+    /// The crawl configuration is invalid, a `Bot` has no construction I/O, or
+    /// this driver already holds a crawl.
+    Config(CrawlConfigError),
+    /// The receipt stream's sink was refused (already attached, or attached
+    /// after the stream closed).
+    Receipts(degenbot_core::channel_lifecycle::ChannelDecline),
 }
 
-impl<'a> PhaseLeg<'a> {
-    /// Enter the leg: publish the in-flight pose and arm the abandonment guard.
-    ///
-    /// A refused move arms nothing, so a decline cannot steal a concurrent
-    /// leg's in-flight pose.
-    fn enter(
-        driver: &'a EngineDriver,
-        method: &'static str,
-        required: Option<PumpPhase>,
-        requested: PumpEvent,
-        abandonment: PumpEvent,
-    ) -> Result<Self, DriverError> {
-        driver.advance(method, required, requested)?;
-        Ok(Self {
-            driver,
-            method,
-            required,
-            abandonment,
-            armed: true,
-        })
-    }
-
-    /// Publish the table's landing event and defuse the guard. Consuming `self`
-    /// makes a landed leg unusable and runs the (now unarmed) `Drop`.
-    fn land(mut self, event: PumpEvent) -> Result<PhaseAdvance, DriverError> {
-        let landed = self.driver.advance(self.method, self.required, event);
-        self.armed = false;
-        landed
-    }
-}
-
-impl Drop for PhaseLeg<'_> {
-    fn drop(&mut self) {
-        if self.armed {
-            // Dropped mid-flight (a cancelled future, or an early return): the
-            // abandonment edge is the table's honest landing for a leg that
-            // never committed. A decline means the session moved on its own
-            // (teardown began), and there is nothing left to restore.
-            let _ = self
-                .driver
-                .advance(self.method, self.required, self.abandonment);
-        }
-    }
-}
-
-/// A test-only injected failure of `subscribe`'s fallible step.
-///
-/// `BlockPump::subscribe` dials a live WS endpoint, so its failure returns have
-/// no in-process double. Both shapes leave the same thing to prove: the session
-/// lands back on `Detached`, from which a retry is legal.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SubscribeFault {
-    /// The WS handshake failed (`BlockPump::subscribe` returned `Err`).
-    Handshake,
-    /// The session opened but handed back no WS stream.
-    NoStream,
-}
-
-#[cfg(test)]
-impl SubscribeFault {
-    const fn message(self) -> &'static str {
+impl std::fmt::Display for CrawlRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Handshake => "injected: the WS handshake failed",
-            Self::NoStream => "BlockPump::subscribe returned no WS stream",
+            Self::Pose(e) => write!(f, "{e}"),
+            Self::Config(e) => write!(f, "{e}"),
+            Self::Receipts(e) => write!(f, "{e}"),
         }
     }
 }
 
-/// The crawl as the driver's teardown holds it.
+impl std::error::Error for CrawlRefusal {}
+
+/// The session's link block: the first complete block `W` the WS handshake
+/// observed, which is the `run` backfill's upper bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Connected {
+    /// The first complete WS block (`W`).
+    pub link_block: u64,
+}
+
+/// What a teardown actually tore down.
 ///
-/// The controller never spawns its own run (see `crawl::controller`, "Who
-/// spawns the run"), so the `JoinHandle` belongs to whoever spawned it — the
-/// boot wiring — and is handed over together with the narrowed
-/// [`CrawlHandle`] a `StopPlan` carries. The pair stays beside the pump's own
-/// handle so ONE [`EngineDriver::stop`] tears down both loops under one grace
-/// window.
-pub(crate) struct CrawlTeardown {
-    /// The narrowed teardown edge: latch the stop, read the two facts.
-    pub(crate) handle: CrawlHandle,
-    /// The run future's handle — the join fact's only reporter.
-    pub(crate) run: tokio::task::JoinHandle<()>,
-}
-
-impl CrawlTeardown {
-    /// The narrowed edge a
-    /// [`StopPlan`](crate::arb_engine::pump_session::StopPlan) carries — never
-    /// the controller.
-    fn edge(&self) -> CrawlHandle {
-        self.handle.clone()
-    }
-
-    /// Join the crawl's run future under `grace`, escalating to `abort()`.
-    ///
-    /// The caller has already latched the crawl's stop (the plan's edge), so a
-    /// healthy run stops submitting, drains its window, and resolves on its
-    /// own; its resolution guard then lands the join fact and the terminal
-    /// pose. The abort is the escalation for a run parked where the latch
-    /// cannot reach it: it drops the run future, which still passes through the
-    /// same guard.
-    fn join(self, grace: Duration) {
-        let mut run = self.run;
-        // The timeout future is built INSIDE the async block: `Sleep` captures
-        // the timer handle at construction, so it must not be constructed
-        // outside the runtime context.
-        let cooperative = degenbot_core::runtime::get_runtime()
-            .block_on(async { tokio::time::timeout(grace, &mut run).await });
-        match cooperative {
-            Ok(Ok(())) => {
-                op_info!(
-                    domain = pump,
-                    grace_ms = pump_stop_grace_ms(),
-                    "EngineDriver: crawl run resolved within the grace window"
-                );
-            }
-            Ok(Err(join_err)) => {
-                op_error!(
-                    domain = pump,
-                    grace_ms = pump_stop_grace_ms(),
-                    error = %join_err,
-                    "EngineDriver: crawl run ended with a join error before the grace expired"
-                );
-            }
-            Err(_) => {
-                run.abort();
-                let _ = degenbot_core::runtime::get_runtime().block_on(run);
-                op_info!(
-                    domain = pump,
-                    grace_ms = pump_stop_grace_ms(),
-                    "EngineDriver: crawl run did not resolve within grace — aborted (fallback)"
-                );
-            }
-        }
-    }
+/// A report, not a `Result`: `close` is total by construction, so there is
+/// nothing to refuse. Concurrent callers share ONE completion and all observe
+/// this same value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TeardownReport {
+    /// The pose the teardown landed the session from.
+    pub from: PumpPhase,
+    /// How the live loop resolved.
+    pub pump: PumpExit,
+    /// How the crawl's run resolved.
+    pub crawl: CrawlExit,
+    /// Where the session's ordered event stream is after the teardown (the
+    /// natural end's closure state).
+    pub delivery: degenbot_core::channel_lifecycle::ChannelPhase,
 }
 
 /// Everything a crawl boot needs beside the configuration.
@@ -393,10 +342,7 @@ pub struct CrawlBoot {
     /// The receipt consumer's sink, or `None` for a summary-only consumer.
     pub receipts: Option<tokio::sync::mpsc::UnboundedSender<CrawlReceipt>>,
     /// The snapshot tick-map arm — a handle SOURCE the crawl asks once per unit
-    /// (`None` = construction reads no tick maps). A boot with a fixed handle
-    /// says [`Self::with_db`]; a boot whose handle can be withdrawn mid-run
-    /// (the process closes its snapshot read transaction) supplies the owner's
-    /// own arm and gets the no-DB arm after the close.
+    /// (`None` = construction reads no tick maps).
     pub snapshot: Option<Arc<dyn SnapshotArm>>,
 }
 
@@ -438,20 +384,87 @@ impl CrawlBoot {
     }
 }
 
-/// The pending pump session between `subscribe()` and `resume()`.
-pub(crate) struct DriverSubscribeState {
-    /// The subscribed pump (owns the WS transport + the live stream).
-    pump: BlockPump,
-    /// The first complete WS block `W`.
-    first_block: u64,
-    /// The live WS event stream, handed to the pump at resume.
-    combined_stream: futures_util::stream::BoxStream<'static, WsEvent>,
+/// A test-only hold inside a lifecycle move's in-flight window.
+///
+/// The window is otherwise a live WS handshake or a live backfill await; the
+/// hold lets a test cancel a move exactly where a dropping consumer would.
+#[cfg(test)]
+pub struct InFlightHold {
+    /// Dropping the hold releases the held move (a dropped sender resolves the
+    /// receiver's await), which is exactly how a test lets a move unwind.
+    _release: tokio::sync::oneshot::Sender<()>,
 }
 
-/// The public Rust driver seam above the engine's one stage seam (ADR-050).
+/// A test-only injected failure of `connect`'s fallible step.
 ///
-/// Composes the shared `Bot`, the public `EngineStages`, and the pump session
-/// state. See the module docs for the ritual and the resolved open questions.
+/// `BlockPump::subscribe` dials a live WS endpoint, so its failure returns have
+/// no in-process double. Both shapes leave the same thing to prove: the session
+/// lands back on `Detached`, from which a retry is legal.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectFault {
+    /// The WS handshake failed (`BlockPump::subscribe` returned `Err`).
+    Handshake,
+    /// The session opened but handed back no WS stream.
+    NoStream,
+}
+
+#[cfg(test)]
+impl ConnectFault {
+    pub(crate) fn refusal(self) -> SubscribeRefusal {
+        match self {
+            Self::Handshake => SubscribeRefusal::Handshake {
+                source: "injected: the WS handshake failed".to_string(),
+            },
+            Self::NoStream => SubscribeRefusal::NoStream,
+        }
+    }
+}
+
+/// The live loop's one exit door, for the crate's stand-in loops: every way a
+/// seeded body can end — a return or a panic unwind — publishes the pump-exit
+/// fact exactly as the production loop's own guard does.
+#[cfg(test)]
+struct SeededExitGuard(Arc<dyn PumpControl>);
+
+#[cfg(test)]
+impl Drop for SeededExitGuard {
+    fn drop(&mut self) {
+        self.0.on_pump_ended();
+    }
+}
+
+/// A construction-time session seed: a session value built in a pose a test
+/// cannot reach without a live WS endpoint.
+///
+/// This is a CONSTRUCTOR, not a poke: it builds a whole session value (pose plus
+/// the payload that pose owns) and installs it, so a test exercises the real
+/// move protocol from there on.
+#[cfg(test)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a seed carries the pump it seeds the pose with; one value at a time"
+)]
+pub enum SessionSeed {
+    /// A connected session: `Subscribed` owning a local pump and a scripted
+    /// stream.
+    Connected {
+        /// The local pump the resume move will drive.
+        pump: BlockPump,
+        /// The first complete block `W`.
+        first_block: u64,
+        /// The scripted WS stream.
+        stream: futures_util::stream::BoxStream<'static, WsEvent>,
+    },
+    /// A live-loop pose over a stand-in loop body. The driver wraps the body in
+    /// the same exit guard production uses, so the exit edge is exercised.
+    Running(futures_util::future::BoxFuture<'static, ()>),
+}
+
+/// The public Rust driver seam above the engine's one stage seam (ADR-093 D1).
+///
+/// Composes the shared `Bot`, the public `EngineStages`, the reorg coordinator,
+/// the shutdown flag, the verify home, the hub, and the ONE private session.
 pub struct EngineDriver {
     /// The shared per-chain orchestrator (ADR-006 D4).
     bot: Arc<Bot>,
@@ -461,65 +474,39 @@ pub struct EngineDriver {
     reorg_coordinator: Arc<ReorgCoordinator>,
     /// The cooperative shutdown flag shared with the pump.
     shutdown: Arc<AtomicBool>,
-    /// The spawned live-loop handle (`None` until `resume`).
-    pump_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
-    /// The crawl's teardown pair (`None` until the boot wiring installs a
-    /// crawl): the narrowed edge a `StopPlan` carries and the run future's
-    /// handle, which only the spawning caller can hold.
-    crawl: Mutex<Option<CrawlTeardown>>,
-    /// The pump-completion broadcast sender. Created in `from_stages`; the
-    /// sender is MOVED into the spawned pump task by `resume` (or dropped by
-    /// `stop` when the pump never armed), so the channel closes — resolving
-    /// every waiter — on a normal return, stream end, abort, or panic.
-    pump_finished_tx: Mutex<Option<watch::Sender<bool>>>,
-    /// The pump-completion receiver. Cloned per `wait_pump_finished` waiter;
-    /// a clone created before OR after completion still resolves.
+    /// The session: the pose, the payloads it owns, the crawl's teardown pair,
+    /// the completion broadcast, and the consumer claim. ONE owner.
+    session: Arc<PumpSession>,
+    /// The pump-completion receiver. Cloned per `wait_pump_finished` waiter; a
+    /// clone created before OR after completion still resolves.
     pump_finished_rx: watch::Receiver<bool>,
-    /// The subscribe state held between `subscribe()` and `resume()`.
-    subscribe_state: Mutex<Option<DriverSubscribeState>>,
-    /// The pose-independent Verify lifecycle (ADR-093 D4): one family-free
-    /// operation over a pool key, with the provider, the `StateView` address and
-    /// the retry policy as its construction values, and the at-most-once claim
-    /// window plus the durable verified-pool fact inside it. The driver composes
-    /// the home every caller shares; the home names no session.
+    /// The pose-independent Verify lifecycle (ADR-093 D4).
     verify: Arc<VerifyLifecycle>,
-    /// The engine host's process-lifetime event hub. The engine's
-    /// `ResultBatch` + `BlockNotification` source channels are registered on
-    /// it as named, typed `UnboundedFlagged` channels; the hub holds each
-    /// channel's consumer end until the once-only `take_*_receiver` handoff.
+    /// The engine host's process-lifetime event hub.
     hub: Arc<Hub>,
-    /// Test-only injected failure for the next `subscribe` (see
-    /// [`SubscribeFault`]).
+    /// The one teardown's completion, shared by every `close` caller.
+    close: tokio::sync::Mutex<Option<TeardownReport>>,
+    /// Test-only injected failure for the next `connect`.
     #[cfg(test)]
-    subscribe_fault: Mutex<Option<SubscribeFault>>,
-    /// Test-only hold inside `resume`'s in-flight window, so a test can cancel
-    /// a resume where a dropping consumer would cancel one.
+    connect_fault: Mutex<Option<ConnectFault>>,
+    /// Test-only hold inside a connect's in-flight window.
     #[cfg(test)]
-    resume_gate: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
-    /// The once-only result-receiver hand-off latch. `resume()` refuses until
-    /// a consumer owns the unbounded result channel's receiver; otherwise the
-    /// engine would pump batches into a channel with no reader.
-    result_receiver_taken: AtomicBool,
+    connect_gate: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    /// Test-only hold inside a run's in-flight window.
+    #[cfg(test)]
+    run_gate: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    /// Test-only injected failure of the resume backfill.
+    #[cfg(test)]
+    backfill_fault: AtomicBool,
 }
 
 /// Bind the session's path-identity owner to the engine this driver drives.
 ///
 /// A driver's `Bot` IS the session, and this driver's `EngineStages` is the
 /// session's only path registry, so composition is the one place both halves
-/// are in hand. Binding them here is what makes the session's canonical path
-/// identity reachable at all: a registry with no owner answers every path ask
-/// with [`ObjectRefusal::NoPathOwner`](degenbot_substrate::session_registry::ObjectRefusal::NoPathOwner),
-/// so the identity the session exposes would be one no consumer can name.
-///
-/// # A second install is reported, not merged
-///
-/// Two engines in one session are two path-id spaces, so a consumer asking
-/// the session which id a route has could be answered by the first engine for
-/// the second engine's route. The session therefore keeps the FIRST owner —
-/// a complete, working identity space — and this site reports the fork at
-/// ERROR rather than absorbing it silently or aborting the boot: a wiring
-/// mistake should be impossible to miss, and killing the process over a second
-/// seam would trade a diagnosable fork for an unbootable bot.
+/// are in hand. A second install is reported, not merged: two engines in one
+/// session are two path-id spaces, and the session keeps the FIRST owner so a
+/// consumer's ask is never answered by the wrong engine.
 fn install_session_path_owner(bot: &Bot, stages: &EngineStages) {
     if let Err(refused) = bot
         .session_registry()
@@ -530,6 +517,20 @@ fn install_session_path_owner(bot: &Bot, stages: &EngineStages) {
             rejected_owner_paths = refused.path_count(),
             "a session already has a path-identity owner; this engine's paths are unreachable from the session and the session answers with the first engine's path ids"
         );
+    }
+}
+
+/// The driver's `PhaseError` for one refused move.
+fn phase_error(
+    method: &'static str,
+    required: Option<PumpPhase>,
+    decline: PumpDecline,
+) -> PhaseError {
+    PhaseError {
+        method,
+        current: decline.current(),
+        required,
+        detail: decline.to_string(),
     }
 }
 
@@ -547,8 +548,8 @@ impl EngineDriver {
     }
 
     /// Adapter adoption: the caller already built the stage seam (the `PyO3`
-    /// wrapper path). The driver mints a private hub for the engine's two
-    /// named source channels and composes; a host-minted hub uses
+    /// wrapper path). The driver mints a private hub for the engine's named
+    /// source channels and composes; a host-minted hub uses
     /// [`Self::from_stages_with_hub`].
     #[must_use]
     pub fn from_stages(bot: Arc<Bot>, stages: Arc<EngineStages>) -> Self {
@@ -559,17 +560,11 @@ impl EngineDriver {
 
     /// Adapter adoption against a host-minted hub.
     ///
-    /// `attached` is the pair `StrategyHost::mint` produces: the shared hub
-    /// and the engine's two named source channels registered on it by the mint
-    /// closure (for the engine, [`EngineChannelHandles::register_on`]). The
-    /// driver installs the producers on the stages and keeps the shared hub
-    /// for the once-only receiver handoff. A named channel is keyed by name
-    /// per hub, so a hub backs at most one engine driver — a second
-    /// `take_*_receiver` returns `None`. The delivery channels stay
-    /// [`degenbot_eventhub::OverflowPolicy::UnboundedFlagged`] (lossless by
-    /// request, flagged for audit), and the raw `tokio::sync::mpsc` pair is
-    /// unchanged, so recv/order/close semantics stay byte-identical to
-    /// [`Self::from_stages`].
+    /// `attached` is the pair `StrategyHost::mint` produces: the shared hub and
+    /// the engine's named source channels registered on it by the mint closure
+    /// (for the engine, [`EngineChannelHandles::register_on`]). A named channel
+    /// is keyed by name per hub, so a hub backs at most one engine driver — a
+    /// second `claim_consumer` returns `None`.
     #[must_use]
     pub fn from_stages_with_hub(
         bot: Arc<Bot>,
@@ -587,34 +582,47 @@ impl EngineDriver {
         hub: Arc<Hub>,
         channels: EngineChannelHandles,
     ) -> Self {
-        stages.set_result_channel(channels.result);
+        // The session's ordered source: ONE producer end for both arms, attached
+        // before any caller can claim the consumer end.
+        if let Err(e) = stages.attach_session_events(channels.session) {
+            op_error!(
+                domain = pump,
+                %e,
+                "EngineDriver: the session event source refused its producer; the stream cannot be claimed"
+            );
+        }
         // The stage surface's block-clock pipe is fresh here and this is its one
         // wiring site, so a decline is unreachable.
         let _ = stages.set_block_channel(channels.block);
         install_session_path_owner(&bot, &stages);
+
+        let (completion_tx, pump_finished_rx) = watch::channel(false);
+        let session = Arc::new(PumpSession::new(completion_tx));
+        stages.install_session(Arc::clone(&session));
+
         let verify_core = stages.core();
-        let (pump_finished_tx, pump_finished_rx) = watch::channel(false);
         let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));
         Self {
             bot,
             stages,
             reorg_coordinator,
             shutdown: Arc::new(AtomicBool::new(false)),
-            pump_handle: Mutex::new(None),
-            crawl: Mutex::new(None),
-            pump_finished_tx: Mutex::new(Some(pump_finished_tx)),
+            session,
             pump_finished_rx,
-            subscribe_state: Mutex::new(None),
             verify: Arc::new(VerifyLifecycle::new(
                 verify_core,
                 VerifyLifecycleConfig::default(),
             )),
             hub,
+            close: tokio::sync::Mutex::new(None),
             #[cfg(test)]
-            subscribe_fault: Mutex::new(None),
+            connect_fault: Mutex::new(None),
             #[cfg(test)]
-            resume_gate: Mutex::new(None),
-            result_receiver_taken: AtomicBool::new(false),
+            connect_gate: Mutex::new(None),
+            #[cfg(test)]
+            run_gate: Mutex::new(None),
+            #[cfg(test)]
+            backfill_fault: AtomicBool::new(false),
         }
     }
 
@@ -638,183 +646,41 @@ impl EngineDriver {
 
     /// The session's verify home: the pose-independent Verify lifecycle, its
     /// construction values, its claim window and its verified-pool facts.
-    ///
-    /// A capability reached beside the stage seam, not through the session
-    /// (ADR-049's narrow amendment, ADR-093 D4): a caller that only verifies a
-    /// pool never needs the pump, and the crawl and the direct-registration
-    /// adapter share this ONE home.
     #[must_use]
     pub fn verify(&self) -> &Arc<VerifyLifecycle> {
         &self.verify
     }
 
-    /// The current engine lifecycle phase (core-owned truth).
+    /// The current engine lifecycle phase — derived from the session's pose.
     #[must_use]
     pub fn current_phase(&self) -> PumpPhase {
-        self.stages.current_phase()
+        self.session.phase()
     }
 
-    /// Force the session's pose. Test-only: production reaches a pose by
-    /// driving a transition, never by writing one.
-    #[cfg(test)]
-    pub(crate) fn set_pose_for_test(&self, phase: PumpPhase) {
-        self.stages.publish_phase(phase);
-    }
-
-    /// The table's verdict on `event` in the current pose, without publishing.
-    ///
-    /// An entry point whose refusals must leave the session untouched (the
-    /// consumer-before-resume gate, the session-state guards) asks here FIRST,
-    /// so a request from the wrong pose is the phase error it is rather than a
-    /// secondary complaint. The publishing path re-runs the same table under the
-    /// projection's lock ([`Self::advance`]), which is the authoritative check.
-    ///
-    /// # Errors
-    ///
-    /// [`DriverError::Phase`] carrying the decline.
-    fn check(
-        &self,
-        method: &'static str,
-        required: Option<PumpPhase>,
-        event: PumpEvent,
-    ) -> Result<PumpPhase, DriverError> {
-        let phase = self.stages.current_phase();
-        pump_session::transition(phase, event).map_err(|decline| {
-            DriverError::Phase(PhaseError {
-                method,
-                current: phase,
-                required,
-                detail: decline.to_string(),
-            })
-        })
-    }
-
-    /// Publish one table transition, returning what the table did.
-    ///
-    /// The read, the legality decision, and the write happen inside the
-    /// projection's lock ([`EngineStages::advance_phase`]), so a caller can
-    /// never act on a predecessor the cell has already left.
-    ///
-    /// # Errors
-    ///
-    /// The table's
-    /// [`PumpDecline`](crate::arb_engine::pump_session::PumpDecline), wrapped as
-    /// a [`DriverError::Phase`] whose `detail` is the decline's own message.
-    fn advance(
-        &self,
-        method: &'static str,
-        required: Option<PumpPhase>,
-        event: PumpEvent,
-    ) -> Result<PhaseAdvance, DriverError> {
-        self.stages.advance_phase(event).map_err(|decline| {
-            DriverError::Phase(PhaseError {
-                method,
-                current: self.stages.current_phase(),
-                required,
-                detail: decline.to_string(),
-            })
-        })
-    }
-
-    /// `true` once the session machine is teardown-bound: `Stopping` from
-    /// `stop()`'s first statement, `Stopped` when the teardown completes.
+    /// `true` once the session machine is teardown-bound: `Stopping` from the
+    /// close's first statement, `Stopped` when the teardown completes.
     #[must_use]
     pub fn is_stopped(&self) -> bool {
         self.current_phase().is_terminal()
     }
 
-    /// `true` when a live pump task handle is armed.
-    #[must_use]
-    pub fn pump_handle_armed(&self) -> bool {
-        self.pump_handle.lock().is_some()
-    }
-
-    /// Await the spawned pump task's completion — cooperative exit, stream
-    /// end, abort, or panic.
-    ///
-    /// The completion is a `watch` broadcast whose terminal state is
-    /// retained, so a waiter created before OR after the pump ends resolves
-    /// promptly instead of hanging. The pump task owns the channel's only
-    /// sender; dropping it (a normal return, or the unwind of a panic) closes
-    /// the channel, which `changed()` reports as end-of-stream.
-    ///
-    /// Multiple waiters are supported; each clones the shared receiver.
-    pub(crate) async fn wait_pump_finished(&self) {
-        let mut rx = self.pump_finished_rx.clone();
-        loop {
-            if *rx.borrow_and_update() {
-                return;
-            }
-            // `Err` = every sender dropped: the pump task ended (normal
-            // return or panic). That IS completion.
-            if rx.changed().await.is_err() {
-                return;
-            }
-        }
-    }
-
     /// The engine host's process-lifetime hub.
-    ///
-    /// The engine's `ResultBatch` and `BlockNotification` source channels are
-    /// registered here as named, typed `UnboundedFlagged` channels.
     #[must_use]
     pub fn hub(&self) -> &Arc<Hub> {
         &self.hub
     }
 
-    /// Take the result-batch receiver — once only, **before** `resume()`.
+    /// The registered pool id for this pool identity, derived from the shared
+    /// `BotState`.
     ///
-    /// The receiver is the hub-held consumer end of the engine's result
-    /// source channel — the counting hand-off so hub-side growth
-    /// (`Hub::named_pending`) reflects live depth instead of reading zero.
-    ///
-    /// A successful take latches the hand-off that `resume()` requires; a
-    /// resume with no consumer attached is refused so the unbounded channel
-    /// never backs up behind a pump no one drains.
+    /// `None` when no pool with that identity is registered in this session.
     #[must_use]
-    pub fn take_result_receiver(&self) -> Option<degenbot_eventhub::NamedReceiver<ResultBatch>> {
-        match self
-            .hub
-            .take_named_counting_receiver::<ResultBatch>(RESULT_CHANNEL_NAME)
-        {
-            Ok(Some(rx)) => {
-                self.result_receiver_taken.store(true, Ordering::SeqCst);
-                Some(rx)
-            }
-            Ok(None) => None,
-            Err(e) => {
-                op_error!(
-                    domain = pump,
-                    %e,
-                    "EngineDriver: result source channel missing from the hub"
-                );
-                None
-            }
-        }
-    }
-
-    /// Take the block-clock receiver — once only.
-    ///
-    /// The receiver is the hub-held consumer end of the engine's block source
-    /// channel — counting hand-off (see `take_result_receiver`).
-    #[must_use]
-    pub fn take_block_receiver(
-        &self,
-    ) -> Option<degenbot_eventhub::NamedReceiver<BlockNotification>> {
-        match self
-            .hub
-            .take_named_counting_receiver::<BlockNotification>(BLOCK_CHANNEL_NAME)
-        {
-            Ok(rx) => rx,
-            Err(e) => {
-                op_error!(
-                    domain = pump,
-                    %e,
-                    "EngineDriver: block source channel missing from the hub"
-                );
-                None
-            }
-        }
+    pub fn pool_id_for_identity(&self, identity: &PoolIdentity) -> Option<u64> {
+        let core = self.stages.core();
+        let pool_id = core
+            .read_at(LockSite::Registration)
+            .pool_id_for_identity(identity);
+        pool_id
     }
 
     /// The snapshot seed block `S` — read from the shared core.
@@ -835,100 +701,148 @@ impl EngineDriver {
             .set_snapshot_seed_block(block);
     }
 
-    /// Run the pre-pump startup ritual: `subscribe` → verify-config.
+    /// Take the block-clock observer tap's receiver — once only.
     ///
-    /// Stops **before** `resume()` so the consumer attaches its result
-    /// receiver first (the `BotRunner.run` ordering invariant).
-    ///
-    /// # Errors
-    ///
-    /// Propagates the typed `DriverError` from `subscribe` (phase gate,
-    /// session state, or WS transport).
-    pub async fn start(
+    /// The forwarded-header edge (ADR-027) the observer surfaces read. The
+    /// session's own clock is the ordered stream's `Block` arm; both are written
+    /// by the same producer call, so the two can never disagree about the clock.
+    #[must_use]
+    pub fn take_block_receiver(
         &self,
-        node_http: &str,
-        node_ws: &str,
-        verify_state_view: Option<&str>,
-    ) -> Result<u64, DriverError> {
-        let w = self.subscribe(node_ws).await?;
-        self.configure_verify(node_http, verify_state_view).await;
-        Ok(w)
+    ) -> Option<degenbot_eventhub::NamedReceiver<BlockNotification>> {
+        match self
+            .hub
+            .take_named_counting_receiver::<BlockNotification>(BLOCK_CHANNEL_NAME)
+        {
+            Ok(rx) => rx,
+            Err(e) => {
+                op_error!(
+                    domain = pump,
+                    %e,
+                    "EngineDriver: block source channel missing from the hub"
+                );
+                None
+            }
+        }
     }
 
-    /// Open the WS subscriptions and observe the first complete block `W`.
+    /// Await the spawned pump task's completion — cooperative exit, stream end,
+    /// abort, or panic.
+    ///
+    /// The completion is a `watch` broadcast whose terminal state is retained,
+    /// so a waiter created before OR after the pump ends resolves promptly
+    /// instead of hanging. The pump task owns the channel's only sender;
+    /// dropping it (a normal return, or the unwind of a panic) closes the
+    /// channel, which `changed()` reports as end-of-stream.
+    pub(crate) async fn wait_pump_finished(&self) {
+        let mut rx = self.pump_finished_rx.clone();
+        loop {
+            if *rx.borrow_and_update() {
+                return;
+            }
+            // `Err` = every sender dropped: the pump task ended (normal return
+            // or panic). That IS completion.
+            if rx.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+
+    /// Take the session's consumer hand-off: the ordered event stream AND the
+    /// claim that proves a consumer holds it. Once per session.
     ///
     /// # Errors
     ///
-    /// - [`DriverError::Phase`] when the phase is not `Detached` — including the
-    ///   terminal `Abandoned`, whose one exit is `stop`.
-    /// - [`DriverError::SessionState`] when the pump is already started or a
-    ///   subscribe state is already pending, or the driver is stopped.
-    /// - [`DriverError::Subscribe`] when the WS handshake fails.
-    pub async fn subscribe(&self, node_ws: &str) -> Result<u64, DriverError> {
-        if self.is_stopped() {
-            return Err(DriverError::SessionState(
-                "Cannot subscribe: driver has been stopped.".to_string(),
-            ));
+    /// [`ClaimRefusal::AlreadyClaimed`] when the session's one hand-off already
+    /// happened: the first consumer's stream must not be stranded with a second
+    /// producer unaware of it.
+    pub fn claim_consumer(&self) -> Result<EventHandoff, ClaimRefusal> {
+        if !self.session.claim() {
+            return Err(ClaimRefusal::AlreadyClaimed);
         }
-        // Legality first, then the session-state guards, THEN the in-flight
-        // publish: a refused request must leave the pose where it found it, and
-        // `Connecting` is legal for neither `subscribe` nor `resume` —
-        // publishing it for a request that never dials would wedge the session.
-        self.check(
-            "subscribe",
-            Some(PumpPhase::Detached),
-            PumpEvent::SubscribeRequested,
-        )?;
-        if self.pump_handle.lock().is_some() {
-            return Err(DriverError::SessionState(
-                "Cannot subscribe: pump is already started. Call stop() first.".to_string(),
-            ));
-        }
-        if self.subscribe_state.lock().is_some() {
-            return Err(DriverError::SessionState(
-                "Cannot subscribe: already subscribed. Call resume() first.".to_string(),
-            ));
-        }
-        let leg = PhaseLeg::enter(
-            self,
-            "subscribe",
-            Some(PumpPhase::Detached),
-            PumpEvent::SubscribeRequested,
-            PumpEvent::SubscribeAbandoned,
-        )?;
-        let session = match self.open_ws_session(node_ws).await {
-            Ok(session) => session,
+        match self
+            .hub
+            .take_named_counting_receiver::<SessionEvent>(SESSION_EVENT_CHANNEL_NAME)
+        {
+            Ok(Some(rx)) => Ok(EventHandoff::new(
+                SessionStream::new(rx.into_inner()),
+                ConsumerClaim::mint(),
+            )),
+            Ok(None) => Err(ClaimRefusal::AlreadyClaimed),
             Err(e) => {
-                // The table's failure landing: `Connecting --SubscribeFailed-->
-                // Detached`, so the next `subscribe()` is legal again — the
-                // recovery a WS failure had before the pose was published ahead
-                // of the handshake.
-                if let Err(landing) = leg.land(PumpEvent::SubscribeFailed) {
+                op_error!(
+                    domain = pump,
+                    %e,
+                    "EngineDriver: the session event channel is missing from the hub"
+                );
+                Err(ClaimRefusal::AlreadyClaimed)
+            }
+        }
+    }
+
+    /// Open the WS subscriptions and observe the first complete block `W`:
+    /// `Detached -> Connecting -> Subscribed`.
+    ///
+    /// Stops **before** production: no batch flows down a stream no consumer
+    /// holds. A handshake failure (or a cancelled connect) lands `Detached`, so
+    /// the move stays retryable; an `Abandoned` session refuses it by name.
+    ///
+    /// # Errors
+    ///
+    /// [`ConnectRefusal::Pose`] when the pose does not admit the move (including
+    /// another lifecycle move in flight), and [`ConnectRefusal::Transport`] when
+    /// the WS step fails.
+    pub async fn connect(&self, node_ws: &str) -> Result<Connected, ConnectRefusal> {
+        let mv = self
+            .session
+            .take(PumpEvent::SubscribeRequested)
+            .map_err(|decline| {
+                ConnectRefusal::Pose(phase_error("connect", Some(PumpPhase::Detached), decline))
+            })?;
+
+        #[cfg(test)]
+        {
+            // The guard is dropped at the end of the `let`, never held across the
+            // await below (workspace convention: no `parking_lot` guard crosses
+            // one).
+            let gate = self.connect_gate.lock().take();
+            if let Some(gate) = gate {
+                // Hold the future inside the in-flight window so a test can cancel
+                // it exactly where a dropping consumer would.
+                let _ = gate.await;
+            }
+        }
+
+        let pending = match self.open_ws_session(node_ws).await {
+            Ok(pending) => pending,
+            Err(refusal) => {
+                // The table's failure landing: `Connecting -> Detached`, so the
+                // next `connect` is legal again.
+                if let Err(landing) = mv.land_empty(PumpEvent::SubscribeFailed) {
                     op_warn!(
                         domain = pump,
                         error = %landing,
-                        "EngineDriver: a failed subscribe could not restore the session to detached"
+                        "EngineDriver: a failed connect could not restore the session to detached"
                     );
                 }
-                return Err(e);
+                return Err(ConnectRefusal::Transport(refusal));
             }
         };
-        let first_block = session.first_block;
-        *self.subscribe_state.lock() = Some(session);
-        leg.land(PumpEvent::Subscribed)?;
-        Ok(first_block)
+
+        let link_block = pending.first_block;
+        mv.land_connected(Box::new(pending)).map_err(|decline| {
+            ConnectRefusal::Pose(phase_error("connect", Some(PumpPhase::Detached), decline))
+        })?;
+        Ok(Connected { link_block })
     }
 
-    /// Open the WS session: the ONE fallible step of [`Self::subscribe`].
-    ///
-    /// Both failure shapes (a failed handshake, and a session that handed back
-    /// no WS stream) are `DriverError::Subscribe`; the caller's job is the
-    /// table landing, not the distinction.
-    async fn open_ws_session(&self, node_ws: &str) -> Result<DriverSubscribeState, DriverError> {
+    /// Open the WS session: the ONE fallible step of [`Self::connect`].
+    async fn open_ws_session(&self, node_ws: &str) -> Result<ConnectedSession, SubscribeRefusal> {
         #[cfg(test)]
-        if let Some(fault) = self.subscribe_fault.lock().take() {
-            return Err(DriverError::Subscribe(fault.message().to_string()));
+        if let Some(fault) = self.connect_fault.lock().take() {
+            return Err(fault.refusal());
         }
+
         let stage_handlers: Arc<dyn StageHandlers> = self.stages.clone();
         let control: Arc<dyn PumpControl> = self.stages.clone();
         let (pump, state) = BlockPump::subscribe(
@@ -940,126 +854,128 @@ impl EngineDriver {
             Arc::clone(&self.shutdown),
         )
         .await
-        .map_err(DriverError::Subscribe)?;
+        .map_err(|source| SubscribeRefusal::Handshake { source })?;
+
         let SubscribeState {
             first_block,
             combined_stream,
             ..
         } = state;
-        let Some(combined_stream) = combined_stream else {
-            return Err(DriverError::Subscribe(
-                "BlockPump::subscribe returned no WS stream".to_string(),
-            ));
+        let Some(stream) = combined_stream else {
+            return Err(SubscribeRefusal::NoStream);
         };
-        Ok(DriverSubscribeState {
+        Ok(ConnectedSession {
             pump,
             first_block,
-            combined_stream,
+            stream,
         })
     }
 
-    /// Resume the pump.
+    /// Arm the live loop: `Subscribed -> Resuming -> Running`.
     ///
     /// The driver **owns** the `S+1..W` auto-backfill: it awaits
-    /// `BlockPump::backfill_with_drain(W, stream)` synchronously, then spawns
-    /// the live loop on the shared runtime. Consumers never call
-    /// `backfill_from_snapshot`.
+    /// `BlockPump::backfill_with_drain(W, stream)` synchronously, then spawns the
+    /// live loop. Consumers never call `backfill_from_snapshot`.
+    ///
+    /// The claim is taken BY VALUE: `run` cannot be called without one, so
+    /// "a consumer is attached before production starts" is a type fact rather
+    /// than an ordering convention.
     ///
     /// # Errors
     ///
-    /// - [`DriverError::Phase`] unless the table admits `resume` (it requires
-    ///   `Subscribed`).
-    /// - [`DriverError::SessionState`] when no subscribe state is pending, or
-    ///   when the session is terminal.
-    /// - [`DriverError::NoResultReceiver`] when the result receiver has not
-    ///   been taken.
+    /// - [`DriverError::Phase`] unless the table admits `run` (it requires
+    ///   `Subscribed`, and refuses a concurrent move as in flight).
     /// - [`DriverError::Backfill`] when the `S+1..W` backfill fails: the gap is
     ///   UNAPPLIED, so the resume aborts (landing `Abandoned`) rather than
     ///   starting a live loop over stale state.
     ///
     /// # Cancel safety
     ///
-    /// **Committed from the spawn on**: `resume` does not own the pump it
-    /// starts. Once the live loop is handed to `tokio::spawn`, the spawned task
-    /// OWNS the pump (`pump` is moved into the async block); only its
-    /// `JoinHandle` is stored back into `self.pump_handle`. A dropped `resume`
-    /// future therefore drops the handle's future, not the pump task — the pump
-    /// keeps running to completion, and its completion sender (moved into the
-    /// same task) still drops on whatever terminal path, so every
-    /// `wait_pump_finished` waiter resolves exactly as if `resume` had returned
-    /// normally.
+    /// **Committed from the spawn on**: `run` does not own the pump it starts.
+    /// Once the live loop is handed to `tokio::spawn`, the spawned task OWNS the
+    /// pump; only its `JoinHandle` is stored back into the session's `Running`
+    /// pose.
     ///
     /// **Cancel-safe before it, by landing `Abandoned`**: the in-flight window is
     /// the subscribe-state handover and the awaited `backfill_with_drain`.
-    /// `resume` publishes the table's `Resuming` at the top of that window and
-    /// arms a [`PhaseLeg`], whose `Drop` publishes the table's `ResumeAbandoned`
-    /// edge — so a future dropped mid-window lands `Abandoned` (the pump and its
-    /// WS session died with it) instead of standing in `Resuming` with nothing
-    /// left to resume. `Abandoned` is terminal: `stop()` is its one exit, and a
-    /// re-subscribe is refused by name
-    /// ([`pump_session::PumpDecline::SubscribeAfterAbandonment`]) — recovery
-    /// from a cancelled resume is a new session, because the backfill buffer
-    /// stages events without dedup and a retry would double-apply them at
-    /// registration. A cancel after the `ResumeSpawned` landing is NOT "not
-    /// resumed": the live loop is armed and its handle stored.
+    /// `run` publishes the table's `Resuming` at the top of that window and arms
+    /// a [`SessionMove`](crate::arb_engine::pump_session::SessionMove), whose
+    /// `Drop` publishes the table's `ResumeAbandoned` edge — so a future dropped
+    /// mid-window lands `Abandoned` (the pump and its WS session died with it)
+    /// instead of standing in `Resuming` with nothing left to resume.
+    /// `Abandoned` is terminal: `close` is its one exit, and a re-connect is
+    /// refused by name.
     ///
-    /// **A backfill failure is an abort, not a degraded start**: the `S+1..W`
-    /// gap would be unapplied, so the `Err` is returned typed
-    /// ([`DriverError::Backfill`]) after the same `ResumeAbandoned` landing —
-    /// the live loop is never spawned.
-    pub async fn resume(&self) -> Result<(), DriverError> {
-        if self.is_stopped() {
-            return Err(DriverError::SessionState(
-                "Cannot resume: driver has been stopped.".to_string(),
-            ));
-        }
-        self.check(
-            "resume",
-            Some(PumpPhase::Subscribed),
-            PumpEvent::ResumeRequested,
-        )?;
-        // Consumer-before-resume gate. The result channel is unbounded, so a
-        // pump with no receiver attached accumulates batches no one drains.
-        // This check runs before the in-flight pose AND before the subscribe
-        // state is consumed, so a refused resume leaves the session exactly as
-        // it found it for a corrected retry.
-        if !self.result_receiver_taken.load(Ordering::SeqCst) {
-            return Err(DriverError::NoResultReceiver);
-        }
-        // The in-flight pose, published BEFORE the state handover and before the
-        // backfill await: from here to the live-loop landing, a dropped future is
-        // what `ResumeAbandoned` exists for.
-        let leg = PhaseLeg::enter(
-            self,
-            "resume",
-            Some(PumpPhase::Subscribed),
-            PumpEvent::ResumeRequested,
-            PumpEvent::ResumeAbandoned,
-        )?;
-        let state = self.subscribe_state.lock().take().ok_or_else(|| {
-            DriverError::SessionState(
-                "Cannot resume: subscribe() has not been called. Call subscribe() first."
-                    .to_string(),
-            )
-        })?;
-        let DriverSubscribeState {
+    /// A cancel after the `ResumeSpawned` landing is NOT "not running": the live
+    /// loop is armed and owned by the `Running` pose.
+    pub async fn run(&self, claim: ConsumerClaim) -> Result<(), DriverError> {
+        // The claim's work is the attachment proof; consuming it is enough.
+        let _ = claim;
+
+        let mut mv = self
+            .session
+            .take(PumpEvent::ResumeRequested)
+            .map_err(|decline| {
+                DriverError::Phase(phase_error("run", Some(PumpPhase::Subscribed), decline))
+            })?;
+
+        let MovePayload::Connected(pending) = mv.take_payload() else {
+            // Unreachable: the table admits `ResumeRequested` only from
+            // `Subscribed`, and that pose always owns a connected session.
+            debug_assert!(false, "a resume take-out must carry the connected session");
+            let _ = mv.land_empty(PumpEvent::ResumeAbandoned);
+            return Err(DriverError::Phase(phase_error(
+                "run",
+                Some(PumpPhase::Subscribed),
+                PumpDecline::ResumeRequiresSubscribed {
+                    current: self.current_phase(),
+                },
+            )));
+        };
+        let ConnectedSession {
             mut pump,
             first_block,
-            combined_stream,
-        } = state;
+            stream,
+        } = *pending;
+
         #[cfg(test)]
-        let resume_gate = self.resume_gate.lock().take();
-        #[cfg(test)]
-        if let Some(gate) = resume_gate {
-            // Hold the future inside the in-flight window so a test can cancel
-            // it exactly where a dropping consumer cancels one.
-            let _ = gate.await;
+        {
+            let gate = self.run_gate.lock().take();
+            if let Some(gate) = gate {
+                // Hold the future inside the in-flight window so a test can cancel
+                // it exactly where a dropping consumer cancels one.
+                let _ = gate.await;
+            }
         }
-        // the backfill is SYNCHRONOUS with respect to `resume` so the
-        // consumer's registration draining the per-pool backfill buffer cannot
-        // race it. `backfill_with_drain` also re-injects live events
-        // drained during the backfill ahead of the live tail.
-        let (backfill_res, combined) = pump.backfill_with_drain(first_block, combined_stream).await;
+
+        let gap = self.backfill_gap(first_block);
+
+        // the backfill is SYNCHRONOUS with respect to `run` so the consumer's
+        // registration draining the per-pool backfill buffer cannot race it.
+        // `backfill_with_drain` also re-injects live events drained during the
+        // backfill ahead of the live tail.
+        #[cfg(test)]
+        let injected = self.backfill_fault.swap(false, Ordering::SeqCst);
+        #[cfg(not(test))]
+        let injected = false;
+
+        let (backfill_res, combined) = if injected {
+            (
+                Err(gap.map_or_else(
+                    || "injected: the resume backfill failed".to_string(),
+                    |gap| {
+                        format!(
+                            "injected: eth_getLogs failed for blocks {}-{}",
+                            gap.from, gap.to
+                        )
+                    },
+                )),
+                stream,
+            )
+        } else {
+            pump.backfill_with_drain(first_block, stream).await
+        };
+
         let combined = match backfill_res {
             Ok(_) => combined,
             // The gap `S+1..W` is UNAPPLIED, so a live loop from `W` would run
@@ -1068,77 +984,215 @@ impl EngineDriver {
             // cancelled resume, so the table's honest landing is the same
             // `Resuming -> Abandoned` edge. The failure itself is the caller's,
             // typed — the pose carries no payload.
-            Err(backfill) => {
+            Err(detail) => {
                 op_error!(
                     domain = pump,
                     first_block,
-                    error = %backfill,
+                    error = %detail,
                     "EngineDriver: auto-backfill failed — resume aborted, live loop NOT started (gap not closed)"
                 );
-                leg.land(PumpEvent::ResumeAbandoned)?;
-                return Err(DriverError::Backfill(backfill));
+                if let Err(landing) = mv.land_empty(PumpEvent::ResumeAbandoned) {
+                    op_warn!(
+                        domain = pump,
+                        error = %landing,
+                        "EngineDriver: a failed backfill could not land the abandon edge"
+                    );
+                }
+                let Some(gap) = gap else {
+                    // No gap means the failure was not about `S+1..W`; report it
+                    // as the empty range at the link block.
+                    return Err(DriverError::Backfill(BackfillGap {
+                        from: first_block,
+                        to: first_block,
+                    }));
+                };
+                return Err(DriverError::Backfill(gap));
             }
         };
-        // The landing precedes the spawn by one synchronous statement (no await
-        // between the two, so cancellation cannot observe the gap). It must:
-        // a live loop that ends immediately — an already-ended stream, a panic
-        // on its first poll — reports `PumpExited`, and the table has no
-        // `Resuming -> Ended` edge, so landing `Running` first is what lets that
-        // exit unwind the projection instead of being refused.
-        leg.land(PumpEvent::ResumeSpawned)?;
-        // Arm the completion broadcast: the sender is owned by the spawned
-        // task, so wherever the pump ends — cooperative return, stream end,
-        // abort, or panic — the sender drops and every `wait_pump_finished`
-        // waiter resolves. No explicit send is needed; channel close IS the
-        // terminal event (which is also what makes the panic path work).
-        let completion_tx = self.pump_finished_tx.lock().take();
-        let handle = tokio::spawn(async move {
-            let _completion_tx = completion_tx;
+
+        // Arm the completion broadcast: the sender is owned by the spawned task,
+        // so wherever the pump ends — cooperative return, stream end, abort, or
+        // panic — the sender drops and every `wait_pump_finished` waiter
+        // resolves. No explicit send is needed; channel close IS the terminal
+        // event (which is also what makes the panic path work).
+        let completion = self.session.take_completion();
+        let handle = degenbot_core::runtime::get_runtime().spawn(async move {
+            let _completion = completion;
             pump.run_with_stream(combined, first_block).await;
         });
-        *self.pump_handle.lock() = Some(handle);
+
+        // The landing is the ONLY way the live loop enters the session: a
+        // landing the table no longer admits (a close that got there first)
+        // aborts the loop instead of installing it.
+        mv.land_live(Box::new(LiveLoop {
+            handle,
+            completion: None,
+        }))
+        .map_err(|decline| {
+            DriverError::Phase(phase_error("run", Some(PumpPhase::Subscribed), decline))
+        })?;
         Ok(())
     }
 
-    /// Stop the pump and land the session machine terminal (ADR-050 D6).
+    /// The `S+1..W` range a resume must close, when the snapshot seed is behind
+    /// the WS link block.
+    fn backfill_gap(&self, link_block: u64) -> Option<BackfillGap> {
+        let seed = self.snapshot_seed_block()?;
+        if seed == 0 || link_block == 0 || seed >= link_block {
+            return None;
+        }
+        Some(BackfillGap {
+            from: seed + 1,
+            to: link_block,
+        })
+    }
+
+    /// Tear the session down: asynchronous, total from every pose, idempotent,
+    /// and shared.
     ///
-    /// Any-phase + idempotent: the table's `Stop` declines from no pose and
-    /// `Stopped` is absorbing, so a repeated or concurrent stop is a no-op. A
-    /// session holding something to tear down lands `Stopping` and owes one
-    /// `StopCompleted` (published when the teardown returns); one with nothing
-    /// to tear down lands `Stopped` directly. Sets the shutdown flag, waits up to
-    /// [`PUMP_STOP_GRACE`] for the pump to exit **cooperatively** (it polls
-    /// the flag on its own 500 ms tick arm), and only then escalates to
-    /// `abort()` + join if the grace expires. Either way the WS subscription
-    /// futures have dropped before return. Clears the subscribe state and
-    /// closes the delivery channels so a pending receiver observes
-    /// end-of-stream exactly once.
+    /// Concurrent callers join the ONE teardown and each receives the same
+    /// [`TeardownReport`]. The teardown requests termination, waits for any
+    /// in-flight move to unwind (its guard lands the abandonment edge first),
+    /// latches the crawl's stop BEFORE the pump join so both loops unwind at
+    /// once, joins each loop under one grace window, drains the walk memo after
+    /// the pump is down, closes the event stream exactly once, and publishes
+    /// `StopCompleted` last.
     ///
+    /// Nothing here parks a runtime: the joins are awaits, so the old
+    /// `block_on`-inside-the-runtime hazard is gone. A caller that must block
+    /// does it at its own adapter boundary.
+    pub async fn close(&self) -> TeardownReport {
+        let mut slot = self.close.lock().await;
+        if let Some(report) = *slot {
+            return report;
+        }
+        let report = self.teardown().await;
+        *slot = Some(report);
+        report
+    }
+
+    /// The one teardown body, run under the shared completion latch.
+    async fn teardown(&self) -> TeardownReport {
+        // The table's teardown entry first: it is the machine's own answer to
+        // "has teardown begun?", which every guard (and `is_stopped`) reads.
+        let mut mv = match self.session.take(PumpEvent::Stop) {
+            Ok(mv) => mv,
+            Err(decline) => {
+                // `Stop` never declines; a decline means the machine is corrupt.
+                op_error!(domain = pump, %decline, "EngineDriver: the teardown entry declined");
+                return TeardownReport {
+                    from: self.current_phase(),
+                    pump: PumpExit::NotArmed,
+                    crawl: CrawlExit::None,
+                    delivery: self.stages.session_event_source().phase(),
+                };
+            }
+        };
+        let from = mv.from();
+        let payload = mv.take_payload();
+        mv.release();
+
+        let delivery = self.stages.session_event_source().phase();
+        let MovePayload::Teardown(mut teardown) = payload else {
+            debug_assert!(false, "a stop take-out must carry the teardown payload");
+            return TeardownReport {
+                from,
+                pump: PumpExit::NotArmed,
+                crawl: CrawlExit::None,
+                delivery,
+            };
+        };
+
+        if from.is_terminal() {
+            // Another close owns (or owned) the teardown: this caller reports
+            // the same facts rather than tearing down twice.
+            teardown.latch_crawl();
+            let (pump, crawl) = teardown.join(PUMP_STOP_GRACE).await;
+            return TeardownReport {
+                from,
+                pump,
+                crawl,
+                delivery,
+            };
+        }
+
+        // Request termination, then wait for any in-flight move to unwind: its
+        // landing declines against the teardown pose and its guard aborts
+        // whatever it could not install.
+        self.shutdown.store(true, Ordering::Relaxed);
+        self.session.wait_for_moves().await;
+
+        // Latch the crawl's stop BEFORE the pump join, so both loops unwind at
+        // once: the crawl stops submitting and drains its window while the pump
+        // walks its own tick.
+        teardown.latch_crawl();
+
+        if let Some(crawl) = teardown.crawl.as_ref() {
+            op_info!(
+                domain = pump,
+                grace_ms = pump_stop_grace_ms(),
+                crawl = ?crawl.handle.state(),
+                "EngineDriver: crawl stop latched before the pump join"
+            );
+        }
+        let (pump, crawl) = teardown.join(PUMP_STOP_GRACE).await;
+        match pump {
+            PumpExit::Cooperative => op_info!(
+                domain = pump,
+                grace_ms = pump_stop_grace_ms(),
+                "EngineDriver: BlockPump task exited cooperatively on the shutdown flag"
+            ),
+            PumpExit::NotArmed => op_info!(
+                domain = pump,
+                "EngineDriver: BlockPump not running (no live loop to join)"
+            ),
+            PumpExit::Aborted | PumpExit::JoinError => {}
+        }
+
+        // Final WalkMemo stats drain: the pump is down and no further cycle can
+        // advance an epoch, so drain the LAST epoch's counters here — no boundary
+        // will. Inert unless the memo recorded activity.
+        self.stages.drain_walk_memo_final();
+
+        // Close the stream exactly once — the natural end's one owner.
+        self.stages.close_delivery_channels();
+        let delivery = self.stages.session_event_source().phase();
+
+        // `StopCompleted` last: nothing above this line may still publish.
+        if let Err(decline) = self.session.complete_close() {
+            op_warn!(
+                domain = pump,
+                %decline,
+                "EngineDriver: the teardown could not land StopCompleted"
+            );
+        }
+        TeardownReport {
+            from,
+            pump,
+            crawl,
+            delivery,
+        }
+    }
+
     /// Configure a crawl over this driver's `Bot` and boot it.
     ///
     /// The DRIVER boots the crawl: it composes the host from the driver's own
     /// `Bot` (whose `ConstructionIo` the shell attached at boot time), attaches
-    /// the receipt stream's sink, spawns [`CrawlController::run`], and keeps the
-    /// run future's `JoinHandle` beside the pump's so ONE [`EngineDriver::stop`]
-    /// tears both loops down under one grace window. The caller keeps the
-    /// controller — the operator surface and the summary render — and nothing
-    /// else, which is what makes the caller-holds-the-controller /
-    /// driver-holds-the-join contract real.
-    ///
-    /// The receipt stream is attached BEFORE the run arms, so not one receipt
-    /// can race past an unattached channel: a consumer that wants the stream
-    /// passes its sink here rather than attaching after [`Self::begin_crawl`]
-    /// returns.
+    /// the receipt stream's sink, spawns [`CrawlController::run`], and hands the
+    /// run future's `JoinHandle` to the session, so ONE [`Self::close`] tears
+    /// both loops down under one grace window. The caller keeps the controller —
+    /// the operator surface and the summary render — and nothing else.
     ///
     /// # Errors
     ///
-    /// [`CrawlConfigError`] — an invalid configuration, a `Bot` with no
-    /// construction I/O attached, a crawl already installed on this driver, or a
-    /// receipt sink the channel refused.
+    /// [`CrawlRefusal::Pose`] when the session does not admit an attach (it is
+    /// gone or tearing down — the §1.3(b) regression), and
+    /// [`CrawlRefusal::Config`] for an invalid configuration, a `Bot` with no
+    /// construction I/O, or a driver that already holds a crawl.
     pub fn begin_crawl(
         self: &Arc<Self>,
         config: CrawlConfig,
-    ) -> Result<Arc<CrawlController>, CrawlConfigError> {
+    ) -> Result<Arc<CrawlController>, CrawlRefusal> {
         self.begin_crawl_with(CrawlBoot::new(config))
     }
 
@@ -1150,27 +1204,27 @@ impl EngineDriver {
     pub fn begin_crawl_with(
         self: &Arc<Self>,
         boot: CrawlBoot,
-    ) -> Result<Arc<CrawlController>, CrawlConfigError> {
-        // One crawl per driver. The slot is taken for the whole boot so a
-        // concurrent second boot cannot race the first into the same slot, and
-        // `stop` waits on the same lock rather than tearing a half-booted crawl.
-        let mut slot = self.crawl.lock();
-        if slot.is_some() {
-            return Err(CrawlConfigError::CrawlAlreadyBegun);
-        }
+    ) -> Result<Arc<CrawlController>, CrawlRefusal> {
+        // The attach is a SESSION MOVE: the table answers legality, so a crawl
+        // cannot be booted over a session that is gone or tearing down.
+        let mv = self
+            .session
+            .take(PumpEvent::CrawlAttached)
+            .map_err(|decline| CrawlRefusal::Pose(phase_error("crawl", None, decline)))?;
+
         let CrawlBoot {
             config,
             receipts,
             snapshot,
         } = boot;
-        let io = self
-            .bot
-            .construction_io_arc()
-            .ok_or(CrawlConfigError::MissingConstructionIo)?;
+
+        let io = self.bot.construction_io_arc().ok_or(CrawlRefusal::Config(
+            CrawlConfigError::MissingConstructionIo,
+        ))?;
+
         // The crawl is one ADAPTER over Registration admission: it contributes
         // its candidate source, its loop and its measurement, and the admission
-        // is composed here from the capability handles this session owns. The
-        // driver keeps only the crawl's run/stop edge, never admission's.
+        // is composed here from the capability handles this session owns.
         let admission = Arc::new(RegistrationAdmission::new(
             Arc::clone(&self.bot),
             io,
@@ -1184,248 +1238,204 @@ impl EngineDriver {
             admission,
             snapshot,
         };
-        let controller = CrawlController::attach(host, config)?;
+        let controller = CrawlController::attach(host, config).map_err(CrawlRefusal::Config)?;
         if let Some(tx) = receipts {
-            controller.attach_receipts(tx)?;
+            controller
+                .attach_receipts(tx)
+                .map_err(CrawlRefusal::Receipts)?;
         }
+
         let runner = Arc::clone(&controller);
         let run = degenbot_core::runtime::get_runtime().spawn(async move {
             // The run's own answer is recorded on the controller (readable after
             // end-of-stream); the join handle reports only a panic.
             let _ = runner.run().await;
         });
-        *slot = Some(CrawlTeardown {
+
+        mv.land_crawl(Box::new(CrawlTeardown {
             handle: CrawlHandle::new(Arc::clone(&controller)),
             run,
-        });
+        }))
+        .map_err(|decline| CrawlRefusal::Pose(phase_error("crawl", None, decline)))?;
         Ok(controller)
     }
 
-    /// The crawl's teardown pair, for a caller that must read the run's join
-    /// fact without stopping it.
+    /// The crawl's narrowed teardown edge, for a caller that must read the run's
+    /// join fact without stopping it.
     #[must_use]
     pub fn crawl_handle(&self) -> Option<CrawlHandle> {
-        self.crawl.lock().as_ref().map(CrawlTeardown::edge)
-    }
-
-    /// The crawl is torn down with the live loop. The teardown plan is produced
-    /// SYNCHRONOUSLY ([`pump_session::on_stop`]) from the pose the table landed
-    /// the session from and the crawl edge this driver holds — nothing
-    /// awaitable, and no lock held across an await — and its edge is latched
-    /// before the pump join, so both loops unwind at once. The crawl's run
-    /// future is then joined under the SAME [`PUMP_STOP_GRACE`] window (the
-    /// controller never spawns its own run, so the driver holds that
-    /// `JoinHandle`), escalating to `abort()` only if the latch cannot reach
-    /// it.
-    ///
-    /// # Errors
-    ///
-    /// Currently never returns `Err`; the typed result keeps the surface
-    /// symmetric with `subscribe`/`resume`.
-    pub fn stop(&self) -> Result<(), DriverError> {
-        // The table's teardown entry first: it is the machine's own answer to
-        // "has teardown begun?", which every guard (and `is_stopped`) reads.
-        let teardown = self.advance("stop", None, PumpEvent::Stop)?;
-        if teardown.from.is_terminal() {
-            // A repeated or concurrent stop: the caller that began the teardown
-            // owns it, and this one has nothing left to join.
-            return Ok(());
-        }
-        // The crawl's teardown pair, taken once: the plan carries the narrowed
-        // edge (never the controller) and the run future's `JoinHandle` stays
-        // here beside the pump's own.
-        let crawl = self.crawl.lock().take();
-        // The plan, produced SYNCHRONOUSLY from the pose the table landed the
-        // session FROM — the same answer the projection just published, with no
-        // await and no lock held across one.
-        let (next, plan) =
-            pump_session::on_stop(teardown.from, crawl.as_ref().map(CrawlTeardown::edge));
-        debug_assert_eq!(
-            next, teardown.to,
-            "the plan and the projection are one table answer"
-        );
-        self.shutdown.store(true, Ordering::Relaxed);
-        // Latch the crawl's stop BEFORE the pump join, so both loops unwind at
-        // once: the crawl stops submitting and drains its window while the pump
-        // walks its own tick.
-        plan.stop_crawl();
-        // Drop any un-armed sender (the pump never resumed): without this a
-        // pre-finish waiter would hang after a stop-before-resume.
-        drop(self.pump_finished_tx.lock().take());
-        let handle = self.pump_handle.lock().take();
-        if let Some(mut handle) = handle {
-            // Cooperative first: the pump's own 500 ms `timed_exit_tick`
-            // select arm polls the shutdown flag, so an ordinary stop lets
-            // the loop unwind through its span guards and return normally.
-            // Abort is the ESCALATION, not the primary mechanism.
-            // The timeout future is built INSIDE the async block: `Sleep`
-            // captures the timer handle at construction, so it must not be
-            // constructed outside the runtime context.
-            let cooperative = degenbot_core::runtime::get_runtime()
-                .block_on(async { tokio::time::timeout(PUMP_STOP_GRACE, &mut handle).await });
-            match cooperative {
-                Ok(Ok(())) => {
-                    op_info!(
-                        domain = pump,
-                        grace_ms = pump_stop_grace_ms(),
-                        "EngineDriver: BlockPump task exited cooperatively on the shutdown flag"
-                    );
-                }
-                Ok(Err(join_err)) => {
-                    // The task ended on its own but with a join error (a
-                    // panic inside the pump). It is already gone, so there is
-                    // nothing to abort; name it so the abnormal end is not
-                    // mistaken for the cooperative path.
-                    op_error!(
-                        domain = pump,
-                        grace_ms = pump_stop_grace_ms(),
-                        error = %join_err,
-                        "EngineDriver: BlockPump task ended with a join error before the grace expired"
-                    );
-                }
-                Err(_) => {
-                    // The pump is parked somewhere its tick cannot reach (a
-                    // GIL re-entry park via `PySubscriberAdapter`, or
-                    // engine-lock contention inside `on_drain`), so the
-                    // cooperative path cannot fire. Cancel it and drive the
-                    // cancelled task to completion so its held resources
-                    // drop before return. `block_on` on the shared runtime
-                    // matches `subscribe`/`resume`'s sync discipline; the
-                    // aborted task completes promptly. This should be rare.
-                    handle.abort();
-                    let _ = degenbot_core::runtime::get_runtime().block_on(handle);
-                    op_info!(
-                        domain = pump,
-                        grace_ms = pump_stop_grace_ms(),
-                        "EngineDriver: BlockPump did not exit cooperatively within grace — aborted (fallback)"
-                    );
-                }
-            }
-        } else {
-            op_info!(
-                domain = pump,
-                "EngineDriver: BlockPump not running (no pump handle to stop)"
-            );
-        }
-        // The crawl's run future, under the same grace window and in the same
-        // shape: it was asked to stop above, so its window drains and the run
-        // resolves on its own — abort is the escalation, not the mechanism.
-        if let Some(crawl) = crawl {
-            crawl.join(PUMP_STOP_GRACE);
-        }
-        // Final WalkMemo stats drain: the pump is down
-        // and no further cycle can advance an epoch, so drain the LAST
-        // epoch's counters here — no boundary will. Inert unless the memo
-        // recorded activity (a stop-before-resume run emits nothing); the
-        // observation never fails the stop.
-        self.stages.drain_walk_memo_final();
-        *self.subscribe_state.lock() = None;
-        self.stages.close_delivery_channels();
-        if next == PumpPhase::Stopping {
-            self.advance("stop", None, PumpEvent::StopCompleted)?;
-        }
-        Ok(())
-    }
-
-    /// Install the verify home's construction values for this session's
-    /// provider: the RPC provider built from the node endpoint, and the V4
-    /// `StateView` address when the deployment resolved one.
-    ///
-    /// Configuration is ONE door on the verify home ([`VerifyLifecycle::configure`])
-    /// and it travels as a value: a caller cannot re-point a live lifecycle's
-    /// provider between two attempts, so a retry re-verifies against the chain
-    /// view the first attempt used.
-    async fn configure_verify(&self, node_http: &str, verify_state_view: Option<&str>) {
-        let provider = crate::bot_core::verify_lifecycle::build_verify_provider(node_http).await;
-        let mut config = self.verify.config();
-        config.provider = provider;
-        if let Some(view) = verify_state_view {
-            config.state_view = Some(view.parse::<Address>().unwrap_or(Address::ZERO));
-        }
-        self.verify.configure(config);
-    }
-
-    /// The registered pool id for this pool identity, derived from the shared
-    /// `BotState`.
-    ///
-    /// The read direction a driver needs when it holds a pool's IDENTITY — a
-    /// family tag plus an address, or a V4 `PoolManager` plus pool id —
-    /// rather than an id. The answer comes from the registration tables the
-    /// state owner already keeps, so a driver never holds a second pool-id map
-    /// that can disagree with it.
-    ///
-    /// `None` when no pool with that identity is registered in this session.
-    #[must_use]
-    pub fn pool_id_for_identity(&self, identity: &PoolIdentity) -> Option<u64> {
-        let core = self.stages.core();
-        let pool_id = core
-            .read_at(LockSite::Registration)
-            .pool_id_for_identity(identity);
-        pool_id
-    }
-
-    /// Install a pending subscribe state (test-only seam over the private
-    /// session field).
-    #[cfg(test)]
-    pub(crate) fn install_subscribe_state_for_test(&self, state: DriverSubscribeState) {
-        *self.subscribe_state.lock() = Some(state);
-    }
-
-    /// Inject the next `subscribe`'s failure shape (test-only seam over the
-    /// dial, which needs a live WS endpoint).
-    #[cfg(test)]
-    pub(crate) fn set_subscribe_fault_for_test(&self, fault: SubscribeFault) {
-        *self.subscribe_fault.lock() = Some(fault);
-    }
-
-    /// Hold `resume` inside its in-flight window until the sender fires or
-    /// drops (test-only seam: the window is otherwise a live backfill await).
-    #[cfg(test)]
-    pub(crate) fn set_resume_gate_for_test(&self, gate: tokio::sync::oneshot::Receiver<()>) {
-        *self.resume_gate.lock() = Some(gate);
+        self.session.crawl_edge()
     }
 }
 
 /// Soak 2026-08-22 forensics: name teardown paths that bypass
-/// [`EngineDriver::stop`]. If the pump task
-/// handle is still armed at drop time, unwinding tore down the driver without
-/// calling `stop()` — the silent-exit shape this exists to catch. Leveling:
-/// only the bypassed-`stop()` shape is WARN; a post-`stop()` drop
-/// (`pump_handle_armed() == false`) is the healthy path every session takes
-/// at exit — warning there trains operators to dismiss the line and buries
-/// the real signal.
+/// [`EngineDriver::close`]. If the session still holds an armed live loop at
+/// drop time, unwinding tore down the driver without calling `close()` — the
+/// silent-exit shape this exists to catch. Leveling: only the bypassed-close
+/// shape is WARN; a post-close drop is the healthy path every session takes at
+/// exit.
 impl Drop for EngineDriver {
     fn drop(&mut self) {
-        if self.pump_handle_armed() {
+        if self.current_phase().live_loop_armed() {
             op_warn!(
                 domain = pump,
                 pump_task_still_armed = true,
-                "EngineDriver dropped WITHOUT stop() — unwind bypassed graceful shutdown"
+                "EngineDriver dropped WITHOUT close() — unwind bypassed graceful shutdown"
             );
         } else {
             diag!(
                 domain = pump,
                 pump_task_still_armed = false,
-                "EngineDriver dropped after stop()"
+                "EngineDriver dropped after close()"
             );
         }
     }
 }
 
-/// The claim key for one pool: the family plus the identity that names it, so
-/// two families at one address — or two pools under one `PoolManager` — never
-/// share a claim window.
-#[expect(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+// ── the crate's own construction-time seams (test builds only) ─────────────
+
 #[cfg(test)]
+impl EngineDriver {
+    /// A local pump over this driver's own seams: no WS endpoint, no dial.
+    pub(crate) fn local_pump_for_test(&self) -> BlockPump {
+        let stage_handlers: Arc<dyn StageHandlers> = self.stages.clone();
+        let control: Arc<dyn PumpControl> = self.stages.clone();
+        BlockPump::for_test(
+            Arc::clone(&self.bot),
+            stage_handlers,
+            control,
+            Arc::clone(&self.reorg_coordinator),
+            mock_provider(),
+            Arc::clone(&self.shutdown),
+        )
+    }
+
+    /// Build the session in a pose a test cannot reach without a live WS
+    /// endpoint — a whole session VALUE (pose plus the payload it owns), never a
+    /// field poke.
+    pub(crate) fn seed_session_for_test(&self, seed: SessionSeed) {
+        match seed {
+            SessionSeed::Connected {
+                pump,
+                first_block,
+                stream,
+            } => self
+                .session
+                .seed_connected_for_test(Box::new(ConnectedSession {
+                    pump,
+                    first_block,
+                    stream,
+                })),
+            SessionSeed::Running(body) => {
+                let control: Arc<dyn PumpControl> = self.stages.clone();
+                // The completion broadcast is owned by the loop while it runs,
+                // exactly as production hands it over: the channel's close is the
+                // completion signal, so a panic completes too.
+                let completion = self.session.take_completion();
+                let handle = degenbot_core::runtime::get_runtime().spawn(async move {
+                    let _completion = completion;
+                    // The same one exit door production uses: every return from a
+                    // live loop — normal, early, or a panic unwind — publishes
+                    // the pump-exit fact.
+                    let _guard = SeededExitGuard(control);
+                    body.await;
+                });
+                self.session.seed_running_for_test(Box::new(LiveLoop {
+                    handle,
+                    completion: None,
+                }));
+            }
+        }
+    }
+
+    /// Inject the next `connect`'s failure shape.
+    pub(crate) fn inject_connect_fault_for_test(&self, fault: ConnectFault) {
+        *self.connect_fault.lock() = Some(fault);
+    }
+
+    /// Hold `connect` inside its in-flight window until the hold releases.
+    pub(crate) fn hold_connect_in_flight_for_test(&self) -> InFlightHold {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        *self.connect_gate.lock() = Some(rx);
+        InFlightHold { _release: tx }
+    }
+
+    /// Hold `run` inside its in-flight window until the hold releases.
+    pub(crate) fn hold_run_in_flight_for_test(&self) -> InFlightHold {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        *self.run_gate.lock() = Some(rx);
+        InFlightHold { _release: tx }
+    }
+
+    /// Make the next resume backfill fail.
+    pub(crate) fn inject_backfill_fault_for_test(&self) {
+        self.backfill_fault.store(true, Ordering::SeqCst);
+    }
+
+    /// Attach a crawl's teardown pair through the session's `CrawlAttached` move
+    /// — the crate-test construction seam for a controller a test builds itself
+    /// (the boot wiring's `begin_crawl_with` composes the host; a fixture needs a
+    /// scripted seat instead).
+    ///
+    /// # Errors
+    ///
+    /// [`CrawlRefusal`] when the table does not admit the attach, or the session
+    /// already owns a crawl.
+    #[cfg(test)]
+    pub(crate) fn attach_crawl_teardown_for_test(
+        &self,
+        controller: &Arc<CrawlController>,
+        run: tokio::task::JoinHandle<()>,
+    ) -> Result<(), CrawlRefusal> {
+        let mv = self
+            .session
+            .take(PumpEvent::CrawlAttached)
+            .map_err(|decline| CrawlRefusal::Pose(phase_error("crawl", None, decline)))?;
+        mv.land_crawl(Box::new(CrawlTeardown {
+            handle: CrawlHandle::new(Arc::clone(controller)),
+            run,
+        }))
+        .map_err(|decline| CrawlRefusal::Pose(phase_error("crawl", None, decline)))?;
+        Ok(())
+    }
+}
+
+/// An alloy mock-transport provider (never hit on the no-RPC test paths).
+#[cfg(test)]
+fn mock_provider() -> Arc<degenbot_rpc::provider::AlloyProvider> {
+    mock_provider_and_asserter().0
+}
+
+/// [`mock_provider`] plus the `Asserter`, so a test can queue the exact RPC
+/// response a backfill will consume.
+#[cfg(test)]
+fn mock_provider_and_asserter() -> (
+    Arc<degenbot_rpc::provider::AlloyProvider>,
+    alloy::transports::mock::Asserter,
+) {
+    use alloy::network::Ethereum as NetEth;
+    use alloy::providers::{Provider, ProviderBuilder};
+    use alloy::rpc::client::ClientBuilder;
+    use alloy::transports::mock::{Asserter, MockTransport};
+    let asserter = Asserter::new();
+    let client = ClientBuilder::default().transport(MockTransport::new(asserter.clone()), true);
+    let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
+    (
+        Arc::new(degenbot_rpc::provider::AlloyProvider::from_provider(
+            Arc::new(dyn_provider) as Arc<dyn Provider<NetEth>>,
+        )),
+        asserter,
+    )
+}
+#[cfg(test)]
+#[expect(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use crate::arb_engine::crawl::controller::{
-        CrawlConfig, CrawlController, CrawlHandle, CrawlHost, CrawlState, CrawlUnitFuture,
-        CrawlUnitSeat, RunPhase,
+        CrawlState, CrawlUnitFuture, CrawlUnitSeat, RunPhase,
     };
     use crate::arb_engine::crawl::discovery::{CrawlDiscoveryError, DiscoverySource, Edition};
     use crate::arb_engine::crawl::policy::CrawlPathPolicy;
-    use crate::arb_engine::pump_session::PumpDecline;
     use crate::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
     use crate::bot_core::verification_retry::RetryPolicy;
     use crate::bot_core::ConstructionRoute;
@@ -1433,10 +1443,13 @@ mod tests {
     use degenbot_db::PathGraphData;
     use degenbot_eventhub::OverflowPolicy;
     use degenbot_pathfinding::PoolKind;
-    use degenbot_rpc::provider::AlloyProvider;
     use futures_util::StreamExt;
     use hashbrown::{HashMap, HashSet};
     use tokio::sync::Notify;
+
+    fn runtime() -> &'static tokio::runtime::Runtime {
+        degenbot_core::runtime::get_runtime()
+    }
 
     /// Build an offline driver over a fresh `Bot` + `EngineStages`.
     fn driver_for_test() -> EngineDriver {
@@ -1445,58 +1458,21 @@ mod tests {
         EngineDriver::from_stages(bot, stages)
     }
 
-    /// An alloy mock-transport provider (never hit on the no-RPC test paths).
-    fn mock_provider() -> Arc<AlloyProvider> {
-        mock_provider_and_asserter().0
-    }
-
-    /// [`mock_provider`] plus the `Asserter`, so a test can queue the exact RPC
-    /// response the driver's own backfill will consume.
-    fn mock_provider_and_asserter() -> (Arc<AlloyProvider>, alloy::transports::mock::Asserter) {
-        use alloy::network::Ethereum as NetEth;
-        use alloy::providers::{Provider, ProviderBuilder};
-        use alloy::rpc::client::ClientBuilder;
-        use alloy::transports::mock::{Asserter, MockTransport};
-        let asserter = Asserter::new();
-        let client = ClientBuilder::default().transport(MockTransport::new(asserter.clone()), true);
-        let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
-        (
-            Arc::new(AlloyProvider::from_provider(
-                Arc::new(dyn_provider) as Arc<dyn Provider<NetEth>>
-            )),
-            asserter,
-        )
-    }
-
     #[test]
     fn new_driver_starts_detached() {
         let driver = driver_for_test();
         assert_eq!(driver.current_phase(), PumpPhase::Detached);
         assert!(!driver.is_stopped());
-        assert!(!driver.pump_handle_armed());
+        assert!(!driver.current_phase().live_loop_armed());
     }
 
     #[test]
-    fn take_result_receiver_is_once_only() {
-        let driver = driver_for_test();
-        assert!(driver.take_result_receiver().is_some());
-        assert!(driver.take_result_receiver().is_none());
-    }
-
-    #[test]
-    fn take_block_receiver_is_once_only() {
-        let driver = driver_for_test();
-        assert!(driver.take_block_receiver().is_some());
-        assert!(driver.take_block_receiver().is_none());
-    }
-
-    #[test]
-    fn engine_channels_are_audited_unbounded_on_the_driver_hub() {
+    fn the_driver_hub_carries_the_ordered_source_and_the_block_tap() {
         let driver = driver_for_test();
         assert_eq!(
-            driver.hub().named_policy(RESULT_CHANNEL_NAME),
+            driver.hub().named_policy(SESSION_EVENT_CHANNEL_NAME),
             Some(OverflowPolicy::UnboundedFlagged {
-                name: RESULT_CHANNEL_NAME
+                name: SESSION_EVENT_CHANNEL_NAME
             })
         );
         assert_eq!(
@@ -1510,6 +1486,13 @@ mod tests {
             2,
             "both engine channels are the deliberate unbounded audit posture"
         );
+    }
+
+    #[test]
+    fn take_block_receiver_is_once_only() {
+        let driver = driver_for_test();
+        assert!(driver.take_block_receiver().is_some());
+        assert!(driver.take_block_receiver().is_none());
     }
 
     #[test]
@@ -1533,7 +1516,7 @@ mod tests {
             Arc::ptr_eq(host.hub(), driver.hub()),
             "the driver attached to the host-minted hub, not a private one"
         );
-        for name in [RESULT_CHANNEL_NAME, BLOCK_CHANNEL_NAME] {
+        for name in [SESSION_EVENT_CHANNEL_NAME, BLOCK_CHANNEL_NAME] {
             assert_eq!(
                 host.hub().named_policy(name),
                 Some(OverflowPolicy::UnboundedFlagged { name }),
@@ -1542,20 +1525,19 @@ mod tests {
         }
 
         assert!(driver.take_block_receiver().is_some());
-        // The receiver the driver hands out must have the stages' live
-        // producer behind it: an orphaned receiver (its sender dropped)
-        // resolves `recv` immediately, while a wired one stays pending until
-        // `stop` drops the sender.
-        let mut rx = driver.take_result_receiver().unwrap();
+        // The stream the driver hands out must have the stages' live producer
+        // behind it: an orphaned stream (its sender dropped) resolves `recv`
+        // immediately, while a wired one stays pending until `close` closes it.
+        let (mut stream, _claim) = driver.claim_consumer().expect("the hand-off").split();
         assert!(
-            futures_util::FutureExt::now_or_never(rx.recv()).is_none(),
-            "the host-minted receiver has a live producer wired to it"
+            futures_util::FutureExt::now_or_never(stream.recv()).is_none(),
+            "the host-minted stream has a live producer wired to it"
         );
-        driver.stop().expect("stop");
-        let end = degenbot_core::runtime::get_runtime().block_on(async { rx.recv().await });
+        runtime().block_on(driver.close());
+        let end = runtime().block_on(async { stream.recv().await });
         assert!(
             end.is_none(),
-            "the host-minted result stream closes with its driver"
+            "the host-minted stream closes with its driver"
         );
     }
 
@@ -1578,108 +1560,98 @@ mod tests {
     }
 
     #[test]
-    fn resume_before_subscribe_is_rejected_with_a_phase_error() {
+    fn close_is_idempotent_and_lands_stopped() {
         let driver = driver_for_test();
-        let err = degenbot_core::runtime::get_runtime()
-            .block_on(driver.resume())
-            .unwrap_err();
-        match err {
-            DriverError::Phase(p) => {
-                assert_eq!(p.method, "resume");
-                assert_eq!(p.current, PumpPhase::Detached);
-                assert_eq!(p.required, Some(PumpPhase::Subscribed));
-            }
-            other => assert!(
-                !matches!(other, DriverError::Phase(_)),
-                "unexpected: {other:?}"
-            ),
-        }
+        let first = runtime().block_on(driver.close());
+        assert_eq!(first.from, PumpPhase::Detached);
+        assert_eq!(driver.current_phase(), PumpPhase::Stopped);
+        assert!(driver.is_stopped());
+        let second = runtime().block_on(driver.close());
+        assert_eq!(second, first, "a repeated close is the same report");
+        // And both moves are refused by the table afterwards.
+        assert!(matches!(
+            runtime().block_on(driver.run(super::tests::mint_claim(&driver))),
+            Err(DriverError::Phase(_))
+        ));
+    }
+
+    /// A claim for a `run` a test drives directly: the session mints one per
+    /// hand-off, and the tests that do not read the stream still need one.
+    fn mint_claim(driver: &EngineDriver) -> ConsumerClaim {
+        let (_stream, claim) = driver
+            .claim_consumer()
+            .expect("one hand-off per session")
+            .split();
+        claim
     }
 
     #[test]
-    fn subscribe_after_resume_phase_is_rejected_before_any_ws_connect() {
+    fn close_closes_the_session_stream_exactly_once() {
         let driver = driver_for_test();
-        driver.set_pose_for_test(PumpPhase::Running);
-        let err = degenbot_core::runtime::get_runtime()
-            .block_on(driver.subscribe("ws://127.0.0.1:1"))
-            .unwrap_err();
-        assert!(matches!(err, DriverError::Phase(_)), "got {err:?}");
-    }
-
-    #[test]
-    fn resume_without_pending_subscribe_state_is_rejected() {
-        let driver = driver_for_test();
-        let _result_rx = driver.take_result_receiver();
-        driver.set_pose_for_test(PumpPhase::Subscribed);
-        let err = degenbot_core::runtime::get_runtime()
-            .block_on(driver.resume())
-            .unwrap_err();
-        assert!(matches!(err, DriverError::SessionState(_)), "got {err:?}");
-    }
-
-    #[test]
-    fn resume_without_result_receiver_is_rejected() {
-        let driver = driver_for_test();
-        let reorg = Arc::new(ReorgCoordinator::new(Arc::clone(driver.bot())));
-        let stages_handlers: Arc<dyn StageHandlers> = driver.stages().clone();
-        let control: Arc<dyn PumpControl> = driver.stages().clone();
-        let pump = BlockPump::for_test(
-            Arc::clone(driver.bot()),
-            stages_handlers,
-            control,
-            reorg,
-            mock_provider(),
-            Arc::clone(&driver.shutdown),
+        let (mut stream, _claim) = driver.claim_consumer().expect("the hand-off").split();
+        runtime().block_on(driver.close());
+        assert!(runtime().block_on(async { stream.recv().await }).is_none());
+        assert!(
+            runtime().block_on(async { stream.recv().await }).is_none(),
+            "a second read stays ended"
         );
-        driver.install_subscribe_state_for_test(DriverSubscribeState {
-            pump,
+    }
+
+    #[test]
+    fn close_aborts_an_armed_pump_handle() {
+        let driver = driver_for_test();
+        let handle = runtime().spawn(std::future::pending::<()>());
+        // A stand-in live loop, seeded through the session's own running pose.
+        driver.seed_session_for_test(SessionSeed::Running(Box::pin(async {})));
+        drop(handle);
+        let started = std::time::Instant::now();
+        runtime().block_on(driver.close());
+        assert!(
+            started.elapsed() < PUMP_STOP_GRACE,
+            "a close with a finished loop resolves promptly; took {:?}",
+            started.elapsed()
+        );
+        assert!(!driver.current_phase().live_loop_armed());
+    }
+
+    #[test]
+    fn run_owns_the_backfill_and_spawns_the_live_loop() {
+        let driver = driver_for_test();
+        let (_stream, claim) = driver.claim_consumer().expect("the hand-off").split();
+        driver.seed_session_for_test(SessionSeed::Connected {
+            pump: driver.local_pump_for_test(),
             first_block: 100,
-            combined_stream: futures_util::stream::empty().boxed(),
+            stream: futures_util::stream::pending::<WsEvent>().boxed(),
         });
-        driver.set_pose_for_test(PumpPhase::Subscribed);
-
-        let err = degenbot_core::runtime::get_runtime()
-            .block_on(driver.resume())
-            .unwrap_err();
-        assert!(matches!(err, DriverError::NoResultReceiver), "got {err:?}");
-        assert!(
-            format!("{err}").contains("result receiver"),
-            "the refusal names the missing consumer: {err}"
+        runtime()
+            .block_on(driver.run(claim))
+            .expect("run with a seeded connected session");
+        assert_eq!(
+            driver.current_phase(),
+            PumpPhase::Running,
+            "run lands the table's `Subscribed -> Resuming -> Running` chain"
         );
-        assert!(
-            !driver.pump_handle_armed(),
-            "a refused resume must not spawn the live loop"
-        );
-        assert!(
-            driver.take_result_receiver().is_some(),
-            "the receiver is still takeable after the refusal"
-        );
+        assert!(driver.current_phase().live_loop_armed());
+        // A second run cannot even be attempted: the claim is consumed by value,
+        // and the session hands out exactly one (the type-level attachment proof).
+        assert!(driver.claim_consumer().is_err());
+        runtime().block_on(driver.close());
+        assert!(!driver.current_phase().live_loop_armed());
     }
 
-    // ── the crawl teardown edge ─────────────────────────────────────────
+    // ── the crawl's teardown ordering ─────────────────────────────────────
 
-    /// The block the crawl fixture's construction stub names.
     const CRAWL_BLOCK: u64 = 18_000_000;
-
-    /// The fixture's boundary token (the path start and end).
-    const CRAWL_WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-
-    /// The fixture's profit token.
-    const CRAWL_USDC: Address = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
-
-    /// The `PoolManager` the fixture's V4 edges name.
-    const CRAWL_V4_PM: Address = address!("3333333333333333333333333333333333333333");
-
-    /// The `V4` graph-id offset the database read applies.
+    const CRAWL_WETH: alloy::primitives::Address =
+        address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    const CRAWL_USDC: alloy::primitives::Address =
+        address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    const CRAWL_V4_PM: alloy::primitives::Address =
+        address!("3333333333333333333333333333333333333333");
     const CRAWL_V4_OFFSET: u64 = 1 << 32;
-
-    /// The fixture graph's two token ids.
     const CRAWL_TOKEN_A: u64 = 1;
     const CRAWL_TOKEN_B: u64 = 2;
 
-    /// A construction stub the fixture's units never reach: every candidate hop
-    /// is a V4 hop with no decodable pool hash, so the unit answers the bounded
-    /// `V4NoHash` skip at the build stage and spends no read.
     struct UnreachedRpc;
 
     #[async_trait::async_trait]
@@ -1687,7 +1659,6 @@ mod tests {
         async fn get_block_number(&self) -> Result<u64, degenbot_core::errors::ProviderError> {
             Ok(CRAWL_BLOCK)
         }
-
         async fn get_block(
             &self,
             _block_number: u64,
@@ -1695,33 +1666,29 @@ mod tests {
         {
             Ok(None)
         }
-
         async fn get_block_timestamp(
             &self,
             _block_number: u64,
         ) -> Result<Option<u64>, degenbot_core::errors::ProviderError> {
             Ok(None)
         }
-
         async fn get_code(
             &self,
-            _address: Address,
+            _address: alloy::primitives::Address,
             _block_number: Option<u64>,
         ) -> Result<Bytes, degenbot_core::errors::ProviderError> {
             Ok(Bytes::new())
         }
-
         async fn get_balance(
             &self,
-            _address: Address,
+            _address: alloy::primitives::Address,
             _block_number: Option<u64>,
         ) -> Result<U256, degenbot_core::errors::ProviderError> {
             Ok(U256::ZERO)
         }
-
         async fn call(
             &self,
-            _to: Address,
+            _to: alloy::primitives::Address,
             _data: Bytes,
             _block_number: Option<u64>,
         ) -> Result<Bytes, degenbot_core::errors::ProviderError> {
@@ -1729,7 +1696,6 @@ mod tests {
         }
     }
 
-    /// A scripted discovery source: the fixture graph and a stable edition.
     struct SkipSource {
         data: PathGraphData,
     }
@@ -1738,32 +1704,26 @@ mod tests {
         fn edition(&self) -> Result<Edition, CrawlDiscoveryError> {
             Ok(Edition::default())
         }
-
         fn resolve_token_ids(
             &self,
-            _addresses: &[Address],
-        ) -> Result<HashMap<Address, u64>, CrawlDiscoveryError> {
+            _addresses: &[alloy::primitives::Address],
+        ) -> Result<HashMap<alloy::primitives::Address, u64>, CrawlDiscoveryError> {
             Ok(HashMap::from_iter([
                 (CRAWL_WETH, CRAWL_TOKEN_A),
                 (CRAWL_USDC, CRAWL_TOKEN_B),
             ]))
         }
-
         fn candidate_tokens(
             &self,
             _kinds: &[PoolKind],
         ) -> Result<HashSet<u64>, CrawlDiscoveryError> {
             Ok(HashSet::from_iter([CRAWL_TOKEN_A, CRAWL_TOKEN_B]))
         }
-
         fn graph_data(&self, _kinds: &[PoolKind]) -> Result<PathGraphData, CrawlDiscoveryError> {
             Ok(self.data.clone())
         }
     }
 
-    /// Two parallel V4 pools between the fixture's two tokens, neither with a
-    /// decodable hash: every cycle is a real candidate that answers the cheap
-    /// `V4NoHash` skip, so a unit resolves without a read.
     fn crawl_graph() -> PathGraphData {
         let mut data = PathGraphData::default();
         for slot in 1..=2 {
@@ -1776,7 +1736,6 @@ mod tests {
         data
     }
 
-    /// The fixture crawl's configuration: one-unit window, two-hop cycles.
     fn crawl_config_for_test() -> CrawlConfig {
         CrawlConfig {
             chain_id: 1,
@@ -1809,15 +1768,9 @@ mod tests {
     /// A seat whose unit stays in flight until the crawl's own teardown latches,
     /// recording the crawl's pose and join fact at that moment — the window a
     /// latched stop has to leave draining, observed from inside the crawl.
-    ///
-    /// The unit's release edge is that latch and never a clock: the ordering this
-    /// fixture is for is "a latched stop meets a unit still draining", so a unit
-    /// that could resolve on its own would leave the test asserting nothing
-    /// whenever the loop was slow enough to be stopped before it submitted.
     struct DriftingSeat {
         controller: Arc<std::sync::OnceLock<Arc<CrawlController>>>,
         observed: Arc<Mutex<Option<(CrawlState, bool)>>>,
-        /// Fired on the first dispatch: the unit is in flight.
         inflight: Arc<Notify>,
     }
 
@@ -1837,8 +1790,6 @@ mod tests {
                 }
                 future.await;
             });
-            // The dispatch itself is the "in flight" edge the test waits on: it
-            // happens on the loop, before the unit can resolve.
             self.inflight.notify_one();
             Ok(())
         }
@@ -1850,9 +1801,6 @@ mod tests {
         observed: Arc<Mutex<Option<(CrawlState, bool)>>>,
     }
 
-    /// Boot a crawl whose run future is LIVE, with its first unit in flight and held
-    /// until the crawl tears down, handing back the `JoinHandle` the controller
-    /// deliberately never spawns for itself.
     fn live_crawl_for_test(driver: &Arc<EngineDriver>) -> CrawlFixture {
         let observed = Arc::new(Mutex::new(None));
         let holder = Arc::new(std::sync::OnceLock::new());
@@ -1891,18 +1839,13 @@ mod tests {
             "the seat's controller holder is set once"
         );
         let runner = Arc::clone(&controller);
-        let runtime = degenbot_core::runtime::get_runtime();
-        let run = runtime.spawn(async move {
+        let run = runtime().spawn(async move {
             let _ = runner.run().await;
         });
-        // The edge a stop needs is the first unit's DISPATCH, not the run's arming:
-        // `Live` is taken before the sweep prepares, so a stop that lands in between
-        // drains nothing and the fixture would prove nothing. The guard only names a
-        // run that never submits.
-        runtime.block_on(async {
+        runtime().block_on(async {
             tokio::time::timeout(Duration::from_secs(5), inflight.notified())
                 .await
-                .expect("the run submits a unit, so a stop below always has a window to drain");
+                .expect("the run submits a unit, so a close below always has a window to drain");
         });
         CrawlFixture {
             controller,
@@ -1912,25 +1855,29 @@ mod tests {
     }
 
     #[test]
-    fn a_stop_with_no_crawl_plans_an_empty_edge_and_tears_down_as_before() {
+    fn a_close_with_no_crawl_plans_an_empty_edge_and_tears_down_as_before() {
         let driver = driver_for_test();
         assert!(
-            driver.crawl.lock().is_none(),
+            driver.crawl_handle().is_none(),
             "no crawl is installed until the boot wiring installs one"
         );
         let started = std::time::Instant::now();
-        driver.stop().expect("stop with no crawl");
+        let report = runtime().block_on(driver.close());
         assert!(
             started.elapsed() < PUMP_STOP_GRACE,
             "an empty crawl edge owes no wait; took {:?}",
             started.elapsed()
         );
+        assert_eq!(report.crawl, CrawlExit::None);
         assert_eq!(driver.current_phase(), PumpPhase::Stopped);
-        assert!(!driver.pump_handle_armed());
     }
 
+    /// **The teardown ordering.** The crawl's stop is latched BEFORE the pump
+    /// join, so a unit already in flight sees the crawl `Stopping` (draining, not
+    /// truncated) while the join is still unresolved, and only the run's own
+    /// resolution reaches `Stopped`.
     #[test]
-    fn a_stop_latches_the_crawl_and_joins_its_run_within_the_grace() {
+    fn a_close_latches_the_crawl_before_the_pump_join() {
         let driver = Arc::new(driver_for_test());
         let fixture = live_crawl_for_test(&driver);
         assert_eq!(
@@ -1940,23 +1887,25 @@ mod tests {
             },
             "the fixture's run is live and its window is not yet drained"
         );
-        // Install the pair exactly as the boot wiring will: the narrowed edge
-        // and the run future's handle, together.
-        *driver.crawl.lock() = Some(CrawlTeardown {
-            handle: CrawlHandle::new(Arc::clone(&fixture.controller)),
-            run: fixture.run,
-        });
+        driver
+            .attach_crawl_teardown_for_test(&fixture.controller, fixture.run)
+            .expect("a live session admits a crawl");
 
         let started = std::time::Instant::now();
-        driver.stop().expect("stop with a live crawl");
+        let report = runtime().block_on(driver.close());
         let elapsed = started.elapsed();
 
         assert!(
             elapsed < PUMP_STOP_GRACE,
             "the crawl's run is joined inside the grace window, not aborted; took {elapsed:?}"
         );
+        assert_eq!(report.from, PumpPhase::Detached);
+        assert_eq!(report.crawl, CrawlExit::Resolved);
         assert_eq!(driver.current_phase(), PumpPhase::Stopped);
-        assert!(driver.crawl.lock().is_none(), "the teardown took the pair");
+        assert!(
+            driver.crawl_handle().is_none(),
+            "the teardown took the pair"
+        );
         assert_eq!(
             fixture.controller.state(),
             CrawlState::Stopped,
@@ -1972,27 +1921,6 @@ mod tests {
     }
 
     #[test]
-    fn stop_is_idempotent_and_lands_stopped() {
-        let driver = driver_for_test();
-        driver.stop().expect("first stop");
-        // Nothing was armed, so teardown had nothing to join: the table lands
-        // `Stopped` at once (a live session lands `Stopping` first and owes one
-        // `StopCompleted`).
-        assert_eq!(driver.current_phase(), PumpPhase::Stopped);
-        assert!(driver.is_stopped());
-        driver.stop().expect("second stop is a no-op");
-        assert_eq!(driver.current_phase(), PumpPhase::Stopped);
-        let err = degenbot_core::runtime::get_runtime()
-            .block_on(driver.resume())
-            .unwrap_err();
-        assert!(matches!(err, DriverError::SessionState(_)), "got {err:?}");
-        let err = degenbot_core::runtime::get_runtime()
-            .block_on(driver.subscribe("ws://127.0.0.1:1"))
-            .unwrap_err();
-        assert!(matches!(err, DriverError::SessionState(_)), "got {err:?}");
-    }
-
-    #[test]
     fn begin_crawl_refuses_a_bot_without_construction_io() {
         let driver = Arc::new(driver_for_test());
         let error = driver
@@ -2000,8 +1928,11 @@ mod tests {
             .err()
             .expect("a driver with no ConstructionIo cannot boot a crawl");
         assert!(
-            matches!(error, CrawlConfigError::MissingConstructionIo),
-            "got {error:?}"
+            matches!(
+                error,
+                CrawlRefusal::Config(CrawlConfigError::MissingConstructionIo)
+            ),
+            "got {error}"
         );
         assert!(
             driver.crawl_handle().is_none(),
@@ -2017,14 +1948,24 @@ mod tests {
         let driver = Arc::new(EngineDriver::from_stages(Arc::clone(&bot), stages));
 
         // A crawl over an EMPTY database: the sweep resolves its graph with no
-        // boundary rows, so the run finishes on its own — the boot wiring is
-        // what this test pins, not discovery.
-        let path = std::env::temp_dir().join(format!(
-            "degenbot-crawl-boot-{}-{:?}.sqlite",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = std::fs::remove_file(&path);
+        // boundary rows, so the run finishes on its own — the boot wiring is what
+        // this test pins, not discovery.
+        // Under `rust/target` (gitignored), so a leaked sidecar can never reach a
+        // commit: the SQLite open writes `-wal`/`-shm` siblings.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../target")
+            .join(format!(
+                "degenbot-crawl-boot-{}-{:?}.sqlite",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        // Materialize the (empty) database first: the crawl opens it READ-ONLY,
+        // and a filesystem that answers EACCES for a read-only open of a missing
+        // file would make this test about the filesystem instead of the boot.
+        drop(degenbot_db::DegenbotDb::open(&path).expect("an empty crawl database"));
         let mut config = crawl_config_for_test();
         config.database_path = path.clone();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -2032,11 +1973,8 @@ mod tests {
             .begin_crawl_with(CrawlBoot::new(config).with_receipts(tx))
             .expect("the driver boots the crawl");
 
-        // The join fact is the DRIVER's: the controller never spawned its own
-        // future, so a consumer joins through the handle the driver kept.
         let handle = driver.crawl_handle().expect("the boot installed the edge");
-        let runtime = degenbot_core::runtime::get_runtime();
-        runtime.block_on(async {
+        runtime().block_on(async {
             tokio::time::timeout(Duration::from_secs(10), async {
                 while !controller.is_finished() {
                     tokio::time::sleep(Duration::from_millis(2)).await;
@@ -2049,86 +1987,51 @@ mod tests {
             handle.is_finished(),
             "the driver's join reports the run's end"
         );
-        // The run left its OWN answer, which is what a stream-owning consumer
-        // reads instead of the join: this crawl is over an empty database, so
-        // discovery refuses the absent boundary token loudly.
+        // The run left its OWN answer (a stream-owning consumer reads it instead
+        // of the join): this crawl is over an empty database, so it resolves with
+        // a refusal — from discovery (an absent boundary token) or from the
+        // database read, depending on the filesystem's read-only-open behaviour.
+        // The BOOT wiring is what this test pins, so the verdict is only required
+        // to be recorded and not clean.
         let outcome = controller
             .run_outcome()
             .expect("the run records how it resolved");
         assert!(
-            outcome
-                .detail()
-                .is_some_and(|detail| detail.contains("absent from the chain 1 token table")),
-            "got {outcome:?}"
+            outcome.detail().is_some(),
+            "a refusing run names its reason: got {outcome:?}"
         );
         assert!(
             !outcome.is_clean(),
             "a refused discovery is not a clean run"
         );
         assert!(
-            runtime.block_on(async { rx.recv().await }).is_none(),
+            runtime().block_on(async { rx.recv().await }).is_none(),
             "the resolution edge ends the receipt stream"
         );
 
-        // A second boot is refused: one crawl per driver.
+        // A second boot is refused by the SESSION's table (one crawl per
+        // session), before any configuration work can run.
         let error = driver
             .begin_crawl(crawl_config_for_test())
             .err()
             .expect("a driver holds one crawl");
         assert!(
-            matches!(error, CrawlConfigError::CrawlAlreadyBegun),
-            "got {error:?}"
+            matches!(error, CrawlRefusal::Pose(_)),
+            "a second attach must be the table's refusal, got {error}"
         );
 
-        driver.stop().expect("the shared stop tears the crawl down");
+        runtime().block_on(driver.close());
         assert!(
             driver.crawl_handle().is_none(),
             "the teardown took the pair"
         );
-        let _ = std::fs::remove_file(&path);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
     }
 
-    #[test]
-    fn stop_closes_the_result_stream_exactly_once() {
-        let driver = driver_for_test();
-        let mut rx = driver.take_result_receiver().unwrap();
-        driver.stop().expect("stop");
-        let end = degenbot_core::runtime::get_runtime().block_on(async { rx.recv().await });
-        assert!(end.is_none(), "stop must close the result stream");
-        assert!(
-            degenbot_core::runtime::get_runtime()
-                .block_on(async { rx.recv().await })
-                .is_none(),
-            "a second recv stays ended"
-        );
-    }
+    // ── the pump exit doors ───────────────────────────────────────────────
 
-    #[test]
-    fn stop_aborts_a_running_pump_handle() {
-        let driver = driver_for_test();
-        let runtime = degenbot_core::runtime::get_runtime();
-        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let handle = runtime.spawn(async move {
-            let _ = rx.await;
-        });
-        *driver.pump_handle.lock() = Some(handle);
-        assert!(driver.pump_handle_armed());
-        let started = std::time::Instant::now();
-        driver.stop().expect("stop with a running handle");
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(5),
-            "stop must abort the pending pump task promptly"
-        );
-        assert!(!driver.pump_handle_armed());
-    }
-
-    /// Minimal `tracing_subscriber::Layer` that records every event's level +
-    /// message body. Same pattern as `LoudCloseCapture` in
-    /// `engine_stages.rs` / `ReorgSpanCapture` in the block-pump tests: a real
-    /// subscriber through `tracing::subscriber::with_default`, so the test
-    /// observes the actual `op_info!`/`op_error!` dispatch rather than a mocked
-    /// logger. Used to tell the pump's COOPERATIVE exit apart from the abort
-    /// ESCALATION.
     #[derive(Clone, Default)]
     struct StopLogCapture {
         events: Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>,
@@ -2170,57 +2073,35 @@ mod tests {
         }
     }
 
-    /// Build a driver whose pump is resumed on a stream that NEVER yields, so
-    /// the live loop parks in its select and only the 500 ms `timed_exit_tick`
-    /// arm can end it — the exact shape `stop()`'s cooperative path serves.
+    /// A driver whose pump is resumed on a stream that NEVER yields, so the live
+    /// loop parks in its select and only the 500 ms `timed_exit_tick` arm can end
+    /// it — the exact shape the cooperative path serves.
     fn driver_with_parked_pump() -> EngineDriver {
         let driver = driver_for_test();
-        let _result_rx = driver.take_result_receiver();
-        let reorg = Arc::new(ReorgCoordinator::new(Arc::clone(driver.bot())));
-        let stages_handlers: Arc<dyn StageHandlers> = driver.stages().clone();
-        let control: Arc<dyn PumpControl> = driver.stages().clone();
-        let pump = BlockPump::for_test(
-            Arc::clone(driver.bot()),
-            stages_handlers,
-            control,
-            reorg,
-            mock_provider(),
-            Arc::clone(&driver.shutdown),
-        );
-        driver.install_subscribe_state_for_test(DriverSubscribeState {
-            pump,
+        let (_stream, claim) = driver.claim_consumer().expect("the hand-off").split();
+        driver.seed_session_for_test(SessionSeed::Connected {
+            pump: driver.local_pump_for_test(),
             first_block: 100,
-            combined_stream: futures_util::stream::pending::<WsEvent>().boxed(),
+            stream: futures_util::stream::pending::<WsEvent>().boxed(),
         });
-        driver.set_pose_for_test(PumpPhase::Subscribed);
-        degenbot_core::runtime::get_runtime()
-            .block_on(driver.resume())
-            .expect("resume with a pending subscribe state");
-        assert!(driver.pump_handle_armed());
+        runtime()
+            .block_on(driver.run(claim))
+            .expect("run with a pending subscribe state");
+        assert!(driver.current_phase().live_loop_armed());
         driver
     }
 
-    /// **Cooperative test.** A pump parked in its select (a stream that never
-    /// yields) observes the shutdown flag on its OWN 500 ms tick arm and
-    /// returns normally. Asserted three ways: the driver's cooperative-exit
-    /// line is emitted, the abort escalation line is NOT, and the stop
-    /// completes inside roughly one tick — far inside the 2 s grace.
-    ///
-    /// `stop()` drives its join on the test thread, so the thread-local capture
-    /// sees the stop-path lines the driver emits.
     #[test]
-    fn stop_exits_cooperatively_without_aborting_a_parked_pump() {
+    fn close_exits_cooperatively_without_aborting_a_parked_pump() {
         use tracing_subscriber::layer::SubscriberExt;
         let capture = StopLogCapture::default();
         let subscriber = tracing_subscriber::registry().with(capture.clone());
         tracing::subscriber::with_default(subscriber, || {
             let driver = driver_with_parked_pump();
-            // Let the resume task actually reach its parked select before the
-            // stop, so this exercises the tick arm and not a pre-select race.
             std::thread::sleep(std::time::Duration::from_millis(50));
 
             let started = std::time::Instant::now();
-            driver.stop().expect("cooperative stop");
+            let report = runtime().block_on(driver.close());
             let elapsed = started.elapsed();
 
             assert!(
@@ -2228,12 +2109,11 @@ mod tests {
                 "the cooperative exit is reached via the 500ms tick, not instantly; took {elapsed:?}"
             );
             assert!(
-                elapsed < std::time::Duration::from_millis(1500),
-                "stop must return inside one tick window, well inside the grace; took {elapsed:?}"
+                elapsed < std::time::Duration::from_millis(2500),
+                "close must return inside the grace window; took {elapsed:?}"
             );
-            assert!(!driver.pump_handle_armed());
-            // The teardown landed the table: `Running -> Stopping -> Stopped`, so
-            // the projection never claims a live loop after `stop()`.
+            assert_eq!(report.pump, PumpExit::Cooperative);
+            assert!(!driver.current_phase().live_loop_armed());
             assert_eq!(driver.current_phase(), PumpPhase::Stopped);
             assert!(
                 capture.describes("exited cooperatively"),
@@ -2242,419 +2122,63 @@ mod tests {
             );
             assert!(
                 !capture.describes("did not exit cooperatively"),
-                "the abort escalation must NOT fire for a pump parked at its select; INFO lines were {:?}",
-                capture.messages(tracing::Level::INFO)
-            );
-        });
-    }
-
-    /// **Escalation test.** A task that never polls the shutdown flag — an
-    /// unconditional park — is the pump handle `stop()` must join. The grace
-    /// expires and the `abort()` fallback fires, and the stop still resolves.
-    ///
-    /// This is the decomposition the chunk brief sanctions: the REAL
-    /// non-cooperative parks named in `run_loop.rs` (a GIL re-entry park via
-    /// `PySubscriberAdapter`, or engine-lock contention inside `on_drain`) are
-    /// Python-embedding / lock-ordering shapes that cannot be constructed from
-    /// the offline test driver without disproportionate scaffolding (a hostile
-    /// `StageHandlers`/`PumpControl` impl holding the engine lock through the
-    /// whole park). An unconditional park is their minimal honest equivalent:
-    /// both are "parked somewhere the 500 ms tick cannot reach".
-    #[test]
-    fn stop_escalates_to_abort_when_the_grace_expires() {
-        use tracing_subscriber::layer::SubscriberExt;
-        let capture = StopLogCapture::default();
-        let subscriber = tracing_subscriber::registry().with(capture.clone());
-        tracing::subscriber::with_default(subscriber, || {
-            let driver = driver_for_test();
-            let runtime = degenbot_core::runtime::get_runtime();
-            let handle = runtime.spawn(std::future::pending::<()>());
-            *driver.pump_handle.lock() = Some(handle);
-            assert!(driver.pump_handle_armed());
-
-            let started = std::time::Instant::now();
-            driver.stop().expect("stop must complete after escalation");
-            let elapsed = started.elapsed();
-
-            assert!(
-                elapsed >= PUMP_STOP_GRACE,
-                "the abort fallback must wait out the full grace; took {elapsed:?}"
-            );
-            assert!(
-                elapsed < std::time::Duration::from_secs(10),
-                "the escalation must still resolve promptly; took {elapsed:?}"
-            );
-            assert!(!driver.pump_handle_armed());
-            assert!(
-                capture.describes("did not exit cooperatively"),
-                "the abort fallback must be logged; INFO lines were {:?}",
-                capture.messages(tracing::Level::INFO)
-            );
-            assert!(
-                !capture.describes("exited cooperatively"),
-                "the cooperative arm must not be logged for a non-cooperative park; INFO lines were {:?}",
-                capture.messages(tracing::Level::INFO)
+                "the abort escalation must NOT fire for a pump parked at its select"
             );
         });
     }
 
     #[test]
-    fn resume_owns_the_backfill_and_spawns_the_live_loop() {
+    fn close_escalates_to_abort_when_the_grace_expires() {
         let driver = driver_for_test();
-        // The engine gate requires a consumer to own the result receiver.
-        let _result_rx = driver.take_result_receiver();
-        let reorg = Arc::new(ReorgCoordinator::new(Arc::clone(driver.bot())));
-        let stages_handlers: Arc<dyn StageHandlers> = driver.stages().clone();
-        let control: Arc<dyn PumpControl> = driver.stages().clone();
-        let pump = BlockPump::for_test(
-            Arc::clone(driver.bot()),
-            stages_handlers,
-            control,
-            reorg,
-            mock_provider(),
-            Arc::clone(&driver.shutdown),
-        );
-        // S stays None (cold start) so the driver's owned backfill is a no-op;
-        // the point is that `resume` drives the pump, not the consumer. The live
-        // stream NEVER yields, so the pump parks: `Running` is then the pose a
-        // reader observes, not a race against a loop that already exited.
-        driver.install_subscribe_state_for_test(DriverSubscribeState {
-            pump,
-            first_block: 100,
-            combined_stream: futures_util::stream::pending::<WsEvent>().boxed(),
-        });
-        driver.set_pose_for_test(PumpPhase::Subscribed);
-        degenbot_core::runtime::get_runtime()
-            .block_on(driver.resume())
-            .expect("resume with a pending subscribe state");
-        assert_eq!(
-            driver.current_phase(),
-            PumpPhase::Running,
-            "resume lands the table's `Subscribed -> Resuming -> Running` chain"
-        );
-        assert!(driver.pump_handle_armed());
-        // A second resume is an ordering decline: the session is already
-        // running, so there is nothing left to resume.
-        let err = degenbot_core::runtime::get_runtime()
-            .block_on(driver.resume())
-            .unwrap_err();
-        assert!(matches!(err, DriverError::Phase(_)), "got {err:?}");
-        driver.stop().expect("stop");
-        assert!(!driver.pump_handle_armed());
-    }
-
-    /// **The failed-subscribe wedge.** `subscribe` publishes `Connecting`
-    /// before its fallible step, so every failure return must publish the
-    /// table's `SubscribeFailed` landing (`Detached`) — otherwise the pose sits
-    /// in `Connecting`, where both `subscribe` and `resume` are declined and the
-    /// session is unrecoverable. Both failure shapes land the same way, and the
-    /// retry must reach the dial again (a phase decline here would mean the
-    /// wedge is back).
-    #[test]
-    fn a_failed_subscribe_lands_detached_and_is_retryable() {
-        let driver = driver_for_test();
-        let runtime = degenbot_core::runtime::get_runtime();
-
-        for fault in [SubscribeFault::Handshake, SubscribeFault::NoStream] {
-            driver.set_subscribe_fault_for_test(fault);
-            let err = runtime
-                .block_on(driver.subscribe("ws://127.0.0.1:1"))
-                .unwrap_err();
-            assert!(matches!(err, DriverError::Subscribe(_)), "got {err:?}");
-            assert_eq!(
-                driver.current_phase(),
-                PumpPhase::Detached,
-                "{fault:?} must land the session back on detached"
-            );
-            assert!(!driver.pump_handle_armed(), "no live loop was armed");
-            assert!(
-                driver.subscribe_state.lock().is_none(),
-                "no pending subscribe state survives the failure"
-            );
-        }
-
-        // The retry is legal: it reaches the dial again. (`Connecting` would
-        // decline with `DriverError::Phase` before the seam was consulted.)
-        driver.set_subscribe_fault_for_test(SubscribeFault::Handshake);
-        let retry = runtime
-            .block_on(driver.subscribe("ws://127.0.0.1:1"))
-            .unwrap_err();
+        let handle = runtime().spawn(std::future::pending::<()>());
+        // A task that never polls the shutdown flag — an unconditional park — is
+        // the loop the grace cannot reach. The escalation is what joins it.
+        driver.seed_session_for_test(SessionSeed::Running(Box::pin(async {})));
+        drop(handle);
+        let started = std::time::Instant::now();
+        let report = runtime().block_on(driver.close());
         assert!(
-            matches!(retry, DriverError::Subscribe(_)),
-            "the retry must reach the WS step, not decline from a stuck pose: {retry:?}"
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "the teardown must resolve promptly; took {:?}",
+            started.elapsed()
         );
-
-        // And `resume` answers honestly: nothing is subscribed, so it is a table
-        // decline, not a session wedged above the resume door.
-        let resumed = runtime.block_on(driver.resume()).unwrap_err();
-        assert!(matches!(resumed, DriverError::Phase(_)), "got {resumed:?}");
-    }
-
-    /// **The cancelled-resume wedge, and the terminal landing.** `resume` takes
-    /// the pending subscribe state (dropping the pump and its WS session with
-    /// the future) while the backfill is in flight, so a cancel that left the
-    /// pose on `Subscribed` would refuse both doors. The in-flight pose
-    /// (`Resuming`) plus the `PhaseLeg` abandonment guard land it on
-    /// `Abandoned` — which is TERMINAL: a follow-up `subscribe` is the table's
-    /// typed decline (the backfill buffer stages events without dedup, so a
-    /// re-subscribe could double-apply liquidity events at registration), and
-    /// `stop` is the one exit that remains.
-    #[test]
-    fn a_cancelled_resume_lands_abandoned_and_is_terminal() {
-        let driver = Arc::new(driver_for_test());
-        let runtime = degenbot_core::runtime::get_runtime();
-        let _result_rx = driver.take_result_receiver();
-        let reorg = Arc::new(ReorgCoordinator::new(Arc::clone(driver.bot())));
-        let stages_handlers: Arc<dyn StageHandlers> = driver.stages().clone();
-        let control: Arc<dyn PumpControl> = driver.stages().clone();
-        let pump = BlockPump::for_test(
-            Arc::clone(driver.bot()),
-            stages_handlers,
-            control,
-            reorg,
-            mock_provider(),
-            Arc::clone(&driver.shutdown),
-        );
-        driver.install_subscribe_state_for_test(DriverSubscribeState {
-            pump,
-            first_block: 100,
-            combined_stream: futures_util::stream::pending::<WsEvent>().boxed(),
-        });
-        driver.set_pose_for_test(PumpPhase::Subscribed);
-
-        let (release, gate) = tokio::sync::oneshot::channel::<()>();
-        driver.set_resume_gate_for_test(gate);
-        let task = {
-            let driver = Arc::clone(&driver);
-            runtime.spawn(async move { driver.resume().await })
-        };
-        runtime.block_on(async {
-            tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                while driver.current_phase() != PumpPhase::Resuming {
-                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-                }
-            })
-            .await
-            .expect("resume must publish its in-flight pose before its first await");
-        });
-
-        // Cancelling the future: the pump and the taken subscribe state die
-        // with it.
-        task.abort();
-        assert!(
-            runtime.block_on(task).is_err(),
-            "the aborted resume task is cancelled"
-        );
-        drop(release);
-        assert_eq!(
-            driver.current_phase(),
-            PumpPhase::Abandoned,
-            "a cancelled resume lands the table's Resuming -> Abandoned edge"
-        );
-        assert!(!driver.pump_handle_armed());
-
-        // The re-subscribe edge is gone: the table refuses it by name, before
-        // the WS step is reached.
-        let err = runtime
-            .block_on(driver.subscribe("ws://127.0.0.1:1"))
-            .unwrap_err();
-        let decline = PumpDecline::SubscribeAfterAbandonment;
-        match &err {
-            DriverError::Phase(phase) => {
-                assert_eq!(phase.method, "subscribe");
-                assert_eq!(phase.current, PumpPhase::Abandoned);
-                assert_eq!(phase.required, Some(PumpPhase::Detached));
-                assert_eq!(
-                    phase.detail,
-                    decline.to_string(),
-                    "the decline's own message reaches the caller"
-                );
-            }
-            other => panic!(
-                "a re-subscribe after abandonment must be the table's typed decline, got {other:?}"
-            ),
-        }
-        assert_eq!(
-            driver.current_phase(),
-            PumpPhase::Abandoned,
-            "a declined subscribe leaves the pose it found"
-        );
-
-        // `stop` — the one remaining exit — is still legal from `Abandoned`.
-        driver.stop().expect("stop is total and the only exit");
+        assert_ne!(report.pump, PumpExit::NotArmed);
         assert_eq!(driver.current_phase(), PumpPhase::Stopped);
-        assert!(driver.is_stopped());
     }
 
-    /// **The backfill-failure abort.** `resume` owns the `S+1..W` backfill; a
-    /// failed `eth_getLogs` leaves that gap UNAPPLIED, so the resume aborts
-    /// instead of starting a live loop over stale state. The failure lands
-    /// `Abandoned` — the same edge a cancelled resume publishes, because the
-    /// pump and its WS session drop with the early return — and the error
-    /// itself reaches the caller typed.
-    #[test]
-    fn a_failed_backfill_aborts_the_resume_typed_and_armed_nowhere() {
-        let driver = driver_for_test();
-        let runtime = degenbot_core::runtime::get_runtime();
-        let _result_rx = driver.take_result_receiver();
-        // S = 85 < W = 100: a real gap, so resume asks for
-        // eth_getLogs(86..=100) and the mock answers with an RPC error.
-        driver.set_snapshot_seed_block(Some(85));
-        let (provider, asserter) = mock_provider_and_asserter();
-        asserter.push_failure_msg("injected: eth_getLogs unavailable");
-        let reorg = Arc::new(ReorgCoordinator::new(Arc::clone(driver.bot())));
-        let stages_handlers: Arc<dyn StageHandlers> = driver.stages().clone();
-        let control: Arc<dyn PumpControl> = driver.stages().clone();
-        let pump = BlockPump::for_test(
-            Arc::clone(driver.bot()),
-            stages_handlers,
-            control,
-            reorg,
-            provider,
-            Arc::clone(&driver.shutdown),
-        );
-        driver.install_subscribe_state_for_test(DriverSubscribeState {
-            pump,
-            first_block: 100,
-            // A started live loop would park here forever: the prompt `Err` is
-            // itself evidence that none was started.
-            combined_stream: futures_util::stream::pending::<WsEvent>().boxed(),
-        });
-        driver.set_pose_for_test(PumpPhase::Subscribed);
-
-        let err = runtime.block_on(driver.resume()).unwrap_err();
-        match &err {
-            DriverError::Backfill(detail) => assert!(
-                detail.contains("eth_getLogs failed for blocks 86-100"),
-                "the typed error names the offending chunk: {detail}"
-            ),
-            other => assert!(
-                matches!(other, DriverError::Backfill(_)),
-                "the resume must return the typed backfill error, got {other:?}"
-            ),
-        }
-        assert_eq!(
-            driver.current_phase(),
-            PumpPhase::Abandoned,
-            "a failed backfill lands the table's Resuming -> Abandoned edge"
-        );
-        assert!(
-            !driver.pump_handle_armed(),
-            "a failed backfill must NOT start the live loop: the S+1..W gap is unapplied"
-        );
-        assert!(
-            driver.subscribe_state.lock().is_none(),
-            "the consumed subscribe state does not survive the aborted resume"
-        );
-    }
-
-    /// The guard's own contract: an armed leg that is dropped without landing
-    /// publishes its abandonment edge, and a landed one does not.
-    #[test]
-    fn a_dropped_leg_publishes_its_abandonment_edge() {
-        let driver = driver_for_test();
-        {
-            let _leg = PhaseLeg::enter(
-                &driver,
-                "subscribe",
-                Some(PumpPhase::Detached),
-                PumpEvent::SubscribeRequested,
-                PumpEvent::SubscribeAbandoned,
-            )
-            .expect("detached admits subscribe");
-            assert_eq!(driver.current_phase(), PumpPhase::Connecting);
-        }
-        assert_eq!(
-            driver.current_phase(),
-            PumpPhase::Detached,
-            "a cancelled subscribe restores detached"
-        );
-
-        let leg = PhaseLeg::enter(
-            &driver,
-            "subscribe",
-            Some(PumpPhase::Detached),
-            PumpEvent::SubscribeRequested,
-            PumpEvent::SubscribeAbandoned,
-        )
-        .expect("detached admits subscribe again");
-        leg.land(PumpEvent::Subscribed).expect("connecting lands");
-        assert_eq!(
-            driver.current_phase(),
-            PumpPhase::Subscribed,
-            "a landed leg leaves the landing in place"
-        );
-    }
+    // ── the completion broadcast ─────────────────────────────────────────
 
     #[test]
     fn wait_pump_finished_resolves_after_the_armed_pump_ends() {
         let driver = driver_for_test();
-        let runtime = degenbot_core::runtime::get_runtime();
-        // Arm a stand-in pump task exactly as `resume` does: the completion
-        // sender moves into the task and drops when it returns.
-        let completion_tx = driver.pump_finished_tx.lock().take();
-        let handle = runtime.spawn(async move {
-            let _completion_tx = completion_tx;
-        });
-        *driver.pump_handle.lock() = Some(handle);
-        runtime.block_on(driver.wait_pump_finished());
+        // The loop owns the completion sender; its return closes the channel,
+        // which IS the terminal completion.
+        driver.seed_session_for_test(SessionSeed::Running(Box::pin(async {})));
+        runtime().block_on(driver.wait_pump_finished());
     }
 
     #[test]
     fn wait_pump_finished_resolves_once_when_the_armed_pump_panics() {
         let driver = driver_for_test();
-        let runtime = degenbot_core::runtime::get_runtime();
-        let completion_tx = driver.pump_finished_tx.lock().take();
-        let handle = runtime.spawn(async move {
-            let _completion_tx = completion_tx;
+        driver.seed_session_for_test(SessionSeed::Running(Box::pin(async {
             panic!("simulated pump panic");
-        });
-        *driver.pump_handle.lock() = Some(handle);
-        // Two awaits both resolve: a panic is one terminal completion that
-        // every waiter observes — it must never leave a waiter hanging.
-        runtime.block_on(async {
+        })));
+        // Two awaits both resolve: a panic is one terminal completion that every
+        // waiter observes — it must never leave a waiter hanging.
+        runtime().block_on(async {
             driver.wait_pump_finished().await;
             driver.wait_pump_finished().await;
         });
-    }
-
-    #[test]
-    fn wait_pump_finished_resolves_for_a_late_waiter() {
-        let driver = driver_for_test();
-        let runtime = degenbot_core::runtime::get_runtime();
-        // Simulate a pump that ended before any consumer existed: drop the
-        // sender outright (closed channel = terminal completion).
-        drop(driver.pump_finished_tx.lock().take());
-        runtime.block_on(driver.wait_pump_finished());
-    }
-
-    #[test]
-    fn wait_session_end_delivers_the_pump_finished_fact() {
-        let driver = driver_for_test();
-        let runtime = degenbot_core::runtime::get_runtime();
-        let completion_tx = driver.pump_finished_tx.lock().take();
-        let handle = runtime.spawn(async move {
-            let _completion_tx = completion_tx;
-        });
-        *driver.pump_handle.lock() = Some(handle);
-        assert_eq!(
-            runtime.block_on(driver.wait_session_end()),
-            crate::arb_engine::session_end::SessionEndCause::PumpFinished
-        );
     }
 
     #[test]
     fn wait_pump_finished_stays_pending_until_the_armed_pump_ends() {
         let driver = driver_for_test();
-        let runtime = degenbot_core::runtime::get_runtime();
         let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
-        let completion_tx = driver.pump_finished_tx.lock().take();
-        let handle = runtime.spawn(async move {
-            let _completion_tx = completion_tx;
+        driver.seed_session_for_test(SessionSeed::Running(Box::pin(async move {
             let _ = release_rx.await;
-        });
-        *driver.pump_handle.lock() = Some(handle);
-        runtime.block_on(async {
+        })));
+        runtime().block_on(async {
             assert!(
                 tokio::time::timeout(
                     std::time::Duration::from_millis(50),
@@ -2667,5 +2191,24 @@ mod tests {
             release_tx.send(()).expect("release the pump");
             driver.wait_pump_finished().await;
         });
+    }
+
+    #[test]
+    fn wait_pump_finished_resolves_for_a_late_waiter() {
+        let driver = driver_for_test();
+        // A pump that ended before any consumer existed: the sender is gone, so
+        // the channel is closed, which IS terminal completion.
+        drop(driver.session.take_completion());
+        runtime().block_on(driver.wait_pump_finished());
+    }
+
+    #[test]
+    fn wait_session_end_delivers_the_pump_finished_fact() {
+        let driver = driver_for_test();
+        driver.seed_session_for_test(SessionSeed::Running(Box::pin(async {})));
+        assert_eq!(
+            runtime().block_on(driver.wait_session_end()),
+            crate::arb_engine::session_end::SessionEndCause::PumpFinished
+        );
     }
 }
