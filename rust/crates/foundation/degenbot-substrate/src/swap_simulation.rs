@@ -182,8 +182,10 @@ pub enum SwapRead {
     UnknownPool { pool_id: u64 },
     /// The pool is registered under a family whose requested operation has no
     /// implementation — a typed family gap (e.g. exact-output against a
-    /// Curve/Balancer/Aerodrome invariant), distinct from `NotComputable`
-    /// (arithmetic/invariant failure).
+    /// Curve/Balancer invariant, whose exact-out math is not ported), distinct
+    /// from `NotComputable` (arithmetic/invariant failure). A reserve-pair
+    /// family's exact-output is NOT this variant: the row consults the family
+    /// door, which either prices it or refuses it (`NotComputable`).
     UnsupportedFamily {
         /// The requested pool id.
         pool_id: u64,
@@ -191,7 +193,9 @@ pub enum SwapRead {
         family: &'static str,
     },
     /// Zero amount, non-computable arithmetic/invariant, or an exact-output
-    /// request against a constant-product family.
+    /// request the family door refuses (zero output, overdraw, vanishing
+    /// denominator, or a refusal naming an input the registered slice lacks —
+    /// the door's NAMED refusal folds into this coarser verdict).
     NotComputable,
     /// Miss recovery ran but the fetch itself failed for `word`.
     FetchFailed { word: i32 },
@@ -229,6 +233,31 @@ pub enum OverrideOutcome {
     /// Concentrated-liquidity family result: the raw engine outcome, whose
     /// end state (price / liquidity / tick) is already complete.
     ConcentratedLiquidity(V3SwapOutcome),
+}
+
+/// Project a registry entry into the reserve-pair family door's slice — the
+/// ONE projection both registered reads (the swap row's exact-output arm) and
+/// the override read share, so neither re-derives which identity/state pair a
+/// reserve-pair variant carries.
+///
+/// `None` = the entry's registration carries no reserve-pair identity (a
+/// balance-vector or concentrated-liquidity family).
+fn reserve_pair_design(entry: &PoolEntry) -> Option<reserve_pair::ReservePairState<'_>> {
+    match entry {
+        PoolEntry::V2(p) => Some(reserve_pair::ReservePairState::V2 {
+            identity: &p.0,
+            state: &p.1,
+        }),
+        PoolEntry::AerodromeV2(p) => Some(reserve_pair::ReservePairState::Aerodrome {
+            identity: &p.0,
+            state: &p.1,
+        }),
+        PoolEntry::Curve(..)
+        | PoolEntry::BalancerWeighted(..)
+        | PoolEntry::BalancerStable(..)
+        | PoolEntry::V3(..)
+        | PoolEntry::V4(..) => None,
+    }
 }
 
 /// Convert an unsigned engine amount into the user-perspective delta.
@@ -660,19 +689,9 @@ impl BotState {
         over: &OverrideSwap,
         reserves: reserve_pair::OverrideReserves,
     ) -> Option<OverrideOutcome> {
-        let design = match entry {
-            PoolEntry::V2(p) => reserve_pair::ReservePairState::V2 {
-                identity: &p.0,
-                state: &p.1,
-            },
-            PoolEntry::AerodromeV2(p) => reserve_pair::ReservePairState::Aerodrome {
-                identity: &p.0,
-                state: &p.1,
-            },
-            // A reserve-pair state presented for a family whose registration
-            // carries no reserve-pair identity.
-            _ => return None,
-        };
+        // A reserve-pair state presented for a family whose registration
+        // carries no reserve-pair identity.
+        let design = reserve_pair_design(entry)?;
         // The door's signed request → the family door's exact side.
         let magnitude = over.request.amount_specified.into_sign_and_abs().1;
         let request = if over.request.amount_specified.is_positive() {
@@ -847,40 +866,47 @@ impl BotState {
                     })),
                     Err(_) => SwapRead::NotComputable,
                 },
-                // Exact-output for V2: the family read module's read_swap
-                // door (ADR-073 D2) — the closed-form
-                // `constant_product_calc_exact_out` (formerly buried in
-                // `calculate_tokens_in`) lives there, refusals included
-                // (zero request, overdraw, vanishing denominator →
-                // NotComputable — the retired helper's `None` mapping).
-                (true, PoolEntry::V2(p)) => {
-                    let required = reserve_pair::read_swap(
-                        reserve_pair::ReservePairState::V2 {
-                            identity: &p.0,
-                            state: &p.1,
-                        },
-                        SwapReadRequest::ExactOut {
-                            zero_for_one: request.zero_for_one,
-                            amount_out: magnitude,
-                        },
-                    )
-                    .amount();
-                    match required {
-                        Ok(required) => SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
-                            consumed: -unsigned_to_user_delta(required),
-                            delivered: unsigned_to_user_delta(magnitude),
-                            caveats: Caveats::default(),
-                        })),
-                        Err(_) => SwapRead::NotComputable,
+                // Exact-output: the family's OWN read code answers it, so the
+                // row asks the reserve-pair door (ADR-073 D2) rather than
+                // deciding from the family tag that no exact-out leaf exists.
+                // V2's closed-form `constant_product_calc_exact_out` (formerly
+                // buried in `calculate_tokens_in`) and the Aerodrome
+                // volatile/stable arms all live behind that one door.
+                //
+                // The verdict folding is deliberate: `amount()` collapses the
+                // door's NAMED refusal (`SwapReadRefusal` — a missing input the
+                // registered slice does not carry) and its arithmetic refusals
+                // (zero request, overdraw, vanishing denominator) onto this
+                // row's coarser `NotComputable`, the retired helper's `None`
+                // mapping. The reason stays reachable at the family door that
+                // named it; this row's vocabulary is the registered-state one.
+                (true, _) => match reserve_pair_design(entry) {
+                    Some(design) => {
+                        let required = reserve_pair::read_swap(
+                            design,
+                            SwapReadRequest::ExactOut {
+                                zero_for_one: request.zero_for_one,
+                                amount_out: magnitude,
+                            },
+                        )
+                        .amount();
+                        match required {
+                            Ok(required) => SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
+                                consumed: -unsigned_to_user_delta(required),
+                                delivered: unsigned_to_user_delta(magnitude),
+                                caveats: Caveats::default(),
+                            })),
+                            Err(_) => SwapRead::NotComputable,
+                        }
                     }
-                }
-                // Curve/Balancer/Aerodrome exact-output: the family is
-                // registered and requested, but its exact-out math is not
-                // ported — a typed family gap, never the generic
-                // `NotComputable` that reads as an arithmetic failure.
-                (true, _) => SwapRead::UnsupportedFamily {
-                    pool_id,
-                    family: crate::pool_lookup::entry_family(entry),
+                    // Curve/Balancer exact-output: the family is registered and
+                    // requested, but its exact-out math is not ported — a typed
+                    // family gap, never the generic `NotComputable` that reads
+                    // as an arithmetic failure.
+                    None => SwapRead::UnsupportedFamily {
+                        pool_id,
+                        family: crate::pool_lookup::entry_family(entry),
+                    },
                 },
             },
             // One concentrated liquidity dispatch row (ADR-073 D2): the swap-read goes through
@@ -1344,6 +1370,34 @@ mod tests {
         );
     }
 
+    /// The reserve-pair families' exact-output is priced behind the family read
+    /// module's door — the row consults it and lets the answer through, so the
+    /// volatile Aerodrome design's inverted-quoting leaf computes where the
+    /// family tag alone cannot say whether an exact-out leaf exists.
+    #[test]
+    fn exact_output_on_aerodrome_volatile_prices_through_the_door() {
+        let mut bot = BotState::new();
+        let pid = register_aerodrome_for_swap(&mut bot);
+        let read = bot.swap_simulation(
+            0,
+            pid,
+            SwapRequest {
+                zero_for_one: true,
+                amount_specified: I256::try_from(1_000u64).unwrap(),
+                sqrt_price_limit: None,
+            },
+        );
+        // 1 + (1_000_000 * 1000 * 1000) / ((2_000_000 - 1000) * 997) = 502.
+        assert_eq!(
+            read,
+            SwapRead::Computed(SwapOutcome::V2(V2SwapOutcome {
+                consumed: -I256::try_from(502u64).unwrap(),
+                delivered: I256::try_from(1_000u64).unwrap(),
+                caveats: Caveats::default(),
+            }))
+        );
+    }
+
     // ---------------------------------------------------------------------
     // The override (hypothetical) door: family-complete override state,
     // dispatched by variant, carrying the post-swap reserves for the
@@ -1552,6 +1606,26 @@ mod tests {
             ),
             None
         );
+    }
+
+    fn register_aerodrome_for_swap(bot: &mut BotState) -> u64 {
+        use crate::RegisterAerodromeV2PoolParams;
+        use degenbot_core::fee::fee_fraction;
+        bot.register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+            address: alloy::primitives::Address::from([0xaeu8; 20]),
+            token0: alloy::primitives::Address::ZERO,
+            token1: alloy::primitives::Address::from([1u8; 20]),
+            factory: alloy::primitives::Address::from([0xafu8; 20]),
+            variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
+            stable: false,
+            fee: fee_fraction(3, 1000),
+            token0_decimals: 6,
+            token1_decimals: 18,
+            reserve0: U112::from(1_000_000u64),
+            reserve1: U112::from(2_000_000u64),
+            update_block: 0,
+        })
+        .expect("test setup: Aerodrome registration")
     }
 
     fn register_curve_for_swap(bot: &mut BotState) -> u64 {
