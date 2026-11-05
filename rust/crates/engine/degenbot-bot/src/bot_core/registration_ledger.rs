@@ -548,9 +548,10 @@ impl RefusalKind {
     }
 
     /// The builder's typed failure. The factory-identity class is the loud
-    /// abort; every other builder failure is I/O-derived and stays a
-    /// retriable skip on the one build-refusal taxonomy, carrying the facts
-    /// the shell's builder-error vocabulary interpolates.
+    /// abort; the fee refusals are stable pool facts; every other builder
+    /// failure is I/O-derived and stays a retriable skip on the one
+    /// build-refusal taxonomy, carrying the facts the shell's builder-error
+    /// vocabulary interpolates.
     #[must_use]
     pub fn from_builder_error(
         err: &PoolBuilderError,
@@ -612,7 +613,7 @@ impl RefusalKind {
                 Self::BuildRefused {
                     family,
                     phase,
-                    failure: BuildFailure::Transient(err.to_string()),
+                    failure: BuildFailure::Fee(err.to_string()),
                 }
             }
         }
@@ -786,6 +787,7 @@ impl RefusalKind {
                 | BuildFailure::MissingIdentity(detail)
                 | BuildFailure::TickAssembly(detail)
                 | BuildFailure::TickMapInconsistent(detail)
+                | BuildFailure::Fee(detail)
                 | BuildFailure::Transient(detail) => Some(detail),
                 BuildFailure::HookedPool | BuildFailure::DynamicFee | BuildFailure::HighFee => None,
                 // A spec refusal is the one build arm whose facts are not text:
@@ -1197,16 +1199,19 @@ impl RegistrationLedger {
                 counts_as_skip: false,
                 detail,
             },
-            // The two stable skip classes: a fee above the encoder limit (a
-            // pool-key fact) and a snapshot/chain tick disagreement (a
-            // session-snapshot fact). Both memoize under the ordinary
+            // The stable skip classes: a fee above the encoder limit (a
+            // pool-key fact), a fee refusal (a pool fact — the same read
+            // refuses on every retry), and a snapshot/chain tick disagreement
+            // (a session-snapshot fact). All memoize under the ordinary
             // build-skip tag.
-            BuildFailure::HighFee | BuildFailure::TickMapInconsistent(_) => BuildRefusal {
-                outcome: RegistrationOutcome::build_refused_for(pool_kind),
-                stable: true,
-                counts_as_skip: true,
-                detail,
-            },
+            BuildFailure::HighFee | BuildFailure::Fee(_) | BuildFailure::TickMapInconsistent(_) => {
+                BuildRefusal {
+                    outcome: RegistrationOutcome::build_refused_for(pool_kind),
+                    stable: true,
+                    counts_as_skip: true,
+                    detail,
+                }
+            }
             BuildFailure::Rpc(_)
             | BuildFailure::Spec(_)
             | BuildFailure::Decoding(_)
@@ -1703,6 +1708,15 @@ mod tests {
         assert!(high_fee.stable);
         assert!(high_fee.counts_as_skip);
 
+        let fee = RegistrationLedger::classify_build_refusal(
+            &BuildFailure::Fee("no preset fee".to_string()),
+            PoolKind::V2,
+            Some("no preset fee".to_string()),
+        );
+        assert_eq!(fee.outcome, RegistrationOutcome::BuildV2Refused);
+        assert!(fee.stable, "a fee refusal is a pool fact");
+        assert!(fee.counts_as_skip);
+
         let transient = RegistrationLedger::classify_build_refusal(
             &BuildFailure::Transient("blip".to_string()),
             PoolKind::V2,
@@ -2036,12 +2050,14 @@ mod tests {
 
     use alloy::primitives::{B256, U256};
     use degenbot_core::errors::ProviderError;
+    use degenbot_core::fee::V2FeeRefusal;
     use degenbot_core::hex_utils::HexError;
     use degenbot_db::error::DbError;
     use degenbot_pools::SpecRefusal;
     use degenbot_pools::TickWordFetchError;
     use degenbot_pools::{SpecValue, SpecViolation};
     use degenbot_substrate::tick_assembly::TickMapAssemblyError;
+    use degenbot_uniswap::dex_identity::DexVariant;
 
     /// The family/phase tags a kind carries — an exhaustive classifier, so a
     /// new variant does not compile until it declares where it sits in the
@@ -2694,6 +2710,45 @@ mod tests {
         }
     }
 
+    /// The two fee refusals are stable pool facts: a preset that declares no
+    /// compile-time fee and an on-chain `getFee` answer that is not a usable
+    /// fraction re-read the same way on every retry, so the mapper keeps the
+    /// typed fee arm and the classifier answers stable — the crawl memoizes a
+    /// stable refusal against the pool's identity, so the pool never
+    /// re-enqueues.
+    #[test]
+    #[expect(clippy::expect_used)] // the mapper's carried failure payload is asserted present
+    fn fee_refusals_are_stable_pool_facts() {
+        let address = sample_address(0x44);
+        let build = RegistrationPhase::Build;
+
+        for err in [
+            PoolBuilderError::PerPoolFee {
+                address,
+                variant: DexVariant::AerodromeV2Volatile,
+            },
+            PoolBuilderError::AerodromeFee {
+                address,
+                refusal: V2FeeRefusal::FeeExceedsDenominator,
+            },
+        ] {
+            let kind = RefusalKind::from_builder_error(&err, Some(RegisteredPoolFamily::V2), build);
+            assert_tags(&kind, Some(RegisteredPoolFamily::V2), build);
+            let failure = build_failure(&kind).expect("a builder failure is carried");
+            assert!(
+                matches!(failure, BuildFailure::Fee(_)),
+                "the fee refusal keeps its own typed arm: {err:?}"
+            );
+            let refusal = RegistrationLedger::classify_build_refusal(failure, PoolKind::V2, None);
+            assert_eq!(refusal.outcome, RegistrationOutcome::BuildV2Refused);
+            assert!(
+                refusal.stable,
+                "a fee refusal memoizes, never retries: {err:?}"
+            );
+            assert!(refusal.counts_as_skip);
+        }
+    }
+
     #[test]
     #[expect(clippy::expect_used)] // the mapper's carried failure payload is asserted present
     fn the_snapshot_intake_disagreement_is_a_stable_build_skip() {
@@ -2887,6 +2942,7 @@ mod tests {
             (BuildFailure::HookedPool, true),
             (BuildFailure::DynamicFee, true),
             (BuildFailure::HighFee, true),
+            (BuildFailure::Fee("no preset fee".to_owned()), true),
             (BuildFailure::Rpc("blip".to_owned()), false),
             (BuildFailure::Spec(SpecRefusal::V2Reserve), false),
             (BuildFailure::Decoding("bad bytes".to_owned()), false),

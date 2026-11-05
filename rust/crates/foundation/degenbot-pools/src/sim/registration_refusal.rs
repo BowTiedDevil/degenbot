@@ -260,6 +260,13 @@ pub enum BuildFailure {
     DynamicFee,
     /// A fee above the encoder's limit — a stable pool fact for every family.
     HighFee,
+    /// A fee refusal that is a stable pool fact, with the refusal's
+    /// rendering: the deployment's preset declares no compile-time fee (that
+    /// deployment's own door reads one per-pool), or the pool's on-chain
+    /// `getFee` answer is not a usable fraction. Re-reading the same block
+    /// answers the same way, so the class memoizes like
+    /// [`BuildFailure::HighFee`].
+    Fee(String),
     /// A builder RPC / transport failure, with the provider error's rendering.
     Rpc(String),
     /// The builder refused the pool as out of spec, with the reason.

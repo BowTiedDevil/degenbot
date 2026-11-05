@@ -151,6 +151,11 @@ fn map_build_failure(failure: BuildFailure) -> PyErr {
         BuildFailure::HighFee => HighFeePoolRejectedError::new_err(
             "pool refused: static fee exceeds the cmd_executor's 2-byte encoding limit",
         ),
+        // A stable fee refusal is a permanent refusal: the pool is out of
+        // spec, so it surfaces as the spec class a caller skips by type.
+        BuildFailure::Fee(detail) => {
+            SpecViolationError::new_err(format!("pool build refused: out of spec ({detail})"))
+        }
         BuildFailure::Rpc(detail) => {
             PoolBuildRpcError::new_err(format!("pool build RPC error: {detail}"))
         }
@@ -424,6 +429,7 @@ mod tests {
     use degenbot_bot::bot_core::PoolBuilderError;
     use degenbot_bot::bot_core::RegistrationPhase;
     use degenbot_core::errors::ProviderError;
+    use degenbot_core::fee::V2FeeRefusal;
     use degenbot_pools::RegisterAerodromePoolError;
     use degenbot_pools::RegisterV2PoolError;
     use degenbot_pools::RegisterV3PoolError;
@@ -809,6 +815,25 @@ mod tests {
                 SpecRefusal::BalancerBrokenPool
             ))),
             "pool build refused: out of spec (balancer broken pool)"
+        );
+        // A stable fee refusal is permanent, so it surfaces as the spec class
+        // a caller skips by type — never the retryable I/O classes.
+        let fee_address = addr("0x0606060606060606060606060606060606060606");
+        let fee_refusal = PoolBuilderError::AerodromeFee {
+            address: fee_address,
+            refusal: V2FeeRefusal::FeeExceedsDenominator,
+        };
+        Python::attach(|py| {
+            assert!(
+                mapped(&fee_refusal).is_instance_of::<SpecViolationError>(py),
+                "expected a SpecViolationError"
+            );
+        });
+        assert_eq!(
+            message(&mapped(&fee_refusal)),
+            format!(
+                "pool build refused: out of spec (Aerodrome pool {fee_address} answered an unusable getFee: V2 fee exceeds its denominator)"
+            )
         );
         // The identity verdict is the ONE exception the register path and the
         // build path both raise: the deployment table's own mismatch text.
