@@ -10,7 +10,7 @@ failure class it prevents (with the incident where known), where the gate body
 lives, where its census/data file lives, how to add an entry, and how to run it
 locally.
 
-The seven ratchets:
+The eight ratchets:
 
 | Ratchet | Gate body | Census / data | Local command |
 | --- | --- | --- | --- |
@@ -19,6 +19,7 @@ The seven ratchets:
 | Worker census | `rust/crates/foundation/degenbot-core/src/worker_census.rs` (+ `pubsub_runtime.rs` live counts) | the `register(...)` call sites themselves | `cargo test -p degenbot-core worker_census` |
 | Stub drift | `prek.toml` `stub-drift-staged` -> `just gen-stubs --check`; `tests/ffi/test_ffi_stub_drift.py` (compile-coupled test carries the `stub_drift` marker; runs once as the CI `stub-drift` job) | the committed `src/degenbot/_ffi/*.pyi` tree | `just lint-stub-drift` |
 | pytest noise gate | `scripts/pytest_noise_gate.sh` | the `signatures` array in that script | `just test-python-noise-gate` |
+| Lint-waiver census | `scripts/hooks/too_many_lines_waivers.py` | `scripts/hooks/too-many-lines-waiver-census.txt` | `just check-too-many-lines-waivers` |
 | Capability catalog | `rust/crates/facade/degenbot/tests/architecture_gates.rs::capability_catalog_covers_every_public_crate` | `docs/capabilities.md` (the catalog itself) | `just check-capability-catalog` |
 | Dependency charter | `rust/crates/facade/degenbot/tests/architecture_gates.rs::dependency_charter_is_respected` | `rust/crates/facade/degenbot/tests/dependency_charter.txt` | `just check-dependency-charter` |
 
@@ -298,6 +299,82 @@ bash scripts/pytest_noise_gate.sh scan /tmp/spray.log   # exits 3, prints the li
 
 ---
 
+## 6. Lint-waiver census
+
+**Failure class.** An expected `clippy::too_many_lines` lint is a decision to keep
+one function long, and the decision is worth what its recorded reason is worth: a
+waiver with no reason is, in a later review, indistinguishable from a function nobody
+got round to splitting. The population is large (161 sites in the Rust tree at this
+census) and nothing watched it — a new waiver could land with no reason, and a reason
+could stop being stated in the source while a document kept quoting it.
+
+**Gate body.** `scripts/hooks/too_many_lines_waivers.py`. A *site* is a lint attribute
+whose list names `clippy::too_many_lines`, spelled either as an outer attribute (on the
+item that follows it) or as an inner `#![expect(...)]` (a waiver over the whole file).
+Each site is keyed
+
+```
+<repo-relative-path>::<scope>
+```
+
+where the scope is the annotated item's name (the identifier after its declaration
+keyword: `fn`, `mod`, `struct`, `impl`, ...) or `!module` for an inner attribute. Line
+numbers are deliberately absent — a row has to survive every edit above it and vanish
+only when the waiver does. Two same-named items in one file carry an occurrence suffix
+(`::walk`, `::walk#2`); the nested `walk` helpers in the executor's grammar plan are
+the only case today.
+
+The reconciliation is **bidirectional and fails closed**:
+
+- a site with no census row fails — a new waiver cannot land silently;
+- a row with no site fails — a split function deletes its row in the same change;
+- a row's reason must equal the reason its site states, both ways — a stated
+  `reason = "..."` (or trailing `//` comment) that the row does not carry fails, and a
+  row reason the source no longer states fails;
+- a missing census, a census with no ceiling header, or a scan that found no Rust file
+  at all fails instead of certifying a tree it did not examine.
+
+Exit codes: `0` reconciled, `1` findings, `2` refused to certify.
+
+**Census.** `scripts/hooks/too-many-lines-waiver-census.txt`, one row per site:
+`<key>` then, when the site states one, a TAB and that reason **verbatim** from the
+source (a `reason = "..."` argument or the trailing comment on the attribute),
+whitespace collapsed onto one line so the row survives a rewrap. The census mirrors the
+source and never improves on it — that mirroring is what keeps the two from drifting.
+The `!module` scope is the inner-attribute form.
+
+The header's `# reasonless-high-water: N` freezes the count of sites that state no
+reason at all: still a reviewed decision, but an unexplained one and the first
+candidates for a split. That number moves only downward, so a new reasonless waiver
+fails even if its row is added; every shrink lowers the number in the same change.
+
+Documented blind spots: the `allow(...)` spelling of the same waiver is out of scope
+(the workspace denies that attribute at the lint root, so the expectation form is the
+only live spelling), a waiver inside a macro expansion is invisible to a source scan,
+and the ceiling is a reviewed baseline rather than a proof — widening it is a visible
+diff line, which is the most a census can do.
+
+**Adding an entry.** Strip the waiver and split the function; that is the shrink this
+ratchet exists to make routine. A waiver that must stay states its reason in the
+source (`reason = "..."`, or a trailing comment when the attribute is already long) and
+mirrors that reason into its row. Never add a row without a reason, and never widen the
+ceiling.
+
+**Regenerating.** `just check-too-many-lines-waivers --rows` prints the rows the tree
+implies (sorted, reasons included); paste them over the rows section. The header and
+the ceiling are maintained by hand.
+
+**Run it.** `just check-too-many-lines-waivers` — also a dependency of
+`lint-rust-check`, so `just test`, the pre-push `rust-clippy` gate and CI run it over a
+complete tree, and the `too-many-lines-waivers` pre-commit hook runs it when a commit
+touches a Rust source or one of the gate's own two files.
+`tests/test_too_many_lines_waiver_gate.py` is the committed negative probe: it drives
+the real gate with `--root` pointed at a throwaway tree and requires the red path for a
+fresh site, both reason-drift directions, the stale row, the breached ceiling, and the
+fail-closed exits.
+
+---
+
 ## The `architecture_gates.rs` family
 
 `rust/crates/facade/degenbot/tests/architecture_gates.rs` is the idiom the
@@ -337,10 +414,12 @@ Several are aliased as `check-*` recipes (`check-no-inner-allow`,
 
 Two idioms cover the family. Pick the one that matches what the gate scans.
 
-**Script + lexicon/census** (comment hygiene, pytest noise gate). A shell
-script under `scripts/` holds the detector and the exit-code contract; a
-plain-text census or a `signatures`-style array beside it holds the
-grandfathered entries. The script must (a) fail closed when its census is
+**Script + lexicon/census** (comment hygiene, pytest noise gate, lint-waiver
+census). A script under `scripts/` holds the detector and the exit-code
+contract — shell where the detector is one `rg` pass, Python where the parse is
+more than a filter (`scripts/hooks/tripwire_ratchet.py`,
+`scripts/hooks/too_many_lines_waivers.py`); a plain-text census or a
+`signatures`-style array beside it holds the grandfathered entries. The script must (a) fail closed when its census is
 missing, (b) run one pass (no per-token subprocesses) if it rides the
 pre-commit tier, and (c) state its scope and blind spots in its header. Wire it
 as a `just` recipe and, if it is instant, a `prek.toml` hook (file-scoped where

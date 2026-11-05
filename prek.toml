@@ -86,6 +86,20 @@ hooks = [
   # live-invariant gate (ADR-087 D2): watches the live comment surface under AGENTS.md "Comment Hygiene"; not tripwire precedent.
   { id = "comment-hygiene", name = "Comment hygiene gate", language = "system", entry = "just lint-comment-hygiene", types_or = ["python", "rust", "shell"], stages = ["pre-commit"], pass_filenames = false },
 
+  # The `too_many_lines` waiver ratchet (docs/gates.md section 6): every expected
+  # lint of that name in the Rust tree is reconciled against
+  # scripts/hooks/too-many-lines-waiver-census.txt in both directions, and a
+  # stated reason has to match the census row that carries it. It fires when the
+  # commit touches a Rust source or one of the gate's own two files, and it sweeps
+  # the WORKING TREE (pass_filenames = false) because the stale-row half of the
+  # reconciliation needs the whole population rather than this commit's slice; the
+  # scan is one `git ls-files` pass plus a parse, well inside the instant tier.
+  # `lint-rust-check` also depends on the recipe, so the pre-push clippy gate and
+  # CI re-run it over a complete tree.
+  #
+  # live-invariant gate (ADR-087 D2): watches the live `too_many_lines` waiver sites in the Rust tree against their census; not tripwire precedent.
+  { id = "too-many-lines-waivers", name = "too_many_lines waiver ratchet", language = "system", entry = "just check-too-many-lines-waivers", files = '^rust/.*\.rs$|^scripts/hooks/too-many-lines-waiver-census\.txt$|^scripts/hooks/too_many_lines_waivers\.py$', stages = ["pre-commit"], pass_filenames = false },
+
   # Staged-files format gates: the same detectors as the whole-tree sweeps
   # (ruff format / rustfmt), sliced to the commit's own files, so an
   # untracked unformatted file from another lane can neither block this

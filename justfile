@@ -499,7 +499,7 @@ crates-io-pending *args:
 # shipped crate root, so the lab keeps its `--deny warnings` coverage. The
 # feature-OFF production shape — every dependent compiling without either — is
 # `check-rust-default`'s claim.
-lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics check-capability-catalog check-dependency-charter check-profile-policy
+lint-rust-check: check-toolchain check-no-inner-allow check-engine-impl-blocks check-cli-shell-purity check-config-derived-statics check-too-many-lines-waivers check-capability-catalog check-dependency-charter check-profile-policy
     #!/usr/bin/env bash
     set -euo pipefail
     tier="$(scripts/toolchain_tier.sh)"
@@ -689,6 +689,21 @@ check-profile-policy:
 # live-invariant gate (ADR-087 D2): watches the resolved dependency tree of every live crate against the ADR-084 D3 deny rules; not tripwire precedent.
 check-dependency-charter:
     cargo test --locked --manifest-path rust/Cargo.toml -p degenbot --test architecture_gates -- dependency_charter_is_respected --exact --nocapture
+
+# The `too_many_lines` waiver ratchet: every expected lint of that name is a
+# deliberate decision to keep one function long, and the decision is worth what
+# its recorded reason is worth. The gate reconciles the waiver sites in the
+# Rust tree against scripts/hooks/too-many-lines-waiver-census.txt in both
+# directions -- a waiver with no row fails, a row with no waiver fails, a
+# stated reason the census does not mirror fails, and a new reasonless waiver
+# breaks the census ceiling -- so the population only shrinks.
+# `--rows` prints the census rows the tree implies (the regeneration recipe).
+# Wired into `lint-rust-check` (hence `just test` / CI / the pre-push
+# `rust-clippy` hook) plus the pre-commit `too-many-lines-waivers` hook.
+#
+# live-invariant gate (ADR-087 D2): watches the live `too_many_lines` waiver sites in the Rust tree against scripts/hooks/too-many-lines-waiver-census.txt; not tripwire precedent.
+check-too-many-lines-waivers *args:
+    {{py_run}} python scripts/hooks/too_many_lines_waivers.py "$@"
 
 # ADR-084 D1/C5 consumer probes: each named catalog consumer completes a real
 # task through its own surface. (ii) the pools-only Rust consumer solves a

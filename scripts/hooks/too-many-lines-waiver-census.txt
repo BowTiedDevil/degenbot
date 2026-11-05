@@ -1,0 +1,207 @@
+# too_many_lines waiver census — the lint-waiver ratchet
+# Gate body: scripts/hooks/too_many_lines_waivers.py
+# Index: docs/gates.md section 6 "Lint-waiver census".
+#
+# What this file is. An expected `too_many_lines` lint is a deliberate decision to keep
+# one function long. This census is the population of those decisions: one row per
+# waiver site in the working tree, and the population only shrinks. A waiver with no row
+# fails the gate (a new waiver cannot land silently), a row with no waiver fails (a split
+# function deletes its row in the same change), and a missing census fails closed instead
+# of passing over an empty population.
+#
+# Row format: "<repo-relative-path>::<scope>" and, when the site states one, a TAB then
+# that reason verbatim from the source (a `reason = "..."` argument, or the trailing
+# comment on the attribute), whitespace collapsed onto one line so the row survives a
+# rewrap. There are no line numbers: a row has to survive every edit above it and vanish
+# only when the waiver does. Rows are sorted.
+#
+# The scope names the annotated item — the identifier after the declaration keyword
+# (`fn`, `mod`, `struct`, `impl`, ...) — and `!module` marks an inner `#![expect(...)]`,
+# which waives the lint for the whole file. Two same-named items in one file (the nested
+# walk helpers in the executor's grammar plan are the only case today) carry an
+# occurrence suffix: `::walk`, `::walk#2`.
+#
+# The reason column is the point of the file. A waiver that states its reason must have
+# that reason recorded here, and a row whose reason the source no longer states fails:
+# the census mirrors the source and never improves on it. The two cannot drift apart,
+# and a waiver's justification sits one file away from the code that carries it.
+#
+# The ceiling, "# reasonless-high-water: 100", freezes the count of waiver sites that
+# state no reason at all: still a decision, but an unexplained one, and the first
+# candidates for a split. That count moves only downward, so adding a reasonless waiver
+# fails even when its row is added — a new waiver has to state a reason to land. Every
+# shrink lowers the number in the same change.
+#
+# Regenerate the rows after a sweep (the header, the ceiling included, is by hand):
+#   just check-too-many-lines-waivers --rows
+#
+# Blind spots, by design:
+#   - the `allow(...)` spelling of the same waiver is out of scope: the workspace denies
+#     that attribute at the lint root, so the expectation form is the only live one.
+#   - a waiver that lands inside a macro expansion is invisible to a source scan.
+#   - the ceiling is a reviewed baseline, not a proof: an author can widen it by editing
+#     the number. That edit is exactly what the ratchet exists to put in a diff.
+#
+# reasonless-high-water: 100
+#
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs::dispatch_profitable_results	faithful dispatch seam; mutex-poison guards panic loudly
+rust/crates/engine/degenbot-arbitrage/src/dispatch.rs::the_fanout_prefetches_the_anchors_slot_set_once	the three fan-outs' wire observations read top-down
+rust/crates/engine/degenbot-arbitrage/src/simulator.rs::simulate_path_on_evm_seam	the 7-call seam's body
+rust/crates/engine/degenbot-batch-executor/src/assembly.rs::assemble_batch	the stage reads best as one ordered policy pass
+rust/crates/engine/degenbot-batch-executor/src/executor.rs::renderer_drain_reads_every_stage	the fixture spells every stage's record verbatim
+rust/crates/engine/degenbot-batch-executor/src/executor.rs::run_stages_1_2	the leaf reads best as one ordered stage pass
+rust/crates/engine/degenbot-bot/src/arb_engine/boot_stamp.rs::same_cfg_ride_stays_legal	the F3 positive control carries the whole legal-ride story in one deterministic body (twin stamp asserts + materialization identity + ledger probe)
+rust/crates/engine/degenbot-bot/src/arb_engine/diagnostic.rs::diagnostic_path_state_captures_mixed_hops
+rust/crates/engine/degenbot-bot/src/arb_engine/seat_host/pump.rs::backstop_tick_rate_is_bounded_by_time_not_messages	the end-to-end liveness/tick harness is one driven scenario
+rust/crates/engine/degenbot-bot/src/arb_engine/solve_cycle/merge.rs::clamp_result_with_state	multi-hop concentrated liquidity twin loop + post-clamp profit recompute
+rust/crates/engine/degenbot-bot/src/arb_engine/solve_cycle/mod.rs::run_epoch
+rust/crates/engine/degenbot-bot/src/arb_engine/solve_cycle/resolve.rs::resolve_epoch	chunked fan-out + serial merge + the phase's own telemetry
+rust/crates/engine/degenbot-bot/src/arb_engine/solve_cycle/solve.rs::solve_epoch	the stage sweep + LPT pack + detached enqueue in one phase body
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/admission.rs::admission_draw_zero_shed_preserves_pending_new_paths
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/admission.rs::resolve_chunk_parity_parallel_matches_serial_and_reuses_cache_walks	A/B harness: two full engines, worth the length
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/arb_solving.rs::clamp_concentrated_liquidity_hop_capacity_aligns_v4_first_hop0_outputs	V4-first hop fixture setup + alignment assertions read as one scenario
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/arb_solving.rs::clamp_concentrated_liquidity_hop_capacity_caps_overfed_v4_input
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/arb_solving.rs::clamp_concentrated_liquidity_hop_capacity_realigns_terminal_v2_after_forward_clamp
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/arb_solving.rs::future_state_path_is_reanchored_to_pool_state_head
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/arb_solving.rs::hooked_v4_leg_stages_the_black_box_figure_or_the_approximation	one fixture, both arms — splitting it would need two pools and lose the A/B
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/arb_solving.rs::v4_int128_overflow_path_rejected	int128-overflow setup + assertions are one regression narrative
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/clamp_merge_worker_tests.rs::inline_sim_payload_emits_worker_sim_span_with_verdict	single end-to-end span-emission assertion: stub + emit + export + attribute checks read best as one sequence
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/curve_and_spans.rs::solve_cycle_race_marks_dirty_work_with_solve_span
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/curve_and_spans.rs::streaming_delivery_emits_fast_result_while_slow_path_solves
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/curve_and_spans.rs::tokio_executor_merges_fast_paths_while_slow_path_solves	the T1 acceptance carries the whole hook-probe + streaming-ordering story in one deterministic body
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/paths_reorg_and_locking.rs::handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state	one coherent scenario: apply, then roll back
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/paths_reorg_and_locking.rs::process_backfill_logs_stamps_per_log_block_number
+rust/crates/engine/degenbot-bot/src/arb_engine/tests/paths_reorg_and_locking.rs::solve_3hop_v3_v3_v3_path
+rust/crates/engine/degenbot-bot/src/bot_core/block_pump/run_loop.rs::run_with_stream
+rust/crates/engine/degenbot-bot/src/bot_core/block_pump/tests/backfill.rs::ws_getlogs_large_filter_diagnostic
+rust/crates/engine/degenbot-bot/src/bot_core/block_pump/tests/quiesce.rs::reorg_window_span_lifecycle_enter_restore_close
+rust/crates/engine/degenbot-bot/src/bot_core/block_pump/tests/scenarios.rs::bamkki_routing_fuzz_oracle_holds_across_lifecycle_roles	fuzz-bounded: FUZZ_POOL_COUNT=3 and seed<=48 so these casts cannot truncate/wrap
+rust/crates/engine/degenbot-bot/src/bot_core/pool_builder/builder.rs::build_curve_pool
+rust/crates/engine/degenbot-bot/src/bot_core/pool_builder/tests.rs::construction_door_v4_matches_the_route_interior	the door/interior parity + the V4 ownership pins read as one walk
+rust/crates/engine/degenbot-bot/src/instruments.rs::apply	the dispatch IS one flat 1:1 table over the closed census vocabulary; hiding rows in helpers would obscure the event→instrument map
+rust/crates/engine/degenbot-bot/src/instruments.rs::new	one instrument per block; splitting hides the inventory
+rust/crates/engine/degenbot-simulation/examples/cold_miss_fanout_probe.rs::main	the probe's leg sequence reads top-down
+rust/crates/engine/degenbot-simulation/examples/mirror_coverage_probe.rs::!module
+rust/crates/engine/degenbot-simulation/tests/evm2_batch_quote_bench.rs::!module
+rust/crates/engine/degenbot-simulation/tests/evm2_gas_decomposition.rs::!module
+rust/crates/engine/degenbot-simulation/tests/evm2_phantom_parity.rs::!module
+rust/crates/engine/degenbot-simulation/tests/evm2_v4_black_box_parity.rs::!module
+rust/crates/engine/degenbot-simulation/tests/evm2_v4_dynamic_fee_census.rs::!module
+rust/crates/engine/degenbot-simulation/tests/evm2_v4_hook_finalist_requote.rs::!module
+rust/crates/engine/degenbot-simulation/tests/evm2_v4_hook_requote_bench.rs::!module
+rust/crates/engine/degenbot-simulation/tests/evm2_v4_hook_slots.rs::!module
+rust/crates/engine/degenbot-simulation/tests/frame_oracle.rs::oracle_masks_untracked_bits_and_flags_tracked_divergence	every branch is a distinct mask/flag cell of the comparator's truth table; splitting it would bury the table
+rust/crates/engine/degenbot-simulation/tests/frame_oracle.rs::oracle_parity_for	the per-family parity lanes read top-to-bottom per tracked slot kind, mirroring the layout table
+rust/crates/engine/degenbot-simulation/tests/frame_replay.rs::live_v2_router_swap_replay_matches_chain_post_state
+rust/crates/engine/degenbot-simulation/tests/journal_pools.rs::v3_frame_verdict	the parity lanes read top-to-bottom per tracked slot kind, mirroring the layout table
+rust/crates/engine/degenbot-simulation/tests/spike_derivation.rs::!module
+rust/crates/engine/degenbot-simulation/tests/tier3_v3_pool_swap_vs_reference_bytecode.rs::v3_pool_arbitrary_liquidity_matches_sim_proptest
+rust/crates/engine/degenbot-simulation/tests/tier3_v3_pool_swap_vs_reference_bytecode.rs::v3_pool_arbitrary_topology_edge_corpus
+rust/crates/engine/degenbot-simulation/tests/tier3_v3_pool_swap_vs_reference_bytecode.rs::v3_pool_dense_swap_matches_sim_proptest
+rust/crates/engine/degenbot-simulation/tests/tier3_v4_pool_swap_vs_reference_bytecode.rs::v4_pool_arbitrary_liquidity_matches_sim_proptest
+rust/crates/engine/degenbot-strategy/src/backrun_driver/driver_loop.rs::drive	the driver loop reads top-to-bottom and the slot/feed selection rides here
+rust/crates/engine/degenbot-strategy/src/backrun_driver/driver_loop.rs::run_frame	capture -> pipeline -> dispatch reads top-to-bottom
+rust/crates/engine/degenbot-strategy/src/backrun_engine.rs::settlement_and_backrun_project_v2_to_the_same_executor_bytes	the parity test keeps both public encoder pipelines visible
+rust/crates/engine/degenbot-strategy/src/backrun_strategy.rs::admit_extracted_verified	the V2/V3/V4 admission arms read top-to-bottom per family
+rust/crates/engine/degenbot-strategy/src/frame_pipeline.rs::dispatch_frame	the submit ordering reads top-to-bottom
+rust/crates/engine/degenbot-strategy/src/frame_pipeline.rs::process_frame_with_prefix	one frame reads top-to-bottom
+rust/crates/engine/degenbot-strategy/tests/admit_probe.rs::live_v3_anchor_ingress_solves_production_chain	one live probe reads top-to-bottom
+rust/crates/engine/degenbot-strategy/tests/frame_pipeline.rs::dry_run_fixture_frames_replay_end_to_end_without_classifier	the live dry-run reads top-to-bottom
+rust/crates/engine/degenbot-strategy/tests/frame_pipeline.rs::golden_frame_extract_admit_solve_compose_end_to_end	fixture plumbing reads top-to-bottom: extract, admit, refs by hand, solve, compose, digest
+rust/crates/engine/degenbot-strategy/tests/frame_pipeline.rs::touched_set_trace_reports_cap_pins_and_multi_touched	one frame reads top-to-bottom: admission, payload, solve
+rust/crates/engine/degenbot-strategy/tests/sequence_deficit_probe.rs::sequence_deficit_pools_capture_inject_reproduce
+rust/crates/engine/degenbot-strategy/tests/v2_discovered_fee.rs::discovered_non_default_v2_fee_reaches_executor_bytes_with_settlement_parity	the interface test keeps discovery, admission, both encoders, and golden bytes visible
+rust/crates/facade/degenbot/examples/capture_path_fixture.rs::!module
+rust/crates/facade/degenbot/examples/generate_aave_adversarial_captures.rs::!module
+rust/crates/facade/degenbot/examples/generate_aave_config_windows.rs::!module
+rust/crates/facade/degenbot/examples/generate_aave_upgrade_windows.rs::!module
+rust/crates/facade/degenbot/examples/generate_evm_oracle_captures.rs::!module
+rust/crates/facade/degenbot/examples/record_py_oracle_corpus.rs::!module
+rust/crates/facade/degenbot/examples/record_updater_cassette.rs::!module
+rust/crates/facade/degenbot/examples/standalone_consumer.rs::in_process_sim_standalone_slice
+rust/crates/facade/degenbot/examples/standalone_consumer.rs::main
+rust/crates/facade/degenbot/src/investigation/chain_capture.rs::!module
+rust/crates/facade/degenbot/tests/parity_evm_sim.rs::evm_sim_success_path_dual_driver_parity
+rust/crates/facade/degenbot/tests/parity_inspector.rs::inspector_dual_driver_parity_cafebabe_revert
+rust/crates/foundation/degenbot-config/src/schema.rs::strategy_facets_are_declared_as_typed_sections	one assertion block per declared facet key
+rust/crates/foundation/degenbot-core/src/eip_1559.rs::!module
+rust/crates/foundation/degenbot-db/tests/wal_snapshot_isolation.rs::held_read_transaction_freezes_view_across_concurrent_writer_commits	behavior test — split hurts the positive+negative narrative
+rust/crates/foundation/degenbot-db/tests/writer_parity.rs::replay_event_sequence_produces_coherent_multitable_state	one coherent end-to-end replay scenario
+rust/crates/foundation/degenbot-decoders/src/aave_event_decoder.rs::parity_topic_constants_match_python	fixture table — one entry per event is intrinsic
+rust/crates/foundation/degenbot-executor/src/grammar_ledger.rs::push
+rust/crates/foundation/degenbot-executor/src/grammar_plan.rs::plan_to_bytes
+rust/crates/foundation/degenbot-executor/src/grammar_plan.rs::plan_to_ledger_ops
+rust/crates/foundation/degenbot-executor/src/grammar_plan.rs::walk
+rust/crates/foundation/degenbot-executor/src/grammar_plan.rs::walk#2
+rust/crates/foundation/degenbot-executor/src/grammar_walker/shapes/three_hop.rs::derive
+rust/crates/foundation/degenbot-executor/src/grammar_walker/shapes/three_hop.rs::rule_walk_v2v3
+rust/crates/foundation/degenbot-executor/src/grammar_walker/shapes/three_hop.rs::rule_walk_v2v3_v4_mixed
+rust/crates/foundation/degenbot-executor/src/grammar_walker/shapes/three_hop.rs::rule_walk_v4_led
+rust/crates/foundation/degenbot-executor/src/grammar_walker/shapes/two_hop_seed_v4.rs::seed_v4_arm	One arm for six families (guards + table staging + inner/callback/plan-head sequences); splitting would move the branches into a parameter bag.
+rust/crates/foundation/degenbot-executor/src/grammar_walker/shapes/two_hop_uniswap_only.rs::derive
+rust/crates/foundation/degenbot-executor/tests/encoders_parity.rs::!module
+rust/crates/foundation/degenbot-executor/tests/grammar_parity.rs::!module
+rust/crates/foundation/degenbot-ingestion/src/ingestor.rs::observe_complete_block	ADR-043 domain-target args widen the emit calls
+rust/crates/foundation/degenbot-math/src/curve/mod.rs::!module
+rust/crates/foundation/degenbot-pool-updater/src/run.rs::apply_chunk_writes_on_conn
+rust/crates/foundation/degenbot-pool-updater/src/run.rs::compute_preverified_liquidity
+rust/crates/foundation/degenbot-pool-updater/src/run.rs::run_pool_update_on_db
+rust/crates/foundation/degenbot-pools/examples/concentrated_liquidity_cache_lab.rs::!module
+rust/crates/foundation/degenbot-pools/examples/concentrated_liquidity_solve_replay.rs::!module
+rust/crates/foundation/degenbot-pools/examples/entry_ab_readout.rs::!module
+rust/crates/foundation/degenbot-pools/examples/mixed_solve_replay.rs::!module
+rust/crates/foundation/degenbot-pools/examples/rayon_scale_probe.rs::!module
+rust/crates/foundation/degenbot-pools/examples/stateview_feasibility_probe.rs::!module
+rust/crates/foundation/degenbot-pools/examples/v2_concentrated_liquidity_parity_probe.rs::!module
+rust/crates/foundation/degenbot-pools/examples/walkmemo_readout.rs::!module
+rust/crates/foundation/degenbot-pools/src/families/concentrated_liquidity/mod.rs::read_swap	the length is the door's dispatch shape (four sources × two designs, each arm a single drive call); per-arm leaf extraction would re-duplicate the ONE drive policy per design — the seam ADR-037 closed
+rust/crates/foundation/degenbot-pools/src/sim/curve_dy_io.rs::resolve_dy_inputs	cohesive I/O orchestration ported 1:1 from the companion
+rust/crates/foundation/degenbot-pools/src/sim/simulate_swap.rs::simulate_swap	the length is the dispatch's shape (one row per family, each row a door call in the shared request vocabulary); per-row extraction would re-duplicate the row scaffolding ADR-073 D2 collapsed
+rust/crates/foundation/degenbot-pools/src/solve/bounded_brent.rs::minimize_scalar_bounded	SciPy's expressions are transcribed literally: the exact `==` float guards and `0.5 * (a + b)` midpoints are load-bearing for bit-parity (`f64::midpoint` rounds differently), and the SciPy names `fulc`/`nfc` are kept for side-by-side diffability.
+rust/crates/foundation/degenbot-pools/src/solve/concentrated_liquidity/active_set.rs::solve_active_set_path_inner
+rust/crates/foundation/degenbot-pools/src/solve/concentrated_liquidity/tests/mod.rs::block_25641093_pool_feed_hop2_predicts_onchain_output	still >100 in hotpath builds (test-only, never instrumented)
+rust/crates/foundation/degenbot-pools/src/solve/concentrated_liquidity/tests/mod.rs::int_simulate_mixed_path_n	validation-only oracle retained for the test module
+rust/crates/foundation/degenbot-pools/src/solve/concentrated_liquidity/tests/mod.rs::reference_uncapped_mixed_solve	still >100 in hotpath builds (test-only, never instrumented)
+rust/crates/foundation/degenbot-pools/src/solve/profit_envelope/gate.rs::compose_path_bound
+rust/crates/foundation/degenbot-pools/src/solve/profit_envelope/gate.rs::gate_false_skip_93794_stage_bisect
+rust/crates/foundation/degenbot-pools/src/solve/profit_envelope/gate.rs::prune
+rust/crates/foundation/degenbot-pools/src/solve/profit_envelope/kernel.rs::concave_max
+rust/crates/foundation/degenbot-pools/src/solve/profit_envelope/kernel.rs::exact_compose_tightens_or_equals_on_captured_concentrated_liquidity_corpora	measurement harness: stdout is the deliverable
+rust/crates/foundation/degenbot-pools/src/solve/profit_envelope/kernel.rs::merged_compose_falsification_families
+rust/crates/foundation/degenbot-pools/src/state/v3_state.rs::v3_simulate_swap
+rust/crates/foundation/degenbot-pools/src/state/v4_state.rs::v4_simulate_swap
+rust/crates/foundation/degenbot-pools/tests/concentrated_liquidity_cache_lab_goldens.rs::!module
+rust/crates/foundation/degenbot-pools/tests/offline_heavy_replay.rs::replay_captured_heavy_paths
+rust/crates/foundation/degenbot-pools/tests/v4_crossing_solver_vs_sim_parity.rs::!module
+rust/crates/foundation/degenbot-pools/tests/v4_leading_current_tick_segment.rs::!module
+rust/crates/foundation/degenbot-rpc/examples/concentrated_liquidity_capture_gen.rs::!module
+rust/crates/foundation/degenbot-rpc/src/abi.rs::getter_selectors_match_reference_vectors
+rust/crates/foundation/degenbot-rpc/src/txpool_feed.rs::session	the ws session reads top-to-bottom
+rust/crates/foundation/degenbot-rpc/tests/v3_iia_fixture_reproduction.rs::!module
+rust/crates/foundation/degenbot-substrate/src/log_dispatcher.rs::dispatch
+rust/crates/foundation/degenbot-substrate/src/log_dispatcher.rs::v3_mint_log_lands_on_decoded_tick_lower
+rust/crates/foundation/degenbot-substrate/src/swap_simulation.rs::concentrated_liquidity_swap_read	the length is the row's dispatch shape (classify the registry entry for both designs, one read_swap door call, then adapt the outcome to this crate's Caveats/SwapRead); the compute leaves already live behind the family door, and per-arm extraction would drag substrate types across that seam
+rust/crates/foundation/degenbot-substrate/src/tests/registration.rs::pool_family_dispatches_every_registered_family
+rust/crates/foundation/degenbot-substrate/src/tests/registration.rs::registered_family_readers_tag_every_registered_family
+rust/crates/integrations/degenbot-aave/src/updater/operations_parser/liquidation.rs::create_liquidation_operation	5-nested-branch fn — intrinsic
+rust/crates/integrations/degenbot-aave/src/updater/operations_parser/mod.rs::parse	parse() is intrinsic — parity-drift mirror
+rust/crates/integrations/degenbot-aave/src/updater/operations_parser/standard.rs::create_withdraw_operation	mirror's body intrinsic — parity-drift match has 6 branches
+rust/crates/integrations/degenbot-aave/src/updater/operations_parser/validation.rs::validate_operation
+rust/crates/integrations/degenbot-aave/src/updater/run.rs::run_aave_update_driver
+rust/crates/integrations/degenbot-aave/src/updater/run/apply.rs::apply_chunk_events_on_conn
+rust/crates/integrations/degenbot-aave/src/updater/run/process.rs::process_chunk_on_conn
+rust/crates/integrations/degenbot-aave/src/updater/run/substrate.rs::prefetch_on_conn	the seven set-shaped prefetches, one body
+rust/crates/integrations/degenbot-aave/src/updater/transaction_processor.rs::build_gho_chunk_event
+rust/crates/integrations/degenbot-aave/src/updater/transaction_processor.rs::build_scaled_event_chunk_event
+rust/crates/integrations/degenbot-aave/src/updater/transaction_processor.rs::tests
+rust/crates/integrations/degenbot-aave/tests/aave_market_reset.rs::completing_sync_cassette
+rust/crates/integrations/degenbot-aave/tests/wave3_capture_replay.rs::wave3_generated_captures_replay_to_the_committed_goldens
+rust/crates/integrations/degenbot-aave/tests/wave4_upgrade_span_replay.rs::wave4_upgrade_span_replays_to_the_committed_goldens
+rust/crates/integrations/degenbot-aave/tests/wave5_config_span_replay.rs::wave5_config_spans_replay_to_the_committed_goldens
+rust/crates/shells/degenbot-cli-core/src/aave.rs::update
+rust/crates/shells/degenbot-python/src/bot/engine/crawl.rs::crawl_config_from_python	one flat translation table: the config schema is read field by field, in the order the core's CrawlConfig declares them
+rust/crates/shells/degenbot-python/src/bot/mod.rs::assemble_v3_tick_map_chain_truth_gate
+rust/crates/shells/degenbot-python/src/diagnostics/gil_probe.rs::start_gil_probe	thread bodies are linear by design
+rust/crates/shells/degenbot-python/src/simulation/in_process_probe.rs::simulate_in_process_revert_probe	PyO3 FFI dict-building surface; one set_item per field
+rust/crates/shells/degenbot-python/src/simulation/inline_hook.rs::simulate_path
+rust/examples/settlement_bot/src/main.rs::run	linear boot + ledger + EngineDriver handshake driver; splitting obscures the phase order
