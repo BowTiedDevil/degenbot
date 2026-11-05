@@ -114,6 +114,14 @@ impl HopType {
     /// registry families, named differently by each vocabulary
     /// (`SolidlyStable` is the math name for the reserve-pair family the
     /// registry tags `aerodrome-v2`).
+    ///
+    /// Deliberately a SECOND projection, not a read of the identity-layer family
+    /// table (`degenbot_pools::state::capability`): this map is keyed by the
+    /// solver's own closed set of seven hop types (one per solve branch), a
+    /// different key space than the four identity kinds the table is keyed over,
+    /// so deriving one from the other would have to invent keys. The solver lag
+    /// is the point — `HopType` refuses the binned identity entirely
+    /// ([`TryFrom<&Identity>`] answers `Err`).
     #[must_use]
     pub const fn registered_family(self) -> crate::RegisteredPoolFamily {
         use crate::RegisteredPoolFamily as Family;

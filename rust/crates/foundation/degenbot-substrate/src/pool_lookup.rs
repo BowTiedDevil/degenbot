@@ -394,6 +394,12 @@ impl BotState {
     /// getter on `PyLiquidityPool`, which returns `""` for non-V2). `None` is
     /// explicit so a caller cannot mistake an unregistered pool for a family
     /// gap via an `""` sentinel.
+    ///
+    /// The family itself comes from the identity-layer family table
+    /// (`degenbot_pools::state::capability`): this reader and the typed twin
+    /// both project the registered entry's identity variant through
+    /// [`PoolEntry::registered_family`], which reads that table's row rather
+    /// than a second variant→family map.
     #[must_use]
     pub fn pool_family(&self, pool_id: u64) -> Option<&'static str> {
         self.registered_family(pool_id)

@@ -2,6 +2,10 @@ use super::*;
 use crate::RegisterAerodromePoolError;
 use degenbot_core::fee::{fee_fraction, fee_ratio, FeeRatio, FeeRatioRefusal, FeeSpec};
 use degenbot_pools::PoolLiquidityUpdate;
+use degenbot_pools::{
+    DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle, YDVariant,
+    YVariant,
+};
 
 #[test]
 fn conservative_bot_flag_default_on() {
@@ -93,11 +97,11 @@ fn curve_get_dy_runs_the_rust_owned_swap_path() {
             rate_multipliers: vec![E18, E18],
             balances: vec![E21, TWO_E21],
             update_block: 0,
-            swap_style: 1,         // STANDARD
-            lending_rate_style: 1, // NONE
-            d_variant: 1,
-            y_variant: 1,
-            yd_variant: 1,
+            swap_style: SwapStyle::Standard,            // STANDARD
+            lending_rate_style: LendingRateStyle::None, // NONE
+            d_variant: DVariant::Standard,
+            y_variant: YVariant::Standard,
+            yd_variant: YDVariant::Standard,
             base_pool: None,
             initial_a_coefficient: None,
             future_a_coefficient: None,
@@ -113,8 +117,8 @@ fn curve_get_dy_runs_the_rust_owned_swap_path() {
             use_lending: Vec::new(),
             precision_multipliers: vec![E18, E18],
             tokens_underlying: None,
-            metapool_rate_style: 1,
-            metapool_underlying_style: 1,
+            metapool_rate_style: MetapoolRateStyle::Standard,
+            metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
             data_provider: None,
         })
         .expect("curve registration");
@@ -152,11 +156,11 @@ fn curve_get_dy_underlying_refuses_a_zero_balance_metapool() {
         rate_multipliers: vec![E18, E18],
         balances: vec![E21, E21],
         update_block: 1,
-        swap_style: 1,
-        lending_rate_style: 1,
-        d_variant: 1,
-        y_variant: 1,
-        yd_variant: 1,
+        swap_style: SwapStyle::Standard,
+        lending_rate_style: LendingRateStyle::None,
+        d_variant: DVariant::Standard,
+        y_variant: YVariant::Standard,
+        yd_variant: YDVariant::Standard,
         base_pool,
         initial_a_coefficient: None,
         future_a_coefficient: None,
@@ -172,8 +176,8 @@ fn curve_get_dy_underlying_refuses_a_zero_balance_metapool() {
         use_lending: Vec::new(),
         precision_multipliers: vec![E18, E18],
         tokens_underlying: None,
-        metapool_rate_style: 1,
-        metapool_underlying_style: 1,
+        metapool_rate_style: MetapoolRateStyle::Standard,
+        metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
         data_provider: None,
     };
 
@@ -227,11 +231,11 @@ fn curve_get_dy_refuses_a_zero_balance_direct_pool() {
         rate_multipliers: vec![E18, E18],
         balances,
         update_block: 1,
-        swap_style: 1,
-        lending_rate_style: 1,
-        d_variant: 1,
-        y_variant: 1,
-        yd_variant: 1,
+        swap_style: SwapStyle::Standard,
+        lending_rate_style: LendingRateStyle::None,
+        d_variant: DVariant::Standard,
+        y_variant: YVariant::Standard,
+        yd_variant: YDVariant::Standard,
         base_pool: None,
         initial_a_coefficient: None,
         future_a_coefficient: None,
@@ -247,8 +251,8 @@ fn curve_get_dy_refuses_a_zero_balance_direct_pool() {
         use_lending: Vec::new(),
         precision_multipliers: vec![E18, E18],
         tokens_underlying: None,
-        metapool_rate_style: 1,
-        metapool_underlying_style: 1,
+        metapool_rate_style: MetapoolRateStyle::Standard,
+        metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
         data_provider: None,
     };
 
@@ -332,11 +336,11 @@ fn pool_family_dispatches_every_registered_family() {
             rate_multipliers: vec![U256::from(1u64), U256::from(1u64)],
             balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
             update_block: 0,
-            swap_style: 0,
-            lending_rate_style: 0,
-            d_variant: 1,
-            y_variant: 1,
-            yd_variant: 0,
+            swap_style: SwapStyle::Standard,
+            lending_rate_style: LendingRateStyle::None,
+            d_variant: DVariant::Standard,
+            y_variant: YVariant::Standard,
+            yd_variant: YDVariant::Standard,
             base_pool: None,
             initial_a_coefficient: None,
             future_a_coefficient: None,
@@ -352,8 +356,8 @@ fn pool_family_dispatches_every_registered_family() {
             use_lending: vec![false, false],
             precision_multipliers: vec![U256::from(1u64), U256::from(1u64)],
             tokens_underlying: None,
-            metapool_rate_style: 1,
-            metapool_underlying_style: 1,
+            metapool_rate_style: MetapoolRateStyle::Standard,
+            metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
             data_provider: None,
         })
         .expect("curve registration");
@@ -1029,11 +1033,11 @@ fn registered_family_readers_tag_every_registered_family() {
             rate_multipliers: vec![U256::from(1u64), U256::from(1u64)],
             balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
             update_block: 0,
-            swap_style: 0,
-            lending_rate_style: 0,
-            d_variant: 1,
-            y_variant: 1,
-            yd_variant: 0,
+            swap_style: SwapStyle::Standard,
+            lending_rate_style: LendingRateStyle::None,
+            d_variant: DVariant::Standard,
+            y_variant: YVariant::Standard,
+            yd_variant: YDVariant::Standard,
             base_pool: None,
             initial_a_coefficient: None,
             future_a_coefficient: None,
@@ -1049,8 +1053,8 @@ fn registered_family_readers_tag_every_registered_family() {
             use_lending: vec![false, false],
             precision_multipliers: vec![U256::from(1u64), U256::from(1u64)],
             tokens_underlying: None,
-            metapool_rate_style: 1,
-            metapool_underlying_style: 1,
+            metapool_rate_style: MetapoolRateStyle::Standard,
+            metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
             data_provider: None,
         })
         .expect("curve registration");

@@ -10,7 +10,10 @@
 use std::collections::HashMap;
 
 use alloy::primitives::{Address, U256};
-use degenbot_math::curve::calculate_dy;
+use degenbot_math::curve::{
+    calculate_dy, DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle,
+    SwapStyle, YDVariant, YVariant,
+};
 
 use super::{
     check_metapool_liquidity, check_pool_liquidity, resolve_dy_inputs, BASE_CACHE_EXPIRES,
@@ -25,7 +28,11 @@ const TOK0: Address = Address::ZERO;
 const TOK1: Address = Address::with_last_byte(1);
 const BASE: Address = Address::with_last_byte(2);
 
-fn identity(swap_style: u8, lending_rate_style: u8, metapool: bool) -> CurvePoolIdentity {
+fn identity(
+    swap_style: SwapStyle,
+    lending_rate_style: LendingRateStyle,
+    metapool: bool,
+) -> CurvePoolIdentity {
     CurvePoolIdentity {
         address: Address::ZERO,
         tokens: vec![TOK0, TOK1].into(),
@@ -36,9 +43,9 @@ fn identity(swap_style: u8, lending_rate_style: u8, metapool: bool) -> CurvePool
         rate_multipliers: vec![E18, E18].into(),
         swap_style,
         lending_rate_style,
-        d_variant: 1,
-        y_variant: 1,
-        yd_variant: 1,
+        d_variant: DVariant::Standard,
+        y_variant: YVariant::Standard,
+        yd_variant: YDVariant::Standard,
         base_pool: if metapool { Some(BASE) } else { None },
         initial_a_coefficient: None,
         future_a_coefficient: None,
@@ -54,8 +61,8 @@ fn identity(swap_style: u8, lending_rate_style: u8, metapool: bool) -> CurvePool
         use_lending: Box::default(),
         precision_multipliers: vec![E18, E18].into(),
         tokens_underlying: None,
-        metapool_rate_style: 1,
-        metapool_underlying_style: 1,
+        metapool_rate_style: MetapoolRateStyle::Standard,
+        metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
     }
 }
 
@@ -131,11 +138,17 @@ impl CurveDataProvider for StubProvider {
 #[test]
 fn standard_plain_no_provider_resolves_and_matches_recorded_dy() {
     // A plain STANDARD pool needs no provider I/O — `None` still resolves.
-    let inputs = resolve_dy_inputs(&identity(1, 1, false), &[E21, TWO_E21], None, 1, None)
-        .expect("plain standard resolves without a provider");
+    let inputs = resolve_dy_inputs(
+        &identity(SwapStyle::Standard, LendingRateStyle::None, false),
+        &[E21, TWO_E21],
+        None,
+        1,
+        None,
+    )
+    .expect("plain standard resolves without a provider");
 
     assert!(!inputs.metapool);
-    assert_eq!(inputs.swap_style, 1);
+    assert_eq!(inputs.swap_style, SwapStyle::Standard);
     assert_eq!(inputs.n_coins, 2);
     // xp = rate * balance // PRECISION
     assert_eq!(inputs.xp, vec![E21, TWO_E21]);
@@ -151,7 +164,7 @@ fn standard_plain_no_provider_resolves_and_matches_recorded_dy() {
 #[test]
 fn override_balances_replace_state() {
     let inputs = resolve_dy_inputs(
-        &identity(1, 1, false),
+        &identity(SwapStyle::Standard, LendingRateStyle::None, false),
         &[E21, TWO_E21],
         None,
         1,
@@ -177,9 +190,9 @@ fn lending_pool_reads_rates_from_provider() {
         token_balances: HashMap::new(),
         admin_balances: None,
     };
-    // lending_rate_style = 2 (CTOKEN, != NONE)
+    // The pool carries the CTOKEN lending axis (not NONE), so rates come from I/O.
     let inputs = resolve_dy_inputs(
-        &identity(1, 2, false),
+        &identity(SwapStyle::Standard, LendingRateStyle::Ctoken, false),
         &[E21, TWO_E21],
         Some(&provider),
         1,
@@ -196,8 +209,14 @@ fn lending_pool_reads_rates_from_provider() {
 
 #[test]
 fn lending_pool_requires_a_provider() {
-    let err = resolve_dy_inputs(&identity(1, 2, false), &[E21, TWO_E21], None, 1, None)
-        .expect_err("lending without a provider must fail");
+    let err = resolve_dy_inputs(
+        &identity(SwapStyle::Standard, LendingRateStyle::Ctoken, false),
+        &[E21, TWO_E21],
+        None,
+        1,
+        None,
+    )
+    .expect_err("lending without a provider must fail");
     assert!(matches!(
         err,
         crate::sim::curve_dy_io::CurveInputsError::NoProvider(_)
@@ -222,9 +241,9 @@ fn crypto_pool_reads_d_gamma_price_scale() {
         token_balances: tb,
         admin_balances: None,
     };
-    // swap_style = 4 (CRYPTO)
+    // The pool carries the CRYPTO swap axis.
     let inputs = resolve_dy_inputs(
-        &identity(4, 1, false),
+        &identity(SwapStyle::Crypto, LendingRateStyle::None, false),
         &[E21, TWO_E21],
         Some(&provider),
         1,
@@ -255,9 +274,9 @@ fn live_admin_uses_effective_balances() {
         base_cache_updated: None,
         base_virtual_price: None,
     };
-    // swap_style = 5 (LIVE_ADMIN)
+    // The pool carries the LIVE_ADMIN swap axis.
     let inputs = resolve_dy_inputs(
-        &identity(5, 1, false),
+        &identity(SwapStyle::LiveAdmin, LendingRateStyle::None, false),
         &[E21, TWO_E21],
         Some(&provider),
         1,
@@ -301,7 +320,7 @@ fn metapool_reads_virtual_and_redemption_prices() {
         admin_balances: None,
     };
     let inputs = resolve_dy_inputs(
-        &identity(1, 1, true),
+        &identity(SwapStyle::Standard, LendingRateStyle::None, true),
         &[E21, TWO_E21],
         Some(&provider),
         1,
@@ -329,7 +348,7 @@ fn metapool_without_redemption_degrades_to_none() {
         admin_balances: None,
     };
     let inputs = resolve_dy_inputs(
-        &identity(1, 1, true),
+        &identity(SwapStyle::Standard, LendingRateStyle::None, true),
         &[E21, TWO_E21],
         Some(&provider),
         1,
@@ -341,8 +360,14 @@ fn metapool_without_redemption_degrades_to_none() {
 
 #[test]
 fn metapool_requires_a_provider() {
-    let err = resolve_dy_inputs(&identity(1, 1, true), &[E21, TWO_E21], None, 1, None)
-        .expect_err("metapool without a provider must fail");
+    let err = resolve_dy_inputs(
+        &identity(SwapStyle::Standard, LendingRateStyle::None, true),
+        &[E21, TWO_E21],
+        None,
+        1,
+        None,
+    )
+    .expect_err("metapool without a provider must fail");
     assert!(matches!(
         err,
         crate::sim::curve_dy_io::CurveInputsError::NoProvider(_)
@@ -351,7 +376,7 @@ fn metapool_requires_a_provider() {
 
 #[test]
 fn ramping_a_interpolates_with_timestamp() {
-    let mut ident = identity(1, 1, false);
+    let mut ident = identity(SwapStyle::Standard, LendingRateStyle::None, false);
     ident.initial_a_coefficient = Some(100);
     ident.future_a_coefficient = Some(200);
     ident.initial_a_coefficient_time = Some(1_000);
@@ -450,7 +475,7 @@ fn metapool_provider(block_timestamp: u64, base_cache_updated: Option<u64>) -> S
 
 fn resolve_metapool(provider: &StubProvider) -> degenbot_math::curve::DyCalculationInputs {
     resolve_dy_inputs(
-        &identity(1, 1, true),
+        &identity(SwapStyle::Standard, LendingRateStyle::None, true),
         &[E21, TWO_E21],
         Some(provider),
         1,

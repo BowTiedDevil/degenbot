@@ -381,25 +381,40 @@ fn missing_identity_is_a_typed_refusal_not_a_silent_second_object() {
 /// same address registered under two families is two identities.
 #[test]
 fn every_registered_family_is_a_canonical_identity() {
-    const FAMILIES: [&str; 6] = [
-        "v2",
-        "v3",
-        "curve",
-        "balancer-weighted",
-        "balancer-stable",
-        "aerodrome-v2",
-    ];
-
     let registry = SessionObjectRegistry::new(CHAIN_ID);
-    let mut objects = Vec::with_capacity(FAMILIES.len());
-    for family in FAMILIES {
-        let identity = PoolIdentity::for_address_family(family, make_pool_addr())
-            .unwrap_or_else(|| panic!("{family} is a registered family with a canonical identity"));
+    let mut objects = Vec::with_capacity(degenbot_pools::RegisteredPoolFamily::ALL.len());
+    for family in degenbot_pools::RegisteredPoolFamily::ALL {
+        let Some(identity) = PoolIdentity::for_address_family(family.tag(), make_pool_addr())
+        else {
+            // A V4 pool's identity is the `(PoolManager, pool_id)` pair, never
+            // an address; every other family is address-keyed.
+            assert_eq!(
+                family,
+                degenbot_pools::RegisteredPoolFamily::V4,
+                "only V4 is not address-keyed"
+            );
+            continue;
+        };
+        assert_eq!(
+            identity.registered_family(),
+            family,
+            "the session identity reports the family it was named by"
+        );
         assert_eq!(
             identity.family_tag(),
-            family,
+            family.tag(),
             "the identity reports the same family tag the name came in as"
         );
+        // The registry family reverses onto the capability family the identity
+        // layer declares for it — the agreement between the session vocabulary
+        // and the core's identity-layer family table.
+        for stable in [false, true] {
+            assert!(
+                degenbot_pools::Family::try_from((&family, stable)).is_ok(),
+                "{} has an identity-layer family row for both species",
+                family.tag()
+            );
+        }
         objects.push(registry.get_or_create_pool(identity));
     }
 
@@ -410,7 +425,11 @@ fn every_registered_family_is_a_canonical_identity() {
             .all(|object| !Arc::ptr_eq(first, object)),
         "one address under two families is two canonical identities, not one"
     );
-    assert_eq!(registry.pool_count(), FAMILIES.len());
+    assert_eq!(
+        registry.pool_count(),
+        degenbot_pools::RegisteredPoolFamily::ALL.len() - 1,
+        "every address-keyed family, and only those, became an object"
+    );
 
     // A V4 pool's identity is the `(PoolManager, pool_id)` pair, never an
     // address, so the address-keyed constructor must refuse the tag instead of

@@ -33,6 +33,10 @@
 //! Everything else is immutable config set at registration.
 
 use alloy::primitives::{Address, U256};
+use degenbot_math::curve::{
+    DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle, YDVariant,
+    YVariant,
+};
 use std::sync::Arc;
 
 use crate::sim::curve_data_provider::CurveDataProvider;
@@ -89,19 +93,18 @@ pub struct RegisterCurvePoolParams {
     /// journal delta.
     pub update_block: u64,
 
-    // --- Variant strategy enums (opaque to Rust; carried so the future
-    //     Rust get_dy can dispatch on them) ---
-    /// `swap_style` discriminator (standard / `live_admin` / crypto / ...).
-    /// Stored as a raw u8 to keep Rust free of the Python enum surface.
-    pub swap_style: u8,
-    /// `lending_rate_style` discriminator (`NONE` / ...).
-    pub lending_rate_style: u8,
-    /// `d_variant` discriminator (stableswap D-iteration variant).
-    pub d_variant: u8,
-    /// `y_variant` discriminator (stableswap y-iteration variant).
-    pub y_variant: u8,
-    /// `yd_variant` discriminator (stableswap yd-iteration variant).
-    pub yd_variant: u8,
+    // --- Variant strategy axes (the typed discriminants the Rust get_dy
+    //     dispatches on) ---
+    /// Which `get_dy` computation path this pool uses.
+    pub swap_style: SwapStyle,
+    /// Which stored-rate path supplies a lending token's rate.
+    pub lending_rate_style: LendingRateStyle,
+    /// Which D-step pair the stableswap `get_D` walks.
+    pub d_variant: DVariant,
+    /// Which Y-step the stableswap `get_y` walks.
+    pub y_variant: YVariant,
+    /// Which Y_D-step the stableswap `get_y_d` walks.
+    pub yd_variant: YDVariant,
 
     // --- Optional metapool wiring ---
     /// Base pool address for metapools (`None` for plain pools).
@@ -155,10 +158,10 @@ pub struct RegisterCurvePoolParams {
 
     // --- Metapool strategy discriminants (immutable; the two
     //     `PoolStrategies` enums the extension did not carry). ---
-    /// `metapool_rate_style` discriminant (auto()-based `MetapoolRateStyle`).
-    pub metapool_rate_style: u8,
-    /// `metapool_underlying_style` discriminant (`MetapoolUnderlyingStyle`).
-    pub metapool_underlying_style: u8,
+    /// How the metapool builds its `get_dy` rate tuple.
+    pub metapool_rate_style: MetapoolRateStyle,
+    /// How the metapool walks `get_dy_underlying`.
+    pub metapool_underlying_style: MetapoolUnderlyingStyle,
 
     // --- I/O trait object (layer-2 design; the on-chain-state reader). ---
     /// Off-chain data provider (ADR-005). `None` ⇔ no I/O path — a
@@ -193,19 +196,18 @@ pub struct CurvePoolIdentity {
     /// Rate multipliers (precision-adjusted), one per token. `Box<[U256]>`:
     /// immutable after registration — drops the `Vec` capacity field.
     pub rate_multipliers: Box<[U256]>,
-    // --- Variant strategy enums (opaque to Rust; carried so the future
-    //     Rust get_dy can dispatch on them) ---
-    /// `swap_style` discriminator (standard / `live_admin` / crypto / ...).
-    /// Stored as a raw u8 to keep Rust free of the Python enum surface.
-    pub swap_style: u8,
-    /// `lending_rate_style` discriminator (`NONE` / ...).
-    pub lending_rate_style: u8,
-    /// `d_variant` discriminator (stableswap D-iteration variant).
-    pub d_variant: u8,
-    /// `y_variant` discriminator (stableswap y-iteration variant).
-    pub y_variant: u8,
-    /// `yd_variant` discriminator (stableswap yd-iteration variant).
-    pub yd_variant: u8,
+    // --- Variant strategy axes (the typed discriminants the Rust get_dy
+    //     dispatches on) ---
+    /// Which `get_dy` computation path this pool uses.
+    pub swap_style: SwapStyle,
+    /// Which stored-rate path supplies a lending token's rate.
+    pub lending_rate_style: LendingRateStyle,
+    /// Which D-step pair the stableswap `get_D` walks.
+    pub d_variant: DVariant,
+    /// Which Y-step the stableswap `get_y` walks.
+    pub y_variant: YVariant,
+    /// Which Y_D-step the stableswap `get_y_d` walks.
+    pub yd_variant: YDVariant,
     // --- Optional metapool wiring ---
     /// Base pool address for metapools (`None` for plain pools).
     pub base_pool: Option<Address>,
@@ -244,10 +246,10 @@ pub struct CurvePoolIdentity {
     /// Underlying ERC20 coin addresses for a metapool (`None` for plain).
     pub tokens_underlying: Option<Box<[Address]>>,
     // --- Metapool strategy discriminants (immutable). ---
-    /// `metapool_rate_style` discriminant.
-    pub metapool_rate_style: u8,
-    /// `metapool_underlying_style` discriminant.
-    pub metapool_underlying_style: u8,
+    /// How the metapool builds its `get_dy` rate tuple.
+    pub metapool_rate_style: MetapoolRateStyle,
+    /// How the metapool walks `get_dy_underlying`.
+    pub metapool_underlying_style: MetapoolUnderlyingStyle,
 }
 
 /// Curve `StableSwap` pool state owned by [`crate::BotState`].

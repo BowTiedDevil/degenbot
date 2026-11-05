@@ -11,6 +11,7 @@ use alloy::primitives::{Address, U256};
 use degenbot_math::curve::curve_dy_calculator::{
     calculate_dy as core_calculate_dy, calculate_dy_underlying as core_calculate_dy_underlying,
     CurveBasePoolPort as CoreBasePort, CurveSwapError, DyCalculationInputs as CoreInputs,
+    MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle,
 };
 use pyo3::{
     exceptions::PyValueError,
@@ -62,6 +63,17 @@ fn u256_to_py_obj(py: Python<'_>, v: U256) -> PyResult<PyObject> {
     Ok(alloy_py::u256_to_py(py, &v)?.unbind())
 }
 
+/// Decode one Curve strategy byte into its typed axis — the ONE conversion site
+/// for the builder's setters.
+///
+/// The setters keep their `u8` FFI signature (the Python `DyCalculationInputs`
+/// carries the enum `.value`s), so this is where a byte becomes an enum. An
+/// unmapped byte names no axis: it raises instead of defaulting, because a
+/// defaulted axis would silently change which arithmetic the calculator runs.
+fn style_axis<T>(byte: u8, axis: &'static str, decode: fn(u8) -> Option<T>) -> PyResult<T> {
+    decode(byte).ok_or_else(|| PyValueError::new_err(format!("Unknown {axis}: {byte}")))
+}
+
 /// Translate a `CurveSwapError` into a Python exception. Invariant failures
 /// surface as `ValueError` (the Python `DyCalculator` re-wraps those as
 /// `EVMRevertError`); wiring failures surface as `TypeError`/`ValueError`.
@@ -98,10 +110,10 @@ fn empty_inputs() -> CoreInputs {
         d_variant: degenbot_math::curve::DVariant::Standard,
         y_variant: degenbot_math::curve::YVariant::Standard,
         a_precision: U256::ZERO,
-        swap_style: 1,
+        swap_style: SwapStyle::Standard,
         metapool: false,
-        metapool_rate_style: 1,
-        metapool_underlying_style: 1,
+        metapool_rate_style: MetapoolRateStyle::Standard,
+        metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
         d: None,
         gamma: None,
         price_scale: None,
@@ -219,14 +231,14 @@ impl DyCalculationInputs {
     }
     #[setter]
     fn set_d_variant(&mut self, v: u8) -> PyResult<()> {
-        self.inner.d_variant = degenbot_math::curve::DVariant::try_from_u8(v)
-            .ok_or_else(|| PyValueError::new_err(format!("Unknown d_variant: {v}")))?;
+        self.inner.d_variant =
+            style_axis(v, "d_variant", degenbot_math::curve::DVariant::try_from_u8)?;
         Ok(())
     }
     #[setter]
     fn set_y_variant(&mut self, v: u8) -> PyResult<()> {
-        self.inner.y_variant = degenbot_math::curve::YVariant::try_from_u8(v)
-            .ok_or_else(|| PyValueError::new_err(format!("Unknown y_variant: {v}")))?;
+        self.inner.y_variant =
+            style_axis(v, "y_variant", degenbot_math::curve::YVariant::try_from_u8)?;
         Ok(())
     }
     #[setter]
@@ -235,20 +247,28 @@ impl DyCalculationInputs {
         Ok(())
     }
     #[setter]
-    fn set_swap_style(&mut self, v: u8) {
-        self.inner.swap_style = v;
+    fn set_swap_style(&mut self, v: u8) -> PyResult<()> {
+        self.inner.swap_style = style_axis(v, "swap_style", SwapStyle::try_from_u8)?;
+        Ok(())
     }
     #[setter]
     fn set_metapool(&mut self, v: bool) {
         self.inner.metapool = v;
     }
     #[setter]
-    fn set_metapool_rate_style(&mut self, v: u8) {
-        self.inner.metapool_rate_style = v;
+    fn set_metapool_rate_style(&mut self, v: u8) -> PyResult<()> {
+        self.inner.metapool_rate_style =
+            style_axis(v, "metapool_rate_style", MetapoolRateStyle::try_from_u8)?;
+        Ok(())
     }
     #[setter]
-    fn set_metapool_underlying_style(&mut self, v: u8) {
-        self.inner.metapool_underlying_style = v;
+    fn set_metapool_underlying_style(&mut self, v: u8) -> PyResult<()> {
+        self.inner.metapool_underlying_style = style_axis(
+            v,
+            "metapool_underlying_style",
+            MetapoolUnderlyingStyle::try_from_u8,
+        )?;
+        Ok(())
     }
     #[setter]
     fn set_d(&mut self, v: Option<&Bound<'_, PyAny>>) -> PyResult<()> {

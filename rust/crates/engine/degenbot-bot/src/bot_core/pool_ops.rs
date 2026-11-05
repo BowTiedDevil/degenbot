@@ -512,6 +512,10 @@ mod tests {
 
     use super::*;
     use alloy::primitives::aliases::U112;
+    use degenbot_pools::{
+        DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle,
+        YDVariant, YVariant,
+    };
     use degenbot_substrate::RegisterV2PoolParams;
     use hashbrown::HashMap;
 
@@ -585,11 +589,11 @@ mod tests {
                     rate_multipliers: vec![U256::from(1_000_000_000_000_000_000u64); 2],
                     balances: vec![U256::from(1_000_000_000_000_000_000u64); 2],
                     update_block: 100,
-                    swap_style: 0,
-                    lending_rate_style: 0,
-                    d_variant: 0,
-                    y_variant: 0,
-                    yd_variant: 0,
+                    swap_style: SwapStyle::Standard,
+                    lending_rate_style: LendingRateStyle::None,
+                    d_variant: DVariant::Standard,
+                    y_variant: YVariant::Standard,
+                    yd_variant: YDVariant::Standard,
                     base_pool: None,
                     initial_a_coefficient: None,
                     future_a_coefficient: None,
@@ -605,8 +609,8 @@ mod tests {
                     use_lending: vec![false, false],
                     precision_multipliers: vec![U256::from(1_000_000_000_000_000_000u64); 2],
                     tokens_underlying: None,
-                    metapool_rate_style: 0,
-                    metapool_underlying_style: 0,
+                    metapool_rate_style: MetapoolRateStyle::Standard,
+                    metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
                     data_provider: None,
                 })
                 .expect("curve registration");

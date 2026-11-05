@@ -42,7 +42,7 @@
 
 use alloy::primitives::U256;
 
-use degenbot_math::curve::resolve_ramping_a;
+use degenbot_math::curve::{resolve_ramping_a, SwapStyle};
 
 use crate::sim::curve_dy_io::{check_pool_liquidity, resolve_dy_inputs, CurveInputsError};
 use crate::state::state_history::BalanceVectorPoolState as _;
@@ -69,8 +69,6 @@ pub use crate::state::curve_state::{CurvePoolIdentity, CurvePoolState, RegisterC
 pub enum CaptureRefusal {
     /// Fewer than two coins — no pairwise hop can be formed.
     TooFewTokens,
-    /// A variant byte (`y_variant` / `d_variant`) decoded to nothing.
-    UnknownVariant,
     /// A pairwise index fell outside the rate-adjusted coin list.
     OutOfRange,
 }
@@ -142,10 +140,8 @@ pub fn capture_hop(
     if token_index_in >= xp.len() || token_index_out >= xp.len() {
         return Err(CaptureRefusal::OutOfRange);
     }
-    let y_variant = degenbot_math::curve::stableswap::YVariant::try_from_u8(identity.y_variant)
-        .ok_or(CaptureRefusal::UnknownVariant)?;
-    let d_variant = degenbot_math::curve::stableswap::DVariant::try_from_u8(identity.d_variant)
-        .ok_or(CaptureRefusal::UnknownVariant)?;
+    let y_variant = identity.y_variant;
+    let d_variant = identity.d_variant;
     Ok(CurveStableswapHop {
         amp,
         a_precision,
@@ -214,7 +210,7 @@ fn read_standard_swap(
     // Only the standard stableswap path is ported; the other styles answer the
     // typed refusal (`curve_get_dy` / `calculate_dy` are the Rust surfaces
     // that DO compute those styles).
-    if identity.swap_style != 1 {
+    if identity.swap_style != SwapStyle::Standard {
         return Err(SimulateSwapError::NotComputable);
     }
     if amount_in.is_zero() {
@@ -270,13 +266,10 @@ fn read_standard_swap(
         .checked_add(dx_scaled)
         .ok_or(SimulateSwapError::NotComputable)?;
 
-    // Variant dispatch: map the opaque u8 discriminants (1-based auto(); the
-    // standard path defaults to STANDARD when an unrecognised/zero value is
-    // carried, as the slice fixtures do).
-    let y_variant = degenbot_math::curve::stableswap::YVariant::try_from_u8(identity.y_variant)
-        .unwrap_or(degenbot_math::curve::stableswap::YVariant::Standard);
-    let d_variant = degenbot_math::curve::stableswap::DVariant::try_from_u8(identity.d_variant)
-        .unwrap_or(degenbot_math::curve::stableswap::DVariant::Standard);
+    // Variant dispatch: the identity carries the typed axes, so the swap path
+    // reads them rather than decoding a stored byte.
+    let y_variant = identity.y_variant;
+    let d_variant = identity.d_variant;
 
     let y = degenbot_math::curve::stableswap::stableswap_get_y(
         coin_in,
@@ -407,8 +400,7 @@ pub fn calc_token_amount(
     let timestamp = curve_block_timestamp(identity, provider, block_number)?;
     let amp = resolve_ramping_a(curve_ramping_params(identity), timestamp)?;
     let a_precision = U256::from(identity.a_precision);
-    let d_variant = degenbot_math::curve::DVariant::try_from_u8(identity.d_variant)
-        .ok_or(degenbot_math::curve::CurveSwapError::UnknownStyle(99))?;
+    let d_variant = identity.d_variant;
     let n_u = U256::from(n);
 
     let d_0 = degenbot_math::curve::stableswap_get_d(
@@ -459,10 +451,8 @@ pub fn calc_withdraw_one_coin(
     let timestamp = curve_block_timestamp(identity, provider, block_number)?;
     let amp = resolve_ramping_a(curve_ramping_params(identity), timestamp)?;
     let a_precision = U256::from(identity.a_precision);
-    let d_variant = degenbot_math::curve::DVariant::try_from_u8(identity.d_variant)
-        .ok_or(degenbot_math::curve::CurveSwapError::UnknownStyle(99))?;
-    let yd_variant = degenbot_math::curve::YDVariant::try_from_u8(identity.yd_variant)
-        .ok_or(degenbot_math::curve::CurveSwapError::UnknownStyle(99))?;
+    let d_variant = identity.d_variant;
+    let yd_variant = identity.yd_variant;
     let n_u = U256::from(n);
     let precisions = &identity.precision_multipliers;
 
@@ -566,6 +556,9 @@ fn curve_total_supply(
 mod tests {
     use super::*;
     use crate::state::curve_state::CurvePoolIdentity;
+    use degenbot_math::curve::{
+        DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, YDVariant, YVariant,
+    };
 
     // A non-STANDARD Curve swap style answers the TYPED refusal at the read
     // door, never a zero output (the companion's Curve read path consumes
@@ -581,11 +574,11 @@ mod tests {
             fee: 4_000_000,
             admin_fee: 0,
             rate_multipliers: vec![U256::from(CURVE_PRECISION); 2].into(),
-            swap_style: 4, // CRYPTO - a non-STANDARD style
-            lending_rate_style: 0,
-            d_variant: 1,
-            y_variant: 1,
-            yd_variant: 1,
+            swap_style: SwapStyle::Crypto, // CRYPTO - a non-STANDARD style
+            lending_rate_style: LendingRateStyle::None,
+            d_variant: DVariant::Standard,
+            y_variant: YVariant::Standard,
+            yd_variant: YDVariant::Standard,
             base_pool: None,
             initial_a_coefficient: None,
             future_a_coefficient: None,
@@ -601,8 +594,8 @@ mod tests {
             use_lending: Box::default(),
             precision_multipliers: vec![U256::from(CURVE_PRECISION); 2].into(),
             tokens_underlying: None,
-            metapool_rate_style: 1,
-            metapool_underlying_style: 1,
+            metapool_rate_style: MetapoolRateStyle::Standard,
+            metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
         };
         let state = CurvePoolState {
             balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)].into(),
@@ -640,11 +633,11 @@ mod tests {
             fee: 4_000_000,
             admin_fee: 0,
             rate_multipliers: vec![U256::from(CURVE_PRECISION); n_tokens].into(),
-            swap_style: 1,
-            lending_rate_style: 0,
-            d_variant: 1,
-            y_variant: 1,
-            yd_variant: 1,
+            swap_style: SwapStyle::Standard,
+            lending_rate_style: LendingRateStyle::None,
+            d_variant: DVariant::Standard,
+            y_variant: YVariant::Standard,
+            yd_variant: YDVariant::Standard,
             base_pool: None,
             initial_a_coefficient: None,
             future_a_coefficient: None,
@@ -660,8 +653,8 @@ mod tests {
             use_lending: Box::default(),
             precision_multipliers: vec![U256::from(CURVE_PRECISION); n_tokens].into(),
             tokens_underlying: None,
-            metapool_rate_style: 1,
-            metapool_underlying_style: 1,
+            metapool_rate_style: MetapoolRateStyle::Standard,
+            metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
         }
     }
 

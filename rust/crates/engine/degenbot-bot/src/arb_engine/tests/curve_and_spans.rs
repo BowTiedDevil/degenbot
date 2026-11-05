@@ -1,4 +1,8 @@
 use super::*;
+use degenbot_pools::{
+    DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle, YDVariant,
+    YVariant,
+};
 
 // -----------------------------------------------------------------------
 // Curve stableswap solve branch (RPDDWH)
@@ -25,11 +29,11 @@ fn curve_stable_params(
             U256::from(balance1) * one_e18,
         ],
         update_block: 0,
-        swap_style: 0,         // STANDARD
-        lending_rate_style: 0, // NONE
-        d_variant: 1,          // Standard
-        y_variant: 1,          // Standard
-        yd_variant: 1,
+        swap_style: SwapStyle::Standard,            // STANDARD
+        lending_rate_style: LendingRateStyle::None, // NONE
+        d_variant: DVariant::Standard,              // Standard
+        y_variant: YVariant::Standard,              // Standard
+        yd_variant: YDVariant::Standard,
         base_pool: None,
         initial_a_coefficient: None,
         future_a_coefficient: None,
@@ -45,8 +49,8 @@ fn curve_stable_params(
         use_lending: vec![false, false],
         precision_multipliers: vec![precision, precision],
         tokens_underlying: None,
-        metapool_rate_style: 0,
-        metapool_underlying_style: 0,
+        metapool_rate_style: MetapoolRateStyle::Standard,
+        metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
         data_provider: None,
     }
 }

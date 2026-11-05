@@ -185,6 +185,15 @@ pub use sim::pool::{
 /// `RegisterV2PoolParams` / `V2PoolIdentity` can name the field's type without a
 /// direct dependency on the preset crate.
 pub use degenbot_uniswap::dex_identity::DexVariant;
+
+/// The Curve strategy axes a `RegisterCurvePoolParams` / `CurvePoolIdentity`
+/// carries as typed fields. Re-exported from `degenbot-math` (their declaration
+/// site) so a consumer holding Curve registration params can name an axis
+/// without a direct dependency on the pure-math crate.
+pub use degenbot_math::curve::{
+    DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle, YDVariant,
+    YVariant,
+};
 pub use state::v2_state::{RegisterV2PoolError, RegisterV2PoolParams, V2PoolIdentity, V2PoolState};
 
 pub use state::aerodrome_v2_state::{
@@ -245,8 +254,8 @@ pub use state::int_v3_hop::{
 /// The family-capability table: which families an arm serves, and the bounds
 /// each family's encoder enforces.
 pub use state::capability::{
-    capabilities, Arm, Family, FamilyCapabilities, ENCODER_FAMILIES, V4_FEE_CEILING_EXCLUSIVE,
-    V4_HOOKLESS_ONLY,
+    capabilities, Arm, Family, FamilyCapabilities, NoFamilyRow, ENCODER_FAMILIES,
+    V4_FEE_CEILING_EXCLUSIVE, V4_HOOKLESS_ONLY,
 };
 
 /// The tick-map read/mutate traits and the slot0-head verifier a divergence

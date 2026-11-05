@@ -114,20 +114,68 @@ impl RegisteredPoolFamily {
 }
 
 impl PoolEntry {
+    /// The identity-layer family key this entry's state names — which identity
+    /// VARIANT the entry holds.
+    ///
+    /// The entry's only decision is the identity, never the family: the family
+    /// projection is the [`crate::state::capability::FAMILY_ROWS`] row's, so a
+    /// keeper that moves a variant between families has one table to edit.
+    const fn family_key(&self) -> crate::state::capability::FamilyKey {
+        use crate::sim::pool::{
+            BalanceVectorVariant, ConcentratedLiquidityVariant, ReservePairVariant,
+        };
+        use crate::state::capability::FamilyKey;
+
+        match self {
+            Self::V2(..) => FamilyKey::ReservePair(ReservePairVariant::UniswapV2),
+            Self::AerodromeV2(pair) => FamilyKey::ReservePair(ReservePairVariant::AerodromeV2 {
+                stable: pair.0.stable,
+            }),
+            Self::V3(..) => {
+                FamilyKey::ConcentratedLiquidity(ConcentratedLiquidityVariant::UniswapV3)
+            }
+            Self::V4(..) => {
+                FamilyKey::ConcentratedLiquidity(ConcentratedLiquidityVariant::UniswapV4)
+            }
+            Self::Curve(..) => FamilyKey::BalanceVector(BalanceVectorVariant::Curve),
+            Self::BalancerWeighted(..) => {
+                FamilyKey::BalanceVector(BalanceVectorVariant::BalancerWeighted)
+            }
+            Self::BalancerStable(..) => {
+                FamilyKey::BalanceVector(BalanceVectorVariant::BalancerStable)
+            }
+        }
+    }
+
     /// Project the entry onto its registration family tag (ADR-059 D1). Total
     /// over the variants; the address-keyed reader consults it and rejects
     /// [`RegisteredPoolFamily::V4`] because an address query cannot name a
     /// V4 pool.
+    ///
+    /// The family itself is the identity-layer table's answer for the entry's
+    /// identity variant (`Self::family_key`) — the same table
+    /// [`degenbot_pools::Family::from_identity`](crate::Family::from_identity)
+    /// reads, so the registry and capability vocabularies cannot disagree about
+    /// which family an identity belongs to.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: the one table row whose registry column is empty is
+    /// the roadmap-only binned identity (LFJ), and no `PoolEntry` variant holds
+    /// a binned pool — `Self::family_key` cannot name it, so the miss arm is
+    /// unreachable by construction.
     #[must_use]
+    #[expect(
+        clippy::panic,
+        reason = "no PoolEntry variant holds the one identity the table leaves unnamed; the match is the proof"
+    )]
     pub const fn registered_family(&self) -> RegisteredPoolFamily {
-        match self {
-            Self::V2(..) => RegisteredPoolFamily::V2,
-            Self::V3(..) => RegisteredPoolFamily::V3,
-            Self::V4(..) => RegisteredPoolFamily::V4,
-            Self::Curve(..) => RegisteredPoolFamily::Curve,
-            Self::BalancerWeighted(..) => RegisteredPoolFamily::BalancerWeighted,
-            Self::BalancerStable(..) => RegisteredPoolFamily::BalancerStable,
-            Self::AerodromeV2(..) => RegisteredPoolFamily::AerodromeV2,
+        match self.family_key().registered_family() {
+            Some(family) => family,
+            // Every `PoolEntry` variant is an admitted identity, so its row
+            // names a registry family; the one row that does not is the
+            // roadmap-only binned identity, which has no `PoolEntry` variant.
+            None => panic!("a PoolEntry variant has no identity-layer family row"),
         }
     }
 }

@@ -306,13 +306,16 @@ class CurveStableswapPool(
             self._gamma,
         ) = _read_crypto_fee_coefficients(arm)
 
-        # Strategies — reconstruct from the 7 u8 discriminants stored in Rust.
-        # auto()-based enums: .value is forwarded verbatim, so Enum(value)
-        # round-trips (the factory's _strategies_to_rust_enums is the inverse).
+        # Strategies — reconstruct from what the core stores. Five axes come
+        # back as the auto()-based discriminant (``.value`` round-trips through
+        # ``Enum(value)``; the factory's ``_strategies_to_rust_enums`` is the
+        # inverse), and the two y-iteration axes come back as member NAMES so a
+        # drift raises ``KeyError`` here instead of silently constructing the
+        # wrong member from a stale byte.
         self._strategies = PoolStrategies(
             d_variant=DVariant(arm.d_variant),
-            y_variant=YVariant(arm.y_variant),
-            yd_variant=YDVariant(arm.yd_variant),
+            y_variant=YVariant[arm.y_variant],
+            yd_variant=YDVariant[arm.yd_variant],
             swap_style=SwapStyle(arm.swap_style),
             metapool_rate_style=MetapoolRateStyle(arm.metapool_rate_style),
             metapool_underlying_style=MetapoolUnderlyingStyle(arm.metapool_underlying_style),

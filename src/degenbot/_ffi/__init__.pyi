@@ -1430,11 +1430,11 @@ class Bot:
         rate_multipliers: list,
         balances: list,
         update_block: SupportsIndex,
-        swap_style: SupportsIndex = 0,
-        lending_rate_style: SupportsIndex = 0,
-        d_variant: SupportsIndex = 0,
-        y_variant: SupportsIndex = 0,
-        yd_variant: SupportsIndex = 0,
+        swap_style: SupportsIndex = 1,
+        lending_rate_style: SupportsIndex = 1,
+        d_variant: SupportsIndex = 1,
+        y_variant: SupportsIndex = 1,
+        yd_variant: SupportsIndex = 1,
         base_pool: str | None = None,
         initial_a_coefficient: SupportsIndex | None = None,
         future_a_coefficient: SupportsIndex | None = None,
@@ -1462,7 +1462,10 @@ class Bot:
 
         Raises:
             `ValueError`: If the pool address is malformed or already
-                registered, or the list lengths mismatch.
+                registered, the list lengths mismatch, or a strategy
+                discriminant names no axis (the seven `PoolStrategies` bytes are
+                decoded here, the one boundary that receives them, so the core
+                stores typed axes and never a guessed default).
         """
     def register_token(
         self,
@@ -3107,6 +3110,9 @@ class CurveView:
     def swap_style(self, /) -> int:
         """
         Curve `swap_style` discriminant (`PoolStrategies.swap_style.value`).
+
+        The stored axis is typed in the core; this reader projects it back onto
+        the discriminant the Python enum's `.value` carries.
         """
     def token_addresses(self, /) -> list[str]:
         """
@@ -3127,14 +3133,19 @@ class CurveView:
         Curve per-token `use_lending` flags.
         """
     @property
-    def y_variant(self, /) -> int:
+    def y_variant(self, /) -> str:
         """
-        Curve `y_variant` discriminant.
+        Curve `y_variant` member name (`"STANDARD"` / `"VARIANT_0"` /
+        `"VARIANT_1"`).
+
+        A NAME, not the discriminant: the driver rebuilds its enum by name
+        (`YVariant[handle.y_variant]`), so the spelling the core hands back is
+        checked by the lookup instead of trusted as a byte.
         """
     @property
-    def yd_variant(self, /) -> int:
+    def yd_variant(self, /) -> str:
         """
-        Curve `yd_variant` discriminant.
+        Curve `yd_variant` member name (`"STANDARD"` / `"VARIANT_0"`).
         """
 
 @final

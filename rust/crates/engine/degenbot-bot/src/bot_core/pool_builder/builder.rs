@@ -1873,13 +1873,14 @@ pub async fn build_curve_pool(
         rate_multipliers,
         balances: coins.balances,
         update_block: block_num,
-        // The core resolves the strategy axes as typed discriminants; the
-        // registration params carry the stored bytes.
-        swap_style: strategies.swap_style as u8,
-        lending_rate_style: strategies.lending_rate_style as u8,
-        d_variant: strategies.d_variant as u8,
-        y_variant: strategies.y_variant as u8,
-        yd_variant: strategies.yd_variant as u8,
+        // The address resolution already answered typed axes, and the params
+        // carry those same types: no byte round trip between the resolver and
+        // the identity.
+        swap_style: strategies.swap_style,
+        lending_rate_style: strategies.lending_rate_style,
+        d_variant: strategies.d_variant,
+        y_variant: strategies.y_variant,
+        yd_variant: strategies.yd_variant,
         base_pool: metapool.base_pool_address,
         initial_a_coefficient: ramping.initial_a,
         future_a_coefficient: ramping.future_a,
@@ -1895,8 +1896,8 @@ pub async fn build_curve_pool(
         use_lending: lending.use_lending,
         precision_multipliers,
         tokens_underlying: metapool.tokens_underlying,
-        metapool_rate_style: strategies.metapool_rate_style as u8,
-        metapool_underlying_style: strategies.metapool_underlying_style as u8,
+        metapool_rate_style: strategies.metapool_rate_style,
+        metapool_underlying_style: strategies.metapool_underlying_style,
         data_provider: Some(Arc::new(provider) as Arc<dyn CurveDataProvider>),
     })
 }

@@ -132,6 +132,19 @@ impl YVariant {
         }
     }
 
+    /// The member name the Python mirror spells this variant with
+    /// (`degenbot.curve.types.YVariant`): the by-name spelling an FFI reader
+    /// hands back so a driver reconstructs the enum with `YVariant[name]`
+    /// instead of re-declaring the byte table.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Standard => "STANDARD",
+            Self::Variant0 => "VARIANT_0",
+            Self::Variant1 => "VARIANT_1",
+        }
+    }
+
     /// Whether this variant omits the A_PRECISION divisor (matches the
     /// Python `y_variant in {VARIANT_0, VARIANT_1}` check).
     #[must_use]
@@ -158,6 +171,18 @@ impl YDVariant {
             1 => Some(Self::Standard),
             2 => Some(Self::Variant0),
             _ => None,
+        }
+    }
+
+    /// The member name the Python mirror spells this variant with
+    /// (`degenbot.curve.types.YDVariant`): the by-name spelling an FFI reader
+    /// hands back so a driver reconstructs the enum with `YDVariant[name]`
+    /// instead of re-declaring the byte table.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Standard => "STANDARD",
+            Self::Variant0 => "VARIANT_0",
         }
     }
 }

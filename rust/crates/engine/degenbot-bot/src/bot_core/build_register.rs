@@ -313,6 +313,10 @@ mod tests {
     use degenbot_pools::PoolTickCoverage;
     use degenbot_pools::RegisterV2PoolParams;
     use degenbot_pools::RegisterV3PoolParams;
+    use degenbot_pools::{
+        DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle,
+        YDVariant, YVariant,
+    };
     use degenbot_substrate::PoolRegistration;
 
     /// A non-JSON factory (CREATE2 verify skipped).
@@ -459,11 +463,11 @@ mod tests {
             update_block: 10,
             // STANDARD (=1) discriminants: the dy calculator's vocabularies
             // (SwapStyle / LENDING_NONE / D / Y / Yd) are 1-based.
-            swap_style: 1,
-            lending_rate_style: 1,
-            d_variant: 1,
-            y_variant: 1,
-            yd_variant: 1,
+            swap_style: SwapStyle::Standard,
+            lending_rate_style: LendingRateStyle::None,
+            d_variant: DVariant::Standard,
+            y_variant: YVariant::Standard,
+            yd_variant: YDVariant::Standard,
             base_pool: None,
             initial_a_coefficient: None,
             future_a_coefficient: None,
@@ -479,8 +483,8 @@ mod tests {
             use_lending: Vec::new(),
             precision_multipliers: Vec::new(),
             tokens_underlying: None,
-            metapool_rate_style: 1,
-            metapool_underlying_style: 1,
+            metapool_rate_style: MetapoolRateStyle::Standard,
+            metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
             data_provider: None,
         };
         let pool_id = bot

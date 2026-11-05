@@ -1048,6 +1048,10 @@ mod tests {
 
     use super::*;
     use ::degenbot_pools::PoolTickCoverage;
+    use degenbot_pools::{
+        DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle,
+        YDVariant, YVariant,
+    };
     use hashbrown::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -1559,11 +1563,11 @@ mod tests {
             rate_multipliers: vec![E18, E18],
             balances: vec![E18, E18],
             update_block: 0,
-            swap_style: 1,
-            lending_rate_style: 1,
-            d_variant: 1,
-            y_variant: 1,
-            yd_variant: 1,
+            swap_style: SwapStyle::Standard,
+            lending_rate_style: LendingRateStyle::None,
+            d_variant: DVariant::Standard,
+            y_variant: YVariant::Standard,
+            yd_variant: YDVariant::Standard,
             base_pool: None,
             initial_a_coefficient: None,
             future_a_coefficient: None,
@@ -1579,8 +1583,8 @@ mod tests {
             use_lending: Vec::new(),
             precision_multipliers: vec![E18, E18],
             tokens_underlying: None,
-            metapool_rate_style: 1,
-            metapool_underlying_style: 1,
+            metapool_rate_style: MetapoolRateStyle::Standard,
+            metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
             data_provider: None,
         })
         .expect("curve registration")

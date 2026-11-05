@@ -71,6 +71,24 @@ pub enum Identity {
 }
 
 impl Identity {
+    /// The identity-layer family key — which variant of which identity kind
+    /// this identity names, with the per-pool payload (`dex`) dropped so the
+    /// [`Family::from_identity`](crate::Family::from_identity) table can be
+    /// keyed by it.
+    #[must_use]
+    pub(crate) const fn family_key(self) -> crate::state::capability::FamilyKey {
+        use crate::state::capability::FamilyKey;
+
+        match self {
+            Self::ReservePair { variant, .. } => FamilyKey::ReservePair(variant),
+            Self::ConcentratedLiquidity { variant, .. } => {
+                FamilyKey::ConcentratedLiquidity(variant)
+            }
+            Self::BalanceVector { variant, .. } => FamilyKey::BalanceVector(variant),
+            Self::BinnedLiquidity { variant, .. } => FamilyKey::BinnedLiquidity(variant),
+        }
+    }
+
     /// The [`Structure`] this identity belongs to.
     ///
     /// ADR-059 D1: the structural taxonomy is the source every tier's family

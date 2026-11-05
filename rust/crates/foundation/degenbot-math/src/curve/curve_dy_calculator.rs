@@ -96,6 +96,24 @@ pub enum LendingRateStyle {
     Oracle = 7,
 }
 
+impl LendingRateStyle {
+    /// Map the stored `u8` discriminant (from
+    /// `RegisterCurvePoolParams.lending_rate_style`) to the style.
+    #[must_use]
+    pub fn try_from_u8(v: u8) -> Option<Self> {
+        match v {
+            1 => Some(Self::None),
+            2 => Some(Self::Ctoken),
+            3 => Some(Self::Ytoken),
+            4 => Some(Self::CyToken),
+            5 => Some(Self::Aeth),
+            6 => Some(Self::Reth),
+            7 => Some(Self::Oracle),
+            _ => None,
+        }
+    }
+}
+
 /// How a metapool builds its `get_dy` rate tuple. Mirrors
 /// `MetapoolRateStyle` (`auto()`, 1-based).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -109,6 +127,20 @@ pub enum MetapoolRateStyle {
     RedemptionVp = 3,
 }
 
+impl MetapoolRateStyle {
+    /// Map the stored `u8` discriminant (from
+    /// `RegisterCurvePoolParams.metapool_rate_style`) to the style.
+    #[must_use]
+    pub fn try_from_u8(v: u8) -> Option<Self> {
+        match v {
+            1 => Some(Self::Standard),
+            2 => Some(Self::PrecisionVp),
+            3 => Some(Self::RedemptionVp),
+            _ => None,
+        }
+    }
+}
+
 /// How a metapool walks `get_dy_underlying`. Mirrors
 /// `MetapoolUnderlyingStyle` (`auto()`, 1-based).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -120,6 +152,20 @@ pub enum MetapoolUnderlyingStyle {
     Redemption = 2,
     /// `(PRECISION, virtual_price)` — no rate multiplier for the first coin.
     PrecisionVp = 3,
+}
+
+impl MetapoolUnderlyingStyle {
+    /// Map the stored `u8` discriminant (from
+    /// `RegisterCurvePoolParams.metapool_underlying_style`) to the style.
+    #[must_use]
+    pub fn try_from_u8(v: u8) -> Option<Self> {
+        match v {
+            1 => Some(Self::Standard),
+            2 => Some(Self::Redemption),
+            3 => Some(Self::PrecisionVp),
+            _ => None,
+        }
+    }
 }
 
 /// A-ramping resolution outcome. The pool stores a fixed `a_coefficient`
@@ -165,14 +211,14 @@ pub struct DyCalculationInputs {
     pub d_variant: DVariant,
     pub y_variant: crate::curve::stableswap::YVariant,
     pub a_precision: U256,
-    pub swap_style: u8,
+    pub swap_style: SwapStyle,
     /// Whether this pool is a metapool (has a base pool). When `true`,
     /// `calculate_dy` dispatches the `MetapoolDyCalculator` fast-path by
     /// `metapool_rate_style`; `calculate_dy_underlying` delegates base-pool
     /// ops through the `CurveBasePoolPort`.
     pub metapool: bool,
-    pub metapool_rate_style: u8,
-    pub metapool_underlying_style: u8,
+    pub metapool_rate_style: MetapoolRateStyle,
+    pub metapool_underlying_style: MetapoolUnderlyingStyle,
     // crypto I/O
     pub d: Option<U256>,
     pub gamma: Option<U256>,
@@ -216,8 +262,6 @@ pub enum CurveSwapError {
     /// The invariant solver rejected the inputs (non-convergence, overflow,
     /// out-of-range index, unsafe value).
     Invariant(CurveMathError),
-    /// Unknown `swap_style` discriminant.
-    UnknownStyle(u8),
     /// `calculate_dy_underlying` called without a base pool.
     NotMetapool,
     /// A required optional input was missing for the active style.
@@ -244,7 +288,6 @@ impl std::fmt::Display for CurveSwapError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Invariant(e) => write!(f, "invariant: {e:?}"),
-            Self::UnknownStyle(s) => write!(f, "unknown swap_style {s}"),
             Self::NotMetapool => write!(f, "underlying calc requires a base pool"),
             Self::MissingValue(v) => write!(f, "missing required input: {v}"),
             Self::BasePool(e) => write!(f, "base-pool op failed: {e}"),
@@ -676,14 +719,13 @@ fn calculate_crypto_dy(
 // ---------------------------------------------------------------------------
 
 /// Metapool-dy core (mirrors `MetapoolDyCalculator.calculate`). `rate_style`
-/// is the `MetapoolRateStyle` discriminant (1=STANDARD, 2=PRECISION_VP,
-/// 3=REDEMPTION_VP).
+/// selects the rate tuple the metapool branch builds.
 fn calculate_metapool_dy(
     i: usize,
     j: usize,
     dx: U256,
     inputs: &DyCalculationInputs,
-    rate_style: u8,
+    rate_style: MetapoolRateStyle,
 ) -> Result<U256, CurveSwapError> {
     if i == j || i >= inputs.n_coins || j >= inputs.n_coins {
         return Err(CurveSwapError::IndexOutOfBounds);
@@ -692,15 +734,14 @@ fn calculate_metapool_dy(
         .virtual_price
         .ok_or(CurveSwapError::MissingValue("virtual_price"))?;
     let rates = match rate_style {
-        1 => [inputs.rate_multipliers[0], vp],
-        2 => [inputs.precision, vp],
-        3 => [
+        MetapoolRateStyle::Standard => [inputs.rate_multipliers[0], vp],
+        MetapoolRateStyle::PrecisionVp => [inputs.precision, vp],
+        MetapoolRateStyle::RedemptionVp => [
             inputs
                 .scaled_redemption_price
                 .ok_or(CurveSwapError::MissingValue("scaled_redemption_price"))?,
             vp,
         ],
-        _ => return Err(CurveSwapError::UnknownStyle(rate_style)),
     };
 
     let xp = inputs
@@ -731,15 +772,14 @@ fn calculate_metapool_dy(
 // ---------------------------------------------------------------------------
 
 /// Metapool-underlying core (mirrors
-/// `MetapoolUnderlyingDyCalculator.calculate`). `underlying_style` is the
-/// `MetapoolUnderlyingStyle` discriminant (1=STANDARD, 2=REDEMPTION,
-/// 3=PRECISION_VP).
+/// `MetapoolUnderlyingDyCalculator.calculate`). `underlying_style` selects the
+/// underlying walk's rate/conversion tuple.
 fn calculate_metapool_underlying_dy(
     i: usize,
     j: usize,
     dx: U256,
     inputs: &DyCalculationInputs,
-    underlying_style: u8,
+    underlying_style: MetapoolUnderlyingStyle,
     base: &dyn CurveBasePoolPort,
 ) -> Result<U256, CurveSwapError> {
     // NB: underlying indices span BOTH the meta coins and the base-pool coins,
@@ -755,15 +795,14 @@ fn calculate_metapool_underlying_dy(
     let max_coin = inputs.n_coins.saturating_sub(1);
 
     let rates = match underlying_style {
-        1 => [inputs.rate_multipliers[0], vp],
-        2 => [
+        MetapoolUnderlyingStyle::Standard => [inputs.rate_multipliers[0], vp],
+        MetapoolUnderlyingStyle::Redemption => [
             inputs
                 .scaled_redemption_price
                 .ok_or(CurveSwapError::MissingValue("scaled_redemption_price"))?,
             vp,
         ],
-        3 => [inputs.precision, vp],
-        _ => return Err(CurveSwapError::UnknownStyle(underlying_style)),
+        MetapoolUnderlyingStyle::PrecisionVp => [inputs.precision, vp],
     };
 
     let xp = inputs
@@ -788,15 +827,16 @@ fn calculate_metapool_underlying_dy(
 
     let x = match base_i {
         None => match underlying_style {
-            2 => {
+            MetapoolUnderlyingStyle::Redemption => {
                 let rp = inputs
                     .scaled_redemption_price
                     .ok_or(CurveSwapError::MissingValue("scaled_redemption_price"))?;
                 cadd(xp[i], cdiv(cmul(dx, rp)?, inputs.precision)?)?
             }
-            3 => cadd(xp[i], dx)?,
-            1 => cadd(xp[i], cmul(dx, inputs.precision_multipliers[i])?)?,
-            _ => return Err(CurveSwapError::UnknownStyle(underlying_style)),
+            MetapoolUnderlyingStyle::PrecisionVp => cadd(xp[i], dx)?,
+            MetapoolUnderlyingStyle::Standard => {
+                cadd(xp[i], cmul(dx, inputs.precision_multipliers[i])?)?
+            }
         },
         Some(bi) => match base_j {
             // i is a base coin, j is the meta coin → deposit into the base pool.
@@ -837,7 +877,7 @@ fn calculate_metapool_underlying_dy(
     dy = csub(dy, cdiv(cmul(inputs.fee, dy)?, inputs.fee_denominator)?)?;
 
     match underlying_style {
-        2 => {
+        MetapoolUnderlyingStyle::Redemption => {
             if j == 0 {
                 let rp = inputs
                     .scaled_redemption_price
@@ -852,7 +892,7 @@ fn calculate_metapool_underlying_dy(
                 )?;
             }
         }
-        3 => {
+        MetapoolUnderlyingStyle::PrecisionVp => {
             // (PRECISION/VP conversion of coin 0 is the identity `//1e18`)
             if let Some(bj) = base_j {
                 dy = base.calc_withdraw_one_coin(
@@ -862,7 +902,7 @@ fn calculate_metapool_underlying_dy(
                 )?;
             }
         }
-        1 => {
+        MetapoolUnderlyingStyle::Standard => {
             if base_j.is_none() {
                 dy = cdiv(dy, inputs.precision_multipliers[meta_j])?;
             } else if let Some(bj) = base_j {
@@ -873,7 +913,6 @@ fn calculate_metapool_underlying_dy(
                 )?;
             }
         }
-        _ => return Err(CurveSwapError::UnknownStyle(underlying_style)),
     }
     Ok(dy)
 }
@@ -898,9 +937,7 @@ pub fn calculate_dy(
     if inputs.metapool {
         return calculate_metapool_dy(i, j, dx, inputs, inputs.metapool_rate_style);
     }
-    let style = SwapStyle::try_from_u8(inputs.swap_style)
-        .ok_or(CurveSwapError::UnknownStyle(inputs.swap_style))?;
-    match style {
+    match inputs.swap_style {
         SwapStyle::LiveAdminDynamic => {
             calculate_live_admin_dynamic_dy(i, j, dx, inputs, PrecisionMode::None)
         }
@@ -916,7 +953,7 @@ pub fn calculate_dy(
         | SwapStyle::NoOneFeeRate
         | SwapStyle::CyToken
         | SwapStyle::RateAdjustedNoOne => {
-            calculate_standard_dy(i, j, dx, inputs, standard_axes(style))
+            calculate_standard_dy(i, j, dx, inputs, standard_axes(inputs.swap_style))
         }
     }
 }

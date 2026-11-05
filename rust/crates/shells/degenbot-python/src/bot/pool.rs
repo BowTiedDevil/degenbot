@@ -2295,6 +2295,10 @@ mod tests {
     #![expect(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+    use degenbot_pools::{
+        DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle,
+        YDVariant, YVariant,
+    };
 
     /// The green path: a 3-tuple seed narrows onto the Rust row and serializes
     /// back through the same wire shape.
@@ -2454,11 +2458,11 @@ mod tests {
                     U256::from(2_000u64) * one_e18,
                 ],
                 update_block: 0,
-                swap_style: 0,
-                lending_rate_style: 0,
-                d_variant: 1,
-                y_variant: 1,
-                yd_variant: 1,
+                swap_style: SwapStyle::Standard,
+                lending_rate_style: LendingRateStyle::None,
+                d_variant: DVariant::Standard,
+                y_variant: YVariant::Standard,
+                yd_variant: YDVariant::Standard,
                 base_pool: None,
                 initial_a_coefficient: None,
                 future_a_coefficient: None,
@@ -2474,8 +2478,8 @@ mod tests {
                 use_lending: vec![false, false],
                 precision_multipliers: vec![one_e18, one_e18],
                 tokens_underlying: None,
-                metapool_rate_style: 0,
-                metapool_underlying_style: 0,
+                metapool_rate_style: MetapoolRateStyle::Standard,
+                metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
                 data_provider: None,
             })
             .expect("curve registration");
@@ -2571,7 +2575,9 @@ mod tests {
             assert_eq!(arm.fee(py).unwrap(), 4_000_000);
             assert_eq!(arm.a_coefficient(py).unwrap(), 10);
             assert_eq!(arm.admin_fee(py).unwrap(), 0);
-            assert_eq!(arm.swap_style(py).unwrap(), 0);
+            assert_eq!(arm.swap_style(py).unwrap(), 1); // STANDARD
+            assert_eq!(arm.y_variant(py).unwrap(), "STANDARD");
+            assert_eq!(arm.yd_variant(py).unwrap(), "STANDARD");
             assert!(!arm.has_data_provider(py).unwrap());
             assert!(arm.lp_token(py).unwrap().is_none());
             assert_eq!(arm.a_ramp(py).unwrap(), (None, None, None, None, None));
@@ -3060,45 +3066,53 @@ impl PyCurveView {
     }
 
     /// Curve `swap_style` discriminant (`PoolStrategies.swap_style.value`).
+    ///
+    /// The stored axis is typed in the core; this reader projects it back onto
+    /// the discriminant the Python enum's `.value` carries.
     #[getter]
     fn swap_style(&self, py: Python<'_>) -> PyResult<u8> {
-        self.identity(py, |id| id.swap_style)
+        self.identity(py, |id| id.swap_style as u8)
     }
 
     /// Curve `lending_rate_style` discriminant.
     #[getter]
     fn lending_rate_style(&self, py: Python<'_>) -> PyResult<u8> {
-        self.identity(py, |id| id.lending_rate_style)
+        self.identity(py, |id| id.lending_rate_style as u8)
     }
 
     /// Curve `d_variant` discriminant.
     #[getter]
     fn d_variant(&self, py: Python<'_>) -> PyResult<u8> {
-        self.identity(py, |id| id.d_variant)
+        self.identity(py, |id| id.d_variant as u8)
     }
 
-    /// Curve `y_variant` discriminant.
+    /// Curve `y_variant` member name (`"STANDARD"` / `"VARIANT_0"` /
+    /// `"VARIANT_1"`).
+    ///
+    /// A NAME, not the discriminant: the driver rebuilds its enum by name
+    /// (`YVariant[handle.y_variant]`), so the spelling the core hands back is
+    /// checked by the lookup instead of trusted as a byte.
     #[getter]
-    fn y_variant(&self, py: Python<'_>) -> PyResult<u8> {
-        self.identity(py, |id| id.y_variant)
+    fn y_variant(&self, py: Python<'_>) -> PyResult<&'static str> {
+        self.identity(py, |id| id.y_variant.name())
     }
 
-    /// Curve `yd_variant` discriminant.
+    /// Curve `yd_variant` member name (`"STANDARD"` / `"VARIANT_0"`).
     #[getter]
-    fn yd_variant(&self, py: Python<'_>) -> PyResult<u8> {
-        self.identity(py, |id| id.yd_variant)
+    fn yd_variant(&self, py: Python<'_>) -> PyResult<&'static str> {
+        self.identity(py, |id| id.yd_variant.name())
     }
 
     /// Curve `metapool_rate_style` discriminant.
     #[getter]
     fn metapool_rate_style(&self, py: Python<'_>) -> PyResult<u8> {
-        self.identity(py, |id| id.metapool_rate_style)
+        self.identity(py, |id| id.metapool_rate_style as u8)
     }
 
     /// Curve `metapool_underlying_style` discriminant.
     #[getter]
     fn metapool_underlying_style(&self, py: Python<'_>) -> PyResult<u8> {
-        self.identity(py, |id| id.metapool_underlying_style)
+        self.identity(py, |id| id.metapool_underlying_style as u8)
     }
 
     /// Curve base-pool address (EIP-55 checksummed). `None` for plain pools.

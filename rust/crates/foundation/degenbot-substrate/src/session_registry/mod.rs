@@ -218,6 +218,17 @@ impl PoolIdentity {
     }
 
     /// The family this identity belongs to, as the one family enum.
+    ///
+    /// This projection is TOTAL BY CONSTRUCTION rather than a table read: a
+    /// session identity is keyed BY registry family, so its own variant IS the
+    /// family — there is no variant→family choice left to own. The
+    /// identity-layer family table (the core's
+    /// `degenbot_pools::state::capability` rows) is what the REGISTERED entry
+    /// reads, and a session identity is minted from that answer
+    /// ([`PoolIdentity::for_address_family`]); the two can only disagree if a
+    /// session identity is built by hand, which the registry's get-or-create
+    /// seam does not allow. `tests/session_registry.rs` pins the agreement over
+    /// the whole closed set.
     #[must_use]
     pub const fn registered_family(&self) -> RegisteredPoolFamily {
         match self {

@@ -16,6 +16,10 @@ use crate::{
 };
 use degenbot_core::fee::fee_fraction;
 use degenbot_pools::RegisteredPoolFamily;
+use degenbot_pools::{
+    DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle, YDVariant,
+    YVariant,
+};
 
 // ---------------------------------------------------------------------------
 // Params builders (one per family), mirroring the direct-entry tests.
@@ -78,11 +82,11 @@ fn curve_params(address: Address) -> RegisterCurvePoolParams {
         rate_multipliers: vec![U256::from(1u64), U256::from(1u64)],
         balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
         update_block: 3,
-        swap_style: 1,
-        lending_rate_style: 1,
-        d_variant: 1,
-        y_variant: 1,
-        yd_variant: 1,
+        swap_style: SwapStyle::Standard,
+        lending_rate_style: LendingRateStyle::None,
+        d_variant: DVariant::Standard,
+        y_variant: YVariant::Standard,
+        yd_variant: YDVariant::Standard,
         base_pool: None,
         initial_a_coefficient: None,
         future_a_coefficient: None,
@@ -98,8 +102,8 @@ fn curve_params(address: Address) -> RegisterCurvePoolParams {
         use_lending: vec![false, false],
         precision_multipliers: vec![U256::from(1u64), U256::from(1u64)],
         tokens_underlying: None,
-        metapool_rate_style: 1,
-        metapool_underlying_style: 1,
+        metapool_rate_style: MetapoolRateStyle::Standard,
+        metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
         data_provider: None,
     }
 }

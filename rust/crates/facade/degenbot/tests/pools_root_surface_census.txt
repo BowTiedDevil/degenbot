@@ -83,6 +83,25 @@
 # holding those params can name it without an extra edge on the preset crate
 # (`degenbot-strategy`'s fixtures are that consumer).
 #
+# The 1075 -> 1084 review is the typed Curve axes + the identity-layer family
+# table. Two groups share the bump. (1) The seven Curve strategy axes
+# (`DVariant`, `LendingRateStyle`, `MetapoolRateStyle`, `MetapoolUnderlyingStyle`,
+# `SwapStyle`, `YDVariant`, `YVariant`) are re-exported from `degenbot-math`
+# because they are now the TYPES of the
+# `RegisterCurvePoolParams` / `CurvePoolIdentity` discriminant fields — the same
+# reason `DexVariant` is re-exported above: a consumer holding those params can
+# name an axis without a direct edge on the pure-math crate, and typing the
+# fields is what removed the four silent `try_from_u8(..).unwrap_or(Standard)`
+# decode fallbacks from `sim::curve_dy_io` and the two
+# `UnknownStyle(99)` placeholder refusals from `families::curve_stableswap`.
+# (2) `NoFamilyRow` is the refusal of the identity-layer family table's reverse
+# lookup (`TryFrom<(&RegisteredPoolFamily, bool)> for Family`), so a consumer
+# that only holds a registry family (the session identity, a crawl hop) reaches
+# the capability family through the one table rather than a private variant
+# match. The table's key (`FamilyKey`), its rows and the per-key projections stay
+# crate-private: the public doors are `Family::from_identity` and the reverse
+# `TryFrom`, which is why the count moves by the refusal alone.
+#
 # Regenerate: rg -n '^pub mod' rust/crates/foundation/degenbot-pools/src/lib.rs
 # plus the name count from `count_pub_items` in the gate.
 #

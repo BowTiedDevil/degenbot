@@ -55,7 +55,6 @@ pub(crate) fn project_curve(
 fn curve_refusal(refusal: curve_read::CaptureRefusal) -> MissingHopReason {
     match refusal {
         curve_read::CaptureRefusal::TooFewTokens => MissingHopReason::TooFewTokens,
-        curve_read::CaptureRefusal::UnknownVariant => MissingHopReason::UnknownVariant,
         curve_read::CaptureRefusal::OutOfRange => MissingHopReason::OutOfRange,
     }
 }
@@ -68,6 +67,10 @@ mod tests {
     use crate::{BotState, RegisterCurvePoolParams};
     use alloy::primitives::{Address, U256};
     use degenbot_pools::solve::{HopType, MixedPoolRef, ResolvedHop};
+    use degenbot_pools::{
+        DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle,
+        YDVariant, YVariant,
+    };
 
     // -----------------------------------------------------------------
     // Per-family projection tests: `project_curve`
@@ -88,8 +91,8 @@ mod tests {
         addr_byte: u8,
         balance0: u128,
         balance1: u128,
-        y_variant: u8,
-        d_variant: u8,
+        y_variant: YVariant,
+        d_variant: DVariant,
     ) -> u64 {
         let one_e18 = U256::from(10u64).pow(U256::from(18u64));
         let precision = one_e18;
@@ -106,11 +109,11 @@ mod tests {
                 U256::from(balance1) * one_e18,
             ],
             update_block: 0,
-            swap_style: 0,         // STANDARD
-            lending_rate_style: 0, // NONE
+            swap_style: SwapStyle::Standard,            // STANDARD
+            lending_rate_style: LendingRateStyle::None, // NONE
             d_variant,
             y_variant,
-            yd_variant: 1,
+            yd_variant: YDVariant::Standard,
             base_pool: None,
             initial_a_coefficient: None,
             future_a_coefficient: None,
@@ -126,8 +129,8 @@ mod tests {
             use_lending: vec![false, false],
             precision_multipliers: vec![precision, precision],
             tokens_underlying: None,
-            metapool_rate_style: 0,
-            metapool_underlying_style: 0,
+            metapool_rate_style: MetapoolRateStyle::Standard,
+            metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
             data_provider: None,
         })
         .expect("curve registration")
@@ -136,7 +139,14 @@ mod tests {
     #[test]
     fn project_curve_builds_rate_adjusted_xp_hop() {
         let mut core = BotState::new();
-        let cr_id = register_curve(&mut core, 0xd1, 1000, 2000, 1, 1);
+        let cr_id = register_curve(
+            &mut core,
+            0xd1,
+            1000,
+            2000,
+            YVariant::Standard,
+            DVariant::Standard,
+        );
 
         let (hop, _) = project_curve(&core, &cr_ref(cr_id, true)).unwrap();
         let ResolvedHop::CurveStableswap { state: s } = hop else {
@@ -170,14 +180,6 @@ mod tests {
                 .expect("state")
                 .state_nonce
         );
-    }
-
-    #[test]
-    fn project_curve_unknown_variant_byte_is_unknown_variant() {
-        let mut core = BotState::new();
-        let cr_id = register_curve(&mut core, 0xd2, 1000, 2000, 9, 1);
-        let reason = project_curve(&core, &cr_ref(cr_id, true)).unwrap_err();
-        assert_eq!(reason, MissingHopReason::UnknownVariant);
     }
 
     #[test]

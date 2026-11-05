@@ -64,7 +64,10 @@ use degenbot_pools::RegisterV2PoolParams;
 use degenbot_pools::RegisterV3PoolParams;
 use degenbot_pools::RegisteredPoolFamily;
 use degenbot_pools::SpecRefusal;
-use degenbot_pools::{RegisterV4PoolParams, V4PoolKey};
+use degenbot_pools::{
+    DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, RegisterV4PoolParams,
+    SwapStyle, V4PoolKey, YDVariant, YVariant,
+};
 use degenbot_substrate::{PoolLookup, PoolRegistration};
 use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
@@ -2649,7 +2652,10 @@ impl PyBot {
     ///
     /// Raises:
     ///     `ValueError`: If the pool address is malformed or already
-    ///         registered, or the list lengths mismatch.
+    ///         registered, the list lengths mismatch, or a strategy
+    ///         discriminant names no axis (the seven `PoolStrategies` bytes are
+    ///         decoded here, the one boundary that receives them, so the core
+    ///         stores typed axes and never a guessed default).
     #[expect(clippy::too_many_arguments)]
     // `y_variant` / `yd_variant` carry the public Python kwargs' names, which
     // in turn mirror the `resolve_y_variant` / `resolve_yd_variant`
@@ -2667,11 +2673,11 @@ impl PyBot {
         rate_multipliers,
         balances,
         update_block,
-        swap_style=0,
-        lending_rate_style=0,
-        d_variant=0,
-        y_variant=0,
-        yd_variant=0,
+        swap_style=1,
+        lending_rate_style=1,
+        d_variant=1,
+        y_variant=1,
+        yd_variant=1,
         base_pool=None,
         initial_a_coefficient=None,
         future_a_coefficient=None,
@@ -2761,11 +2767,15 @@ impl PyBot {
             rate_multipliers: rate_mults,
             balances: bal_vals,
             update_block,
-            swap_style,
-            lending_rate_style,
-            d_variant,
-            y_variant,
-            yd_variant,
+            swap_style: curve_axis(swap_style, "swap_style", SwapStyle::try_from_u8)?,
+            lending_rate_style: curve_axis(
+                lending_rate_style,
+                "lending_rate_style",
+                LendingRateStyle::try_from_u8,
+            )?,
+            d_variant: curve_axis(d_variant, "d_variant", DVariant::try_from_u8)?,
+            y_variant: curve_axis(y_variant, "y_variant", YVariant::try_from_u8)?,
+            yd_variant: curve_axis(yd_variant, "yd_variant", YDVariant::try_from_u8)?,
             base_pool: base,
             initial_a_coefficient,
             future_a_coefficient,
@@ -2781,8 +2791,16 @@ impl PyBot {
             use_lending: use_lend,
             precision_multipliers: prec_mults,
             tokens_underlying: tokens_under,
-            metapool_rate_style,
-            metapool_underlying_style,
+            metapool_rate_style: curve_axis(
+                metapool_rate_style,
+                "metapool_rate_style",
+                MetapoolRateStyle::try_from_u8,
+            )?,
+            metapool_underlying_style: curve_axis(
+                metapool_underlying_style,
+                "metapool_underlying_style",
+                MetapoolUnderlyingStyle::try_from_u8,
+            )?,
             data_provider: data_provider
                 .map(|b| crate::bot::pool::make_curve_data_provider(b.unbind())),
         };
@@ -3260,6 +3278,19 @@ fn extract_checked_bitmap_words(
         })?);
     }
     Ok(out)
+}
+
+/// Decode one stored Curve strategy byte into its typed axis.
+///
+/// The byte is the Python enum's `auto()` discriminant — a value the caller
+/// received from the same declaration, never a guess. An unmapped byte names no
+/// axis, so it is refused here, at the one boundary that receives bytes, rather
+/// than carried into the core where a silent `Standard` fallback would price a
+/// pool with axes it never declared.
+fn curve_axis<T>(byte: u8, axis: &'static str, decode: fn(u8) -> Option<T>) -> PyResult<T> {
+    decode(byte).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!("unknown Curve {axis} discriminant {byte}"))
+    })
 }
 
 fn parse_address(s: &str) -> PyResult<Address> {

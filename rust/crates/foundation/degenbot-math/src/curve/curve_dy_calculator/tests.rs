@@ -48,10 +48,10 @@ fn inputs() -> DyCalculationInputs {
         d_variant: DVariant::Standard,
         y_variant: YVariant::Standard,
         a_precision: A_PREC,
-        swap_style: 1,
+        swap_style: SwapStyle::Standard,
         metapool: false,
-        metapool_rate_style: 1,
-        metapool_underlying_style: 1,
+        metapool_rate_style: MetapoolRateStyle::Standard,
+        metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
         d: None,
         gamma: None,
         price_scale: None,
@@ -84,7 +84,7 @@ fn swap_fixture() -> DyCalculationInputs {
 #[test]
 fn standard_style_matches_oracle() {
     let mut i = swap_fixture();
-    i.swap_style = 1; // STANDARD
+    i.swap_style = SwapStyle::Standard; // STANDARD
     assert_eq!(
         calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(339_176_146_955_799_262u64)
@@ -96,7 +96,7 @@ fn rate_adjusted_equals_standard_fee_ordering() {
     // Fee-then-rate and rate-then-fee are mathematically equivalent; they
     // differ only by integer-floor rounding residue, and here they coincide.
     let mut i = swap_fixture();
-    i.swap_style = 2; // RATE_ADJUSTED (RATE_THEN_FEE)
+    i.swap_style = SwapStyle::RateAdjusted; // RATE_ADJUSTED (RATE_THEN_FEE)
     assert_eq!(
         calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(339_176_146_955_799_262u64)
@@ -107,7 +107,7 @@ fn rate_adjusted_equals_standard_fee_ordering() {
 fn raw_balance_style_differs_from_rate_adjusted() {
     // RAW_BALANCE uses the raw reserves with identity rates + fee-only.
     let mut i = swap_fixture();
-    i.swap_style = 3; // RAW_BALANCE
+    i.swap_style = SwapStyle::RawBalance; // RAW_BALANCE
     assert_eq!(
         calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(504_173_682_256_068_734u64)
@@ -117,7 +117,7 @@ fn raw_balance_style_differs_from_rate_adjusted() {
 #[test]
 fn live_admin_uses_rate_multipliers_source() {
     let mut i = swap_fixture();
-    i.swap_style = 5; // LIVE_ADMIN (rate_source = RATE_MULTIPLIERS)
+    i.swap_style = SwapStyle::LiveAdmin; // LIVE_ADMIN (rate_source = RATE_MULTIPLIERS)
     assert_eq!(
         calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(508_764_220_433_698_893u64)
@@ -128,9 +128,9 @@ fn live_admin_uses_rate_multipliers_source() {
 fn no_one_fee_rate_skips_subtract_one() {
     // Plain fixture (rate = 1e18) so the -1 survives; NO_ONE adds it back.
     let mut i = inputs();
-    i.swap_style = 1; // STANDARD
+    i.swap_style = SwapStyle::Standard; // STANDARD
     let standard = calculate_dy(0, 1, ONE, &i).unwrap();
-    i.swap_style = 9; // NO_ONE_FEE_RATE
+    i.swap_style = SwapStyle::NoOneFeeRate; // NO_ONE_FEE_RATE
     assert_eq!(
         calculate_dy(0, 1, ONE, &i).unwrap(),
         standard + U256::from(1u8)
@@ -140,7 +140,7 @@ fn no_one_fee_rate_skips_subtract_one() {
 #[test]
 fn cytoken_equals_standard() {
     let mut i = swap_fixture();
-    i.swap_style = 10; // CYTOKEN — identical arithmetic to STANDARD
+    i.swap_style = SwapStyle::CyToken; // CYTOKEN — identical arithmetic to STANDARD
     assert_eq!(
         calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(339_176_146_955_799_262u64)
@@ -154,7 +154,7 @@ fn cytoken_equals_standard() {
 #[test]
 fn live_dynamic_none_offpeg_fee() {
     let mut i = inputs();
-    i.swap_style = 6; // LIVE_ADMIN_DYNAMIC (precision_mode NONE)
+    i.swap_style = SwapStyle::LiveAdminDynamic; // LIVE_ADMIN_DYNAMIC (precision_mode NONE)
     i.effective_balances = Some(vec![U256::from(2_999u64) * ONE, U256::from(5_998u64) * ONE]);
     assert_eq!(
         calculate_dy(0, 1, ONE, &i).unwrap(),
@@ -165,7 +165,7 @@ fn live_dynamic_none_offpeg_fee() {
 #[test]
 fn live_dynamic_precision_multipliers() {
     let mut i = inputs();
-    i.swap_style = 7; // LIVE_ADMIN_DYNAMIC_PRECISION
+    i.swap_style = SwapStyle::LiveAdminDynamicPrecision; // LIVE_ADMIN_DYNAMIC_PRECISION
     i.balances = vec![U256::from(3_000_000u64), U256::from(6_000_000u64)];
     i.effective_balances = Some(vec![U256::from(3_000_000u64), U256::from(6_000_000u64)]);
     i.precision_multipliers = vec![
@@ -187,7 +187,7 @@ fn live_dynamic_precision_multipliers() {
 fn crypto_fixture() -> DyCalculationInputs {
     let mut i = inputs();
     i.n_coins = 3;
-    i.swap_style = 4; // CRYPTO
+    i.swap_style = SwapStyle::Crypto; // CRYPTO
     i.fee = U256::ZERO;
     i.balances = vec![
         U256::from(10u64).pow(U256::from(12u64)),
@@ -250,7 +250,7 @@ fn metapool_fixture() -> DyCalculationInputs {
 fn metapool_standard_rate_style() {
     let mut i = metapool_fixture();
     i.metapool = true;
-    i.metapool_rate_style = 1; // STANDARD
+    i.metapool_rate_style = MetapoolRateStyle::Standard; // STANDARD
     assert_eq!(
         calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(961_074_000_134_304_340u64)
@@ -263,7 +263,7 @@ fn metapool_precision_vp_rate_style() {
     // here so it coincides with STANDARD.
     let mut i = metapool_fixture();
     i.metapool = true;
-    i.metapool_rate_style = 2; // PRECISION_VP
+    i.metapool_rate_style = MetapoolRateStyle::PrecisionVp; // PRECISION_VP
     assert_eq!(
         calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(961_074_000_134_304_340u64)
@@ -274,7 +274,7 @@ fn metapool_precision_vp_rate_style() {
 fn metapool_redemption_vp_rate_style() {
     let mut i = metapool_fixture();
     i.metapool = true;
-    i.metapool_rate_style = 3; // REDEMPTION_VP
+    i.metapool_rate_style = MetapoolRateStyle::RedemptionVp; // REDEMPTION_VP
     assert_eq!(
         calculate_dy(0, 1, ONE, &i).unwrap(),
         U256::from(970_515_793_492_844_491u64)
@@ -319,7 +319,7 @@ fn underlying_delegates_when_both_coins_are_base_pool_coins() {
     // calculator returns the base pool's get_dy verbatim.
     let mut i = metapool_fixture();
     i.n_coins = 2;
-    i.metapool_underlying_style = 1; // STANDARD
+    i.metapool_underlying_style = MetapoolUnderlyingStyle::Standard; // STANDARD
     assert_eq!(
         calculate_dy_underlying(1, 2, ONE, &i, &StubBasePool).unwrap(),
         U256::from(987_654_321u64)
@@ -406,14 +406,79 @@ fn amp_resolves_variant0_divisor() {
     );
 }
 
+/// Every axis byte is decoded ONCE, at the boundary that receives it (the
+/// `PyO3` registration door / the `curve_dy` setter), so the calculator's
+/// dispatch is exhaustive over the enums and an unmapped byte is refused where
+/// it arrives instead of reaching a style arm.
 #[test]
-fn unknown_style_is_rejected() {
-    let mut i = inputs();
-    i.swap_style = 99;
-    assert_eq!(
-        calculate_dy(0, 1, ONE, &i).unwrap_err(),
-        CurveSwapError::UnknownStyle(99)
-    );
+fn style_discriminants_round_trip_through_the_stored_byte() {
+    for style in [
+        SwapStyle::Standard,
+        SwapStyle::RateAdjusted,
+        SwapStyle::RawBalance,
+        SwapStyle::Crypto,
+        SwapStyle::LiveAdmin,
+        SwapStyle::LiveAdminDynamic,
+        SwapStyle::LiveAdminDynamicPrecision,
+        SwapStyle::LiveAdminOracle,
+        SwapStyle::NoOneFeeRate,
+        SwapStyle::CyToken,
+        SwapStyle::RateAdjustedNoOne,
+    ] {
+        assert_eq!(
+            SwapStyle::try_from_u8(style as u8),
+            Some(style),
+            "{style:?}"
+        );
+    }
+    for lending in [
+        LendingRateStyle::None,
+        LendingRateStyle::Ctoken,
+        LendingRateStyle::Ytoken,
+        LendingRateStyle::CyToken,
+        LendingRateStyle::Aeth,
+        LendingRateStyle::Reth,
+        LendingRateStyle::Oracle,
+    ] {
+        assert_eq!(
+            LendingRateStyle::try_from_u8(lending as u8),
+            Some(lending),
+            "{lending:?}"
+        );
+    }
+    for rate in [
+        MetapoolRateStyle::Standard,
+        MetapoolRateStyle::PrecisionVp,
+        MetapoolRateStyle::RedemptionVp,
+    ] {
+        assert_eq!(
+            MetapoolRateStyle::try_from_u8(rate as u8),
+            Some(rate),
+            "{rate:?}"
+        );
+    }
+    for underlying in [
+        MetapoolUnderlyingStyle::Standard,
+        MetapoolUnderlyingStyle::Redemption,
+        MetapoolUnderlyingStyle::PrecisionVp,
+    ] {
+        assert_eq!(
+            MetapoolUnderlyingStyle::try_from_u8(underlying as u8),
+            Some(underlying),
+            "{underlying:?}"
+        );
+    }
+
+    // Out of range: the Python `auto()` enums are 1-based, so 0 is not a style,
+    // and a byte past the declaration names nothing.
+    assert_eq!(SwapStyle::try_from_u8(0), None);
+    assert_eq!(SwapStyle::try_from_u8(12), None);
+    assert_eq!(LendingRateStyle::try_from_u8(0), None);
+    assert_eq!(LendingRateStyle::try_from_u8(8), None);
+    assert_eq!(MetapoolRateStyle::try_from_u8(0), None);
+    assert_eq!(MetapoolRateStyle::try_from_u8(4), None);
+    assert_eq!(MetapoolUnderlyingStyle::try_from_u8(0), None);
+    assert_eq!(MetapoolUnderlyingStyle::try_from_u8(4), None);
 }
 
 #[test]
@@ -452,7 +517,7 @@ fn gusd_3crv_inputs(vp: U256) -> DyCalculationInputs {
     i.amp = U256::from(100_000_u64); // a_coefficient 1000 x a_precision 100
     i.a_precision = A_PREC;
     i.metapool = true;
-    i.metapool_rate_style = 1; // STANDARD: rates = [rate_multipliers[0], vp]
+    i.metapool_rate_style = MetapoolRateStyle::Standard; // STANDARD: rates = [rate_multipliers[0], vp]
     i.virtual_price = Some(vp);
     i.scaled_redemption_price = None;
     i

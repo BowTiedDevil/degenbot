@@ -16,8 +16,8 @@
 
 use alloy::primitives::U256;
 use degenbot_math::curve::{
-    resolve_amp, resolve_ramping_a, ARampingParams, DVariant, DyCalculationInputs, SwapStyle,
-    YVariant,
+    resolve_amp, resolve_ramping_a, ARampingParams, DyCalculationInputs, LendingRateStyle,
+    SwapStyle,
 };
 
 use crate::sim::curve_data_provider::{CurveDataProvider, CurveDataProviderError};
@@ -27,9 +27,6 @@ use crate::state::curve_state::CurvePoolIdentity;
 const PRECISION: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 /// The swap-fee denominator (1e10).
 const FEE_DENOMINATOR: U256 = U256::from_limbs([10_000_000_000, 0, 0, 0]);
-
-/// `LendingRateStyle` `NONE` discriminant (1-based `auto()`, matches Python).
-const LENDING_NONE: u8 = 1;
 
 /// The metapool base-virtual-price cache lifetime (600 s), mirroring the
 /// contract's `base_cache_updated + BASE_CACHE_EXPIRES` freshness test. This is
@@ -121,7 +118,7 @@ fn resolve_rates(
     provider: Option<&dyn CurveDataProvider>,
     block_number: u64,
 ) -> Result<Vec<U256>, CurveInputsError> {
-    if identity.lending_rate_style == LENDING_NONE {
+    if identity.lending_rate_style == LendingRateStyle::None {
         Ok(identity.rate_multipliers.to_vec())
     } else {
         let p = provider.ok_or(CurveInputsError::NoProvider("lending_rate"))?;
@@ -215,13 +212,13 @@ pub fn resolve_dy_inputs(
         block_timestamp,
     )
     .map_err(CurveInputsError::Swap)?;
-    let y_variant = YVariant::try_from_u8(identity.y_variant).unwrap_or(YVariant::Standard);
+    let y_variant = identity.y_variant;
     let amp = resolve_amp(raw_amp, U256::from(identity.a_precision), y_variant);
 
     let resolved_rates = resolve_rates(identity, provider, block_number)?;
     let xp_v = xp(&resolved_rates, pool_balances)?;
 
-    let swap_style = SwapStyle::try_from_u8(identity.swap_style).unwrap_or(SwapStyle::Standard);
+    let swap_style = identity.swap_style;
     let metapool = identity.base_pool.is_some();
 
     let mut inputs = DyCalculationInputs {
@@ -242,7 +239,7 @@ pub fn resolve_dy_inputs(
         block_number,
         block_timestamp,
         amp,
-        d_variant: DVariant::try_from_u8(identity.d_variant).unwrap_or(DVariant::Standard),
+        d_variant: identity.d_variant,
         y_variant,
         a_precision: U256::from(identity.a_precision),
         swap_style: identity.swap_style,

@@ -736,6 +736,10 @@ mod tests {
     #![expect(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use alloy::primitives::aliases::U112;
+    use degenbot_pools::{
+        DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle,
+        YDVariant, YVariant,
+    };
     use degenbot_pools::{V4PoolKey, V4_DYNAMIC_FEE_FLAG};
 
     /// The V2 door request the fixtures register through.
@@ -926,11 +930,11 @@ mod tests {
                 alloy::primitives::U256::from(1_000u64),
             ],
             update_block: 5,
-            swap_style: 0,
-            lending_rate_style: 0,
-            d_variant: 0,
-            y_variant: 0,
-            yd_variant: 0,
+            swap_style: SwapStyle::Standard,
+            lending_rate_style: LendingRateStyle::None,
+            d_variant: DVariant::Standard,
+            y_variant: YVariant::Standard,
+            yd_variant: YDVariant::Standard,
             base_pool: None,
             initial_a_coefficient: None,
             future_a_coefficient: None,
@@ -946,8 +950,8 @@ mod tests {
             use_lending: Vec::new(),
             precision_multipliers: Vec::new(),
             tokens_underlying: None,
-            metapool_rate_style: 1,
-            metapool_underlying_style: 1,
+            metapool_rate_style: MetapoolRateStyle::Standard,
+            metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
             data_provider: None,
         }
     }
@@ -1267,11 +1271,11 @@ mod tests {
                     alloy::primitives::U256::from(1_000u64),
                 ],
                 update_block: 5,
-                swap_style: 0,
-                lending_rate_style: 0,
-                d_variant: 0,
-                y_variant: 0,
-                yd_variant: 0,
+                swap_style: SwapStyle::Standard,
+                lending_rate_style: LendingRateStyle::None,
+                d_variant: DVariant::Standard,
+                y_variant: YVariant::Standard,
+                yd_variant: YDVariant::Standard,
                 base_pool: None,
                 initial_a_coefficient: None,
                 future_a_coefficient: None,
@@ -1287,8 +1291,8 @@ mod tests {
                 use_lending: Vec::new(),
                 precision_multipliers: Vec::new(),
                 tokens_underlying: None,
-                metapool_rate_style: 1,
-                metapool_underlying_style: 1,
+                metapool_rate_style: MetapoolRateStyle::Standard,
+                metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
                 data_provider: None,
             })))
             .expect("curve registers");

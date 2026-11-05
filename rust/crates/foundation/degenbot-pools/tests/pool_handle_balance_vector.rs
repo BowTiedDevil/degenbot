@@ -10,7 +10,10 @@ use degenbot_pools::state::balancer_weighted_state::{
     BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
 };
 use degenbot_pools::state::curve_state::{CurvePoolState, RegisterCurvePoolParams};
-use degenbot_pools::{BalanceVectorVariant, Identity, Pool, Structure};
+use degenbot_pools::{
+    BalanceVectorVariant, DVariant, Identity, LendingRateStyle, MetapoolRateStyle,
+    MetapoolUnderlyingStyle, Pool, Structure, SwapStyle, YDVariant, YVariant,
+};
 
 fn make_curve_pool() -> PoolEntry {
     let params = RegisterCurvePoolParams {
@@ -35,11 +38,11 @@ fn make_curve_pool() -> PoolEntry {
             U256::from(3_000_000_000u64),
         ],
         update_block: 100,
-        swap_style: 0,
-        lending_rate_style: 0,
-        d_variant: 0,
-        y_variant: 0,
-        yd_variant: 0,
+        swap_style: SwapStyle::Standard,
+        lending_rate_style: LendingRateStyle::None,
+        d_variant: DVariant::Standard,
+        y_variant: YVariant::Standard,
+        yd_variant: YDVariant::Standard,
         base_pool: None,
         initial_a_coefficient: None,
         future_a_coefficient: None,
@@ -59,8 +62,8 @@ fn make_curve_pool() -> PoolEntry {
             U256::from(1_000_000_000_000_000_000u64),
         ],
         tokens_underlying: None,
-        metapool_rate_style: 0,
-        metapool_underlying_style: 0,
+        metapool_rate_style: MetapoolRateStyle::Standard,
+        metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
         data_provider: None,
     };
     let (identity, state) = CurvePoolState::from_params(params, 8);
@@ -229,11 +232,11 @@ fn make_standard_curve_pool() -> PoolEntry {
         rate_multipliers: vec![U256::from(1_000_000_000_000_000_000u64); 2],
         balances: vec![U256::from(1_000_000_000_000_000_000u64); 2],
         update_block: 100,
-        swap_style: 1, // STANDARD
-        lending_rate_style: 0,
-        d_variant: 1, // STANDARD
-        y_variant: 1, // STANDARD
-        yd_variant: 1,
+        swap_style: SwapStyle::Standard, // STANDARD
+        lending_rate_style: LendingRateStyle::None,
+        d_variant: DVariant::Standard, // STANDARD
+        y_variant: YVariant::Standard, // STANDARD
+        yd_variant: YDVariant::Standard,
         base_pool: None,
         initial_a_coefficient: None,
         future_a_coefficient: None,
@@ -249,8 +252,8 @@ fn make_standard_curve_pool() -> PoolEntry {
         use_lending: vec![false; 2],
         precision_multipliers: vec![U256::from(1_000_000_000_000_000_000u64); 2],
         tokens_underlying: None,
-        metapool_rate_style: 0,
-        metapool_underlying_style: 0,
+        metapool_rate_style: MetapoolRateStyle::Standard,
+        metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
         data_provider: None,
     };
     let (identity, state) = CurvePoolState::from_params(params, 8);

@@ -27,7 +27,10 @@
 use alloy::primitives::U256;
 use degenbot::{BotState, RegisterCurvePoolParams};
 use degenbot_math::curve::curve_dy_calculator::{calculate_dy, DyCalculationInputs};
-use degenbot_math::curve::{DVariant, YVariant};
+use degenbot_math::curve::{
+    DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle, YDVariant,
+    YVariant,
+};
 
 /// Path to the shared Curve fixture (loaded by both this Rust test and the
 /// Python dual-driver test — HRT356, the single source of truth).
@@ -124,10 +127,16 @@ fn build_inputs(p: &ProbeInputs) -> DyCalculationInputs {
         d_variant: DVariant::try_from_u8(p.d_variant).expect("valid d_variant"),
         y_variant: YVariant::try_from_u8(p.y_variant).expect("valid y_variant"),
         a_precision: u256(&p.a_precision),
-        swap_style: p.swap_style,
+        // The probe fixture is recorded JSON, so its strategy axes arrive as the
+        // Python enums' discriminants; this is the one decode on the way in.
+        swap_style: SwapStyle::try_from_u8(p.swap_style).expect("valid swap_style"),
         metapool: p.metapool,
-        metapool_rate_style: p.metapool_rate_style,
-        metapool_underlying_style: p.metapool_underlying_style,
+        metapool_rate_style: MetapoolRateStyle::try_from_u8(p.metapool_rate_style)
+            .expect("valid metapool_rate_style"),
+        metapool_underlying_style: MetapoolUnderlyingStyle::try_from_u8(
+            p.metapool_underlying_style,
+        )
+        .expect("valid metapool_underlying_style"),
         d: None,
         gamma: None,
         price_scale: None,
@@ -196,11 +205,11 @@ fn standalone_rust_consumer_curve_get_dy_equals_recorded_constant() {
             rate_multipliers: u256_vec(&plain.inputs.rate_multipliers),
             balances: u256_vec(&plain.inputs.balances),
             update_block: 0,
-            swap_style: 1,         // STANDARD
-            lending_rate_style: 1, // NONE
-            d_variant: 1,
-            y_variant: 1,
-            yd_variant: 1,
+            swap_style: SwapStyle::Standard,            // STANDARD
+            lending_rate_style: LendingRateStyle::None, // NONE
+            d_variant: DVariant::Standard,
+            y_variant: YVariant::Standard,
+            yd_variant: YDVariant::Standard,
             base_pool: None,
             initial_a_coefficient: None,
             future_a_coefficient: None,
@@ -216,8 +225,8 @@ fn standalone_rust_consumer_curve_get_dy_equals_recorded_constant() {
             use_lending: Vec::new(),
             precision_multipliers: u256_vec(&plain.inputs.precision_multipliers),
             tokens_underlying: None,
-            metapool_rate_style: 1,
-            metapool_underlying_style: 1,
+            metapool_rate_style: MetapoolRateStyle::Standard,
+            metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
             data_provider: None,
         })
         .expect("curve registration");

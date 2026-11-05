@@ -30,6 +30,10 @@ use degenbot_decoders::revert::RevertClass;
 use degenbot_pools::sim::registry::PoolEntry;
 use degenbot_pools::sim::simulate_swap::simulate_swap;
 use degenbot_pools::state::curve_state::{CurvePoolState, RegisterCurvePoolParams};
+use degenbot_pools::{
+    DVariant, LendingRateStyle, MetapoolRateStyle, MetapoolUnderlyingStyle, SwapStyle, YDVariant,
+    YVariant,
+};
 
 pub mod evm2_fixture;
 
@@ -111,11 +115,11 @@ fn engine_curve_out(case: &CurveCase, zfo: bool, amount_in: U256) -> Option<U256
             rate_multipliers: case.rates.to_vec(),
             balances: case.balances.to_vec(),
             update_block: 100,
-            swap_style: 1, // STANDARD
-            lending_rate_style: 0,
-            d_variant: 1, // STANDARD
-            y_variant: 1, // STANDARD
-            yd_variant: 1,
+            swap_style: SwapStyle::Standard, // STANDARD
+            lending_rate_style: LendingRateStyle::None,
+            d_variant: DVariant::Standard, // STANDARD
+            y_variant: YVariant::Standard, // STANDARD
+            yd_variant: YDVariant::Standard,
             base_pool: None,
             initial_a_coefficient: None,
             future_a_coefficient: None,
@@ -131,8 +135,8 @@ fn engine_curve_out(case: &CurveCase, zfo: bool, amount_in: U256) -> Option<U256
             use_lending: vec![false; 2],
             precision_multipliers: vec![CURVE_PRECISION; 2],
             tokens_underlying: None,
-            metapool_rate_style: 0,
-            metapool_underlying_style: 0,
+            metapool_rate_style: MetapoolRateStyle::Standard,
+            metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
             data_provider: None,
         },
         8,

@@ -559,92 +559,214 @@ mod tests {
         assert_eq!(ct.lending_rate_style, LendingRateStyle::Ctoken);
     }
 
-    /// The discriminants a mapped address registers with, by address: the
-    /// stored bytes are deployed pool behavior, so a pool filed under the wrong
+    /// One row's four address-specific axes, in the order the fixture pins them
+    /// (`swap_style`, `lending_rate_style`, `metapool_rate_style`,
+    /// `metapool_underlying_style`). Typed, not bytes: the axes a resolved pool
+    /// carries ARE these enums, and the byte spelling is the enums' own
+    /// discriminants (`style_discriminants_round_trip_through_the_stored_byte`
+    /// in `degenbot-math` pins the encode/decode round trip).
+    type Axes = (
+        SwapStyle,
+        LendingRateStyle,
+        MetapoolRateStyle,
+        MetapoolUnderlyingStyle,
+    );
+
+    /// An unlisted address' axes — every axis' default, which is what the
+    /// resolver falls through to.
+    const DEFAULT_AXES: Axes = (
+        SwapStyle::Standard,
+        LendingRateStyle::None,
+        MetapoolRateStyle::Standard,
+        MetapoolUnderlyingStyle::Standard,
+    );
+
+    // One const per strategy group the address tables name, so a fixture row
+    // states WHICH group the pool belongs to rather than restating four enum
+    // members per address.
+    const METAPOOL_PRECISION_VP: Axes = (
+        SwapStyle::Standard,
+        LendingRateStyle::None,
+        MetapoolRateStyle::PrecisionVp,
+        MetapoolUnderlyingStyle::PrecisionVp,
+    );
+    const METAPOOL_REDEMPTION_VP: Axes = (
+        SwapStyle::Standard,
+        LendingRateStyle::None,
+        MetapoolRateStyle::RedemptionVp,
+        MetapoolUnderlyingStyle::Redemption,
+    );
+    const LIVE_ADMIN: Axes = (
+        SwapStyle::LiveAdmin,
+        LendingRateStyle::None,
+        MetapoolRateStyle::Standard,
+        MetapoolUnderlyingStyle::Standard,
+    );
+    const CRYPTO: Axes = (
+        SwapStyle::Crypto,
+        LendingRateStyle::None,
+        MetapoolRateStyle::Standard,
+        MetapoolUnderlyingStyle::Standard,
+    );
+    const RATE_ADJUSTED: Axes = (
+        SwapStyle::RateAdjusted,
+        LendingRateStyle::None,
+        MetapoolRateStyle::Standard,
+        MetapoolUnderlyingStyle::Standard,
+    );
+    const RAW_BALANCE: Axes = (
+        SwapStyle::RawBalance,
+        LendingRateStyle::None,
+        MetapoolRateStyle::Standard,
+        MetapoolUnderlyingStyle::Standard,
+    );
+    const LIVE_ADMIN_ORACLE: Axes = (
+        SwapStyle::LiveAdminOracle,
+        LendingRateStyle::Oracle,
+        MetapoolRateStyle::Standard,
+        MetapoolUnderlyingStyle::Standard,
+    );
+    const RATE_ADJUSTED_NO_ONE_CTOKEN: Axes = (
+        SwapStyle::RateAdjustedNoOne,
+        LendingRateStyle::Ctoken,
+        MetapoolRateStyle::Standard,
+        MetapoolUnderlyingStyle::Standard,
+    );
+    const RATE_ADJUSTED_NO_ONE: Axes = (
+        SwapStyle::RateAdjustedNoOne,
+        LendingRateStyle::None,
+        MetapoolRateStyle::Standard,
+        MetapoolUnderlyingStyle::Standard,
+    );
+    const CYTOKEN: Axes = (
+        SwapStyle::CyToken,
+        LendingRateStyle::CyToken,
+        MetapoolRateStyle::Standard,
+        MetapoolUnderlyingStyle::Standard,
+    );
+    const RATE_ADJUSTED_YTOKEN: Axes = (
+        SwapStyle::RateAdjusted,
+        LendingRateStyle::Ytoken,
+        MetapoolRateStyle::Standard,
+        MetapoolUnderlyingStyle::Standard,
+    );
+    const RATE_ADJUSTED_NO_ONE_YTOKEN: Axes = (
+        SwapStyle::RateAdjustedNoOne,
+        LendingRateStyle::Ytoken,
+        MetapoolRateStyle::Standard,
+        MetapoolUnderlyingStyle::Standard,
+    );
+    const NO_ONE_FEE_RATE_AETH: Axes = (
+        SwapStyle::NoOneFeeRate,
+        LendingRateStyle::Aeth,
+        MetapoolRateStyle::Standard,
+        MetapoolUnderlyingStyle::Standard,
+    );
+    const NO_ONE_FEE_RATE_RETH: Axes = (
+        SwapStyle::NoOneFeeRate,
+        LendingRateStyle::Reth,
+        MetapoolRateStyle::Standard,
+        MetapoolUnderlyingStyle::Standard,
+    );
+    const LIVE_ADMIN_DYNAMIC: Axes = (
+        SwapStyle::LiveAdminDynamic,
+        LendingRateStyle::None,
+        MetapoolRateStyle::Standard,
+        MetapoolUnderlyingStyle::Standard,
+    );
+    const LIVE_ADMIN_DYNAMIC_PRECISION: Axes = (
+        SwapStyle::LiveAdminDynamicPrecision,
+        LendingRateStyle::None,
+        MetapoolRateStyle::Standard,
+        MetapoolUnderlyingStyle::Standard,
+    );
+
+    /// The axes a mapped address registers with, by address: the stored
+    /// discriminants are deployed pool behavior, so a pool filed under the wrong
     /// strategy group must fail here rather than re-register differently.
     // One row per address reads as the table it pins; a vertical rustfmt pass
     // would bury the pairing in 270 lines of punctuation.
     #[rustfmt::skip]
-    const REGISTERED_DISCRIMINANTS: &[(Address, [u8; 4])] = &[
-        (address!("0xC61557C5d177bd7DC889A3b621eEC333e168f68A"), [1, 1, 2, 3]),
-        (address!("0x4606326b4Db89373F5377C316d3b0F6e55Bc6A20"), [1, 1, 2, 3]),
-        (address!("0x618788357D0EBd8A37e763ADab3bc575D54c2C7d"), [1, 1, 3, 2]),
-        (address!("0x4e0915C88bC70750D68C481540F081fEFaF22273"), [5, 1, 1, 1]),
-        (address!("0x1005F7406f32a61BD760CfA14aCCd2737913d546"), [5, 1, 1, 1]),
-        (address!("0x6A274dE3e2462c7614702474D64d376729831dCa"), [5, 1, 1, 1]),
-        (address!("0xb9446c4Ef5EBE66268dA6700D26f96273DE3d571"), [5, 1, 1, 1]),
-        (address!("0x3Fb78e61784C9c637D560eDE23Ad57CA1294c14a"), [5, 1, 1, 1]),
-        (address!("0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"), [4, 1, 1, 1]),
-        (address!("0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F"), [2, 1, 1, 1]),
-        (address!("0x7fC77b5c7614E1533320Ea6DDc2Eb61fa00A9714"), [2, 1, 1, 1]),
-        (address!("0x93054188d876f558f4a66B2EF1d97d16eDf0895B"), [2, 1, 1, 1]),
-        (address!("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"), [2, 1, 1, 1]),
-        (address!("0x0Ce6a5fF5217e38315f87032CF90686C96627CAA"), [1, 1, 1, 1]),
-        (address!("0x19b080FE1ffA0553469D20Ca36219F17Fcf03859"), [1, 1, 1, 1]),
-        (address!("0x1C5F80b6B68A9E1Ef25926EeE00b5255791b996B"), [1, 1, 1, 1]),
-        (address!("0x1F6bb2a7a2A84d08bb821B89E38cA651175aeDd4"), [1, 1, 1, 1]),
-        (address!("0x21B45B2c1C53fDFe378Ed1955E8Cc29aE8cE0132"), [1, 1, 1, 1]),
-        (address!("0x3CFAa1596777CAD9f5004F9a0c443d912E262243"), [1, 1, 1, 1]),
-        (address!("0x3F1B0278A9ee595635B61817630cC19DE792f506"), [1, 1, 1, 1]),
-        (address!("0x4424b4A37ba0088D8a718b8fc2aB7952C7e695F5"), [1, 1, 1, 1]),
-        (address!("0x602a9Abb10582768Fd8a9f13aD6316Ac2A5A2e2B"), [1, 1, 1, 1]),
-        (address!("0x8461A004b50d321CB22B7d034969cE6803911899"), [1, 1, 1, 1]),
-        (address!("0x857110B5f8eFD66CC3762abb935315630AC770B5"), [1, 1, 1, 1]),
-        (address!("0x8818a9bb44Fbf33502bE7c15c500d0C783B73067"), [1, 1, 1, 1]),
-        (address!("0x9c2C8910F113181783c249d8F6Aa41b51Cde0f0c"), [1, 1, 1, 1]),
-        (address!("0xa1F8A6807c402E4A15ef4EBa36528A3FED24E577"), [1, 1, 1, 1]),
-        (address!("0xaE34574AC03A15cd58A92DC79De7B1A0800F1CE3"), [1, 1, 1, 1]),
-        (address!("0xAf25fFe6bA5A8a29665adCfA6D30C5Ae56CA0Cd3"), [1, 1, 1, 1]),
-        (address!("0xBa3436Fd341F2C8A928452Db3C5A3670d1d5Cc73"), [1, 1, 1, 1]),
-        (address!("0xbB2dC673E1091abCA3eaDB622b18f6D4634b2CD9"), [1, 1, 1, 1]),
-        (address!("0xc5424B857f758E906013F3555Dad202e4bdB4567"), [1, 1, 1, 1]),
-        (address!("0xc8a7C1c4B748970F57cA59326BcD49F5c9dc43E3"), [1, 1, 1, 1]),
-        (address!("0xcbD5cC53C5b846671C6434Ab301AD4d210c21184"), [1, 1, 1, 1]),
-        (address!("0xD6Ac1CB9019137a896343Da59dDE6d097F710538"), [1, 1, 1, 1]),
-        (address!("0xD7C10449A6D134A9ed37e2922F8474EAc6E5c100"), [1, 1, 1, 1]),
-        (address!("0xDC24316b9AE028F1497c275EB9192a3Ea0f67022"), [1, 1, 1, 1]),
-        (address!("0xDcEF968d416a41Cdac0ED8702fAC8128A64241A2"), [1, 1, 1, 1]),
-        (address!("0xe7A3b38c39F97E977723bd1239C3470702568e7B"), [1, 1, 1, 1]),
-        (address!("0xf083FBa98dED0f9C970e5a418500bad08D8b9732"), [1, 1, 1, 1]),
-        (address!("0xF178C0b5Bb7e7aBF4e12A4838C7b7c5bA2C623c0"), [1, 1, 1, 1]),
-        (address!("0xf253f83AcA21aAbD2A20553AE0BF7F65C755A07F"), [1, 1, 1, 1]),
-        (address!("0xfC8c34a3B3CFE1F1Dd6DBCCEC4BC5d3103b80FF0"), [1, 1, 1, 1]),
-        (address!("0xFD5dB7463a3aB53fD211b4af195c5BCCC1A03890"), [1, 1, 1, 1]),
-        (address!("0x04c90C198b2eFF55716079bc06d7CCc4aa4d7512"), [3, 1, 1, 1]),
-        (address!("0x320B564Fb9CF36933eC507a846ce230008631fd3"), [3, 1, 1, 1]),
-        (address!("0x48fF31bBbD8Ab553Ebe7cBD84e1eA3dBa8f54957"), [3, 1, 1, 1]),
-        (address!("0x55A8a39bc9694714E2874c1ce77aa1E599461E18"), [3, 1, 1, 1]),
-        (address!("0x875DF0bA24ccD867f8217593ee27253280772A97"), [3, 1, 1, 1]),
-        (address!("0x9D0464996170c6B9e75eED71c68B99dDEDf279e8"), [3, 1, 1, 1]),
-        (address!("0xBaaa1F5DbA42C3389bDbc2c9D2dE134F5cD0Dc89"), [3, 1, 1, 1]),
-        (address!("0xDa5B670CcD418a187a3066674A8002Adc9356Ad1"), [3, 1, 1, 1]),
-        (address!("0xf03bD3cfE85f00bF5819AC20f0870cE8a8d1F0D8"), [3, 1, 1, 1]),
-        (address!("0xFB9a265b5a1f52d97838Ec7274A0b1442efAcC87"), [3, 1, 1, 1]),
-        (address!("0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492"), [8, 7, 1, 1]),
-        (address!("0xBfAb6FA95E0091ed66058ad493189D2cB29385E6"), [8, 7, 1, 1]),
-        (address!("0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C"), [11, 2, 1, 1]),
-        (address!("0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56"), [11, 2, 1, 1]),
-        (address!("0xA5407eAE9Ba41422680e2e00537571bcC53efBfD"), [11, 1, 1, 1]),
-        (address!("0x2dded6Da1BF5DBdF597C45fcFaa3194e53EcfeAF"), [10, 4, 1, 1]),
-        (address!("0x06364f10B501e868329afBc005b3492902d6C763"), [2, 3, 1, 1]),
-        (address!("0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51"), [11, 3, 1, 1]),
-        (address!("0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27"), [11, 3, 1, 1]),
-        (address!("0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2"), [9, 5, 1, 1]),
-        (address!("0xF9440930043eb3997fc70e1339dBb11F341de7A8"), [9, 6, 1, 1]),
-        (address!("0xEB16Ae0052ed37f479f7fe63849198Df1765a733"), [6, 1, 1, 1]),
-        (address!("0xDeBF20617708857ebe4F679508E7b7863a8A8EeE"), [7, 1, 1, 1]),
+    const REGISTERED_DISCRIMINANTS: &[(Address, Axes)] = &[
+        (address!("0xC61557C5d177bd7DC889A3b621eEC333e168f68A"), METAPOOL_PRECISION_VP),
+        (address!("0x4606326b4Db89373F5377C316d3b0F6e55Bc6A20"), METAPOOL_PRECISION_VP),
+        (address!("0x618788357D0EBd8A37e763ADab3bc575D54c2C7d"), METAPOOL_REDEMPTION_VP),
+        (address!("0x4e0915C88bC70750D68C481540F081fEFaF22273"), LIVE_ADMIN),
+        (address!("0x1005F7406f32a61BD760CfA14aCCd2737913d546"), LIVE_ADMIN),
+        (address!("0x6A274dE3e2462c7614702474D64d376729831dCa"), LIVE_ADMIN),
+        (address!("0xb9446c4Ef5EBE66268dA6700D26f96273DE3d571"), LIVE_ADMIN),
+        (address!("0x3Fb78e61784C9c637D560eDE23Ad57CA1294c14a"), LIVE_ADMIN),
+        (address!("0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"), CRYPTO),
+        (address!("0x4CA9b3063Ec5866A4B82E437059D2C43d1be596F"), RATE_ADJUSTED),
+        (address!("0x7fC77b5c7614E1533320Ea6DDc2Eb61fa00A9714"), RATE_ADJUSTED),
+        (address!("0x93054188d876f558f4a66B2EF1d97d16eDf0895B"), RATE_ADJUSTED),
+        (address!("0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7"), RATE_ADJUSTED),
+        (address!("0x0Ce6a5fF5217e38315f87032CF90686C96627CAA"), DEFAULT_AXES),
+        (address!("0x19b080FE1ffA0553469D20Ca36219F17Fcf03859"), DEFAULT_AXES),
+        (address!("0x1C5F80b6B68A9E1Ef25926EeE00b5255791b996B"), DEFAULT_AXES),
+        (address!("0x1F6bb2a7a2A84d08bb821B89E38cA651175aeDd4"), DEFAULT_AXES),
+        (address!("0x21B45B2c1C53fDFe378Ed1955E8Cc29aE8cE0132"), DEFAULT_AXES),
+        (address!("0x3CFAa1596777CAD9f5004F9a0c443d912E262243"), DEFAULT_AXES),
+        (address!("0x3F1B0278A9ee595635B61817630cC19DE792f506"), DEFAULT_AXES),
+        (address!("0x4424b4A37ba0088D8a718b8fc2aB7952C7e695F5"), DEFAULT_AXES),
+        (address!("0x602a9Abb10582768Fd8a9f13aD6316Ac2A5A2e2B"), DEFAULT_AXES),
+        (address!("0x8461A004b50d321CB22B7d034969cE6803911899"), DEFAULT_AXES),
+        (address!("0x857110B5f8eFD66CC3762abb935315630AC770B5"), DEFAULT_AXES),
+        (address!("0x8818a9bb44Fbf33502bE7c15c500d0C783B73067"), DEFAULT_AXES),
+        (address!("0x9c2C8910F113181783c249d8F6Aa41b51Cde0f0c"), DEFAULT_AXES),
+        (address!("0xa1F8A6807c402E4A15ef4EBa36528A3FED24E577"), DEFAULT_AXES),
+        (address!("0xaE34574AC03A15cd58A92DC79De7B1A0800F1CE3"), DEFAULT_AXES),
+        (address!("0xAf25fFe6bA5A8a29665adCfA6D30C5Ae56CA0Cd3"), DEFAULT_AXES),
+        (address!("0xBa3436Fd341F2C8A928452Db3C5A3670d1d5Cc73"), DEFAULT_AXES),
+        (address!("0xbB2dC673E1091abCA3eaDB622b18f6D4634b2CD9"), DEFAULT_AXES),
+        (address!("0xc5424B857f758E906013F3555Dad202e4bdB4567"), DEFAULT_AXES),
+        (address!("0xc8a7C1c4B748970F57cA59326BcD49F5c9dc43E3"), DEFAULT_AXES),
+        (address!("0xcbD5cC53C5b846671C6434Ab301AD4d210c21184"), DEFAULT_AXES),
+        (address!("0xD6Ac1CB9019137a896343Da59dDE6d097F710538"), DEFAULT_AXES),
+        (address!("0xD7C10449A6D134A9ed37e2922F8474EAc6E5c100"), DEFAULT_AXES),
+        (address!("0xDC24316b9AE028F1497c275EB9192a3Ea0f67022"), DEFAULT_AXES),
+        (address!("0xDcEF968d416a41Cdac0ED8702fAC8128A64241A2"), DEFAULT_AXES),
+        (address!("0xe7A3b38c39F97E977723bd1239C3470702568e7B"), DEFAULT_AXES),
+        (address!("0xf083FBa98dED0f9C970e5a418500bad08D8b9732"), DEFAULT_AXES),
+        (address!("0xF178C0b5Bb7e7aBF4e12A4838C7b7c5bA2C623c0"), DEFAULT_AXES),
+        (address!("0xf253f83AcA21aAbD2A20553AE0BF7F65C755A07F"), DEFAULT_AXES),
+        (address!("0xfC8c34a3B3CFE1F1Dd6DBCCEC4BC5d3103b80FF0"), DEFAULT_AXES),
+        (address!("0xFD5dB7463a3aB53fD211b4af195c5BCCC1A03890"), DEFAULT_AXES),
+        (address!("0x04c90C198b2eFF55716079bc06d7CCc4aa4d7512"), RAW_BALANCE),
+        (address!("0x320B564Fb9CF36933eC507a846ce230008631fd3"), RAW_BALANCE),
+        (address!("0x48fF31bBbD8Ab553Ebe7cBD84e1eA3dBa8f54957"), RAW_BALANCE),
+        (address!("0x55A8a39bc9694714E2874c1ce77aa1E599461E18"), RAW_BALANCE),
+        (address!("0x875DF0bA24ccD867f8217593ee27253280772A97"), RAW_BALANCE),
+        (address!("0x9D0464996170c6B9e75eED71c68B99dDEDf279e8"), RAW_BALANCE),
+        (address!("0xBaaa1F5DbA42C3389bDbc2c9D2dE134F5cD0Dc89"), RAW_BALANCE),
+        (address!("0xDa5B670CcD418a187a3066674A8002Adc9356Ad1"), RAW_BALANCE),
+        (address!("0xf03bD3cfE85f00bF5819AC20f0870cE8a8d1F0D8"), RAW_BALANCE),
+        (address!("0xFB9a265b5a1f52d97838Ec7274A0b1442efAcC87"), RAW_BALANCE),
+        (address!("0x59Ab5a5b5d617E478a2479B0cAD80DA7e2831492"), LIVE_ADMIN_ORACLE),
+        (address!("0xBfAb6FA95E0091ed66058ad493189D2cB29385E6"), LIVE_ADMIN_ORACLE),
+        (address!("0x52EA46506B9CC5Ef470C5bf89f17Dc28bB35D85C"), RATE_ADJUSTED_NO_ONE_CTOKEN),
+        (address!("0xA2B47E3D5c44877cca798226B7B8118F9BFb7A56"), RATE_ADJUSTED_NO_ONE_CTOKEN),
+        (address!("0xA5407eAE9Ba41422680e2e00537571bcC53efBfD"), RATE_ADJUSTED_NO_ONE),
+        (address!("0x2dded6Da1BF5DBdF597C45fcFaa3194e53EcfeAF"), CYTOKEN),
+        (address!("0x06364f10B501e868329afBc005b3492902d6C763"), RATE_ADJUSTED_YTOKEN),
+        (address!("0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51"), RATE_ADJUSTED_NO_ONE_YTOKEN),
+        (address!("0x79a8C46DeA5aDa233ABaFFD40F3A0A2B1e5A4F27"), RATE_ADJUSTED_NO_ONE_YTOKEN),
+        (address!("0xA96A65c051bF88B4095Ee1f2451C2A9d43F53Ae2"), NO_ONE_FEE_RATE_AETH),
+        (address!("0xF9440930043eb3997fc70e1339dBb11F341de7A8"), NO_ONE_FEE_RATE_RETH),
+        (address!("0xEB16Ae0052ed37f479f7fe63849198Df1765a733"), LIVE_ADMIN_DYNAMIC),
+        (address!("0xDeBF20617708857ebe4F679508E7b7863a8A8EeE"), LIVE_ADMIN_DYNAMIC_PRECISION),
     ];
 
     #[test]
     fn every_mapped_address_keeps_its_registered_discriminants() {
         for (addr, want) in REGISTERED_DISCRIMINANTS {
             let s = resolve_curve_strategy_discriminants(*addr);
-            let got = [
-                s.swap_style as u8,
-                s.lending_rate_style as u8,
-                s.metapool_rate_style as u8,
-                s.metapool_underlying_style as u8,
-            ];
+            let got = (
+                s.swap_style,
+                s.lending_rate_style,
+                s.metapool_rate_style,
+                s.metapool_underlying_style,
+            );
             assert_eq!(got, *want, "{addr}");
         }
     }

@@ -49,7 +49,8 @@ use degenbot::db::snapshot_db::SnapshotDb;
 use degenbot::dex_identity::UNISWAP_V2;
 use degenbot::math::balancer::{mul_down, ONE};
 use degenbot::math::curve::{
-    calculate_dy, stableswap_get_d, DVariant, DyCalculationInputs, YVariant,
+    calculate_dy, stableswap_get_d, DVariant, DyCalculationInputs, MetapoolRateStyle,
+    MetapoolUnderlyingStyle, SwapStyle, YVariant,
 };
 use degenbot::math::solidly::{calc_d as solidly_calc_d, calc_f as solidly_calc_f};
 use degenbot::simulation::apply_simulation_overrides;
@@ -436,10 +437,10 @@ fn main() {
         d_variant: DVariant::Standard,
         y_variant: YVariant::Standard,
         a_precision: U256::from(100_u64),
-        swap_style: 1,
+        swap_style: SwapStyle::Standard,
         metapool: false,
-        metapool_rate_style: 1,
-        metapool_underlying_style: 1,
+        metapool_rate_style: MetapoolRateStyle::Standard,
+        metapool_underlying_style: MetapoolUnderlyingStyle::Standard,
         d: None,
         gamma: None,
         price_scale: None,

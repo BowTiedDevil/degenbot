@@ -25,6 +25,7 @@ use super::{builder, curve_choreography};
 use crate::bot_core::construction_io::{
     ConstructionIo, NoDb, PacedRead, RpcConstruction, TickFetchPace,
 };
+use degenbot_pools::{DVariant, LendingRateStyle, SwapStyle};
 
 const TO: Address = alloy::primitives::address!("0x1111111111111111111111111111111111111111");
 const SV: Address = alloy::primitives::address!("0x2222222222222222222222222222222222222222");
@@ -2304,9 +2305,9 @@ async fn build_curve_pool_assembles_plain_pool_params() {
     assert_eq!(p.precision_multipliers, vec![r12, r12]);
 
     // Strategy defaults (plain, unmapped address).
-    assert_eq!(p.swap_style, 1); // STANDARD
-    assert_eq!(p.lending_rate_style, 1); // NONE
-    assert_eq!(p.d_variant, 1);
+    assert_eq!(p.swap_style, SwapStyle::Standard);
+    assert_eq!(p.lending_rate_style, LendingRateStyle::None);
+    assert_eq!(p.d_variant, DVariant::Standard);
 
     // Plain pool: no base/underlying, no lp, no ramping, no crypto.
     assert_eq!(p.base_pool, None);
