@@ -42,6 +42,12 @@ hotpath = { version = "^0.31.0", default-features = false }
 
 [features]
 hotpath = ["hotpath/hotpath", "hotpath/threads"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
+# Uploads the `digest` bench's hotpath report to hotpath.rs from CI.
+hotpath-cloud = ["hotpath", "hotpath/hotpath-cloud"]
+# Instruction counts per measured function when the bench runs under
+# Valgrind's Callgrind (x86_64 Linux); native runs report timing as usual.
+hotpath-callgrind = ["hotpath", "hotpath/hotpath-callgrind"]
 # Fixture capture/replay I/O (src/solve/capture_fixture.rs, the profit-envelope
 # capture writer, and the fixture-reading test modules). Test lanes enable it
 # explicitly so the golden corpora stay executed, not silently skipped.
@@ -62,6 +68,10 @@ telemetry = []
 proptest = "^1.12"
 rayon = { version = "^1.12" }
 criterion = { version = "^0.8", default-features = false, features = ["cargo_bench_support"] }
+# Criterion adapter: `benches/digest.rs` runs a fixed iteration count and
+# writes a hotpath report when HOTPATH_CRITERION_ITERATIONS is set; without it
+# the wrappers forward to Criterion unchanged.
+hotpath = { version = "^0.31.0", default-features = false, features = ["criterion-0-8"] }
 tempfile = { version = "^3.27" }
 # No `degenbot-rpc` here: the RPC-backed CL harnesses (the network-gated V3
 # mainnet-fixture reproduction and the capture generator) live in

@@ -18,7 +18,7 @@
 
 #![expect(clippy::doc_markdown)]
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use hotpath::criterion::{criterion_group, criterion_main, Criterion};
 use std::hint::black_box;
 
 use degenbot_math::balancer::stable_math::calculate_invariant_deployed;
