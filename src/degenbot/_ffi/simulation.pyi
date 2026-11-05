@@ -17,27 +17,6 @@ from . import ArbitrageEngine, ConfigValues
 from .provider import AsyncAlloyProvider
 from .submission import Dispatcher, TxSigner
 
-__all__ = [
-    "AssemblyVerdict",
-    "BatchExecutor",
-    "BatchOutcome",
-    "BatchOutcomeSet",
-    "ExecutorPolicyValues",
-    "FailureDetail",
-    "FailureKind",
-    "PayloadOutcome",
-    "PayloadVerdict",
-    "SimReceipt",
-    "SimulateContext",
-    "SimulateVerdict",
-    "SubmitVerdict",
-    "build_batch_executor_py",
-    "executor_policy_py",
-    "merge_payload_results_py",
-    "simulate_in_process_revert_probe",
-    "simulate_in_process_success_probe",
-]
-
 @final
 class AssemblyVerdict:
     """
@@ -58,24 +37,12 @@ class AssemblyVerdict:
 class BatchExecutor:
     """
     The per-session executor over the core batch choreography.
+
+    The session consumer (`crate::simulation::session`) owns this executor's
+    whole input side; this seam carries the drain and the construction handles
+    the consumer needs (the core arc, the session dispatcher, the suppression
+    registry).
     """
-    def enqueue(self, /, work: Incomplete) -> None:
-        """
-        Enqueue one batch: the rows enter the core's ordered lane (assembly,
-        sim, and submit run internally; the records surface on
-        `next_outcome`).
-
-        GIL-held path resolution happens HERE (the pre-cut-over seam's resolve
-        point, on the driver's loop thread): payload rows resolve LOUD (a miss
-        is a `ValueError` — the pinned string survives) and raw rows resolve
-        leniently (a miss stays unresolved; the core folds the typed
-        `SkipResolveMiss`).
-
-        # Errors
-
-        `ValueError`: a payload dict is malformed, or a payload row's
-        `path_id` is not registered in the engine.
-        """
     @property
     def enqueued(self, /) -> int:
         """
@@ -88,24 +55,9 @@ class BatchExecutor:
 
         Cancelling this future loses no message: the Rust-side
         `BatchDrain::next` cancel-safety contract pins that the shared
-        receiver leaves a message queued when the drain future is dropped.
-        """
-    def raise_if_failed(self, /) -> None:
-        """
-        Re-raise the first stored leaf failure in the caller's frame (the
-        loud-abort rule).
-
-        # Errors
-
-        `RuntimeError` when a sim or submit leaf failed.
-        """
-    def shutdown(self, /) -> Any:
-        """
-        Drain in-flight work and join the submitter.
-
-        # Errors
-
-        `RuntimeError` when a sim or submit leaf failed.
+        receiver leaves a message queued when the drain future is dropped. The
+        session consumer quiesces the lane when its loop ends, which closes this
+        stream: the drain terminates on its own.
         """
     @property
     def submitted(self, /) -> int:
@@ -123,6 +75,12 @@ class BatchOutcome:
     def assembly(self, /) -> AssemblyVerdict:
         """
         The stage-1 assembly verdict.
+        """
+    @property
+    def assembly_label(self, /) -> str:
+        """
+        The stage-1 verdict's stable machine label (`"skip-empty-hops"`, …) —
+        the core record's own spelling, so a reader never re-derives it here.
         """
     @property
     def block(self, /) -> int:
@@ -299,6 +257,100 @@ class PayloadVerdict:
     def path_id(self, /) -> int:
         """
         The path id the verdict belongs to.
+        """
+
+@final
+class SessionConsumer:
+    """
+    The session consume loop (the core's `SessionConsumer`) plus its one
+    stream-activity heartbeat and progress view.
+    """
+    def __new__(
+        cls,
+        /,
+        executor: BatchExecutor,
+        *,
+        allow_quiet_end: bool = False,
+        fee_history_provider: AsyncAlloyProvider | None = None,
+        fee_history_blocks: SupportsIndex = 1,
+    ) -> SessionConsumer:
+        """
+        Build the session consumer over a session executor, unattached.
+
+        Production builds this shape and then moves the engine's hand-off into
+        it with :meth:`attach`. `allow_quiet_end` is the session's end policy:
+        `False` for a supervised session, where a natural stream end means the
+        pump died outside its own teardown and the end verdict says so. A
+        `fee_history_provider` opts the session into the advisory per-header
+        `eth_feeHistory` sample (the core's declared percentile pair).
+        """
+    def attach(self, /, engine: ArbitrageEngine) -> None:
+        """
+        Move the engine's ONE event hand-off (and its driver) into this
+        consumer.
+
+        The hand-off travels with the claim that proves a consumer holds it, so
+        the consumer's :meth:`resume` is the only way production starts. A
+        second attach — or an engine whose hand-off another consumer holds — is
+        refused by name: one session has one consumer.
+
+        # Errors
+
+        `RuntimeError`: the engine's hand-off is gone, or this consumer has
+        already run.
+        """
+    @property
+    def beats(self, /) -> int:
+        """
+        The stream-activity beats this consumer fed (one per RECEIVED event).
+        """
+    @property
+    def progress(self, /) -> tuple[int, int, int]:
+        """
+        The consume loop's lock-free progress view: `(batches, blocks,
+        current_block)`.
+        """
+    def resume(self, /) -> Any:
+        """
+        Start production: the claim's one use is the driver's `run`.
+
+        The core closes the session on a refusal too, so a consumer that could
+        not start never leaves a session running with nobody consuming it.
+
+        # Errors
+
+        `SessionConsumerError` (a `RuntimeError`) carrying the driver's refusal.
+        """
+    def run(self, /) -> Any:
+        """
+        Consume the session's ordered stream and report; close runs on every
+        path (the core owns it).
+
+        The product is the loop's counts plus the typed end verdict
+        (`quiet-end` / `pump-stopped`). The executor's record stream is quiesced
+        by the loop's own exit, so a concurrent drain ends by itself.
+
+        # Errors
+
+        `SessionConsumerError` (a `RuntimeError`): the ordered lane stored a leaf
+        failure. The detail is the leaf's own text, re-raised in this caller's
+        frame before any further batch reached the lane.
+        """
+    @staticmethod
+    def scripted(
+        executor: BatchExecutor, events: list, *, allow_quiet_end: bool = True
+    ) -> SessionConsumer:
+        """
+        Build the consumer over a scripted event sequence (the shared oracle).
+
+        Each event is the engine stream's own Python shape: a block dict
+        (`kind="block"` + the notification fields) or a result-batch dict
+        (`kind="batch"` + `fresh`/`updated` six-tuples and `payloads`), so the
+        script a test replays is the surface the engine handed Python.
+
+        # Errors
+
+        `ValueError`: an event is not the engine's stream shape.
         """
 
 @final
@@ -667,6 +719,8 @@ def simulate_in_process_success_probe(path_id: SupportsIndex) -> dict:
     bucket (a `debug_assert!` fires + is surfaced as `RuntimeError`).
     """
 
+def __getattr__(name: str) -> Incomplete: ...
+
 __all__ = [
     "AssemblyVerdict",
     "BatchExecutor",
@@ -677,6 +731,7 @@ __all__ = [
     "FailureKind",
     "PayloadOutcome",
     "PayloadVerdict",
+    "SessionConsumer",
     "SimReceipt",
     "SimulateContext",
     "SimulateVerdict",

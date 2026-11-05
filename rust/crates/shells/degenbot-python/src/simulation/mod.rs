@@ -24,9 +24,11 @@
 //! - **`PyO3` wrapper** (this module): `#[pyclass]`/`#[pyfunction]` only —
 //!   arg-extract → GIL release (`py.detach`) → strategy call → result wrap.
 //!   No business logic. Mirrors the `submission/` subtree's discipline exactly.
-//! - **Python companion** (`examples/eth_settlement_arbitrage_v2_v3_v4_rust.py`): the
-//!   cockpit enqueues batches into [`batch::PyBatchExecutor`] and renders the
-//!   `[sim]` summary from the drained Batch outcome records.
+//! - **Python companion** (`examples/eth_settlement_arbitrage_v2_v3_v4_rust.py`):
+//!   the cockpit's session consumer ([`session::PySessionConsumer`]) drives the
+//!   [`batch::PyBatchExecutor`] over the engine's ordered stream, and the
+//!   cockpit renders the `[sim]` summary from the drained Batch outcome
+//!   records.
 //!
 //! The seam's output is the submission seam's input shape: the batch executor
 //! joins each surviving `SimResult` → `PySubmitCandidate` at result-wrap time,
@@ -45,6 +47,7 @@ pub mod dispatch;
 pub mod in_process_probe;
 mod inline_hook;
 pub mod render;
+pub mod session;
 
 pub use context::PySimulateContext;
 
@@ -67,6 +70,9 @@ pub mod simulation {
 
     #[pymodule_export]
     use super::dispatch::{merge_payload_results_py, PyPayloadOutcome, PyPayloadVerdict};
+
+    #[pymodule_export]
+    use super::session::{PySessionConsumer, SessionConsumerError};
 
     #[pymodule_export]
     use super::in_process_probe::{

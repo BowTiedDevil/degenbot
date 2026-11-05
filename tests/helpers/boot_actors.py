@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from degenbot.runner import BotRunner, InjectedActors
 from tests.fakes.bot import FakeBot
 from tests.fakes.engine import FakeEngineRegistry
-from tests.fakes.runner_pipelines import StubPipeline
+from tests.fakes.runner_pipelines import StubPipeline, fake_session_consumer
 
 if TYPE_CHECKING:
     from degenbot.runner.config import ArbitrageConfig
@@ -145,6 +145,7 @@ def boot_runner(
             # consumer, so a boot test over the non-Alloy fake provider supplies
             # the void stub (the production pipeline needs an Alloy handle).
             pipeline_factory=StubPipeline,
+            consumer_factory=fake_session_consumer,
             path_builder=path_builder if path_builder is not None else (lambda **kw: None),
             consumer=lambda *args, **kw: noop_coro(),
             settlement_arm=settlement_arm,

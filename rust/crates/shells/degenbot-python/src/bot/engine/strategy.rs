@@ -520,9 +520,35 @@ impl PyArbEngine {
     {
         py.detach(|| f(&mut self.session.host().lock()))
     }
+}
+
+#[pymethods]
+impl PyArbEngine {
+    /// Enable each named facet through the host's admission gate.
+    ///
+    /// The first half of the engine's start flow: a hosted driver's loop starts
+    /// only for an ENABLED facet, so the facet set is enabled BEFORE the session
+    /// consumer's `resume` arms the pump. A facet name the host does not admit
+    /// fails here, before production starts. Refusals map exactly as
+    /// [`Self::enable_strategy`]'s.
+    #[pyo3(signature = (facets))]
+    fn enable_facets(&self, py: Python<'_>, facets: Vec<String>) -> PyResult<()> {
+        for facet in facets {
+            let id = StrategyId::new(facet.as_str());
+            self.with_host(py, |host| host.enable(&id))
+                .map_err(map_host_error)?;
+        }
+        Ok(())
+    }
 
     /// Launch the engine's deferred hosted I/O and then its hosted drivers —
     /// the START boundary, ordered by the core session boot.
+    ///
+    /// The second half of the start flow, called once the session consumer's
+    /// `resume` armed the pump: the head-watch WS connect and each active arm's
+    /// feed pump launch BEFORE the drivers, because each driver's loop
+    /// subscribes the hub head source the head edge registers as it starts.
+    /// Construction dials nothing.
     ///
     /// The GIL is released across the whole start so a slow WS connect never
     /// parks the interpreter, and the ordering (feed pumps and head edge
@@ -536,29 +562,11 @@ impl PyArbEngine {
     /// start consumes its deferred-I/O latch before launching anything, so a
     /// failure there is terminal: the caller must drop the engine, whose drop
     /// stops the pumps and tears the head-watch runtime down.
-    pub(crate) fn start_hosted_session(&self, py: Python<'_>) -> PyResult<usize> {
+    fn start_hosted_session(&self, py: Python<'_>) -> PyResult<usize> {
         py.detach(|| degenbot_core::runtime::get_runtime().block_on(self.session.start()))
             .map_err(map_session_boot_error)
     }
 
-    /// Enable each named facet through the host's admission gate.
-    ///
-    /// The engine's start flow owns the enable-then-resume ordering: a hosted
-    /// driver's loop starts only for an ENABLED facet, so the facet set and
-    /// the pump resume are one ordered operation. Refusals map exactly as
-    /// [`Self::enable_strategy`]'s.
-    pub(crate) fn enable_facets(&self, py: Python<'_>, facets: &[String]) -> PyResult<()> {
-        for facet in facets {
-            let id = StrategyId::new(facet.as_str());
-            self.with_host(py, |host| host.enable(&id))
-                .map_err(map_host_error)?;
-        }
-        Ok(())
-    }
-}
-
-#[pymethods]
-impl PyArbEngine {
     /// Enable a registered, configured strategy. Returns the resulting FSM
     /// state name.
     ///

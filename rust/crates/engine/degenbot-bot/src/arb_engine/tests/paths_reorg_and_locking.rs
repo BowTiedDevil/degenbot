@@ -1202,10 +1202,8 @@ fn block_notification_carries_block_and_metadata() {
     assert_eq!(notif.gas_used, metadata.gas_used);
     assert_eq!(notif.gas_limit, metadata.gas_limit);
 }
-// The block-channel engine tests (set_block_channel plumbing, notify_block
-// push) relocated with the pipe itself: the block clock is now relayed by
-// the engine's stage surface (`EngineStages` over `BlockClockPipe`) — see
-// bot_core/block_clock_pipe.rs + the EngineStages tests.
+// The header edge's clock tests live with the stream: `notify_block` writes the
+// session's one `Block` arm, and the consumer's block clock reads it there.
 #[test]
 fn on_pump_ended_closes_the_result_stream() {
     // Incident 2026-08-20 (WS-silent class): pump death routes the sink's
@@ -1213,9 +1211,8 @@ fn on_pump_ended_closes_the_result_stream() {
     // result stream must report Disconnected so the consumer ends and the
     // bot fails loudly (the engine outlives the pump, so without the
     // close the sender stays alive and the Python side awaits forever).
-    // The BLOCK stream close is coordinator-owned now (ADR-027 completion)
-    // — covered by
-    // solve_coordinator::notify_block_delivers_to_the_coordinator_block_clock_pipe.
+    // The BLOCK arm's close is the session stream's close (one channel, one
+    // close edge), covered by the driver's close tests.
     use tokio::sync::mpsc::error::TryRecvError;
     let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut engine = ArbitrageEngine::new();

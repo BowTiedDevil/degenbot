@@ -47,7 +47,7 @@ use crate::bot_core::stage_handlers::{
     QuiesceOutcome, Resolve, Simulate, SimulateOutcome, Solve, SolveOutcome, StageError,
 };
 use crate::bot_core::{PumpControl, Rewind, RewindOutcome};
-use degenbot_core::block_clock_pipe::{BlockClockPipe, BlockNotification};
+use degenbot_core::block_notification::BlockNotification;
 use degenbot_core::diag;
 use degenbot_core::op_error;
 use degenbot_core::op_warn;
@@ -103,11 +103,6 @@ pub struct EngineStages {
     /// Identity is structural: there is no
     /// swap surface and no second handle.
     delta: Arc<EpochDelta>,
-    /// The block-clock pipe (delivery-to-Python at the async boundary).
-    /// Header ticks never touch the engine (a chain fact, not engine
-    /// business — B2/ADR-027 lineage; the pipe moved here from the
-    /// dissolved coordinator).
-    block_clock: Mutex<BlockClockPipe>,
     /// The session's ordered event source — the producer end the header edge
     /// writes `SessionEvent::Block` into. The delivery edge writes the SAME
     /// source from the engine's delivery lifecycle, which is what makes
@@ -199,7 +194,6 @@ impl EngineStages {
             delta,
             session_events,
             session: Mutex::new(None),
-            block_clock: Mutex::new(BlockClockPipe::default()),
         }
     }
 
@@ -255,24 +249,6 @@ impl EngineStages {
             payloads: hashbrown::HashMap::new(),
         };
         let _ = self.engine.lock().delivery.lifecycle.send_batch(batch);
-    }
-    /// Attach the block-clock channel sender (the wiring layer creates the
-    /// channel pair; the Python-facing receiver lives on `PumpState`).
-    /// The pipe mutex is a non-poisoning `parking_lot` — a nanosecond send,
-    /// never queued behind solver work (B2).
-    ///
-    /// # Errors
-    ///
-    /// [`degenbot_core::channel_lifecycle::ChannelDecline::AlreadyAttached`]
-    /// when a sender is already attached, and
-    /// [`degenbot_core::channel_lifecycle::ChannelDecline::AttachedAfterClose`]
-    /// after `close_delivery_channels` — a closed pipe's receiver has already
-    /// observed end-of-stream.
-    pub fn set_block_channel(
-        &self,
-        tx: tokio::sync::mpsc::UnboundedSender<crate::bot_core::BlockNotification>,
-    ) -> Result<(), degenbot_core::channel_lifecycle::ChannelDecline> {
-        self.block_clock.lock().attach(tx)
     }
     /// Apply an operator [`EngineRetune`] to the live engine — the engine's
     /// twin of the fleet's centralized posture feeder + wake (43121b9). This
@@ -469,7 +445,6 @@ impl EngineStages {
     /// calls it too, because an aborted pump task never reaches the loop end
     /// (ADR-050 D3/D6).
     pub fn close_delivery_channels(&self) {
-        self.block_clock.lock().close();
         self.engine.lock().delivery.lifecycle.close();
     }
 
@@ -902,12 +877,10 @@ impl PumpControl for EngineStages {
             gas_used: metadata.gas_used,
             gas_limit: metadata.gas_limit,
         };
-        self.block_clock.lock().notify(notification);
-        // The session stream's Block arm, written by the SAME producer call as
-        // the observer tap above: the header edge is the one place a block
-        // becomes visible, so the two cannot disagree about the clock, and
-        // `Block(N)` is on the stream before any `Batch(N)` this task later
-        // publishes (ADR-093 D5).
+        // The session stream's Block arm: the header edge is the one place a
+        // block becomes visible, so the clock and the batches can never
+        // disagree, and `Block(N)` is on the stream before any `Batch(N)` this
+        // task later publishes (ADR-093 D5).
         self.session_events.send(SessionEvent::Block(notification));
     }
     fn on_pump_ended(&self) {

@@ -369,15 +369,16 @@ mod _ffi {
     #[pymodule_export]
     use crate::pathfinding::{build_path_graph, PathGraph};
 
-    // Uniswap mixed V2/V3/V4 engine (feature = "bot") + the block-stream
-    // async iterator (the authoritative `newHeads`-derived block clock) +
-    // the cockpit session-phase table (`strategy_host::SessionPhase`),
-    // exposed so the Python `_Phase` translates the host's verdict instead
-    // of authoring the legal-state matrix.
+    // Uniswap mixed V2/V3/V4 engine (feature = "bot") + the cockpit
+    // session-phase table (`strategy_host::SessionPhase`), exposed so the
+    // Python `_Phase` translates the host's verdict instead of authoring the
+    // legal-state matrix. The engine is not an event iterator any more: its
+    // session stream belongs to the session consumer (`degenbot._ffi.simulation`
+    // `SessionConsumer`), which owns the consume loop end to end.
     #[cfg(feature = "bot")]
     #[pymodule_export]
     use crate::bot::engine::{
-        session_phase_next, BlockStream, PyArbEngine, PyCrawlReceiptStream, PyCrawlSession,
+        session_phase_next, PyArbEngine, PyCrawlReceiptStream, PyCrawlSession,
     };
 
     // Bot — Rust-owned state (feature = "bot"). `PyConcentratedLiquidityView`

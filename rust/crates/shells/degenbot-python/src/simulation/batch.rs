@@ -5,84 +5,66 @@
 //! The driver (the settlement cockpit) constructs ONE executor per session
 //! with resolved policy values — the in-flight cap as a plain count, the
 //! thin-margin floor, the relay posture (the `SubmissionTarget` + the
-//! broadcast fan-out), the dry-run/inject guards — then:
-//!
-//! 1. `enqueue`es each streamed solver batch as a
-//!    [`BatchWorkRow`] (the runner's `BatchWork` dataclass, extracted by
-//!    field name);
-//! 2. drains the Batch outcome records via `next_outcome` (the display fold
-//!    lives in the driver);
-//! 3. polls `raise_if_failed` (the loud-abort rule) and `shutdown`s at
-//!    teardown.
+//! broadcast fan-out), the dry-run/inject guards — and the session consumer
+//! (`crate::simulation::session`) drives it: the consumer derives each batch's
+//! work, enqueues it, and owns the loud-abort rule and the teardown. The driver
+//! drains the Batch outcome records via `next_outcome` (the display fold lives
+//! in the driver). There is no enqueue door on this seam: a caller that could
+//! enqueue a batch could own consumption again.
 //!
 //! NO Python closures on the hot path (the task's contract): the two
-//! production leaves are the core's own `EngineLeaves`; the only GIL work on
-//! this seam is the enqueue-time path resolution (the same point in the flow
-//! the pre-cut-over seam resolved, on the driver's loop thread).
+//! production leaves are the core's own `EngineLeaves`, and the path resolver
+//! is the engine stage surface itself (GIL-free), so no cell of the pipeline
+//! re-enters Python.
 //!
-//! Path resolution: the core's `PathResolver` is a session-shared map the
-//! enqueue path fills (one engine projection call per DISTINCT id per batch
-//! — the payload arm's resolve miss is the loud `ValueError` the
-//! `merge_payload_results_py` contract pins; a RAW-row miss is left
-//! unresolved and the core folds it as the typed `SkipResolveMiss`).
+//! Path resolution: the core's `PathResolver` is the engine's stage projection
+//! ([`EngineResolver`]), read GIL-free by the assembly stage — a payload row's
+//! resolve miss is the assembly's loud-abort arm (a payload row is engine-born),
+//! and a RAW-row miss is the typed `SkipResolveMiss` skip.
 //!
 //! # GIL discipline (ADR-005)
 //!
-//! Construction + `enqueue` are GIL-held (arg extraction + the resolve). The
-//! leaves release the GIL for the whole sim/submit pipeline (the core's
-//! future body never touches Python); `next_outcome` releases it across the
-//! drain await.
+//! Construction is GIL-held (arg extraction). The leaves release the GIL for
+//! the whole sim/submit pipeline (the core's future body never touches Python);
+//! `next_outcome` releases it across the drain await.
 //!
 //! The `use_v4_batch` encode axis defaults `false` — no driver config key
 //! declares it yet; a declared key arrives later as its own value.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::bot::engine::PyArbEngine;
 use crate::prelude::*;
 use crate::rpc::async_provider::PyAsyncAlloyProvider;
-use crate::simulation::dispatch::payload_row_from_dict;
 use crate::simulation::render::{path_info_to_py_dict, sim_failure_to_dict};
 use crate::submission::dispatcher::PyDispatcher;
 use crate::submission::signer::PyTxSigner;
 use crate::submission::submit::{
     settlement_lane, settlement_lane_for, skip_reason_to_py, PyReceiptProbe,
 };
-use degenbot_arbitrage::BlockPriorityFees;
 use degenbot_batch_executor::record::{
     FailureDetail, FailureKind, SimReceipt, SimulateVerdict, SubmitVerdict,
 };
-use degenbot_batch_executor::row::{PayloadRow, RawResult};
 use degenbot_batch_executor::{
-    BatchExecutor, BatchOutcome, BatchOutcomeSet, BatchWork, ExecutorConfig, ExecutorRuntime,
-    PathResolver,
+    BatchExecutor, BatchOutcome, BatchOutcomeSet, ExecutorConfig, ExecutorRuntime, PathResolver,
 };
+use degenbot_bot::arb_engine::EngineStages;
 use degenbot_executor::composers::PathInfo;
-use degenbot_submission::SubmissionTarget;
-use pyo3::exceptions::PyValueError;
-use pyo3::types::{PyAny, PyDict, PyList};
+use degenbot_submission::{PathSuppression, SubmissionTarget};
+use pyo3::types::{PyDict, PyList};
 
-/// The loud-abort prefix the executor's leaf-failure surface carries (the
-/// same contract the Python-leaf pipeline seam uses).
-const LEAF_FAILURE_PREFIX: &str =
-    "sim-submit-pipeline leaf task failed - aborting the consumer loudly: ";
+/// The core's `PathResolver` over the engine's stage surface.
+///
+/// The projection is the engine registry's own ([`EngineStages::path_info_for`]):
+/// there is no Python-side path map to fill, so a resolve is GIL-free and the
+/// assembler can read it from any worker. A projection BUILD error reads as a
+/// resolve miss here — a raw row folds it as the typed skip, and a payload row
+/// (which must resolve) is the assembly's loud-abort arm either way.
+struct EngineResolver(Arc<EngineStages>);
 
-/// Map a stored leaf failure to the cockpit's loud-abort `RuntimeError`.
-fn leaf_failure_err(failure: degenbot_submission::PipelineFailure) -> PyErr {
-    let degenbot_submission::PipelineFailure { detail } = failure;
-    pyo3::exceptions::PyRuntimeError::new_err(format!("{LEAF_FAILURE_PREFIX}{detail}"))
-}
-
-/// The session-shared path map behind the core's `PathResolver` (see the
-/// module docs: enqueue fills it, the core's assembly stage reads it
-/// GIL-free).
-#[derive(Default)]
-struct SharedPathMap(Arc<parking_lot::RwLock<HashMap<u64, PathInfo>>>);
-
-impl PathResolver for SharedPathMap {
+impl PathResolver for EngineResolver {
     fn resolve(&self, path_id: u64) -> Option<PathInfo> {
-        self.0.read().get(&path_id).cloned()
+        self.0.path_info_for(path_id).and_then(Result::ok)
     }
 }
 
@@ -326,6 +308,13 @@ impl PyBatchOutcome {
         PyAssemblyVerdict::wrap(self.inner.assembly)
     }
 
+    /// The stage-1 verdict's stable machine label (`"skip-empty-hops"`, …) —
+    /// the core record's own spelling, so a reader never re-derives it here.
+    #[getter]
+    fn assembly_label(&self) -> &'static str {
+        self.inner.assembly.label()
+    }
+
     /// The stage-2 simulate verdict (`None` when the row never reached the
     /// sim stage).
     #[getter]
@@ -421,147 +410,47 @@ impl PyBatchOutcomeSet {
     }
 }
 
-/// One raw engine-result row — the named record the runner constructs at the
-/// batch-stream conversion point (`_consume._engine_result`) and this seam
-/// extracts by field name (`FromPyObject` getattr extraction over the frozen
-/// dataclass); no positional 7-tuple crosses the boundary.
-#[derive(FromPyObject, Clone)]
-struct RawEngineResult {
-    path_id: u64,
-    optimal_input: u128,
-    engine_profit: u128,
-    hop_outputs: Vec<u128>,
-    consumed_inputs: Vec<u128>,
-    solve_block: u64,
-    state_nonces: Vec<u64>,
-}
-
-/// The enqueue payload: one streamed solver batch (the runner's `BatchWork`
-/// dataclass, extracted by field name — the `payloads` dict's per-path
-/// inline-sim payload rows arrive as opaque dicts and are parsed crate-side).
-#[derive(FromPyObject)]
-struct BatchWorkRow {
-    results: Vec<RawEngineResult>,
-    payloads: Option<HashMap<u64, Py<PyAny>>>,
-    current_block: u64,
-    base_fee_next: u128,
-    block_timestamp: u64,
-}
-
 /// The per-session executor over the core batch choreography.
+///
+/// The session consumer (`crate::simulation::session`) owns this executor's
+/// whole input side; this seam carries the drain and the construction handles
+/// the consumer needs (the core arc, the session dispatcher, the suppression
+/// registry).
 #[pyclass(name = "BatchExecutor", module = "degenbot._ffi.simulation")]
 pub struct PyBatchExecutor {
     executor: Arc<BatchExecutor>,
-    engine: Py<PyArbEngine>,
-    paths: SharedPathMap,
     dispatcher: Arc<std::sync::Mutex<degenbot_submission::Dispatcher>>,
+    suppression: Arc<std::sync::Mutex<PathSuppression>>,
+}
+
+impl PyBatchExecutor {
+    /// The core executor arc (the consumer enqueues on it).
+    pub(crate) fn executor_arc(&self) -> Arc<BatchExecutor> {
+        Arc::clone(&self.executor)
+    }
+
+    /// The session's one dispatcher arc (the consumer's block clock drives it).
+    pub(crate) fn dispatcher_arc(&self) -> Arc<std::sync::Mutex<degenbot_submission::Dispatcher>> {
+        Arc::clone(&self.dispatcher)
+    }
+
+    /// The session's cross-block suppression registry (the consumer drops a
+    /// removed path's entry there).
+    pub(crate) fn suppression_arc(&self) -> Arc<std::sync::Mutex<PathSuppression>> {
+        self.suppression.clone()
+    }
 }
 
 #[pymethods]
 impl PyBatchExecutor {
-    /// Enqueue one batch: the rows enter the core's ordered lane (assembly,
-    /// sim, and submit run internally; the records surface on
-    /// `next_outcome`).
-    ///
-    /// GIL-held path resolution happens HERE (the pre-cut-over seam's resolve
-    /// point, on the driver's loop thread): payload rows resolve LOUD (a miss
-    /// is a `ValueError` — the pinned string survives) and raw rows resolve
-    /// leniently (a miss stays unresolved; the core folds the typed
-    /// `SkipResolveMiss`).
-    ///
-    /// # Errors
-    ///
-    /// `ValueError`: a payload dict is malformed, or a payload row's
-    /// `path_id` is not registered in the engine.
-    fn enqueue(&self, py: Python<'_>, work: BatchWorkRow) -> PyResult<()> {
-        let engine = self.engine.borrow(py);
-        let mut map = self.paths.0.write();
-        let mut payload_rows: Vec<PayloadRow> = Vec::new();
-        if let Some(payloads) = &work.payloads {
-            for (path_id, value) in payloads {
-                let dict = value
-                    .bind(py)
-                    .cast::<PyDict>()
-                    .map_err(|_| PyValueError::new_err("payload entries must be dicts"))?;
-                let row = payload_row_from_dict(dict)?;
-                if row.path_id != *path_id {
-                    return Err(PyValueError::new_err(format!(
-                        "payload dict path_id {} disagrees with its key {}",
-                        row.path_id, path_id
-                    )));
-                }
-                let info = engine
-                    .path_info_for_core(py, row.path_id)
-                    .ok_or_else(|| {
-                        PyValueError::new_err(format!(
-                            "path_id {} is not registered in this engine; \
-                             the payload pool keys cannot be derived",
-                            row.path_id
-                        ))
-                    })
-                    .and_then(|r| r.map_err(|e| PyValueError::new_err(format!("{e}"))))?;
-                map.insert(row.path_id, info);
-                payload_rows.push(row);
-            }
-        }
-        let mut rows: Vec<RawResult> = Vec::with_capacity(work.results.len());
-        for row in work.results {
-            let raw = RawResult {
-                path_id: row.path_id,
-                optimal_input: row.optimal_input,
-                profit: row.engine_profit,
-                hop_outputs: row.hop_outputs,
-                consumed_inputs: row.consumed_inputs,
-                solve_block: row.solve_block,
-                state_nonces: row.state_nonces,
-            };
-            // The raw arm's resolve is LENIENT (decision a): a miss stays
-            // unresolved — the core's assembly stage folds the typed
-            // `SkipResolveMiss`. A projection BUILD error stays loud (the
-            // pre-cut-over seam's `ValueError` fidelity).
-            if let Some(resolved) = engine.path_info_for_core(py, raw.path_id) {
-                let info = resolved.map_err(|e| PyValueError::new_err(format!("{e}")))?;
-                map.insert(raw.path_id, info);
-            }
-            rows.push(raw);
-        }
-        drop(map);
-        drop(engine);
-
-        // The per-block priority-fee percentiles from the dispatcher's ring
-        // (the latest recorded block's p10/p50 — the core fan-out's
-        // `BlockPriorityFees` input).
-        let block_priority_fees: Option<BlockPriorityFees> = {
-            #[expect(clippy::expect_used)] // invariant-guarded (documented)
-            let guard = self.dispatcher.lock().expect("dispatcher mutex poisoned");
-            guard
-                .block_priority_fees()
-                .last_key_value()
-                .map(|(&block, fees)| BlockPriorityFees {
-                    block,
-                    p10: alloy::primitives::U256::from(*fees.get(&10).unwrap_or(&0)),
-                    p50: alloy::primitives::U256::from(*fees.get(&50).unwrap_or(&0)),
-                })
-        };
-
-        let _guard = crate::runtime::get_runtime().enter();
-        self.executor.enqueue(BatchWork {
-            rows,
-            payloads: payload_rows,
-            current_block: work.current_block,
-            base_fee_next: work.base_fee_next,
-            block_timestamp: work.block_timestamp,
-            block_priority_fees,
-        });
-        Ok(())
-    }
-
     /// Await the next batch's outcome set (`None` once the executor is shut
     /// down and drained — the drain loop's terminator).
     ///
     /// Cancelling this future loses no message: the Rust-side
     /// `BatchDrain::next` cancel-safety contract pins that the shared
-    /// receiver leaves a message queued when the drain future is dropped.
+    /// receiver leaves a message queued when the drain future is dropped. The
+    /// session consumer quiesces the lane when its loop ends, which closes this
+    /// stream: the drain terminates on its own.
     fn next_outcome<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let drain = self.executor.drain_handle();
         crate::ambient_runtime::future_into_py(py, async move {
@@ -570,28 +459,6 @@ impl PyBatchExecutor {
                 .next()
                 .await
                 .map(|set| PyBatchOutcomeSet { inner: set }))
-        })
-    }
-
-    /// Re-raise the first stored leaf failure in the caller's frame (the
-    /// loud-abort rule).
-    ///
-    /// # Errors
-    ///
-    /// `RuntimeError` when a sim or submit leaf failed.
-    fn raise_if_failed(&self) -> PyResult<()> {
-        self.executor.raise_if_failed().map_err(leaf_failure_err)
-    }
-
-    /// Drain in-flight work and join the submitter.
-    ///
-    /// # Errors
-    ///
-    /// `RuntimeError` when a sim or submit leaf failed.
-    fn shutdown<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let executor = Arc::clone(&self.executor);
-        crate::ambient_runtime::future_into_py(py, async move {
-            executor.shutdown().await.map_err(leaf_failure_err)
         })
     }
 
@@ -657,7 +524,7 @@ pub fn build_batch_executor_py(
     py: Python<'_>,
     context: &crate::simulation::context::PySimulateContext,
     dispatcher: &PyDispatcher,
-    engine: Py<PyArbEngine>,
+    engine: &PyArbEngine,
     signer: &PyTxSigner,
     submit_provider: &PyAsyncAlloyProvider,
     operator_nonce: u64,
@@ -665,8 +532,7 @@ pub fn build_batch_executor_py(
     broadcast_providers: Option<Vec<PyRef<'_, PyAsyncAlloyProvider>>>,
 ) -> PyResult<PyBatchExecutor> {
     crate::ambient_runtime::ensure_async_runtime_bound();
-    let engine_ref = engine.borrow(py);
-    let paths = SharedPathMap::default();
+    let suppression = dispatcher.suppression_arc();
     let runtime = ExecutorRuntime {
         // `0` = no cap: the cockpit never carried a per-batch cap (the
         // fan-out's own `MAX_SIMULATE_CONCURRENT` bound always applied).
@@ -674,11 +540,13 @@ pub fn build_batch_executor_py(
         // The v4-batch axis has no declared key yet (a runtime value).
         use_v4_batch: false,
         dry_run,
-        resolver: Arc::new(SharedPathMap(Arc::clone(&paths.0))),
+        // The path resolver is the engine stage surface itself: the projection
+        // is GIL-free, so no cell of the pipeline re-enters Python.
+        resolver: Arc::new(EngineResolver(engine.stages_arc())),
         // Decision b: the suppression registry is the dispatcher's
         // cross-block feedback arc, DISTINCT from the batch-local
-        // payload-served set the enqueue path derives.
-        suppression: dispatcher.suppression_arc(),
+        // payload-served set each batch's payload rows define.
+        suppression: Arc::clone(&suppression),
         divergence: dispatcher.pool_divergence_arc(),
         fot: dispatcher.fot_registry_arc(),
         provider: submit_provider.provider_arc(),
@@ -690,8 +558,8 @@ pub fn build_batch_executor_py(
         injected_address: context.injected_address,
         runtime_bytecode: context.runtime_bytecode.clone(),
         warmup: context.warmup,
-        bot_state: Some(engine_ref.bot_state_arc()),
-        warm_cache: Some(engine_ref.warm_code_cache_arc()),
+        bot_state: Some(engine.bot_state_arc()),
+        warm_cache: Some(engine.warm_code_cache_arc()),
         dispatcher: dispatcher.inner_arc(),
         signer: Arc::new(signer.signer().clone()),
         probe: Arc::new(PyReceiptProbe::new(&submit_provider.provider_arc())),
@@ -707,7 +575,7 @@ pub fn build_batch_executor_py(
         // pending-tx slot, not this strategy's).
         target: SubmissionTarget::Public,
     };
-    drop(engine_ref);
+    let _ = py;
     // The policy values convert from the INSTALLED verdict — the same load
     // `resolved_config().values` projects — so the executor cannot disagree
     // with the verdict Python reads.
@@ -721,9 +589,8 @@ pub fn build_batch_executor_py(
     };
     Ok(PyBatchExecutor {
         executor,
-        engine,
-        paths,
         dispatcher: dispatcher.inner_arc(),
+        suppression,
     })
 }
 

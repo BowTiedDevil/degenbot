@@ -1030,7 +1030,7 @@ struct AsyncPathState {
 /// raises `StopAsyncIteration`.
 ///
 /// The mutable search state lives behind an `Arc<Mutex<Option<..>>>` and is
-/// taken for the duration of one `__anext__` (mirroring `BlockStream`'s
+/// taken for the duration of one `__anext__` (mirroring the subscription
 /// receiver take/put-back), so a single shared iterator survives across awaits.
 /// Dropping the Python object sets the cooperative `cancel` flag: a consumer
 /// that abandons the sweep (`aclose()` / GC) stops a mid-grind DFS at its next

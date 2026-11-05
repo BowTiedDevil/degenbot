@@ -204,7 +204,7 @@ pub use diagnostic::{
 pub use driver::{
     BackfillGap, ConnectRefusal, Connected, CrawlBoot, CrawlRefusal, DriverError,
     EngineChannelHandles, EngineDriver, PhaseError, SubscribeRefusal, TeardownReport,
-    BLOCK_CHANNEL_NAME, SESSION_EVENT_CHANNEL_NAME,
+    SESSION_EVENT_CHANNEL_NAME,
 };
 pub use engine_stages::EngineStages;
 pub use fleet_status::{
@@ -243,7 +243,7 @@ pub use degenbot_substrate::BlockMetadata;
 // ADR-027 completion (2026-08-20 review): the block-clock pipe is
 // coordinator-owned; the type moved to bot_core. Re-exported so external
 // references keep working (same pattern as BlockMetadata above).
-pub use degenbot_core::block_clock_pipe::BlockNotification;
+pub use degenbot_core::block_notification::BlockNotification;
 /// Incremental result batch pushed to Python via the result channel.
 ///
 /// Each batch contains only paths that changed since the last batch

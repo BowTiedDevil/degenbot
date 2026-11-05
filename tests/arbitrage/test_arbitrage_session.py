@@ -30,6 +30,8 @@ from typing import Any
 
 import pytest
 
+from degenbot.arbitrage.engine_registry import ArbitrageEngine
+from degenbot.dispatch import Dispatcher, SessionConsumer
 from degenbot.exceptions import VerificationMismatchError, VerificationRpcError
 from degenbot.runner import BotRunner
 from degenbot.runner._relay_posture import RelayPosture
@@ -46,6 +48,7 @@ from tests.helpers.session import (
     offline_cfg,
     session_for_test,
 )
+from tests.helpers.session_drive import offline_executor
 
 
 @pytest.fixture(autouse=True)
@@ -76,16 +79,6 @@ def _runner(**overrides: Any) -> BotRunner:
 
 def _noop_coro() -> Any:
     return noop_coro()
-
-
-def _block_dict(number: int) -> dict[str, int]:
-    return {
-        "number": number,
-        "timestamp": 1_700_000_000 + number,
-        "base_fee_per_gas": 1_000_000_000,
-        "gas_used": 15_000_000,
-        "gas_limit": 30_000_000,
-    }
 
 
 class _Recorder:
@@ -166,8 +159,16 @@ class TestBotRunnerRun:
 
         await runner.run()
 
-        # consumer task created FIRST (before resume), then resume, then paths, then release
-        assert events == ["consumer", "run", "path_builder", "release"]
+        # The engine's start flow first (the facets enable, then the consumer's
+        # resume arms the pump, then the hosted I/O), then the drain task, then
+        # registration, then the trim it completes.
+        assert events == [
+            "enable_facets",
+            "start_hosted_session",
+            "consumer",
+            "path_builder",
+            "release",
+        ]
         assert engine_registry.engine.resumed is True
         assert bot.released is True
 
@@ -323,37 +324,22 @@ class TestSessionPhaseMachine:
             assert phase.on_shutdown() is SessionPhase.CLOSED
 
 
-class TestRunBlockStreamAcquiredOnce:
-    """Regression: the run must acquire the once-only ``engine.block_stream()``
-    exactly ONCE and feed it DIRECTLY to the single result consumer.
+class TestOneConsumerPerSession:
+    """The engine's event stream is claimed ONCE: one session, one consumer.
 
-    The real ``Bot.block_stream()`` is once-only — a second call raises
-    ``RuntimeError("block_stream() can only be called once")``. This test uses a
-    bot whose ``block_stream()`` raises on the second call (mimicking the real
-    once-only seam — the block-clock pipe is coordinator-owned) and asserts the
-    single consumer receives every block.
+    One session has one consumer: the engine's event hand-off (``EventHandoff``)
+    moves into the session consumer together with the claim its ``resume``
+    consumes. A second consumer cannot attach, and the refusal names the reason
+    instead of aliasing the one consume loop.
     """
 
-    async def test_run_acquires_block_stream_once_for_single_consumer(self) -> None:
-        seen_by_consumer: list[int] = []
+    def test_a_second_consumer_attach_is_refused(self) -> None:
+        engine = ArbitrageEngine()
+        executor = offline_executor(Dispatcher.for_block(12_345))
+        SessionConsumer(executor, allow_quiet_end=True).attach(engine)
 
-        async def recording_consumer(loop: object, *, block_stream: Any = None, **kwargs: Any):
-            async for b in block_stream:
-                seen_by_consumer.append(b["number"])  # ruff: ignore[manual-list-comprehension]
-
-        bot = FakeBot(blocks=[_block_dict(500), _block_dict(550), _block_dict(600)])
-        session = session_for_test(bot=bot, consumer=recording_consumer)
-
-        await session.run()
-
-        # The load-bearing contract: exactly ONE acquisition.
-        assert bot.block_stream_calls == 1, (
-            "run() must acquire bot.block_stream() exactly once (was 2 -> crash)"
-        )
-        assert session.actors is not None
-        assert session.actors.engine_registry.engine.resumed is True
-        # The single consumer received every block.
-        assert seen_by_consumer == [500, 550, 600], "the consumer must receive every block"
+        with pytest.raises(RuntimeError, match="already claimed"):
+            SessionConsumer(executor, allow_quiet_end=True).attach(engine)
 
 
 class TestShutdown:
@@ -878,15 +864,11 @@ class TestSubCBgRegistrationConcurrency:
                     0
                 )  # yield stands in for the real builder's per-path construction await
 
-        async def recording_consumer(loop: object, *, block_stream: Any = None, **kwargs: Any):
-            async for _b in block_stream:
-                await asyncio.sleep(
-                    0
-                )  # yield stands in for the real consumer's per-block dispatch await
+        async def recording_consumer(loop: object, consumer: object) -> None:
+            for _ in range(3):
+                await asyncio.sleep(0)  # yield stands in for the drain's per-batch render await
 
-        bot = FakeBot(blocks=[_block_dict(500)])
         session = session_for_test(
-            bot=bot,
             path_builder=forever_path_builder,
             consumer=recording_consumer,
             # A builder that never returns needs the production scheduler.
@@ -894,12 +876,11 @@ class TestSubCBgRegistrationConcurrency:
         )
         await session.run()
 
-        assert bot.block_stream_calls == 1
         assert session.actors is not None
         assert session.actors.engine_registry.engine.resumed is True
         assert climbed > 0, "registration must have climbed concurrently with the main loop"
-        # Main loop ended on the finite block stream; run()'s finally cancelled
-        # the still-climbing registration.
+        # Main loop ended (the drain adapter returned); run()'s finally
+        # cancelled the still-climbing registration.
         assert session.registration_task is not None
         assert session.registration_task.cancelled()
 

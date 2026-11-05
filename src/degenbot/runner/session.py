@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, Self, cast
 
 from degenbot.arbitrage import session_phase_next
 from degenbot.arbitrage.engine_registry import EngineRegistry
-from degenbot.dispatch import BatchExecutor, Dispatcher, SimulateContext, fetch_fee_history
+from degenbot.dispatch import BatchExecutor, Dispatcher, SimulateContext
 from degenbot.logging import logger as bot_logger
 from degenbot.runner._actors import (
     build_async_w3,
@@ -46,7 +46,7 @@ from degenbot.runner._dispatch import SubmissionSmoke
 from degenbot.runner._render import DisplayPolicy
 from degenbot.runner._run_ritual import RunRitual
 from degenbot.runner._session_watch import SessionWatch
-from degenbot.runner._sim_submit import build_executor_for
+from degenbot.runner._sim_submit import build_executor_for, build_session_consumer
 from degenbot.runner.build_paths import build_paths
 from degenbot.runner.diag import arm_diagnostics
 from degenbot.strategy import settlement_broadcast_endpoints, validate_strategy_readiness
@@ -178,9 +178,9 @@ class SessionPhase(Enum):
 
 type _PathBuilder = Callable[..., Awaitable[None]]
 type _Consumer = Callable[..., Coroutine[Any, Any, None]]
+type _ConsumerFactory = Callable[..., Any]
 type _Scheduler = Callable[[Coroutine[Any, Any, None]], asyncio.Task[Any]]
 type _PipelineFactory = Callable[[Session], Any]
-type _FeeHistoryFetcher = Callable[..., Awaitable[bool]]
 
 
 def _pick(injected: Any, production: Any) -> Any:
@@ -216,10 +216,10 @@ class InjectedActors:
     #: :class:`~degenbot.dispatch.BatchExecutor`); tests inject a stub to
     #: observe the pipeline seam without the Rust sim path.
     pipeline_factory: _PipelineFactory | None = None
-    #: The head-tick ``eth_feeHistory`` leaf (Rust owns the decode +
-    #: ``record_priority_fees``). Injected so a provider double can drive the
-    #: reconcile path; the default is the production FFI leaf.
-    fee_history_fetcher: _FeeHistoryFetcher | None = None
+    #: Factory for the session's core event consumer (``None`` = the production
+    #: :class:`~degenbot.dispatch.SessionConsumer` over the engine's hand-off);
+    #: tests inject a stub so a fake engine needs no live session.
+    consumer_factory: _ConsumerFactory | None = None
     #: Offline seam for the live activation gate: when set, the session's relay
     #: posture is this injected value (lifecycle tests pin a stub; production
     #: leaves it unset so the Rust readiness resolution owns the posture and the
@@ -264,9 +264,9 @@ class Actors:
     async_w3: AsyncAlloyProvider
     path_builder: _PathBuilder
     consumer: _Consumer
+    consumer_factory: _ConsumerFactory
     scheduler: _Scheduler
     pipeline_factory: _PipelineFactory
-    fee_history_fetcher: _FeeHistoryFetcher
     readiness: Callable[[], StrategyReadinessView]
     settlement_endpoints: Callable[[], list[str]]
     stop_engine: Callable[[], None] | None
@@ -324,9 +324,9 @@ class Actors:
             async_w3=async_w3,
             path_builder=_pick(injected.path_builder, build_paths),
             consumer=_pick(injected.consumer, consume_result_batches),
+            consumer_factory=_pick(injected.consumer_factory, build_session_consumer),
             scheduler=injected.scheduler,
             pipeline_factory=_pick(injected.pipeline_factory, build_executor_for),
-            fee_history_fetcher=_pick(injected.fee_history_fetcher, fetch_fee_history),
             readiness=_pick(injected.readiness, validate_strategy_readiness),
             settlement_endpoints=_pick(
                 injected.settlement_endpoints, settlement_broadcast_endpoints
@@ -345,10 +345,16 @@ class Session:
     session state to hold, and ``actors`` is ``None`` exactly while the phase is
     ``New``.
 
-    Write discipline: downstream modules (the run ritual, the block loop, the
-    trim) read fields directly but mutate ONLY through the owner's mutators
-    (``advance_block`` / ``attach_consumer_task`` / ``attach_registration`` /
-    ``drop_bot`` / ``build_pipeline``) — remote attribute pokes are forbidden.
+    The block clock is NOT a session field: the Rust session consumer advances
+    the session's dispatcher, and every reader consults it there (a Python
+    mirror froze at ``start()`` while the consumer advanced — the silent-staleness
+    hazard the session exists to kill).
+
+    Write discipline: downstream modules (the run ritual, the drain, the trim)
+    read fields directly but mutate ONLY through the owner's mutators
+    (``attach_consumer_task`` / ``attach_registration`` / ``drop_bot`` /
+    ``build_pipeline`` / ``build_consumer``) — remote attribute pokes are
+    forbidden.
 
     The mutable run-phase handles are the session's own lifecycle facts:
     ``result_consumer_task`` and ``registration_task``/``registration_context``
@@ -369,8 +375,6 @@ class Session:
     dispatcher: Dispatcher | None = None
     #: The sim context; ``None`` for non-Alloy (test) providers, or unbuilt.
     sim_ctx: SimulateContext | None = None
-    #: The session's block clock (advanced by the block loop's one mutation).
-    current_block: int = 0
     #: The readiness view resolved once at the ``start()`` boundary.
     readiness: StrategyReadinessView | None = None
     #: The resolved settlement-arm disposition the run ritual reads.
@@ -385,8 +389,11 @@ class Session:
     #: teardown duties).
     session_watch: SessionWatch = field(default_factory=SessionWatch)
     #: The concurrent sim fan-out + single ordered submitter, attached by
-    #: :meth:`build_pipeline` when the run ritual attaches the consumer.
+    #: :meth:`build_pipeline` when the run ritual starts the consumer.
     sim_submit_pipeline: BatchExecutor | None = None
+    #: The session's core event consumer (the ONE consume loop), attached by
+    #: :meth:`build_consumer`; ``None`` before the run ritual builds it.
+    consumer: Any | None = None
     #: The registration-owned construction context (written by the run ritual
     #: for the real builder; ``None`` for injected builders). It parks the
     #: engine's booted crawl session — the operator add-a-path surface — and the
@@ -486,7 +493,6 @@ class Session:
 
         self.dispatcher = dispatcher
         self.sim_ctx = sim_ctx
-        self.current_block = current_block
         self.readiness = readiness
         self.settlement_active = settlement_active
         self.relay_posture = relay_posture
@@ -679,34 +685,72 @@ class Session:
         self.sim_submit_pipeline = cast("BatchExecutor", pipeline)
         return self.sim_submit_pipeline
 
-    def block_loop(self) -> BlockLoop:
-        """Assemble the block loop's collaborator record over the built state.
+    async def build_consumer(self) -> Any:
+        """Build (through the session's factory) and attach the session consumer.
+
+        The factory may be async (the production construction attaches the
+        engine's one event hand-off and reads the provider for the advisory
+        fee-history sample) or sync (a test double observes the attach without a
+        live session).
 
         Returns:
-            The block loop's collaborators (clock, provider, pipeline, engine,
-            fee-history leaf, display policy, smoke FSM, block-clock mutator).
+            The attached session consumer.
+
+        Raises:
+            RuntimeError: If the session has no attached sim/submit pipeline
+                (the consumer needs the executor it enqueues on).
+
+        """
+        actors = self.actors
+        pipeline = self.sim_submit_pipeline
+        assert actors is not None, "the consumer is built by a started session"
+        if pipeline is None:
+            msg = "the session consumer needs the session's attached sim/submit pipeline"
+            raise RuntimeError(msg)
+        built = actors.consumer_factory(self, pipeline)
+        consumer = await built if inspect.isawaitable(built) else built
+        self.consumer = consumer
+        return consumer
+
+    def block_loop(self) -> BlockLoop:
+        """Assemble the display drain's collaborator record over the built state.
+
+        Returns:
+            The drain's collaborators (the dispatch state, the pipeline, the
+            render policy, the silent-veto smoke FSM). The block clock and the
+            batch work are the core consumer's; the drain renders records only.
 
         Raises:
             RuntimeError: If the session is not started or has no attached
                 sim/submit pipeline.
 
         """
-        actors = self.actors
         dispatcher = self.dispatcher
         pipeline = self.sim_submit_pipeline
-        if actors is None or dispatcher is None or pipeline is None:
-            msg = "the block loop needs a started session with an attached sim/submit pipeline"
+        if dispatcher is None or pipeline is None:
+            msg = "the drain needs a started session with an attached sim/submit pipeline"
             raise RuntimeError(msg)
         return BlockLoop(
             dispatcher=dispatcher,
-            engine=actors.engine_registry.engine,
-            provider=actors.async_w3,
             pipeline=pipeline,
-            fee_history=actors.fee_history_fetcher,
             policy=DisplayPolicy.from_cfg(self.cfg),
             smoke=self.submission_smoke,
-            advance_block=self.advance_block,
         )
+
+    @property
+    def current_block(self) -> int:
+        """The session's block clock — the dispatcher's current block.
+
+        The Rust session consumer advances the dispatcher once per accepted
+        header; this reads it, so no Python mirror can freeze behind the loop.
+
+        Returns:
+            The block the session is consuming at (0 before the dispatcher
+            exists).
+
+        """
+        dispatcher = self.dispatcher
+        return 0 if dispatcher is None else int(dispatcher.current_block)
 
     def trim_python_state(self) -> None:
         """Trim redundant Python state once registration is done.
@@ -807,15 +851,6 @@ class Session:
             main_task.cancel()
 
     # ── Mutators (the one write discipline) ─────────────────────────
-    def advance_block(self, block_number: int) -> None:
-        """Advance the session's block clock (the block loop's one mutation).
-
-        Args:
-            block_number: The head block the tick reported.
-
-        """
-        self.current_block = block_number
-
     def attach_consumer_task(self, task: asyncio.Task[Any]) -> None:
         """Attach the result-consumer drain task (written by the run ritual).
 
@@ -859,7 +894,6 @@ class Session:
         *,
         actors: Actors,
         dispatcher: Dispatcher,
-        current_block: int = 0,
         sim_ctx: SimulateContext | None = None,
         settlement_active: bool = True,
         readiness: StrategyReadinessView | None = None,
@@ -870,16 +904,16 @@ class Session:
         """Build a started session directly over injected collaborators.
 
         The one construction seam for the cockpit tests: it resolves the state
-        ``start()`` would build (actors, dispatcher, block clock, settlement
-        arm, posture) without the boot I/O, so a test supplies only the
-        collaborators its facet exercises instead of a 13-field DI record.
+        ``start()`` would build (actors, dispatcher, settlement arm, posture)
+        without the boot I/O, so a test supplies only the collaborators its facet
+        exercises instead of a 13-field DI record.
 
         Args:
             cfg: The session's typed config.
             actors: The resolved collaborators (the standard fakes, or the real
                 production builders).
-            dispatcher: The session's dispatch state.
-            current_block: The block clock the session starts on.
+            dispatcher: The session's dispatch state (its ``current_block`` IS
+                the session's block clock).
             sim_ctx: The sim context (``None`` for non-Alloy providers).
             settlement_active: The resolved settlement-arm disposition.
             readiness: The resolved readiness view (the run ritual reads it for
@@ -898,7 +932,6 @@ class Session:
             phase=SessionPhase.STARTED,
             actors=actors,
             dispatcher=dispatcher,
-            current_block=current_block,
             sim_ctx=sim_ctx,
             settlement_active=settlement_active,
             readiness=readiness,

@@ -61,6 +61,11 @@ _V2_MATH = "degenbot._ffi.v2_math"
 ALIAS_TABLE: list[tuple[str, str, str, str]] = [
     # degenbot.dispatch — simulation seam
     (_DISPATCH, "build_batch_executor", _SIM, "build_batch_executor_py"),
+    # The session consumer is the ONE consume loop's door: the driver reaches it
+    # through the companion name, and its abort type must stay the exact Rust
+    # exception so a driver's ``except`` keeps matching what the core raises.
+    (_DISPATCH, "SessionConsumer", _SIM, "SessionConsumer"),
+    (_DISPATCH, "SessionConsumerError", _SIM, "SessionConsumerError"),
     (_DISPATCH, "SimulateContext", _SIM, "SimulateContext"),
     (_DISPATCH, "PayloadOutcome", _SIM, "PayloadOutcome"),
     (_DISPATCH, "PayloadVerdict", _SIM, "PayloadVerdict"),
@@ -127,7 +132,10 @@ def test_dispatch_all_pins_public_surface() -> None:
     (SIMPIPE2 T3): the runner builds submit records from payload batches,
     so it is a public name alongside the FFI leaf wrappers. Added
     the payload seam (``merge_payload_results`` + the two pyclasses) when
-    the payload arm started routing through the same Rust sim join.
+    the payload arm started routing through the same Rust sim join. The
+    session consumer (``SessionConsumer`` + its typed abort) joined when the
+    consume loop moved into ``degenbot-batch-executor``: the cockpit builds the
+    consumer from here and catches its abort by this name.
     """
 
     d = degenbot.dispatch
@@ -141,6 +149,8 @@ def test_dispatch_all_pins_public_surface() -> None:
         "FailureKind",
         "PayloadOutcome",
         "PayloadVerdict",
+        "SessionConsumer",
+        "SessionConsumerError",
         "SimReceipt",
         "SimSubmitPipeline",
         "SimulateContext",

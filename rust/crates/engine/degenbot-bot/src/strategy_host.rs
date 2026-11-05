@@ -1522,8 +1522,8 @@ mod tests {
 
         assert_eq!(
             host.hub().unbounded_flagged_count(),
-            2,
-            "the mint closure's two engine channels are registered on the host's hub"
+            1,
+            "the mint closure's engine stream channel is registered on the host's hub"
         );
         assert_eq!(
             host.hub()

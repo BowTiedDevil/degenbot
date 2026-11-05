@@ -64,10 +64,9 @@ pub(crate) struct DeliveryLifecycle {
     source: Arc<SessionEventSource>,
 }
 
-// The block-notification channel is NOT engine-side any more (ADR-027
-// completion, 2026-08-20 review): the block-clock pipe is coordinator-owned
-// (bot_core::block_clock_pipe::BlockClockPipe). The session's own `Block` arm
-// is written at the header producer site, not here.
+// The block clock is NOT a channel of its own: the session's ordered stream
+// carries one `Block` arm per accepted header, written at the header producer
+// site beside the batches (ADR-093 D5), so the two arms cannot disagree.
 
 impl DeliveryLifecycle {
     /// The session's one ordered source, as a shared handle.

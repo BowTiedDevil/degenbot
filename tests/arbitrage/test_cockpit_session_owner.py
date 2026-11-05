@@ -6,12 +6,13 @@ pipelines. The runner keeps no mirrors (``current_block`` / ``_sim_ctx`` used
 to freeze at ``start()`` while the session advanced — a silent-staleness
 hazard), ``SessionPhase`` alone owns lifecycle legality (no ``_started`` bool),
 and the consumer's mutations ride the owner's mutators (``build_pipeline`` /
-``advance_block``), never attribute pokes.
+``build_consumer``), never attribute pokes. The block clock has one writer — the
+Rust session consumer — and the session reads the dispatcher it writes.
 
 Seams: the public ``BotRunner`` lifecycle (production start over the DI record;
-per-phase guard matrix, re-entry idempotence) and the loop seam
+per-phase guard matrix, re-entry idempotence) and the drain adapter
 (``consume_result_batches`` driven with the session's own collaborator record +
-injected streams). No anvil, no live RPC.
+a scripted core consumer). No anvil, no live RPC.
 """
 
 from __future__ import annotations
@@ -22,16 +23,15 @@ import signal
 import pytest
 
 from degenbot.runner import BotRunner
-from degenbot.runner._consume import consume_result_batches
 from degenbot.runner.session import PhaseError, SessionPhase
 from tests.fakes.engine import FakeEngineRegistry
 from tests.helpers.seam import session_phase_next
 from tests.helpers.session import (
-    FakeDispatcher,
     injected_test_actors,
     offline_cfg,
     session_for_test,
 )
+from tests.helpers.session_drive import block_event, drive_session, session_with_real_clock
 
 
 @pytest.fixture(autouse=True)
@@ -46,55 +46,6 @@ def _runner(**overrides: object) -> BotRunner:
         offline_cfg(),
         actors=injected_test_actors(settlement_arm=True, **overrides),  # type: ignore[arg-type]
         install_sigint=install_sigint,  # type: ignore[arg-type]
-    )
-
-
-class AsyncOnce:
-    """Yield one item, then StopAsyncIteration."""
-
-    def __init__(self, item: object) -> None:
-        self._item = item
-        self._done = False
-
-    def __aiter__(self) -> AsyncOnce:
-        return self
-
-    async def __anext__(self) -> object:
-        if self._done:
-            raise StopAsyncIteration
-        self._done = True
-        return self._item
-
-
-def _block_tick(number: int) -> dict[str, int]:
-    return {
-        "number": number,
-        "timestamp": 1_700_000_000 + number,
-        "base_fee_per_gas": 1_000_000_000,
-        "gas_used": 15_000_000,
-        "gas_limit": 30_000_000,
-    }
-
-
-def _empty_batch() -> dict[str, object]:
-    return {
-        "fresh": [],
-        "updated": [],
-        "removed": [],
-        "solve_block": 12_346,
-        "base_fee_per_gas": 1_000_000_000,
-        "gas_used": 15_000_000,
-        "gas_limit": 30_000_000,
-    }
-
-
-async def _drive_one_block(session: object, *, tick: int) -> None:
-    """Run the real consumer loop over one block tick + one empty batch."""
-    await consume_result_batches(
-        session.block_loop(),  # type: ignore[attr-defined]
-        block_stream=AsyncOnce(_block_tick(tick)),
-        result_iter=AsyncOnce(_empty_batch()),
-        allow_quiet_end=True,  # injected one-shot streams end by design
     )
 
 
@@ -172,13 +123,12 @@ class TestNoFrozenMirrors:
     """
 
     async def test_consumer_advanced_block_visible_through_the_session(self) -> None:
-        session = session_for_test(dispatcher=FakeDispatcher(current_block=12_345))
-        await session.build_pipeline()
+        session, _executor = await session_with_real_clock()
         start_block = session.current_block
 
-        await _drive_one_block(session, tick=start_block + 2)
+        await drive_session(session, [block_event(start_block + 2)])
 
-        # The owner advanced (the loop's advance_block mutator).
+        # The owner advanced (the core consumer's clock write).
         assert session.current_block == start_block + 2
         # The dispatcher clock agrees (driven by the same tick).
         assert session.dispatcher is not None
@@ -188,16 +138,19 @@ class TestNoFrozenMirrors:
         session = session_for_test()
         await session.build_pipeline()
 
-        await _drive_one_block(session, tick=session.current_block + 1)
-
         # The session's pipeline is visible on the owner (not stashed on a
         # facade), and it was built over that same owner.
         assert session.sim_submit_pipeline is not None
         assert session.sim_submit_pipeline.session is session  # type: ignore[attr-defined]
 
-    async def test_advance_block_is_the_one_block_mutation(self) -> None:
-        session = session_for_test(current_block=100)
-        session.advance_block(105)
+    async def test_the_session_clock_is_the_dispatcher_value(self) -> None:
+        """One clock, one home: the session reads the dispatcher, never a copy."""
+        session, _executor = await session_with_real_clock(start_block=100)
+        assert session.current_block == 100
+
+        assert session.dispatcher is not None
+        session.dispatcher.advance_block(105)
+
         assert session.current_block == 105
 
 

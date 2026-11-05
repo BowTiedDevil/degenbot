@@ -25,7 +25,7 @@
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use degenbot_bot::arb_engine::{ConnectRefusal, DriverError};
+use degenbot_bot::arb_engine::ConnectRefusal;
 use degenbot_bot::bot_core::{
     BuildFailure, IdentityMismatchShape, LifecyclePrecondition, RefusalKind, RegisterRefusal,
     SnapshotLoadReason, UnsupportedSubject, VerifyOrigin,
@@ -39,23 +39,6 @@ use crate::bot::engine::{
     SpecViolationError, TickMapIntakeInconsistentError, UnsupportedPoolFamilyError,
     VerificationMismatchError, VerificationRpcError,
 };
-
-// --- Driver lifecycle (`EngineDriver` seam) ---
-
-/// Map a core [`DriverError`] to a Python exception.
-///
-/// Every arm carries its typed refusal, and `Display` is the single source of
-/// the text — the Python `RuntimeError` vocabulary is unchanged from the prose
-/// era while the matching is now a variant, not a string. The verify lifecycle
-/// does not travel through `DriverError` at all: the verify home raises its
-/// `RefusalKind` and this module's `map_refusal` owns that vocabulary.
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the mapper consumes the driver's error, the shell's one error channel"
-)]
-pub(crate) fn map_driver_err(err: DriverError) -> PyErr {
-    PyRuntimeError::new_err(err.to_string())
-}
 
 /// Map a `connect` refusal to a Python exception.
 ///
@@ -502,23 +485,6 @@ mod tests {
             err.to_string()
         });
         strip_class(rendered)
-    }
-
-    #[test]
-    fn driver_err_passthrough_uses_display_text() {
-        // The typed refusals keep Display as the single source of their text.
-        let err = map_driver_err(DriverError::Phase(degenbot_bot::arb_engine::PhaseError {
-            method: "run",
-            current: degenbot_bot::arb_engine::PumpPhase::Detached,
-            required: Some(degenbot_bot::arb_engine::PumpPhase::Subscribed),
-            detail: "cannot resume from detached".to_string(),
-        }));
-        assert_eq!(runtime_error(&err), "cannot resume from detached");
-
-        let err = map_driver_err(DriverError::Backfill(
-            degenbot_bot::arb_engine::BackfillGap { from: 86, to: 100 },
-        ));
-        assert!(runtime_error(&err).contains("86-100"));
     }
 
     #[test]

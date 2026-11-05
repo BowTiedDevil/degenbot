@@ -22,7 +22,7 @@ from degenbot.runner.config import ArbitrageConfig, RpcCascadeOverrides
 from degenbot.runner.session import Actors, InjectedActors, Session
 from tests.fakes.bot import FakeBot
 from tests.fakes.engine import FakeEngineRegistry
-from tests.fakes.runner_pipelines import StubPipeline
+from tests.fakes.runner_pipelines import StubPipeline, fake_session_consumer
 from tests.helpers import verdict_probe as probe
 from tests.helpers.boot_actors import inline_registration_scheduler, noop_coro
 
@@ -140,7 +140,7 @@ class FakeReadiness:
 
 
 def noop_consumer(*args: Any, **kwargs: Any) -> Any:
-    """The consumer double: a coroutine that ends the main loop immediately."""
+    """The drain-adapter double: a coroutine that ends the main loop immediately."""
     return noop_coro()
 
 
@@ -169,6 +169,7 @@ def injected_test_actors(**overrides: Any) -> InjectedActors:
         "async_w3": FakeAsyncW3(),
         "path_builder": noop_builder,
         "consumer": noop_consumer,
+        "consumer_factory": fake_session_consumer,
         "pipeline_factory": StubPipeline,
         "scheduler": inline_registration_scheduler,
         "relay_posture": OFFLINE_RELAY,
@@ -196,7 +197,6 @@ def session_for_test(
     *,
     cfg: ArbitrageConfig | None = None,
     dispatcher: Any = None,
-    current_block: int | None = None,
     sim_ctx: Any = None,
     settlement_active: bool = True,
     readiness: Any = None,
@@ -209,8 +209,8 @@ def session_for_test(
 
     Args:
         cfg: The typed config (``None`` = :func:`offline_cfg`).
-        dispatcher: The dispatch state (``None`` = a clock at ``current_block``).
-        current_block: The block clock (``None`` = the dispatcher's block).
+        dispatcher: The dispatch state (``None`` = a clock at 12 345); its
+            ``current_block`` IS the session's block clock.
         sim_ctx: The sim context (``None`` = none, i.e. a non-Alloy provider).
         settlement_active: The resolved settlement-arm disposition.
         readiness: The readiness view the run ritual reads.
@@ -229,9 +229,6 @@ def session_for_test(
         resolved_cfg,
         actors=test_actors(**actor_overrides),
         dispatcher=resolved_dispatcher,
-        current_block=(
-            resolved_dispatcher.current_block if current_block is None else current_block
-        ),
         sim_ctx=sim_ctx,
         settlement_active=settlement_active,
         readiness=readiness if readiness is not None else FakeReadiness(),

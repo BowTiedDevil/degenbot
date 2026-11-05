@@ -673,41 +673,6 @@ impl PyBot {
         }
     }
 
-    /// Return a fresh async iterator over `newHeads` block notifications —
-    /// the settlement bot's authoritative block clock .
-    ///
-    /// ADR-027 completion : the block-clock pipe is
-    /// coordinator-owned, so this method lives on `PyBot` (the pump-lifecycle
-    /// handle) — NOT on the engine wrapper, which is out of the block path
-    /// entirely. The receiver is born on the shared `PumpState` beside the
-    /// pipe's sender and is handed out exactly once.
-    ///
-    /// Each yielded item is a dict: `number`, `timestamp`,
-    /// `base_fee_per_gas` (int | None), `gas_used`, `gas_limit`.
-    ///
-    /// Can be called at most once (the receiver is moved into the iterator).
-    /// Subsequent calls raise `RuntimeError`. Raises `RuntimeError` too if
-    /// no engine was constructed against this bot (no pump state).
-    ///
-    /// # Errors
-    /// `RuntimeError` if no pump state is attached (no engine constructed
-    /// against this bot) or the receiver was already handed out.
-    pub fn block_stream(&self) -> PyResult<crate::bot::engine::BlockStream> {
-        use degenbot_bot::bot_core::BlockStreamError;
-        // D4 state: the pump `Mutex<Option<Arc<EngineDriver>>>` is read here;
-        // the once-only receiver hand-off is the core `Bot::block_stream`.
-        let pump = self.pump.lock().clone();
-        let block_rx = Bot::block_stream(pump.as_deref()).map_err(|e| match e {
-            BlockStreamError::NoPumpState => pyo3::exceptions::PyRuntimeError::new_err(
-                "no pump state: construct an engine against this Bot first",
-            ),
-            BlockStreamError::AlreadyTaken => {
-                pyo3::exceptions::PyRuntimeError::new_err("block_stream() can only be called once")
-            }
-        })?;
-        Ok(crate::bot::engine::BlockStream::new(block_rx))
-    }
-
     /// Load the V3 + V4 DB snapshot into the core `BotState` .
     ///
     /// Called at Python `Bot.__init__` time when a DB path is configured

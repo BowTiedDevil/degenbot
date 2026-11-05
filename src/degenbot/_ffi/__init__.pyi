@@ -195,25 +195,6 @@ class ArbitrageEngine:
     Holds the shared [`EngineStages`] seam (the engine type is `pub(crate)`
     machinery behind it).
     """
-    def __aiter__(self, /) -> ArbitrageEngine:
-        """
-        Return self as an async iterator over result batches.
-        """
-    def __anext__(self, /) -> Any:
-        """
-        Await the next result batch from the engine.
-
-        Returns a dict with keys:
-          - "`solve_block"`: int
-          - "timestamp": int
-          - "`base_fee_per_gas"`: int | None
-          - "`gas_used"`: int
-          - "`gas_limit"`: int
-          - "fresh": list of (`path_id`, `optimal_input`, profit, `hop_outputs`, `consumed_inputs`)
-          - "updated": list of (`path_id`, `optimal_input`, profit, `hop_outputs`, `consumed_inputs`)
-          - "expired": list of int (`path_ids`)
-          - "removed": list of int (`path_ids`)
-        """
     def __new__(cls, /, py_bot: Bot | None = None) -> ArbitrageEngine: ...
     def apply_buffer_v3(self, /, pool_address: str) -> None:
         """
@@ -350,6 +331,16 @@ class ArbitrageEngine:
         Disable a non-terminal strategy. Its held nonce reservations are
         released. Raises the same typed refusals as `enable_strategy`.
         """
+    def enable_facets(self, /, facets: SupportsGetItem[int, str]) -> None:
+        """
+        Enable each named facet through the host's admission gate.
+
+        The first half of the engine's start flow: a hosted driver's loop starts
+        only for an ENABLED facet, so the facet set is enabled BEFORE the session
+        consumer's `resume` arms the pump. A facet name the host does not admit
+        fails here, before production starts. Refusals map exactly as
+        [`Self::enable_strategy`]'s.
+        """
     def enable_strategy(self, /, name: str) -> str:
         """
         Enable a registered, configured strategy. Returns the resulting FSM
@@ -478,26 +469,6 @@ class ArbitrageEngine:
         """
         Number of pools the V2 solve lane admits (the reserve-pair family's
         volatile designs — V2 + Aerodrome volatile; ADR-059 D6).
-        """
-    def run(self, /, facets: SupportsGetItem[int, str]) -> None:
-        """
-        Run phase: arm the live loop (consumes the session's consumer claim).
-
-        Must be called after `subscribe()`. Takes the WS stream from the
-        subscribe phase and begins processing events on block boundaries.
-
-        After calling `resume()`, the engine processes events autonomously.
-        Python reads results via `latest_results()` and awaits new blocks
-        via `wait_for_block()`.
-
-        Raises `RuntimeError` if `subscribe()` has not been called first.
-
-        Resuming the pump is the engine's start flow, and the flow owns the
-        enable-then-resume ordering: each named facet enables through the host
-        admission gate first, then the pump resumes, then every enabled facet
-        owning a hosted loop (the backrun lane) boots with a supervisor per
-        driver so a self-halt is queryable. A facet name the host does not
-        admit fails the call before the pump resumes.
         """
     def run_registration_lifecycle(self, /, lifecycle: RegistrationLifecycle) -> Any:
         """
@@ -669,6 +640,30 @@ class ArbitrageEngine:
 
         Raises `RuntimeError` if the phase is past the subscribe window, the
         pump is already started/subscribed, or the WS subscribe fails.
+        """
+    def start_hosted_session(self, /) -> int:
+        """
+        Launch the engine's deferred hosted I/O and then its hosted drivers —
+        the START boundary, ordered by the core session boot.
+
+        The second half of the start flow, called once the session consumer's
+        `resume` armed the pump: the head-watch WS connect and each active arm's
+        feed pump launch BEFORE the drivers, because each driver's loop
+        subscribes the hub head source the head edge registers as it starts.
+        Construction dials nothing.
+
+        The GIL is released across the whole start so a slow WS connect never
+        parks the interpreter, and the ordering (feed pumps and head edge
+        before any driver loop) lives in the boot.
+
+        # Errors
+
+        `RuntimeError` when the hosted head source cannot be registered — a
+        miswired boot fails closed rather than driving a clockless fleet — and
+        the host's typed refusal when a driver's start is refused. The hosted
+        start consumes its deferred-I/O latch before launching anything, so a
+        failure there is terminal: the caller must drop the engine, whose drop
+        stops the pumps and tears the head-watch runtime down.
         """
     def strategies(self, /) -> list[tuple[str, str, str | None]]:
         """
@@ -897,24 +892,6 @@ class BalancerWeightedView:
         """
 
 @final
-class BlockStream:
-    """
-    pyo3 async iterator over `newHeads` block notifications.
-    """
-    def __aiter__(self, /) -> BlockStream:
-        """
-        Return self as the async iterator.
-        """
-    def __anext__(self, /) -> Any:
-        """
-        Await the next block notification from the pump.
-
-        Returns a dict with keys: `number` (int), `timestamp` (int),
-        `base_fee_per_gas` (int | None), `gas_used` (int), `gas_limit` (int).
-        Raises `StopAsyncIteration` when the channel closes (pump stopped).
-        """
-
-@final
 class Bot:
     """
     Python handle to the per-chain `Bot` orchestrator (ADR-006 D4).
@@ -1001,28 +978,6 @@ class Bot:
         opened (WAL permits the concurrent connection) + wrapped in
         `DegenbotDbConstruction`; construction DB reads route through this held
         connection (no per-call `DegenbotDb::open`).
-        """
-    def block_stream(self, /) -> BlockStream:
-        """
-        Return a fresh async iterator over `newHeads` block notifications —
-        the settlement bot's authoritative block clock .
-
-        ADR-027 completion : the block-clock pipe is
-        coordinator-owned, so this method lives on `PyBot` (the pump-lifecycle
-        handle) — NOT on the engine wrapper, which is out of the block path
-        entirely. The receiver is born on the shared `PumpState` beside the
-        pipe's sender and is handed out exactly once.
-
-        Each yielded item is a dict: `number`, `timestamp`,
-        `base_fee_per_gas` (int | None), `gas_used`, `gas_limit`.
-
-        Can be called at most once (the receiver is moved into the iterator).
-        Subsequent calls raise `RuntimeError`. Raises `RuntimeError` too if
-        no engine was constructed against this bot (no pump state).
-
-        # Errors
-        `RuntimeError` if no pump state is attached (no engine constructed
-        against this bot) or the receiver was already handed out.
         """
     def build_curve_pool(
         self, /, address: str, registry_addresses: list, block: SupportsIndex | None = None
@@ -3264,7 +3219,7 @@ class PathBatchIterator:
     raises `StopAsyncIteration`.
 
     The mutable search state lives behind an `Arc<Mutex<Option<..>>>` and is
-    taken for the duration of one `__anext__` (mirroring `BlockStream`'s
+    taken for the duration of one `__anext__` (mirroring the subscription
     receiver take/put-back), so a single shared iterator survives across awaits.
     Dropping the Python object sets the cooperative `cancel` flag: a consumer
     that abandons the sweep (`aclose()` / GC) stops a mid-grind DFS at its next
@@ -5111,7 +5066,6 @@ __all__ = [
     "BalancerFamily",
     "BalancerStableView",
     "BalancerWeightedView",
-    "BlockStream",
     "BootRefused",
     "Bot",
     "BotIo",

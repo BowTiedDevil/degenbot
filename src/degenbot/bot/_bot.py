@@ -56,7 +56,6 @@ from ._account_queries import AccountQueryMixin
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from degenbot._ffi import BlockStream
     from degenbot.erc20.erc20 import Erc20Token
     from degenbot.pathfinding import PoolKind
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
@@ -308,27 +307,6 @@ class Bot(AccountQueryMixin):
     def provider(self) -> AlloyProvider:
         """The single RPC provider for this Bot's chain."""
         return cast("AlloyProvider", self._provider)
-
-    def block_stream(self) -> BlockStream:
-        """Fresh async iterator over ``newHeads`` block notifications.
-
-        The settlement bot's authoritative block clock: ticked
-        once per accepted header by the pump — NOT derived from
-        ``ResultBatch.solve_block``, which lags by the send debounce.
-
-        ADR-027: the block-clock pipe is
-        coordinator-owned, so this surfaces on the ``Bot`` (the
-        pump-lifecycle handle) rather than on the arbitrage engine, which is
-        out of the block path entirely. Once-only: a second call raises
-        ``RuntimeError``.
-
-        Returns:
-            BlockStream: Async iterator yielding one dict per accepted block
-            header (``number``, ``timestamp``, ``base_fee_per_gas``,
-            ``gas_used``, ``gas_limit``); ends when the pump stops.
-
-        """
-        return self._py_bot.block_stream()
 
     def release_python_state(self) -> None:
         """Drop Python-side pool/token caches once Rust owns canonical state.

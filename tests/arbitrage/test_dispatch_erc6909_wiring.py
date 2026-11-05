@@ -75,7 +75,6 @@ def _session(engine: Any, cfg: ArbitrageConfig) -> Session:
         async_w3=_FakeW3(),
         sim_ctx=_ctx(),
         dispatcher=Dispatcher.for_block(0),
-        current_block=10,
     )
 
 

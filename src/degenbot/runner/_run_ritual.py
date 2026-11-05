@@ -51,8 +51,8 @@ class _RitualState(Enum):
     """The ritual's private states; the order below is the transition table."""
 
     ATTACH_CONSUMER = "attach_consumer"
-    ATTACH_WATCH = "attach_watch"
     RESUME = "resume"
+    ATTACH_WATCH = "attach_watch"
     REGISTRATION = "registration"
     MAIN_LOOP = "main_loop"
     ENDED = "ended"
@@ -61,21 +61,21 @@ class _RitualState(Enum):
 class RunRitual:
     """The startup-ordering state machine behind ``Session.run()``.
 
-    One legal drive: ``attach_consumer -> attach_watch -> resume ->
+    One legal drive: ``attach_consumer -> resume -> attach_watch ->
     registration -> main_loop``. Each named transition admits only its own
     state and refuses every other (:class:`RunRitualError`), so the ordering
     the engine requires lives in the machine rather than in call-site prose:
 
-    - the consumer task exists BEFORE ``resume()`` — the engine's once-only
-      result-receiver hand-off is satisfied at engine construction, so the
-      residual asyncio-side ordering is that the drain task must exist before
-      batches can flow over the unbounded result channel;
-    - the session watch holds that consumer before any later failure (an
-      inline ``build_paths`` raise, Ctrl-C during registration) can skip
-      teardown;
-    - ``resume(facets)`` is the single enable-then-resume gate, fed the facet
-      list the ritual resolves (a settlement-active boot hosts no backrun
-      lane; a backrun-only boot hosts the active arms and no registration);
+    - the consumer is BUILT first: it takes the engine's one event hand-off, so
+      the session's stream has an owner before production can start;
+    - ``resume`` is the engine's start flow in its core-owned order — enable the
+      facets, then the consumer's ``resume`` (the claim's one use: the driver's
+      ``run``), then the hosted-I/O boundary — fed the facet list the ritual
+      resolves (a settlement-active boot hosts no backrun lane; a backrun-only
+      boot hosts the active arms and no registration);
+    - the consumer task and the session watch attach the moment the pump is
+      armed, so a later failure (an inline ``build_paths`` raise, Ctrl-C during
+      registration) still reaches the consumer;
     - registration is ONE scheduled hand-off — the scheduler is data (the
       production default is ``asyncio.create_task``) — and a backrun-only
       boot schedules nothing and never trims.
@@ -109,57 +109,32 @@ class RunRitual:
             raise RunRitualError(msg)
 
     async def attach_consumer(self) -> None:
-        """Acquire the once-only block stream, build the pipeline, start the drain.
+        """Build the sim/submit pipeline and the session's core event consumer.
 
-        The block-clock pipe is coordinator-owned: ``bot.block_stream()`` moves
-        the mpsc receiver out of the PumpState on each call — a second call
-        raises, so the stream is acquired exactly once and fed DIRECTLY to the
-        single result consumer (the Rust two-step gate + solve-time verifier own
-        verification; no Python whole-batch re-verify). The sim/submit pipeline
-        is built here, before the task exists, so a pipeline refusal (no sim
-        context, non-Alloy provider) aborts the run before the pump resumes.
+        The pipeline comes first (a refusal — no sim context, non-Alloy provider
+        — aborts the run before the pump resumes), then the consumer takes the
+        engine's one event hand-off. Nothing is spawned yet: the consumer task
+        starts once the pump is armed, so the stream's first event cannot race a
+        loop that production has not started under.
 
         """
         self._expect(_RitualState.ATTACH_CONSUMER)
         session = self._session
-        actors = session.actors
-        assert actors is not None, "the run ritual drives a started session"
-        bot = actors.bot
-        assert bot is not None, "registration has not trimmed the bot yet"
-        block_stream = bot.block_stream()
-        # The pipeline is built BEFORE the consumer task exists: the loop
-        # receives it as a collaborator (its record), never as a lazy build of
-        # its own.
         await session.build_pipeline()
-        consumer = actors.consumer or consume_result_batches
-        session.attach_consumer_task(
-            asyncio.create_task(
-                consumer(session.block_loop(), block_stream=block_stream),
-                name="result-consumer",
-            )
-        )
-        self._state = _RitualState.ATTACH_WATCH
-
-    def attach_watch(self) -> None:
-        """Attach the consumer to the session watch the moment it exists."""
-        self._expect(_RitualState.ATTACH_WATCH)
-        session = self._session
-        consumer_task = session.result_consumer_task
-        assert consumer_task is not None, "attach_consumer ran before attach_watch"
-        session.session_watch.attach(
-            consumer_task=consumer_task,
-            watchdog_factory=session.pump_finished_watchdog,
-        )
+        await session.build_consumer()
         self._state = _RitualState.RESUME
 
-    def resume(self) -> None:
-        """Resolve the hosted-arm facet set and resume the pump.
+    async def resume(self) -> None:
+        """Resolve the hosted-arm facet set and start the session's production.
 
         The enabled-facet set is a data read over the same readiness view the
-        boot gate consumed. ``resume()`` owns enabling each facet before it
-        drives a hosted loop, so the enable-then-resume ordering lives in the
-        engine, not here. A settlement-active boot is this session's settlement
-        arm, so it hosts no backrun lane.
+        boot gate consumed. Three calls in the core's order: the facets enable
+        through the host admission gate, the consumer's ``resume`` consumes the
+        session's one consumer claim (the driver's ``run`` — production cannot
+        start without an attached consumer), and the deferred hosted I/O
+        launches once the pump is armed. A settlement-active boot is this
+        session's settlement arm, so it hosts no backrun lane.
+
         """
         self._expect(_RitualState.RESUME)
         session = self._session
@@ -169,12 +144,46 @@ class RunRitual:
             assert view is not None, "start() resolved the readiness before run()"
             facets = list(view.active_backrun_facets)
             bot_logger.info(
-                f"[host-arms] settlement facet inactive — hosted arms: "
+                f"[host-arms] settlement facet inactive - hosted arms: "
                 f"{', '.join(facets) if facets else 'NONE'}"
             )
         actors = session.actors
         assert actors is not None, "the run ritual drives a started session"
-        actors.engine_registry.engine.run(facets=facets)
+        consumer = session.consumer
+        assert consumer is not None, "attach_consumer built the session consumer"
+        engine = actors.engine_registry.engine
+        engine.enable_facets(facets)
+        await consumer.resume()
+        engine.start_hosted_session()
+        self._state = _RitualState.ATTACH_WATCH
+
+    def attach_watch(self) -> None:
+        """Start the consumer task and attach it to the session watch.
+
+        The task's lifetime is the session's: the watch holds it for the whole
+        main loop, and the pump-finished watchdog cancels it when the pump ends
+        outside ``stop()``.
+
+        """
+        self._expect(_RitualState.ATTACH_WATCH)
+        session = self._session
+        actors = session.actors
+        assert actors is not None, "the run ritual drives a started session"
+        consumer = session.consumer
+        assert consumer is not None, "attach_consumer built the session consumer"
+        adapter = actors.consumer or consume_result_batches
+        session.attach_consumer_task(
+            asyncio.create_task(
+                adapter(session.block_loop(), consumer),
+                name="result-consumer",
+            )
+        )
+        consumer_task = session.result_consumer_task
+        assert consumer_task is not None, "attach_watch just created the consumer task"
+        session.session_watch.attach(
+            consumer_task=consumer_task,
+            watchdog_factory=session.pump_finished_watchdog,
+        )
         self._state = _RitualState.REGISTRATION
 
     def registration(self) -> None:
@@ -251,8 +260,8 @@ class RunRitual:
 
         """
         await self.attach_consumer()
+        await self.resume()
         self.attach_watch()
-        self.resume()
         self.registration()
         return await self.main_loop()
 

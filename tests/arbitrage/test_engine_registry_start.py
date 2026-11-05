@@ -101,10 +101,15 @@ def test_pybot_exposes_verify_methods_after_engine_attach() -> None:
 
 
 def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
-    """T3 (ADR-006 D4): Bot exposes subscribe/resume as delegating entry
-     points once a ArbitrageEngine is constructed against it (which attaches
-     the shared PumpState). The Bot is the D4 pump owner; these methods drive
-     the SAME PumpState the engine reads.
+    """T3 (ADR-006 D4): Bot exposes the pump-lifecycle moves (connect + run) as
+     delegating entry points once a ArbitrageEngine is constructed against it
+     (which attaches the shared PumpState). The Bot is the D4 pump owner; these
+     methods drive the SAME PumpState the engine reads.
+
+     The engine's own share is the start flow around the consumer's resume:
+     ``connect`` (subscribe + backfill) then, once a session consumer holds the
+     event hand-off, ``enable_facets`` → the consumer's ``resume`` →
+     ``start_hosted_session``. Arming the pump is the consumer's move.
 
      The snapshot→WS gap is closed automatically inside the core
      `BlockPump::resume_from_subscribe`. `S` is recorded on the shared
@@ -119,9 +124,9 @@ def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
     engine = ArbitrageEngine(py_bot=bot)
     for method in ("connect", "run"):
         assert hasattr(bot, method), f"Bot must expose {method} after engine attach"
-    # The engine still exposes subscribe/resume too (reads the same shared state).
-    for method in ("connect", "run"):
-        assert hasattr(engine, method)
+    # The engine's start flow around the session consumer's resume.
+    for method in ("connect", "enable_facets", "start_hosted_session"):
+        assert hasattr(engine, method), f"the engine must expose the start-flow half {method}"
     # The engine still exposes the snapshot seed block (getter+setter): the DB
     # load records `S` and `start()` reads it back.
     assert hasattr(engine, "snapshot_seed_block")  # getter+setter

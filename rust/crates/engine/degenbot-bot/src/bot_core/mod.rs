@@ -93,7 +93,7 @@ pub use balancer_weighted_state::{
 // (degenbot-core), not bot_runtime knowledge — the runtime’s engine merely
 // relays header ticks through it and the PyO3 layer subscribes at the edge.
 pub use curve_state::{CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams};
-pub use degenbot_core::block_clock_pipe::{BlockClockPipe, BlockNotification};
+pub use degenbot_core::block_notification::BlockNotification;
 pub use degenbot_ingestion::RELEVANT_TOPICS;
 
 pub use pump_control::PumpControl;
@@ -180,9 +180,7 @@ pub use construction_io::{
 };
 
 /// The `Bot` facade's snapshot + block-stream error vocabulary.
-pub use lifecycle::{
-    BlockStreamError, CloseSnapshotTxError, RetainedSnapshotTx, SnapshotOpenError,
-};
+pub use lifecycle::{CloseSnapshotTxError, RetainedSnapshotTx, SnapshotOpenError};
 
 /// Liquidity verification against a live tick map.
 pub use liquidity_verifier::verify_live_map;

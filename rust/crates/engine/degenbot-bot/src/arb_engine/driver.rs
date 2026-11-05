@@ -78,7 +78,7 @@ use crate::arb_engine::pump_session::{
 use crate::arb_engine::session_events::{
     ClaimRefusal, ConsumerClaim, EventHandoff, SessionEvent, SessionStream,
 };
-use crate::arb_engine::{BlockNotification, EngineStages};
+use crate::arb_engine::EngineStages;
 use crate::bot_core::block_pump::{BlockPump, SubscribeState};
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
 use crate::bot_core::verify_lifecycle::VerifyLifecycleConfig;
@@ -93,12 +93,6 @@ use degenbot_ingestion::IngestEvent as WsEvent;
 /// [`degenbot_eventhub::HubEvent`] variant: `SessionEvent` is an engine-owned
 /// downstream type the hub vocabulary deliberately does not name.
 pub const SESSION_EVENT_CHANNEL_NAME: &str = "engine_session_event";
-
-/// Hub registration name for the block-clock observer tap.
-///
-/// The forwarded-header edge (ADR-027) the observer surfaces read; the session's
-/// own clock is the stream's `Block` arm, written by the same producer call.
-pub const BLOCK_CHANNEL_NAME: &str = "engine_block_notification";
 
 /// How long [`EngineDriver::close`] waits for each loop to exit
 /// **cooperatively** before escalating to `abort()`.
@@ -126,7 +120,6 @@ fn pump_stop_grace_ms() -> u64 {
 /// them. The consumer ends stay hub-held for the once-only hand-offs.
 pub struct EngineChannelHandles {
     session: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-    block: tokio::sync::mpsc::UnboundedSender<BlockNotification>,
 }
 
 impl EngineChannelHandles {
@@ -141,10 +134,7 @@ impl EngineChannelHandles {
         let session = hub
             .add_named_unbounded_source::<SessionEvent>(SESSION_EVENT_CHANNEL_NAME)
             .into_inner();
-        let block = hub
-            .add_named_unbounded_source::<BlockNotification>(BLOCK_CHANNEL_NAME)
-            .into_inner();
-        Self { session, block }
+        Self { session }
     }
 }
 
@@ -591,9 +581,6 @@ impl EngineDriver {
                 "EngineDriver: the session event source refused its producer; the stream cannot be claimed"
             );
         }
-        // The stage surface's block-clock pipe is fresh here and this is its one
-        // wiring site, so a decline is unreachable.
-        let _ = stages.set_block_channel(channels.block);
         install_session_path_owner(&bot, &stages);
 
         let (completion_tx, pump_finished_rx) = watch::channel(false);
@@ -699,31 +686,6 @@ impl EngineDriver {
             .state_arc()
             .write_at(LockSite::Pump)
             .set_snapshot_seed_block(block);
-    }
-
-    /// Take the block-clock observer tap's receiver — once only.
-    ///
-    /// The forwarded-header edge (ADR-027) the observer surfaces read. The
-    /// session's own clock is the ordered stream's `Block` arm; both are written
-    /// by the same producer call, so the two can never disagree about the clock.
-    #[must_use]
-    pub fn take_block_receiver(
-        &self,
-    ) -> Option<degenbot_eventhub::NamedReceiver<BlockNotification>> {
-        match self
-            .hub
-            .take_named_counting_receiver::<BlockNotification>(BLOCK_CHANNEL_NAME)
-        {
-            Ok(rx) => rx,
-            Err(e) => {
-                op_error!(
-                    domain = pump,
-                    %e,
-                    "EngineDriver: block source channel missing from the hub"
-                );
-                None
-            }
-        }
     }
 
     /// Await the spawned pump task's completion — cooperative exit, stream end,
@@ -1467,7 +1429,7 @@ mod tests {
     }
 
     #[test]
-    fn the_driver_hub_carries_the_ordered_source_and_the_block_tap() {
+    fn the_driver_hub_carries_the_ordered_source() {
         let driver = driver_for_test();
         assert_eq!(
             driver.hub().named_policy(SESSION_EVENT_CHANNEL_NAME),
@@ -1476,23 +1438,10 @@ mod tests {
             })
         );
         assert_eq!(
-            driver.hub().named_policy(BLOCK_CHANNEL_NAME),
-            Some(OverflowPolicy::UnboundedFlagged {
-                name: BLOCK_CHANNEL_NAME
-            })
-        );
-        assert_eq!(
             driver.hub().unbounded_flagged_count(),
-            2,
-            "both engine channels are the deliberate unbounded audit posture"
+            1,
+            "the session's ordered stream is the deliberate unbounded audit posture"
         );
-    }
-
-    #[test]
-    fn take_block_receiver_is_once_only() {
-        let driver = driver_for_test();
-        assert!(driver.take_block_receiver().is_some());
-        assert!(driver.take_block_receiver().is_none());
     }
 
     #[test]
@@ -1516,15 +1465,13 @@ mod tests {
             Arc::ptr_eq(host.hub(), driver.hub()),
             "the driver attached to the host-minted hub, not a private one"
         );
-        for name in [SESSION_EVENT_CHANNEL_NAME, BLOCK_CHANNEL_NAME] {
-            assert_eq!(
-                host.hub().named_policy(name),
-                Some(OverflowPolicy::UnboundedFlagged { name }),
-                "the host-minted hub carries {name}"
-            );
-        }
+        let name = SESSION_EVENT_CHANNEL_NAME;
+        assert_eq!(
+            host.hub().named_policy(name),
+            Some(OverflowPolicy::UnboundedFlagged { name }),
+            "the host-minted hub carries {name}"
+        );
 
-        assert!(driver.take_block_receiver().is_some());
         // The stream the driver hands out must have the stages' live producer
         // behind it: an orphaned stream (its sender dropped) resolves `recv`
         // immediately, while a wired one stays pending until `close` closes it.

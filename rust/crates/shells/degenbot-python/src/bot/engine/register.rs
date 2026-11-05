@@ -6,7 +6,7 @@
 //! blocks per type, so each concern file contributes one slice.
 
 use super::{Arc, Bot, EngineStages, PoolHop, PyArbEngine, PyBot, PyList};
-use crate::bot::errmap::{map_connect_err, map_driver_err, map_path_registration_err};
+use crate::bot::errmap::{map_connect_err, map_path_registration_err};
 use crate::prelude::*;
 
 use degenbot_substrate::session_registry::SessionObjectRegistry;
@@ -72,16 +72,13 @@ impl PyArbEngine {
         let session = super::strategy::boot_session(Arc::clone(&bot), Arc::clone(&stages))
             .map_err(super::strategy::map_session_boot_error)?;
         // ONE consumer hand-off: the ordered stream AND the claim that proves a
-        // consumer holds it. `resume`/`run` consumes the claim.
-        let (stream, claim) = session
-            .driver()
-            .claim_consumer()
-            .map_err(|refusal| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "{refusal} (the engine wrapper is this session's one consumer)"
-                ))
-            })?
-            .split();
+        // consumer holds it. It stays here until a session consumer attaches,
+        // and that consumer's `resume` consumes the claim.
+        let handoff = session.driver().claim_consumer().map_err(|refusal| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "{refusal} (the engine wrapper is this session's one consumer)"
+            ))
+        })?;
         // Both wrappers share the driver itself.
         if let Some(parent) = py_bot_ref {
             parent
@@ -103,8 +100,7 @@ impl PyArbEngine {
         Ok(Self {
             stages,
             session,
-            stream: Arc::new(parking_lot::Mutex::new(Some(stream))),
-            claim: parking_lot::Mutex::new(Some(claim)),
+            handoff: parking_lot::Mutex::new(Some(handoff)),
             warm_code_cache,
         })
     }
@@ -287,43 +283,6 @@ impl PyArbEngine {
             &node_ws,
             verify_state_view.as_deref(),
         )
-    }
-
-    /// Run phase: arm the live loop (consumes the session's consumer claim).
-    ///
-    /// Must be called after `subscribe()`. Takes the WS stream from the
-    /// subscribe phase and begins processing events on block boundaries.
-    ///
-    /// After calling `resume()`, the engine processes events autonomously.
-    /// Python reads results via `latest_results()` and awaits new blocks
-    /// via `wait_for_block()`.
-    ///
-    /// Raises `RuntimeError` if `subscribe()` has not been called first.
-    ///
-    /// Resuming the pump is the engine's start flow, and the flow owns the
-    /// enable-then-resume ordering: each named facet enables through the host
-    /// admission gate first, then the pump resumes, then every enabled facet
-    /// owning a hosted loop (the backrun lane) boots with a supervisor per
-    /// driver so a self-halt is queryable. A facet name the host does not
-    /// admit fails the call before the pump resumes.
-    #[pyo3(signature = (facets))]
-    #[expect(clippy::needless_pass_by_value)]
-    fn run(&self, py: Python<'_>, facets: Vec<String>) -> PyResult<()> {
-        self.enable_facets(py, &facets)?;
-        let claim = self.claim.lock().take().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err(
-                "Cannot run: this session's event stream is not claimed. \
-                 Construct the engine (which claims it) before running.",
-            )
-        })?;
-        py.detach(|| degenbot_bot::bot_core::Bot::run(self.session.driver(), claim))
-            .map_err(map_driver_err)?;
-        // The start boundary for the deferred hosted I/O: the head-watch WS
-        // connect and each active arm's feed pump launch here, BEFORE the
-        // drivers, because each driver's loop subscribes the hub head source
-        // the head edge registers as it starts. Construction dials nothing.
-        self.start_hosted_session(py)?;
-        Ok(())
     }
 
     /// Stop the pump and signal the Rust core to clean up (ADR-006 D4).

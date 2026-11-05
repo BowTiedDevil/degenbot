@@ -42,7 +42,7 @@
 //!   `None`; `SendOutcome` names which way a send did not deliver.
 
 pub mod address_utils;
-pub mod block_clock_pipe;
+pub mod block_notification;
 pub mod channel_lifecycle;
 pub mod cpu_budget;
 pub mod eip_1559;

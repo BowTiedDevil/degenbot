@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from degenbot.dispatch import BatchExecutor, TxSigner
+from degenbot.dispatch import BatchExecutor, SessionConsumer, TxSigner
 from degenbot.dispatch import (
     build_batch_executor as build_batch_executor_py,
 )
@@ -40,27 +40,9 @@ if TYPE_CHECKING:
 
     from degenbot.dispatch import Dispatcher, SimulateContext
     from degenbot.provider import AsyncAlloyProvider
-    from degenbot.runner._dispatch import RawEngineResult
     from degenbot.runner._relay_posture import RelayPosture
     from degenbot.runner.config import ArbitrageConfig
     from degenbot.runner.session import Session
-
-
-@dataclass
-class BatchWork:
-    """One streamed solver batch (the FFI enqueue payload).
-
-    The executor seam extracts this by field name (the frozen-dataclass
-    getattr pattern); ``payloads`` keys are the batch-local payload-served
-    set. ``current_block`` is also the dispatch-clock value the consumer
-    stub records.
-    """
-
-    results: list[RawEngineResult]
-    block_timestamp: int
-    base_fee_next: int
-    current_block: int
-    payloads: dict[int, dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -186,3 +168,37 @@ async def build_executor_for(session: Session) -> BatchExecutor:
 
     """
     return await build_batch_executor(ExecutorInputs.from_session(session))
+
+
+def build_session_consumer(session: Session, executor: BatchExecutor) -> SessionConsumer:
+    """Build the session's core event consumer over its engine's one hand-off.
+
+    The consumer is the loop: it takes the engine's ordered stream and the claim
+    that proves a consumer holds it, derives each batch's work, enqueues it on
+    the session's executor, and owns the loud-abort rule and the session close.
+    Python keeps only the drain (``_consume``) and the error/calling-convention
+    translation.
+
+    The session is supervised: a natural stream end means the pump died outside
+    this session's own teardown, so the end verdict is the loud
+    ``pump-stopped``. The advisory per-header ``eth_feeHistory`` sample rides the
+    same loop (the core's declared percentile pair), where the pre-cut-over
+    driver awaited it per block.
+
+    Args:
+        session: The started session the consumer is built over.
+        executor: The session's constructed batch executor.
+
+    Returns:
+        The attached session consumer (its ``resume`` arms the pump).
+
+    """
+    actors = session.actors
+    assert actors is not None, "the session consumer is built by a started session"
+    consumer = SessionConsumer(
+        executor,
+        allow_quiet_end=False,
+        fee_history_provider=actors.async_w3.as_async_alloy(),
+    )
+    consumer.attach(actors.engine_registry.engine)
+    return consumer

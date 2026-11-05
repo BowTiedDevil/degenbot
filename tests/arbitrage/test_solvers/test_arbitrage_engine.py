@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from degenbot.arbitrage.engine_registry import ArbitrageEngine
+from degenbot.dispatch import Dispatcher, SessionConsumer, SessionConsumerError
+from tests.helpers.session_drive import offline_executor
 
 # sqrt price at tick 0 (1:1 price for 18-decimal tokens)
 SQRT_PRICE_TICK_0 = 79228162514264337593543950336
@@ -37,24 +39,32 @@ class TestEventBufferControl:
         engine.flush_event_buffer()
 
 
-class TestConnectRun:
-    def test_connect_and_run_are_the_lifecycle_moves(self):
-        """The session exposes the two moves (they will not connect in tests)."""
-        engine = ArbitrageEngine()
-        assert hasattr(engine, "connect")
-        assert hasattr(engine, "run")
-        assert hasattr(engine, "close")
+class TestLifecycleMoves:
+    def test_connect_and_close_are_the_engine_lifecycle_moves(self):
+        """The engine exposes the connect/close pair (they will not connect in tests).
 
-    def test_run_before_connect_refuses_on_the_claim(self):
-        """`run` consumes the consumer claim; a wrapper that never held one
-
-        (this bare engine claims at construction, so its claim was already
-
-        consumed or is present) refuses through the driver's typed pose gate.
+        The arm move belongs to the session consumer (`resume` is the claim's
+        one use), so the engine carries only the two start-flow halves the run
+        ritual calls in order around that resume.
         """
         engine = ArbitrageEngine()
-        with pytest.raises(RuntimeError):
-            engine.run([])
+        assert hasattr(engine, "connect")
+        assert hasattr(engine, "close")
+        assert hasattr(engine, "enable_facets")
+        assert hasattr(engine, "start_hosted_session")
+
+    async def test_resume_before_attach_refuses_on_the_claim(self):
+        """`resume` consumes the consumer claim, so an unattached consumer refuses.
+
+        A consumer built but never handed the engine's event hand-off holds no
+        claim; resuming it must fail loud (the shared loud-abort mapping) rather
+        than drive a stream nobody gave it.
+        """
+        executor = offline_executor(Dispatcher.for_block(12_345))
+        consumer = SessionConsumer(executor, allow_quiet_end=True)
+        with pytest.raises(SessionConsumerError, match="no attached session") as refusal:
+            await consumer.resume()
+        assert refusal.value.batch_index == 0
 
     def test_connect_signature_takes_the_endpoint_only(self):
         """Configuration is not a lifecycle argument (ADR-093 D1)."""

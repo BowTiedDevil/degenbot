@@ -1,11 +1,10 @@
 """Submit-lane records, the smoke FSM, and the executor boundary's leaves.
 
 The production path is the Rust core's batch executor
-(:mod:`degenbot.runner._sim_submit` builds it; the consumer enqueues batches
-and a drain task renders). This module owns the submit side of one drained
-batch: the raw engine-result record the assembly seam extracts, the
-``[dispatch]`` line render over the typed submit records, the silent-veto smoke
-FSM, and the relay broadcast fan-out.
+(:mod:`degenbot.runner._sim_submit` builds it; the session consumer derives and
+enqueues each batch, and a drain task renders). This module owns the submit side
+of one drained batch: the ``[dispatch]`` line render over the typed submit
+records, the silent-veto smoke FSM, and the relay broadcast fan-out.
 
 The render view (:class:`~degenbot.runner._render.MergedOutcome`) and the
 display policy (:class:`~degenbot.runner._render.DisplayPolicy`) live in
@@ -33,25 +32,6 @@ if TYPE_CHECKING:
 # first gate-clearing candidate; reused so streaming batches never re-dial
 # the builder endpoints per batch.
 _RELAY_SUBMIT_PROVIDERS: list[tuple[str, Any]] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class RawEngineResult:
-    """One raw engine-result row the solver result batch stream delivers.
-
-    The named record is constructed at the batch-stream conversion point
-    (``_consume._engine_result``) and extracted by field name by the Rust
-    batch executor's ``enqueue`` seam — the field order never crosses the
-    boundary positionally.
-    """
-
-    path_id: int
-    optimal_input: int
-    engine_profit: int
-    hop_outputs: tuple[int, ...]
-    consumed_inputs: tuple[int, ...]
-    solve_block: int
-    state_nonces: tuple[int, ...]
 
 
 #: Silent-veto smoke detector: a live-armed session whose candidates clear

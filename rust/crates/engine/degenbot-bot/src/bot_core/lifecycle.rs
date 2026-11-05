@@ -45,17 +45,6 @@ pub enum CloseSnapshotTxError {
     Close(degenbot_db::DbError),
 }
 
-/// Error from [`Bot::block_stream`].
-#[derive(Debug)]
-pub enum BlockStreamError {
-    /// No engine was constructed against the bot (the shell's "no pump
-    /// state" `RuntimeError`).
-    NoPumpState,
-    /// The receiver was already handed out (the shell's "can only be called
-    /// once" `RuntimeError`).
-    AlreadyTaken,
-}
-
 impl Bot {
     /// The snapshot seed block `S` (`None` = the cold-start path). The read
     /// the `PyO3` `snapshot_seed_block` getter routes through.
@@ -177,26 +166,6 @@ impl Bot {
             );
             verify.configure(config);
         }
-    }
-
-    /// Take the block-clock receiver for the block stream — the once-only
-    /// hand-off from the attached engine's block source channel. `None`
-    /// (no engine constructed against the bot) is
-    /// [`BlockStreamError::NoPumpState`]; a second take is
-    /// [`BlockStreamError::AlreadyTaken`] (the receiver is moved into the
-    /// iterator at the shell).
-    ///
-    /// # Errors
-    /// [`BlockStreamError`] as above.
-    pub fn block_stream(
-        driver: Option<&EngineDriver>,
-    ) -> Result<
-        degenbot_eventhub::NamedReceiver<crate::bot_core::BlockNotification>,
-        BlockStreamError,
-    > {
-        let pump = driver.ok_or(BlockStreamError::NoPumpState)?;
-        pump.take_block_receiver()
-            .ok_or(BlockStreamError::AlreadyTaken)
     }
 }
 
@@ -540,28 +509,6 @@ mod tests {
         assert!(tx.close().expect("no handle: Ok").is_none());
 
         drop(held);
-    }
-
-    /// The block-clock receiver is handed out exactly once: a missing driver
-    /// is the typed `NoPumpState` (the shell's "no pump state" `RuntimeError`)
-    /// and a second take is `AlreadyTaken` ("can only be called once").
-    #[test]
-    fn block_stream_hands_the_receiver_out_exactly_once() {
-        let bot = std::sync::Arc::new(Bot::new(8453));
-        let driver =
-            crate::arb_engine::EngineDriver::new(bot, degenbot_config::holder::config_arc());
-
-        assert!(matches!(
-            Bot::block_stream(None),
-            Err(super::BlockStreamError::NoPumpState)
-        ));
-
-        let rx = Bot::block_stream(Some(&driver)).expect("first hand-off");
-        drop(rx);
-        assert!(matches!(
-            Bot::block_stream(Some(&driver)),
-            Err(super::BlockStreamError::AlreadyTaken)
-        ));
     }
 
     /// The verify-config setters no-op without an attached engine (the shell's

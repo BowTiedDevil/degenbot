@@ -31,7 +31,6 @@ pub(crate) use strategy::session_phase_next;
 
 pub use crawl::{PyCrawlReceiptStream, PyCrawlSession};
 pub use errors::*;
-pub use result_channel::BlockStream;
 
 use crate::prelude::*;
 use degenbot_substrate::state_lock::StateLock;
@@ -39,7 +38,6 @@ use degenbot_substrate::BotState;
 pub(crate) use std::sync::Arc;
 
 pub(crate) use alloy::primitives::{Address, U256};
-pub(crate) use pyo3::exceptions::PyStopAsyncIteration;
 pub(crate) use pyo3::types::{PyDict, PyList};
 
 pub(crate) use crate::bot::PyBot;
@@ -47,10 +45,8 @@ pub(crate) use degenbot_bot::bot_core::Bot;
 
 pub(crate) use degenbot_bot::arb_engine::EngineStages;
 
-pub(crate) use degenbot_bot::arb_engine::{
-    BlockNotification, ConsumerClaim, ResultBatch, SessionEvent, SessionStream,
-};
-pub(crate) use degenbot_pools::solve::{HopType, PoolHop, SolvePathResult};
+pub(crate) use degenbot_bot::arb_engine::EventHandoff;
+pub(crate) use degenbot_pools::solve::{HopType, PoolHop};
 
 /// Python-facing mixed V2/V3 arbitrage engine.
 ///
@@ -74,21 +70,14 @@ pub struct PyArbEngine {
     /// handle instead of four it must wire in order.
     pub(crate) session: degenbot_bot::bot_core::EngineSession,
 
-    /// The session's ordered event stream — the ONE consumer hand-off, taken in
-    /// `new()` and read by `__anext__`.
+    /// The session's ONE consumer hand-off — the ordered stream AND the claim
+    /// that proves a consumer holds it (ADR-093 D5).
     ///
-    /// `Block(N)` reaches the stream before every `Batch(N)`; the block clock also
-    /// arrives on `PyBot::block_stream`'s observer tap (both written at the one
-    /// header producer site), so `__anext__` skips the clock arm it does not own.
-    stream: Arc<parking_lot::Mutex<Option<SessionStream>>>,
-
-    /// The `ConsumerClaim` that travelled with the stream. `run()` consumes it:
-    /// production cannot start without the proof that a consumer is attached.
-    claim: parking_lot::Mutex<Option<ConsumerClaim>>,
-    // The block-notification receiver is NOT here any more (ADR-027
-    // completion): the block-clock pipe is driver-owned, and its receiver
-    // lives on the shared EngineDriver — `PyBot::block_stream` hands it to
-    // Python.
+    /// The session consumer takes it (`SessionConsumer.attach`) and its `resume`
+    /// consumes the claim, so production cannot start without an attached
+    /// consumer. Nothing else reads the stream: `Block(N)` arrives before every
+    /// `Batch(N)` because the header producer writes both arms.
+    handoff: parking_lot::Mutex<Option<EventHandoff>>,
     /// The cross-block persistent bytecode + account-existence cache
     /// (`WarmCodeCacheInner`, the Option-A layer). Held for the
     /// engine's life; cloned into each per-block `Evm2BlockSimHandle::build` so
@@ -164,6 +153,29 @@ impl PyArbEngine {
     /// for `BotStateDb`). One Arc clone, no state copy.
     pub(crate) fn bot_state_arc(&self) -> Arc<StateLock<BotState>> {
         self.stages.core()
+    }
+
+    /// The stage-surface arc — the engine's ONE external seam (ADR-093 D3).
+    ///
+    /// The batch executor's path resolver IS this surface, so a resolve is a
+    /// GIL-free stage read and no Python-side path map exists to keep in step
+    /// with the registry.
+    pub(crate) fn stages_arc(&self) -> Arc<EngineStages> {
+        Arc::clone(&self.stages)
+    }
+
+    /// The session's shared driver (the pump session's one owner).
+    pub(crate) fn driver_arc(&self) -> Arc<degenbot_bot::arb_engine::EngineDriver> {
+        Arc::clone(self.session.driver())
+    }
+
+    /// Take the session's ONE consumer hand-off.
+    ///
+    /// `None` once a consumer holds it: one session has one consumer, and the
+    /// stream cannot be handed out twice. The caller is the session consumer's
+    /// `attach`, which moves the claim into `resume`.
+    pub(crate) fn take_handoff(&self) -> Option<EventHandoff> {
+        self.handoff.lock().take()
     }
 
     /// The cross-block warm bytecode cache arc (Option A) — the

@@ -35,7 +35,8 @@ ENGINE_SEAM_MEMBERS: tuple[str, ...] = (
     "session_end_future",
     "register_and_solve_path",
     "release_all_v3_v4_quarantined",
-    "run",
+    "enable_facets",
+    "start_hosted_session",
     "run_registration_lifecycle",
     "set_path_cap",
     "set_verify_rpc_url",
@@ -81,7 +82,9 @@ class EngineSeam(Protocol):
     def v4_pool_count(self) -> int: ...
     def path_count(self) -> int: ...
     def session_end_future(self) -> Any: ...
-    def run(self, facets: list[str]) -> None: ...
+    def enable_facets(self, facets: list[str]) -> None: ...
+
+    def start_hosted_session(self) -> int: ...
     def close(self) -> None: ...
     def enable_strategy(self, name: str) -> str: ...
     def disable_strategy(self, name: str) -> None: ...
@@ -107,6 +110,7 @@ class FakeEngine:
         self._events = events
         self.calls: list[str] = []
         self.resumed = False
+        self.hosted_started = False
         self.stop_calls = 0
         self.stop_raises = stop_raises
         self._backfill_target = backfill_target
@@ -149,14 +153,23 @@ class FakeEngine:
 
     # ── lifecycle ──────────────────────────────────────────────────
 
-    def run(self, facets: list[str]) -> None:
-        """Enable the named facets, then arm the live loop (the engine-owned
-        enable-then-run ordering, mirrored in-process)."""
+    def enable_facets(self, facets: list[str]) -> None:
+        """Enable the named facets through the host admission gate.
+
+        The first half of the engine's start flow: the session consumer's resume
+        (the driver's ``run``) follows it, so the ordering is the engine's.
+        """
         self.resumed = True
         self.resume_facets = list(facets)
         for facet in facets:
             self.enable_strategy(facet)
-        self._record("run")
+        self._record("enable_facets")
+
+    def start_hosted_session(self) -> int:
+        """Launch the deferred hosted I/O (the start flow's second half)."""
+        self.hosted_started = True
+        self._record("start_hosted_session")
+        return 0
 
     def close(self) -> None:
         self.stop_calls += 1

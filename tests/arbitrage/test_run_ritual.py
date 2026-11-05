@@ -1,7 +1,7 @@
 """The run ritual's transition table, pinned against a real session.
 
 ``_run_ritual`` is the cockpit's ONE owner of a running session's startup
-ordering (GLOSSARY.md *Run ritual*): consumer-attach, watch-attach, resume,
+ordering (GLOSSARY.md *Run ritual*): consumer-attach, resume, watch-attach,
 registration, main loop — an enum state machine whose transitions refuse to
 run out of order (:class:`RunRitualError`, an internal-sequencing error
 distinct from the operator-facing ``PhaseError``).
@@ -11,9 +11,9 @@ cockpit's one construction seam, so the ritual drives the SAME record and
 mutators a boot does. These tests pin: every legal transition; the
 ``RunRitualError`` refusals; scheduler-as-data (exactly one task scheduled when
 registration runs, zero when the arm skips it — and no trim); the consumer
-attached before ``resume()`` as an observable fact; the registration failure
-surfacing through the session watch's ``RegistrationFailed`` verdict and
-re-raising in the caller's frame.
+built before ``resume()`` and its task spawned only once the pump is armed; the
+registration failure surfacing through the session watch's
+``RegistrationFailed`` verdict and re-raising in the caller's frame.
 """
 
 from __future__ import annotations
@@ -130,6 +130,20 @@ def _session(
     )
 
 
+async def _arm(session: Any) -> RunRitual:
+    """Drive the startup moves that precede registration, in the shipped order.
+
+    The engine's start flow is the consumer's (facets enable, then the pump
+    arms, then the hosted I/O), so the drain task attaches only after it — a
+    task spawned earlier would iterate a stream production has not opened yet.
+    """
+    ritual = RunRitual(session)
+    await ritual.attach_consumer()
+    await ritual.resume()
+    ritual.attach_watch()
+    return ritual
+
+
 def _hanging_consumer(events: list[str]) -> Any:
     async def _c(*args: Any, **kwargs: Any) -> None:
         events.append("consumer")
@@ -145,12 +159,13 @@ class TestTransitionTable:
         assert ritual._state is _RitualState.ATTACH_CONSUMER
 
         await ritual.attach_consumer()
-        assert ritual._state is _RitualState.ATTACH_WATCH
-        assert session.result_consumer_task is not None
-        ritual.attach_watch()
         assert ritual._state is _RitualState.RESUME
-        ritual.resume()
+        assert session.consumer is not None, "attach_consumer builds the consumer"
+        await ritual.resume()
+        assert ritual._state is _RitualState.ATTACH_WATCH
+        ritual.attach_watch()
         assert ritual._state is _RitualState.REGISTRATION
+        assert session.result_consumer_task is not None
         ritual.registration()
         assert ritual._state is _RitualState.MAIN_LOOP
         verdict = await ritual.main_loop()
@@ -171,9 +186,10 @@ class TestTransitionTable:
         # registration task; the startup ordering around them is what the
         # sequence pins.
         assert events == [
+            "enable_facets",
+            "start_hosted_session",
             "consumer",
             "watch-attach",
-            "run",
             "path-builder",
             "release",
             "watch-attach-registration",
@@ -181,31 +197,46 @@ class TestTransitionTable:
             "teardown-registration",
         ]
 
-    async def test_consumer_is_attached_before_resume(self) -> None:
-        """The consumer task exists AND the watch holds it before any resume move."""
+    async def test_the_consumer_precedes_the_pump_and_its_task_follows(self) -> None:
+        """The consumer is built before the pump arms; its task attaches after.
+
+        The consumer holds the engine's one event hand-off, so it must exist
+        before ``resume`` consumes the claim — and the drain task must not be
+        spawned ahead of the arm, because the stream it iterates is opened by
+        the arm itself.
+        """
         events: list[str] = []
         watch = _RecordingWatch(events)
         session = _session(events, watch=watch)
         ritual = RunRitual(session)
-        await ritual.attach_consumer()
-        ritual.attach_watch()
 
-        assert watch.attached_consumer is session.result_consumer_task
+        await ritual.attach_consumer()
+        consumer = session.consumer
+        assert consumer is not None, "the consumer exists before the pump arms"
+        assert session.result_consumer_task is None, "nothing is spawned before the arm"
         assert session.actors is not None
         assert session.actors.engine_registry.engine.resumed is False
-        ritual.resume()
-        assert events.index("consumer") < events.index("run")
-        assert events.index("watch-attach") < events.index("run")
+
+        await ritual.resume()
+        assert consumer.calls == ["resume"], "the arm is the claim's one use"
+        assert session.actors.engine_registry.engine.resumed is True
+
+        ritual.attach_watch()
+        assert watch.attached_consumer is session.result_consumer_task
+        assert events.index("consumer") < events.index("watch-attach")
 
 
 class TestRefusals:
     async def test_transitions_refused_before_the_ritual_started(self) -> None:
-        # The RITUAL's transition names (its `resume` move arms the engine the
-        # same way the driver's `run` does).
-        for name in ("attach_watch", "resume", "registration"):
+        # The RITUAL's transition names (`resume` is the move that arms the
+        # engine through the consumer's claim).
+        for name in ("attach_watch", "registration"):
             ritual = RunRitual(_session())
             with pytest.raises(RunRitualError, match="refused"):
                 getattr(ritual, name)()
+        ritual = RunRitual(_session())
+        with pytest.raises(RunRitualError, match="refused"):
+            await ritual.resume()
         ritual = RunRitual(_session())
         with pytest.raises(RunRitualError, match="refused"):
             await ritual.main_loop()
@@ -223,9 +254,11 @@ class TestRefusals:
     async def test_an_ended_ritual_refuses_every_move(self) -> None:
         ritual = RunRitual(_session())
         await ritual.run()
-        for name in ("attach_watch", "resume", "registration"):
+        for name in ("attach_watch", "registration"):
             with pytest.raises(RunRitualError, match="refused"):
                 getattr(ritual, name)()
+        with pytest.raises(RunRitualError, match="refused"):
+            await ritual.resume()
         with pytest.raises(RunRitualError, match="refused"):
             await ritual.attach_consumer()
         with pytest.raises(RunRitualError, match="refused"):
@@ -244,10 +277,7 @@ class TestSchedulerAsData:
         events: list[str] = []
         watch = _RecordingWatch(events)
         session = _session(events, scheduler=scheduler, watch=watch)
-        ritual = RunRitual(session)
-        await ritual.attach_consumer()
-        ritual.attach_watch()
-        ritual.resume()
+        ritual = await _arm(session)
 
         ritual.registration()
 
@@ -260,10 +290,7 @@ class TestSchedulerAsData:
         the seam, so the ritual restores the observable name the registration
         background task carries."""
         session = _session(scheduler=asyncio.create_task)
-        ritual = RunRitual(session)
-        await ritual.attach_consumer()
-        ritual.attach_watch()
-        ritual.resume()
+        ritual = await _arm(session)
 
         ritual.registration()
 
@@ -284,10 +311,7 @@ class TestSchedulerAsData:
             settlement_active=False,
             watch=watch,
         )
-        ritual = RunRitual(session)
-        await ritual.attach_consumer()
-        ritual.attach_watch()
-        ritual.resume()
+        ritual = await _arm(session)
 
         ritual.registration()
 
@@ -305,10 +329,7 @@ class TestRegistrationHandoff:
         assert session.actors is not None
         bot = session.actors.bot
         engine_registry = session.actors.engine_registry
-        ritual = RunRitual(session)
-        await ritual.attach_consumer()
-        ritual.attach_watch()
-        ritual.resume()
+        ritual = await _arm(session)
 
         ritual.registration()
 
@@ -324,10 +345,7 @@ class TestRegistrationHandoff:
     async def test_trim_runs_inside_the_registration_handoff(self) -> None:
         bot = FakeBot()
         session = _session(bot=bot)
-        ritual = RunRitual(session)
-        await ritual.attach_consumer()
-        ritual.attach_watch()
-        ritual.resume()
+        ritual = await _arm(session)
 
         ritual.registration()
 

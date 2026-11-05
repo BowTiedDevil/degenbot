@@ -195,6 +195,13 @@ pub struct FeeHistoryPolicy {
 pub struct SessionClock {
     /// The session's one dispatcher (block time, current block, the fee ring).
     pub dispatcher: Arc<Mutex<Dispatcher>>,
+    /// The cross-block path-suppression registry.
+    ///
+    /// It is a separate policy value from the dispatcher (the sim seam locks it
+    /// directly), and a batch's `removed` set is the engine telling the session
+    /// those paths are gone: their suppression entries would otherwise outlive
+    /// the path ids and suppress a later path that reuses one.
+    pub suppression: Option<Arc<Mutex<degenbot_submission::PathSuppression>>>,
     /// The advisory fee-history sample, when this session records one.
     pub fee_history: Option<FeeHistoryPolicy>,
 }
@@ -205,8 +212,19 @@ impl SessionClock {
     pub fn new(dispatcher: Arc<Mutex<Dispatcher>>) -> Self {
         Self {
             dispatcher,
+            suppression: None,
             fee_history: None,
         }
+    }
+
+    /// Discard a removed path's cross-block suppression entry.
+    #[must_use]
+    pub fn with_suppression(
+        mut self,
+        suppression: Arc<Mutex<degenbot_submission::PathSuppression>>,
+    ) -> Self {
+        self.suppression = Some(suppression);
+        self
     }
 
     /// Record the advisory fee-history sample per accepted header.
@@ -565,6 +583,19 @@ impl SessionConsumer {
         if self.clock.is_stale(batch.solve_block) {
             report.stale_batches += 1;
         }
+        // The engine's removals are session facts, not batch work: a removed
+        // path's suppression entry is dropped HERE, where the batch is read, so
+        // the registry cannot keep suppressing an id the engine retired.
+        if let Some(suppression) = &self.clock_handles.suppression {
+            if !batch.removed.is_empty() {
+                let mut suppression = suppression
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                for path_id in &batch.removed {
+                    suppression.discard(*path_id);
+                }
+            }
+        }
         let mut work = batch_work(batch, &self.clock);
         work.block_priority_fees = self.priority_fees();
         self.executor.enqueue(work);
@@ -751,6 +782,23 @@ mod tests {
         }
     }
 
+    fn solve_result(optimal_input: u64, profit: u64) -> SolvePathResult {
+        SolvePathResult {
+            optimal_input: alloy::primitives::U256::from(optimal_input),
+            profit: alloy::primitives::U256::from(profit),
+            hop_outputs: vec![
+                alloy::primitives::U256::from(profit),
+                alloy::primitives::U256::from(profit * 2),
+            ],
+            consumed_inputs: vec![
+                alloy::primitives::U256::from(optimal_input),
+                alloy::primitives::U256::from(optimal_input),
+            ],
+            state_nonces: vec![1, 2],
+            ..Default::default()
+        }
+    }
+
     fn block(number: u64, timestamp: u64) -> BlockNotification {
         BlockNotification {
             number,
@@ -827,6 +875,201 @@ mod tests {
             ),
             heartbeat,
         )
+    }
+
+    /// The seam extraction's row shape: an engine solve row is the executor's
+    /// raw row, and a `U256` above `u128` saturates instead of wrapping (the
+    /// executor's threshold arithmetic is `u128`).
+    #[test]
+    fn raw_row_projects_the_engine_row_with_u128_saturation() {
+        let row = raw_row(9, &solve_result(500, 42), 100);
+        assert_eq!(row.path_id, 9);
+        assert_eq!(row.optimal_input, 500);
+        assert_eq!(row.profit, 42);
+        assert_eq!(row.hop_outputs, vec![42, 84]);
+        assert_eq!(row.consumed_inputs, vec![500, 500]);
+        assert_eq!(row.solve_block, 100);
+        assert_eq!(row.state_nonces, vec![1, 2]);
+
+        let huge = degenbot_pools::solve::SolvePathResult {
+            optimal_input: alloy::primitives::U256::MAX,
+            profit: alloy::primitives::U256::from(1_u64),
+            hop_outputs: vec![alloy::primitives::U256::MAX],
+            consumed_inputs: vec![alloy::primitives::U256::from(1_u64)],
+            state_nonces: vec![7],
+            ..Default::default()
+        };
+        let row = raw_row(1, &huge, 100);
+        assert_eq!(row.optimal_input, u128::MAX, "a u128 overflow saturates");
+        assert_eq!(row.hop_outputs, vec![u128::MAX]);
+    }
+
+    /// Every payload field crosses: the calldata bytes, the access-list rows
+    /// decoded back into the RPC shape, the failure record, and the sim's own
+    /// capture (the failure dump's ACTUAL half).
+    #[test]
+    fn payload_row_projects_the_inline_sim_row() {
+        let sim = degenbot_bot::arb_engine::SimulatedPathResult {
+            path_id: 4,
+            gross_profit: alloy::primitives::U256::from(1_000_u64),
+            net_profit: alloy::primitives::U256::from(900_u64),
+            gas_used: 300_000,
+            priority_fee: 2,
+            base_fee_next: 7,
+            execute_calldata: vec![0xde, 0xad],
+            access_list: Some(vec![degenbot_bot::arb_engine::AccessListRow {
+                address: degenbot_core::address_utils::parse_address(
+                    "0x1111111111111111111111111111111111111111",
+                )
+                .unwrap(),
+                storage_keys: vec![alloy::primitives::U256::from(3_u64)],
+            }]),
+            captured_swaps: vec![degenbot_bot::arb_engine::CapturedSwapRow {
+                emitter: degenbot_core::address_utils::parse_address(
+                    "0x4444444444444444444444444444444444444444",
+                )
+                .unwrap(),
+                family: degenbot_bot::arb_engine::InlineSwapFamily::V2,
+                amount0: alloy::primitives::I256::try_from(-1_000_i128).unwrap(),
+                amount1: alloy::primitives::I256::try_from(3_000_i128).unwrap(),
+                sqrt_price_x96: alloy::primitives::U256::ZERO,
+                liquidity: alloy::primitives::U256::ZERO,
+                tick: 0,
+            }],
+            hop_count: 2,
+            failure: Some(degenbot_bot::arb_engine::InlineSimFailure {
+                fail_index: Some(3),
+                revert_data: vec![0x01, 0x02],
+                bucket: "no-profit".to_string(),
+            }),
+        };
+        let row = payload_row(&sim);
+        assert_eq!(row.path_id, 4);
+        assert_eq!(row.net_profit, alloy::primitives::U256::from(900_u64));
+        assert_eq!(row.gas_used, 300_000);
+        assert_eq!(row.base_fee_next, 7);
+        assert_eq!(row.execute_calldata.as_ref(), &[0xde, 0xad][..]);
+        let list = row.access_list.expect("the access list projects");
+        assert_eq!(list.0.len(), 1);
+        assert_eq!(
+            list.0[0].storage_keys,
+            vec![alloy::primitives::B256::from(
+                alloy::primitives::U256::from(3_u64)
+            )]
+        );
+        let failure = row.failure.expect("the failure projects");
+        assert_eq!(failure.bucket, "no-profit");
+        assert_eq!(failure.fail_index, Some(3));
+        assert_eq!(failure.revert_data.as_ref(), &[0x01, 0x02][..]);
+        assert_eq!(row.captured_swaps.len(), 1);
+        assert_eq!(
+            row.captured_swaps[0].family,
+            degenbot_simulation::sim::capture::SwapFamily::V2
+        );
+        assert_eq!(
+            row.captured_swaps[0].amount0,
+            alloy::primitives::I256::try_from(-1_000_i128).unwrap()
+        );
+
+        let healthy = degenbot_bot::arb_engine::SimulatedPathResult {
+            failure: None,
+            access_list: None,
+            ..sim
+        };
+        let row = payload_row(&healthy);
+        assert!(row.failure.is_none());
+        assert!(row.access_list.is_none());
+    }
+
+    /// The batch's work: `fresh` and `updated` join in stream order, the
+    /// payloads join in path-id order (a deterministic record order for the
+    /// drain), and every per-block fact rides the session clock.
+    #[test]
+    fn batch_work_joins_rows_and_orders_payloads_by_path_id() {
+        let mut batch = empty_batch(101);
+        batch.fresh = vec![(1_u64, solve_result(100, 10))];
+        batch.updated = vec![(2_u64, solve_result(200, 20))];
+        batch.payloads.insert(
+            20_u64,
+            degenbot_bot::arb_engine::SimulatedPathResult {
+                path_id: 20,
+                gross_profit: alloy::primitives::U256::from(2_u64),
+                net_profit: alloy::primitives::U256::from(2_u64),
+                gas_used: 1,
+                priority_fee: 1,
+                base_fee_next: 1,
+                execute_calldata: Vec::new(),
+                access_list: None,
+                captured_swaps: Vec::new(),
+                hop_count: 1,
+                failure: None,
+            },
+        );
+        batch.payloads.insert(
+            5_u64,
+            degenbot_bot::arb_engine::SimulatedPathResult {
+                path_id: 5,
+                ..batch.payloads[&20].clone()
+            },
+        );
+        let clock = BlockClock {
+            current_block: 101,
+            block_timestamp: 1_700_000_101,
+            base_fee_next: 1_041_666_666,
+        };
+        let work = batch_work(&batch, &clock);
+        assert_eq!(
+            work.rows.iter().map(|r| r.path_id).collect::<Vec<_>>(),
+            vec![1, 2],
+            "fresh then updated, in stream order"
+        );
+        assert_eq!(
+            work.payloads.iter().map(|p| p.path_id).collect::<Vec<_>>(),
+            vec![5, 20],
+            "payloads join in path-id order"
+        );
+        assert_eq!(work.current_block, 101);
+        assert_eq!(work.base_fee_next, 1_041_666_666);
+        assert_eq!(work.block_timestamp, 1_700_000_101);
+        assert!(work.block_priority_fees.is_none());
+    }
+
+    /// A removed path leaves the cross-block suppression registry at the batch
+    /// the engine removed it in — the entry cannot outlive the id.
+    #[tokio::test]
+    async fn a_removed_path_leaves_the_suppression_registry() {
+        let suppression = Arc::new(Mutex::new(degenbot_submission::PathSuppression::new()));
+        {
+            let mut registry = suppression.lock().unwrap();
+            registry.record_failure(7);
+            registry.record_failure(7);
+        }
+        let heartbeat = Heartbeat::new();
+        let executor = fake_executor(None, Arc::new(tokio::sync::Notify::new()));
+        let mut consumer = SessionConsumer::new(
+            executor,
+            SessionClock::new(Arc::new(Mutex::new(Dispatcher::for_block(0))))
+                .with_suppression(Arc::clone(&suppression)),
+            ConsumerPolicy {
+                allow_quiet_end: true,
+                heartbeat: Some(heartbeat),
+                progress: SessionProgress::new(),
+            },
+        );
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tx.send(SessionEvent::Block(block(100, 1))).unwrap();
+        let mut batch = empty_batch(100);
+        batch.removed = vec![7];
+        tx.send(SessionEvent::Batch(batch)).unwrap();
+        drop(tx);
+
+        let report = consumer.consume(&mut rx).await.expect("no leaf failed");
+        assert_eq!(report.batches, 1);
+        assert_eq!(
+            suppression.lock().unwrap().total_suppressed(),
+            0,
+            "the removed path keeps no suppression entry"
+        );
     }
 
     /// The loud-abort rule's placement: a stored leaf failure stops the loop
