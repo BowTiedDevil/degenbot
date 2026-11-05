@@ -1179,27 +1179,27 @@ fn v3_pool_sparse_crossing_byte_exact() {
     }
 }
 
-/// The word-profile dense threshold (`WORD_PROFILE_THRESHOLD = 128`) is
-/// REACHABLE for a low tick-spacing pool but STRUCTURALLY UNREACHABLE for every
-/// real Uniswap V3 fee tier. A single tick range is span-bounded by +−MAX_TICK
-/// (887272), so its interior word-boundary count tops out at
-/// `2 * 887272 / (256 * tick_spacing)` - ~70 at spacing=100 (0.01%, the widest
-/// real tier) and ~1 at spacing=3000 (0.3%, typical). Both are far under 128;
-/// reaching 128 needs tick_spacing <= 54, i.e. a fee tier below 0.01% that V3
-/// does not deploy. This also CORRECTS an earlier note: the walk budget is
-/// distance-aware (clamped to `WALK_CEILING`, not a short 24-step cap), so a
-/// wide low-spacing pool DOES cross 128 (spacing=1 -> ~3.4k) - the reason real
-/// pools stay light is the tick-span ceiling, not the walk. Pins why the dense
-/// word-profile optimization is dormant for production V3 pools (the tick-span
-/// ceiling keeps ranges light), while remaining exercisable on a synthetic pool.
+/// A range's interior word-boundary count is capped by the tick-span ceiling:
+/// ticks reach only +-MAX_TICK (887272), so a spacing-`s` range carries at most
+/// `2 * 887272 / (256 * s)` interior boundaries. Density is a property of the
+/// tick SPACING, not of the fee label — the 0.01% tier's spacing-1 pools are
+/// genuinely dense (the block 26,350,149 capture holds its whole liquidity in
+/// one position and prices a 378-boundary forward word profile), while the
+/// wider spacings real pools deploy stay an order of magnitude lighter over the
+/// same span.
+///
+/// Nothing gates the word-profile path on that distinction: every ending range
+/// carrying word-boundary prices gets a profile. `DENSE_OBSERVE_THRESHOLD` only
+/// decides when the walk reports `WalkStats::max_dense_words`, so a consumer
+/// can see a dense range rather than the walk silently paying for it.
 #[test]
-fn v3_word_profile_dense_threshold_vs_fee_tiers() {
+fn v3_word_boundary_count_is_bounded_by_the_tick_span() {
     let fee = 3000u32;
     let cur = 0i32;
     let max_span = 880_000i32; // just under MAX_TICK (887272)
-                               // (tick_spacing, expect_dense): spacing=1 proves low-spacing can be dense;
-                               // every real fee tier (100/500/3000/10000) must stay light.
-    for (spacing, expect_dense) in [
+                               // (tick_spacing, expect_populated): spacing=1 fills the dense band;
+                               // the wider spacings carry only what the ceiling leaves them.
+    for (spacing, expect_populated) in [
         (1i32, true),
         (100, false),
         (500, false),
@@ -1227,8 +1227,8 @@ fn v3_word_profile_dense_threshold_vs_fee_tiers() {
             "spacing={spacing}: {maxwb} word bounds exceeds the tick-span upper bound {upper}"
         );
         assert_eq!(
-            maxwb >= 128,
-            expect_dense,
+            maxwb > 1_000,
+            expect_populated,
             "spacing={spacing}: max_word_bounds={maxwb} (span-cap upper bound {upper})"
         );
     }
