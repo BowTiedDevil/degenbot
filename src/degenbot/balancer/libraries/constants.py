@@ -33,7 +33,7 @@ class PowVersion(enum.Enum):
     def to_u8(self) -> int:
         """Return the `u8` discriminant threaded across the Rust seam (1 = V1, 2 = V2).
 
-        Mirrors `degenbot_balancer_math::PowVersion::to_u8` so the bytecode-detected
+        Mirrors `degenbot_math::balancer::PowVersion::to_u8` so the bytecode-detected
         version crosses the FFI boundary to the Rust math leaf as a plain `u8`.
 
         Returns:

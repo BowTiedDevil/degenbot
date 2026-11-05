@@ -1,7 +1,6 @@
 """Block-stream + result-batch consumption for the settlement-arbitrage cockpit.
 
-Extracted from ``examples/eth_backrun_v2_v3_v4_runner.py``.
-Owns the permanent main loop: :func:`consume_result_batches` awaits
+The permanent main loop: :func:`consume_result_batches` awaits
 the block clock (``bot.block_stream()``) and the result batches (``engine``)
 concurrently, driving the dispatcher's block clock and handing profitable
 results to the batch pipeline.

@@ -808,11 +808,11 @@ def format_sim_diag_line(
 
     per-hop outputs), and ``captured_swaps`` (the inspector-captured actual
 
-    per-swap amounts). ``logs/permutation_analyzer.py::classify_candidate``
+    per-swap amounts). The expected-vs-actual gap between ``hop_outputs[i]``
 
-    compares ``hop_outputs[i]`` vs the i-th captured swap's output amount to
+    and the i-th captured swap's output amount is the SolverCalc / Encoding /
 
-    classify SolverCalc / Encoding / Unknown. Never raises — a malformed
+    Unknown verdict's basis. Never raises — a malformed
 
     failure emits a best-effort line with the fields it has, so emission never
 

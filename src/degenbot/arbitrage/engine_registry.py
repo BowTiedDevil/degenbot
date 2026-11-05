@@ -18,10 +18,6 @@ registration workers share one lifecycle run without a Python claim table.
 
 The name stays ``EngineRegistry`` because it remains the public registration
 interface for operators; the registration *state* it used to own is gone.
-
-Lifted from ``examples/eth_backrun_v2_v3_v4_rust.py`` — engine-operation
-machinery only. Deployment policy (the main loop, dispatcher, simulation
-overrides) stays example-side (B-mid scope).
 """
 
 from __future__ import annotations

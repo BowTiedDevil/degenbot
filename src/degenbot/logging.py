@@ -238,16 +238,16 @@ RUST_BRIDGE_LOGGER_NAMES = (
 )
 
 #: The Python package-tree root whose descendants include Python-side modules
-#: that log via ``logging.getLogger("degenbot.arbitrage.<module>")`` (e.g. the
-#: recurring verifier ``degenbot.arbitrage.recurring_verify``). These inherit
-#: from the ``degenbot`` package logger — a SIBLING of ``degenbot.logging``
-#: (which has ``propagate = False``), not an ancestor — so without configuring
-#: the ``degenbot`` root here their INFO records fall through to the stdlib
-#: root (WARNING, no handler) and are dropped. This failure was observed live:
-#: the recurring verifier ran and detected drift but its ``[verify] (recurring)``
-#: lines never reached stdout, and 0 ``(recurring)`` hits appeared across all 27
-#: permutation runs. Configuring the ``degenbot`` package root with the same
-#: stdout handler + INFO level makes the arbitrage subtree visible.
+#: that log via ``logging.getLogger(__name__)`` (a ``degenbot.<area>.<module>``
+#: name). These inherit from the ``degenbot`` package logger — a SIBLING of
+#: ``degenbot.logging`` (which has ``propagate = False``), not an ancestor — so
+#: without configuring the ``degenbot`` root here their INFO records fall
+#: through to the stdlib root (WARNING, no handler) and are dropped. A
+#: recurring-verify driver that logged under this package lost its whole INFO
+#: stream this way: the run detected drift, emitted nothing, and 0 hits
+#: appeared across all 27 permutation runs. Configuring the ``degenbot``
+#: package root with the same stdout handler + INFO level makes the subtree
+#: visible.
 PY_PACKAGE_ROOT_LOGGER_NAMES = ("degenbot",)
 
 # Attach the same stdout handler + level to each Rust crate-root logger so

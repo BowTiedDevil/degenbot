@@ -7,11 +7,11 @@ submodule with un-prefixed names. Importers should use::
 
 rather than reaching into ``degenbot._ffi`` directly — this path is stable
 across future Rust reshuffles, and the un-prefixed names let the Rust
-crate structure (``degenbot-balancer-math`` → ``fixed_point`` /
+crate structure (``degenbot_math::balancer`` → ``fixed_point`` /
 ``weighted_math`` / ``stable_math``) show through to Python.
 
-The functions are thin PyO3 wrappers over the pure-Rust ``degenbot-balancer-math``
-core crate; see that crate's docs for the math semantics.
+The functions are thin PyO3 wrappers over the pure-Rust ``degenbot-math`` crate's
+``balancer`` module; see that module's docs for the math semantics.
 """
 
 from degenbot._ffi.balancer_math import (

@@ -26,10 +26,9 @@ from degenbot.updater import (
 )
 from degenbot.utils.bytes import to_0x_hex
 
-# V3 liquidity event topic0 hashes (Mint/Burn). Used by the V3 decode shell
-# (`apply_v3_liquidity_updates`) to recognize the Burn signature + negate the
-# delta. Kept here (not in the retired `cli/pool.py`) so the chunk loop's
-# removal leaves these decode shells with their topic constants.
+# V3 liquidity event topic0 hashes (Mint/Burn). The V3 decode shell
+# (`apply_v3_liquidity_updates`) recognizes the Burn signature and negates the
+# delta; the constants live beside the update configs that feed that shell.
 UNISWAP_V3_MINT_EVENT_HASH = bytes.fromhex(
     "7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde",
 )

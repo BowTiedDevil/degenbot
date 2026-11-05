@@ -65,7 +65,7 @@ class UniswapV2QuoteHost(Protocol):
 
 
 class CamelotStableSwapQuoter:
-    """Camelot's solidly-stable exact-in leaf over the ``degenbot-solidly-math`` core.
+    """Camelot's solidly-stable exact-in leaf over the ``degenbot-math`` crate's ``solidly`` module.
 
     A leaf shape: the arguments are translated into the leaf's terms (token
     index, reserve pair, decimal scales, fee) and the leaf's answer is the

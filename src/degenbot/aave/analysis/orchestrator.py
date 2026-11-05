@@ -7,9 +7,9 @@ the I/O orchestration: resolve the DB path, fetch users / positions / prices
 via Rust-backed readers, drive the per-user Rust analysis seam, and bucket the
 results.
 
-The former ``core.py`` (pure math + dataclasses) + ``protocols.py`` (typing
-seams) were retired once the Rust core reached byte-identical parity (verified
-by the parity gate (``docs/architecture/parity-gate.md``) before deletion).
+The pure-math + typing-seam half of this package is GONE — the Rust
+``degenbot-aave::analysis`` core owns it at byte-identical parity, which the
+parity gate (``docs/architecture/parity-gate.md``) verifies.
 The ``PositionAnalysisResult`` bucket-sorter stays here (it's trivial Python, not math).
 """
 

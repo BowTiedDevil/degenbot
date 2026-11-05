@@ -7,10 +7,10 @@ with un-prefixed names. Importers should use::
 
 rather than reaching into ``degenbot._ffi`` directly — this path is stable
 across future Rust reshuffles, and lets the Rust crate structure
-(``degenbot-concentrated-liquidity-math``) show through to Python.
+(``degenbot_math::concentrated_liquidity``) show through to Python.
 
-The functions are thin PyO3 wrappers over the pure-Rust ``degenbot-concentrated-liquidity-math``
-core crate. The concentrated liquidity math is shared across Uniswap
+The functions are thin PyO3 wrappers over the pure-Rust ``degenbot-math`` crate's
+``concentrated_liquidity`` module. The concentrated liquidity math is shared across Uniswap
 V3 and V4, so this companion lives at ``degenbot.uniswap.math``
 (variant-neutral), shared by the V3 and V4 families.
 """

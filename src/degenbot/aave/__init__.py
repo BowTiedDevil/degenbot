@@ -9,16 +9,12 @@ The updater functions are thin PyO3 wrappers over the pure-Rust
 ``degenbot-aave-updater`` core crate. ``CancelHandle`` is re-exported via
 ``degenbot.updater``.
 
-The former Python in-memory enrichment/processing pipeline
-(``extraction``/``operations``/``events``/``models``/``calculator``/
-``liquidation_patterns``/``pattern_types``/``operation_types`` + the
-``enrichment/`` and ``processors/`` packages) was retired once the Rust
-``degenbot-aave`` crate reached feature parity (it owns the full RPC fetch +
-decode + apply + verify loop end-to-end). The ``analysis/`` read-back
-package is a thin driver shell over the same Rust core's position-analysis
-math. The former Python ``libraries/`` math primitives package was retired
-once ``degenbot-aave::wad_ray_math`` owned the equivalents and the
-analysis cutover removed the last Python importer.
+The Python enrichment/processing pipeline is GONE: the Rust ``degenbot-aave``
+crate owns the full RPC fetch + decode + apply + verify loop end-to-end (git
+history carries the deleted modules). The ``analysis/`` read-back package is a
+thin driver shell over the same Rust core's position-analysis math, and the
+Aave math primitives live in that crate's ``wad_ray_math`` /
+``percentage_math`` modules, which own the deployed rounding semantics.
 """
 
 from degenbot._ffi.aave import (

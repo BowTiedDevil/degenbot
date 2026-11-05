@@ -7,10 +7,10 @@ submodule with un-prefixed names. Importers should use::
 
 rather than reaching into ``degenbot._ffi`` directly — this path is stable
 across future Rust reshuffles, and lets the Rust crate structure
-(``degenbot-curve-math``) show through to Python.
+(``degenbot_math::curve``) show through to Python.
 
-The functions are thin PyO3 wrappers over the pure-Rust
-``degenbot-curve-math`` core crate; see that crate's docs for math semantics.
+The functions are thin PyO3 wrappers over the pure-Rust ``degenbot-math``
+crate's ``curve`` module; see that module's docs for math semantics.
 """
 
 from degenbot._ffi.curve_math import (
