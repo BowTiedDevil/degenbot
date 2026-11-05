@@ -196,9 +196,12 @@ pub struct BatchWork {
 
 /// The sim stage's product: the batch's records (stages 1-2 filled) + the
 /// joined submit rows for stage 3.
-struct SimStageOutput {
-    outcomes: Vec<BatchOutcome>,
-    submit_candidates: Vec<degenbot_submission::SubmitCandidate>,
+///
+/// Crate-visible so the session consumer's own tests can drive the ordered lane
+/// through the same [`BatchExecutor`] value the production path builds.
+pub(crate) struct SimStageOutput {
+    pub(crate) outcomes: Vec<BatchOutcome>,
+    pub(crate) submit_candidates: Vec<degenbot_submission::SubmitCandidate>,
 }
 
 /// One drained batch: the candidate outcome records + the RAW submit-lane
@@ -576,7 +579,7 @@ impl BatchExecutor {
     /// ordering + loud-abort contract is exercised at the executor boundary.
     /// The strong record-sender half moves here (dropped at `shutdown`); the
     /// leaves receive a weak downgrade of it.
-    fn from_leaves(
+    pub(crate) fn from_leaves(
         concurrency: usize,
         sim: Arc<dyn SimLeaf<BatchWork, SimStageOutput>>,
         submit: Arc<dyn SubmitLeaf<BatchWork, SimStageOutput>>,

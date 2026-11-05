@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use crate::consume::SessionProgress;
+use degenbot::batch_executor::SessionProgress;
 
 /// One run-loop heartbeat observation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -205,15 +205,11 @@ mod tests {
             heartbeat_interval: Duration::from_millis(300),
         };
         let progress = SessionProgress::new();
-        let at = |current_block| crate::consume::BlockClock {
-            current_block,
-            ..crate::consume::BlockClock::default()
-        };
         // Two batches on one block (streaming-delivery fan-out), then one on
         // the next: batches and blocks must be reported as distinct counts.
-        progress.note(&at(21_000_042));
-        progress.note(&at(21_000_042));
-        progress.note(&at(21_000_043));
+        progress.note_batch(21_000_042);
+        progress.note_batch(21_000_042);
+        progress.note_batch(21_000_043);
         let seen = RefCell::new(Vec::new());
         let end = run_session_loop(&config, &progress, std::future::pending(), |hb| {
             seen.borrow_mut().push(*hb);

@@ -1,0 +1,388 @@
+{
+  "schema": 1,
+  "description": "The session-consumption event-sequence oracle: the EXPECTED product of the ONE session consumer over a scripted ordered event sequence, read by BOTH halves of the parity gate - rust/crates/engine/degenbot-batch-executor/tests/session_consumption.rs (pure-Rust consumption) and tests/standalone_parity/test_session_consumption_gate.py (Python consumption through the PyO3 seam). Both halves feed the SAME script into the SAME Rust consumer and assert identical executor work (the per-batch outcome records, path ids, stage verdicts, blocks), identical outcome ORDERING (one record set per enqueued batch, in arrival order), identical loud-abort behavior (the first leaf failure surfaces at the consumer with its batch index and the detail), identical stall detection (the heartbeat the core stall watchdog feeds - one beat per actual stream event, so a silent source feeds none), and identical close-on-termination (the typed end verdict and the shared teardown report). Path ids are SYMBOLIC ('path_a' = the one registered 2-hop V2 path, 'path_missing' = an id the resolver does not answer); each half substitutes its own id, so the oracle holds no engine registry identity. Every raw row in a script skips pre-sim (empty hops / resolve miss / shape corruption), so no scenario dials RPC.",
+  "status_vocabulary": {
+    "end": [
+      "quiet-end",
+      "pump-stopped"
+    ],
+    "outcome": [
+      "ok",
+      "aborted"
+    ],
+    "assembly": [
+      "assembled",
+      "skip-empty-hops",
+      "skip-resolve-miss",
+      "skip-payload-served",
+      "skip-suppressed",
+      "skip-thin-margin",
+      "skip-divergent-pool",
+      "skip-fee-on-transfer"
+    ],
+    "simulate": [
+      "profitable",
+      "gas-unprofitable",
+      "failed",
+      "exception",
+      "none"
+    ],
+    "heartbeat": "one beat per received stream event (actual stream activity)",
+    "trip_owner": "the core stall_watchdog over the beat sequence; the consumer only beats"
+  },
+  "paths": {
+    "path_a": "the one registered 2-hop V2 path",
+    "path_missing": "an unregistered path id"
+  },
+  "blocks": {
+    "100": {
+      "number": 100,
+      "timestamp": 1700000100,
+      "base_fee_per_gas": 1000000000,
+      "gas_used": 15000000,
+      "gas_limit": 30000000
+    },
+    "101": {
+      "number": 101,
+      "timestamp": 1700000101,
+      "base_fee_per_gas": 1000000000,
+      "gas_used": 21000000,
+      "gas_limit": 30000000
+    }
+  },
+  "scenarios": [
+    {
+      "name": "multiple-batches-per-block",
+      "allow_quiet_end": true,
+      "events": [
+        {
+          "kind": "block",
+          "block": "100"
+        },
+        {
+          "kind": "batch",
+          "solve_block": 100,
+          "rows": [
+            {
+              "path": "path_missing",
+              "optimal_input": 1000,
+              "profit": 100,
+              "hop_outputs": [
+                100,
+                100
+              ],
+              "consumed_inputs": [
+                1000,
+                1000
+              ],
+              "state_nonces": [
+                1,
+                1
+              ],
+              "solve_block": 100
+            }
+          ],
+          "payloads": [
+            {
+              "path": "path_a",
+              "gross_profit": 600,
+              "net_profit": 500,
+              "gas_used": 300000,
+              "priority_fee": 2,
+              "base_fee_next": 30
+            }
+          ]
+        },
+        {
+          "kind": "batch",
+          "solve_block": 100,
+          "rows": [
+            {
+              "path": "path_a",
+              "optimal_input": 1000,
+              "profit": 100,
+              "hop_outputs": [],
+              "consumed_inputs": [],
+              "state_nonces": [],
+              "solve_block": 100
+            }
+          ],
+          "payloads": []
+        },
+        {
+          "kind": "block",
+          "block": "101"
+        },
+        {
+          "kind": "batch",
+          "solve_block": 101,
+          "rows": [
+            {
+              "path": "path_missing",
+              "optimal_input": 1000,
+              "profit": 100,
+              "hop_outputs": [
+                100,
+                100
+              ],
+              "consumed_inputs": [
+                1000,
+                1000
+              ],
+              "state_nonces": [
+                1,
+                1
+              ],
+              "solve_block": 101
+            }
+          ],
+          "payloads": [
+            {
+              "path": "path_a",
+              "gross_profit": 0,
+              "net_profit": 0,
+              "gas_used": 300000,
+              "priority_fee": 2,
+              "base_fee_next": 30
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "outcome": "ok",
+        "end": "quiet-end",
+        "batches": 3,
+        "blocks": 2,
+        "stale_batches": 0,
+        "end_of_stream": 1,
+        "beats": 5,
+        "aborted_at": null,
+        "detail_contains": null,
+        "records": [
+          [
+            {
+              "path": "path_missing",
+              "block": 100,
+              "assembly": "skip-resolve-miss",
+              "simulate": "none"
+            },
+            {
+              "path": "path_a",
+              "block": 100,
+              "assembly": "assembled",
+              "simulate": "profitable"
+            }
+          ],
+          [
+            {
+              "path": "path_a",
+              "block": 100,
+              "assembly": "skip-empty-hops",
+              "simulate": "none"
+            }
+          ],
+          [
+            {
+              "path": "path_missing",
+              "block": 101,
+              "assembly": "skip-resolve-miss",
+              "simulate": "none"
+            },
+            {
+              "path": "path_a",
+              "block": 101,
+              "assembly": "assembled",
+              "simulate": "gas-unprofitable"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "zero-batch-block",
+      "allow_quiet_end": true,
+      "events": [
+        {
+          "kind": "block",
+          "block": "100"
+        },
+        {
+          "kind": "block",
+          "block": "101"
+        }
+      ],
+      "expected": {
+        "outcome": "ok",
+        "end": "quiet-end",
+        "batches": 0,
+        "blocks": 2,
+        "stale_batches": 0,
+        "end_of_stream": 1,
+        "beats": 2,
+        "aborted_at": null,
+        "detail_contains": null,
+        "records": []
+      }
+    },
+    {
+      "name": "stale-results",
+      "allow_quiet_end": true,
+      "events": [
+        {
+          "kind": "block",
+          "block": "100"
+        },
+        {
+          "kind": "block",
+          "block": "101"
+        },
+        {
+          "kind": "batch",
+          "solve_block": 100,
+          "rows": [],
+          "payloads": [
+            {
+              "path": "path_a",
+              "gross_profit": 600,
+              "net_profit": 500,
+              "gas_used": 300000,
+              "priority_fee": 2,
+              "base_fee_next": 30
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "outcome": "ok",
+        "end": "quiet-end",
+        "batches": 1,
+        "blocks": 2,
+        "stale_batches": 1,
+        "end_of_stream": 1,
+        "beats": 3,
+        "aborted_at": null,
+        "detail_contains": null,
+        "records": [
+          [
+            {
+              "path": "path_a",
+              "block": 101,
+              "assembly": "assembled",
+              "simulate": "profitable"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "consumer-failure",
+      "allow_quiet_end": true,
+      "events": [
+        {
+          "kind": "block",
+          "block": "100"
+        },
+        {
+          "kind": "batch",
+          "solve_block": 100,
+          "rows": [
+            {
+              "path": "path_a",
+              "optimal_input": 1000,
+              "profit": 100,
+              "hop_outputs": [
+                100
+              ],
+              "consumed_inputs": [
+                1000
+              ],
+              "state_nonces": [
+                1
+              ],
+              "solve_block": 100
+            }
+          ],
+          "payloads": []
+        }
+      ],
+      "expected": {
+        "outcome": "aborted",
+        "end": "quiet-end",
+        "batches": 1,
+        "blocks": 1,
+        "stale_batches": 0,
+        "end_of_stream": 1,
+        "beats": 2,
+        "aborted_at": 1,
+        "detail_contains": [
+          "hop_outputs length (1)"
+        ],
+        "records": []
+      }
+    },
+    {
+      "name": "pump-end",
+      "allow_quiet_end": false,
+      "events": [
+        {
+          "kind": "block",
+          "block": "100"
+        },
+        {
+          "kind": "batch",
+          "solve_block": 100,
+          "rows": [
+            {
+              "path": "path_a",
+              "optimal_input": 1000,
+              "profit": 100,
+              "hop_outputs": [],
+              "consumed_inputs": [],
+              "state_nonces": [],
+              "solve_block": 100
+            }
+          ],
+          "payloads": []
+        }
+      ],
+      "expected": {
+        "outcome": "ok",
+        "end": "pump-stopped",
+        "batches": 1,
+        "blocks": 1,
+        "stale_batches": 0,
+        "end_of_stream": 1,
+        "beats": 2,
+        "aborted_at": null,
+        "detail_contains": null,
+        "records": [
+          [
+            {
+              "path": "path_a",
+              "block": 100,
+              "assembly": "skip-empty-hops",
+              "simulate": "none"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "silent-source",
+      "allow_quiet_end": true,
+      "events": [],
+      "expected": {
+        "outcome": "ok",
+        "end": "quiet-end",
+        "batches": 0,
+        "blocks": 0,
+        "stale_batches": 0,
+        "end_of_stream": 1,
+        "beats": 0,
+        "aborted_at": null,
+        "detail_contains": null,
+        "records": []
+      }
+    }
+  ]
+}

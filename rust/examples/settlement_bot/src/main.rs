@@ -764,37 +764,16 @@ fn run() -> Result<(), String> {
     driver.stages().set_path_cap(max_paths);
     println!("[registration] path cap = {max_paths:?} (pathfinding.max_registered_paths)");
     degenbot::op_info!(domain = path, path_cap = ?max_paths, "registration: path cap bound");
-    // Attach the result consumer BEFORE resume — the BotRunner ordering
-    // invariant (`BotRunner.run`: create the consumer, THEN resume). The
-    // receiver is handed to the G4 consumer task (row 7 + row 16).
-    // The wrapper's receiver tally exists for the hub-side depth diagnostic
-    // (`Hub::named_pending`); the sample's own consume loop does not poll it,
-    // so hand it the raw channel end.
-    // Claim the session's ONE event hand-off BEFORE producing: the stream and
-    // the claim that proves a consumer holds it travel together, and `run`
-    // consumes the claim (ADR-093 D5). A second claim is refused by name.
-    let (stream, claim) = driver
+    // The session's ONE event hand-off: the ordered stream and the claim that
+    // proves a consumer holds it travel together, and the consumer's own
+    // `resume` consumes the claim (ADR-093 D5). A second claim is refused by
+    // name. The stream is NOT demultiplexed: the consumer reads both arms (the
+    // clock is the `Block` arm), so there is no bridge between the engine's one
+    // stream and the loop that consumes it.
+    let handoff = driver
         .claim_consumer()
-        .map_err(|refusal| refusal.to_string())?
-        .split();
+        .map_err(|refusal| refusal.to_string())?;
     let runtime = degenbot::runtime::get_runtime();
-    // TEMPORARY DEMULTIPLEX (ADR-093 D5): the session's one ordered stream
-    // carries `Block(N)` before that epoch's `Batch(N)`, and this sample's G4
-    // consumer still speaks `ResultBatch`. One task reads the stream and
-    // forwards the `Batch` arm; the clock arm is the same `newHeads` edge the
-    // driver's observer tap publishes. The session-consumer slice (`ZJZU27`)
-    // deletes this bridge together with the loop it feeds.
-    let (batch_tx, result_rx) = tokio::sync::mpsc::unbounded_channel();
-    let _stream_bridge = runtime.spawn(async move {
-        let mut stream = stream;
-        while let Some(event) = stream.recv().await {
-            if let degenbot::SessionEvent::Batch(batch) = event {
-                if batch_tx.send(batch).is_err() {
-                    break;
-                }
-            }
-        }
-    });
     let outcome = runtime.block_on(async {
         // G4 : the result-batch consumer runs concurrently with
         // the live registration arm; `driver.stop()` below closes the channel
@@ -802,8 +781,8 @@ fn run() -> Result<(), String> {
         // G5 : the consumer beats a session-watch heartbeat per
         // batch and the watch aborts it (`WatchdogTripped`) if the loop stalls.
         let heartbeat = degenbot::session_end::Heartbeat::new();
-        // RSP-10: the shared progress view the run-loop heartbeat reads.
-        let progress = consume::SessionProgress::new();
+        // The shared progress view the run-loop heartbeat reads.
+        let progress = degenbot::batch_executor::SessionProgress::new();
 
         // ── The core batch executor (ledger rows 15 + 16; the executor
         // cut-over) ── Value-configured ONCE: the driver injects the plain
@@ -819,24 +798,7 @@ fn run() -> Result<(), String> {
         )
         .await
         .map_err(|e| format!("live construction provider from {http}: {e}"))?;
-        let executor = build_batch_executor(&cfg, &loaded, &provider, &bot, &driver)?;
-        let consumer = tokio::spawn(consume::run_result_consumer_watched(
-            result_rx,
-            executor,
-            Some(heartbeat.clone()),
-            Some(progress.clone()),
-        ));
-        let stall_after = std::time::Duration::from_millis(
-            std::env::var("SETTLEMENT_STALL_WATCHDOG_MS")
-                .ok()
-                .and_then(|raw| raw.parse::<u64>().ok())
-                .unwrap_or(120_000),
-        );
-        let watch_task = tokio::spawn(session_watch::supervise_consumer(
-            consumer,
-            heartbeat.clone(),
-            stall_after,
-        ));
+        let (executor, dispatcher) = build_batch_executor(&cfg, &loaded, &provider, &bot, &driver)?;
         // G5 row 20: the operator Unix-socket channel (`--operator-socket`).
         let operator = match cli.operator_socket.as_deref() {
             Some(path) => {
@@ -886,11 +848,46 @@ fn run() -> Result<(), String> {
             .map_err(|e| e.to_string())?
             .link_block;
         let phase_after_start = driver.current_phase();
-        // `run` is the single gate after which batches flow AND it consumes the
-        // consumer claim; the driver owns the S+1..W auto-backfill before it
-        // spawns the live loop.
-        driver.run(claim).await.map_err(|e| e.to_string())?;
+
+        // ── The session consumer (ADR-093 D5/D6): the ONE consume loop ──
+        // The consumer owns `run(claim)` — production cannot start without the
+        // attached-consumer proof — and it owns the block clock, the batch work,
+        // the ordered lane enqueue, the loud-abort rule, the stall feed, and the
+        // session close. This driver keeps only the record drain and the report.
+        let mut consumer = degenbot::batch_executor::SessionConsumer::new(
+            std::sync::Arc::clone(&executor),
+            degenbot::batch_executor::SessionClock::new(dispatcher),
+            degenbot::batch_executor::ConsumerPolicy {
+                // The driver's own `close` is this session's teardown, so a
+                // natural stream end is the intended end.
+                allow_quiet_end: true,
+                heartbeat: Some(heartbeat.clone()),
+                progress: progress.clone(),
+            },
+        );
+        consumer.attach(handoff, std::sync::Arc::clone(&driver));
+        consumer
+            .resume()
+            .await
+            .map_err(|failure| failure.error.detail)?;
         let phase_after_resume = driver.current_phase();
+        let consumer_task = tokio::spawn(consume::run_session_consumer(
+            consumer,
+            std::sync::Arc::clone(&executor),
+        ));
+        let stall_after = std::time::Duration::from_millis(
+            std::env::var("SETTLEMENT_STALL_WATCHDOG_MS")
+                .ok()
+                .and_then(|raw| raw.parse::<u64>().ok())
+                .unwrap_or(120_000),
+        );
+        // The watch ranks the end state; the heartbeat it watches is the
+        // consumer's own stream-activity feed.
+        let watch_task = tokio::spawn(session_watch::supervise_consumer(
+            consumer_task,
+            heartbeat.clone(),
+            stall_after,
+        ));
 
         // ── G3 live registration arm (gated by SMOKE_RPC_URL) ──
         // Per-candidate pool build through the core `ConstructionIo`, BotState
@@ -1075,23 +1072,27 @@ fn run() -> Result<(), String> {
             ));
         }
     }
-    let (consumer_report, consumer_clock) = watch_outcome
+    let report = watch_outcome
         .consumer
         .ok_or_else(|| "session watch lost the consumer output".to_string())?
         .map_err(|e| format!("result consumer join: {e}"))?
-        .map_err(|e| format!("result consumer: {e:?}"))?;
+        .map_err(|e| format!("result consumer: {e}"))?;
+    let consumer_report = report.consumer;
     println!(
-        "[g4] result consumer: batches={} end_of_stream={} end={:?} clock={}",
+        "[g4] result consumer: batches={} blocks={} stale={} end_of_stream={} end={:?} teardown_from={:?}",
         consumer_report.batches,
+        consumer_report.blocks,
+        consumer_report.stale_batches,
         consumer_report.end_of_stream,
         consumer_report.end,
-        consumer_clock.current_block,
+        report.teardown.from,
     );
     degenbot::op_info!(
         domain = pump,
         batches = consumer_report.batches,
+        blocks = consumer_report.blocks,
+        stale_batches = consumer_report.stale_batches,
         end_of_stream = consumer_report.end_of_stream,
-        current_block = consumer_clock.current_block,
         "result consumer report"
     );
     println!(
@@ -1127,7 +1128,13 @@ fn build_batch_executor(
     provider: &degenbot::rpc::provider::AlloyProvider,
     bot: &std::sync::Arc<degenbot::bot_core::Bot>,
     driver: &std::sync::Arc<degenbot::EngineDriver>,
-) -> Result<degenbot::batch_executor::BatchExecutor, String> {
+) -> Result<
+    (
+        std::sync::Arc<degenbot::batch_executor::BatchExecutor>,
+        std::sync::Arc<std::sync::Mutex<degenbot::submission::Dispatcher>>,
+    ),
+    String,
+> {
     use degenbot::batch_executor::{ExecutorConfig, ExecutorRuntime};
 
     let executor_address = degenbot::core::address_utils::parse_address(&cfg.executor_address)
@@ -1147,6 +1154,11 @@ fn build_batch_executor(
         ),
         None => alloy::primitives::Bytes::new(),
     };
+    // The session's ONE dispatcher: the consumer's block clock drives it and
+    // the executor's submit leaf reads it, so both hold this same value.
+    let dispatcher = std::sync::Arc::new(std::sync::Mutex::new(
+        degenbot::submission::Dispatcher::for_block(0),
+    ));
     let config = ExecutorConfig::from_verdict(
         &loaded.config,
         ExecutorRuntime {
@@ -1197,9 +1209,7 @@ fn build_batch_executor(
             // No separate warm-code cache in this driver: the sim's cold-miss
             // fallback DB (the provider) serves the reads.
             warm_cache: None,
-            dispatcher: std::sync::Arc::new(std::sync::Mutex::new(
-                degenbot::submission::Dispatcher::for_block(0),
-            )),
+            dispatcher: std::sync::Arc::clone(&dispatcher),
             signer: std::sync::Arc::new(
                 degenbot::submission::TxSigner::from_key_hex(&cfg.operator_private_key, CHAIN_ID)
                     .map_err(|e| format!("operator signer: {e}"))?,
@@ -1218,7 +1228,10 @@ fn build_batch_executor(
             target: degenbot::submission::SubmissionTarget::Public,
         },
     );
-    Ok(degenbot::batch_executor::BatchExecutor::new(config))
+    Ok((
+        std::sync::Arc::new(degenbot::batch_executor::BatchExecutor::new(config)),
+        dispatcher,
+    ))
 }
 
 fn strategy_arm_refusal(

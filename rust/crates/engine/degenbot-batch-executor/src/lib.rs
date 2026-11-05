@@ -19,6 +19,14 @@
 //! The ordered lane (bounded sim fan-out, FIFO submit order = nonce order,
 //! loud-abort re-raise in the caller's frame) is
 //! [`degenbot_submission::SimSubmitPipeline`] — CONSUMED, not re-implemented.
+//!
+//! [`session`] is the ONE consume loop above the pipeline: the session's ordered
+//! event stream (`Block` → the session block clock, `Batch` → the batch work
+//! above) drives the executor, feeds the stall watchdog from actual stream
+//! activity, re-raises a leaf failure in the caller's frame before the next
+//! enqueue, and closes the session on every exit. Both first-class consumers
+//! drive it; their remaining responsibility is pulling the records for
+//! display.
 //! The module is value-configured ([`executor::ExecutorConfig`]): a driver
 //! injects the cap as a plain count, the policy values, and the relay
 //! posture — never choreography code. Its product is the stream of
@@ -34,6 +42,7 @@ pub mod executor;
 pub mod policy;
 pub mod record;
 pub mod row;
+pub mod session;
 
 pub use assembly::{
     build_raw_candidate, classify_raw_row, derive_path_pools, join_sim_result,
@@ -47,3 +56,8 @@ pub use record::{
     SimulateVerdict, SubmitVerdict,
 };
 pub use row::{PayloadFailure, PayloadRow, RawResult};
+pub use session::{
+    batch_work, payload_row, raw_row, BlockClock, ConsumerEnd, ConsumerError, ConsumerPolicy,
+    ConsumerReport, FeeHistoryPolicy, SessionClock, SessionConsumer, SessionEventSource,
+    SessionFailure, SessionProgress, SessionReport,
+};

@@ -34,6 +34,10 @@ degenbot-executor.workspace = true
 degenbot-rpc.workspace = true
 # The cross-block warm-code cache the fan-out handle build consumes.
 degenbot-simulation.workspace = true
+
+# The engine's solve-row type (`SolvePathResult`): the session consumer's row
+# derivation reads the solve results the ordered event stream delivers.
+degenbot-pools.workspace = true
 # The ordered lane (`SimSubmitPipeline`) + the production submit leaf
 # (`dispatch_and_submit`) + the policy state (`PathSuppression`, `Dispatcher`).
 degenbot-submission.workspace = true
@@ -48,6 +52,9 @@ tracing = { version = "^0.1" }
 degenbot-core.workspace = true
 
 [dev-dependencies]
+# The shared event-sequence oracle (`tests/session_consumption.rs`) reads its
+# recorded expectation from the parity fixture directory as JSON.
+serde_json = "^1.0"
 # The event-capture layer the forensic-emission test asserts through.
 tracing-subscriber = { version = "^0.3", default-features = false, features = [
     "std",
