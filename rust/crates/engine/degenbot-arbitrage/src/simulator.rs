@@ -60,7 +60,7 @@ use crate::calldata::{
 use crate::dispatch::SolveStep;
 
 // ─────────────────────────────────────────────────────────────────────────
-// Constants (ports the Python oracle's module-level literals)
+// Fee-sizing + gas constants
 // ─────────────────────────────────────────────────────────────────────────
 
 /// The target profit ratio `TARGET_PROFIT_RATIO = 1.25` (L147) — the priority
@@ -156,11 +156,13 @@ pub fn fits_int128(value: u128) -> bool {
 // The result + failure types
 // ─────────────────────────────────────────────────────────────────────────
 
-/// The profitable simulation result — `(path_id, gross, net, gas, tx_params, path_info)`.
+/// The profitable simulation result — `(path_id, gross, net, gas, tx_params,
+/// path_info)`.
 ///
-/// Mirrors the Python oracle's per-path simulate return tuple (L2436). All gross-profitable
-/// results are returned — the caller separates gas-profitable from
-/// gas-unprofitable but onchain-valid (the comment at L2432–L2434).
+/// Every gross-profitable path is returned, gas-profitable or not: the split
+/// between "profitable after gas" and "onchain-valid but unprofitable" belongs
+/// to the caller, so a path that clears the chain but not the gas floor stays
+/// visible instead of disappearing at the sim seam.
 #[derive(Debug, Clone)]
 pub struct SimResult {
     /// The path id (`path_id`).
@@ -601,13 +603,13 @@ impl FailBuckets {
 ///    where `min = max(p10 + 1, 1)` and `max = max(p50 + 1, min)`. If no
 ///    feeHistory percentiles are available, `min = 1` and `max = target`.
 ///
-/// # Float→int truncate semantics (the parity gate)
+/// # Float→int truncate semantics
 ///
-/// Both `target_priority_fee` and `priority_fee` use Python's `int(...)`,
-/// which truncates toward zero. The Rust port uses `as u128` casts on `f64`,
-/// which also truncate toward zero for non-negative values — the only values
-/// possible here (the inputs are non-negative ints + the floor at 1 ensures
-/// non-negativity).
+/// Both `target_priority_fee` and `priority_fee` land via `as u128` casts on
+/// `f64`, which truncate toward zero — a priority fee is never rounded up past
+/// what the margin supports. The only values reachable here are non-negative
+/// (non-negative inputs, and the floor at 1 keeps the target positive), so the
+/// cast never saturates.
 #[must_use]
 #[expect(
     clippy::cast_precision_loss,
@@ -652,18 +654,17 @@ pub fn compute_priority_fee(
     priority_fee.clamp(min_priority_fee, max_priority_fee)
 }
 
-/// Lossy `U256` → `f64` (mirrors Python's `int / float` promotion). The
-/// priority-fee path is inherently lossy (the Python oracle mixes `int` gross
-/// with `float` ratio); the parity gate is on the `int(...)` truncation of the
-/// final float, not on the f64 precision of the gross (which is exact for any
-/// realistic Wei-denominated gross < 2^53).
+/// Lossy `U256` → `f64` — the promotion the fee sizing needs to mix an integer
+/// wei gross with an `f64` ratio. The fee's contract is the truncation of the
+/// FINAL float, not the precision of the gross: gross profit is wei-denominated
+/// and realistically < 2^53, where f64 is exact.
 #[expect(clippy::cast_precision_loss)]
 fn u256_to_f64_lossy(v: U256) -> f64 {
     // `U256` → `f64` via the little-endian u64 limbs (high limb first).
     //
-    // The parity gate is on the `int(...)` truncate of the FINAL float (the
-    // priority fee), not the f64 precision of the gross. Gross profits are
-    // Wei-denominated and realistically < 2^53, where the f64 is exact.
+    // What matters is the truncate of the FINAL float (the priority fee), not
+    // the f64 precision of the gross. Gross profits are wei-denominated and
+    // realistically < 2^53, where the f64 is exact.
     let limbs: &[u64; 4] = v.as_limbs();
     let mut acc: f64 = 0.0;
     for &limb in limbs.iter().rev() {
@@ -763,9 +764,10 @@ fn scan_for_v4_v2_boundary_bridge(hops: &[HopInfo], weth_address: Address) -> Op
 
 /// Inputs to `Evm2BlockSimHandle` / [`simulate_path_on_evm`] that don't vary per-path.
 ///
-/// Ports the closure-captured state in the Python oracle's per-path simulate: the
+/// The per-block state every path in a simulate batch shares: the
 /// executor/weth/pm/multicall addresses, the funding flags, the warmup slots,
-/// the dispatcher's `block_priority_fees` + the block context.
+/// the dispatcher's `block_priority_fees` + the block context. Threading it
+/// once per block keeps the per-path call free of repeated RPC.
 ///
 /// `provider` is omitted from `Debug` (the `AlloyProvider` doesn't impl it;
 /// its `rpc_url` is logged separately by the driver).
@@ -809,7 +811,8 @@ pub struct SimulateContext<'a> {
     /// block header to avoid a per-path `eth_getBlockByNumber` RPC.
     pub block_timestamp: u64,
     /// The latest block priority-fee percentiles (p10/p50) — the
-    /// `dispatcher.block_priority_fees[max(...)]` the Python oracle reads.
+    /// `dispatcher.block_priority_fees` sample for the newest block, which is
+    /// the one the fee bounds are drawn from.
     pub block_priority_fees: Option<BlockPriorityFees>,
 }
 

@@ -54,16 +54,17 @@ pub struct ReserveConfiguration {
 }
 
 /// Decode the Aave V3 reserve-configuration `uint256` bitmap into the typed
-/// [`ReserveConfiguration`]. Port of `_decode_reserve_configuration_bitmap`
-/// (`event_handlers.py` L133–L214) — the exact bit masks + shifts.
+/// [`ReserveConfiguration`]. Unpacks the deployed Aave V3
+/// `ReserveConfiguration` library's field layout — each field is a masked bit
+/// range of the bitmap, so the masks + shifts are the library's own.
 ///
 /// `config_bitmap` is the raw `uint256` returned by the Pool contract's
 /// `getConfiguration(address)`; the caller (Python driver) RPC-fetches it and
 /// passes it in (the RPC fetch is `stays-python`; this fn is pure CPU).
 #[must_use]
 pub fn decode_reserve_configuration_bitmap(config_bitmap: U256) -> ReserveConfiguration {
-    // bits as documented in the Python oracle (L138–L211); the masks + shifts
-    // are reproduced verbatim.
+    // The `ReserveConfiguration` field layout, field by field: a masked bit
+    // range per field, low bits first.
     let ltv = mask_shift(config_bitmap, 0, 0xFFFF);
     let liquidation_threshold = mask_shift(config_bitmap, 16, 0xFFFF);
     let liquidation_bonus = mask_shift(config_bitmap, 32, 0xFFFF);

@@ -594,11 +594,11 @@ mod tests {
         assert_eq!(signed.into_raw(), v);
     }
 
-    // Numerical-accuracy ports from the retired Python parity oracle
-    // (`tests/balancer/libraries/test_log_exp_math.py`). These cover the
-    // branches the error-path corpus above does not: the `ln_36`
-    // near-one path, `log` round-trips, and fractional `pow`/`ln` values
-    // against `math.log` approximations.
+    // Numerical-accuracy checks covering the branches the error-path corpus
+    // above does not: the `ln_36` near-one path, `log` round-trips, and
+    // fractional `pow`/`ln` values against `math.log` approximations. Carried
+    // over from the retired Python parity suite — those math modules are gone,
+    // and these rows are the surviving record.
 
     #[test]
     fn ln_uses_ln_36_for_near_one_above() {

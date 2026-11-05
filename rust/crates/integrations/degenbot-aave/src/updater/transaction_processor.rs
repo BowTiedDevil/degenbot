@@ -1142,17 +1142,14 @@ fn dispatch_interest_accrual(
 /// fn — the most-recent `DISCOUNT_PERCENT_UPDATED` before `log_index`, else the
 /// snapshot default). For revisions without discount support (V4+), returns 0.
 ///
-/// # The bad-debt mechanism (DP3 — FLAGGED to the orchestrator)
+/// # The bad-debt mechanism
 ///
-/// The task body (scope 4 / DP3) says the bad-debt override checks
-/// `user_liquidation_count == 1` (B's SINGLE pattern) + needs an A-type
-/// `Operation` amend to carry the flag. **The Python oracle (`_is_bad_debt_
-/// liquidation`, `token_processor.py:714`) actually checks for a
-/// `DEFICIT_CREATED` event for the user in `tx_logs` — it does NOT consult
-/// `user_liquidation_count`.** C3 implements the `DEFICIT_CREATED`-faithful
-/// path (the parity-gate target); NO A-type amend. The orchestrator has been
-/// flagged; if they redirect to `user_liquidation_count`, the change is small
-/// + isolated.
+/// The override keys off a `DEFICIT_CREATED` event for the user in `tx_logs` —
+/// the Pool's own record that it wrote the shortfall off. It does NOT consult
+/// `user_liquidation_count`: that count says how often the user was liquidated,
+/// not whether this liquidation produced a deficit, and the two disagree on a
+/// repeat liquidation. A `DEFICIT_CREATED` in the tx means the contract burned
+/// the ENTIRE remaining debt.
 #[derive(Debug)]
 pub struct GhoDiscountContext<'a> {
     /// `(user, log_index, old_discount)` — from `DISCOUNT_PERCENT_UPDATED`
@@ -1376,12 +1373,11 @@ fn dispatch_gho_liquidation(
                     | ScaledTokenEventType::GhoDebtTransfer
             );
         if is_gho {
-            // The bad-debt check (DP3 — FLAGGED to the orchestrator): the
-            // Python oracle checks for a `DEFICIT_CREATED` event for the user
-            // in this tx. If present, the contract burns the ENTIRE remaining
-            // GHO debt (not just `debtToCover`) → set the position balance to
-            // 0 + advance `last_index`. The parity-gate delta-based apply may be off
-            // by 1 wei on the bad-debt path.
+            // The bad-debt check: a `DEFICIT_CREATED` event for the user in
+            // this tx means the contract burned the ENTIRE remaining GHO debt
+            // (not just `debtToCover`) → set the position balance to 0 + advance
+            // `last_index`. The delta-based apply may be off by 1 wei here: the
+            // contract zeroes a balance, the apply derives a delta.
             if gho_ctx.is_bad_debt(ev.user_address) {
                 let asset = lookup_gho_debt_asset(ev, market_id, conn, substrate)?;
                 let position_id = resolve_position_id(
@@ -1689,17 +1685,14 @@ fn lookup_gho_debt_asset(
 }
 
 #[expect(clippy::too_many_arguments)] // the substrate cache rides the existing arg list
-/// Dispatch the non-GHO `LiquidationCall`. Mirrors the non-GHO branch of
-/// `_process_debt_burn_with_match` — checks the bad-debt override FIRST
-/// (DP3 — FLAGGED to the orchestrator: the Python oracle checks for a
-/// `DEFICIT_CREATED` event for the user in this tx; `user_liquidation_count`
-/// is NOT consulted). If bad-debt, the contract burns the ENTIRE remaining
-/// debt → set the position balance to 0 + advance `last_index`. Else, the
-/// per-event-type raw-amount extractor (debt → word 0, collateral → word 1).
+/// Dispatch the non-GHO `LiquidationCall`. Checks the bad-debt override FIRST:
+/// a `DEFICIT_CREATED` event for the user in this tx means the contract burned
+/// the ENTIRE remaining debt (`user_liquidation_count` is NOT consulted) → set
+/// the position balance to 0 + advance `last_index`. Else, the per-event-type
+/// raw-amount extractor (debt → word 0, collateral → word 1).
 ///
-/// The bad-debt reset applies to BOTH GHO and non-GHO debt burns (mirrors
-/// Python's "applies to both GHO and non-GHO tokens" note): a GHO debt burn
-/// attached to a non-GHO `LiquidationCall` (via `collect_debt_burns`'
+/// The bad-debt reset applies to BOTH GHO and non-GHO debt burns: a GHO debt
+/// burn attached to a non-GHO `LiquidationCall` (via `collect_debt_burns`'
 /// single-liquidation "collect all burns" branch) never reaches
 /// `dispatch_gho_liquidation`, so the reset here is the only zeroing path.
 /// `gho_vtoken_address` is retained as a parameter for signature parity with

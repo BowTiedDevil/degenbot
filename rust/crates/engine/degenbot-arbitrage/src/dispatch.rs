@@ -135,13 +135,13 @@ fn v2_calc_trace_body<S: V2ReservesReader>(session: &mut S, sim_path: &SimulateP
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Constants (ports the Python oracle's module-level literals)
+// Dispatch + pre-filter constants
 // ─────────────────────────────────────────────────────────────────────────
 
-/// The concurrent-simulation cap (`MAX_SIMULATE_CONCURRENT = 50`, L147) —
-/// the `truncate` pre-fan-out cap + the `buffer_unordered` bound for the
-/// legacy RPC path. Candidates beyond this are NOT simulated (the Python
-/// oracle slices `results[:MAX_SIMULATE_CONCURRENT]`).
+/// The concurrent-simulation cap — the `truncate` pre-fan-out cap plus the
+/// `buffer_unordered` bound for the legacy RPC path. Candidates past the cap
+/// are NOT simulated: they are dropped from the batch, so the cap must sit
+/// above what a per-block candidate set realistically reaches.
 pub const MAX_SIMULATE_CONCURRENT: usize = 50;
 
 /// The min net-profit threshold (`MIN_PROFIT_NET = 1`, L137) — a gross-
@@ -227,11 +227,10 @@ pub fn filter_thin_margin_results(
 
 /// A pre-simulation candidate — the engine result + the resolved [`PathInfo`].
 ///
-/// Ports the `EngineResult` tuple `(path_id, opt_input, profit, hop_outputs,
-/// consumed_inputs, solve_block)`. The Python oracle resolves
-/// the `PathInfo` from `engine_registry.paths.get(path_id)`; this leaf takes
-/// it pre-resolved (the registry lookup is the caller's concern — the
-/// `degenbot` umbrella's `Bot` owns the engine registry).
+/// Carries the `EngineResult` tuple `(path_id, opt_input, profit, hop_outputs,
+/// consumed_inputs, solve_block)`. The `PathInfo` arrives pre-resolved: the
+/// registry lookup is the caller's concern (the `degenbot` umbrella's `Bot`
+/// owns the engine registry), so this leaf never reaches into solver state.
 /// One per-hop row of a candidate (a Cloudflare-style fewer-lists row):
 /// the solver's output, the executable input, and the solve-time state
 /// nonce, contiguous per hop.
@@ -381,9 +380,8 @@ impl DispatchOutcome {
 /// 3. **Pre-filter — thin-margin** — drop razor-thin arb via
 ///    [`filter_thin_margin_results`] (`min_profit_margin_bps`; `0` disables).
 /// 4. **Cap** — take the first [`MAX_SIMULATE_CONCURRENT`] candidates (the
-///    Python oracle slices `results[:MAX_SIMULATE_CONCURRENT]`; the candidates
-///    are expected pre-sorted by engine profit descending — the caller does
-///    the sort, ports L1684).
+///    list is expected pre-sorted by engine profit descending — the caller
+///    owns the sort, so the cap keeps the best-first prefix).
 /// 5. **Fan-out** — the in-process evm2 path: build ONE per-block
 ///    `Evm2BlockSimHandle` + simulate each candidate SERIALLY on the shared
 ///    `&mut evm` (Tier 1). `bot_state` is `Option` so that
@@ -391,9 +389,8 @@ impl DispatchOutcome {
 ///    need not construct an engine; the `None` arm is the unreachable
 ///    anti-pattern guard for non-empty input without a `BotState` (the
 ///    retired `eth_simulateV1` RPC executor — ADR-019 D1).
-/// 6. **Gather** — collect the stream; exceptions are tolerated (counted, not
-///    propagated — the Python oracle uses `return_exceptions=True`,
-///    L2504).
+/// 6. **Gather** — collect the stream; a failed candidate is counted and
+///    skipped, never propagated: one broken path must not sink a batch.
 /// 7. **Feedback — pool divergence** — for each `SolverCalc`
 ///    failure, record divergence for the diverging hop's pool key (derived
 ///    from `path_info.hops[i]`); the NEXT block's skip (step 2) drops paths
@@ -409,21 +406,21 @@ impl DispatchOutcome {
 /// block context — see [`simulate_path_on_evm`]). `path_suppression` is
 /// mutated in place for the pre-filter + the outcome recording.
 ///
-/// # Parity gate (`docs/architecture/parity-gate.md`)
+/// # Categorization contract (`docs/architecture/parity-gate.md`)
 ///
-/// The categorization buckets, the pre-filter drops, and the suppression
-/// transitions match the Python oracle's `dispatch_profitable_results`
-/// behavior (the `[sim] N candidates: X ok (Y profitable, Z below threshold),
-/// W failed, V exceptions` summary L2538–L2542). The summary RENDERING stays
-/// Python (D4); this leaf returns the typed [`DispatchOutcome`].
+/// The categorization buckets, the pre-filter drops and the suppression
+/// transitions are the dispatch contract: a candidate that returns a result and
+/// one that reverts are tallied apart, and a path's suppression state moves only
+/// on those outcomes. The `[sim] N candidates: X ok (Y profitable, Z below
+/// threshold), W failed, V exceptions` summary is the driver's to render; this
+/// leaf returns the typed [`DispatchOutcome`].
 ///
 /// # Failure model
 ///
 /// Infallible — returns `DispatchOutcome` directly (not a `Result`). Every
 /// per-path failure (revert / no-profit / rpc-failed / int128-overflow) is
 /// tallied into `outcome.fail_buckets` + recorded as a per-candidate
-/// [`SimFailure`] (ports the Python oracle's `return_exceptions=True`
-/// tolerance, L2504 — no failure propagates as an `Err`). The
+/// [`SimFailure`] — no failure propagates as an `Err`. The
 /// `exception_count` field captures `simulate_path_on_evm` `Err` returns (the
 /// rare defensive `?` on the execute() ABI encode), counted not propagated.
 ///

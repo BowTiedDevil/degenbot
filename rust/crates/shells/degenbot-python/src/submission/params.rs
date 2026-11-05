@@ -90,15 +90,15 @@ impl PyTxParams {
 /// `#[pyfunction]` wrapper over [`degenbot_submission::finalize_fees`].
 ///
 /// Sets ``params.max_priority_fee_per_gas = priority_fee`` and
-/// ``params.max_fee_per_gas = int(1.5 * base_fee_next) + priority_fee``
-/// (the Python oracle's inline fee computation, including the float→int
-/// truncate — see the core crate's `fee` module).
+/// ``params.max_fee_per_gas = trunc(1.5 * base_fee_next) + priority_fee``
+/// (the 1.5× headroom convention, including the float truncate — see the core
+/// crate's `fee` module).
 ///
 /// Args:
 ///     `params`: The `PyTxParams` to finalize fees onto (mutated in place)
 ///     `base_fee_next`: The next-block base fee in wei
 ///     `priority_fee`: The priority fee in wei (consumed from the Simulation
-///         leaf's `_compute_priority_fee` — submission does not compute it)
+///         leaf's `compute_priority_fee` — submission does not compute it)
 ///
 /// # Errors
 ///

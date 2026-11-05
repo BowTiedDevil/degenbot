@@ -113,8 +113,9 @@ impl PyDatabaseSnapshot {
         build_all_liquidity_maps_py(py, rows)
     }
 
-    /// V3 `get_newest_block()` → newest V3 exchange `last_update_block` or
-    /// `None` (any NULL → `None`, mirroring the Python oracle).
+    /// V3 `get_newest_block()` → newest V3 exchange `last_update_block`, or
+    /// `None` when no V3 exchange row carries one (a NULL column reads as
+    /// absent, never as zero).
     fn get_newest_block_v3(&self, py: Python<'_>) -> PyResult<Option<i64>> {
         py.detach(|| {
             self.db

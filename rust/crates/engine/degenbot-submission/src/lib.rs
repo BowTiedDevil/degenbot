@@ -16,10 +16,10 @@
 //!   round-trips back to Python per-tx). [`signer::TxSigner::sign_eip1559`]
 //!   builds the type-2 `TxEnvelope` from [`params::TxParams`] + signs it
 //!   synchronously (ECDSA secp256k1, RFC 6979 deterministic nonces).
-//! - [`fee::finalize_fees`] — `maxFeePerGas = int(1.5 * base_fee_next) +
-//!   priority_fee`, `maxPriorityFeePerGas = priority_fee` (the Python oracle's
-//!   inline fee computation, including the float→int truncate boundary —
-//!   documented on [`fee`]).
+//! - [`fee::finalize_fees`] — `maxFeePerGas = trunc(1.5 * base_fee_next) +
+//!   priority_fee`, `maxPriorityFeePerGas = priority_fee` (the 1.5× headroom
+//!   convention, including the float truncate boundary — documented on
+//!   [`fee`]).
 //! - [`params::TxParams`] — the EIP-1559 field set the caller assembles, the
 //!   signer finalizes fees onto, and `TxSigner` signs (`to`/`data`=`execute()`
 //!   calldata/`gas`/`nonce`/`value=0`/`accessList` + the two fee fields).

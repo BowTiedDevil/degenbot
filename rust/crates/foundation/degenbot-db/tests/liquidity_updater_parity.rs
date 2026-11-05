@@ -199,7 +199,7 @@ fn v3_apply_matches_python_oracle() {
     assert_eq!(
         positions,
         to_position_tuple(&exp.positions),
-        "V3 positions must match the Python oracle"
+        "V3 positions must match the Python-written fixture"
     );
     assert_eq!(
         block, exp.liquidity_update_block,
@@ -245,7 +245,7 @@ fn v4_apply_matches_python_oracle() {
     assert_eq!(
         positions,
         to_position_tuple(&exp.positions),
-        "V4 positions must match the Python oracle"
+        "V4 positions must match the Python-written fixture"
     );
     assert_eq!(
         block, exp.liquidity_update_block,

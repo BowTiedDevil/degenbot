@@ -23,8 +23,7 @@ def next_base_fee(
     Compute the EIP-1559 next-block base fee, mirroring the pure-Rust
     `degenbot_core::eip_1559::next_base_fee`.
 
-    Args mirror the Python oracle (`degenbot.calculations.evm_math.next_base_fee`):
-    `parent_base_fee`, `parent_gas_used`, `parent_gas_limit`, optional
+    Args: `parent_base_fee`, `parent_gas_used`, `parent_gas_limit`, optional
     `min_base_fee`, `base_fee_max_change_denominator` (default 8) and
     `elasticity_multiplier` (default 2). U256 intermediates avoid u128 overflow.
     """

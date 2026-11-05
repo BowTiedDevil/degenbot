@@ -43,23 +43,22 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 /// Maximum number of per-block priority-fee percentile samples retained in
-/// [`Dispatcher::block_priority_fees`] (matches `FEE_HISTORY_WINDOW = 10` in
-/// the Python oracle). On overflow the oldest block (min key) is pruned.
+/// [`Dispatcher::block_priority_fees`]: ten blocks of `eth_feeHistory` — the
+/// window the p10/p50 fee bounds are drawn from. On overflow the oldest block
+/// (min key) is pruned.
 pub const FEE_HISTORY_WINDOW: usize = 10;
 
-/// `PathSuppression` consecutive-failure count threshold (matches
-/// `PATH_SUPPRESS_THRESHOLD = 10` in the Python oracle).
+/// `PathSuppression` consecutive-failure count threshold: a path that fails
+/// ten times in a row is suppressed.
 pub const PATH_SUPPRESS_THRESHOLD: u32 = 10;
 
-/// `PathSuppression` retry interval in blocks (matches
-/// `PATH_SUPPRESS_RETRY_INTERVAL = 100` in the Python oracle). A suppressed
-/// path is retried once per interval; a successful retry permanently un-
-/// suppresses it.
+/// `PathSuppression` retry interval in blocks: a suppressed path is retried
+/// once per 100 blocks; a successful retry permanently un-suppresses it.
 pub const PATH_SUPPRESS_RETRY_INTERVAL: u64 = 100;
 
-/// Maximum retained block-time samples in
-/// [`Dispatcher::block_times`] (matches `deque(maxlen=60)` in the Python
-/// oracle). The deque drops the oldest on overflow.
+/// Maximum retained block-time samples in [`Dispatcher::block_times`]. The
+/// window drops the oldest on overflow, so the block-time average tracks the
+/// recent chain rather than its whole history.
 pub const BLOCK_TIMES_WINDOW: usize = 60;
 
 /// A submission-keyed pool identifier (V2/V3 pool address or V4 `pool_id_hex`
@@ -476,8 +475,7 @@ impl Dispatcher {
     }
 
     /// Record per-block percentile fees, pruning to `FEE_HISTORY_WINDOW`.
-    /// On overflow the min key (oldest block) is popped (matches Python
-    /// `block_priority_fees.pop(min(...))`).
+    /// On overflow the min key (oldest block) is popped.
     pub fn record_priority_fees(&mut self, block: u64, fees: BTreeMap<u64, u128>) {
         self.block_priority_fees.insert(block, fees);
         if self.block_priority_fees.len() > FEE_HISTORY_WINDOW {
@@ -487,13 +485,12 @@ impl Dispatcher {
     }
 
     /// Return the most-recently recorded per-block percentile fees (the max
-    /// block key). Matches Python `block_priority_fees[max(...)]`.
+    /// block key).
     ///
     /// # Panics
-    /// Panics if no fees have been recorded yet (matches the Python
-    /// `max([])` `ValueError` on an empty dict — the caller must record
-    /// before reading; this is a programming error, not a recoverable
-    /// condition).
+    /// Panics if no fees have been recorded yet — an empty window has no
+    /// percentiles to draw bounds from, so the caller must record before
+    /// reading; this is a programming error, not a recoverable condition.
     #[must_use]
     pub fn latest_priority_fees(&self) -> &BTreeMap<u64, u128> {
         #[expect(clippy::expect_used)] // ring always holds >= 1 entry (documented)
@@ -506,11 +503,10 @@ impl Dispatcher {
     }
 
     /// Borrow the full per-block priority-fee ring (the
-    /// `block -> {percentile: fee}` map). Used by the `PyO3` seam so the
-    /// Python `_compute_priority_fee` (which reads `max(ring)` for the
-    /// latest block's percentiles) works unchanged — returns an empty
-    /// map when nothing has been recorded yet (matching the Python
-    /// `dispatcher.block_priority_fees` empty-dict behavior — no panic).
+    /// `block -> {percentile: fee}` map). Used by the `PyO3` seam so a driver
+    /// that reads the newest block's percentiles can do so on its own — returns
+    /// an empty map when nothing has been recorded yet (an empty window is a
+    /// state, not an error).
     #[must_use]
     pub fn block_priority_fees(&self) -> &BTreeMap<u64, BTreeMap<u64, u128>> {
         &self.block_priority_fees

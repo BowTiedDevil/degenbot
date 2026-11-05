@@ -1,15 +1,13 @@
 //! Aave V3 GHO debt processor — the GHO scaled-balance math with discount
 //! handling.
 //!
-//! Verbatim port of the Python
-//! `src/degenbot/aave/processors/processor.py::UnifiedGhoProcessor` (the
-//! `process_mint_event` / `process_burn_event` / `accrue_debt_on_action` /
-//! `get_discounted_balance` fns) + the GHO strategy dicts from
-//! `src/degenbot/aave/processors/strategies.py` (`GHO_STRATEGIES` +
-//! `GHO_DISCOUNT_STRATEGIES`). The parity-gate cross-check
-//! (`docs/architecture/parity-gate.md`) compares
-//! these against the Python oracle byte-for-byte, so the branch logic + the
-//! rounding selection MUST match exactly.
+//! The GHO scaled-balance model of the deployed Aave V3 GHO token: the
+//! per-event math (`process_mint_event` / `process_burn_event`), the discount
+//! accrual (`accrue_debt_on_action` / `get_discounted_balance`), and the
+//! per-revision strategy tables (`GHO_STRATEGIES` + `GHO_DISCOUNT_STRATEGIES`).
+//! The parity-gate cross-check (`docs/architecture/parity-gate.md`) compares
+//! Rust-written rows against the recorded fixture rows byte-for-byte, so the
+//! branch logic + the rounding selection MUST match exactly.
 //!
 //! # The GHO-vs-standard-debt split
 //!
@@ -24,10 +22,10 @@
 //!
 //! # π (zero DB, zero RPC)
 //!
-//! This module is pure CPU math (mirrors the Python `UnifiedGhoProcessor`
-//! which is stateless — constructed per-revision, holds no mutable state).
-//! The RPC `raw_call` for users-not-in-DB discounts is the driver-shell's
-//! (orchestrator's) concern — the caller (C3) passes `previous_discount` in.
+//! This module is pure CPU math: the processor is stateless — constructed per
+//! revision, holding no mutable state. The RPC `raw_call` for
+//! users-not-in-DB discounts is the driver shell's concern — the caller passes
+//! `previous_discount` in.
 //! The `should_refresh_discount` flag is what C3's GHO-discount machinery
 //! consumes (the flag the processor sets when the discount needs refreshing
 //! after a balance-changing operation).
@@ -139,14 +137,13 @@ impl GhoUserOperation {
     }
 }
 
-/// The result of processing a GHO debt `Mint` event. Mirrors the Python
-/// `GhoScaledTokenMintResult` (`balance_delta`, `new_index`,
-/// `user_operation`, `discount_scaled`, `should_refresh_discount`).
+/// The result of processing a GHO debt `Mint` event: `balance_delta`,
+/// `new_index`, `user_operation`, `discount_scaled`,
+/// `should_refresh_discount`.
 ///
-/// Note: the task body's `GhoProcessorResult { ..., scaled_amount, ... }`
-/// field is the `discount_scaled` here (the Python's field name — the
-/// parity-gate cross-check compares against the Python oracle, so the Python field name
-/// is canonical).
+/// `discount_scaled` is the discount's own scaled contribution to the delta —
+/// named for what it is, because the parity-gate fixture pins it as its own
+/// column separate from the net `balance_delta`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GhoScaledTokenMintResult {
     /// The signed delta to add to the position's scaled balance. Positive for
@@ -355,12 +352,11 @@ impl UnifiedGhoProcessor {
         let discount_scaled =
             self.accrue_debt_on_action(prev_balance, prev_index, prev_discount, event_data.index)?;
 
-        // Track whether the BORROW branch computed an "else" (negate) result —
-        // the borrow-branch computes `|raw_delta - discount_scaled|` (a positive
-        // magnitude) and the sign-wrap below uses this flag to determine the
-        // sign. Mirrors the Python oracle's
-        // `if balance_delta > discount_scaled: balance_delta -= discount_scaled`
-        // `else: balance_delta = -(discount_scaled - balance_delta)` split.
+        // Track whether the BORROW branch took the negate side — the branch
+        // computes `|raw_delta - discount_scaled|` as a positive magnitude and
+        // the sign-wrap below uses this flag to pick the sign. The split is
+        // `if raw_delta > discount_scaled { raw_delta - discount_scaled } else
+        // { -(discount_scaled - raw_delta) }`.
         let mut borrow_negate = false;
 
         let (balance_delta, user_operation) = if event_data.value >= event_data.balance_increase {
@@ -395,7 +391,7 @@ impl UnifiedGhoProcessor {
                     // This captures BOTH the inequality (`raw_delta < discount_scaled`)
                     // and the equality case (`raw_delta == discount_scaled`, which
                     // happens when `value == balance_increase` → `raw_delta == 0`):
-                    // the Python oracle's `else` clause includes the equality case.
+                    // the negate side owns `raw_delta <= discount_scaled`.
                     borrow_negate = true;
                     discount_scaled.saturating_sub(raw_delta)
                 }
@@ -462,13 +458,13 @@ impl UnifiedGhoProcessor {
 
         // Apply the sign: BORROW → may be positive or negative (the GHO
         // BORROW discount-adjustment can negate); REPAY / INTEREST_ACCRUAL →
-        // always negative. The `borrow_negate` flag mirrors the Python oracle's
-        // `else: balance_delta = -(discount_scaled - balance_delta)` clause —
-        // including the equality case (`raw_delta == discount_scaled`) — so the
-        // `value == balance_increase` (Mint5-accrual) path returns a NEGATIVE
-        // `-(discount_scaled)` instead of the (previously bugged) POSITIVE
-        // `+discount_scaled`. Fixes the user-0x417afF 48.79-GHO-stuck-balance
-        // divergence (cand.db user_id=3818).
+        // always negative. `borrow_negate` selects the negate side of the
+        // borrow split — including the equality case (`raw_delta ==
+        // discount_scaled`) — so the `value == balance_increase`
+        // (Mint5-accrual) shape returns a NEGATIVE `-(discount_scaled)` rather
+        // than the POSITIVE `+discount_scaled` a strict `<` produced. That sign
+        // flip was the 48.79-GHO stuck balance on the 0x417afF write-off
+        // (block 17893923, logIdx 361).
         let balance_delta_i256 = match user_operation {
             GhoUserOperation::Borrow => {
                 if borrow_negate {
@@ -919,15 +915,14 @@ mod tests {
 
     #[test]
     fn mint_v4_value_equals_balance_increase_classifies_as_borrow() {
-        // Parity-gate quirk: the Python's `else` (GHO_INTEREST_ACCRUAL) branch is
-        // DEAD CODE — the `if value >= balance_increase` catches the `==` case,
-        // so `value == balance_increase` classifies as GHO_BORROW (not
-        // interest accrual). The BORROW branch computes `requested = 0` →
-        // `balance_delta = ray_div(0, index) = 0` — the same the (dead)
+        // Parity-gate quirk: the `else` (GHO_INTEREST_ACCRUAL) branch is DEAD
+        // CODE — `if value >= balance_increase` catches the `==` case, so
+        // `value == balance_increase` classifies as GHO_BORROW (not interest
+        // accrual). The BORROW branch computes `requested = 0` →
+        // `balance_delta = ray_div(0, index) = 0`, the same value the (dead)
         // interest-accrual branch would compute for the no-discount case.
-        // For parity-gate purposes, the Rust port mirrors this quirk (NOT a bug to fix —
-        // the parity-gate cross-check compares against the Python oracle).
-        // Verified against the Python oracle: returns GHO_BORROW, delta=0.
+        // This mirrors the quirk deliberately (NOT a bug to fix — the fixture
+        // rows encode the same classification): GHO_BORROW, delta=0.
         let p = UnifiedGhoProcessor::new(4);
         let ev = ScaledTokenEventData {
             value: U256::from(5u64),
@@ -1113,16 +1108,15 @@ mod tests {
         assert!(!GhoUserOperation::InterestAccrual.is_repay());
     }
 
-    // ── parity gate (`docs/architecture/parity-gate.md`) cross-check (vs the
-    // Python `UnifiedGhoProcessor` oracle)
-    ///
-    /// Each fixture is `(rev, value, balance_increase, index, scaled_amount,
-    /// prev_balance, prev_index, prev_discount, actual_repay)` → the EXACT
-    /// `(user_operation, balance_delta, discount_scaled, should_refresh)` the
-    /// Python oracle produces. Captured 2026-07-05 from
-    /// `src/degenbot/aave/processors/processor.py::UnifiedGhoProcessor` (the
-    /// `.process_mint_event` / `.process_burn_event` fns). This is the
-    /// parity-gate zero-drift surface for the GHO processor — the final arbiter.
+    // ── parity gate (`docs/architecture/parity-gate.md`) cross-check ────────
+    //
+    // Each fixture is `(rev, value, balance_increase, index, scaled_amount,
+    // prev_balance, prev_index, prev_discount, actual_repay)` → the EXACT
+    // `(user_operation, balance_delta, discount_scaled, should_refresh)` the
+    // processor must produce. The rows were recorded from the Python
+    // `UnifiedGhoProcessor` (`src/degenbot/aave/processors/processor.py` — that
+    // package is gone; the rows are the surviving record). This is the
+    // zero-drift surface for the GHO processor — the final arbiter.
 
     #[test]
     fn parity_mint_borrow_v1_v2_v4_v5() {
@@ -1222,16 +1216,15 @@ mod tests {
     #[test]
     fn parity_mint_v1_value_equals_balance_increase_with_positive_discount_negates() {
         // Regression: user 0x417afF TX 2 (block 17893923, logIdx=361) — the
-        // Parity-gate quirk where `value == balance_increase` classifies as
-        // BORROW (the Python's `else` interest-accrual branch is dead code).
-        // With a POSITIVE `discount_scaled`, the Python oracle returns
-        // `balance_delta = -(discount_scaled - raw_delta)` = `-(discount_scaled `
-        // `- 0)` = `-discount_scaled` (a NEGATIVE burn from the position). Rust's
-        // borrow-branch sign-wrap used a strict `<` condition (`balance_delta <
-        // discount_scaled`) that MISSED the equality case (raw_delta == 0 →
-        // balance_delta == discount_scaled → not < → no negate → returned the
-        // positive complement). 2 × discount_scaled = 48.79 GHO divergence →
-        // the cand.db stuck balance for user_id=3818.
+        // parity quirk where `value == balance_increase` classifies as BORROW
+        // (the `else` interest-accrual branch is dead code). With a POSITIVE
+        // `discount_scaled`, the expected result is
+        // `balance_delta = -(discount_scaled - raw_delta)` = `-(discount_scaled -
+        // 0)` = `-discount_scaled`: a NEGATIVE burn from the position. A strict
+        // `<` in the sign-wrap (`balance_delta < discount_scaled`) MISSED the
+        // equality case (raw_delta == 0 → balance_delta == discount_scaled → not
+        // < → no negate → the positive complement). 2 × discount_scaled = 48.79
+        // GHO divergence, i.e. the stuck balance this row pins.
         //
         // Inputs captured from the live tx 0xdaf7a4e9...
         //   block 17893923  logIdx 361  vToken rev=1
@@ -1241,7 +1234,7 @@ mod tests {
         //   value          = 123683949235110136664 (123.683949 GHO)
         //   balance_increase = 123683949235110136664 (123.683949 GHO)
         //   index          = 1001120576006523063100148152 (1.001120576)
-        // Python oracle returns:
+        // The expected result:
         //   balance_delta   = -24395466556666203902 (-24.395467 GHO)
         //   discount_scaled = 24395466556666203902 (24.395467 GHO)
         //   user_operation  = GhoUserOperation::GHO_BORROW
@@ -1263,8 +1256,8 @@ mod tests {
             "the == quirk → BORROW"
         );
         // The discount_scaled magnitude (≈24.395 GHO); allow a 10_000-wei
-        // tolerance for the upstream ray_mul/ray_div HALF_UP rounding↵
-        // implementation divergence under separate investigation. The BUG here↵
+        // tolerance for the upstream ray_mul/ray_div HALF_UP rounding
+        // implementation divergence under separate investigation. The BUG here
         // is the SIGN flip, not the magnitude.
         let expected_abs = U256::from(24_395_466_556_666_203_902u128);
         let diff = if r.discount_scaled >= expected_abs {
@@ -1279,22 +1272,22 @@ mod tests {
             expected_abs,
             diff
         );
-        // THE BUG: the sign-wrap's strict `<` condition misses the equality↵
-        // case (raw_delta == 0 → balance_delta becomes discount_scaled,↵
-        // which is NOT < discount_scaled) and returns the POSITIVE complement↵
-        // instead of the Python oracle's NEGATIVE burn. With this fix, the↵
-        // delta should be the NEGATIVE of the discount_scaled magnitude.
+        // THE BUG: a strict `<` in the sign-wrap misses the equality case
+        // (raw_delta == 0 → balance_delta becomes discount_scaled, which is NOT
+        // < discount_scaled) and returns the POSITIVE complement instead of the
+        // NEGATIVE burn. With the negate side owning `<=`, the delta is the
+        // NEGATIVE of the discount_scaled magnitude.
         assert_eq!(
             r.balance_delta,
             -I256::try_from(r.discount_scaled).unwrap(),
-            "value==balance_increase with positive discount → NEGATIVE burn of the full discount_scaled (Python oracle)"
+            "value==balance_increase with positive discount → NEGATIVE burn of the full discount_scaled (recorded fixture)"
         );
     }
 
     #[test]
     fn parity_mint_value_equals_balance_increase_quirk() {
-        // The parity-gate quirk: value==balance_increase classifies as BORROW
-        // (the Python's `else` interest-accrual branch is dead code — the `>=`
+        // The parity quirk: value==balance_increase classifies as BORROW
+        // (the `else` interest-accrual branch is dead code — the `>=`
         // catches `==`). delta = ray_div(0, RAY) = 0.
         let p4 = UnifiedGhoProcessor::new(4);
         let ev = ScaledTokenEventData {

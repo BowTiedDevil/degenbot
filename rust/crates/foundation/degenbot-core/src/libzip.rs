@@ -3,8 +3,8 @@
 //! Pure-Rust port of the FastLZ LZ77 variant in Solady's `solady.js`
 //! (`LibZip.flzCompress` / `LibZip.flzDecompress`). Pure functions over
 //! `&[u8]` — no `pyo3`, no I/O, no state held across calls. Direct 1:1
-//! transcription of the deployed JS; cross-checked byte-for-byte against the
-//! Python oracle (`degenbot.utils.solady.libzip`).
+//! transcription of the deployed JS, pinned byte-for-byte by a recorded fixture
+//! corpus (the JS library's own test prose as input).
 //!
 //! ref: <https://github.com/Vectorized/solady/blob/main/js/solady.js>
 //!
@@ -85,8 +85,7 @@ fn get_3_byte_int(bytes: &[u8], pos: usize) -> u32 {
 
 /// FastLZ hash of a 24-bit value, masked into the 13-bit offset domain.
 ///
-/// Equivalent to the Python oracle's `hash(x)`:
-/// `((2654435769 * x) >> 19) & 8191`.
+/// The reference `hash(x)`: `((2654435769 * x) >> 19) & 8191`.
 ///
 /// The product `2654435769 * x` reaches ~4.45e16 (beyond `u32`) for large
 /// 24-bit `x`, so the multiply is computed in `u64`. Because the final `& 8191`
@@ -183,7 +182,8 @@ pub fn compress(data: &[u8]) -> Result<Vec<u8>, LibZipError> {
 
         // Find the maximum match length. The JS `e *= ib[p+l]===ib[q+l]` idiom
         // stops at the first mismatch or at `max_possible_match_length`; the
-        // `+1` here mirrors the Python oracle's `match_length = offset + 1`.
+        // `+1` here matches the reference ports' `match_length = offset + 1`
+        // (the mismatch index is one past the last matching byte).
         let mut match_length = max_possible_match_length;
         for offset in 0..max_possible_match_length {
             if data[p + offset] != data[q + offset] {
@@ -193,7 +193,7 @@ pub fn compress(data: &[u8]) -> Result<Vec<u8>, LibZipError> {
         }
 
         input_buffer_offset += match_length;
-        // The Perl/Python oracle tracks `distance_to_last_seen_chunk = i - r`
+        // The reference ports track `distance_to_last_seen_chunk = i - r`
         // *before* the `i += match_length` step (`r` == `last_seen_offset`),
         // then applies `--d` (the JS `--d`) because match offsets are encoded
         // as `distance - 1`. Reconstruct from the post-increment variables.
@@ -451,7 +451,7 @@ we achieve a return to naive, unselfconscious interaction. The individual ego is
 sacrificed into the collective noosphere, uniting us under a totalising spirit. \
 The best art in the wired is not only beautiful but produces a network spirituality. \
 I long for Network Spirituality!";
-        // Expected output from the Python oracle (`flz_compress`), byte-for-byte.
+        // Expected output for the FlzCompress fixture, byte-for-byte.
         let expected = hex_to_bytes(
             "1f4e65772077617665206469676974616c206172742073686f756c64206e6f74201f6265206a7564\
 67656420736f6c656c79206f6e20616573746865746963206d65017269202301757420240e7374206173\

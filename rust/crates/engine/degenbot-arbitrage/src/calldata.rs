@@ -14,8 +14,9 @@
 //!
 //! All selectors are `keccak256(signature)[:4]`; values are ABI-encoded via
 //! `degenbot_abi::encoder::encode_rust` (the pure-Rust encoder). Each
-//! builder is byte-for-byte parity vs the Python oracle's
-//! `selector + eth_abi.abi.encode(...)` output (golden tests pin the bytes).
+//! builder emits `selector ++ abi.encode(args)` — the ABI encoding is
+//! canonical, so the bytes are the ones the executor contract decodes (golden
+//! tests pin them).
 
 #![expect(clippy::doc_markdown)]
 
@@ -131,10 +132,11 @@ mod tests {
     const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 
     // ---------------------------------------------------------------------
-    // Parity gate (`docs/architecture/parity-gate.md`): byte-for-byte golden parity vs the Python oracle
-    // (`encode_balanceof_calldata`, the getEthBalance block, the ERC6909
-    // block). The selector hexes are pinned `const`; the encoded tails are
-    // captured from `eth_abi.abi.encode(...)` over the corpus addresses.
+    // Golden parity (`docs/architecture/parity-gate.md`): `encode_balanceof_calldata`,
+    // the getEthBalance block and the ERC6909 block are pinned byte-for-byte.
+    // The selector hexes are pinned `const`; the encoded tails are the canonical
+    // ABI encoding of the corpus addresses — one encoding exists, so the bytes
+    // are the contract's own.
     // ---------------------------------------------------------------------
 
     #[test]

@@ -31,11 +31,11 @@
 //!   on confirm/expire. No outer mutex guard is held across an `.await` (the
 //!   release path is synchronous).
 //!
-//! # Receipt fetch (the `TransactionNotFound` → "not yet included" branch)
+//! # Receipt fetch (the "not yet included" branch)
 //!
-//! The Python oracle calls `await async_w3.eth.get_transaction_receipt(
-//! tx_hash)` and treats `TransactionNotFound` as "not yet included"; a
-//! successful return means confirmed. The Rust equivalent is a typed
+//! JSON-RPC `eth_getTransactionReceipt` answers `null` for a hash the node has
+//! not included yet, and the receipt for one it has: "not yet included" is a
+//! state of the chain, not an error. The Rust equivalent is a typed
 //! `get_transaction_receipt` that returns `Option` (the rpc leaf EXISTS at
 //! `degenbot-rpc::AlloyProvider::get_transaction_receipt` L688 — `None` =
 //! not yet included, `Some(receipt)` = confirmed). To keep the submission
@@ -74,8 +74,8 @@ use crate::dispatcher::{CommittedTx, Dispatcher, PoolKey};
 use crate::{SubmissionError, SubmissionResult};
 
 /// Network constant: a pending tx is voided after this many blocks without
-/// inclusion (matches `BLOCKS_BEFORE_NONCE_EXPIRES = 5` in the Python oracle;
-/// submit reveals `5` for mainnet).
+/// inclusion. Five blocks is the mainnet window — past it the tx is treated as
+/// dropped, and its pools and nonce are released to the next candidate.
 pub const BLOCKS_BEFORE_NONCE_EXPIRES: u64 = 5;
 
 /// The pending-tx coordination view.
@@ -288,9 +288,8 @@ impl Drop for ReservationGuard<'_> {
 ///
 /// # Errors
 /// Propagates [`crate::SubmissionError`] if the receipt probe itself fails
-/// with a non-"not-found" RPC error (the Python oracle's
-/// `get_transaction_receipt` is wrapped only in `except TransactionNotFound`;
-/// other RPC errors propagate as the submission error), or if the dispatcher
+/// with anything other than "not found" (an unlanded tx is a state; a transport
+/// or node error propagates as the submission error), or if the dispatcher
 /// head-event source is dropped while the tx is pending (no further head can
 /// arrive, so the tx can never confirm or expire).
 ///

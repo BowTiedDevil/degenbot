@@ -1,10 +1,9 @@
 //! Aave V3 `PercentageMath` — 4-decimal fixed-point percentage arithmetic.
 //!
-//! Verbatim port of `src/degenbot/aave/libraries/percentage_math.py` (which is
-//! itself a port of the [Aave V3 Solidity `PercentageMath`][sol] library). The
-//! The parity-gate cross-check (`docs/architecture/parity-gate.md`)
-//! compares these against the Python oracle
-//! byte-for-byte, so the rounding + overflow semantics MUST match exactly.
+//! Direct Rust port of the [Aave V3 Solidity `PercentageMath`][sol] library: the
+//! same `PERCENTAGE_FACTOR` scaling and half-up tie constant. The rounding +
+//! overflow semantics MUST match exactly — a basis-point of drift compounds on
+//! every debt balance the discount touches.
 //!
 //! [sol]: https://github.com/aave/aave-v3-core/blob/master/contracts/protocol/libraries/math/PercentageMath.sol
 //!
@@ -15,17 +14,18 @@
 //!
 //! # Rounding
 //!
-//! The Python library exposes the half-up variants (`percent_mul` /
-//! `percent_div`) as the primary operations + floor/ceil variants
-//! (`percent_mul_floor` / `percent_mul_ceil` / `percent_div_ceil`). The GHO
-//! processor's `accrue_debt_on_action` + `get_discounted_balance` use the
-//! half-up `percent_mul` (the discount is `percent_mul(balance_increase,
-//! discount_percent)`); the parity-gate cross-check will catch a missed variant.
+//! The library exposes the half-up variants (`percent_mul` / `percent_div`) as
+//! the primary operations + floor/ceil variants (`percent_mul_floor` /
+//! `percent_mul_ceil` / `percent_div_ceil`). The GHO processor's
+//! `accrue_debt_on_action` + `get_discounted_balance` use the half-up
+//! `percent_mul` (the discount is `percent_mul(balance_increase,
+//! discount_percent)`); a missed variant shifts the discount by a unit on every
+//! accrual.
 //!
 //! # Overflow
 //!
-//! The Python oracle raises `EVMRevertError` on overflow. The Rust port
-//! returns [`PercentError::Overflow`]; division by zero returns
+//! The contract reverts on overflow. This port returns
+//! [`PercentError::Overflow`]; division by zero returns
 //! [`PercentError::ZeroDivision`].
 
 use alloy::primitives::U256;
@@ -61,7 +61,7 @@ pub enum PercentError {
 /// `value * percentage + HALF_PERCENTAGE_FACTOR > MAX_UINT256`.
 pub fn percent_mul(value: U256, percentage: U256) -> Result<U256, PercentError> {
     if !percentage.is_zero() {
-        // The Python oracle guards: `value > (MAX - HALF) // percentage` → overflow.
+        // The contract's overflow guard: `value > (MAX - HALF) // percentage`.
         let bound = (crate::MAX_UINT256 - HALF_PERCENTAGE_FACTOR) / percentage;
         if value > bound {
             return Err(PercentError::Overflow);

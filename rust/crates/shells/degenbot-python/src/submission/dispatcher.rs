@@ -307,9 +307,8 @@ impl PyDispatcher {
     }
 
     /// The full per-block priority-fee ring (`{block: {percentile: wei}}`),
-    /// empty when nothing recorded. Read by `_compute_priority_fee` (which
-    /// does `max(ring)` for the latest block's percentiles) — preserves the
-    /// Python `dispatcher.block_priority_fees` attribute shape unchanged.
+    /// empty when nothing recorded. Exposed raw so a driver can pick its own
+    /// block window; the ring is pruned to the fee-history window on write.
     #[getter]
     fn block_priority_fees(
         &self,

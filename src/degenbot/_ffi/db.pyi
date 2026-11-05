@@ -179,8 +179,9 @@ class DatabaseSnapshot:
         """
     def get_newest_block_v3(self, /) -> int | None:
         """
-        V3 `get_newest_block()` → newest V3 exchange `last_update_block` or
-        `None` (any NULL → `None`, mirroring the Python oracle).
+        V3 `get_newest_block()` → newest V3 exchange `last_update_block`, or
+        `None` when no V3 exchange row carries one (a NULL column reads as
+        absent, never as zero).
         """
     def get_newest_block_v4(self, /) -> int | None:
         """

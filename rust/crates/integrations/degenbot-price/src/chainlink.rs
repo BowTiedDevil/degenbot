@@ -1,21 +1,21 @@
 //! Chainlink aggregator price-feed reader.
 //!
-//! Ports [`degenbot.chainlink.price_feed.ChainlinkPriceContract`](../../../../../src/degenbot/chainlink/price_feed.py)
-//! to a pyo3-free Rust reader. The reader builds typed `eth_call`s over
-//! [`degenbot_rpc::contract::Contract::call_typed`] — the `eth_call` primitive
-//! is already Rust-owned, so this crate owns only the *mechanism* (typed feed
+//! Reads the [`AggregatorV3Interface`] of a deployed aggregator —
+//! `latestRoundData()` and `decimals()` — as typed `eth_call`s over
+//! [`degenbot_rpc::contract::Contract::call_typed`]. The `eth_call` primitive is
+//! already Rust-owned, so this crate owns only the *mechanism* (typed feed
 //! readers), not the RPC plumbing.
 //!
-//! # Parity oracle (`docs/architecture/parity-gate.md`)
+//! # Decode contract
 //!
-//! The Python `ChainlinkPriceContract` is the parity oracle; the parity gate pins
-//! value-exact parity for the `latestRoundData` tuple decode, the `decimals`
-//! `uint8` decode, and the `price()` decimal correction (parity is exercised
-//! against recorded EVM return bytes — canonical ABI decode, which is what the
-//! Python `abi_decode` performs too — so the two implementations agree by
-//! construction).
+//! The round tuple, the `uint8` decimals and the decimal-corrected price are
+//! pinned against recorded EVM return bytes. Both halves are the aggregator's
+//! own vocabulary — canonical ABI decode of the return word, then integer
+//! arithmetic over the `int256` answer and the feed's `decimals` — so the reader
+//! agrees with the chain by construction rather than by comparison against a
+//! second implementation.
 //!
-//! [`degenbot.chainlink.price_feed.ChainlinkPriceContract`]: https://github.com/BowTiedDevil/degenbot/blob/main/src/degenbot/chainlink/price_feed.py
+//! [`AggregatorV3Interface`]: https://github.com/smartcontractkit/chainlink/blob/develop/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol
 
 use crate::decode::{as_int, as_u128, as_uint};
 use crate::error::{PriceError, PriceResult};
@@ -35,12 +35,12 @@ const DECIMALS_SIG: &str = "decimals() returns (uint8)";
 const LATEST_ROUND_DATA_SIG: &str =
     "latestRoundData() returns (uint80,int256,uint256,uint256,uint80)";
 
-/// A decoded Chainlink `latestRoundData()` return tuple.
+/// A decoded Chainlink `latestRoundData()` return tuple — one field per
+/// [`AggregatorV3Interface`] slot.
 ///
-/// Mirrors the Python oracle's
-/// `_round_id, answer, _started_at, _updated_at, _answered_in_round` unpacking
-/// (the underscored slots are retained here as named fields — Chainlink callers
-/// commonly use `started_at`/`updated_at` for staleness checks).
+/// Every slot is retained as a named field: Chainlink callers gate on
+/// `started_at`/`updated_at` for staleness, and on `answered_in_round` to spot a
+/// carried-over answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoundData {
     /// `roundId` (`uint80`) — round identifier.
@@ -59,8 +59,7 @@ pub struct RoundData {
 ///
 /// Constructed with the aggregator address + the shared RPC provider (the
 /// `eth_call` is routed via an internal [`Contract`]). `chain_id` is carried
-/// for caller bookkeeping (matching the Python oracle); it does not affect RPC
-/// routing.
+/// for caller bookkeeping only; it does not affect RPC routing.
 #[derive(Clone)]
 pub struct ChainlinkPriceFeed {
     contract: Contract,
@@ -140,15 +139,15 @@ impl ChainlinkPriceFeed {
         build_round_data(&values)
     }
 
-    /// The decimal-corrected nominal price as a `U256` (whole units), the
-    /// integer analogue of the Python oracle's
-    /// `float(answer) / 10**decimals`.
+    /// The decimal-corrected nominal price as a `U256` in whole units:
+    /// `answer / 10**decimals`, truncated toward zero.
     ///
     /// Fetches `decimals()` + `latestRoundData()` and divides the `int256`
-    /// answer by `10**decimals` (truncating integer division — the `[0,1)`
-    /// fractional part is dropped, matching `int(answer // 10**decimals)`).
-    /// Negative `answer` values (which never occur for live USD feeds, but
-    /// are possible per the `int256` ABI) clamp to zero.
+    /// answer by `10**decimals`. The division is integer truncation, so the
+    /// `[0,1)` fractional part is dropped — the feed reports the answer in its
+    /// own `decimals`, and this is the whole-unit face of it. Negative `answer`
+    /// values (which never occur for live USD feeds, but are possible per the
+    /// `int256` ABI) clamp to zero.
     ///
     /// # Errors
     ///
@@ -156,9 +155,9 @@ impl ChainlinkPriceFeed {
     ///
     /// # Note
     ///
-    /// Each call re-fetches `decimals()` (the Python oracle caches it on the
-    /// instance). Caching across calls is a consumer concern; the reader is a
-    /// per-call mechanism.
+    /// Each call re-fetches `decimals()`. A feed's decimals are immutable, so
+    /// caching them across calls is a consumer concern; the reader is a per-call
+    /// mechanism.
     pub async fn price(&self, block_number: Option<u64>) -> PriceResult<U256> {
         let decimals = self.decimals(block_number).await?;
         let round = self.latest_round_data(block_number).await?;
@@ -192,12 +191,12 @@ fn build_round_data(values: &[AbiValue]) -> PriceResult<RoundData> {
 }
 
 /// Decimal-correct a raw `int256` Chainlink answer into a `U256` whole-unit
-/// price (the integer analogue of the Python
-/// `float(answer) / 10**decimals`).
+/// price: `answer / 10**decimals`, truncated toward zero.
 ///
-/// Truncating integer division mirrors `int(answer // 10**decimals)`; a
-/// negative `answer` (not produced by live USD feeds, but permitted by the
-/// `int256` ABI type) clamps to zero. `decimals` beyond ~38 (no Chainlink feed)
+/// The answer arrives in the feed's own `decimals`; the division drops the
+/// `[0,1)` fractional part. A negative `answer` (not produced by live USD feeds,
+/// but permitted by the `int256` ABI type) clamps to zero rather than wrapping
+/// into a two's-complement magnitude. `decimals` beyond ~38 (no Chainlink feed)
 /// would overflow `u128::checked_pow`; such a feed clamps to zero here too —
 /// the caller already validated the feed address, not the on-chain return.
 #[must_use]
@@ -239,10 +238,10 @@ mod tests {
     // Pinned reference feed: Chainlink ETH/USD aggregator
     // `0x5f4eC3Df9cbd43714FE274015522933F4461f15A` on mainnet, which reports
     // prices with 8 decimals. The return bytes below are canonical ABI
-    // encodings of representative round values (the sandbox running these
-    // gates has no live RPC, so bytes are constructed via the same ABI encoder
-    // the chain would produce; decode parity vs. the Python `abi_decode` holds
-    // because both implement canonical ABI decode of the identical bytes).
+    // encodings of representative round values, constructed via the same ABI
+    // encoder the chain would produce: a live `eth_call` hands
+    // `Contract::call_typed` exactly these bytes, so the decode path under test
+    // is the one the chain feeds.
     const PINNED_CHAINLINK_ETH_USD: &str = "0x5f4eC3Df9cbd43714FE274015522933F4461f15A";
     // A plausible pinned block in the ~21M range.
     const PINNED_BLOCK: u64 = 21_000_000;
@@ -348,9 +347,9 @@ mod tests {
     #[test]
     fn pinned_feed_constants_are_documented_reference() {
         // Sanity: the pinned feed address is the canonical Chainlink ETH/USD
-        // aggregator (8 decimals). This is documentation parity — the actual
-        // return bytes above are encoded by us, but the feed identity is the
-        // reference the Python oracle would be pointed at.
+        // aggregator (8 decimals). The return bytes above are encoded here, but
+        // the feed identity — and therefore the `decimals` and `int256` answer
+        // shape the reader must handle — is this deployed aggregator.
         assert_eq!(
             PINNED_CHAINLINK_ETH_USD.to_lowercase(),
             "0x5f4ec3df9cbd43714fe274015522933f4461f15a"

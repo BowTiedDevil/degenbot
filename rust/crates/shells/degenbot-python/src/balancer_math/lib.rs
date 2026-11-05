@@ -102,7 +102,7 @@ fn bal_err(e: BalancerMathError) -> PyErr {
         BalancerMathError::TokenCountOverflow => "TOO_MANY_TOKENS",
     };
     // Overflow-class errors (would exceed MAX_UINT256) surface as OverflowError;
-    // the rest mirror the deployed-contract revert tags the Python oracle raises.
+    // the rest carry the deployed-contract revert tags verbatim.
     match e {
         BalancerMathError::AddOverflow
         | BalancerMathError::SubOverflow

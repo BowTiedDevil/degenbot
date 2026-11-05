@@ -239,13 +239,13 @@ mod tests {
         );
     }
 
-    // Numerical-accuracy ports from the retired Python parity oracle
-    // (`tests/balancer/libraries/test_fixed_point.py`). These cover the
-    // branches the error-path/fast-path corpus above does not: the V1
-    // general path (via `log_exp_math::pow` + `MAX_POW_RELATIVE_ERROR`
-    // correction), `pow_up`, fractional exponents, and `complement`
-    // mid-range values. The V2 fast paths and error bounds are already
-    // covered above + transitively by `stable_math`/`weighted_math`.
+    // Numerical-accuracy checks covering the branches the error-path/fast-path
+    // corpus above does not: the V1 general path (via `log_exp_math::pow` +
+    // `MAX_POW_RELATIVE_ERROR` correction), `pow_up`, fractional exponents, and
+    // `complement` mid-range values. They were carried over from the retired
+    // Python parity suite — those math modules are gone, and these rows are the
+    // surviving record. The V2 fast paths and error bounds are already covered
+    // above + transitively by `stable_math`/`weighted_math`.
 
     #[test]
     fn pow_down_v1_rounds_below_exact_square() {

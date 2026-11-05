@@ -8,7 +8,7 @@
 //!
 //! The cross-DB byte-comparison vs a Python-written fixture lives in
 //! `tests/database/test_discovery_seam.py`; this Rust test pins the Rust
-//! trajectory so that the Python oracle gate has a stable reference.
+//! trajectory so that cross-driver gate has a stable reference.
 
 #![expect(clippy::unwrap_used)]
 use alloy::primitives::Address;

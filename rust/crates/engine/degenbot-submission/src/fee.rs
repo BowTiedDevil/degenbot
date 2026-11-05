@@ -1,20 +1,24 @@
 //! Fee finalization — the `maxFeePerGas` / `maxPriorityFeePerGas` arithmetic
-//! that the Python oracle performs inline at submission time.
+//! the submission path stamps onto a candidate before signing.
 //!
-//! # Parity oracle (`docs/architecture/parity-gate.md`)
+//! # The convention
 //!
-//! `examples/eth_backrun_v2_v3_v4_rust.py` L2623–L2624:
-//!
-//! ```python
-//! tx_params["maxPriorityFeePerGas"] = priority_fee
-//! tx_params["maxFeePerGas"] = int(1.5 * base_fee_next) + priority_fee
+//! ```text
+//! maxPriorityFeePerGas = priority_fee
+//! maxFeePerGas         = trunc(1.5 * base_fee_next) + priority_fee
 //! ```
 //!
-//! [`finalize_fees`] reproduces this exactly, including the **float→int
-//! truncate boundary**: `int(1.5 * base_fee_next)` uses Python `int()` on a
-//! `float`, which truncates toward zero. The Rust path uses
-//! `(1.5 * base_fee_next as f64) as u128`, which is the identical IEEE-754
-//! double-precision multiply + toward-zero truncation.
+//! A type-2 transaction is includable at any base fee up to `maxFeePerGas`, so
+//! the bid is the next block's base fee plus 50% headroom — room for the base
+//! fee to drift over the blocks the tx stays pending. The priority fee is added
+//! on top rather than folded into the headroom: the validator tip must be
+//! exactly the fee the simulation sized.
+//!
+//! ## The float boundary
+//!
+//! [`compute_max_fee`] computes `(1.5 * base_fee_next as f64) as u128` — one
+//! IEEE-754 double multiply, then a toward-zero truncate. The 1.5 factor is the
+//! reason for the float; the truncate keeps the fee a whole wei value.
 //!
 //! ## The float boundary (documented)
 //!
@@ -22,36 +26,34 @@
 //! (~1e10–1e11 wei, i.e. 10–100 gwei), `1.5 * base_fee_next` is well under
 //! `2^53` (~9e15), so the `f64` multiply is **exact** and the truncate is a
 //! no-op (the value is already whole). For pathological `base_fee_next`
-//! values above `~6e37`, `1.5 * x` overflows `f64`'s exact-integer range,
-//! but such values are never produced on mainnet (the 1.5× headroom would be
-//! roughly `10^38` wei = `10^29` gwei — impossible). The float path is pinned
-//! here for **byte-exact Python parity**, not for arithmetic range — the
-//! same convention as [`_compute_priority_fee`] in the Simulation leaf (the
-//! `priority_fee` consumed here is *produced* there using the same
-//! float→int truncate convention).
+//! values above `~6e37`, `1.5 * x` leaves `f64`'s exact-integer range, but such
+//! values are never produced on mainnet (the 1.5× headroom would be roughly
+//! `10^38` wei = `10^29` gwei — impossible).
 //!
-//! [`_compute_priority_fee`]: the Simulation leaf — a cross-module
-//! reference; submission consumes the fee off `tx_params`, no edge.
+//! The `priority_fee` consumed here is produced by the Simulation leaf
+//! (`degenbot_arbitrage::simulator::compute_priority_fee`, which truncates the
+//! same way) — a cross-module reference, not a crate edge: submission reads the
+//! fee off `tx_params`.
 
 use crate::error::{SubmissionError, SubmissionResult};
 use crate::params::TxParams;
 
-/// The 1.5× headroom multiplier the Python oracle applies to `base_fee_next`
-/// when computing `maxFeePerGas`. Exposed as a `const` so the parity-gate
-/// test can pin the convention without re-deriving the float literal.
+/// The 1.5× headroom multiplier applied to `base_fee_next` when computing
+/// `maxFeePerGas`. Exposed as a `const` so the tests can pin the convention
+/// without re-deriving the float literal.
 pub const MAX_FEE_HEADROOM: f64 = 1.5;
 
-/// Finalize `maxFeePerGas` / `maxPriorityFeePerGas` onto `tx_params`, mirroring
-/// the Python oracle's inline fee computation.
+/// Finalize `maxFeePerGas` / `maxPriorityFeePerGas` onto `tx_params` (see the
+/// module docs for the convention).
 ///
 /// Sets:
 /// - `tx_params.max_priority_fee_per_gas = priority_fee`
-/// - `tx_params.max_fee_per_gas = int(1.5 * base_fee_next) + priority_fee`
+/// - `tx_params.max_fee_per_gas = trunc(1.5 * base_fee_next) + priority_fee`
 ///
 /// `base_fee_next` is the *next-block* base fee (`next_base_fee`,
 /// already computed — this crate consumes it, no edge). `priority_fee` is
-/// the Simulation leaf's `_compute_priority_fee` output (consumed off
-/// `tx_params` — no hard edge; for parity-gate testing it is a fixture value).
+/// the Simulation leaf's `compute_priority_fee` output (consumed off
+/// `tx_params` — no hard edge; the tests drive it with fixture values).
 ///
 /// # Errors
 ///
@@ -80,11 +82,11 @@ pub fn finalize_fees(
     Ok(())
 }
 
-/// Compute `maxFeePerGas = int(1.5 * base_fee_next) + priority_fee`.
+/// Compute `maxFeePerGas = trunc(1.5 * base_fee_next) + priority_fee`.
 ///
-/// Exposed separately from [`finalize_fees`] so the parity-gate proptest can
-/// drive the arithmetic directly without constructing a full `TxParams`.
-/// See the module docs for the float→int truncate boundary.
+/// Exposed separately from [`finalize_fees`] so the proptest can drive the
+/// arithmetic directly without constructing a full `TxParams`.
+/// See the module docs for the float boundary.
 ///
 /// # Errors
 ///
@@ -92,9 +94,8 @@ pub fn finalize_fees(
 /// overflows `u128` (impossible for realistic mainnet fees — see the float
 /// boundary note on this module).
 pub fn compute_max_fee(base_fee_next: u128, priority_fee: u128) -> SubmissionResult<u128> {
-    // Python: int(1.5 * base_fee_next) — float multiply then toward-zero
-    // truncate via Python `int()`. The Rust `as u128` cast on an `f64` is
-    // the same toward-zero truncation. See module docs for the float boundary.
+    // Float multiply, then a toward-zero truncate (`as u128` on an `f64`).
+    // See the module docs for the float boundary.
     #[expect(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,

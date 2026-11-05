@@ -4,23 +4,20 @@
 //!
 //! # Architectural role (ADR-005)
 //!
-//! Today the Python oracle crosses the operator private key into
-//! `eth_account.Account.sign_transaction(...)` **per transaction**
-//! (`examples/eth_backrun_v2_v3_v4_rust.py` L2638), a security smell: the key
-//! material round-trips into Python on every submission. [`TxSigner`]
-//! receives the key bytes/hex **once** at construction (via the `PyO3` wrapper)
-//! and holds it in Rust for the signer's lifetime — the key never crosses
-//! back into Python per-tx. The signing itself is **synchronous ECDSA**
-//! (secp256k1, RFC 6979 deterministic nonces) — CPU-bound, no network — so
-//! the `PyO3` wrapper releases the GIL around it (`py.detach`).
+//! The operator private key is the one secret the submission path holds.
+//! [`TxSigner`] receives it **once** at construction (via the `PyO3` wrapper)
+//! and holds it in Rust for the signer's lifetime — key material never
+//! round-trips per transaction, so the per-tx path cannot copy, log or retain
+//! it. Signing is **synchronous ECDSA** (secp256k1, RFC 6979 deterministic
+//! nonces) — CPU-bound, no network — so the `PyO3` wrapper releases the GIL
+//! around it (`py.detach`).
 //!
-//! # Parity gate (`docs/architecture/parity-gate.md`)
+//! # Determinism (`docs/architecture/parity-gate.md`)
 //!
-//! The parity oracle is `eth_account.Account.sign_transaction(transaction_dict=tx_params,
-//! private_key=operator_private_key).raw_transaction`. Because both `eth_account`
-//! and `alloy-signer-local` use RFC 6979 deterministic ECDSA over secp256k1, a
-//! pinned key + `tx_params` produces **byte-for-byte identical** raw signed
-//! `bytes` in Rust and Python — pinned in the parity-gate test against a canonical
+//! RFC 6979 makes the signature a pure function of (key, `tx_params`): no
+//! randomness is drawn, so a pinned key + `tx_params` produces the
+//! **byte-for-byte identical** raw signed `bytes` as any other conforming
+//! secp256k1 signer — pinned in the parity-gate test against a canonical
 //! (anvil account 0) fixture.
 
 use crate::error::{SubmissionError, SubmissionResult};

@@ -3,10 +3,11 @@
 //! These helpers sit between [`degenbot_rpc::contract::Contract::call_typed`]
 //! (which yields `Vec<AbiValue>` — the canonical ABI decode of the `eth_call`
 //! return bytes) and the reader structs. Isolating them here keeps the decode
-//! logic pure + independently parity-testable without a live RPC: a test feeds
+//! logic pure + independently testable without a live RPC: a test feeds
 //! recorded EVM return bytes through the shared
 //! `degenbot_abi::decoder::decode_for_types` and then these extractors,
-//! asserting value-exact results vs. the Python oracle's `abi_decode`.
+//! asserting the value the chain's own encoding carries — the extraction adds
+//! no arithmetic, so the recorded bytes are the whole authority.
 
 use crate::error::PriceError;
 use alloy::primitives::{I256, U256};

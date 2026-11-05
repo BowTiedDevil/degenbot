@@ -1,4 +1,4 @@
-//! Cross-check the Rust Balancer math against the frozen Python oracle.
+//! Cross-check the Rust Balancer math against the frozen oracle snapshot.
 //
 // Test-crate lint allows: throwaway parser code (mirror of the curve-math
 // oracle_crosscheck.rs pattern).
@@ -6,7 +6,7 @@
 #![expect(clippy::redundant_closure_for_method_calls)]
 // The oracle parser below uses `panic!` on malformed lines and `unwrap` on
 // replay results — idiomatic for a test harness asserting the Rust port
-// matches the frozen Python oracle byte-for-byte.
+// matches the frozen snapshot byte-for-byte.
 #![expect(clippy::unwrap_used, clippy::panic, clippy::panic_in_result_fn)]
 //!
 //! The oracle snapshot (`oracle_balancer_snapshot.txt`) is the frozen output of a

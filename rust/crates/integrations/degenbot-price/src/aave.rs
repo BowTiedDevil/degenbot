@@ -1,17 +1,16 @@
 //! Aave price-oracle reader.
 //!
-//! Ports [`degenbot.aave.analysis.orchestrator.OraclePriceFetcher`](../../../../../src/degenbot/aave/analysis/orchestrator.py)
-//! to a pyo3-free Rust reader. The reader does a single typed
-//! `getAssetPrice(address) returns (uint256)` `eth_call` per asset through
-//! [`degenbot_rpc::contract::Contract::call_typed`]; the `eth_call` primitive is
+//! Reads `getAssetPrice(address) returns (uint256)` from a deployed Aave oracle
+//! — one typed `eth_call` per asset through
+//! [`degenbot_rpc::contract::Contract::call_typed`]. The `eth_call` primitive is
 //! already Rust-owned, so this crate owns only the *mechanism*.
 //!
-//! # Parity oracle (`docs/architecture/parity-gate.md`)
+//! # Decode contract
 //!
-//! The Python `OraclePriceFetcher.fetch` is the parity oracle; the parity gate
-//! pins value-exact parity for the `getAssetPrice` `uint256` decode (tested
-//! against the canonical ABI decode of recorded return bytes — the same bytes
-//! the Python `abi_decode(["uint256"], …)` decodes).
+//! The returned `uint256` word is the oracle's answer verbatim: canonical ABI
+//! decode, returned unscaled — the oracle already reports in its base
+//! currency's decimals, so unit conversion is the caller's concern. Pinned
+//! against recorded return bytes.
 
 use crate::decode::as_uint;
 use crate::error::{PriceError, PriceResult};
@@ -88,17 +87,13 @@ impl AavePriceOracle {
 
     /// Fetch prices for a batch of assets, tolerantly.
     ///
-    /// Ports [`OraclePriceFetcher.fetch`]'s per-asset error handling: a failure
-    /// on one asset (contract revert, decode error, or any other RPC failure)
-    /// is logged and skipped, and the successfully-fetched prices are returned.
-    ///
-    /// This matches the Python oracle's `ContractLogicError`/`ValueError`
-    /// skip-and-continue intent; the per-call [`get_asset_price`](Self::get_asset_price)
-    /// is available for callers needing strict, single-asset semantics. Fetches
-    /// are sequential — matching the Python oracle's loop; concurrent fetching
-    /// is a consumer-tier concern.
-    ///
-    /// [`OraclePriceFetcher.fetch`]: https://github.com/BowTiedDevil/degenbot/blob/main/src/degenbot/aave/analysis/orchestrator.py
+    /// A failure on one asset (contract revert, decode error, or any other RPC
+    /// failure) is logged and skipped, and the successfully-fetched prices are
+    /// returned: one unpriceable asset must not sink a batch. The per-call
+    /// [`get_asset_price`](Self::get_asset_price) is available for callers
+    /// needing strict, single-asset semantics. Fetches are sequential — one
+    /// `eth_call` per asset, no fan-out; concurrency is a consumer-tier
+    /// concern.
     pub async fn fetch_prices(
         &self,
         assets: &[Address],

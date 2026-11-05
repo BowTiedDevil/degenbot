@@ -24,13 +24,15 @@
 //! row's `balance` and `last_index` columns, taking the pre-computed
 //! `balance_delta` from this processor.
 //!
-//! # Parity gate (`docs/architecture/parity-gate.md`)
+//! # Revision strategies (`docs/architecture/parity-gate.md`)
 //!
-//! The revision-strategy dicts and the `process_mint_event` /
-//! `process_burn_event` branch logic are byte-for-byte ports of the Python
-//! (the parity-gate cross-check compares Rust-written rows vs the Python oracle, so
-//! any deviation bites there). The ray-math primitives (`ray_div` with
-//! floor/ceil/half-up) come from `crate::wad_ray_math`.
+//! The revision-strategy tables and the `process_mint_event` /
+//! `process_burn_event` branch logic follow the deployed token revisions: which
+//! way an aToken/vToken rounds its scaled amounts, and which direction its
+//! balance delta moves, is a property of that token's revision rather than a
+//! tunable. The parity-gate cross-check compares Rust-written rows against the
+//! recorded fixture rows, so any deviation bites there. The ray-math primitives
+//! (`ray_div` with floor/ceil/half-up) come from `crate::wad_ray_math`.
 
 #![expect(clippy::doc_lazy_continuation)] // multi-line rustdoc phrasing
 

@@ -642,7 +642,8 @@ impl BatchPolicyOracle for PyBatchPolicyOracle {
     }
 }
 
-/// One policy candidate as the Python oracle's dict.
+/// One policy candidate as a plain dict (the FFI-facing shape of a
+/// [`PolicyCandidate`]).
 fn candidate_to_py(py: Python<'_>, candidate: &PolicyCandidate) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("seq", candidate.seq)?;

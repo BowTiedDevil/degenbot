@@ -74,7 +74,8 @@ fn fetch_path_graph_edges_matches_python_oracle() {
         )
         .unwrap();
 
-    // Sort edges for deterministic comparison (the Python oracle sorts too).
+    // Sort edges for deterministic comparison: row order is not part of the
+    // fetched-graph contract, and the expected rows are sorted.
     let mut rust_edges: Vec<[u64; 4]> = data
         .edges
         .iter()
@@ -103,8 +104,8 @@ fn fetch_path_graph_edges_matches_python_oracle() {
         expected.v4_lookups.clone().into_iter().collect();
     assert_eq!(rust_v4, exp_v4, "v4_lookups mismatch");
 
-    // pool_id_to_kind (last-write-wins on V2/V3 vs V4 ID collision — the
-    // Python oracle has the same collision; both insert V2/V3 first, then V4).
+    // pool_id_to_kind (last-write-wins on a V2/V3 vs V4 ID collision): the
+    // insert order is V2/V3 first, then V4, so the V4 kind wins the key.
     let rust_kind: HashMap<String, u8> = data
         .pool_id_to_kind
         .iter()

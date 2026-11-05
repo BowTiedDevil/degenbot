@@ -8,7 +8,7 @@
 #![expect(clippy::manual_let_else)]
 // The line parser below uses `panic!` on malformed oracle lines and `unwrap`/
 // `expect` on replay results — idiomatic for a test harness that asserts the
-// Rust port matches the frozen Python oracle byte-for-byte.
+// Rust port matches the frozen snapshot byte-for-byte.
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //!
 //! The oracle snapshot (`oracle_curve_snapshot.txt`) is the frozen output of a

@@ -1,10 +1,10 @@
 //! Aave V3 `WadRayMath` — 18/27-decimal fixed-point arithmetic.
 //!
-//! Verbatim port of `src/degenbot/aave/libraries/wad_ray_math.py` (which is
-//! itself a port of the [Aave V3 Solidity `WadRayMath`][sol] library). The
-//! The parity-gate cross-check (`docs/architecture/parity-gate.md`)
-//! compares these against the Python oracle
-//! byte-for-byte, so the rounding + overflow semantics MUST match exactly.
+//! Direct Rust port of the [Aave V3 Solidity `WadRayMath`][sol] library: the
+//! same `WAD`/`RAY` scaling, the same half-up constants, and the same
+//! `require(a * b <= MAX_UINT256)` bound. The rounding + overflow semantics
+//! MUST match exactly — one ray-unit of drift is a position-balance bug the
+//! written rows carry forever.
 //!
 //! [sol]: https://github.com/aave/aave-v3-core/blob/master/contracts/protocol/libraries/math/WadRayMath.sol
 //!
@@ -16,23 +16,22 @@
 //!
 //! # Rounding
 //!
-//! The Python library exposes three rounding modes per op:
+//! The library exposes three rounding modes per op:
 //! - **Half-up** (the default; `(a*b + HALF_RAY) // RAY` — rounds to nearest,
 //!   ties go up).
 //! - **Floor** (`(a*b) // RAY` — truncates toward zero).
 //! - **Ceil** (`(a*b) // RAY + ((a*b) % RAY != 0)` — rounds toward +∞).
 //!
 //! `ray_mul` / `ray_div` take an optional [`RayRounding`] mode; the
-//! revision-aware token processors (`degenbot-aave::processors`)
-//! select floor/ceil/half-up per the token revision's strategy (see the
-//! Python `processors/strategies.py::RoundingStrategy`).
+//! revision-aware token processors (`degenbot-aave::processors`) select
+//! floor/ceil/half-up per the token revision's strategy — which way a deployed
+//! aToken/vToken rounds is a property of its revision, not of the arithmetic.
 //!
 //! # Overflow
 //!
-//! The Python oracle raises `EVMRevertError` on overflow (`a*b > MAX_UINT256`).
-//! The Rust port returns [`WadRayError::Overflow`] (a `thiserror::Error`); the
-//! apply layer surfaces it via `?`. Division by zero returns
-//! [`WadRayError::ZeroDivision`].
+//! The contract reverts when `a*b > MAX_UINT256`. This port returns
+//! [`WadRayError::Overflow`] (a `thiserror::Error`); the apply layer surfaces it
+//! via `?`. Division by zero returns [`WadRayError::ZeroDivision`].
 
 use alloy::primitives::U256;
 use thiserror::Error;
@@ -72,8 +71,8 @@ pub enum WadRayError {
     ZeroDivision,
 }
 
-/// The rounding mode for a `ray_mul` / `ray_div` operation. Mirrors the
-/// Python `wad_ray_math.Rounding` enum (`HALF_UP` / `FLOOR` / `CEIL`).
+/// The rounding mode for a `ray_mul` / `ray_div` operation — the axis the
+/// contract library threads through its `HALF_UP` / `FLOOR` / `CEIL` variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RayRounding {
     /// Default: round half up to nearest (`(a*b + HALF_RAY) // RAY`).
@@ -390,12 +389,12 @@ mod tests {
         // 1 RAY = 1e27 → 1e18 WAD (exact).
         assert_eq!(ray_to_wad(RAY), WAD);
         // RAY + WAD_RAY_RATIO/2: the remainder is EXACTLY half → does NOT round
-        // up (Python uses strict `>`, so a tie stays down). Result = WAD.
+        // up (the contract's strict `>`, so a tie stays down). Result = WAD.
         let exact_half = RAY + WAD_RAY_RATIO / U256::from(2u8);
         assert_eq!(
             ray_to_wad(exact_half),
             WAD,
-            "exact half (tie) does NOT round up (strict `>` in the oracle)"
+            "exact half (tie) does NOT round up (strict `>` in the contract)"
         );
         // RAY + WAD_RAY_RATIO/2 + 1: the remainder is just above half → rounds up to WAD+1.
         let just_above_half = RAY + WAD_RAY_RATIO / U256::from(2u8) + U256::from(1u8);

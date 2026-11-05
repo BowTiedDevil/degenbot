@@ -1,8 +1,8 @@
 //! `PyO3` bindings for the Solady `LibZip` (`FastLZ`) compress/decompress.
 //!
 //! Thin translator over `degenbot_core::libzip`. No business logic — extract
-//! args → call core → wrap result as `HexBytes` (matching the Python oracle's
-//! return type in `degenbot.utils.solady.libzip`).
+//! args → call core → wrap the result as `HexBytes`, the type the driver's
+//! `degenbot.utils.solady` surface hands back.
 
 use crate::prelude::*;
 use pyo3::exceptions::PyTypeError;

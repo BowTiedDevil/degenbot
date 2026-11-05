@@ -1,12 +1,11 @@
 //! `TxParams` — the EIP-1559 transaction field set the caller assembles, the
 //! signer finalizes fees onto, and [`crate::signer::TxSigner`] signs.
 //!
-//! `chain_id` is held ONCE on [`crate::signer::TxSigner`] (the signer owns the
-//! replay-protection context — the Python oracle's `tx_params["chainId"]` is
-//! the signer's chain, not an independent per-tx field). This avoids a
-//! duplicated-state smell: a `TxSigner` constructed for chain *C* always
-//! produces type-2 txs replay-protected for *C*, regardless of what a caller
-//! passes.
+//! `chain_id` is held ONCE on [`crate::signer::TxSigner`]: the signer owns the
+//! replay-protection context, so the chain id is not an independent per-tx
+//! field. A `TxSigner` constructed for chain *C* always produces type-2 txs
+//! replay-protected for *C*, regardless of what a caller passes — one writer,
+//! no duplicated-state smell.
 
 use alloy::eips::eip2930::AccessList;
 use alloy::primitives::{Address, Bytes, U256};
@@ -14,10 +13,9 @@ use alloy::primitives::{Address, Bytes, U256};
 /// The EIP-1559 transaction field set (minus `chain_id`, which the
 /// [`TxSigner`](crate::signer::TxSigner) owns).
 ///
-/// Mirrors the fields the Python oracle sets on `tx_params` in
-/// `examples/eth_backrun_v2_v3_v4_rust.py` L2620–L2626 (`to`/`data`/`gas`/
-/// `nonce`/`value=0`/`accessList` + the two fee fields finalized by
-/// [`finalize_fees`](crate::fee::finalize_fees)). `data` is the `execute()`
+/// The EIP-1559 type-2 field set: `to`/`data`/`gas`/`nonce`/`value=0`/
+/// `accessList` + the two fee fields finalized by
+/// [`finalize_fees`](crate::fee::finalize_fees). `data` is the `execute()`
 /// calldata produced by the executor (the `degenbot-executor` / `degenbot-abi`
 /// EIP-2718 typing — this crate consumes already-encoded `Bytes`).
 #[derive(Debug, Clone, PartialEq, Eq)]

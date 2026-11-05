@@ -1,12 +1,12 @@
 //! `degenbot._ffi.eip_1559` — thin `PyO3` wrappers over the pure-Rust
 //! `degenbot-core::eip_1559` module.
 //!
-//! Exposes the EIP-1559 `next_base_fee` so the Python driver reads it from the
-//! Rust core (single source of truth) instead of re-implementing the formula in
-//! pure Python (`degenbot.calculations.evm_math`). This closes the "driver
-//! co-implements core" duplication: the `BotRunner` computes `base_fee_next` here
-//! (Rust math) and pipes it into the Rust dispatch seam, with no second
-//! implementation of the EIP-1559 formula in the driver path.
+//! Exposes the EIP-1559 `next_base_fee` to the Python driver from the Rust core
+//! (single source of truth): the `BotRunner` computes `base_fee_next` here (Rust
+//! math) and pipes it into the Rust dispatch seam, so the driver path holds no
+//! second implementation of the [EIP-1559] formula.
+//!
+//! [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
 
 use pyo3::exceptions::PyZeroDivisionError;
 use pyo3::prelude::*;
@@ -14,8 +14,7 @@ use pyo3::prelude::*;
 /// Compute the EIP-1559 next-block base fee, mirroring the pure-Rust
 /// `degenbot_core::eip_1559::next_base_fee`.
 ///
-/// Args mirror the Python oracle (`degenbot.calculations.evm_math.next_base_fee`):
-/// `parent_base_fee`, `parent_gas_used`, `parent_gas_limit`, optional
+/// Args: `parent_base_fee`, `parent_gas_used`, `parent_gas_limit`, optional
 /// `min_base_fee`, `base_fee_max_change_denominator` (default 8) and
 /// `elasticity_multiplier` (default 2). U256 intermediates avoid u128 overflow.
 #[pyfunction]
@@ -28,8 +27,7 @@ fn next_base_fee(
     base_fee_max_change_denominator: u128,
     elasticity_multiplier: u128,
 ) -> PyResult<u128> {
-    // Mirror the Python oracle (`degenbot.calculations.evm_math.next_base_fee`):
-    // only the Greater/Less branches divide by `last_gas_target`, so a zero
+    // Only the Greater/Less branches divide by `last_gas_target`, so a zero
     // target raises ZeroDivisionError there and only there — the Equal branch
     // (e.g. gas_limit=0, gas_used=0) returns the parent fee without dividing.
     // This avoids leaking a Rust panic (`PanicException`) for the degenerate

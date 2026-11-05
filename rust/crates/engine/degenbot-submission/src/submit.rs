@@ -292,7 +292,7 @@ impl BatchState {
 /// One dispatch batch: the invariant per-batch inputs every stage reads, and
 /// the ordered pipeline those stages form.
 ///
-/// The order is the Python oracle's `dispatch_profitable_results` submit tail:
+/// Every stage runs in this order for each candidate:
 ///
 /// 1. [`Self::sort`] — best-first by net profit.
 /// 2. [`Self::record_candidate_economics`] — the per-candidate census prologue.
@@ -1098,12 +1098,13 @@ impl SubmitBatch<'_> {
 /// [`SkipReason::NonceContended`], so no candidate leaves the pipeline without
 /// an outcome.
 ///
-/// # Parity gate (`docs/architecture/parity-gate.md`)
+/// # Pipeline invariants (`docs/architecture/parity-gate.md`)
 ///
 /// The submit order (net-desc), the mutual-exclusivity skip, the
 /// `dry_run`/`inject_code` skip (with pools still committed), the
-/// nonce→fee→access-list→sign→broadcast sequence, + the monitor spawn match
-/// the Python oracle's `dispatch_profitable_results` submit tail.
+/// nonce→fee→access-list→sign→broadcast sequence, and the monitor spawn are the
+/// batch's contract: each is a designated skip point or an ordering constraint,
+/// and reordering any of them changes which candidates reach the chain.
 ///
 /// # Errors
 ///
