@@ -22,9 +22,9 @@ The driver is a script, not a module, and the tests reach *into* the script for 
   - `examples/` **is a package** (`examples/__init__.py` exists), so `from examples.…`
     currently resolves — which is why the seams have stayed green this long.
 - **No `src/degenbot/**` file imports from `examples.`** (verified: `rg "from examples\." src/`
-  is empty). Every `build_paths` / `BackrunSession` reference inside `src/`
-  (`bot/_bot.py`, `arbitrage/engine_registry.py`, `arbitrage/verification_retry.py`) is
-  **docstring-only prose**, not an import. So the consumer graph is entirely test-side.
+  is empty). Every `build_paths` reference inside `src/` (`bot/_bot.py`,
+  `arbitrage/engine_registry.py`, `arbitrage/policy.py`) is **docstring-only prose**,
+  not an import. So the consumer graph is entirely test-side.
 - The offending import that motivates the epic — `tests/arbitrage/test_backrun_session.py`
   does `from examples.eth_backrun_v2_v3_v4_rust import BackrunSession` — is real and live.
 
@@ -47,8 +47,8 @@ named seams so each is individually testable. Nothing engine-owned changes.
 
 Proposed new package boundary: **`src/degenbot/runner/`** — a new top-level companion
 namespace (the epic's proposal), housing `BotRunner` + the moved driver plumbing. This is
-distinct from `src/degenbot/arbitrage/` (engine-adjacent: `engine_registry`,
-`recurring_verify`, `verification_retry`, `policy` all stay there). Rationale: the driver
+distinct from `src/degenbot/arbitrage/` (engine-adjacent: `engine_registry` and
+`policy` stay there). Rationale: the driver
 is an *orchestrator over* arbitrage (and future engine families), not an arbitrage intern,
 so it gets its own module rather than being buried as `arbitrage/runner.py`.
 
@@ -86,8 +86,8 @@ class BotRunner:
         the real build_paths (test seam)."""
 
     async def consume(self) -> None:
-        """Attach the result consumer (block-stream tee + recurring-verify),
-        resume the pump, and become the permanent main loop."""
+        """Attach the result consumer, resume the pump, and become the
+        permanent main loop."""
 
     async def dispatch(self, results, *, current_block, ...) -> None:
         """The encode→simulate→submit leaf (currently _dispatch_profitable);
@@ -134,8 +134,8 @@ src/degenbot/diagnostics/
   __init__.py            # re-exports mark_progress / start_gil_probe from degenbot._ffi
 ```
 
-The already-package-owned collaborators stay put: `arbitrage/recurring_verify.py`
-(`run_recurring_verify_until_done`), `arbitrage/engine_registry.py`, `arbitrage/verification_retry.py`.
+The already-package-owned collaborators stay put: `arbitrage/engine_registry.py` and
+`arbitrage/policy.py`.
 
 ## 5. Consumer enumeration
 
