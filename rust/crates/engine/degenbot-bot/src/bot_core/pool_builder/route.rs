@@ -884,7 +884,7 @@ mod route_tests {
         // unchanged — the use site's registration rendering (`map_admission` /
         // `map_register_refusal`) is the one home for the messages, so the
         // door never re-classifies what the write door already classified.
-        let refusal = RegisterRefusal::from(&RegisterV4PoolError::DynamicFee { fee: 0x100_000 });
+        let refusal = RegisterRefusal::from(&RegisterV4PoolError::DynamicFee { fee: 0x0080_0000 });
         let folded = fold_registration_verdict(
             RegistrationVerdict::refused(RegisteredPoolFamily::V4, refusal.clone()),
             || None,

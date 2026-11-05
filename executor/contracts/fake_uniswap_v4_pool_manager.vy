@@ -50,7 +50,7 @@ MAX_TICK_SPACING: constant(int24) = 16384
 MIN_TICK_SPACING: constant(int24) = -16384
 
 # ── Dynamic fee sentinel (from LPFeeLibrary) ──
-DYNAMIC_FEE_FLAG: constant(uint24) = 8388608  # top bit set = dynamic fee
+DYNAMIC_FEE_FLAG: constant(uint24) = 8388608  # LPFeeLibrary sentinel; matched by EQUALITY, never a mask
 
 implements: IPoolManager
 implements: IPoolManagerExttload
@@ -749,8 +749,10 @@ def updateDynamicLPFee(key: IPoolManager.PoolKey, new_dynamic_lp_fee: uint24):
     - Stores the fee for the pool
     - Can be called outside unlock (like initialize)
     """
-    # Validate: pool must have dynamic fee flag, and caller must be the hook
-    assert (key.fee & DYNAMIC_FEE_FLAG) != 0, "UnauthorizedDynamicLPFeeUpdate"
+    # Validate: pool must have dynamic fee flag, and caller must be the hook.
+    # LPFeeLibrary.isDynamicFee is exact EQUALITY (`self == DYNAMIC_FEE_FLAG`),
+    # so a static fee merely sharing the high bit (e.g. 0x800001) is refused.
+    assert key.fee == DYNAMIC_FEE_FLAG, "UnauthorizedDynamicLPFeeUpdate"
     assert msg.sender == key.hooks, "UnauthorizedDynamicLPFeeUpdate"
 
     # Validate fee range (max valid LP fee = 1_000_000 = 100%)
