@@ -72,7 +72,7 @@ mod submission;
 mod telemetry;
 
 use crate::discovery::{build_graph, DiscoveryParams, NATIVE_CURRENCY};
-use crate::pipeline::{run_offline, RegistrationPipeline};
+use crate::pipeline::run_offline;
 use crate::policy::{parse_permutation_filter, PathPolicy};
 use degenbot::pathfinding::PoolKind;
 
@@ -652,13 +652,11 @@ fn run() -> Result<(), String> {
     };
     let retry_policy = cfg.verification_retry_policy;
     retry_policy.validate()?;
-    let mut pipeline = RegistrationPipeline::new(policy, retry_policy);
-
     // 6. Offline-dry run: enumeration → directions → policy → candidate counts.
     let report = degenbot::runtime::get_runtime().block_on(run_offline(
-        &mut pipeline,
         &built,
         &params,
+        &policy,
         &weth_lower,
         &weth_lower,
     ));
@@ -706,8 +704,7 @@ fn run() -> Result<(), String> {
                 &discovered,
                 &requested_kinds,
                 &params,
-                pipeline.policy.clone(),
-                pipeline.retry_policy,
+                policy.clone(),
                 weth_lower.clone(),
                 weth_lower.clone(),
             ));
@@ -826,8 +823,7 @@ fn run() -> Result<(), String> {
                         &discovered,
                         &requested_kinds,
                         &params,
-                        pipeline.policy.clone(),
-                        pipeline.retry_policy,
+                        policy.clone(),
                         weth_lower.clone(),
                         weth_lower.clone(),
                     ));
@@ -887,12 +883,32 @@ fn run() -> Result<(), String> {
             )),
             std::sync::Arc::new(degenbot::bot_core::AlloyRpcConstruction::new(provider)),
         );
-        let live_ctx = live::LiveContext {
-            chain_id: CHAIN_ID,
-            block: None,
-            io: &io,
-            db: Some(&snap),
-        };
+        // The verify home's retry policy is a construction value: installed once
+        // here rather than carried per candidate.
+        let mut verify_config = driver.verify().config();
+        verify_config.retry = retry_policy;
+        driver.verify().configure(verify_config);
+        // Registration admission: the ONE implementation of the stage order,
+        // composed from this session's capability handles. The driver reaches it
+        // as an adapter — it owns no admission rule of its own.
+        let profit_token = degenbot::core::address_utils::parse_address(WETH_ADDRESS)
+            .map_err(|e| format!("WETH address: {e}"))?;
+        let admission = degenbot::bot::crawl::RegistrationAdmission::new(
+            std::sync::Arc::clone(driver.bot()),
+            std::sync::Arc::new(io),
+            std::sync::Arc::clone(driver.stages()),
+            std::sync::Arc::clone(driver.verify()),
+            std::sync::Arc::new(degenbot::bot::crawl::CrawlLedger::new()),
+            std::sync::Arc::new(degenbot::bot::crawl::BuildFlights::new()),
+            std::sync::Arc::new(degenbot::bot::crawl::AdmissionSettings {
+                route: live::construction_route(&discovered),
+                policy: degenbot::bot::crawl::CrawlPathPolicy::default(),
+                oracle: None,
+                profit_token,
+                snapshot_block: None,
+                state_block: None,
+            }),
+        );
         // The time-throttled registration-progress summary
         // (`pathfinding.reg_progress_secs`, declared default 30s) keeps the
         // crawl visible even when path_count never crosses a 1000-boundary.
@@ -900,14 +916,13 @@ fn run() -> Result<(), String> {
             progress::progress_interval(loaded.config.pathfinding.reg_progress_secs)?;
         let mut reg_progress = progress::ProgressCadence::new(progress_secs);
         let live_report = live::run_live(
-            &driver,
+            &admission,
             &built,
-            &discovered,
-            &mut pipeline,
             &params,
+            &policy,
             &weth_lower,
             &weth_lower,
-            &live_ctx,
+            Some(&snap),
             &mut reg_progress,
         )
         .await;

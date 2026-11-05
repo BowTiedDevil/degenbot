@@ -63,6 +63,11 @@ pub(crate) mod verify_claims;
 /// The bounded retry dance for transient registration-verify failures.
 pub(crate) mod verification_retry;
 
+/// The pose-independent Verify lifecycle: one family-free operation over a pool
+/// key, with the provider, `StateView`, and retry policy as construction values
+/// (ADR-093 D4).
+pub(crate) mod verify_lifecycle;
+
 pub(crate) mod snapshot_verify;
 pub(crate) mod solve_anchor;
 
@@ -116,6 +121,7 @@ pub use stage_handlers::{
     SimulateOutcome, Solve, SolveOutcome, Stage, StageError, StageHandlers,
 };
 pub use verify_claims::{PoolVerifications, VerifyClaims};
+pub use verify_lifecycle::{VerifyLifecycle, VerifyLifecycleConfig};
 
 // Re-export the unified block stage machine : the
 // per-block state map + decision producer + watchdogs + gates in ONE pure

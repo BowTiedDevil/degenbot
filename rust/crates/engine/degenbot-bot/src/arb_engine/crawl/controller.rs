@@ -122,22 +122,18 @@ use degenbot_pathfinding::PoolKind;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
+use crate::arb_engine::crawl::admission::{AdmissionSettings, CrawlAbort, RegistrationAdmission};
 use crate::arb_engine::crawl::discovery::{
     CrawlDiscoveryError, DbDiscoverySource, DiscoveredPath, DiscoveryConfig, DiscoverySource,
     DiscoverySweep, Edition,
 };
-use crate::arb_engine::crawl::flights::BuildFlights;
 use crate::arb_engine::crawl::policy::{BatchPolicyOracle, CrawlPathPolicy};
 use crate::arb_engine::crawl::profile::CrawlSummary;
 use crate::arb_engine::crawl::receipt::CrawlReceipt;
-use crate::arb_engine::crawl::unit::{
-    run_crawl_unit, CrawlAbort, CrawlLedger, CrawlUnit, CrawlUnitHost, CrawlUnitSettings,
-};
-use crate::arb_engine::driver::EngineDriver;
-use crate::bot_core::construction_io::ConstructionIo;
+use crate::arb_engine::crawl::unit::{run_crawl_unit, CrawlUnit, CrawlUnitHost};
 use crate::bot_core::registration_ledger::RegistrationUnitOutcome;
 use crate::bot_core::verification_retry::RetryPolicy;
-use crate::bot_core::{Bot, ConstructionRoute};
+use crate::bot_core::ConstructionRoute;
 
 // ── the state machine ───────────────────────────────────────────────────────
 
@@ -503,13 +499,15 @@ impl CrawlConfig {
         })
     }
 
-    /// The unit-wide values every seat reads.
-    fn unit_settings(&self) -> CrawlUnitSettings {
-        CrawlUnitSettings {
+    /// The admission-wide values every seat reads.
+    ///
+    /// The verify retry policy is NOT one of them: it is the verify home's
+    /// construction value, applied once when the crawl is attached.
+    pub(crate) fn admission_settings(&self) -> AdmissionSettings {
+        AdmissionSettings {
             route: self.route.clone(),
             policy: self.policy.clone(),
             oracle: self.oracle.clone(),
-            retry: self.retry,
             profit_token: self.profit_token,
             snapshot_block: self.snapshot_block,
             state_block: self.state_block,
@@ -652,32 +650,15 @@ impl SnapshotArm for Option<Arc<dyn TickMapDb>> {
 /// snapshot arm is where a head construction asks for the tick-map handle it
 /// reads.
 pub struct CrawlHost {
-    /// The shared per-chain orchestrator.
-    pub bot: Arc<Bot>,
-    /// The engine driver: verify lifecycles + the path registry.
-    pub driver: Arc<EngineDriver>,
-    /// The construction-I/O handle.
-    pub io: Arc<ConstructionIo>,
+    /// Registration admission — the one implementation of the stage order, and
+    /// with it the construction state, the I/O handle, the engine stage seam,
+    /// the verify home, the ledger, the build flights, and the policy values.
+    pub admission: Arc<RegistrationAdmission>,
     /// The tick-map arm (`None` = construction reads no tick maps).
     pub snapshot: Option<Arc<dyn SnapshotArm>>,
 }
 
 impl CrawlHost {
-    /// Compose a host from the driver every engine surface already holds.
-    #[must_use]
-    pub fn from_driver(
-        driver: &Arc<EngineDriver>,
-        io: Arc<ConstructionIo>,
-        snapshot: Option<Arc<dyn SnapshotArm>>,
-    ) -> Self {
-        Self {
-            bot: Arc::clone(driver.bot()),
-            driver: Arc::clone(driver),
-            io,
-            snapshot,
-        }
-    }
-
     /// One unit's tick-map handle: a fresh ask of the arm, owned by that unit's
     /// future alone.
     fn acquire_db(&self) -> Option<Arc<dyn TickMapDb>> {
@@ -687,26 +668,16 @@ impl CrawlHost {
 
 /// The reused host handles, moved into one unit's future.
 struct UnitHost {
-    bot: Arc<Bot>,
-    driver: Arc<EngineDriver>,
-    io: Arc<ConstructionIo>,
+    admission: Arc<RegistrationAdmission>,
     db: Option<Arc<dyn TickMapDb>>,
-    ledger: Arc<CrawlLedger>,
-    flights: Arc<BuildFlights>,
-    settings: Arc<CrawlUnitSettings>,
 }
 
 impl UnitHost {
     /// Borrow the crawl unit's host view for one `run_crawl_unit` call.
     fn borrow(&self) -> CrawlUnitHost<'_> {
         CrawlUnitHost {
-            bot: &self.bot,
-            driver: &self.driver,
-            io: &self.io,
+            admission: &self.admission,
             db: self.db.as_deref(),
-            ledger: &self.ledger,
-            flights: &self.flights,
-            settings: &self.settings,
         }
     }
 }
@@ -927,9 +898,6 @@ pub struct CrawlController {
     host: CrawlHost,
     config: CrawlConfig,
     source: Arc<dyn DiscoverySource>,
-    ledger: Arc<CrawlLedger>,
-    flights: Arc<BuildFlights>,
-    settings: Arc<CrawlUnitSettings>,
     seat: Arc<dyn CrawlUnitSeat>,
     state: Mutex<CrawlState>,
     /// The join fact's own machine. Lock ordering: this is the OUTERMOST lock —
@@ -1025,15 +993,17 @@ impl CrawlController {
         config.validate()?;
         // The cap is engine state, and the shell's configure step is the one
         // place it is set: a value, applied once.
-        host.driver.set_path_cap(config.path_cap);
-        let settings = Arc::new(config.unit_settings());
+        host.admission.stages().set_path_cap(config.path_cap);
+        // The crawl's verify retry policy is a construction value of the ONE
+        // verify home every adapter shares, installed once here rather than
+        // carried per unit.
+        let mut verify = host.admission.verify().config();
+        verify.retry = config.retry;
+        host.admission.verify().configure(verify);
         Ok(Arc::new(Self {
             host,
             config,
             source,
-            ledger: Arc::new(CrawlLedger::new()),
-            flights: Arc::new(BuildFlights::new()),
-            settings,
             seat,
             state: Mutex::new(CrawlState::Idle),
             run_phase: Mutex::new(RunPhase::NotStarted),
@@ -1511,16 +1481,11 @@ impl CrawlController {
     /// Hand one unit to the seat, with its outcome funneled back to the loop.
     fn submit(&self, unit: CrawlUnit, tx: &UnitSink) -> Result<(), CrawlRequestError> {
         let host = UnitHost {
-            bot: Arc::clone(&self.host.bot),
-            driver: Arc::clone(&self.host.driver),
-            io: Arc::clone(&self.host.io),
+            admission: Arc::clone(&self.host.admission),
             // Per use, never held for the crawl's life: the owner's close must
             // find its own handle alone, and a unit submitted after the close
             // reads no tick maps.
             db: self.host.acquire_db(),
-            ledger: Arc::clone(&self.ledger),
-            flights: Arc::clone(&self.flights),
-            settings: Arc::clone(&self.settings),
         };
         let tx = tx.clone();
         let seq = unit.seq;

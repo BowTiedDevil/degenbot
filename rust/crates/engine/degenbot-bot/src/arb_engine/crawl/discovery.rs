@@ -52,7 +52,7 @@ use degenbot_pathfinding::{
 };
 use hashbrown::{HashMap, HashSet};
 
-use crate::arb_engine::crawl::unit::DiscoveredHop;
+use crate::arb_engine::crawl::admission::DiscoveredHop;
 
 /// The structural fingerprint of the discovery subgraph — a
 /// [`degenbot_db::GraphEdition`].

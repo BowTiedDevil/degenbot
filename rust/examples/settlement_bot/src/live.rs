@@ -1,106 +1,124 @@
-//! The smoke-gated live registration arm of the G3 pipeline (ergo
-//! `XFEJUG`).
+//! The smoke-gated live registration arm of the G3 pipeline — an ADAPTER over
+//! Registration admission.
 //!
-//! Mirrors `build_paths.py::PathRegistrationPipeline._registration_unit`'s
-//! build/verify/register turns when a live node is present:
+//! The stage order a candidate takes (memoization → construction → eligibility →
+//! Verify lifecycle → registration) is the core's ONE implementation
+//! ([`RegistrationAdmission`]). This module contributes what an adapter owns:
+//! the batched graph enumeration, this driver's pre-registration policy gate
+//! and progress cadence, and the folding of each admission receipt into the
+//! core `PipelineReport` — the same fold the crawl adapter's receipts fold
+//! through, so both adapters answer the same report for the same candidate
+//! sequence.
 //!
-//! 1. build each candidate hop through the core `pool_builder`
-//!    (`build_v2`/`build_v3`/`build_v4`) and register it into the shared
-//!    `BotState` (the Rust builders publish into the engine's state);
-//! 2. run the ADR-022 verify lifecycle for each V3/V4 hop under the tokio
-//!    at-most-once claim table + the RPC-only retry dance;
-//! 3. `EngineDriver::register_and_solve_path` with the `(pool_id, zfo)` hop
-//!    list (the Python `register_crawl_path` shape).
-//!
-//! The unit outcomes it answers are the CORE's typed
-//! `RegistrationUnitOutcome` vocabulary, folded through the core's
-//! `PipelineReport::absorb`; this module keeps only the hand-wired
-//! build/verify/register turns and its own observation policy (the
-//! register-failure metric sample).
+//! A loud admission abort (a family-level construction refusal, a direction
+//! invariant violation, a verification mismatch past the retry policy) stops
+//! the crawl: it is folded as a counted engine rejection and reported, never
+//! disguised as a benign skip.
 //!
 //! This module is only reached behind `SMOKE_RPC_URL`; the offline CI gate
-//! exercises the shared preparation stages instead.
+//! exercises the shared enumeration instead.
 
 use std::time::Instant;
 
 use crate::discovery::{BatchedPathFinder, BuiltGraph, DiscoveryParams};
-use crate::pipeline::{PrepareOutcome, PreparedCandidate, RegistrationPipeline};
+use crate::pipeline::{admitted_hops, node_indices, resolve_path};
+use crate::policy::PathPolicy;
 use crate::progress::{progress_line, ProgressCadence};
 use alloy::primitives::Address;
-use degenbot::bot::bot_core::{
-    BuildFailure, OutcomeLabel, PipelineReport, RefusalKind, RegisterRefusal, RegistrationLedger,
-    RegistrationOutcome, RegistrationUnitOutcome,
-};
-use degenbot::bot_core::Bot;
-use degenbot::bot_core::ConstructionIo;
-use degenbot::bot_core::{build_v2, build_v3, build_v4, V4PoolBuildIdentity};
+use degenbot::bot::bot_core::{PipelineReport, RegistrationOutcome, RegistrationUnitOutcome};
+use degenbot::bot::crawl::RegistrationAdmission;
+use degenbot::bot_core::ConstructionRoute;
 use degenbot::db::discovery_read::DiscoveryPoolRow;
 use degenbot::db::snapshot::TickMapDb;
-use degenbot::pathfinding::PoolKind;
-use degenbot::solvers::PoolHop;
-use degenbot::substrate::state_lock::LockSite;
-use degenbot::substrate::PoolRegistration;
-use degenbot::EngineDriver;
 
-/// The live construction context (constructed once per boot).
-pub struct LiveContext<'a> {
-    /// The settled chain id.
-    pub chain_id: u64,
-    /// The snapshot block used for the builds/lifecycles (`None` = head).
-    pub block: Option<u64>,
-    /// The construction I/O (DB + RPC adapters).
-    pub io: &'a ConstructionIo,
-    /// The optional DB tick-map handle (Tracked arms).
-    pub db: Option<&'a dyn TickMapDb>,
-}
-
-/// Run the live pipeline over the batched discovery enumeration.
+/// Run the live arm over the batched discovery enumeration.
+///
+/// `db` is the per-use tick-map handle a head construction seeds its map from;
+/// the admission owns everything else it needs.
 #[expect(
     clippy::too_many_arguments,
-    reason = "linear live driver mirroring the Python build_paths signature surface"
+    reason = "linear live driver: the enumeration's inputs plus the shared admission"
 )]
 pub async fn run_live(
-    driver: &EngineDriver,
+    admission: &RegistrationAdmission,
     built: &BuiltGraph,
-    rows: &[DiscoveryPoolRow],
-    pipeline: &mut RegistrationPipeline,
     params: &DiscoveryParams,
+    policy: &PathPolicy,
     input_token_lower: &str,
     weth_lower: &str,
-    ctx: &LiveContext<'_>,
+    db: Option<&dyn TickMapDb>,
     progress: &mut ProgressCadence,
 ) -> PipelineReport {
     let mut report = PipelineReport::default();
     let mut finder = BatchedPathFinder::new(&built.graph, params);
-    // The Registered-path cap (RSP-11) is a BENIGN STOP of discovery: the
-    // first `RegistryFull` refusal ends the crawl, exactly as Python's
-    // `run_registration` checks `self.capped` at the top of its loop. Without
-    // this the loop would keep grinding through every remaining candidate for
-    // no engine growth (the observed 12.6M-path silent crawl).
+    let mut seq: u64 = 0;
+    // The Registered-path cap (RSP-11) is a BENIGN STOP of discovery: the first
+    // `Cap` receipt ends the crawl, exactly as Python's `run_registration`
+    // checks `self.capped` at the top of its loop. Without this the loop would
+    // keep grinding through every remaining candidate for no engine growth (the
+    // observed 12.6M-path silent crawl).
     'crawl: while let Some(batch) = finder.next_batch() {
         for path in &batch {
             let mut stop = false;
-            match pipeline.prepare_candidate(built, path, input_token_lower, weth_lower) {
-                PrepareOutcome::Ready(candidate) => {
-                    let outcome =
-                        build_and_register(driver, built, rows, pipeline, &candidate, ctx).await;
-                    stop = crawl_stops_on(&outcome);
-                    report.absorb(&outcome);
+            match node_indices(built, path) {
+                Ok(pool_indices) => {
+                    match resolve_path(built, &pool_indices, input_token_lower, weth_lower) {
+                        Ok((_zfos, hops)) => match policy.evaluate(&hops) {
+                            Err(rejection) => {
+                                report.policy_rejected += 1;
+                                let outcome = RegistrationUnitOutcome::Reject {
+                                    detail: Some(rejection.to_string()),
+                                };
+                                observe_folded(&outcome);
+                                report.absorb(&outcome);
+                            }
+                            Ok(()) => match admitted_hops(built, &pool_indices) {
+                                Ok(hops) => match admission.admit(seq, &hops, None, db).await {
+                                    Ok(receipt) => {
+                                        stop = crawl_stops_on(&receipt.outcome);
+                                        observe_folded(&receipt.outcome);
+                                        report.absorb(&receipt.outcome);
+                                    }
+                                    Err(abort) => {
+                                        // The core's loud contract: admission refuses
+                                        // to continue, so this adapter offers no next
+                                        // candidate. Counted as an engine rejection
+                                        // (never a skip) and named for the operator.
+                                        degenbot::op_warn!(
+                                            domain = path,
+                                            error = %abort,
+                                            "g3-live: registration admission aborted the crawl"
+                                        );
+                                        println!("[g3-live] admission aborted the crawl: {abort}");
+                                        stop = true;
+                                        let outcome = RegistrationUnitOutcome::Reject {
+                                            detail: Some(abort.to_string()),
+                                        };
+                                        observe_folded(&outcome);
+                                        report.absorb(&outcome);
+                                    }
+                                },
+                                Err(outcome) => {
+                                    observe_folded(&outcome);
+                                    report.absorb(&outcome);
+                                }
+                            },
+                        },
+                        Err(message) => {
+                            report.direction_errors += 1;
+                            *report
+                                .skip_reasons
+                                .entry(format!("direction-fatal:{message}"))
+                                .or_insert(0) += 1;
+                        }
+                    }
+                }
+                Err(outcome) => {
                     observe_folded(&outcome);
-                }
-                PrepareOutcome::Skip(outcome) => report.absorb(&outcome),
-                PrepareOutcome::Reject(outcome) => {
                     report.absorb(&outcome);
-                    report.policy_rejected += 1;
-                }
-                PrepareOutcome::DirectionFatal(message) => {
-                    report.direction_errors += 1;
-                    *report
-                        .skip_reasons
-                        .entry(format!("direction-fatal:{message}"))
-                        .or_insert(0) += 1;
                 }
             }
+            seq += 1;
             // INN6TK: the time-throttled summary fires even when nothing
             // registers, so a discovery-heavy skip-fest stays visible.
             if progress.due(Instant::now()) {
@@ -121,260 +139,109 @@ pub async fn run_live(
 /// Whether the crawl must stop after this unit outcome.
 ///
 /// The typed [`RegistrationUnitOutcome::Cap`] is the fold of the engine
-/// registry's `PathRegistrationError::RegistryFull` refusal: the BENIGN STOP
-/// of discovery (Python latches `capped` and breaks `run_registration`),
-/// never counted as a per-candidate error and never a reason to keep
-/// crawling a full registry.
+/// registry's `PathRegistrationError::RegistryFull` refusal: the BENIGN STOP of
+/// discovery (Python latches `capped` and breaks `run_registration`), never
+/// counted as a per-candidate error and never a reason to keep crawling a full
+/// registry.
 #[must_use]
 pub fn crawl_stops_on(outcome: &RegistrationUnitOutcome) -> bool {
     matches!(outcome, RegistrationUnitOutcome::Cap)
 }
 
-/// The driver's observation policy over one folded outcome: the
-/// register-failure metric sample. Every `RegisterFailed` funnels through
-/// the fold here — the verify folds in `verify_one` return before the
-/// `register_and_solve_path` arm, so sampling at the producer sites would
-/// miss them. Env-gated + cardinality-bounded.
-fn observe_folded(outcome: &RegistrationUnitOutcome) {
-    if let RegistrationUnitOutcome::RegisterFailed {
-        detail: Some(detail),
-    } = outcome
-    {
-        emit_register_failure_sample(detail);
-    }
-}
-
-/// Build each hop, register it into `BotState`, verify it under the claims
-/// table, then register the path.
-async fn build_and_register(
-    driver: &EngineDriver,
-    built: &BuiltGraph,
-    rows: &[DiscoveryPoolRow],
-    pipeline: &mut RegistrationPipeline,
-    candidate: &PreparedCandidate,
-    ctx: &LiveContext<'_>,
-) -> RegistrationUnitOutcome {
-    let mut pool_ids: Vec<u64> = Vec::with_capacity(candidate.pool_indices.len());
-    for node_idx in &candidate.pool_indices {
-        let node = &built.nodes[*node_idx];
-        let row = &rows[node.row_index];
-        match build_one(driver, row, ctx).await {
-            Ok(pool_id) => pool_ids.push(pool_id),
-            Err(failure) => {
-                let detail = build_failure_detail(&failure);
-                let refusal = RegistrationLedger::classify_build_refusal(
-                    &failure,
-                    node.kind,
-                    Some(detail.clone()),
-                );
-                emit_build_refusal_sample(node.kind, &node.identity, &refusal.outcome, &detail);
-                if refusal.stable {
-                    pipeline.ledger.memoize_unregistrable(
-                        node.memo_key
-                            .as_deref()
-                            .and_then(degenbot::PreBuildIdentity::parse),
-                        refusal.outcome.clone(),
-                        refusal.counts_as_skip,
-                    );
-                }
-                return RegistrationUnitOutcome::Skip {
-                    label: OutcomeLabel::Vocabulary(refusal.outcome),
-                    counts_as_skip: refusal.counts_as_skip,
-                    detail: Some(detail),
-                };
-            }
-        }
-    }
-
-    for node_idx in &candidate.pool_indices {
-        let node = &built.nodes[*node_idx];
-        let row = &rows[node.row_index];
-        if let Err(outcome) = verify_one(driver, pipeline, row, ctx).await {
-            return *outcome;
-        }
-    }
-
-    let hops: Vec<PoolHop> = pool_ids
-        .iter()
-        .zip(candidate.zfos.iter())
-        .map(|(pool_id, zero_for_one)| PoolHop {
-            pool_id: *pool_id,
-            zero_for_one: *zero_for_one,
-        })
-        .collect();
-
-    match driver.register_and_solve_path(hops) {
-        Ok((_path_id, created)) => {
-            pipeline
-                .ledger
-                .memoize_registered_path(candidate.hop_sig.clone());
-            RegistrationUnitOutcome::Registered {
-                created,
-                v4_hops: candidate.v4_hops,
-            }
-        }
-        Err(err) => {
-            if matches!(
-                err,
-                degenbot::bot::arb_engine::PathRegistrationError::RegistryFull { .. }
-            ) {
-                RegistrationUnitOutcome::Cap
-            } else {
-                RegistrationUnitOutcome::RegisterFailed {
-                    detail: Some(err.to_string()),
-                }
-            }
-        }
-    }
-}
-
-/// Build + register one hop into the shared `BotState`.
+/// The construction route this deployment's enumeration serves: the DEX
+/// factories the discovery read named, plus the core's generic rung.
 ///
-/// The registry-of-record reuse pre-check runs BEFORE any build/RPC (the
-/// IRUMXD single-registry discipline, mirroring the Python `build_v2_pool`
-/// adapter's reuse fast path): a hop the engine already registered is answered
-/// by the existing `pool_id`, never re-built and never refused. The
-/// build+register turn only runs on a genuine miss, and the insert goes
-/// through the ONE family write door (ADR-078: `Bot::register` over
-/// `PoolRegistration` — the same seam the FFI shell and `bot_core` cross).
-/// The door's get-or-register guard answers a concurrent writer whose
-/// registration completed before the insert; a residual `AlreadyRegistered`
-/// (a writer acquiring the write guard between the door's guard read and its
-/// insert — a benign race artifact, never a pool fact) folds back to the
-/// freshly-readable `pool_id`.
-async fn build_one(
-    driver: &EngineDriver,
-    row: &DiscoveryPoolRow,
-    ctx: &LiveContext<'_>,
-) -> Result<u64, BuildFailure> {
-    let bot = driver.bot();
-    if let Some(pool_id) = reuse_registered_pool(bot, row) {
-        return Ok(pool_id);
+/// The route is a VALUE the driver resolves (the core never invents one): a
+/// pool whose on-chain `factory()` matches an enumerated exchange constructs at
+/// that rung, and the generic rung serves any family the core deployment tables
+/// resolve.
+#[must_use]
+pub fn construction_route(rows: &[DiscoveryPoolRow]) -> ConstructionRoute {
+    let mut factories: Vec<Address> = Vec::new();
+    for row in rows {
+        let factory = match row {
+            DiscoveryPoolRow::V2(r) => Some(r.exchange.factory),
+            DiscoveryPoolRow::V3(r) => Some(r.exchange.factory),
+            DiscoveryPoolRow::V4(_) => None,
+        };
+        if let Some(factory) = factory {
+            if !factories.contains(&factory) {
+                factories.push(factory);
+            }
+        }
     }
-    // Match the Python `_build_delegated` adapter: `ctx.block == None` means
-    // head, but the builder's `update_block` would degrade to 0 on a literal
-    // `None` — mis-keying the registration seed so the backfill drain
-    // double-counts a head-fresh liquidity scalar. Resolve head concretely.
-    let build_block = resolve_build_block(ctx).await?;
-    match row {
-        DiscoveryPoolRow::V2(r) => {
-            let params = build_v2(ctx.chain_id, r.pool.address, ctx.io, Some(build_block))
-                .await
-                .map_err(|e| BuildFailure::Transient(e.to_string()))?;
-            let result = bot.register(PoolRegistration::V2(Box::new(params)));
-            fold_already_registered(
-                result,
-                || reuse_address_pool(bot, &r.pool.address),
-                transient_refusal,
-            )
-        }
-        DiscoveryPoolRow::V3(r) => {
-            let params = build_v3(
-                ctx.chain_id,
-                r.pool.address,
-                ctx.db,
-                ctx.io,
-                Some(build_block),
-            )
-            .await
-            .map_err(|e| BuildFailure::Transient(e.to_string()))?;
-            let result = bot.register(PoolRegistration::V3(Box::new(params)));
-            fold_already_registered(
-                result,
-                || reuse_address_pool(bot, &r.pool.address),
-                transient_refusal,
-            )
-        }
-        DiscoveryPoolRow::V4(r) => {
-            let mut pool_id = [0_u8; 32];
-            pool_id.copy_from_slice(r.pool_hash.as_slice());
-            let identity = V4PoolBuildIdentity {
-                pool_manager: r.manager.address,
-                state_view: r.manager.state_view.unwrap_or_default(),
-                pool_id,
-                currency0: r.token0.address,
-                currency1: r.token1.address,
-                fee: u32::try_from(r.fee_currency0).unwrap_or(0),
-                tick_spacing: i32::try_from(r.tick_spacing).unwrap_or(0),
-                hook_address: r.hooks,
-            };
-            let result = build_v4(identity, ctx.db, ctx.io, Some(build_block))
-                .await
-                .map_err(|e| BuildFailure::Transient(e.to_string()))?;
-            let registered = bot.register(PoolRegistration::V4(Box::new(result.params)));
-            fold_already_registered(
-                registered,
-                || reuse_v4_pool(bot, r.manager.address, &pool_id),
-                v4_build_failure,
-            )
-        }
+    ConstructionRoute {
+        factories,
+        generic: true,
     }
 }
 
-/// Resolve the builder block exactly as the Python `_build_delegated` adapter
-/// does: an explicit `ctx.block` passes through; `None` (head) is resolved to
-/// a concrete block number so the builder's `update_block` cannot degrade to
-/// `0` (`build_v3`'s `block.unwrap_or(0)`), which would mis-key the
-/// registration seed and make the backfill drain double-count the head-fresh
-/// liquidity scalar (the observed in-range invariant panic).
-async fn resolve_build_block(ctx: &LiveContext<'_>) -> Result<u64, BuildFailure> {
-    match ctx.block {
-        Some(block) => Ok(block),
-        None => ctx
-            .io
-            .get_block_number()
-            .await
-            .map_err(|e| BuildFailure::Transient(format!("head block: {e}"))),
+/// The adapter's observation policy over one folded outcome: the bounded,
+/// env-gated diagnostic sample. Purely observational — it never mutates a
+/// counter, memo, or classification.
+fn observe_folded(outcome: &RegistrationUnitOutcome) {
+    match outcome {
+        RegistrationUnitOutcome::RegisterFailed {
+            detail: Some(detail),
+        } => emit_sample(RegistrationOutcome::RegisterFailed.as_str(), detail),
+        RegistrationUnitOutcome::Skip {
+            label,
+            detail: Some(detail),
+            ..
+        } => emit_sample(label.as_label(), detail),
+        RegistrationUnitOutcome::Skip { .. }
+        | RegistrationUnitOutcome::Reject { .. }
+        | RegistrationUnitOutcome::Cap
+        | RegistrationUnitOutcome::RegisterFailed { detail: None }
+        | RegistrationUnitOutcome::Registered { .. } => {}
     }
 }
 
-/// The registry-of-record reuse lookup for one candidate hop, dispatched by
-/// family — address-keyed for V2/V3, `(pool_manager, pool_id)`-keyed for V4.
-fn reuse_registered_pool(bot: &Bot, row: &DiscoveryPoolRow) -> Option<u64> {
-    match row {
-        DiscoveryPoolRow::V2(r) => reuse_address_pool(bot, &r.pool.address),
-        DiscoveryPoolRow::V3(r) => reuse_address_pool(bot, &r.pool.address),
-        DiscoveryPoolRow::V4(r) => {
-            let mut pool_id = [0_u8; 32];
-            pool_id.copy_from_slice(r.pool_hash.as_slice());
-            reuse_v4_pool(bot, r.manager.address, &pool_id)
-        }
+/// At most this many distinct samples are ever retained (and printed) per tag,
+/// so the sampler's cardinality stays bounded even across a multi-hour crawl.
+const REG_DEBUG_MAX_DISTINCT: usize = 3;
+
+/// Diagnostic-only sampler gated by `DEGENBOT_REG_DEBUG_SAMPLES=1`: prints up to
+/// [`REG_DEBUG_MAX_DISTINCT`] distinct `(tag, detail)` pairs so a folded outcome
+/// class can be traced to the underlying refusal that produced it.
+///
+/// Purely observational: it never mutates a counter, memo, or classification,
+/// and does nothing unless the env gate is set, so production behavior is
+/// unchanged.
+fn emit_sample(tag: &str, detail: &str) {
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<String, usize>>> =
+        std::sync::OnceLock::new();
+    if std::env::var("DEGENBOT_REG_DEBUG_SAMPLES").ok().as_deref() != Some("1") {
+        return;
     }
-}
-
-/// Reuse an already-registered address-keyed (V2/V3) pool identity.
-fn reuse_address_pool(bot: &Bot, address: &Address) -> Option<u64> {
-    bot.state_arc()
-        .read_at(LockSite::Core)
-        .registered_pool_by_address(address)
-        .map(|(pool_id, _family)| pool_id)
-}
-
-/// Reuse an already-registered `(pool_manager, pool_id)`-keyed V4 identity.
-fn reuse_v4_pool(bot: &Bot, pool_manager: Address, pool_id: &[u8; 32]) -> Option<u64> {
-    bot.state_arc()
-        .read_at(LockSite::Core)
-        .try_registered(pool_manager, pool_id)
-        .map(|registered| registered.pool_id)
+    let seen = SEEN.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    let mut guard = match seen.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let emitted = guard.entry(tag.to_string()).or_insert(0);
+    if *emitted < REG_DEBUG_MAX_DISTINCT {
+        *emitted += 1;
+        println!("[reg-debug] tag={tag} detail={detail}");
+    }
 }
 
 /// The V4 `StateView` contract address the registration verify lifecycle must
-/// use, resolved from the discovered `pool_managers` rows — the same
-/// per-manager column the V4 build path already trusts
-/// (`DiscoveryV4Row::manager.state_view`).
+/// use, resolved from the discovered `pool_managers` rows — the same per-manager
+/// column the V4 build path already trusts (`DiscoveryV4Row::manager.state_view`).
 ///
 /// Python sources this fact from a chain deployment constant
 /// (`EthereumMainnetUniswapV4.state_view.address`) and passes it to
 /// `EngineRegistry.start(..., verify_state_view=...)`
-/// (`src/degenbot/runner/bot_runner.py:470`). The fresh Rust driver boots with
-/// no deployment registry, so the example resolves the same fact from the
-/// snapshot enumeration instead of hard-coding a chain address; the first
-/// manager row that carries one wins (one `StateView` per `pool_manager`, and
-/// the verify lifecycle takes a single address).
+/// (`src/degenbot/runner/bot_runner.py:470`). The fresh Rust driver boots with no
+/// deployment registry, so the example resolves the same fact from the snapshot
+/// enumeration instead of hard-coding a chain address; the first manager row that
+/// carries one wins (one `StateView` per `pool_manager`, and the verify lifecycle
+/// takes a single address).
 ///
-/// `None` when the enumeration carries no V4 manager row with a `state_view`;
-/// the caller then leaves the driver unconfigured and every V4 verify fails
-/// fast with its D-C no-config refusal (loud, never silently skipped).
+/// `None` when the enumeration carries no V4 manager row with a `state_view`; the
+/// caller then leaves the driver unconfigured and every V4 verify fails fast with
+/// its D-C no-config refusal (loud, never silently skipped).
 #[must_use]
 pub fn resolve_verify_state_view(rows: &[DiscoveryPoolRow]) -> Option<Address> {
     rows.iter().find_map(|row| match row {
@@ -383,274 +250,13 @@ pub fn resolve_verify_state_view(rows: &[DiscoveryPoolRow]) -> Option<Address> {
     })
 }
 
-/// The address-keyed (V2/V3) door refusal's `BuildFailure` classification —
-/// the historical mapping: every non-race refusal was transient (the V2/V3
-/// register entries raise no admission arms).
-fn transient_refusal(kind: &RefusalKind) -> BuildFailure {
-    BuildFailure::Transient(kind.to_string())
-}
-
-/// The V4 door refusal's `BuildFailure` classification — the historical
-/// `From<RegisterV4PoolError>` mapping carried through the door's
-/// field-for-field refusal shape: the admission arms ride their typed
-/// `BuildFailure` counters, a spec violation stays the encoder-limit class,
-/// and anything else is transient.
-fn v4_build_failure(kind: &RefusalKind) -> BuildFailure {
-    match kind {
-        RefusalKind::RegisterRefused {
-            reason: RegisterRefusal::Admission { failure, .. },
-            ..
-        } => failure.clone(),
-        RefusalKind::RegisterRefused {
-            reason: RegisterRefusal::SpecViolation { .. },
-            ..
-        } => BuildFailure::HighFee,
-        other => transient_refusal(other),
-    }
-}
-
-/// Fold the family write door's refusal into a registry reuse when the door
-/// reports a concurrent `AlreadyRegistered`.
-///
-/// The door's get-or-register guard re-reads the registry before its insert,
-/// so a writer whose registration completed before the insert is answered by
-/// the guard itself. The residual window — a writer acquiring the write guard
-/// between the door's guard read and its insert — is benign (the engine admits
-/// pools from other tasks): `reuse_registered` re-reads the registry AFTER the
-/// failed write and returns the id the winner installed. Only a re-read miss
-/// (a refusal with no registry entry to reuse) stays a transient build
-/// failure.
-fn fold_already_registered(
-    result: Result<u64, RefusalKind>,
-    reuse_registered: impl FnOnce() -> Option<u64>,
-    map_refusal: impl FnOnce(&RefusalKind) -> BuildFailure,
-) -> Result<u64, BuildFailure> {
-    match result {
-        Ok(pool_id) => Ok(pool_id),
-        Err(kind) => {
-            if matches!(
-                &kind,
-                RefusalKind::RegisterRefused {
-                    reason: RegisterRefusal::AlreadyRegistered { .. },
-                    ..
-                }
-            ) {
-                return reuse_registered().ok_or_else(|| {
-                    BuildFailure::Transient(format!(
-                        "already-registered admission race with no registry entry to reuse ({kind})"
-                    ))
-                });
-            }
-            Err(map_refusal(&kind))
-        }
-    }
-}
-
-/// Run one hop's verify lifecycle under the claim table + retry dance.
-async fn verify_one(
-    driver: &EngineDriver,
-    pipeline: &mut RegistrationPipeline,
-    row: &DiscoveryPoolRow,
-    ctx: &LiveContext<'_>,
-) -> Result<(), Box<RegistrationUnitOutcome>> {
-    match row {
-        DiscoveryPoolRow::V3(r) => {
-            let key = degenbot::PreBuildIdentity::Address(r.pool.address);
-            if pipeline.ledger.pool_verified(&key) {
-                return Ok(());
-            }
-            let address = r.pool.address;
-            let block = ctx.block;
-            let policy = pipeline.retry_policy;
-            // The at-most-once claim and the retry classification are the
-            // DRIVER's (`EngineDriver::run_registration_lifecycle_with_retry`):
-            // a transient failure releases the claim and the dance re-enters the
-            // lifecycle.
-            let result = driver
-                .run_registration_lifecycle_with_retry(
-                    degenbot::substrate::PoolLookup::from_address(address),
-                    block,
-                    &policy,
-                )
-                .await;
-            match result {
-                Ok(()) => {
-                    pipeline.ledger.memoize_verified_pool(key);
-                    Ok(())
-                }
-                Err(err) => Err(Box::new(RegistrationUnitOutcome::RegisterFailed {
-                    detail: Some(format!("verify-v3: {err}")),
-                })),
-            }
-        }
-        DiscoveryPoolRow::V4(r) => {
-            let key = degenbot::PreBuildIdentity::V4(r.pool_hash.0);
-            if pipeline.ledger.pool_verified(&key) {
-                return Ok(());
-            }
-            let manager = r.manager.address;
-            let mut pool_id = [0_u8; 32];
-            pool_id.copy_from_slice(r.pool_hash.as_slice());
-            let block = ctx.block;
-            let policy = pipeline.retry_policy;
-            // The claim and the retry classification are the driver's, keyed
-            // by the `(PoolManager, pool_id)` pair.
-            let result = driver
-                .run_registration_lifecycle_with_retry(
-                    degenbot::substrate::PoolLookup::V4 {
-                        pool_manager: manager,
-                        pool_id,
-                    },
-                    block,
-                    &policy,
-                )
-                .await;
-            match result {
-                Ok(()) => {
-                    pipeline.ledger.memoize_verified_pool(key);
-                    Ok(())
-                }
-                Err(err) => Err(Box::new(RegistrationUnitOutcome::RegisterFailed {
-                    detail: Some(format!("verify-v4: {err}")),
-                })),
-            }
-        }
-        DiscoveryPoolRow::V2(_) => Ok(()),
-    }
-}
-
-/// The human-readable detail for a build failure (log-only).
-fn build_failure_detail(failure: &BuildFailure) -> String {
-    match failure {
-        BuildFailure::Transient(message)
-        | BuildFailure::Rpc(message)
-        | BuildFailure::Decoding(message)
-        | BuildFailure::Db(message)
-        | BuildFailure::MissingIdentity(message)
-        | BuildFailure::TickAssembly(message)
-        | BuildFailure::TickMapInconsistent(message)
-        | BuildFailure::Fee(message) => message.clone(),
-        BuildFailure::Spec(reason) => format!("pool build refused: out of spec ({reason})"),
-        BuildFailure::HookedPool => "hook admission refusal".to_string(),
-        BuildFailure::DynamicFee => "dynamic-fee admission refusal".to_string(),
-        BuildFailure::HighFee => "fee exceeds the encoder limit".to_string(),
-    }
-}
-
-/// At most this many distinct samples are ever retained (and printed) per
-/// tag, so the sampler's cardinality stays bounded even across a multi-hour
-/// crawl.
-const REG_DEBUG_MAX_DISTINCT: usize = 3;
-
-/// Diagnostic-only sampler gated by `DEGENBOT_REG_DEBUG_SAMPLES=1`: prints
-/// up to `REG_DEBUG_MAX_DISTINCT` distinct `(tag, detail)` build-refusal
-/// pairs (with the failing pool's identity + kind) so the top-level
-/// `build-v2-refused`/`build-v4-refused` tags can be traced to their
-/// underlying `PoolBuilderError`/registration error.
-///
-/// Purely observational: it never mutates a counter, memo, or classification,
-/// and does nothing unless the env gate is set, so production behavior is
-/// unchanged.
-fn emit_build_refusal_sample(
-    kind: PoolKind,
-    identity: &str,
-    outcome: &RegistrationOutcome,
-    detail: &str,
-) {
-    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<String, usize>>> =
-        std::sync::OnceLock::new();
-    if std::env::var("DEGENBOT_REG_DEBUG_SAMPLES").ok().as_deref() != Some("1") {
-        return;
-    }
-    let seen = SEEN.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
-    let mut guard = match seen.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let emitted = guard.entry(outcome.as_str().to_string()).or_insert(0);
-    if *emitted < REG_DEBUG_MAX_DISTINCT {
-        *emitted += 1;
-        println!(
-            "[reg-debug] tag={} kind={kind:?} pool={identity} detail={detail}",
-            outcome.as_str()
-        );
-    }
-}
-
-/// Diagnostic-only sampler gated by `DEGENBOT_REG_DEBUG_SAMPLES=1`: prints
-/// up to `REG_DEBUG_MAX_DISTINCT` DISTINCT register-failure detail strings
-/// (the `PathRegistrationError` display text returned by
-/// `EngineDriver::register_and_solve_path`) so the `register-fail` skip
-/// class — historically 7.1M members with no witness — can be traced to the
-/// engine-side refusal that produced it.
-///
-/// Bounded cardinality: at most `REG_DEBUG_MAX_DISTINCT` distinct detail
-/// strings are ever retained; repeats only bump a counter and are never
-/// printed, so a live crawl cannot grow this map without bound.
-///
-/// Purely observational: it never mutates a counter, memo, or classification,
-/// and does nothing unless the env gate is set, so production behavior is
-/// unchanged.
-pub(crate) fn emit_register_failure_sample(detail: &str) {
-    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<String, usize>>> =
-        std::sync::OnceLock::new();
-    if std::env::var("DEGENBOT_REG_DEBUG_SAMPLES").ok().as_deref() != Some("1") {
-        return;
-    }
-    let seen = SEEN.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
-    let mut guard = match seen.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    if let Some(count) = guard.get_mut(detail) {
-        *count += 1;
-        return;
-    }
-    if guard.len() < REG_DEBUG_MAX_DISTINCT {
-        guard.insert(detail.to_string(), 1);
-        println!("[reg-debug] tag=register-fail detail={detail}");
-    }
-}
-
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test setup asserts the fixture registration succeeds"
-)]
 mod tests {
     use super::*;
-    use degenbot::bot::bot_core::{
-        OutcomeLabel, PipelineReport, RegistrationOutcome, RegistrationUnitOutcome,
-    };
-    use degenbot::pools::state::v2_state::{RegisterV2PoolError, RegisterV2PoolParams};
+    use degenbot::bot::bot_core::{OutcomeLabel, RegistrationOutcome};
+    use degenbot::db::rows::{Erc20TokenRow, ExchangeRow, PoolManagerRow};
 
-    /// A minimal in-spec V2 fixture keyed by `address`.
-    fn v2_params(address: Address) -> RegisterV2PoolParams {
-        RegisterV2PoolParams {
-            address,
-            token0: Address::from([0xaau8; 20]),
-            token1: Address::from([0xbbu8; 20]),
-            reserve0: alloy::primitives::aliases::U112::from(1_000_000u64),
-            reserve1: alloy::primitives::aliases::U112::from(2_000_000u64),
-            fee_token0: degenbot::core::fee::fee_ratio(997, 1_000),
-            fee_token1: degenbot::core::fee::fee_ratio(997, 1_000),
-            factory: Address::ZERO,
-            deployer: Address::ZERO,
-            init_hash: alloy::primitives::B256::ZERO,
-            update_block: 0,
-            variant: degenbot::uniswap::dex_identity::DexVariant::UniswapV2,
-            stable_swap: false,
-        }
-    }
-
-    /// Register the fixture into the bot's shared `BotState` through the
-    /// family write door (test setup).
-    fn register_v2(bot: &Bot, address: Address) -> u64 {
-        bot.register(PoolRegistration::V2(Box::new(v2_params(address))))
-            .expect("test setup: register V2 pool")
-    }
-
-    /// A V4 manager row carrying a `state_view` supplies the driver's
+    /// A V4 manager row carrying `state_view` supplies the driver's
     /// scalar/bootstrap configuration. Full-map verification uses the manager
     /// address and `PoolId`, so this setting does not select the RPC target.
     #[test]
@@ -677,7 +283,6 @@ mod tests {
     /// A minimal V4 discovery row whose manager carries `state_view`.
     fn v4_row_with_state_view(state_view: Option<Address>) -> DiscoveryPoolRow {
         use degenbot::db::discovery_read::DiscoveryV4Row;
-        use degenbot::db::rows::{Erc20TokenRow, ExchangeRow, PoolManagerRow};
         let token = |id: i64, byte: u8| Erc20TokenRow {
             id,
             chain: 1,
@@ -718,44 +323,11 @@ mod tests {
         })
     }
 
-    /// RSP-12 shortcut: a hop registered by an earlier candidate is answered
-    /// by the registry-of-record lookup, so `build_one` returns the existing
-    /// engine id BEFORE `build_v2` (no second RPC round-trip, no refusal).
-    #[test]
-    fn already_registered_pool_is_reused_without_a_build() {
-        let bot = Bot::new(1);
-        let address = Address::from([0x11u8; 20]);
-        // First encounter: no registry entry, so the build+register turn runs.
-        assert_eq!(reuse_address_pool(&bot, &address), None);
-        let id = register_v2(&bot, address);
-        // Second candidate: the shortcut reuses the engine identity.
-        assert_eq!(reuse_address_pool(&bot, &address), Some(id));
-    }
-
-    /// RSP-12 race fold: `AlreadyRegistered` despite the pre-check is a benign
-    /// race, so the fold re-reads the registry and reuses the winner's id
-    /// instead of refusing (which the ledger would count as a skip).
-    #[test]
-    fn already_registered_race_folds_to_reuse_not_a_skip() {
-        let bot = Bot::new(1);
-        let address = Address::from([0x22u8; 20]);
-        let id = register_v2(&bot, address);
-        let folded = fold_already_registered(
-            Err(RefusalKind::from_register_v2_error(
-                &RegisterV2PoolError::AlreadyRegistered { address },
-            )),
-            || reuse_address_pool(&bot, &address),
-            transient_refusal,
-        );
-        assert_eq!(folded, Ok(id));
-    }
-
     #[test]
     fn registry_full_is_a_benign_crawl_stop() {
-        // `build_and_register` folds the engine registry's `RegistryFull`
-        // refusal to the core's `RegistrationUnitOutcome::Cap`; that outcome
-        // stops the crawl and latches the report's capped witness via the
-        // core fold.
+        // The admission folds the engine registry's `RegistryFull` refusal to
+        // the core's `RegistrationUnitOutcome::Cap`; that outcome stops the
+        // crawl and latches the report's capped witness via the core fold.
         assert!(crawl_stops_on(&RegistrationUnitOutcome::Cap));
         assert!(!crawl_stops_on(&RegistrationUnitOutcome::Registered {
             created: true,
@@ -772,5 +344,18 @@ mod tests {
         assert!(report.capped, "the cap stop latches the benign witness");
         assert_eq!(report.cap_skip_count, 1);
         assert_eq!(report.skip_count, 1);
+    }
+
+    #[test]
+    fn the_construction_route_is_the_enumerated_factories_plus_the_generic_rung() {
+        let route = construction_route(&[v4_row_with_state_view(None)]);
+        assert!(
+            route.generic,
+            "the generic rung serves every family the deployment tables resolve"
+        );
+        assert!(
+            route.factories.is_empty(),
+            "a V4 manager names no factory rung"
+        );
     }
 }

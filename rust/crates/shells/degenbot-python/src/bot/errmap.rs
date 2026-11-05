@@ -49,19 +49,11 @@ pub(crate) fn map_driver_err(err: DriverError) -> PyErr {
         // source of the remediation text, so the Python `RuntimeError` string
         // stays byte-identical to the pre-typing refusal.
         DriverError::NoResultReceiver => PyRuntimeError::new_err(err.to_string()),
-        // Every other non-lifecycle variant (phase/session/subscribe/resume/
-        // registration) surfaces as the legacy `RuntimeError` with the driver's
-        // message; the registration lifecycles route their verify errors
-        // through the typed `map_driver_lifecycle_err` instead.
-        other => PyRuntimeError::new_err(other.to_string()),
-    }
-}
-
-/// Map a lifecycle [`DriverError`] to the typed Python exception the verify
-/// surface has always raised.
-pub(crate) fn map_driver_lifecycle_err(err: DriverError) -> PyErr {
-    match err {
-        DriverError::Verify(kind) => map_refusal(kind),
+        // Every other variant (phase/session/subscribe/resume/registration)
+        // surfaces as the legacy `RuntimeError` with the driver's message. The
+        // verify lifecycle does not travel through `DriverError` at all: the
+        // verify home raises its `RefusalKind` and this module's `map_refusal`
+        // owns that vocabulary.
         other => PyRuntimeError::new_err(other.to_string()),
     }
 }
@@ -509,28 +501,6 @@ mod tests {
         );
         let err = map_driver_err(DriverError::SessionState("already subscribed".to_string()));
         assert_eq!(runtime_error(&err), "already subscribed");
-    }
-
-    #[test]
-    fn driver_lifecycle_err_pins_the_verify_vocabulary() {
-        let err = map_driver_lifecycle_err(DriverError::Verify(
-            RefusalKind::lifecycle_precondition(LifecyclePrecondition::MissingVerifyProvider),
-        ));
-        Python::attach(|py| {
-            assert!(err.is_instance_of::<VerificationRpcError>(py));
-        });
-        assert_eq!(
-            message(&err),
-            "registration verify requires an RPC provider for tracked pools — configure the bot's single provider"
-        );
-
-        let err = map_driver_lifecycle_err(DriverError::Verify(
-            RefusalKind::lifecycle_precondition(LifecyclePrecondition::MissingTickSpacing),
-        ));
-        assert_eq!(
-            runtime_error(&err),
-            "registration verify requires the registered pool's tick spacing"
-        );
     }
 
     #[test]

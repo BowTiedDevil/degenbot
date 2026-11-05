@@ -138,12 +138,26 @@ impl Bot {
         driver.stop()
     }
 
-    /// Set the HTTP RPC URL used for verification. `None` (no engine
+    /// Install the verify home's RPC provider from `rpc_url`. `None` (no engine
     /// constructed against the bot) is a no-op — the guard the `PyO3` shell
     /// held as a swallowed `pump_state` error.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called from within a Tokio runtime (it parks on the shared
+    /// runtime via `block_on`).
     pub fn set_verify_rpc_url(driver: Option<&EngineDriver>, rpc_url: &str) {
         if let Some(pump) = driver {
-            pump.set_verify_rpc_url(rpc_url);
+            let verify = pump.verify();
+            let rpc_url = rpc_url.to_owned();
+            let verify = Arc::clone(verify);
+            degenbot_core::runtime::get_runtime().block_on(async move {
+                let provider =
+                    crate::bot_core::verify_lifecycle::build_verify_provider(&rpc_url).await;
+                let mut config = verify.config();
+                config.provider = provider;
+                verify.configure(config);
+            });
         }
     }
 
@@ -151,7 +165,14 @@ impl Bot {
     /// engine constructed against the bot) is a no-op.
     pub fn set_verify_state_view(driver: Option<&EngineDriver>, state_view_address: &str) {
         if let Some(pump) = driver {
-            pump.set_verify_state_view(state_view_address);
+            let verify = pump.verify();
+            let mut config = verify.config();
+            config.state_view = Some(
+                state_view_address
+                    .parse()
+                    .unwrap_or(alloy::primitives::Address::ZERO),
+            );
+            verify.configure(config);
         }
     }
 

@@ -1,10 +1,10 @@
-//! The crawl unit's offline fixtures, the R1 equivalence pin, the outcome
-//! parity table, and the loud-abort arms.
+//! Registration admission's offline fixtures, the two-adapter parity suite, the
+//! R1 equivalence pin, the outcome parity table, and the loud-abort arms.
 //!
 //! Every fixture is offline: a `FakeRpc` answers the construction reads per
 //! `(contract, selector)`, `NoDb`/`FixtureDb` answer the DB half, and a real
-//! `Bot` + `EngineDriver` pair owns the state, the registry and the verify
-//! claim table. Nothing here needs a node.
+//! `Bot` + `EngineDriver` pair owns the state and the registry while the driver's
+//! verify home owns the claim table. Nothing here needs a node.
 
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -26,9 +26,9 @@ use degenbot_uniswap::create2::compute_v2_address;
 use degenbot_uniswap::dex_identity;
 use hashbrown::HashMap;
 
-use super::{
-    run_crawl_unit, CrawlAbort, CrawlLedger, CrawlUnit, CrawlUnitHost, CrawlUnitSettings,
-    DiscoveredHop,
+use super::{run_crawl_unit, CrawlUnit, CrawlUnitHost};
+use crate::arb_engine::crawl::admission::{
+    AdmissionSettings, CrawlAbort, CrawlLedger, DiscoveredHop, RegistrationAdmission,
 };
 use crate::arb_engine::crawl::flights::BuildFlights;
 use crate::arb_engine::crawl::policy::{CrawlPathPolicy, TokenFilter};
@@ -37,7 +37,7 @@ use crate::arb_engine::EngineDriver;
 use crate::arb_engine::EngineStages;
 use crate::bot_core::construction_io::{ConstructionIo, DbConstruction, NoDb, RpcConstruction};
 use crate::bot_core::registration_ledger::{
-    PreBuildIdentity, RegistrationOutcome, RegistrationUnitOutcome,
+    PipelineReport, PreBuildIdentity, RegistrationOutcome, RegistrationUnitOutcome,
 };
 use crate::bot_core::verification_retry::RetryPolicy;
 use crate::bot_core::{Bot, ConstructionRefusal, ConstructionRoute};
@@ -383,13 +383,26 @@ fn cycle_unit(seq: u64) -> CrawlUnit {
 
 // ── the harness ────────────────────────────────────────────────────────────
 
+/// The admission's wide settings as a fixture value — no policy, the generic
+/// construction rung, and this fixture's block.
+fn default_settings() -> AdmissionSettings {
+    AdmissionSettings {
+        route: ConstructionRoute::generic_only(),
+        policy: CrawlPathPolicy::default(),
+        oracle: None,
+        profit_token: USDC,
+        snapshot_block: None,
+        state_block: Some(BLOCK),
+    }
+}
+
 struct Harness {
     bot: Arc<Bot>,
     driver: EngineDriver,
-    io: ConstructionIo,
-    ledger: CrawlLedger,
-    flights: BuildFlights,
-    settings: CrawlUnitSettings,
+    io: Arc<ConstructionIo>,
+    ledger: Arc<CrawlLedger>,
+    flights: Arc<BuildFlights>,
+    admission: RegistrationAdmission,
 }
 
 impl Harness {
@@ -398,52 +411,76 @@ impl Harness {
     }
 
     fn with_db(rpc: FakeRpc, db: Arc<dyn DbConstruction + Send + Sync>) -> Self {
-        let io = ConstructionIo::new(db, Arc::new(rpc));
+        Self::with_settings(rpc, db, default_settings())
+    }
+
+    fn with_settings(
+        rpc: FakeRpc,
+        db: Arc<dyn DbConstruction + Send + Sync>,
+        settings: AdmissionSettings,
+    ) -> Self {
+        let io = Arc::new(ConstructionIo::new(db, Arc::new(rpc)));
         let bot = Arc::new(Bot::new(CHAIN_ID));
         let stages = Arc::new(EngineStages::with_core(bot.state_arc(), bot.active_delta()));
-        let driver = EngineDriver::from_stages(Arc::clone(&bot), stages);
-        Self {
-            bot,
-            driver,
-            io,
-            ledger: CrawlLedger::new(),
-            flights: BuildFlights::new(),
-            settings: CrawlUnitSettings {
-                route: ConstructionRoute::generic_only(),
-                policy: CrawlPathPolicy::default(),
-                oracle: None,
+        let driver = EngineDriver::from_stages(Arc::clone(&bot), Arc::clone(&stages));
+        // The verify home walks no retry sleeps in the suite: one attempt, no
+        // delay, no jitter.
+        driver
+            .verify()
+            .configure(crate::bot_core::VerifyLifecycleConfig {
+                provider: None,
+                state_view: None,
                 retry: RetryPolicy {
                     max_attempts: 1,
                     base_delay: 0.0,
                     max_delay: 0.0,
                     jitter: 0.0,
                 },
-                profit_token: USDC,
-                snapshot_block: None,
-                state_block: Some(BLOCK),
-            },
+            });
+        let ledger = Arc::new(CrawlLedger::new());
+        let flights = Arc::new(BuildFlights::new());
+        let admission = RegistrationAdmission::new(
+            Arc::clone(&bot),
+            Arc::clone(&io),
+            Arc::clone(driver.stages()),
+            Arc::clone(driver.verify()),
+            Arc::clone(&ledger),
+            Arc::clone(&flights),
+            Arc::new(settings),
+        );
+        Self {
+            bot,
+            driver,
+            io,
+            ledger,
+            flights,
+            admission,
         }
     }
 
     fn host(&self) -> CrawlUnitHost<'_> {
         CrawlUnitHost {
-            bot: self.bot.as_ref(),
-            driver: &self.driver,
-            io: &self.io,
+            admission: &self.admission,
             db: None,
-            ledger: &self.ledger,
-            flights: &self.flights,
-            settings: &self.settings,
         }
     }
 
+    /// The CRAWL adapter: one submitted unit through the loop's entry.
     async fn run(&self, unit: &CrawlUnit) -> Result<CrawlReceipt, CrawlAbort> {
         run_crawl_unit(&self.host(), unit).await
     }
 
-    /// Build one hop exactly as the unit's build stage does.
+    /// The DIRECT adapter: the same admission, called with a candidate a caller
+    /// already holds (the pure-Rust settlement bot's shape).
+    async fn run_direct(&self, unit: &CrawlUnit) -> Result<CrawlReceipt, CrawlAbort> {
+        self.admission
+            .admit(unit.seq, &unit.hops, unit.directions.as_deref(), None)
+            .await
+    }
+
+    /// Build one hop exactly as the admission's build stage does.
     async fn build_hop(&self, hop: &DiscoveredHop) -> Result<u64, ConstructionRefusal> {
-        self.host().build_hop(hop, BLOCK, None).await
+        self.admission.build_hop(hop, BLOCK, None).await
     }
 
     fn registered_family(&self, pool_id: u64) -> Option<degenbot_pools::RegisteredPoolFamily> {
@@ -669,7 +706,7 @@ async fn a_pinned_direction_mismatch_skips_before_verify() {
     assert_parity("pinned_direction_mismatch", &receipt);
     assert_eq!(receipt.split.len(), 3, "the gate answered at eligibility");
     assert_eq!(
-        harness.ledger.verified_pool_count(),
+        harness.driver.verify().verified_pool_count(),
         0,
         "a direction mismatch never reaches verify"
     );
@@ -678,14 +715,20 @@ async fn a_pinned_direction_mismatch_skips_before_verify() {
 
 #[tokio::test]
 async fn a_policy_denial_is_a_counted_reject_and_memoizes_the_path() {
-    let mut harness = Harness::new(cycle_rpc());
-    harness.settings.policy = CrawlPathPolicy {
-        tokens: TokenFilter {
-            deny: [WETH].into_iter().collect(),
-            ..TokenFilter::default()
+    let harness = Harness::with_settings(
+        cycle_rpc(),
+        Arc::new(NoDb),
+        AdmissionSettings {
+            policy: CrawlPathPolicy {
+                tokens: TokenFilter {
+                    deny: [WETH].into_iter().collect(),
+                    ..TokenFilter::default()
+                },
+                ..CrawlPathPolicy::default()
+            },
+            ..default_settings()
         },
-        ..CrawlPathPolicy::default()
-    };
+    );
     let receipt = harness.run(&cycle_unit(0)).await.unwrap();
     assert_parity("policy_denied", &receipt);
     match &receipt.outcome {
@@ -828,12 +871,18 @@ async fn the_edge_kind_is_equivalent_to_the_onchain_probe() {
 
 #[tokio::test]
 async fn a_family_level_construction_refusal_aborts_the_crawl() {
-    let mut harness = Harness::new(cycle_rpc());
-    // No factory rung and no generic builder: the route serves no pool.
-    harness.settings.route = ConstructionRoute {
-        factories: Vec::new(),
-        generic: false,
-    };
+    let harness = Harness::with_settings(
+        cycle_rpc(),
+        Arc::new(NoDb),
+        AdmissionSettings {
+            // No factory rung and no generic builder: the route serves no pool.
+            route: ConstructionRoute {
+                factories: Vec::new(),
+                generic: false,
+            },
+            ..default_settings()
+        },
+    );
     let err = harness.run(&cycle_unit(0)).await.unwrap_err();
     assert!(
         matches!(
@@ -885,10 +934,10 @@ async fn the_verify_memo_answers_one_lifecycle_per_pool() {
         directions: None,
     };
     harness.run(&first).await.unwrap();
-    assert_eq!(harness.ledger.verified_pool_count(), 1);
+    assert_eq!(harness.driver.verify().verified_pool_count(), 1);
     harness.run(&second).await.unwrap();
     assert_eq!(
-        harness.ledger.verified_pool_count(),
+        harness.driver.verify().verified_pool_count(),
         1,
         "a completed lifecycle is a pool fact: the V3 pool verifies once"
     );
@@ -974,7 +1023,7 @@ fn hop_kinds_and_memo_identities_are_the_edge_values() {
 
 #[test]
 fn the_build_failure_classification_keeps_the_taxonomy_class() {
-    use super::{classify_construction_refusal, HopRefusal};
+    use crate::arb_engine::crawl::admission::{classify_construction_refusal, HopRefusal};
     use degenbot_pools::RegisterRefusal;
 
     // A dynamic-fee V4 pool crosses the write door as an admission refusal; the
@@ -1015,4 +1064,342 @@ fn the_build_failure_classification_keeps_the_taxonomy_class() {
         classify_construction_refusal(&loud, v2_hop()),
         HopRefusal::Abort(_)
     ));
+}
+
+// ── Registration admission: one implementation, two adapters ───────────────
+
+/// Fold a receipt stream into the driver's report — the pure-Rust example's
+/// fold (`PipelineReport::absorb`), which both adapters must feed identically.
+fn fold(receipts: &[CrawlReceipt]) -> PipelineReport {
+    let mut report = PipelineReport::default();
+    for receipt in receipts {
+        report.absorb(&receipt.outcome);
+    }
+    report
+}
+
+/// One candidate sequence — a fresh cycle, its duplicate, a second duplicate —
+/// answers the same receipts through the crawl adapter and the direct adapter,
+/// and folds to the same report. The stage order is one implementation, so the
+/// only thing that can differ between the adapters is who submitted the
+/// candidate.
+#[tokio::test]
+async fn the_two_adapters_answer_the_same_candidate_sequence() {
+    let sequence = [cycle_unit(0), cycle_unit(1), cycle_unit(2)];
+    let crawl = Harness::new(cycle_rpc());
+    let direct = Harness::new(cycle_rpc());
+
+    let mut crawl_receipts = Vec::new();
+    let mut direct_receipts = Vec::new();
+    for unit in &sequence {
+        let submitted = crawl.run(unit).await.unwrap();
+        let offered = direct.run_direct(unit).await.unwrap();
+        assert_eq!(submitted.seq, unit.seq);
+        assert_eq!(offered.seq, unit.seq);
+        assert_eq!(
+            submitted.outcome, offered.outcome,
+            "seq {}: the same outcome",
+            unit.seq
+        );
+        assert_eq!(submitted.hop_sig, offered.hop_sig, "seq {}", unit.seq);
+        assert_eq!(submitted.path_id, offered.path_id, "seq {}", unit.seq);
+        assert_eq!(
+            submitted.split.len(),
+            offered.split.len(),
+            "seq {}: the same stage answered",
+            unit.seq
+        );
+        crawl_receipts.push(submitted);
+        direct_receipts.push(offered);
+    }
+
+    let crawl_report = fold(&crawl_receipts);
+    assert_eq!(
+        crawl_report,
+        fold(&direct_receipts),
+        "both adapters fold to the same report"
+    );
+    assert_eq!(crawl_report.path_count, 1, "one new path");
+    assert_eq!(crawl_report.dup_count, 2, "two duplicates");
+    assert!(
+        crawl_report.fold_identities_hold(),
+        "the fold's own identities hold"
+    );
+}
+
+/// The skip arms agree too: a pinned-direction refusal and a hashless V4 hop
+/// answer the same receipt through either adapter (kind, tag, stage).
+#[tokio::test]
+async fn the_two_adapters_answer_the_same_skips() {
+    let mut pinned = cycle_unit(0);
+    pinned.directions = Some(vec![true]);
+    let hashless = CrawlUnit {
+        seq: 1,
+        hops: vec![DiscoveredHop::V4 {
+            pool_manager: V4_PM,
+            pool_hash: None,
+        }],
+        directions: None,
+    };
+    let crawl = Harness::new(cycle_rpc());
+    let direct = Harness::new(cycle_rpc());
+    for unit in [&pinned, &hashless] {
+        let submitted = crawl.run(unit).await.unwrap();
+        let offered = direct.run_direct(unit).await.unwrap();
+        assert_eq!(submitted.kind(), offered.kind());
+        assert_eq!(submitted.refusal_tag(), offered.refusal_tag());
+        assert_eq!(
+            submitted.answering_stage(),
+            offered.answering_stage(),
+            "seq {}: the same stage answered",
+            unit.seq
+        );
+    }
+    assert_eq!(crawl.driver.path_count(), 0);
+    assert_eq!(direct.driver.path_count(), 0);
+}
+
+/// The benign registered-path cap is the register stage's answer in both
+/// adapters, and it is the caller's BENIGN stop rather than an error.
+#[tokio::test]
+async fn the_benign_cap_answers_at_the_register_stage_for_both_adapters() {
+    let crawl = Harness::new(cycle_rpc());
+    let direct = Harness::new(cycle_rpc());
+    crawl.driver.set_path_cap(Some(0));
+    direct.driver.set_path_cap(Some(0));
+
+    let submitted = crawl.run(&cycle_unit(0)).await.unwrap();
+    let offered = direct.run_direct(&cycle_unit(0)).await.unwrap();
+    assert_eq!(submitted.outcome, RegistrationUnitOutcome::Cap);
+    assert_eq!(offered.outcome, RegistrationUnitOutcome::Cap);
+    assert_eq!(submitted.split.len(), 5, "the cap owns the whole climb");
+    assert_eq!(offered.split.len(), 5);
+    let report = fold(&[submitted, offered]);
+    assert!(report.capped, "the cap latches the benign witness");
+    assert_eq!(report.cap_skip_count, 2);
+    assert!(report.fold_identities_hold());
+}
+
+/// A STABLE build refusal is a pool fact (the second sighting answers at the
+/// memo stage); a TRANSIENT one is never memoized (the second sighting rebuilds).
+#[tokio::test]
+async fn a_stable_refusal_is_a_pool_fact_and_a_transient_one_stays_retryable() {
+    // Stable: a V4 static fee past the executor's field is a pool-key fact.
+    let mut rpc = FakeRpc::new();
+    set_v4(&mut rpc);
+    let stable = Harness::with_db(
+        rpc,
+        Arc::new(V4Db {
+            fee: 320_000,
+            hooks: Address::ZERO,
+        }),
+    );
+    let unit = CrawlUnit {
+        seq: 0,
+        hops: vec![v4_hop()],
+        directions: None,
+    };
+    let first = stable.run_direct(&unit).await.unwrap();
+    assert_eq!(first.split.len(), 2, "the build stage answered");
+    let again = stable.run_direct(&unit).await.unwrap();
+    assert_eq!(again.split.len(), 1, "the memo answered before any build");
+    match (&first.outcome, &again.outcome) {
+        (
+            RegistrationUnitOutcome::Skip {
+                label: first_label,
+                counts_as_skip: first_counts,
+                ..
+            },
+            RegistrationUnitOutcome::Skip {
+                label: again_label,
+                counts_as_skip: again_counts,
+                ..
+            },
+        ) => {
+            assert_eq!(first_label, again_label, "the same memoized label");
+            assert_eq!(first_counts, again_counts, "the same counter class");
+        }
+        other => panic!("expected two skips, got {other:?}"),
+    }
+    let key = v4_hop().pre_build_identity();
+    assert!(
+        stable
+            .ledger
+            .with(|ledger| ledger.unregistrable_record(key.as_ref()).is_some()),
+        "a stable refusal is memoized"
+    );
+
+    // Transient: an unreadable V3 pool re-runs the build stage every time.
+    let transient = Harness::new(FakeRpc::new());
+    let unit = CrawlUnit {
+        seq: 0,
+        hops: vec![v3_hop()],
+        directions: None,
+    };
+    let first = transient.run_direct(&unit).await.unwrap();
+    assert_eq!(first.split.len(), 2, "the build stage answered");
+    let again = transient.run_direct(&unit).await.unwrap();
+    assert_eq!(
+        again.split.len(),
+        2,
+        "a transient refusal re-runs the build stage"
+    );
+    let key = v3_hop().pre_build_identity();
+    assert!(
+        transient
+            .ledger
+            .with(|ledger| ledger.unregistrable_record(key.as_ref()).is_none()),
+        "a transient failure is never memoized"
+    );
+}
+
+/// One verify home, two adapters: a pool the direct adapter verified is not
+/// verified again when the crawl adapter offers a second candidate through it.
+#[tokio::test]
+async fn the_verify_fact_is_joined_across_the_two_adapters() {
+    let mut rpc = FakeRpc::new();
+    set_v2(&mut rpc, &dex_identity::UNISWAP_V2, USDC, WETH);
+    set_v2(&mut rpc, &dex_identity::SUSHISWAP_V2, USDC, WETH);
+    set_v3(&mut rpc, V3_POOL, USDC, WETH);
+    let harness = Harness::new(rpc);
+
+    let offered = CrawlUnit {
+        seq: 0,
+        hops: vec![v2_hop(), v3_hop()],
+        directions: None,
+    };
+    let submitted = CrawlUnit {
+        seq: 1,
+        hops: vec![sushi_v2_hop(), v3_hop()],
+        directions: None,
+    };
+    harness.run_direct(&offered).await.unwrap();
+    assert_eq!(
+        harness.driver.verify().verified_pool_count(),
+        1,
+        "the direct adapter ran the V3 pool's lifecycle"
+    );
+    harness.run(&submitted).await.unwrap();
+    assert_eq!(
+        harness.driver.verify().verified_pool_count(),
+        1,
+        "the crawl adapter joined the completed lifecycle"
+    );
+    assert_eq!(
+        harness.driver.path_count(),
+        2,
+        "two distinct cycles registered"
+    );
+}
+
+/// A fatal verify failure is the loud arm: the admission stops rather than
+/// counting a skip, and it records no verified fact.
+#[tokio::test]
+async fn a_fatal_verify_failure_aborts_the_admission() {
+    use crate::bot_core::registration_ledger::{RegistrationPhase, VerifyOrigin};
+
+    let harness = Harness::new(cycle_rpc());
+    let mismatch = crate::bot_core::registration_ledger::RefusalKind::verify_failed(
+        RegistrationPhase::Verify,
+        true,
+        VerifyOrigin::Mismatch,
+        "snapshot mismatch".to_owned(),
+    );
+    harness
+        .driver
+        .verify()
+        .script_attempts_for_test(vec![Err(mismatch.clone())]);
+
+    let err = harness.run_direct(&cycle_unit(0)).await.unwrap_err();
+    assert!(
+        matches!(&err, CrawlAbort::Verify(kind) if *kind == mismatch),
+        "a fatal mismatch is a loud abort, never a counted skip: {err}"
+    );
+    assert_eq!(harness.driver.verify().verified_pool_count(), 0);
+    assert_eq!(harness.driver.path_count(), 0, "no path registered");
+}
+
+/// A transient verify failure is retried INSIDE one admission under the verify
+/// home's policy, so one candidate still registers without the caller looping.
+#[tokio::test]
+async fn a_transient_verify_failure_is_retried_inside_one_admission() {
+    use crate::bot_core::registration_ledger::{RegistrationPhase, VerifyOrigin};
+
+    let harness = Harness::new(cycle_rpc());
+    harness
+        .driver
+        .verify()
+        .configure(crate::bot_core::VerifyLifecycleConfig {
+            provider: None,
+            state_view: None,
+            retry: RetryPolicy {
+                max_attempts: 2,
+                base_delay: 0.0,
+                max_delay: 0.0,
+                jitter: 0.0,
+            },
+        });
+    let blip = crate::bot_core::registration_ledger::RefusalKind::verify_failed(
+        RegistrationPhase::Verify,
+        false,
+        VerifyOrigin::Transport,
+        "transport blip".to_owned(),
+    );
+    harness
+        .driver
+        .verify()
+        .script_attempts_for_test(vec![Err(blip)]);
+
+    let receipt = harness.run_direct(&cycle_unit(0)).await.unwrap();
+    assert_eq!(
+        receipt.outcome,
+        RegistrationUnitOutcome::Registered {
+            created: true,
+            v4_hops: 0
+        },
+        "the retry recovered inside one admission"
+    );
+    assert_eq!(harness.driver.verify().verified_pool_count(), 1);
+}
+
+/// A policy denial is a counted reject that memoizes the hop signature, and a
+/// re-sighting answers from the memo without a detail — through the direct
+/// adapter exactly as through the crawl.
+#[tokio::test]
+async fn a_policy_denial_rejects_and_memoizes_through_the_direct_adapter() {
+    let harness = Harness::with_settings(
+        cycle_rpc(),
+        Arc::new(NoDb),
+        AdmissionSettings {
+            policy: CrawlPathPolicy {
+                tokens: TokenFilter {
+                    deny: [WETH].into_iter().collect(),
+                    ..TokenFilter::default()
+                },
+                ..CrawlPathPolicy::default()
+            },
+            ..default_settings()
+        },
+    );
+    let receipt = harness.run_direct(&cycle_unit(0)).await.unwrap();
+    match &receipt.outcome {
+        RegistrationUnitOutcome::Reject { detail } => assert!(
+            detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("TokenDenylisted")),
+            "the refusal rendering rides the log detail: {detail:?}"
+        ),
+        other => panic!("expected a reject, got {other:?}"),
+    }
+    let sig = receipt.hop_sig.clone().expect("the candidate sig existed");
+    assert!(
+        harness.ledger.with(|ledger| ledger.path_rejected(&sig)),
+        "a policy deny memoizes the hop signature"
+    );
+    let again = harness.run_direct(&cycle_unit(1)).await.unwrap();
+    match &again.outcome {
+        RegistrationUnitOutcome::Reject { detail } => assert_eq!(*detail, None),
+        other => panic!("expected a memoized reject, got {other:?}"),
+    }
+    assert_eq!(harness.driver.path_count(), 0);
 }

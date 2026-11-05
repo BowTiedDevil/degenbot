@@ -309,11 +309,15 @@ pub mod fleet_intake {
 ///
 /// [`EngineDriver::begin_crawl`]: crate::arb_engine::EngineDriver::begin_crawl
 pub mod crawl {
+    pub use crate::arb_engine::crawl::admission::{
+        AdmissionSettings, CrawlAbort, CrawlLedger, DiscoveredHop, RegistrationAdmission,
+    };
     pub use crate::arb_engine::crawl::controller::{
         CrawlConfig, CrawlConfigError, CrawlController, CrawlRequestError, RunOutcome, SeatHold,
         SnapshotArm,
     };
     pub use crate::arb_engine::crawl::discovery::DiscoveredPath;
+    pub use crate::arb_engine::crawl::flights::BuildFlights;
     pub use crate::arb_engine::crawl::policy::{
         BatchPolicyOracle, CrawlPathPolicy, DuplicatePoolPolicy, HopBounds, LiquidityFloor,
         LiquidityProxy, OracleError, PathPolicyVerdict, PolicyCandidate, PolicyRefusal,
@@ -321,7 +325,7 @@ pub mod crawl {
     };
     pub use crate::arb_engine::crawl::profile::CrawlSummary;
     pub use crate::arb_engine::crawl::receipt::{CrawlReceipt, UnitStage};
-    pub use crate::arb_engine::crawl::unit::{CrawlAbort, DiscoveredHop};
+    pub use crate::arb_engine::crawl::unit::CrawlUnit;
 }
 pub use degenbot_substrate::connector_index;
 pub mod failure_policy;

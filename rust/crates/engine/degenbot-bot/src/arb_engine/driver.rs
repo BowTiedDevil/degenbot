@@ -53,8 +53,9 @@
 //!   `PathRegistrationError`; the verify lifecycle propagates the core
 //!   `RefusalKind` so the adapter keeps its byte-identical Python exception
 //!   mapping.
-//! - **Verify provider.** Built by the driver (`set_verify_rpc_url` + an
-//!   internal async builder used by `start`) and stored on the driver.
+//! - **Verify provider.** Built once at session start (`configure_verify` over
+//!   [`VerifyLifecycle::configure`]) and installed as the verify home's
+//!   construction value, alongside the V4 `StateView` address.
 //! - **Lifecycle inputs are typed.** ADR-050 D4 sketches `&str` inputs; the
 //!   implementation takes `Address`/`V4PoolId` so string parsing stays in the
 //!   `PyO3` adapter, preserving its synchronous `ValueError` raise (the
@@ -62,9 +63,11 @@
 //! - **Main loop.** No `run_until_stopped` convenience: the consumer owns its
 //!   consume/dispatch loop (ADR-050 D9).
 
+use crate::arb_engine::crawl::admission::{CrawlLedger, RegistrationAdmission};
 use crate::arb_engine::crawl::controller::{
     CrawlConfig, CrawlConfigError, CrawlController, CrawlHandle, CrawlHost, SnapshotArm,
 };
+use crate::arb_engine::crawl::flights::BuildFlights;
 use crate::arb_engine::crawl::receipt::CrawlReceipt;
 use crate::arb_engine::lifecycle::PathRegistrationError;
 use crate::arb_engine::pump_session::{self, PhaseAdvance, PumpEvent};
@@ -72,13 +75,9 @@ use crate::arb_engine::{
     BlockNotification, EngineRetune, EngineStages, InlineSimulator, PumpPhase, ResultBatch,
 };
 use crate::bot_core::block_pump::{BlockPump, SubscribeState};
-use crate::bot_core::registration_ledger::{
-    PreBuildIdentity, RefusalKind, RegistrationPhase, VerifyOrigin,
-};
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
-use crate::bot_core::verification_retry::{retry_verification_call, RetryPolicy};
-use crate::bot_core::verify_claims::PoolVerifications;
-use crate::bot_core::{Bot, PumpControl, StageHandlers};
+use crate::bot_core::verify_lifecycle::VerifyLifecycleConfig;
+use crate::bot_core::{Bot, PumpControl, StageHandlers, VerifyLifecycle};
 use crate::strategy_host::HostHub;
 use alloy::primitives::Address;
 use degenbot_core::{diag, op_error, op_info, op_warn};
@@ -86,19 +85,16 @@ use degenbot_eventhub::Hub;
 use degenbot_executor::composers::PathInfo;
 use degenbot_ingestion::IngestEvent as WsEvent;
 use degenbot_pools::solve::{PoolHop, SolvePathResult};
-use degenbot_rpc::provider::AlloyProvider;
 use degenbot_substrate::path_info::PathInfoBuildError;
 use degenbot_substrate::session_registry::PoolIdentity;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::BotState;
-use degenbot_substrate::PoolLookup;
 use hashbrown::HashMap;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
-use tracing::Instrument as _;
 
 /// Hub registration name for the engine's result-batch source channel.
 ///
@@ -213,10 +209,6 @@ pub enum DriverError {
     Backfill(String),
     /// Typed path-registration refusal (propagated verbatim, ADR-050 D4).
     Registration(PathRegistrationError),
-    /// The registration verify lifecycle failed — the core [`RefusalKind`]
-    /// (mismatch/RPC/missing config) propagated verbatim so the adapter can
-    /// keep its typed Python mapping.
-    Verify(RefusalKind),
 }
 
 impl std::fmt::Display for DriverError {
@@ -228,19 +220,11 @@ impl std::fmt::Display for DriverError {
                 "Cannot resume: the result receiver has not been taken. Call take_result_receiver() before resume() so the unbounded result channel has a consumer attached.",
             ),
             Self::Registration(e) => write!(f, "{e}"),
-            Self::Verify(e) => write!(f, "{e}"),
         }
     }
 }
 
-impl std::error::Error for DriverError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Verify(e) => Some(e),
-            _ => None,
-        }
-    }
-}
+impl std::error::Error for DriverError {}
 
 /// One session move in flight, guarded against the future being dropped.
 ///
@@ -499,18 +483,12 @@ pub struct EngineDriver {
     pump_finished_rx: watch::Receiver<bool>,
     /// The subscribe state held between `subscribe()` and `resume()`.
     subscribe_state: Mutex<Option<DriverSubscribeState>>,
-    /// The HTTP RPC URL used for verification.
-    verify_rpc_url: Mutex<Option<String>>,
-    /// The cached verification provider (one per driver/chain, ADR-022 D3).
-    verify_provider: Mutex<Option<AlloyProvider>>,
-    /// The optional V4 `StateView` contract address for verification.
-    verify_state_view: Mutex<Option<Address>>,
-    /// The session's per-pool verification owner (ADR-022): the at-most-once
-    /// claim policy for live windows plus the durable verified-pool fact the
-    /// core registration ledger holds, shared by the async entry points, the
-    /// blocking seat-thread twins, and every `PyO3` caller of the same
-    /// driver. A driver is the session, so a driver holds one owner.
-    verifications: PoolVerifications<RefusalKind>,
+    /// The pose-independent Verify lifecycle (ADR-093 D4): one family-free
+    /// operation over a pool key, with the provider, the `StateView` address and
+    /// the retry policy as its construction values, and the at-most-once claim
+    /// window plus the durable verified-pool fact inside it. The driver composes
+    /// the home every caller shares; the home names no session.
+    verify: Arc<VerifyLifecycle>,
     /// The engine host's process-lifetime event hub. The engine's
     /// `ResultBatch` + `BlockNotification` source channels are registered on
     /// it as named, typed `UnboundedFlagged` channels; the hub holds each
@@ -558,24 +536,6 @@ fn install_session_path_owner(bot: &Bot, stages: &EngineStages) {
             rejected_owner_paths = refused.path_count(),
             "a session already has a path-identity owner; this engine's paths are unreachable from the session and the session answers with the first engine's path ids"
         );
-    }
-}
-
-/// Classify a `DriverError` from a registration lifecycle into the core
-/// verify taxonomy the retry dance reads.
-///
-/// Only the verify arm is representable; every other driver failure is
-/// unreachable at a lifecycle call site and maps to the fatal
-/// [`VerifyOrigin::Other`] refusal so the retry never re-attempts it.
-fn verify_refusal_from_driver(err: DriverError) -> RefusalKind {
-    match err {
-        DriverError::Verify(kind) => kind,
-        other => RefusalKind::verify_failed(
-            RegistrationPhase::Verify,
-            true,
-            VerifyOrigin::Other,
-            other.to_string(),
-        ),
     }
 }
 
@@ -638,6 +598,7 @@ impl EngineDriver {
         // wiring site, so a decline is unreachable.
         let _ = stages.set_block_channel(channels.block);
         install_session_path_owner(&bot, &stages);
+        let verify_core = stages.core();
         let (pump_finished_tx, pump_finished_rx) = watch::channel(false);
         let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));
         Self {
@@ -650,10 +611,10 @@ impl EngineDriver {
             pump_finished_tx: Mutex::new(Some(pump_finished_tx)),
             pump_finished_rx,
             subscribe_state: Mutex::new(None),
-            verify_rpc_url: Mutex::new(None),
-            verify_provider: Mutex::new(None),
-            verify_state_view: Mutex::new(None),
-            verifications: PoolVerifications::new(),
+            verify: Arc::new(VerifyLifecycle::new(
+                verify_core,
+                VerifyLifecycleConfig::default(),
+            )),
             hub,
             #[cfg(test)]
             subscribe_fault: Mutex::new(None),
@@ -679,6 +640,18 @@ impl EngineDriver {
     #[must_use]
     pub fn stages(&self) -> &Arc<EngineStages> {
         &self.stages
+    }
+
+    /// The session's verify home: the pose-independent Verify lifecycle, its
+    /// construction values, its claim window and its verified-pool facts.
+    ///
+    /// A capability reached beside the stage seam, not through the session
+    /// (ADR-049's narrow amendment, ADR-093 D4): a caller that only verifies a
+    /// pool never needs the pump, and the crawl and the direct-registration
+    /// adapter share this ONE home.
+    #[must_use]
+    pub fn verify(&self) -> &Arc<VerifyLifecycle> {
+        &self.verify
     }
 
     /// The current engine lifecycle phase (core-owned truth).
@@ -884,10 +857,7 @@ impl EngineDriver {
         verify_state_view: Option<&str>,
     ) -> Result<u64, DriverError> {
         let w = self.subscribe(node_ws).await?;
-        self.build_verify_provider(node_http).await;
-        if let Some(view) = verify_state_view {
-            self.set_verify_state_view(view);
-        }
+        self.configure_verify(node_http, verify_state_view).await;
         Ok(w)
     }
 
@@ -1203,7 +1173,23 @@ impl EngineDriver {
             .bot
             .construction_io_arc()
             .ok_or(CrawlConfigError::MissingConstructionIo)?;
-        let host = CrawlHost::from_driver(self, io, snapshot);
+        // The crawl is one ADAPTER over Registration admission: it contributes
+        // its candidate source, its loop and its measurement, and the admission
+        // is composed here from the capability handles this session owns. The
+        // driver keeps only the crawl's run/stop edge, never admission's.
+        let admission = Arc::new(RegistrationAdmission::new(
+            Arc::clone(&self.bot),
+            io,
+            Arc::clone(&self.stages),
+            Arc::clone(&self.verify),
+            Arc::new(CrawlLedger::new()),
+            Arc::new(BuildFlights::new()),
+            Arc::new(config.admission_settings()),
+        ));
+        let host = CrawlHost {
+            admission,
+            snapshot,
+        };
         let controller = CrawlController::attach(host, config)?;
         if let Some(tx) = receipts {
             controller.attach_receipts(tx)?;
@@ -1347,38 +1333,22 @@ impl EngineDriver {
         Ok(())
     }
 
-    /// Set the HTTP RPC URL used for verification (builds the provider).
+    /// Install the verify home's construction values for this session's
+    /// provider: the RPC provider built from the node endpoint, and the V4
+    /// `StateView` address when the deployment resolved one.
     ///
-    /// # Panics
-    ///
-    /// Panics if called from within a Tokio runtime (it parks on the shared
-    /// runtime via `block_on`). Use `start` from async contexts.
-    pub fn set_verify_rpc_url(&self, rpc_url: &str) {
-        degenbot_core::runtime::get_runtime().block_on(self.build_verify_provider(rpc_url));
-    }
-
-    /// Build + store the verification provider (the async half of
-    /// [`Self::set_verify_rpc_url`], shared with `start` so an async caller
-    /// never nests `block_on`).
-    async fn build_verify_provider(&self, rpc_url: &str) {
-        match AlloyProvider::new(rpc_url, degenbot_rpc::provider::DEFAULT_MAX_RETRIES).await {
-            Ok(provider) => {
-                *self.verify_provider.lock() = Some(provider);
-            }
-            Err(e) => {
-                #[expect(clippy::print_stderr)] // startup diagnostic
-                {
-                    eprintln!("Failed to create verification provider: {e}");
-                }
-            }
+    /// Configuration is ONE door on the verify home ([`VerifyLifecycle::configure`])
+    /// and it travels as a value: a caller cannot re-point a live lifecycle's
+    /// provider between two attempts, so a retry re-verifies against the chain
+    /// view the first attempt used.
+    async fn configure_verify(&self, node_http: &str, verify_state_view: Option<&str>) {
+        let provider = crate::bot_core::verify_lifecycle::build_verify_provider(node_http).await;
+        let mut config = self.verify.config();
+        config.provider = provider;
+        if let Some(view) = verify_state_view {
+            config.state_view = Some(view.parse::<Address>().unwrap_or(Address::ZERO));
         }
-        *self.verify_rpc_url.lock() = Some(rpc_url.to_string());
-    }
-
-    /// Set the `StateView` contract address for V4 verification.
-    pub fn set_verify_state_view(&self, state_view_address: &str) {
-        let addr: Address = state_view_address.parse().unwrap_or(Address::ZERO);
-        *self.verify_state_view.lock() = Some(addr);
+        self.verify.configure(config);
     }
 
     /// The registered pool id for this pool identity, derived from the shared
@@ -1398,171 +1368,6 @@ impl EngineDriver {
             .read_at(LockSite::Registration)
             .pool_id_for_identity(identity);
         pool_id
-    }
-
-    /// How many verify-claim windows are live on this driver — the
-    /// test/diagnostic witness for the at-most-once claim.
-    #[must_use]
-    pub fn live_verify_claim_count(&self) -> usize {
-        self.verifications.live_claim_count()
-    }
-
-    /// How many pools have a completed verify-lifecycle fact on this driver —
-    /// the durable counterpart to [`Self::live_verify_claim_count`], and the
-    /// witness that a repeated registration is a no-op rather than a re-run.
-    #[must_use]
-    pub fn verified_pool_count(&self) -> usize {
-        self.verifications.verified_pool_count()
-    }
-
-    /// Whether `key` names a pool whose verify lifecycle already COMPLETED on
-    /// this driver.
-    ///
-    /// The driver exposes this for tests and diagnostics; registration paths
-    /// do not consult it directly — they enter the lifecycle, which applies
-    /// the fact itself.
-    #[must_use]
-    pub fn is_pool_verified(&self, key: &PreBuildIdentity) -> bool {
-        self.verifications.is_verified(key)
-    }
-
-    /// Run a pool's core-owned registration verify lifecycle, AT MOST ONCE per
-    /// live claim window — and never again once it has COMPLETED.
-    ///
-    /// The key is a value ([`degenbot_substrate::PoolLookup`]): a V3 pool by
-    /// contract address, a V4 pool by `(PoolManager, pool_id)`. One body serves
-    /// both designs, so the claim key, the unregistered no-op guard, the span
-    /// fields and the diagnostic wording cannot drift apart per family.
-    ///
-    /// Concurrent callers — the async driver, a blocking seat-thread twin, or
-    /// any `PyO3` caller of this same driver — share one run and each receive
-    /// its outcome; a failed window is released so a later caller retries. A
-    /// completed lifecycle records a durable verified-pool fact, so a
-    /// subsequent registration of the same identity is a no-op rather than a
-    /// re-run (the behavior the retired Python key cache provided).
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`DriverError::Verify`] from the core lifecycle
-    /// (`Mismatch` = fatal; `Rpc` = retryable; missing provider = fail-fast).
-    pub async fn run_registration_lifecycle(
-        &self,
-        key: PoolLookup,
-        snapshot_block: Option<u64>,
-    ) -> Result<(), DriverError> {
-        let core = self.stages.core();
-        // The verify fact is keyed by the SAME identity the registration ledger
-        // memos on, so the driver's claim path and the pipeline's ledger share
-        // one fact instead of three private string formats.
-        let claim_key = match key {
-            PoolLookup::Address(address) => PreBuildIdentity::Address(address),
-            PoolLookup::V4 { pool_id, .. } => PreBuildIdentity::V4(pool_id),
-        };
-        if self.verifications.is_verified(&claim_key) {
-            return Ok(());
-        }
-        // An unregistered pool is a no-op `Ok` in the lifecycle; that must not
-        // become a durable fact, or a later registration of this pool would
-        // skip the verify it still needs.
-        let registered = {
-            let state = core.read_at(LockSite::Registration);
-            key.coverage(&state).is_some()
-        };
-        if !registered {
-            return Ok(());
-        }
-        let provider = self.verify_provider.lock().clone();
-        self.verifications
-            .run_exclusive(&claim_key, || async move {
-                let span = tracing::info_span!(
-                    "degenbot.pool.verify_lifecycle",
-                    pool.version = key.family().tag(),
-                    pool.address = %key,
-                );
-                let result = crate::bot_core::run_registration_lifecycle(
-                    &core,
-                    provider.as_ref(),
-                    key,
-                    snapshot_block,
-                )
-                .instrument(span)
-                .await;
-
-                if result.is_ok() {
-                    diag!(domain = pump, version = %key.family().tag(), pool = %key, "registration verify-lifecycle complete");
-                } else {
-                    op_warn!(domain = pump, version = %key.family().tag(), pool = %key, "registration verify-lifecycle FAILED");
-                }
-                result
-            })
-            .await
-            .map_err(DriverError::Verify)
-    }
-
-    /// Blocking registration lifecycle (the seat-thread twin).
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`DriverError::Verify`].
-    ///
-    /// # Panics
-    ///
-    /// Panics if called from within a Tokio runtime.
-    pub fn run_registration_lifecycle_sync(
-        &self,
-        key: degenbot_substrate::PoolLookup,
-        snapshot_block: Option<u64>,
-    ) -> Result<(), DriverError> {
-        degenbot_core::runtime::get_runtime()
-            .block_on(self.run_registration_lifecycle(key, snapshot_block))
-    }
-
-    /// Run a pool's registration verify lifecycle under the bounded retry
-    /// dance.
-    ///
-    /// A transient verify failure (`fatal == false`) releases the claim (the
-    /// plain lifecycle owns that), so the next attempt re-runs the whole
-    /// lifecycle; a fatal mismatch is never retried. Returns the classified
-    /// failure once the policy is exhausted.
-    ///
-    /// # Errors
-    ///
-    /// Returns the last transient [`RefusalKind`] after exhausting `policy`,
-    /// or the first fatal one.
-    pub async fn run_registration_lifecycle_with_retry(
-        &self,
-        key: degenbot_substrate::PoolLookup,
-        snapshot_block: Option<u64>,
-        policy: &RetryPolicy,
-    ) -> Result<(), RefusalKind> {
-        retry_verification_call(policy, |_attempt| async move {
-            self.run_registration_lifecycle(key, snapshot_block)
-                .await
-                .map_err(verify_refusal_from_driver)
-        })
-        .await
-    }
-
-    /// Blocking with-retry twin (the seat-thread shape).
-    ///
-    /// # Errors
-    ///
-    /// As the async twin.
-    ///
-    /// # Panics
-    ///
-    /// Panics if called from within a Tokio runtime.
-    pub fn run_registration_lifecycle_with_retry_sync(
-        &self,
-        key: degenbot_substrate::PoolLookup,
-        snapshot_block: Option<u64>,
-        policy: &RetryPolicy,
-    ) -> Result<(), RefusalKind> {
-        degenbot_core::runtime::get_runtime().block_on(self.run_registration_lifecycle_with_retry(
-            key,
-            snapshot_block,
-            policy,
-        ))
     }
 
     /// Register a mixed path (DELEGATION, ADR-050 D4).
@@ -1693,13 +1498,13 @@ mod tests {
     use crate::arb_engine::crawl::policy::CrawlPathPolicy;
     use crate::arb_engine::pump_session::PumpDecline;
     use crate::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
+    use crate::bot_core::verification_retry::RetryPolicy;
     use crate::bot_core::ConstructionRoute;
     use alloy::primitives::{address, Bytes, U256};
     use degenbot_db::PathGraphData;
-    use degenbot_decoders::v4_swap_decoder::V4PoolId;
     use degenbot_eventhub::OverflowPolicy;
     use degenbot_pathfinding::PoolKind;
-    use degenbot_pools::PoolTickCoverage;
+    use degenbot_rpc::provider::AlloyProvider;
     use futures_util::StreamExt;
     use hashbrown::HashSet;
     use tokio::sync::Notify;
@@ -2129,10 +1934,23 @@ mod tests {
             inflight: Arc::clone(&inflight),
         });
         let io = Arc::new(ConstructionIo::new(Arc::new(NoDb), Arc::new(UnreachedRpc)));
-        let host = CrawlHost::from_driver(driver, io, None);
+        let config = crawl_config_for_test();
+        let admission = Arc::new(RegistrationAdmission::new(
+            Arc::clone(driver.bot()),
+            io,
+            Arc::clone(driver.stages()),
+            Arc::clone(driver.verify()),
+            Arc::new(CrawlLedger::new()),
+            Arc::new(BuildFlights::new()),
+            Arc::new(config.admission_settings()),
+        ));
+        let host = CrawlHost {
+            admission,
+            snapshot: None,
+        };
         let controller = CrawlController::attach_with(
             host,
-            crawl_config_for_test(),
+            config,
             Arc::new(SkipSource {
                 data: crawl_graph(),
             }),
@@ -2882,26 +2700,6 @@ mod tests {
     }
 
     #[test]
-    fn a_non_verify_driver_error_classifies_as_fatal_other() {
-        let classified = verify_refusal_from_driver(DriverError::NoResultReceiver);
-        assert!(
-            matches!(
-                &classified,
-                RefusalKind::VerifyFailed {
-                    origin: VerifyOrigin::Other,
-                    fatal: true,
-                    ..
-                }
-            ),
-            "a non-verify driver failure must classify as Other, got {classified:?}"
-        );
-        assert!(
-            !crate::bot_core::verification_retry::is_retryable(&classified),
-            "a non-verify driver failure is fatal, never retried"
-        );
-    }
-
-    #[test]
     fn wait_session_end_delivers_the_pump_finished_fact() {
         let driver = driver_for_test();
         let runtime = degenbot_core::runtime::get_runtime();
@@ -2940,226 +2738,5 @@ mod tests {
             release_tx.send(()).expect("release the pump");
             driver.wait_pump_finished().await;
         });
-    }
-
-    // ── durable verified-pool fact (the verify-once registration invariant) ──
-
-    /// Register a V3 pool directly in the driver's shared core.
-    fn register_v3(driver: &EngineDriver, address: Address, coverage: PoolTickCoverage) -> u64 {
-        use alloy::primitives::{U128, U256};
-        use degenbot_pools::TickInfo;
-        use degenbot_pools::{PoolTickCoverage, RegisterV3PoolParams};
-        use hashbrown::HashMap;
-        let mut tick_data = HashMap::new();
-        if coverage == PoolTickCoverage::Tracked {
-            tick_data.insert(
-                60,
-                TickInfo {
-                    liquidity_gross: U128::from(100),
-                    liquidity_net: 100i128,
-                    block: 0,
-                },
-            );
-        }
-        driver
-            .stages()
-            .core()
-            .write_at(LockSite::Registration)
-            .register_v3_pool(&RegisterV3PoolParams {
-                address,
-                token0: Address::ZERO,
-                token1: Address::from([1u8; 20]),
-                fee: 3000,
-                tick_spacing: 60,
-                factory: Address::ZERO,
-                sqrt_price_x96: U256::from(1u128) << 96,
-                liquidity: 1_000_000,
-                tick: 0,
-                tick_data,
-                update_block: 0,
-                tick_data_block: None,
-                coverage,
-                fetcher: None,
-                ..Default::default()
-            })
-            .expect("test setup: V3 registration")
-    }
-
-    fn register_sparse_v3(driver: &EngineDriver, address: Address) -> u64 {
-        register_v3(driver, address, PoolTickCoverage::Sparse)
-    }
-
-    /// Register a Sparse V4 pool directly in the driver's shared core.
-    fn register_sparse_v4(driver: &EngineDriver, pool_manager: Address, pool_id: V4PoolId) -> u64 {
-        use alloy::primitives::U256;
-        use degenbot_pools::PoolTickCoverage;
-        use degenbot_pools::RegisterV4PoolParams;
-        use degenbot_pools::V4PoolKey;
-        use hashbrown::HashMap;
-        driver
-            .stages()
-            .core()
-            .write_at(LockSite::Registration)
-            .register_v4_pool(&RegisterV4PoolParams {
-                pool_manager,
-                pool_id,
-                pool_key: V4PoolKey {
-                    currency0: Address::ZERO,
-                    currency1: Address::from([1u8; 20]),
-                    fee: 500,
-                    tick_spacing: 10,
-                    hooks: Address::ZERO,
-                },
-                state_view: Address::ZERO,
-                hook_flags: 0,
-                protocol_fee: 0,
-                sqrt_price_x96: U256::from(1u128) << 96,
-                liquidity: 1_000_000,
-                tick: 0,
-                tick_data: HashMap::new(),
-                update_block: 0,
-                tick_data_block: None,
-                coverage: PoolTickCoverage::Sparse,
-                fetcher: None,
-                known_bitmap_words: Vec::new(),
-            })
-            .expect("test setup: V4 registration")
-    }
-
-    /// The registration invariant the retired Python key cache provided: a
-    /// later registration of the same identity does not re-run a COMPLETED
-    /// lifecycle. Re-quarantine the verified pool and buffer a backfill event;
-    /// a re-run would drain (apply) it, while a skipped run leaves it
-    /// untouched — the observable witness that the lifecycle did not run.
-    #[tokio::test]
-    async fn repeat_registration_does_not_rerun_a_completed_v3_lifecycle() {
-        let driver = driver_for_test();
-        let address = Address::from([0x11u8; 20]);
-        register_sparse_v3(&driver, address);
-        let key = PreBuildIdentity::Address(address);
-
-        driver
-            .run_registration_lifecycle(PoolLookup::from_address(address), None)
-            .await
-            .expect("first lifecycle");
-        assert!(driver.is_pool_verified(&key), "success records the fact");
-        assert_eq!(driver.verified_pool_count(), 1);
-
-        // Swap the now-verified Sparse pool for a Tracked one at the same
-        // address: a re-run would reach the verify step and fail for lack of a
-        // provider, so reaching `Ok` proves the durable fact short-circuited
-        // the expensive lifecycle rather than running it again.
-        {
-            let shared = driver.stages().core();
-            shared
-                .write_at(LockSite::Registration)
-                .unregister_pool(PoolLookup::from_address(address));
-        }
-        register_v3(&driver, address, PoolTickCoverage::Tracked);
-
-        driver
-            .run_registration_lifecycle(PoolLookup::from_address(address), None)
-            .await
-            .expect("a verified pool is not re-verified");
-        assert_eq!(driver.verified_pool_count(), 1);
-    }
-
-    /// A failed lifecycle records no fact, so a later driver call retries it
-    /// (here: a Tracked pool with no provider fails both times).
-    #[tokio::test]
-    async fn failed_driver_lifecycle_is_retriable_and_not_verified() {
-        use alloy::primitives::U256;
-        use degenbot_pools::{PoolTickCoverage, RegisterV3PoolParams};
-        use hashbrown::HashMap;
-
-        let driver = driver_for_test();
-        let address = Address::from([0x12u8; 20]);
-        let mut tick_data = HashMap::new();
-        tick_data.insert(
-            60,
-            degenbot_pools::TickInfo {
-                liquidity_gross: alloy::primitives::U128::from(100),
-                liquidity_net: 100i128,
-                block: 0,
-            },
-        );
-        driver
-            .stages()
-            .core()
-            .write_at(LockSite::Registration)
-            .register_v3_pool(&RegisterV3PoolParams {
-                address,
-                token0: Address::ZERO,
-                token1: Address::from([1u8; 20]),
-                fee: 3000,
-                tick_spacing: 60,
-                factory: Address::ZERO,
-                sqrt_price_x96: U256::from(1u128) << 96,
-                liquidity: 1_000_000,
-                tick: 0,
-                tick_data,
-                update_block: 0,
-                tick_data_block: None,
-                coverage: PoolTickCoverage::Tracked,
-                fetcher: None,
-                ..Default::default()
-            })
-            .expect("test setup: tracked V3 registration");
-        let key = PreBuildIdentity::Address(address);
-
-        for _ in 0..2 {
-            assert!(
-                driver
-                    .run_registration_lifecycle(PoolLookup::from_address(address), None)
-                    .await
-                    .is_err(),
-                "a tracked pool with no provider fails"
-            );
-            assert!(
-                !driver.is_pool_verified(&key),
-                "a failure must not record a verified fact"
-            );
-        }
-        assert_eq!(driver.verified_pool_count(), 0);
-    }
-
-    /// The durable fact is scoped by the driver's family-scoped claim key: a
-    /// V3 pool at an address does not verify a V4 pool under the same address
-    /// as its manager, nor does one V4 `(manager, pool_id)` verify a sibling
-    /// pool under the same manager.
-    #[tokio::test]
-    async fn driver_verify_facts_are_family_and_pair_scoped() {
-        let driver = driver_for_test();
-        let shared_address = Address::from([0x21u8; 20]);
-        let sibling_id = [0x88u8; 32];
-
-        register_sparse_v3(&driver, shared_address);
-        register_sparse_v4(&driver, shared_address, sibling_id);
-
-        let v3_key = PreBuildIdentity::Address(shared_address);
-        let v4_key = PreBuildIdentity::V4(sibling_id);
-
-        driver
-            .run_registration_lifecycle(PoolLookup::from_address(shared_address), None)
-            .await
-            .expect("V3 lifecycle");
-        assert!(driver.is_pool_verified(&v3_key));
-        assert!(
-            !driver.is_pool_verified(&v4_key),
-            "a V3 fact is not a V4 fact at the same address"
-        );
-
-        driver
-            .run_registration_lifecycle(
-                PoolLookup::V4 {
-                    pool_manager: shared_address,
-                    pool_id: sibling_id,
-                },
-                None,
-            )
-            .await
-            .expect("V4 lifecycle");
-        assert!(driver.is_pool_verified(&v4_key));
-        assert_eq!(driver.verified_pool_count(), 2);
     }
 }

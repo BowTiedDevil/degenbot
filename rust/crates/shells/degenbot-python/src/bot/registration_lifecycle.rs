@@ -22,7 +22,7 @@ use alloy::primitives::Address;
 use pyo3::exceptions::PyValueError;
 
 use crate::bot::engine::{hex_string_to_pool_id, PyArbEngine};
-use crate::bot::errmap::{map_driver_lifecycle_err, map_refusal};
+use crate::bot::errmap::map_refusal;
 use crate::bot::PyBot;
 use crate::config::RetryPolicy;
 use crate::prelude::*;
@@ -328,30 +328,33 @@ pub(crate) fn run_registration_lifecycle(
     let snapshot_block = lifecycle.snapshot_block;
     match lifecycle.mode {
         Mode::Async => {
-            let driver = Arc::clone(driver);
+            let verify = Arc::clone(driver.verify());
             let future = crate::ambient_runtime::future_into_py(py, async move {
-                driver
-                    .run_registration_lifecycle(key, snapshot_block)
-                    .await
-                    .map_err(map_driver_lifecycle_err)
+                verify.run(key, snapshot_block).await.map_err(map_refusal)
             })?;
             Ok(future.into())
         }
         Mode::Blocking => {
-            let driver = Arc::clone(driver);
+            let verify = Arc::clone(driver.verify());
             py.detach(move || {
-                driver
-                    .run_registration_lifecycle_sync(key, snapshot_block)
-                    .map_err(map_driver_lifecycle_err)
+                degenbot_core::runtime::get_runtime()
+                    .block_on(verify.run(key, snapshot_block))
+                    .map_err(map_refusal)
             })?;
             Ok(py.None())
         }
         Mode::BlockingWithRetry => {
+            // The retry policy is the verify home's construction value (its one
+            // owner); this mode installs the value's bounds on that home and then
+            // runs the one operation. The bounded dance itself is core-owned.
             let policy = lifecycle.core_policy(py)?;
-            let driver = Arc::clone(driver);
+            let verify = Arc::clone(driver.verify());
+            let mut config = verify.config();
+            config.retry = policy;
+            verify.configure(config);
             py.detach(move || {
-                driver
-                    .run_registration_lifecycle_with_retry_sync(key, snapshot_block, &policy)
+                degenbot_core::runtime::get_runtime()
+                    .block_on(verify.run(key, snapshot_block))
                     .map_err(map_refusal)
             })?;
             Ok(py.None())

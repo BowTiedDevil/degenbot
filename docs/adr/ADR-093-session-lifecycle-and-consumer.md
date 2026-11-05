@@ -313,9 +313,12 @@ consumer that took the driver asks `driver.stages()` once and keeps the handle.
   Verify configuration becomes a property of the verify home plus the one
   provider the `Bot` owns (ADR-022 D3), not a session poke.
 - **Registration admission.** One implementation of the stage order (memo →
-  construction → eligibility → Verify lifecycle → registration) lives in
-  `bot_core` beside the ledger, whose mechanical gate is already
+  construction → eligibility → Verify lifecycle → registration) lives at
+  `arb_engine::crawl::admission`, beside the two adapters it feeds and
+  composing the `bot_core` homes it stages — the ledger's mechanical gate is
   `RegistrationLedger::admit_path_with_policy` (`registration_ledger.rs:1323`).
+  A `bot_core` home would invert the module direction: the admission composes
+  `EngineStages`, which lives in `arb_engine`.
   Two **adapters** feed it: the crawl (`degenbot_bot::arb_engine::crawl`) for
   discovered candidates, and direct registration for a caller that already has
   a candidate path. Neither adapter owns the order, and neither can drift it.
@@ -323,7 +326,7 @@ consumer that took the driver asks `driver.stages()` once and keeps the handle.
   actually needs — `Arc<Bot>`, `Arc<ConstructionIo>`, the snapshot arm, the
   ledger, the flights, the settings, and the two capability handles (the verify
   claim table and the path registry) — instead of `Arc<EngineDriver>`
-  (`crawl/controller.rs:654`–`691`, `crawl/unit.rs:292`). `degenbot_bot::crawl`
+  (`crawl/controller.rs`, `crawl/unit.rs`). `degenbot_bot::crawl`
   then runs in a process that never pumps, which is the leverage the
   back-reference was withholding.
 

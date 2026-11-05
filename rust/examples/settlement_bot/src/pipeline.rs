@@ -1,283 +1,217 @@
-//! The discovery→registration pipeline — parity-ledger rows 9 + 12 + 13
+//! The example's registration pipeline — an ADAPTER over Registration
+//! admission, plus its offline enumeration arm.
 //!
-//! Mirrors `src/degenbot/runner/build_paths.py`'s
-//! `PathRegistrationPipeline._registration_unit` (the per-path build/verify/
-//! register unit) hand-wired: the D7KMQO policy gate, the W73FVY dup
-//! fast-path, and the prepare→arm→fold sequence. The CONTRACT it coordinates
-//! is the core's (`degenbot::bot_core`): the typed
-//! [`RegistrationUnitOutcome`](degenbot::bot::bot_core::RegistrationUnitOutcome)
-//! vocabulary, the
-//! [`PipelineReport`](degenbot::bot::bot_core::PipelineReport)
-//! counter fold, and the [`RegistrationLedger`](degenbot::bot::bot_core::RegistrationLedger)
-//! memos — this module declares none of them. The at-most-once verify window
-//! is the CORE's too (`degenbot::bot::bot_core::VerifyClaims`, entered by
-//! `EngineDriver::run_*_registration_lifecycle`); this layer keeps only the
-//! verify-once memo and the bounded retry dance over a released window.
+//! The stage order a candidate takes to the engine's registry (memoization →
+//! construction → eligibility → Verify lifecycle → registration) is the core's
+//! ONE implementation
+//! ([`RegistrationAdmission`](degenbot::bot::crawl::RegistrationAdmission)); this
+//! module contributes the two things an adapter owns — where candidates come
+//! from (the batched graph enumeration) and this driver's observation policy
+//! (the pre-registration [`PathPolicy`] gate and the progress cadence). It
+//! declares no admission rule of its own: the typed outcome vocabulary, the
+//! `PipelineReport` fold, the negative memos, the build flights, the verify
+//! claim table and its bounded retry are all the core's.
 //!
-//! Two modes:
+//! Two arms:
 //! - **offline-dry** ([`run_offline`]): enumeration + direction resolution +
-//!   policy + candidate counts only — no RPC, no build, no registration.
-//!   This is the CI acceptance path.
-//! - **live** (gated on `SMOKE_RPC_URL`; see `main.rs`): per-candidate pool
-//!   build through `ConstructionIo`, `BotState` registration, the ADR-022
-//!   verify lifecycle under the claim table, then
-//!   `EngineDriver::register_and_solve_path`.
+//!   the graph-side policy + candidate counts only — no RPC, no build, no
+//!   registration, so nothing is admitted at all. This is the CI acceptance
+//!   path.
+//! - **live** (`crate::live::run_live`, gated on `SMOKE_RPC_URL`): the same
+//!   enumeration, then each candidate through the admission. The receipt the
+//!   admission answers is folded here through `PipelineReport::absorb` — the
+//!   same fold the crawl adapter's receipts fold through.
+
+#![expect(
+    clippy::result_large_err,
+    reason = "the bounded admission outcome IS the vocabulary the fold consumes; boxing it would only move the allocation to every call site"
+)]
 
 use degenbot::pathfinding::{
     resolve_directions as core_resolve_directions, DirectionHop, PoolKind,
 };
 
-use crate::discovery::{BuiltGraph, DiscoveryParams};
+use crate::discovery::{BatchedPathFinder, BuiltGraph, DiscoveryParams};
 use crate::policy::{HopView, PathPolicy};
 use degenbot::bot::bot_core::{
-    HopSignature, OutcomeLabel, PipelineReport, RegistrationLedger, RegistrationOutcome,
-    RegistrationUnitOutcome,
+    OutcomeLabel, PipelineReport, RegistrationOutcome, RegistrationUnitOutcome,
 };
-use degenbot::bot_core::RetryPolicy;
+use degenbot::bot::crawl::DiscoveredHop;
 
-/// A path that passed every driver gate and is ready for the registration
-/// stage.
-#[derive(Clone, Debug)]
-pub struct PreparedCandidate {
-    /// Node indices (into [`BuiltGraph::nodes`]) in path order.
+/// One enumerated path resolved to its graph nodes and oriented hop views.
+pub struct ResolvedPath {
+    /// Indices into [`BuiltGraph::nodes`], in path order.
     pub pool_indices: Vec<usize>,
-    /// The oriented hop views.
+    /// The oriented hop views (the graph-side policy's input).
     pub hops: Vec<HopView>,
-    /// The hop signature (engine pool ids once live; graph ids offline).
-    pub hop_sig: HopSignature,
-    /// The per-hop directions (parallel to `pool_indices`).
+    /// The per-hop directions, parallel to `pool_indices`.
     pub zfos: Vec<bool>,
-    /// The number of V4 hops (the `v4_pool_count` witness).
-    pub v4_hops: usize,
 }
 
-/// The result of the pre-registration preparation stage.
-#[derive(Clone, Debug)]
-pub enum PrepareOutcome {
-    /// Ready for build/verify/register.
-    Ready(PreparedCandidate),
-    /// A benign skip (unregistrable memo, unknown type, no hash, direction
-    /// mismatch).
-    Skip(RegistrationUnitOutcome),
-    /// A counted rejection (path-rejected memo / policy deny).
-    Reject(RegistrationUnitOutcome),
-    /// A fatal direction-resolution failure (subgraph vs constructed pool
-    /// disagreement) — the Python pipeline aborts loudly.
-    DirectionFatal(String),
-}
-
-/// The reusable registration pipeline (mirrors `PathRegistrationPipeline`).
-#[derive(Debug)]
-pub struct RegistrationPipeline {
-    /// The four memos + typed build-refusal classification.
-    pub ledger: RegistrationLedger,
-    /// The driver path-composition policy (row 13).
-    pub policy: PathPolicy,
-    /// The transient-verify retry policy.
-    pub retry_policy: RetryPolicy,
-}
-
-impl RegistrationPipeline {
-    /// Build a pipeline with the driver defaults.
-    #[must_use]
-    pub fn new(policy: PathPolicy, retry_policy: RetryPolicy) -> Self {
-        Self {
-            ledger: RegistrationLedger::default(),
-            policy,
-            retry_policy,
+/// Map one enumerated path onto graph nodes, refusing a pool the graph does not
+/// hold (or holds under another family) with the admission's own bounded label.
+///
+/// # Errors
+///
+/// The bounded `UnknownPoolType` skip outcome.
+pub fn node_indices(
+    built: &BuiltGraph,
+    path: &[(u64, PoolKind)],
+) -> Result<Vec<usize>, RegistrationUnitOutcome> {
+    let mut pool_indices: Vec<usize> = Vec::with_capacity(path.len());
+    for (graph_id, kind) in path {
+        let Some(idx) = built.by_graph_id.get(graph_id).copied() else {
+            return Err(unknown_pool());
+        };
+        if built.nodes[idx].kind != *kind {
+            return Err(unknown_pool());
         }
+        pool_indices.push(idx);
     }
+    Ok(pool_indices)
+}
 
-    /// Resolve the per-hop directions and orient the hop views — the driver's
-    /// direction-resolution step, over the graph nodes the candidate indexes.
-    fn resolve_hops(
-        built: &BuiltGraph,
-        pool_indices: &[usize],
-        input_token_lower: &str,
-        weth_lower: &str,
-    ) -> Result<(Vec<bool>, Vec<HopView>), String> {
-        let direction_hops: Vec<DirectionHop<'_>> = pool_indices
-            .iter()
-            .map(|idx| {
-                let node = &built.nodes[*idx];
-                DirectionHop {
-                    token0: &node.token0,
-                    token1: &node.token1,
-                    identity: &node.identity,
-                }
-            })
-            .collect();
-        let zfos = core_resolve_directions(&direction_hops, input_token_lower, weth_lower)
-            .map_err(|error| error.to_string())?;
-
-        let hops = pool_indices
-            .iter()
-            .zip(zfos.iter())
-            .map(|(idx, zfo)| {
-                let node = &built.nodes[*idx];
-                let (token_in, token_out) = if *zfo {
-                    (node.token0.clone(), node.token1.clone())
-                } else {
-                    (node.token1.clone(), node.token0.clone())
-                };
-                HopView {
-                    pool_identity: node.identity.clone(),
-                    pool_kind: node.kind,
-                    token_in,
-                    token_out,
-                }
-            })
-            .collect();
-        Ok((zfos, hops))
+fn unknown_pool() -> RegistrationUnitOutcome {
+    RegistrationUnitOutcome::Skip {
+        label: OutcomeLabel::Vocabulary(RegistrationOutcome::UnknownPoolType),
+        counts_as_skip: true,
+        detail: None,
     }
+}
 
-    /// Run the pre-registration stages (mirrors `_registration_unit` up to the
-    /// build/verify/register turns).
-    #[must_use]
-    pub fn prepare_candidate(
-        &mut self,
-        built: &BuiltGraph,
-        path: &[(u64, PoolKind)],
-        input_token_lower: &str,
-        weth_lower: &str,
-    ) -> PrepareOutcome {
-        let mut pool_indices: Vec<usize> = Vec::with_capacity(path.len());
-        let mut kinds: Vec<PoolKind> = Vec::with_capacity(path.len());
-        for (graph_id, kind) in path {
-            let Some(idx) = built.by_graph_id.get(graph_id).copied() else {
-                return PrepareOutcome::Skip(RegistrationUnitOutcome::Skip {
-                    label: OutcomeLabel::Vocabulary(RegistrationOutcome::UnknownPoolType),
-                    counts_as_skip: true,
-                    detail: None,
-                });
-            };
-            if built.nodes[idx].kind != *kind {
-                return PrepareOutcome::Skip(RegistrationUnitOutcome::Skip {
-                    label: OutcomeLabel::Vocabulary(RegistrationOutcome::UnknownPoolType),
-                    counts_as_skip: true,
-                    detail: None,
-                });
-            }
-            pool_indices.push(idx);
-            kinds.push(*kind);
-        }
-
-        // Unregistrable-pool memo: a stable-refused hop answers before any
-        // build/verify (mirrors the ledger ask).
-        for (idx, kind) in pool_indices.iter().zip(kinds.iter()) {
+/// Resolve the per-hop directions from the graph's own token facts and orient
+/// the hop views — the enumeration's direction step.
+///
+/// # Errors
+///
+/// The direction resolver's rendering when the chain cannot close.
+pub fn resolve_path(
+    built: &BuiltGraph,
+    pool_indices: &[usize],
+    input_token_lower: &str,
+    weth_lower: &str,
+) -> Result<(Vec<bool>, Vec<HopView>), String> {
+    let direction_hops: Vec<DirectionHop<'_>> = pool_indices
+        .iter()
+        .map(|idx| {
             let node = &built.nodes[*idx];
-            if node.kind == PoolKind::V4 && node.pool_hash.is_none() {
-                return PrepareOutcome::Skip(RegistrationUnitOutcome::Skip {
-                    label: OutcomeLabel::Vocabulary(RegistrationOutcome::V4NoHash),
-                    counts_as_skip: true,
-                    detail: None,
-                });
+            DirectionHop {
+                token0: &node.token0,
+                token1: &node.token1,
+                identity: &node.identity,
             }
-            let memo_key = RegistrationLedger::pool_memo_key(
-                *kind,
-                node.address.as_deref(),
-                node.pool_hash.as_deref(),
-            );
-            if let Some(record) = self.ledger.unregistrable_record(memo_key.as_ref()) {
-                return PrepareOutcome::Skip(RegistrationUnitOutcome::Skip {
-                    label: OutcomeLabel::Vocabulary(record.outcome.clone()),
-                    counts_as_skip: record.counts_as_skip,
-                    detail: None,
-                });
-            }
-        }
-
-        let (zfos, hops) =
-            match Self::resolve_hops(built, &pool_indices, input_token_lower, weth_lower) {
-                Ok(resolved) => resolved,
-                Err(error) => return PrepareOutcome::DirectionFatal(error),
-            };
-
-        // Offline stand-in for the engine hop id: the graph id. The live path
-        // replaces this with the BotState pool id before registering.
-        let hop_sig: HopSignature = path
-            .iter()
-            .zip(zfos.iter())
-            .map(|((graph_id, _), zfo)| (*graph_id, *zfo))
-            .collect();
-        let v4_hops = kinds.iter().filter(|k| **k == PoolKind::V4).count();
-
-        // Deterministic reject memo (D7KMQO gate deny).
-        if self.ledger.path_rejected(&hop_sig) {
-            return PrepareOutcome::Reject(RegistrationUnitOutcome::Reject { detail: None });
-        }
-
-        // Policy gate: hop bounds, allow/deny, duplicate pools.
-        if let Err(rejection) = self.policy.evaluate(&hops) {
-            self.ledger.memoize_rejected_path(hop_sig);
-            return PrepareOutcome::Reject(RegistrationUnitOutcome::Reject {
-                detail: Some(rejection.to_string()),
-            });
-        }
-
-        // Dup fast-path (W73FVY): answer registered signatures before verify.
-        // The dedup outcome carries the unit's V4 hops so the fold's
-        // `v4_pool_count` witness matches the Python driver's memo answer.
-        if self.ledger.path_registered(&hop_sig) {
-            return PrepareOutcome::Skip(RegistrationUnitOutcome::Registered {
-                created: false,
-                v4_hops,
-            });
-        }
-
-        PrepareOutcome::Ready(PreparedCandidate {
-            pool_indices,
-            hops,
-            hop_sig,
-            zfos,
-            v4_hops,
         })
-    }
+        .collect();
+    let zfos = core_resolve_directions(&direction_hops, input_token_lower, weth_lower)
+        .map_err(|error| error.to_string())?;
+
+    let hops = pool_indices
+        .iter()
+        .zip(zfos.iter())
+        .map(|(idx, zfo)| {
+            let node = &built.nodes[*idx];
+            let (token_in, token_out) = if *zfo {
+                (node.token0.clone(), node.token1.clone())
+            } else {
+                (node.token1.clone(), node.token0.clone())
+            };
+            HopView {
+                pool_identity: node.identity.clone(),
+                pool_kind: node.kind,
+                token_in,
+                token_out,
+            }
+        })
+        .collect();
+    Ok((zfos, hops))
 }
 
-/// The offline-dry pipeline: walk the batched enumeration, apply directions +
-/// policy, and count candidates. No RPC, no build, no registration.
+/// The admission's candidate hops for one resolved path — the family identity
+/// the admission builds from (the graph's addresses and V4 pool ids).
+///
+/// # Errors
+///
+/// The bounded `UnknownPoolType` skip outcome when a node carries no identity
+/// for its family.
+pub fn admitted_hops(
+    built: &BuiltGraph,
+    pool_indices: &[usize],
+) -> Result<Vec<DiscoveredHop>, RegistrationUnitOutcome> {
+    let mut hops = Vec::with_capacity(pool_indices.len());
+    for idx in pool_indices {
+        let node = &built.nodes[*idx];
+        let hop = match node.kind {
+            PoolKind::V2 => DiscoveredHop::V2 {
+                address: parse_address(node.address.as_deref())?,
+            },
+            PoolKind::V3 => DiscoveredHop::V3 {
+                address: parse_address(node.address.as_deref())?,
+            },
+            PoolKind::V4 => DiscoveredHop::V4 {
+                pool_manager: parse_address(node.manager.as_deref())?,
+                pool_hash: node
+                    .pool_hash
+                    .as_deref()
+                    .and_then(|hash| hash.parse::<alloy::primitives::B256>().ok())
+                    .map(|hash| hash.0),
+            },
+            _ => return Err(unknown_pool()),
+        };
+        hops.push(hop);
+    }
+    Ok(hops)
+}
+
+fn parse_address(
+    text: Option<&str>,
+) -> Result<alloy::primitives::Address, RegistrationUnitOutcome> {
+    text.and_then(|text| text.parse().ok())
+        .ok_or_else(unknown_pool)
+}
+
+/// The offline-dry arm: walk the batched enumeration, resolve directions, apply
+/// the graph-side policy, and count candidates. No RPC, no build, no
+/// registration — nothing is admitted.
 ///
 /// This is the CI acceptance path (parity: outcomes comparable to the Python
 /// driver's build/skip counters with the build/verify/register turns removed).
 pub async fn run_offline(
-    pipeline: &mut RegistrationPipeline,
     built: &BuiltGraph,
     params: &DiscoveryParams,
+    policy: &PathPolicy,
     input_token_lower: &str,
     weth_lower: &str,
 ) -> PipelineReport {
     let mut report = PipelineReport::default();
-    let mut finder = crate::discovery::BatchedPathFinder::new(&built.graph, params);
+    let mut finder = BatchedPathFinder::new(&built.graph, params);
     while let Some(batch) = finder.next_batch() {
         for path in &batch {
-            let outcome = pipeline.prepare_candidate(built, path, input_token_lower, weth_lower);
-            match outcome {
-                PrepareOutcome::Ready(candidate) => {
-                    report.candidates += 1;
-                    report.v4_pool_count += candidate.v4_hops;
+            match node_indices(built, path) {
+                Ok(pool_indices) => {
+                    match resolve_path(built, &pool_indices, input_token_lower, weth_lower) {
+                        Ok((_zfos, hops)) => match policy.evaluate(&hops) {
+                            Ok(()) => report.candidates += 1,
+                            Err(rejection) => {
+                                report.policy_rejected += 1;
+                                report.absorb(&RegistrationUnitOutcome::Reject {
+                                    detail: Some(rejection.to_string()),
+                                });
+                            }
+                        },
+                        Err(message) => {
+                            report.direction_errors += 1;
+                            *report
+                                .skip_reasons
+                                .entry(format!("direction-fatal:{message}"))
+                                .or_insert(0) += 1;
+                        }
+                    }
                 }
-                PrepareOutcome::Skip(outcome) => report.absorb(&outcome),
-                PrepareOutcome::Reject(outcome) => {
-                    report.absorb(&outcome);
-                    report.policy_rejected += 1;
-                }
-                PrepareOutcome::DirectionFatal(message) => {
-                    report.direction_errors += 1;
-                    *report
-                        .skip_reasons
-                        .entry(format!("direction-fatal:{message}"))
-                        .or_insert(0) += 1;
-                }
+                Err(outcome) => report.absorb(&outcome),
             }
         }
         tokio::task::yield_now().await;
     }
-    // Discovery admits every token as an intermediate hop (mirroring
-    // `find_paths_async` with no `allowed_intermediate_tokens`), so the policy
-    // gate never sees a token-filter rejection by default; `token_filter_count`
-    // stays the Python counter it is (0 unless a `PathPolicy` allow/deny set is
-    // configured).
     report
 }
 
@@ -290,8 +224,8 @@ pub async fn run_offline(
 mod tests {
     use super::*;
     use crate::discovery::{build_graph, DiscoveryParams, V4_POOL_ID_OFFSET};
-    use crate::policy::PathPolicy;
-    use degenbot::pathfinding::PoolKind;
+    use alloy::primitives::{address, Address};
+    use degenbot::db::discovery_read::DiscoveryPoolRow;
     use std::path::Path;
 
     /// The G2 discovery fixture (chain 8453: one V3 pool + one V4 pool).
@@ -311,9 +245,9 @@ mod tests {
     /// backup is left behind. The two fixture tests run on parallel test
     /// threads; opening the shared repo file from both raced that heal
     /// (`SQLITE_IOERR` / "index ... already exists" / "database disk image is
-    /// malformed") — the intermittent `open fixture db` failure at
-    /// pipeline.rs:545. Each test heals its own copy instead, so the committed
-    /// fixture bytes stay historical and no two opens share a file.
+    /// malformed") — the intermittent `open fixture db` failure. Each test heals
+    /// its own copy instead, so the committed fixture bytes stay historical and
+    /// no two opens share a file.
     struct FixtureCopy {
         path: std::path::PathBuf,
     }
@@ -389,18 +323,15 @@ mod tests {
             pool_type_per_depth: None,
             batch_size: 1000,
         };
-        let mut pipeline = RegistrationPipeline::new(
-            PathPolicy {
-                min_hops: 2,
-                max_hops: 3,
-                ..PathPolicy::default()
-            },
-            RetryPolicy::verification_default(),
-        );
+        let policy = PathPolicy {
+            min_hops: 2,
+            max_hops: 3,
+            ..PathPolicy::default()
+        };
         let report = run_offline(
-            &mut pipeline,
             &built,
             &params,
+            &policy,
             "0x236aa50979d5f3de3bd1eeb40e81137f22ab794b",
             "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
         )
@@ -410,5 +341,134 @@ mod tests {
         assert_eq!(report.candidates, 0);
         assert_eq!(report.path_count, 0);
         assert_eq!(report.direction_errors, 0);
+    }
+
+    // ── the adapter's candidate mapping, pinned against the admission ──────
+
+    const PIN_USDC: Address = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    const PIN_WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+
+    /// One V2 discovery row over `(USDC, WETH)`.
+    fn pin_v2_row(id: i64, pool: Address) -> DiscoveryPoolRow {
+        use degenbot::db::discovery_read::DiscoveryV2Row;
+        use degenbot::db::rows::{Erc20TokenRow, ExchangeRow, LiquidityPoolRow};
+        let token = |id: i64, address: Address| Erc20TokenRow {
+            id,
+            chain: 1,
+            address,
+            name: None,
+            symbol: None,
+            decimals: Some(18),
+        };
+        DiscoveryPoolRow::V2(DiscoveryV2Row {
+            pool: LiquidityPoolRow {
+                id,
+                address: pool,
+                chain: 1,
+                kind: "uniswap_v2".to_owned(),
+                token0_id: 1,
+                token1_id: 2,
+                exchange_id: 1,
+            },
+            exchange: ExchangeRow {
+                id: 1,
+                chain_id: 1,
+                name: "uniswap_v2".to_owned(),
+                active: true,
+                last_update_block: None,
+                factory: Address::ZERO,
+                deployer: None,
+            },
+            token0: token(1, PIN_USDC),
+            token1: token(2, PIN_WETH),
+            fee_token0: 997,
+            fee_token1: 997,
+            fee_denominator: 1_000,
+            stable: None,
+        })
+    }
+
+    /// A two-pool graph over one token pair: both tokens sit on two edges, so the
+    /// degree filter admits them and the graph carries a two-hop cycle.
+    fn pin_graph() -> BuiltGraph {
+        let rows = vec![
+            pin_v2_row(1, Address::from([0x51u8; 20])),
+            pin_v2_row(2, Address::from([0x52u8; 20])),
+        ];
+        build_graph(&rows, &[PoolKind::V2], None)
+    }
+
+    /// The candidate path over the fixture graph, in graph order.
+    fn pin_path(built: &BuiltGraph) -> Vec<(u64, PoolKind)> {
+        built
+            .nodes
+            .iter()
+            .map(|node| (node.graph_id, node.kind))
+            .collect()
+    }
+
+    /// The adapter's mapping answers the SAME bounded vocabulary the admission
+    /// folds: a graph path maps to family identities, an unknown or family-
+    /// mismatched pool is the `unknown-pool-type` skip, and the direction
+    /// refusal stays the loud arm.
+    #[test]
+    fn the_adapter_maps_a_path_to_the_admissions_candidate_families() {
+        let built = pin_graph();
+        let path = pin_path(&built);
+        assert_eq!(path.len(), 2, "the fixture graph has two V2 hops");
+        let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+        let weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+
+        let indices = node_indices(&built, &path).expect("the path maps");
+        assert_eq!(indices.len(), 2);
+        let (zfos, views) = resolve_path(&built, &indices, usdc, weth).expect("the cycle closes");
+        assert_eq!(zfos, vec![true, false], "USDC → WETH → USDC");
+        assert_eq!(views.len(), 2);
+
+        let hops = admitted_hops(&built, &indices).expect("both hops carry an identity");
+        assert_eq!(hops.len(), 2);
+        for hop in &hops {
+            assert_eq!(hop.kind(), PoolKind::V2);
+            assert!(hop.pre_build_identity().is_some());
+        }
+
+        // An unknown graph id and a family mismatch are the bounded skip.
+        assert!(matches!(
+            node_indices(&built, &[(9_999, PoolKind::V2)]),
+            Err(RegistrationUnitOutcome::Skip {
+                label: OutcomeLabel::Vocabulary(RegistrationOutcome::UnknownPoolType),
+                counts_as_skip: true,
+                ..
+            })
+        ));
+        assert!(matches!(
+            node_indices(&built, &[(path[0].0, PoolKind::V3)]),
+            Err(RegistrationUnitOutcome::Skip {
+                label: OutcomeLabel::Vocabulary(RegistrationOutcome::UnknownPoolType),
+                counts_as_skip: true,
+                ..
+            })
+        ));
+    }
+
+    /// A V4 hop carries its `(PoolManager, pool_id)` identity; a hashless one is
+    /// still representable, and the ADMISSION answers its bounded `v4-no-hash`
+    /// skip (the adapter never invents one).
+    #[test]
+    fn a_v4_hop_carries_its_manager_and_pool_id() {
+        let mut built = pin_graph();
+        built.nodes[0].kind = PoolKind::V4;
+        built.nodes[0].manager = Some("0x3333333333333333333333333333333333333333".to_owned());
+        built.nodes[0].pool_hash = Some(format!("0x{}", "cd".repeat(32)));
+        let hops = admitted_hops(&built, &[0]).expect("the V4 identity maps");
+        assert_eq!(hops.len(), 1);
+        assert_eq!(hops[0].kind(), PoolKind::V4);
+
+        built.nodes[0].pool_hash = None;
+        let hashless = admitted_hops(&built, &[0]).expect("a hashless V4 hop is representable");
+        assert!(
+            hashless[0].pre_build_identity().is_none(),
+            "a hashless hop carries no memoizable identity"
+        );
     }
 }

@@ -34,12 +34,13 @@ use super::{
     CrawlRequestError, CrawlState, CrawlStateError, CrawlUnitFuture, CrawlUnitSeat, RunPhase,
     SeatHold, SnapshotArm,
 };
+use crate::arb_engine::crawl::admission::{CrawlLedger, DiscoveredHop, RegistrationAdmission};
 use crate::arb_engine::crawl::discovery::{
     CrawlDiscoveryError, DiscoveredPath, DiscoverySource, Edition,
 };
+use crate::arb_engine::crawl::flights::BuildFlights;
 use crate::arb_engine::crawl::policy::CrawlPathPolicy;
 use crate::arb_engine::crawl::receipt::{CrawlReceipt, StageSplit};
-use crate::arb_engine::crawl::unit::DiscoveredHop;
 use crate::arb_engine::EngineStages;
 use crate::bot_core::construction_io::{ConstructionIo, NoDb, RpcConstruction};
 use crate::bot_core::registration_ledger::RegistrationUnitOutcome;
@@ -495,10 +496,17 @@ fn harness_with_arm(
         Arc::clone(&bot),
         stages,
     ));
-    let host = CrawlHost {
-        bot,
-        driver,
+    let admission = Arc::new(RegistrationAdmission::new(
+        Arc::clone(&bot),
         io,
+        Arc::clone(driver.stages()),
+        Arc::clone(driver.verify()),
+        Arc::new(CrawlLedger::new()),
+        Arc::new(BuildFlights::new()),
+        Arc::new(config.admission_settings()),
+    ));
+    let host = CrawlHost {
+        admission,
         snapshot,
     };
     let controller = CrawlController::attach_with(host, config, source.clone(), seat).unwrap();

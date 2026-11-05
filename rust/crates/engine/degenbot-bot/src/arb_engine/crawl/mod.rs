@@ -1,12 +1,14 @@
 //! The Rust-owned registration crawl.
 //!
-//! `policy` is the path-composition policy as data: the core evaluates a
-//! candidate's composition without holding a Python predicate. `receipt` is a
-//! unit's terminal record (identity, answering stage, outcome) and `profile`
-//! the measurement folded from those records — the stage profile and the
-//! summary counters the crawl is reported by. `unit` is the per-candidate
-//! pipeline itself (memo → build → eligibility → verify → register, one
-//! receipt), and `flights` the single-flight build table that keeps concurrent
+//! `admission` is Registration admission itself — the ONE implementation of the
+//! stage order (memo → build → eligibility → verify → register), answered as one
+//! `CrawlReceipt` or one loud `CrawlAbort`. `unit` is the CRAWL adapter over it:
+//! one submitted candidate in, the admission's receipt out. `policy` is the
+//! path-composition policy as data: the core evaluates a candidate's composition
+//! without holding a Python predicate. `receipt` is a candidate's terminal record
+//! (identity, answering stage, outcome) and `profile` the measurement folded from
+//! those records — the stage profile and the summary counters the crawl is
+//! reported by. `flights` is the single-flight build table that keeps concurrent
 //! seats from paying for the same construction twice. `discovery` is where
 //! candidates come from (the DB graph reads, the traversal plan, the lazy DFS
 //! sweep) and `controller` the crawl's own machine: the windowed submission
@@ -14,9 +16,10 @@
 //!
 //! The data flow is one line: `discovery` yields a `DiscoveredPath`, the
 //! controller wraps it in a `CrawlUnit`, a fleet seat runs `unit::run_crawl_unit`
-//! and answers a `CrawlReceipt`, and the controller folds that receipt into the
-//! `profile::CrawlSummary` it reports.
+//! (the admission's crawl adapter) and answers a `CrawlReceipt`, and the
+//! controller folds that receipt into the `profile::CrawlSummary` it reports.
 
+pub mod admission;
 pub mod controller;
 pub mod discovery;
 pub mod flights;

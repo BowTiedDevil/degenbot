@@ -26,11 +26,11 @@
 //! the same process owner the Python `degenbot._ffi.fleet` mirror mints, so
 //! the reach claim is proven by construction (row 20 is DRIVER-POLICY, not a
 //! new gap). The host is the driver-local transport: `add_path`/`discover`
-//! delegate to a [`PathOps`] sink (the driver's registration pipeline), and
-//! the wire guard never crashes on a malformed command.
+//! delegate to a [`PathOps`] sink (the example's graph-side candidate
+//! preparation), and the wire guard never crashes on a malformed command.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use degenbot::db::discovery_read::DiscoveryPoolRow;
@@ -45,9 +45,7 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::discovery::{build_graph, BatchedPathFinder, BuiltGraph, DiscoveryParams, PoolNode};
-use crate::pipeline::RegistrationPipeline;
 use crate::policy::PathPolicy;
-use degenbot::bot_core::RetryPolicy;
 
 /// Default per-request read timeout (mirrors `OperatorServer`'s
 /// `request_timeout` default).
@@ -154,12 +152,17 @@ pub trait PathOps: Send + Sync {
     fn trigger_discovery(&self, bound: Option<usize>) -> Result<usize, String>;
 }
 
-/// The production [`PathOps`]: enqueue/discover through a driver
-/// [`RegistrationPipeline`] over a graph built from the same discovery rows.
+/// The production [`PathOps`]: enqueue/discover through the example's
+/// graph-side candidate preparation ([`crate::pipeline`]) over a graph built
+/// from the same discovery rows.
+///
+/// This surface is RPC-free by construction, so it exercises the enumeration and
+/// the pre-registration policy only — it admits nothing (Registration admission
+/// needs a node), which is exactly the inert mode's contract.
 pub struct PipelinePathOps {
     graph: BuiltGraph,
     params: DiscoveryParams,
-    pipeline: Mutex<RegistrationPipeline>,
+    policy: PathPolicy,
     input_token: String,
     weth: String,
 }
@@ -172,17 +175,26 @@ impl PipelinePathOps {
         requested_kinds: &[PoolKind],
         params: &DiscoveryParams,
         policy: PathPolicy,
-        retry_policy: RetryPolicy,
         input_token: String,
         weth: String,
     ) -> Self {
         Self {
             graph: build_graph(rows, requested_kinds, None),
             params: params.clone(),
-            pipeline: Mutex::new(RegistrationPipeline::new(policy, retry_policy)),
+            policy,
             input_token,
             weth,
         }
+    }
+
+    /// Prepare one graph path: the adapter's mapping, the direction resolution,
+    /// and the graph-side policy gate.
+    fn prepare(&self, path: &[(u64, PoolKind)]) -> Option<()> {
+        let indices = crate::pipeline::node_indices(&self.graph, path).ok()?;
+        let (_zfos, hops) =
+            crate::pipeline::resolve_path(&self.graph, &indices, &self.input_token, &self.weth)
+                .ok()?;
+        self.policy.evaluate(&hops).ok()
     }
 }
 
@@ -217,29 +229,20 @@ impl PathOps for PipelinePathOps {
             }
         }
         if resolved {
-            let mut pipeline = match self.pipeline.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            let _ = pipeline.prepare_candidate(&self.graph, &path, &self.input_token, &self.weth);
+            let _ = self.prepare(&path);
         }
         Ok(steps.len())
     }
 
     fn trigger_discovery(&self, bound: Option<usize>) -> Result<usize, String> {
         let mut finder = BatchedPathFinder::new(&self.graph.graph, &self.params);
-        let mut pipeline = match self.pipeline.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
         let mut count = 0_usize;
         while let Some(batch) = finder.next_batch() {
             for path in &batch {
                 if bound.is_some_and(|limit| count >= limit) {
                     return Ok(count);
                 }
-                let _ =
-                    pipeline.prepare_candidate(&self.graph, path, &self.input_token, &self.weth);
+                let _ = self.prepare(path);
                 count += 1;
             }
         }
