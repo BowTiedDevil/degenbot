@@ -12,6 +12,7 @@ use super::{
 use crate::conversion::alloy::{PyI256, PyU256};
 use crate::prelude::*;
 use degenbot_bot::arb_engine::SimulatedPathResult;
+use degenbot_pools::solve::MixedPoolRef;
 use pyo3::types::{PyBytes, PyString};
 
 fn address_to_checksum<'py>(py: Python<'py>, a: &Address) -> Bound<'py, PyString> {
@@ -40,155 +41,12 @@ impl PyArbEngine {
     ///     - "`tick_spacing"`: int (V3/V4 only)
     ///   Returns None if the `path_id` is not found.
     #[pyo3(signature = (path_id))]
-    #[expect(clippy::too_many_lines)]
     fn inspect_path(&self, path_id: u64, py: Python<'_>) -> PyResult<Option<Py<PyDict>>> {
-        // Phase 1: Collect pool refs from the path. GIL hygiene: the engine
-        // Mutex is acquired inside the accessor's py.detach.
-        let Some(pool_refs) = self.with_stages(py, |e| e.path_pool_refs(path_id)) else {
+        let Some(pool_refs) = self.collect_pool_refs(py, path_id) else {
             return Ok(None);
         };
-
-        // Phase 2: Query sub-engines for pool details. GIL hygiene: the
-        // engine Mutex + core read guard are acquired inside the accessor's
-        // py.detach; the loop is pure Rust (owned HopInfo data out, no Python
-        // API under the locks) and the dict is built under the GIL below.
-        // ADR-003: V2 state lives in BotState. One core-lock window covers all
-        // V2 lookups in this loop (engine-then-core ordering; V3/V4 state still
-        // reads the per-family engines, which are disjoint fields).
-        let hops: Vec<HopInfo> = self.with_core(py, |core| {
-            let mut hops = Vec::new();
-
-            for pool_ref in &pool_refs {
-                match pool_ref.hop_type {
-                    HopType::V2 => {
-                        let identity =
-                            core.pool_slice::<degenbot_pools::V2PoolIdentity>(pool_ref.pool_key);
-                        let addr = identity.map(|i| format!("{}", i.address));
-                        // V2 fee is `gamma_numer`, orientation-selected (ADR-003).
-                        let gamma_numer = identity.map(|i| {
-                            if pool_ref.zero_for_one {
-                                i.fee_token0.0
-                            } else {
-                                i.fee_token1.0
-                            }
-                        });
-                        hops.push(HopInfo {
-                            hop_type: pool_ref.hop_type.as_tag(),
-                            address: addr,
-                            pool_id: None,
-                            zero_for_one: pool_ref.zero_for_one,
-                            fee: gamma_numer,
-                            tick_spacing: None,
-                        });
-                    }
-                    HopType::V3 => {
-                        let pool_id = pool_ref.pool_key;
-                        let identity = core.pool_slice::<degenbot_pools::V3PoolIdentity>(pool_id);
-                        let (addr, fee, ts) = identity.map_or((None, None, None), |i| {
-                            (
-                                Some(format!("{}", i.address)),
-                                Some(u64::from(i.fee)),
-                                Some(i.tick_spacing),
-                            )
-                        });
-                        hops.push(HopInfo {
-                            hop_type: pool_ref.hop_type.as_tag(),
-                            address: addr,
-                            pool_id: None,
-                            zero_for_one: pool_ref.zero_for_one,
-                            fee,
-                            tick_spacing: ts,
-                        });
-                    }
-                    HopType::V4 => {
-                        let identity =
-                            core.pool_slice::<degenbot_pools::V4PoolIdentity>(pool_ref.pool_key);
-                        let (pm, pid, fee, ts) = identity.map_or((None, None, None, None), |i| {
-                            (
-                                Some(format!("{}", i.pool_manager)),
-                                Some(format!("0x{}", alloy::hex::encode(i.pool_id))),
-                                Some(u64::from(i.pool_key.fee)),
-                                Some(i.pool_key.tick_spacing),
-                            )
-                        });
-                        hops.push(HopInfo {
-                            hop_type: pool_ref.hop_type.as_tag(),
-                            address: pm,
-                            pool_id: pid,
-                            zero_for_one: pool_ref.zero_for_one,
-                            fee,
-                            tick_spacing: ts,
-                        });
-                    }
-                    // Solidly hop-info lands with the build/register plumbing
-                    //. Until then, a Solidly hop emits a minimal
-                    // HopInfo so the result-channel match is exhaustive; the
-                    // resolve short-circuit means no Solidly hop reaches a solve.
-                    HopType::SolidlyStable => {
-                        hops.push(HopInfo {
-                            hop_type: pool_ref.hop_type.as_tag(),
-                            address: None,
-                            pool_id: None,
-                            zero_for_one: pool_ref.zero_for_one,
-                            fee: None,
-                            tick_spacing: None,
-                        });
-                    }
-                    HopType::BalancerWeighted => {
-                        let id = core.pool_slice::<degenbot_pools::BalancerWeightedPoolIdentity>(
-                            pool_ref.pool_key,
-                        );
-                        hops.push(HopInfo {
-                            hop_type: pool_ref.hop_type.as_tag(),
-                            address: id.map(|i| format!("{}", i.address)),
-                            pool_id: None,
-                            zero_for_one: pool_ref.zero_for_one,
-                            fee: None,
-                            tick_spacing: None,
-                        });
-                    }
-                    HopType::BalancerStable => {
-                        let id = core.pool_slice::<degenbot_pools::BalancerStablePoolIdentity>(
-                            pool_ref.pool_key,
-                        );
-                        hops.push(HopInfo {
-                            hop_type: pool_ref.hop_type.as_tag(),
-                            address: id.map(|i| format!("{}", i.address)),
-                            pool_id: None,
-                            zero_for_one: pool_ref.zero_for_one,
-                            fee: None,
-                            tick_spacing: None,
-                        });
-                    }
-                    HopType::CurveStableswap => {
-                        let id =
-                            core.pool_slice::<degenbot_pools::CurvePoolIdentity>(pool_ref.pool_key);
-                        hops.push(HopInfo {
-                            hop_type: pool_ref.hop_type.as_tag(),
-                            address: id.map(|i| format!("{}", i.address)),
-                            pool_id: None,
-                            zero_for_one: pool_ref.zero_for_one,
-                            fee: None,
-                            tick_spacing: None,
-                        });
-                    }
-                }
-            }
-
-            hops
-        });
-
-        // Phase 3: Build the Python dict
-        let dict = PyDict::new(py);
-        dict.set_item("path_id", path_id)?;
-
-        let hops_list = PyList::empty(py);
-        for hop in &hops {
-            hops_list.append(hop_info_to_pydict(py, hop)?)?;
-        }
-        dict.set_item("hops", hops_list)?;
-
-        Ok(Some(dict.unbind()))
+        let hops = self.read_hop_infos(py, &pool_refs);
+        Self::render_hops(py, path_id, &hops).map(Some)
     }
 
     /// Returns (`results`, `block_number`) where results is a flat list:
@@ -341,6 +199,140 @@ impl PyArbEngine {
             // Convert batch to Python dict (requires GIL)
             Python::attach(|py| batch_to_py_dict(&batch, py))
         })
+    }
+}
+
+/// The three GIL phases of [`PyArbEngine::inspect_path`], split so each one's
+/// lock discipline is carried by its signature instead of a comment: owned refs
+/// out of the engine, owned hop data out of the core, Python objects under the
+/// GIL.
+impl PyArbEngine {
+    /// Resolve the path's immutable per-hop pool refs.
+    ///
+    /// GIL hygiene: the engine Mutex is acquired inside the accessor's
+    /// `py.detach`, so the guard never coexists with the GIL. `None` means the
+    /// path is not registered.
+    fn collect_pool_refs(&self, py: Python<'_>, path_id: u64) -> Option<Vec<MixedPoolRef>> {
+        self.with_stages(py, |e| e.path_pool_refs(path_id))
+    }
+
+    /// Read each pool ref's identity and build its owned [`HopInfo`].
+    ///
+    /// GIL hygiene: the engine Mutex and the core read guard are both acquired
+    /// inside the accessor's `py.detach`, and the loop is pure Rust — owned hop
+    /// data comes out, so no Python API call runs while a state guard is held.
+    ///
+    /// ADR-003: V2 state lives in `BotState`, so ONE core-lock window covers
+    /// every lookup in this loop (engine-then-core ordering).
+    fn read_hop_infos(&self, py: Python<'_>, pool_refs: &[MixedPoolRef]) -> Vec<HopInfo> {
+        self.with_core(py, |core| {
+            pool_refs
+                .iter()
+                .map(|pool_ref| match pool_ref.hop_type {
+                    HopType::V2 => {
+                        let identity =
+                            core.pool_slice::<degenbot_pools::V2PoolIdentity>(pool_ref.pool_key);
+                        // V2 fee is `gamma_numer`, orientation-selected (ADR-003).
+                        let gamma_numer = identity.map(|i| {
+                            if pool_ref.zero_for_one {
+                                i.fee_token0.0
+                            } else {
+                                i.fee_token1.0
+                            }
+                        });
+                        HopInfo {
+                            address: identity.map(|i| format!("{}", i.address)),
+                            fee: gamma_numer,
+                            ..HopInfo::new(pool_ref)
+                        }
+                    }
+                    HopType::V3 => {
+                        let identity =
+                            core.pool_slice::<degenbot_pools::V3PoolIdentity>(pool_ref.pool_key);
+                        let (addr, fee, ts) = identity.map_or((None, None, None), |i| {
+                            (
+                                Some(format!("{}", i.address)),
+                                Some(u64::from(i.fee)),
+                                Some(i.tick_spacing),
+                            )
+                        });
+                        HopInfo {
+                            address: addr,
+                            fee,
+                            tick_spacing: ts,
+                            ..HopInfo::new(pool_ref)
+                        }
+                    }
+                    HopType::V4 => {
+                        let identity =
+                            core.pool_slice::<degenbot_pools::V4PoolIdentity>(pool_ref.pool_key);
+                        let (pm, pid, fee, ts) = identity.map_or((None, None, None, None), |i| {
+                            (
+                                Some(format!("{}", i.pool_manager)),
+                                Some(format!("0x{}", alloy::hex::encode(i.pool_id))),
+                                Some(u64::from(i.pool_key.fee)),
+                                Some(i.pool_key.tick_spacing),
+                            )
+                        });
+                        HopInfo {
+                            address: pm,
+                            pool_id: pid,
+                            fee,
+                            tick_spacing: ts,
+                            ..HopInfo::new(pool_ref)
+                        }
+                    }
+                    // Solidly hop-info lands with the build/register plumbing
+                    //. Until then, a Solidly hop emits a minimal
+                    // HopInfo so the result-channel match is exhaustive; the
+                    // resolve short-circuit means no Solidly hop reaches a solve.
+                    HopType::SolidlyStable => HopInfo::new(pool_ref),
+                    HopType::BalancerWeighted => {
+                        let id = core.pool_slice::<degenbot_pools::BalancerWeightedPoolIdentity>(
+                            pool_ref.pool_key,
+                        );
+                        HopInfo {
+                            address: id.map(|i| format!("{}", i.address)),
+                            ..HopInfo::new(pool_ref)
+                        }
+                    }
+                    HopType::BalancerStable => {
+                        let id = core.pool_slice::<degenbot_pools::BalancerStablePoolIdentity>(
+                            pool_ref.pool_key,
+                        );
+                        HopInfo {
+                            address: id.map(|i| format!("{}", i.address)),
+                            ..HopInfo::new(pool_ref)
+                        }
+                    }
+                    HopType::CurveStableswap => {
+                        let id =
+                            core.pool_slice::<degenbot_pools::CurvePoolIdentity>(pool_ref.pool_key);
+                        HopInfo {
+                            address: id.map(|i| format!("{}", i.address)),
+                            ..HopInfo::new(pool_ref)
+                        }
+                    }
+                })
+                .collect()
+        })
+    }
+
+    /// Project the owned hop data into the Python result dict.
+    ///
+    /// Runs under the GIL by construction: it takes no engine access and no
+    /// state guard, only owned [`HopInfo`] values.
+    fn render_hops(py: Python<'_>, path_id: u64, hops: &[HopInfo]) -> PyResult<Py<PyDict>> {
+        let dict = PyDict::new(py);
+        dict.set_item("path_id", path_id)?;
+
+        let hops_list = PyList::empty(py);
+        for hop in hops {
+            hops_list.append(hop_info_to_pydict(py, hop)?)?;
+        }
+        dict.set_item("hops", hops_list)?;
+
+        Ok(dict.unbind())
     }
 }
 
@@ -511,6 +503,22 @@ struct HopInfo {
     fee: Option<u64>,
     tick_spacing: Option<i32>,
 }
+
+impl HopInfo {
+    /// Every hop's shared fields; a family's arm then sets only what its
+    /// identity supplies.
+    fn new(pool_ref: &MixedPoolRef) -> Self {
+        Self {
+            hop_type: pool_ref.hop_type.as_tag(),
+            address: None,
+            pool_id: None,
+            zero_for_one: pool_ref.zero_for_one,
+            fee: None,
+            tick_spacing: None,
+        }
+    }
+}
+
 /// Build the Python dict describing a single hop for `inspect_path`.
 fn hop_info_to_pydict<'py>(py: Python<'py>, hop: &HopInfo) -> PyResult<Bound<'py, PyDict>> {
     let hop_dict = PyDict::new(py);
