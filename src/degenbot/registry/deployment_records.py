@@ -283,7 +283,9 @@ def load_deployments(
     if overlay_path is not None:
         overlay: Path | None = Path(overlay_path)
     else:
-        selected = config_file_path() if config_path is _UNSET_CONFIG else config_path
+        selected: Path | str | None = (
+            config_file_path() if isinstance(config_path, _Unset) else config_path
+        )
         overlay = _overlay_path_from_config(selected)
     if overlay is not None and overlay.exists():
         overlay_records = _read_json(overlay)

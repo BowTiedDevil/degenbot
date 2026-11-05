@@ -194,6 +194,11 @@ class StableswapPoolState:
         """Name."""
         return self._name
 
+    @name.setter
+    def name(self, value: str) -> None:
+        """Set the name (the base declares it writable)."""
+        self._name = value
+
     # ── Mutable properties (state accessed through the mixin) ──
 
     # Note: base_cache_updated and base_virtual_price are set on the pool
