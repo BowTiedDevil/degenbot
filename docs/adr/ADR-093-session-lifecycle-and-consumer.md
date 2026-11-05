@@ -539,19 +539,16 @@ holds in the other by construction.
 ## 5. Capability homes and the dependency charter
 
 `docs/capabilities.md` gains rows only for homes that resolve to real code
-today (ADR-084 D1's catalog gate). What that gate verifies **today** is the
-home-path half: every row's crate path must resolve. Its door-item half is
-**not** enforced — `assert_catalog_door_items_resolve` skips every token that
-does not begin with an ASCII uppercase letter
-(`rust/crates/facade/degenbot/tests/architecture_gates.rs`), so lowercase
-function doors (`run_verify_lifecycle`, `simulate_swap`, …) and quoted qualified
-paths (`sim::registry::PoolEntry`, the checker's own documented example) go
-unchecked. The rows below are chosen because they are true of the code today,
-not because that half of the gate proved them; the coverage gap is tracked as
-ergo **6OABWT** ("Make the capability-catalog door-item check resolve function
-names and qualified paths"), which closes it and turns the half-check into a
-real gate. Until it lands, a door item in this table is a claim this ADR makes,
-not one the gate certifies.
+today (ADR-084 D1's catalog gate), and both halves of that gate are live. Every
+row's crate path must resolve, and every backticked door-item token of any case
+— a bare function name (`run_verify_lifecycle`) or a qualified path
+(`sim::registry::PoolEntry`, the checker's own documented example) — must
+resolve to a declared `pub` item or a `pub use` re-export in the crate it names
+(`assert_catalog_door_items_resolve` over `resolve_door_item`,
+`rust/crates/facade/degenbot/tests/architecture_gates.rs`). ergo **6OABWT**
+closed the case filter that once skipped lowercase function doors, so a broken
+lowercase door item now fails `just check-capability-catalog`: the rows below are
+gate-checked claims rather than this ADR's word alone.
 
 | Capability | Home | Door items | Row added |
 |---|---|---|---|
