@@ -1,45 +1,59 @@
 # Simulation-revert diagnostics pipeline
 
-End-to-end flow for attributing a reverted simulation candidate, from the
-on-chain revert through the structured `[sim-diag]` log line to the analyzer's
-four-way classification. Covers the spike's recompute caveats (V2 vs V3/V4).
+End-to-end flow for attributing a reverted simulation candidate: the on-chain
+revert, the FFI failure record it leaves behind, the `[sim-diag]` log line
+rendered from that record, and the `SolverCalc` basis that line's expected-vs-
+actual gap carries. Covers the recompute caveats (V2 vs V3/V4).
 
 ## Pipeline
 
 ```
-simulation revert (eth_call in simulate_one)
+simulation revert (the Rust sim)
         │
-        ├─[ unchanged ]─ `[sim-fail]` + `[sim-revert-data]` lines (human/debug)
-        ├─[ unchanged ]─ deduped `[v-state]` verbose block (sampled per block+type)
+        ▼
+FFI failure record      (rust/crates/shells/degenbot-python/src/simulation/render.rs)
+        │  reverting_frame, captured_swaps, hop_outputs, call_trace
+        ▼
+`_render_one_failure`  (src/degenbot/runner/_render.py)
         │
-        └─[ LAV44W, always-on ]─ `_emit_sim_diag(path_id, …)`
-                   │  calls diagnostic_inspect_path(path_id, rpc_url)
-                   │    → builds the DiagnosticPathState snapshot
-                   │      (engine_state per hop; fetch_onchain → onchain_state +
-                   │       drift/field_drift; thread_solver_result_and_recompute
-                   │       → optimal_input/hop_outputs + per-hop recompute)
+        ├─ `[sim-fail] path=… type=… bucket=… revert@depth=… hops=…`   (INFO)
+        │
+        └─ `format_sim_diag_line(…)` → one `[sim-diag] <json>` line    (DEBUG)
+                   │  payload: path_id, path_type, solve_block, block, age,
+                   │           revert_info, optimal_input, hop_outputs,
+                   │           captured_swaps
                    ▼
-            `_format_sim_diag_line(snapshot, …)`  (examples/eth_backrun_helpers.py)
-                   ▼
-            one `[sim-diag] <json>` line per reverted candidate  (no dedup, no env gate)
-                   ▼
-            logs/permutation_analyzer.py  `classify_candidate(sim_diag)`
-                   ▼
-            four-way TSV columns: Drift / SolverCalc / Encoding / Unknown
+        the expected-vs-actual gap — `hop_outputs[i]` vs the i-th captured
+        swap's output amount — is the `SolverCalc` basis
 ```
+
+The four-way TSV analyzer that once closed this flow (`logs/permutation_analyzer.py`'s
+`classify_candidate`, driven by `logs/test_all_permutations.sh`) retired with
+`logs/` itself — `git show cbd76d848`. Nothing in the tree grades a logged
+`[sim-diag]` line any more: the live `SolverCalc` classifier is
+`degenbot_arbitrage::pool_divergence::is_solver_calc_failure`, deciding the same
+gap in-process from the failure record. Rendering is capped at
+`_SIM_FAIL_RENDER_CAP` records per batch. The analyzer's other input, the Rust
+per-hop recompute (`fetch_onchain`, `HopRecompute`'s `expected_out_*` /
+`matches_solver`), retired too — `rust/crates/engine/degenbot-bot/src/arb_engine/diagnostic.rs`
+opens with that retirement, and the captured swap is the basis in its place.
 
 ### Where each piece lives
 
 | Stage | File |
 |---|---|
-| Snapshot build + onchain fetch + recompute | `rust/crates/engine/degenbot-bot/src/arb_engine/diagnostic.rs` |
-| PyO3 entry (`diagnostic_inspect_path`) | `rust/crates/shells/degenbot-python/src/bot/engine/solve.rs` |
-| Always-on emit + JSON-line builder | `examples/eth_backrun_v2_v3_v4_rust.py`, `examples/eth_backrun_helpers.py` |
-| Classifier + TSV driver | `logs/permutation_analyzer.py`, `logs/test_all_permutations.sh` |
+| Capture (frames, swaps, slots) | `rust/crates/engine/degenbot-simulation/src/sim/capture/` — see `inspector-diagnostics.md` |
+| Failure record (`SimFailure`) | `rust/crates/engine/degenbot-arbitrage/src/simulator.rs` |
+| FFI record dicts | `rust/crates/shells/degenbot-python/src/simulation/render.rs` |
+| `[sim-fail]` / `[sim-diag]` renderers | `src/degenbot/runner/_render.py` (`_render_one_failure`, `format_sim_diag_line`, `SimDiagWindow`) |
+| `SolverCalc` classifier | `rust/crates/engine/degenbot-arbitrage/src/pool_divergence.rs` (`is_solver_calc_failure`) |
+| On-demand path snapshot (`diagnostic_inspect_path`) | `rust/crates/engine/degenbot-bot/src/arb_engine/diagnostic.rs`, `rust/crates/shells/degenbot-python/src/bot/engine/solve.rs` |
 
 ## Four-way classification
 
-Applied per reverted candidate (from its `[sim-diag]` payload), in order:
+The retired analyzer's rules, recorded because they say what a `[sim-diag]`
+payload can and cannot support — nothing in the tree computes them. Applied per
+reverted candidate (from its `[sim-diag]` payload), in order:
 
 1. **Drift** — any hop has `drift == true` (engine_state ≠ onchain_state). The
    map basis is verified at startup (snapshot + backfill phases — see the

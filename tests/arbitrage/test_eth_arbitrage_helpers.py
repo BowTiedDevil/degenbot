@@ -1,14 +1,8 @@
-"""Tests for the non-encoder helpers in ``eth_backrun_helpers``.
+"""Tests for ``format_sim_diag_line``, the ``[sim-diag]`` line renderer.
 
-The command-stream encoders (``_3hop_*`` / ``_encode_cmd_*``) are retired;
-their byte-exact parity lives in the Rust golden-file tests (``cargo test
--p degenbot-executor``). This file keeps the
-regression coverage for the **stays-Python** display helper
-``format_sim_diag_line`` (now in :mod:`degenbot.runner._render`).
-
-The ``classify_candidate`` round-trip tests were removed along with
-the ``logs.permutation_analyzer`` module (Rust tracing replaced Python-side
-classifier infra).
+The renderer's home is :mod:`degenbot.runner._render`: the line is a
+**stays-Python** display concern (the amounts it reports are the Rust sim's own
+captured swaps), so its regression coverage lives here.
 """
 
 import json

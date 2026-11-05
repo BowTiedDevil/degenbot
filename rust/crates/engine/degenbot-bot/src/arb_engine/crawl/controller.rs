@@ -62,11 +62,19 @@
 //! # The loop
 //!
 //! [`CrawlController::run`] is the crawl: one discovery sweep feeds a windowed
-//! submission (`intake_window` outstanding units, the Python's
-//! `REG_INTAKE_WINDOW = 32`), receipts resolve in FIFO submission order, and the
-//! single fold point ([`CrawlSummary::absorb`]) runs on the loop, never on a
-//! seat. That is the Python loop's shape with the crossings removed — the
-//! counters, the stage profile and the cap latch are engine state now.
+//! submission paced by `intake_window` (the Python's `REG_INTAKE_WINDOW = 32`),
+//! receipts resolve in FIFO submission order, and the single fold point
+//! ([`CrawlSummary::absorb`]) runs on the loop, never on a seat. That is the
+//! Python loop's shape with the crossings removed — the counters, the stage
+//! profile and the cap latch are engine state now.
+//!
+//! The window PACES; it does not cap. The admission edge
+//! (`Fold::inflight() >= window`) sits after the submit, and a receipt that
+//! lands behind an older sibling waits in the buffer until the FIFO front
+//! reaches it — so the loop's own gauge reads one past the window (measured)
+//! with the admission discipline intact. The exact ceiling is the one read
+//! where nothing can resolve, by
+//! `a_parked_window_takes_on_exactly_the_window_and_names_every_submission`.
 //!
 //! Units ride the EXISTING fleet intake (PRG-5 preserved): a seat picks up an
 //! [`InnerWork`](crate::arb_engine::fleet_intake::InnerWork) box and drives
@@ -423,9 +431,9 @@ pub fn transition(state: CrawlState, event: CrawlEvent) -> Result<CrawlState, Cr
 /// The resolved crawl configuration — a VALUE, supplied by the driver shell.
 ///
 /// Everything the crawl needs to be configured once and then run: the discovery
-/// scope, the unit policy, and the two budgets (the intake window and the path
-/// cap). The shell resolves the route/policy/permutation filter; the crawl
-/// invents none of them.
+/// scope, the unit policy, and the two intake bounds (the submission window,
+/// which paces, and the path cap). The shell resolves the
+/// route/policy/permutation filter; the crawl invents none of them.
 #[derive(Clone, Debug)]
 pub struct CrawlConfig {
     /// The chain every read and construction is scoped to.
@@ -534,7 +542,7 @@ impl CrawlConfig {
             return Err(CrawlConfigError::ZeroPolicyBatch);
         }
         // A policy batch wider than the submission window could never be
-        // filled: the window is what bounds outstanding units.
+        // filled: the window is what paces outstanding units.
         if self.policy_batch_size > self.intake_window {
             return Err(CrawlConfigError::PolicyBatchExceedsWindow {
                 batch: self.policy_batch_size,

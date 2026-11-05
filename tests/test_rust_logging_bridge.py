@@ -114,17 +114,16 @@ def test_rust_info_record_is_visible() -> None:
         )
 
 
-# ── (T4): arbitrage-subtree visibility ──────────────────────────
+# ── arbitrage-subtree visibility ─────────────────────────────────
 
-#: Python modules under ``degenbot.arbitrage.*`` (e.g. ``recurring_verify``)
-#: use ``logging.getLogger("degenbot.arbitrage.recurring_verify")`` — they
-#: inherit from the ``degenbot`` package logger. S2 found these records were
-#: SILENCED (the package logger ``degenbot.logging`` has ``propagate=False``
-#: and is a sibling, not an ancestor, of ``degenbot.arbitrage.*``). The base
-#: config must make the ``degenbot`` package subtree visible so recurring-verify
-#: ``[verify] (recurring)`` lines reach stdout/file.
+#: Sample ``degenbot.arbitrage.<module>`` logger names. A module that logs under
+#: its own ``logging.getLogger(__name__)`` inherits from the ``degenbot``
+#: package logger, and ``degenbot.logging`` (the handler owner, with
+#: ``propagate=False``) is that subtree's SIBLING, not its ancestor — so the
+#: package root is the one logger the base config has to configure
+#: (``degenbot.logging.PY_PACKAGE_ROOT_LOGGER_NAMES``).
 _SAMPLE_ARBITRAGE_TARGETS = (
-    "degenbot.arbitrage.recurring_verify",
+    "degenbot.arbitrage.policy",
     "degenbot.arbitrage.engine_registry",
 )
 
@@ -132,11 +131,9 @@ _SAMPLE_ARBITRAGE_TARGETS = (
 def test_degenbot_arbitrage_loggers_configured_at_info_or_lower() -> None:
     """Base config lowers the ``degenbot`` package subtree to <= INFO.
 
-    The S2 probe found the recurring verifier's ``[verify] (recurring)``
-    lines were dropped: the module logs under
-    ``logging.getLogger("degenbot.arbitrage.recurring_verify")`` which inherits
-    from ``degenbot`` — but base config only configured the Rust bridge roots +
-    the ``degenbot.logging`` package logger (a sibling, not an ancestor).
+    These loggers inherit from ``degenbot``, while the handler-owning
+    ``degenbot.logging`` logger is a sibling of the subtree — so the package
+    root's level is the only gate these records pass through.
     """
     for name in _SAMPLE_ARBITRAGE_TARGETS:
         logger = logging.getLogger(name)
@@ -149,22 +146,21 @@ def test_degenbot_arbitrage_loggers_configured_at_info_or_lower() -> None:
 def test_degenbot_arbitrage_info_record_reaches_handler() -> None:
     """An INFO record on a ``degenbot.arbitrage.*`` target reaches a handler.
 
-    This is the contract the recurring verifier relies on — without it, the
-    drift-detection success/mismatch lines never reach stdout and the analyzer
-    sees no recurring activity.
+    The ``degenbot`` package handler is the only one such a record reaches, so a
+    record that misses it is silent — no later handler picks it up.
     """
     for target in _SAMPLE_ARBITRAGE_TARGETS:
         pkg_logger = logging.getLogger("degenbot")
         capture = _CaptureHandler()
         pkg_logger.addHandler(capture)
         try:
-            logging.getLogger(target).info("[verify] (recurring) checking at block %d", 25398650)
+            logging.getLogger(target).info("[arbitrage] checking at block %d", 25398650)
         finally:
             pkg_logger.removeHandler(capture)
         visible = [r for r in capture.records if r.levelno == logging.INFO]
-        assert any("[verify] (recurring)" in r.getMessage() for r in visible), (
+        assert any("[arbitrage] checking" in r.getMessage() for r in visible), (
             f"INFO record on {target} did NOT reach the `degenbot` package handler "
-            "— recurring-verify lines are silenced"
+            "— its lines are silenced"
         )
 
 
