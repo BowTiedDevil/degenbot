@@ -147,8 +147,9 @@ impl PyFailureDetail {
         self.inner.path_id
     }
 
-    /// The failure-bucket label (`classify_revert` output or the
-    /// orchestration-only tag).
+    /// The failure-bucket label — the Rust
+    /// `degenbot::decoders::revert::classify_revert` output or the
+    /// orchestration-only tag.
     #[getter]
     fn bucket(&self) -> &str {
         &self.inner.bucket

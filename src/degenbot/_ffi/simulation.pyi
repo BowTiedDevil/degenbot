@@ -221,8 +221,9 @@ class FailureDetail:
     @property
     def bucket(self, /) -> str:
         """
-        The failure-bucket label (`classify_revert` output or the
-        orchestration-only tag).
+        The failure-bucket label — the Rust
+        `degenbot::decoders::revert::classify_revert` output or the
+        orchestration-only tag.
         """
     @property
     def path_id(self, /) -> int:

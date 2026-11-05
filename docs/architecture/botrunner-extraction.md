@@ -12,7 +12,8 @@ companion module.
 
 ## 1. Friction confirmed
 
-The driver is a script, not a module, and the tests reach *into* the script for it:
+At spike time the driver was a script, not a module, and the tests reached *into* the
+script for it:
 
 - Probes at spike time:
   - `examples/eth_backrun_v2_v3_v4_rust.py` — **2906 lines** (grew from the 1955 recorded
@@ -24,9 +25,12 @@ The driver is a script, not a module, and the tests reach *into* the script for 
 - **No `src/degenbot/**` file imports from `examples.`** (verified: `rg "from examples\." src/`
   is empty). Every `build_paths` reference inside `src/` (`bot/_bot.py`,
   `arbitrage/engine_registry.py`, `arbitrage/policy.py`) is **docstring-only prose**,
-  not an import. So the consumer graph is entirely test-side.
-- The offending import that motivates the epic — `tests/arbitrage/test_backrun_session.py`
-  does `from examples.eth_backrun_v2_v3_v4_rust import BackrunSession` — is real and live.
+  not an import. So the consumer graph at spike time was entirely test-side.
+- The offending import that motivated the epic — `tests/arbitrage/test_backrun_session.py`
+  did `from examples.eth_backrun_v2_v3_v4_rust import BackrunSession` — was real and live at
+  spike time. Both ends are gone: the test is `tests/arbitrage/test_arbitrage_session.py`
+  (`from degenbot.runner import BotRunner`), and the entrypoint is
+  `examples/eth_settlement_arbitrage_v2_v3_v4_rust.py`, a 134-line `argv → BotRunner` shell.
 
 ## 2. Placement decision (ADR-005 discipline — the two-consumer check)
 
@@ -95,39 +99,60 @@ class BotRunner:
         block loop."""
 ```
 
-**Method-vs-module split (what stays "thin example"):**
-
-| Responsibility | Stays in module | Stays in `examples/` (policy) |
-|---|---|---|
-| Actor lifecycle + phase ordering | `BotRunner.start/run` | — |
-| Path discovery/registration | `build_paths` + `PathRegistrationPipeline` + `ConstructionContext` + `run_registration_pipeline` | — |
-| Result/block-loop plumbing | `consume_result_batches`, `_tee_block_stream`, `_reprime`, `_apply_block_if_ready`, `_apply_result_if_ready` | — |
-| Sim/submit | `BotRunner.dispatch` (ex-`_dispatch_profitable`), `_render_sim_summary`, `_render_profit_logs`, `_render_sim_failures`, `_render_fot_tokens`, `_dump_failure_fixture` | — |
-| Config + pure helpers | `BackrunConfig`, `classify_revert`, `format_failure_breakdown`, `filter_thin_margin_results`, `format_sim_diag_line` (moved from `eth_backrun_helpers.py`) | — |
-| Pure pool direction | `resolve_directions` (moved to `runner/build_paths.py` — see §10 deviation) | — |
-| Module constants | factory/pool-manager/WETH/executor constants, `REG_*`, `PATH_PERMUTATION_FILTER`, `MIN_*` (→ `runner/driver_constants.py`) | — |
-| CLI + entrypoint | `build_backrun_arg_parser` (→ `runner/cli.py` — see §10 deviation) | `main()`, `if __name__ == "__main__"`, SIGINT wrapper |
+**Method-vs-module split (what stays "thin example"):** the proposal's map — package versus
+example policy — held: the extraction moved every responsibility the proposal listed into the
+package, and §4 names where each one lives now (the crawl and the encode→simulate→submit leaf
+have since moved to the Rust core — §10.6). The four seams above survived as the session's
+internal seams rather than as `BotRunner` methods: `run()` drives `runner/_run_ritual.py`'s
+state machine over `runner/session.py`'s `Session`.
 
 `_build_arg_parser` was to stay example-side (CLI policy) per this spike, but the final
 gate (zero `from examples.eth_backrun` imports in `tests/`/`src/`) forced it into the
-package as `runner/cli.py::build_backrun_arg_parser` (see §10). It is tested by
-`test_eth_backrun_main_args.py`, which now imports from the package.
+package as `runner/cli.py::build_arbitrage_arg_parser` (see §10). It is tested by
+`test_eth_arbitrage_main_args.py`, which imports from the package.
 
 ## 4. Module layout (final)
 
+Responsibility map, as shipped:
+
+| Responsibility | Shipped home | Stays in `examples/` (policy) |
+|---|---|---|
+| Actor lifecycle + phase ordering | `BotRunner.start/run` (`runner/bot_runner.py`) over `runner/session.py`'s `Session`, ordered by `runner/_run_ritual.py`'s `RunRitual` | — |
+| Path discovery/registration | `build_paths` + `ConstructionContext` + `BuildPathsOptions` (`runner/build_paths.py`); the crawl itself is the engine's (`degenbot_bot::arb_engine::crawl`) | — |
+| Result/block-loop plumbing | `BlockLoop` + `consume_result_batches` + `_reprime` + `_apply_block_if_ready` + `_apply_result_if_ready` (`runner/_consume.py`) | — |
+| Sim/submit | The Rust core (`degenbot-batch-executor` + the engine's `dispatch_profitable_results`); Python keeps the construction boundary (`runner/_sim_submit.py`), the submit-record render + smoke FSM (`runner/_dispatch.py`), and the rendering (`runner/_render.py`) | — |
+| Config + pure helpers | `ArbitrageConfig` + `build` (`runner/config.py`); `format_failure_breakdown` / `format_sim_diag_line` (`runner/_render.py`). The revert taxonomy and the thin-margin floor are Rust: `degenbot::decoders::revert::classify_revert`, `degenbot_arbitrage::filter_thin_margin_results` | — |
+| Pure pool direction | `resolve_directions`, re-exported by `degenbot.pathfinding` from `degenbot._ffi` (the Rust `degenbot_pathfinding::directions` seam) | — |
+| Module constants | Absorbed by the typed config: `runner/config.py`'s fields + `runner/identity.py`'s deployment/operator material | — |
+| CLI + entrypoint | `build_arbitrage_arg_parser` (`runner/cli.py`) | `main()`, `if __name__ == "__main__"`, the SIGINT wrapper |
+
 ```
 src/degenbot/runner/
-  __init__.py            # re-export BotRunner (public surface) + BackrunSession alias
-  bot_runner.py          # BotRunner (ex-BackrunSession) — start/build_paths/consume/dispatch
-  build_paths.py         # build_paths + PathRegistrationPipeline + ConstructionContext
-                         #   + run_registration_pipeline + resolve_directions
-  consume.py             # consume_result_batches + _tee_block_stream + _reprime
+  __init__.py            # the package face: BotRunner, Session (+SessionPhase/PhaseError),
+                         #   InjectedActors/Actors, ActivationGateRefused, ArbitrageConfig,
+                         #   build_paths / ConstructionContext / BuildPathsOptions
+  bot_runner.py          # BotRunner — the operator verbs: start / run / enqueue_path /
+                         #   trigger_discovery / shutdown
+  session.py             # Session — the one owner of a pump session's coordination state,
+                         #   with the lifecycle FSM and the InjectedActors/Actors records
+  build_paths.py         # build_paths + ConstructionContext + BuildPathsOptions + crawl_config
+                         #   (the crawl is the engine's: degenbot_bot::arb_engine::crawl)
+  _run_ritual.py         # RunRitual — one owner of a running session's startup ordering
+  _consume.py            # BlockLoop + consume_result_batches + _reprime
                          #   + _apply_block_if_ready + _apply_result_if_ready
-  dispatch.py            # _dispatch_profitable (→BotRunner.dispatch) + the _render_* helpers
-  config.py              # BackrunConfig + from_env + classify_revert/format_*/filter_* helpers
-  driver_constants.py    # factory/pool-manager/WETH/executor constants, REG_*, MIN_*
-                         #   + PATH_PERMUTATION_FILTER
-  cli.py                 # build_backrun_arg_parser (argparse CLI surface)
+  _dispatch.py           # RawEngineResult + render_submit_records + track_submission_smoke
+                         #   + the relay-provider resolution
+  _render.py             # MergedOutcome/DisplayPolicy + the _render_* helpers
+                         #   + format_failure_breakdown + format_sim_diag_line
+  _sim_submit.py         # BatchExecutor construction (build_executor_for/build_batch_executor)
+  _actors.py             # the collaborator builders + ActivationGateRefused
+  _session_watch.py      # SessionWatch + SessionEndVerdict (the session's end-state)
+  _relay_posture.py      # RelayPosture — where signed bytes are broadcast
+  cli.py                 # build_arbitrage_arg_parser (argparse CLI surface)
+  config.py              # ArbitrageConfig (+ build) — the typed config loader
+  identity.py            # deployment/operator addresses, published keys, checksum helper
+  published_operator_private_keys.txt  # the repo-published operator keys identity.py reads
+  diag.py                # DiagConfig + the tracemalloc / RSS / faulthandler probes
 
 # ADR-013 stable home for the GIL-probe stuck-watchdog (moved out of the runner leaf):
 src/degenbot/diagnostics/
@@ -139,8 +164,13 @@ The already-package-owned collaborators stay put: `arbitrage/engine_registry.py`
 
 ## 5. Consumer enumeration
 
-**Verified: no `src/` consumer imports from `examples.`** — the only defect is test-side.
-Full table of files reaching into the examples (all in `tests/`):
+**Verified at spike time: no `src/` consumer imported from `examples.`** — the only defect
+was test-side. This is the spike-time enumeration; task 7 rerouted every row to the package,
+and no `tests/` file imports from `examples.` any more. The files were then renamed to the
+locked arbitrage names (`git show 0a041a1c9`), so the shipped readers are
+`test_arbitrage_session.py`, `test_arbitrage_config.py`, `test_eth_arbitrage_helpers.py`,
+`test_eth_arbitrage_main_args.py`, `test_consumer_block_stream.py`,
+`test_render_sim_failures.py` and `test_synthetic_v2_round_trip.py`:
 
 | Test file | Symbol(s) reached | Switch target |
 |---|---|---|
@@ -246,6 +276,25 @@ engine. Recorded here so the epic does not invent an ADR for what is a doc-level
    identity) work — `erc20_builder`'s leaf `_ffi` import (fixed via a `degenbot.database`
    TYPE_CHECKING re-export) and `test_bot`'s stale `_io`/`build_v4_pool` fakes (extended
    to the `fetch_erc20_metadata_batch` seam + 11-field return surface).
+6. **The shipped layout has been renamed and narrowed since the epic closed; §4's map and
+   tree describe today's `src/degenbot/runner/`, not the tree task 6 left.** `consume.py` →
+   `_consume.py`, `dispatch.py` → `_dispatch.py`, and the render helpers left dispatch for
+   `_render.py`; `driver_constants.py` retired into the typed config (`runner/config.py`)
+   plus `runner/identity.py`'s deployment material; `BackrunConfig.from_env` became
+   `ArbitrageConfig.build`, and `build_backrun_arg_parser` became
+   `build_arbitrage_arg_parser`. `resolve_directions` belongs to `degenbot.pathfinding`
+   (§10.1's `runner/build_paths.py` home was superseded, and §10.3's `driver_constants.py`
+   no longer exists). The `BackrunSession` alias the transition kept is gone from
+   `runner/__init__.py`, and `BotRunner` narrowed to five operator verbs over `Session` —
+   the four seams proposed in §3 are that session's internals, not facade methods.
+   Three responsibilities left the package for the Rust core since: the crawl
+   (`degenbot_bot::arb_engine::crawl`, which retired the `PathRegistrationPipeline` /
+   `run_registration_pipeline` pair), the encode→simulate→submit leaf
+   (`degenbot-batch-executor` + the engine's `dispatch_profitable_results`), and two pure
+   helpers (`classify_revert` → `degenbot::decoders::revert::classify_revert`;
+   `filter_thin_margin_results` → `degenbot_arbitrage::filter_thin_margin_results`).
+   `_tee_block_stream` went with `arbitrage/recurring_verify.py` (`git show 00424a440`) —
+   the residue §4 carried until now.
 
 ## Running parity gate (RSP-8, ergo 23DLCY)
 
