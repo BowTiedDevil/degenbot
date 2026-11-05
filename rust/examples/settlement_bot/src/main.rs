@@ -387,7 +387,7 @@ fn print_parity_ledger(snapshot_seed_block: Option<u64>) {
         ("05-snapshot-load", "REACHABLE", "SnapshotDb::open + Bot::load_snapshot_from_db"),
         ("06-engine-subscribe-resume", "REACHED-via-EngineDriver", "EngineDriver::start → subscribe → verify-config (stops pre-resume); resume owns the S+1..W auto-backfill via BlockPump::backfill_with_drain"),
         ("07-result-batch-stream", "REACHED-via-EngineDriver", "EngineDriver::take_result_receiver (attach pre-resume); ResultBatch over the existing unbounded channel"),
-        ("08-register-and-solve-path", "REACHED-via-EngineDriver", "EngineDriver::register_and_solve_path delegates to EngineStages"),
+        ("08-register-and-solve-path", "REACHED-via-EngineStages", "EngineStages::register_path / register_and_solve_path / set_path_cap (through the driver's stages() handle); the crawl reaches the same seam through Registration admission"),
         ("09-verify-lifecycles", "REACHABLE", "EngineDriver::run_v3/v4_registration_lifecycle(+_sync) expose the core lifecycles and now carry the at-most-once claim (bot_core::VerifyClaims, ZTEUTA); the outcome ledger is the core's (bot_core::registration_ledger, ZTEUTA); the bounded retry dance is the core's (bot_core::verification_retry)"),
         ("10-pool-construction", "REACHABLE", "probe_pool_type + build_v2/v3/v4/... (umbrella)"),
         ("11-discovery-db-enumeration", "REACHABLE", "degenbot::db::SnapshotDb::fetch_discovery_rows (degenbot-db::discovery_read) + tests/discovery_read_parity.rs"),
@@ -758,8 +758,10 @@ fn run() -> Result<(), String> {
     // (`pathfinding.max_registered_paths`, declared default 100 000; 0 =
     // uncapped) onto the engine registry BEFORE the crawl, mirroring
     // build_paths.py's `engine.set_path_cap(MAX_REGISTERED_PATHS or None)`.
+    // The cap is an engine operation, so it is set at the stage seam the
+    // registry lives behind (ADR-093 D3).
     let max_paths = progress::path_cap(loaded.config.pathfinding.max_registered_paths);
-    driver.set_path_cap(max_paths);
+    driver.stages().set_path_cap(max_paths);
     println!("[registration] path cap = {max_paths:?} (pathfinding.max_registered_paths)");
     degenbot::op_info!(domain = path, path_cap = ?max_paths, "registration: path cap bound");
     // Attach the result consumer BEFORE resume — the BotRunner ordering
@@ -1118,8 +1120,8 @@ fn build_batch_executor(
             max_candidates: usize::try_from(MAX_SIMULATE_CONCURRENT).unwrap_or(usize::MAX),
             use_v4_batch: false,
             dry_run: cfg.dry_run,
-            resolver: std::sync::Arc::new(dispatch::DriverResolver {
-                driver: std::sync::Arc::clone(driver),
+            resolver: std::sync::Arc::new(dispatch::StagesResolver {
+                stages: std::sync::Arc::clone(driver.stages()),
             }),
             // The cross-block suppression registry is its OWN policy value —
             // never merged with the batch-local payload-served set the executor

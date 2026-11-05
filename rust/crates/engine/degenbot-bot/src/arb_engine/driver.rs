@@ -71,9 +71,7 @@ use crate::arb_engine::crawl::flights::BuildFlights;
 use crate::arb_engine::crawl::receipt::CrawlReceipt;
 use crate::arb_engine::lifecycle::PathRegistrationError;
 use crate::arb_engine::pump_session::{self, PhaseAdvance, PumpEvent};
-use crate::arb_engine::{
-    BlockNotification, EngineRetune, EngineStages, InlineSimulator, PumpPhase, ResultBatch,
-};
+use crate::arb_engine::{BlockNotification, EngineStages, PumpPhase, ResultBatch};
 use crate::bot_core::block_pump::{BlockPump, SubscribeState};
 use crate::bot_core::reorg_coordinator::ReorgCoordinator;
 use crate::bot_core::verify_lifecycle::VerifyLifecycleConfig;
@@ -82,14 +80,10 @@ use crate::strategy_host::HostHub;
 use alloy::primitives::Address;
 use degenbot_core::{diag, op_error, op_info, op_warn};
 use degenbot_eventhub::Hub;
-use degenbot_executor::composers::PathInfo;
 use degenbot_ingestion::IngestEvent as WsEvent;
-use degenbot_pools::solve::{PoolHop, SolvePathResult};
-use degenbot_substrate::path_info::PathInfoBuildError;
 use degenbot_substrate::session_registry::PoolIdentity;
 use degenbot_substrate::state_lock::{LockSite, StateLock};
 use degenbot_substrate::BotState;
-use hashbrown::HashMap;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -1370,71 +1364,6 @@ impl EngineDriver {
         pool_id
     }
 
-    /// Register a mixed path (DELEGATION, ADR-050 D4).
-    ///
-    /// # Errors
-    ///
-    /// Propagates the typed [`PathRegistrationError`].
-    pub fn register_path(&self, hops: Vec<PoolHop>) -> Result<(u64, bool), PathRegistrationError> {
-        self.stages.register_path(hops)
-    }
-
-    /// Register a path and eagerly solve it (DELEGATION, ADR-050 D4).
-    ///
-    /// # Errors
-    ///
-    /// Propagates the typed [`PathRegistrationError`].
-    pub fn register_and_solve_path(
-        &self,
-        hops: Vec<PoolHop>,
-    ) -> Result<(u64, bool), PathRegistrationError> {
-        self.stages.register_and_solve_path(hops)
-    }
-
-    /// De-register a path. Returns `true` if it existed (DELEGATION).
-    pub fn deregister_path(&self, path_id: u64) -> bool {
-        self.stages.deregister_path(path_id)
-    }
-
-    /// Set the registered-path cap (DELEGATION).
-    pub fn set_path_cap(&self, cap: Option<usize>) {
-        self.stages.set_path_cap(cap);
-    }
-
-    /// The registered path count (DELEGATION).
-    #[must_use]
-    pub fn path_count(&self) -> usize {
-        self.stages.path_count()
-    }
-
-    /// The dedup-hit counter (DELEGATION).
-    #[must_use]
-    pub fn path_dedups(&self) -> u64 {
-        self.stages.path_dedups()
-    }
-
-    /// Resolve a path id to its encoder projection (DELEGATION).
-    #[must_use]
-    pub fn path_info_for(&self, path_id: u64) -> Option<Result<PathInfo, PathInfoBuildError>> {
-        self.stages.path_info_for(path_id)
-    }
-
-    /// Apply an operator retune (DELEGATION).
-    pub fn apply_retune(&self, retune: &EngineRetune) {
-        self.stages.apply_retune(retune);
-    }
-
-    /// Install the inline-sim hook (DELEGATION).
-    pub fn set_inline_simulator(&self, sim: Arc<dyn InlineSimulator>) {
-        self.stages.set_inline_simulator(sim);
-    }
-
-    /// The last solved results + block.
-    #[must_use]
-    pub fn latest_results(&self) -> (HashMap<u64, SolvePathResult>, u64) {
-        self.stages.latest_results()
-    }
-
     /// Install a pending subscribe state (test-only seam over the private
     /// session field).
     #[cfg(test)]
@@ -1506,7 +1435,7 @@ mod tests {
     use degenbot_pathfinding::PoolKind;
     use degenbot_rpc::provider::AlloyProvider;
     use futures_util::StreamExt;
-    use hashbrown::HashSet;
+    use hashbrown::{HashMap, HashSet};
     use tokio::sync::Notify;
 
     /// Build an offline driver over a fresh `Bot` + `EngineStages`.

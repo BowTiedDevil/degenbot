@@ -13,7 +13,7 @@
 //!   dict → row extraction at its seam, not a re-implementation of the
 //!   shaping (candidate building is the executor's assembly stage);
 //! - the path-resolver adapters ([`MapResolver`] for maps,
-//!   [`DriverResolver`] for the live engine registry);
+//!   [`StagesResolver`] for the live engine registry);
 //! - the receipt probe the submit monitors poll ([`ProviderReceiptProbe`]);
 //! - the fee helpers that stay driver reach proofs (row 17):
 //!   [`priority_fee`] / [`next_base_fee`] / the fee-history fetchers.
@@ -32,7 +32,7 @@ use std::sync::{Arc, Mutex};
 use alloy::primitives::{B256, U256};
 use degenbot::arbitrage::{compute_priority_fee, BlockPriorityFees, CapturedSwap};
 use degenbot::batch_executor::{BatchWork, PathResolver, PayloadFailure, PayloadRow, RawResult};
-use degenbot::bot::arb_engine::{InlineSwapFamily, ResultBatch, SimulatedPathResult};
+use degenbot::bot::arb_engine::{EngineStages, InlineSwapFamily, ResultBatch, SimulatedPathResult};
 use degenbot::cmd_executor::composers::PathInfo;
 use degenbot::rpc::provider::AlloyProvider;
 use degenbot::simulation::sim::capture::SwapFamily;
@@ -163,17 +163,17 @@ impl PathResolver for MapResolver {
 }
 
 /// The live resolver: the engine registry projection through
-/// `EngineDriver::path_info_for` — the same registry the result batch's
+/// [`EngineStages::path_info_for`] — the same registry the result batch's
 /// path ids name.
 #[derive(Clone)]
-pub struct DriverResolver {
-    /// The session driver (shared with the engine handshake).
-    pub driver: Arc<degenbot::EngineDriver>,
+pub struct StagesResolver {
+    /// The engine stage seam (the registry's one home).
+    pub stages: Arc<EngineStages>,
 }
 
-impl PathResolver for DriverResolver {
+impl PathResolver for StagesResolver {
     fn resolve(&self, path_id: u64) -> Option<PathInfo> {
-        self.driver
+        self.stages
             .path_info_for(path_id)
             .and_then(std::result::Result::ok)
     }

@@ -1,7 +1,11 @@
 # ADR-075: The mirrored engine surfaces stay — the driver/stages mirror is accepted, policed by the drift gates
 
-**Status: accepted (2026-10-16).** Recorded at the architecture-review grilling
-so future reviews do not re-suggest collapsing the mirror.
+**Status: superseded by [ADR-093](ADR-093-session-lifecycle-and-consumer.md)
+(2026-11-05).** The mirror this ADR accepted is deleted by subtraction (ergo
+KKUMXS): the driver's nine forwarding members are gone and `EngineStages` is
+the direct engine interface (ADR-093 D3). The record below stands as the
+2026-10-16 decision, taken at the architecture-review grilling so its reasoning
+survives the supersession.
 
 > **Header note (ADR-087 D5).** The census gates this ADR named were deleted under ADR-087 D1/D5 (`candidate2_enginestages_has_no_inherent_poke_twins`, `candidate2_driver_surface_stays_off_the_engine`) — the link breaks in both directions.
 

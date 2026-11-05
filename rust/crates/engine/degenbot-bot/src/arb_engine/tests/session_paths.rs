@@ -18,7 +18,7 @@ use super::*;
 use std::sync::Arc;
 
 use crate::arb_engine::path_objects::EnginePathObjects;
-use crate::arb_engine::{EngineDriver, EngineStages};
+use crate::arb_engine::{EngineDriver, EngineRetune, EngineStages, PathRegistrationError};
 use crate::bot_core::Bot;
 use degenbot_core::fee::fee_ratio;
 use degenbot_pools::RegisterV2PoolParams;
@@ -549,4 +549,129 @@ fn a_second_driver_over_one_session_keeps_the_first_path_owner() {
         ),
         "the second engine's route is not in the session's id space"
     );
+}
+
+/// A simulator that answers nothing: this walk proves the wiring DOOR is the
+/// stage seam and that installing there disturbs no other operation.
+struct NoInlineSim;
+
+impl crate::arb_engine::InlineSimulator for NoInlineSim {
+    fn simulate_path(
+        &self,
+        _request: crate::arb_engine::InlineSimRequest,
+    ) -> Option<crate::arb_engine::SimulatedPathResult> {
+        None
+    }
+}
+
+/// ADR-093 D3: the driver's engine surface IS the stage seam.
+///
+/// A session consumer takes the driver for the lifecycle, asks `stages()` once,
+/// and performs every engine operation at that one handle — registration, the
+/// dedup counter, the encoder projection, the registered-path cap, an operator
+/// retune, the inline-sim wiring, the results read, and deregistration. Nothing
+/// in this walk needs a second engine interface, which is what makes the
+/// driver's deleted forwarding surface a subtraction rather than a gap.
+#[test]
+fn every_engine_operation_is_reached_at_the_stage_seam() {
+    let (driver, _registry) = booted_session();
+    let stages = Arc::clone(driver.stages());
+
+    let (first_pool, second_pool) = {
+        let core = driver.core();
+        let state = core.read_at(LockSite::Registration);
+        (
+            state
+                .pool_id_for_identity(&PoolIdentity::v2(pool_a()))
+                .expect("pool A id"),
+            state
+                .pool_id_for_identity(&PoolIdentity::v2(pool_b()))
+                .expect("pool B id"),
+        )
+    };
+    let route = vec![
+        PoolHop {
+            pool_id: first_pool,
+            zero_for_one: true,
+        },
+        PoolHop {
+            pool_id: second_pool,
+            zero_for_one: false,
+        },
+    ];
+    let second_route = vec![
+        PoolHop {
+            pool_id: second_pool,
+            zero_for_one: true,
+        },
+        PoolHop {
+            pool_id: first_pool,
+            zero_for_one: false,
+        },
+    ];
+
+    // Registration allocates the engine's own id and reports the growth.
+    let (path_id, created) = stages.register_path(route.clone()).expect("path registers");
+    assert!(created);
+    assert_eq!(path_id, 1, "the engine's allocator owns the id");
+    assert_eq!(stages.path_count(), 1);
+    assert_eq!(stages.path_dedups(), 0);
+
+    // The encoder projection is the registry's, read at the same handle.
+    let info = stages
+        .path_info_for(path_id)
+        .expect("the registered path is known")
+        .expect("the path encodes");
+    assert_eq!(info.hops.len(), 2);
+
+    // A duplicate joins the first entry and counts a dedup hit engine-side.
+    let (again, created_again) = stages.register_path(route).expect("the dup joins");
+    assert_eq!(again, path_id);
+    assert!(!created_again);
+    assert_eq!(stages.path_dedups(), 1);
+    assert_eq!(stages.path_count(), 1);
+
+    // The cap is the engine registry's, enforced through this handle.
+    stages.set_path_cap(Some(1));
+    assert!(matches!(
+        stages.register_path(second_route.clone()),
+        Err(PathRegistrationError::RegistryFull {
+            cap: 1,
+            registered: 1
+        })
+    ));
+    stages.set_path_cap(None);
+
+    // An operator retune reaches the live engine: the cap it carries is the one
+    // the next registration meets.
+    stages.apply_retune(&EngineRetune {
+        event_buffer_max_age: None,
+        solve_admission: true,
+        admission_target_depth: 2,
+        admission_retention_blocks: 5,
+        path_cap: Some(1),
+        min_profit: U256::ZERO,
+        max_profit: U256::MAX,
+        clamp_margin: U256::from(1u64),
+        force_deferred: None,
+    });
+    assert!(matches!(
+        stages.register_path(second_route),
+        Err(PathRegistrationError::RegistryFull {
+            cap: 1,
+            registered: 1
+        })
+    ));
+    stages.set_path_cap(None);
+
+    // The inline-sim hook is wired at this handle, and solving still runs.
+    stages.set_inline_simulator(Arc::new(NoInlineSim));
+    stages.solve_all_paths(1);
+    let (_results, block) = stages.latest_results();
+    assert_eq!(block, 1);
+
+    // Deregistration is the engine's too.
+    assert!(stages.deregister_path(path_id));
+    assert_eq!(stages.path_count(), 0);
+    assert!(stages.path_info_for(path_id).is_none());
 }

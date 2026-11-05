@@ -46,7 +46,7 @@
       "05-snapshot-load": "REACHABLE",
       "06-engine-subscribe-resume": "REACHED-via-EngineDriver",
       "07-result-batch-stream": "REACHED-via-EngineDriver",
-      "08-register-and-solve-path": "REACHED-via-EngineDriver",
+      "08-register-and-solve-path": "REACHED-via-EngineStages",
       "09-verify-lifecycles": "REACHABLE",
       "10-pool-construction": "REACHABLE",
       "11-discovery-db-enumeration": "REACHABLE",

@@ -41,6 +41,7 @@ _DISCOVERY_CHAIN_ID = 8453
 _ALLOWED_STATUSES = {
     "REACHABLE",
     "REACHED-via-EngineDriver",
+    "REACHED-via-EngineStages",
     "DRIVER-POLICY",
     "PARTIAL",
     "BLOCKED",
