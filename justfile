@@ -867,6 +867,56 @@ test-flake-probe:
     done
     echo "✓ flake-probe: 3/3 green"
 
+# Repeat-run gate for the three Rust ordering tests that fail only under
+# whole-crate load: the crawl controller's abort/drain and window/receipt tests
+# and the driver's stop-latch test. Their fixtures establish the orderings with
+# events (a teardown latch, a fill gate, a quiesce notify) instead of clocks, so
+# a green run in isolation proves little -- the load that exposed them is the
+# whole-crate run's own scheduling.
+#
+# Measured basis for the granularity: the stop-latch test failed 2 of 25
+# consecutive whole-crate `-p degenbot-bot` runs while passing in isolation, and
+# it is the most reproducible of the three. The selection below is therefore the
+# WHOLE crate, never an `-E` filter: a narrow filter re-runs these tests in
+# exactly the isolation where they never flaked. Five consecutive runs; ANY red
+# run fails the recipe.
+#
+# Non-vacuity: `cargo nextest list` must still name all three tests before the
+# first run, so a rename or a moved module fails here instead of leaving this
+# probe repeating an empty selection (`cargo nextest run` has no `--list`; the
+# listing is its own subcommand, and its selection mirrors `test-rust-nextest`'s
+# for this package, gated feature included).
+#
+# On demand only -- never in `test`, pre-push, or CI: five repetitions are
+# minutes of wall clock, and the load this gate depends on is the whole-crate
+# run it is repeating.
+test-flake-probe-rust: check-toolchain
+    #!/usr/bin/env bash
+    set -euo pipefail
+    runs=5
+    probe_tests=(
+        'arb_engine::crawl::controller::tests::a_fatal_unit_aborts_the_crawl_loudly_after_the_drain'
+        'arb_engine::crawl::controller::tests::the_window_bounds_the_outstanding_units_and_every_receipt_folds'
+        'arb_engine::driver::tests::a_stop_latches_the_crawl_and_joins_its_run_within_the_grace'
+    )
+    python_libdir="$({{ py_run }} python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    listing="$(cargo nextest list --locked --manifest-path rust/Cargo.toml \
+        -p degenbot-bot --features degenbot-bot/executor-ab-probe)"
+    for test in "${probe_tests[@]}"; do
+        if ! grep -qF -- "$test" <<<"$listing"; then
+            echo "ERROR: probe test missing from the -p degenbot-bot selection:" >&2
+            echo "       $test" >&2
+            echo "       Renamed or moved? Update this recipe's test ids." >&2
+            exit 1
+        fi
+    done
+    for i in $(seq 1 "$runs"); do
+        echo "▶ flake-probe-rust run ${i}/${runs}"
+        just test-rust-nextest -p degenbot-bot
+    done
+    echo "✓ flake-probe-rust: ${runs}/${runs} green"
+
 # Re-populate golden files for on-chain-oracle parity tests. Requires a working
 # fork (tests.env RPC or local node). Pass a nodeid to refresh a single test:
 #   just record-golden -- tests/uniswap/v3/test_uniswap_v3_liquidity_pool.py::test_cached_calculations
